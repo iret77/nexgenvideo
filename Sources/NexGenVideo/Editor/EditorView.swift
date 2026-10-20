@@ -803,15 +803,18 @@ private final class PanelHostingController<Content: View>: NSViewController, Pan
         super.viewDidLayout()
         let inset = AppTheme.Layout.panelGap / 2
         let bounds = view.bounds
-        let panelFrame = bounds.insetBy(dx: inset, dy: inset)
+        let horizontalInset = bounds.width > 2 * inset ? inset : AppTheme.Spacing.none
+        let verticalInset = bounds.height > 2 * inset ? inset : AppTheme.Spacing.none
+        let panelFrame = NSRect(x: bounds.minX + horizontalInset, y: bounds.minY + verticalInset,
+            width: bounds.width - 2 * horizontalInset, height: bounds.height - 2 * verticalInset)
         if hostingController.view.frame != panelFrame {
             hostingController.view.frame = panelFrame
         }
         focusRing.frame = bounds
         focusRing.path = CGPath(
-            roundedRect: bounds.insetBy(dx: inset, dy: inset),
-            cornerWidth: AppTheme.Radius.sm,
-            cornerHeight: AppTheme.Radius.sm,
+            roundedRect: panelFrame,
+            cornerWidth: min(AppTheme.Radius.sm, panelFrame.width / 2),
+            cornerHeight: min(AppTheme.Radius.sm, panelFrame.height / 2),
             transform: nil
         )
         if let scale = view.window?.backingScaleFactor {

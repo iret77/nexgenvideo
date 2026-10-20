@@ -29,6 +29,8 @@ enum ProductionPlanningAcceptanceFixture {
         try ProjectPluginSettings.setProductionContract(.current, projectURL: home)
         try PhaseContractRuntime.initializeWorkflowState(dataRoot: root, workflow: HostWorkflowKey.core(.current))
         let document = try await VideoProject.load(from: home, agentService: agentService)
+        var ready = false
+        defer { if !ready { document.close() } }
         _ = NSApplication.shared
         document.makeWindowControllers()
         await document.generationRestorationTask?.value
@@ -58,6 +60,7 @@ enum ProductionPlanningAcceptanceFixture {
         try await beforeDesignApproval?(context)
         try await approve("production_design", in: context)
         try await writeTreatmentAndScript(in: context)
+        ready = true
         return context
     }
 
@@ -160,6 +163,8 @@ enum ProductionPlanningAcceptanceFixture {
 
     static func makePromotion(withLookObligation: Bool = false, agentService: AgentService? = nil) async throws -> Context {
         let context = try await makeScript(agentService: agentService)
+        var ready = false
+        defer { if !ready { context.document.close() } }
         try await approve("script", in: context)
         _ = try await writeStoryboard(in: context)
         _ = try await attachSketches(in: context)
@@ -217,6 +222,7 @@ enum ProductionPlanningAcceptanceFixture {
         let proposal = PipelineProductionPlanWriter.Proposal(expectedDraftFingerprint: preparation.draft.sha256,
             expectedAssetGraphFingerprint: preparation.graph.sha256, shots: shots)
         try await run("write_shotlist", args: ["origin": "agentProposal", "proposal": try object(proposal)], in: context)
+        ready = true
         return context
     }
 
@@ -333,6 +339,8 @@ enum ProductionPlanningAcceptanceFixture {
     static func makeImportedAssembly(agentService: AgentService? = nil,
         beforeRenderReview: (@MainActor (Context) async throws -> Void)? = nil) async throws -> Context {
         let context = try await makeScript(agentService: agentService)
+        var ready = false
+        defer { if !ready { context.document.close() } }
         try await approve("script", in: context)
         _ = try await writeStoryboard(in: context)
         _ = try await attachSketches(in: context)
@@ -366,6 +374,7 @@ enum ProductionPlanningAcceptanceFixture {
         try await approve("render_review", in: context)
         _ = try await assembleImported(in: context)
         try await approve("render", in: context)
+        ready = true
         return context
     }
 
@@ -443,6 +452,8 @@ enum ProductionPlanningAcceptanceFixture {
 
     static func makeStateVariantBible() async throws -> Context {
         let context = try await makeScript()
+        var ready = false
+        defer { if !ready { context.document.close() } }
         try await approve("script", in: context)
         _ = try await writeStoryboard(in: context)
         let board = try await attachSketches(in: context)
@@ -481,6 +492,7 @@ enum ProductionPlanningAcceptanceFixture {
         try await run("prepare_production_assets", args: ["assets": [["path": destinations[1], "modality": "image",
             "entity_id": "shape", "state_id": "shape_blue", "view_id": "front",
             "allowed_use_ids": [CoreReferenceSemanticJobIDV1.referenceAnchor]]]], in: context)
+        ready = true
         return context
     }
 
@@ -510,6 +522,8 @@ enum ProductionPlanningAcceptanceFixture {
         let result = await context.executor.execute(name: tool, args: args)
         guard !result.isError, result.turnDisposition == .continueTurn else {
             let text = result.content.compactMap { if case .text(let text) = $0 { text } else { nil } }.joined(separator: "\n")
+            let diagnostic = "[acceptance] writer failed name=\(tool) content=\(text)\n"
+            FileHandle.standardError.write(Data(diagnostic.utf8))
             throw GateBlocked("Acceptance writer \(tool) failed: \(text)")
         }
         await context.editor.refreshEngineState()
@@ -523,11 +537,15 @@ enum ProductionPlanningAcceptanceFixture {
         guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 320, pixelsHigh: 180,
             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
             colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { throw CocoaError(.fileWriteUnknown) }
+        guard let foreground = (index == 0 ? NSColor.systemRed : NSColor.systemBlue).usingColorSpace(bitmap.colorSpace),
+              let background = NSColor.white.usingColorSpace(bitmap.colorSpace) else {
+            throw GateBlocked("The production fixture colors could not be converted to its bitmap color space.")
+        }
         for y in 0..<180 {
             for x in 0..<320 {
                 let dx = x - 160, dy = y - 90
                 let shape = index == 0 ? dx * dx + dy * dy < 3_600 : abs(dx) < 60 && abs(dy) < 60
-                bitmap.setColor(shape ? (index == 0 ? .systemRed : .systemBlue) : .white, atX: x, y: y)
+                bitmap.setColor(shape ? foreground : background, atX: x, y: y)
             }
         }
         guard let bytes = bitmap.representation(using: .png, properties: [:]) else { throw CocoaError(.fileWriteUnknown) }
