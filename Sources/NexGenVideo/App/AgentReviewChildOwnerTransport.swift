@@ -168,8 +168,10 @@ final class AgentReviewChildOwnerHTTP: URLProtocol, @unchecked Sendable {
         var errors: [String] = []
     }
     private static let storage = OSAllocatedUnfairLock(initialState: State())
-    private struct Lifetime { var task: Task<Void, Never>?; var stopped = false }
-    private let lifetime = OSAllocatedUnfairLock(initialState: Lifetime())
+    private struct Lifetime { var task: Task<Void, Never>?; var stopped = false; var finished = false }
+    // Client callbacks can synchronously reenter stopLoading().
+    private let lifetimeLock = NSRecursiveLock()
+    private var lifetime = Lifetime()
     static func bind(_ request: AgentReviewChildRequest) { storage.withLock { $0.request = request } }
     static func reset() { storage.withLock { $0 = State() } }
     static var evidence: State { storage.withLock { $0 } }
@@ -178,7 +180,10 @@ final class AgentReviewChildOwnerHTTP: URLProtocol, @unchecked Sendable {
     }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
-        let task = Task { [self] in
+        _ = startOwnedLoading()
+    }
+    func startOwnedLoading() -> Task<Void, Never> {
+        let load: @Sendable () async -> Void = { [self] in
             do {
                 try await Task.sleep(for: .milliseconds(150))
                 guard request.url?.absoluteString == "https://api.anthropic.com/v1/messages",
@@ -233,15 +238,39 @@ final class AgentReviewChildOwnerHTTP: URLProtocol, @unchecked Sendable {
                 try Task.checkCancellation()
                 guard let url = request.url, let response = HTTPURLResponse(url: url, statusCode: 200,
                     httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "text/event-stream"]) else { throw CocoaError(.fileReadUnknown) }
-                client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-                client?.urlProtocol(self, didLoad: wire); client?.urlProtocolDidFinishLoading(self)
+                notifyClient { $0.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed) }
+                notifyClient { $0.urlProtocol(self, didLoad: wire) }
+                notifyClient(terminal: true) { $0.urlProtocolDidFinishLoading(self) }
             } catch {
-                guard !Task.isCancelled else { return }
-                Self.storage.withLock { $0.errors.append(error.localizedDescription) }
-                client?.urlProtocol(self, didFailWithError: error)
+                notifyClient(terminal: true) {
+                    Self.storage.withLock { $0.errors.append(error.localizedDescription) }
+                    $0.urlProtocol(self, didFailWithError: error)
+                }
             }
         }
-        lifetime.withLock { value in value.task = task; if value.stopped { task.cancel() } }
+        let task = Task(operation: load)
+        let shouldCancel = lifetimeLock.withLock {
+            guard !lifetime.stopped, !lifetime.finished else { return true }
+            lifetime.task = task
+            return false
+        }
+        if shouldCancel { task.cancel() }
+        return task
     }
-    override func stopLoading() { lifetime.withLock { $0.stopped = true; $0.task?.cancel() } }
+    override func stopLoading() {
+        let task = lifetimeLock.withLock {
+            lifetime.stopped = true
+            let task = lifetime.task
+            lifetime.task = nil
+            return task
+        }
+        task?.cancel()
+    }
+    private func notifyClient(terminal: Bool = false, _ notify: (any URLProtocolClient) -> Void) {
+        lifetimeLock.withLock {
+            guard !lifetime.stopped, !lifetime.finished, !Task.isCancelled, let client else { return }
+            if terminal { lifetime.finished = true; lifetime.task = nil }
+            notify(client)
+        }
+    }
 }
