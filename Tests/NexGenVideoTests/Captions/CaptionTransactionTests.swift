@@ -12,7 +12,8 @@ struct CaptionTransactionTests {
         let seen = Observation()
         editor.captionTranscriptionClient = .init(transcribe: { url, video, range, censor, locale in
             #expect(url != source && !video)
-            #expect(try Data(contentsOf: url) == Data("original audio bytes".utf8))
+            let actual = try Data(contentsOf: url)
+            #expect(actual == Data("original audio bytes".utf8))
             #expect(range == 0...5 && censor && locale?.identifier == "en_US")
             seen.url = url
             return transcript()

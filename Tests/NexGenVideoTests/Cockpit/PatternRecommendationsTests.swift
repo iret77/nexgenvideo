@@ -124,7 +124,7 @@ struct PatternRecommendationsTests {
             #expect(result.fitScore == original["fit_score"] as? Double)
             #expect(result.confidence == original["confidence"] as? Double)
             #expect(result.inputCoverage == original["input_coverage"] as? Double)
-            let detailBytes = try #require(MusicvideoPatternProvider().get(id: result.id))
+            let detailBytes = try #require(try MusicvideoPatternProvider().get(id: result.id))
             let detail = try PatternRecommendationsModel.detail(detailBytes, expectedID: result.id)
             let source = try #require(try JSONSerialization.jsonObject(with: detailBytes) as? [String: Any])
             let camera = try #require(source["camera"] as? [String: Any])
@@ -150,7 +150,7 @@ struct PatternRecommendationsTests {
         let set = try #require(object["recommendations"] as? [String: Any])
         let raw = try #require(set["results"] as? [[String: Any]])
         let id = try #require(raw.first?["pattern_id"] as? String)
-        let detailBytes = try #require(MusicvideoPatternProvider().get(id: id))
+        let detailBytes = try #require(try MusicvideoPatternProvider().get(id: id))
         var detail = try #require(try JSONSerialization.jsonObject(with: detailBytes) as? [String: Any])
         var camera = try #require(detail["camera"] as? [String: Any]); camera["basis"] = "certain"
         detail["camera"] = camera

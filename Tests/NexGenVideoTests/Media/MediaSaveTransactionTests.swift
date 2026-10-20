@@ -29,7 +29,7 @@ struct MediaSaveTransactionTests {
         let task = try #require(editor.saveAsMedia(source: before, name: "Saved range", type: .video) { captured, resolver in
             #expect(captured == before)
             let frozen = try #require(resolver.resolveURL(for: asset.id))
-            #expect(frozen != source && (try Data(contentsOf: frozen)) == bytes)
+            #expect(try (frozen != source && Data(contentsOf: frozen) == bytes))
             try Data("rendered bytes".utf8).write(to: rendered)
             switch reason {
             case "project": editor.projectURL = other

@@ -234,7 +234,7 @@ struct CaptionSpeechEditsTests {
             #expect(fragments.allSatisfy { $0.textContent == "Hello world." && $0.captionGroupId == caption.captionGroupId
                 && $0.linkGroupId == caption.linkGroupId && $0.captionProvenance == caption.captionProvenance })
             let decoded = try JSONDecoder().decode(CaptionSpeechEdits.Plan.self, from: JSONEncoder().encode(plan))
-            #expect(decoded == plan && (try prepare(editor)) == plan)
+            #expect(try (decoded == plan && prepare(editor) == plan))
             guard case .ok = editor.rippleDeleteRangesOnTrack(trackIndex: 1,
                 ranges: [FrameRange(start: 30, end: 60)], captionEdits: decoded) else {
                 Issue.record("An exact animated caption split was refused"); return
@@ -268,7 +268,7 @@ struct CaptionSpeechEditsTests {
         let originalTrack = editor.timeline.tracks[3]
         let plan = try proposal(), fragments = plan.changes[0].after
         #expect(fragments.count == 3 && fragments[1].id != reserved)
-        #expect(Set(fragments.map(\.id)).count == 3 && (try proposal()) == plan)
+        #expect(try (Set(fragments.map(\.id)).count == 3 && proposal() == plan))
         guard case .ok = editor.rippleDeleteRangesOnTrack(trackIndex: 1,
             ranges: cuts.map { FrameRange(start: $0.start, end: $0.end) }, captionEdits: plan) else {
             Issue.record("A valid collision-free multi-cut caption split was refused"); return

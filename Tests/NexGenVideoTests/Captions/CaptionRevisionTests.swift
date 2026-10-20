@@ -160,7 +160,8 @@ struct CaptionRevisionTests {
         asset.url = stale
         let expected = try Data(contentsOf: source)
         editor.captionTranscriptionClient = .init(transcribe: { url, _, _, _, _ in
-            #expect(try Data(contentsOf: url) == expected)
+            let actual = try Data(contentsOf: url)
+            #expect(actual == expected)
             return Self.transcript
         }, supportedLocales: { [] })
         let removal = try await ToolExecutor(editor: editor).prepareWordRemoval(editor, ["words": [1]])
@@ -200,7 +201,8 @@ struct CaptionRevisionTests {
         let undo = UndoManager(); undo.groupsByEvent = false; editor.undoManager = undo
         editor.captionTranscriptionClient = .init(transcribe: { url, video, range, censor, locale in
             #expect(url != source && !video && range == nil && !censor && locale == nil)
-            #expect(try Data(contentsOf: url) == Data("original audio".utf8))
+            let actual = try Data(contentsOf: url)
+            #expect(actual == Data("original audio".utf8))
             return Self.transcript
         }, supportedLocales: { [] })
         let tool = ToolExecutor(editor: editor)
