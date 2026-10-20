@@ -103,7 +103,7 @@ struct ProjectWorkingCopyTests {
     @Test("a Core binding cannot silently opt an existing Recovery copy into production")
     func refusesUnconfirmedCoreRecovery() throws {
         let pkg = try tempPackage()
-        try ProjectPluginSettings.setActivePlugin(nil, projectURL: pkg)
+        try ProjectPluginSettings.setActivePlugin(Optional<ProjectPackBinding>.none, projectURL: pkg)
         let key = uniqueKey()
         defer { ProjectWorkingCopy.discard(key: key); try? FileManager.default.removeItem(at: pkg) }
         let opened = try ProjectWorkingCopy.open(key: key, packageURL: pkg)
@@ -119,7 +119,7 @@ struct ProjectWorkingCopyTests {
     @Test("matching Core contracts recover later unsaved production work")
     func recoversMatchingCoreContract() throws {
         let pkg = try tempPackage()
-        try ProjectPluginSettings.setActivePlugin(nil, projectURL: pkg)
+        try ProjectPluginSettings.setActivePlugin(Optional<ProjectPackBinding>.none, projectURL: pkg)
         try ProjectPluginSettings.setProductionContract(.current, projectURL: pkg)
         let key = uniqueKey()
         defer { ProjectWorkingCopy.discard(key: key); try? FileManager.default.removeItem(at: pkg) }
