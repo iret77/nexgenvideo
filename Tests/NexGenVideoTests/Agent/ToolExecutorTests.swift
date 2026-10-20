@@ -42,11 +42,6 @@ final class ToolHarness {
         )
     }
 
-    init(editor: EditorViewModel, executor: ToolExecutor) {
-        self.editor = editor
-        self.executor = executor
-    }
-
     /// Run a tool by name and decode the .ok text payload as JSON.
     func runOK(_ name: String, args: [String: Any] = [:]) async throws -> Any {
         let result = await executor.execute(name: name, args: args)
