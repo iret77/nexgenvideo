@@ -143,7 +143,10 @@ public enum ProductionPlanningStoreV1 {
                 try PlanningValidation.require(previous.sha256 == item.sha256, "storyboard.bundle.conflictingPath")
             } else { byPath[item.path] = item }
         }
-        references = byPath.values.sorted { $0.path < $1.path }
+        references = byPath.values.sorted { $0.path < $1.path }.map { reference in
+            .init(id: "storyboard-input-" + FileDigest.sha256(of: Data(reference.path.utf8)),
+                role: reference.role, path: reference.path, sha256: reference.sha256)
+        }
         for item in references { _ = try ProjectLocalFile.requireHash(item.sha256, at: item.path, dataRoot: dataRoot) }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]

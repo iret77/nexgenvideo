@@ -536,16 +536,29 @@ enum ProductionPlanningAcceptanceFixture {
     private static func imageBytes(index: Int) throws -> Data {
         guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 320, pixelsHigh: 180,
             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { throw CocoaError(.fileWriteUnknown) }
-        guard let foreground = (index == 0 ? AppTheme.Acceptance.fixtureCircleColor : AppTheme.Acceptance.fixtureSquareColor).usingColorSpace(bitmap.colorSpace),
-              let background = AppTheme.Acceptance.fixtureShapeBackgroundColor.usingColorSpace(bitmap.colorSpace) else {
+            colorSpaceName: .deviceRGB, bitmapFormat: .alphaNonpremultiplied,
+            bytesPerRow: 320 * 4, bitsPerPixel: 32), let pixels = bitmap.bitmapData else { throw CocoaError(.fileWriteUnknown) }
+        guard let foreground = (index == 0 ? AppTheme.Acceptance.fixtureCircleColor : AppTheme.Acceptance.fixtureSquareColor).usingColorSpace(.deviceRGB),
+              let background = AppTheme.Acceptance.fixtureShapeBackgroundColor.usingColorSpace(.deviceRGB) else {
             throw GateBlocked("The production fixture colors could not be converted to its bitmap color space.")
         }
+        let foregroundComponents = [foreground.redComponent, foreground.greenComponent, foreground.blueComponent, foreground.alphaComponent]
+        let backgroundComponents = [background.redComponent, background.greenComponent, background.blueComponent, background.alphaComponent]
+        guard (foregroundComponents + backgroundComponents).allSatisfy({ $0.isFinite && $0 >= 0 && $0 <= 1 }) else {
+            throw GateBlocked("The production fixture colors have invalid RGBA components.")
+        }
+        let foregroundSamples = foregroundComponents.map { UInt8(($0 * 255).rounded()) }
+        let backgroundSamples = backgroundComponents.map { UInt8(($0 * 255).rounded()) }
         for y in 0..<180 {
             for x in 0..<320 {
                 let dx = x - 160, dy = y - 90
                 let shape = index == 0 ? dx * dx + dy * dy < 3_600 : abs(dx) < 60 && abs(dy) < 60
-                bitmap.setColor(shape ? foreground : background, atX: x, y: y)
+                let samples = shape ? foregroundSamples : backgroundSamples
+                let offset = y * bitmap.bytesPerRow + x * 4
+                pixels[offset] = samples[0]
+                pixels[offset + 1] = samples[1]
+                pixels[offset + 2] = samples[2]
+                pixels[offset + 3] = samples[3]
             }
         }
         guard let bytes = bitmap.representation(using: .png, properties: [:]) else { throw CocoaError(.fileWriteUnknown) }

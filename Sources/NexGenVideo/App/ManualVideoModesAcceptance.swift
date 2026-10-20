@@ -223,10 +223,13 @@ enum ManualVideoModesAcceptance {
 
     private static func image(_ url: URL, red: Bool) throws {
         guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 320, pixelsHigh: 180, bitsPerSample: 8,
-            samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else {
+            samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+              let context = NSGraphicsContext(bitmapImageRep: bitmap) else {
             throw GateBlocked("The exact frame fixture cannot be allocated.")
         }
-        for y in 0..<180 { for x in 0..<320 { bitmap.setColor(red ? .red : .blue, atX: x, y: y) } }
+        let pixels = context.cgContext
+        pixels.setFillColor((red ? AppTheme.Acceptance.fixtureRedColor : AppTheme.Acceptance.fixtureBlueColor).cgColor)
+        pixels.fill(CGRect(x: 0, y: 0, width: 320, height: 180))
         guard let data = bitmap.representation(using: .png, properties: [:]) else { throw GateBlocked("The frame fixture cannot be encoded.") }
         try data.write(to: url)
     }

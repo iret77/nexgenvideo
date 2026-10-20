@@ -23,6 +23,7 @@ struct PipelineProductionSequenceReviewStoreTests {
 
     @Test func realFilmReviewBindsExternalSourcesActualCutAndPersistedObservations() async throws {
         let context = try await ProductionPlanningAcceptanceFixture.makeImportedAssembly()
+        defer { context.document.close() }
         let editor = context.editor
         let originalTimeline = editor.timeline
         let clip = try #require(originalTimeline.tracks.flatMap(\.clips).first(where: { $0.mediaType == .video }))

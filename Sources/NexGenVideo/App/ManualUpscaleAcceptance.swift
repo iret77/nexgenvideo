@@ -59,7 +59,12 @@ enum ManualUpscaleAcceptance {
         }
         let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 64, pixelsHigh: 64, bitsPerSample: 8,
             samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
-        for x in 0..<64 { for y in 0..<64 { bitmap.setColor(.blue, atX: x, y: y) } }
+        guard let context = NSGraphicsContext(bitmapImageRep: bitmap) else {
+            throw GateBlocked("The actual output image context could not be allocated.")
+        }
+        let pixels = context.cgContext
+        pixels.setFillColor(AppTheme.Acceptance.fixtureBlueColor.cgColor)
+        pixels.fill(CGRect(x: 0, y: 0, width: 64, height: 64))
         guard let bytes = bitmap.representation(using: .png, properties: [:]) else { throw GateBlocked("The actual output image could not be encoded.") }
         try MusicvideoGenerationHTTP.installUpscale(endpoint: package.payload.target.endpoint, output: bytes)
         try await driver.click("generation.review.approve", in: sheet)

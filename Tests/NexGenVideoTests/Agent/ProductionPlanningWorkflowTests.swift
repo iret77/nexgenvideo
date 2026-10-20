@@ -9,6 +9,7 @@ import Testing
 struct ProductionPlanningWorkflowTests {
     @Test func missingAndChangedSketchesBlockApprovalButRemainRepairable() async throws {
         let fixture = try await ProductionPlanningAcceptanceFixture.makeScript()
+        defer { fixture.document.close() }
         try await ProductionPlanningAcceptanceFixture.approve("script", in: fixture)
         let missing = try await ProductionPlanningAcceptanceFixture.writeStoryboard(in: fixture)
         #expect(missing.timing.shots.count == 2)
@@ -27,14 +28,53 @@ struct ProductionPlanningWorkflowTests {
         #expect(repairable.timing.shots.map(\.id) == assigned.timing.shots.map(\.id))
         let repaired = try await ProductionPlanningAcceptanceFixture.attachSketches(in: fixture)
         #expect(repaired.fingerprint != assigned.fingerprint)
+        let firstImage = try #require(repaired.timing.shots.first?.moments.first?.asset?.image)
+        let target = try #require(repaired.timing.shots.last)
+        let targetMoment = try #require(target.moments.first)
+        let duplicated = try await PipelineStoryboardEditor.attachImage(
+            from: fixture.dataRoot.appendingPathComponent(firstImage.path), shotID: target.id, momentID: targetMoment.id,
+            expectedFingerprint: repaired.fingerprint, editor: fixture.editor)
+        let secondImage = try #require(duplicated.timing.shots.last?.moments.first?.asset?.image)
+        #expect(firstImage.id == secondImage.id)
+        #expect(firstImage.sha256 == secondImage.sha256)
+        #expect(firstImage.path != secondImage.path)
         try await ProductionPlanningAcceptanceFixture.approve("storyboard", in: fixture)
         #expect(fixture.editor.projectState?.nextPhaseName == "shot_planning")
         let draft = try await ProductionPlanningAcceptanceFixture.writeShotPlanning(in: fixture)
         #expect(draft.shots.map(\.shotID) == assigned.timing.shots.map(\.id))
+        #expect(Set(draft.header.inputs.map(\.id)).count == draft.header.inputs.count)
+        #expect(Set(draft.header.inputs.map(\.path)) == Set(duplicated.references.map(\.path)))
+        for reference in duplicated.references {
+            #expect(draft.header.inputs.contains { $0.path == reference.path && $0.sha256 == reference.sha256 && $0.role == reference.role })
+        }
+        var imported = draft
+        let video = try await ProductionPlanningAcceptanceFixture.makeSourceVideo()
+        defer { try? FileManager.default.removeItem(at: video) }
+        for (index, original) in draft.shots.enumerated() {
+            let candidate = ShotPlanningDraftV1.ShotIntent(shotID: original.shotID, sourceMode: .imported,
+                camera: original.camera, obligations: [])
+            imported = try await PipelineShotPlanningEditor.attachSource(from: video, to: candidate, in: imported, editor: fixture.editor)
+            let selected = try #require(imported.shots.first { $0.shotID == original.shotID })
+            let source = try #require(selected.source)
+            imported = try await PipelineShotPlanningEditor.replace(.init(shotID: original.shotID, sourceMode: .imported,
+                source: source, camera: selected.camera, obligations: [], sourceInputRange: .init(source: source,
+                    timebase: ProductionPlanningAcceptanceFixture.timebase, startTicks: Int64(index) * 2_400, durationTicks: 2_400)),
+                in: imported, editor: fixture.editor)
+        }
+        try await ProductionPlanningAcceptanceFixture.approve("shot_planning", in: fixture)
+        try await ProductionPlanningAcceptanceFixture.writeBible(in: fixture)
+        _ = try await ProductionPlanningAcceptanceFixture.prepareImportedAssets(in: fixture)
+        try await ProductionPlanningAcceptanceFixture.approve("bible", in: fixture)
+        let projection = try await ProductionPlanningAcceptanceFixture.promoteImported(in: fixture)
+        #expect(projection.shots.map(\.id) == draft.shots.map(\.shotID))
+        for reference in duplicated.references {
+            #expect(projection.header.inputs.contains { $0.path == reference.path && $0.sha256 == reference.sha256 })
+        }
     }
 
     @Test func staleNativeStoryboardEditCannotOverwriteANewerRevision() async throws {
         let fixture = try await ProductionPlanningAcceptanceFixture.makeScript()
+        defer { fixture.document.close() }
         try await ProductionPlanningAcceptanceFixture.approve("script", in: fixture)
         _ = try await ProductionPlanningAcceptanceFixture.writeStoryboard(in: fixture)
         let original = try await ProductionPlanningAcceptanceFixture.attachSketches(in: fixture)
@@ -57,6 +97,7 @@ struct ProductionPlanningWorkflowTests {
     }
     @Test func rapidNativeUndoAndRedoSerializeRealWriterRevisions() async throws {
         let fixture = try await ProductionPlanningAcceptanceFixture.makeScript()
+        defer { fixture.document.close() }
         try await ProductionPlanningAcceptanceFixture.approve("script", in: fixture)
         _ = try await ProductionPlanningAcceptanceFixture.writeStoryboard(in: fixture)
         let original = try await ProductionPlanningAcceptanceFixture.attachSketches(in: fixture)

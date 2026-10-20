@@ -10,6 +10,7 @@ import Testing
 struct PipelineStoryboardNativeMediaTests {
     @Test func externalConfirmationRequiresNativeReviewAndBindsReceiptBytes() async throws {
         let (context, board) = try await storyboard()
+        defer { context.document.close() }
         let shot = try #require(board.timing.shots.first)
         let moment = try #require(shot.moments.first)
         let image = try externalImage()
@@ -46,6 +47,7 @@ struct PipelineStoryboardNativeMediaTests {
 
     @Test func staleAndCompetingNativeCandidatesCannotAssign() async throws {
         let (context, board) = try await storyboard()
+        defer { context.document.close() }
         let shot = try #require(board.timing.shots.first), moment = try #require(shot.moments.first)
         let candidate = try await PipelineStoryboardNativeMedia.prepareExternal(from: externalImage(), shotID: shot.id,
             momentID: moment.id, expectedFingerprint: board.fingerprint, editor: context.editor)
@@ -85,6 +87,7 @@ struct PipelineStoryboardNativeMediaTests {
 
     @Test func cancelledPreparationCannotPublish() async throws {
         let (context, board) = try await storyboard()
+        defer { context.document.close() }
         let shot = try #require(board.timing.shots.first), moment = try #require(shot.moments.first)
         let image = try externalImage()
         let task = Task {
@@ -98,6 +101,7 @@ struct PipelineStoryboardNativeMediaTests {
 
     @Test func actualDecodedFrameBindsOriginalVideoActualTimeAndNativeReceipt() async throws {
         let (context, board) = try await storyboard()
+        defer { context.document.close() }
         let video = try await makeVideo()
         let shot = try #require(board.timing.shots.first), moment = try #require(shot.moments.first)
         let source = try await PipelineStoryboardNativeMedia.importSource(from: video,
@@ -166,8 +170,12 @@ struct PipelineStoryboardNativeMediaTests {
 
     private func storyboard() async throws -> (ProductionPlanningAcceptanceFixture.Context, StoryboardBundleSnapshot) {
         let context = try await ProductionPlanningAcceptanceFixture.makeScript()
+        var ready = false
+        defer { if !ready { context.document.close() } }
         try await ProductionPlanningAcceptanceFixture.approve("script", in: context)
-        return (context, try await ProductionPlanningAcceptanceFixture.writeStoryboard(in: context))
+        let board = try await ProductionPlanningAcceptanceFixture.writeStoryboard(in: context)
+        ready = true
+        return (context, board)
     }
 
     private func externalImage() throws -> URL {

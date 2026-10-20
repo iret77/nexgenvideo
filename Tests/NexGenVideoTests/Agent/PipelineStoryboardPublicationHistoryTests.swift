@@ -46,6 +46,7 @@ struct PipelineStoryboardPublicationHistoryTests {
 
     @Test func documentCloseAtPublicationNotificationCannotRegisterHistoryInTheClosedEditor() async throws {
         let (context, board) = try await fixture()
+        defer { if context.editor.workingRoot != nil { context.document.close() } }
         let shot = try #require(board.timing.shots.first), moment = try #require(shot.moments.first)
         var notified = false
         context.editor.onPipelineChanged = {
@@ -61,7 +62,11 @@ struct PipelineStoryboardPublicationHistoryTests {
 
     private func fixture() async throws -> (ProductionPlanningAcceptanceFixture.Context, StoryboardBundleSnapshot) {
         let context = try await ProductionPlanningAcceptanceFixture.makeScript()
+        var ready = false
+        defer { if !ready { context.document.close() } }
         try await ProductionPlanningAcceptanceFixture.approve("script", in: context)
-        return (context, try await ProductionPlanningAcceptanceFixture.writeStoryboard(in: context))
+        let board = try await ProductionPlanningAcceptanceFixture.writeStoryboard(in: context)
+        ready = true
+        return (context, board)
     }
 }

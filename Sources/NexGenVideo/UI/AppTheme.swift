@@ -7,6 +7,9 @@ enum AppTheme {
         static let fixtureCircleColor = NSColor.systemRed
         static let fixtureSquareColor = NSColor.systemBlue
         static let fixtureShapeBackgroundColor = NSColor.white
+        static let fixtureRedColor = NSColor.red
+        static let fixtureBlueColor = NSColor.blue
+        static let fixtureGeneratedImageColor = NSColor(red: 0.8, green: 0.1, blue: 0.1, alpha: 1)
         static let inspectorViewport = CGSize(width: 440, height: 650)
         static let musicvideoViewport = CGSize(width: 1380, height: 950)
         static let workbenchViewport = CGSize(width: 1470, height: 950)

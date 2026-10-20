@@ -8,6 +8,7 @@ import Testing
 struct PipelineProductionPlanWriterTests {
     @Test func stillPromotionUsesRealPhaseChainWithoutAFinalProviderRoute() async throws {
         let fixture = try await ProductionPlanningAcceptanceFixture.makePromotion()
+        defer { fixture.document.close() }
         let projection = try ProductionPlanningLineageV2.projection(dataRoot: fixture.dataRoot)
         let promotion = try PipelineShotPlanningPromotionStore.requireCurrent(projection: projection, dataRoot: fixture.dataRoot)
         #expect(promotion.routes.isEmpty)
@@ -26,6 +27,7 @@ struct PipelineProductionPlanWriterTests {
 
     @Test func promotedAssignmentsRemainReadOnlyUntilAnExplicitBibleRewind() async throws {
         let fixture = try await ProductionPlanningAcceptanceFixture.makePromotion(withLookObligation: true)
+        defer { fixture.document.close() }
         let shown = try PipelineShotPlanningPromotionStore.readSnapshot(dataRoot: fixture.dataRoot)
         #expect(!shown.canAssign)
         #expect(shown.assignmentMessage != nil)
@@ -69,6 +71,7 @@ struct PipelineProductionPlanWriterTests {
 
     @Test func actualNativeBibleVariantUsesItsBaseIdentityAndDistinctStateID() async throws {
         let fixture = try await ProductionPlanningAcceptanceFixture.makeStateVariantBible()
+        defer { fixture.document.close() }
         let shown = try PipelineShotPlanningPromotionStore.readSnapshot(dataRoot: fixture.dataRoot)
         #expect(shown.canAssign)
         let shot = try #require(shown.draft.shots.first)
@@ -94,6 +97,7 @@ struct PipelineProductionPlanWriterTests {
 
     @Test func nativeRevisionPreservesCanonicalActionTimingAndImmutableHistory() async throws {
         let fixture = try await ProductionPlanningAcceptanceFixture.makePromotion()
+        defer { fixture.document.close() }
         let original = try ProductionPlanningLineageV2.projection(dataRoot: fixture.dataRoot)
         let shot = try #require(original.shots.first)
         let archive = fixture.dataRoot.appendingPathComponent(ProductionPlanProjectionV1.versionPath(original.header.revision))
@@ -120,6 +124,7 @@ struct PipelineProductionPlanWriterTests {
 
     @Test func stillDoesNotAcceptProviderHandlesOrAnInventedVideoCandidate() async throws {
         let fixture = try await ProductionPlanningAcceptanceFixture.makePromotion()
+        defer { fixture.document.close() }
         let projection = try ProductionPlanningLineageV2.projection(dataRoot: fixture.dataRoot)
         let shot = try #require(projection.shots.first)
         let snapshot = try await PipelineProductionPlanWriter.readCandidateSnapshot(shotID: shot.id, editor: fixture.editor)
@@ -139,6 +144,7 @@ struct PipelineProductionPlanWriterTests {
 
     @Test func stillPreviewCannotSilentlyDiscardEitherAudioRequirement() async throws {
         let fixture = try await ProductionPlanningAcceptanceFixture.makePromotion()
+        defer { fixture.document.close() }
         let current = try ProductionPlanningLineageV2.projection(dataRoot: fixture.dataRoot)
         let id = try #require(current.shots.first?.id)
         let original = try await PipelineProductionPlanWriter.readCandidateSnapshot(shotID: id, editor: fixture.editor)
@@ -160,6 +166,7 @@ struct PipelineProductionPlanWriterTests {
 
     @Test func predecessorStillPreviewChecksTheDependentShotRecipe() async throws {
         let fixture = try await ProductionPlanningAcceptanceFixture.makePromotion()
+        defer { fixture.document.close() }
         let current = try ProductionPlanningLineageV2.projection(dataRoot: fixture.dataRoot)
         let id = try #require(current.shots.first?.id), follower = try #require(current.shots.last?.id)
         let original = try await PipelineProductionPlanWriter.readCandidateSnapshot(shotID: id, editor: fixture.editor)
@@ -187,6 +194,7 @@ struct PipelineProductionPlanWriterTests {
 
     @Test func nativeApplyCannotEnterAnotherPhaseMutation() async throws {
         let fixture = try await ProductionPlanningAcceptanceFixture.makePromotion()
+        defer { fixture.document.close() }
         let projection = try ProductionPlanningLineageV2.projection(dataRoot: fixture.dataRoot)
         let shot = try #require(projection.shots.first)
         let snapshot = try await PipelineProductionPlanWriter.readCandidateSnapshot(shotID: shot.id, editor: fixture.editor)
@@ -200,6 +208,7 @@ struct PipelineProductionPlanWriterTests {
     }
     @Test func unchangedTechnicalApplyDoesNotInventARevision() async throws {
         let fixture = try await ProductionPlanningAcceptanceFixture.makePromotion()
+        defer { fixture.document.close() }
         let plan = try ProductionPlanningLineageV2.projection(dataRoot: fixture.dataRoot)
         let snapshot = try await PipelineProductionPlanWriter.readCandidateSnapshot(shotID: try #require(plan.shots.first?.id), editor: fixture.editor)
         let result = try await PipelineProductionPlanWriter.applyNative(snapshot.currentChange, snapshot: snapshot, editor: fixture.editor)
@@ -209,6 +218,7 @@ struct PipelineProductionPlanWriterTests {
 
     @Test func rapidNativeTechnicalUndoRedoCreatesCanonicalRevisionsWithoutReusingHistoricalHeads() async throws {
         let fixture = try await ProductionPlanningAcceptanceFixture.makePromotion()
+        defer { fixture.document.close() }
         let original = try ProductionPlanningLineageV2.projection(dataRoot: fixture.dataRoot)
         let id = try #require(original.shots.first?.id)
         for resolution in ["1080p", "720p"] {
@@ -233,6 +243,7 @@ struct PipelineProductionPlanWriterTests {
 
     @Test func preparedTechnicalCommitRejectsChangedPlanAndRealReferenceBytes() async throws {
         let fixture = try await ProductionPlanningAcceptanceFixture.makePromotion(withLookObligation: true)
+        defer { fixture.document.close() }
         let dataRoot = fixture.dataRoot
         let initial = try ProductionPlanningLineageV2.projection(dataRoot: fixture.dataRoot)
         let head = try await Task.detached { try PipelineProductionPlanWriter.nativeInputs(dataRoot: dataRoot) }.value
@@ -258,6 +269,7 @@ struct PipelineProductionPlanWriterTests {
 
     @Test func unchangedPreparedPublicationCommitsExactCanonicalBytesAndChangedSessionCannotCommit() async throws {
         let fixture = try await ProductionPlanningAcceptanceFixture.makePromotion()
+        defer { fixture.document.close() }
         let root = fixture.dataRoot
         let head = try await Task.detached { try PipelineProductionPlanWriter.nativeInputs(dataRoot: root) }.value
         let access = try PipelineNativeEditAccess(editor: fixture.editor, label: "Prepare exact publication")
@@ -285,6 +297,7 @@ struct PipelineProductionPlanWriterTests {
 
     @Test func preparedPublicationRejectsActualReferencedSourceVideoChange() async throws {
         let fixture = try await ProductionPlanningAcceptanceFixture.makeImportedAssembly()
+        defer { fixture.document.close() }
         let root = fixture.dataRoot
         try NativeGateWriter.rewind(projectDir: try #require(fixture.editor.workingRoot), targetPhase: "shotlist",
             declaredPack: nil, declaredProductionContract: .current, executionCoordinator: fixture.editor.pipelinePhaseRunCoordinator)

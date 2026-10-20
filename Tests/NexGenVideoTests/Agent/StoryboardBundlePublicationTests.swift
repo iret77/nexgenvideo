@@ -8,9 +8,13 @@ import Testing
 struct StoryboardBundlePublicationTests {
     private func fixture(sketches: Bool = false) async throws -> (ProductionPlanningAcceptanceFixture.Context, StoryboardBundleSnapshot) {
         let context = try await ProductionPlanningAcceptanceFixture.makeScript()
+        var ready = false
+        defer { if !ready { context.document.close() } }
         try await ProductionPlanningAcceptanceFixture.approve("script", in: context)
         let board = try await ProductionPlanningAcceptanceFixture.writeStoryboard(in: context)
-        return (context, sketches ? try await ProductionPlanningAcceptanceFixture.attachSketches(in: context) : board)
+        let result = sketches ? try await ProductionPlanningAcceptanceFixture.attachSketches(in: context) : board
+        ready = true
+        return (context, result)
     }
 
     private func write(_ proposal: PipelineStoryboardBundleWriter.Proposal,

@@ -217,8 +217,10 @@ enum ManualGenerationAcceptance {
         let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 64, pixelsHigh: 64,
             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
             colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
-        guard let bitmap else { throw CocoaError(.fileWriteUnknown) }
-        for y in 0..<64 { for x in 0..<64 { bitmap.setColor(NSColor(red: 0.8, green: 0.1, blue: 0.1, alpha: 1), atX: x, y: y) } }
+        guard let bitmap, let context = NSGraphicsContext(bitmapImageRep: bitmap) else { throw CocoaError(.fileWriteUnknown) }
+        let pixels = context.cgContext
+        pixels.setFillColor(AppTheme.Acceptance.fixtureGeneratedImageColor.cgColor)
+        pixels.fill(CGRect(x: 0, y: 0, width: 64, height: 64))
         guard let bytes = bitmap.representation(using: .png, properties: [:]) else { throw CocoaError(.fileWriteUnknown) }
         return bytes
     }

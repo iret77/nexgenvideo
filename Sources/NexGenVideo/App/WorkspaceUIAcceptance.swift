@@ -1683,10 +1683,10 @@ enum WorkspaceUIAcceptance {
             bitmapDataPlanes: nil, pixelsWide: 32, pixelsHigh: 18, bitsPerSample: 8,
             samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
             colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
-        ) else { throw CocoaError(.fileWriteUnknown) }
-        for y in 0..<18 {
-            for x in 0..<32 { bitmap.setColor(.systemBlue, atX: x, y: y) }
-        }
+        ), let context = NSGraphicsContext(bitmapImageRep: bitmap) else { throw CocoaError(.fileWriteUnknown) }
+        let pixels = context.cgContext
+        pixels.setFillColor(AppTheme.Acceptance.fixtureSquareColor.cgColor)
+        pixels.fill(CGRect(x: 0, y: 0, width: 32, height: 18))
         guard let image = bitmap.representation(using: .png, properties: [:]),
               let format = AVAudioFormat(standardFormatWithSampleRate: 8_000, channels: 1),
               let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 800),
