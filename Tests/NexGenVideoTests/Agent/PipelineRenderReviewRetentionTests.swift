@@ -28,7 +28,7 @@ struct PipelineRenderReviewRetentionTests {
             try PipelineRenderReviewWriter.requireCurrent(rereview, context.dataRoot)
         }
         defer { context.document.close() }
-        let final = try #require(PipelineRenderReviewWriter.loadIfPresent(dataRoot: context.dataRoot))
+        let final = try #require(try PipelineRenderReviewWriter.loadIfPresent(dataRoot: context.dataRoot))
         #expect(final.findings.count == 1)
         #expect(final.findings.first?.acceptance != nil)
         try PipelineRenderReviewWriter.requireCurrent(final, context.dataRoot)

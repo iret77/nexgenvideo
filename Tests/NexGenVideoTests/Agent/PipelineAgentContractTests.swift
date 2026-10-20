@@ -491,7 +491,7 @@ struct PipelineAgentContractTests {
             #expect(!updated.get(phase).approved, "\(phase) must be invalidated")
             #expect(updated.get(phase).state == .pending)
         }
-        let lineage = try #require(PipelineLineageStore.loadIfPresent(dataRoot: context.dataRoot))
+        let lineage = try #require(try PipelineLineageStore.loadIfPresent(dataRoot: context.dataRoot))
         #expect(lineage.phases["storyboard"] != nil)
     }
 

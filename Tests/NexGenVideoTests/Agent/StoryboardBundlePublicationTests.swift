@@ -106,7 +106,7 @@ struct StoryboardBundlePublicationTests {
         try await ProductionPlanningAcceptanceFixture.run("write_script", args: ["origin": "agentRevision",
             "summary": script.summary + " Reconsidered order.", "scenes": try ProductionPlanningAcceptanceFixture.object(script.scenes)], in: context)
         #expect(throws: (any Error).self) { try PlanningWriterIO.storyboard(dataRoot: context.dataRoot, requireVisuals: false) }
-        let prior = try #require(ProductionPlanningStoreV1.readStoryboardIdentityHistory(dataRoot: context.dataRoot, through: 1))
+        let prior = try #require(try ProductionPlanningStoreV1.readStoryboardIdentityHistory(dataRoot: context.dataRoot, through: 1))
         #expect(prior == initial.identity)
         try await ProductionPlanningAcceptanceFixture.approve("script", in: context)
         let replacement = try write(proposal(initial), in: context)

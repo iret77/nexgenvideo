@@ -82,7 +82,7 @@ enum CurrentMusicvideoFixture {
     }
 
     static func initializeWorkflow(dataRoot: URL) throws {
-        let workflow = try #require(PhaseContractRuntime.resolveWorkflow(
+        let workflow = try #require(try PhaseContractRuntime.resolveWorkflow(
             dataRoot: dataRoot, expectedPack: binding, expectedProductionContract: nil
         ))
         try PhaseContractRuntime.initializeWorkflowState(dataRoot: dataRoot, workflow: workflow)

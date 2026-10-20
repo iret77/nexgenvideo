@@ -42,7 +42,7 @@ struct HostWorkflowKeyTests {
         #expect(throws: (any Error).self) {
             try PhaseContractRuntime.resolveWorkflow(dataRoot: root, expectedPack: nil, expectedProductionContract: nil)
         }
-        let trusted = try #require(PhaseContractRuntime.resolveWorkflow(dataRoot: root,
+        let trusted = try #require(try PhaseContractRuntime.resolveWorkflow(dataRoot: root,
             expectedPack: nil, expectedProductionContract: .current))
         #expect(trusted.contractID == "core.production.v2")
         try ProjectPluginSettings.setProductionContract(nil, projectURL: home)

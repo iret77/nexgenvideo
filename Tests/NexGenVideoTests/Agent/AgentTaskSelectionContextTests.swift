@@ -73,7 +73,7 @@ struct AgentTaskSelectionContextTests {
         let context = try await ProductionPlanningAcceptanceFixture.makeImportedAssembly()
         defer { context.document.close() }
         let editor = context.editor
-        let snapshot = try #require(ProductionPlanPresentation.load(dataRoot: context.dataRoot))
+        let snapshot = try #require(try ProductionPlanPresentation.load(dataRoot: context.dataRoot))
         let shot = try #require(snapshot.projection.shots.first)
         editor.setWorkspaceFocus(.production)
         editor.revealCockpit(.shotlist)

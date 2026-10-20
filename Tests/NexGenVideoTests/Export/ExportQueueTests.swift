@@ -95,7 +95,7 @@ struct ExportQueueTests {
         let selection = try ExportArtwork.filmFrame(editor: fixture.editor)
         let refs = try await ExportArtwork.prepare(selection, editor: fixture.editor)
         let spec = try posterSpec(fixture, refs: refs)
-        let snapshot = try #require(ExportArtwork.load(spec: spec, dataRoot: fixture.dataRoot,
+        let snapshot = try #require(try ExportArtwork.load(spec: spec, dataRoot: fixture.dataRoot,
             timelineSHA256: ExportArtwork.timelineHash(fixture.timeline)))
         let output = fixture.root.appendingPathComponent("film.mp4")
         let queue = ExportQueue()
@@ -127,7 +127,7 @@ struct ExportQueueTests {
         let laterSelection = try ExportArtwork.filmFrame(editor: fixture.editor)
         let laterRefs = try await ExportArtwork.prepare(laterSelection, editor: fixture.editor)
         #expect(laterRefs != refs)
-        let later = try #require(ExportArtwork.load(spec: posterSpec(fixture, refs: laterRefs), dataRoot: fixture.dataRoot,
+        let later = try #require(try ExportArtwork.load(spec: posterSpec(fixture, refs: laterRefs), dataRoot: fixture.dataRoot,
             timelineSHA256: ExportArtwork.timelineHash(fixture.timeline)))
         try #require(later.pngSHA256 != snapshot.pngSHA256)
         for (references, expectsRed) in [(refs, true), (laterRefs, false)] {
@@ -174,7 +174,7 @@ struct ExportQueueTests {
             format: .h264, resolution: .r720p, outputURL: output)
         let sources = ExportQueue.SourceBinding.snapshotRoot(jobID: job.id).appendingPathComponent("sources")
         let spec = try posterSpec(fixture, refs: refs)
-        let snapshot = try #require(ExportArtwork.load(spec: spec, dataRoot: fixture.dataRoot,
+        let snapshot = try #require(try ExportArtwork.load(spec: spec, dataRoot: fixture.dataRoot,
             timelineSHA256: ExportArtwork.timelineHash(fixture.timeline)))
         let png = try #require(FileManager.default.contentsOfDirectory(at: sources,
             includingPropertiesForKeys: nil).first { (try? FileDigest.sha256(of: $0)) == snapshot.pngSHA256 })

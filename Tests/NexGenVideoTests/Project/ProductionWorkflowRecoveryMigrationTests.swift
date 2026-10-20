@@ -90,7 +90,7 @@ struct ProductionWorkflowRecoveryMigrationTests {
         let edited = try JSONEncoder().encode(Timeline(fps: 30))
         try edited.write(to: opened.home.appendingPathComponent(Project.timelineFilename))
         try ProjectWorkingCopy.markDirty(key: key)
-        let source = try #require(ProjectWorkingCopy.recoverableDirtyHome(for: root))
+        let source = try #require(try ProjectWorkingCopy.recoverableDirtyHome(for: root))
         #expect(source == opened.home)
         let intent = try ProductionWorkflowRecoveryMigration.preview(projectURL: root, sourceRoot: source, source: .core, target: .core)
         #expect(intent.files != intent.savedFiles)
@@ -216,7 +216,7 @@ struct ProductionWorkflowRecoveryMigrationTests {
         let persisted = try YAMLArtifactStore(dataRoot: dataRoot).load(Gates.self, at: PipelineLayout.gatesFile)
         #expect(persisted.get("project_init") == (failFirstSave ? Gate() : approved))
         #expect(persisted.gates.filter { $0.value.approved }.keys.sorted() == (failFirstSave ? [] : ["project_init"]))
-        let lineage = try #require(PipelineLineageStore.loadIfPresent(dataRoot: dataRoot))
+        let lineage = try #require(try PipelineLineageStore.loadIfPresent(dataRoot: dataRoot))
         #expect(lineage.phases.keys.sorted() == (failFirstSave ? [] : ["project_init"]))
         if failFirstSave {
             #expect(try Data(contentsOf: dataRoot.appendingPathComponent(PipelineLayout.lineageFile)) == resetLineage)
