@@ -107,11 +107,12 @@ struct ProjectSessionResetTests {
         let generation = editor.openWorkingCopyGeneration
         let marker = home.appendingPathComponent("new-generation.txt")
         let bytes = Data("New owner's bytes must survive".utf8)
-        let task = try #require(editor.discardRecoveredWork(beforeInstall: {
+        let pendingTask = editor.discardRecoveredWork(beforeInstall: {
             let replacement = try ProjectWorkingCopy.open(key: fixture.key, packageURL: fixture.package)
             try bytes.write(to: marker)
             if adoptInSameEditor { editor.adoptWorkingCopy(replacement, key: fixture.key, packageURL: fixture.package) }
-        }))
+        })
+        let task = try #require(pendingTask)
         await task.value
         #expect(try Data(contentsOf: marker) == bytes)
         #expect((editor.openWorkingCopyGeneration != generation) == adoptInSameEditor)
@@ -161,9 +162,10 @@ struct ProjectSessionResetTests {
         let marker = home.appendingPathComponent("unsaved.txt")
         let bytes = Data("Keep this unsaved work".utf8)
         try bytes.write(to: marker)
-        let task = try #require(editor.discardRecoveredWork(beforeInstall: {
+        let pendingTask = editor.discardRecoveredWork(beforeInstall: {
             withUnsafeCurrentTask { $0?.cancel() }
-        }))
+        })
+        let task = try #require(pendingTask)
         await task.value
         #expect(try Data(contentsOf: marker) == bytes)
         #expect(editor.openWorkingCopyGeneration == generation)
