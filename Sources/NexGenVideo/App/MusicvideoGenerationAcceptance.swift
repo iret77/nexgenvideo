@@ -755,7 +755,8 @@ final class MusicvideoGenerationHTTP: URLProtocol, @unchecked Sendable {
             responses[upload] = Response(method: "PUT", type: "application/octet-stream", bytes: Data())
             return try json(["upload_url": upload, "file_url": "https://media.invalid/frame-input-\(index).png"], method: "POST")
         }
-        state.withLock { $0 = State(responses: responses, imageUploads: uploads) }
+        let installedState = State(responses: responses, imageUploads: uploads)
+        state.withLock { $0 = installedState }
     }
     static func installAudio(endpoint: String, output: Data) throws {
         let response = "https://queue.fal.run/native-audio/requests/" + requestID
