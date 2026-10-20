@@ -141,7 +141,7 @@ struct InspectorView: View {
 
     // MARK: - Entity / Look / Shot inspectors (read-only; editing lives in Phase C)
 
-    private func entityInspectorContent(_ entity: any BibleEntity) -> some View {
+    private func entityInspectorContent(_ entity: any BiblePanelEntity) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
                 BibleEntityCard(entity: entity, projectDir: editor.workingRoot)
@@ -313,7 +313,7 @@ struct InspectorView: View {
 
     /// Shot↔entity provenance: which shots use this entity (click → inspect the shot).
     @ViewBuilder
-    private func usageSection(of entity: any BibleEntity) -> some View {
+    private func usageSection(of entity: any BiblePanelEntity) -> some View {
         let graph = objectGraph
         let ref = BibleEntityRef(kind: entityKind(of: entity), id: entity.id)
         let shots = graph.usage(of: ref)
@@ -384,7 +384,7 @@ struct InspectorView: View {
         }
     }
 
-    private func entityKind(of entity: any BibleEntity) -> BibleEntityKind {
+    private func entityKind(of entity: any BiblePanelEntity) -> BibleEntityKind {
         switch entity {
         case is BibleEnsemble: .ensemble
         case is BibleProp: .prop
@@ -406,7 +406,7 @@ struct InspectorView: View {
 
     /// Structured Bible editing: the form composes ONE precise agent command — the bible phase
     /// tooling stays the single writer, so schema/sheet invariants hold.
-    private func entityEditForm(_ entity: any BibleEntity) -> some View {
+    private func entityEditForm(_ entity: any BiblePanelEntity) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
             Text("Edit \(entity.name)")
                 .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
@@ -430,7 +430,7 @@ struct InspectorView: View {
         .frame(width: AppTheme.ComponentSize.inspectorPopoverWidth)
     }
 
-    private func applyEntityEdit(_ entity: any BibleEntity) {
+    private func applyEntityEdit(_ entity: any BiblePanelEntity) {
         var changes: [String] = []
         func diff(_ field: String, new: String, old: String, clearable: Bool) {
             let trimmed = new.trimmingCharacters(in: .whitespacesAndNewlines)

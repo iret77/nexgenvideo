@@ -122,7 +122,7 @@ enum ProductionWorkflowRecoveryMigration {
         try JSONArtifactStore(dataRoot: dataRoot).save(namespace, to: OutputNamespace.relativePath)
     }
 
-    static func outputPath(area: String, leaf: String, dataRoot: URL) throws -> String {
+    nonisolated static func outputPath(area: String, leaf: String, dataRoot: URL) throws -> String {
         guard outputAreas.contains(area), validRelativePath(leaf) else { throw MigrationError.invalidArchive }
         let namespace = try outputNamespace(dataRoot: dataRoot)
         let path = area + "/" + namespace.id + "/" + leaf
@@ -134,7 +134,7 @@ enum ProductionWorkflowRecoveryMigration {
         _ = try outputNamespace(dataRoot: dataRoot)
     }
 
-    static func requireNewOutput(_ path: String, dataRoot: URL) throws {
+    nonisolated static func requireNewOutput(_ path: String, dataRoot: URL) throws {
         let namespace = try outputNamespace(dataRoot: dataRoot)
         guard validRelativePath(path), outputAreas.contains(where: { path.hasPrefix($0 + "/" + namespace.id + "/") }),
               !namespace.protectedPaths.contains(DataRootResolver.pipelineDirname + "/" + path) else { throw MigrationError.invalidArchive }
@@ -144,10 +144,10 @@ enum ProductionWorkflowRecoveryMigration {
               (try? FileManager.default.destinationOfSymbolicLink(atPath: destination.path)) == nil else { throw MigrationError.invalidArchive }
     }
 
-    private static let outputAreas = ["production_design/refs", "production_design/lighting", "storyboard/sketches",
+    nonisolated private static let outputAreas = ["production_design/refs", "production_design/lighting", "storyboard/sketches",
                                       "bible", "frames", "renders", "execution/resources", "execution/blockout"]
 
-    private static func outputNamespace(dataRoot: URL) throws -> OutputNamespace {
+    nonisolated private static func outputNamespace(dataRoot: URL) throws -> OutputNamespace {
         let namespace = try JSONDecoder().decode(OutputNamespace.self,
             from: Data(contentsOf: ProjectLocalFile.resolve(OutputNamespace.relativePath, dataRoot: dataRoot)))
         guard namespace.schema == "production-output-namespace/v1", let id = UUID(uuidString: namespace.id),

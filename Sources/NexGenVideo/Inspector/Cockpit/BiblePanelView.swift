@@ -136,7 +136,7 @@ struct BiblePanelView: View {
     // MARK: - Entity list
 
     @ViewBuilder
-    private func entityList<Entity: BibleEntity & Identifiable>(_ entities: [Entity], kind: BibleEntityKind) -> some View {
+    private func entityList<Entity: BiblePanelEntity & Identifiable>(_ entities: [Entity], kind: BibleEntityKind) -> some View {
         if entities.isEmpty {
             emptyState(
                 icon: "tray",
@@ -274,7 +274,7 @@ struct BiblePanelView: View {
 // MARK: - Entity card
 
 struct BibleEntityCard: View {
-    let entity: any BibleEntity
+    let entity: any BiblePanelEntity
     let projectDir: URL?
     enum Presentation { case board, inspector }
     var presentation: Presentation = .inspector

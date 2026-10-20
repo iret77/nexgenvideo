@@ -30,7 +30,7 @@ enum ProductionBibleEntityAcceptance {
             throw failed("The actual typed source assignments are missing.")
         }
         var candidate = original
-        candidate.characters.append(try NexGenEngine.Character(id: performerID, name: "Reference performer",
+        candidate.characters.append(try .init(id: performerID, name: "Reference performer",
             visualPrompt: "Controlled geometric stand-in for typed reference navigation, not a human identity-quality claim.",
             attributes: ["fixture": "geometric stand-in"], referenceImages: [performer.path], sheets: ["front": performer.path]))
         candidate.ensembles.append(try Ensemble(id: ensembleID, name: "Reference ensemble",
