@@ -287,6 +287,7 @@ enum ProductionObjectContextAcceptance {
                 let reopened = try await VideoProject.load(from: package, agentService: RecordingRuntime().service())
                 var reopenedClosed = false
                 defer { if !reopenedClosed { reopened.close() } }
+                reopened.makeWindowControllers()
                 guard !reopened.editorViewModel.agentService.sessions.contains(where: { $0.id == seed.id }),
                       preservedSessions.allSatisfy({ id, messages in reopened.editorViewModel.agentService.sessions.first(where: { $0.id == id })?.messages == messages }),
                       reopened.editorViewModel.timeline == readContext.timeline,

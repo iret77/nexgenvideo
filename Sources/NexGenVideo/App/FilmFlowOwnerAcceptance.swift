@@ -43,7 +43,8 @@ enum FilmFlowOwnerAcceptance {
 
         func brief(_ context: ProductionPlanningAcceptanceFixture.Context) async throws {
             NSDocumentController.shared.addDocument(context.document)
-            context.document.makeWindowControllers(); context.document.showWindows()
+            if context.document.windowControllers.isEmpty { context.document.makeWindowControllers() }
+            context.document.showWindows()
             guard let window = context.document.windowControllers.first?.window else { throw failed("The actual document window is missing.") }
             window.setContentSize(NSSize(width: 960, height: 640)); window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true); NSApp.mainMenu = MainMenuBuilder.buildMenu()

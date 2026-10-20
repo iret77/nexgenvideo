@@ -106,8 +106,8 @@ public struct MusicvideoPack: Pack, PackResourceRootProviding {
             ),
             ProductionKnowledgePhaseSelectionV1(
                 phase: "script", knowledgePhase: "treatment",
-                libraryIDs: ["musicvideo-performance-planning", "story-containers", "film-production-story-structures", "film-production-film-craft", "film-production-production-pipeline"],
-                intentTags: ["music-performance", "visual-arc", "performance-coverage", "story-development", "story-structures", "film-craft", "production-pipeline"]
+                libraryIDs: ["musicvideo-performance-planning", "story-containers", "film-production-story-structures", "film-production-film-craft"],
+                intentTags: ["music-performance", "visual-arc", "performance-coverage", "story-development", "story-structures", "film-craft"]
             ),
             ProductionKnowledgePhaseSelectionV1(
                 phase: "storyboard",

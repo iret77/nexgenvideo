@@ -12,7 +12,10 @@ struct ProductionKnowledgeV1Tests {
             "generative_film",
             "narrative_storytelling",
         ])
-        let legacyLibraries = catalog.libraries.filter { !$0.id.rawValue.hasPrefix("film-production-") }
+        let legacyLibraries = catalog.libraries.filter {
+            !$0.id.rawValue.hasPrefix("film-production-")
+                && $0.id.rawValue != "musicvideo-performance-planning"
+        }
         #expect(legacyLibraries.map(\.id.rawValue) == [
             "camera-recipes",
             "continuity-and-coverage",
@@ -27,6 +30,14 @@ struct ProductionKnowledgeV1Tests {
         })
         #expect(legacyLibraries.allSatisfy {
             $0.provenance.sourceCommit == "d07a1ce5c54b899b7c565d3e3cc4aac40b8363e2"
+        })
+        let musicvideoLibraries = catalog.libraries.filter {
+            $0.id.rawValue == "musicvideo-performance-planning"
+        }
+        #expect(musicvideoLibraries.count == 1)
+        #expect(musicvideoLibraries.allSatisfy {
+            $0.version.rawValue == "1.0.0"
+                && $0.provenance.sourceCommit == "0b4a4e311d17c6c0673cbebd70b2c8d57531fa65"
         })
         let migrated = catalog.libraries.filter { $0.id.rawValue.hasPrefix("film-production-") }
         #expect(migrated.count == 21)

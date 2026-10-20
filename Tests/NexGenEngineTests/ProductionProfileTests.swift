@@ -3,10 +3,10 @@ import Testing
 
 @Suite("Production profiles")
 struct ProductionProfileTests {
-    @Test("engine feature version reflects production profiles")
+    @Test("engine planning contract preserves the legacy compatibility floor")
     func engineVersion() {
         #expect(NexGenEngine.version == "0.3.0")
-        #expect(EngineContract.current == 11)
+        #expect(EngineContract.current == 12)
         #expect(EngineContract.minimumCompatible == 2)
     }
 

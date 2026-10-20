@@ -29,6 +29,9 @@ enum ProductionPlanningAcceptanceFixture {
         try ProjectPluginSettings.setProductionContract(.current, projectURL: home)
         try PhaseContractRuntime.initializeWorkflowState(dataRoot: root, workflow: HostWorkflowKey.core(.current))
         let document = try await VideoProject.load(from: home, agentService: agentService)
+        _ = NSApplication.shared
+        document.makeWindowControllers()
+        await document.generationRestorationTask?.value
         let editor = document.editorViewModel
         editor.undoManager = document.undoManager
         guard let working = editor.workingRoot, let workingRoot = DataRootResolver.dataRoot(of: working),

@@ -19,11 +19,12 @@ struct ClarityKernelTests {
                 px[i] = v; px[i + 1] = v; px[i + 2] = v; px[i + 3] = 255
             }
         }
-        let ctx2 = px.withUnsafeMutableBytes {
-            CGContext(data: $0.baseAddress, width: n, height: n, bitsPerComponent: 8, bytesPerRow: n * 4,
-                      space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        let ctx2 = CGContext(data: nil, width: n, height: n, bitsPerComponent: 8, bytesPerRow: n * 4,
+                            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        px.withUnsafeBytes {
+            ctx2.data!.copyMemory(from: $0.baseAddress!, byteCount: $0.count)
         }
-        return CIImage(cgImage: ctx2!.makeImage()!, options: [.colorSpace: NSNull()])
+        return CIImage(cgImage: ctx2.makeImage()!, options: [.colorSpace: NSNull()])
     }
 
     private func luma(_ image: CIImage) -> [Float] {

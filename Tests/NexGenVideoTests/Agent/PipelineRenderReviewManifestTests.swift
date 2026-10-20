@@ -187,7 +187,7 @@ final class PipelineRenderReviewManifestTests: XCTestCase {
     }
 
     func testActualPageBytesAndAllBudgetLimitsMatchPersistedDerivatives() throws {
-        let first = try image(red: 0.2, size: 1_568), second = try image(red: 0.8, size: 1_568)
+        let first = try image(red: 0.2, size: 768), second = try image(red: 0.8, size: 768)
         let a = reference("frames/a.png", bytes: first.bytes), b = reference("frames/b.png", bytes: second.bytes)
         let manifest = try plan(snapshot(evidence: [[a], [b]]), images: [a.sha256: first, b.sha256: second])
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -217,6 +217,16 @@ final class PipelineRenderReviewManifestTests: XCTestCase {
         try Data("corrupt".utf8).write(to: directory.appendingPathComponent(first.derivative.reference.path))
         let page = try XCTUnwrap(manifest.pages.first { $0.imageIDs.contains(first.derivative.id) })
         XCTAssertThrowsError(try manifest.pageContent(pageID: page.id, dataRoot: directory))
+    }
+
+    func testOversizedImagePairIsRefusedWithoutTruncatingContents() throws {
+        let first = try image(red: 0.2, size: 1_568), second = try image(red: 0.8, size: 1_568)
+        let a = reference("frames/a.png", bytes: first.bytes), b = reference("frames/b.png", bytes: second.bytes)
+        XCTAssertThrowsError(try plan(snapshot(evidence: [[a], [b]]), images: [a.sha256: first, b.sha256: second])) { error in
+            guard let blocked = error as? GateBlocked else { return XCTFail("Expected the bounded review refusal, got \(error)") }
+            XCTAssertTrue(blocked.message.contains("cannot fit the image, byte or token bounds"))
+            XCTAssertTrue(blocked.message.contains("Its contents have not been truncated."))
+        }
     }
 
     func testOmittedMappingsItemsEdgesOrDerivativesAndChangedDimensionsAreRejected() throws {

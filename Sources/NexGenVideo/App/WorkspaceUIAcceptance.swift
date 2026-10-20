@@ -2872,7 +2872,7 @@ extension WorkspaceUIAcceptance {
         do {
             let fixture = try await ProductionPlanningAcceptanceFixture.makeScript()
             let editor = fixture.editor
-            fixture.document.makeWindowControllers()
+            if fixture.document.windowControllers.isEmpty { fixture.document.makeWindowControllers() }
             guard let window = fixture.document.windowControllers.compactMap({ $0 as? EditorWindowController }).first?.window,
                   let host = window.contentView else { throw ToolError("The planning fixture has no native document window.") }
             window.setContentSize(AppTheme.Acceptance.musicvideoViewport)

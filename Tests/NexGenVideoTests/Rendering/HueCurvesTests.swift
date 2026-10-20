@@ -64,11 +64,12 @@ struct HueCurvesTests {
                 px[i] = UInt8(c.0 * 255); px[i + 1] = UInt8(c.1 * 255); px[i + 2] = UInt8(c.2 * 255); px[i + 3] = 255
             }
         }
-        let ctx = px.withUnsafeMutableBytes {
-            CGContext(data: $0.baseAddress, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
-                      space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        px.withUnsafeBytes {
+            ctx.data!.copyMemory(from: $0.baseAddress!, byteCount: $0.count)
         }
-        return ctx!.makeImage()!
+        return ctx.makeImage()!
     }
 
     @Test func hueHistogramPeaksAtPresentHues() {

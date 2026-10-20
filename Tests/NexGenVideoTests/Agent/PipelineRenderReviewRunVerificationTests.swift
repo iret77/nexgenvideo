@@ -55,6 +55,7 @@ final class PipelineRenderReviewRunVerificationTests: XCTestCase {
 
     func testExactChildCallsAndDeliveredContentRejectMutation() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
         defer { try? FileManager.default.removeItem(at: root) }
         let fixture = try Fixture(manifest: minimalManifest(), root: root, backend: .claudeCode)
         let reference = try fixture.page(try XCTUnwrap(fixture.manifest.pages.first), first: true)
@@ -106,6 +107,7 @@ final class PipelineRenderReviewRunVerificationTests: XCTestCase {
 
     func testSummaryMustKeepExactSourceUnitsAndCanonicalReferences() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
         defer { try? FileManager.default.removeItem(at: root) }
         let fixture = try Fixture(manifest: minimalManifest(), root: root, backend: .anthropicAPI)
         let page = try fixture.page(try XCTUnwrap(fixture.manifest.pages.first), first: true)

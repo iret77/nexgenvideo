@@ -22,7 +22,7 @@ enum ProductionFramesOwnerAcceptance {
         if !NSDocumentController.shared.documents.contains(where: { $0 === context.document }) {
             NSDocumentController.shared.addDocument(context.document)
         }
-        context.document.makeWindowControllers()
+        if context.document.windowControllers.isEmpty { context.document.makeWindowControllers() }
         guard let window = context.document.windowControllers.compactMap({ $0 as? EditorWindowController }).first?.window else { throw failed("No actual document window.") }
         window.setContentSize(AppTheme.Window.projectMin); window.appearance = NSAppearance(named: .darkAqua)
         context.document.showWindows(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)

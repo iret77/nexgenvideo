@@ -34,7 +34,9 @@ enum AgentReviewChildOwnerAcceptance {
         let context = try await AgentReviewChildOwnerFixture.make(service: service)
         let editor = context.editor, root = context.dataRoot
         defer { context.document.close() }
-        NSDocumentController.shared.addDocument(context.document); context.document.makeWindowControllers(); context.document.showWindows()
+        NSDocumentController.shared.addDocument(context.document)
+        if context.document.windowControllers.isEmpty { context.document.makeWindowControllers() }
+        context.document.showWindows()
         guard let window = context.document.windowControllers.first?.window else { throw failed("The actual review document window did not open.") }
         window.setContentSize(AppTheme.Window.projectMin); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
         let driver = ProductionVisualSourcesDriver(window: window, output: output, name: "native-review-child")

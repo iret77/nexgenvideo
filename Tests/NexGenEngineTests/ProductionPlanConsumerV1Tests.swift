@@ -484,7 +484,11 @@ extension ProductionPlanConsumerV1Tests {
             renderability: .green, acceptance: [.init(id: "still", requirement: "Use the approved generated still", severity: "blocking")],
             generationRequirement: .init(modalityID: "image", modeIDs: [ShotDeliveryModeResolverV1.timelineAnimatedStillModeID],
                 visibleEntityCount: 0))
-        let plan = ProductionPlanProjectionV1(header: base.header, timebase: base.timebase, mode: base.mode,
+        let plannedInputs = [
+            ref("input-template", ShotPlanningPromotionV1.inputTemplatePath(shotID: shotID, revision: 1)),
+            ref("demand", ShotPlanningPromotionV1.demandPath(shotID: shotID, revision: 1)),
+        ]
+        let plan = ProductionPlanProjectionV1(header: header(base.header.inputs + plannedInputs), timebase: base.timebase, mode: base.mode,
             executionPlan: .init(id: "plan", projectID: "fixture", creativeContext: base.executionPlan.creativeContext, shots: [shot]),
             timings: base.timings, sourceBindings: [], draftReference: base.draftReference,
             storyboardReference: base.storyboardReference, editorialBindings: base.editorialBindings)
@@ -494,7 +498,7 @@ extension ProductionPlanConsumerV1Tests {
             .init(shotID: shotID, sourceMode: .generated,
                 camera: .init(framing: timing().shots[0].framing, movement: .static), obligations: [optional])])
         let old = fixture.promotion
-        let promotion = ShotPlanningPromotionV1(header: old.header, draft: old.draft, timing: old.timing,
+        let promotion = ShotPlanningPromotionV1(header: header(old.header.inputs + plannedInputs), draft: old.draft, timing: old.timing,
             bible: old.bible, assetGraph: old.assetGraph, projection: old.projection, routes: old.routes,
             resolutions: [.init(shotID: shotID, obligationID: optional.id,
                 outcome: .skipped(reason: "Use the generated image instead"),

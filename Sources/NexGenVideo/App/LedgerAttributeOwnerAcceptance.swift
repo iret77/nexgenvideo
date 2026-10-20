@@ -30,7 +30,9 @@ enum LedgerAttributeOwnerAcceptance {
         try await ProductionPlanningAcceptanceFixture.run("set_ledger_attribute", args: initial, in: context)
         try await ProductionPlanningAcceptanceFixture.run("set_ledger_attribute", args: ["kind": "look", "key": "palette",
             "tag": "Pale walls", "directive": "Retain the pale wall palette.", "source": "Retained fixture direction", "locked": true], in: context)
-        NSDocumentController.shared.addDocument(context.document); context.document.makeWindowControllers(); context.document.showWindows()
+        NSDocumentController.shared.addDocument(context.document)
+        if context.document.windowControllers.isEmpty { context.document.makeWindowControllers() }
+        context.document.showWindows()
         guard let window = context.document.windowControllers.first?.window else { throw failed("The genuine Ledger document did not open.") }
         let editor = context.editor
         window.setContentSize(AppTheme.Window.projectMin); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
@@ -194,6 +196,7 @@ enum LedgerAttributeOwnerAcceptance {
             context.document.close(); closed = true
             let reopened = try await VideoProject.load(from: context.packageURL, agentService: Runtime().service())
             defer { reopened.close() }
+            NSDocumentController.shared.addDocument(reopened); reopened.makeWindowControllers(); reopened.showWindows()
             guard let reopenedHome = reopened.editorViewModel.workingRoot, let reopenedRoot = DataRootResolver.dataRoot(of: reopenedHome),
                   try await snapshot(reopenedRoot).0 == final.0 else { throw failed("Save/reopen lost the reconciled Ledger value, provenance or lock.") }
             let reopenedValue = try await snapshot(reopenedRoot), actualBible = try await bibleSnapshot(reopenedRoot)
@@ -202,7 +205,6 @@ enum LedgerAttributeOwnerAcceptance {
             try reopenedValue.2.write(to: output.appendingPathComponent("ledger-reopened.yaml"))
             try PlanningWriterIO.json(actualBible.0).write(to: output.appendingPathComponent("bible-after.json"))
             try actualBible.2.write(to: output.appendingPathComponent("bible-after.yaml"))
-            NSDocumentController.shared.addDocument(reopened); reopened.makeWindowControllers(); reopened.showWindows()
             guard let reopenedWindow = reopened.windowControllers.first?.window else { throw failed("The saved Ledger document did not reopen visibly.") }
             reopenedWindow.setContentSize(AppTheme.Window.projectMin); reopenedWindow.makeKeyAndOrderFront(nil)
             let reopenedContext = ProductionPlanningAcceptanceFixture.Context(document: reopened, packageURL: context.packageURL,

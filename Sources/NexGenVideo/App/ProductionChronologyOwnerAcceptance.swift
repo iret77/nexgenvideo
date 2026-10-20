@@ -22,7 +22,7 @@ enum ProductionChronologyOwnerAcceptance {
         let context = try await ProductionPlanningAcceptanceFixture.makeScript(agentService: runtime.service())
         defer { context.editor.agentService.cancel(); context.document.close() }
         NSDocumentController.shared.addDocument(context.document)
-        context.document.makeWindowControllers()
+        if context.document.windowControllers.isEmpty { context.document.makeWindowControllers() }
         guard let window = context.document.windowControllers.compactMap({ $0 as? EditorWindowController }).first?.window else {
             throw GateBlocked("The chronology document has no actual editor window.")
         }

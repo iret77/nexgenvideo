@@ -18,11 +18,12 @@ struct GlowKernelTests {
                 px[i] = 255; px[i + 1] = 255; px[i + 2] = 255; px[i + 3] = 255
             }
         }
-        let c = px.withUnsafeMutableBytes {
-            CGContext(data: $0.baseAddress, width: n, height: n, bitsPerComponent: 8, bytesPerRow: n * 4,
-                      space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        let c = CGContext(data: nil, width: n, height: n, bitsPerComponent: 8, bytesPerRow: n * 4,
+                            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        px.withUnsafeBytes {
+            c.data!.copyMemory(from: $0.baseAddress!, byteCount: $0.count)
         }
-        return CIImage(cgImage: c!.makeImage()!, options: [.colorSpace: NSNull()])
+        return CIImage(cgImage: c.makeImage()!, options: [.colorSpace: NSNull()])
     }
 
     private func pixel(_ image: CIImage, _ x: Int, _ y: Int) -> (Double, Double, Double) {
