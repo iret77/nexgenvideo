@@ -1,17 +1,19 @@
-"""Observe the two render-review XCTest methods without stopping their process."""
+"""Observe owned test processes and render-review stages without stopping them."""
 import argparse
+from collections import Counter
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
 import selectors
+import select
 import subprocess
 import sys
 import threading
 import time
 
-from verify_swift_test_output import assess_output
+from verify_swift_test_output import ANSI, SWIFT_END, assess_output
 
 
 TARGETS = {
@@ -70,6 +72,145 @@ def capture(pid_identity, root_pid, evidence, request):
     (evidence / "capture-receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
 
 
+
+class TestProcessObservation:
+    def __init__(self, evidence, root_pid):
+        self.evidence, self.root_pid = evidence, root_pid
+        self.events = (evidence / "process-events.jsonl").open("w")
+        self.swift_events = (evidence / "swift-testing-events.jsonl").open("w")
+        self.children = {}
+        self.last_scan = 0
+        self.run = 0
+        self.active = False
+        self.unfinished = Counter()
+        self.summaries = []
+        self.queue = None
+        try:
+            if sys.platform == "darwin":
+                self.queue = select.kqueue()
+        except OSError as error:
+            self.record(event="observer-unavailable", error=str(error))
+
+    def record(self, **row):
+        self.events.write(json.dumps({"observedMonotonic": time.monotonic(), **row}) + "\n")
+        self.events.flush()
+
+    def watch(self, identity, *, self_report=None):
+        pid = identity["pid"]
+        if pid in self.children:
+            if self.children[pid] == identity:
+                if self_report is not None:
+                    self.record(event="child-self-report-correlated", target=identity, selfReport=self_report)
+            else:
+                self.record(event="child-watch-unavailable", target=identity, selfReport=self_report,
+                            error="The previously watched PID now has a different process identity")
+            return
+        if self.queue is None:
+            self.record(event="child-watch-unavailable", target=identity, selfReport=self_report,
+                        error="Darwin kqueue is unavailable")
+            return
+        # Darwin exposes NOTE_EXITSTATUS even when Python omits its name.
+        note = select.kevent(pid, filter=select.KQ_FILTER_PROC,
+            flags=select.KQ_EV_ADD | select.KQ_EV_ENABLE | select.KQ_EV_ONESHOT,
+            fflags=select.KQ_NOTE_EXIT | 0x04000000)
+        try:
+            self.queue.control([note], 0, 0)
+            self.children[pid] = identity
+            self.record(event="child-watch-registered", target=identity, selfReport=self_report)
+        except OSError as error:
+            self.record(event="child-watch-unavailable", target=identity, selfReport=self_report, error=str(error))
+
+    def self_report(self, row):
+        if (not isinstance(row, dict) or row.get("event") != "atexit-registration"
+                or type(row.get("pid")) is not int or row["pid"] < 1
+                or type(row.get("parentPID")) is not int or row["parentPID"] < 1):
+            self.record(event="invalid-test-self-report", selfReport=row)
+            return
+        try:
+            rows, owned = process_tree(self.root_pid)
+            identity = rows.get(row["pid"])
+            if row["pid"] not in owned or identity["parentPID"] != row["parentPID"]:
+                self.record(event="self-report-watch-unavailable", selfReport=row,
+                            error="The self-reported PID is absent from the owned tree or its parent changed")
+                return
+            self.watch(identity, self_report=row)
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            self.record(event="self-report-watch-unavailable", selfReport=row, error=str(error))
+
+    def tick(self, *, scan=False):
+        if self.queue is None:
+            return
+        if scan or time.monotonic() - self.last_scan >= 1:
+            self.last_scan = time.monotonic()
+            try:
+                rows, owned = process_tree(self.root_pid)
+                for pid in owned:
+                    identity = rows[pid]
+                    executable = Path(identity["executable"])
+                    if pid in self.children or not (identity["parentPID"] == self.root_pid or executable.name == "xctest" or ".xctest/" in str(executable)):
+                        continue
+                    self.watch(identity)
+            except (OSError, ValueError, subprocess.SubprocessError) as error:
+                self.record(event="process-scan-unavailable", error=str(error))
+        try:
+            for event in self.queue.control(None, max(1, len(self.children)), 0):
+                row = {"event": "child-kernel-event", "target": self.children.get(event.ident),
+                       "pid": event.ident, "flags": event.flags, "filterFlags": event.fflags,
+                       "rawStatus": event.data}
+                if event.fflags & select.KQ_NOTE_EXIT and event.fflags & 0x04000000:
+                    row["exitCode"] = os.waitstatus_to_exitcode(event.data & 0xffff)
+                self.record(**row)
+        except (OSError, ValueError) as error:
+            self.record(event="child-exit-observation-unavailable", error=str(error))
+
+    def summary(self, reason):
+        self.summaries.append({"run": self.run, "reason": reason,
+            "unfinishedDisplayNames": dict(self.unfinished), "identity": "console-display-name-multiset"})
+
+    def line(self, native_line):
+        line = ANSI.sub("", native_line).rstrip("\r")
+        if line.startswith("[swift-test-process] "):
+            self.record(event="test-self-report", nativeHeader=native_line)
+            try:
+                self.self_report(json.loads(line[len("[swift-test-process] "):]))
+            except ValueError as error:
+                self.record(event="invalid-test-self-report", nativeHeader=native_line, error=str(error))
+        if line == "◇ Test run started.":
+            if self.active:
+                self.summary("next-run-before-end")
+            self.run += 1
+            self.active = True
+            self.unfinished.clear()
+            self.tick(scan=True)
+        if self.run and line[:1] in {"◇", "✔", "✘", "➜", "━"}:
+            self.swift_events.write(json.dumps({"run": self.run, "nativeHeader": native_line}) + "\n")
+            self.swift_events.flush()
+        if match := re.fullmatch(r"◇ Test (.+) started\.", line):
+            self.unfinished[match[1]] += 1
+        elif match := re.fullmatch(r"[✔✘━] Test (.+) (?:passed|failed) after .+\.", line):
+            name = match[1]
+            if self.unfinished[name] > 0:
+                self.unfinished[name] -= 1
+                if not self.unfinished[name]:
+                    del self.unfinished[name]
+        if SWIFT_END.fullmatch(line):
+            self.summary("framework-end")
+            self.active = False
+
+    def finish(self):
+        self.tick()
+        if self.active:
+            self.summary("swiftpm-process-exited-before-end")
+        (self.evidence / "swift-testing-observation.json").write_text(json.dumps(
+            {"runs": self.summaries, "caveat": "Display names can collide; raw events remain authoritative. "
+             "An atexit callback may also run on image unload; only kernel events establish process exit."},
+            indent=2) + "\n")
+        if self.queue is not None:
+            self.queue.close()
+        self.events.close()
+        self.swift_events.close()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--evidence", required=True, type=Path)
@@ -89,9 +230,11 @@ def main():
            "sampleSeconds": SAMPLE_SECONDS, "captureTimeoutSeconds": CAPTURE_TIMEOUT_SECONDS}
     state = {"test": None, "lastStage": None, "changed": time.monotonic(), "selfPID": None}
     (args.evidence / "run.json").write_text(json.dumps(run, indent=2) + "\n")
-    environment = {**os.environ, "NGV_RENDER_REVIEW_TEST_DIAGNOSTIC": "1"}
+    environment = {**os.environ, "NGV_RENDER_REVIEW_TEST_DIAGNOSTIC": "1",
+                   "NGV_SWIFT_TEST_PROCESS_EVIDENCE": str(args.evidence.resolve())}
     process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                stderr=subprocess.STDOUT, env=environment)
+    observation = TestProcessObservation(args.evidence, process.pid)
     selector = selectors.DefaultSelector()
     selector.register(process.stdout, selectors.EVENT_READ)
     pending = b""
@@ -103,12 +246,14 @@ def main():
             stages.flush()
 
         def line_received(raw):
-            line = raw.decode("utf-8", errors="replace")
+            native_line = raw.decode("utf-8", errors="replace")
+            line = ANSI.sub("", native_line).rstrip("\r")
+            observation.line(native_line)
             case = CASE.search(line)
             if case:
                 name = case[1] + "." + case[2]
                 if name in TARGETS:
-                    record({"test": name, "event": case[3], "nativeHeader": line})
+                    record({"test": name, "event": case[3], "nativeHeader": native_line})
                     if case[3] == "started":
                         state.update(test=name, lastStage="xctest.started", selfPID=None, changed=time.monotonic())
                     elif state["test"] == name:
@@ -124,6 +269,7 @@ def main():
                     record({"event": "invalid-stage", "error": str(error)})
 
         while selector.get_map() or process.poll() is None:
+            observation.tick()
             for key, _ in selector.select(timeout=1):
                 data = os.read(key.fd, 65536)
                 if not data:
@@ -162,6 +308,7 @@ def main():
     selector.close()
     process.stdout.close()
     exit_code = process.wait()
+    observation.finish()
     if sampler is not None:
         # Retain the one owned worker through its bounded ps/sample waits.
         sampler.join()

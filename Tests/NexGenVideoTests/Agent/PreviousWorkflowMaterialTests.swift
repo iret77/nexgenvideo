@@ -146,7 +146,13 @@ struct PreviousWorkflowMaterialTests {
         let dialog = intake("script")
         try service.presentDialog(dialog)
         let context = try #require(service.previousWorkflowMaterialScope(for: dialog))
-        let catalog = try await service.previousWorkflowMaterials(scope: context)
+        let catalog: PreviousWorkflowMaterialCatalog
+        do {
+            catalog = try await service.previousWorkflowMaterials(scope: context)
+        } catch {
+            throw ArchiveFixtureFailure(stage: "host.catalog", cause: String(describing: error),
+                evidence: archiveDiagnostic(fixture, staging: context.workingRoot))
+        }
         let selection = try #require(catalog.items.first).selection
         let root = try #require(editor.workingRoot).appendingPathComponent("pipeline")
         let before = try Data(contentsOf: root.appendingPathComponent(PipelineLayout.gatesFile))
@@ -255,6 +261,7 @@ struct PreviousWorkflowMaterialTests {
     private func makeFixture(storyExtension: String = "md", bindCharacter: Bool = false,
                              adoptCharacter: Bool = true, independentCharacter: Bool = false,
                              directReference: Bool = false, additionalView: Bool = false) throws -> Fixture {
+        Fixtures.installProcessExitDiagnostic()
         let home = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent(UUID().uuidString + ".ngv")
         let root = try ProjectScaffold.initProject(home: home, name: "Fixture", mode: .generic)
         _ = try ProjectIdentity.key(for: home)
@@ -296,11 +303,79 @@ struct PreviousWorkflowMaterialTests {
             characters: characters,
             locations: [Location(id: "legacy_location", name: "Lead Singer", visualPrompt: "An empty courtyard", referenceImages: ["bible/location.png"])])
         try YAMLArtifactStore(dataRoot: root).save(bible, to: PipelineLayout.bibleFile)
-        let history = try ProductionWorkflowRecoveryMigration.preview(projectURL: home, source: .core, target: .core)
-        try ProductionWorkflowRecoveryMigration.archiveAndReset(history, staging: home)
-        try ProjectPluginSettings.setProductionContract(.current, projectURL: home)
-        try ProductionWorkflowRecoveryMigration.finish(history, staging: home)
+        let history = try fixtureOperation("migration.preview") {
+            try ProductionWorkflowRecoveryMigration.preview(projectURL: home, source: .core, target: .core)
+        }
+        try fixtureOperation("migration.archive") {
+            try ProductionWorkflowRecoveryMigration.archiveAndReset(history, staging: home)
+        }
+        try fixtureOperation("migration.binding") {
+            try ProjectPluginSettings.setProductionContract(.current, projectURL: home)
+        }
+        try fixtureOperation("migration.finish", fixture: .init(home: home, history: history, story: story, image: image)) {
+            try ProductionWorkflowRecoveryMigration.finish(history, staging: home)
+        }
         return .init(home: home, history: history, story: story, image: image)
+    }
+
+    private struct ArchiveFixtureFailure: Error {
+        let stage: String
+        let cause: String
+        var evidence: String = ""
+    }
+
+    private func fixtureOperation<T>(_ stage: String, fixture: Fixture? = nil, _ operation: () throws -> T) throws -> T {
+        do { return try operation() }
+        catch {
+            throw ArchiveFixtureFailure(stage: stage, cause: String(describing: error),
+                evidence: fixture.map { archiveDiagnostic($0, staging: $0.home) } ?? "")
+        }
+    }
+
+    private func archiveDiagnostic(_ fixture: Fixture, staging: URL) -> String {
+        do {
+            let root = staging.appendingPathComponent("pipeline")
+            let directory = root.appendingPathComponent("migration-history")
+            let archive = directory.appendingPathComponent(fixture.history.fingerprint)
+            let history = try JSONDecoder().decode(ProductionWorkflowRecoveryMigration.History.self,
+                from: Data(contentsOf: archive.appendingPathComponent("manifest.v1.json")))
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+            guard var identity = try JSONSerialization.jsonObject(with: encoder.encode(history.intent)) as? [String: Any] else {
+                return "archive-diagnostic-error:intent-not-object"
+            }
+            identity.removeValue(forKey: "fingerprint")
+            let fingerprint = FileDigest.sha256(of: try JSONSerialization.data(withJSONObject: identity,
+                options: [.sortedKeys, .withoutEscapingSlashes]))
+            let settings = try JSONSerialization.jsonObject(with: Data(contentsOf:
+                archive.appendingPathComponent(ProjectPluginSettings.filename))) as? [String: Any]
+            var failures: [String] = []
+            for path in history.intent.archivePaths {
+                guard let file = history.intent.files.first(where: { $0.path == path }) else {
+                    failures.append("missing-inventory:" + path)
+                    continue
+                }
+                do {
+                    _ = try ProjectLocalFile.requireHash(file.sha256,
+                        at: "migration-history/" + history.intent.fingerprint + "/" + path, dataRoot: root)
+                } catch { failures.append(path + ":" + String(describing: error)) }
+            }
+            let projectID = ProjectIdentity.existingUUID(for: staging)
+            let evidence: [String: Any] = [
+                "directoryURLCanonical": directory.resolvingSymlinksInPath() == directory.standardizedFileURL,
+                "directoryPathCanonical": directory.resolvingSymlinksInPath().path == directory.standardizedFileURL.path,
+                "schema": history.schema, "completed": history.completed,
+                "intentMatchesFixture": history.intent == fixture.history,
+                "fingerprintMatches": fingerprint == history.intent.fingerprint,
+                "namespaceIsUUID": UUID(uuidString: history.intent.namespaceID) != nil,
+                "inventoryPathsUnique": Set(history.intent.files.map(\.path)).count == history.intent.files.count,
+                "archivePathsUnique": Set(history.intent.archivePaths).count == history.intent.archivePaths.count,
+                "settingsArchived": history.intent.archivePaths.contains(ProjectPluginSettings.filename),
+                "projectIdentityMatches": projectID != nil && settings?["id"] as? String == projectID,
+                "archiveHashFailures": failures
+            ]
+            return String(decoding: try JSONSerialization.data(withJSONObject: evidence, options: [.sortedKeys]), as: UTF8.self)
+        } catch { return "archive-diagnostic-error:" + String(describing: error) }
     }
 
     private func scope(_ fixture: Fixture, _ role: PreviousWorkflowMaterialRole) -> PreviousWorkflowMaterialScope {

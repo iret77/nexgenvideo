@@ -11,7 +11,7 @@
             "Story development, visual Storyboard, Animatic, shot planning, References, Takes and film review have dedicated native workspaces. Phase decisions stay visible beside activity and generation requests.",
             "Shot sources, sketches, frames, takes and accepted ranges retain their project identities and recorded inputs. Changed inputs require a current review before approval.",
             "Bounded pre-render review runs show preparation, explicit authorization, cancellation and explicit resume without inserting generated requests as user messages.",
-            "Plan/elevation blockout clips label their views and preserve Blender’s axis directions."
+            "Plan/elevation blockout clips keep labels upright, show clearer camera markers and distinguish camera movement from viewing direction. Both views retain usable space in compact previews and preserve Blender’s axis directions."
           ]
         },
         {

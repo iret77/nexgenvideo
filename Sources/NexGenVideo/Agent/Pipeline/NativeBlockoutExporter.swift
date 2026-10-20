@@ -172,7 +172,9 @@ enum NativeBlockoutExporter {
         let font = NSFont.systemFont(ofSize: AppTheme.FontSize.xs * previewScale,
             weight: AppTheme.AppKitFontWeight.semibold) as CTFont
         let labelHeight = CTFontGetAscent(font) + CTFontGetDescent(font) + CTFontGetLeading(font) + AppTheme.Spacing.xxs * 2
-        let viewports = makeViewports(layouts: layouts, bounds: bounds, metric: metric, labelHeight: labelHeight)
+        let markerClearance = (AppTheme.IconSize.xxs + AppTheme.BorderWidth.medium) * previewScale / 2
+        let viewports = makeViewports(layouts: layouts, bounds: bounds, metric: metric,
+            labelHeight: labelHeight, markerClearance: markerClearance)
         context.setStrokeColor(CGColor(gray: 0.58, alpha: 1))
         context.setLineWidth(AppTheme.BorderWidth.medium)
         for viewport in viewports.values {
@@ -202,16 +204,8 @@ enum NativeBlockoutExporter {
         let ordered = setups.sorted { $0.id < $1.id }
         for (index, setup) in ordered.enumerated() {
             guard let viewport = viewports[setup.locationID] else { continue }
-            let hue = CGFloat(index % 5) / 5
-            let color = CGColor(
-                red: 0.45 + hue * 0.3,
-                green: 0.72 - hue * 0.18,
-                blue: 0.85 - hue * 0.08,
-                alpha: 1
-            )
-            context.setStrokeColor(color)
-            context.setFillColor(color)
-            context.setLineWidth(AppTheme.BorderWidth.thick)
+            let colors = AppTheme.Text.blockoutCameraColors
+            let color = colors[index % colors.count]
             let points = setup.path.isEmpty
                 ? [setup.position]
                 : setup.path.map(\.position)
@@ -223,35 +217,32 @@ enum NativeBlockoutExporter {
                 (Projection.plan, viewport.plan),
                 (Projection.elevation, viewport.elevation),
             ] {
+                let markerScale = min(previewScale,
+                    max(0, min(rect.width, rect.height)) / (AppTheme.IconSize.xxs * 2))
+                guard markerScale > 0 else { continue }
                 let projected = points.map {
                     project($0, in: rect, layout: viewport.layout, projection: projection)
                 }
                 guard let first = projected.first else { continue }
-                context.move(to: first)
-                for point in projected.dropFirst() { context.addLine(to: point) }
-                context.strokePath()
+                let movement = CGMutablePath()
+                movement.move(to: first)
+                for point in projected.dropFirst() { movement.addLine(to: point) }
+                stroke(movement, color: AppTheme.Text.primary.cgColor, dashed: true,
+                    previewScale: markerScale, context: context)
                 let camera = projected[targetIndex]
-                let markerSize = max(
-                    AppTheme.IconSize.xs / 2,
-                    min(rect.width, rect.height) / 18
+                let lookAt = setup.path.isEmpty ? nil : project(
+                    setup.path[targetIndex].lookAt, in: rect,
+                    layout: viewport.layout, projection: projection
                 )
-                context.fillEllipse(in: CGRect(
-                    x: camera.x - markerSize / 2,
-                    y: camera.y - markerSize / 2,
-                    width: markerSize,
-                    height: markerSize
-                ))
-                if !setup.path.isEmpty {
-                    let lookAt = project(
-                        setup.path[targetIndex].lookAt,
-                        in: rect,
-                        layout: viewport.layout,
-                        projection: projection
-                    )
-                    context.move(to: camera)
-                    context.addLine(to: lookAt)
-                    context.strokePath()
+                if let lookAt {
+                    let direction = CGMutablePath()
+                    direction.move(to: camera)
+                    direction.addLine(to: lookAt)
+                    stroke(direction, color: color, dashed: false,
+                        previewScale: markerScale, context: context)
                 }
+                drawCamera(at: camera, lookAt: lookAt, size: AppTheme.IconSize.xxs * markerScale, color: color,
+                    previewScale: markerScale, context: context)
             }
         }
         for viewport in viewports.values {
@@ -259,6 +250,50 @@ enum NativeBlockoutExporter {
             drawLabel("Plan" + suffix, in: viewport.planLabel, font: font, context: context)
             drawLabel("Elevation" + suffix, in: viewport.elevationLabel, font: font, context: context)
         }
+    }
+
+    private static func stroke(_ path: CGPath, color: CGColor, dashed: Bool,
+                               previewScale: CGFloat, context: CGContext) {
+        context.saveGState()
+        defer { context.restoreGState() }
+        context.setLineCap(.round)
+        context.setLineJoin(.round)
+        context.setLineDash(phase: 0, lengths: dashed ? AppTheme.Border.compactDash.map { $0 * previewScale } : [])
+        for (color, width) in [
+            (AppTheme.Background.surface.cgColor, AppTheme.BorderWidth.medium + AppTheme.BorderWidth.thick),
+            (color, AppTheme.BorderWidth.medium),
+        ] {
+            context.addPath(path)
+            context.setStrokeColor(color)
+            context.setLineWidth(width * previewScale)
+            context.strokePath()
+        }
+    }
+
+    private static func drawCamera(at camera: CGPoint, lookAt: CGPoint?, size: CGFloat,
+                                   color: CGColor, previewScale: CGFloat, context: CGContext) {
+        let radius = size / 2
+        let marker = CGMutablePath()
+        if let lookAt, hypot(lookAt.x - camera.x, lookAt.y - camera.y) > CGFloat.ulpOfOne {
+            let angle = atan2(lookAt.y - camera.y, lookAt.x - camera.x)
+            for index in 0..<3 {
+                let direction = angle + CGFloat(index) * 2 * .pi / 3
+                let point = CGPoint(x: camera.x + cos(direction) * radius,
+                    y: camera.y + sin(direction) * radius)
+                if index == 0 { marker.move(to: point) } else { marker.addLine(to: point) }
+            }
+            marker.closeSubpath()
+        } else {
+            marker.addEllipse(in: CGRect(x: camera.x - radius, y: camera.y - radius, width: size, height: size))
+        }
+        context.saveGState()
+        defer { context.restoreGState() }
+        context.addPath(marker)
+        context.setFillColor(color)
+        context.setStrokeColor(AppTheme.Background.surface.cgColor)
+        context.setLineWidth(AppTheme.BorderWidth.medium * previewScale)
+        context.setLineJoin(.round)
+        context.drawPath(using: .fillStroke)
     }
 
     private static func drawLabel(_ text: String, in rect: CGRect, font: CTFont, context: CGContext) {
@@ -305,7 +340,8 @@ enum NativeBlockoutExporter {
         layouts: [SpatialLayoutV1],
         bounds: CGRect,
         metric: Bool,
-        labelHeight: CGFloat
+        labelHeight: CGFloat,
+        markerClearance: CGFloat
     ) -> [String: Viewport] {
         let ordered = layouts.sorted { $0.locationID < $1.locationID }
         let count = max(1, ordered.count)
@@ -326,14 +362,14 @@ enum NativeBlockoutExporter {
                 dx: AppTheme.Spacing.xs,
                 dy: AppTheme.Spacing.xs
             )
-            let planHeight = cell.height * 0.67
-            let markerClearance = max(AppTheme.IconSize.xs / 4, min(cell.width, cell.height) / 36)
-                + AppTheme.BorderWidth.thick / 2
+            let planHeight = cell.height / 2
             func labeled(_ rect: CGRect) -> (plot: CGRect, label: CGRect) {
                 let height = min(labelHeight, rect.height / 2)
                 let gap = min(markerClearance + AppTheme.Spacing.xxs, (rect.height - height) / 3)
+                let horizontalGap = min(markerClearance, rect.width / 3)
                 return (
-                    CGRect(x: rect.minX, y: rect.minY + gap, width: rect.width, height: rect.height - height - gap * 2),
+                    CGRect(x: rect.minX + horizontalGap, y: rect.minY + gap,
+                        width: rect.width - horizontalGap * 2, height: rect.height - height - gap * 2),
                     CGRect(x: rect.minX, y: rect.maxY - height, width: rect.width, height: height)
                 )
             }

@@ -177,6 +177,11 @@ enum AppTheme {
         static let tertiary = NSColor.white.withAlphaComponent(0.62)
         static let muted = NSColor.white.withAlphaComponent(0.50)
         static let systemSecondary = NSColor.secondaryLabelColor
+        static let blockoutCameraColors = (0..<5).map { index in
+            let hue = CGFloat(index) / 5
+            return CGColor(red: 0.45 + hue * 0.3, green: 0.72 - hue * 0.18,
+                blue: 0.85 - hue * 0.08, alpha: 1)
+        }
 
         static var primaryColor: Color { Color(primary) }
         static var secondaryColor: Color { Color(secondary) }
