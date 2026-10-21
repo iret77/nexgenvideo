@@ -661,6 +661,7 @@ struct ProjectWorkingCopyTests {
     func upgradedEditorUsesAuthorizedTarget() throws {
         try CurrentMusicvideoFixture.load()
         let pkg = try tempPackage(pipelineName: nil)
+        _ = try ProjectScaffold.initProject(home: pkg, name: "Authorized production upgrade", mode: .beat)
         let source = try musicvideoBinding(version: "0.5.0")
         let target = try CurrentMusicvideoFixture.binding
         let unrelated = try musicvideoBinding(version: "0.9.9")
@@ -673,12 +674,18 @@ struct ProjectWorkingCopyTests {
             ProjectWorkingCopy.discard(key: key)
             try? FileManager.default.removeItem(at: pkg)
         }
-        _ = try ProjectWorkingCopy.open(key: key, packageURL: pkg)
+        let opened = try ProjectWorkingCopy.open(key: key, packageURL: pkg)
+        let reset = try ProductionWorkflowRecoveryMigration.preview(projectURL: pkg, sourceRoot: opened.home,
+            source: .pack(source), target: .pack(target))
         UserDefaults.standard.set(try JSONEncoder().encode(
-            ProjectPackMigration.Request(source: source, target: target)
+            ProjectPackMigration.Request(source: source, target: target, productionReset: reset)
         ), forKey: "NGVPackMigration." + key)
         try ProjectWorkingCopy.transact(key: key) { staging in
+            try ProductionWorkflowRecoveryMigration.archiveAndReset(reset, staging: staging)
             try ProjectPluginSettings.setActivePlugin(target, projectURL: staging)
+            #expect(!ProjectPackMigration.authorizesRecoveredUpgrade(projectURL: pkg,
+                recoveryURL: staging, workingCopyKey: key))
+            try ProductionWorkflowRecoveryMigration.finish(reset, staging: staging)
         }
         let reopened = try ProjectWorkingCopy.open(key: key, packageURL: pkg)
         editor.adoptWorkingCopy(reopened, key: key, packageURL: pkg)

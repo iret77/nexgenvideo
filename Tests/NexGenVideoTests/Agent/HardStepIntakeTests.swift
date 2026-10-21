@@ -932,9 +932,9 @@ struct HardStepIntakeTests {
         #expect(third.fileIntake?.completionLabel == "Done")
     }
 
-    @Test("a workflow hard step leaves a durable transcript record without starting the agent")
+    @Test("a workflow hard step leaves a durable transcript record without starting the agent", arguments: [false, true])
     @MainActor
-    func workflowStepDoesNotBecomeChat() async throws {
+    func workflowStepDoesNotBecomeChat(retryAfterLedgerFailure: Bool) async throws {
         try CurrentMusicvideoFixture.load()
         let package = FileManager.default.temporaryDirectory
             .appendingPathComponent("workflow-intake-\(UUID().uuidString).ngv", isDirectory: true)
@@ -968,15 +968,38 @@ struct HardStepIntakeTests {
         #expect(dialog.title == "Existing story")
         #expect(dialog.purpose == .workflowIntake)
         let messageCount = editor.agentService.messages.count
+        let answer = AgentDialogResult(selectedLabels: [:], toggles: [:], direction: "")
+        if retryAfterLedgerFailure {
+            try FileManager.default.createDirectory(at: IntakeLedger.url(dataRoot: dataRoot), withIntermediateDirectories: false)
+        }
         editor.agentService.submitDialog(
             dialog,
-            result: AgentDialogResult(
-                selectedLabels: [:],
-                toggles: [:],
-                direction: ""
-            )
+            result: answer
         )
 
+        if retryAfterLedgerFailure {
+            #expect(editor.agentService.dialogSubmissionError?.contains("Couldn't save the Existing story decision") == true)
+            #expect(editor.agentService.pendingDialog?.id == dialog.id)
+            #expect(editor.agentService.messages.count == messageCount)
+            let greenfield = try PipelineStorySourceWriter.selectionState(dataRoot: dataRoot)
+            try FileManager.default.removeItem(at: IntakeLedger.url(dataRoot: dataRoot))
+            try PipelineStorySourceWriter.confirmPastedSource(text: "A different selected story.", editor: editor)
+            let replacement = try PipelineStorySourceWriter.selectionState(dataRoot: dataRoot)
+            editor.agentService.submitDialog(dialog, result: answer)
+            #expect(editor.agentService.dialogSubmissionError?.contains("workflow intake changed") == true)
+            #expect(try PipelineStorySourceWriter.selectionState(dataRoot: dataRoot) == replacement)
+            #expect(!IntakeLedger.load(dataRoot: dataRoot).isDeclined("brief.script"))
+            #expect(editor.agentService.messages.count == messageCount)
+            let access = try PipelinePlanningWriteAccess(dataRoot: dataRoot,
+                declaration: .init(packName: editor.declaredPluginName, binding: editor.declaredPluginBinding,
+                    productionContract: editor.declaredProductionContract), phase: "brief")
+            try PipelineStorySourceWriter.restoreSelection(greenfield, expected: replacement, access: access)
+            editor.agentService.submitDialog(dialog, result: answer)
+            #expect(try PipelineStorySourceWriter.selectionState(dataRoot: dataRoot) == greenfield)
+        }
+        #expect(editor.agentService.dialogSubmissionError == nil)
+        #expect(try PipelineStorySourceWriter.confirmedSelection(dataRoot: dataRoot,
+            workflowID: HostWorkflowKey.musicvideoV2Contract)?.disposition == .greenfield)
         #expect(editor.agentService.pendingDialog?.title == "Prepared character 1")
         #expect(IntakeLedger.load(dataRoot: dataRoot).isDeclined("brief.script"))
         #expect(editor.agentService.messages.count == messageCount + 1)

@@ -332,117 +332,159 @@ struct MCPHTTPServerTests {
             }
             return server
         })
-        try await server.start()
-        let disconnectedSession = URLSession(configuration: .ephemeral)
-        var disconnectedCall: Task<(data: Data, statusCode: Int), Error>?
-        var retryCall: Task<(data: Data, statusCode: Int), Error>?
-        do {
-            let endpoint = try #require(
-                URL(string: "http://127.0.0.1:\(port)/mcp")
-            )
-            let initialize = """
-            {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}
-            """
-            let initializeResponse = try await post(
-                initialize,
-                to: endpoint,
-                protocolVersion: nil
-            )
-            #expect(initializeResponse.statusCode == 200)
-
-            let call = """
-            {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"slow","arguments":{}}}
-            """
-            disconnectedCall = Task.detached {
-                try await post(
-                    call,
-                    to: endpoint,
-                    protocolVersion: "2025-03-26",
-                    session: disconnectedSession
+        try await withRunnerCancellationCleanup(runnerLatch) {
+            try await server.start()
+            let disconnectedSession = URLSession(configuration: .ephemeral)
+            var disconnectedCall: Task<(data: Data, statusCode: Int), Error>?
+            var retryCall: Task<(data: Data, statusCode: Int), Error>?
+            do {
+                let endpoint = try #require(
+                    URL(string: "http://127.0.0.1:\(port)/mcp")
                 )
-            }
-            await runnerLatch.waitUntilEntered()
-            #expect(runCount.value == 1)
-
-            disconnectedSession.invalidateAndCancel()
-            disconnectedCall?.cancel()
-
-            let reinitialize = """
-            {"jsonrpc":"2.0","id":3,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test-reconnect","version":"1"}}}
-            """
-            let reinitializeResponse = try await post(
-                reinitialize,
-                to: endpoint,
-                protocolVersion: nil
-            )
-            #expect(reinitializeResponse.statusCode == 200)
-            let reinitializeEnvelope = try #require(
-                try JSONSerialization.jsonObject(
-                    with: reinitializeResponse.data
-                ) as? [String: Any]
-            )
-            #expect(reinitializeEnvelope["result"] != nil)
-            #expect(reinitializeEnvelope["error"] == nil)
-            #expect(serverCount.value == 2)
-
-            let retry = """
-            {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"slow","arguments":{}}}
-            """
-            retryCall = Task.detached {
-                try await post(
-                    retry,
+                let initialize = """
+                {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}
+                """
+                let initializeResponse = try await post(
+                    initialize,
                     to: endpoint,
-                    protocolVersion: "2025-03-26"
+                    protocolVersion: nil
                 )
-            }
-            await retryJoined.wait()
-            #expect(coordinator.runningPhase(projectRoot: projectRoot) == "analysis")
-            #expect(runCount.value == 1)
-            #expect(serverCount.value == 2)
+                #expect(initializeResponse.statusCode == 200)
 
-            var getRequest = URLRequest(url: endpoint)
-            getRequest.httpMethod = "GET"
-            getRequest.setValue(
-                "text/event-stream",
-                forHTTPHeaderField: "Accept"
-            )
-            let (_, rawGetResponse) = try await URLSession.shared.data(
-                for: getRequest
-            )
-            let getResponse = try #require(rawGetResponse as? HTTPURLResponse)
-            #expect(getResponse.statusCode == 405)
-            #expect(runCount.value == 1)
+                let call = """
+                {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"slow","arguments":{}}}
+                """
+                disconnectedCall = Task.detached {
+                    try await post(
+                        call,
+                        to: endpoint,
+                        protocolVersion: "2025-03-26",
+                        session: disconnectedSession
+                    )
+                }
+                await runnerLatch.waitUntilEntered()
+                #expect(runCount.value == 1)
 
-            runnerLatch.allowCompletion()
-            let activeCall = try #require(retryCall)
-            let response = try await activeCall.value
-            #expect(response.statusCode == 200)
-            #expect(
-                String(decoding: response.data, as: UTF8.self)
-                    .contains("finished")
-            )
-            #expect(runCount.value == 1)
-            #expect(serverCount.value == 2)
-            #expect(coordinator.runningPhase(projectRoot: projectRoot) == nil)
-            #expect(executionState.snapshot?.status == .completed)
-            if let disconnectedCall {
-                _ = try? await disconnectedCall.value
+                disconnectedSession.invalidateAndCancel()
+                disconnectedCall?.cancel()
+
+                let reinitialize = """
+                {"jsonrpc":"2.0","id":3,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test-reconnect","version":"1"}}}
+                """
+                let reinitializeResponse = try await post(
+                    reinitialize,
+                    to: endpoint,
+                    protocolVersion: nil
+                )
+                #expect(reinitializeResponse.statusCode == 200)
+                let reinitializeEnvelope = try #require(
+                    try JSONSerialization.jsonObject(
+                        with: reinitializeResponse.data
+                    ) as? [String: Any]
+                )
+                #expect(reinitializeEnvelope["result"] != nil)
+                #expect(reinitializeEnvelope["error"] == nil)
+                #expect(serverCount.value == 2)
+
+                let retry = """
+                {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"slow","arguments":{}}}
+                """
+                retryCall = Task.detached {
+                    try await post(
+                        retry,
+                        to: endpoint,
+                        protocolVersion: "2025-03-26"
+                    )
+                }
+                await retryJoined.wait()
+                #expect(coordinator.runningPhase(projectRoot: projectRoot) == "analysis")
+                #expect(runCount.value == 1)
+                #expect(serverCount.value == 2)
+
+                var getRequest = URLRequest(url: endpoint)
+                getRequest.httpMethod = "GET"
+                getRequest.setValue(
+                    "text/event-stream",
+                    forHTTPHeaderField: "Accept"
+                )
+                let (_, rawGetResponse) = try await URLSession.shared.data(
+                    for: getRequest
+                )
+                let getResponse = try #require(rawGetResponse as? HTTPURLResponse)
+                #expect(getResponse.statusCode == 405)
+                #expect(runCount.value == 1)
+
+                runnerLatch.allowCompletion()
+                let activeCall = try #require(retryCall)
+                let response = try await activeCall.value
+                #expect(response.statusCode == 200)
+                #expect(
+                    String(decoding: response.data, as: UTF8.self)
+                        .contains("finished")
+                )
+                #expect(runCount.value == 1)
+                #expect(serverCount.value == 2)
+                #expect(coordinator.runningPhase(projectRoot: projectRoot) == nil)
+                #expect(executionState.snapshot?.status == .completed)
+                if let disconnectedCall {
+                    _ = try? await disconnectedCall.value
+                }
+                await server.stop()
+            } catch {
+                runnerLatch.allowCompletion()
+                disconnectedSession.invalidateAndCancel()
+                disconnectedCall?.cancel()
+                retryCall?.cancel()
+                if let disconnectedCall {
+                    _ = try? await disconnectedCall.value
+                }
+                if let retryCall {
+                    _ = try? await retryCall.value
+                }
+                await server.stop()
+                throw error
             }
-            await server.stop()
-        } catch {
-            runnerLatch.allowCompletion()
-            disconnectedSession.invalidateAndCancel()
-            disconnectedCall?.cancel()
-            retryCall?.cancel()
-            if let disconnectedCall {
-                _ = try? await disconnectedCall.value
-            }
-            if let retryCall {
-                _ = try? await retryCall.value
-            }
-            await server.stop()
-            throw error
         }
+    }
+
+    @MainActor
+    @Test("runner cancellation releases its latch before the operation resumes", arguments: [false, true])
+    func runnerCancellationReleasesLatch(cancelBeforeEntry: Bool) async {
+        let runnerLatch = PhaseRunnerLatch()
+        let heldOperation = MCPHeldOperation()
+        let operationFinished = MCPRunCounter()
+        let completion = AsyncStream.makeStream(of: Void.self)
+        let worker = Thread {
+            runnerLatch.block()
+            completion.continuation.yield()
+            completion.continuation.finish()
+        }
+        worker.start()
+        await runnerLatch.waitUntilEntered()
+        let task = Task { @MainActor in
+            await withRunnerCancellationCleanup(runnerLatch) {
+                await heldOperation.wait()
+                operationFinished.increment()
+            }
+        }
+        defer {
+            runnerLatch.allowCompletion()
+            heldOperation.finish()
+            task.cancel()
+        }
+        if cancelBeforeEntry {
+            task.cancel()
+            await heldOperation.entered.wait()
+        } else {
+            await heldOperation.entered.wait()
+            task.cancel()
+        }
+        var finishedWorker = completion.stream.makeAsyncIterator()
+        #expect(await finishedWorker.next(isolation: MainActor.shared) != nil)
+        #expect(operationFinished.value == 0)
+        heldOperation.finish()
+        await task.value
+        #expect(operationFinished.value == 1)
     }
 
     private func post(
@@ -560,5 +602,35 @@ actor TestAsyncSignal {
 
     private func cancel(id: UUID) {
         waiters.removeValue(forKey: id)?.resume()
+    }
+}
+
+@MainActor
+private func withRunnerCancellationCleanup(
+    _ runnerLatch: PhaseRunnerLatch,
+    operation: @MainActor () async throws -> Void
+) async rethrows {
+    try await withTaskCancellationHandler(
+        operation: operation,
+        onCancel: { runnerLatch.allowCompletion() },
+        isolation: MainActor.shared
+    )
+}
+
+@MainActor
+private final class MCPHeldOperation {
+    let entered = TestAsyncSignal()
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+            Task { await entered.signal() }
+        }
+    }
+
+    func finish() {
+        continuation?.resume()
+        continuation = nil
     }
 }

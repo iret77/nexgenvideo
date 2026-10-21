@@ -1590,19 +1590,6 @@ final class AgentService {
         let phase = editor.pipelineAgentHarness.workflowIntakePhase(
             dialogID: dialog.id
         )
-        if editor.usesProductionPlanningV2, phase == "brief", dialog.fileIntake?.attachAs == "script", !didProvideMaterial {
-            do {
-                try editor.pipelineAgentHarness.validateWorkflowIntake(dialogID: dialog.id, editor: editor)
-                try PipelineStorySourceWriter.confirmGreenfield(editor: editor)
-            } catch {
-                activeIntakeDraftKey = preservedIntakeKey
-                pendingDialog = dialog
-                dialogDraft = preservedDraft
-                dialogChoiceSelections = preservedSelections
-                dialogSubmissionError = error.localizedDescription
-                return
-            }
-        }
         let reconciliation = editor.pipelineAgentHarness.resolveWorkflowIntake(
             dialogID: dialog.id,
             didProvideMaterial: didProvideMaterial,

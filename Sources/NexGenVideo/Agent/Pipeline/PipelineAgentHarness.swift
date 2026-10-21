@@ -316,11 +316,15 @@ final class PipelineAgentHarness {
         editor: EditorViewModel
     ) -> Reconciliation {
         do {
-            try validateWorkflowIntake(
+            let resumesGreenfield = try validateWorkflowIntake(
                 dialogID: dialogID,
                 editor: editor,
                 materialAlreadyApplied: didProvideMaterial
             )
+            if editor.usesProductionPlanningV2, !didProvideMaterial, !resumesGreenfield,
+               offered?.step.phase == "brief", offered?.step.kind == .script {
+                try PipelineStorySourceWriter.confirmGreenfield(editor: editor)
+            }
         } catch {
             return Reconciliation(
                 isReady: false,
@@ -335,11 +339,12 @@ final class PipelineAgentHarness {
         return reconcile(editor: editor)
     }
 
+    @discardableResult
     func validateWorkflowIntake(
         dialogID: String,
         editor: EditorViewModel,
         materialAlreadyApplied: Bool = false
-    ) throws {
+    ) throws -> Bool {
         guard let offered, offered.dialogID == dialogID else {
             throw ToolError(
                 "The workflow intake changed before the answer could be applied. Try again."
@@ -396,7 +401,13 @@ final class PipelineAgentHarness {
         } catch let blocked as GateBlocked {
             throw ToolError(blocked.message)
         }
-        if !offered.isRepeat, !materialAlreadyApplied {
+        var resumesGreenfield = false
+        if editor.usesProductionPlanningV2, offered.step.phase == "brief", offered.step.kind == .script,
+           intakeResolution?.dialogID == dialogID, intakeResolution?.didProvideMaterial == false {
+            resumesGreenfield = try PipelineStorySourceWriter.confirmedSelection(dataRoot: dataRoot,
+                workflowID: context.contract.manifest.contractID)?.disposition == .greenfield
+        }
+        if !offered.isRepeat, !materialAlreadyApplied, !resumesGreenfield {
             let current = IntakePlanner.next(
                 context.manifest.steps(for: phase),
                 dataRoot: dataRoot,
@@ -409,6 +420,7 @@ final class PipelineAgentHarness {
                 )
             }
         }
+        return resumesGreenfield
     }
 
     func reconcile(editor: EditorViewModel) -> Reconciliation {

@@ -100,7 +100,11 @@ final class GateReviewModel {
         do {
             workflow = try PhaseContractRuntime.resolveWorkflow(dataRoot: dataRoot,
                 expectedPack: approval.declaredBinding, expectedProductionContract: approval.declaredProductionContract)
-        } catch { blocker = error.localizedDescription; return }
+        } catch {
+            Log.agent.warning("Gate review workflow verification failed: \(error.localizedDescription)")
+            blocker = "The project's workflow could not be verified. Reopen the project before requesting approval again."
+            return
+        }
         var visualStoryboardFingerprint: String?
         var snapshot: StoryboardReviewSnapshot?
         if approval.phase == "storyboard", workflow?.isProductionV2 == true {
@@ -110,7 +114,8 @@ final class GateReviewModel {
                 }.value
             } catch {
                 guard token == generation, !Task.isCancelled else { return }
-                blocker = error.localizedDescription
+                Log.agent.warning("Gate review Storyboard verification failed: \(error.localizedDescription)")
+                blocker = "The Storyboard is incomplete or has changed. Choose ‘Not yet’, then ask the agent to update it and request approval again."
                 return
             }
         } else if approval.phase == "storyboard" {

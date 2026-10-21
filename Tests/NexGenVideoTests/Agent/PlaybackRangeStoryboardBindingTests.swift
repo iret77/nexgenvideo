@@ -168,6 +168,38 @@ struct PlaybackRangeStoryboardBindingTests {
         }
     }
 
+    @Test func canonicalRangeRejectsAnAdditionalSongUntilItIsRemoved() throws {
+        let value = try fixture()
+        defer { try? FileManager.default.removeItem(at: value.home) }
+        let original = try Data(contentsOf: value.root.appendingPathComponent("audio/song.wav"))
+        let additional = value.root.appendingPathComponent("audio/additional.wav")
+        try original.write(to: additional)
+        #expect(throws: GateBlocked.self) {
+            try PipelinePlaybackRangeWriter.requireCanonicalCurrent(value.range, dataRoot: value.root,
+                workflowID: HostWorkflowKey.musicvideoV2Contract)
+        }
+        try FileManager.default.removeItem(at: additional)
+        try PipelinePlaybackRangeWriter.requireCanonicalCurrent(value.range, dataRoot: value.root,
+            workflowID: HostWorkflowKey.musicvideoV2Contract)
+    }
+
+    @Test(arguments: [false, true])
+    func canonicalRangeRejectsLinkedTracks(outsideProject: Bool) throws {
+        let value = try fixture()
+        defer { try? FileManager.default.removeItem(at: value.home) }
+        let song = value.root.appendingPathComponent("audio/song.wav")
+        let target = outsideProject
+            ? FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
+            : value.home.appendingPathComponent("retained-song.wav")
+        defer { if outsideProject { try? FileManager.default.removeItem(at: target) } }
+        try FileManager.default.moveItem(at: song, to: target)
+        try FileManager.default.createSymbolicLink(at: song, withDestinationURL: target)
+        #expect(throws: ProjectLocalFileError.symbolicLink("audio/song.wav")) {
+            try PipelinePlaybackRangeWriter.requireCanonicalCurrent(value.range, dataRoot: value.root,
+                workflowID: HostWorkflowKey.musicvideoV2Contract)
+        }
+    }
+
     @Test func canonicalRangeRehashesAnalysisEvenWhenItsHeaderOmitsTheAnalysisInput() throws {
         let value = try fixture()
         defer { try? FileManager.default.removeItem(at: value.home) }

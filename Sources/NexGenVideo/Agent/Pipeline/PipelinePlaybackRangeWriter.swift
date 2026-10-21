@@ -220,7 +220,8 @@ enum PipelinePlaybackRangeWriter {
               let analysisURL = AudioProjectLayout.expectedAnalysisArtifactURL(dataRoot: dataRoot),
               try FrameInventory.relativePath(of: analysisURL, to: dataRoot) == range.analysis.path,
               AudioProjectLayout.songFiles(dataRoot: dataRoot).count == 1,
-              AudioProjectLayout.songFiles(dataRoot: dataRoot).first == (try ProjectLocalFile.resolve(audio.path, dataRoot: dataRoot)) else {
+              AudioProjectLayout.songFiles(dataRoot: dataRoot).first?.standardizedFileURL
+                == (try ProjectLocalFile.resolve(audio.path, dataRoot: dataRoot)).standardizedFileURL else {
             throw GateBlocked("The playback range does not bind this project's current track and analysis.")
         }
         let selectionURL = dataRoot.appendingPathComponent(currentSelection)

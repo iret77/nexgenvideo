@@ -259,13 +259,13 @@ enum NativeBlockoutExporter {
         }
         for drawing in drawings {
             stroke(drawing.movement, color: AppTheme.Text.primary.cgColor, dashed: true,
-                previewScale: drawing.scale, referenceScale: symbolScale, context: context)
+                previewScale: previewScale, markerScale: drawing.scale, referenceScale: symbolScale, context: context)
             if let lookAt = drawing.lookAt {
                 let direction = CGMutablePath()
                 direction.move(to: drawing.camera)
                 direction.addLine(to: lookAt)
                 stroke(direction, color: drawing.color, dashed: false,
-                    previewScale: drawing.scale, referenceScale: symbolScale, context: context)
+                    previewScale: previewScale, markerScale: drawing.scale, referenceScale: symbolScale, context: context)
             }
         }
         context.restoreGState()
@@ -312,25 +312,27 @@ enum NativeBlockoutExporter {
     }
 
     private static func stroke(_ path: CGPath, color: CGColor, dashed: Bool,
-                               previewScale: CGFloat, referenceScale: CGFloat, context: CGContext) {
+                               previewScale: CGFloat, markerScale: CGFloat, referenceScale: CGFloat, context: CGContext) {
         context.saveGState()
         defer { context.restoreGState() }
         context.setLineCap(dashed ? .butt : .round)
         context.setLineJoin(.round)
-        context.setLineDash(phase: 0, lengths: dashed ? AppTheme.Border.longDash.map { $0 * previewScale } : [])
-        let lookWidth = max(AppTheme.BorderWidth.thick, AppTheme.BorderWidth.blockoutLookMinimum / referenceScale)
-        let lookCasing = max(AppTheme.BorderWidth.heavy, lookWidth + AppTheme.BorderWidth.thin * 2 / referenceScale)
-        let travelWidth = max(AppTheme.BorderWidth.blockoutTravel,
-            lookCasing + AppTheme.BorderWidth.heavy * 2 / referenceScale)
+        context.setLineDash(phase: 0, lengths: dashed ? AppTheme.Border.longDash.map { $0 * markerScale } : [])
+        let fitScale = markerScale / referenceScale
+        let lineScale = previewScale * fitScale
+        let lookWidth = max(AppTheme.BorderWidth.thick * lineScale, AppTheme.BorderWidth.blockoutLookMinimum * fitScale)
+        let halo = max(AppTheme.BorderWidth.thin * fitScale, AppTheme.BorderWidth.hairline * lineScale)
+        let lookCasing = lookWidth + halo * 2
+        let travelWidth = lookCasing + AppTheme.BorderWidth.thick * lineScale * 2
         let width = dashed ? travelWidth : lookWidth
-        let casing = dashed ? width + AppTheme.BorderWidth.thick : lookCasing
+        let casing = dashed ? width + halo * 2 : lookCasing
         for (color, width) in [
             (AppTheme.Background.surface.cgColor, casing),
             (color, width),
         ] {
             context.addPath(path)
             context.setStrokeColor(color)
-            context.setLineWidth(width * previewScale)
+            context.setLineWidth(width)
             context.strokePath()
         }
     }
@@ -360,7 +362,9 @@ enum NativeBlockoutExporter {
         context.setStrokeColor(AppTheme.Background.surface.cgColor)
         context.setLineWidth(AppTheme.BorderWidth.medium * previewScale)
         context.setLineJoin(.round)
-        context.drawPath(using: .fillStroke)
+        context.strokePath()
+        context.addPath(marker)
+        context.fillPath()
     }
 
     private static func drawLabel(_ variants: [String], in rect: CGRect, font: CTFont, context: CGContext) {
