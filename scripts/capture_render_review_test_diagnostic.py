@@ -420,6 +420,7 @@ def main():
     parser.add_argument("--log", required=True, type=Path)
     parser.add_argument("--swift-testing-runs", required=True, type=int)
     parser.add_argument("--xctest-runs", required=True, type=int)
+    parser.add_argument("--without-runloop-probe", action="store_true")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     if min(args.swift_testing_runs, args.xctest_runs) < 1:
@@ -435,7 +436,10 @@ def main():
     (args.evidence / "run.json").write_text(json.dumps(run, indent=2) + "\n")
     environment = {**os.environ, "NGV_RENDER_REVIEW_TEST_DIAGNOSTIC": "1",
                    "NGV_SWIFT_TEST_PROCESS_EVIDENCE": str(args.evidence.resolve())}
-    probe_receipt, probe_environment = prepare_runloop_probe(args.evidence, command)
+    if args.without_runloop_probe:
+        probe_receipt, probe_environment = {"status": "not-requested"}, {}
+    else:
+        probe_receipt, probe_environment = prepare_runloop_probe(args.evidence, command)
     run["runLoopProbe"] = probe_receipt
     environment.update(probe_environment)
     actual_command = probe_receipt.get("actualCommand", command)
@@ -531,8 +535,9 @@ def main():
         and row["selfReport"]["guardMatched"] and row["selfReport"].get("outputAvailable") is True
         for row in observation.probe_loads)
     run["runLoopProbe"]["loadObservation"] = (
-        "owned-app-probe-init-observed" if run["runLoopProbe"]["ownedAppProbeInitCount"]
-        else "unavailable-no-owned-app-probe-init-observed")
+        "not-requested" if args.without_runloop_probe else
+        "owned-app-probe-init-observed" if run["runLoopProbe"]["ownedAppProbeInitCount"] else
+        "unavailable-no-owned-app-probe-init-observed")
     if sampler is not None:
         # Retain the one owned worker through its bounded ps/sample waits.
         sampler.join()

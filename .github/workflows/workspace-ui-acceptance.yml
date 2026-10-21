@@ -215,7 +215,17 @@ jobs:
           set -euo pipefail
           swift build --cache-path "$NGV_SWIFTPM_CACHE_PATH" --build-tests
           scripts/stage_test_runtime.sh debug
-          swift test --cache-path "$NGV_SWIFTPM_CACHE_PATH" --skip-build --filter "$NGV_UNIT_TEST_FILTER"
+          python3 scripts/run_macos_tests.py --cache-path "$NGV_SWIFTPM_CACHE_PATH" \
+            --filter "$NGV_UNIT_TEST_FILTER" --evidence "$RUNNER_TEMP/workspace-unit-tests"
+
+      - name: Upload selected unit regression evidence
+        if: always() && inputs.unit_test_filter != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: workspace-unit-tests-${{ github.run_id }}
+          path: ${{ runner.temp }}/workspace-unit-tests
+          if-no-files-found: ignore
+          retention-days: 7
 
   runtime:
     needs: [source, build]

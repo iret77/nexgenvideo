@@ -33,6 +33,7 @@ let package = Package(
     products: [
         .executable(name: "NexGenVideo", targets: ["NexGenVideo"]),
         .executable(name: "NexGenVideoDiagnostics", targets: ["NexGenVideoDiagnostics"]),
+        .executable(name: "NexGenVideoAppKitTestHost", targets: ["NexGenVideoAppKitTestHost"]),
         .executable(name: "NexGenVideoBpyService", targets: ["NexGenVideoBpyService"]),
         .executable(name: "NexGenVideoBpySupervisor", targets: ["NexGenVideoBpySupervisor"]),
         .executable(name: "NexGenVideoBpyStorage", targets: ["NexGenVideoBpyStorage"]),
@@ -62,6 +63,7 @@ let package = Package(
         .package(url: "https://github.com/microsoft/onnxruntime-swift-package-manager", from: "1.19.2"),
     ],
     targets: [
+        .executableTarget(name: "NexGenVideoAppKitTestHost", path: "Tests/AppKitTestHost"),
         .target(name: "BpyRuntimeProtocol", path: "Sources/BpyRuntimeProtocol"),
         .target(name: "BpySupervisorPOSIX", path: "Sources/BpySupervisorPOSIX"),
         .executableTarget(

@@ -195,10 +195,11 @@ jobs:
 
       - name: Exercise real dialog and spend consumers deterministically
         run: |
-          swift test \
+          python3 scripts/run_macos_tests.py \
             --cache-path "$NGV_SWIFTPM_CACHE_PATH" \
-            --skip-build \
-            --filter productConsumer
+            --scope app-swift-testing \
+            --filter productConsumer \
+            --evidence "$RUNNER_TEMP/codex-test-host-product-consumers"
 
       - name: Prove emitted configuration parses and starts a clean App Server
         shell: bash
@@ -206,10 +207,11 @@ jobs:
           NGV_CODEX_CLEAN_CONFIGURATION: "1"
         run: |
           set -euo pipefail
-          swift test \
+          python3 scripts/run_macos_tests.py \
             --cache-path "$NGV_SWIFTPM_CACHE_PATH" \
-            --skip-build \
-            --filter isolatedConfigurationStartsCleanRuntime
+            --scope app-swift-testing \
+            --filter isolatedConfigurationStartsCleanRuntime \
+            --evidence "$RUNNER_TEMP/codex-test-host-clean-configuration"
           python3 - "$CODEX_HOME/config.toml" <<'PY'
           from pathlib import Path
           import sys
@@ -260,10 +262,11 @@ jobs:
         env:
           NGV_CODEX_HOSTILE_SYSTEM_CONFIG: "1"
         run: |
-          swift test \
+          python3 scripts/run_macos_tests.py \
             --cache-path "$NGV_SWIFTPM_CACHE_PATH" \
-            --skip-build \
-            --filter hostileSystemConfigurationFailsBeforeSideEffects
+            --scope app-swift-testing \
+            --filter hostileSystemConfigurationFailsBeforeSideEffects \
+            --evidence "$RUNNER_TEMP/codex-test-host-hostile-configuration"
           test ! -e "$NGV_CODEX_HOSTILE_MCP_MARKER"
 
       - name: Remove adversarial system configuration fixture
@@ -297,14 +300,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          swift test \
+          python3 scripts/run_macos_tests.py \
             --cache-path "$NGV_SWIFTPM_CACHE_PATH" \
-            --skip-build \
-            --filter productConsumerOwnsSpendSuspension
-          swift test \
+            --scope app-swift-testing \
+            --filter productConsumerOwnsSpendSuspension \
+            --evidence "$RUNNER_TEMP/codex-test-host-spend-consumer"
+          python3 scripts/run_macos_tests.py \
             --cache-path "$NGV_SWIFTPM_CACHE_PATH" \
-            --skip-build \
-            --filter CodexAppServerLiveAcceptanceTests
+            --scope app-swift-testing \
+            --filter CodexAppServerLiveAcceptanceTests \
+            --evidence "$RUNNER_TEMP/codex-test-host-live-consumers"
 
       - name: Verify redacted evidence
         shell: bash

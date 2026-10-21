@@ -103,31 +103,152 @@ struct NativeBlockoutExporterTests {
             try #require(CGImageDestinationFinalize(destination))
         }
         let bitmap = NSBitmapImageRep(cgImage: image)
-        let pixel = try #require(bitmap.colorAt(x: image.width * 3 / 4, y: image.height * 3 / 4))
+        let pixel = try #require(bitmap.colorAt(x: image.width / 4, y: image.height / 2))
         #expect(pixel.brightnessComponent > 0.4)
-        #expect(simultaneousLookAndPathColumns(in: bitmap) >= 3 * max(1, width / 320))
+        let floor = try #require(pixel.usingColorSpace(.deviceRGB))
+        let extent = try #require(floorExtent(in: bitmap, floor: floor))
+        #expect(abs(Double(extent.width) * layout.depthMeters - Double(extent.height) * layout.widthMeters)
+            <= 2 * (layout.widthMeters + layout.depthMeters))
+        let marks = try planMarks(in: bitmap)
+        let pixelScale = max(1, width / 320)
+        #expect(abs(marks.direction.dx + marks.direction.dy) <= CGFloat(2 * pixelScale))
+        #expect(markerFacesLook(marks))
+        #expect(simultaneousLookAndPathColumns(in: bitmap, marks: marks) >= 3 * pixelScale)
+        #expect(markerBackgroundGapColumns(in: bitmap, floor: floor, marks: marks) >= 2 * pixelScale)
     }
 
-    private func simultaneousLookAndPathColumns(in bitmap: NSBitmapImageRep) -> Int {
-        func components(_ x: Int, _ y: Int) -> (CGFloat, CGFloat, CGFloat)? {
-            guard y >= 0, y < bitmap.pixelsHigh,
-                  let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { return nil }
-            return (color.redComponent, color.greenComponent, color.blueComponent)
+    private struct PixelPoint {
+        let x: Int
+        let y: Int
+    }
+
+    private struct PlanMarks {
+        let marker: [PixelPoint]
+        let look: [PixelPoint]
+        let anchor: CGPoint
+        let direction: CGVector
+
+        var normal: CGVector {
+            let length = hypot(direction.dx, direction.dy)
+            return CGVector(dx: -direction.dy / length, dy: direction.dx / length)
         }
-        func travel(_ x: Int, _ y: Int) -> Bool {
-            guard let (red, green, blue) = components(x, y) else { return false }
-            return min(red, green, blue) > 0.8
-        }
-        let pixelScale = max(1, bitmap.pixelsWide / 320)
-        var consecutive = 0, longest = 0
-        for x in (bitmap.pixelsWide / 3)..<(bitmap.pixelsWide / 2) {
-            let shared = ((bitmap.pixelsHigh / 2)..<bitmap.pixelsHigh).contains { y in
-                guard let (red, green, blue) = components(x, y),
-                      blue - red > 0.1, green - red > 0.07 else { return false }
-                return (2 * pixelScale...4 * pixelScale).contains { travel(x, y - $0) }
-                    && (2 * pixelScale...4 * pixelScale).contains { travel(x, y + $0) }
+    }
+
+    private func components(in bitmap: NSBitmapImageRep, x: Int, y: Int) -> (CGFloat, CGFloat, CGFloat)? {
+        guard x >= 0, x < bitmap.pixelsWide, y >= 0, y < bitmap.pixelsHigh,
+              let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { return nil }
+        return (color.redComponent, color.greenComponent, color.blueComponent)
+    }
+
+    private func isLook(_ color: (CGFloat, CGFloat, CGFloat)) -> Bool {
+        color.2 - color.0 > 0.1 && color.1 - color.0 > 0.07
+    }
+
+    private func isFloor(_ color: (CGFloat, CGFloat, CGFloat), floor: NSColor) -> Bool {
+        abs(color.0 - floor.redComponent) < 0.08 && abs(color.1 - floor.greenComponent) < 0.08
+            && abs(color.2 - floor.blueComponent) < 0.08
+    }
+
+    private func floorExtent(in bitmap: NSBitmapImageRep, floor: NSColor) -> (width: Int, height: Int)? {
+        var columns = Array(repeating: 0, count: bitmap.pixelsWide / 2)
+        var rows = Array(repeating: 0, count: bitmap.pixelsHigh)
+        for x in columns.indices {
+            for y in rows.indices {
+                guard let color = components(in: bitmap, x: x, y: y), isFloor(color, floor: floor) else { continue }
+                columns[x] += 1; rows[y] += 1
             }
-            consecutive = shared ? consecutive + 1 : 0
+        }
+        guard let maxColumn = columns.max(), maxColumn > 0, let maxRow = rows.max(), maxRow > 0 else { return nil }
+        let occupiedX = columns.indices.filter { columns[$0] * 2 >= maxColumn }
+        let occupiedY = rows.indices.filter { rows[$0] * 2 >= maxRow }
+        guard let minX = occupiedX.first, let maxX = occupiedX.last,
+              let minY = occupiedY.first, let maxY = occupiedY.last else { return nil }
+        return (maxX - minX + 1, maxY - minY + 1)
+    }
+
+    private func planMarks(in bitmap: NSBitmapImageRep) throws -> PlanMarks {
+        let width = bitmap.pixelsWide
+        var remaining: Set<Int> = []
+        for x in 0..<(width / 2) {
+            for y in 0..<bitmap.pixelsHigh {
+                if let color = components(in: bitmap, x: x, y: y), isLook(color) {
+                    remaining.insert(y * width + x)
+                }
+            }
+        }
+        var groups: [[PixelPoint]] = []
+        while let seed = remaining.popFirst() {
+            var pending = [seed], group: [PixelPoint] = []
+            while let encoded = pending.popLast() {
+                let point = PixelPoint(x: encoded % width, y: encoded / width)
+                group.append(point)
+                for dy in -1...1 {
+                    for dx in -1...1 {
+                        let x = point.x + dx, y = point.y + dy
+                        guard x >= 0, x < width / 2, y >= 0, y < bitmap.pixelsHigh else { continue }
+                        let neighbor = y * width + x
+                        if remaining.remove(neighbor) != nil { pending.append(neighbor) }
+                    }
+                }
+            }
+            if group.count >= 3 * max(1, width / 320) { groups.append(group) }
+        }
+        groups.sort { ($0.map { $0.x }.min() ?? width) < ($1.map { $0.x }.min() ?? width) }
+        try #require(groups.count == 2, "The Plan must contain a distinct cyan marker and Look segment.")
+        let marker = groups[0], look = groups[1]
+        let minX = try #require(look.map { $0.x }.min())
+        let maxX = try #require(look.map { $0.x }.max())
+        let inset = max(1, (maxX - minX) / 4)
+        let firstX = minX + inset, lastX = maxX - inset
+        try #require(lastX > firstX)
+        func centerY(at x: Int) throws -> CGFloat {
+            let rows = look.filter { $0.x == x }.map { $0.y }
+            try #require(!rows.isEmpty)
+            return CGFloat(rows.reduce(0, +)) / CGFloat(rows.count)
+        }
+        let firstY = try centerY(at: firstX), lastY = try centerY(at: lastX)
+        return PlanMarks(marker: marker, look: look, anchor: CGPoint(x: CGFloat(firstX), y: firstY),
+            direction: CGVector(dx: CGFloat(lastX - firstX), dy: lastY - firstY))
+    }
+
+    private func markerFacesLook(_ marks: PlanMarks) -> Bool {
+        let center = CGPoint(x: CGFloat(marks.marker.map { $0.x }.reduce(0, +)) / CGFloat(marks.marker.count),
+            y: CGFloat(marks.marker.map { $0.y }.reduce(0, +)) / CGFloat(marks.marker.count))
+        let projected = marks.marker.map {
+            (CGFloat($0.x) - center.x) * marks.direction.dx + (CGFloat($0.y) - center.y) * marks.direction.dy
+        }
+        guard let front = projected.max(), let rear = projected.min() else { return false }
+        return front > -rear * 1.3
+    }
+
+    private func markerBackgroundGapColumns(in bitmap: NSBitmapImageRep, floor: NSColor, marks: PlanMarks) -> Int {
+        guard let lastMarkerX = marks.marker.map({ $0.x }).max(), let firstLookX = marks.look.map({ $0.x }).min(),
+              firstLookX > lastMarkerX else { return 0 }
+        var consecutive = 0, longest = 0
+        for x in (lastMarkerX + 1)..<firstLookX {
+            let y = Int((marks.anchor.y + marks.direction.dy * (CGFloat(x) - marks.anchor.x) / marks.direction.dx).rounded())
+            let background = components(in: bitmap, x: x, y: y).map { isFloor($0, floor: floor) } ?? false
+            consecutive = background ? consecutive + 1 : 0
+            longest = max(longest, consecutive)
+        }
+        return longest
+    }
+
+    private func simultaneousLookAndPathColumns(in bitmap: NSBitmapImageRep, marks: PlanMarks) -> Int {
+        let pixelScale = max(1, bitmap.pixelsWide / 320)
+        let normal = marks.normal
+        func travel(from point: PixelPoint, sign: Int) -> Bool {
+            (2 * pixelScale...4 * pixelScale).contains { offset in
+                let x = Int((CGFloat(point.x) + CGFloat(sign * offset) * normal.dx).rounded())
+                let y = Int((CGFloat(point.y) + CGFloat(sign * offset) * normal.dy).rounded())
+                guard let color = components(in: bitmap, x: x, y: y) else { return false }
+                return min(color.0, color.1, color.2) > 0.8
+            }
+        }
+        let sharedColumns = Set(marks.look.filter { travel(from: $0, sign: -1) && travel(from: $0, sign: 1) }.map { $0.x })
+        var consecutive = 0, longest = 0
+        for x in sharedColumns.sorted() {
+            consecutive = sharedColumns.contains(x - 1) ? consecutive + 1 : 1
             longest = max(longest, consecutive)
         }
         return longest

@@ -63,6 +63,7 @@ enum AppTheme {
         static let thick: CGFloat = 2
         static let heavy: CGFloat = 3
         static let blockoutTravel: CGFloat = 6
+        static let blockoutLookMinimum: CGFloat = 4
     }
 
     // MARK: - Accent

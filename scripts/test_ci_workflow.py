@@ -173,11 +173,13 @@ class CIWorkflowTests(unittest.TestCase):
         selected = build.split("      - name: Run selected unit regressions\n", 1)[1]
         self.assertIn("if: inputs.unit_test_filter != ''", selected)
         self.assertIn("NGV_UNIT_TEST_FILTER: ${{ inputs.unit_test_filter }}", selected)
-        run = selected.split("        run: |\n", 1)[1]
+        run = selected.split("        run: |\n", 1)[1].split("      - name:", 1)[0]
         self.assertNotIn("${{", run)
         self.assertLess(run.index("--build-tests"), run.index("scripts/stage_test_runtime.sh debug"))
-        self.assertLess(run.index("scripts/stage_test_runtime.sh debug"), run.index("swift test"))
-        self.assertIn('swift test --cache-path "$NGV_SWIFTPM_CACHE_PATH" --skip-build --filter "$NGV_UNIT_TEST_FILTER"', run)
+        self.assertLess(run.index("scripts/stage_test_runtime.sh debug"), run.index("scripts/run_macos_tests.py"))
+        self.assertIn('python3 scripts/run_macos_tests.py --cache-path "$NGV_SWIFTPM_CACHE_PATH"', run)
+        self.assertIn('--filter "$NGV_UNIT_TEST_FILTER" --evidence "$RUNNER_TEMP/workspace-unit-tests"', run)
+        self.assertIn('name: workspace-unit-tests-${{ github.run_id }}', selected)
         self.assertNotIn("scripts/bundle.sh", run)
 
     def test_workspace_native_acceptance_keeps_the_uploaded_app_after_unit_failure(self):

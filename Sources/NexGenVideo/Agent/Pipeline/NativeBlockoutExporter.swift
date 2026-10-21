@@ -14,14 +14,19 @@ enum NativeBlockoutExporter {
         let path: [CameraPathKeyframeV1]
     }
 
+    enum ViewArrangement: Sendable, Equatable { case stacked, bestFit }
+
     struct PlanFrame: Sendable {
         let cameras: [CameraProjection]
         let layouts: [SpatialLayoutV1]
         let shapes: [BlockoutShapeV1]
         let metric: Bool
+        let arrangement: ViewArrangement
 
-        init(cameras: [CameraProjection], layouts: [SpatialLayoutV1], shapes: [BlockoutShapeV1], metric: Bool = false) {
+        init(cameras: [CameraProjection], layouts: [SpatialLayoutV1], shapes: [BlockoutShapeV1], metric: Bool = false,
+             arrangement: ViewArrangement = .stacked) {
             self.cameras = cameras; self.layouts = layouts; self.shapes = shapes; self.metric = metric
+            self.arrangement = arrangement
         }
     }
 
@@ -32,7 +37,7 @@ enum NativeBlockoutExporter {
             presentation: { CMTime(value: CMTimeValue($0), timescale: CMTimeScale(request.fps)) },
             duration: CMTime(value: CMTimeValue(count), timescale: CMTimeScale(request.fps)), to: url) { _ in
                 PlanFrame(cameras: setups.map { .init(id: $0.id, locationID: $0.locationID, position: $0.position, path: $0.path) },
-                    layouts: layouts, shapes: shapes)
+                    layouts: layouts, shapes: shapes, metric: true, arrangement: .bestFit)
             }
     }
 
@@ -103,6 +108,7 @@ enum NativeBlockoutExporter {
                 shapes: plan.shapes,
                 progress: Double(frameIndex) / Double(max(1, frameCount - 1)),
                 metric: plan.metric,
+                arrangement: plan.arrangement,
                 in: buffer
             )
             let presentationTime = presentation(frameIndex)
@@ -130,6 +136,7 @@ enum NativeBlockoutExporter {
         shapes: [BlockoutShapeV1],
         progress: Double,
         metric: Bool,
+        arrangement: ViewArrangement,
         in buffer: CVPixelBuffer
     ) throws {
         CVPixelBufferLockBaseAddress(buffer, [])
@@ -171,11 +178,12 @@ enum NativeBlockoutExporter {
                                       CGFloat(height) / AppTheme.Layout.previewMinHeight))
         let font = NSFont.systemFont(ofSize: AppTheme.FontSize.xs * previewScale,
             weight: AppTheme.AppKitFontWeight.semibold) as CTFont
-        let labelHeight = CTFontGetAscent(font) + CTFontGetDescent(font) + CTFontGetLeading(font) + AppTheme.Spacing.xxs * 2
+        let labelHeight = (CTFontGetAscent(font) + CTFontGetDescent(font) + CTFontGetLeading(font) + AppTheme.Spacing.xxs * 2)
+            * (arrangement == .bestFit ? 2 : 1)
         let symbolScale = max(previewScale, AppTheme.IconSize.md / AppTheme.IconSize.xs)
         let markerClearance = (AppTheme.IconSize.xs + AppTheme.BorderWidth.medium) * symbolScale / 2
         let viewports = makeViewports(layouts: layouts, bounds: bounds, metric: metric,
-            labelHeight: labelHeight, markerClearance: markerClearance)
+            labelHeight: labelHeight, markerClearance: markerClearance, arrangement: arrangement)
         context.setStrokeColor(CGColor(gray: 0.58, alpha: 1))
         context.setLineWidth(AppTheme.BorderWidth.medium)
         for viewport in viewports.values {
@@ -202,6 +210,7 @@ enum NativeBlockoutExporter {
             )
         }
 
+        var drawings: [CameraDrawing] = []
         let ordered = setups.sorted { $0.id < $1.id }
         for (index, setup) in ordered.enumerated() {
             guard let viewport = viewports[setup.locationID] else { continue }
@@ -233,34 +242,73 @@ enum NativeBlockoutExporter {
                     setup.path[targetIndex].lookAt, in: rect,
                     layout: viewport.layout, projection: projection
                 )
-                stroke(movement, color: AppTheme.Text.primary.cgColor, dashed: true,
-                    previewScale: markerScale, referenceScale: symbolScale, context: context)
-                if let lookAt {
-                    let direction = CGMutablePath()
-                    direction.move(to: camera)
-                    direction.addLine(to: lookAt)
-                    stroke(direction, color: color, dashed: false,
-                        previewScale: markerScale, referenceScale: symbolScale, context: context)
-                }
-                drawCamera(at: camera, lookAt: lookAt, size: AppTheme.IconSize.xs * markerScale, color: color,
-                    previewScale: markerScale, context: context)
+                let radius = markerExclusionRadius(scale: markerScale)
+                drawings.append(CameraDrawing(locationID: setup.locationID, projection: projection,
+                    movement: movement, camera: camera, lookAt: lookAt, color: color, scale: markerScale,
+                    hasVisibleTravel: projected.contains { hypot($0.x - camera.x, $0.y - camera.y) > radius }))
             }
         }
-        for viewport in viewports.values {
-            let suffix = viewport.locationNumber.map { " · \($0)" } ?? ""
-            drawLabel([
-                "Plan (X/Z)" + suffix + " · — Look · - - Path",
-                "Plan" + suffix + " · — Look · - - Path",
-                "Plan (X/Z)" + suffix,
-                "Plan" + suffix,
-            ], in: viewport.planLabel, font: font, context: context)
-            drawLabel([
-                "Elevation (X/Y)" + suffix + " · — Look · - - Path",
-                "Elev." + suffix + " · — Look · - - Path",
-                "Elev. (X/Y)" + suffix,
-                "Elev." + suffix,
-            ], in: viewport.elevationLabel, font: font, context: context)
+        context.saveGState()
+        for drawing in drawings {
+            let radius = markerExclusionRadius(scale: drawing.scale)
+            context.beginPath()
+            context.addRect(bounds)
+            context.addEllipse(in: CGRect(x: drawing.camera.x - radius, y: drawing.camera.y - radius,
+                width: radius * 2, height: radius * 2))
+            context.clip(using: .evenOdd)
         }
+        for drawing in drawings {
+            stroke(drawing.movement, color: AppTheme.Text.primary.cgColor, dashed: true,
+                previewScale: drawing.scale, referenceScale: symbolScale, context: context)
+            if let lookAt = drawing.lookAt {
+                let direction = CGMutablePath()
+                direction.move(to: drawing.camera)
+                direction.addLine(to: lookAt)
+                stroke(direction, color: drawing.color, dashed: false,
+                    previewScale: drawing.scale, referenceScale: symbolScale, context: context)
+            }
+        }
+        context.restoreGState()
+        for drawing in drawings {
+            drawCamera(at: drawing.camera, lookAt: drawing.lookAt, size: AppTheme.IconSize.xs * drawing.scale,
+                color: drawing.color, previewScale: drawing.scale, context: context)
+        }
+        for (locationID, viewport) in viewports {
+            let suffix = viewport.locationNumber.map { " · \($0)" } ?? ""
+            for (projection, label, title, shortTitle, axes) in [
+                (Projection.plan, viewport.planLabel, "Plan", "Plan", "X/Z"),
+                (Projection.elevation, viewport.elevationLabel, "Elevation", "Elev.", "X/Y"),
+            ] {
+                let roles = legend(for: drawings.filter { $0.locationID == locationID && $0.projection == projection })
+                let titles = [title + " (" + axes + ")" + suffix, shortTitle + " (" + axes + ")" + suffix,
+                    shortTitle + suffix]
+                if arrangement == .bestFit {
+                    drawLabel(titles, in: CGRect(x: label.minX, y: label.midY, width: label.width, height: label.height / 2),
+                        font: font, context: context)
+                    drawLabel(roles, in: CGRect(x: label.minX, y: label.minY, width: label.width, height: label.height / 2),
+                        font: font, context: context)
+                } else {
+                    let full = roles.first.map { $0.isEmpty ? "" : " · " + $0 } ?? ""
+                    let compact = roles.last.map { $0.isEmpty ? "" : " · " + $0 } ?? ""
+                    drawLabel([titles[0] + full, shortTitle + suffix + compact] + titles,
+                        in: label, font: font, context: context)
+                }
+            }
+        }
+    }
+
+    private static func markerExclusionRadius(scale: CGFloat) -> CGFloat {
+        ((AppTheme.IconSize.xs + AppTheme.BorderWidth.medium) / 2 + AppTheme.Spacing.xs) * scale
+    }
+
+    private static func legend(for drawings: [CameraDrawing]) -> [String] {
+        guard !drawings.isEmpty else { return [""] }
+        let hasLook = drawings.contains { $0.hasVisibleLook }
+        let hasHeading = drawings.contains { $0.hasHeading }
+        let hasTravel = drawings.contains { $0.hasVisibleTravel }
+        let direction = hasLook ? "— Look" : hasHeading ? "Camera direction" : "No projected direction"
+        let compact = hasLook ? "Look" : hasHeading ? "Direction" : "No direction in view"
+        return [direction + (hasTravel ? " · - - Path" : ""), compact + (hasTravel ? " / Path" : "")]
     }
 
     private static func stroke(_ path: CGPath, color: CGColor, dashed: Bool,
@@ -270,9 +318,12 @@ enum NativeBlockoutExporter {
         context.setLineCap(dashed ? .butt : .round)
         context.setLineJoin(.round)
         context.setLineDash(phase: 0, lengths: dashed ? AppTheme.Border.longDash.map { $0 * previewScale } : [])
-        let width = dashed ? AppTheme.BorderWidth.blockoutTravel : AppTheme.BorderWidth.thick
-        let casing = dashed ? width + AppTheme.BorderWidth.thick
-            : max(AppTheme.BorderWidth.heavy, width + AppTheme.BorderWidth.thin * 2 / referenceScale)
+        let lookWidth = max(AppTheme.BorderWidth.thick, AppTheme.BorderWidth.blockoutLookMinimum / referenceScale)
+        let lookCasing = max(AppTheme.BorderWidth.heavy, lookWidth + AppTheme.BorderWidth.thin * 2 / referenceScale)
+        let travelWidth = max(AppTheme.BorderWidth.blockoutTravel,
+            lookCasing + AppTheme.BorderWidth.thick * 2 / referenceScale)
+        let width = dashed ? travelWidth : lookWidth
+        let casing = dashed ? width + AppTheme.BorderWidth.thick : lookCasing
         for (color, width) in [
             (AppTheme.Background.surface.cgColor, casing),
             (color, width),
@@ -345,9 +396,30 @@ enum NativeBlockoutExporter {
         CTLineDraw(makeLine(text, fittedFont), context)
     }
 
-    private enum Projection {
+    private enum Projection: Equatable {
         case plan
         case elevation
+    }
+
+    private struct CameraDrawing {
+        let locationID: String
+        let projection: Projection
+        let movement: CGPath
+        let camera: CGPoint
+        let lookAt: CGPoint?
+        let color: CGColor
+        let scale: CGFloat
+        let hasVisibleTravel: Bool
+
+        var hasHeading: Bool {
+            guard let lookAt else { return false }
+            return hypot(lookAt.x - camera.x, lookAt.y - camera.y) > CGFloat.ulpOfOne
+        }
+
+        var hasVisibleLook: Bool {
+            guard let lookAt else { return false }
+            return hypot(lookAt.x - camera.x, lookAt.y - camera.y) > NativeBlockoutExporter.markerExclusionRadius(scale: scale)
+        }
     }
 
     private struct Viewport {
@@ -364,7 +436,8 @@ enum NativeBlockoutExporter {
         bounds: CGRect,
         metric: Bool,
         labelHeight: CGFloat,
-        markerClearance: CGFloat
+        markerClearance: CGFloat,
+        arrangement: ViewArrangement
     ) -> [String: Viewport] {
         let ordered = layouts.sorted { $0.locationID < $1.locationID }
         let count = max(1, ordered.count)
@@ -396,14 +469,24 @@ enum NativeBlockoutExporter {
                     CGRect(x: rect.minX, y: rect.maxY - height, width: rect.width, height: height)
                 )
             }
-            let plan = labeled(CGRect(x: cell.minX, y: cell.minY, width: cell.width, height: planHeight))
-            let elevation = labeled(CGRect(x: cell.minX, y: cell.minY + planHeight,
+            var plan = labeled(CGRect(x: cell.minX, y: cell.minY, width: cell.width, height: planHeight))
+            var elevation = labeled(CGRect(x: cell.minX, y: cell.minY + planHeight,
                 width: cell.width, height: cell.height - planHeight))
+            func metricScale(_ plan: CGRect, _ elevation: CGRect) -> CGFloat {
+                min(plan.width / layout.widthMeters, plan.height / layout.depthMeters,
+                    elevation.width / layout.widthMeters, elevation.height / layout.heightMeters)
+            }
+            if arrangement == .bestFit {
+                let sidePlan = labeled(CGRect(x: cell.minX, y: cell.minY, width: cell.width / 2, height: cell.height))
+                let sideElevation = labeled(CGRect(x: cell.midX, y: cell.minY, width: cell.width / 2, height: cell.height))
+                if metricScale(sidePlan.plot, sideElevation.plot) > metricScale(plan.plot, elevation.plot) {
+                    plan = sidePlan; elevation = sideElevation
+                }
+            }
             var planRect = plan.plot
             var elevationRect = elevation.plot
             if metric {
-                let scale = min(planRect.width / layout.widthMeters, planRect.height / layout.depthMeters,
-                                elevationRect.width / layout.widthMeters, elevationRect.height / layout.heightMeters)
+                let scale = metricScale(planRect, elevationRect)
                 func fitted(_ rect: CGRect, height: Double) -> CGRect {
                     let size = CGSize(width: layout.widthMeters * scale, height: height * scale)
                     return CGRect(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2, width: size.width, height: size.height)

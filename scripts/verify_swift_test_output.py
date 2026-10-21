@@ -8,15 +8,17 @@ import re
 ANSI = re.compile(r"\x1b\][^\x07]*?(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]", re.S)
 SWIFT_END = re.compile(r"^[✔━✘] Test run with (\d+) tests? in \d+ suites? (passed|failed) after .+\.$")
 XCTEST = re.compile(r"^Test Suite 'All tests' (started|passed|failed) at .+\.$")
+XCTEST_FILTERED = re.compile(r"^Test Suite 'Selected tests' (started|passed|failed) at .+\.$")
 XCTEST_FAILURE = re.compile(r"^Test (?:Case|Suite) '.+' failed(?: at | \().+")
 
 
-def assess_output(path, *, swift_testing_runs, xctest_runs):
+def assess_output(path, *, swift_testing_runs, xctest_runs, xctest_filtered=False):
     expected = {"swiftTesting": swift_testing_runs, "xctest": xctest_runs}
     starts = dict.fromkeys(expected, 0)
     ends = dict.fromkeys(expected, 0)
     active = dict.fromkeys(expected, False)
     failures = []
+    xctest_pattern = XCTEST_FILTERED if xctest_filtered else XCTEST
 
     def event(library, state, number):
         if state == "started":
@@ -45,7 +47,7 @@ def assess_output(path, *, swift_testing_runs, xctest_runs):
                 event("swiftTesting", match[2], number)
                 if int(match[1]) == 0:
                     failures.append({"line": number, "reason": "swiftTesting.empty-selected-run"})
-            elif match := XCTEST.fullmatch(line):
+            elif match := xctest_pattern.fullmatch(line):
                 event("xctest", match[1], number)
     for library, count in expected.items():
         if starts[library] != count or ends[library] != count or active[library]:

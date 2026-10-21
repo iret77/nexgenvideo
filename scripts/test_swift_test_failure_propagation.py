@@ -53,6 +53,7 @@ class SwiftTestFailurePropagationTests(unittest.TestCase):
                 (139, "error: Exited with unexpected signal code 11", 139),
                 (1, "Test Suite failed", 1),
                 (0, COMPLETE_OUTPUT, 0),
+                (0, COMPLETE_OUTPUT.replace("All tests", "Selected tests"), 1),
                 (0, "All tests passed", 1),
                 (0, COMPLETE_OUTPUT.replace(
                     "✔ Test sample() passed after 0.001 seconds.",
@@ -88,23 +89,19 @@ class SwiftTestFailurePropagationTests(unittest.TestCase):
                     (root / "scripts").mkdir()
                     for helper in helpers:
                         (root / "scripts" / helper).write_bytes((ROOT / "scripts" / helper).read_bytes())
-                    swift = binary / "swift"
-                    swift.write_text(textwrap.dedent("""\
-                        #!/bin/bash
-                        set -euo pipefail
-                        count=0
-                        if [ -f "$FAKE_SWIFT_CALLS" ]; then count=$(cat "$FAKE_SWIFT_CALLS"); fi
-                        count=$((count + 1))
-                        printf '%s\\n' "$count" > "$FAKE_SWIFT_CALLS"
-                        printf '%s\\n' "$@" > "$FAKE_SWIFT_ARGS"
-                        printf '%s\\n' "${SWIFT_BACKTRACE:-}" > "$FAKE_SWIFT_BACKTRACE"
-                        if [ "$count" -eq 1 ]; then
-                          echo "$FAKE_SWIFT_MESSAGE" >&2
-                          exit "$FAKE_SWIFT_EXIT"
-                        fi
-                        exit 0
+                    driver = root / "scripts/run_macos_tests.py"
+                    driver.write_text(textwrap.dedent("""\
+                        import os
+                        from pathlib import Path
+                        import sys
+                        calls = Path(os.environ["FAKE_SWIFT_CALLS"])
+                        count = int(calls.read_text()) if calls.exists() else 0
+                        calls.write_text(str(count + 1) + "\\n")
+                        Path(os.environ["FAKE_SWIFT_ARGS"]).write_text("\\n".join(sys.argv[1:]) + "\\n")
+                        Path(os.environ["FAKE_SWIFT_BACKTRACE"]).write_text(os.environ.get("SWIFT_BACKTRACE", "") + "\\n")
+                        print(os.environ["FAKE_SWIFT_MESSAGE"], flush=True)
+                        sys.exit(int(os.environ["FAKE_SWIFT_EXIT"]))
                         """))
-                    swift.chmod(0o755)
                     cache = str(root / "dependency cache")
                     runtime = str(root / "runner temp")
                     env = dict(os.environ, PATH=str(binary) + os.pathsep + os.environ["PATH"],
@@ -121,11 +118,12 @@ class SwiftTestFailurePropagationTests(unittest.TestCase):
                     self.assertEqual((root / "calls").read_text(), "1\n")
                     self.assertIn(message, result.stdout)
                     self.assertIn(message, (root / log).read_text())
-                    expected = ["test", "--cache-path", cache]
+                    expected = ["--cache-path", cache]
                     expected.extend(value.format(runtime=runtime) for value in configuration)
-                    expected.append("--skip-build")
                     if filename == "release.yml":
-                        expected.extend(["-Xswiftc", "-enable-testing"])
+                        expected.extend(["--swiftc-flag=-enable-testing", "--evidence", runtime + "/release-test-evidence"])
+                    else:
+                        expected.extend(["--evidence", runtime + "/render-review-test-diagnostic/hosted-suite"])
                     self.assertEqual((root / "args").read_text().splitlines(), expected)
                     self.assertEqual(
                         (root / "backtrace").read_text(),

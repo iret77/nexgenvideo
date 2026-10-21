@@ -479,8 +479,21 @@ jobs:
         run: |
           set -euo pipefail
           export SWIFT_BACKTRACE=enable=yes,interactive=no,demangle=yes,cache=no
-          swift test --cache-path "$NGV_SWIFTPM_CACHE_PATH" -c release --scratch-path "$RUNNER_TEMP/release-tests" --skip-build -Xswiftc -enable-testing 2>&1 | tee release-test.log
+          python3 scripts/run_macos_tests.py --cache-path "$NGV_SWIFTPM_CACHE_PATH" \
+            -c release --scratch-path "$RUNNER_TEMP/release-tests" --swiftc-flag=-enable-testing \
+            --evidence "$RUNNER_TEMP/release-test-evidence" 2>&1 | tee release-test.log
           python3 scripts/verify_swift_test_output.py --log release-test.log --swift-testing-runs 2 --xctest-runs 2
+
+      - name: Upload release test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-test-evidence
+          path: |
+            ${{ runner.temp }}/release-test-evidence
+            release-test.log
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Verify release tests did not mutate tracked source
         run: scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist
