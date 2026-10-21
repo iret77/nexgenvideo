@@ -40,6 +40,13 @@ struct ProductionPhaseTransitionTests {
         let approval = try #require(editor.agentService.pendingGateApproval)
         #expect(approval.phase == "project_init")
         #expect(approval.dataRoot?.resolvingSymlinksInPath().path == dataRoot.resolvingSymlinksInPath().path)
+        let review = GateReviewModel()
+        #expect(review.isChecking)
+        await review.refresh(approval: approval, editor: editor)
+        #expect(!review.isChecking)
+        #expect(review.isReady)
+        #expect(review.readyApprovalID == approval.id)
+        #expect(review.blocker == nil)
 
         let resolved = await editor.agentService.resolveGate(.approved, approvalID: editor.agentService.pendingGateApproval?.id ?? "missing")
         let result = try #require(resolved)

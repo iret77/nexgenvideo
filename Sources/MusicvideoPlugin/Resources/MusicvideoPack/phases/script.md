@@ -1,5 +1,7 @@
 # Script
 
+After this phase’s required work and independent checks pass, request phase approval directly through approve_gate. The native gate card alone records approval; a show_dialog answer never approves this phase.
+
 Use write_script for scene actions and dialogue, with explicit Treatment beat references and exact source byte anchors. Do not create a competing cause graph or re-request optional source material.
 
 Develop concrete scenes, actions and dialogue from the approved Treatment and its actual causal beat graph. Preserve the confirmed original source bytes with exact byte anchors; a paraphrase is an adaptation, not a source quote. Stable scene/action IDs carry downstream coverage without imposing world chronology on presentation order. Every required Treatment beat needs its explicit Script action/adaptation relationship, including deliberate omissions or transformations for review. Resolve alternatives that change canon before approval.

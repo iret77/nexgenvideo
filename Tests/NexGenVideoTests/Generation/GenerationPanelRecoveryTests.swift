@@ -50,7 +50,7 @@ struct GenerationPanelRecoveryTests {
     }
 
     @Test func sourceOnlyOfferingIsShownBeforeSourceAssignmentAndPriorExecutableBindingSurvives() throws {
-        let catalog = ModelCatalog(); catalog.load(entries: ModelCatalog.launchEntries)
+        let catalog = ModelCatalog(); catalog.load(entries: RunwayModelRegistry.entries)
         let suite = "Generation panel selection " + UUID().uuidString
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }

@@ -62,7 +62,25 @@ struct StoryboardPlanningView: View {
         if loading { return "Loading Storyboard…" }
         if importing { return "Wait for the sketch import to finish." }
         if editor.agentService.isComposerBlocked {
-            return "Respond to the pending decision below before editing sketches."
+            let owner = AgentSurfaceState.resolve(.init(
+                hasSpendApproval: editor.agentService.pendingSpendApproval != nil || editor.generationBatchCoordinator.pending != nil,
+                hasGateApproval: editor.agentService.pendingGateApproval != nil,
+                hasDialog: editor.agentService.pendingDialog != nil,
+                hasRepairPause: editor.agentService.currentPipelineRepairFailure != nil)).dockOwner
+            if owner == .gateApproval, let approval = editor.agentService.pendingGateApproval,
+               approval.phase == "storyboard", !approval.isRewind,
+               !editor.agentService.gateApprovalIsWriting,
+               let root = editor.workingRoot.flatMap({ DataRootResolver.dataRoot(of: $0) }),
+               approval.dataRoot?.standardizedFileURL == root.standardizedFileURL {
+                _ = editor.pipelinePhaseExecution.snapshot
+                if editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: root) == nil {
+                    return editor.workspaceFocus == .production
+                        ? "Choose ‘Not yet’ on the Storyboard approval card to defer approval before editing sketches."
+                        : "Open Agent, then choose ‘Not yet’ on the Storyboard approval card before editing sketches."
+                }
+            }
+            if owner == .composer { return "Wait for the current decision to finish before editing sketches." }
+            return "Respond to the pending decision card before editing sketches."
         }
         if editor.agentService.isStreaming { return "Wait for the current AI task to finish before editing sketches." }
         guard let root = editor.workingRoot.flatMap({ DataRootResolver.dataRoot(of: $0) }) else {

@@ -126,12 +126,13 @@ struct ProductionWorkflowRecoveryMigrationTests {
 
     @Test func dirtyRecoveryPreviewAndCoreTransactionPreserveUnsavedTimeline() throws {
         let root = try fixture()
-        let savedTimeline = try JSONEncoder().encode(Timeline())
+        let savedTimeline = try JSONEncoder().encode(Timeline(fps: 24))
         try savedTimeline.write(to: root.appendingPathComponent(Project.timelineFilename))
         let key = try ProjectIdentity.key(for: root)
         defer { ProjectWorkingCopy.discard(key: key); try? FileManager.default.removeItem(at: root) }
         let opened = try ProjectWorkingCopy.open(key: key, packageURL: root)
         let edited = try JSONEncoder().encode(Timeline(fps: 30))
+        #expect(edited != savedTimeline)
         try edited.write(to: opened.home.appendingPathComponent(Project.timelineFilename))
         try ProjectWorkingCopy.markDirty(key: key)
         let source = try #require(try ProjectWorkingCopy.recoverableDirtyHome(for: root))

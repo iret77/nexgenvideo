@@ -154,7 +154,7 @@ enum NativeBlockoutExporter {
         let bounds = CGRect(x: 0, y: 0, width: width, height: height)
         context.setFillColor(CGColor(gray: 0.16, alpha: 1))
         context.fill(bounds)
-        context.setStrokeColor(CGColor(gray: 0.38, alpha: 1))
+        context.setStrokeColor(AppTheme.Border.divider.cgColor)
         context.setLineWidth(AppTheme.BorderWidth.thin)
         let grid = max(24, min(width, height) / 10)
         for x in stride(from: 0, through: width, by: grid) {
@@ -172,7 +172,7 @@ enum NativeBlockoutExporter {
         let font = NSFont.systemFont(ofSize: AppTheme.FontSize.xs * previewScale,
             weight: AppTheme.AppKitFontWeight.semibold) as CTFont
         let labelHeight = CTFontGetAscent(font) + CTFontGetDescent(font) + CTFontGetLeading(font) + AppTheme.Spacing.xxs * 2
-        let markerClearance = (AppTheme.IconSize.xxs + AppTheme.BorderWidth.medium) * previewScale / 2
+        let markerClearance = (AppTheme.IconSize.xs + AppTheme.BorderWidth.medium) * previewScale / 2
         let viewports = makeViewports(layouts: layouts, bounds: bounds, metric: metric,
             labelHeight: labelHeight, markerClearance: markerClearance)
         context.setStrokeColor(CGColor(gray: 0.58, alpha: 1))
@@ -218,7 +218,7 @@ enum NativeBlockoutExporter {
                 (Projection.elevation, viewport.elevation),
             ] {
                 let markerScale = min(previewScale,
-                    max(0, min(rect.width, rect.height)) / (AppTheme.IconSize.xxs * 2))
+                    max(0, min(rect.width, rect.height)) / (AppTheme.IconSize.xs + AppTheme.BorderWidth.medium))
                 guard markerScale > 0 else { continue }
                 let projected = points.map {
                     project($0, in: rect, layout: viewport.layout, projection: projection)
@@ -232,6 +232,8 @@ enum NativeBlockoutExporter {
                     setup.path[targetIndex].lookAt, in: rect,
                     layout: viewport.layout, projection: projection
                 )
+                stroke(movement, color: AppTheme.Text.primary.cgColor, dashed: true,
+                    previewScale: markerScale, context: context)
                 if let lookAt {
                     let direction = CGMutablePath()
                     direction.move(to: camera)
@@ -239,16 +241,24 @@ enum NativeBlockoutExporter {
                     stroke(direction, color: color, dashed: false,
                         previewScale: markerScale, context: context)
                 }
-                stroke(movement, color: AppTheme.Text.primary.cgColor, dashed: true,
-                    previewScale: markerScale, context: context)
-                drawCamera(at: camera, lookAt: lookAt, size: AppTheme.IconSize.xxs * markerScale, color: color,
+                drawCamera(at: camera, lookAt: lookAt, size: AppTheme.IconSize.xs * markerScale, color: color,
                     previewScale: markerScale, context: context)
             }
         }
         for viewport in viewports.values {
             let suffix = viewport.locationNumber.map { " · \($0)" } ?? ""
-            drawLabel("Plan" + suffix, in: viewport.planLabel, font: font, context: context)
-            drawLabel("Elevation" + suffix, in: viewport.elevationLabel, font: font, context: context)
+            drawLabel([
+                "Plan (X/Z)" + suffix + " · — Look · - - Path",
+                "Plan" + suffix + " · — Look · - - Path",
+                "Plan (X/Z)" + suffix,
+                "Plan" + suffix,
+            ], in: viewport.planLabel, font: font, context: context)
+            drawLabel([
+                "Elevation (X/Y)" + suffix + " · — Look · - - Path",
+                "Elev." + suffix + " · — Look · - - Path",
+                "Elev. (X/Y)" + suffix,
+                "Elev." + suffix,
+            ], in: viewport.elevationLabel, font: font, context: context)
         }
     }
 
@@ -258,10 +268,12 @@ enum NativeBlockoutExporter {
         defer { context.restoreGState() }
         context.setLineCap(dashed ? .butt : .round)
         context.setLineJoin(.round)
-        context.setLineDash(phase: 0, lengths: dashed ? AppTheme.Border.compactDash.map { $0 * previewScale } : [])
+        context.setLineDash(phase: 0, lengths: dashed ? AppTheme.Border.longDash.map { $0 * previewScale } : [])
+        let width = dashed ? AppTheme.BorderWidth.blockoutTravel : AppTheme.BorderWidth.thick
+        let casing = dashed ? width + AppTheme.BorderWidth.thick : AppTheme.BorderWidth.heavy
         for (color, width) in [
-            (AppTheme.Background.surface.cgColor, AppTheme.BorderWidth.medium + AppTheme.BorderWidth.thick),
-            (color, AppTheme.BorderWidth.medium),
+            (AppTheme.Background.surface.cgColor, casing),
+            (color, width),
         ] {
             context.addPath(path)
             context.setStrokeColor(color)
@@ -275,13 +287,14 @@ enum NativeBlockoutExporter {
         let radius = size / 2
         let marker = CGMutablePath()
         if let lookAt, hypot(lookAt.x - camera.x, lookAt.y - camera.y) > CGFloat.ulpOfOne {
-            let angle = atan2(lookAt.y - camera.y, lookAt.x - camera.x)
-            for index in 0..<3 {
-                let direction = angle + CGFloat(index) * 2 * .pi / 3
-                let point = CGPoint(x: camera.x + cos(direction) * radius,
-                    y: camera.y + sin(direction) * radius)
-                if index == 0 { marker.move(to: point) } else { marker.addLine(to: point) }
-            }
+            let distance = hypot(lookAt.x - camera.x, lookAt.y - camera.y)
+            let forward = CGPoint(x: (lookAt.x - camera.x) / distance, y: (lookAt.y - camera.y) / distance)
+            let side = CGPoint(x: -forward.y, y: forward.x)
+            marker.move(to: CGPoint(x: camera.x + forward.x * radius, y: camera.y + forward.y * radius))
+            marker.addLine(to: CGPoint(x: camera.x + (-forward.x + side.x) * radius / 2,
+                y: camera.y + (-forward.y + side.y) * radius / 2))
+            marker.addLine(to: CGPoint(x: camera.x + (-forward.x - side.x) * radius / 2,
+                y: camera.y + (-forward.y - side.y) * radius / 2))
             marker.closeSubpath()
         } else {
             marker.addEllipse(in: CGRect(x: camera.x - radius, y: camera.y - radius, width: size, height: size))
@@ -296,30 +309,37 @@ enum NativeBlockoutExporter {
         context.drawPath(using: .fillStroke)
     }
 
-    private static func drawLabel(_ text: String, in rect: CGRect, font: CTFont, context: CGContext) {
-        func makeLine(_ font: CTFont) -> CTLine {
+    private static func drawLabel(_ variants: [String], in rect: CGRect, font: CTFont, context: CGContext) {
+        guard rect.width > 0, rect.height > 0, let fallback = variants.last else { return }
+        func makeLine(_ text: String, _ font: CTFont) -> CTLine {
             let attributes: [NSAttributedString.Key: Any] = [
                 kCTFontAttributeName as NSAttributedString.Key: font,
                 kCTForegroundColorAttributeName as NSAttributedString.Key: AppTheme.Text.primary.cgColor,
             ]
             return CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: attributes))
         }
-        let line = makeLine(font)
-        let width = max(0, rect.width - AppTheme.Spacing.xs * 2)
-        let height = max(0, rect.height - AppTheme.Spacing.xxs * 2)
-        let textWidth = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
+        let horizontalInset = min(AppTheme.Spacing.xs, rect.width / 4)
+        let verticalInset = min(AppTheme.Spacing.xxs, rect.height / 4)
+        let width = rect.width - horizontalInset * 2
+        let height = rect.height - verticalInset * 2
         let textHeight = CTFontGetAscent(font) + CTFontGetDescent(font) + CTFontGetLeading(font)
-        let scale = min(1, min(width / max(CGFloat.ulpOfOne, textWidth), height / max(CGFloat.ulpOfOne, textHeight)))
-        let fittedFont = CTFontCreateCopyWithAttributes(font, CTFontGetSize(font) * scale, nil, nil)
+        let heightScale = min(1, height / max(CGFloat.ulpOfOne, textHeight))
+        let heightFont = CTFontCreateCopyWithAttributes(font, CTFontGetSize(font) * heightScale, nil, nil)
+        let text = variants.first {
+            CGFloat(CTLineGetTypographicBounds(makeLine($0, heightFont), nil, nil, nil)) <= width
+        } ?? fallback
+        let textWidth = CGFloat(CTLineGetTypographicBounds(makeLine(text, heightFont), nil, nil, nil))
+        let widthScale = min(1, width / max(CGFloat.ulpOfOne, textWidth))
+        let fittedFont = CTFontCreateCopyWithAttributes(heightFont, CTFontGetSize(heightFont) * widthScale, nil, nil)
         context.saveGState()
         defer { context.restoreGState() }
         context.clip(to: rect)
         context.setFillColor(AppTheme.Background.surface.cgColor)
         context.fill(rect)
         context.textMatrix = .identity
-        context.textPosition = CGPoint(x: rect.minX + AppTheme.Spacing.xs,
+        context.textPosition = CGPoint(x: rect.minX + horizontalInset,
             y: rect.midY - (CTFontGetAscent(fittedFont) - CTFontGetDescent(fittedFont)) / 2)
-        CTLineDraw(makeLine(fittedFont), context)
+        CTLineDraw(makeLine(text, fittedFont), context)
     }
 
     private enum Projection {

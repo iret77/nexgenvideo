@@ -112,14 +112,17 @@ def prepare_runloop_probe(evidence, command):
         receipt["compileExitCode"] = result.returncode
         if result.returncode != 0 or not library.is_file():
             raise RuntimeError("The runloop probe could not be compiled; the original test command will run")
-        architecture_command = ["xcrun", "lipo", str(library), "-verify_arch", "arm64", "arm64e"]
+        architecture_command = ["xcrun", "lipo", "-archs", str(library)]
         receipt["architectureVerificationCommand"] = architecture_command
-        with (folder / "architectures.log").open("wb") as log:
-            architecture = subprocess.run(architecture_command, stdin=subprocess.DEVNULL,
-                                          stdout=log, stderr=log, timeout=15, check=False)
+        architecture = subprocess.run(architecture_command, stdin=subprocess.DEVNULL,
+                                      capture_output=True, text=True, timeout=15, check=False)
+        (folder / "architectures.log").write_text(architecture.stdout + architecture.stderr)
         receipt["architectureVerificationExitCode"] = architecture.returncode
         if architecture.returncode != 0:
-            raise RuntimeError("The runloop probe does not contain both requested architecture slices")
+            raise RuntimeError("The runloop probe architectures could not be inspected")
+        receipt["architectures"] = architecture.stdout.split()
+        if set(receipt["architectures"]) != {"arm64", "arm64e"}:
+            raise RuntimeError("The runloop probe must contain exactly the arm64 and arm64e slices")
         resolved = subprocess.run(["xcrun", "--find", "swift"], stdin=subprocess.DEVNULL,
                                   capture_output=True, text=True, timeout=15, check=False)
         (folder / "resolve-swift.log").write_text(resolved.stdout + resolved.stderr)

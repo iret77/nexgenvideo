@@ -12,7 +12,7 @@ import capture_render_review_test_diagnostic as diagnostic
 
 class RunloopProbePreparationTests(unittest.TestCase):
     def test_unavailable_preparation_preserves_original_single_test_command(self):
-        for failure in ("foreign-dyld", "compile", "architecture", "manifest", "timeout", "missing-loader", "wrong-pid", "malformed-loader", "null-executable", "numeric-executable", "list-executable", "object-executable"):
+        for failure in ("foreign-dyld", "compile", "architecture", "thin-arm64", "thin-arm64e", "unknown-architecture", "manifest", "timeout", "missing-loader", "wrong-pid", "malformed-loader", "null-executable", "numeric-executable", "list-executable", "object-executable"):
             with self.subTest(failure=failure):
                 receipt, overrides, calls, command = self.prepare(failure)
                 self.assertEqual(receipt["status"], "unavailable")
@@ -54,7 +54,8 @@ class RunloopProbePreparationTests(unittest.TestCase):
         self.assertEqual([compile_command[index + 1] for index, arg in enumerate(compile_command) if arg == "-arch"],
                          ["arm64", "arm64e"])
         architecture = next(call[1] for call in calls if call[0] == "architecture")
-        self.assertEqual(architecture[3:], ["-verify_arch", "arm64", "arm64e"])
+        self.assertEqual(architecture[2], "-archs")
+        self.assertEqual(receipt["architectures"], ["arm64", "arm64e"])
         manifest = next(call[1] for call in calls if call[0] == "manifest")
         self.assertEqual(manifest[1:3], ["package", "--package-path"])
         self.assertEqual(manifest[-3:], ["--manifest-cache", "none", "dump-package"])
@@ -93,7 +94,10 @@ class RunloopProbePreparationTests(unittest.TestCase):
                     return subprocess.CompletedProcess(arguments, 1 if failure == "compile" else 0)
                 if "lipo" in arguments:
                     calls.append(("architecture", arguments))
-                    return subprocess.CompletedProcess(arguments, 1 if failure == "architecture" else 0)
+                    architectures = {"thin-arm64": "arm64\n", "thin-arm64e": "arm64e\n",
+                                     "unknown-architecture": "arm64 unknown(16777228,2)\n"}
+                    return subprocess.CompletedProcess(arguments, 1 if failure == "architecture" else 0,
+                                                       architectures.get(failure, "arm64 arm64e\n"), "")
                 return subprocess.CompletedProcess(arguments, 0, str(swift) + "\n", "")
 
             class ManifestProcess:

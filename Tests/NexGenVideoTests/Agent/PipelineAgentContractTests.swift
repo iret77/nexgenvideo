@@ -30,6 +30,10 @@ struct PipelineAgentContractTests {
         return (dataRoot, cleanup)
     }
 
+    private func phaseInstructions(_ phase: String) throws -> String {
+        try CurrentMusicvideoFixture.load().instructions(for: phase)
+    }
+
     @Test("every musicvideo phase has one order, gate, instructions, and executable path")
     func completeContract() throws {
         let contract = try CurrentMusicvideoFixture.load()
@@ -138,13 +142,14 @@ struct PipelineAgentContractTests {
 
     @Test("aggregate phase approval is owned only by the gate card")
     func aggregateApprovalHasOneOwner() throws {
-        for name in [
-            "analysis", "brief", "production-design", "treatment",
-            "storyboard", "bible", "shotlist", "sanity", "frame", "render",
-        ] {
-            let document = try PackKnowledge.phaseDoc(name: name)
-            #expect(document.contains("approve_gate"), "\(name) must request its gate")
-            #expect(document.contains("directly"), "\(name) must route directly to the gate card")
+        let contract = try CurrentMusicvideoFixture.load()
+        #expect(contract.order == CurrentMusicvideoFixture.phases)
+        for phase in contract.order {
+            let document = try contract.instructions(for: phase)
+            #expect(document.contains("approve_gate"), "\(phase) must request its gate")
+            #expect(document.contains("directly"), "\(phase) must route directly to the gate card")
+            #expect(document.contains("The native gate card alone records approval"))
+            #expect(document.contains("a show_dialog answer never approves this phase"))
             #expect(!document.contains("`approve` → set the gate"))
             #expect(!document.contains("On `approve`: set the gate"))
             #expect(!document.contains("- `approve_gate`"))
@@ -153,7 +158,7 @@ struct PipelineAgentContractTests {
 
     @Test("approved Sanity rewinds before re-audit")
     func sanityResumeRewindsBeforeRunner() throws {
-        let document = try PackKnowledge.phaseDoc(name: "sanity")
+        let document = try phaseInstructions("sanity")
         let resume = try #require(document.range(
             of: "On `re-audit` → first call"
         ))
@@ -170,7 +175,7 @@ struct PipelineAgentContractTests {
 
     @Test("Sanity accepts the gate-approved macOS 26 rhythm path")
     func sanityUsesAnalysisProvenanceContract() throws {
-        let document = try PackKnowledge.phaseDoc(name: "sanity")
+        let document = try phaseInstructions("sanity")
         #expect(document.contains("`beat-transformer` is the"))
         #expect(document.contains("canonical macOS 26 path"))
         #expect(document.contains("`native_dsp` and `neural_beat_grid` both"))
@@ -180,7 +185,7 @@ struct PipelineAgentContractTests {
 
     @Test("Brief-owned production decisions are settled before approval")
     func briefOwnsDeferredDecisions() throws {
-        let document = try PackKnowledge.phaseDoc(name: "brief")
+        let document = try phaseInstructions("brief")
         #expect(document.contains("finish before Brief approval"))
         #expect(document.contains("A later change requires an explicit Brief rewind"))
         #expect(!document.contains("budget_stop_eur"))
@@ -194,8 +199,8 @@ struct PipelineAgentContractTests {
 
     @Test("Frames and Render never stop for spend")
     func spendNeverStopsFramesOrRender() throws {
-        let frame = try PackKnowledge.phaseDoc(name: "frame")
-        let render = try PackKnowledge.phaseDoc(name: "render")
+        let frame = try phaseInstructions("frames")
+        let render = try phaseInstructions("render")
         for document in [frame, render] {
             #expect(document.contains("is a display, never a limit"))
             #expect(!document.contains("over_budget"))
@@ -207,7 +212,7 @@ struct PipelineAgentContractTests {
 
     @Test("Bible instructions keep approved images as identity truth")
     func bibleDoesNotRequestRecognitionTrait() throws {
-        let document = try PackKnowledge.phaseDoc(name: "bible")
+        let document = try phaseInstructions("bible")
         #expect(document.contains("Do not ask for a single “recognition trait”"))
         #expect(document.contains("Canonical approved character"))
         #expect(!document.contains("frame builder appends it"))
@@ -225,14 +230,14 @@ struct PipelineAgentContractTests {
             "fal:fal-ai/gpt-image-2.5/sunburst/text-to-image",
             "fal:fal-ai/gpt-image-2.5/sunburst/edit",
         ]))
-        for phase in ["brief", "bible", "frame"] {
-            let document = try PackKnowledge.phaseDoc(name: phase)
+        for phase in ["brief", "bible", "frames"] {
+            let document = try phaseInstructions(phase)
             #expect(document.contains("Flare"), "\(phase) must name the default route")
             #expect(document.contains("Sunburst"), "\(phase) must name the precision route")
             #expect(document.contains("list_models"), "\(phase) must use the live catalog")
         }
-        let bible = try PackKnowledge.phaseDoc(name: "bible")
-        let frame = try PackKnowledge.phaseDoc(name: "frame")
+        let bible = try phaseInstructions("bible")
+        let frame = try phaseInstructions("frames")
         #expect(bible.contains("does not approve a sheet"))
         #expect(frame.contains("vision audit still decide acceptance"))
     }
@@ -439,13 +444,11 @@ struct PipelineAgentContractTests {
 
     @Test("current-phase tools require an explicit rewind after completion")
     func completedPipelineRejectsCurrentPhaseTools() throws {
-        try CurrentMusicvideoFixture.load()
+        let contract = try CurrentMusicvideoFixture.load()
+        #expect(contract.order == CurrentMusicvideoFixture.phases)
         let (dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
-        let registry = PackCatalog.registry(activePack: "musicvideo")
-        let order = PhaseOrder.merged(
-            packPlacements: registry.phasePlacements
-        )
+        let order = contract.order
         let store = YAMLArtifactStore(dataRoot: dataRoot)
         var gates = try store.load(
             Gates.self,
@@ -455,6 +458,7 @@ struct PipelineAgentContractTests {
             GatesOperations.approve(&gates, phase: phase)
         }
         try store.save(gates, to: PipelineLayout.gatesFile)
+        #expect(try ProjectStateBuilder.buildSnapshot(dataRoot: dataRoot, order: order).nextPhase == nil)
 
         do {
             _ = try PipelineAgentHarness().guardCurrentPhaseWork(

@@ -265,7 +265,8 @@ extension EditorViewModel {
         undoManager?.setActionName(actionName)
     }
 
-    func applyMediaLibrarySnapshot(_ snapshot: MediaLibraryUndoSnapshot) {
+    @discardableResult
+    func applyMediaLibrarySnapshot(_ snapshot: MediaLibraryUndoSnapshot) -> [Task<Bool, Never>] {
         let previousIDs = Set(mediaAssets.map(\.id))
         timeline = snapshot.timeline
         mediaManifest = snapshot.mediaManifest
@@ -283,9 +284,11 @@ extension EditorViewModel {
         videoEngine?.activateTab(activePreviewTab)
         refreshMissingMediaCache()
         notifyTimelineChanged()
+        var finalizations: [Task<Bool, Never>] = []
         for asset in mediaAssets where !previousIDs.contains(asset.id) && asset.generationStatus == .none && !isMediaOffline(asset.id) {
-            Task { await finalizeImportedAsset(asset) }
+            finalizations.append(Task { await finalizeImportedAsset(asset) })
         }
+        return finalizations
     }
 }
 

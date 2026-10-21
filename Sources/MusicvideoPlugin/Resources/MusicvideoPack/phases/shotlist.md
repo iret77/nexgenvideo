@@ -1,5 +1,7 @@
 # Shot List
 
+After this phase’s required work and independent checks pass, request phase approval directly through approve_gate. The native gate card alone records approval; a show_dialog answer never approves this phase.
+
 Use write_shotlist with the normalized proposal contract. Preserve every approved planned-shot UUID, Storyboard action, framing, timing, source selection and native input range. Do not author legacy sNNN Shot List rows or a second editable timeline.
 
 After write_bible, call prepare_production_assets for actual project-local Bible/Design images, source media or verified scene geometry. It validates decoded files and returns real content IDs plus expectedDraftFingerprint and expectedAssetGraphFingerprint. Native obligation assignment is an explicit user action: wait for every required obligation to have its real selected asset and receipt, or its explicitly permitted skip. Do not invent confirmations or substitute a free-text subject for an asset.

@@ -39,6 +39,19 @@ struct GateApprovalCard: View {
         approval.isRewind ? "Inspect the approved work before allowing a revision." : "Review in \(reviewDestination) before approving."
     }
 
+    private var reviewStatusText: String {
+        if isBlocked { return "\(approval.phaseLabel) is still being processed. Approval is not available yet." }
+        if review.isChecking {
+            return approval.isRewind ? "Checking whether a revision can start…"
+                : "Checking whether \(approval.phaseLabel) can be approved…"
+        }
+        guard review.isReady else {
+            return review.blocker ?? "Approval is not available. Request a new approval."
+        }
+        return approval.isRewind ? "Confirm only if you want to revise this approved work."
+            : "Review \(approval.phaseLabel), then approve here to continue."
+    }
+
     var body: some View {
         Group {
             if compact { compactCard }
@@ -97,8 +110,8 @@ struct GateApprovalCard: View {
             }
             if isBlocked {
                 Text("Finish the running phase before approving.").foregroundStyle(AppTheme.Status.warningColor)
-            } else if let blocker = review.blocker {
-                Text(blocker).foregroundStyle(AppTheme.Text.secondaryColor)
+            } else if !review.isReady {
+                Text(reviewStatusText).foregroundStyle(AppTheme.Text.secondaryColor)
             }
             if let error { Text(error).foregroundStyle(AppTheme.Status.errorColor) }
         }
@@ -116,12 +129,6 @@ struct GateApprovalCard: View {
             .scrollBounceBehavior(.basedOnSize)
             openButton
                 .buttonStyle(.capsule(.secondary, size: .regular))
-            if let blocker = review.blocker, !isBlocked {
-                Text(blocker)
-                    .interfaceFont(size: AppTheme.Typography.ui)
-                    .foregroundStyle(AppTheme.Text.secondaryColor)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
             footerRow
         }
         .padding(AppTheme.Spacing.md)
@@ -209,10 +216,7 @@ struct GateApprovalCard: View {
                     }
                 }
             }
-            Text(approval.isRewind ? (review.isReady ? "Confirm only if you want to revise this approved work." : "Checking whether a revision can start…")
-                 : isBlocked ? "\(approval.phaseLabel) is still being processed. Approval is not available yet."
-                 : review.isReady ? "Review \(approval.phaseLabel), then approve here to continue."
-                 : "Checking whether \(approval.phaseLabel) can be approved…")
+            Text(reviewStatusText)
                 .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .fixedSize(horizontal: false, vertical: true)
@@ -289,7 +293,7 @@ struct GateApprovalCard: View {
                 .disabled(isWorking || isBlocked || !review.isReady)
                 .background {
                     acceptanceProbe("approve", enabled: !(isWorking || isBlocked || !review.isReady),
-                        text: review.isReady ? nil : review.blocker)
+                        text: review.isChecking ? "Checking the current phase…" : review.isReady ? nil : review.blocker)
                 }
                 .accessibilityHint(
                     isBlocked ? "Finish the running phase before approving" : ""

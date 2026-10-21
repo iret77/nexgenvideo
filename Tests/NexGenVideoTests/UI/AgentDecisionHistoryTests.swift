@@ -43,6 +43,12 @@ struct AgentDecisionHistoryTests {
 
     @Test func multiClipRevisionNamesEveryTargetInsteadOfOnlyTheirCount() throws {
         let editor = EditorViewModel(agentService: AgentService(refreshBackendStatusOnInit: false))
+        editor.setWorkspaceFocus(.edit)
+        editor.timeline = Timeline(tracks: [Track(id: "video", type: .video, clips: [
+            Clip(id: "clip-a", mediaRef: "source-a", startFrame: 0, durationFrames: 90),
+            Clip(id: "clip-b", mediaRef: "source-b", startFrame: 90, durationFrames: 90),
+        ])])
+        editor.selectPreviewTab(id: PreviewTab.timeline.id)
         editor.selectedClipIds = ["clip-b", "clip-a"]
         let task = try #require(editor.selectedObjectRevisionTask)
         #expect(task.prompt.contains("timeline clip IDs clip-a, clip-b"))
@@ -97,6 +103,10 @@ struct AgentDecisionHistoryTests {
         let editor = EditorViewModel(agentService: service)
         service.loadSessions(from: nil)
         editor.setWorkspaceFocus(.edit)
+        editor.timeline = Timeline(tracks: [Track(id: "video", type: .video, clips: [
+            Clip(id: "original-clip", mediaRef: "source", startFrame: 0, durationFrames: 90),
+        ])])
+        editor.selectPreviewTab(id: PreviewTab.timeline.id)
         editor.currentFrame = 42
         editor.inspectedObject = .clip("original-clip")
         let task = AgentTask(title: "Revise", systemImage: "pencil", prompt: "Revise this clip.")
@@ -105,7 +115,13 @@ struct AgentDecisionHistoryTests {
         editor.inspectedObject = .clip("different-clip")
         editor.currentFrame = 7
         #expect(staged.originContext?.contains("original-clip") == true)
-        #expect(staged.originContext?.contains("timeline frame: 42") == true)
+        let hint = try #require(staged.originContext)
+        let start = try #require(hint.firstIndex(of: "{"))
+        let end = try #require(hint.lastIndex(of: "}"))
+        let origin = try JSONDecoder().decode(AgentTaskSelectionContext.self, from: Data(hint[start...end].utf8))
+        #expect(origin.timelineFrame == 42)
+        #expect(origin.workspace == "edit")
+        #expect(origin.clips.map(\.clipID) == ["original-clip"])
         #expect(staged.originContext?.contains("different-clip") == false)
         let restored = try JSONDecoder().decode(AgentTask.self, from: JSONEncoder().encode(staged))
         #expect(restored == staged)

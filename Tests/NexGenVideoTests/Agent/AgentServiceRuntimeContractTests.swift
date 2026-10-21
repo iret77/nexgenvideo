@@ -182,7 +182,7 @@ struct AgentServiceRuntimeContractTests {
         let editor = EditorViewModel(agentService: service)
         defer { service.cancel() }
         #expect(editor.continueProductionPhase("bible"))
-        #expect(AgentTaskActivityPresentation(task: service.currentTaskActivity).title == "Continue Bible")
+        #expect(AgentTaskActivityPresentation(task: service.currentTaskActivity).title == "Continue References")
     }
 
     @Test("both backends receive the same canonical messages and host-owned context")
@@ -259,7 +259,6 @@ struct AgentServiceRuntimeContractTests {
         #expect(claudeRequest.currentMessage == .init(
             role: .user,
             content: [
-                .text("<app-context>No format plugin is active — this project uses the generic production workflow.</app-context>"),
                 .text("Continue"),
             ]
         ))
@@ -299,7 +298,6 @@ struct AgentServiceRuntimeContractTests {
         #expect(turn.currentMessage == .init(
             role: .user,
             content: [
-                .text("<app-context>No format plugin is active — this project uses the generic production workflow.</app-context>"),
                 .text("Private kickoff"),
             ]
         ))

@@ -1,5 +1,7 @@
 # Treatment
 
+After this phase’s required work and independent checks pass, request phase approval directly through approve_gate. The native gate card alone records approval; a show_dialog answer never approves this phase.
+
 Use write_treatment to publish Treatment and its causality v2 bundle together. Keep world-time before/parallel/unknown relations separate from presentation order. Resolve material canon alternatives before approval.
 
 ## Directorial development

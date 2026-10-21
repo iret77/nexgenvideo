@@ -105,21 +105,30 @@ struct CaptionTransactionTests {
     @Test func taskCancellationNormalizesWrappedFrameworkFailureAndPublishesNothing() async throws {
         let (editor, _) = try fixture()
         let before = editor.timeline, seen = Observation()
+        let (entered, entry) = AsyncStream<URL>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        let (suspension, release) = AsyncStream<Void>.makeStream()
+        defer { entry.finish(); release.finish() }
         editor.captionTranscriptionClient = .init(transcribe: { url, _, _, _, _ in
             seen.url = url
-            do { try await Task.sleep(for: .seconds(30)) }
-            catch { throw TranscriptionError.analysisFailed("Framework cancelled the analysis") }
-            return transcript()
+            entry.yield(url)
+            for await _ in suspension {}
+            throw TranscriptionError.analysisFailed("Framework cancelled the analysis")
         }, supportedLocales: { [] })
-        let task = Task { try await editor.generateCaptions(for: .init(sourceClipIds: ["voice"])) }
+        let task = Task {
+            defer { entry.finish() }
+            return try await editor.generateCaptions(for: .init(sourceClipIds: ["voice"]))
+        }
         defer { task.cancel() }
-        let deadline = ContinuousClock.now.advanced(by: .seconds(10))
-        while seen.url == nil && ContinuousClock.now < deadline { await Task.yield() }
-        _ = try #require(seen.url)
+        var entries = entered.makeAsyncIterator()
+        let started = await withTaskCancellationHandler {
+            await entries.next()
+        } onCancel: { task.cancel() }
+        if started == nil { _ = try await task.value }
+        let url = try #require(started)
+        #expect(seen.url == url)
         task.cancel()
         await #expect(throws: CancellationError.self) { try await task.value }
         #expect(editor.timeline == before)
-        let url = try #require(seen.url)
         #expect(!FileManager.default.fileExists(atPath: url.deletingLastPathComponent().path))
     }
 

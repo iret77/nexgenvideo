@@ -1,5 +1,7 @@
 # Render Review
 
+After this phase’s required work and independent checks pass, request phase approval directly through approve_gate. The native gate card alone records approval; a show_dialog answer never approves this phase.
+
 Call get_render_review_inputs once after current Frames approval. It prepares the complete host review manifest and native usage decision, then suspends this conversation. The host delivers actual inspection images, selected source input ranges, final compiled prompt text/IR, exact route snapshots and honest deferred predecessor recipes in fresh, bounded child contexts. A valid phase approval can cover the complete initial review; an interrupted review resumes only through an explicit native action.
 
 In a child context, use only get_render_review_page followed by write_render_review_page in a later model response. Record one specific observation for every supplied item, including labelled text segments and paired shot relations. The host preserves every original and additional finding, combines the complete page set through bounded summaries, and publishes only the verified aggregate. Do not call write_render_review from ordinary chat. The ordinary runtime does not expose this compatibility writer, and its dispatcher refuses model submissions; the host publishes the verified aggregate. Do not invent a reviewer, model run or media observation. Text synthesis is not an additional visual inspection.

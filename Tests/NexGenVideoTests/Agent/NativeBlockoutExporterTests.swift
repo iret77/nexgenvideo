@@ -10,6 +10,15 @@ import Testing
 struct NativeBlockoutExporterTests {
     @Test("exports metric shapes and a camera path as playable video")
     func exportsPlayableGraybox() async throws {
+        try await verifyGraybox(width: 320, height: 180, evidenceName: "graybox")
+    }
+
+    @Test("collinear viewing direction and movement remain visible at normal export size")
+    func collinearLookAndPathRemainVisibleAtNormalExportSize() async throws {
+        try await verifyGraybox(width: 1280, height: 720, evidenceName: "graybox-1280x720")
+    }
+
+    private func verifyGraybox(width: Int, height: Int, evidenceName: String) async throws {
         let output = FileManager.default.temporaryDirectory
             .appendingPathComponent("blockout-\(UUID().uuidString).mov")
         defer { try? FileManager.default.removeItem(at: output) }
@@ -60,8 +69,8 @@ struct NativeBlockoutExporterTests {
             shapes: [shape],
             request: BlockoutRequestV1(
                 mode: .native,
-                width: 320,
-                height: 180,
+                width: width,
+                height: height,
                 fps: 4,
                 durationSeconds: 1
             ),
@@ -72,13 +81,13 @@ struct NativeBlockoutExporterTests {
             .map { URL(fileURLWithPath: $0, isDirectory: true) }
         if let evidence {
             try FileManager.default.createDirectory(at: evidence, withIntermediateDirectories: true)
-            try FileManager.default.copyItem(at: output, to: evidence.appendingPathComponent("graybox.mov"))
+            try FileManager.default.copyItem(at: output, to: evidence.appendingPathComponent(evidenceName + ".mov"))
         }
         let asset = AVURLAsset(url: output)
         let track = try #require(
             try await asset.loadTracks(withMediaType: .video).first
         )
-        #expect(try await track.load(.naturalSize) == CGSize(width: 320, height: 180))
+        #expect(try await track.load(.naturalSize) == CGSize(width: CGFloat(width), height: CGFloat(height)))
         #expect(try await asset.load(.duration).seconds >= 0.75)
 
         let generator = AVAssetImageGenerator(asset: asset)
@@ -87,7 +96,7 @@ struct NativeBlockoutExporterTests {
         let image = try await generator.image(at: .zero).image
         if let evidence {
             let destination = try #require(CGImageDestinationCreateWithURL(
-                evidence.appendingPathComponent("graybox.png") as CFURL,
+                evidence.appendingPathComponent(evidenceName + ".png") as CFURL,
                 UTType.png.identifier as CFString, 1, nil
             ))
             CGImageDestinationAddImage(destination, image, nil)
@@ -96,5 +105,31 @@ struct NativeBlockoutExporterTests {
         let bitmap = NSBitmapImageRep(cgImage: image)
         let pixel = try #require(bitmap.colorAt(x: image.width * 3 / 4, y: image.height * 3 / 4))
         #expect(pixel.brightnessComponent > 0.4)
+        #expect(simultaneousLookAndPathColumns(in: bitmap) >= 3 * max(1, width / 320))
+    }
+
+    private func simultaneousLookAndPathColumns(in bitmap: NSBitmapImageRep) -> Int {
+        func components(_ x: Int, _ y: Int) -> (CGFloat, CGFloat, CGFloat)? {
+            guard y >= 0, y < bitmap.pixelsHigh,
+                  let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { return nil }
+            return (color.redComponent, color.greenComponent, color.blueComponent)
+        }
+        func travel(_ x: Int, _ y: Int) -> Bool {
+            guard let (red, green, blue) = components(x, y) else { return false }
+            return min(red, green, blue) > 0.8
+        }
+        let pixelScale = max(1, bitmap.pixelsWide / 320)
+        var consecutive = 0, longest = 0
+        for x in (bitmap.pixelsWide / 3)..<(bitmap.pixelsWide / 2) {
+            let shared = ((bitmap.pixelsHigh / 2)..<bitmap.pixelsHigh).contains { y in
+                guard let (red, green, blue) = components(x, y),
+                      blue - red > 0.1, green - red > 0.07 else { return false }
+                return (2 * pixelScale...4 * pixelScale).contains { travel(x, y - $0) }
+                    && (2 * pixelScale...4 * pixelScale).contains { travel(x, y + $0) }
+            }
+            consecutive = shared ? consecutive + 1 : 0
+            longest = max(longest, consecutive)
+        }
+        return longest
     }
 }

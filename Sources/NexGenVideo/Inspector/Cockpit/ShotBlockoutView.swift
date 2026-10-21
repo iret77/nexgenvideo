@@ -74,7 +74,7 @@ struct ShotBlockoutView: View {
                     Button("Create plan/elevation MOV") { attach(imported: nil) }
                         .buttonStyle(InlineActionButtonStyle()).disabled(!active || shot?.camera.spatialState == nil)
                         .reviewAcceptanceProbe("shot.blockout.plan", state: active && shot?.camera.spatialState != nil)
-                    Text("Elevation is above Plan. Matching numbers identify the same location. Dashed lines show camera movement; solid arrows show camera direction. The diagram shows bounding boxes, not perspective or appearance, and is not sent to a model.")
+                    Text("Elevation shows X/Y above Plan's X/Z. Matching numbers identify the same location. Solid Look lines and triangular markers show viewing direction; dashed Path lines show camera movement. A circle has no projected heading. World-axis bounding boxes may appear edge-on. The diagrams show neither perspective nor appearance and are not sent to a model.")
                         .foregroundStyle(AppTheme.Text.secondaryColor)
                     AppDivider()
                     Button("Choose blockout MOV…") { importing = true }.buttonStyle(InlineActionButtonStyle()).disabled(!active || timing == nil)

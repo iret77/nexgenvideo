@@ -1,14 +1,20 @@
 # Bible
 
+After this phase’s required work and independent checks pass, request phase approval directly through approve_gate. The native gate card alone records approval; a show_dialog answer never approves this phase.
+
 Use extract_scene3d_povs and write_bible to fulfill the approved draft obligations with actual identity, appearance and reference evidence. compile_prompt, generate_image, prepare_generation_batch and import_media remain subject to native spend consent. Never rewrite the approved draft or mislabel geometric Clay evidence as identity or generated-image provenance.
 
 After write_bible, use prepare_production_assets to validate actual approved Bible/Design assets, source media and verified geometry for the technical draft obligations. The host derives content IDs and returns exact fingerprints. Native obligation assignment records which real asset fulfills each role; the agent cannot choose an identity/source range, forge its confirmation or accept an optional skip. This preparation is a supporting sidecar, not Shot List approval.
 
 ## Demand and identity
 
+Canonical approved character and location images are the identity truth. Do not ask for a single “recognition trait” or replace inspected identity references with a textual shortcut. Preserve their exact provenance and the native confirmed source selection.
+
 The approved Shot Planning obligations determine which entities, views, states and geometry are needed. Reuse valid, visually inspected assets on resume; generate only missing demanded views. A real missing story/shot obligation requires rewind to its owner, not an ad-hoc figure or silently relaxed requirement. Keep Character, Ensemble, Location, Prop, Look and state-variant meanings distinct. Native confirmed references establish actual identity; prose alone does not secure it.
 
 Maintain brief.visual_medium_notes in the look, plus actual approved palette/lighting and sourced director-pattern guidance. Design moodboards remain style inspiration rather than Character/Location identity anchors. A real Design lighting anchor may guide sheet generation. Location sheets should depict the requested architecture/crop without incidental performers. Record visible zone coverage and a proportion master where repeated scale needs it.
+
+Use list_models with the currently enabled providers before choosing an image offering. When available and suitable, GPT Image 2.5 Flare is the default for ordinary images; reserve Sunburst for precision-critical work with an explicit reason. Otherwise choose another executable offering with the required reference, ratio and output capabilities; a model name never proves availability. A model choice does not approve a sheet; inspect the actual image and retain its independent native approval.
 
 For each missing sheet choose the actual available image offering, compile its concrete intent, and pass the returned token and exact reference set unchanged to generation. Anchor related views to the inspected master and actual selected identity references. Preserve true state variants through their canonical inheritance contract; do not blend inconsistent candidates. Native batch consent may cover independent views together; dependent views wait for their master. Inspect completed images and recover failed/declined requests visibly. No guessed price or spend target stops the phase.
 

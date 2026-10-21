@@ -267,8 +267,11 @@ struct GateApprovalTests {
 
     @Test("an unknown embedded chat header is treated as external MCP")
     func unknownEmbeddedChatCannotClaimResumption() async throws {
-        let (h, dataRoot, cleanup) = try scaffold()
-        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let (h, dataRoot, cleanup) = try scaffold(openProject: true)
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
 
         let result = await h.executor.execute(
             name: "approve_gate",
@@ -285,8 +288,11 @@ struct GateApprovalTests {
 
     @Test("approve_gate returns approval_pending without waiting or writing")
     func toolReturnsPending() async throws {
-        let (h, dataRoot, cleanup) = try scaffold()
-        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let (h, dataRoot, cleanup) = try scaffold(openProject: true)
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
 
         let result = await h.runRaw(
             "approve_gate",
@@ -312,8 +318,11 @@ struct GateApprovalTests {
 
     @Test("a pending gate records checked without recording approval")
     func pendingGateRecordsCheckedState() async throws {
-        let (h, dataRoot, cleanup) = try scaffold()
-        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let (h, dataRoot, cleanup) = try scaffold(openProject: true)
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
         h.editor.agentService.newChat()
         let sessionID = try #require(h.editor.agentService.currentSessionId)
         h.editor.agentService.messages = [AgentMessage(
@@ -338,8 +347,11 @@ struct GateApprovalTests {
 
     @Test("set_gate_state approval request does not mark the project edited")
     func setStateApprovalRequestDoesNotDirty() async throws {
-        let (h, dataRoot, cleanup) = try scaffold()
-        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let (h, dataRoot, cleanup) = try scaffold(openProject: true)
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
         var dirtied = 0
         h.editor.onPipelineChanged = { dirtied += 1 }
 
@@ -358,8 +370,11 @@ struct GateApprovalTests {
 
     @Test("set_gate_state immediate write marks the project edited once")
     func setStateImmediateWriteDirtiesOnce() async throws {
-        let (h, dataRoot, cleanup) = try scaffold()
-        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let (h, dataRoot, cleanup) = try scaffold(openProject: true)
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
         var dirtied = 0
         h.editor.onPipelineChanged = { dirtied += 1 }
 
@@ -375,8 +390,11 @@ struct GateApprovalTests {
 
     @Test("set_gate_state cannot mark an unreached phase for revision")
     func setStateRejectsFuturePhase() async throws {
-        let (h, dataRoot, cleanup) = try scaffold()
-        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let (h, dataRoot, cleanup) = try scaffold(openProject: true)
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
 
         let result = await h.runRaw("set_gate_state", args: [
             "project_dir": dataRoot.path,
@@ -405,6 +423,13 @@ struct GateApprovalTests {
             dataRoot: liveRoot
         ))
         try FileManager.default.removeItem(at: liveRoot)
+        let review = GateReviewModel()
+        #expect(review.isChecking)
+        await review.refresh(approval: request.approval, editor: h.editor)
+        #expect(!review.isChecking)
+        #expect(!review.isReady)
+        #expect(review.readyApprovalID == nil)
+        #expect(review.blocker != nil)
         let result = await service.resolveGate(.approved, approvalID: service.pendingGateApproval?.id ?? "missing")
 
         #expect(result?.isError == true)
@@ -415,8 +440,11 @@ struct GateApprovalTests {
 
     @Test("a competing approval never records checked for the requested phase")
     func competingApprovalDoesNotRecordChecked() async throws {
-        let (h, dataRoot, cleanup) = try scaffold()
-        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let (h, dataRoot, cleanup) = try scaffold(openProject: true)
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
         let service = h.editor.agentService
         service.newChat()
         let sessionID = try #require(service.currentSessionId)
@@ -445,8 +473,11 @@ struct GateApprovalTests {
 
     @Test("gate structure failure is agent correction, not wait-and-retry")
     func gateStructureFailureIsAgentCorrection() async throws {
-        let (h, dataRoot, cleanup) = try scaffold()
-        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let (h, dataRoot, cleanup) = try scaffold(openProject: true)
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
         let service = h.editor.agentService
         service.newChat()
         let sessionID = try #require(service.currentSessionId)
@@ -527,8 +558,11 @@ struct GateApprovalTests {
 
     @Test("a gate decision suspends the tool batch before later calls execute")
     func gateSuspendsRemainingToolBatch() async throws {
-        let (h, dataRoot, cleanup) = try scaffold()
-        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let (h, dataRoot, cleanup) = try scaffold(openProject: true)
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
         let service = h.editor.agentService
         service.newChat()
         let sessionID = try #require(service.currentSessionId)
@@ -697,20 +731,56 @@ struct GateApprovalTests {
         #expect(!service.hasPendingHostFollowUp)
     }
 
+    @Test("root-bound approvals reject unopened, foreign, or differently declared projects",
+          arguments: ["unopened", "foreign-root", "different-workflow"])
+    func rootedApprovalRequiresMatchingOpenedProject(scope: String) throws {
+        let (h, savedRoot, cleanup) = try scaffold()
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        var root = savedRoot
+        if scope != "unopened" { root = try h.openProject(dataRoot: savedRoot) }
+        var requestedRoot = root
+        if scope == "foreign-root" {
+            requestedRoot = try ProjectScaffold.initProject(
+                home: cleanup.appendingPathComponent("other", isDirectory: true), name: "other", mode: .beat)
+        }
+        let gatesURL = PipelineLayout.url(PipelineLayout.gatesFile, in: requestedRoot)
+        let before = try Data(contentsOf: gatesURL)
+        #expect(h.editor.declaredProductionContract == nil)
+
+        #expect(throws: ToolError.self) {
+            try h.editor.agentService.requestGateApproval(GateApproval(
+                phase: "project_init", dataRoot: requestedRoot,
+                declaredProductionContract: scope == "different-workflow" ? .current : nil))
+        }
+
+        #expect(h.editor.agentService.pendingGateApproval == nil)
+        #expect(try Data(contentsOf: gatesURL) == before)
+    }
+
     // MARK: - Tool outcome (approve writes, decline does not)
 
-    private func scaffold() throws -> (ToolHarness, URL, URL) {
+    private func scaffold(openProject: Bool = false) throws -> (ToolHarness, URL, URL) {
         let tmp = FileManager.default.temporaryDirectory
             .appendingPathComponent("gate-approval-\(UUID().uuidString)", isDirectory: true)
         let home = tmp.appendingPathComponent("proj", isDirectory: true)
         let dataRoot = try ProjectScaffold.initProject(home: home, name: "demo", mode: .beat)
-        return (ToolHarness(), dataRoot, tmp)
+        let harness = ToolHarness()
+        let root: URL
+        if openProject { root = try harness.openProject(dataRoot: dataRoot) }
+        else { root = dataRoot }
+        return (harness, root, tmp)
     }
 
     @Test("approve_gate declined leaves the gate unwritten and tells the agent to stay on the phase")
     func declineDoesNotWrite() async throws {
-        let (h, dataRoot, cleanup) = try scaffold()
-        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let (h, dataRoot, cleanup) = try scaffold(openProject: true)
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
         let dir = dataRoot.path
 
         // A decline wrote nothing, so it must NOT mark the document edited — otherwise the user is
@@ -734,8 +804,11 @@ struct GateApprovalTests {
 
     @Test("approve_gate approved writes the gate")
     func approveWrites() async throws {
-        let (h, dataRoot, cleanup) = try scaffold()
-        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let (h, dataRoot, cleanup) = try scaffold(openProject: true)
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
         let dir = dataRoot.path
 
         var dirtied = 0
@@ -755,8 +828,11 @@ struct GateApprovalTests {
 
     @Test("Project reload cannot replace an approval before its commit returns")
     func projectReloadDuringCommitKeepsDecisionOwnership() async throws {
-        let (h, dataRoot, cleanup) = try scaffold()
-        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let (h, dataRoot, cleanup) = try scaffold(openProject: true)
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
         let service = h.editor.agentService
         let requested = await h.runRaw("approve_gate", args: ["project_dir": dataRoot.path, "phase": "project_init"])
         #expect(!requested.isError)
@@ -783,8 +859,11 @@ struct GateApprovalTests {
 
     @Test("approval click keeps its card open when pipeline mutation owns the project")
     func approvalClickWaitsForPipelineMutation() async throws {
-        let (h, dataRoot, cleanup) = try scaffold()
-        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let (h, dataRoot, cleanup) = try scaffold(openProject: true)
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
         let args: [String: Any] = [
             "project_dir": dataRoot.path,
             "phase": "project_init",

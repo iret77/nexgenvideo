@@ -1,5 +1,7 @@
 # Shot Planning
 
+After this phase’s required work and independent checks pass, request phase approval directly through approve_gate. The native gate card alone records approval; a show_dialog answer never approves this phase.
+
 Use write_shot_planning_draft to refine approved framing with source mode, camera movement, blocking and typed obligations. Preserve every planned-shot UUID and editorial interval. Missing required media is an unresolved obligation, never a fake file path. No provider generation occurs in this phase.
 
 ## Production intent before asset creation

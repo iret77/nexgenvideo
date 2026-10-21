@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import NexGenEngine
 @testable import NexGenVideo
 
 /// Holds both editor and executor strongly so the executor's weak ref to the editor
@@ -40,6 +41,18 @@ final class ToolHarness {
             isModelEnabled: isModelEnabled,
             phaseMutationRecorder: phaseMutationRecorder
         )
+    }
+
+    func openProject(dataRoot: URL) throws -> URL {
+        let home = FrameInventory.projectHome(of: dataRoot)
+        try Fixtures.prepareProjectPackage(at: home, timeline: editor.timeline)
+        editor.projectURL = home
+        do {
+            return try #require(editor.workingRoot.flatMap { DataRootResolver.dataRoot(of: $0) })
+        } catch {
+            editor.releaseWorkingCopy()
+            throw error
+        }
     }
 
     /// Run a tool by name and decode the .ok text payload as JSON.

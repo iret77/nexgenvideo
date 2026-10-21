@@ -1,5 +1,7 @@
 # Phase A2 — Analysis
 
+After this phase’s required work and independent checks pass, request phase approval directly through approve_gate. The native gate card alone records approval; a show_dialog answer never approves this phase.
+
 > **Orchestrator instruction (main-session context).** Never spawn this
 > phase as a sub-agent — presenting a structured dialog (`show_dialog`) is a
 > main-session UI capability.

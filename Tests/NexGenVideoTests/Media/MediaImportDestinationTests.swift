@@ -52,9 +52,9 @@ struct MediaImportDestinationTests {
         editor.mediaManifest.entries = [asset.toManifestEntry(projectURL: editor.workingRoot)]
         let snapshot = editor.mediaLibraryUndoSnapshot()
         editor.mediaAssets = []; editor.mediaManifest.entries = []
-        editor.applyMediaLibrarySnapshot(snapshot)
-        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
-        while asset.sourceWidth == nil && ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        let finalizations = editor.applyMediaLibrarySnapshot(snapshot)
+        #expect(finalizations.count == 1)
+        for finalization in finalizations { #expect(await finalization.value) }
         #expect(editor.mediaAssets.first === asset)
         #expect(asset.sourceWidth == 2 && asset.sourceHeight == 2)
         #expect(editor.mediaManifest.entries.first?.sourceWidth == 2)

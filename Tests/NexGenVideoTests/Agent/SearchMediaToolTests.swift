@@ -40,7 +40,11 @@ struct SearchMediaToolTests {
         let silent = h.addAsset(type: .video); silent.hasAudio = false
         let obj = try await h.runOK("search_media", args: ["query": "budget", "scope": "spoken"]) as? [String: Any]
         #expect(obj?["spokenStatus"] as? String == "notIndexed")
-        #expect(obj?["spokenUnavailableMediaRefs"] as? [String] == [audio.id])
+        let unavailable = try #require(obj?["spokenUnavailableMediaRefs"] as? [String])
+        #expect(unavailable.count == 1)
+        let reference = try #require(unavailable.first)
+        let resolved = h.editor.mediaAssets.filter { $0.id.hasPrefix(reference) }
+        #expect(resolved.map(\.id) == [audio.id])
         #expect((obj?["spoken"] as? [Any])?.isEmpty == true)
         let onlySilent = try await h.runOK("search_media", args: ["query": "budget", "scope": "spoken", "mediaRef": silent.id]) as? [String: Any]
         #expect(onlySilent?["spokenStatus"] as? String == "ready")

@@ -1,6 +1,12 @@
 # Sanity
 
+After this phase’s required work and independent checks pass, request phase approval directly through approve_gate. The native gate card alone records approval; a show_dialog answer never approves this phase.
+
 Use run_sanity on the exact normalized production plan and current source/reference inputs. Findings retain their actual severity; do not invent a new coverage or budget limit.
+
+On `re-audit` → first call `rewind(project_dir, target_phase="sanity")` when the user explicitly requests a new audit of already approved Sanity, then call `run_sanity` on the current exact inputs. Renew the independent report and native approval; never run against an approved stale phase or silently clear its gate.
+
+`beat-transformer` is the canonical macOS 26 path. For that measured path, `native_dsp` and `neural_beat_grid` both require successful original stage diagnostics and the gate-verified track/grid provenance. Preserve the approved measured beat/downbeat data; a future system analyzer is not required for acceptance.
 
 ## Independent structural audit
 

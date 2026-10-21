@@ -1,6 +1,10 @@
 # Render
 
+After this phase’s required work and independent checks pass, request phase approval directly through approve_gate. The native gate card alone records approval; a show_dialog answer never approves this phase.
+
 Use run_phase, next_render_shot, record_render and assemble_timeline for the exact approved production package. compile_prompt and prepare_generation_batch prepare requests without spending. generate_video, generate_image and generate_audio require existing native batch or whole-phase spend consent. Bind the selected immutable predecessor Take, selection receipt and exact full-output end before submitting a continuation or native extension. Changed prompt, route, source or predecessor invalidates review before spend. Take selection and NLE assembly never rewrite approved Storyboard timing.
+
+The budget is a display, never a limit. Show proven money, provider credits and runs without known prices; missing prices or an exceeded display amount never stop this phase. Actual paid requests still require the existing native batch or whole-phase consent.
 
 Music Video uses the exact musicvideo-production/v2 extension from the approved projection. Condition performance shots with its native-exported phrase audio and exact sample range, never a guessed song snippet. Keep the original song once at timeline zero, suppress provider song audio and bind any declared additional audio layer to its actual project bytes. Prove minimum continuous performance coverage with the actual selected Takes/NLE placements. Multicam plans retain full-song timing; only the separately native-selected final output range trims the delivery, without silently changing source placements or rounding the exact song end.
 

@@ -58,15 +58,18 @@ enum StoryboardReviewBinding: String, Sendable {
 final class GateReviewModel {
     private(set) var isReady = false
     private(set) var readyApprovalID: String?
-    private(set) var blocker: String? = "Checking the current phase…"
+    private(set) var blocker: String?
     private var generation = 0
+    private(set) var isChecking = true
 
     func refresh(approval: GateApproval, editor: EditorViewModel) async {
         generation += 1
         let token = generation
+        isChecking = true
+        defer { if token == generation { isChecking = false } }
         isReady = false
         readyApprovalID = nil
-        blocker = "Checking the current phase…"
+        blocker = nil
         guard let root = editor.workingRoot,
               let dataRoot = DataRootResolver.dataRoot(of: root),
               approval.dataRoot?.standardizedFileURL == dataRoot.standardizedFileURL,

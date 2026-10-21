@@ -749,7 +749,8 @@ struct ProjectWorkingCopyTests {
         )
 
         #expect(editor.declaredPluginName == "musicvideo")
-        #expect(throws: ToolError.self) {
+        #expect(throws: PhaseContractError.registryMismatch(
+            "the project workflow differs from the trusted session declaration")) {
             try editor.pipelineAgentHarness.guardPhaseWork(
                 phase: "project_init",
                 dataRoot: dataRoot,

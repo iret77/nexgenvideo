@@ -1100,8 +1100,12 @@ struct WorkflowToolsTests {
 
     @Test("approve_gate, set_gate_state, and rewind round-trip through gates.yaml")
     func gateRoundTrip() async throws {
-        let (h, dataRoot, cleanup) = try scaffold()
-        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let (h, savedRoot, cleanup) = try scaffold()
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        let dataRoot = try h.openProject(dataRoot: savedRoot)
         let dir = dataRoot.path
 
         // Gates approve in order — project_init before brief. approve_gate now surfaces a user
@@ -1145,9 +1149,13 @@ struct WorkflowToolsTests {
 
     @Test("approve_gate is hard-blocked for analysis until a real artifact exists")
     func analysisGateHardBlocked() async throws {
-        let (h, dataRoot, cleanup) = try scaffold(enforceHardGates: true)
-        defer { try? FileManager.default.removeItem(at: cleanup) }
-        let binding = try activatePack("musicvideo", dataRoot: dataRoot)
+        let (h, savedRoot, cleanup) = try scaffold(enforceHardGates: true)
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        let binding = try activatePack("musicvideo", dataRoot: savedRoot)
+        let dataRoot = try h.openProject(dataRoot: savedRoot)
         try FileManager.default.createDirectory(
             at: dataRoot.appendingPathComponent("audio"),
             withIntermediateDirectories: true
@@ -2371,11 +2379,11 @@ struct WorkflowToolsTests {
         let binding = try activatePack("musicvideo", dataRoot: dataRoot)
         let store = YAMLArtifactStore(dataRoot: dataRoot)
         var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
-        let order = PhaseOrder.merged(
-            packPlacements: PackCatalog.registry(activePack: "musicvideo")
-                .phasePlacements
-        )
-        for phase in order.prefix(while: { $0 != "shotlist" }) {
+        let workflow = try #require(try PhaseContractRuntime.resolveWorkflow(
+            dataRoot: dataRoot, expectedPack: binding, expectedProductionContract: nil))
+        let order = try PhaseContractRuntime.order(workflow: workflow)
+        let planningIndex = try #require(order.firstIndex(of: "shot_planning"))
+        for phase in order[..<planningIndex] {
             GatesOperations.approve(&gates, phase: phase)
         }
         try store.save(gates, to: PipelineLayout.gatesFile)
@@ -2401,18 +2409,20 @@ struct WorkflowToolsTests {
         }
 
         try saveBrief(conceptType: .performance)
-        let performancePrompt = try #require(
-            try PipelineAgentHarness().runtimeContext(dataRoot: dataRoot, declaredPack: "musicvideo", declaredBinding: binding).instructions
-        )
+        let performanceContext = try PipelineAgentHarness().runtimeContext(
+            dataRoot: dataRoot, declaredPack: "musicvideo", declaredBinding: binding)
+        #expect(performanceContext.currentPhase == "shot_planning")
+        let performancePrompt = try #require(performanceContext.instructions)
         #expect(performancePrompt.contains("Core production profile: generative_film"))
         #expect(!performancePrompt.contains("Core production profile: narrative_storytelling"))
         #expect(performancePrompt.contains("Production library: film-craft-baseline/"))
         #expect(!performancePrompt.contains("execution_plan.has_start_end_states"))
 
         try saveBrief(conceptType: .narrative)
-        let narrativePrompt = try #require(
-            try PipelineAgentHarness().runtimeContext(dataRoot: dataRoot, declaredPack: "musicvideo", declaredBinding: binding).instructions
-        )
+        let narrativeContext = try PipelineAgentHarness().runtimeContext(
+            dataRoot: dataRoot, declaredPack: "musicvideo", declaredBinding: binding)
+        #expect(narrativeContext.currentPhase == "shot_planning")
+        let narrativePrompt = try #require(narrativeContext.instructions)
         #expect(narrativePrompt.contains("Core production profile: generative_film"))
         #expect(narrativePrompt.contains("Core production profile: narrative_storytelling"))
         #expect(narrativePrompt.contains("Production library: continuity-and-coverage/"))
@@ -3370,7 +3380,7 @@ struct WorkflowToolsTests {
     /// Generic legacy writers retain their independent DTO and reference-routing coverage.
     private func prepareLegacyReferenceShotlistProject() async throws -> ReferenceShotlistProject {
         let routing = falRoutingDependencies()
-        let (setup, dataRoot, cleanup) = try scaffold(
+        let (setup, savedRoot, cleanup) = try scaffold(
             providerActivation: { routing.activation },
             productionRouteCandidates: routing.candidates,
             catalogReadiness: { true },
@@ -3384,6 +3394,14 @@ struct WorkflowToolsTests {
             catalogReadiness: { true },
             isModelEnabled: { _ in true }
         )
+        var ready = false
+        defer {
+            if !ready {
+                harness.editor.releaseWorkingCopy()
+                try? FileManager.default.removeItem(at: cleanup)
+            }
+        }
+        let dataRoot = try harness.openProject(dataRoot: savedRoot)
         let route = try await publishedReferenceRoute(harness, dataRoot: dataRoot)
 
         _ = try writeMeasuredAnalysis(dataRoot: dataRoot, readableTrack: true)
@@ -3541,6 +3559,7 @@ struct WorkflowToolsTests {
         _ = try await harness.runGateOK("approve_gate", args: [
             "project_dir": dataRoot.path, "phase": "bible",
         ])
+        ready = true
         return ReferenceShotlistProject(
             harness: harness,
             dataRoot: dataRoot,
@@ -3773,7 +3792,10 @@ struct WorkflowToolsTests {
     @Test("Legacy generic Bible to Shot List run retains DTO reference routing and recording")
     func legacyAutonomousBibleToShotlistRun() async throws {
         let project = try await prepareLegacyReferenceShotlistProject()
-        defer { try? FileManager.default.removeItem(at: project.cleanup) }
+        defer {
+            project.harness.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: project.cleanup)
+        }
         let h = project.harness
         let dataRoot = project.dataRoot
         let store = YAMLArtifactStore(dataRoot: dataRoot)
@@ -3860,7 +3882,10 @@ struct WorkflowToolsTests {
     @Test("write_shotlist schema rejects invented roles; the writer rejects retired and unroutable slots")
     func writeShotlistRejectsGuessedReferenceIdentifiers() async throws {
         let project = try await prepareLegacyReferenceShotlistProject()
-        defer { try? FileManager.default.removeItem(at: project.cleanup) }
+        defer {
+            project.harness.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: project.cleanup)
+        }
         let h = project.harness
         let dataRoot = project.dataRoot
         let valid = referenceShotlistArguments(project.route).merging(
@@ -4156,7 +4181,7 @@ struct WorkflowToolsTests {
             )
             Issue.record("The writer accepted unreadable live format settings.")
         } catch let error as ToolError {
-            #expect(error.message == "This project's format settings do not match the production workflow trusted by this session, so it can't be saved.")
+            #expect(error.message == "This project's format settings are unreadable, so it can't be saved.")
         }
         #expect(latestShotlistVersion(dataRoot: dataRoot) == nil)
     }
@@ -5298,9 +5323,13 @@ struct WorkflowToolsTests {
 
     @Test("analysis interpretation rejects wrong lyric labels without changing bytes, then accepts correction")
     func analysisInterpretationRejectsWrongLabelsThenRecovers() async throws {
-        let (h, dataRoot, cleanup) = try scaffold(enforceHardGates: true)
-        defer { try? FileManager.default.removeItem(at: cleanup) }
-        try activatePack("musicvideo", dataRoot: dataRoot)
+        let (h, savedRoot, cleanup) = try scaffold(enforceHardGates: true)
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        try activatePack("musicvideo", dataRoot: savedRoot)
+        let dataRoot = try h.openProject(dataRoot: savedRoot)
         let analysisURL = try writeMeasuredAnalysis(dataRoot: dataRoot)
         _ = try await h.runGateOK("approve_gate", args: [
             "project_dir": dataRoot.path, "phase": "project_init",
@@ -5335,9 +5364,13 @@ struct WorkflowToolsTests {
 
     @Test("analysis interpretation repairs a previously persisted wrong label without reanalysis")
     func analysisInterpretationRepairsPersistedWrongLabel() async throws {
-        let (h, dataRoot, cleanup) = try scaffold(enforceHardGates: true)
-        defer { try? FileManager.default.removeItem(at: cleanup) }
-        try activatePack("musicvideo", dataRoot: dataRoot)
+        let (h, savedRoot, cleanup) = try scaffold(enforceHardGates: true)
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        try activatePack("musicvideo", dataRoot: savedRoot)
+        let dataRoot = try h.openProject(dataRoot: savedRoot)
         let analysisURL = try writeMeasuredAnalysis(dataRoot: dataRoot)
         _ = try await h.runGateOK("approve_gate", args: [
             "project_dir": dataRoot.path, "phase": "project_init",
@@ -5440,8 +5473,8 @@ struct WorkflowToolsTests {
         #expect(result.isError)
     }
 
-    @Test("write_analysis_interpretation cannot hide unresolved section timing")
-    func writeAnalysisInterpretationRejectsUnresolvedStructure() async throws {
+    @Test("write_analysis_interpretation rejects a forged unresolved structure without changing bytes")
+    func writeAnalysisInterpretationRejectsForgedUnresolvedStructure() async throws {
         let (h, dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
         try activatePack("musicvideo", dataRoot: dataRoot)
@@ -5472,7 +5505,7 @@ struct WorkflowToolsTests {
         )
 
         #expect(result.isError)
-        #expect(ToolHarness.textOf(result).contains("native structure remains unresolved"))
+        #expect(ToolHarness.textOf(result) == "The unresolved analysis does not match its canonical measured candidates, grid and DSP evidence. Re-run analysis.")
         #expect(try Data(contentsOf: analysisURL) == before)
     }
 

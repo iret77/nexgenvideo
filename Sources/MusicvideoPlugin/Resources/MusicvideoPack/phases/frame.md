@@ -1,6 +1,12 @@
 # Frames
 
+After this phase’s required work and independent checks pass, request phase approval directly through approve_gate. The native gate card alone records approval; a show_dialog answer never approves this phase.
+
 Use run_phase, next_render_shot, record_render and save_frame_audit for exact required conditioning roles only. compile_prompt, generate_image, prepare_generation_batch and crop_to_aspect require actual capabilities and native consent. Imported, AI-enhanced and keyframe-none shots require no invented Frames; a real empty manifest is valid when the required role set is empty.
+
+The budget is a display, never a limit. Show proven money, provider credits and runs without known prices; missing prices or an exceeded display amount never stop this phase. Actual paid requests still require the existing native batch or whole-phase consent.
+
+Use list_models with the currently enabled providers before choosing an image offering. When available and suitable, GPT Image 2.5 Flare is the default for ordinary images; reserve Sunburst for precision-critical work with an explicit reason. Otherwise choose another executable offering with the required reference, ratio and output capabilities; a model name never proves availability. Actual reference retention and the vision audit still decide acceptance.
 
 ## Actual role-aware generation and review
 

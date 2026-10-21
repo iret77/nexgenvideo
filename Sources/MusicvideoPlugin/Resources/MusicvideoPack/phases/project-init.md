@@ -1,5 +1,7 @@
 # Phase K0 — Project Init
 
+After this phase’s required work and independent checks pass, request phase approval directly through approve_gate. The native gate card alone records approval; a show_dialog answer never approves this phase.
+
 > **Orchestrator instruction (main-session context).** Never spawn this
 > phase as a sub-agent. Use the **interface language supplied by the host**
 > unless the user explicitly requests another language;

@@ -1,5 +1,7 @@
 # Storyboard
 
+After this phase’s required work and independent checks pass, request phase approval directly through approve_gate. The native gate card alone records approval; a show_dialog answer never approves this phase.
+
 Use the native playback range and original analyzed track. Beat/Section plans respect the selected interval; Multicam source plans retain full-song 0…actualSongEnd and the selected excerpt applies only at later output assembly/export. The host derives the exact original AudioBinding; never substitute another track or change its offset.
 
 Write the complete action/adaptation/timing draft with write_storyboard_bundle. It allocates stable shot UUIDs and returns the current fingerprint. A moment is a visual instant inside a shot, not another cut. The approved Script remains authoritative. Beat/Section plans use the selected playback range; Multicam source plans cover the full original song and apply the selected excerpt only at assembly/export. Preserve native edits and exact framing.
