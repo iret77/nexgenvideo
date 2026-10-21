@@ -14,7 +14,7 @@ func withPromptCompilerTimeLimit<Value: Sendable>(
     try await withThrowingTaskGroup(of: Value.self) { group in
         // The structured scope joins both children after cancellation.
         defer { group.cancelAll() }
-        group.addTask { @MainActor in return try await operation() }
+        group.addTask { @Sendable in return try await operation() }
         group.addTask {
             try await Task.sleep(for: .seconds(120))
             Issue.record("The prompt compiler operation exceeded its 120-second time limit.")
