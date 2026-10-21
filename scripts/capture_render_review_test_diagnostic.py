@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import selectors
 import shutil
+import signal
 import select
 import subprocess
 import sys
@@ -25,6 +26,36 @@ CASE = re.compile(r"Test Case '-\[NexGenVideoTests\.(\w+) (\w+)\]' (started|pass
 STAGE_PREFIX = "[render-review-test-stage] "
 SAMPLE_SECONDS = 3
 CAPTURE_TIMEOUT_SECONDS = 120
+
+
+def probe_launch_environment(command, executable):
+    return {"NGV_CF_RUNLOOP_PROBE_PARENT_PID": str(os.getpid()),
+            "NGV_CF_RUNLOOP_PROBE_EXECUTABLE": str(executable),
+            "NGV_CF_RUNLOOP_PROBE_ROOT_PID": "",
+            "NGV_CF_RUNLOOP_PROBE_ARGC": str(len(command)),
+            **{f"NGV_CF_RUNLOOP_PROBE_ARG_{index}": value for index, value in enumerate(command)}}
+
+
+def stop_manifest_process_group(process):
+    records = []
+    for signum in (signal.SIGTERM, signal.SIGKILL):
+        row = {"processGroup": process.pid, "signal": int(signum)}
+        try:
+            os.killpg(process.pid, signum)
+            row["signalStatus"] = "sent"
+        except ProcessLookupError:
+            row["signalStatus"] = "group-absent"
+        except OSError as error:
+            row["signalStatus"] = "unavailable"
+            row["error"] = str(error)
+        try:
+            row["rootExitCode"] = process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            row["rootWait"] = "timed-out"
+        records.append(row)
+        if row["signalStatus"] == "group-absent":
+            break
+    return records
 
 
 def prepare_runloop_probe(evidence, command):
@@ -69,7 +100,7 @@ def prepare_runloop_probe(evidence, command):
         copied_source = originals / source.name
         library = folder / "capture_swift_test_runloop.dylib"
         compile_command = ["xcrun", "--sdk", "macosx", "clang", "-dynamiclib", "-std=c11",
-                           "-arch", "arm64", "-g", "-O0", "-fno-omit-frame-pointer",
+                           "-arch", "arm64", "-arch", "arm64e", "-g", "-O0", "-fno-omit-frame-pointer",
                            "-framework", "CoreFoundation", str(copied_source), "-o", str(library)]
         receipt.update(compileCommand=compile_command, compileTimeoutSeconds=120,
                        sourceSHA256=hashlib.sha256(copied_source.read_bytes()).hexdigest(),
@@ -81,6 +112,14 @@ def prepare_runloop_probe(evidence, command):
         receipt["compileExitCode"] = result.returncode
         if result.returncode != 0 or not library.is_file():
             raise RuntimeError("The runloop probe could not be compiled; the original test command will run")
+        architecture_command = ["xcrun", "lipo", str(library), "-verify_arch", "arm64", "arm64e"]
+        receipt["architectureVerificationCommand"] = architecture_command
+        with (folder / "architectures.log").open("wb") as log:
+            architecture = subprocess.run(architecture_command, stdin=subprocess.DEVNULL,
+                                          stdout=log, stderr=log, timeout=15, check=False)
+        receipt["architectureVerificationExitCode"] = architecture.returncode
+        if architecture.returncode != 0:
+            raise RuntimeError("The runloop probe does not contain both requested architecture slices")
         resolved = subprocess.run(["xcrun", "--find", "swift"], stdin=subprocess.DEVNULL,
                                   capture_output=True, text=True, timeout=15, check=False)
         (folder / "resolve-swift.log").write_text(resolved.stdout + resolved.stderr)
@@ -104,13 +143,47 @@ def prepare_runloop_probe(evidence, command):
                        swiftExecutable=str(swift_executable),
                        swiftExecutableIdentity={"device": identity.st_dev, "inode": identity.st_ino,
                                                 "bytes": identity.st_size, "mtimeNS": identity.st_mtime_ns})
-        receipt.update(status="prepared-load-not-yet-proven",
+        receipt.update(status="prepared-test-helper-load-not-yet-proven",
                        librarySHA256=hashlib.sha256(library.read_bytes()).hexdigest(),
                        libraryBytes=library.stat().st_size)
         overrides = {"DYLD_INSERT_LIBRARIES": str(library.resolve()),
                      "NGV_CF_RUNLOOP_PROBE_BUNDLE": str(bundle),
                      "NGV_CF_RUNLOOP_PROBE_BINARY": str(binary)}
+        smoke_command = [str(swift_invocation), "package", "--package-path", str(Path.cwd()),
+                         "--manifest-cache", "none", "dump-package"]
+        smoke_environment = dict(os.environ, **overrides,
+                                 NGV_SWIFT_TEST_PROCESS_EVIDENCE=str(evidence.resolve()))
+        smoke_environment.update(probe_launch_environment(smoke_command, swift_executable))
+        receipt.update(manifestPreparationCommand=smoke_command, manifestPreparationTimeoutSeconds=120,
+                       manifestPreparationScope="root-manifest-only-no-build-or-test-no-all-architecture-claim")
+        with (folder / "manifest.stdout").open("wb") as stdout, (folder / "manifest.stderr").open("wb") as stderr:
+            smoke = subprocess.Popen(smoke_command, executable=str(swift_executable),
+                                     stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
+                                     env=smoke_environment, start_new_session=True)
+            receipt["manifestPreparationPID"] = smoke.pid
+            try:
+                smoke.wait(timeout=120)
+            except subprocess.TimeoutExpired:
+                receipt["manifestTimeoutCleanup"] = stop_manifest_process_group(smoke)
+                raise
+            receipt["manifestPreparationExitCode"] = smoke.returncode
+        if smoke.returncode != 0:
+            raise RuntimeError("The injected root-manifest preparation failed; the original test command will run")
+        root_records = evidence / f"runloop-probe-root-{smoke.pid}.jsonl"
+        rows = [json.loads(line) for line in root_records.read_text().splitlines() if line]
+        matching = [row for row in rows if isinstance(row, dict) and row.get("event") == "probe-root-init"
+                    and row.get("pid") == smoke.pid and row.get("parentPID") == os.getpid()
+                    and row.get("initialLaunchMatched") is True
+                    and row.get("injectionCleanup") == "retained-own-root-library"
+                    and row.get("loadedLibrary") == str(library.resolve())
+                    and isinstance(row.get("executable"), str) and row["executable"]
+                    and Path(row["executable"]).resolve() == swift_executable]
+        if len(matching) != 1:
+            raise RuntimeError("The injected manifest preparation has no unique matching initial loader/root receipt")
+        receipt["manifestPreparationLoaderReceipt"] = matching[0]
+        overrides.update(probe_launch_environment(receipt["actualCommand"], swift_executable))
     except (OSError, ValueError, subprocess.SubprocessError, RuntimeError) as error:
+        overrides.clear()
         for field in ("swiftExecutable", "swiftInvocationPath", "actualCommand"):
             receipt.pop(field, None)
         receipt.update(status="unavailable", error=str(error))

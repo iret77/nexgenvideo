@@ -1,6 +1,22 @@
 name: Cache SwiftPM dependencies
 description: Cache resolved dependency sources and binary artifacts without reusing build products.
 
+inputs:
+  restore-only:
+    description: Restore dependencies without saving in the job post phase.
+    default: 'false'
+
+outputs:
+  cache-path:
+    description: Isolated dependency cache directory.
+    value: ${{ steps.cache-path.outputs.path }}
+  cache-hit:
+    description: Exact cache match in restore-only mode.
+    value: ${{ steps.restore.outputs.cache-hit }}
+  cache-primary-key:
+    description: Original cache key in restore-only mode.
+    value: ${{ steps.restore.outputs.cache-primary-key }}
+
 runs:
   using: composite
   steps:
@@ -25,7 +41,16 @@ runs:
         echo "NGV_SWIFTPM_CACHE_PATH=$path" >> "$GITHUB_ENV"
 
     - name: Cache resolved dependencies
+      if: inputs.restore-only != 'true'
       uses: actions/cache@v4
+      with:
+        path: ${{ steps.cache-path.outputs.path }}
+        key: spm-dependencies-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('Package.resolved', 'Package.swift', 'Engine/Package.swift') }}
+
+    - name: Restore resolved dependencies
+      id: restore
+      if: inputs.restore-only == 'true'
+      uses: actions/cache/restore@v4
       with:
         path: ${{ steps.cache-path.outputs.path }}
         key: spm-dependencies-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('Package.resolved', 'Package.swift', 'Engine/Package.swift') }}

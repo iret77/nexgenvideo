@@ -124,13 +124,24 @@ jobs:
       - uses: ./.github/actions/setup-xcode-27
 
       - uses: ./.github/actions/cache-swiftpm-dependencies
+        id: swiftpm_dependencies
+        with:
+          restore-only: 'true'
 
       - name: Build
+        id: build
         timeout-minutes: 40
         run: swift build --cache-path "$NGV_SWIFTPM_CACHE_PATH" --build-tests
 
       - name: Verify build did not mutate tracked source
         run: scripts/verify_tracked_source_state.sh
+
+      - name: Save resolved dependencies after successful build
+        if: ${{ success() && steps.build.outcome == 'success' && steps.swiftpm_dependencies.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ steps.swiftpm_dependencies.outputs.cache-path }}
+          key: ${{ steps.swiftpm_dependencies.outputs.cache-primary-key }}
 
       - name: Stage test runtime inputs
         run: scripts/stage_test_runtime.sh debug

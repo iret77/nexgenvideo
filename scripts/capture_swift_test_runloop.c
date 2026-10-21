@@ -171,7 +171,28 @@ static const char *argument(const char *name, unsigned *matches) {
     return value;
 }
 
-static const char *cleanup_injection(char *library, int *error) {
+static bool initial_launch_matches(const char *executable) {
+    const char *parent = getenv("NGV_CF_RUNLOOP_PROBE_PARENT_PID");
+    const char *expected = getenv("NGV_CF_RUNLOOP_PROBE_EXECUTABLE");
+    const char *count = getenv("NGV_CF_RUNLOOP_PROBE_ARGC");
+    char parent_text[32], count_text[32], resolved[PATH_MAX];
+    snprintf(parent_text, sizeof(parent_text), "%d", getppid());
+    snprintf(count_text, sizeof(count_text), "%d", *_NSGetArgc());
+    if (!parent || strcmp(parent, parent_text) != 0 || !expected || !count
+            || strcmp(count, count_text) != 0 || !realpath(executable, resolved)
+            || strcmp(expected, resolved) != 0) return false;
+    char **arguments = *_NSGetArgv();
+    for (int i = 0; i < *_NSGetArgc(); ++i) {
+        char key[64];
+        snprintf(key, sizeof(key), "NGV_CF_RUNLOOP_PROBE_ARG_%d", i);
+        const char *value = getenv(key);
+        if (!value || strcmp(value, arguments[i]) != 0) return false;
+    }
+    return true;
+}
+
+static const char *cleanup_injection(char *library, int *error, const char *executable,
+                                     bool *root, bool *initial) {
     Dl_info information = {0};
     char inserted[PATH_MAX] = "";
     const char *value = getenv("DYLD_INSERT_LIBRARIES");
@@ -186,6 +207,17 @@ static const char *cleanup_injection(char *library, int *error) {
     if (!getenv("NGV_CF_RUNLOOP_PROBE_BUNDLE") || !getenv("NGV_CF_RUNLOOP_PROBE_BINARY")) {
         return "preserved-scope-unavailable";
     }
+    const char *bound = getenv("NGV_CF_RUNLOOP_PROBE_ROOT_PID");
+    char current[32];
+    snprintf(current, sizeof(current), "%d", getpid());
+    *initial = (!bound || !*bound) && initial_launch_matches(executable);
+    if (*initial && setenv("NGV_CF_RUNLOOP_PROBE_ROOT_PID", current, 1) != 0) {
+        *error = errno;
+        *initial = false;
+    }
+    bound = getenv("NGV_CF_RUNLOOP_PROBE_ROOT_PID");
+    *root = bound && strcmp(bound, current) == 0;
+    if (*root) return "retained-own-root-library";
     if (unsetenv("DYLD_INSERT_LIBRARIES") != 0) {
         *error = errno;
         return "remove-unavailable";
@@ -202,14 +234,44 @@ static void initialize(void) {
     const char *name = strrchr(executable, '/');
     const char *leaf = name ? name + 1 : executable;
     bool helper = strcmp(leaf, "swiftpm-testing-helper") == 0;
-    if (!helper && strcmp(leaf, "xctest") != 0) goto done;
     if (!getenv("NGV_SWIFT_TEST_PROCESS_EVIDENCE")) goto done;
     recording = true;
     char library_path[PATH_MAX] = "";
     int cleanup_error = 0;
-    const char *cleanup = cleanup_injection(library_path, &cleanup_error);
+    bool root = false, initial = false;
+    const char *cleanup = cleanup_injection(library_path, &cleanup_error, executable, &root, &initial);
     const char *directory = getenv("NGV_SWIFT_TEST_PROCESS_EVIDENCE");
     if (!directory) {
+        recording = false;
+        goto done;
+    }
+    if (root || (!helper && strcmp(leaf, "xctest") != 0)) {
+        char path[PATH_MAX];
+        int length = snprintf(path, sizeof(path), "%s/runloop-probe-%s-%d.jsonl",
+                              directory, root ? "root" : "child", getpid());
+        if (length >= 0 && (size_t)length < sizeof(path)) {
+            output_fd = open(path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC | O_NOFOLLOW, 0600);
+        }
+        struct record row = {0};
+        begin(&row, root ? "probe-root-init" : "probe-child-init");
+        append(&row, ",\"loadedLibrary\":");
+        string_limit(&row, library_path, PATH_MAX);
+        append(&row, ",\"executable\":");
+        string_limit(&row, executable, PATH_MAX);
+        append(&row, ",\"injectionCleanup\":");
+        string(&row, cleanup);
+        append(&row, ",\"initialLaunchMatched\":%s,\"injectionCleanupErrno\":%d,\"compiledArchitecture\":",
+               initial ? "true" : "false", cleanup_error);
+#if defined(__arm64e__)
+        string(&row, "arm64e");
+#elif defined(__arm64__)
+        string(&row, "arm64");
+#else
+        string(&row, "other");
+#endif
+        write_record(&row, false);
+        if (output_fd >= 0) close(output_fd);
+        output_fd = -1;
         recording = false;
         goto done;
     }
@@ -314,11 +376,25 @@ static void observed_run(void) {
     errno = result_errno;
 }
 
-__attribute__((used, section("__DATA,__interpose,interposing")))
-static const struct {
-    const void *replacement;
-    const void *replacee;
-} runloop_interposes[] = {
-    {(const void *)(uintptr_t)&observed_stop, (const void *)(uintptr_t)&CFRunLoopStop},
-    {(const void *)(uintptr_t)&observed_run, (const void *)(uintptr_t)&CFRunLoopRun}
-};
+#if defined(__arm64e__) && !__has_feature(ptrauth_intrinsics)
+#error arm64e interposing requires pointer-authentication intrinsics
+#endif
+#if __has_feature(ptrauth_intrinsics)
+#include <ptrauth.h>
+#define NGV_INTERPOSE_AUTH(replacement, replacee, field) \
+    __ptrauth(ptrauth_key_process_independent_code, 1, \
+        __builtin_ptrauth_string_discriminator("DYLD_INTERPOSE" __FILE_NAME__ #replacement #replacee "::" #field))
+#else
+#define NGV_INTERPOSE_AUTH(replacement, replacee, field)
+#endif
+
+#define NGV_INTERPOSE(replacement_function, replacee_function) \
+    __attribute__((used)) static struct { \
+        const void *NGV_INTERPOSE_AUTH(replacement_function, replacee_function, replacement) replacement; \
+        const void *NGV_INTERPOSE_AUTH(replacement_function, replacee_function, replacee) replacee; \
+    } interpose_##replacee_function __attribute__((section("__DATA,__interpose,interposing"))) = { \
+        (const void *)(unsigned long)&replacement_function, (const void *)(unsigned long)&replacee_function \
+    };
+
+NGV_INTERPOSE(observed_stop, CFRunLoopStop)
+NGV_INTERPOSE(observed_run, CFRunLoopRun)
