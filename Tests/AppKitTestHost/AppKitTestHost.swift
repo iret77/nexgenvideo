@@ -1,4 +1,5 @@
 import AppKit
+import AppKitTestHostSupport
 import Darwin
 import Foundation
 
@@ -116,13 +117,30 @@ private enum AppKitTestHost {
         UserDefaults.standard.register(defaults: ["NSApplicationCrashOnExceptions": true])
         do {
             let environment = ProcessInfo.processInfo.environment
-            let bundle = try path("NGV_APPKIT_TEST_BUNDLE", in: environment)
-            let events = try path("NGV_APPKIT_TEST_EVENTS", in: environment)
-            let receiptPath = try path("NGV_APPKIT_TEST_RECEIPT", in: environment)
             guard Thread.isMainThread else {
                 throw HostError.message("The AppKit test host must start on the main thread.")
             }
-            let application = NSApplication.shared
+            guard let exceptionPath = environment["NGV_APPKIT_EXCEPTION_EVIDENCE"], exceptionPath.hasPrefix("/") else {
+                throw HostError.message("NGV_APPKIT_EXCEPTION_EVIDENCE must be an absolute path.")
+            }
+            let application = exceptionPath.withCString { output in
+                (environment["GITHUB_SHA"] ?? "").withCString { source in
+                    NGVCreateTestApplication(output, source)
+                }
+            }
+            guard let application else {
+                throw HostError.message("Cannot create the diagnostic AppKit application or its exclusive evidence file.")
+            }
+            if Array(CommandLine.arguments.dropFirst()) == ["--ngv-exception-probe"] {
+                guard NGVScheduleHostExceptionProbe(application) else {
+                    throw HostError.message("Cannot schedule the native AppKit exception probe.")
+                }
+                application.run()
+                throw HostError.message("The native AppKit exception probe unexpectedly returned.")
+            }
+            let bundle = try path("NGV_APPKIT_TEST_BUNDLE", in: environment)
+            let events = try path("NGV_APPKIT_TEST_EVENTS", in: environment)
+            let receiptPath = try path("NGV_APPKIT_TEST_RECEIPT", in: environment)
             guard !FileManager.default.fileExists(atPath: receiptPath.path) else {
                 throw HostError.message("The completion receipt already exists.")
             }

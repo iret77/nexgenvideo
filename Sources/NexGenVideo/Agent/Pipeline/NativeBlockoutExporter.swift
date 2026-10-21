@@ -176,14 +176,22 @@ enum NativeBlockoutExporter {
 
         let previewScale = max(1, max(CGFloat(width) / AppTheme.Layout.productionInspectorMin,
                                       CGFloat(height) / AppTheme.Layout.previewMinHeight))
-        let font = NSFont.systemFont(ofSize: AppTheme.FontSize.xs * previewScale,
+        let diagramScale = max(1, min(bounds.width / AppTheme.Layout.blockoutReferenceSize.width,
+                                      bounds.height / AppTheme.Layout.blockoutReferenceSize.height))
+        let spacingScale = arrangement == .bestFit ? diagramScale : 1
+        let lineScale = arrangement == .bestFit ? diagramScale : previewScale
+        let font = NSFont.systemFont(ofSize: AppTheme.FontSize.xs * lineScale,
             weight: AppTheme.AppKitFontWeight.semibold) as CTFont
-        let labelHeight = (CTFontGetAscent(font) + CTFontGetDescent(font) + CTFontGetLeading(font) + AppTheme.Spacing.xxs * 2)
+        let labelHeight = (CTFontGetAscent(font) + CTFontGetDescent(font) + CTFontGetLeading(font)
+            + AppTheme.Spacing.xxs * spacingScale * 2)
             * (arrangement == .bestFit ? 2 : 1)
-        let symbolScale = max(previewScale, AppTheme.IconSize.lgXl / AppTheme.IconSize.xs)
+        let symbolScale = arrangement == .bestFit
+            ? AppTheme.IconSize.smMd / AppTheme.IconSize.xs * diagramScale
+            : max(previewScale, AppTheme.IconSize.lgXl / AppTheme.IconSize.xs)
         let markerClearance = (AppTheme.IconSize.xs + AppTheme.BorderWidth.medium) * symbolScale / 2
         let viewports = makeViewports(layouts: layouts, bounds: bounds, metric: metric,
-            labelHeight: labelHeight, markerClearance: markerClearance, arrangement: arrangement)
+            labelHeight: labelHeight, markerClearance: markerClearance, spacingScale: spacingScale,
+            arrangement: arrangement)
         context.setStrokeColor(CGColor(gray: 0.58, alpha: 1))
         context.setLineWidth(AppTheme.BorderWidth.medium)
         for viewport in viewports.values {
@@ -244,7 +252,7 @@ enum NativeBlockoutExporter {
                 )
                 let radius = markerExclusionRadius(scale: markerScale)
                 drawings.append(CameraDrawing(locationID: setup.locationID, projection: projection,
-                    movement: movement, camera: camera, lookAt: lookAt, color: color, scale: markerScale,
+                    movement: movement, travelPoints: projected, camera: camera, lookAt: lookAt, color: color, scale: markerScale,
                     hasVisibleTravel: projected.contains { hypot($0.x - camera.x, $0.y - camera.y) > radius }))
             }
         }
@@ -258,12 +266,14 @@ enum NativeBlockoutExporter {
             context.clip(using: .evenOdd)
         }
         for drawing in drawings {
-            strokeTravel(drawing, previewScale: previewScale, referenceScale: symbolScale, context: context)
+            strokeTravel(drawing, excluding: drawings, previewScale: lineScale, referenceScale: symbolScale,
+                arrangement: arrangement, bounds: bounds, context: context)
         }
         for drawing in drawings {
             if let direction = drawing.lookPath {
                 stroke(direction, color: drawing.color, dashed: false,
-                    previewScale: previewScale, markerScale: drawing.scale, referenceScale: symbolScale, context: context)
+                    previewScale: lineScale, markerScale: drawing.scale, referenceScale: symbolScale,
+                    arrangement: arrangement, context: context)
             }
         }
         context.restoreGState()
@@ -282,9 +292,9 @@ enum NativeBlockoutExporter {
                     shortTitle + suffix]
                 if arrangement == .bestFit {
                     drawLabel(titles, in: CGRect(x: label.minX, y: label.midY, width: label.width, height: label.height / 2),
-                        font: font, context: context)
+                        font: font, insetScale: spacingScale, context: context)
                     drawLabel(roles, in: CGRect(x: label.minX, y: label.minY, width: label.width, height: label.height / 2),
-                        font: font, context: context)
+                        font: font, insetScale: spacingScale, context: context)
                 } else {
                     let full = roles.first.map { $0.isEmpty ? "" : " · " + $0 } ?? ""
                     let compact = roles.last.map { $0.isEmpty ? "" : " · " + $0 } ?? ""
@@ -309,15 +319,30 @@ enum NativeBlockoutExporter {
         return [direction + (hasTravel ? " · - - Path" : ""), compact + (hasTravel ? " / Path" : "")]
     }
 
-    private static func strokeTravel(_ drawing: CameraDrawing, previewScale: CGFloat,
-                                     referenceScale: CGFloat, context: CGContext) {
+    private static func strokeTravel(_ drawing: CameraDrawing, excluding drawings: [CameraDrawing], previewScale: CGFloat,
+                                     referenceScale: CGFloat, arrangement: ViewArrangement, bounds: CGRect, context: CGContext) {
         stroke(drawing.movement, color: AppTheme.Text.primary.cgColor, dashed: true,
-            previewScale: previewScale, markerScale: drawing.scale, referenceScale: referenceScale, context: context)
+            previewScale: previewScale, markerScale: drawing.scale, referenceScale: referenceScale,
+            arrangement: arrangement, context: context)
         guard drawing.hasVisibleTravel, let direction = drawing.lookPath else { return }
+        if arrangement == .bestFit {
+            let widths = strokeWidths(dashed: true, overlappingLook: true, previewScale: previewScale,
+                markerScale: drawing.scale, referenceScale: referenceScale, arrangement: arrangement)
+            let look = strokeWidths(dashed: false, overlappingLook: false, previewScale: previewScale,
+                markerScale: drawing.scale, referenceScale: referenceScale, arrangement: arrangement)
+            let travel = strokeWidths(dashed: true, overlappingLook: false, previewScale: previewScale,
+                markerScale: drawing.scale, referenceScale: referenceScale, arrangement: arrangement)
+            let overlaps = overlappingTravelDashes(drawing, excluding: drawings, casingWidth: widths.casing,
+                overlapRadius: (look.casing + travel.casing) / 2, bounds: bounds)
+            stroke(overlaps, color: AppTheme.Text.primary.cgColor, dashed: true, overlappingLook: true, preDashed: true,
+                previewScale: previewScale, markerScale: drawing.scale, referenceScale: referenceScale,
+                arrangement: arrangement, context: context)
+            return
+        }
         context.saveGState()
         defer { context.restoreGState() }
         let widths = strokeWidths(dashed: true, overlappingLook: true, previewScale: previewScale,
-            markerScale: drawing.scale, referenceScale: referenceScale)
+            markerScale: drawing.scale, referenceScale: referenceScale, arrangement: arrangement)
         context.addPath(direction)
         context.setLineDash(phase: 0, lengths: [])
         context.setLineCap(.butt)
@@ -326,15 +351,167 @@ enum NativeBlockoutExporter {
         context.replacePathWithStrokedPath()
         context.clip()
         stroke(drawing.movement, color: AppTheme.Text.primary.cgColor, dashed: true, overlappingLook: true,
-            previewScale: previewScale, markerScale: drawing.scale, referenceScale: referenceScale, context: context)
+            previewScale: previewScale, markerScale: drawing.scale, referenceScale: referenceScale,
+            arrangement: arrangement, context: context)
+    }
+
+    private static func overlappingTravelDashes(_ drawing: CameraDrawing, excluding drawings: [CameraDrawing],
+                                                casingWidth: CGFloat, overlapRadius: CGFloat, bounds: CGRect) -> CGPath {
+        let result = CGMutablePath()
+        guard let lookAt = drawing.lookAt else { return result }
+        let lookLength = hypot(lookAt.x - drawing.camera.x, lookAt.y - drawing.camera.y)
+        guard lookLength.isFinite, lookLength > CGFloat.ulpOfOne else { return result }
+        let forward = CGPoint(x: (lookAt.x - drawing.camera.x) / lookLength,
+            y: (lookAt.y - drawing.camera.y) / lookLength)
+        let lookBounds = CGRect(x: min(drawing.camera.x, lookAt.x), y: min(drawing.camera.y, lookAt.y),
+            width: abs(lookAt.x - drawing.camera.x), height: abs(lookAt.y - drawing.camera.y))
+            .insetBy(dx: -overlapRadius, dy: -overlapRadius)
+        let searchBounds = bounds.insetBy(dx: -casingWidth / 2, dy: -casingWidth / 2).intersection(lookBounds)
+        guard !searchBounds.isNull, !searchBounds.isEmpty else { return result }
+        func overlapsLook(_ point: CGPoint) -> Bool {
+            let x = point.x - drawing.camera.x, y = point.y - drawing.camera.y
+            let along = x * forward.x + y * forward.y
+            let closest = min(lookLength, max(0, along))
+            return hypot(x - closest * forward.x, y - closest * forward.y) <= overlapRadius
+        }
+        func clearsMarkers(_ points: [CGPoint]) -> Bool {
+            return drawings.allSatisfy { marker in
+                let radius = markerExclusionRadius(scale: marker.scale)
+                for (start, end) in zip(points, points.dropFirst()) {
+                    let length = hypot(end.x - start.x, end.y - start.y)
+                    guard length > CGFloat.ulpOfOne else { return false }
+                    let direction = CGPoint(x: (end.x - start.x) / length, y: (end.y - start.y) / length)
+                    let x = marker.camera.x - start.x, y = marker.camera.y - start.y
+                    let along = x * direction.x + y * direction.y
+                    let across = x * direction.y - y * direction.x
+                    let outsideEnd = max(0, -along, along - length)
+                    let outsideSide = max(0, abs(across) - casingWidth / 2)
+                    if hypot(outsideEnd, outsideSide) <= radius { return false }
+                }
+                for index in 1..<(points.count - 1) {
+                    let vertex = points[index]
+                    let incomingLength = hypot(vertex.x - points[index - 1].x, vertex.y - points[index - 1].y)
+                    let outgoingLength = hypot(points[index + 1].x - vertex.x, points[index + 1].y - vertex.y)
+                    guard incomingLength > 0, outgoingLength > 0 else { return false }
+                    let incoming = CGPoint(x: (vertex.x - points[index - 1].x) / incomingLength,
+                        y: (vertex.y - points[index - 1].y) / incomingLength)
+                    let outgoing = CGPoint(x: (points[index + 1].x - vertex.x) / outgoingLength,
+                        y: (points[index + 1].y - vertex.y) / outgoingLength)
+                    let turn = incoming.x * outgoing.y - incoming.y * outgoing.x
+                    if turn == 0 && incoming.x * outgoing.x + incoming.y * outgoing.y >= 0 { continue }
+                    let sign: CGFloat = turn < 0 ? -1 : 1
+                    let firstNormal = CGPoint(x: incoming.y * sign, y: -incoming.x * sign)
+                    let lastNormal = CGPoint(x: outgoing.y * sign, y: -outgoing.x * sign)
+                    let x = marker.camera.x - vertex.x, y = marker.camera.y - vertex.y
+                    let afterFirst = (firstNormal.x * y - firstNormal.y * x) * sign >= 0
+                    let beforeLast = (x * lastNormal.y - y * lastNormal.x) * sign >= 0
+                    if afterFirst && beforeLast && hypot(x, y) <= radius + casingWidth / 2 { return false }
+                }
+                return true
+            }
+        }
+        var segments: [TravelSegment] = []
+        var distance: CGFloat = 0
+        for (start, end) in zip(drawing.travelPoints, drawing.travelPoints.dropFirst()) {
+            let length = hypot(end.x - start.x, end.y - start.y)
+            guard length.isFinite else { return result }
+            guard length > 0 else { continue }
+            segments.append(TravelSegment(start: start, end: end, startDistance: distance, endDistance: distance + length))
+            distance += length
+        }
+        let pattern = AppTheme.Border.longDash.map { $0 * drawing.scale }
+        guard distance.isFinite, pattern.count == 2, let on = pattern.first, on > 0 else { return result }
+        let period = pattern.reduce(0, +)
+        guard period.isFinite, period > 0 else { return result }
+        var ranges: [(first: CGFloat, last: CGFloat)] = []
+        for segment in segments {
+            let length = segment.endDistance - segment.startDistance
+            guard length > 0 else { continue }
+            var entry: CGFloat = 0
+            var exit = length
+            for (origin, direction, lower, upper) in [
+                (segment.start.x, (segment.end.x - segment.start.x) / length, searchBounds.minX, searchBounds.maxX),
+                (segment.start.y, (segment.end.y - segment.start.y) / length, searchBounds.minY, searchBounds.maxY),
+            ] {
+                if direction == 0 {
+                    if origin < lower || origin > upper { exit = -1; break }
+                } else {
+                    let first = (lower - origin) / direction, last = (upper - origin) / direction
+                    entry = max(entry, min(first, last))
+                    exit = min(exit, max(first, last))
+                }
+            }
+            guard entry.isFinite, exit.isFinite, entry <= exit else { continue }
+            let from = segment.startDistance + entry, to = segment.startDistance + exit
+            guard from.isFinite, to.isFinite else { continue }
+            let phase = from.truncatingRemainder(dividingBy: period)
+            var first = from - phase
+            if phase > on { first += period }
+            let last = to - to.truncatingRemainder(dividingBy: period)
+            guard first.isFinite, last.isFinite, first <= last else { continue }
+            if let prior = ranges.last, first <= prior.last + period {
+                ranges[ranges.count - 1].last = max(prior.last, last)
+            } else {
+                ranges.append((first, last))
+            }
+        }
+        var firstSegment = 0
+        // Hidden spans and turns must not restart the source path's dash phase.
+        for range in ranges {
+            var dashOffset: CGFloat = 0
+            var dashStart = range.first
+            while dashStart <= range.last && dashStart < distance {
+                let dashEnd = min(range.first + (dashOffset + on), distance)
+                guard dashEnd.isFinite, dashEnd > dashStart else { break }
+                while firstSegment < segments.count && segments[firstSegment].endDistance <= dashStart {
+                    firstSegment += 1
+                }
+                var index = firstSegment
+                var points: [CGPoint] = []
+                var valid = true
+                while index < segments.count && segments[index].startDistance < dashEnd {
+                    let segment = segments[index]
+                    let length = segment.endDistance - segment.startDistance
+                    guard length > 0 else { index += 1; continue }
+                    let from = max(dashStart, segment.startDistance), to = min(dashEnd, segment.endDistance)
+                    let dx = segment.end.x - segment.start.x, dy = segment.end.y - segment.start.y
+                    let first = from == segment.startDistance ? segment.start
+                        : CGPoint(x: segment.start.x + dx * ((from - segment.startDistance) / length),
+                            y: segment.start.y + dy * ((from - segment.startDistance) / length))
+                    let last = to == segment.endDistance ? segment.end
+                        : CGPoint(x: segment.start.x + dx * ((to - segment.startDistance) / length),
+                            y: segment.start.y + dy * ((to - segment.startDistance) / length))
+                    if !overlapsLook(first) || !overlapsLook(last) {
+                        valid = false
+                        break
+                    }
+                    if points.isEmpty { points.append(first) }
+                    points.append(last)
+                    index += 1
+                }
+                if valid, points.count > 1, let start = points.first, clearsMarkers(points) {
+                    result.move(to: start)
+                    for point in points.dropFirst() { result.addLine(to: point) }
+                }
+                let nextOffset = dashOffset + period
+                let next = range.first + nextOffset
+                guard nextOffset.isFinite, nextOffset > dashOffset, next.isFinite, next > dashStart else { break }
+                dashOffset = nextOffset
+                dashStart = next
+            }
+        }
+        return result
     }
 
     private static func strokeWidths(dashed: Bool, overlappingLook: Bool, previewScale: CGFloat,
-                                     markerScale: CGFloat, referenceScale: CGFloat) -> (line: CGFloat, casing: CGFloat) {
+                                     markerScale: CGFloat, referenceScale: CGFloat,
+                                     arrangement: ViewArrangement) -> (line: CGFloat, casing: CGFloat) {
         let fitScale = markerScale / referenceScale
         let lineScale = previewScale * fitScale
-        let lookWidth = max(AppTheme.BorderWidth.thick * lineScale, AppTheme.BorderWidth.blockoutLookMinimum * fitScale)
-        let halo = max(AppTheme.BorderWidth.thin * fitScale, AppTheme.BorderWidth.hairline * lineScale)
+        let lookWidth = arrangement == .bestFit ? AppTheme.BorderWidth.blockoutLookMinimum * lineScale
+            : max(AppTheme.BorderWidth.thick * lineScale, AppTheme.BorderWidth.blockoutLookMinimum * fitScale)
+        let halo = arrangement == .bestFit ? AppTheme.BorderWidth.thin * lineScale
+            : max(AppTheme.BorderWidth.thin * fitScale, AppTheme.BorderWidth.hairline * lineScale)
         let lookCasing = lookWidth + halo * 2
         let travelWidth = lookCasing + AppTheme.BorderWidth.thick * lineScale * 2
         let width = dashed ? (overlappingLook ? travelWidth : AppTheme.BorderWidth.thick * lineScale) : lookWidth
@@ -343,14 +520,15 @@ enum NativeBlockoutExporter {
     }
 
     private static func stroke(_ path: CGPath, color: CGColor, dashed: Bool, overlappingLook: Bool = false,
-                               previewScale: CGFloat, markerScale: CGFloat, referenceScale: CGFloat, context: CGContext) {
+                               preDashed: Bool = false, previewScale: CGFloat, markerScale: CGFloat,
+                               referenceScale: CGFloat, arrangement: ViewArrangement, context: CGContext) {
         context.saveGState()
         defer { context.restoreGState() }
         context.setLineCap(dashed ? .butt : .round)
         context.setLineJoin(.round)
-        context.setLineDash(phase: 0, lengths: dashed ? AppTheme.Border.longDash.map { $0 * markerScale } : [])
+        context.setLineDash(phase: 0, lengths: dashed && !preDashed ? AppTheme.Border.longDash.map { $0 * markerScale } : [])
         let widths = strokeWidths(dashed: dashed, overlappingLook: overlappingLook,
-            previewScale: previewScale, markerScale: markerScale, referenceScale: referenceScale)
+            previewScale: previewScale, markerScale: markerScale, referenceScale: referenceScale, arrangement: arrangement)
         for (color, width) in [
             (AppTheme.Background.surface.cgColor, widths.casing),
             (color, widths.line),
@@ -392,7 +570,8 @@ enum NativeBlockoutExporter {
         context.fillPath()
     }
 
-    private static func drawLabel(_ variants: [String], in rect: CGRect, font: CTFont, context: CGContext) {
+    private static func drawLabel(_ variants: [String], in rect: CGRect, font: CTFont,
+                                  insetScale: CGFloat = 1, context: CGContext) {
         guard rect.width > 0, rect.height > 0, let fallback = variants.last else { return }
         func makeLine(_ text: String, _ font: CTFont) -> CTLine {
             let attributes: [NSAttributedString.Key: Any] = [
@@ -401,8 +580,8 @@ enum NativeBlockoutExporter {
             ]
             return CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: attributes))
         }
-        let horizontalInset = min(AppTheme.Spacing.xs, rect.width / 4)
-        let verticalInset = min(AppTheme.Spacing.xxs, rect.height / 4)
+        let horizontalInset = min(AppTheme.Spacing.xs * insetScale, rect.width / 4)
+        let verticalInset = min(AppTheme.Spacing.xxs * insetScale, rect.height / 4)
         let width = rect.width - horizontalInset * 2
         let height = rect.height - verticalInset * 2
         let textHeight = CTFontGetAscent(font) + CTFontGetDescent(font) + CTFontGetLeading(font)
@@ -430,10 +609,18 @@ enum NativeBlockoutExporter {
         case elevation
     }
 
+    private struct TravelSegment {
+        let start: CGPoint
+        let end: CGPoint
+        let startDistance: CGFloat
+        let endDistance: CGFloat
+    }
+
     private struct CameraDrawing {
         let locationID: String
         let projection: Projection
         let movement: CGPath
+        let travelPoints: [CGPoint]
         let camera: CGPoint
         let lookAt: CGPoint?
         let color: CGColor
@@ -474,6 +661,7 @@ enum NativeBlockoutExporter {
         metric: Bool,
         labelHeight: CGFloat,
         markerClearance: CGFloat,
+        spacingScale: CGFloat,
         arrangement: ViewArrangement
     ) -> [String: Viewport] {
         let ordered = layouts.sorted { $0.locationID < $1.locationID }
@@ -492,13 +680,13 @@ enum NativeBlockoutExporter {
                 width: cellWidth,
                 height: cellHeight
             ).insetBy(
-                dx: AppTheme.Spacing.xs,
-                dy: AppTheme.Spacing.xs
+                dx: AppTheme.Spacing.xs * spacingScale,
+                dy: AppTheme.Spacing.xs * spacingScale
             )
             let planHeight = cell.height / 2
             func labeled(_ rect: CGRect) -> (plot: CGRect, label: CGRect) {
                 let height = min(labelHeight, rect.height / 2)
-                let gap = min(markerClearance + AppTheme.Spacing.xxs, (rect.height - height) / 3)
+                let gap = min(markerClearance + AppTheme.Spacing.xxs * spacingScale, (rect.height - height) / 3)
                 let horizontalGap = min(markerClearance, rect.width / 3)
                 return (
                     CGRect(x: rect.minX + horizontalGap, y: rect.minY + gap,

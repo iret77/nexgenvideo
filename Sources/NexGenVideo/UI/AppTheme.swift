@@ -474,6 +474,7 @@ enum AppTheme {
     }
 
     enum Layout {
+        static let blockoutReferenceSize = CGSize(width: 320, height: 180)
         static let workflowSidebarDefault: CGFloat = 260
         static let workflowSidebarMin: CGFloat = 220
         static let productionInspectorDefault: CGFloat = 300

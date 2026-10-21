@@ -1,12 +1,18 @@
 """Run XCTest, Engine Swift Testing and hosted App Swift Testing once each."""
 import argparse
 from collections import Counter
+from datetime import datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import stat
+import struct
 import subprocess
 import sys
+import time
+import uuid
 
 from verify_swift_test_output import ANSI, assess_output
 
@@ -171,10 +177,12 @@ def empty_swift_output(path):
     return {"status": "empty-selection", "originalAssessment": result}
 
 
-def run_process(command, path, environment):
+def run_process(command, path, environment, observation=None):
     with path.open("w") as log:
         with subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                               stderr=subprocess.STDOUT, text=True, env=environment) as process:
+            if observation is not None:
+                observation.update(pid=process.pid, launchLatest=time.time())
             last_line = ""
             for line in process.stdout:
                 log.write(line)
@@ -183,7 +191,187 @@ def run_process(command, path, environment):
             if last_line and not last_line.endswith("\n"):
                 print(flush=True)
             code = process.wait()
+            if observation is not None:
+                observation["exitObserved"] = time.time()
             return code, process.pid
+
+
+def host_binary_identity(host):
+    digest = hashlib.sha256()
+    with host.open("rb") as stream:
+        header = stream.read(32)
+        commands = b""
+        if len(header) == 32 and struct.unpack_from("<I", header)[0] == 0xFEEDFACF:
+            size = struct.unpack_from("<I", header, 20)[0]
+            if size <= 1024 * 1024:
+                commands = stream.read(size)
+        stream.seek(0)
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    image_uuid = None
+    offset = 0
+    while offset + 8 <= len(commands):
+        kind, size = struct.unpack_from("<II", commands, offset)
+        if size < 8 or offset + size > len(commands):
+            break
+        if kind == 0x1B and size == 24:
+            image_uuid = str(uuid.UUID(bytes=commands[offset + 8:offset + 24]))
+            break
+        offset += size
+    return {"hostExecutable": str(host.resolve()), "hostSHA256": digest.hexdigest(), "hostUUID": image_uuid}
+
+
+def report_directories():
+    return [Path.home() / "Library/Logs/DiagnosticReports", Path("/Library/Logs/DiagnosticReports")]
+
+
+def report_candidates(directories, name):
+    result, errors = {}, []
+    for directory in directories:
+        try:
+            for path in directory.iterdir():
+                if not path.name.lstrip(".").startswith(name) or path.suffix not in {".ips", ".crash"}:
+                    continue
+                info = path.lstat()
+                if stat.S_ISREG(info.st_mode):
+                    result[str(path)] = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
+                if len(result) >= 128:
+                    errors.append("Candidate limit reached")
+                    return result, errors
+        except OSError as error:
+            errors.append(str(error))
+    return result, errors
+
+
+def prepare_post_mortem(host):
+    context = {"parentPID": os.getpid(), "directories": [str(path) for path in report_directories()]}
+    try:
+        context.update(host_binary_identity(host))
+        context["baseline"], context["baselineErrors"] = report_candidates(
+            [Path(path) for path in context["directories"]], host.name)
+    except Exception as error:
+        context["preparationError"] = str(error)
+    return context
+
+
+def report_timestamp(value):
+    if not isinstance(value, str):
+        raise ValueError("Missing report timestamp")
+    for pattern in ("%Y-%m-%d %H:%M:%S.%f %z", "%Y-%m-%d %H:%M:%S %z"):
+        try:
+            return datetime.strptime(value, pattern).timestamp()
+        except ValueError:
+            pass
+    stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if stamp.tzinfo is None:
+        raise ValueError("Report timestamp has no timezone")
+    return stamp.timestamp()
+
+
+def owned_crash_report(raw, context):
+    metadata, separator, body = raw.partition(b"\n")
+    metadata, report = json.loads(metadata), json.loads(body)
+    if not separator or not isinstance(metadata, dict) or not isinstance(report, dict):
+        raise ValueError("Not a two-object native IPS report")
+    if str(metadata.get("bug_type")) != "309":
+        raise ValueError("Not a native crash report")
+    if (type(report.get("pid")) is not int or report["pid"] != context["pid"]
+            or type(report.get("parentPid")) is not int or report["parentPid"] != context["parentPID"]):
+        raise ValueError("Report PID or parent does not match the owned child")
+    launch, captured = report_timestamp(report.get("procLaunch")), report_timestamp(report.get("captureTime"))
+    if (not context["launchEarliest"] - 1 <= launch <= context["launchLatest"] + 1
+            or not launch <= captured <= context["exitObserved"] + 1):
+        raise ValueError("Report launch or crash time does not match the owned child")
+    image_uuid = context.get("hostUUID")
+    if image_uuid:
+        images = report.get("usedImages")
+        if not isinstance(images, list) or not any(isinstance(image, dict)
+                and str(image.get("uuid", "")).lower() == image_uuid for image in images):
+            raise ValueError("Report does not contain the original host image UUID")
+        binding = "pid+parent+launch/crash interval+original host image UUID"
+    else:
+        if report.get("procPath") != context["hostExecutable"]:
+            raise ValueError("Report executable path cannot be bound without a host UUID")
+        binding = "pid+parent+launch/crash interval+exact original executable path"
+    return {"binding": binding, "incident": report.get("incident"), "procPath": report.get("procPath"),
+            "hasLastExceptionBacktrace": bool(report.get("lastExceptionBacktrace")), "hasASI": bool(report.get("asi"))}
+
+
+def capture_post_mortem(folder, context, original_exit):
+    deadline = time.monotonic() + 30
+    folder.mkdir()
+    result = {"schema": 1, "originalExitCode": original_exit, "ownedChild": context,
+              "status": "diagnostic-partial", "reports": [], "candidateStatus": {},
+              "causality": "Signal exit does not prove a language exception"}
+    try:
+        start = datetime.fromtimestamp(context["launchEarliest"] - 1, timezone.utc).strftime("%Y-%m-%d %H:%M:%S%z")
+        end = datetime.fromtimestamp(context["exitObserved"] + 1, timezone.utc).strftime("%Y-%m-%d %H:%M:%S%z")
+        predicate = "processImagePath == " + json.dumps(context["hostExecutable"])
+        command = ["/usr/bin/log", "show", "--style", "json", "--no-pager", "--info", "--debug",
+                   "--process", str(context["pid"]), "--start", start, "--end", end, "--predicate", predicate]
+        result["unifiedLog"] = {"command": command}
+        try:
+            with (folder / "unified-log.json").open("wb") as output, (folder / "unified-log.stderr").open("wb") as error:
+                query = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=output, stderr=error,
+                                       timeout=min(10, max(0.1, deadline - time.monotonic())), check=False)
+            result["unifiedLog"]["exitCode"] = query.returncode
+        except (OSError, subprocess.SubprocessError) as error:
+            result["unifiedLog"]["error"] = str(error)
+        directories = [Path(path) for path in context["directories"]]
+        previous = {}
+        while time.monotonic() < deadline:
+            candidates, result["scanErrors"] = report_candidates(directories, Path(context["hostExecutable"]).name)
+            for name, identity in candidates.items():
+                if time.monotonic() >= deadline:
+                    break
+                if list(identity) == list(context.get("baseline", {}).get(name, [])):
+                    continue
+                if previous.get(name) != identity:
+                    result["candidateStatus"][name] = "Waiting for stable report bytes"
+                    continue
+                try:
+                    if Path(name).suffix != ".ips":
+                        raise ValueError("Legacy .crash format not bound; no foreign or unbound bytes copied")
+                    if identity[2] > 32 * 1024 * 1024:
+                        raise ValueError("Report exceeds 32 MiB; no truncated report copied")
+                    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+                    with os.fdopen(fd, "rb") as stream:
+                        before = os.fstat(stream.fileno())
+                        if not stat.S_ISREG(before.st_mode):
+                            raise ValueError("Report is no longer a regular file")
+                        raw = stream.read(32 * 1024 * 1024 + 1)
+                        after = os.fstat(stream.fileno())
+                    current = (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+                    initial = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+                    if current != identity or initial != current or len(raw) != after.st_size:
+                        raise ValueError("Report changed while being read")
+                    binding = owned_crash_report(raw, context)
+                    destination = folder / ("owned-host-" + str(len(result["reports"])) + ".ips")
+                    destination.write_bytes(raw)
+                    result["reports"].append({"originalPath": name, "file": destination.name,
+                        "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest(), **binding})
+                    result["candidateStatus"][name] = "Bound original report copied"
+                    break
+                except (OSError, ValueError, TypeError, KeyError) as error:
+                    result["candidateStatus"][name] = str(error)
+            if result["reports"]:
+                break
+            previous = candidates
+            time.sleep(min(1, max(0, deadline - time.monotonic())))
+        result["status"] = "bound-report-captured" if result["reports"] else "no-bound-report-before-deadline"
+    except Exception as error:
+        result["error"] = str(error)
+    result["finishedAt"] = datetime.now(timezone.utc).isoformat()
+    for path in (folder / "unified-log.json", folder / "unified-log.stderr"):
+        if path.is_file():
+            digest = hashlib.sha256()
+            with path.open("rb") as stream:
+                for block in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(block)
+            result.setdefault("rawFiles", []).append({"file": path.name, "bytes": path.stat().st_size,
+                                                     "sha256": digest.hexdigest()})
+    write_json(folder / "receipt.json", result)
+    return result
 
 
 def app_environment(environment, binary_root, bundle, folder):
@@ -294,12 +482,22 @@ def run(args):
                 environment = app_environment(environment, binary_root, bundle, folder)
                 environment.update(NGV_APPKIT_TEST_BUNDLE=str(bundle.resolve()),
                                    NGV_APPKIT_TEST_EVENTS=str(events_path.resolve()),
-                                   NGV_APPKIT_TEST_RECEIPT=str(receipt_path.resolve()))
+                                   NGV_APPKIT_TEST_RECEIPT=str(receipt_path.resolve()),
+                                   NGV_APPKIT_EXCEPTION_EVIDENCE=str((folder / "exception.jsonl").absolute()))
             phase = {"name": name, "command": command, "status": "running", "log": str(log)}
             result["phases"].append(phase)
             write_json(result_path, result)
-            code, pid = run_process(command, log, environment)
+            observation = prepare_post_mortem(host) if name == "app-swift-testing" else None
+            if observation is not None:
+                observation["launchEarliest"] = time.time()
+            code, pid = run_process(command, log, environment, observation)
             phase.update(exitCode=code, pid=pid)
+            if name == "app-swift-testing" and code < 0:
+                try:
+                    phase["postMortem"] = capture_post_mortem(folder / "post-mortem", observation, code)
+                except Exception as error:
+                    phase["postMortem"] = {"status": "diagnostic-unavailable", "error": str(error),
+                                           "originalExitCode": code}
             with combined.open("a") as destination:
                 text = log.read_text()
                 destination.write(text)

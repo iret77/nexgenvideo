@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -40,7 +41,7 @@ def write_events(path, records):
 
 class HostedTestDriverTests(unittest.TestCase):
     def invoke(self, root, *, filter="", scope="all", exits=None, empty=(), console=None,
-               receipt_change=None, query_error=None):
+               receipt_change=None, query_error=None, capture_error=None):
         binary_root = root / "built products"
         binary_root.mkdir(exist_ok=True)
         host = binary_root / "NexGenVideoAppKitTestHost"
@@ -67,9 +68,11 @@ class HostedTestDriverTests(unittest.TestCase):
             selected = binary_root if command[0] == "swift" else compiler if "--find" in command else platform
             return subprocess.CompletedProcess(command, 0, str(selected) + "\n", "")
 
-        def process(command, log, environment):
+        def process(command, log, environment, observation=None):
             name = log.parent.name
             calls.append((name, command, environment))
+            if observation is not None:
+                observation.update(pid=123, launchLatest=100, exitObserved=101)
             default = XCTEST.replace("All tests", "Selected tests") if filter else XCTEST
             output = (console or {}).get(name, default if name == "xctest" else SWIFT)
             if name in empty:
@@ -92,8 +95,11 @@ class HostedTestDriverTests(unittest.TestCase):
         with patch.dict(os.environ, {"GITHUB_SHA": "a" * 40}, clear=True), \
                 patch.object(driver.subprocess, "run", side_effect=query), \
                 patch.object(driver, "run_process", side_effect=process), \
+                patch.object(driver, "capture_post_mortem", side_effect=capture_error,
+                             return_value={"status": "captured"}) as capture, \
                 contextlib.redirect_stderr(io.StringIO()):
             code = driver.run(args)
+        self.post_mortem_calls = capture.call_args_list
         return code, json.loads((args.evidence / "suite.json").read_text()), calls, queries
 
     def test_exact_release_products_run_once_and_preserve_framework_boundaries(self):
@@ -127,6 +133,116 @@ class HostedTestDriverTests(unittest.TestCase):
             code, receipt, _, _ = self.invoke(Path(directory), console={"app-swift-testing": "◇ Test run started.\n"})
             self.assertEqual(code, 1)
             self.assertFalse(receipt["completed"])
+
+    def test_owned_app_signal_is_preserved_when_post_mortem_capture_fails(self):
+        for failure in (OSError("unavailable"), ValueError("malformed report"),
+                        subprocess.TimeoutExpired(["/usr/bin/log", "show"], 10)):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
+                code, receipt, calls, _ = self.invoke(Path(directory), scope="app-swift-testing",
+                    exits={"app-swift-testing": -5}, capture_error=failure)
+                self.assertEqual(code, 133)
+                self.assertFalse(receipt["completed"])
+                self.assertEqual(len(calls), 1)
+                phase = receipt["phases"][0]
+                self.assertEqual(phase["exitCode"], -5)
+                self.assertEqual(phase["postMortem"]["originalExitCode"], -5)
+                self.assertEqual(len(self.post_mortem_calls), 1)
+
+    def test_post_mortem_runs_only_for_original_negative_app_exit(self):
+        for name, code in (("app-swift-testing", 0), ("app-swift-testing", 133),
+                           ("engine-swift-testing", -5), ("xctest", -5)):
+            with self.subTest(name=name, code=code), tempfile.TemporaryDirectory() as directory:
+                _, _, calls, _ = self.invoke(Path(directory), exits={name: code})
+                self.assertEqual(self.post_mortem_calls, [])
+                if name == "app-swift-testing":
+                    evidence = Path(calls[-1][2]["NGV_APPKIT_EXCEPTION_EVIDENCE"])
+                    self.assertEqual(evidence, Path(directory) / "evidence/app-swift-testing/exception.jsonl")
+                    self.assertFalse(evidence.exists())
+
+    def crash_context(self):
+        launch = driver.report_timestamp("2026-10-21 09:25:18.100 +0000")
+        return {"pid": 123, "parentPID": os.getpid(), "launchEarliest": launch - .05,
+                "launchLatest": launch + .05, "exitObserved": launch + 2,
+                "hostExecutable": "/original/products/NexGenVideoAppKitTestHost",
+                "hostUUID": "01efa441-68f3-3882-ac42-b9ceeeb6051d", "baseline": {}, "directories": []}
+
+    def crash_bytes(self, context, **changes):
+        report = {"pid": context["pid"], "parentPid": context["parentPID"],
+                  "procLaunch": "2026-10-21 09:25:18.100 +0000",
+                  "captureTime": "2026-10-21 09:25:19.100 +0000",
+                  "procPath": "/Users/USER/redacted/NexGenVideoAppKitTestHost",
+                  "usedImages": [{"uuid": context["hostUUID"]}],
+                  "lastExceptionBacktrace": [{"imageOffset": 123}]}
+        report.update(changes)
+        return (json.dumps({"bug_type": "309"}) + "\n" + json.dumps(report) + "\n").encode()
+
+    def test_os_report_requires_owned_process_lifetime_and_original_host_image(self):
+        context = self.crash_context()
+        valid = self.crash_bytes(context)
+        self.assertTrue(driver.owned_crash_report(valid, context)["hasLastExceptionBacktrace"])
+        for change in ({"pid": 999}, {"parentPid": 999},
+                       {"procLaunch": "2026-10-20 09:25:18.100 +0000"},
+                       {"captureTime": "2026-10-21 09:30:18.100 +0000"},
+                       {"usedImages": [{"uuid": "another-image"}]}):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                driver.owned_crash_report(self.crash_bytes(context, **change), context)
+        no_uuid = dict(context, hostUUID=None)
+        with self.assertRaises(ValueError):
+            driver.owned_crash_report(valid, no_uuid)
+        exact = self.crash_bytes(context, procPath=context["hostExecutable"])
+        self.assertIn("exact original executable path", driver.owned_crash_report(exact, no_uuid)["binding"])
+
+    def test_post_mortem_preserves_raw_report_when_only_access_time_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            report = root / "NexGenVideoAppKitTestHost-original.ips"
+            context = self.crash_context()
+            context["directories"] = [str(root)]
+            raw = self.crash_bytes(context)
+            report.write_bytes(raw)
+            info = report.stat()
+            stable = dict(st_dev=info.st_dev, st_ino=info.st_ino, st_size=info.st_size,
+                          st_mtime_ns=info.st_mtime_ns, st_mode=info.st_mode)
+            before = SimpleNamespace(**stable, st_atime=100)
+            after = SimpleNamespace(**stable, st_atime=200)
+
+            def log_query(command, **kwargs):
+                self.assertEqual(command[:4], ["/usr/bin/log", "show", "--style", "json"])
+                self.assertIn("--process", command)
+                self.assertEqual(command[command.index("--process") + 1], "123")
+                self.assertIn(context["hostExecutable"], command[-1])
+                self.assertLessEqual(kwargs["timeout"], 10)
+                kwargs["stdout"].write(b"[]\n")
+                return subprocess.CompletedProcess(command, 0)
+
+            with patch.object(driver.subprocess, "run", side_effect=log_query), \
+                    patch.object(driver.os, "fstat", side_effect=[before, after]), \
+                    patch.object(driver.time, "sleep"):
+                captured = driver.capture_post_mortem(root / "post-mortem", context, -5)
+            self.assertEqual(captured["status"], "bound-report-captured")
+            self.assertEqual(len(captured["reports"]), 1)
+            self.assertEqual((root / "post-mortem/owned-host-0.ips").read_bytes(), raw)
+            self.assertEqual(captured["originalExitCode"], -5)
+
+    def test_post_mortem_unavailable_log_and_foreign_report_do_not_extend_deadline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            context = self.crash_context()
+            context["directories"] = [str(root)]
+            (root / "NexGenVideoAppKitTestHost-foreign.ips").write_bytes(self.crash_bytes(context, pid=999))
+            clock = [0.0]
+            def advance(seconds):
+                clock[0] += seconds
+            with patch.object(driver.subprocess, "run", side_effect=OSError("log unavailable")), \
+                    patch.object(driver.time, "monotonic", side_effect=lambda: clock[0]), \
+                    patch.object(driver.time, "sleep", side_effect=advance) as sleep:
+                captured = driver.capture_post_mortem(root / "post-mortem", context, -5)
+            self.assertEqual(captured["status"], "no-bound-report-before-deadline")
+            self.assertEqual(captured["reports"], [])
+            self.assertIn("unavailable", captured["unifiedLog"]["error"])
+            self.assertTrue(all(call.args[0] <= 1 for call in sleep.call_args_list))
+            self.assertEqual(clock[0], 30)
+            self.assertEqual(list((root / "post-mortem").glob("*.ips")), [])
 
     def test_bounded_product_query_timeout_records_failure_without_starting_tests(self):
         with tempfile.TemporaryDirectory() as directory:

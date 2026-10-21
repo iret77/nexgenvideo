@@ -63,7 +63,15 @@ let package = Package(
         .package(url: "https://github.com/microsoft/onnxruntime-swift-package-manager", from: "1.19.2"),
     ],
     targets: [
-        .executableTarget(name: "NexGenVideoAppKitTestHost", path: "Tests/AppKitTestHost"),
+        .executableTarget(
+            name: "NexGenVideoAppKitTestHost", dependencies: ["AppKitTestHostSupport"],
+            path: "Tests/AppKitTestHost"
+        ),
+        .target(
+            name: "AppKitTestHostSupport", path: "Tests/AppKitTestHostSupport",
+            cSettings: [.unsafeFlags(["-fobjc-arc"])],
+            linkerSettings: [.linkedFramework("AppKit")]
+        ),
         .target(name: "BpyRuntimeProtocol", path: "Sources/BpyRuntimeProtocol"),
         .target(name: "BpySupervisorPOSIX", path: "Sources/BpySupervisorPOSIX"),
         .executableTarget(
