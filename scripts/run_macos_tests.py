@@ -225,6 +225,121 @@ def report_directories():
     return [Path.home() / "Library/Logs/DiagnosticReports", Path("/Library/Logs/DiagnosticReports")]
 
 
+WATCHDOG_NAME = re.compile(r"NexGenVideo-\d{4}-\d{2}-\d{2}T\d{6}Z-main-thread-hang(?:\.json|\.sample\.txt)")
+WATCHDOG_REPORT_BYTES = 1024 * 1024
+WATCHDOG_TOTAL_BYTES = 32 * 1024 * 1024
+
+
+def watchdog_report_directory():
+    return Path.home() / "Library/Logs/NexGenVideo"
+
+
+def watchdog_identity(info):
+    return [info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns]
+
+
+def watchdog_candidates(directory):
+    candidates = {}
+    fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        with os.scandir(fd) as entries:
+            for entry in entries:
+                if not WATCHDOG_NAME.fullmatch(entry.name):
+                    continue
+                if len(candidates) >= 128:
+                    raise ValueError("Watchdog candidate limit reached")
+                try:
+                    candidates[entry.name] = watchdog_identity(entry.stat(follow_symlinks=False))
+                except OSError as error:
+                    raise ValueError("Watchdog candidate inspection failed: " + str(error)) from error
+    finally:
+        os.close(fd)
+    return candidates
+
+
+def read_watchdog_file(directory_fd, name, identity, limit):
+    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory_fd)
+    with os.fdopen(fd, "rb") as stream:
+        before = os.fstat(stream.fileno())
+        if not stat.S_ISREG(before.st_mode) or before.st_size > limit:
+            raise ValueError("Watchdog file is not regular or exceeds the capture byte limit")
+        raw = stream.read(limit + 1)
+        after = os.fstat(stream.fileno())
+    named = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+    if (not stat.S_ISREG(named.st_mode) or watchdog_identity(before) != identity
+            or watchdog_identity(after) != identity or watchdog_identity(named) != identity
+            or len(raw) != after.st_size):
+        raise ValueError("Watchdog file changed while being read")
+    return raw
+
+
+def capture_watchdog_reports(folder, context, original_exit):
+    folder.mkdir()
+    result = {"schema": 1, "originalExitCode": original_exit, "reports": [], "candidateStatus": {},
+              "causality": "Retained diagnostics do not prove a stall cause or test success"}
+    directory = Path(context["watchdogDirectory"])
+    result["originalDirectory"] = str(directory)
+    try:
+        if context.get("watchdogBaselineError"):
+            raise ValueError("Watchdog baseline unavailable: " + context["watchdogBaselineError"])
+        baseline = context["watchdogBaseline"]
+        candidates = watchdog_candidates(directory)
+        fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        remaining = WATCHDOG_TOTAL_BYTES
+        try:
+            for name, identity in sorted(candidates.items()):
+                if not name.endswith(".json"):
+                    continue
+                try:
+                    if name in baseline and identity[:2] == baseline[name][:2]:
+                        raise ValueError("Stale watchdog baseline file")
+                    raw = read_watchdog_file(fd, name, identity, min(WATCHDOG_REPORT_BYTES, remaining))
+                    report = json.loads(raw)
+                    if (not isinstance(report, dict) or type(report.get("schemaVersion")) is not int
+                            or report["schemaVersion"] != 1 or type(report.get("processID")) is not int
+                            or type(context.get("pid")) is not int or report["processID"] != context["pid"]):
+                        raise ValueError("Watchdog schema or owned PID does not match")
+                    detected = report_timestamp(report.get("detectedAt"))
+                    if not context["launchEarliest"] <= detected <= context["exitObserved"]:
+                        raise ValueError("Watchdog detection is outside the owned launch/exit interval")
+                    sample_name = report.get("sampleFilenameIfAvailable")
+                    if sample_name != name.removesuffix(".json") + ".sample.txt":
+                        raise ValueError("Watchdog sample is not the matching report basename")
+                    destination = folder / name
+                    destination.write_bytes(raw)
+                    remaining -= len(raw)
+                    entry = {"originalPath": str(directory / name), "file": name, "bytes": len(raw),
+                             "sha256": hashlib.sha256(raw).hexdigest(), "processID": report["processID"],
+                             "detectedAt": report["detectedAt"], "producerSampleStatus": report.get("sampleStatus")}
+                    result["reports"].append(entry)
+                    result["candidateStatus"][name] = "Bound original watchdog report copied"
+                    try:
+                        identity = watchdog_identity(os.stat(sample_name, dir_fd=fd, follow_symlinks=False))
+                        if sample_name in baseline and identity[:2] == baseline[sample_name][:2]:
+                            raise ValueError("Stale watchdog baseline sample")
+                        sample = read_watchdog_file(fd, sample_name, identity, remaining)
+                        (folder / sample_name).write_bytes(sample)
+                        remaining -= len(sample)
+                        entry["sample"] = {"status": "captured-unverified", "file": sample_name,
+                            "bytes": len(sample), "sha256": hashlib.sha256(sample).hexdigest(),
+                            "completeness": "Raw bytes only; producer status is not a complete-stack attestation"}
+                    except FileNotFoundError:
+                        entry["sample"] = {"status": "absent"}
+                    except (OSError, ValueError) as error:
+                        entry["sample"] = {"status": "unavailable", "error": str(error)}
+                except (OSError, ValueError, TypeError, KeyError, OverflowError) as error:
+                    result["candidateStatus"][name] = str(error)
+        finally:
+            os.close(fd)
+        result["status"] = "captured" if result["reports"] else "no-bound-watchdog-report"
+    except FileNotFoundError:
+        result["status"] = "directory-absent"
+    except (OSError, ValueError, TypeError, KeyError) as error:
+        result.update(status="diagnostic-unavailable", error=str(error))
+    write_json(folder / "receipt.json", result)
+    return result
+
+
 def report_candidates(directories, name):
     result, errors = {}, []
     for directory in directories:
@@ -245,6 +360,14 @@ def report_candidates(directories, name):
 
 def prepare_post_mortem(host):
     context = {"parentPID": os.getpid(), "directories": [str(path) for path in report_directories()]}
+    directory = watchdog_report_directory()
+    context["watchdogDirectory"] = str(directory)
+    try:
+        context["watchdogBaseline"] = watchdog_candidates(directory)
+    except FileNotFoundError:
+        context["watchdogBaseline"] = {}
+    except (OSError, ValueError) as error:
+        context["watchdogBaselineError"] = str(error)
     try:
         context.update(host_binary_identity(host))
         context["baseline"], context["baselineErrors"] = report_candidates(
@@ -492,6 +615,12 @@ def run(args):
                 observation["launchEarliest"] = time.time()
             code, pid = run_process(command, log, environment, observation)
             phase.update(exitCode=code, pid=pid)
+            if name == "app-swift-testing":
+                try:
+                    phase["watchdogReports"] = capture_watchdog_reports(folder / "watchdog", observation, code)
+                except Exception as error:
+                    phase["watchdogReports"] = {"status": "diagnostic-unavailable", "error": str(error),
+                                                "originalExitCode": code}
             if name == "app-swift-testing" and code < 0:
                 try:
                     phase["postMortem"] = capture_post_mortem(folder / "post-mortem", observation, code)

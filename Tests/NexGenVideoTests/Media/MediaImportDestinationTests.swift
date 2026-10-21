@@ -44,8 +44,17 @@ struct MediaImportDestinationTests {
         let source = media.appendingPathComponent("Restored.png")
         let pixels = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2,
             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
-        for y in 0..<2 { for x in 0..<2 { pixels.setColor(.blue, atX: x, y: y) } }
+            colorSpaceName: .deviceRGB, bitmapFormat: .alphaNonpremultiplied, bytesPerRow: 2 * 4, bitsPerPixel: 32))
+        let bytes = try #require(pixels.bitmapData)
+        for y in 0..<2 {
+            for x in 0..<2 {
+                let offset = y * pixels.bytesPerRow + x * 4
+                bytes[offset] = 0
+                bytes[offset + 1] = 0
+                bytes[offset + 2] = 255
+                bytes[offset + 3] = 255
+            }
+        }
         try #require(pixels.representation(using: .png, properties: [:])).write(to: source)
         let asset = MediaAsset(id: "restored", url: source, type: .image, name: "Restored")
         editor.mediaAssets = [asset]
@@ -67,8 +76,17 @@ struct MediaImportDestinationTests {
         let undo = UndoManager(); undo.groupsByEvent = false; editor.undoManager = undo
         let pixels = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2,
             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
-        for y in 0..<2 { for x in 0..<2 { pixels.setColor(.red, atX: x, y: y) } }
+            colorSpaceName: .deviceRGB, bitmapFormat: .alphaNonpremultiplied, bytesPerRow: 2 * 4, bitsPerPixel: 32))
+        let bytes = try #require(pixels.bitmapData)
+        for y in 0..<2 {
+            for x in 0..<2 {
+                let offset = y * pixels.bytesPerRow + x * 4
+                bytes[offset] = 255
+                bytes[offset + 1] = 0
+                bytes[offset + 2] = 0
+                bytes[offset + 3] = 255
+            }
+        }
         let png = try #require(pixels.representation(using: .png, properties: [:]))
         undo.beginUndoGrouping()
         let asset = try #require(await editor.importPastedImageData(png, originalFilename: "Opening 60.png"))

@@ -7,12 +7,19 @@ import Testing
 @Suite("Upscale reviews exact sources and replacement scope")
 @MainActor
 struct UpscalePackageTests {
-    private func imageBytes(_ color: NSColor) throws -> Data {
+    private func imageBytes(red: UInt8) throws -> Data {
         let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 64, pixelsHigh: 64,
             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
-            bytesPerRow: 0, bitsPerPixel: 0))
+            bitmapFormat: .alphaNonpremultiplied, bytesPerRow: 64 * 4, bitsPerPixel: 32))
+        let pixels = try #require(bitmap.bitmapData)
         for y in 0..<64 {
-            for x in 0..<64 { bitmap.setColor(color, atX: x, y: y) }
+            for x in 0..<64 {
+                let offset = y * bitmap.bytesPerRow + x * 4
+                pixels[offset] = red
+                pixels[offset + 1] = 0
+                pixels[offset + 2] = 0
+                pixels[offset + 3] = 255
+            }
         }
         return try #require(bitmap.representation(using: .png, properties: [:]))
     }
@@ -22,7 +29,7 @@ struct UpscalePackageTests {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let sourceURL = directory.appendingPathComponent("Source.png")
-        try imageBytes(.black).write(to: sourceURL)
+        try imageBytes(red: 0).write(to: sourceURL)
         let source = MediaAsset(id: "source", url: sourceURL, type: .image, name: "Source", duration: 1)
         source.sourceWidth = 64; source.sourceHeight = 64
         let editor = EditorViewModel(); editor.mediaAssets = [source]
@@ -62,7 +69,7 @@ struct UpscalePackageTests {
             try await GenerationPackageInputs.requireCurrentReferences(package: package, editor: editor)
         }
         source.url = sourceURL
-        let changedBytes = try imageBytes(.red)
+        let changedBytes = try imageBytes(red: 255)
         try #require(changedBytes != reviewedBytes)
         try changedBytes.write(to: sourceURL)
         await #expect(throws: (any Error).self) {

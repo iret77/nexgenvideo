@@ -181,10 +181,20 @@ struct PipelineStoryboardNativeMediaTests {
     private func externalImage() throws -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("Director-layout-\(UUID().uuidString).png")
         guard let image = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 32, pixelsHigh: 32, bitsPerSample: 8,
-            samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else {
+            samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+            bitmapFormat: .alphaNonpremultiplied, bytesPerRow: 32 * 4, bitsPerPixel: 32), let pixels = image.bitmapData else {
             throw CocoaError(.fileWriteUnknown)
         }
-        for y in 0..<32 { for x in 0..<32 { image.setColor(x < 16 ? .white : .black, atX: x, y: y) } }
+        for y in 0..<32 {
+            for x in 0..<32 {
+                let offset = y * image.bytesPerRow + x * 4
+                let value: UInt8 = x < 16 ? 255 : 0
+                pixels[offset] = value
+                pixels[offset + 1] = value
+                pixels[offset + 2] = value
+                pixels[offset + 3] = 255
+            }
+        }
         guard let data = image.representation(using: .png, properties: [:]) else { throw CocoaError(.fileWriteUnknown) }
         try data.write(to: url)
         return url

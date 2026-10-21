@@ -31,13 +31,17 @@ enum PipelineScriptEditor {
                 guard editor.openWorkingCopyGeneration == generation else { throw GateBlocked("Open the original project before editing Script.") }
                 try ProjectWorkingCopy.markDirty(key: key)
             })
-        editor.undoManager?.registerUndo(withTarget: editor) { target in
+        let manager = editor.undoManager
+        let opensGroup = manager?.groupingLevel == 0
+        if opensGroup { manager?.beginUndoGrouping() }
+        manager?.registerUndo(withTarget: editor) { target in
             guard target.workingRoot == home, target.openWorkingCopyKey == key,
                   target.openWorkingCopyGeneration == generation else { return }
             do { try apply(summary: current.summary, scenes: current.scenes, expected: written, undo: true, editor: target) }
             catch { target.mediaPanelToast = MediaPanelToast(message: error.localizedDescription) }
         }
-        editor.undoManager?.setActionName("Edit Script")
+        manager?.setActionName("Edit Script")
+        if opensGroup { manager?.endUndoGrouping() }
         editor.onPipelineChanged?()
         Task { await editor.refreshEngineState() }
     }

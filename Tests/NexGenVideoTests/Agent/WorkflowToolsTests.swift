@@ -3126,7 +3126,8 @@ struct WorkflowToolsTests {
         let binding = try activatePack("musicvideo", dataRoot: dataRoot)
         let brief = try Brief(project: "demo", generated: "2026-07-26T00:00:00Z", mission: .demo,
             targetPlatform: "YouTube", aspectRatio: .landscape16x9, projectMode: "section", budgetEur: 50,
-            conceptType: .narrative, visualMedium: .animation2d, figures: .none, lyricsIntegration: .metaphorical)
+            conceptType: .narrative, visualMedium: .animation2d,
+            visualMediumNotes: "restrained hand-drawn animation", figures: .none, lyricsIntegration: .metaphorical)
         try YAMLArtifactStore(dataRoot: dataRoot).save(brief, to: PipelineLayout.briefFile)
         #expect(PackCatalog.registry(activePack: binding.id).activeProductionProfileIDs(
             metadata: ["concept_type": brief.conceptType.rawValue]) == [.generativeFilm, .narrativeStorytelling])
@@ -3153,7 +3154,7 @@ struct WorkflowToolsTests {
             invalid.shots[0].productionPlan?.blockingAnchors[0].setAnchor = "screen-left edge"
             expected = "prop_refs or visible_zones"
         case "undeclared_anchor":
-            invalid.shots[0].productionPlan?.blockingAnchors[0].setAnchor = "upper left"
+            invalid.shots[0].productionPlan?.blockingAnchors[0].setAnchor = "unlisted_archway"
             expected = "prop_refs or visible_zones"
         default:
             Issue.record("Unknown production-profile defect: \(defect).")

@@ -980,7 +980,9 @@ final class AgentService {
                     try Task.checkCancellation()
                     guard context.matches(self) else { throw PipelinePreviousWorkflowMaterial.changed() }
                     if dialog.purpose == .workflowIntake {
-                        try editor.pipelineAgentHarness.validateWorkflowIntake(dialogID: dialog.id, editor: editor)
+                        try editor.pipelineAgentHarness.validateWorkflowIntake(
+                            dialogID: dialog.id, editor: editor, materialAlreadyApplied: true
+                        )
                         guard self.intakeRoleConflict(kind, urls: urls) == nil else { throw PipelinePreviousWorkflowMaterial.changed() }
                     }
                     if let selection = result.previousWorkflowSelection {

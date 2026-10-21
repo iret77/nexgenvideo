@@ -821,8 +821,10 @@ struct HardStepIntakeTests {
         _ = editor.pipelineAgentHarness.reconcile(editor: editor)
 
         let location = try #require(editor.agentService.pendingDialog)
+        let gatesURL = dataRoot.appendingPathComponent(PipelineLayout.gatesFile)
+        let validGates = try Data(contentsOf: gatesURL)
         try Data("invalid gates".utf8).write(
-            to: dataRoot.appendingPathComponent(PipelineLayout.gatesFile),
+            to: gatesURL,
             options: .atomic
         )
         editor.agentService.cancelDialog()
@@ -830,6 +832,38 @@ struct HardStepIntakeTests {
         #expect(editor.agentService.pendingDialog?.id == location.id)
         #expect(editor.agentService.dialogSubmissionError != nil)
         #expect(editor.agentService.isComposerBlocked)
+
+        try validGates.write(to: gatesURL, options: .atomic)
+        try write("fixtures/location.png", in: dataRoot)
+        let source = dataRoot.appendingPathComponent("fixtures/location.png")
+        try FullflowAcceptanceFixture.writeReference(to: source)
+        let sourceBytes = try Data(contentsOf: source)
+        editor.agentService.submitDialog(
+            location,
+            result: AgentDialogResult(
+                selectedLabels: [:],
+                toggles: [:],
+                direction: "Changed workflow",
+                fileURLs: [source]
+            )
+        )
+        try #require(editor.agentService.submittingDialogID == location.id)
+        try Data("invalid gates".utf8).write(to: gatesURL, options: .atomic)
+        do {
+            _ = try await waitForDialog(
+                titled: "Prepared location 2", after: location.id, service: editor.agentService
+            )
+            Issue.record("A changed workflow must reject the pending location attachment.")
+        } catch let error as ToolError {
+            #expect(error.localizedDescription.contains("Couldn't attach location references:"))
+        }
+        #expect(editor.agentService.pendingDialog?.id == location.id)
+        #expect(editor.agentService.submittingDialogID == nil)
+        #expect(editor.agentService.isComposerBlocked)
+        #expect(try Data(contentsOf: source) == sourceBytes)
+        let destination = dataRoot.appendingPathComponent("import/locations/changed-workflow")
+        #expect(try FileManager.default.contentsOfDirectory(atPath: destination.path).isEmpty)
+        #expect(try ConfirmedIdentityAssetStoreV1.load(dataRoot: dataRoot).entries.isEmpty)
     }
 
     // MARK: - Dialog construction

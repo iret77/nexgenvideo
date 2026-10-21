@@ -41,7 +41,7 @@ def write_events(path, records):
 
 class HostedTestDriverTests(unittest.TestCase):
     def invoke(self, root, *, filter="", scope="all", exits=None, empty=(), console=None,
-               receipt_change=None, query_error=None, capture_error=None):
+               receipt_change=None, query_error=None, capture_error=None, watchdog_error=None):
         binary_root = root / "built products"
         binary_root.mkdir(exist_ok=True)
         host = binary_root / "NexGenVideoAppKitTestHost"
@@ -95,11 +95,15 @@ class HostedTestDriverTests(unittest.TestCase):
         with patch.dict(os.environ, {"GITHUB_SHA": "a" * 40}, clear=True), \
                 patch.object(driver.subprocess, "run", side_effect=query), \
                 patch.object(driver, "run_process", side_effect=process), \
+                patch.object(driver, "watchdog_report_directory", return_value=root / "watchdog-source"), \
+                patch.object(driver, "capture_watchdog_reports", side_effect=watchdog_error,
+                             return_value={"status": "captured"}) as watchdog, \
                 patch.object(driver, "capture_post_mortem", side_effect=capture_error,
                              return_value={"status": "captured"}) as capture, \
                 contextlib.redirect_stderr(io.StringIO()):
             code = driver.run(args)
         self.post_mortem_calls = capture.call_args_list
+        self.watchdog_calls = watchdog.call_args_list
         return code, json.loads((args.evidence / "suite.json").read_text()), calls, queries
 
     def test_exact_release_products_run_once_and_preserve_framework_boundaries(self):
@@ -165,6 +169,179 @@ class HostedTestDriverTests(unittest.TestCase):
                 "launchLatest": launch + .05, "exitObserved": launch + 2,
                 "hostExecutable": "/original/products/NexGenVideoAppKitTestHost",
                 "hostUUID": "01efa441-68f3-3882-ac42-b9ceeeb6051d", "baseline": {}, "directories": []}
+
+    def watchdog_context(self, directory):
+        return dict(self.crash_context(), watchdogDirectory=str(directory), watchdogBaseline={})
+
+    def watchdog_bytes(self, context, **changes):
+        report = {"schemaVersion": 1, "processID": context["pid"], "detectedAt": "2026-10-21T09:25:19Z",
+                  "sampleFilenameIfAvailable": "NexGenVideo-2026-10-21T092519Z-main-thread-hang.sample.txt",
+                  "sampleStatus": "timedOut", "recentContexts": []}
+        report.update(changes)
+        return (json.dumps(report, indent=3) + "\r\n").encode()
+
+    def test_watchdog_retention_runs_for_every_app_exit_without_changing_original_outcomes(self):
+        for original, expected in ((0, 0), (1, 1), (-5, 133)):
+            for error in (None, OSError("watchdog retention unavailable")):
+                with self.subTest(original=original, error=error), tempfile.TemporaryDirectory() as directory:
+                    code, receipt, calls, _ = self.invoke(Path(directory), scope="app-swift-testing",
+                        exits={"app-swift-testing": original}, watchdog_error=error)
+                    self.assertEqual(code, expected)
+                    self.assertEqual(receipt["completed"], original == 0)
+                    self.assertEqual(len(calls), 1)
+                    phase = receipt["phases"][0]
+                    self.assertEqual(phase["exitCode"], original)
+                    self.assertEqual(len(self.watchdog_calls), 1)
+                    self.assertEqual(self.watchdog_calls[0].args[-1], original)
+                    if error:
+                        self.assertEqual(phase["watchdogReports"]["originalExitCode"], original)
+                        self.assertEqual(phase["watchdogReports"]["status"], "diagnostic-unavailable")
+
+    def test_watchdog_retains_exact_report_and_sample_bytes_without_completeness_claim(self):
+        for status, present in (("completed", True), ("timedOut", True), ("timedOut", False)):
+            with self.subTest(status=status, present=present), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                context = self.watchdog_context(root)
+                name = "NexGenVideo-2026-10-21T092519Z-main-thread-hang.json"
+                raw = self.watchdog_bytes(context, sampleStatus=status)
+                (root / name).write_bytes(raw)
+                sample_name = json.loads(raw)["sampleFilenameIfAvailable"]
+                sample = b"original possibly partial stack\xff\r\n"
+                if present:
+                    (root / sample_name).write_bytes(sample)
+                captured = driver.capture_watchdog_reports(root / "captured", context, -5)
+                self.assertEqual(captured["originalExitCode"], -5)
+                self.assertEqual(len(captured["reports"]), 1)
+                report = captured["reports"][0]
+                self.assertEqual((root / "captured" / name).read_bytes(), raw)
+                self.assertEqual(report["sha256"], driver.hashlib.sha256(raw).hexdigest())
+                self.assertEqual(report["producerSampleStatus"], status)
+                self.assertEqual(report["sample"]["status"], "captured-unverified" if present else "absent")
+                if present:
+                    self.assertEqual((root / "captured" / sample_name).read_bytes(), sample)
+                    self.assertEqual(report["sample"]["sha256"], driver.hashlib.sha256(sample).hexdigest())
+
+    def test_watchdog_rejects_foreign_schema_time_and_unsafe_sample_bindings(self):
+        changes = ({"processID": 999}, {"processID": True}, {"schemaVersion": True}, {"schemaVersion": 2},
+                   {"detectedAt": "2026-10-21T09:25:17Z"}, {"detectedAt": "2026-10-21T09:25:21Z"},
+                   {"detectedAt": "2026-10-21T09:25:19"}, {"sampleFilenameIfAvailable": "../private.sample.txt"},
+                   {"sampleFilenameIfAvailable": "/private.sample.txt"}, {"sampleFilenameIfAvailable": "other.sample.txt"})
+        for change in changes:
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                context = self.watchdog_context(root)
+                name = "NexGenVideo-2026-10-21T092519Z-main-thread-hang.json"
+                (root / name).write_bytes(self.watchdog_bytes(context, **change))
+                captured = driver.capture_watchdog_reports(root / "captured", context, 1)
+                self.assertEqual(captured["reports"], [])
+                self.assertNotEqual(captured["candidateStatus"][name], "Bound original watchdog report copied")
+                self.assertEqual(list((root / "captured").glob("*.json")), [root / "captured/receipt.json"])
+
+    def test_watchdog_baseline_rejects_old_report_even_when_rewritten_in_place(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "watchdog"
+            source.mkdir()
+            name = "NexGenVideo-2026-10-21T092519Z-main-thread-hang.json"
+            (source / name).write_bytes(self.watchdog_bytes(self.crash_context()))
+            host = root / "host"
+            host.touch()
+            with patch.object(driver, "watchdog_report_directory", return_value=source), \
+                    patch.object(driver, "report_directories", return_value=[]):
+                context = driver.prepare_post_mortem(host)
+            context.update(self.crash_context())
+            (source / name).write_bytes(self.watchdog_bytes(context, sampleStatus="completed"))
+            captured = driver.capture_watchdog_reports(root / "captured", context, 0)
+            self.assertEqual(captured["reports"], [])
+            self.assertIn("Stale watchdog baseline", captured["candidateStatus"][name])
+
+    def test_watchdog_does_not_follow_report_sample_or_directory_symlinks(self):
+        for kind in ("report", "sample", "directory"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                source = root / "source"
+                source.mkdir()
+                context = self.watchdog_context(source)
+                raw = self.watchdog_bytes(context)
+                name = "NexGenVideo-2026-10-21T092519Z-main-thread-hang.json"
+                sample_name = json.loads(raw)["sampleFilenameIfAvailable"]
+                outside = root / "outside"
+                outside.write_bytes(raw if kind == "report" else b"foreign sample")
+                if kind == "report":
+                    (source / name).symlink_to(outside)
+                else:
+                    (source / name).write_bytes(raw)
+                    (source / sample_name).symlink_to(outside)
+                if kind == "directory":
+                    alias = root / "alias"
+                    alias.symlink_to(source, target_is_directory=True)
+                    context["watchdogDirectory"] = str(alias)
+                captured = driver.capture_watchdog_reports(root / "captured", context, 1)
+                if kind == "sample":
+                    self.assertEqual(len(captured["reports"]), 1)
+                    self.assertEqual(captured["reports"][0]["sample"]["status"], "unavailable")
+                else:
+                    self.assertEqual(captured["reports"], [])
+                self.assertFalse((root / "captured" / sample_name).exists())
+
+    def test_watchdog_incomplete_baseline_does_not_claim_a_report_is_fresh(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            context = self.watchdog_context(root)
+            context["watchdogBaselineError"] = "candidate inspection unavailable"
+            name = "NexGenVideo-2026-10-21T092519Z-main-thread-hang.json"
+            (root / name).write_bytes(self.watchdog_bytes(context))
+            captured = driver.capture_watchdog_reports(root / "captured", context, 1)
+            self.assertEqual(captured["reports"], [])
+            self.assertEqual(captured["status"], "diagnostic-unavailable")
+            self.assertEqual(captured["originalExitCode"], 1)
+
+    def test_watchdog_does_not_attach_a_prelaunch_sample_to_a_fresh_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            context = self.watchdog_context(root)
+            raw = self.watchdog_bytes(context)
+            sample_name = json.loads(raw)["sampleFilenameIfAvailable"]
+            (root / sample_name).write_bytes(b"old process stack")
+            context["watchdogBaseline"] = driver.watchdog_candidates(root)
+            name = "NexGenVideo-2026-10-21T092519Z-main-thread-hang.json"
+            (root / name).write_bytes(raw)
+            captured = driver.capture_watchdog_reports(root / "captured", context, 0)
+            self.assertEqual(len(captured["reports"]), 1)
+            self.assertIn("Stale watchdog baseline sample", captured["reports"][0]["sample"]["error"])
+            self.assertFalse((root / "captured" / sample_name).exists())
+
+    def test_watchdog_rejects_changed_report_and_bounds_report_and_sample_bytes(self):
+        for kind in ("changed", "oversized-report", "sample-budget"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                context = self.watchdog_context(root)
+                name = "NexGenVideo-2026-10-21T092519Z-main-thread-hang.json"
+                raw = self.watchdog_bytes(context)
+                report = root / name
+                report.write_bytes(raw)
+                if kind == "changed":
+                    info = report.stat()
+                    fields = dict(st_dev=info.st_dev, st_ino=info.st_ino, st_size=info.st_size,
+                                  st_mtime_ns=info.st_mtime_ns, st_mode=info.st_mode)
+                    changed = dict(fields, st_mtime_ns=info.st_mtime_ns + 1)
+                    with patch.object(driver.os, "fstat", side_effect=[SimpleNamespace(**fields), SimpleNamespace(**changed)]):
+                        captured = driver.capture_watchdog_reports(root / "captured", context, 1)
+                    self.assertIn("changed while", captured["candidateStatus"][name])
+                    self.assertEqual(captured["reports"], [])
+                elif kind == "oversized-report":
+                    report.write_bytes(b"x" * (driver.WATCHDOG_REPORT_BYTES + 1))
+                    captured = driver.capture_watchdog_reports(root / "captured", context, 1)
+                    self.assertIn("capture byte limit", captured["candidateStatus"][name])
+                    self.assertEqual(captured["reports"], [])
+                else:
+                    sample_name = json.loads(raw)["sampleFilenameIfAvailable"]
+                    (root / sample_name).write_bytes(b"stack")
+                    with patch.object(driver, "WATCHDOG_TOTAL_BYTES", len(raw) + 1):
+                        captured = driver.capture_watchdog_reports(root / "captured", context, 1)
+                    self.assertEqual((root / "captured" / name).read_bytes(), raw)
+                    self.assertIn("capture byte limit", captured["reports"][0]["sample"]["error"])
+                    self.assertFalse((root / "captured" / sample_name).exists())
 
     def crash_bytes(self, context, **changes):
         report = {"pid": context["pid"], "parentPid": context["parentPID"],
