@@ -74,11 +74,11 @@ struct AudioGenerationOptionTests {
             try? FileManager.default.removeItem(at: directory)
         }
         let model = audio(voices: ["Current voice"])
-        let request = GenerationRequest(modality: .audio, modelId: model.id, intent: "", durationSeconds: 4,
+        let request = GenerationRequest(modality: .audio, modelId: model.id, intent: "Recorded original direction", durationSeconds: 4,
             placement: .mediaLibrary(folderId: nil), origin: .panel,
             submission: .audio { prompt in
                 .make(genInput: .init(prompt: prompt, model: model.id, duration: 4, aspectRatio: ""), model: model,
-                    params: .init(prompt: "Recorded original direction", voice: "Current voice", lyrics: "Unsupported words",
+                    params: .init(prompt: prompt, voice: "Current voice", lyrics: "Unsupported words",
                         styleInstructions: nil, instrumental: false, durationSeconds: 4))
             })
         let result = await GenerationController.prepare(request, editor: editor)

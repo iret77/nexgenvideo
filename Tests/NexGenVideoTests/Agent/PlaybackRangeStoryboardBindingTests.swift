@@ -25,6 +25,8 @@ struct PlaybackRangeStoryboardBindingTests {
 
     private func fixture() throws -> Fixture {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("StoryboardRange-\(UUID().uuidString).ngv")
+        var retained = false
+        defer { if !retained { try? FileManager.default.removeItem(at: home) } }
         let root = try ProjectScaffold.initProject(home: home, name: "Range byte binding", mode: .beat)
         let project = try YAMLArtifactStore(dataRoot: root).load(ProjectMeta.self, at: PipelineLayout.projectFile)
         _ = try ProjectLocalFile.ensureDirectory("audio", dataRoot: root)
@@ -53,8 +55,40 @@ struct PlaybackRangeStoryboardBindingTests {
         let range = try PipelinePlaybackRangeWriter.materialize(snapshot,
             brief: PlanningWriterIO.reference(PipelineLayout.briefFile, id: "brief", role: "core.brief", dataRoot: root))
         try PlanningWriterIO.json(range).write(to: root.appendingPathComponent(PlaybackRangeV1.currentPath))
-        let references = try PipelinePlaybackRangeWriter.bindingReferences(range, dataRoot: root, workflowID: selection.workflowID)
+        let references: [CanonicalArtifactReferenceV1]
+        do {
+            references = try PipelinePlaybackRangeWriter.bindingReferences(range, dataRoot: root, workflowID: selection.workflowID)
+        } catch {
+            func describe(_ url: URL?) -> [String: String] {
+                guard let url else { return ["status": "unavailable"] }
+                return ["absolute": url.absoluteString, "path": url.path,
+                    "base": url.baseURL?.absoluteString ?? "none", "standardized": url.standardizedFileURL.absoluteString]
+            }
+            var track: [String: String]
+            do { track = describe(try ProjectLocalFile.resolve(audio.path, dataRoot: root)) }
+            catch { track = ["error": String(describing: error)] }
+            var projectObservation: [String: String]
+            do {
+                projectObservation = ["project": try YAMLArtifactStore(dataRoot: root)
+                    .load(ProjectMeta.self, at: PipelineLayout.projectFile).project]
+            } catch { projectObservation = ["error": String(describing: error)] }
+            let expectedAnalysis = AudioProjectLayout.expectedAnalysisArtifactURL(dataRoot: root)
+            let observation: [String: Any] = [
+                "scope": "fixture observation after original binding failure", "error": String(describing: error),
+                "rangeProject": range.header.projectID, "project": projectObservation, "root": describe(root),
+                "inputs": range.header.inputs.map { ["path": $0.path, "role": $0.role, "sha256": $0.sha256] },
+                "analysisPath": range.analysis.path, "expectedAnalysis": describe(expectedAnalysis),
+                "expectedAnalysisRelativePath": expectedAnalysis.map { FrameInventory.relativePath(of: $0, to: root) } ?? "unavailable",
+                "songs": AudioProjectLayout.songFiles(dataRoot: root).map { describe($0) }, "resolvedTrack": track,
+            ]
+            if var bytes = try? JSONSerialization.data(withJSONObject: observation, options: [.sortedKeys]) {
+                bytes.append(0x0A)
+                FileHandle.standardError.write(bytes)
+            }
+            throw error
+        }
         let unique = Dictionary(grouping: references, by: \.path).values.compactMap(\.first).sorted { $0.path < $1.path }
+        retained = true
         return Fixture(home: home, root: root, range: range, inputs: unique)
     }
 

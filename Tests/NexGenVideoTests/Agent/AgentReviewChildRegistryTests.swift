@@ -102,9 +102,11 @@ struct AgentReviewChildRegistryTests {
         #expect(completion.modelID == "fixture-model")
         let late = await runtime.savedExecute?("read", AgentReviewChildRequest.readTool, "{}")
         #expect(late?.isError == true)
-        let archived = try JSONDecoder().decode(AgentReviewChildCallEvidence.self, from: JSONEncoder().encode(calls[0]))
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let archived = try JSONDecoder().decode(AgentReviewChildCallEvidence.self, from: encoder.encode(calls[0]))
         #expect(archived.response == calls[0].response)
-        #expect(try JSONEncoder().encode(archived) == JSONEncoder().encode(calls[0]))
+        #expect(try encoder.encode(archived) == encoder.encode(calls[0]))
         try archived.requireRecordedCall(request: request, toolName: AgentReviewChildRequest.readTool, canonicalJSON: "{}")
     }
 

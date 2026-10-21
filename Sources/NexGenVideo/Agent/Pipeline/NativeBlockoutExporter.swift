@@ -180,7 +180,7 @@ enum NativeBlockoutExporter {
             weight: AppTheme.AppKitFontWeight.semibold) as CTFont
         let labelHeight = (CTFontGetAscent(font) + CTFontGetDescent(font) + CTFontGetLeading(font) + AppTheme.Spacing.xxs * 2)
             * (arrangement == .bestFit ? 2 : 1)
-        let symbolScale = max(previewScale, AppTheme.IconSize.md / AppTheme.IconSize.xs)
+        let symbolScale = max(previewScale, AppTheme.IconSize.lgXl / AppTheme.IconSize.xs)
         let markerClearance = (AppTheme.IconSize.xs + AppTheme.BorderWidth.medium) * symbolScale / 2
         let viewports = makeViewports(layouts: layouts, bounds: bounds, metric: metric,
             labelHeight: labelHeight, markerClearance: markerClearance, arrangement: arrangement)
@@ -321,7 +321,7 @@ enum NativeBlockoutExporter {
         let lookWidth = max(AppTheme.BorderWidth.thick, AppTheme.BorderWidth.blockoutLookMinimum / referenceScale)
         let lookCasing = max(AppTheme.BorderWidth.heavy, lookWidth + AppTheme.BorderWidth.thin * 2 / referenceScale)
         let travelWidth = max(AppTheme.BorderWidth.blockoutTravel,
-            lookCasing + AppTheme.BorderWidth.thick * 2 / referenceScale)
+            lookCasing + AppTheme.BorderWidth.heavy * 2 / referenceScale)
         let width = dashed ? travelWidth : lookWidth
         let casing = dashed ? width + AppTheme.BorderWidth.thick : lookCasing
         for (color, width) in [

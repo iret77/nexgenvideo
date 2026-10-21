@@ -662,7 +662,7 @@ struct ProjectWorkingCopyTests {
         try CurrentMusicvideoFixture.load()
         let pkg = try tempPackage(pipelineName: nil)
         let source = try musicvideoBinding(version: "0.5.0")
-        let target = try musicvideoBinding()
+        let target = try CurrentMusicvideoFixture.binding
         let unrelated = try musicvideoBinding(version: "0.9.9")
         try ProjectPluginSettings.setActivePlugin(source, projectURL: pkg)
         let key = try ProjectIdentity.key(for: pkg)

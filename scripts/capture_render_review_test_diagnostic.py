@@ -221,19 +221,25 @@ def process_tree(root_pid):
     return rows, descendants
 
 
-def capture(pid_identity, root_pid, evidence, request):
+def require_owned_identity(pid_identity, root_pid, root_identity=None):
+    rows, owned = process_tree(root_pid)
+    if (pid_identity["pid"] not in owned or rows.get(pid_identity["pid"]) != pid_identity
+            or root_identity is not None and rows.get(root_pid) != root_identity):
+        raise RuntimeError("The owned test process or root identity changed before capture")
+    return rows
+
+
+def capture(pid_identity, root_pid, evidence, request, *, root_identity=None, timeout=CAPTURE_TIMEOUT_SECONDS):
     command = ["/usr/bin/sample", str(pid_identity["pid"]), str(SAMPLE_SECONDS), "-file", str(evidence / "sample.txt")]
     receipt = {**request, "target": pid_identity, "status": "capture-unavailable",
                "requestedSampleCommand": command, "sampleSeconds": SAMPLE_SECONDS,
-               "captureTimeoutSeconds": CAPTURE_TIMEOUT_SECONDS}
+               "captureTimeoutSeconds": timeout}
     try:
-        rows, owned = process_tree(root_pid)
-        if pid_identity["pid"] not in owned or rows.get(pid_identity["pid"]) != pid_identity:
-            raise RuntimeError("The owned XCTest process identity changed before capture")
+        require_owned_identity(pid_identity, root_pid, root_identity)
         with (evidence / "sample-command.log").open("wb") as log:
             result = subprocess.run(
                 command, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
-                timeout=CAPTURE_TIMEOUT_SECONDS, check=False,
+                timeout=timeout, check=False,
             )
         receipt.update(status="capture-returned", returnCode=result.returncode)
     except (OSError, ValueError, subprocess.SubprocessError, RuntimeError) as error:
@@ -247,9 +253,162 @@ def capture(pid_identity, root_pid, evidence, request):
 
 
 
+
+def capture_appkit_host(target, root_pid, root_identity, evidence, suite_bytes, events_path, request, record=None):
+    receipt = {**request, "status": "capture-started", "target": target, "rootIdentity": root_identity,
+               "causality": "No hang or source cause inferred from inactivity"}
+    receipt_path = evidence.parent / (evidence.name + "-status.json")
+
+    def persist():
+        try:
+            receipt_path.write_text(json.dumps(receipt, indent=2) + "\n")
+        except OSError as error:
+            receipt.setdefault("receiptWriteErrors", []).append(str(error))
+            if record is not None:
+                try:
+                    record(event="appkit-host-stale-status-write-unavailable", error=str(error),
+                        status=receipt["status"], target=target)
+                except OSError:
+                    pass
+
+    try:
+        evidence.mkdir()
+        persist()
+        (evidence / "suite-original.json").write_bytes(suite_bytes)
+        receipt["suiteSHA256"] = hashlib.sha256(suite_bytes).hexdigest()
+        try:
+            with events_path.open("rb") as source, (evidence / "events-original.jsonl").open("wb") as destination:
+                identity = os.fstat(source.fileno())
+                remaining = min(identity.st_size, 64 * 1024 * 1024)
+                digest, copied = hashlib.sha256(), 0
+                while remaining:
+                    block = source.read(min(1024 * 1024, remaining))
+                    if not block:
+                        break
+                    destination.write(block); digest.update(block)
+                    copied += len(block); remaining -= len(block)
+                receipt["eventsSnapshot"] = {"source": str(events_path), "sourceDevice": identity.st_dev,
+                    "sourceInode": identity.st_ino, "sourceBytesAtOpen": identity.st_size,
+                    "capturedBytes": copied, "sha256": digest.hexdigest(),
+                    "completeAtOpenSize": copied == identity.st_size,
+                    "scope": "Immutable raw prefix at open size; concurrent appends are not part of this snapshot"}
+        except OSError as error:
+            receipt["eventsSnapshotError"] = str(error)
+        persist()
+        capture(target, root_pid, evidence, request, root_identity=root_identity, timeout=15)
+        try:
+            require_owned_identity(target, root_pid, root_identity)
+            command = ["/usr/bin/vmmap", str(target["pid"])]
+            receipt["vmmapCommand"] = command
+            persist()
+            with (evidence / "vmmap.txt").open("wb") as output:
+                result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=output,
+                    stderr=subprocess.STDOUT, timeout=15, check=False)
+            receipt["vmmapExitCode"] = result.returncode
+        except (OSError, ValueError, subprocess.SubprocessError, RuntimeError) as error:
+            receipt["vmmapError"] = str(error)
+        image_map = evidence / "vmmap.txt"
+        if image_map.is_file():
+            receipt["vmmapSHA256"] = hashlib.sha256(image_map.read_bytes()).hexdigest()
+        receipt["status"] = "capture-finished-see-individual-command-status"
+    except (OSError, ValueError, subprocess.SubprocessError, RuntimeError) as error:
+        receipt.update(status="capture-unavailable-or-partial", error=str(error))
+    finally:
+        receipt["finishedMonotonic"] = time.monotonic()
+        persist()
+
+
+class AppKitHostStaleObservation:
+    def __init__(self, evidence, root_pid, command, root_identity, record):
+        self.record, self.last_error = record, None
+        self.evidence, self.root_pid, self.root_identity = evidence, root_pid, root_identity
+        self.bound_root_identity = None
+        self.suite_path = None
+        self.target, self.event_state, self.worker = None, None, None
+        self.changed, self.last_scan, self.attempted = time.monotonic(), 0, False
+        driver = Path(__file__).resolve().with_name("run_macos_tests.py")
+        if (len(command) > 3 and Path(command[1]).resolve() == driver
+                and command.count("--evidence") == 1 and command.index("--evidence") < len(command) - 1):
+            folder = Path(command[command.index("--evidence") + 1]).resolve()
+            if folder.is_relative_to(evidence.resolve()):
+                self.suite_path = folder / "suite.json"
+
+    def tick(self):
+        now = time.monotonic()
+        if self.suite_path is None or self.attempted or now - self.last_scan < 1:
+            return
+        self.last_scan = now
+        try:
+            suite_bytes = self.suite_path.read_bytes()
+            suite = json.loads(suite_bytes)
+            if not isinstance(suite, dict):
+                return
+            phases = suite.get("phases", [])
+            if not isinstance(phases, list) or not phases or not isinstance(phases[-1], dict):
+                return
+            if phases[-1].get("name") != "app-swift-testing" or phases[-1].get("status") != "running":
+                return
+            command = phases[-1]["command"]
+            if (not isinstance(command, list) or not command or not isinstance(command[0], str)
+                    or not Path(command[0]).is_absolute() or Path(command[0]).name != "NexGenVideoAppKitTestHost"):
+                return
+            rows, owned = process_tree(self.root_pid)
+            current_root = rows.get(self.root_pid)
+            if (self.root_identity is None or current_root is None
+                    or any(current_root[key] != self.root_identity[key] for key in ("pid", "parentPID", "started"))
+                    or self.bound_root_identity is not None and current_root != self.bound_root_identity):
+                raise RuntimeError("The original driver process identity is unavailable or changed")
+            candidates = [rows[pid] for pid in owned if rows[pid]["parentPID"] == self.root_pid
+                and Path(rows[pid]["executable"]).resolve() == Path(command[0]).resolve()]
+            if len(candidates) != 1 or self.target is not None and candidates[0] != self.target:
+                if self.target is not None:
+                    raise RuntimeError("The bound AppKit host exited, became unowned or changed identity")
+                return
+            events_path = self.suite_path.parent / "app-swift-testing/events.jsonl"
+            try:
+                identity = events_path.stat()
+                event_state = (identity.st_dev, identity.st_ino, identity.st_size)
+            except FileNotFoundError:
+                event_state = None
+            if self.target is None:
+                self.bound_root_identity = dict(current_root)
+                self.target, self.event_state, self.changed = candidates[0], event_state, now
+                self.record(event="appkit-host-stale-watch-bound", target=self.target, rootIdentity=self.bound_root_identity,
+                    launchRootIdentity=self.root_identity,
+                    originalRunningCommand=command, originalSuitePath=str(self.suite_path))
+            elif event_state != self.event_state:
+                self.event_state, self.changed = event_state, now
+            if now - self.changed < 180:
+                return
+            self.attempted = True
+            request = {"status": "capture-requested", "trigger": "180s without native event-file byte progress",
+                "requestedMonotonic": now, "lastNativeProgressMonotonic": self.changed,
+                "driverPID": self.root_pid, "originalRunningCommand": command,
+                "originalSuitePath": str(self.suite_path), "eventFileState": self.event_state,
+                "consoleHeartbeatCountsAsProgress": False, "captureLimit": 1}
+            (self.evidence / "appkit-host-stale-request.json").write_text(json.dumps(request, indent=2) + "\n")
+            self.worker = threading.Thread(target=capture_appkit_host,
+                args=(self.target, self.root_pid, self.bound_root_identity, self.evidence / "appkit-host-stale",
+                      suite_bytes, events_path, request, self.record))
+            self.worker.start()
+        except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError, RuntimeError) as error:
+            if str(error) != self.last_error:
+                self.last_error = str(error)
+                self.record(event="appkit-host-stale-observation-unavailable", error=self.last_error)
+
+    def finish(self):
+        if self.worker is not None:
+            self.worker.join()
+        return {"captureAttempted": self.attempted, "target": self.target,
+                "boundDriverIdentity": self.bound_root_identity,
+                "unavailableReason": self.last_error,
+                "nativeProgressScope": "Only native events file bytes; console logs do not reset delay"}
+
+
 class TestProcessObservation:
     def __init__(self, evidence, root_pid):
         self.evidence, self.root_pid = evidence, root_pid
+        self.record_lock = threading.Lock()
         self.events = (evidence / "process-events.jsonl").open("w")
         self.swift_events = (evidence / "swift-testing-events.jsonl").open("w")
         self.children = {}
@@ -267,8 +426,9 @@ class TestProcessObservation:
             self.record(event="observer-unavailable", error=str(error))
 
     def record(self, **row):
-        self.events.write(json.dumps({"observedMonotonic": time.monotonic(), **row}) + "\n")
-        self.events.flush()
+        with self.record_lock:
+            self.events.write(json.dumps({"observedMonotonic": time.monotonic(), **row}) + "\n")
+            self.events.flush()
 
     def watch(self, identity, *, self_report=None):
         pid = identity["pid"]
@@ -455,6 +615,8 @@ def main():
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         run["runLoopProbe"]["observedRootIdentityError"] = str(error)
     observation = TestProcessObservation(args.evidence, process.pid)
+    appkit_stale = AppKitHostStaleObservation(args.evidence, process.pid, actual_command,
+        run["runLoopProbe"].get("observedRootIdentity"), observation.record)
     selector = selectors.DefaultSelector()
     selector.register(process.stdout, selectors.EVENT_READ)
     pending = b""
@@ -490,6 +652,7 @@ def main():
 
         while selector.get_map() or process.poll() is None:
             observation.tick()
+            appkit_stale.tick()
             for key, _ in selector.select(timeout=1):
                 data = os.read(key.fd, 65536)
                 if not data:
@@ -528,6 +691,7 @@ def main():
     selector.close()
     process.stdout.close()
     exit_code = process.wait()
+    run["appKitHostStaleObservation"] = appkit_stale.finish()
     observation.finish()
     run["runLoopProbe"]["helperLoads"] = observation.probe_loads
     run["runLoopProbe"]["ownedAppProbeInitCount"] = sum(

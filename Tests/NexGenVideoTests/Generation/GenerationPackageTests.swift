@@ -101,15 +101,15 @@ struct GenerationPackageTests {
     }
 
     @Test func audioReviewRoundTripsWithoutSubmittingOrInventingVisualInputs() async throws {
-        let entry = try #require(FalModelRegistry.entries.first {
-            if case .audio = $0.uiCapabilities { return true }
-            return false
-        })
-        guard case .audio(let caps) = entry.uiCapabilities else { Issue.record("Expected audio fixture"); return }
+        let caps = AudioCaps(category: "music", voices: nil, defaultVoice: nil,
+            supportsLyrics: true, supportsInstrumental: false, supportsStyleInstructions: true,
+            durations: [8], minPromptLength: 1, inputs: ["text"], promptLabel: nil, minSeconds: 8, maxSeconds: 8)
+        let entry = CatalogEntry(id: "fixture-audio-package", kind: .audio, displayName: "Audio package fixture",
+            allowedEndpoints: [], responseShape: .audio, uiCapabilities: .audio(caps))
         let model = AudioModelConfig(entry: entry, caps: caps)
         let editor = EditorViewModel()
         let target = ResolvedGenerationTarget(modelId: model.id, provider: .fal, endpoint: model.id, binding: nil)
-        let request = GenerationRequest(modality: .audio, modelId: model.id, intent: "",
+        let request = GenerationRequest(modality: .audio, modelId: model.id, intent: "A quiet original melody",
             durationSeconds: 8, placement: .mediaLibrary(folderId: nil), origin: .panel, target: target,
             submission: .audio { prompt in
                 .make(genInput: .init(prompt: prompt, model: model.id, duration: 8, aspectRatio: ""), model: model,
