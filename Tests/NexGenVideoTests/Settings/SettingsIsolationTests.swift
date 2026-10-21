@@ -54,6 +54,10 @@ struct SettingsIsolationTests {
         catalog.applyResearchRecords(try await store.snapshot().records)
         #expect(catalog.offeringCapabilitiesByModelID == original)
         #expect(catalog.settingsBindings(forModelID: entry.id, activation: .init()).isEmpty)
+        #expect(catalog.settingsBindings(forModelID: entry.id, activation: .init(active: [.init(provider: .fal, transport: .api)])).isEmpty)
+        catalog.applyDiscovered([entry], for: .fal)
         #expect(!catalog.settingsBindings(forModelID: entry.id, activation: .init(active: [.init(provider: .fal, transport: .api)])).isEmpty)
+        catalog.applyDiscovered([], for: .fal)
+        #expect(catalog.settingsBindings(forModelID: entry.id, activation: .init(active: [.init(provider: .fal, transport: .api)])).isEmpty)
     }
 }

@@ -258,12 +258,10 @@ enum NativeBlockoutExporter {
             context.clip(using: .evenOdd)
         }
         for drawing in drawings {
-            stroke(drawing.movement, color: AppTheme.Text.primary.cgColor, dashed: true,
-                previewScale: previewScale, markerScale: drawing.scale, referenceScale: symbolScale, context: context)
-            if let lookAt = drawing.lookAt {
-                let direction = CGMutablePath()
-                direction.move(to: drawing.camera)
-                direction.addLine(to: lookAt)
+            strokeTravel(drawing, previewScale: previewScale, referenceScale: symbolScale, context: context)
+        }
+        for drawing in drawings {
+            if let direction = drawing.lookPath {
                 stroke(direction, color: drawing.color, dashed: false,
                     previewScale: previewScale, markerScale: drawing.scale, referenceScale: symbolScale, context: context)
             }
@@ -311,24 +309,51 @@ enum NativeBlockoutExporter {
         return [direction + (hasTravel ? " · - - Path" : ""), compact + (hasTravel ? " / Path" : "")]
     }
 
-    private static func stroke(_ path: CGPath, color: CGColor, dashed: Bool,
-                               previewScale: CGFloat, markerScale: CGFloat, referenceScale: CGFloat, context: CGContext) {
+    private static func strokeTravel(_ drawing: CameraDrawing, previewScale: CGFloat,
+                                     referenceScale: CGFloat, context: CGContext) {
+        stroke(drawing.movement, color: AppTheme.Text.primary.cgColor, dashed: true,
+            previewScale: previewScale, markerScale: drawing.scale, referenceScale: referenceScale, context: context)
+        guard drawing.hasVisibleTravel, let direction = drawing.lookPath else { return }
         context.saveGState()
         defer { context.restoreGState() }
-        context.setLineCap(dashed ? .butt : .round)
+        let widths = strokeWidths(dashed: true, overlappingLook: true, previewScale: previewScale,
+            markerScale: drawing.scale, referenceScale: referenceScale)
+        context.addPath(direction)
+        context.setLineDash(phase: 0, lengths: [])
+        context.setLineCap(.butt)
         context.setLineJoin(.round)
-        context.setLineDash(phase: 0, lengths: dashed ? AppTheme.Border.longDash.map { $0 * markerScale } : [])
+        context.setLineWidth(widths.casing)
+        context.replacePathWithStrokedPath()
+        context.clip()
+        stroke(drawing.movement, color: AppTheme.Text.primary.cgColor, dashed: true, overlappingLook: true,
+            previewScale: previewScale, markerScale: drawing.scale, referenceScale: referenceScale, context: context)
+    }
+
+    private static func strokeWidths(dashed: Bool, overlappingLook: Bool, previewScale: CGFloat,
+                                     markerScale: CGFloat, referenceScale: CGFloat) -> (line: CGFloat, casing: CGFloat) {
         let fitScale = markerScale / referenceScale
         let lineScale = previewScale * fitScale
         let lookWidth = max(AppTheme.BorderWidth.thick * lineScale, AppTheme.BorderWidth.blockoutLookMinimum * fitScale)
         let halo = max(AppTheme.BorderWidth.thin * fitScale, AppTheme.BorderWidth.hairline * lineScale)
         let lookCasing = lookWidth + halo * 2
         let travelWidth = lookCasing + AppTheme.BorderWidth.thick * lineScale * 2
-        let width = dashed ? travelWidth : lookWidth
+        let width = dashed ? (overlappingLook ? travelWidth : AppTheme.BorderWidth.thick * lineScale) : lookWidth
         let casing = dashed ? width + halo * 2 : lookCasing
+        return (width, casing)
+    }
+
+    private static func stroke(_ path: CGPath, color: CGColor, dashed: Bool, overlappingLook: Bool = false,
+                               previewScale: CGFloat, markerScale: CGFloat, referenceScale: CGFloat, context: CGContext) {
+        context.saveGState()
+        defer { context.restoreGState() }
+        context.setLineCap(dashed ? .butt : .round)
+        context.setLineJoin(.round)
+        context.setLineDash(phase: 0, lengths: dashed ? AppTheme.Border.longDash.map { $0 * markerScale } : [])
+        let widths = strokeWidths(dashed: dashed, overlappingLook: overlappingLook,
+            previewScale: previewScale, markerScale: markerScale, referenceScale: referenceScale)
         for (color, width) in [
-            (AppTheme.Background.surface.cgColor, casing),
-            (color, width),
+            (AppTheme.Background.surface.cgColor, widths.casing),
+            (color, widths.line),
         ] {
             context.addPath(path)
             context.setStrokeColor(color)
@@ -414,6 +439,14 @@ enum NativeBlockoutExporter {
         let color: CGColor
         let scale: CGFloat
         let hasVisibleTravel: Bool
+
+        var lookPath: CGPath? {
+            guard let lookAt else { return nil }
+            let path = CGMutablePath()
+            path.move(to: camera)
+            path.addLine(to: lookAt)
+            return path
+        }
 
         var hasHeading: Bool {
             guard let lookAt else { return false }

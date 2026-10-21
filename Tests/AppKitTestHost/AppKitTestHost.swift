@@ -52,25 +52,6 @@ private enum HostError: Error {
 }
 
 @MainActor
-private final class TestRuntimeApplication: NSApplication {
-    override func reportException(_ exception: NSException) {
-        let report: [String: Any] = [
-            "name": exception.name.rawValue,
-            "reason": exception.reason ?? "",
-            "exceptionStack": exception.callStackSymbols,
-            "reportStack": Thread.callStackSymbols,
-            "pid": Int(getpid()),
-            "parentPID": Int(getppid()),
-            "sourceSHA": ProcessInfo.processInfo.environment["GITHUB_SHA"] ?? "",
-        ]
-        let bytes = (try? JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]))
-            ?? Data(exception.description.utf8)
-        FileHandle.standardError.write(Data("NGV_APPKIT_TEST_EXCEPTION ".utf8) + bytes + Data([0x0A]))
-        exit(EXIT_FAILURE)
-    }
-}
-
-@MainActor
 private final class TestApplication: NSObject, NSApplicationDelegate {
     private let entryPoint: TestingEntryPoint
     private let sink: EventSink
@@ -132,6 +113,7 @@ private struct HostReceipt: Encodable {
 private enum AppKitTestHost {
     @MainActor
     static func main() {
+        UserDefaults.standard.register(defaults: ["NSApplicationCrashOnExceptions": true])
         do {
             let environment = ProcessInfo.processInfo.environment
             let bundle = try path("NGV_APPKIT_TEST_BUNDLE", in: environment)
@@ -140,9 +122,7 @@ private enum AppKitTestHost {
             guard Thread.isMainThread else {
                 throw HostError.message("The AppKit test host must start on the main thread.")
             }
-            guard let application = TestRuntimeApplication.shared as? TestRuntimeApplication else {
-                throw HostError.message("The AppKit test host requires its exception-reporting application.")
-            }
+            let application = NSApplication.shared
             guard !FileManager.default.fileExists(atPath: receiptPath.path) else {
                 throw HostError.message("The completion receipt already exists.")
             }

@@ -225,8 +225,9 @@ enum ProductionWorkflowRecoveryMigration {
         switch intent.target {
         case .pack(let target):
             guard ProjectPluginSettings.bindingResolution(projectURL: staging) == .bound(target),
-                  let contract = try PhaseContractRuntime.contract(activePack: target.id) else { throw MigrationError.invalidSource }
-            workflow = try HostWorkflowKey.resolve(binding: target, contract: contract)
+                  let resolved = try PhaseContractRuntime.resolveWorkflow(dataRoot: root,
+                    expectedPack: target, expectedProductionContract: nil) else { throw MigrationError.invalidSource }
+            workflow = resolved
         case .core:
             guard ProjectPluginSettings.productionContractResolution(projectURL: staging) == .bound(.current) else {
                 throw MigrationError.invalidSource

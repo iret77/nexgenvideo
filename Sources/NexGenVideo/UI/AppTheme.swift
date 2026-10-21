@@ -181,8 +181,8 @@ enum AppTheme {
         static let systemSecondary = NSColor.secondaryLabelColor
         static let blockoutCameraColors = (0..<5).map { index in
             let hue = CGFloat(index) / 5
-            return CGColor(red: 0.45 + hue * 0.3, green: 0.72 - hue * 0.18,
-                blue: 0.85 - hue * 0.08, alpha: 1)
+            return CGColor(red: 0.18 + hue * 0.3, green: 0.78 - hue * 0.18,
+                blue: 0.95 - hue * 0.08, alpha: 1)
         }
 
         static var primaryColor: Color { Color(primary) }
