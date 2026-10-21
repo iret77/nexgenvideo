@@ -8,7 +8,12 @@ import Testing
 struct PipelineRenderReviewRetentionTests {
     @Test func repeatedCaptureAndReviewPreserveAnAcceptedConcern() async throws {
         let context = try await ProductionPlanningAcceptanceFixture.makeImportedAssembly { context in
+            let board = try PlanningWriterIO.storyboard(dataRoot: context.dataRoot)
             let snapshot = try await PipelineRenderReviewWriter.capture(editor: context.editor)
+            #expect(Set(snapshot.references.map(\.id)).count == snapshot.references.count)
+            for reference in board.references {
+                #expect(snapshot.references.contains(reference))
+            }
             let shot = try #require(snapshot.shots.first)
             let finding = RenderReviewV1.Finding(id: "camera-choice", kind: .semanticConcern, category: .camera,
                 shotIDs: [shot.shotID], message: "The deliberately static camera needs an editorial decision.",

@@ -144,32 +144,37 @@ final class PipelineSpatialSceneAuthority: SpatialSceneAuthority {
     }
 
     struct SourceFence: Sendable {
-        let paths: [URL: [Int64]]
+        struct Stamp: Sendable, Equatable {
+            let identityOnly: Bool
+            let values: [Int64]
+        }
+
+        let paths: [URL: Stamp]
         let canonicalPaths: [URL]
 
         static func capture(dataRoot: URL, additionalCanonicalPaths: [String] = []) throws -> Self {
             let root = dataRoot.standardizedFileURL
             let home = root.deletingLastPathComponent()
-            var stamps: [URL: [Int64]] = [home: try stamp(home)]
+            var stamps: [URL: Stamp] = [:]
             func visit(_ path: URL) throws {
                 try Task.checkCancellation()
                 let state = try stamp(path)
-                guard !state.isEmpty else { throw SpatialSceneError.changed }
+                guard !state.values.isEmpty else { throw SpatialSceneError.changed }
                 stamps[path] = state
-                if mode_t(state[3]) & S_IFMT == S_IFDIR {
+                if mode_t(state.values[3]) & S_IFMT == S_IFDIR {
                     for child in try FileManager.default.contentsOfDirectory(at: path, includingPropertiesForKeys: nil) {
                         try visit(child)
                     }
                 }
             }
             try visit(root)
-            let canonical = [root, home] + ["ngv.json", ".ngv-open-generation"].map { home.appendingPathComponent($0) }
+            let canonical = [root, home] + ["ngv.json", ".ngv-open-generation", ".ngv-materialized"].map { home.appendingPathComponent($0) }
                 + [PipelineLayout.projectFile, PipelineLayout.briefFile, PipelineLayout.gatesFile,
                    PipelineLayout.lineageFile, PipelineLayout.productionDesignFile, StorySourceV1.currentPath,
                    ProductionSpatialInventoryV1.currentPath, "\(SpatialSceneStore.basePath)/index.v1.json"]
                     .map { root.appendingPathComponent($0) }
                 + additionalCanonicalPaths.map { root.appendingPathComponent($0) }
-            for path in canonical { stamps[path] = try stamp(path) }
+            for path in canonical { stamps[path] = try stamp(path, identityOnly: path == home) }
             let result = Self(paths: stamps, canonicalPaths: canonical)
             try result.requireUnchanged()
             return result
@@ -178,29 +183,36 @@ final class PipelineSpatialSceneAuthority: SpatialSceneAuthority {
         func requireUnchanged() throws {
             for (path, expected) in paths {
                 try Task.checkCancellation()
-                guard try Self.stamp(path) == expected else { throw SpatialSceneError.changed }
+                guard try Self.stamp(path, identityOnly: expected.identityOnly) == expected else { throw SpatialSceneError.changed }
             }
         }
 
         func requireCanonicalRootsUnchanged() throws {
             for path in canonicalPaths {
-                guard try Self.stamp(path) == paths[path] else { throw SpatialSceneError.changed }
+                guard let expected = paths[path],
+                      try Self.stamp(path, identityOnly: expected.identityOnly) == expected else { throw SpatialSceneError.changed }
             }
         }
 
-        private static func stamp(_ path: URL) throws -> [Int64] {
+        private static func stamp(_ path: URL, identityOnly: Bool = false) throws -> Stamp {
             var value = stat()
             guard lstat(path.path, &value) == 0 else {
-                if errno == ENOENT { return [] }
+                if errno == ENOENT, !identityOnly { return Stamp(identityOnly: false, values: []) }
                 throw SpatialSceneError.changed
             }
             guard value.st_mode & S_IFMT == S_IFREG || value.st_mode & S_IFMT == S_IFDIR else {
                 throw SpatialSceneError.changed
             }
-            return [Int64(value.st_dev), Int64(bitPattern: value.st_ino), value.st_size,
+            if identityOnly {
+                guard value.st_mode & S_IFMT == S_IFDIR else { throw SpatialSceneError.changed }
+                // Package checkpoints replace siblings without changing pipeline ownership.
+                return Stamp(identityOnly: true, values: [Int64(value.st_dev), Int64(bitPattern: value.st_ino),
+                    Int64(value.st_mode), Int64(value.st_uid), Int64(value.st_gid)])
+            }
+            return Stamp(identityOnly: false, values: [Int64(value.st_dev), Int64(bitPattern: value.st_ino), value.st_size,
                     Int64(value.st_mode), Int64(value.st_nlink), Int64(value.st_uid),
                     Int64(value.st_mtimespec.tv_sec), Int64(value.st_mtimespec.tv_nsec),
-                    Int64(value.st_ctimespec.tv_sec), Int64(value.st_ctimespec.tv_nsec)]
+                    Int64(value.st_ctimespec.tv_sec), Int64(value.st_ctimespec.tv_nsec)])
         }
     }
 

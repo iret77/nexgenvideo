@@ -59,6 +59,18 @@ struct ProductionFinalPromptCompilationTests {
             let context = ProductionPlanningAcceptanceFixture.Context(document: document,
                 packageURL: home, dataRoot: root, executor: executor)
             let inspected = try await PipelineRenderReviewWriter.capture(editor: editor)
+            #expect(Set(inspected.references.map(\.id)).count == inspected.references.count)
+            for shot in shots {
+                let bundle = try PipelineProductionInputMaterializer.requireCurrent(shotID: shot.execution.id, dataRoot: root)
+                let planned = bundle.receipt.plannedRoute
+                #expect(planned.id == bundle.receipt.route.id && planned.path != bundle.receipt.route.path)
+                #expect(inspected.shots.first { $0.shotID == shot.execution.id }?.review.route == bundle.receipt.route)
+                for reference in [planned, bundle.receipt.graph, bundle.receipt.route] {
+                    #expect(inspected.references.contains {
+                        $0.path == reference.path && $0.sha256 == reference.sha256 && $0.role == reference.role
+                    })
+                }
+            }
             _ = try await PipelineRenderReviewWriter.recordNativeReview(snapshot: inspected, findings: [], editor: editor)
             try await ProductionPlanningAcceptanceFixture.approve("render_review", in: context)
             let first = try #require(shots.first)

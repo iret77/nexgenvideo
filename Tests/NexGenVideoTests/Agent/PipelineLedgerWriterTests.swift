@@ -32,16 +32,23 @@ struct PipelineLedgerWriterTests {
     @Test func nativeUndoRedoRestoresWholeLedgerAfterToolLeaseEnds() async throws {
         let context = try await ProductionPlanningAcceptanceFixture.makeBible()
         defer { context.document.close() }
+        let manager = try #require(context.editor.undoManager)
+        manager.removeAllActions(); manager.groupsByEvent = false
+        #expect(manager.groupingLevel == 0 && !manager.canUndo)
         let target: [String: Any] = ["kind": "film", "key": "lighting", "tag": "Side light", "source": "Director", "directive": "One side only"]
         try await ProductionPlanningAcceptanceFixture.run("set_ledger_attribute", args: target, in: context)
         let original = try YAMLArtifactStore(dataRoot: context.dataRoot).load(Ledger.self, at: PipelineLayout.ledgerFile)
         try await ProductionPlanningAcceptanceFixture.run("lock_ledger_attribute", args: ["kind": "film", "key": "lighting", "locked": true], in: context)
         let locked = try YAMLArtifactStore(dataRoot: context.dataRoot).load(Ledger.self, at: PipelineLayout.ledgerFile)
-        let manager = try #require(context.editor.undoManager)
+        #expect(original.objects["film"]?["lighting"]?.locked == false)
+        #expect(locked.objects["film"]?["lighting"]?.locked == true)
+        #expect(manager.groupingLevel == 0 && manager.canUndo)
         manager.undo()
         #expect(try await PipelineLedgerWriter.waitForPendingNativeRestore(editor: context.editor) == original)
+        #expect(manager.groupingLevel == 0 && manager.canUndo && manager.canRedo)
         manager.redo()
         #expect(try await PipelineLedgerWriter.waitForPendingNativeRestore(editor: context.editor) == locked)
+        #expect(manager.groupingLevel == 0 && manager.canUndo && !manager.canRedo)
         let access = try PipelineNativeEditAccess(editor: context.editor, label: "Ledger publication Undo regression")
         let transaction = try PipelineLedgerWriter.ToolTransaction(editor: context.editor, dataRoot: context.dataRoot,
             declaration: access.declaration, lease: access.lease)
@@ -58,6 +65,7 @@ struct PipelineLedgerWriterTests {
         access.end(editor: context.editor)
         transaction.finish(); finished = true
         #expect(try await PipelineLedgerWriter.waitForPendingNativeRestore(editor: context.editor) == locked)
+        #expect(manager.groupingLevel == 0 && manager.canRedo)
     }
 
     @Test func nativeUndoRejectsChangedLedgerInsteadOfBlindYamlRestore() async throws {

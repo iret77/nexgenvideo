@@ -726,6 +726,12 @@ enum PipelineRenderReviewWriter {
             if let prior = paths[ref.path], prior.sha256 != ref.sha256 { throw GateBlocked("Review inputs claim different bytes at the same path.") }
             if paths[ref.path] == nil { paths[ref.path] = ref }
         }
-        return paths.values.sorted { $0.path < $1.path }
+        let sorted = paths.values.sorted { $0.path < $1.path }
+        guard Set(sorted.map(\.id)).count != sorted.count else { return sorted }
+        // Preserve existing fingerprints; only previously conflicting IDs need file identities.
+        return sorted.map { ref in
+            .init(id: "review-input." + FileDigest.sha256(of: Data(ref.path.utf8)),
+                role: ref.role, path: ref.path, sha256: ref.sha256)
+        }
     }
 }
