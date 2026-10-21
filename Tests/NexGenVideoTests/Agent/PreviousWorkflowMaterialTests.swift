@@ -347,8 +347,12 @@ struct PreviousWorkflowMaterialTests {
             identity.removeValue(forKey: "fingerprint")
             let fingerprint = FileDigest.sha256(of: try JSONSerialization.data(withJSONObject: identity,
                 options: [.sortedKeys, .withoutEscapingSlashes]))
-            let settings = try JSONSerialization.jsonObject(with: Data(contentsOf:
-                archive.appendingPathComponent(ProjectPluginSettings.filename))) as? [String: Any]
+            var settings: [String: Any]?
+            var settingsReadError = ""
+            do {
+                settings = try JSONSerialization.jsonObject(with: Data(contentsOf:
+                    archive.appendingPathComponent(ProjectPluginSettings.filename))) as? [String: Any]
+            } catch { settingsReadError = String(describing: error) }
             var failures: [String] = []
             for path in history.intent.archivePaths {
                 guard let file = history.intent.files.first(where: { $0.path == path }) else {
@@ -362,6 +366,19 @@ struct PreviousWorkflowMaterialTests {
             }
             let projectID = ProjectIdentity.existingUUID(for: staging)
             let evidence: [String: Any] = [
+                "stagingURL": staging.absoluteString,
+                "stagingPath": staging.path,
+                "stagingHasDirectoryPath": staging.hasDirectoryPath,
+                "standardizedStagingURL": staging.standardizedFileURL.absoluteString,
+                "standardizedStagingPath": staging.standardizedFileURL.path,
+                "standardizedStagingHasDirectoryPath": staging.standardizedFileURL.hasDirectoryPath,
+                "resolvedStagingURL": staging.resolvingSymlinksInPath().absoluteString,
+                "resolvedStagingPath": staging.resolvingSymlinksInPath().path,
+                "resolvedInventoryRootURL": staging.standardizedFileURL.resolvingSymlinksInPath().absoluteString,
+                "resolvedInventoryRootPath": staging.standardizedFileURL.resolvingSymlinksInPath().path,
+                "settingsFilename": ProjectPluginSettings.filename,
+                "expectedWorkingSettingsURL": staging.appendingPathComponent(ProjectPluginSettings.filename).absoluteString,
+                "expectedArchivedSettingsURL": archive.appendingPathComponent(ProjectPluginSettings.filename).absoluteString,
                 "directoryURLCanonical": directory.resolvingSymlinksInPath() == directory.standardizedFileURL,
                 "directoryPathCanonical": directory.resolvingSymlinksInPath().path == directory.standardizedFileURL.path,
                 "schema": history.schema, "completed": history.completed,
@@ -371,6 +388,12 @@ struct PreviousWorkflowMaterialTests {
                 "inventoryPathsUnique": Set(history.intent.files.map(\.path)).count == history.intent.files.count,
                 "archivePathsUnique": Set(history.intent.archivePaths).count == history.intent.archivePaths.count,
                 "settingsArchived": history.intent.archivePaths.contains(ProjectPluginSettings.filename),
+                "settingsReadError": settingsReadError,
+                "inventoryPaths": history.intent.files.map(\.path),
+                "archivePaths": history.intent.archivePaths,
+                "archiveTopLevelEntries": ((try? FileManager.default.contentsOfDirectory(atPath: archive.path)) ?? []).sorted(),
+                "workingTopLevelEntries": ((try? FileManager.default.contentsOfDirectory(atPath: staging.path)) ?? []).sorted(),
+                "workingSettingsExists": FileManager.default.fileExists(atPath: staging.appendingPathComponent(ProjectPluginSettings.filename).path),
                 "projectIdentityMatches": projectID != nil && settings?["id"] as? String == projectID,
                 "archiveHashFailures": failures
             ]
