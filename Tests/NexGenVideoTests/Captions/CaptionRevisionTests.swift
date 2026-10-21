@@ -73,11 +73,19 @@ struct CaptionRevisionTests {
         let (editor, _) = try fixture()
         editor.projectURL = nil
         editor.timeline.tracks.append(Track(type: .video, clips: [Fixtures.clip(id: "missing-broll", mediaRef: "missing", start: 200, duration: 30)]))
+        let before = editor.timeline
+        let undo = UndoManager(); undo.groupsByEvent = false; editor.undoManager = undo
         editor.captionTranscriptionClient = .init(transcribe: { _, _, _, _, _ in Self.transcript }, supportedLocales: { [] })
         _ = try await ToolExecutor(editor: editor).removeWords(editor, ["words": [1]])
         #expect(editor.timeline.tracks[0].clips.map(\.durationFrames) == [30, 90])
         #expect(editor.timeline.tracks[1].clips.map(\.durationFrames) == [30, 90])
         #expect(editor.timeline.tracks[3].clips.first?.startFrame == 170)
+        let after = editor.timeline
+        #expect(undo.groupingLevel == 0 && undo.undoActionName == "Remove Words")
+        undo.undo(); #expect(editor.timeline == before && !undo.canUndo)
+        #expect(undo.redoActionName == "Remove Words")
+        undo.redo(); #expect(editor.timeline == after && !undo.canRedo)
+        #expect(undo.undoActionName == "Remove Words")
     }
 
     @Test func directWordCutRoutesUnalignedCaptionToNativeReviewWithoutMutation() async throws {
@@ -219,8 +227,89 @@ struct CaptionRevisionTests {
         }
         #expect(editor.clipFor(id: "caption-b")?.startFrame == 30)
         let after = editor.timeline
+        #expect(undo.groupingLevel == 0 && undo.undoActionName == "Remove Words")
         undo.undo(); #expect(editor.timeline == before && !undo.canUndo)
-        undo.redo(); #expect(editor.timeline == after)
+        #expect(undo.redoActionName == "Remove Words")
+        undo.redo(); #expect(editor.timeline == after && !undo.canRedo)
+        #expect(undo.groupingLevel == 0 && undo.undoActionName == "Remove Words")
+    }
+
+    @Test(arguments: [0, 2])
+    func edgeWordCutsPreserveSourceTrimsAndOneNamedUndo(word: Int) async throws {
+        let (editor, _) = try fixture()
+        for index in 0..<2 { editor.timeline.tracks[index].clips[0].durationFrames = 90 }
+        let before = editor.timeline
+        let undo = UndoManager(); undo.groupsByEvent = false; editor.undoManager = undo
+        editor.captionTranscriptionClient = .init(transcribe: { _, _, _, _, _ in Self.transcript }, supportedLocales: { [] })
+        let removal = try await ToolExecutor(editor: editor).prepareWordRemoval(editor, ["words": [word]])
+        #expect(removal.ranges == [.init(start: word * 30, end: (word + 1) * 30)])
+        _ = try await removal.apply(editor)
+        for index in 0..<2 {
+            let clips = editor.timeline.tracks[index].clips
+            #expect(clips.map(\.id) == before.tracks[index].clips.map(\.id))
+            #expect(clips.map(\.mediaRef) == before.tracks[index].clips.map(\.mediaRef))
+            #expect(clips.map(\.linkGroupId) == ["pair"])
+            #expect(clips.map(\.startFrame) == [0] && clips.map(\.durationFrames) == [60])
+            #expect(clips.map(\.trimStartFrame) == [word == 0 ? 30 : 0])
+            #expect(clips.map(\.trimEndFrame) == [word == 2 ? 30 : 0])
+        }
+        let remainingCaptionID = word == 0 ? "caption-b" : "caption-a"
+        let remainingCaption = try #require(editor.clipFor(id: remainingCaptionID))
+        #expect(editor.timeline.tracks[2].clips.map(\.id) == [remainingCaptionID])
+        #expect(remainingCaption.startFrame == (word == 0 ? 30 : 0) && remainingCaption.durationFrames == 30)
+        let after = editor.timeline
+        #expect(after != before && undo.groupingLevel == 0 && undo.undoActionName == "Remove Words")
+        undo.undo(); #expect(editor.timeline == before && !undo.canUndo)
+        #expect(undo.redoActionName == "Remove Words")
+        undo.redo(); #expect(editor.timeline == after && !undo.canRedo)
+        #expect(undo.groupingLevel == 0 && undo.undoActionName == "Remove Words")
+    }
+
+    @Test(arguments: [false, true])
+    func preparedWordCutPreservesCallerOwnedUndoGroup(nestedTransaction: Bool) async throws {
+        let (editor, _) = try fixture()
+        let before = editor.timeline
+        let undo = UndoManager(); undo.groupsByEvent = false; editor.undoManager = undo
+        editor.captionTranscriptionClient = .init(transcribe: { _, _, _, _, _ in Self.transcript }, supportedLocales: { [] })
+        let removal = try await ToolExecutor(editor: editor).prepareWordRemoval(editor, ["words": [1]])
+        let actionName = nestedTransaction ? "Revise Speech" : "Remove Words"
+        undo.beginUndoGrouping()
+        do {
+            defer { undo.endUndoGrouping() }
+            if nestedTransaction {
+                try editor.withTimelineSwap(actionName: actionName) {
+                    _ = try removal.edits.apply(editor)
+                    #expect(undo.groupingLevel == 1)
+                    editor.timeline.markers.append(TimelineMarker(id: "after-cut", startFrame: 60, title: "Kept speech"))
+                }
+            } else {
+                _ = try removal.edits.apply(editor)
+            }
+            #expect(undo.groupingLevel == 1)
+        }
+        let after = editor.timeline
+        #expect(after.tracks[0].clips.map(\.durationFrames) == [30, 90])
+        #expect(after.tracks[1].clips.map(\.durationFrames) == [30, 90])
+        #expect(after != before && undo.groupingLevel == 0 && undo.undoActionName == actionName)
+        undo.undo(); #expect(editor.timeline == before && !undo.canUndo)
+        #expect(undo.redoActionName == actionName)
+        undo.redo(); #expect(editor.timeline == after && !undo.canRedo)
+        #expect(undo.undoActionName == actionName)
+    }
+
+    @Test func refusedWordCutPreservesExistingUndoHistory() async throws {
+        let (editor, _) = try fixture()
+        let original = editor.timeline
+        let undo = UndoManager(); undo.groupsByEvent = false; editor.undoManager = undo
+        editor.captionTranscriptionClient = .init(transcribe: { _, _, _, _, _ in Self.transcript }, supportedLocales: { [] })
+        let removal = try await ToolExecutor(editor: editor).prepareWordRemoval(editor, ["words": [1]])
+        editor.withTimelineSwap(actionName: "Change Canvas") { editor.timeline.width += 1 }
+        let changed = editor.timeline
+        #expect(throws: (any Error).self) { _ = try removal.edits.apply(editor) }
+        #expect(editor.timeline == changed && undo.groupingLevel == 0 && undo.undoActionName == "Change Canvas")
+        undo.undo(); #expect(editor.timeline == original && !undo.canUndo)
+        #expect(undo.redoActionName == "Change Canvas")
+        undo.redo(); #expect(editor.timeline == changed && !undo.canRedo)
     }
 
     @Test func lateTranscriptionCannotCutChangedTimelineOrSource() async throws {

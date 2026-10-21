@@ -124,12 +124,12 @@ struct WordRemovalEdits: Codable, Equatable, Sendable {
             throw ToolError("The speech track no longer exists.")
         }
         let outcome = editor.rippleDeleteRangesOnTrack(trackIndex: index,
-            ranges: ranges.map { FrameRange(start: $0.start, end: $0.end) }, captionEdits: captionEdits)
+            ranges: ranges.map { FrameRange(start: $0.start, end: $0.end) }, captionEdits: captionEdits,
+            actionName: "Remove Words")
         guard case .ok(let report) = outcome else {
             if case .refused(let reason) = outcome { throw ToolError("Ripple delete refused: " + reason) }
             throw ToolError("Ripple delete refused.")
         }
-        editor.undoManager?.setActionName("Remove Words")
         var payload: [String: Any] = ["removedWords": removedTexts.count, "removedFrames": report.removedFrames,
             "tracksEdited": report.clearedTracks, "cutAggressiveness": aggressiveness,
             "note": "Removed and closed the gaps. Re-read get_transcript before another remove_words."]

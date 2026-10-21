@@ -347,6 +347,7 @@ struct SyncTimelineMutationTests {
         ])
         let before = editor.timeline
         let undoManager = UndoManager()
+        undoManager.groupsByEvent = false
         editor.undoManager = undoManager
         var report = EditorViewModel.SyncBatchReport()
 
@@ -377,11 +378,17 @@ struct SyncTimelineMutationTests {
         #expect(allClips.first(where: { $0.id == targetVideo.id })?.startFrame == 0)
         #expect(allClips.first(where: { $0.id == targetAudio.id })?.startFrame == 0)
         #expect(undoManager.canUndo)
+        #expect(undoManager.groupingLevel == 0 && undoManager.undoActionName == "Synchronize")
+        let after = editor.timeline
 
         undoManager.undo()
         #expect(editor.timeline == before)
         #expect(undoManager.canUndo == false)
         #expect(undoManager.canRedo)
+        #expect(undoManager.redoActionName == "Synchronize")
+        undoManager.redo()
+        #expect(editor.timeline == after && !undoManager.canRedo)
+        #expect(undoManager.groupingLevel == 0 && undoManager.undoActionName == "Synchronize")
     }
 
     @Test func ambiguousOrWeakResultsDoNotMutateTimeline() {

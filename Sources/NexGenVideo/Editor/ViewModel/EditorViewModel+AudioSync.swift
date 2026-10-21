@@ -747,8 +747,7 @@ extension EditorViewModel {
             )
         })
         if !moves.isEmpty {
-            moveClips(moves)
-            undoManager?.setActionName("Synchronize")
+            moveClips(moves, actionName: "Synchronize")
         }
     }
 

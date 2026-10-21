@@ -310,7 +310,8 @@ extension EditorViewModel {
     }
 
     /// Deletes project-frame ranges from one track (spanning any clips) and closes the gaps; cuts linked A/V partners, shifts sync-locked tracks, refuses if any can't absorb.
-    func rippleDeleteRangesOnTrack(trackIndex: Int, ranges: [FrameRange], captionEdits: CaptionSpeechEdits.Plan? = nil) -> RippleRangesOutcome {
+    func rippleDeleteRangesOnTrack(trackIndex: Int, ranges: [FrameRange], captionEdits: CaptionSpeechEdits.Plan? = nil,
+                                   actionName: String = "Ripple Delete") -> RippleRangesOutcome {
         let prepared: SpeechRipplePreflight
         do { prepared = try prepareSpeechRipple(trackIndex: trackIndex, ranges: ranges, captionEdits: captionEdits) }
         catch { return .refused(error.localizedDescription) }
@@ -321,7 +322,7 @@ extension EditorViewModel {
         let anchorBeforeIds = Set(timeline.tracks[trackIndex].clips.map(\.id))
 
         var shiftedClips = 0
-        withTimelineSwap(actionName: "Ripple Delete") {
+        withTimelineSwap(actionName: actionName) {
             for index in timeline.tracks.indices {
                 let trackID = timeline.tracks[index].id
                 let changes = captionEdits?.changes.filter { $0.trackID == trackID } ?? []

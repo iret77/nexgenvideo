@@ -279,7 +279,7 @@ enum NativeBlockoutExporter {
         context.restoreGState()
         for drawing in drawings {
             drawCamera(at: drawing.camera, lookAt: drawing.lookAt, size: AppTheme.IconSize.xs * drawing.scale,
-                color: drawing.color, previewScale: drawing.scale, context: context)
+                color: drawing.color, previewScale: drawing.scale, arrangement: arrangement, context: context)
         }
         for (locationID, viewport) in viewports {
             let suffix = viewport.locationNumber.map { " · \($0)" } ?? ""
@@ -287,17 +287,20 @@ enum NativeBlockoutExporter {
                 (Projection.plan, viewport.planLabel, "Plan", "Plan", "X/Z"),
                 (Projection.elevation, viewport.elevationLabel, "Elevation", "Elev.", "X/Y"),
             ] {
-                let roles = legend(for: drawings.filter { $0.locationID == locationID && $0.projection == projection })
+                let roles = legend(for: drawings.filter { $0.locationID == locationID && $0.projection == projection },
+                    arrangement: arrangement)
                 let titles = [title + " (" + axes + ")" + suffix, shortTitle + " (" + axes + ")" + suffix,
                     shortTitle + suffix]
                 if arrangement == .bestFit {
-                    drawLabel(titles, in: CGRect(x: label.minX, y: label.midY, width: label.width, height: label.height / 2),
-                        font: font, insetScale: spacingScale, context: context)
-                    drawLabel(roles, in: CGRect(x: label.minX, y: label.minY, width: label.width, height: label.height / 2),
-                        font: font, insetScale: spacingScale, context: context)
+                    let minimum = roles.heading.isEmpty ? 0 : AppTheme.FontSize.minimumReadable * lineScale
+                    let headings = titles.map { $0 + (roles.heading.isEmpty ? "" : " · " + roles.heading) }
+                    drawLabel(headings, in: CGRect(x: label.minX, y: label.midY, width: label.width, height: label.height / 2),
+                        font: font, insetScale: spacingScale, minimumFontSize: minimum, context: context)
+                    drawLabel(roles.lines, in: CGRect(x: label.minX, y: label.minY, width: label.width, height: label.height / 2),
+                        font: font, insetScale: spacingScale, minimumFontSize: minimum, context: context)
                 } else {
-                    let full = roles.first.map { $0.isEmpty ? "" : " · " + $0 } ?? ""
-                    let compact = roles.last.map { $0.isEmpty ? "" : " · " + $0 } ?? ""
+                    let full = roles.lines.first.map { $0.isEmpty ? "" : " · " + $0 } ?? ""
+                    let compact = roles.lines.last.map { $0.isEmpty ? "" : " · " + $0 } ?? ""
                     drawLabel([titles[0] + full, shortTitle + suffix + compact] + titles,
                         in: label, font: font, context: context)
                 }
@@ -309,14 +312,20 @@ enum NativeBlockoutExporter {
         ((AppTheme.IconSize.xs + AppTheme.BorderWidth.medium) / 2 + AppTheme.Spacing.xs) * scale
     }
 
-    private static func legend(for drawings: [CameraDrawing]) -> [String] {
-        guard !drawings.isEmpty else { return [""] }
+    private static func legend(for drawings: [CameraDrawing], arrangement: ViewArrangement) -> (heading: String, lines: [String]) {
+        guard !drawings.isEmpty else { return ("", [""]) }
         let hasLook = drawings.contains { $0.hasVisibleLook }
         let hasHeading = drawings.contains { $0.hasHeading }
         let hasTravel = drawings.contains { $0.hasVisibleTravel }
         let direction = hasLook ? "— Look" : hasHeading ? "Camera direction" : "No projected direction"
         let compact = hasLook ? "Look" : hasHeading ? "Direction" : "No direction in view"
-        return [direction + (hasTravel ? " · - - Path" : ""), compact + (hasTravel ? " / Path" : "")]
+        if arrangement == .bestFit, drawings.contains(where: { $0.hasSmallProjectedTravel }) {
+            let heading = hasLook ? "Look" : hasHeading ? "Direction" : "No direction"
+            let mixed = drawings.contains { $0.hasProjectedTravel && !$0.hasSmallProjectedTravel }
+            return (heading, ["Path (" + (mixed ? "incl. small in view" : "small in view") + ")",
+                "Path (" + (mixed ? "incl. small" : "small") + ")"])
+        }
+        return ("", [direction + (hasTravel ? " · - - Path" : ""), compact + (hasTravel ? " / Path" : "")])
     }
 
     private static func strokeTravel(_ drawing: CameraDrawing, excluding drawings: [CameraDrawing], previewScale: CGFloat,
@@ -541,7 +550,7 @@ enum NativeBlockoutExporter {
     }
 
     private static func drawCamera(at camera: CGPoint, lookAt: CGPoint?, size: CGFloat,
-                                   color: CGColor, previewScale: CGFloat, context: CGContext) {
+                                   color: CGColor, previewScale: CGFloat, arrangement: ViewArrangement, context: CGContext) {
         let radius = size / 2
         let marker = CGMutablePath()
         if let lookAt, hypot(lookAt.x - camera.x, lookAt.y - camera.y) > CGFloat.ulpOfOne {
@@ -552,6 +561,10 @@ enum NativeBlockoutExporter {
             let rearHalfWidth = radius * AppTheme.ComponentSize.blockoutMarkerRearHalfWidthRatio
             marker.addLine(to: CGPoint(x: camera.x - forward.x * radius / 2 + side.x * rearHalfWidth,
                 y: camera.y - forward.y * radius / 2 + side.y * rearHalfWidth))
+            if arrangement == .bestFit {
+                let inset = radius * AppTheme.ComponentSize.blockoutMarkerNotchInsetRatio
+                marker.addLine(to: CGPoint(x: camera.x - forward.x * inset, y: camera.y - forward.y * inset))
+            }
             marker.addLine(to: CGPoint(x: camera.x - forward.x * radius / 2 - side.x * rearHalfWidth,
                 y: camera.y - forward.y * radius / 2 - side.y * rearHalfWidth))
             marker.closeSubpath()
@@ -571,7 +584,7 @@ enum NativeBlockoutExporter {
     }
 
     private static func drawLabel(_ variants: [String], in rect: CGRect, font: CTFont,
-                                  insetScale: CGFloat = 1, context: CGContext) {
+                                  insetScale: CGFloat = 1, minimumFontSize: CGFloat = 0, context: CGContext) {
         guard rect.width > 0, rect.height > 0, let fallback = variants.last else { return }
         func makeLine(_ text: String, _ font: CTFont) -> CTLine {
             let attributes: [NSAttributedString.Key: Any] = [
@@ -587,12 +600,15 @@ enum NativeBlockoutExporter {
         let textHeight = CTFontGetAscent(font) + CTFontGetDescent(font) + CTFontGetLeading(font)
         let heightScale = min(1, height / max(CGFloat.ulpOfOne, textHeight))
         let heightFont = CTFontCreateCopyWithAttributes(font, CTFontGetSize(font) * heightScale, nil, nil)
+        let selectionFont = minimumFontSize > 0
+            ? CTFontCreateCopyWithAttributes(heightFont, minimumFontSize, nil, nil) : heightFont
         let text = variants.first {
-            CGFloat(CTLineGetTypographicBounds(makeLine($0, heightFont), nil, nil, nil)) <= width
+            CGFloat(CTLineGetTypographicBounds(makeLine($0, selectionFont), nil, nil, nil)) <= width
         } ?? fallback
         let textWidth = CGFloat(CTLineGetTypographicBounds(makeLine(text, heightFont), nil, nil, nil))
         let widthScale = min(1, width / max(CGFloat.ulpOfOne, textWidth))
-        let fittedFont = CTFontCreateCopyWithAttributes(heightFont, CTFontGetSize(heightFont) * widthScale, nil, nil)
+        let fittedFont = CTFontCreateCopyWithAttributes(heightFont,
+            max(minimumFontSize, CTFontGetSize(heightFont) * widthScale), nil, nil)
         context.saveGState()
         defer { context.restoreGState() }
         context.clip(to: rect)
@@ -626,6 +642,21 @@ enum NativeBlockoutExporter {
         let color: CGColor
         let scale: CGFloat
         let hasVisibleTravel: Bool
+
+        var projectedTravelExtent: CGFloat {
+            let bounds = movement.boundingBoxOfPath
+            return hypot(bounds.width, bounds.height)
+        }
+
+        var hasProjectedTravel: Bool {
+            projectedTravelExtent > CGFloat.ulpOfOne
+        }
+
+        var hasSmallProjectedTravel: Bool {
+            let radius = NativeBlockoutExporter.markerExclusionRadius(scale: scale)
+                + AppTheme.Border.longDash[0] * scale
+            return hasProjectedTravel && projectedTravelExtent <= radius
+        }
 
         var lookPath: CGPath? {
             guard let lookAt else { return nil }

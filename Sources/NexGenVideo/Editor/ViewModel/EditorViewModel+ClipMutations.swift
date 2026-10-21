@@ -45,7 +45,7 @@ extension EditorViewModel {
     }
 
     /// Moved clips share a single delta from the drag, so they don't collide with each other.
-    func moveClips(_ moves: [(clipId: String, toTrack: Int, toFrame: Int)]) {
+    func moveClips(_ moves: [(clipId: String, toTrack: Int, toFrame: Int)], actionName: String? = nil) {
         guard !moves.isEmpty else { return }
 
         // Collect current state + validate track-type compatibility.
@@ -61,8 +61,7 @@ extension EditorViewModel {
         }
         guard !clipInfos.isEmpty else { return }
 
-        let actionName = moves.count == 1 ? "Move Clip" : "Move Clips"
-        withTimelineSwap(actionName: actionName) {
+        withTimelineSwap(actionName: actionName ?? (moves.count == 1 ? "Move Clip" : "Move Clips")) {
             // Pull moved clips off their source tracks first, so clearRegion on
             // the destinations never touches them.
             for info in clipInfos {
@@ -279,6 +278,7 @@ extension EditorViewModel {
         redoTarget: [(id: String, clip: Clip)],
         actionName: String
     ) {
+        guard undoManager?.isUndoRegistrationEnabled ?? true else { return }
         undoManager?.registerUndo(withTarget: self) { vm in
             for entry in undoTarget {
                 if let loc = vm.findClip(id: entry.id) {

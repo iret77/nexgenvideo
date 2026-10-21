@@ -333,6 +333,7 @@ enum AppTheme {
 
     enum ComponentSize {
         static let blockoutMarkerRearHalfWidthRatio: CGFloat = 0.625
+        static let blockoutMarkerNotchInsetRatio: CGFloat = 0.25
         static let scrubFieldStandard: CGFloat = 50
         static let scrubFieldWide: CGFloat = 56
         static let sheetTileMinWidth: CGFloat = 88
