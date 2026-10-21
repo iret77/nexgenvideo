@@ -121,7 +121,7 @@ struct CaptionTransactionTests {
         defer { task.cancel() }
         var entries = entered.makeAsyncIterator()
         let started = await withTaskCancellationHandler {
-            await entries.next()
+            await entries.next(isolation: MainActor.shared)
         } onCancel: { task.cancel() }
         if started == nil { _ = try await task.value }
         let url = try #require(started)
