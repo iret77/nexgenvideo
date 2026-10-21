@@ -61,6 +61,8 @@ def stop_manifest_process_group(process):
 def prepare_runloop_probe(evidence, command):
     receipt = {"status": "unavailable", "scope": "owned-swift-test-environment-only",
                "stopLimit": 8, "runLimit": 4, "frameLimit": 24,
+               "tailMainStopLimit": 8, "tailFlushLimit": 5,
+               "tailMainStopCapture": "all-main-loop-targets-including-background-callers",
                "returnReason": "CFRunLoopRun-is-void-no-reason-inferred"}
     overrides = {}
     try:

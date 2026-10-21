@@ -19,7 +19,7 @@
 #include <time.h>
 #include <unistd.h>
 
-enum { frame_limit = 24, other_stop_limit = 7, run_limit = 4, text_limit = 192 };
+enum { frame_limit = 24, other_stop_limit = 7, tail_stop_limit = 8, run_limit = 4, text_limit = 192 };
 static int output_fd = -1;
 static bool enabled;
 static _Thread_local bool recording;
@@ -30,6 +30,23 @@ static atomic_uint runs;
 static atomic_uint sequences;
 static atomic_uint stop_calls;
 static atomic_uint write_failures;
+static atomic_uint tail_captures;
+
+struct stop_snapshot {
+    unsigned ordinal, main_ordinal, depth;
+    struct timespec at;
+    uint64_t thread;
+    bool main_thread;
+    CFRunLoopRef loop, caller;
+    bool has_target_mode, has_caller_mode;
+    char target_mode[256], caller_mode[256];
+    int frame_count;
+    void *frames[frame_limit];
+};
+
+static struct stop_snapshot tail_stops[tail_stop_limit];
+static pthread_mutex_t tail_lock = PTHREAD_MUTEX_INITIALIZER;
+static void flush_tail(const char *reason, unsigned activation);
 
 struct record {
     char bytes[24 * 1024];
@@ -95,9 +112,7 @@ static void begin(struct record *row, const char *event) {
         pthread_main_np() ? "true" : "false");
 }
 
-static void stack(struct record *row) {
-    void *frames[frame_limit];
-    int count = backtrace(frames, frame_limit);
+static void stack_frames(struct record *row, void *const *frames, int count) {
     append(row, ",\"frameLimit\":%d,\"stack\":[", frame_limit);
     for (int i = 0; i < count; ++i) {
         Dl_info information = {0};
@@ -110,6 +125,12 @@ static void stack(struct record *row) {
         append(row, ",\"symbolAddress\":\"%p\"}", information.dli_saddr);
     }
     append(row, "]");
+}
+
+static void stack(struct record *row) {
+    void *frames[frame_limit];
+    int count = backtrace(frames, frame_limit);
+    stack_frames(row, frames, count);
 }
 
 static void write_record(struct record *row, bool console) {
@@ -139,16 +160,19 @@ static void counters(struct record *row) {
     unsigned run = atomic_load(&runs);
     append(row, ",\"stopCallsSeen\":%u,\"mainStopCallsSeen\":%u,\"otherStopSlotsRequested\":%u,"
         "\"otherStopCapReached\":%s,\"stopCallsOmittedByCap\":%u,\"firstMainStopSlotUnused\":%s,"
-        "\"runCallsSeen\":%u,\"runPairsOmittedByCap\":%u,\"recordWriteFailures\":%u",
+        "\"runCallsSeen\":%u,\"runPairsOmittedByCap\":%u,\"recordWriteFailures\":%u,"
+        "\"tailMainStopsCaptured\":%u,\"tailMainStopLimit\":%d",
         atomic_load(&stop_calls), main, other, other >= other_stop_limit ? "true" : "false",
         other > other_stop_limit ? other - other_stop_limit : 0, main == 0 ? "true" : "false",
-        run, run > run_limit ? run - run_limit : 0, atomic_load(&write_failures));
+        run, run > run_limit ? run - run_limit : 0, atomic_load(&write_failures),
+        atomic_load(&tail_captures), tail_stop_limit);
 }
 
 static void record_counters(void) {
     int saved_errno = errno;
     if (enabled && !recording) {
         recording = true;
+        flush_tail("atexit", 0);
         struct record row = {0};
         begin(&row, "probe-atexit-counters");
         counters(&row);
@@ -311,6 +335,8 @@ static void initialize(void) {
         output_fd >= 0 ? "true" : "false", other_stop_limit + 1, run_limit);
     append(&row, ",\"atexitRegistrationResult\":%d,\"symbolTextLimit\":%d,\"recordByteLimit\":%zu",
         exit_registration, text_limit, sizeof(row.bytes));
+    append(&row, ",\"tailMainStopLimit\":%d,\"tailSnapshotStorageBytes\":%zu,\"tailFlushLimit\":%d",
+        tail_stop_limit, sizeof(tail_stops), run_limit + 1);
     write_record(&row, helper);
     recording = false;
 done:
@@ -333,13 +359,93 @@ static void record_loop(const char *event, CFRunLoopRef loop, unsigned activatio
     write_record(&row, false);
 }
 
+static bool snapshot_mode(CFRunLoopRef loop, char *text, size_t capacity) {
+    CFStringRef value = loop ? CFRunLoopCopyCurrentMode(loop) : NULL;
+    if (!value) return false;
+    if (!CFStringGetCString(value, text, capacity, kCFStringEncodingUTF8)) {
+        memcpy(text, "<unavailable>", sizeof("<unavailable>"));
+    }
+    CFRelease(value);
+    return true;
+}
+
+static void retain_stop(CFRunLoopRef loop, unsigned ordinal, unsigned main_ordinal) {
+    struct stop_snapshot snapshot = {0};
+    snapshot.ordinal = ordinal;
+    snapshot.main_ordinal = main_ordinal;
+    snapshot.depth = run_depth;
+    clock_gettime(CLOCK_MONOTONIC, &snapshot.at);
+    pthread_threadid_np(NULL, &snapshot.thread);
+    snapshot.main_thread = pthread_main_np() != 0;
+    snapshot.loop = loop;
+    snapshot.caller = CFRunLoopGetCurrent();
+    snapshot.has_target_mode = snapshot_mode(loop, snapshot.target_mode, sizeof(snapshot.target_mode));
+    snapshot.has_caller_mode = snapshot_mode(snapshot.caller, snapshot.caller_mode, sizeof(snapshot.caller_mode));
+    snapshot.frame_count = backtrace(snapshot.frames, frame_limit);
+    if (pthread_mutex_lock(&tail_lock) != 0) {
+        atomic_fetch_add(&write_failures, 1);
+        return;
+    }
+    struct stop_snapshot *slot = &tail_stops[(main_ordinal - 1) % tail_stop_limit];
+    if (slot->main_ordinal < main_ordinal) *slot = snapshot;
+    atomic_fetch_add(&tail_captures, 1);
+    pthread_mutex_unlock(&tail_lock);
+}
+
+static void flush_tail(const char *reason, unsigned activation) {
+    struct stop_snapshot snapshots[tail_stop_limit];
+    if (pthread_mutex_lock(&tail_lock) != 0) {
+        atomic_fetch_add(&write_failures, 1);
+        return;
+    }
+    memcpy(snapshots, tail_stops, sizeof(snapshots));
+    pthread_mutex_unlock(&tail_lock);
+    for (unsigned i = 1; i < tail_stop_limit; ++i) {
+        struct stop_snapshot value = snapshots[i];
+        unsigned j = i;
+        while (j > 0 && snapshots[j - 1].main_ordinal > value.main_ordinal) {
+            snapshots[j] = snapshots[j - 1];
+            --j;
+        }
+        snapshots[j] = value;
+    }
+    for (unsigned i = 0; i < tail_stop_limit; ++i) {
+        const struct stop_snapshot *snapshot = &snapshots[i];
+        if (!snapshot->main_ordinal) continue;
+        struct record row = {0};
+        begin(&row, "CFRunLoopStop-tail");
+        append(&row, ",\"flushReason\":");
+        string(&row, reason);
+        append(&row, ",\"flushActivation\":%u,\"stopOrdinal\":%u,\"mainStopOrdinal\":%u,"
+            "\"stopMonotonicSeconds\":%lld,\"stopMonotonicNanoseconds\":%ld,"
+            "\"stopThreadID\":%llu,\"stopMainThread\":%s,\"runLoop\":\"%p\","
+            "\"targetIsMainLoop\":true,\"runDepthAtStop\":%u,\"targetMode\":",
+            activation, snapshot->ordinal, snapshot->main_ordinal,
+            (long long)snapshot->at.tv_sec, snapshot->at.tv_nsec,
+            (unsigned long long)snapshot->thread, snapshot->main_thread ? "true" : "false",
+            snapshot->loop, snapshot->depth);
+        if (snapshot->has_target_mode) string(&row, snapshot->target_mode);
+        else append(&row, "null");
+        append(&row, ",\"callerRunLoop\":\"%p\",\"callerEqualsTarget\":%s,\"callerMode\":",
+            snapshot->caller, snapshot->caller == snapshot->loop ? "true" : "false");
+        if (snapshot->has_caller_mode) string(&row, snapshot->caller_mode);
+        else append(&row, "null");
+        append(&row, ",\"stackCapture\":\"before-original-stop\",\"symbolization\":\"at-flush\"");
+        counters(&row);
+        stack_frames(&row, snapshot->frames, snapshot->frame_count);
+        write_record(&row, false);
+    }
+}
+
 static void observed_stop(CFRunLoopRef loop) {
     int saved_errno = errno;
     if (enabled && !recording) {
         recording = true;
-        atomic_fetch_add(&stop_calls, 1);
+        unsigned ordinal = atomic_fetch_add(&stop_calls, 1) + 1;
         bool main = loop == CFRunLoopGetMain();
-        bool selected = main && atomic_fetch_add(&main_stops, 1) == 0;
+        unsigned main_ordinal = main ? atomic_fetch_add(&main_stops, 1) + 1 : 0;
+        if (main) retain_stop(loop, ordinal, main_ordinal);
+        bool selected = main_ordinal == 1;
         if (!selected) selected = atomic_fetch_add(&other_stops, 1) < other_stop_limit;
         if (selected) record_loop("CFRunLoopStop", loop, 0);
         recording = false;
@@ -369,7 +475,10 @@ static void observed_run(void) {
     int result_errno = errno;
     if (enabled && !recording) {
         recording = true;
-        if (selected) record_loop("CFRunLoopRun-return", loop, activation);
+        if (selected) {
+            record_loop("CFRunLoopRun-return", loop, activation);
+            flush_tail("CFRunLoopRun-return", activation);
+        }
         --run_depth;
         recording = false;
     }

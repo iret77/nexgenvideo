@@ -172,7 +172,8 @@ enum NativeBlockoutExporter {
         let font = NSFont.systemFont(ofSize: AppTheme.FontSize.xs * previewScale,
             weight: AppTheme.AppKitFontWeight.semibold) as CTFont
         let labelHeight = CTFontGetAscent(font) + CTFontGetDescent(font) + CTFontGetLeading(font) + AppTheme.Spacing.xxs * 2
-        let markerClearance = (AppTheme.IconSize.xs + AppTheme.BorderWidth.medium) * previewScale / 2
+        let symbolScale = max(previewScale, AppTheme.IconSize.md / AppTheme.IconSize.xs)
+        let markerClearance = (AppTheme.IconSize.xs + AppTheme.BorderWidth.medium) * symbolScale / 2
         let viewports = makeViewports(layouts: layouts, bounds: bounds, metric: metric,
             labelHeight: labelHeight, markerClearance: markerClearance)
         context.setStrokeColor(CGColor(gray: 0.58, alpha: 1))
@@ -217,7 +218,7 @@ enum NativeBlockoutExporter {
                 (Projection.plan, viewport.plan),
                 (Projection.elevation, viewport.elevation),
             ] {
-                let markerScale = min(previewScale,
+                let markerScale = min(symbolScale,
                     max(0, min(rect.width, rect.height)) / (AppTheme.IconSize.xs + AppTheme.BorderWidth.medium))
                 guard markerScale > 0 else { continue }
                 let projected = points.map {
@@ -233,13 +234,13 @@ enum NativeBlockoutExporter {
                     layout: viewport.layout, projection: projection
                 )
                 stroke(movement, color: AppTheme.Text.primary.cgColor, dashed: true,
-                    previewScale: markerScale, context: context)
+                    previewScale: markerScale, referenceScale: symbolScale, context: context)
                 if let lookAt {
                     let direction = CGMutablePath()
                     direction.move(to: camera)
                     direction.addLine(to: lookAt)
                     stroke(direction, color: color, dashed: false,
-                        previewScale: markerScale, context: context)
+                        previewScale: markerScale, referenceScale: symbolScale, context: context)
                 }
                 drawCamera(at: camera, lookAt: lookAt, size: AppTheme.IconSize.xs * markerScale, color: color,
                     previewScale: markerScale, context: context)
@@ -263,14 +264,15 @@ enum NativeBlockoutExporter {
     }
 
     private static func stroke(_ path: CGPath, color: CGColor, dashed: Bool,
-                               previewScale: CGFloat, context: CGContext) {
+                               previewScale: CGFloat, referenceScale: CGFloat, context: CGContext) {
         context.saveGState()
         defer { context.restoreGState() }
         context.setLineCap(dashed ? .butt : .round)
         context.setLineJoin(.round)
         context.setLineDash(phase: 0, lengths: dashed ? AppTheme.Border.longDash.map { $0 * previewScale } : [])
         let width = dashed ? AppTheme.BorderWidth.blockoutTravel : AppTheme.BorderWidth.thick
-        let casing = dashed ? width + AppTheme.BorderWidth.thick : AppTheme.BorderWidth.heavy
+        let casing = dashed ? width + AppTheme.BorderWidth.thick
+            : max(AppTheme.BorderWidth.heavy, width + AppTheme.BorderWidth.thin * 2 / referenceScale)
         for (color, width) in [
             (AppTheme.Background.surface.cgColor, casing),
             (color, width),
@@ -291,10 +293,11 @@ enum NativeBlockoutExporter {
             let forward = CGPoint(x: (lookAt.x - camera.x) / distance, y: (lookAt.y - camera.y) / distance)
             let side = CGPoint(x: -forward.y, y: forward.x)
             marker.move(to: CGPoint(x: camera.x + forward.x * radius, y: camera.y + forward.y * radius))
-            marker.addLine(to: CGPoint(x: camera.x + (-forward.x + side.x) * radius / 2,
-                y: camera.y + (-forward.y + side.y) * radius / 2))
-            marker.addLine(to: CGPoint(x: camera.x + (-forward.x - side.x) * radius / 2,
-                y: camera.y + (-forward.y - side.y) * radius / 2))
+            let rearHalfWidth = radius * AppTheme.ComponentSize.blockoutMarkerRearHalfWidthRatio
+            marker.addLine(to: CGPoint(x: camera.x - forward.x * radius / 2 + side.x * rearHalfWidth,
+                y: camera.y - forward.y * radius / 2 + side.y * rearHalfWidth))
+            marker.addLine(to: CGPoint(x: camera.x - forward.x * radius / 2 - side.x * rearHalfWidth,
+                y: camera.y - forward.y * radius / 2 - side.y * rearHalfWidth))
             marker.closeSubpath()
         } else {
             marker.addEllipse(in: CGRect(x: camera.x - radius, y: camera.y - radius, width: size, height: size))
