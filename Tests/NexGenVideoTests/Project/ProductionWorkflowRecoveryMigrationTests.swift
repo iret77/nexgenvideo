@@ -22,6 +22,50 @@ struct ProductionWorkflowRecoveryMigrationTests {
         #expect(gates.gates.values.allSatisfy { !$0.approved && $0.notes == nil })
     }
 
+    @Test(arguments: [false, true])
+    func inventoryUsesProjectRelativePathsBeforeArchiving(directoryHint: Bool) throws {
+        let root = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let projectURL = URL(fileURLWithPath: root.path, isDirectory: directoryHint)
+        let settings = try Data(contentsOf: root.appendingPathComponent(ProjectPluginSettings.filename))
+        let intent = try ProductionWorkflowRecoveryMigration.preview(projectURL: projectURL, source: .core, target: .core)
+        let paths = Set(intent.files.map(\.path))
+        #expect(paths.contains(ProjectPluginSettings.filename))
+        #expect(paths.contains(Project.timelineFilename))
+        #expect(paths.contains("pipeline/treatment/v4.md"))
+        #expect(paths.contains("pipeline/frames/legacy.png"))
+        #expect(intent.archivePaths.contains(ProjectPluginSettings.filename))
+        #expect(intent.archivePaths.contains("pipeline/treatment/v4.md"))
+        try ProductionWorkflowRecoveryMigration.archiveAndReset(intent, staging: projectURL)
+        let archive = root.appendingPathComponent("pipeline/migration-history/" + intent.fingerprint)
+        #expect(try Data(contentsOf: archive.appendingPathComponent(ProjectPluginSettings.filename)) == settings)
+        #expect(try Data(contentsOf: archive.appendingPathComponent("pipeline/treatment/v4.md")) == Data("approved treatment".utf8))
+        try ProjectPluginSettings.setProductionContract(.current, projectURL: projectURL)
+        try ProductionWorkflowRecoveryMigration.finish(intent, staging: projectURL)
+        try ProductionWorkflowRecoveryMigration.requireCompleted(intent, staging: projectURL)
+        #expect(try Data(contentsOf: root.appendingPathComponent(Project.timelineFilename)) == Data("edited timeline".utf8))
+        #expect(try Data(contentsOf: root.appendingPathComponent("pipeline/frames/legacy.png")) == Data("paid image bytes".utf8))
+    }
+
+    @Test(arguments: [false, true], [false, true])
+    func inventoryRejectsSymbolicLinksBeforeArchiving(directory: Bool, outsideProject: Bool) throws {
+        let root = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let other = try fixture()
+        defer { try? FileManager.default.removeItem(at: other) }
+        let targetRoot = outsideProject ? other : root
+        let target = targetRoot.appendingPathComponent(directory ? "pipeline/frames" : Project.timelineFilename)
+        let link = root.appendingPathComponent("linked-source")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+        let settings = try Data(contentsOf: root.appendingPathComponent(ProjectPluginSettings.filename))
+        #expect(throws: ProductionWorkflowRecoveryMigration.MigrationError.self) {
+            try ProductionWorkflowRecoveryMigration.preview(projectURL: root, source: .core, target: .core)
+        }
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("pipeline/migration-history").path))
+        #expect(try Data(contentsOf: root.appendingPathComponent(ProjectPluginSettings.filename)) == settings)
+        #expect(try Data(contentsOf: root.appendingPathComponent("pipeline/treatment/v4.md")) == Data("approved treatment".utf8))
+    }
+
     @Test func sourceChangeAfterPreviewRejectsBeforeAnyArchiveMove() throws {
         let root = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }

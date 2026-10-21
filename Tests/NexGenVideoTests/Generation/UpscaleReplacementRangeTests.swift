@@ -132,6 +132,7 @@ struct UpscaleReplacementRangeTests {
 
         var input = GenerationInput(prompt: "", model: model.id, duration: 3, aspectRatio: "")
         input.sourceVideoAssetId = source.id
+        input.sourceRange = .init(trim: nil)
         let previous = MediaAsset(id: "previous", url: URL(fileURLWithPath: "/not-read/previous.mp4"),
             type: .video, name: "Previous upscale", duration: 3, generationInput: input)
         editor.mediaPanelToast = nil

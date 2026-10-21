@@ -5932,10 +5932,84 @@ struct WorkflowToolsTests {
 }
 
 extension WorkflowToolsTests {
+    private func legacyRouteChangeCatalog(defaults: UserDefaults) throws -> ModelCatalog {
+        let evidence = CapabilityEvidenceV1(
+            sourceTitle: "WorkflowToolsTests synthetic two-model route-change fixture",
+            observedAt: "2026-10-21T00:00:00Z", kind: .providerSchema, confidence: 1
+        )
+        let entries = try [
+            "bytedance/seedance-2.0/text-to-video",
+            "bytedance/seedance-2.5/text-to-video",
+        ].map { modelID -> CatalogEntry in
+            var entry = try #require(FalModelRegistry.model(for: modelID)?.entry)
+            let offer = try #require(entry.offers?.first { $0.provider == .fal && $0.transport == .api })
+            let policy = try #require(offer.productionInputPolicy)
+            let offering = CatalogOfferingIdentity.make(offer: offer, modelID: modelID, modality: .video)
+            func fields(origin: ResolvedCapabilityOriginV1) -> ResolvedCapabilityFieldsV1 {
+                func value<Value>(_ value: Value, semantics: CapabilityValueSemanticsV1 = .hardAPILimit)
+                    -> ResolvedCapabilityValueV1<Value> where Value: Codable & Sendable & Equatable {
+                    .init(value: value, semantics: semantics, origin: origin, evidence: [evidence])
+                }
+                return ResolvedCapabilityFieldsV1(
+                    integers: [
+                        CapabilityFieldIDV1.visibleCharacters: value(0),
+                        CapabilityFieldIDV1.referenceImages: value(0),
+                        CapabilityFieldIDV1.referenceVideos: value(0),
+                        CapabilityFieldIDV1.referenceAudios: value(0),
+                        CapabilityFieldIDV1.totalReferences: value(0),
+                    ],
+                    decimals: [
+                        CapabilityFieldIDV1.durationMinimum: value(5.0),
+                        CapabilityFieldIDV1.durationMaximum: value(5.0),
+                    ],
+                    booleans: [
+                        CapabilityFieldIDV1.firstFrame: value(false),
+                        CapabilityFieldIDV1.lastFrame: value(false),
+                        CapabilityFieldIDV1.sourceVideo: value(false),
+                        CapabilityFieldIDV1.sourceVideoRequired: value(policy.requiresSourceVideo),
+                        CapabilityFieldIDV1.framesCountTowardImageReferenceLimit: value(policy.framesCountTowardImageReferenceLimit),
+                        CapabilityFieldIDV1.framesCountTowardTotalReferenceLimit: value(policy.framesCountTowardTotalReferenceLimit),
+                        CapabilityFieldIDV1.nativeAudio: value(false),
+                    ],
+                    strings: [
+                        CapabilityFieldIDV1.modes: value(["text-to-video"], semantics: .supportedSet),
+                        CapabilityFieldIDV1.inputKinds: value(["text"], semantics: .supportedSet),
+                        CapabilityFieldIDV1.outputKinds: value(["video"], semantics: .supportedSet),
+                        CapabilityFieldIDV1.aspectRatios: value(["16:9"], semantics: .supportedSet),
+                        CapabilityFieldIDV1.resolutions: value(["720p"], semantics: .supportedSet),
+                    ],
+                    integerLists: [CapabilityFieldIDV1.durationValues: value([5], semantics: .supportedSet)]
+                )
+            }
+            entry.offers = [offer]
+            entry.resolvedOfferingCapabilities = [ResolvedOfferingCapabilityProfileV1(
+                offering: offering,
+                intrinsic: ResolvedCapabilityProfileV1(
+                    requestedIdentity: nil, resolvedIdentity: nil, defensiveProfileID: nil,
+                    researchNeeded: false,
+                    fields: fields(origin: .init(kind: .exact, profileID: "fixture-route-change/\(modelID)"))
+                ),
+                effective: ResolvedCapabilityProfileV1(
+                    requestedIdentity: nil, resolvedIdentity: nil, defensiveProfileID: nil,
+                    researchNeeded: false,
+                    fields: fields(origin: .init(kind: .endpointOverlay,
+                        profileID: "fixture-route-change-endpoint/\(modelID)", endpointID: offering.endpointID))
+                )
+            )]
+            return entry
+        }
+        let catalog = ModelCatalog(preferences: ModelPreferences(defaults: defaults))
+        catalog.load(entries: entries)
+        #expect(catalog.lastError == nil)
+        return catalog
+    }
+
     @Test("approved legacy route changes recompile against the newly selected model")
     func approvedLegacyRouteChangeRecompilesForCurrentModel() async throws {
-        let catalog = ModelCatalog()
-        catalog.load(entries: ModelCatalog.launchEntries)
+        let defaultsDomain = "WorkflowRouteChange-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: defaultsDomain))
+        defer { defaults.removePersistentDomain(forName: defaultsDomain) }
+        let catalog = try legacyRouteChangeCatalog(defaults: defaults)
         let activation = ProviderActivation(active: [ProviderActivation.Key(provider: .fal, transport: .api)])
         let candidates: ProductionRouteCandidateProvider = { catalog.productionRouteCandidates(activation: $0) }
         let (h, originalRoot, cleanup) = try scaffold(providerActivation: { activation }, productionRouteCandidates: candidates)
@@ -5959,6 +6033,10 @@ extension WorkflowToolsTests {
         let root = try #require(DataRootResolver.dataRoot(of: working))
         let options = try PipelineProductionRouting.resolveOptions(shotID: "s001", dataRoot: root,
             activation: activation, candidateProvider: candidates)
+        #expect(Set(options.map(\.modelID)) == Set([
+            "bytedance/seedance-2.0/text-to-video",
+            "bytedance/seedance-2.5/text-to-video",
+        ]))
         let first = try #require(options.first)
         let second = try #require(options.first(where: { $0.modelID != first.modelID }))
         _ = try PipelineProductionRouting.resolveAndWrite(shotID: "s001", dataRoot: root,

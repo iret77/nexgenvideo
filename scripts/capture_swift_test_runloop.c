@@ -7,7 +7,6 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <mach-o/dyld.h>
-#include <mach-o/dyld-interposing.h>
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdatomic.h>
@@ -315,5 +314,11 @@ static void observed_run(void) {
     errno = result_errno;
 }
 
-DYLD_INTERPOSE(observed_stop, CFRunLoopStop)
-DYLD_INTERPOSE(observed_run, CFRunLoopRun)
+__attribute__((used, section("__DATA,__interpose,interposing")))
+static const struct {
+    const void *replacement;
+    const void *replacee;
+} runloop_interposes[] = {
+    {(const void *)(uintptr_t)&observed_stop, (const void *)(uintptr_t)&CFRunLoopStop},
+    {(const void *)(uintptr_t)&observed_run, (const void *)(uintptr_t)&CFRunLoopRun}
+};

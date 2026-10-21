@@ -442,6 +442,7 @@ enum ProductionWorkflowRecoveryMigration {
         try ProductionMigrationPreflight.perform { control in
             let root = root.standardizedFileURL
             guard root.resolvingSymlinksInPath() == root else { throw MigrationError.invalidSource }
+            let prefix = root.path + "/"
             var failure: Error?
             guard let enumerator = FileManager.default.enumerator(at: root,
                 includingPropertiesForKeys: [.isSymbolicLinkKey, .isRegularFileKey], errorHandler: { _, error in failure = error; return false }) else {
@@ -453,8 +454,11 @@ enum ProductionWorkflowRecoveryMigration {
                 let values = try url.resourceValues(forKeys: [.isSymbolicLinkKey, .isRegularFileKey])
                 guard values.isSymbolicLink != true else { throw MigrationError.invalidSource }
                 guard values.isRegularFile == true else { continue }
-                let path = String(url.path.dropFirst(root.path.count + 1))
-                if !ProjectWorkingCopy.isPackageRuntimePath(path) { urls.append((url, path)) }
+                let canonicalURL = url.standardizedFileURL
+                guard canonicalURL.resolvingSymlinksInPath() == canonicalURL,
+                      canonicalURL.path.hasPrefix(prefix) else { throw MigrationError.invalidSource }
+                let path = String(canonicalURL.path.dropFirst(prefix.count))
+                if !ProjectWorkingCopy.isPackageRuntimePath(path) { urls.append((canonicalURL, path)) }
             }
             if let failure { throw failure }
             return try urls.sorted { $0.1 < $1.1 }.enumerated().map { index, file in

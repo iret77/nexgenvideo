@@ -227,8 +227,6 @@ enum NativeBlockoutExporter {
                 let movement = CGMutablePath()
                 movement.move(to: first)
                 for point in projected.dropFirst() { movement.addLine(to: point) }
-                stroke(movement, color: AppTheme.Text.primary.cgColor, dashed: true,
-                    previewScale: markerScale, context: context)
                 let camera = projected[targetIndex]
                 let lookAt = setup.path.isEmpty ? nil : project(
                     setup.path[targetIndex].lookAt, in: rect,
@@ -241,6 +239,8 @@ enum NativeBlockoutExporter {
                     stroke(direction, color: color, dashed: false,
                         previewScale: markerScale, context: context)
                 }
+                stroke(movement, color: AppTheme.Text.primary.cgColor, dashed: true,
+                    previewScale: markerScale, context: context)
                 drawCamera(at: camera, lookAt: lookAt, size: AppTheme.IconSize.xxs * markerScale, color: color,
                     previewScale: markerScale, context: context)
             }
@@ -256,7 +256,7 @@ enum NativeBlockoutExporter {
                                previewScale: CGFloat, context: CGContext) {
         context.saveGState()
         defer { context.restoreGState() }
-        context.setLineCap(.round)
+        context.setLineCap(dashed ? .butt : .round)
         context.setLineJoin(.round)
         context.setLineDash(phase: 0, lengths: dashed ? AppTheme.Border.compactDash.map { $0 * previewScale } : [])
         for (color, width) in [
