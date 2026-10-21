@@ -568,13 +568,18 @@ struct HardStepIntakeTests {
         #expect(editor.projectState?.nextPhaseName == "brief")
         #expect(editor.agentService.pendingDialog?.title == "Existing story")
         #expect(editor.agentService.pendingDialog?.fileIntake?.attachAs == "script")
-        let prompt = try editor.pipelineAgentHarness.runtimeContext(dataRoot: liveDataRoot,
-            declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding).instructions
-        let normalizedPrompt = prompt?
+        let runtime = try editor.pipelineAgentHarness.runtimeContext(dataRoot: liveDataRoot,
+            declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding)
+        #expect(runtime.currentPhase == "brief")
+        let prompt = try #require(runtime.instructions)
+        #expect(prompt.split(whereSeparator: \.isNewline).contains { $0 == "# Brief" })
+        let greenfield = try #require(prompt.components(separatedBy: "\n\n").first { $0.contains("Explicit Greenfield") })
+        let normalizedGreenfield = greenfield
             .split(whereSeparator: \.isWhitespace)
             .joined(separator: " ")
-        #expect(prompt?.contains("# Phase K1 — Brief") == true)
-        #expect(normalizedPrompt?.contains("If it is absent, this is greenfield") == true)
+        #expect(normalizedGreenfield.contains("develop from the approved song analysis"))
+        #expect(normalizedGreenfield.contains("optional lyrics"))
+        #expect(normalizedGreenfield.contains("Never move story intake before Analysis"))
 
         let staleStoryDialog = try #require(editor.agentService.pendingDialog)
         var advancedGates = try liveStore.load(Gates.self, at: PipelineLayout.gatesFile)
@@ -654,11 +659,11 @@ struct HardStepIntakeTests {
         #expect(editor.agentService.pendingDialog != nil)
         #expect(editor.agentService.submittingDialogID == first.id)
         #expect(editor.agentService.isComposerBlocked)
-        let awaitedSecond = await waitForDialog(
+        var second = try await waitForDialog(
             titled: "Prepared character 2",
+            after: first.id,
             service: editor.agentService
         )
-        var second = try #require(awaitedSecond)
         #expect(second.title == "Prepared character 2")
         let confirmed = try ConfirmedIdentityAssetStoreV1.load(
             dataRoot: dataRoot
@@ -718,11 +723,11 @@ struct HardStepIntakeTests {
 
         #expect(editor.agentService.pendingDialog != nil)
         #expect(editor.agentService.isComposerBlocked)
-        let awaitedThird = await waitForDialog(
+        let third = try await waitForDialog(
             titled: "Prepared character 3",
+            after: second.id,
             service: editor.agentService
         )
-        let third = try #require(awaitedThird)
         #expect(!IntakeLedger.load(dataRoot: dataRoot).isDeclined("brief.characters"))
         editor.agentService.completeDialog(first)
         #expect(editor.agentService.pendingDialog?.id == third.id)
@@ -745,11 +750,11 @@ struct HardStepIntakeTests {
                 fileURLs: [dataRoot.appendingPathComponent("fixtures/location-first.png")]
             )
         )
-        let awaitedSecondLocation = await waitForDialog(
+        let secondLocation = try await waitForDialog(
             titled: "Prepared location 2",
+            after: firstLocation.id,
             service: editor.agentService
         )
-        let secondLocation = try #require(awaitedSecondLocation)
         try write("fixtures/location-second.png", in: dataRoot)
         try FullflowAcceptanceFixture.writeReference(to: dataRoot.appendingPathComponent("fixtures/location-second.png"))
         editor.agentService.submitDialog(
@@ -761,11 +766,11 @@ struct HardStepIntakeTests {
                 fileURLs: [dataRoot.appendingPathComponent("fixtures/location-second.png")]
             )
         )
-        let awaitedThirdLocation = await waitForDialog(
+        let thirdLocation = try await waitForDialog(
             titled: "Prepared location 3",
+            after: secondLocation.id,
             service: editor.agentService
         )
-        let thirdLocation = try #require(awaitedThirdLocation)
         #expect(!IntakeLedger.load(dataRoot: dataRoot).isDeclined("brief.locations"))
         editor.agentService.completeDialog(thirdLocation)
         #expect(editor.agentService.pendingDialog?.title == "Style references")
@@ -832,15 +837,26 @@ struct HardStepIntakeTests {
     @MainActor
     private func waitForDialog(
         titled title: String,
+        after submittedDialogID: String,
         service: AgentService
-    ) async -> AgentDialog? {
-        for _ in 0..<1_000 {
-            if service.pendingDialog?.title == title {
-                return service.pendingDialog
+    ) async throws -> AgentDialog {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(30))
+        while true {
+            try Task.checkCancellation()
+            if let error = service.dialogSubmissionError {
+                throw ToolError("Intake submission \(submittedDialogID) failed while waiting for \(title): \(error)")
             }
-            await Task.yield()
+            if service.submittingDialogID == nil, let dialog = service.pendingDialog,
+               dialog.id != submittedDialogID, dialog.title == title {
+                return dialog
+            }
+            guard clock.now < deadline else {
+                let pending = service.pendingDialog.map { "\($0.title) [\($0.id)]" } ?? "none"
+                throw ToolError("Intake did not settle at \(title) after \(submittedDialogID); pending=\(pending), submitting=\(service.submittingDialogID ?? "none").")
+            }
+            try await Task.sleep(for: .milliseconds(10))
         }
-        return nil
     }
 
     @Test("a step becomes a file-intake dialog routed by its attachAs")

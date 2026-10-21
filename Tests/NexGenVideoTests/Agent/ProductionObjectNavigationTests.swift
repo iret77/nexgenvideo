@@ -42,6 +42,12 @@ struct ProductionObjectNavigationTests {
         } catch let error as GateBlocked {
             #expect(error.localizedDescription.contains("production source or assembled clip changed"))
         } catch { Issue.record("Changed source failed for an unrelated reason: \(error)") }
+        do {
+            _ = try await Task.detached { try ProductionObjectNavigation.verifiedOrigin(mediaID: first.mediaID, context: captured) }.value
+            Issue.record("Changed media bytes must not reveal their previous production origin.")
+        } catch let error as GateBlocked {
+            #expect(error.localizedDescription.contains("production source or assembled clip changed"))
+        } catch { Issue.record("Changed origin failed for an unrelated reason: \(error)") }
         try bytes.write(to: asset.url, options: .atomic)
         #expect(try await Task.detached { try ProductionObjectNavigation.read(captured) }.value == initial)
     }

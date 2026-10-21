@@ -800,8 +800,7 @@ extension ToolExecutor {
         } else {
             false
         }
-        if carriesConfirmedIdentity {
-            let declaration = try mutationPackDeclaration(editor, dataRoot: root)
+        if carriesConfirmedIdentity, workflow != (try HostWorkflowKey.core(.current)) {
             try ConfirmedIdentityProvenanceRecovery.requireCompatibleBinding(
                 declaration.binding
             )

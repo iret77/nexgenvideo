@@ -148,7 +148,15 @@ enum FilmFlowSnapshotStore {
     static func list(dataRoot: URL) throws -> [Retained] {
         let base = dataRoot.appendingPathComponent("import/filmflow")
         guard FileManager.default.fileExists(atPath: base.path) else { return [] }
-        let root = try ProjectLocalFile.resolve("import/filmflow", dataRoot: dataRoot)
+        let normalized = dataRoot.standardizedFileURL
+        let root = normalized.appendingPathComponent("import/filmflow")
+        for directory in [FrameInventory.projectHome(of: normalized), normalized,
+                          normalized.appendingPathComponent("import"), root] {
+            let values = try directory.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+            guard values.isSymbolicLink != true, values.isDirectory == true else {
+                throw FilmFlowFailure.message("The FilmFlow snapshot directory is not a project-local directory.")
+            }
+        }
         return try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
             .sorted { $0.lastPathComponent < $1.lastPathComponent }.map { directory in
                 guard let id = UUID(uuidString: directory.lastPathComponent), directory.lastPathComponent == id.uuidString.lowercased() else {

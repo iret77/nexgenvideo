@@ -10,7 +10,7 @@ struct PipelineLedgerStreamingUndoTests {
     func nativeUndoWaitsForTheActualAgentTurnAndKeepsOlderHistory(cancelTurn: Bool) async throws {
         let runtime = LedgerUndoRuntime()
         let service = runtime.service()
-        let context = try await ProductionPlanningAcceptanceFixture.makePromotion(agentService: service)
+        let context = try await ProductionPlanningAcceptanceFixture.makeBible(agentService: service)
         defer { service.cancel(); context.document.close() }
         let original = try? YAMLArtifactStore(dataRoot: context.dataRoot).load(Ledger.self, at: PipelineLayout.ledgerFile)
         try await ProductionPlanningAcceptanceFixture.run("set_ledger_attribute",
@@ -62,7 +62,7 @@ struct PipelineLedgerStreamingUndoTests {
     @Test func queuedUndoRefusesTheClosedProjectWithoutAStaleToast() async throws {
         let runtime = LedgerUndoRuntime()
         let service = runtime.service()
-        let context = try await ProductionPlanningAcceptanceFixture.makePromotion(agentService: service)
+        let context = try await ProductionPlanningAcceptanceFixture.makeBible(agentService: service)
         defer { service.cancel(); if context.editor.workingRoot != nil { context.document.close() } }
         #expect(service.send(text: "Revise the current lighting intent.", mentions: [], hidden: true))
         try await until { runtime.turn != nil }

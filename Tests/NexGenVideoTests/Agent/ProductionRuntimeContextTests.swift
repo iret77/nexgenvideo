@@ -27,7 +27,14 @@ struct ProductionRuntimeContextTests {
         service.cancel()
         service.isStreaming = true
         let origin = ToolCallOrigin.inAppChat(sessionID: try #require(service.currentSessionId))
-        _ = try service.requestGateApproval(.init(phase: "script", dataRoot: fixture.dataRoot), origin: origin)
+        #expect(throws: ToolError.self) {
+            try service.requestGateApproval(.init(phase: "script", dataRoot: fixture.dataRoot), origin: origin)
+        }
+        #expect(service.pendingGateApproval == nil)
+        let contract = try #require(fixture.editor.declaredProductionContract)
+        #expect(contract == .current)
+        _ = try service.requestGateApproval(.init(phase: "script", dataRoot: fixture.dataRoot,
+            declaredProductionContract: contract), origin: origin)
         #expect(await service.resolveGate(.approved, approvalID: service.pendingGateApproval?.id ?? "missing")?.isError == false)
         await fixture.editor.refreshEngineState()
         #expect(fixture.editor.projectState?.nextPhaseName == "storyboard")

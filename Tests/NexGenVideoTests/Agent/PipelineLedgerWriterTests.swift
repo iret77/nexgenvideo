@@ -7,7 +7,7 @@ import Testing
 @Suite("Canonical Ledger transactions and native history")
 struct PipelineLedgerWriterTests {
     @Test func lockedRemovalPreservesActualBytesAndReconciliationKeepsSourceAndOtherObjects() async throws {
-        let context = try await ProductionPlanningAcceptanceFixture.makePromotion()
+        let context = try await ProductionPlanningAcceptanceFixture.makeBible()
         defer { context.document.close() }
         let target: [String: Any] = ["kind": "film", "key": "lighting"]
         try await ProductionPlanningAcceptanceFixture.run("set_ledger_attribute", args: target.merging([
@@ -30,7 +30,7 @@ struct PipelineLedgerWriterTests {
     }
 
     @Test func nativeUndoRedoRestoresWholeLedgerAfterToolLeaseEnds() async throws {
-        let context = try await ProductionPlanningAcceptanceFixture.makePromotion()
+        let context = try await ProductionPlanningAcceptanceFixture.makeBible()
         defer { context.document.close() }
         let target: [String: Any] = ["kind": "film", "key": "lighting", "tag": "Side light", "source": "Director", "directive": "One side only"]
         try await ProductionPlanningAcceptanceFixture.run("set_ledger_attribute", args: target, in: context)
@@ -61,7 +61,7 @@ struct PipelineLedgerWriterTests {
     }
 
     @Test func nativeUndoRejectsChangedLedgerInsteadOfBlindYamlRestore() async throws {
-        let context = try await ProductionPlanningAcceptanceFixture.makePromotion()
+        let context = try await ProductionPlanningAcceptanceFixture.makeBible()
         defer { context.document.close() }
         try await ProductionPlanningAcceptanceFixture.run("set_ledger_attribute", args: ["kind": "film", "key": "lighting", "tag": "Side light"], in: context)
         var external = try YAMLArtifactStore(dataRoot: context.dataRoot).load(Ledger.self, at: PipelineLayout.ledgerFile)
@@ -76,7 +76,7 @@ struct PipelineLedgerWriterTests {
     }
 
     @Test func expiredBorrowedLeaseCannotPublishLedgerBytes() async throws {
-        let context = try await ProductionPlanningAcceptanceFixture.makePromotion()
+        let context = try await ProductionPlanningAcceptanceFixture.makeBible()
         defer { context.document.close() }
         let access = try PipelineNativeEditAccess(editor: context.editor, label: "Ledger stale lease regression")
         let transaction = try PipelineLedgerWriter.ToolTransaction(editor: context.editor, dataRoot: context.dataRoot,

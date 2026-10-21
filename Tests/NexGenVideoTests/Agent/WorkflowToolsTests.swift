@@ -2969,43 +2969,16 @@ struct WorkflowToolsTests {
         ]
         var generatedExecution = generatedExecutionShotInput()
         generatedExecution["storyboard_step_ids"] = storyboardSteps.compactMap { $0["id"] as? String }
-        let musicvideoPlan: [String: Any] = [
-            "performance_segments": [],
-            "final_mix": [
-                "original_song_timeline_start_seconds": 0,
-                "original_song_occurrences": 1,
-                "provider_song_audio_muted": true,
-                "approved_additional_layer_ids": [],
-            ],
-            "visual_arc": [
-                "concept": "The yard opens from stillness into arrival.",
-                "motifs": [[
-                    "id": "yard-threshold",
-                    "description": "The yard entrance remains the section anchor.",
-                    "setup_ids": [],
-                ]],
-                "sections": [[
-                    "section_id": "intro",
-                    "musical_function": "opening",
-                    "visual_function": "establish the yard before the arrival",
-                    "motif_ids": ["yard-threshold"],
-                    "shot_ids": ["s001"],
-                    "constants": [[
-                        "kind": "guidance",
-                        "target_id": "s001",
-                        "value": "Hold the empty yard before the entrance.",
-                        "rationale": "The opening establishes the section's visual baseline.",
-                    ]],
-                    "variations": [],
-                    "lyrics_relation": "unused",
-                    "change_explanation": "The arrival changes the held opening frame.",
-                ]],
-            ],
-            "coverage": [],
-        ]
+        func rejectedShotlist(_ arguments: [String: Any], expectedVersion: Int? = nil) async throws -> ToolResult {
+            h.executor.resetPipelineRepairAttempts()
+            let result = await h.runRaw("write_shotlist", args: arguments)
+            try #require(result.isError, "\(ToolHarness.textOf(result))")
+            try #require(latestShotlistVersion(dataRoot: dataRoot) == expectedVersion)
+            return result
+        }
         var missingPlanShot = shot
         missingPlanShot.removeValue(forKey: "production_plan")
-        let missingPlan = await h.runRaw("write_shotlist", args: [
+        let missingPlan = try await rejectedShotlist([
             "project_dir": dataRoot.path,
             "shots": [missingPlanShot],
             "execution_shots": [generatedExecution],
@@ -3013,20 +2986,6 @@ struct WorkflowToolsTests {
         #expect(missingPlan.isError)
         #expect(ToolHarness.textOf(missingPlan).contains("production_plan"))
         #expect(latestShotlistVersion(dataRoot: dataRoot) == nil)
-
-        var invalidShot = shot
-        var invalidPlan = try #require(
-            invalidShot["production_plan"] as? [String: Any]
-        )
-        invalidPlan.removeValue(forKey: "narrative_beat")
-        invalidShot["production_plan"] = invalidPlan
-        let missingBeat = await h.runRaw("write_shotlist", args: [
-            "project_dir": dataRoot.path,
-            "shots": [invalidShot],
-            "execution_shots": [generatedExecution],
-        ])
-        #expect(missingBeat.isError)
-        #expect(ToolHarness.textOf(missingBeat).contains("narrative_beat"))
 
         var oversizedShot = shot
         var oversizedPlan = try #require(
@@ -3037,7 +2996,7 @@ struct WorkflowToolsTests {
             count: ShotProductionPlan.singleDirectiveMaximumLength + 1
         )
         oversizedShot["production_plan"] = oversizedPlan
-        let oversized = await h.runRaw("write_shotlist", args: [
+        let oversized = try await rejectedShotlist([
             "project_dir": dataRoot.path,
             "shots": [oversizedShot],
             "execution_shots": [generatedExecution],
@@ -3064,7 +3023,7 @@ struct WorkflowToolsTests {
             "set_anchor": "   ",
         ]]
         unanchoredShot["production_plan"] = unanchoredPlan
-        let unanchored = await h.runRaw("write_shotlist", args: [
+        let unanchored = try await rejectedShotlist([
             "project_dir": dataRoot.path,
             "shots": [unanchoredShot],
             "execution_shots": [generatedExecution],
@@ -3089,7 +3048,7 @@ struct WorkflowToolsTests {
             "set_anchor": "screen-right",
         ]]
         directionOnlyShot["production_plan"] = directionOnlyPlan
-        let directionOnly = await h.runRaw("write_shotlist", args: [
+        let directionOnly = try await rejectedShotlist([
             "project_dir": dataRoot.path,
             "shots": [directionOnlyShot],
             "execution_shots": [generatedExecution],
@@ -3097,45 +3056,6 @@ struct WorkflowToolsTests {
         #expect(directionOnly.isError)
         #expect(ToolHarness.textOf(directionOnly).contains("production_plan.blocking_anchors[0].set_anchor: expected pattern"))
         #expect(latestShotlistVersion(dataRoot: dataRoot) == nil)
-
-        var disguisedDirectionShot = unanchoredShot
-        disguisedDirectionShot["visible_zones"] = ["screen-left edge"]
-        var disguisedDirectionPlan = try #require(
-            disguisedDirectionShot["production_plan"] as? [String: Any]
-        )
-        disguisedDirectionPlan["blocking_anchors"] = [[
-            "character_ref": "performer",
-            "set_anchor": "screen-left edge",
-        ]]
-        disguisedDirectionShot["production_plan"] = disguisedDirectionPlan
-        let disguisedDirection = await h.runRaw("write_shotlist", args: [
-            "project_dir": dataRoot.path,
-            "shots": [disguisedDirectionShot],
-            "execution_shots": [generatedExecution],
-        ])
-        #expect(disguisedDirection.isError)
-        #expect(
-            ToolHarness.textOf(disguisedDirection).contains(
-                "prop_refs or visible_zones"
-            )
-        )
-
-        var undeclaredAnchorShot = unanchoredShot
-        var undeclaredAnchorPlan = try #require(
-            undeclaredAnchorShot["production_plan"] as? [String: Any]
-        )
-        undeclaredAnchorPlan["blocking_anchors"] = [[
-            "character_ref": "performer",
-            "set_anchor": "upper left",
-        ]]
-        undeclaredAnchorShot["production_plan"] = undeclaredAnchorPlan
-        let undeclaredAnchor = await h.runRaw("write_shotlist", args: [
-            "project_dir": dataRoot.path,
-            "shots": [undeclaredAnchorShot],
-            "execution_shots": [generatedExecution],
-        ])
-        #expect(undeclaredAnchor.isError)
-        #expect(ToolHarness.textOf(undeclaredAnchor).contains("prop_refs or visible_zones"))
 
         var missingRelationShot = unanchoredShot
         missingRelationShot["character_blocking"] = [[
@@ -3153,7 +3073,7 @@ struct WorkflowToolsTests {
             "set_anchor": "hall doorway",
         ]]
         missingRelationShot["production_plan"] = missingRelationPlan
-        let missingRelation = await h.runRaw("write_shotlist", args: [
+        let missingRelation = try await rejectedShotlist([
             "project_dir": dataRoot.path,
             "shots": [missingRelationShot],
             "execution_shots": [generatedExecution],
@@ -3161,11 +3081,11 @@ struct WorkflowToolsTests {
         #expect(missingRelation.isError)
         #expect(ToolHarness.textOf(missingRelation).contains("expected at least 1 character"))
 
+        h.executor.resetPipelineRepairAttempts()
         _ = try await h.runOK("write_shotlist", args: [
             "project_dir": dataRoot.path,
             "shots": [shot],
             "execution_shots": [generatedExecution],
-            "musicvideo_plan": musicvideoPlan,
         ])
         let shotlist = try #require(try loadShotlist(dataRoot: dataRoot))
         #expect(shotlist.project == "demo")
@@ -3175,11 +3095,11 @@ struct WorkflowToolsTests {
         var importedShot = shot
         importedShot["source_mode"] = "imported"
         importedShot["keyframe_strategy"] = "none"
-        let importedWithPlan = await h.runRaw("write_shotlist", args: [
+        let importedWithPlan = try await rejectedShotlist([
             "project_dir": dataRoot.path,
             "shots": [importedShot],
             "execution_shots": [importedExecutionShotInput()],
-        ])
+        ], expectedVersion: 1)
         #expect(importedWithPlan.isError)
         #expect(ToolHarness.textOf(importedWithPlan).contains("production_plan"))
         #expect(latestShotlistVersion(dataRoot: dataRoot) == 1)
@@ -3187,15 +3107,67 @@ struct WorkflowToolsTests {
         importedShot.removeValue(forKey: "production_plan")
         var importedExecution = importedExecutionShotInput()
         importedExecution["storyboard_step_ids"] = storyboardSteps.compactMap { $0["id"] as? String }
+        h.executor.resetPipelineRepairAttempts()
         _ = try await h.runOK("write_shotlist", args: [
             "project_dir": dataRoot.path,
             "shots": [importedShot],
             "execution_shots": [importedExecution],
-            "musicvideo_plan": musicvideoPlan,
         ])
         let importedShotlist = try #require(try loadShotlist(dataRoot: dataRoot))
         #expect(importedShotlist.shots.first?.sourceMode == .imported)
         #expect(importedShotlist.shots.first?.productionPlan == nil)
+    }
+
+    @Test("bound production profiles reject missing narrative beats and false set anchors",
+        arguments: ["missing_beat", "direction_anchor", "undeclared_anchor"])
+    func boundProductionProfilesRejectInvalidShotPlans(_ defect: String) throws {
+        let (_, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let binding = try activatePack("musicvideo", dataRoot: dataRoot)
+        let brief = try Brief(project: "demo", generated: "2026-07-26T00:00:00Z", mission: .demo,
+            targetPlatform: "YouTube", aspectRatio: .landscape16x9, projectMode: "section", budgetEur: 50,
+            conceptType: .narrative, visualMedium: .animation2d, figures: .none, lyricsIntegration: .metaphorical)
+        try YAMLArtifactStore(dataRoot: dataRoot).save(brief, to: PipelineLayout.briefFile)
+        #expect(PackCatalog.registry(activePack: binding.id).activeProductionProfileIDs(
+            metadata: ["concept_type": brief.conceptType.rawValue]) == [.generativeFilm, .narrativeStorytelling])
+
+        let plan = try ShotProductionPlan(primaryAction: "The performer enters the yard.",
+            cameraMovement: .static, narrativeBeat: .establish, renderability: .green,
+            blockingAnchors: [.init(characterRef: "performer", setAnchor: "yard_main")])
+        var shotlist = try minimalShotlist(productionPlan: plan)
+        shotlist.shots[0].characterRefs = ["performer"]
+        shotlist.shots[0].visibleZones = ["yard_main"]
+        shotlist.shots[0].characterBlocking = [try CharacterBlocking(characterRef: "performer",
+            position: "near the doorway", pose: "standing", gaze: "toward the yard", relationToSet: "beside the doorway")]
+        try PipelineShotlistWriter.validate(shotlist, dataRoot: dataRoot,
+            declaredPack: binding.id, declaredBinding: binding)
+
+        var invalid = shotlist
+        let expected: String
+        switch defect {
+        case "missing_beat":
+            invalid.shots[0].productionPlan?.narrativeBeat = nil
+            expected = "narrative_beat"
+        case "direction_anchor":
+            invalid.shots[0].visibleZones = ["screen-left edge"]
+            invalid.shots[0].productionPlan?.blockingAnchors[0].setAnchor = "screen-left edge"
+            expected = "prop_refs or visible_zones"
+        case "undeclared_anchor":
+            invalid.shots[0].productionPlan?.blockingAnchors[0].setAnchor = "upper left"
+            expected = "prop_refs or visible_zones"
+        default:
+            Issue.record("Unknown production-profile defect: \(defect).")
+            return
+        }
+        do {
+            try PipelineShotlistWriter.validate(invalid, dataRoot: dataRoot,
+                declaredPack: binding.id, declaredBinding: binding)
+            Issue.record("Expected the active production profile to reject \(defect).")
+        } catch let error as ToolError {
+            #expect(error.localizedDescription.contains(expected), "\(error.localizedDescription)")
+        }
+        #expect(latestShotlistVersion(dataRoot: dataRoot) == nil)
+        #expect(!FileManager.default.fileExists(atPath: dataRoot.appendingPathComponent(PipelineLayout.executionPlanFile).path))
     }
 
     private struct PublishedReferenceRoute {
@@ -3664,40 +3636,6 @@ struct WorkflowToolsTests {
         return [
             "shots": shots,
             "execution_shots": executions,
-            "musicvideo_plan": [
-                "performance_segments": [],
-                "final_mix": [
-                    "original_song_timeline_start_seconds": 0,
-                    "original_song_occurrences": 1,
-                    "provider_song_audio_muted": true,
-                    "approved_additional_layer_ids": [],
-                ],
-                "visual_arc": [
-                    "concept": "The street opens from stillness into the crossing.",
-                    "motifs": [[
-                        "id": "street-threshold",
-                        "description": "The curb remains the section anchor.",
-                        "setup_ids": [],
-                    ]],
-                    "sections": [[
-                        "section_id": "intro",
-                        "musical_function": "opening",
-                        "visual_function": "establish the street before the crossing",
-                        "motif_ids": ["street-threshold"],
-                        "shot_ids": Self.referenceShots.map { $0.id },
-                        "constants": [[
-                            "kind": "guidance",
-                            "target_id": "s001",
-                            "value": "Hold the empty street before the crossing.",
-                            "rationale": "The opening establishes the section's visual baseline.",
-                        ]],
-                        "variations": [],
-                        "lyrics_relation": "unused",
-                        "change_explanation": "The crossing changes the held opening frame.",
-                    ]],
-                ],
-                "coverage": [],
-            ],
         ]
     }
 
@@ -3816,7 +3754,11 @@ struct WorkflowToolsTests {
         for phase in earlier {
             #expect(gatesAfter.get(phase) == gatesBefore.get(phase), "gate \(phase) changed")
         }
-        try MusicvideoGateChecks.requireRealShotlist(dataRoot: dataRoot)
+        let shotlist = try #require(try loadShotlist(dataRoot: dataRoot))
+        #expect(shotlist.shots.map(\.id) == Self.referenceShots.map { $0.id })
+        try PipelineShotlistWriter.validate(shotlist, dataRoot: dataRoot,
+            declaredPack: project.binding?.id, declaredBinding: project.binding)
+        try PipelineExecutionPlanWriter.requireCurrentShotlistBinding(dataRoot: dataRoot)
         let readiness = await NativeGateWriter.controlReadiness(
             projectDir: FrameInventory.projectHome(of: dataRoot),
             phase: "shotlist",
@@ -3933,6 +3875,7 @@ struct WorkflowToolsTests {
         #expect(foreignMode.contains("execution_shot[s001].generation_requirement.mode_ids"), "\(foreignMode)")
         #expect(foreignMode.contains("fixture-unoffered"), "\(foreignMode)")
 
+        h.executor.resetPipelineRepairAttempts()
         _ = try await h.runOK("write_shotlist", args: valid)
         #expect(latestShotlistVersion(dataRoot: dataRoot) == 1)
     }

@@ -108,7 +108,12 @@ struct ExportProjectToolTests {
             "outputPath": xmlURL.path,
             "requestID": requestID,
         ]) as? [String: Any]
-        #expect(xml?["status"] as? String == "exported")
+        #expect(xml?["status"] as? String == "exportedWithWarnings")
+        #expect(xml?["warnings"] as? [String] == [
+            "Text, blend modes, flips, adjustments, effects, and keyframe easing aren't included in XMEML.",
+        ])
+        #expect(joined?["status"] as? String == "exportedWithWarnings")
+        #expect((joined?["warnings"] as? [String]) == (xml?["warnings"] as? [String]))
         #expect(xml?["mode"] as? String == "xml")
         #expect((xml?["jobID"] as? String) == (joined?["jobID"] as? String))
         #expect((xml?["width"] as? Int) == (joined?["width"] as? Int))

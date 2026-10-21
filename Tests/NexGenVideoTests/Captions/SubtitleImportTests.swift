@@ -27,6 +27,7 @@ struct SubtitleImportTests {
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         let editor = EditorViewModel()
         let undo = UndoManager()
+        undo.groupsByEvent = false
         editor.undoManager = undo
 
         let ids = try await editor.importCaptions(
@@ -67,6 +68,7 @@ struct SubtitleImportTests {
         editor.timeline = Fixtures.timeline(tracks: [Fixtures.videoTrack()])
         let before = editor.timeline
         let undo = UndoManager()
+        undo.groupsByEvent = false
         editor.undoManager = undo
 
         await #expect(throws: SubtitleFileParser.ParseError.self) {
@@ -104,13 +106,20 @@ struct SubtitleImportTests {
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         let editor = EditorViewModel()
         let undo = UndoManager()
+        undo.groupsByEvent = false
         editor.undoManager = undo
 
+        let before = editor.timeline
         _ = try await editor.importCaptions(from: fixture.file)
+        let firstImport = editor.timeline
+        #expect(undo.groupingLevel == 0)
         let firstGroup = try #require(editor.timeline.tracks.flatMap(\.clips).first?.captionGroupId)
         _ = try await editor.importCaptions(from: fixture.file)
+        let bothImports = editor.timeline
         let clips = editor.timeline.tracks.flatMap(\.clips)
 
+        #expect(undo.groupingLevel == 0)
+        #expect(undo.undoActionName == "Add Captions")
         #expect(clips.count == 2)
         #expect(Set(clips.compactMap(\.captionGroupId)).count == 2)
         #expect(clips.contains { $0.captionGroupId == firstGroup })
@@ -119,6 +128,19 @@ struct SubtitleImportTests {
         let remaining = editor.timeline.tracks.flatMap(\.clips)
         #expect(remaining.count == 1)
         #expect(remaining.first?.captionGroupId == firstGroup)
+        #expect(editor.timeline == firstImport)
+        #expect(undo.canUndo)
+        #expect(undo.undoActionName == "Add Captions")
+        undo.undo()
+        #expect(editor.timeline == before)
+        #expect(!undo.canUndo)
+        #expect(undo.redoActionName == "Add Captions")
+        undo.redo()
+        #expect(editor.timeline == firstImport)
+        #expect(undo.redoActionName == "Add Captions")
+        undo.redo()
+        #expect(editor.timeline == bothImports)
+        #expect(!undo.canRedo)
     }
 
     @Test func librarySubtitleUsesReadableImportFilenameAndKeepsSourceBytes() async throws {

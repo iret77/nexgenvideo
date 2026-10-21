@@ -118,6 +118,44 @@ struct FilmFlowSnapshotTests {
         #expect(throws: (any Error).self) { _ = try FilmFlowSnapshot.verify(directory: value.directory, expectedSHA256: value.manifestSHA256) }
     }
 
+    @Test func inventoryAcceptsDirectoryURLFormsButRejectsUnlistedEmptyDirectories() async throws {
+        let value = try await capture()
+        defer { value.discard() }
+        let expected = try FilmFlowSnapshot.decode(FilmFlowSnapshot.self,
+            from: Data(contentsOf: value.directory.appendingPathComponent("snapshot.v1.json")))
+        let directories = [value.directory, URL(fileURLWithPath: value.directory.path, isDirectory: true),
+            URL(fileURLWithPath: value.directory.path + "/", isDirectory: true), value.directory.resolvingSymlinksInPath()]
+        for directory in directories {
+            #expect(try FilmFlowSnapshot.verify(directory: directory, expectedSHA256: value.manifestSHA256) == expected)
+        }
+        for path in ["unlisted", "dto/unlisted"] {
+            let directory = value.directory.appendingPathComponent(path)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+            #expect(throws: (any Error).self) {
+                _ = try FilmFlowSnapshot.verify(directory: value.directory, expectedSHA256: value.manifestSHA256)
+            }
+            try FileManager.default.removeItem(at: directory)
+            #expect(try FilmFlowSnapshot.verify(directory: value.directory, expectedSHA256: value.manifestSHA256) == expected)
+        }
+    }
+
+    @Test(arguments: ["import", "import/filmflow"])
+    func emptyRetainedInventoryDoesNotCreateDirectoriesOrFollowLinks(linkedPath: String) throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("filmflow-list-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        #expect(try FilmFlowSnapshotStore.list(dataRoot: root).isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("import").path))
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("import/filmflow"), withIntermediateDirectories: true)
+        #expect(try FilmFlowSnapshotStore.list(dataRoot: root).isEmpty)
+        let outside = FileManager.default.temporaryDirectory.appendingPathComponent("filmflow-list-outside-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: outside) }
+        let directory = root.appendingPathComponent(linkedPath)
+        try FileManager.default.moveItem(at: directory, to: outside)
+        try FileManager.default.createSymbolicLink(at: directory, withDestinationURL: outside)
+        #expect(throws: (any Error).self) { _ = try FilmFlowSnapshotStore.list(dataRoot: root) }
+    }
+
     @Test func agentAssetCopyCannotReadOrWriteSnapshotsAndAdoptionHistory() throws {
         for source in [false, true] {
             for path in ["import/filmflow/a/dto/get_project.json", "pipeline/import/filmflow/a/images/x.png",

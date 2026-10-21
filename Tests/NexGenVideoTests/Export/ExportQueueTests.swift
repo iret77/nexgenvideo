@@ -1949,7 +1949,7 @@ struct ExportQueueTests {
             source: mediaSource,
             duration: 5
         )]
-        let dataRoot = workingRoot.appendingPathComponent(DataRootResolver.pipelineDirname)
+        let dataRoot = workingRoot.appendingPathComponent(DataRootResolver.pipelineDirname, isDirectory: true)
         if productionMetadata {
             try FileManager.default.createDirectory(at: dataRoot, withIntermediateDirectories: true)
             try YAMLArtifactStore(dataRoot: dataRoot).save(

@@ -64,6 +64,11 @@ enum ProductionObjectNavigation {
     }
 
     static func read(_ context: Context) throws -> Snapshot {
+        do { return try readCurrent(context) }
+        catch is ProjectLocalFileError { throw changed() }
+    }
+
+    private static func readCurrent(_ context: Context) throws -> Snapshot {
         try Task.checkCancellation()
         guard let root = DataRootResolver.dataRoot(of: context.home),
               try PhaseContractRuntime.resolveWorkflow(dataRoot: root, expectedPack: context.declaration.binding,
@@ -116,6 +121,11 @@ enum ProductionObjectNavigation {
     }
 
     static func verifiedOrigin(mediaID: String, context: Context) throws -> Origin? {
+        do { return try currentOrigin(mediaID: mediaID, context: context) }
+        catch is ProjectLocalFileError { throw changed() }
+    }
+
+    private static func currentOrigin(mediaID: String, context: Context) throws -> Origin? {
         try Task.checkCancellation()
         guard let root = DataRootResolver.dataRoot(of: context.home),
               try PhaseContractRuntime.resolveWorkflow(dataRoot: root, expectedPack: context.declaration.binding,

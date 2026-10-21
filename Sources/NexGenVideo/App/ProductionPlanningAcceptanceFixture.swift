@@ -221,6 +221,24 @@ enum ProductionPlanningAcceptanceFixture {
         return try ProductionPlanningStoreV1.readShotPlanning(dataRoot: context.dataRoot, storyboard: board)
     }
 
+    static func makeBible(agentService: AgentService? = nil) async throws -> Context {
+        let context = try await makeScript(agentService: agentService)
+        var ready = false
+        defer { if !ready { context.document.close() } }
+        try await approve("script", in: context)
+        _ = try await writeStoryboard(in: context)
+        _ = try await attachSketches(in: context)
+        try await approve("storyboard", in: context)
+        _ = try await writeShotPlanning(in: context)
+        try await approve("shot_planning", in: context)
+        try await writeBible(in: context)
+        guard context.editor.projectState?.nextPhaseName == "bible" else {
+            throw GateBlocked("The canonical fixture did not reach the current Bible phase.")
+        }
+        ready = true
+        return context
+    }
+
     static func makePromotion(withLookObligation: Bool = false, agentService: AgentService? = nil) async throws -> Context {
         let context = try await makeScript(agentService: agentService)
         var ready = false
@@ -323,6 +341,8 @@ enum ProductionPlanningAcceptanceFixture {
             let draft = try ProductionPlanningStoreV1.readShotPlanning(dataRoot: root, storyboard: board)
             let intents = Dictionary(uniqueKeysWithValues: draft.shots.map { ($0.shotID, $0) })
             let sections = try MusicvideoProductionExtensionStoreV2.sections(analysis: analysis, timing: board.timing, dataRoot: root)
+            let motif = MusicArcMotifV1(id: "light-and-shape",
+                description: "Coloured geometric shapes against pale backgrounds.", setupIDs: [])
             let arc = try sections.map { section in
                 let constants = try section.shotIDs.map { id -> MusicArcParameterV1 in
                     guard let intent = intents[id] else { throw GateBlocked("The actual Music Video camera intent is missing.") }
@@ -330,14 +350,14 @@ enum ProductionPlanningAcceptanceFixture {
                         rationale: "Preserve the actual abstract Shot Planning camera intent.")
                 }
                 return MusicArcSectionV1(sectionID: section.id, musicalFunction: "Use the approved analysis section without inventing performance cues.",
-                    visualFunction: "Present the planned light and shape compositions.", motifIDs: [], shotIDs: section.shotIDs,
+                    visualFunction: "Present the planned light and shape compositions.", motifIDs: [motif.id], shotIDs: section.shotIDs,
                     constants: constants, variations: [], lyricsRelation: .unused,
                     changeExplanation: "The canonical shot boundaries determine the visible change within this actual song section.")
             }
             let result = MusicvideoProductionPlanDraftV1(performanceSegments: [],
                 finalMix: .init(originalSongTimelineStartSeconds: 0, originalSongOccurrences: 1, providerSongAudioMuted: true,
                     approvedAdditionalLayerIDs: []),
-                visualArc: .init(concept: board.storyboard.summary, motifs: [], sections: arc), coverage: [])
+                visualArc: .init(concept: board.storyboard.summary, motifs: [motif], sections: arc), coverage: [])
             try MusicvideoProductionValidatorV1.validate(result)
             return result
         }.value

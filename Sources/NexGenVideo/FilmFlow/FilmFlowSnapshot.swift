@@ -244,13 +244,13 @@ struct FilmFlowSnapshot: Codable, Equatable, Sendable {
             throw FilmFlowFailure.message("The FilmFlow project binding changed.")
         }
         let expectedPaths = Set(["snapshot.v1.json"] + value.responses.flatMap { [$0.portablePath, "schemas/\($0.tool).json"] } + value.images.map(\.path))
-        guard let enumerator = FileManager.default.enumerator(at: directory, includingPropertiesForKeys: [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey]) else {
+        guard let enumerator = FileManager.default.enumerator(atPath: directory.path) else {
             throw FilmFlowFailure.message("The FilmFlow snapshot inventory cannot be read.")
         }
         var actualPaths = Set<String>()
-        for case let file as URL in enumerator {
+        for case let path as String in enumerator {
+            let file = directory.appendingPathComponent(path)
             let properties = try file.resourceValues(forKeys: [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey])
-            let path = String(file.path.dropFirst(directory.path.count + 1))
             guard properties.isSymbolicLink != true,
                   (properties.isDirectory == true ? ["dto", "schemas", "images"].contains(path) : properties.isRegularFile == true) else {
                 throw FilmFlowFailure.message("The FilmFlow snapshot contains an unsupported entry.")

@@ -4,7 +4,7 @@ import Testing
 @testable import NexGenVideo
 
 @MainActor
-@Suite("Final production tool preserves the approved shot compilation", .serialized, .timeLimit(.minutes(2)))
+@Suite("Final production tool preserves the approved shot compilation", .serialized)
 struct ProductionFinalPromptCompilationTests {
     @Test func nextFinalShotReturnsTheExactApprovedPromptAndBinding() async throws {
         let original = try await ProductionPlanningAcceptanceFixture.makePromotion(withLookObligation: true)
@@ -54,46 +54,51 @@ struct ProductionFinalPromptCompilationTests {
         try await ProductionPlanningAcceptanceFixture.approve("sanity", in: context)
         try await ProductionPlanningAcceptanceFixture.prepareEmptyFrames(in: context)
         try await ProductionPlanningAcceptanceFixture.approve("frames", in: context)
-        let inspected = try await PipelineRenderReviewWriter.capture(editor: editor)
-        _ = try await PipelineRenderReviewWriter.recordNativeReview(snapshot: inspected, findings: [], editor: editor)
-        try await ProductionPlanningAcceptanceFixture.approve("render_review", in: context)
-        let first = try #require(shots.first)
-        let reviewed = try #require(inspected.shots.first { $0.shotID == first.execution.id })
-        let reference = try #require(reviewed.review.compiledPrompt)
-        let approved = try ProductionCompiledPromptStore.load(reference, dataRoot: root)
-        let promptBytes = try Data(contentsOf: root.appendingPathComponent(reference.path))
-        let reviewBytes = try Data(contentsOf: root.appendingPathComponent(RenderReviewV1.currentPath))
-        #expect(approved.shotID == first.execution.id)
-        #expect(approved.modality == "video")
-        #expect(approved.modelID == modelID)
-        #expect(!reviewed.review.conditioning.isEmpty)
+        let document = context.document, home = context.packageURL
+        try await withPromptCompilerTimeLimit {
+            let context = ProductionPlanningAcceptanceFixture.Context(document: document,
+                packageURL: home, dataRoot: root, executor: executor)
+            let inspected = try await PipelineRenderReviewWriter.capture(editor: editor)
+            _ = try await PipelineRenderReviewWriter.recordNativeReview(snapshot: inspected, findings: [], editor: editor)
+            try await ProductionPlanningAcceptanceFixture.approve("render_review", in: context)
+            let first = try #require(shots.first)
+            let reviewed = try #require(inspected.shots.first { $0.shotID == first.execution.id })
+            let reference = try #require(reviewed.review.compiledPrompt)
+            let approved = try ProductionCompiledPromptStore.load(reference, dataRoot: root)
+            let promptBytes = try Data(contentsOf: root.appendingPathComponent(reference.path))
+            let reviewBytes = try Data(contentsOf: root.appendingPathComponent(RenderReviewV1.currentPath))
+            #expect(approved.shotID == first.execution.id)
+            #expect(approved.modality == "video")
+            #expect(approved.modelID == modelID)
+            #expect(!reviewed.review.conditioning.isEmpty)
 
-        for _ in 0..<2 {
-            let result = await executor.execute(name: "next_render_shot", args: ["phase": "final"])
-            try #require(!result.isError, Comment(rawValue: ToolHarness.textOf(result)))
-            let value = try #require(JSONSerialization.jsonObject(with: Data(ToolHarness.textOf(result).utf8)) as? [String: Any])
-            let text = try #require(value["compiled_prompt"] as? String)
-            let token = try #require(value["compileToken"] as? String)
-            #expect(value["shot_id"] as? String == first.execution.id)
-            #expect(value["generation_model"] as? String == modelID)
-            #expect(value["video_generation_required"] as? Bool == true)
-            #expect(value["done"] as? Bool == false)
-            #expect(Data(text.utf8) == Data(approved.text.utf8))
-            #expect(PromptCompiler.validate(token: token, text: text, modelId: modelID, binding: approved.binding))
-            let actual = try await PromptCompiler.currentBinding(editor: editor, shotId: first.execution.id,
-                modality: .video, modelId: modelID, modelCatalog: catalog)
-            #expect(actual.withPromptIRSHA256(FileDigest.sha256(of: approved.sourceIR)) == approved.binding)
+            for _ in 0..<2 {
+                let result = await executor.execute(name: "next_render_shot", args: ["phase": "final"])
+                try #require(!result.isError, Comment(rawValue: ToolHarness.textOf(result)))
+                let value = try #require(JSONSerialization.jsonObject(with: Data(ToolHarness.textOf(result).utf8)) as? [String: Any])
+                let text = try #require(value["compiled_prompt"] as? String)
+                let token = try #require(value["compileToken"] as? String)
+                #expect(value["shot_id"] as? String == first.execution.id)
+                #expect(value["generation_model"] as? String == modelID)
+                #expect(value["video_generation_required"] as? Bool == true)
+                #expect(value["done"] as? Bool == false)
+                #expect(Data(text.utf8) == Data(approved.text.utf8))
+                #expect(PromptCompiler.validate(token: token, text: text, modelId: modelID, binding: approved.binding))
+                let actual = try await PromptCompiler.currentBinding(editor: editor, shotId: first.execution.id,
+                    modality: .video, modelId: modelID, modelCatalog: catalog)
+                #expect(actual.withPromptIRSHA256(FileDigest.sha256(of: approved.sourceIR)) == approved.binding)
+                #expect(try Data(contentsOf: root.appendingPathComponent(reference.path)) == promptBytes)
+                #expect(try Data(contentsOf: root.appendingPathComponent(RenderReviewV1.currentPath)) == reviewBytes)
+                #expect(editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: root) == nil)
+            }
+            do {
+                _ = try await PromptCompiler.compile(intent: first.execution.primaryAction, modelId: modelID,
+                    modality: .video, editor: editor, shotId: first.execution.id, modelCatalog: catalog)
+                Issue.record("A shot-bound compile accepted a missing current shot projection.")
+            } catch let error as ToolError {
+                #expect(error.message == "Shot-bound compilation requires the current shot projection.")
+            }
             #expect(try Data(contentsOf: root.appendingPathComponent(reference.path)) == promptBytes)
-            #expect(try Data(contentsOf: root.appendingPathComponent(RenderReviewV1.currentPath)) == reviewBytes)
-            #expect(editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: root) == nil)
         }
-        do {
-            _ = try await PromptCompiler.compile(intent: first.execution.primaryAction, modelId: modelID,
-                modality: .video, editor: editor, shotId: first.execution.id, modelCatalog: catalog)
-            Issue.record("A shot-bound compile accepted a missing current shot projection.")
-        } catch let error as ToolError {
-            #expect(error.message == "Shot-bound compilation requires the current shot projection.")
-        }
-        #expect(try Data(contentsOf: root.appendingPathComponent(reference.path)) == promptBytes)
     }
 }

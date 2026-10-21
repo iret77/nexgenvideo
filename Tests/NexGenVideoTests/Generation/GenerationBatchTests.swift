@@ -482,7 +482,8 @@ struct GenerationBatchTests {
         let editor = EditorViewModel()
         editor.projectURL = root
         let endpoint = "fal-ai/gemini-25-flash-image/edit"
-        let (_, package) = try await GenerationPackageFixture.prepare(editor: editor, endpoint: endpoint)
+        let (generation, package) = try await GenerationPackageFixture.prepare(editor: editor, endpoint: endpoint)
+        try await GenerationPackageInputs.persist(package: package, snapshot: try #require(generation.references), editor: editor)
         let batch = try GenerationBatch(payload: .init(nonce: UUID(), projectKey: package.payload.binding.projectKey,
             phase: nil, items: [.init(id: UUID().uuidString, purpose: "HTTP acceptance fixture only", package: package)]))
         let approved = try await GenerationBatchStore.approve(batch, editor: editor)
@@ -1960,9 +1961,10 @@ struct GenerationBatchTests {
                 origin: .direct, editor: editor)
             #expect(result.turnDisposition == .suspendTurn)
             #expect(editor.generationBatchCoordinator.autoApprovingPhase == "frames")
-            for _ in 0..<500 where editor.generationBatchCoordinator.pending != nil {
+            for _ in 0..<500 where editor.generationBatchCoordinator.autoApprovingPhase != nil {
                 try await Task.sleep(nanoseconds: 10_000_000)
             }
+            #expect(editor.generationBatchCoordinator.autoApprovingPhase == nil)
             #expect(editor.generationBatchCoordinator.pending == nil)
             #expect(editor.phaseSpendApproval.current?.runs.count == 1)
 

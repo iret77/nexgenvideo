@@ -4,6 +4,10 @@ import Testing
 
 @Suite("XMLExporter")
 struct XMLExporterTests {
+    @MainActor private final class ProgressRecorder {
+        var values: [Double] = []
+        var completedFiles: [Bool] = []
+    }
 
     /// Build a tmpdir + manifest + resolver pointing at empty files on disk.
     /// XMLExporter only checks file existence; it doesn't read contents.
@@ -601,7 +605,7 @@ struct XMLExporterTests {
         #expect(earlyRange.lowerBound < laterRange.lowerBound, "earlier-starting clip must appear first in the XML")
     }
 
-    @Test func xmlExportThroughExportServiceWritesFileWithoutError() async throws {
+    @Test @MainActor func xmlExportThroughExportServiceWritesFileWithoutError() async throws {
         // Drive XML export through the public ExportService API rather than calling
         // XMLExporter directly. Catches misrouting in ExportService.export's switch.
         let (resolver, tmpDir) = try makeResolver(entries: [videoManifestEntry(id: "media-v", in: NSTemporaryDirectory())])
@@ -609,33 +613,45 @@ struct XMLExporterTests {
         let timeline = Fixtures.timeline(tracks: [Fixtures.videoTrack(clips: [clip])])
         let outURL = tmpDir.appendingPathComponent("svc.xml")
 
-        let svc = await ExportService()
+        let svc = ExportService()
+        let progress = ProgressRecorder()
         await svc.export(
             timeline: timeline, resolver: resolver,
-            format: .xml, resolution: .r1080p, outputURL: outURL
+            format: .xml, resolution: .r1080p, outputURL: outURL,
+            event: { event in
+                if case .progress(1) = event {
+                    progress.completedFiles.append((try? Data(contentsOf: outURL).isEmpty) == false)
+                }
+            }
         )
-        await #expect(svc.error == nil)
-        await #expect(svc.progress == 1.0)
+        #expect(svc.error == nil)
+        #expect(svc.progress == 1.0)
+        #expect(!progress.completedFiles.isEmpty && progress.completedFiles.allSatisfy { $0 })
         #expect(FileManager.default.fileExists(atPath: outURL.path))
     }
 
-    @Test func xmlExportServiceDoesNotReportSuccessAfterWriteFailure() async throws {
+    @Test @MainActor func xmlExportServiceDoesNotReportSuccessAfterWriteFailure() async throws {
         let (resolver, tmpDir) = try makeResolver(entries: [])
         defer { try? FileManager.default.removeItem(at: tmpDir) }
         let outURL = tmpDir
             .appendingPathComponent("missing", isDirectory: true)
             .appendingPathComponent("service.xml")
-        let service = await ExportService()
+        let service = ExportService()
+        let progress = ProgressRecorder()
 
         await service.export(
             timeline: Fixtures.timeline(), resolver: resolver,
-            format: .xml, resolution: .r1080p, outputURL: outURL
+            format: .xml, resolution: .r1080p, outputURL: outURL,
+            event: { event in
+                if case .progress(let value) = event { progress.values.append(value) }
+            }
         )
 
-        let message = await service.error
+        let message = service.error
         #expect(message?.contains("service.xml") == true)
         #expect(message?.contains("Choose another writable location") == true)
-        await #expect(service.progress != 1.0)
+        #expect(service.progress != 1.0)
+        #expect(!progress.values.isEmpty && progress.values.allSatisfy { $0 < 1 })
         #expect(!FileManager.default.fileExists(atPath: outURL.path))
     }
 

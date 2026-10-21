@@ -3,8 +3,30 @@ import NexGenEngine
 import Testing
 @testable import NexGenVideo
 
+private struct PromptCompilerOperationTimeout: LocalizedError {
+    var errorDescription: String? { "The prompt compiler operation exceeded its 120-second time limit." }
+}
+
 @MainActor
-@Suite("Prompt compilation publication owns the pipeline", .serialized, .timeLimit(.minutes(2)))
+func withPromptCompilerTimeLimit<Value: Sendable>(
+    _ operation: @escaping @MainActor @Sendable () async throws -> Value
+) async throws -> Value {
+    try await withThrowingTaskGroup(of: Value.self) { group in
+        // The structured scope joins both children after cancellation.
+        defer { group.cancelAll() }
+        group.addTask { @MainActor in return try await operation() }
+        group.addTask {
+            try await Task.sleep(for: .seconds(120))
+            Issue.record("The prompt compiler operation exceeded its 120-second time limit.")
+            throw PromptCompilerOperationTimeout()
+        }
+        guard let value = try await group.next() else { throw CancellationError() }
+        return value
+    }
+}
+
+@MainActor
+@Suite("Prompt compilation publication owns the pipeline", .serialized)
 struct PromptCompilationLeaseTests {
     @MainActor private final class PublicationBarrier {
         private let entered: AsyncStream<Void>
@@ -56,60 +78,70 @@ struct PromptCompilationLeaseTests {
     func suspendedCompilerKeepsItsPublishedRecord() async throws {
         var retained: (path: String, bytes: Data)?
         let context = try await ProductionPlanningAcceptanceFixture.makeImportedAssembly(beforeRenderReview: { context in
-            let (executor, model) = try compiler(context.editor)
-            let barrier = PublicationBarrier()
-            executor.promptCompilationCheckpoint = { await barrier.pause() }
-            let before = try files(context.dataRoot)
-            let operation = Task { @MainActor in
-                defer { barrier.finish() }
-                return await executor.execute(name: "compile_prompt", args: [
-                    "intent": "A green triangle on an empty white surface.", "model": model, "shotId": "none",
-                ])
-            }
-            defer { barrier.release(); operation.cancel() }
-            try #require(await barrier.waitUntilEntered(), "The actual compiler did not reach its publication checkpoint.")
-            #expect(context.editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: context.dataRoot) == "render_review")
-            #expect(try files(context.dataRoot) == before)
+            let editor = context.editor, root = context.dataRoot
+            retained = try await withPromptCompilerTimeLimit {
+                let (executor, model) = try compiler(editor)
+                let barrier = PublicationBarrier()
+                executor.promptCompilationCheckpoint = { await barrier.pause() }
+                let before = try files(root)
+                let operation = Task { @MainActor in
+                    defer { barrier.finish() }
+                    return await executor.execute(name: "compile_prompt", args: [
+                        "intent": "A green triangle on an empty white surface.", "model": model, "shotId": "none",
+                    ])
+                }
+                defer { barrier.release(); operation.cancel() }
+                do {
+                    try #require(await barrier.waitUntilEntered(), "The actual compiler did not reach its publication checkpoint.")
+                    #expect(editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: root) == "render_review")
+                    #expect(try files(root) == before)
 
-            do {
-                _ = try await PipelineRenderReviewWriter.capture(editor: context.editor)
-                Issue.record("Review preparation entered while the actual compiler was suspended.")
-            } catch let error as GateBlocked {
-                #expect(error.message == "Wait for the current production job before preparing the review.")
-            }
-            let (competingExecutor, _) = try compiler(context.editor)
-            let competing = await competingExecutor.execute(name: "compile_prompt", args: [
-                "intent": "A yellow square on a black surface.", "model": model, "shotId": "none",
-            ])
-            #expect(competing.isError)
-            #expect(ToolHarness.textOf(competing).contains("while render_review is running"))
-            #expect(try files(context.dataRoot) == before)
+                    do {
+                        _ = try await PipelineRenderReviewWriter.capture(editor: editor)
+                        Issue.record("Review preparation entered while the actual compiler was suspended.")
+                    } catch let error as GateBlocked {
+                        #expect(error.message == "Wait for the current production job before preparing the review.")
+                    }
+                    let (competingExecutor, _) = try compiler(editor)
+                    let competing = await competingExecutor.execute(name: "compile_prompt", args: [
+                        "intent": "A yellow square on a black surface.", "model": model, "shotId": "none",
+                    ])
+                    #expect(competing.isError)
+                    #expect(ToolHarness.textOf(competing).contains("while render_review is running"))
+                    #expect(try files(root) == before)
 
-            barrier.release()
-            let result = await operation.value
-            try #require(!result.isError, "Actual compilation: \(ToolHarness.textOf(result))")
-            #expect(context.editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: context.dataRoot) == nil)
-            let payload = try #require(JSONSerialization.jsonObject(with: Data(ToolHarness.textOf(result).utf8)) as? [String: Any])
-            let text = try #require(payload["compiledPrompt"] as? String)
-            let token = try #require(payload["compileToken"] as? String)
-            let after = try files(context.dataRoot)
-            let newPaths = Set(after.keys).subtracting(before.keys)
-            let path = try #require(newPaths.first)
-            #expect(newPaths.count == 1)
-            #expect(path.hasPrefix("execution/compiled-prompts/"))
-            for (path, bytes) in before { #expect(after[path] == bytes) }
-            let bytes = try #require(after[path])
-            let record = try JSONDecoder().decode(ProductionCompiledPromptStore.Record.self, from: bytes)
-            #expect(record.text == text)
-            #expect(record.modelID == model)
-            #expect(record.modality == "image")
-            #expect(record.shotID == "none")
-            #expect(record.binding.promptIRSHA256 == FileDigest.sha256(of: record.sourceIR))
-            #expect(PromptCompiler.validate(token: token, text: text, modelId: model, binding: record.binding))
-            #expect(try ProductionCompiledPromptStore.path(binding: record.binding, modelID: model, text: text) == path)
-            let reference = try PlanningWriterIO.reference(path, id: "actual-compiler", role: "host.production-compiled-prompt", dataRoot: context.dataRoot)
-            #expect(try ProductionCompiledPromptStore.load(reference, dataRoot: context.dataRoot) == record)
-            retained = (path, bytes)
+                    barrier.release()
+                    let result = await operation.value
+                    try #require(!result.isError, "Actual compilation: \(ToolHarness.textOf(result))")
+                    #expect(editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: root) == nil)
+                    let payload = try #require(JSONSerialization.jsonObject(with: Data(ToolHarness.textOf(result).utf8)) as? [String: Any])
+                    let text = try #require(payload["compiledPrompt"] as? String)
+                    let token = try #require(payload["compileToken"] as? String)
+                    let after = try files(root)
+                    let newPaths = Set(after.keys).subtracting(before.keys)
+                    let path = try #require(newPaths.first)
+                    #expect(newPaths.count == 1)
+                    #expect(path.hasPrefix("execution/compiled-prompts/"))
+                    for (path, bytes) in before { #expect(after[path] == bytes) }
+                    let bytes = try #require(after[path])
+                    let record = try JSONDecoder().decode(ProductionCompiledPromptStore.Record.self, from: bytes)
+                    #expect(record.text == text)
+                    #expect(record.modelID == model)
+                    #expect(record.modality == "image")
+                    #expect(record.shotID == "none")
+                    #expect(record.binding.promptIRSHA256 == FileDigest.sha256(of: record.sourceIR))
+                    #expect(PromptCompiler.validate(token: token, text: text, modelId: model, binding: record.binding))
+                    #expect(try ProductionCompiledPromptStore.path(binding: record.binding, modelID: model, text: text) == path)
+                    let reference = try PlanningWriterIO.reference(path, id: "actual-compiler", role: "host.production-compiled-prompt", dataRoot: root)
+                    #expect(try ProductionCompiledPromptStore.load(reference, dataRoot: root) == record)
+                    return (path: path, bytes: bytes)
+                } catch {
+                    barrier.release()
+                    operation.cancel()
+                    _ = await operation.value
+                    throw error
+                }
+            }
         })
         defer { context.document.close() }
         let record = try #require(retained)
@@ -122,31 +154,41 @@ struct PromptCompilationLeaseTests {
         let context = try await ProductionPlanningAcceptanceFixture.makeScript()
         defer { context.document.close() }
         try await ProductionPlanningAcceptanceFixture.approve("script", in: context)
-        let (executor, model) = try compiler(context.editor)
-        let barrier = PublicationBarrier()
-        executor.promptCompilationCheckpoint = { await barrier.pause() }
-        let before = try files(context.dataRoot)
-        let operation = Task { @MainActor in
-            defer { barrier.finish() }
-            return await executor.execute(name: "compile_prompt", args: [
-                "intent": "A green triangle on an empty white surface.", "model": model, "shotId": "none",
-            ])
+        let editor = context.editor, root = context.dataRoot
+        try await withPromptCompilerTimeLimit {
+            let (executor, model) = try compiler(editor)
+            let barrier = PublicationBarrier()
+            executor.promptCompilationCheckpoint = { await barrier.pause() }
+            let before = try files(root)
+            let operation = Task { @MainActor in
+                defer { barrier.finish() }
+                return await executor.execute(name: "compile_prompt", args: [
+                    "intent": "A green triangle on an empty white surface.", "model": model, "shotId": "none",
+                ])
+            }
+            defer { barrier.release(); operation.cancel() }
+            do {
+                try #require(await barrier.waitUntilEntered(), "The actual compiler did not reach its publication checkpoint.")
+                #expect(editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: root) == "storyboard")
+                operation.cancel()
+                barrier.release()
+                let canceled = await operation.value
+                #expect(canceled.isError)
+                #expect(editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: root) == nil)
+                #expect(try files(root) == before)
+                executor.promptCompilationCheckpoint = nil
+                let retry = await executor.execute(name: "compile_prompt", args: [
+                    "intent": "A green triangle on an empty white surface.", "model": model, "shotId": "none",
+                ])
+                #expect(!retry.isError, "Actual compilation retry: \(ToolHarness.textOf(retry))")
+                #expect(editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: root) == nil)
+                #expect(try files(root).count == before.count + 1)
+            } catch {
+                barrier.release()
+                operation.cancel()
+                _ = await operation.value
+                throw error
+            }
         }
-        defer { barrier.release(); operation.cancel() }
-        try #require(await barrier.waitUntilEntered(), "The actual compiler did not reach its publication checkpoint.")
-        #expect(context.editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: context.dataRoot) == "storyboard")
-        operation.cancel()
-        barrier.release()
-        let canceled = await operation.value
-        #expect(canceled.isError)
-        #expect(context.editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: context.dataRoot) == nil)
-        #expect(try files(context.dataRoot) == before)
-        executor.promptCompilationCheckpoint = nil
-        let retry = await executor.execute(name: "compile_prompt", args: [
-            "intent": "A green triangle on an empty white surface.", "model": model, "shotId": "none",
-        ])
-        #expect(!retry.isError, "Actual compilation retry: \(ToolHarness.textOf(retry))")
-        #expect(context.editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: context.dataRoot) == nil)
-        #expect(try files(context.dataRoot).count == before.count + 1)
     }
 }

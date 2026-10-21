@@ -120,7 +120,7 @@ enum XMLExporter {
         let staged = try await FCPXMLExporter.stageProjectMedia(
             mediaRefs: refs, resolver: resolver,
             directory: stagedMediaDirectoryURL ?? FCPXMLExporter.mediaDirectory(for: outputURL),
-            isCancelled: { isCancelled() }, progress: progress)
+            isCancelled: { isCancelled() }, progress: { value in progress(value * 0.9) })
         do {
             try Task.checkCancellation()
             let publishedDirectory = FCPXMLExporter.mediaDirectory(for: publishedOutputURL ?? outputURL)
@@ -134,6 +134,7 @@ enum XMLExporter {
                     isCancelled: { isCancelled() || Task.isCancelled }, emittedMediaURLs: urls)
             }
             try await withTaskCancellationHandler { try await writing.value } onCancel: { writing.cancel() }
+            await progress(1)
         } catch {
             FCPXMLExporter.cleanup(staged)
             throw error
