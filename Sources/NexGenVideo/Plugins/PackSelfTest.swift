@@ -48,6 +48,19 @@ enum PackSelfTest {
 
     private static func requiredResourceFailure(_ record: InstalledPluginRecord) -> String? {
         guard record.id == "musicvideo" else { return nil }
+        return requiredResourceFailure(
+            record,
+            contract: PhaseContractStore.contract(packID: record.id),
+            registry: PackCatalog.registry(activePack: record.id)
+        )
+    }
+
+    static func requiredResourceFailure(
+        _ record: InstalledPluginRecord,
+        contract: ResolvedPhaseContract?,
+        registry: EngineRegistry
+    ) -> String? {
+        guard record.id == "musicvideo" else { return nil }
         guard let manifest = HardStepManifest.load(bundleURL: record.bundleURL) else {
             return "required hardsteps.json is missing or malformed"
         }
@@ -73,38 +86,22 @@ enum PackSelfTest {
         guard creative.allSatisfy({ !$0.required }) else {
             return "creative-material intake is not fully optional"
         }
-        guard let contract = PhaseContractStore.contract(packID: record.id) else {
+        guard let contract else {
             return "resolved pipeline contract is unavailable after pack loading"
         }
-        let failures = PipelineAgentContract.failures(
-            registry: PackCatalog.registry(activePack: record.id),
-            manifest: manifest,
-            phaseBoundCapabilities: Dictionary(uniqueKeysWithValues: contract.phases.map {
-                ($0.declaration.id, $0.phaseBoundCapabilities)
-            }),
-            supportingCapabilities: Dictionary(uniqueKeysWithValues: contract.phases.map {
-                ($0.declaration.id, $0.supportingCapabilities)
-            }),
-            phaseDocument: {
-                phaseDocument($0, bundleURL: record.bundleURL)
-            }
-        )
-        return failures.first
-    }
-
-    private static func phaseDocument(
-        _ name: String,
-        bundleURL: URL
-    ) -> String? {
-        guard let enumerator = FileManager.default.enumerator(
-            at: bundleURL,
-            includingPropertiesForKeys: [.isRegularFileKey],
-            options: [.skipsHiddenFiles]
-        ) else { return nil }
-        let suffix = "/MusicvideoPack/phases/\(name).md"
-        for case let url as URL in enumerator where url.path.hasSuffix(suffix) {
-            return try? String(contentsOf: url, encoding: .utf8)
+        guard contract.packID == record.id,
+              contract.packVersion == record.version,
+              contract.projectSchema == record.projectSchema,
+              contract.hardSteps == manifest else {
+            return "resolved pipeline contract differs from the loaded pack or its intake resources"
         }
-        return nil
+        do {
+            try PhaseContractRuntime.validateLockedMusicvideoIfNeeded(contract, registry: registry)
+        } catch {
+            return error.localizedDescription
+        }
+        let coverURL = try? PackResourceLocator.file("phases/cover.md", inside: contract.resourceRoot)
+        let cover = coverURL.flatMap { try? String(contentsOf: $0, encoding: .utf8) }
+        return PipelineAgentContract.coverDocumentFailures(cover).first
     }
 }

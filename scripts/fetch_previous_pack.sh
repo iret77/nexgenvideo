@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
-  echo "usage: $0 /path/to/current.ngvpack /path/to/output-directory [sign-identity]" >&2
+if [ "$#" -ne 2 ]; then
+  echo "usage: $0 /path/to/current.ngvpack /path/to/output-directory" >&2
   exit 2
 fi
 
 current_pack="$1"
 output_dir="$2"
-sign_identity="${3:-}"
 [ -d "$current_pack" ] || { echo "missing current pack: $current_pack" >&2; exit 2; }
 mkdir -p "$output_dir/compatible" "$output_dir/incompatible"
 
@@ -131,27 +130,9 @@ done < "$selection"
   exit 1
 }
 
-if [ -n "$latest_compatible" ]; then
-  lifecycle_pack="$latest_compatible"
-else
-  lifecycle_pack="$output_dir/lifecycle-$latest_historical_version.ngvpack"
-  /usr/bin/ditto --noqtn "$current_pack" "$lifecycle_pack"
-  /usr/libexec/PlistBuddy -c \
-    "Set :CFBundleShortVersionString $latest_historical_version" \
-    "$lifecycle_pack/Contents/Info.plist"
-  /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $latest_historical_version" \
-    "$lifecycle_pack/Contents/Info.plist"
-  lifecycle_binary="$lifecycle_pack/Contents/MacOS/$pack_id"
-  if [ -n "$sign_identity" ]; then
-    /usr/bin/codesign --force --options runtime --timestamp \
-      --sign "$sign_identity" "$lifecycle_binary"
-    /usr/bin/codesign --force --options runtime --timestamp \
-      --sign "$sign_identity" "$lifecycle_pack"
-  else
-    /usr/bin/codesign --force --sign - "$lifecycle_binary"
-    /usr/bin/codesign --force --sign - "$lifecycle_pack"
-  fi
-  /usr/bin/codesign --verify --strict --verbose=2 "$lifecycle_pack"
-fi
+[ -n "$latest_compatible" ] || {
+  echo "no ABI-compatible historical pack for $pack_id before $current_version" >&2
+  exit 1
+}
 
-printf '%s\n' "$lifecycle_pack"
+printf '%s\n' "$latest_compatible"

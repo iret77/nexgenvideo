@@ -695,7 +695,7 @@ jobs:
             "$INSTALL_APP/Contents/MacOS/NexGenVideo"
           PREVIOUS_DIR="$(mktemp -d)"
           PREVIOUS_PACK="$(bash scripts/fetch_previous_pack.sh \
-            "$PACK_BUNDLE" "$PREVIOUS_DIR" "$SIGN_IDENTITY")"
+            "$PACK_BUNDLE" "$PREVIOUS_DIR")"
           while IFS= read -r COMPATIBLE_PACK; do
             NGV_SELFTEST_LOAD_ONLY=1 NGV_SELFTEST_PACK="$COMPATIBLE_PACK" \
               "$INSTALL_APP/Contents/MacOS/NexGenVideo"

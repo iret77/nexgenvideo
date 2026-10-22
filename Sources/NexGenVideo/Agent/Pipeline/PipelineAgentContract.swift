@@ -286,20 +286,7 @@ enum PipelineAgentContract {
                 "post-pipeline utilities grant tools outside the guarded supporting-tool set"
             )
         }
-        if let cover = phaseDocument("cover") {
-            for required in ["compile_prompt", "generate_image", "list_models"]
-            where !cover.contains(required) {
-                failures.append("cover utility instructions don't name required tool \(required)")
-            }
-            for forbidden in ["approve_gate", "`Bash`", "record_render("]
-            where cover.contains(forbidden) {
-                failures.append(
-                    "cover utility instructions contain forbidden pipeline operation \(forbidden)"
-                )
-            }
-        } else {
-            failures.append("cover has no packaged post-pipeline utility document")
-        }
+        failures.append(contentsOf: coverDocumentFailures(phaseDocument("cover")))
 
         let intakePhases = Set(manifest.allSteps.map(\.phase))
         let allowedIntakePhases: Set<String> = ["project_init", "brief"]
@@ -317,6 +304,22 @@ enum PipelineAgentContract {
             != [.script, .character, .location, .style] {
             failures.append(
                 "brief intake is not exactly Story, Characters, Locations, Style"
+            )
+        }
+        return failures
+    }
+
+    static func coverDocumentFailures(_ cover: String?) -> [String] {
+        guard let cover else { return ["cover has no packaged post-pipeline utility document"] }
+        var failures: [String] = []
+        for required in ["compile_prompt", "generate_image", "list_models"]
+        where !cover.contains(required) {
+            failures.append("cover utility instructions don't name required tool \(required)")
+        }
+        for forbidden in ["approve_gate", "`Bash`", "record_render("]
+        where cover.contains(forbidden) {
+            failures.append(
+                "cover utility instructions contain forbidden pipeline operation \(forbidden)"
             )
         }
         return failures
