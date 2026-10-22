@@ -171,6 +171,17 @@ canonical revision.
 
 ## Runtime and distribution
 
+The immutable Python/bpy tree lives in `Contents/Resources/BpyRuntime`, keeping its internal
+library and module paths intact. Every Mach-O in that tree is signed individually before the app's
+outer resource seal; bundle verification checks each signature independently. Native supervisor and
+storage tools remain in `Contents/Helpers`, and the two services remain in `Contents/XPCServices`.
+This deliberately accepts the extra resource sealing described in Apple's
+[code-signing guidance](https://developer.apple.com/library/archive/technotes/tn2206/): runtime
+updates replace the whole app through Sparkle, never individual files inside the signed tree.
+Python bytecode and job output cannot modify that tree. The native signing fixture exercises the
+complete resource layout before the full app build; distribution signing and runtime execution still
+require their separate Actions gates.
+
 `Runtime/bpy/runtime-lock.json` pins CPython, the `bpy` wheel, all declared Python dependencies,
 python-build-standalone inputs, source locations, hashes, and licenses. The wheel entry point is the
 RECORD-backed native module `bpy/__init__.so`. The lock also records the exact 43 `bpy/lib/*.dylib`

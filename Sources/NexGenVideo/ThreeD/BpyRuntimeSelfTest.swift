@@ -1264,7 +1264,7 @@ enum BpyRuntimeSelfTest {
         defer { session.close() }
         _ = try session.ready()
         let script = try String(contentsOf: Bundle.main.bundleURL.appendingPathComponent(
-            "Contents/Helpers/BpyRuntime/storage_probe.py"
+            "Contents/Resources/BpyRuntime/storage_probe.py"
         ), encoding: .utf8)
         var proofs: [[String: Any]] = []
         for mode in ["fileport", "memory-entry", "scm-rights"] {

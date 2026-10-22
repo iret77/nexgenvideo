@@ -44,7 +44,7 @@ final class SpatialSceneSession {
         self.pipelineRoot = pipelineRoot
         self.runtime = runtime
         self.authority = authority
-        runtimeRoot = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/BpyRuntime")
+        runtimeRoot = Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/BpyRuntime")
     }
 
     var selectedObject: BpySpatialObject? { snapshot?.objects.first { $0.id == selectedObjectID } }

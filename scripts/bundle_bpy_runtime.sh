@@ -20,7 +20,7 @@ case "$APP" in
   *) echo "invalid bpy app destination: $APP" >&2; exit 1 ;;
 esac
 
-DESTINATION="$APP/Contents/Helpers/BpyRuntime"
+DESTINATION="$APP/Contents/Resources/BpyRuntime"
 rm -rf "$DESTINATION"
 mkdir -p "$DESTINATION"
 cp -R "$RUNTIME_ROOT/." "$DESTINATION/"

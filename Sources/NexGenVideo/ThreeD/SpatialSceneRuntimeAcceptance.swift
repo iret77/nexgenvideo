@@ -9,7 +9,7 @@ nonisolated enum SpatialSceneRuntimeAcceptance {
         try await Task.detached {
             let runtime = BpyRuntimeSession(documentID: "spatial-native-acceptance", serviceName: serviceName)
             defer { runtime.close() }
-            let root = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/BpyRuntime")
+            let root = Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/BpyRuntime")
             let operations = try String(contentsOf: root.appendingPathComponent("scene_operations.py"), encoding: .utf8)
             let lock = try Data(contentsOf: root.appendingPathComponent("runtime-lock.json"))
             let worker = try Data(contentsOf: root.appendingPathComponent("worker.py"))

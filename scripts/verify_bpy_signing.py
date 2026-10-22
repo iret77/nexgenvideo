@@ -42,7 +42,7 @@ def validate(app, development=False):
         if not team:
             raise ValueError("the host has no Developer ID team")
         require_identity(host, team)
-    runtime = app / "Contents/Helpers/BpyRuntime"
+    runtime = app / "Contents/Resources/BpyRuntime"
     supervisor = app / "Contents/Helpers/NexGenVideoBpySupervisor"
     storage = app / "Contents/Helpers/NexGenVideoBpyStorage"
     expected = {runtime / "python/bin/python3.13": {SANDBOX: True, INHERIT: True},

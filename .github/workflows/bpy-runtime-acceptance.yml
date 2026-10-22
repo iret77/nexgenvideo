@@ -85,12 +85,12 @@ jobs:
             set -e
             [ "$status" -ne 0 ]
             for _ in $(seq 1 200); do
-              if ! pgrep -f "$APP/Contents/Helpers/NexGenVideoBpySupervisor|$APP/Contents/Helpers/BpyRuntime/python" >/dev/null; then
+              if ! pgrep -f "$APP/Contents/Helpers/NexGenVideoBpySupervisor|$APP/Contents/Resources/BpyRuntime/python" >/dev/null; then
                 break
               fi
               sleep 0.05
             done
-            if pgrep -f "$APP/Contents/Helpers/NexGenVideoBpySupervisor|$APP/Contents/Helpers/BpyRuntime/python" >/dev/null; then
+            if pgrep -f "$APP/Contents/Helpers/NexGenVideoBpySupervisor|$APP/Contents/Resources/BpyRuntime/python" >/dev/null; then
               echo "orphan bpy process after $mode" >&2
               exit 1
             fi
@@ -278,7 +278,7 @@ jobs:
           ' "$EVIDENCE/result.json"
           python3 scripts/production_spatial_ui_evidence.py "$EVIDENCE"
           "$RUNNER_TEMP/panorama-parser/bin/python" scripts/retained_spatial_evidence.py "$EVIDENCE"
-          python3 scripts/spatial_evaluated_geometry_evidence.py "$EVIDENCE" --runtime-root "$APP/Contents/Helpers/BpyRuntime"
+          python3 scripts/spatial_evaluated_geometry_evidence.py "$EVIDENCE" --runtime-root "$APP/Contents/Resources/BpyRuntime"
           python3 scripts/bpy_protocol_evidence.py "$EVIDENCE"
           python3 scripts/bpy_worker_evidence.py "$EVIDENCE"
           test -s "$EVIDENCE/perspective.png"

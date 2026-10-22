@@ -2606,7 +2606,8 @@ private final class ServiceSession: @unchecked Sendable {
 
     private var supervisorURL: URL {
         runtimeRoot.deletingLastPathComponent()
-            .appendingPathComponent("NexGenVideoBpySupervisor")
+            .deletingLastPathComponent()
+            .appendingPathComponent("Helpers/NexGenVideoBpySupervisor")
     }
 
     private var sitePackagesURL: URL {
@@ -2675,7 +2676,7 @@ private final class BpyRuntimeService: NSObject, @unchecked Sendable {
         runtimeRoot = Bundle.main.bundleURL
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("Helpers", isDirectory: true)
+            .appendingPathComponent("Resources", isDirectory: true)
             .appendingPathComponent("BpyRuntime", isDirectory: true)
         super.init()
     }

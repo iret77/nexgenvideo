@@ -573,7 +573,7 @@ final class BpyRuntimeSession: @unchecked Sendable {
             return data
         }
         let verification = try JSONDecoder().decode(Verification.self, from: output("verification.json"))
-        let runtime = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/BpyRuntime")
+        let runtime = Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/BpyRuntime")
         guard verification.schema == "nexgenvideo/bpy-verification/1",
               verification.jobID == receipt.jobID, verification.fingerprint == receipt.jobFingerprint,
               verification.blenderBuildHash == receipt.blenderBuildHash, let snapshot = verification.spatial,
@@ -696,7 +696,7 @@ final class BpyRuntimeSession: @unchecked Sendable {
               result.response.state == .awaitingConfirmation else {
             throw BpyRuntimeError.invalidOutput("The Clay output has no authenticated runtime execution.")
         }
-        let root = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/BpyRuntime")
+        let root = Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/BpyRuntime")
         let script = try Data(contentsOf: root.appendingPathComponent("scene_operations.py"))
         let settings = try SpatialClayRenderer.renderSettings(proof.request, state: proof.state)
         let literal = try JSONEncoder().encode(String(decoding: settings, as: UTF8.self))

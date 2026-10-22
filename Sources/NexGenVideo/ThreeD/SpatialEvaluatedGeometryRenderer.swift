@@ -33,7 +33,7 @@ enum SpatialEvaluatedGeometryRenderer {
         try geometry.validate(state: state, scene: scene)
         try geometry.validateFiles(files)
         try geometry.validateRecordedSources(files, state: state, scene: scene,
-            runtimeRoot: Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/BpyRuntime"))
+            runtimeRoot: Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/BpyRuntime"))
     }
 
     static func prepare(state: SpatialClayState, revision: SpatialSceneRevision,

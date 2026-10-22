@@ -3,7 +3,7 @@ set -euo pipefail
 
 APP="${1:?NexGenVideo.app required}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-RUNTIME="$APP/Contents/Helpers/BpyRuntime"
+RUNTIME="$APP/Contents/Resources/BpyRuntime"
 PYTHON="$RUNTIME/python/bin/python3.13"
 SUPERVISOR="$APP/Contents/Helpers/NexGenVideoBpySupervisor"
 STORAGE="$APP/Contents/Helpers/NexGenVideoBpyStorage"

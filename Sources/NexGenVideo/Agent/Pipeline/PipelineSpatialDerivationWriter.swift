@@ -107,7 +107,7 @@ enum PipelineSpatialDerivationWriter {
         guard editor.workingRoot == home, editor.openWorkingCopyKey == key,
               BpyRuntimeHost.shared.isOperationActive(operation) else { throw changed() }
         let candidate = try await SpatialClayRenderer.prepare(request: input.5, revision: input.1, runtime: runtime,
-            runtimeRoot: Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/BpyRuntime"))
+            runtimeRoot: Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/BpyRuntime"))
         let transaction = try await background {
             try Task.checkCancellation()
             try input.4.requireUnchanged()

@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Usage:
 #   scripts/bundle.sh [release|debug]           # ad-hoc signed dev build
-#   scripts/bundle.sh debug --fast              # fastest: skip dSYM + deep sign, just env+build
+#   scripts/bundle.sh debug --fast              # stable-identity signing without dSYM
 #   scripts/bundle.sh release --sign            # build + Developer ID codesign
 #   scripts/bundle.sh release --dist            # build + sign + notarize + staple + DMG
 #   scripts/bundle.sh release --package         # notarize + DMG from an existing signed app
@@ -48,7 +48,6 @@ NOTARY_KEY_ID="${NOTARY_KEY_ID:-}"
 NOTARY_ISSUER="${NOTARY_ISSUER:-}"
 SENTRY_DSN="${SENTRY_DSN:-}"
 PLUGIN_CATALOG_URL="${PLUGIN_CATALOG_URL:-}"
-ENTITLEMENTS="$ROOT/scripts/NexGenVideo.entitlements"
 RESOURCES="$ROOT/Sources/NexGenVideo/Resources"
 APP="$ROOT/.build/NexGenVideo.app"
 ZIP="$ROOT/.build/NexGenVideo.zip"
@@ -250,26 +249,7 @@ touch "$APP"
 
 if [ "$MODE" = "fast" ]; then
   echo "==> Codesigning fast app"
-  codesign --force --deep --sign "$SIGN_IDENTITY" "$APP"
-  if [ "$BPY_BUNDLE_MODE" = "full" ]; then
-    BPY_RUNTIME="$APP/Contents/Helpers/BpyRuntime"
-    codesign --force --sign "$SIGN_IDENTITY" "$APP/Contents/Helpers/NexGenVideoBpyStorage"
-    codesign --force --sign "$SIGN_IDENTITY" \
-      --entitlements "$ROOT/Runtime/bpy/PythonChild.entitlements" \
-      "$BPY_RUNTIME/python/bin/python3.13"
-    codesign --force --sign "$SIGN_IDENTITY" \
-      --entitlements "$ROOT/Runtime/bpy/PythonChild.entitlements" \
-      "$APP/Contents/Helpers/NexGenVideoBpySupervisor"
-    for BPY_XPC in "$APP/Contents/XPCServices"/NexGenVideoBpyService*.xpc; do
-      codesign --force --sign "$SIGN_IDENTITY" \
-        --entitlements "$ROOT/Runtime/bpy/NexGenVideoBpyService.entitlements" \
-        "$BPY_XPC/Contents/MacOS/NexGenVideoBpyService"
-      codesign --force --sign "$SIGN_IDENTITY" \
-        --entitlements "$ROOT/Runtime/bpy/NexGenVideoBpyService.entitlements" \
-        "$BPY_XPC"
-    done
-  fi
-  codesign --force --sign "$SIGN_IDENTITY" "$APP"
+  "$ROOT/scripts/sign_app.sh" "$APP" fast "$BPY_BUNDLE_MODE" "$SIGN_IDENTITY"
   echo "==> Done: $APP (fast mode — stable identity, no dSYM)"
   exit 0
 fi
@@ -282,99 +262,13 @@ dsymutil "$BIN_DIRECTORY/libNexGenEngine.dylib" -o "$ROOT/.build/NexGenEngine.dS
 
 if [ "$MODE" = "dev" ]; then
   echo "==> Ad-hoc signing dev app"
-  codesign --force --deep --sign - "$APP"
-  if [ "$BPY_BUNDLE_MODE" != "omitted" ]; then
-    codesign --force --sign - "$APP/Contents/Helpers/NexGenVideoBpyStorage"
-    if [ "$BPY_BUNDLE_MODE" = "full" ]; then
-      BPY_RUNTIME="$APP/Contents/Helpers/BpyRuntime"
-      codesign --force --sign - \
-        --entitlements "$ROOT/Runtime/bpy/PythonChild.entitlements" \
-        "$BPY_RUNTIME/python/bin/python3.13"
-    fi
-    codesign --force --sign - \
-      --entitlements "$ROOT/Runtime/bpy/PythonChild.entitlements" \
-      "$APP/Contents/Helpers/NexGenVideoBpySupervisor"
-    for BPY_XPC in "$APP/Contents/XPCServices"/NexGenVideoBpyService*.xpc; do
-      codesign --force --sign - \
-        --entitlements "$ROOT/Runtime/bpy/NexGenVideoBpyService.entitlements" \
-        "$BPY_XPC/Contents/MacOS/NexGenVideoBpyService"
-      codesign --force --sign - \
-        --entitlements "$ROOT/Runtime/bpy/NexGenVideoBpyService.entitlements" \
-        "$BPY_XPC"
-    done
-  fi
-  codesign --force --sign - "$APP"
-  codesign --verify --strict --verbose=2 "$APP"
+  "$ROOT/scripts/sign_app.sh" "$APP" dev "$BPY_BUNDLE_MODE" -
   upload_dsyms
   echo "==> Done: $APP (ad-hoc signed)"
   exit 0
 fi
 
-if [ "$BPY_BUNDLE_MODE" = "full" ]; then
-  BPY_RUNTIME="$APP/Contents/Helpers/BpyRuntime"
-  echo "==> Codesigning managed bpy runtime"
-  codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" \
-    "$APP/Contents/Helpers/NexGenVideoBpyStorage"
-  while IFS= read -r -d '' binary; do
-    [ "$binary" = "$BPY_RUNTIME/python/bin/python3.13" ] && continue
-    if file "$binary" | grep -q 'Mach-O'; then
-      codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$binary"
-    fi
-  done < <(find "$BPY_RUNTIME" -depth -type f -print0)
-  codesign --force --options runtime --timestamp \
-    --entitlements "$ROOT/Runtime/bpy/PythonChild.entitlements" \
-    --sign "$SIGN_IDENTITY" \
-    "$BPY_RUNTIME/python/bin/python3.13"
-  codesign --force --options runtime --timestamp \
-    --entitlements "$ROOT/Runtime/bpy/PythonChild.entitlements" \
-    --sign "$SIGN_IDENTITY" \
-    "$APP/Contents/Helpers/NexGenVideoBpySupervisor"
-  for BPY_XPC in "$APP/Contents/XPCServices"/NexGenVideoBpyService*.xpc; do
-    codesign --force --options runtime --timestamp \
-      --entitlements "$ROOT/Runtime/bpy/NexGenVideoBpyService.entitlements" \
-      --sign "$SIGN_IDENTITY" \
-      "$BPY_XPC/Contents/MacOS/NexGenVideoBpyService"
-    codesign --force --options runtime --timestamp \
-      --entitlements "$ROOT/Runtime/bpy/NexGenVideoBpyService.entitlements" \
-      --sign "$SIGN_IDENTITY" \
-      "$BPY_XPC"
-    codesign --verify --strict --verbose=2 "$BPY_XPC"
-  done
-fi
-
-SPARKLE_CURRENT="$APP/Contents/Frameworks/Sparkle.framework/Versions/Current"
-if [ -d "$SPARKLE_CURRENT" ]; then
-  echo "==> Codesigning nested Sparkle helpers"
-  for helper in \
-      "$SPARKLE_CURRENT/Autoupdate" \
-      "$SPARKLE_CURRENT/Updater.app/Contents/MacOS/Updater" \
-      "$SPARKLE_CURRENT/Updater.app" \
-      "$SPARKLE_CURRENT/XPCServices/Downloader.xpc/Contents/MacOS/Downloader" \
-      "$SPARKLE_CURRENT/XPCServices/Downloader.xpc" \
-      "$SPARKLE_CURRENT/XPCServices/Installer.xpc/Contents/MacOS/Installer" \
-      "$SPARKLE_CURRENT/XPCServices/Installer.xpc"; do
-    [ -e "$helper" ] && codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$helper"
-  done
-fi
-
-for framework in "$APP/Contents/Frameworks"/*.framework; do
-  [ -d "$framework" ] || continue
-  echo "==> Codesigning embedded framework $(basename "$framework")"
-  codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$framework"
-done
-for dylib in "$APP/Contents/Frameworks"/*.dylib; do
-  [ -f "$dylib" ] || continue
-  echo "==> Codesigning embedded library $(basename "$dylib")"
-  codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$dylib"
-done
-
-echo "==> Codesigning main app"
-codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$APP/Contents/Helpers/NexGenVideoDiagnostics"
-codesign --force --options runtime --timestamp \
-  --entitlements "$ENTITLEMENTS" \
-  --sign "$SIGN_IDENTITY" \
-  "$APP"
-codesign --verify --strict --verbose=2 "$APP"
+"$ROOT/scripts/sign_app.sh" "$APP" distribution "$BPY_BUNDLE_MODE" "$SIGN_IDENTITY"
 
 if [ "$MODE" = "sign" ]; then
   echo "==> Done: $APP (signed, not notarized)"
