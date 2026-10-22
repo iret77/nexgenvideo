@@ -74,6 +74,15 @@ struct PromptCompilationLeaseTests {
         return (ToolExecutor(editor: editor, modelCatalog: catalog), model.id)
     }
 
+    private func requirePublication(_ operation: Task<ToolResult, Error>, barrier: PublicationBarrier) async throws {
+        let entered = await barrier.waitUntilEntered()
+        try Task.checkCancellation()
+        if !entered {
+            let result = try await operation.value
+            try #require(entered, "The actual compiler did not reach its publication checkpoint. Actual compilation: \(ToolHarness.textOf(result))")
+        }
+    }
+
     @Test("A suspended real compiler excludes review preparation and its record survives the later root swap")
     func suspendedCompilerKeepsItsPublishedRecord() async throws {
         var retained: (path: String, bytes: Data)?
@@ -83,16 +92,22 @@ struct PromptCompilationLeaseTests {
                 let (executor, model) = try compiler(editor)
                 let barrier = PublicationBarrier()
                 executor.promptCompilationCheckpoint = { await barrier.pause() }
-                let before = try files(root)
+                var capturedBefore: [String: Data]?
                 let operation = Task { @MainActor in
                     defer { barrier.finish() }
+                    while editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: root) != nil {
+                        try await Task.sleep(for: .milliseconds(25))
+                    }
+                    try Task.checkCancellation()
+                    capturedBefore = try files(root)
                     return await executor.execute(name: "compile_prompt", args: [
                         "intent": "A green triangle on an empty white surface.", "model": model, "shotId": "none",
                     ])
                 }
                 defer { barrier.release(); operation.cancel() }
                 do {
-                    try #require(await barrier.waitUntilEntered(), "The actual compiler did not reach its publication checkpoint.")
+                    try await requirePublication(operation, barrier: barrier)
+                    let before = try #require(capturedBefore)
                     #expect(editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: root) == "render_review")
                     #expect(try files(root) == before)
 
@@ -111,7 +126,7 @@ struct PromptCompilationLeaseTests {
                     #expect(try files(root) == before)
 
                     barrier.release()
-                    let result = await operation.value
+                    let result = try await operation.value
                     try #require(!result.isError, "Actual compilation: \(ToolHarness.textOf(result))")
                     #expect(editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: root) == nil)
                     let payload = try #require(JSONSerialization.jsonObject(with: Data(ToolHarness.textOf(result).utf8)) as? [String: Any])
@@ -138,7 +153,7 @@ struct PromptCompilationLeaseTests {
                 } catch {
                     barrier.release()
                     operation.cancel()
-                    _ = await operation.value
+                    _ = try? await operation.value
                     throw error
                 }
             }
@@ -159,20 +174,26 @@ struct PromptCompilationLeaseTests {
             let (executor, model) = try compiler(editor)
             let barrier = PublicationBarrier()
             executor.promptCompilationCheckpoint = { await barrier.pause() }
-            let before = try files(root)
+            var capturedBefore: [String: Data]?
             let operation = Task { @MainActor in
                 defer { barrier.finish() }
+                while editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: root) != nil {
+                    try await Task.sleep(for: .milliseconds(25))
+                }
+                try Task.checkCancellation()
+                capturedBefore = try files(root)
                 return await executor.execute(name: "compile_prompt", args: [
                     "intent": "A green triangle on an empty white surface.", "model": model, "shotId": "none",
                 ])
             }
             defer { barrier.release(); operation.cancel() }
             do {
-                try #require(await barrier.waitUntilEntered(), "The actual compiler did not reach its publication checkpoint.")
+                try await requirePublication(operation, barrier: barrier)
+                let before = try #require(capturedBefore)
                 #expect(editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: root) == "storyboard")
                 operation.cancel()
                 barrier.release()
-                let canceled = await operation.value
+                let canceled = try await operation.value
                 #expect(canceled.isError)
                 #expect(editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: root) == nil)
                 #expect(try files(root) == before)
@@ -186,7 +207,7 @@ struct PromptCompilationLeaseTests {
             } catch {
                 barrier.release()
                 operation.cancel()
-                _ = await operation.value
+                _ = try? await operation.value
                 throw error
             }
         }

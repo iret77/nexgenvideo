@@ -49,14 +49,11 @@ extension FilmFlowSnapshotTests {
         let scene = try #require(current.scenes.first), event = try #require(scene.events.first)
         let mapping = FilmFlowAdoption(snapshotID: retained.id, snapshotSHA256: retained.sha256,
             sourceObjectID: "get_shotlist#/scenes/0/shots/0", targetID: event.id, fields: ["action"])
-        let (oldSelection, _) = try mapping.prepareScript(dataRoot: context.dataRoot)
-        let key = try #require(context.editor.openWorkingCopyKey)
-        try ProjectWorkingCopy.markDirty(key: key)
-        do {
-            _ = try oldSelection.file(outputs: [], dataRoot: context.dataRoot)
-            Issue.record("The former dirty-before-fence order did not invalidate its prepared selection.")
-        } catch SpatialSceneError.changed {}
         let (selection, source) = try mapping.prepareScript(dataRoot: context.dataRoot)
+        let key = try #require(context.editor.openWorkingCopyKey)
+        try #require(ProjectWorkingCopy.home(key).standardizedFileURL == context.dataRoot.deletingLastPathComponent().standardizedFileURL)
+        try ProjectWorkingCopy.markDirty(key: key)
+        _ = try selection.file(outputs: [], dataRoot: context.dataRoot)
         let changed = ScriptV1.Scene(id: scene.id, title: scene.title, adaptation: scene.adaptation,
             events: scene.events.map { value in
                 value.id == event.id ? .init(id: value.id, action: source.notes, dialogue: value.dialogue,

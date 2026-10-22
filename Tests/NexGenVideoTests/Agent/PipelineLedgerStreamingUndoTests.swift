@@ -12,10 +12,14 @@ struct PipelineLedgerStreamingUndoTests {
         let service = runtime.service()
         let context = try await ProductionPlanningAcceptanceFixture.makeBible(agentService: service)
         defer { service.cancel(); context.document.close() }
+        let manager = try #require(context.editor.undoManager)
+        manager.removeAllActions(); manager.groupsByEvent = false
+        try #require(manager.groupingLevel == 0 && !manager.canUndo)
         let original = try? YAMLArtifactStore(dataRoot: context.dataRoot).load(Ledger.self, at: PipelineLayout.ledgerFile)
         try await ProductionPlanningAcceptanceFixture.run("set_ledger_attribute",
             args: ["kind": "film", "key": "lighting", "tag": "Original side light"], in: context)
         let first = try YAMLArtifactStore(dataRoot: context.dataRoot).load(Ledger.self, at: PipelineLayout.ledgerFile)
+        #expect(manager.groupingLevel == 0 && manager.canUndo)
         #expect(service.send(text: "Revise the current lighting intent.", mentions: [], hidden: true))
         try await until { runtime.turn != nil }
         let result = try await runtime.execute("set_ledger_attribute",
@@ -24,9 +28,10 @@ struct PipelineLedgerStreamingUndoTests {
         try #require(service.isStreaming)
         let second = try YAMLArtifactStore(dataRoot: context.dataRoot).load(Ledger.self, at: PipelineLayout.ledgerFile)
         let bytes = try Data(contentsOf: context.dataRoot.appendingPathComponent(PipelineLayout.ledgerFile))
-        let manager = try #require(context.editor.undoManager)
+        #expect(manager.groupingLevel == 0 && manager.canUndo)
         context.editor.mediaPanelToast = nil
         manager.undo()
+        #expect(manager.canUndo)
         #expect(PipelineLedgerWriter.isRestoring(editor: context.editor))
         #expect(PipelineLedgerWriter.restoreMessage(editor: context.editor)?.contains("Let the agent finish") == true)
         let window = NSWindow()
