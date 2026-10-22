@@ -488,7 +488,7 @@ enum ProductionPlanningAcceptanceFixture {
         return context
     }
 
-    private static func waitForNativeReviewInputs(in context: Context) async throws -> String {
+    static func waitForNativeReviewInputs(in context: Context) async throws -> String {
         let editor = context.editor
         let home = editor.workingRoot, project = editor.projectId
         let key = editor.openWorkingCopyKey, generation = editor.openWorkingCopyGeneration

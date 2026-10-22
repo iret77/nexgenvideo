@@ -58,7 +58,9 @@ struct ProductionFinalPromptCompilationTests {
         try await withPromptCompilerTimeLimit {
             let context = ProductionPlanningAcceptanceFixture.Context(document: document,
                 packageURL: home, dataRoot: root, executor: executor)
+            let displayedFingerprint = try await ProductionPlanningAcceptanceFixture.waitForNativeReviewInputs(in: context)
             let inspected = try await PipelineRenderReviewWriter.capture(editor: editor)
+            try #require(inspected.fingerprint == displayedFingerprint)
             #expect(Set(inspected.references.map(\.id)).count == inspected.references.count)
             for shot in shots {
                 let bundle = try PipelineProductionInputMaterializer.requireCurrent(shotID: shot.execution.id, dataRoot: root)
