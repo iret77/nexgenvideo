@@ -12,7 +12,7 @@ final class PipelineRenderReviewRunVerificationTests: XCTestCase {
     func testCanonicalGraphPreservesEveryPageReductionAndFinding() async throws {
         ProductionPlanningAcceptanceFixture.beginDiagnostic("PipelineRenderReviewRunVerificationTests.testCanonicalGraphPreservesEveryPageReductionAndFinding")
         defer { ProductionPlanningAcceptanceFixture.endDiagnostic() }
-        let context = try await ProductionPlanningAcceptanceFixture.makeImportedAssembly()
+        let context = try await ProductionPlanningAcceptanceFixture.makeImportedAssembly(presentation: .editorSession)
         ProductionPlanningAcceptanceFixture.diagnosticStage("factory.returned")
         defer {
             ProductionPlanningAcceptanceFixture.diagnosticStage("test-close.before")

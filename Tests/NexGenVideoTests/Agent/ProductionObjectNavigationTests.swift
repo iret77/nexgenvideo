@@ -7,7 +7,7 @@ import Testing
 @Suite("Verified production object links")
 struct ProductionObjectNavigationTests {
     @Test func linksUseAssemblyIDsAndRefuseChangedBytesWithoutGuessingPaths() async throws {
-        let fixture = try await ProductionPlanningAcceptanceFixture.makeImportedAssembly()
+        let fixture = try await ProductionPlanningAcceptanceFixture.makeImportedAssembly(presentation: .editorSession)
         defer { fixture.document.close() }
         let editor = fixture.editor
         let captured = try #require(ProductionObjectNavigation.Context(editor))

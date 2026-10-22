@@ -29,6 +29,11 @@ on:
         required: false
         default: true
         type: boolean
+      artifact_only:
+        description: "Keep signed, notarized candidates in Actions only; requires dry_run and uses the stable catalog"
+        required: false
+        default: false
+        type: boolean
       test_bundle_run_id:
         description: Optional completed same-source external UI test producer
         type: string
@@ -56,13 +61,19 @@ jobs:
       - name: Validate release input
         env:
           REL_VERSION: ${{ inputs.version }}
+          ARTIFACT_ONLY: ${{ inputs.artifact_only }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
           echo "$REL_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' \
             || { echo "::error::version must be X.Y.Z"; exit 1; }
+          if [ "$ARTIFACT_ONLY" = "true" ] && [ "$DRY_RUN" != "true" ]; then
+            echo "::error::artifact_only requires dry_run=true"
+            exit 1
+          fi
 
       - name: Require the default branch for stable publication
-        if: ${{ inputs.dry_run == false }}
+        if: ${{ inputs.artifact_only == false && inputs.dry_run == false }}
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           REF_NAME: ${{ github.ref_name }}
@@ -72,7 +83,7 @@ jobs:
             || { echo "::error::Stable releases must run from $DEFAULT_BRANCH"; exit 1; }
 
       - name: Reject open release blockers
-        if: ${{ inputs.dry_run == false }}
+        if: ${{ inputs.artifact_only == false && inputs.dry_run == false }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -101,7 +112,7 @@ jobs:
           fi
 
       - name: Require release merge strategy
-        if: ${{ inputs.dry_run == false }}
+        if: ${{ inputs.artifact_only == false && inputs.dry_run == false }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -123,7 +134,7 @@ jobs:
         run: python3 -m unittest discover -s scripts -p 'test_*.py'
 
       - name: Inspect or resume release publication
-        if: ${{ inputs.dry_run == false }}
+        if: ${{ inputs.artifact_only == false && inputs.dry_run == false }}
         id: publication-state
         env:
           GH_TOKEN: ${{ github.token }}
@@ -362,6 +373,8 @@ jobs:
           python-version: "3.12"
 
       - name: Resolve version + mode
+        env:
+          ARTIFACT_ONLY: ${{ inputs.artifact_only }}
         run: |
           set -euo pipefail
           V="${{ inputs.version }}"
@@ -371,7 +384,7 @@ jobs:
             echo "REL_VERSION=$V"
             echo "REL_DRY=$DRY"
           } >> "$GITHUB_ENV"
-          if [ "$DRY" = "true" ]; then
+          if [ "$DRY" = "true" ] && [ "$ARTIFACT_ONLY" != "true" ]; then
             PREVIEW_TAG="preview-${{ github.run_id }}"
             {
               echo "PLUGIN_CHANNEL_TAG=$PREVIEW_TAG"
@@ -649,6 +662,7 @@ jobs:
           xcrun stapler validate .build/NexGenVideo.dmg
           hdiutil verify .build/NexGenVideo.dmg
 
+          NGV_RELEASE_DMG_SHA256="$(shasum -a 256 .build/NexGenVideo.dmg | awk '{print $1}')"
           MOUNT_POINT="$(mktemp -d)"
           hdiutil attach .build/NexGenVideo.dmg -nobrowse -readonly -mountpoint "$MOUNT_POINT"
           cleanup_mount() {
@@ -666,7 +680,9 @@ jobs:
 
           INSTALL_CHECK="$(mktemp -d)"
           INSTALL_APP="$INSTALL_CHECK/NexGenVideo.app"
+          NGV_RELEASE_MOUNTED_APP_TREE_SHA256="$(python3 scripts/external-gui/acceptance.py tree-sha256 --app "$MOUNT_POINT/NexGenVideo.app")"
           ditto "$MOUNT_POINT/NexGenVideo.app" "$INSTALL_APP"
+          [ "$(python3 scripts/external-gui/acceptance.py tree-sha256 --app "$INSTALL_APP")" = "$NGV_RELEASE_MOUNTED_APP_TREE_SHA256" ]
           cleanup_mount
           trap - EXIT
           codesign --verify --strict --verbose=2 "$INSTALL_APP"
@@ -683,11 +699,13 @@ jobs:
             || { echo "::error::DMG app build is $INSTALLED_BUILD, expected $BUILD_NUMBER"; exit 1; }
 
           PACK_ZIP="$(ls .build/plugins/*.ngvpack.zip | head -1)"
+          NGV_RELEASE_PACK_ZIP_SHA256="$(shasum -a 256 "$PACK_ZIP" | awk '{print $1}')"
           PACK_EXTRACT="$(mktemp -d)"
           /usr/bin/ditto -x -k "$PACK_ZIP" "$PACK_EXTRACT"
           PACK_BUNDLE="$(ls -d "$PACK_EXTRACT"/*.ngvpack 2>/dev/null | head -1 || true)"
           [ -n "$PACK_BUNDLE" ] \
             || { echo "::error::published pack ZIP does not contain an .ngvpack bundle"; exit 1; }
+          NGV_RELEASE_PACK_TREE_SHA256="$(python3 scripts/external-gui/acceptance.py tree-sha256 --app "$PACK_BUNDLE")"
           xcrun stapler validate "$PACK_BUNDLE"
           QUARANTINE="0083;$(printf '%x' "$(date +%s)");GitHub Actions;${{ github.server_url }}"
           /usr/bin/xattr -r -w com.apple.quarantine "$QUARANTINE" "$PACK_BUNDLE"
@@ -709,16 +727,96 @@ jobs:
             "$INSTALL_APP" \
             "$PREVIOUS_PACK" \
             "$PACK_BUNDLE"
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :NGVSourceCommit' "$INSTALL_APP/Contents/Info.plist")" = "$GITHUB_SHA" ]
+          [ "$(basename "$PACK_BUNDLE")" = musicvideo.ngvpack ]
+          [ "$(python3 scripts/external-gui/acceptance.py tree-sha256 --app "$PACK_BUNDLE")" = "$NGV_RELEASE_PACK_TREE_SHA256" ]
+          mkdir -p "$INSTALL_CHECK/plugins"
+          ditto "$PACK_BUNDLE" "$INSTALL_CHECK/plugins/musicvideo.ngvpack"
+          [ "$(python3 scripts/external-gui/acceptance.py tree-sha256 --app "$INSTALL_CHECK/plugins/musicvideo.ngvpack")" = "$NGV_RELEASE_PACK_TREE_SHA256" ]
+          {
+            echo "NGV_RELEASE_INSTALL_CHECK=$INSTALL_CHECK"
+            echo "NGV_RELEASE_DMG_SHA256=$NGV_RELEASE_DMG_SHA256"
+            echo "NGV_RELEASE_MOUNTED_APP_TREE_SHA256=$NGV_RELEASE_MOUNTED_APP_TREE_SHA256"
+            echo "NGV_RELEASE_PACK_BUNDLE=$PACK_BUNDLE"
+            echo "NGV_RELEASE_PACK_TREE_SHA256=$NGV_RELEASE_PACK_TREE_SHA256"
+            echo "NGV_RELEASE_PACK_ZIP=$PACK_ZIP"
+            echo "NGV_RELEASE_PACK_ZIP_SHA256=$NGV_RELEASE_PACK_ZIP_SHA256"
+          } >> "$GITHUB_ENV"
           echo "OK: mounted DMG layout, copied app, Gatekeeper assessment, and quarantined pack load"
 
       - name: Verify DMG checks did not mutate tracked source
         run: scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist
 
+      - name: Transfer the verified installed DMG app for workspace acceptance
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/release-workspace-transfer"
+          tar -czf "$RUNNER_TEMP/release-workspace-transfer/workspace-ui.tar.gz" \
+            -C "$NGV_RELEASE_INSTALL_CHECK" NexGenVideo.app plugins/musicvideo.ngvpack
+          cp .build/bpy-source/bpy-source-receipt.json "$RUNNER_TEMP/release-workspace-transfer/"
+          python3 - <<'PY'
+          import json, os, pathlib, sys
+          sys.path.insert(0, str(pathlib.Path('scripts/external-gui').resolve()))
+          from acceptance import metadata, sha256, tree_sha256
+
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'release-workspace-transfer'
+          installed = pathlib.Path(os.environ['NGV_RELEASE_INSTALL_CHECK'])
+          app = metadata(installed / 'NexGenVideo.app', os.environ['GITHUB_SHA'])
+          dmg = pathlib.Path('.build/NexGenVideo.dmg')
+          pack_zip = pathlib.Path(os.environ['NGV_RELEASE_PACK_ZIP'])
+          if sha256(dmg) != os.environ['NGV_RELEASE_DMG_SHA256']:
+              raise SystemExit('DMG changed after its installed-app checks')
+          if app['treeSHA256'] != os.environ['NGV_RELEASE_MOUNTED_APP_TREE_SHA256']:
+              raise SystemExit('Copied app differs from the mounted final DMG app')
+          if sha256(pack_zip) != os.environ['NGV_RELEASE_PACK_ZIP_SHA256']:
+              raise SystemExit('Final pack ZIP changed after its load checks')
+          pack_tree = tree_sha256(installed / 'plugins/musicvideo.ngvpack')
+          if (pack_tree != os.environ['NGV_RELEASE_PACK_TREE_SHA256']
+              or pack_tree != tree_sha256(pathlib.Path(os.environ['NGV_RELEASE_PACK_BUNDLE']))):
+              raise SystemExit('Transferred pack differs from the final checked pack')
+          receipt = {'schema': 'nexgenvideo/workspace-ui-input/1',
+                     'sourceSHA': os.environ['GITHUB_SHA'],
+                     'archiveSHA256': sha256(root / 'workspace-ui.tar.gz'),
+                     'appTreeSHA256': app['treeSHA256']}
+          runtime_input = root / 'workspace-ui-input.json'
+          runtime_input.write_text(json.dumps(receipt, sort_keys=True) + '\n')
+          proof = {'schema': 'nexgenvideo/release-workspace-producer/1',
+                   'sourceSHA': os.environ['GITHUB_SHA'], 'runID': os.environ['GITHUB_RUN_ID'],
+                   'runAttempt': os.environ['GITHUB_RUN_ATTEMPT'],
+                   'dmgSHA256': sha256(dmg), 'mountedAppTreeSHA256': app['treeSHA256'],
+                   'app': app, 'archiveSHA256': receipt['archiveSHA256'],
+                   'runtimeInputSHA256': sha256(runtime_input),
+                   'bpySourceReceiptSHA256': sha256(root / 'bpy-source-receipt.json'),
+                   'packArchive': pack_zip.name, 'packArchiveSHA256': sha256(pack_zip),
+                   'packTreeSHA256': pack_tree}
+          pathlib.Path('.build/release-workspace-producer.json').write_text(json.dumps(proof, indent=2) + '\n')
+          PY
+      - name: Upload final DMG app for selected workspace acceptance
+        uses: actions/upload-artifact@v4
+        with:
+          name: workspace-ui-app
+          path: |
+            ${{ runner.temp }}/release-workspace-transfer/workspace-ui.tar.gz
+            ${{ runner.temp }}/release-workspace-transfer/workspace-ui-input.json
+            ${{ runner.temp }}/release-workspace-transfer/bpy-source-receipt.json
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+      - name: Upload final DMG workspace producer binding
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-workspace-producer
+          path: .build/release-workspace-producer.json
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Bind the exact DMG for the external user journey
         id: gui-input
         run: |
           set -euo pipefail
-          echo "dmg_sha256=$(shasum -a 256 .build/NexGenVideo.dmg | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          DMG_SHA256="$(shasum -a 256 .build/NexGenVideo.dmg | awk '{print $1}')"
+          [ "$(jq -r .dmgSHA256 .build/release-workspace-producer.json)" = "$DMG_SHA256" ]
+          echo "dmg_sha256=$DMG_SHA256" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
           name: release-user-journey-input
@@ -728,7 +826,7 @@ jobs:
           compression-level: 0
 
       - name: Publish isolated preview plugin channel
-        if: ${{ env.REL_DRY == 'true' }}
+        if: ${{ inputs.artifact_only == false && env.REL_DRY == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -767,7 +865,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Stage stable plugin publication transaction
-        if: ${{ env.REL_DRY == 'false' }}
+        if: ${{ inputs.artifact_only == false && env.REL_DRY == 'false' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -875,7 +973,7 @@ jobs:
             --clobber
 
       - name: Upload dry-run candidate for manual verification
-        if: ${{ env.REL_DRY == 'true' }}
+        if: ${{ inputs.artifact_only == false && env.REL_DRY == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: NexGenVideo-${{ env.REL_VERSION }}-dry-run
@@ -885,6 +983,81 @@ jobs:
             .build/bpy-source/bpy-source-receipt.json
           if-no-files-found: error
           retention-days: 7
+
+      - name: Record unpublished candidate bytes
+        if: ${{ inputs.artifact_only }}
+        run: |
+          set -euo pipefail
+          [ "$(git rev-parse HEAD)" = "$GITHUB_SHA" ]
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(".build")
+          paths = [root / "NexGenVideo.dmg", root / "bpy-source/bpy-source-receipt.json",
+                   root / "release-workspace-producer.json"]
+          for pattern in (
+              "plugins/*.ngvpack.zip",
+              "plugins/*.entry.json",
+              "bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.tar",
+              "bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json",
+          ):
+              matches = sorted(root.glob(pattern))
+              if not matches:
+                  raise SystemExit(f"missing candidate input: {pattern}")
+              paths.extend(matches)
+          paths.extend(sorted(root.glob("plugins/*.badge.png")))
+          assets = []
+          for path in paths:
+              with path.open("rb") as handle:
+                  digest = hashlib.file_digest(handle, "sha256").hexdigest()
+              assets.append({"path": str(path.relative_to(root)), "sha256": digest,
+                             "size": path.stat().st_size})
+          for path in root.glob("plugins/*.entry.json"):
+              entry = json.loads(path.read_text())
+              archive = root / "plugins" / entry["zip"]
+              with archive.open("rb") as handle:
+                  digest = hashlib.file_digest(handle, "sha256").hexdigest()
+              if digest != entry["sha256"]:
+                  raise SystemExit(f"pack entry checksum mismatch: {path}")
+          producer = json.loads((root / "release-workspace-producer.json").read_text())
+          dmg = next(asset for asset in assets if asset["path"] == "NexGenVideo.dmg")
+          if dmg["sha256"] != producer["dmgSHA256"]:
+              raise SystemExit("candidate DMG differs from the checked workspace producer")
+          receipt = {
+              "schema": "nexgenvideo/artifact-only-candidate/1",
+              "sourceSHA": os.environ["GITHUB_SHA"],
+              "runID": os.environ["GITHUB_RUN_ID"],
+              "runAttempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "version": os.environ["REL_VERSION"],
+              "buildNumber": os.environ["BUILD_NUMBER"],
+              "pluginCatalogURL": os.environ["PLUGIN_CATALOG_URL"],
+              "published": False,
+              "assets": assets,
+          }
+          (root / "artifact-only-candidate.json").write_text(json.dumps(receipt, indent=2) + "\n")
+          PY
+
+      - name: Upload unpublished candidate
+        if: ${{ inputs.artifact_only }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: NexGenVideo-${{ env.REL_VERSION }}-artifact-only
+          path: |
+            .build/NexGenVideo.dmg
+            .build/plugins/*.ngvpack.zip
+            .build/plugins/*.entry.json
+            .build/plugins/*.badge.png
+            .build/artifact-only-candidate.json
+            .build/release-workspace-producer.json
+            .build/bpy-source/bpy-source-receipt.json
+            .build/bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.tar
+            .build/bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
 
       - name: Archive exact diagnostic app and symbols
         run: |
@@ -910,7 +1083,7 @@ jobs:
           if-no-files-found: error
 
       - name: Stage draft GitHub release
-        if: ${{ env.REL_DRY == 'false' }}
+        if: ${{ inputs.artifact_only == false && env.REL_DRY == 'false' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -929,7 +1102,7 @@ jobs:
             --target "$GITHUB_SHA"
 
       - name: Hand off stable publication transaction
-        if: ${{ env.REL_DRY == 'false' }}
+        if: ${{ inputs.artifact_only == false && env.REL_DRY == 'false' }}
         uses: actions/upload-artifact@v4
         with:
           name: release-publication-${{ inputs.version }}
@@ -996,7 +1169,7 @@ jobs:
 
   publish:
     needs: [release-gate, release, diagnostic-acceptance, bpy-runtime, external-user-acceptance]
-    if: ${{ inputs.dry_run == false && needs.release-gate.outputs.publication-resumed != 'true' && needs.release.result == 'success' }}
+    if: ${{ inputs.artifact_only == false && inputs.dry_run == false && needs.release-gate.outputs.publication-resumed != 'true' && needs.release.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     permissions:

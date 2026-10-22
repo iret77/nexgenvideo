@@ -53,8 +53,9 @@ struct ProductionRuntimeContextTests {
     func actualNativeFilmFindingsReachRepairTurnOnlyForTheirUnchangedCut(backend: AgentBackend) async throws {
         let runtime = ProductionContextRuntime(backend: backend)
         let service = runtime.service(backend: backend)
-        let fixture = try await ProductionPlanningAcceptanceFixture.makeImportedAssembly(agentService: service)
+        let fixture = try await ProductionPlanningAcceptanceFixture.makeImportedAssembly(agentService: service, presentation: .editorSession)
         defer { service.cancel(); fixture.document.close() }
+        #expect(fixture.document.windowControllers.isEmpty)
         let editor = fixture.editor
         let snapshot = try await PipelineProductionSequenceReviewStore.capture(editor: editor)
         let finding = SequenceReviewFindingV1(id: "actual-context-occlusion", scope: .wholePlayback,

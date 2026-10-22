@@ -86,7 +86,9 @@ struct PromptCompilationLeaseTests {
     @Test("A suspended real compiler excludes review preparation and its record survives the later root swap")
     func suspendedCompilerKeepsItsPublishedRecord() async throws {
         var retained: (path: String, bytes: Data)?
-        let context = try await ProductionPlanningAcceptanceFixture.makeImportedAssembly(beforeRenderReview: { context in
+        let context = try await ProductionPlanningAcceptanceFixture.makeImportedAssembly(presentation: .editorSession, beforeRenderReview: { context in
+            #expect(context.document.windowControllers.isEmpty)
+            #expect(context.editor.renderReviewDraft.fingerprint == nil)
             let editor = context.editor, root = context.dataRoot
             retained = try await withPromptCompilerTimeLimit {
                 let (executor, model) = try compiler(editor)
@@ -166,8 +168,9 @@ struct PromptCompilationLeaseTests {
 
     @Test("Cancellation before real compiler publication releases the lease without writing")
     func cancellationReleasesWithoutPublishing() async throws {
-        let context = try await ProductionPlanningAcceptanceFixture.makeScript()
+        let context = try await ProductionPlanningAcceptanceFixture.makeScript(presentation: .editorSession)
         defer { context.document.close() }
+        #expect(context.document.windowControllers.isEmpty)
         try await ProductionPlanningAcceptanceFixture.approve("script", in: context)
         let editor = context.editor, root = context.dataRoot
         try await withPromptCompilerTimeLimit {

@@ -7,7 +7,7 @@ import Testing
 @Suite("Review input validation survives asynchronous preparation")
 struct PipelineRenderReviewSnapshotCheckTests {
     @Test func changedSourceCannotPassTheFinalCheckEvenWithItsOriginalModificationDate() async throws {
-        let context = try await ProductionPlanningAcceptanceFixture.makeImportedAssembly()
+        let context = try await ProductionPlanningAcceptanceFixture.makeImportedAssembly(presentation: .editorSession)
         defer { context.document.close() }
         let snapshot = try await PipelineRenderReviewWriter.capture(editor: context.editor)
         let root = context.dataRoot
@@ -30,7 +30,7 @@ struct PipelineRenderReviewSnapshotCheckTests {
     }
 
     @Test func projectIdentityAndCancellationInvalidatePreparedReviewInputs() async throws {
-        let context = try await ProductionPlanningAcceptanceFixture.makeImportedAssembly()
+        let context = try await ProductionPlanningAcceptanceFixture.makeImportedAssembly(presentation: .editorSession)
         defer { context.document.close() }
         let snapshot = try await PipelineRenderReviewWriter.capture(editor: context.editor)
         let root = context.dataRoot
@@ -51,7 +51,7 @@ struct PipelineRenderReviewSnapshotCheckTests {
         #expect(throws: (any Error).self) { try check.requireCurrent() }
     }
     @Test func changesOutsideSnapshotReferencesInvalidateTheWholePipelineTransaction() async throws {
-        let context = try await ProductionPlanningAcceptanceFixture.makeImportedAssembly()
+        let context = try await ProductionPlanningAcceptanceFixture.makeImportedAssembly(presentation: .editorSession)
         defer { context.document.close() }
         let snapshot = try await PipelineRenderReviewWriter.capture(editor: context.editor)
         let root = context.dataRoot
@@ -65,7 +65,7 @@ struct PipelineRenderReviewSnapshotCheckTests {
     }
 
     @Test func creationOfAnAbsentDirectionArtifactInvalidatesPreparedReview() async throws {
-        let context = try await ProductionPlanningAcceptanceFixture.makeImportedAssembly()
+        let context = try await ProductionPlanningAcceptanceFixture.makeImportedAssembly(presentation: .editorSession)
         defer { context.document.close() }
         let snapshot = try await PipelineRenderReviewWriter.capture(editor: context.editor)
         let path = try #require(snapshot.absentPaths.first)

@@ -37,15 +37,25 @@ enum ProductionPlanningAcceptanceFixture {
     static let timebase = RationalTimebaseV1(ticksPerSecond: 600, fpsNumerator: 30)
     static let actions = ["A red circle crosses a pale wall.", "A blue square fills the empty frame."]
 
+    typealias Presentation = VideoProject.SessionPresentation
+
     struct Context {
         let document: VideoProject
         let packageURL: URL
         let dataRoot: URL
         let executor: ToolExecutor
+        let presentation: Presentation
         var editor: EditorViewModel { document.editorViewModel }
+
+        init(document: VideoProject, packageURL: URL, dataRoot: URL, executor: ToolExecutor,
+             presentation: Presentation = .nativeWindow) {
+            self.document = document; self.packageURL = packageURL; self.dataRoot = dataRoot
+            self.executor = executor; self.presentation = presentation
+        }
     }
 
-    static func makeScript(agentService: AgentService? = nil, beforeDesignApproval: (@MainActor (Context) async throws -> Void)? = nil,
+    static func makeScript(agentService: AgentService? = nil, presentation: Presentation = .nativeWindow,
+                           beforeDesignApproval: (@MainActor (Context) async throws -> Void)? = nil,
                            beforeBriefApproval: (@MainActor (Context) async throws -> Void)? = nil) async throws -> Context {
         diagnosticStage("makeScript.enter")
         let home = FileManager.default.temporaryDirectory.resolvingSymlinksInPath()
@@ -87,10 +97,16 @@ enum ProductionPlanningAcceptanceFixture {
                 diagnosticStage("makeScript.failure-close.returned")
             }
         }
-        diagnosticStage("window.before")
         _ = NSApplication.shared
-        document.makeWindowControllers()
-        diagnosticStage("window.after")
+        if presentation == .nativeWindow {
+            diagnosticStage("window.before")
+            document.makeWindowControllers()
+            diagnosticStage("window.after")
+        } else {
+            diagnosticStage("editor-session.before")
+            document.prepareEditorSession(presentation: .editorSession)
+            diagnosticStage("editor-session.after")
+        }
         diagnosticStage("restoration.before")
         await document.generationRestorationTask?.value
         diagnosticStage("restoration.after")
@@ -99,7 +115,7 @@ enum ProductionPlanningAcceptanceFixture {
         guard let working = editor.workingRoot, let workingRoot = DataRootResolver.dataRoot(of: working),
               editor.declaredProductionContract == .current else { throw GateBlocked("The production fixture did not open its trusted working copy.") }
         let context = Context(document: document, packageURL: home, dataRoot: workingRoot,
-            executor: ToolExecutor(editor: editor))
+            executor: ToolExecutor(editor: editor), presentation: presentation)
         try await approve("project_init", in: context)
         try PipelineStorySourceWriter.confirmGreenfield(editor: editor)
         try await run("write_brief", args: [
@@ -239,8 +255,9 @@ enum ProductionPlanningAcceptanceFixture {
         return context
     }
 
-    static func makePromotion(withLookObligation: Bool = false, agentService: AgentService? = nil) async throws -> Context {
-        let context = try await makeScript(agentService: agentService)
+    static func makePromotion(withLookObligation: Bool = false, agentService: AgentService? = nil,
+                              presentation: Presentation = .nativeWindow) async throws -> Context {
+        let context = try await makeScript(agentService: agentService, presentation: presentation)
         var ready = false
         defer { if !ready { context.document.close() } }
         try await approve("script", in: context)
@@ -419,9 +436,10 @@ enum ProductionPlanningAcceptanceFixture {
     }
 
     static func makeImportedAssembly(agentService: AgentService? = nil,
+        presentation: Presentation = .nativeWindow,
         beforeRenderReview: (@MainActor (Context) async throws -> Void)? = nil) async throws -> Context {
         diagnosticStage("makeImportedAssembly.enter")
-        let context = try await makeScript(agentService: agentService)
+        let context = try await makeScript(agentService: agentService, presentation: presentation)
         diagnosticStage("makeImportedAssembly.script-returned")
         var ready = false
         defer {
@@ -461,16 +479,12 @@ enum ProductionPlanningAcceptanceFixture {
             try await prepareEmptyFrames(in: context)
             diagnosticStage("frames.prepare.after")
             try await approve("frames", in: context)
-            _ = try await waitForNativeReviewInputs(in: context)
+            if presentation == .nativeWindow { _ = try await waitForNativeReviewInputs(in: context) }
             diagnosticStage("before-render-review.callback.before")
             try await beforeRenderReview?(context)
             diagnosticStage("before-render-review.callback.after")
-            let displayedFingerprint = try await waitForNativeReviewInputs(in: context)
             diagnosticStage("native-review.capture.before")
-            let review = try await PipelineRenderReviewWriter.capture(editor: context.editor)
-            guard review.fingerprint == displayedFingerprint else {
-                throw GateBlocked("The native input review changed before the acceptance capture.")
-            }
+            let review = try await captureReview(in: context)
             diagnosticStage("native-review.capture.after")
             diagnosticStage("native-review.record.before")
             _ = try await PipelineRenderReviewWriter.recordNativeReview(snapshot: review, findings: [], editor: context.editor)
@@ -488,7 +502,25 @@ enum ProductionPlanningAcceptanceFixture {
         return context
     }
 
+    static func captureReview(in context: Context) async throws -> PipelineRenderReviewWriter.Snapshot {
+        if context.presentation == .editorSession {
+            guard context.document.windowControllers.isEmpty else {
+                throw GateBlocked("The source fixture must not mount a native window.")
+            }
+            return try await PipelineRenderReviewWriter.capture(editor: context.editor)
+        }
+        let displayedFingerprint = try await waitForNativeReviewInputs(in: context)
+        let review = try await PipelineRenderReviewWriter.capture(editor: context.editor)
+        guard review.fingerprint == displayedFingerprint else {
+            throw GateBlocked("The native input review changed before the acceptance capture.")
+        }
+        return review
+    }
+
     static func waitForNativeReviewInputs(in context: Context) async throws -> String {
+        guard context.presentation == .nativeWindow else {
+            throw GateBlocked("An editor-session fixture has no displayed native input review.")
+        }
         let editor = context.editor
         let home = editor.workingRoot, project = editor.projectId
         let key = editor.openWorkingCopyKey, generation = editor.openWorkingCopyGeneration

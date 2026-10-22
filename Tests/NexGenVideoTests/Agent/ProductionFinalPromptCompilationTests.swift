@@ -7,8 +7,9 @@ import Testing
 @Suite("Final production tool preserves the approved shot compilation", .serialized)
 struct ProductionFinalPromptCompilationTests {
     @Test func nextFinalShotReturnsTheExactApprovedPromptAndBinding() async throws {
-        let original = try await ProductionPlanningAcceptanceFixture.makePromotion(withLookObligation: true)
+        let original = try await ProductionPlanningAcceptanceFixture.makePromotion(withLookObligation: true, presentation: .editorSession)
         defer { original.document.close() }
+        #expect(original.document.windowControllers.isEmpty)
         let catalog = ModelCatalog()
         catalog.load(entries: ModelCatalog.launchEntries)
         let activation = ProviderActivation(active: [.init(provider: .fal, transport: .api)])
@@ -24,7 +25,7 @@ struct ProductionFinalPromptCompilationTests {
         let executor = ToolExecutor(editor: editor, providerActivation: { activation }, modelCatalog: catalog,
             productionRouteCandidates: { _ in candidates }, catalogReadiness: { true }, isModelEnabled: { _ in true })
         let context = ProductionPlanningAcceptanceFixture.Context(document: original.document,
-            packageURL: original.packageURL, dataRoot: root, executor: executor)
+            packageURL: original.packageURL, dataRoot: root, executor: executor, presentation: .editorSession)
         let inputs = try await Task.detached { try PipelineProductionPlanWriter.nativeInputs(dataRoot: root) }.value
         let shots = try inputs.proposal.shots.map { input -> PipelineProductionPlanWriter.ShotProposal in
             let old = input.execution
@@ -57,10 +58,9 @@ struct ProductionFinalPromptCompilationTests {
         let document = context.document, home = context.packageURL
         try await withPromptCompilerTimeLimit {
             let context = ProductionPlanningAcceptanceFixture.Context(document: document,
-                packageURL: home, dataRoot: root, executor: executor)
-            let displayedFingerprint = try await ProductionPlanningAcceptanceFixture.waitForNativeReviewInputs(in: context)
-            let inspected = try await PipelineRenderReviewWriter.capture(editor: editor)
-            try #require(inspected.fingerprint == displayedFingerprint)
+                packageURL: home, dataRoot: root, executor: executor, presentation: .editorSession)
+            let inspected = try await ProductionPlanningAcceptanceFixture.captureReview(in: context)
+            #expect(context.document.windowControllers.isEmpty)
             #expect(Set(inspected.references.map(\.id)).count == inspected.references.count)
             for shot in shots {
                 let bundle = try PipelineProductionInputMaterializer.requireCurrent(shotID: shot.execution.id, dataRoot: root)

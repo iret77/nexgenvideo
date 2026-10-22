@@ -296,7 +296,7 @@ struct PipelineProductionPlanWriterTests {
     }
 
     @Test func preparedPublicationRejectsActualReferencedSourceVideoChange() async throws {
-        let fixture = try await ProductionPlanningAcceptanceFixture.makeImportedAssembly()
+        let fixture = try await ProductionPlanningAcceptanceFixture.makeImportedAssembly(presentation: .editorSession)
         defer { fixture.document.close() }
         let root = fixture.dataRoot
         try NativeGateWriter.rewind(projectDir: try #require(fixture.editor.workingRoot), targetPhase: "shotlist",

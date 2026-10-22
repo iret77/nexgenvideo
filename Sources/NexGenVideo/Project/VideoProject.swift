@@ -56,7 +56,7 @@ final class VideoProject: NSDocument {
         super.init()
     }
 
-    /// Decoded off-main in read(), applied on main in makeWindowControllers.
+    /// Decoded off-main in read(), applied during editor-session initialization.
     private nonisolated(unsafe) var loadedTimeline: Timeline?
     private nonisolated(unsafe) var loadedManifest: MediaManifest?
     private nonisolated(unsafe) var loadedGenerationLog: GenerationLog?
@@ -746,7 +746,13 @@ final class VideoProject: NSDocument {
         WindowGeometry.clampToScreen(frame, visible: visible)
     }
 
+    enum SessionPresentation: Equatable, Sendable { case nativeWindow, editorSession }
+
     override func makeWindowControllers() {
+        prepareEditorSession(presentation: .nativeWindow)
+    }
+
+    func prepareEditorSession(presentation: SessionPresentation) {
         cachedThumbnail = loadedThumbnail
         loadedThumbnail = nil
         editorViewModel.effectResourceProblems = loadedEffectResourceProblems
@@ -784,57 +790,59 @@ final class VideoProject: NSDocument {
             self?.updateChangeCount(.changeDone)
         }
 
-        let editorView = EditorWindowContentView()
-            .environment(editorViewModel)
-        let hostingController = NSHostingController(rootView: editorView.tint(AppTheme.Accent.primary))
-        hostingController.sizingOptions = []
-        // fullSizeContentView adds a titlebar-height safe-area inset; without dropping it the layout
-        // slides down a full row (an empty strip above TitleBarView, panel headers hidden behind it).
-        // TitleBarView must occupy the real titlebar row — traffic lights overlay its leading inset.
-        hostingController.safeAreaRegions = []
+        if presentation == .nativeWindow {
+            let editorView = EditorWindowContentView()
+                .environment(editorViewModel)
+            let hostingController = NSHostingController(rootView: editorView.tint(AppTheme.Accent.primary))
+            hostingController.sizingOptions = []
+            // fullSizeContentView adds a titlebar-height safe-area inset; without dropping it the layout
+            // slides down a full row (an empty strip above TitleBarView, panel headers hidden behind it).
+            // TitleBarView must occupy the real titlebar row — traffic lights overlay its leading inset.
+            hostingController.safeAreaRegions = []
 
-        let window = NSWindow(contentViewController: hostingController)
-        // Custom chrome owns the titlebar row; install it before applying content-size geometry.
-        window.titleVisibility = .hidden
-        window.titlebarAppearsTransparent = true
-        window.styleMask.insert(.fullSizeContentView)
-        // v5 retires the previous saved default once; later user resizing remains preserved.
-        let restored = window.setFrameUsingName(Self.projectWindowFrameAutosaveName)
-        window.setFrameAutosaveName(Self.projectWindowFrameAutosaveName)
-        // Compute the visible frame AFTER restore so a frame saved on a different or
-        // since-changed display clamps against the screen it actually lands on, not the
-        // window's initial screen.
-        let visible = (window.screen ?? NSScreen.main)?.visibleFrame
-            ?? NSRect(origin: .zero, size: AppTheme.Window.fallbackVisibleFrame)
-        // Screen-aware minimum: never force the window larger than the desktop it opens on.
-        window.minSize = NSSize(width: min(AppTheme.Window.projectMin.width, visible.width),
-                                height: min(AppTheme.Window.projectMin.height, visible.height))
-        if restored {
-            window.setFrame(
-                WindowGeometry.restoredFrame(window.frame, minimum: window.minSize, visible: visible),
-                display: false
-            )
-        } else {
-            window.setContentSize(Self.defaultProjectContentSize(visible: visible))
-            window.center()
+            let window = NSWindow(contentViewController: hostingController)
+            // Custom chrome owns the titlebar row; install it before applying content-size geometry.
+            window.titleVisibility = .hidden
+            window.titlebarAppearsTransparent = true
+            window.styleMask.insert(.fullSizeContentView)
+            // v5 retires the previous saved default once; later user resizing remains preserved.
+            let restored = window.setFrameUsingName(Self.projectWindowFrameAutosaveName)
+            window.setFrameAutosaveName(Self.projectWindowFrameAutosaveName)
+            // Compute the visible frame AFTER restore so a frame saved on a different or
+            // since-changed display clamps against the screen it actually lands on, not the
+            // window's initial screen.
+            let visible = (window.screen ?? NSScreen.main)?.visibleFrame
+                ?? NSRect(origin: .zero, size: AppTheme.Window.fallbackVisibleFrame)
+            // Screen-aware minimum: never force the window larger than the desktop it opens on.
+            window.minSize = NSSize(width: min(AppTheme.Window.projectMin.width, visible.width),
+                                    height: min(AppTheme.Window.projectMin.height, visible.height))
+            if restored {
+                window.setFrame(
+                    WindowGeometry.restoredFrame(window.frame, minimum: window.minSize, visible: visible),
+                    display: false
+                )
+            } else {
+                window.setContentSize(Self.defaultProjectContentSize(visible: visible))
+                window.center()
+            }
+            window.appearance = NSAppearance(named: .darkAqua)
+            // Background-drag fought the timeline: dragging a clip also dragged the whole window (both
+            // moved at once). The window still drags by its transparent titlebar row.
+            window.isMovableByWindowBackground = false
+            window.backgroundColor = NSColor(AppTheme.Background.surfaceColor)
+
+            let controller = EditorWindowController(editorViewModel: editorViewModel, window: window)
+            controller.onBecameKey = { [weak self] window in
+                guard let self else { return }
+                AppState.shared.projectWindowDidBecomeKey(self, window: window)
+            }
+            window.delegate = controller
+            controller.shouldCascadeWindows = true
+            controller.installKeyMonitor()
+            addWindowController(controller)
+
+            window.standardWindowButton(.documentIconButton)?.isHidden = true
         }
-        window.appearance = NSAppearance(named: .darkAqua)
-        // Background-drag fought the timeline: dragging a clip also dragged the whole window (both
-        // moved at once). The window still drags by its transparent titlebar row.
-        window.isMovableByWindowBackground = false
-        window.backgroundColor = NSColor(AppTheme.Background.surfaceColor)
-
-        let controller = EditorWindowController(editorViewModel: editorViewModel, window: window)
-        controller.onBecameKey = { [weak self] window in
-            guard let self else { return }
-            AppState.shared.projectWindowDidBecomeKey(self, window: window)
-        }
-        window.delegate = controller
-        controller.shouldCascadeWindows = true
-        controller.installKeyMonitor()
-        addWindowController(controller)
-
-        window.standardWindowButton(.documentIconButton)?.isHidden = true
 
         if let manifest = loadedManifest {
             editorViewModel.mediaManifest = manifest

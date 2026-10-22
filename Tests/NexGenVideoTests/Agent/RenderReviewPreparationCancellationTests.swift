@@ -97,8 +97,16 @@ struct RenderReviewPreparationCancellationTests {
     }
 
     @Test func nativeCaptureUsesActualPhaseLeaseAndRepeatedUnchangedReviewIsStable() async throws {
-        let context = try await ProductionPlanningAcceptanceFixture.makeImportedAssembly()
+        let context = try await ProductionPlanningAcceptanceFixture.makeImportedAssembly(presentation: .editorSession)
         defer { context.document.close() }
+        #expect(context.document.windowControllers.isEmpty)
+        #expect(context.editor.renderReviewDraft.fingerprint == nil)
+        do {
+            _ = try await ProductionPlanningAcceptanceFixture.waitForNativeReviewInputs(in: context)
+            Issue.record("An editor-only session claimed a displayed native review.")
+        } catch let error as GateBlocked {
+            #expect(error.message == "An editor-session fixture has no displayed native input review.")
+        }
         let home = try #require(context.editor.workingRoot)
         try NativeGateWriter.rewind(projectDir: home, targetPhase: "render_review", declaredPack: nil,
             declaredProductionContract: .current, executionCoordinator: context.editor.pipelinePhaseRunCoordinator)

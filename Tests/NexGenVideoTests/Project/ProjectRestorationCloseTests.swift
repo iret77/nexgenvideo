@@ -25,8 +25,9 @@ struct ProjectRestorationCloseTests {
         }
     }
 
-    @Test("Close retains its working copy until the actual reconciliation task returns")
-    func closeDrainsLateBilling() async throws {
+    @Test("Close retains its working copy until the actual reconciliation task returns",
+        arguments: [VideoProject.SessionPresentation.nativeWindow, .editorSession])
+    func closeDrainsLateBilling(presentation: VideoProject.SessionPresentation) async throws {
         _ = NSApplication.shared
         let package = FileManager.default.temporaryDirectory.appendingPathComponent("ngv-close-restore-\(UUID().uuidString).ngv")
         try Fixtures.prepareProjectPackage(at: package)
@@ -50,7 +51,9 @@ struct ProjectRestorationCloseTests {
             editor.generationService.reconciliation = .init(providerKey: { _ in "isolated-fixture-key" },
                 falCharge: { _, _, _ in await barrier.charge() })
         })
-        document.makeWindowControllers()
+        if presentation == .nativeWindow { document.makeWindowControllers() }
+        else { document.prepareEditorSession(presentation: .editorSession) }
+        #expect(document.windowControllers.isEmpty == (presentation == .editorSession))
         let editor = document.editorViewModel
         let home = try #require(editor.workingRoot)
         let key = try #require(editor.openWorkingCopyKey)

@@ -57,6 +57,28 @@ class NativeQualificationTests(unittest.TestCase):
             with self.subTest(changed=changed), self.assertRaises(ValueError):
                 ci.require_artifact(run, {**artifact, **changed}, 'a' * 40, 77, 'workspace-ui-app')
 
+    def test_release_workspace_producer_does_not_bypass_identity_or_artifact_type(self):
+        run = {'id': 77, 'repository': {'full_name': 'iret77/nexgenvideo'},
+               'head_sha': 'a' * 40, 'event': 'workflow_dispatch',
+               'path': '.github/workflows/release.yml'}
+        artifact = {'id': 8, 'name': 'workspace-ui-app', 'expired': False,
+                    'digest': 'sha256:' + 'b' * 64,
+                    'workflow_run': {'id': 77, 'head_sha': 'a' * 40}}
+        ci.require_artifact(run, artifact, 'a' * 40, 77, 'workspace-ui-app')
+        for changed in ({'head_sha': 'd' * 40}, {'id': 78}, {'event': 'pull_request'},
+                        {'repository': {'full_name': 'someone/other'}},
+                        {'path': '.github/workflows/unrelated.yml'}):
+            with self.subTest(run=changed), self.assertRaises(ValueError):
+                ci.require_artifact({**run, **changed}, artifact, 'a' * 40, 77, 'workspace-ui-app')
+        for changed in ({'expired': True}, {'digest': ''}, {'name': 'diagnostic-release-evidence'},
+                        {'workflow_run': {'id': 78, 'head_sha': 'a' * 40}},
+                        {'workflow_run': {'id': 77, 'head_sha': 'd' * 40}}):
+            with self.subTest(artifact=changed), self.assertRaises(ValueError):
+                ci.require_artifact(run, {**artifact, **changed}, 'a' * 40, 77, 'workspace-ui-app')
+        for name in ('diagnostic-release-evidence', 'release-user-journey-input'):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                ci.require_artifact(run, {**artifact, 'name': name}, 'a' * 40, 77, name)
+
     def runtime_zip(self):
         stream = io.BytesIO()
         with zipfile.ZipFile(stream, 'w') as bundle:
@@ -73,10 +95,10 @@ class NativeQualificationTests(unittest.TestCase):
 
     def test_resolve_and_transfer_keep_the_original_producer_run(self):
         payload = self.runtime_zip()
-        for producer_run in (77, 55):
+        for producer_run, workflow in ((77, 'ci-batch'), (55, 'ci-batch'), (99, 'release')):
             with self.subTest(producer_run=producer_run):
                 run = {'id': producer_run, 'repository': {'full_name': 'iret77/nexgenvideo'},
-                       'head_sha': 'a' * 40, 'event': 'workflow_dispatch', 'path': '.github/workflows/ci-batch.yml'}
+                       'head_sha': 'a' * 40, 'event': 'workflow_dispatch', 'path': f'.github/workflows/{workflow}.yml'}
                 artifact = {'id': 8, 'name': 'workspace-ui-app', 'expired': False,
                             'digest': 'sha256:' + hashlib.sha256(payload).hexdigest(),
                             'workflow_run': {'id': producer_run, 'head_sha': 'a' * 40}}

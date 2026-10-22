@@ -72,7 +72,8 @@ def require_artifact(run, artifact, source_sha, run_id, name):
     if (run.get('id') != run_id or run.get('repository', {}).get('full_name') != REPOSITORY
         or run.get('head_sha') != source_sha or run.get('event') not in {'workflow_dispatch', 'workflow_call'}
         or run.get('path') not in {'.github/workflows/ci-batch.yml', '.github/workflows/ci.yml',
-                                  '.github/workflows/workspace-ui-acceptance.yml'}
+                                  '.github/workflows/workspace-ui-acceptance.yml', '.github/workflows/release.yml'}
+        or (run.get('path') == '.github/workflows/release.yml' and name != 'workspace-ui-app')
         or artifact.get('name') != name or artifact.get('expired') is not False
         or artifact.get('workflow_run', {}).get('id') != run_id
         or artifact.get('workflow_run', {}).get('head_sha') != source_sha

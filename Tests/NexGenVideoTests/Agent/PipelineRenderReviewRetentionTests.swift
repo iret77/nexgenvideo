@@ -7,7 +7,7 @@ import Testing
 @Suite("Native review decisions survive unchanged inputs")
 struct PipelineRenderReviewRetentionTests {
     @Test func repeatedCaptureAndReviewPreserveAnAcceptedConcern() async throws {
-        let context = try await ProductionPlanningAcceptanceFixture.makeImportedAssembly { context in
+        let context = try await ProductionPlanningAcceptanceFixture.makeImportedAssembly(presentation: .editorSession) { context in
             let board = try PlanningWriterIO.storyboard(dataRoot: context.dataRoot)
             let snapshot = try await PipelineRenderReviewWriter.capture(editor: context.editor)
             #expect(Set(snapshot.references.map(\.id)).count == snapshot.references.count)

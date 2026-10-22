@@ -28,6 +28,43 @@ No missing implementation is a concept defect. Any necessary concept correction 
 
 ## Existing evidence, limited to its actual scope
 
+The Release workflow also prepares an unpublished DMG with `artifact_only=true`
+and `dry_run=true`. `artifact_only` defaults to false: ordinary dry runs still
+publish their isolated preview channel, and `dry_run=false` retains stable
+publication. `artifact_only=true` with `dry_run=false` is rejected before building.
+The artifact-only path skips publication recovery and all release, tag, catalog,
+appcast and release-metadata writes. It retains release-configuration tests,
+Developer ID signing, notarization, distributable bpy, real external-pack loading,
+installed-DMG checks and diagnostic/bpy/external native acceptance.
+
+The candidate artifact retains the DMG, notarized pack ZIPs and entries, badges,
+bpy receipt and corresponding-source pair, plus a source/run/attempt and exact-byte
+hash receipt. Artifact upload precedes the native jobs and is not their acceptance
+result. Diagnostic and bpy acceptance use `diagnostic-app.zip` from the stapled
+`.build/NexGenVideo.app` of the same source and producer run; these jobs do not
+establish identity with the app copied from the DMG. The external user journey
+checks the exact DMG SHA. All three jobs must succeed. The app keeps the normal
+stable HTTPS catalog URL. Offline pack artifacts and direct pack
+load checks do not establish a fresh Musicvideo installation: its exact compatible
+pack must be available through the normal catalog before that delivery can pass.
+This mode publishes nothing and supplies no alternate pack-install path.
+
+A workflow change creates a new source candidate. Earlier Core/debug-app evidence
+remains attached to its original SHA; it cannot qualify successor app bytes. The
+reviewed packaging SHA builds its own release app and packs, whose final signed,
+stapled bytes require their own native acceptance. No source-ref override is used.
+
+The release job also exports `workspace-ui-app` from the app copied out of the
+verified final DMG, together with the checked final pack. Its existing three-member
+transfer format is unchanged. A separate `release-workspace-producer` receipt binds
+the DMG hash, mounted/copied app tree, transfer archive, runtime input, pack ZIP/tree
+and bpy receipt. This permits selected existing workspace cases to reuse those
+final bytes without another app build; `release.yml` is accepted only for this
+runtime artifact. The existing Actions prepare step still independently verifies
+the transferred app before launch. Export and producer identity are not native or
+visual acceptance, nor an instruction to repeat all 124 combinations. The exact
+DMG's separate external 100% journey and all existing release gates remain required.
+
 - [39085914949](https://github.com/iret77/nexgenvideo/actions/runs/39085914949), `0a510ea6`: workspace, cards, analysis, provenance, Musicvideo startup, host states and text Storyboard/Production/Activity passed at 100/125/150%. This does not prove Sketches, Animatic, or the complete production path.
 - [39123913490](https://github.com/iret77/nexgenvideo/actions/runs/39123913490), `0b4a4e31`: targeted film review failed at native take text-field commit at all scales. The separate 50-item batch failed reaching the last request after resize. Neither failure has yet been demonstrated fixed.
 - [39124049687](https://github.com/iret77/nexgenvideo/actions/runs/39124049687), `0b4a4e31`: build, tests, external pack load, signing, notarization and installed-DMG checks passed. These are packaging evidence, not full UI acceptance.

@@ -22,7 +22,7 @@ struct PipelineProductionSequenceReviewStoreTests {
     }
 
     @Test func realFilmReviewBindsExternalSourcesActualCutAndPersistedObservations() async throws {
-        let context = try await ProductionPlanningAcceptanceFixture.makeImportedAssembly()
+        let context = try await ProductionPlanningAcceptanceFixture.makeImportedAssembly(presentation: .editorSession)
         defer { context.document.close() }
         let editor = context.editor
         let originalTimeline = editor.timeline

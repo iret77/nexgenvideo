@@ -70,7 +70,7 @@ struct AgentTaskSelectionContextTests {
     }
 
     @Test func visibleV2ShotBeatsStaleClipAndRange() async throws {
-        let context = try await ProductionPlanningAcceptanceFixture.makeImportedAssembly()
+        let context = try await ProductionPlanningAcceptanceFixture.makeImportedAssembly(presentation: .editorSession)
         defer { context.document.close() }
         let editor = context.editor
         let snapshot = try #require(try ProductionPlanPresentation.load(dataRoot: context.dataRoot))

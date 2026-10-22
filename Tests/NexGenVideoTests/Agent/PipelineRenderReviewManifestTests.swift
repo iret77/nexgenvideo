@@ -170,7 +170,7 @@ final class PipelineRenderReviewManifestTests: XCTestCase {
     func testActualCanonicalSnapshotPreparePublishAndVerify() async throws {
         ProductionPlanningAcceptanceFixture.beginDiagnostic("PipelineRenderReviewManifestTests.testActualCanonicalSnapshotPreparePublishAndVerify")
         defer { ProductionPlanningAcceptanceFixture.endDiagnostic() }
-        let fixture = try await ProductionPlanningAcceptanceFixture.makeImportedAssembly()
+        let fixture = try await ProductionPlanningAcceptanceFixture.makeImportedAssembly(presentation: .editorSession)
         ProductionPlanningAcceptanceFixture.diagnosticStage("factory.returned")
         defer {
             ProductionPlanningAcceptanceFixture.diagnosticStage("test-close.before")
