@@ -12,6 +12,10 @@ on:
         type: choice
         options: [all, '1', '1.25', '1.5']
         default: all
+      test_bundle_run_id:
+        description: Optional completed same-source producer of external-gui-tests; empty builds once
+        type: string
+        default: ''
   workflow_call:
     inputs:
       runtime_run_id:
@@ -23,6 +27,9 @@ on:
       runtime_artifact:
         type: string
         default: workspace-ui-app
+      test_bundle_run_id:
+        type: string
+        default: ''
       artifact_mode:
         type: string
         default: app
@@ -51,6 +58,7 @@ jobs:
           INTERFACE_SCALE: ${{ inputs.interface_scale }}
           ARTIFACT_MODE: ${{ inputs.artifact_mode || 'app' }}
           EXPECTED_DMG_SHA256: ${{ inputs.expected_dmg_sha256 }}
+          TEST_BUNDLE_RUN_ID: ${{ inputs.test_bundle_run_id }}
         run: |
           python3 - <<'PY'
           import json, os, re
@@ -58,6 +66,8 @@ jobs:
           if scale not in {'all', '1', '1.25', '1.5'}:
               raise SystemExit('Unknown interface text size')
           mode = os.environ['ARTIFACT_MODE']
+          if os.environ['TEST_BUNDLE_RUN_ID'] and not re.fullmatch('[1-9][0-9]*', os.environ['TEST_BUNDLE_RUN_ID']):
+              raise SystemExit('UI test producer run ID must be positive')
           if mode not in {'app', 'dmg'}:
               raise SystemExit('Unknown app artifact kind')
           if mode == 'dmg' and not re.fullmatch('[a-f0-9]{64}', os.environ['EXPECTED_DMG_SHA256']):
@@ -67,28 +77,120 @@ jobs:
               output.write('scales=' + json.dumps(scales) + '\n')
           PY
 
-  acceptance:
+  test-build:
     needs: cases
-    strategy:
-      fail-fast: false
-      max-parallel: 1
-      matrix:
-        scale: ${{ fromJSON(needs.cases.outputs.scales) }}
-    name: Normal app at ${{ matrix.scale }} text size
+    if: inputs.test_bundle_run_id == ''
+    name: Build external UI tests
     runs-on: macrunner
-    timeout-minutes: 25
+    timeout-minutes: 10
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-xcode-27
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Build only the independent UI test products once
+        run: python3 scripts/external-gui/test_bundle.py build --destination "$RUNNER_TEMP/external-tests-build"
+      - uses: actions/upload-artifact@v4
+        id: upload
+        with:
+          name: external-gui-tests
+          path: |
+            ${{ runner.temp }}/external-tests-build/tests.tar.gz
+            ${{ runner.temp }}/external-tests-build/tests-input.json
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: external-gui-tests-build-log-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/external-tests-build/build.log
+          if-no-files-found: warn
+
+  test-runtime:
+    needs: [cases, test-build]
+    if: ${{ !cancelled() && needs.cases.result == 'success' && (needs.test-build.result == 'success' || (needs.test-build.result == 'skipped' && inputs.test_bundle_run_id != '')) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      producer_sha256: ${{ steps.resolve.outputs.producer_sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bind the original successful test build and exact GitHub artifact bytes
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TEST_BUNDLE_RUN_ID: ${{ inputs.test_bundle_run_id || github.run_id }}
+          TEST_BUNDLE_ARTIFACT_ID: ${{ needs.test-build.outputs.artifact_id }}
+        run: |
+          args=()
+          if [ -n "$TEST_BUNDLE_ARTIFACT_ID" ]; then args+=(--artifact-id "$TEST_BUNDLE_ARTIFACT_ID"); fi
+          python3 scripts/external-gui/test_bundle.py resolve --run-id "$TEST_BUNDLE_RUN_ID" \
+            "${args[@]}" --destination "$RUNNER_TEMP/external-tests-input"
+      - uses: actions/upload-artifact@v4
+        id: upload
+        with:
+          name: external-tests-input-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/external-tests-input/*
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  acceptance:
+    needs: [cases, test-runtime]
+    if: ${{ !cancelled() && needs.test-runtime.result == 'success' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        scale: ${{ fromJSON(needs.cases.outputs.scales) }}
+    name: Normal app at ${{ matrix.scale }} text size
+    # ci-lint: allow-CI005 External installed-app journeys on the macOS 26 production floor.
+    runs-on: macos-26
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Prepare job-local independent media tools
+        id: media-tools
+        uses: mamba-org/setup-micromamba@f457c30a868e4760d3a6fcea5f25dc655b8edf39
+        with:
+          environment-name: ngv-media
+          create-args: 'ffmpeg=9.0.2=gpl_*'
+          micromamba-root-path: ${{ runner.temp }}/micromamba
+          micromamba-binary-path: ${{ runner.temp }}/micromamba-bin/micromamba
+          init-shell: 'none'
+          generate-run-shell: false
+          cache-environment: false
+          cache-downloads: false
+          post-cleanup: all
+      - name: Require both independent media executables
+        env:
+          MEDIA_TOOLS_BIN: ${{ steps.media-tools.outputs.environment-path }}/bin
+        run: |
+          test "$(uname -m)" = arm64
+          "$MEDIA_TOOLS_BIN/ffmpeg" -version
+          "$MEDIA_TOOLS_BIN/ffprobe" -version
+          echo "$MEDIA_TOOLS_BIN" >> "$GITHUB_PATH"
       - uses: actions/download-artifact@v4
         with:
           name: ${{ inputs.runtime_artifact || 'workspace-ui-app' }}
           run-id: ${{ inputs.runtime_run_id || github.run_id }}
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}/external-runtime
+      - uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ needs.test-runtime.outputs.artifact_id }}
+          run-id: ${{ github.run_id }}
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/external-tests-input
       - name: Verify the existing app belongs to this source
         if: inputs.artifact_mode != 'dmg'
         id: app
@@ -121,35 +223,41 @@ jobs:
         env:
           APP_TREE_SHA256: ${{ steps.app.outputs.tree_sha256 }}
           INTERFACE_SCALE: ${{ matrix.scale }}
+          TEST_PRODUCER_SHA256: ${{ needs.test-runtime.outputs.producer_sha256 }}
         run: |
           python3 scripts/external-gui/acceptance.py run \
             --app "$RUNNER_TEMP/external-runtime/NexGenVideo.app" \
             --app-tree-sha256 "$APP_TREE_SHA256" --source-sha "$GITHUB_SHA" \
-            --scale "$INTERFACE_SCALE" --evidence "$RUNNER_TEMP/external-gui"
+            --scale "$INTERFACE_SCALE" --evidence "$RUNNER_TEMP/external-gui" \
+            --test-runtime "$RUNNER_TEMP/external-tests-input" --test-producer-sha256 "$TEST_PRODUCER_SHA256"
       - name: Install and exercise the exact publication DMG
         if: inputs.artifact_mode == 'dmg'
         env:
           EXPECTED_DMG_SHA256: ${{ inputs.expected_dmg_sha256 }}
           INTERFACE_SCALE: ${{ matrix.scale }}
+          TEST_PRODUCER_SHA256: ${{ needs.test-runtime.outputs.producer_sha256 }}
         run: |
           python3 scripts/external-gui/acceptance.py run \
             --dmg "$RUNNER_TEMP/external-runtime/NexGenVideo.dmg" \
             --dmg-sha256 "$EXPECTED_DMG_SHA256" --source-sha "$GITHUB_SHA" \
-            --scale "$INTERFACE_SCALE" --evidence "$RUNNER_TEMP/external-gui"
+            --scale "$INTERFACE_SCALE" --evidence "$RUNNER_TEMP/external-gui" \
+            --test-runtime "$RUNNER_TEMP/external-tests-input" --test-producer-sha256 "$TEST_PRODUCER_SHA256"
       - name: Validate actual journey and exported-file evidence
         env:
           ARTIFACT_MODE: ${{ inputs.artifact_mode || 'app' }}
           EXPECTED_DMG_SHA256: ${{ inputs.expected_dmg_sha256 }}
+          INTERFACE_SCALE: ${{ matrix.scale }}
         run: |
           set -euo pipefail
           if [ "$ARTIFACT_MODE" = dmg ]; then
             python3 scripts/external-gui/acceptance.py validate \
               --evidence "$RUNNER_TEMP/external-gui" --source-sha "$GITHUB_SHA" \
+              --scale "$INTERFACE_SCALE" \
               --dmg-sha256 "$EXPECTED_DMG_SHA256"
           else
             cp "$RUNNER_TEMP/external-runtime/workspace-ui-input.json" "$RUNNER_TEMP/external-gui/runtime-input.json"
             python3 scripts/external-gui/acceptance.py validate \
-              --evidence "$RUNNER_TEMP/external-gui" --source-sha "$GITHUB_SHA"
+              --evidence "$RUNNER_TEMP/external-gui" --source-sha "$GITHUB_SHA" --scale "$INTERFACE_SCALE"
           fi
       - uses: actions/upload-artifact@v4
         if: always()

@@ -41,8 +41,14 @@ and Accessibility evidence; they are never replaced by in-process actions.
 
 ## CI interface
 
-Execution is refused outside an Apple Silicon GitHub Actions job. It requires
-Python 3.9 or newer, the existing macrunner GUI tools, Xcode, xcodegen, ffmpeg and ffprobe.
+Build the independent UI test bundle once on `macrunner`, then run its unchanged
+products on GitHub's `macos-26` arm64 image. NexGenVideo is never rebuilt by this
+workflow. Python 3.12 and the image's existing Xcode are required; xcodegen is used only
+by the build job. A commit-pinned setup-micromamba action provides the conda-forge GPL
+ffmpeg variant (including libx264) and ffprobe under RUNNER_TEMP. Shell initialization,
+generated shell wrappers and caches are disabled; no global package installation or
+shell profile change is involved. Both executables must run before the app is downloaded.
+No private macrunner GUI tool is used at runtime.
 The caller first verifies its immutable runtime artifact or publication
 transaction. App mode then binds the copied bundle with the tree digest:
 
@@ -53,7 +59,8 @@ at the expected source SHA; the check uses the script's repository location.
 APP_TREE_SHA=$(python3 scripts/external-gui/acceptance.py tree-sha256 --app "$VERIFIED_APP")
 python3 scripts/external-gui/acceptance.py run \
   --app "$VERIFIED_APP" --app-tree-sha256 "$APP_TREE_SHA" \
-  --source-sha "$GITHUB_SHA" --scale 1 --evidence "$RUNNER_TEMP/external-gui"
+  --source-sha "$GITHUB_SHA" --scale 1 --evidence "$RUNNER_TEMP/external-gui" \
+  --test-runtime "$VERIFIED_TEST_INPUT" --test-producer-sha256 "$TEST_PRODUCER_SHA256"
 ```
 
 Final DMG qualification requires the SHA-256 from the exact publication
@@ -62,9 +69,10 @@ transaction, rather than a newly inferred expected value:
 ```bash
 python3 scripts/external-gui/acceptance.py run \
   --dmg "$VERIFIED_DMG" --dmg-sha256 "$PUBLICATION_DMG_SHA" \
-  --source-sha "$GITHUB_SHA" --scale 1 --evidence "$RUNNER_TEMP/external-gui"
+  --source-sha "$GITHUB_SHA" --scale 1 --evidence "$RUNNER_TEMP/external-gui" \
+  --test-runtime "$VERIFIED_TEST_INPUT" --test-producer-sha256 "$TEST_PRODUCER_SHA256"
 python3 scripts/external-gui/acceptance.py validate \
-  --evidence "$RUNNER_TEMP/external-gui" --source-sha "$GITHUB_SHA" \
+  --evidence "$RUNNER_TEMP/external-gui" --source-sha "$GITHUB_SHA" --scale 1 \
   --dmg-sha256 "$PUBLICATION_DMG_SHA"
 ```
 
@@ -72,6 +80,36 @@ python3 scripts/external-gui/acceptance.py validate \
 `--dmg-sha256` it rejects app-artifact evidence and every other DMG. A publication
 caller must pass this argument and require the originating GUI job to succeed.
 No intermediate release is needed.
+
+The optional `test_bundle_run_id` selects the original `external-gui-tests` artifact
+from a completed same-source workflow run, including a run whose later journey failed.
+Its actual build job must have succeeded. Omitting it builds one bundle before the
+scale matrix. Further scales and failed journey retries can reuse that producer without
+rebuilding either the app or successful test products. CI-batch externalgui followups
+and the release caller expose the same input; release DMG identity remains independent.
+
+The Linux binding job requires the original GitHub repository, workflow, source,
+run/attempt/job identity, successful build, unexpired artifact ID and API digest. It
+downloads the exact ZIP bytes and accepts only `tests.tar.gz` and `tests-input.json`.
+The receipt binds every test input, the full product tree and archive, requested arm64
+and macOS-26.0 build settings, and build Xcode version. Runtime verifies the Linux job's
+hash-bound original producer records and product bytes without repeating the API query. It safely
+extracts regular files and internal symlinks, preserves modes, and resolves XCTest's
+`__TESTROOT__`/`__TESTHOST__` paths without rewriting the built products. File and directory
+modes are bound; symlinks bind their target, since their mode is platform-dependent. The complete
+test-input archive and original producer records remain in the journey evidence.
+
+Runtime records and checks macOS 26, arm64, the hosted runner, the console user,
+the Aqua bootstrap session, existing developer authorization and a captured PNG from
+screencapture. Its actual visual content still needs independent assessment. It never
+changes TCC, the host, runner configuration or quarantine.
+The actual XCTest launch and ordinary app interactions remain the permission gate;
+unavailable authorization fails with original logs instead of creating a substitute pass.
+The read-only validator independently requires these runtime and bundle records.
+It also binds the app's source and mode, the requested interface scale, and the
+visible export's movie hash. App-artifact validation requires the original
+`workspace-ui-input.json` copied to the evidence directory as `runtime-input.json`;
+its source and app-tree hash must match the installed-app identity.
 
 Use a fresh job VM: the script refuses to overwrite an existing
 `/Applications/NexGenVideo.app` or reuse a configuration. The evidence directory
@@ -89,9 +127,8 @@ and resulting binary identities remain distinguishable.
 ## Scope and limits
 
 This initial external journey covers generic editing and is additional to the
-existing macOS-26 runtime acceptance. `macrunner` currently supplies a macOS-27
-desktop; this does not change the product deployment floor or substitute for
-testing that floor. `--scale` accepts `1`, `1.25` or `1.5`; one run establishes
+existing native fixture acceptance. All external journeys execute on the macOS-26
+production floor. `--scale` accepts `1`, `1.25` or `1.5`; one run establishes
 only its chosen scale. The initial integration may intentionally select `1`.
 
 It does not prove the full production workflow, live generation or provider
@@ -99,3 +136,14 @@ availability. The checked-in engine fixtures are not complete normally openable
 `.ngv` projects, so this test does not invent production-screen evidence from
 them. The actual external Accessibility reachability and first execution time
 remain unverified until the independently reviewed CI batch runs.
+
+[Apple TN2339](https://developer.apple.com/library/archive/technotes/tn2339/_index.html)
+documents separate build-for-testing and test-without-building, with the bundles at
+the paths declared by the xctestrun. It does not guarantee Xcode-27 products will run
+under the hosted Xcode-26 runtime. That compatibility remains pending until the real
+journey produces exactly one passing test and zero failures or skips. Both Xcode
+versions are retained. [Apple's release notes](https://developer.apple.com/documentation/xcode-release-notes/xcode-11_4-release-notes)
+describe skipping incompatible deployment targets, so exit zero alone never qualifies.
+The [hosted arm64 image](https://github.com/actions/runner-images/blob/main/images/macos/macos-26-arm64-Readme.md)
+and its [GUI preparation](https://github.com/actions/runner-images/blob/main/images/macos/templates/macOS-26.arm64.anka.pkr.hcl)
+are the platform reference; their documented preparation is not runtime evidence.

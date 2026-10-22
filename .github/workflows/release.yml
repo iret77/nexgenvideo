@@ -29,6 +29,10 @@ on:
         required: false
         default: true
         type: boolean
+      test_bundle_run_id:
+        description: Optional completed same-source external UI test producer
+        type: string
+        default: ''
   # `workflow_dispatch` is the ONLY trigger. Nothing a commit, a merge, or a PR touches may start a
   # signed build — not the bundling scripts, not the pack manifests, not this file. A build happens
   # when a human asks for one, never as a side effect of changing code. Do not add `push:` or
@@ -988,6 +992,7 @@ jobs:
       artifact_mode: dmg
       expected_dmg_sha256: ${{ needs.release.outputs.dmg_sha256 }}
       interface_scale: '1'
+      test_bundle_run_id: ${{ inputs.test_bundle_run_id }}
 
   publish:
     needs: [release-gate, release, diagnostic-acceptance, bpy-runtime, external-user-acceptance]

@@ -22,7 +22,7 @@ import time
 
 ROOT = Path(__file__).resolve().parent
 REPOSITORY = ROOT.parents[1]
-TEST_INPUTS = ('acceptance.py', 'project.yml', 'NexGenVideoExternalUITests/UserJourneyTests.swift')
+TEST_INPUTS = ('acceptance.py', 'test_bundle.py', 'project.yml', 'NexGenVideoExternalUITests/UserJourneyTests.swift')
 CONFIG = Path('/tmp/nexgenvideo-external-gui-config.json')
 STAGES = ['home', 'settings', 'new-project', 'media-import', 'source-insert',
           'timeline-split', 'timeline-undo', 'close', 'reopen', 'export']
@@ -282,13 +282,55 @@ def verify_movie(evidence, config):
             'frames': {name: sha256(evidence / name) for name in ['source-frame.png', 'export-frame.png']}}
 
 
+def runtime_environment(evidence):
+    runtime = {'schema': 'nexgenvideo/external-gui-runtime/1', 'platform': sys.platform,
+               'architecture': platform.machine(), 'osVersion': output(['sw_vers', '-productVersion']).decode().strip(),
+               'githubActions': os.environ.get('GITHUB_ACTIONS') == 'true',
+               'runnerEnvironment': os.environ.get('RUNNER_ENVIRONMENT'),
+               'imageOS': os.environ.get('ImageOS'), 'imageVersion': os.environ.get('ImageVersion')}
+    write_json(evidence / 'runtime.json', runtime)
+    require(runtime['githubActions'] and runtime['runnerEnvironment'] == 'github-hosted'
+            and runtime['platform'] == 'darwin' and runtime['architecture'] == 'arm64'
+            and runtime['osVersion'].split('.')[0] == '26', 'External GUI runtime requires hosted macOS 26 arm64')
+    uid = os.getuid()
+    runtime['consoleUID'] = int(output(['stat', '-f', '%u', '/dev/console']).decode().strip())
+    runtime['jobUID'] = uid
+    write_json(evidence / 'runtime.json', runtime)
+    require(uid > 0 and runtime['consoleUID'] == uid, 'The CI user has no foreground console session')
+    command(['launchctl', 'print', f'gui/{uid}'], evidence / 'gui-session.log')
+    status = output(['/usr/sbin/DevToolsSecurity', '-status']).decode().strip()
+    runtime['developerSecurity'] = status
+    runtime['xcode'] = output(['xcodebuild', '-version']).decode().strip()
+    write_json(evidence / 'runtime.json', runtime)
+    require(status == 'Developer mode is currently enabled.', 'Hosted developer authorization is unavailable')
+    command(['screencapture', '-x', evidence / 'desktop.png'], evidence / 'prerequisites.log')
+    require((evidence / 'desktop.png').read_bytes().startswith(b'\x89PNG\r\n\x1a\n'),
+            'The hosted desktop did not produce a screenshot')
+    runtime.update(aquaSession=True, desktopSHA256=sha256(evidence / 'desktop.png'))
+    write_json(evidence / 'runtime.json', runtime)
+    return runtime
+
+
+def validate_runtime(evidence):
+    runtime = read_json(evidence / 'runtime.json')
+    require(runtime.get('schema') == 'nexgenvideo/external-gui-runtime/1'
+            and runtime.get('githubActions') is True and runtime.get('runnerEnvironment') == 'github-hosted'
+            and runtime.get('platform') == 'darwin' and runtime.get('architecture') == 'arm64'
+            and runtime.get('osVersion', '').split('.')[0] == '26'
+            and type(runtime.get('jobUID')) is int and runtime['jobUID'] > 0
+            and runtime.get('consoleUID') == runtime['jobUID'] and runtime.get('aquaSession') is True
+            and runtime.get('developerSecurity') == 'Developer mode is currently enabled.'
+            and runtime.get('desktopSHA256') == sha256(evidence / 'desktop.png')
+            and runtime.get('xcode', '').startswith('Xcode '), 'Missing original macOS 26 hosted GUI prerequisites')
+
+
 def run(args):
-    require(os.environ.get('GITHUB_ACTIONS') == 'true' and sys.platform == 'darwin' and platform.machine() == 'arm64',
-            'GUI execution is available only in an Apple Silicon GitHub Actions job')
+    import test_bundle
+
     require(re.fullmatch('[a-f0-9]{40}', args.source_sha), 'Expected an exact source SHA')
     require(not any(name.startswith('NGV_') and ('ACCEPTANCE' in name or 'SELFTEST' in name or 'EXAMPLE' in name)
                     for name in os.environ), 'Internal acceptance flags must not reach this user journey')
-    for tool in ['xcodegen', 'xcodebuild', 'xcrun', 'ffmpeg', 'ffprobe', 'macrunner-gui-check', 'macrunner-gui-run']:
+    for tool in ['xcodebuild', 'xcrun', 'ffmpeg', 'ffprobe', 'screencapture']:
         require(shutil.which(tool), 'Missing CI tool: ' + tool)
     evidence = Path(args.evidence).resolve()
     evidence.mkdir(parents=True, exist_ok=False)
@@ -296,10 +338,21 @@ def run(args):
     result = {'schema': 'nexgenvideo/external-gui-result/1', 'completed': False, 'sourceSHA': args.source_sha}
     write_json(evidence / 'result.json', result)
     try:
-        command(['macrunner-gui-check', '--prepare', '--screenshot', evidence / 'desktop.png'], evidence / 'prerequisites.log')
-        (evidence / 'runner-image.txt').write_bytes(Path('/Users/Shared/macrunner-image.txt').read_bytes())
-        (evidence / 'xcode.txt').write_bytes(output(['xcodebuild', '-version']))
+        runtime_environment(evidence)
         app, identity = install(args, evidence)
+        test_input = Path(args.test_runtime).resolve(strict=True)
+        require(re.fullmatch('[a-f0-9]{64}', args.test_producer_sha256)
+                and sha256(test_input / 'tests-producer.json') == args.test_producer_sha256,
+                'UI test producer identity changed after the original qualification job')
+        for name in ('tests.tar.gz', 'tests-input.json', 'tests-producer.json'):
+            shutil.copy2(test_input / name, evidence / name)
+        work = Path(tempfile.mkdtemp(prefix='ngv-external-tests-'))
+        xctestrun, tests = test_bundle.consume(evidence, work / 'Products', args.source_sha, identity['testFiles'])
+        identity['testBundle'] = {key: tests[key] for key in (
+            'runID', 'attempt', 'archiveSHA256', 'productsSHA256', 'xctestrun', 'xcode')}
+        identity['testBundle'].update(receiptSHA256=sha256(evidence / 'tests-input.json'),
+                                     producerSHA256=sha256(evidence / 'tests-producer.json'))
+        write_json(evidence / 'identity.json', identity)
         source = create_source(evidence)
         config = {'app': str(app), 'evidence': str(evidence), 'source': str(source),
                   'project': str(evidence / 'External GUI.ngv'), 'movie': str(evidence / 'user-export.mp4'),
@@ -307,25 +360,10 @@ def run(args):
         with CONFIG.open('x') as handle:
             json.dump(config, handle)
         write_json(evidence / 'configuration.json', config)
-        work = Path(tempfile.mkdtemp(prefix='ngv-external-tests-'))
-        for name in TEST_INPUTS:
-            target = work / name
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(ROOT / name, target)
-        _, staged_files = test_source_identity(args.source_sha, input_root=work)
-        require(staged_files == identity['testFiles'], 'Staged test inputs differ from the qualified source bytes')
-        command(['xcodegen', 'generate', '--spec', work / 'project.yml'], evidence / 'build-tests.log')
-        command(['xcodebuild', 'build-for-testing', '-project', work / 'NexGenVideoExternalGUI.xcodeproj',
-                 '-scheme', 'NexGenVideoExternalGUI', '-destination', 'platform=macOS',
-                 '-derivedDataPath', work / 'build'], evidence / 'build-tests.log', timeout=240)
-        bundles = list((work / 'build/Build/Products').glob('*.xctestrun'))
-        require(len(bundles) == 1, 'Expected one external xctestrun bundle')
-        xctestrun = bundles[0]
         (evidence / 'test-bundle.sha256').write_text(sha256(xctestrun) + '\n')
-        code = command(['macrunner-gui-run', '--timeout', '720', '--artifacts', evidence / 'gui', '--',
-                        'xcodebuild', 'test-without-building', '-xctestrun', xctestrun,
-                        '-destination', 'platform=macOS', '-parallel-testing-enabled', 'NO',
-                        '-resultBundlePath', evidence / 'tests.xcresult'], evidence / 'tests.log', timeout=780, check=False)
+        code = command(['xcodebuild', 'test-without-building', '-xctestrun', xctestrun,
+                        '-destination', 'platform=macOS,arch=arm64', '-parallel-testing-enabled', 'NO',
+                        '-resultBundlePath', evidence / 'tests.xcresult'], evidence / 'tests.log', timeout=720, check=False)
         result['exitCode'] = code
         bundle = evidence / 'tests.xcresult'
         if bundle.exists():
@@ -343,6 +381,7 @@ def run(args):
         require(journey['stages'][-1]['movieSHA256'] == movie['sha256'], 'Movie changed after the visible completion')
         require(metadata(app, args.source_sha) == identity['app'], 'The app changed while being qualified')
         result.update(completed=True, identitySHA256=sha256(evidence / 'identity.json'),
+                      runtimeSHA256=sha256(evidence / 'runtime.json'),
                       journeySHA256=sha256(evidence / 'journey.json'), export=movie,
                       mode=identity['mode'], dmgSHA256=identity.get('dmgSHA256'))
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
@@ -357,7 +396,29 @@ def run(args):
     require(result['completed'], 'External GUI cleanup failed')
 
 
+def validate_app_identity(evidence, result, identity, source_sha, scale, dmg_sha256):
+    require(identity.get('schema') == 'nexgenvideo/external-gui-input/1'
+            and identity.get('app', {}).get('NGVSourceCommit') == source_sha
+            and result.get('mode') == identity.get('mode'), 'Qualified app identity changed')
+    require(scale in SCALES and identity.get('scale') == scale, 'Evidence belongs to another interface scale')
+    if dmg_sha256:
+        require(re.fullmatch('[a-f0-9]{64}', dmg_sha256)
+                and identity.get('mode') == 'dmg'
+                and identity.get('dmgSHA256') == result.get('dmgSHA256') == dmg_sha256,
+                'This is not GUI acceptance of the exact publication DMG')
+    else:
+        runtime = read_json(evidence / 'runtime-input.json')
+        require(identity.get('mode') == 'app-artifact'
+                and runtime.get('schema') == 'nexgenvideo/workspace-ui-input/1'
+                and runtime.get('sourceSHA') == source_sha
+                and re.fullmatch('[a-f0-9]{64}', runtime.get('appTreeSHA256', ''))
+                and identity['app'].get('treeSHA256') == runtime['appTreeSHA256'],
+                'Qualified app differs from the original runtime receipt')
+
+
 def validate(args):
+    import test_bundle
+
     evidence = Path(args.evidence).resolve(strict=True)
     result = read_json(evidence / 'result.json')
     identity = read_json(evidence / 'identity.json')
@@ -366,16 +427,28 @@ def validate(args):
             'External GUI evidence is incomplete')
     require(result['sourceSHA'] == identity['sourceSHA'] == identity['testSourceSHA'] == args.source_sha,
             'Evidence belongs to another source revision')
+    validate_app_identity(evidence, result, identity, args.source_sha, args.scale, args.dmg_sha256)
     require(result['identitySHA256'] == sha256(evidence / 'identity.json')
             and result['journeySHA256'] == sha256(evidence / 'journey.json'), 'Evidence bytes changed')
-    if args.dmg_sha256:
-        require(identity.get('mode') == 'dmg' and result.get('mode') == 'dmg'
-                and identity.get('dmgSHA256') == result.get('dmgSHA256') == args.dmg_sha256,
-                'This is not GUI acceptance of the exact publication DMG')
+    require(result.get('runtimeSHA256') == sha256(evidence / 'runtime.json'), 'Runtime evidence changed')
+    validate_runtime(evidence)
+    _, source_files = test_source_identity(args.source_sha)
+    require(identity.get('testFiles') == source_files, 'Qualified test source files changed')
+    tests = test_bundle.verify_input(evidence, args.source_sha, source_files)
+    expected = {key: tests[key] for key in ('runID', 'attempt', 'archiveSHA256', 'productsSHA256', 'xctestrun', 'xcode')}
+    expected.update(receiptSHA256=sha256(evidence / 'tests-input.json'),
+                    producerSHA256=sha256(evidence / 'tests-producer.json'))
+    require(identity.get('testBundle') == expected, 'UI test bundle provenance changed')
+    with tempfile.TemporaryDirectory(prefix='ngv-validate-tests-') as temporary:
+        xctestrun, _ = test_bundle.consume(evidence, Path(temporary) / 'Products', args.source_sha, source_files)
+        require((evidence / 'test-bundle.sha256').read_text().strip() == sha256(xctestrun),
+                'Qualified xctestrun changed')
     summary = read_json(evidence / 'summary.json')
     require(summary.get('passedTests') == 1 and summary.get('failedTests') == 0
             and summary.get('skippedTests') == 0, 'External test did not execute and pass')
-    validate_journey(evidence)
+    journey = validate_journey(evidence)
+    require(journey['stages'][-1].get('movieSHA256') == result['export']['sha256'],
+            'Qualified movie differs from the visible completion')
     require(sha256(evidence / 'user-export.mp4') == result['export']['sha256'], 'Qualified movie changed')
     require(sha256(evidence / 'GUI acceptance source.mp4') == result['export']['sourceSHA256'], 'Imported fixture changed')
     for name, digest in result['export']['frames'].items():
@@ -396,9 +469,12 @@ def main():
     execute.add_argument('--scale', choices=SCALES, default='1')
     execute.add_argument('--source-sha', required=True)
     execute.add_argument('--evidence', required=True)
+    execute.add_argument('--test-runtime', required=True)
+    execute.add_argument('--test-producer-sha256', required=True)
     check = commands.add_parser('validate')
     check.add_argument('--source-sha', required=True)
     check.add_argument('--evidence', required=True)
+    check.add_argument('--scale', choices=SCALES, required=True)
     check.add_argument('--dmg-sha256', help='Required by a publication caller; app-artifact evidence cannot satisfy it')
     tree = commands.add_parser('tree-sha256')
     tree.add_argument('--app', required=True)

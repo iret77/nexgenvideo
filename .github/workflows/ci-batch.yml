@@ -36,6 +36,10 @@ on:
         type: choice
         options: [all, '1', '1.25', '1.5']
         default: all
+      test_bundle_run_id:
+        description: Optional same-source external UI test producer for an externalgui followup
+        type: string
+        default: ''
       hang_replays:
         description: Run the chat and recorded hang replays
         type: boolean
@@ -91,6 +95,7 @@ jobs:
           NGV_SOURCE_RUN: ${{ inputs.qualification_source_run_id }}
           NGV_SETTINGS_SCOPE: ${{ inputs.settings_scope }}
           NGV_INTERFACE_SCALE: ${{ inputs.interface_scale }}
+          NGV_TEST_BUNDLE_RUN: ${{ inputs.test_bundle_run_id }}
         run: |
           python3 - <<'PYTHON'
           import os, re
@@ -101,6 +106,10 @@ jobs:
           source_run_id = os.environ['NGV_SOURCE_RUN']
           settings = os.environ['NGV_SETTINGS_SCOPE']
           scale = os.environ['NGV_INTERFACE_SCALE']
+          test_run = os.environ.get('NGV_TEST_BUNDLE_RUN', '')
+          if test_run and (mode != 'followup' or followup != 'externalgui'
+                           or not re.fullmatch(r'[1-9][0-9]*', test_run)):
+              raise SystemExit('UI test producer applies only to an externalgui followup.')
           scopes = {'all', 'settings', 'settings100', 'settings125', 'settings150',
                     'packrecovery', 'packrecovery100', 'packrecovery125', 'packrecovery150',
                     'packresume172', 'packresume172100', 'packresume172125', 'packresume172150'}
@@ -196,6 +205,7 @@ jobs:
     with:
       runtime_run_id: ${{ inputs.runtime_run_id }}
       interface_scale: ${{ inputs.interface_scale }}
+      test_bundle_run_id: ${{ inputs.test_bundle_run_id }}
 
   settings-owner-acceptance:
     needs: [validate, ci]
