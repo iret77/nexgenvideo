@@ -11,7 +11,7 @@ from unittest.mock import Mock, mock_open, patch
 import zipfile
 
 from hang_diagnostic_acceptance import capture_helper_failure, verify_helper_recovery, verify_retained_key
-from verify_diagnostic_candidate import CI_HARNESS_PATHS, HARNESS_PATHS, verify, verify_ci
+from verify_diagnostic_candidate import BPY_DIAGNOSTIC_PATHS, CI_HARNESS_PATHS, HARNESS_PATHS, verify, verify_bpy_diagnostic, verify_ci
 
 
 class CandidateProvenanceTests(unittest.TestCase):
@@ -74,6 +74,91 @@ class CandidateProvenanceTests(unittest.TestCase):
                      "musicvideo/manifest.json"):
             with self.subTest(path=path), self.assertRaisesRegex(ValueError, "new signed build"):
                 self.check([*HARNESS_PATHS, path])
+
+
+class BpyOpenCandidateTests(unittest.TestCase):
+    def setUp(self):
+        self.source = "a" * 40
+        self.digest = "b" * 64
+        self.run = dict(id=12, head_sha=self.source, path=".github/workflows/ci-batch.yml",
+                        event="workflow_dispatch", status="completed", conclusion="failure", run_attempt=2,
+                        repository=dict(full_name="iret77/nexgenvideo"))
+        prefix = "Compile, unit tests, app and native bpy acceptance / "
+        self.jobs = dict(jobs=[dict(name=prefix + name, status="completed", conclusion="success",
+                                   run_id=12, run_attempt=2, head_sha=self.source)
+                              for name in ("Light Checks", "Agent UI Evidence", "bpy-source / source",
+                                           "diagnostic-startup", "Build & Test")])
+        self.jobs["jobs"][-1].update(started_at="2026-10-23T19:59:07Z", completed_at="2026-10-23T20:38:40Z")
+        self.jobs["jobs"].append(dict(name=prefix + "bpy-runtime / runtime", status="completed",
+                                     conclusion="failure", run_id=12, run_attempt=2, head_sha=self.source,
+                                     steps=[dict(name=name, status="completed", conclusion=result) for name, result in (
+                                         ("Relocate the exact app and prepare denied resources", "success"),
+                                         ("Prove pre-lease and post-exec host-crash cleanup", "failure"),
+                                         ("Prepare the independent retained Bible YAML parser", "skipped"),
+                                         ("Run real bpy acceptance without ambient Blender or Python", "skipped"))]))
+        self.jobs["total_count"] = len(self.jobs["jobs"])
+        self.artifact = dict(id=34, name="NexGenVideo-app", expired=False, digest="sha256:" + self.digest,
+                             workflow_run=dict(id=12, head_sha=self.source), created_at="2026-10-23T20:37:27Z",
+                             updated_at="2026-10-23T20:38:00Z", expires_at="2099-01-01T00:00:00Z")
+
+    def check(self, paths=BPY_DIAGNOSTIC_PATHS):
+        verify_bpy_diagnostic(self.run, self.jobs, self.artifact, 12, self.source, 34, self.digest, paths)
+
+    def test_second_attempt_app_has_successful_core_prerequisites_and_exact_failure(self):
+        self.check()
+
+    def test_other_attempt_or_source_cannot_supply_any_prerequisite(self):
+        for job in self.jobs["jobs"]:
+            for key, bad in (("run_attempt", 1), ("head_sha", "c" * 40), ("run_id", 13)):
+                old = job[key]
+                job[key] = bad
+                with self.subTest(job=job["name"], field=key), self.assertRaises(ValueError):
+                    self.check()
+                job[key] = old
+
+    def test_artifact_must_be_produced_in_this_attempt_and_unexpired(self):
+        for key, bad in (("created_at", "2026-10-23T19:00:00Z"), ("updated_at", "2026-10-23T21:00:00Z"),
+                         ("expires_at", "2020-01-01T00:00:00Z"), ("digest", "sha256:" + "c" * 64),
+                         ("expired", True), ("id", 35)):
+            old = self.artifact[key]
+            self.artifact[key] = bad
+            with self.subTest(field=key), self.assertRaises(ValueError):
+                self.check()
+            self.artifact[key] = old
+
+    def test_duplicate_missing_or_failed_prerequisite_is_rejected(self):
+        original = list(self.jobs["jobs"])
+        for altered in (original[:-1], original + [original[0]]):
+            self.jobs = dict(jobs=altered, total_count=len(altered))
+            with self.assertRaises(ValueError):
+                self.check()
+        self.jobs = dict(jobs=original, total_count=len(original))
+        self.jobs["jobs"][3]["conclusion"] = "failure"
+        with self.assertRaises(ValueError):
+            self.check()
+
+    def test_failure_cannot_be_reclassified_or_hidden_by_another_failure(self):
+        steps = self.jobs["jobs"][-1]["steps"]
+        for step in steps:
+            old = step["conclusion"]
+            step["conclusion"] = "success" if old != "success" else "failure"
+            with self.assertRaises(ValueError):
+                self.check()
+            step["conclusion"] = old
+        steps.append(dict(name="another failure", status="completed", conclusion="failure"))
+        with self.assertRaises(ValueError):
+            self.check()
+
+    def test_product_or_runtime_harness_changes_cannot_reuse_the_original_app(self):
+        for path in ("Sources/BpyRuntimeProtocol/BpyRuntimeStorage.swift", "Runtime/bpy/runtime-lock.json",
+                     "scripts/bpy_runtime_acceptance.py", ".github/workflows/bpy-runtime-acceptance.yml",
+                     "scripts/verify_bpy_bundle.sh", "Package.swift"):
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                self.check([*BPY_DIAGNOSTIC_PATHS, path])
+
+    def test_old_runtime_mode_retains_its_original_attempt_requirement(self):
+        with self.assertRaisesRegex(ValueError, "completed CI batch"):
+            verify_ci(self.run, self.jobs, self.artifact, 12, self.source, 34, self.digest, CI_HARNESS_PATHS)
 
 
 class CICandidateProvenanceTests(unittest.TestCase):

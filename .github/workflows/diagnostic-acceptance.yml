@@ -6,7 +6,7 @@ on:
       candidate_kind:
         description: Signed release verification or only failed CI runtime checks
         type: choice
-        options: [signed-release, ci-runtime]
+        options: [signed-release, ci-runtime, ci-bpy-open-diagnostic]
         default: signed-release
       run_id:
         description: "Original producer workflow run"
@@ -48,7 +48,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Verify signed acceptance tooling
-        if: inputs.candidate_kind != 'ci-runtime'
+        if: inputs.candidate_kind == 'signed-release'
         run: python3 -m unittest discover -s scripts -p 'test_*.py'
       - name: Verify changed runtime acceptance tooling
         if: inputs.candidate_kind == 'ci-runtime'
@@ -57,6 +57,12 @@ jobs:
           python3 -m unittest discover -s scripts -p 'test_verify_macho_dependencies.py'
           python3 -m unittest discover -s scripts -p 'test_ci_workflow.py'
           python3 -m unittest discover -s scripts -p 'test_release_workflow.py'
+      - name: Verify isolated bpy diagnostic tooling
+        if: inputs.candidate_kind == 'ci-bpy-open-diagnostic'
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_diagnostic_acceptance.py'
+          python3 -m unittest discover -s scripts -p 'test_bpy_open_diagnostic.py'
+          python3 -m unittest discover -s scripts -p 'test_ci_workflow.py'
       - name: Bind the successful release job and immutable artifact
         env:
           GH_TOKEN: ${{ github.token }}
@@ -84,7 +90,7 @@ jobs:
 
   acceptance:
     needs: source
-    if: inputs.candidate_kind != 'ci-runtime'
+    if: inputs.candidate_kind == 'signed-release'
     # ci-lint: allow-CI005 Runtime acceptance on the macOS 26 floor; macrunner boots only macOS 27.
     runs-on: macos-26
     timeout-minutes: 10
@@ -178,3 +184,79 @@ jobs:
       expected_source_sha: ${{ inputs.source_sha }}
       app_artifact_id: ${{ inputs.artifact_id }}
       app_artifact_sha256: ${{ inputs.artifact_sha256 }}
+
+  ci-bpy-open-diagnostic:
+    needs: source
+    if: inputs.candidate_kind == 'ci-bpy-open-diagnostic'
+    # ci-lint: allow-CI005 Diagnose the original macOS 26 runtime without rebuilding it.
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: diagnostic-candidate-identity
+          path: evidence/identity
+      - name: Retrieve and verify the original app bytes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(sw_vers -productVersion | cut -d. -f1)" = 26
+          test "$(uname -m)" = arm64
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$CANDIDATE_ARTIFACT/zip" > "$RUNNER_TEMP/candidate.zip"
+          test "$(shasum -a 256 "$RUNNER_TEMP/candidate.zip" | cut -d' ' -f1)" = "$CANDIDATE_DIGEST"
+          ditto -x -k "$RUNNER_TEMP/candidate.zip" "$RUNNER_TEMP/candidate"
+          mkdir -p "$RUNNER_TEMP/relocated"
+          ditto -x -k "$RUNNER_TEMP/candidate/NexGenVideo.zip" "$RUNNER_TEMP/relocated"
+          APP="$RUNNER_TEMP/relocated/NexGenVideo.app"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :NGVSourceCommit' "$APP/Contents/Info.plist")" = "$CANDIDATE_SOURCE"
+          codesign --verify --strict --verbose=2 "$APP"
+          scripts/verify_bpy_bundle.sh "$APP" --development
+          for slot in 0 1; do
+            codesign -d --entitlements :- "$APP/Contents/XPCServices/NexGenVideoBpyService$slot.xpc" \
+              > "evidence/service-$slot-entitlements.plist" 2> "evidence/service-$slot-signature.log"
+          done
+          mkdir -p "$RUNNER_TEMP/denied/foreign-project" "$RUNNER_TEMP/fake-bin" "$RUNNER_TEMP/approved-input"
+          printf 'provider-secret' > "$RUNNER_TEMP/denied/provider-secret"
+          printf 'canonical-project-truth' > "$RUNNER_TEMP/denied/canonical-artifact"
+          printf 'foreign-project' > "$RUNNER_TEMP/denied/foreign-project/scene.blend"
+          printf 'host-home-secret' > "$HOME/ngv-bpy-host-home-secret"
+          printf '{"approved":true}' > "$RUNNER_TEMP/approved-input/fixture.json"
+          ln -s "$RUNNER_TEMP/denied/provider-secret" "$RUNNER_TEMP/approved-input/symlink.json"
+          printf 'hardlink' > "$RUNNER_TEMP/approved-input/hardlink-source"
+          ln "$RUNNER_TEMP/approved-input/hardlink-source" "$RUNNER_TEMP/approved-input/hardlink.json"
+          printf '#!/bin/sh\nexit 99\n' > "$RUNNER_TEMP/fake-bin/python3"
+          printf '#!/bin/sh\nexit 99\n' > "$RUNNER_TEMP/fake-bin/blender"
+          chmod +x "$RUNNER_TEMP/fake-bin/python3" "$RUNNER_TEMP/fake-bin/blender"
+      - name: Observe the failed open on the original app
+        id: probe
+        run: |
+          mkdir -p "$RUNNER_TEMP/evidence"
+          python3 scripts/bpy_open_diagnostic.py "$RUNNER_TEMP/relocated/NexGenVideo.app" \
+            --source-sha "$CANDIDATE_SOURCE" --output evidence/open-diagnostic \
+            --probe-output "$RUNNER_TEMP/evidence/host-crash-before-authorization"
+      - name: Retain the original runtime orphan check
+        if: always() && steps.probe.outcome != 'skipped'
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/relocated/NexGenVideo.app"
+          status=0
+          for _ in $(seq 1 200); do
+            status=0
+            pgrep -f "$APP/Contents/Helpers/NexGenVideoBpySupervisor|$APP/Contents/Resources/BpyRuntime/python" \
+              > evidence/remaining-runtime-pids.log || status=$?
+            [ "$status" -eq 0 ] || break
+            sleep 0.05
+          done
+          printf '%s\n' "$status" > evidence/orphan-check-status.txt
+          [ "$status" -eq 1 ]
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bpy-open-diagnostic-${{ inputs.run_id }}-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: |
+            evidence/
+            ${{ runner.temp }}/evidence/
+          if-no-files-found: error
+          retention-days: 90

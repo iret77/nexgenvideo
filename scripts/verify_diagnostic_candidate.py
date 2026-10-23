@@ -1,4 +1,5 @@
 import argparse
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import re
@@ -18,6 +19,73 @@ CI_HARNESS_PATHS = HARNESS_PATHS | {
     "scripts/verify_macho_dependencies.py",
     "scripts/test_verify_macho_dependencies.py",
 }
+
+BPY_DIAGNOSTIC_PATHS = {
+    ".github/workflows/diagnostic-acceptance.yml",
+    "scripts/verify_diagnostic_candidate.py",
+    "scripts/test_diagnostic_acceptance.py",
+    "scripts/bpy_open_diagnostic.py",
+    "scripts/test_bpy_open_diagnostic.py",
+}
+
+
+def verify_bpy_diagnostic(run, jobs, artifact, run_id, source_sha, artifact_id, digest, changed_paths):
+    if (not re.fullmatch(r"[0-9a-f]{40}", source_sha)
+            or not re.fullmatch(r"[0-9a-f]{64}", digest)
+            or run.get("id") != run_id or run.get("head_sha") != source_sha
+            or run.get("path") != ".github/workflows/ci-batch.yml"
+            or run.get("event") != "workflow_dispatch" or run.get("status") != "completed"
+            or run.get("conclusion") != "failure"
+            or run.get("repository", {}).get("full_name") != "iret77/nexgenvideo"
+            or type(run.get("run_attempt")) is not int or run["run_attempt"] < 1):
+        raise ValueError("candidate must be a completed failed CI batch")
+    if jobs.get("total_count") != len(jobs.get("jobs", [])):
+        raise ValueError("incomplete candidate job inventory")
+    prefix = "Compile, unit tests, app and native bpy acceptance / "
+
+    def job(name, conclusion):
+        found = [item for item in jobs["jobs"] if item.get("name") == prefix + name]
+        if (len(found) != 1 or found[0].get("status") != "completed"
+                or found[0].get("conclusion") != conclusion
+                or found[0].get("run_id") != run_id or found[0].get("head_sha") != source_sha
+                or found[0].get("run_attempt") != run["run_attempt"]):
+            raise ValueError("unexpected candidate job identity or result: " + name)
+        return found[0]
+
+    for name in ("Light Checks", "Agent UI Evidence", "bpy-source / source", "diagnostic-startup"):
+        job(name, "success")
+    producer = job("Build & Test", "success")
+    failed = job("bpy-runtime / runtime", "failure")
+    expected = {
+        "Relocate the exact app and prepare denied resources": "success",
+        "Prove pre-lease and post-exec host-crash cleanup": "failure",
+        "Prepare the independent retained Bible YAML parser": "skipped",
+        "Run real bpy acceptance without ambient Blender or Python": "skipped",
+    }
+    steps = failed.get("steps", [])
+    for name, conclusion in expected.items():
+        found = [step for step in steps if step.get("name") == name]
+        if (len(found) != 1 or found[0].get("status") != "completed"
+                or found[0].get("conclusion") != conclusion):
+            raise ValueError("unexpected bpy failure stage")
+    if [step.get("name") for step in steps if step.get("conclusion") == "failure"] != [
+            "Prove pre-lease and post-exec host-crash cleanup"]:
+        raise ValueError("additional bpy step failure")
+    if (artifact.get("id") != artifact_id or artifact.get("name") != "NexGenVideo-app"
+            or artifact.get("expired") is not False or artifact.get("digest") != "sha256:" + digest
+            or artifact.get("workflow_run", {}).get("id") != run_id
+            or artifact.get("workflow_run", {}).get("head_sha") != source_sha):
+        raise ValueError("candidate artifact provenance mismatch")
+    try:
+        instant = lambda value: datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if not (instant(producer["started_at"]) <= instant(artifact["created_at"])
+                <= instant(artifact["updated_at"]) <= instant(producer["completed_at"])
+                and instant(artifact["expires_at"]) > datetime.now(timezone.utc)):
+            raise ValueError("artifact is not bound to the successful producer attempt")
+    except (KeyError, TypeError) as error:
+        raise ValueError("missing artifact production timestamps") from error
+    if set(changed_paths) - BPY_DIAGNOSTIC_PATHS:
+        raise ValueError("only the exact bpy diagnostic harness allowlist may change")
 
 
 def verify_ci(run, jobs, artifact, run_id, source_sha, artifact_id, digest, changed_paths):
@@ -99,13 +167,14 @@ def main():
     parser.add_argument("artifact_id", type=int)
     parser.add_argument("digest")
     parser.add_argument("metadata", type=Path)
-    parser.add_argument("--candidate-kind", choices=("signed-release", "ci-runtime"), default="signed-release")
+    parser.add_argument("--candidate-kind", choices=("signed-release", "ci-runtime", "ci-bpy-open-diagnostic"), default="signed-release")
     args = parser.parse_args()
     subprocess.run(["git", "merge-base", "--is-ancestor", args.source_sha, "HEAD"], check=True)
     paths = subprocess.check_output([
         "git", "diff", "--no-renames", "--name-only", "-z", args.source_sha, "HEAD"
     ]).decode().split("\0")
-    verifier = verify_ci if args.candidate_kind == "ci-runtime" else verify
+    verifier = {"signed-release": verify, "ci-runtime": verify_ci,
+                "ci-bpy-open-diagnostic": verify_bpy_diagnostic}[args.candidate_kind]
     verifier(*(json.loads((args.metadata / name).read_text()) for name in ("run.json", "jobs.json", "artifact.json")),
            args.run_id, args.source_sha, args.artifact_id, args.digest, [path for path in paths if path])
     harness_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
