@@ -1,6 +1,10 @@
 import unittest
+from pathlib import Path
+import subprocess
+import tempfile
+from unittest.mock import Mock, patch
 
-from app_termination_acceptance import verify
+from app_termination_acceptance import capture_pid, run_case, verify
 
 
 class TerminationEvidenceTests(unittest.TestCase):
@@ -68,6 +72,39 @@ class TerminationEvidenceTests(unittest.TestCase):
         events[4]["event"] = "duplicate-accepted"
         with self.assertRaisesRegex(AssertionError, "accepted"):
             verify("duplicate", events, 123, self.source, 0)
+
+    def test_native_entry_coalescing_requires_complete_cleanup(self):
+        events = self.events(["boot", "request-accepted", "duplicate-rejected", "should-terminate", "reply-later",
+                              "native-duplicate", "native-duplicate-returned", "duplicate-rejected", "cleanup-start",
+                              "cleanup-resumed", "cleanup-done", "will-terminate", "process-exit"])
+        verify("duplicate", events, 123, self.source, 0)
+        failed = self.events(["boot", "request-accepted", "duplicate-rejected", "should-terminate", "reply-later",
+                              "native-duplicate", "will-terminate", "process-exit"])
+        with self.assertRaisesRegex(AssertionError, "proof"):
+            verify("duplicate", failed, 123, self.source, 0)
+
+    def test_sample_uses_one_owned_pid_and_bounded_symbolication_time(self):
+        with tempfile.TemporaryDirectory() as root, patch("app_termination_acceptance.subprocess.run") as run:
+            capture_pid(123, Path(root), "sample")
+            self.assertEqual(run.call_args.args[0], ["/usr/bin/sample", "123", "3", "-mayDie", "-file", str(Path(root) / "sample.log")])
+            self.assertGreater(run.call_args.kwargs["timeout"], 3)
+            self.assertLessEqual(run.call_args.kwargs["timeout"], 60)
+            self.assertTrue(run.call_args.kwargs["check"])
+
+    def test_failed_capture_is_not_retried_and_original_process_is_reaped(self):
+        process = Mock(pid=123, returncode=None)
+        process.wait.side_effect = [subprocess.TimeoutExpired("app", 10), -9]
+        process.poll.return_value = None
+        with tempfile.TemporaryDirectory() as root, \
+                patch("app_termination_acceptance.subprocess.Popen", return_value=process), \
+                patch("app_termination_acceptance.capture", side_effect=subprocess.TimeoutExpired("sample", 30)) as capture:
+            with self.assertRaises(subprocess.TimeoutExpired):
+                run_case(Path(root) / "app", Path(root), "raw-control", self.source)
+            capture.assert_called_once()
+            process.kill.assert_called_once()
+            self.assertEqual(process.wait.call_count, 2)
+            self.assertEqual(process.wait.call_args.kwargs["timeout"], 5)
+            self.assertTrue((Path(root) / "raw-control/failure.json").is_file())
 
     def test_relaunch_requires_cleanup_commit_normal_exit_and_one_exact_child(self):
         events = self.events(["boot", "should-terminate", "reply-later", "cleanup-start", "cleanup-resumed",

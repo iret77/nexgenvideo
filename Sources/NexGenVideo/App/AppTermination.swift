@@ -2,6 +2,20 @@ import AppKit
 import CoreFoundation
 
 @MainActor
+final class NexGenVideoApplication: NSApplication {
+    private var terminating = false
+    var terminationReplyPending = false
+
+    override func terminate(_ sender: Any?) {
+        // A second AppKit terminate bypasses the delegate while terminateLater is pending.
+        guard !terminating, !terminationReplyPending else { return }
+        terminating = true
+        defer { terminating = false }
+        super.terminate(sender)
+    }
+}
+
+@MainActor
 enum AppTermination {
     private static var scheduled = false
 

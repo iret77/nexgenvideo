@@ -94,7 +94,7 @@ def capture(process, directory):
 def capture_pid(pid, directory, name):
     with (directory / (name + "-tool.log")).open("wb") as log:
         subprocess.run(["/usr/bin/sample", str(pid), "3", "-mayDie", "-file", str(directory / (name + ".log"))],
-                       stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, timeout=8, check=True)
+                       stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, timeout=30, check=True)
 
 
 def run_case(binary, root, mode, source_sha):
@@ -106,11 +106,13 @@ def run_case(binary, root, mode, source_sha):
         process = subprocess.Popen([str(binary)], env=environment, stdin=subprocess.DEVNULL,
                                    stdout=console, stderr=subprocess.STDOUT)
         timed_out = False
+        capture_attempted = False
         try:
             try:
                 process.wait(timeout=10 if mode == "raw-control" else 25)
             except subprocess.TimeoutExpired:
                 timed_out = True
+                capture_attempted = True
                 capture(process, directory)
             if mode == "relaunch" and not timed_out:
                 deadline = time.monotonic() + 10
@@ -127,7 +129,7 @@ def run_case(binary, root, mode, source_sha):
                           timedOut=timed_out, events=events, passed=True)
         except BaseException as error:
             (directory / "failure.json").write_text(json.dumps(dict(error=str(error), pid=process.pid)) + "\n")
-            if process.poll() is None and not (directory / "sample.log").exists():
+            if process.poll() is None and not capture_attempted:
                 try:
                     capture(process, directory)
                 except Exception as capture_error:

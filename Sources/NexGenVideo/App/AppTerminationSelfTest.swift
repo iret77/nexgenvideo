@@ -36,6 +36,7 @@ enum AppTerminationSelfTest {
         guard ["task", "gcd", "modal", "duplicate", "cancel", "relaunch-cancel", "relaunch", "raw-control"].contains(mode) else { exit(64) }
         guard atexit({ AppTerminationSelfTest.record("process-exit") }) == 0 else { exit(70) }
         let application = NSApplication.shared
+        guard application is NexGenVideoApplication else { exit(72) }
         application.setActivationPolicy(.prohibited)
         let delegate = Delegate(mode: mode)
         application.delegate = delegate

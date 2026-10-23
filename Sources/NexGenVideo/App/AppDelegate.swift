@@ -172,8 +172,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard !runtimeTerminationPending else { return .terminateCancel }
         runtimeTerminationPending = true
+        let application = sender as? NexGenVideoApplication
+        application?.terminationReplyPending = true
         Task { @MainActor in
-            defer { runtimeTerminationPending = false }
+            defer {
+                runtimeTerminationPending = false
+                application?.terminationReplyPending = false
+            }
             if AppTerminationSelfTest.isRequested { await AppTerminationSelfTest.cleanupStarted() }
             let editors = NSDocumentController.shared.documents.compactMap { ($0 as? VideoProject)?.editorViewModel }
             for editor in editors {

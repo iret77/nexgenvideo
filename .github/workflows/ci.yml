@@ -416,7 +416,7 @@ jobs:
     if: needs.source_gate.outputs.bundle_required == 'true'
     # ci-lint: allow-CI005 Runtime acceptance on the macOS 26 floor; macrunner boots only macOS 27.
     runs-on: macos-26
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: read
       actions: read

@@ -94,7 +94,7 @@ final class BpyRuntimeVolume: @unchecked Sendable {
         do {
             let mount = expectedMount(serviceName: serviceName)
             let image = directory.appendingPathComponent("runtime.sparseimage")
-            _ = try command(["create", "-fs", "APFS", "-size", "\(maximumBytes / 512)s",
+            _ = try command(["create", "-type", "SPARSE", "-fs", "APFS", "-sectors", "\(maximumBytes / 512)",
                              "-volname", "NexGenVideo Runtime", image.path], in: directory)
             let imageIdentity = try imageIdentity(in: directoryFD, maximumBytes: maximumBytes)
             record.imageDevice = imageIdentity.device
