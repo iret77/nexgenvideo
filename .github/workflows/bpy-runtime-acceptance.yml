@@ -12,6 +12,18 @@ on:
       distribution:
         type: boolean
         required: true
+      runtime_run_id:
+        type: string
+        default: ''
+      expected_source_sha:
+        type: string
+        default: ''
+      app_artifact_id:
+        type: string
+        default: ''
+      app_artifact_sha256:
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -24,13 +36,47 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - name: Validate original app selectors
+        env:
+          ORIGINAL_RUN: ${{ inputs.runtime_run_id }}
+          ORIGINAL_SOURCE: ${{ inputs.expected_source_sha }}
+          ORIGINAL_ARTIFACT: ${{ inputs.app_artifact_id }}
+          ORIGINAL_DIGEST: ${{ inputs.app_artifact_sha256 }}
+          DISTRIBUTION: ${{ inputs.distribution }}
+        run: |
+          set -euo pipefail
+          if [ -z "$ORIGINAL_RUN" ]; then
+            test -z "$ORIGINAL_SOURCE$ORIGINAL_ARTIFACT$ORIGINAL_DIGEST"
+          else
+            test "$DISTRIBUTION" = false
+            [[ "$ORIGINAL_RUN" =~ ^[1-9][0-9]*$ ]]
+            [[ "$ORIGINAL_SOURCE" =~ ^[0-9a-f]{40}$ ]]
+            [[ "$ORIGINAL_ARTIFACT" =~ ^[1-9][0-9]*$ ]]
+            [[ "$ORIGINAL_DIGEST" =~ ^[0-9a-f]{64}$ ]]
+          fi
       - uses: actions/download-artifact@v4
+        if: inputs.runtime_run_id == ''
         with:
           name: ${{ inputs.artifact }}
           path: ${{ runner.temp }}/download
+      - name: Retrieve the bound original CI app
+        if: inputs.runtime_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ORIGINAL_ARTIFACT: ${{ inputs.app_artifact_id }}
+          ORIGINAL_DIGEST: ${{ inputs.app_artifact_sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "$ORIGINAL_ARTIFACT" =~ ^[1-9][0-9]*$ ]]
+          [[ "$ORIGINAL_DIGEST" =~ ^[0-9a-f]{64}$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ORIGINAL_ARTIFACT/zip" > "$RUNNER_TEMP/original-app.zip"
+          test "$(shasum -a 256 "$RUNNER_TEMP/original-app.zip" | cut -d' ' -f1)" = "$ORIGINAL_DIGEST"
+          ditto -x -k "$RUNNER_TEMP/original-app.zip" "$RUNNER_TEMP/download"
       - uses: actions/download-artifact@v4
         with:
-          name: managed-bpy-source-receipt-${{ github.sha }}
+          name: managed-bpy-source-receipt-${{ inputs.expected_source_sha || github.sha }}
+          run-id: ${{ inputs.runtime_run_id || github.run_id }}
+          github-token: ${{ github.token }}
           path: ${{ runner.temp }}/source
       - uses: ./.github/actions/prepare-bpy-source
         with:
@@ -40,6 +86,7 @@ jobs:
         env:
           APP_ZIP: ${{ inputs.app_zip }}
           DISTRIBUTION: ${{ inputs.distribution }}
+          EXPECTED_SOURCE: ${{ inputs.expected_source_sha || github.sha }}
         run: |
           set -euo pipefail
           [ "$(sw_vers -productVersion | cut -d. -f1)" = 26 ]
@@ -49,7 +96,8 @@ jobs:
           ditto -x -k "$RUNNER_TEMP/download/$APP_ZIP" "$RUNNER_TEMP/relocated"
           APP="$RUNNER_TEMP/relocated/NexGenVideo.app"
           codesign --verify --strict --verbose=2 "$APP"
-          [ "$(/usr/libexec/PlistBuddy -c 'Print :NGVSourceCommit' "$APP/Contents/Info.plist")" = "$GITHUB_SHA" ]
+          [[ "$EXPECTED_SOURCE" =~ ^[0-9a-f]{40}$ ]]
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :NGVSourceCommit' "$APP/Contents/Info.plist")" = "$EXPECTED_SOURCE" ]
           if [ "$DISTRIBUTION" = true ]; then
             scripts/verify_bpy_bundle.sh "$APP" --distribution
             xcrun stapler validate "$APP"

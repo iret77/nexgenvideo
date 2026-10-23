@@ -55,19 +55,15 @@ for slot in 0 1; do
 done
 
 while IFS= read -r -d '' binary; do
-  file "$binary" | grep -q 'Mach-O' || continue
+  description="$(file -b "$binary")"
+  [[ "$description" == *Mach-O* ]] || continue
   codesign --verify --strict --verbose=2 "$binary"
   arches="$(lipo -archs "$binary")"
   [ "$arches" = "arm64" ] || {
     echo "unexpected architecture in $binary: $arches" >&2
     exit 1
   }
-  while IFS= read -r dependency; do
-    case "$dependency" in
-      @rpath/*|@loader_path/*|@executable_path/*|/usr/lib/*|/System/Library/*) ;;
-      *) echo "non-relocatable dependency in $binary: $dependency" >&2; exit 1 ;;
-    esac
-  done < <(otool -L "$binary" | tail -n +2 | awk '{print $1}')
+  python3 "$ROOT/scripts/verify_macho_dependencies.py" "$binary"
 done < <(find "$RUNTIME" "$SUPERVISOR" "$STORAGE" "$APP/Contents/XPCServices" -type f -print0)
 
 echo "managed bpy bundle is signed, arm64-only, and relocatable"

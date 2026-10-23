@@ -459,6 +459,7 @@ jobs:
             evidence/*.json
             evidence/*.log
             evidence/*.png
+            evidence/helper-recovery-recordings.zip
 
   bpy-runtime:
     needs: [source_gate, build_test]

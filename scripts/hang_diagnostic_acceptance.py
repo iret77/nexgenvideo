@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Verify the shipped app's independent capture path; never use owner data."""
 import argparse
+from contextlib import ExitStack
 import hashlib
 import json
 import os
@@ -9,6 +10,7 @@ import subprocess
 import tempfile
 import time
 import uuid
+import zipfile
 
 from analyze_hang_diagnostics import analyze
 from verify_hang_startup import verify_startup
@@ -23,7 +25,7 @@ def main():
     args = parser.parse_args()
     if args.helper_recovery_only:
         args.output.mkdir(parents=True, exist_ok=True)
-        result = verify_helper_recovery(args.app)
+        result = verify_helper_recovery(args.app, output=args.output)
         (args.output / "helper-recovery.json").write_text(json.dumps(result, indent=2) + "\n")
     else:
         if args.symbols is None:
@@ -142,23 +144,66 @@ def verify(args):
             process.kill()
             process.wait(timeout=5)
     retained_recordings.append(folder)
-    results.append(verify_helper_recovery(args.app))
+    results.append(verify_helper_recovery(args.app, output=args.output))
     results.append(verify_startup(args.app, protected_recordings=retained_recordings))
     verify_retained_key(args.app, replay_account, replay_key)
     results.append({"mode": "replay-key-retention", "passed": True})
     (args.output / "result.json").write_text(json.dumps(results, indent=2))
 
 
-def verify_helper_recovery(app):
+def capture_helper_failure(process, root, before, output, error):
+    receipt = {"pid": process.pid, "error": type(error).__name__,
+               "returncode": process.poll(), "recordings": [], "unmatched": [], "captureErrors": []}
+    if process.poll() is None:
+        try:
+            result = subprocess.run(
+                ["/usr/bin/sample", str(process.pid), "1", "-file", str(output / "helper-recovery-sample.log")],
+                stdin=subprocess.DEVNULL, capture_output=True, timeout=10,
+            )
+            receipt["sampleExitCode"] = result.returncode
+            (output / "helper-recovery-sample-tool.log").write_bytes(result.stdout + result.stderr)
+        except (OSError, subprocess.TimeoutExpired) as capture_error:
+            receipt["captureErrors"].append(type(capture_error).__name__)
+    try:
+        with zipfile.ZipFile(output / "helper-recovery-recordings.zip", "w") as archive:
+            for folder in sorted(set(root.glob("*")) - before):
+                try:
+                    if folder.is_symlink() or not folder.is_dir():
+                        receipt["unmatched"].append({"folder": folder.name, "reason": "not-regular-directory"})
+                        continue
+                    heartbeat = json.loads((folder / "heartbeat.json").read_text())
+                    if not isinstance(heartbeat, dict):
+                        receipt["unmatched"].append({"folder": folder.name, "reason": "invalid-heartbeat"})
+                        continue
+                    if heartbeat.get("processID") != process.pid:
+                        receipt["unmatched"].append({"folder": folder.name, "reason": "pid-mismatch"})
+                        continue
+                    receipt["recordings"].append(folder.name)
+                    for path in sorted(folder.rglob("*")):
+                        if path.is_file() and not path.is_symlink() and path.suffix in (".json", ".stacks"):
+                            archive.write(path, path.relative_to(root))
+                except (OSError, ValueError) as capture_error:
+                    receipt["captureErrors"].append(type(capture_error).__name__)
+                    receipt["unmatched"].append({"folder": folder.name, "reason": type(capture_error).__name__})
+    except OSError as capture_error:
+        receipt["captureErrors"].append(type(capture_error).__name__)
+    finally:
+        (output / "helper-recovery-failure.json").write_text(json.dumps(receipt, indent=2) + "\n")
+
+
+def verify_helper_recovery(app, *, output):
     root = Path.home() / "Library/Logs/NexGenVideo/HangIncidents"
     before = set(root.glob("*"))
-    process = subprocess.Popen(
-        [str(app / "Contents/MacOS/NexGenVideo")],
-        env={**os.environ, "NGV_HANG_SELFTEST": "helper-restart"},
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    output.mkdir(parents=True, exist_ok=True)
+    resources = ExitStack()
+    log = resources.enter_context((output / "helper-recovery.log").open("wb"))
+    process = None
     try:
+        process = subprocess.Popen(
+            [str(app / "Contents/MacOS/NexGenVideo")],
+            env={**os.environ, "NGV_HANG_SELFTEST": "helper-restart"},
+            stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+        )
         process.wait(timeout=65)
         assert process.returncode == 0, process.returncode
         folders = set(root.glob("*")) - before
@@ -176,10 +221,20 @@ def verify_helper_recovery(app):
                     and "restarted=" in (item.get("detail") or "")]
         assert recovery, "helper exit and recovery were not recorded"
         return {"mode": "helper-restart", "samples": 6, "issues": recovery, "passed": True}
+    except Exception as error:
+        if process is not None:
+            try:
+                capture_helper_failure(process, root, before, output, error)
+            except Exception as capture_error:
+                log.write(f"failure capture unavailable: {type(capture_error).__name__}\n".encode())
+        raise
     finally:
-        if process.poll() is None:
-            process.kill()
-            process.wait(timeout=5)
+        try:
+            if process is not None and process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
+        finally:
+            resources.close()
 
 
 def verify_retained_key(app, account, key):

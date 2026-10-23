@@ -11,6 +11,42 @@ HARNESS_PATHS = {
     "scripts/verify_diagnostic_candidate.py",
     "scripts/test_diagnostic_acceptance.py",
 }
+CI_HARNESS_PATHS = HARNESS_PATHS | {
+    ".github/workflows/ci.yml",
+    ".github/workflows/bpy-runtime-acceptance.yml",
+    "scripts/verify_bpy_bundle.sh",
+    "scripts/verify_macho_dependencies.py",
+    "scripts/test_verify_macho_dependencies.py",
+}
+
+
+def verify_ci(run, jobs, artifact, run_id, source_sha, artifact_id, digest, changed_paths):
+    if not re.fullmatch(r"[0-9a-f]{40}", source_sha) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise ValueError("invalid candidate identity")
+    if (run.get("id") != run_id or run.get("head_sha") != source_sha
+            or run.get("path") != ".github/workflows/ci-batch.yml"
+            or run.get("event") != "workflow_dispatch" or run.get("status") != "completed"
+            or run.get("repository", {}).get("full_name") != "iret77/nexgenvideo"
+            or type(run.get("run_attempt")) is not int or run["run_attempt"] < 1):
+        raise ValueError("candidate must be a completed CI batch")
+    if jobs.get("total_count") != len(jobs.get("jobs", [])):
+        raise ValueError("incomplete candidate job inventory")
+    prefix = "Compile, unit tests, app and native bpy acceptance / "
+    for name in ("Light Checks", "Build & Test", "bpy-source / source", "Agent UI Evidence"):
+        matches = [job for job in jobs["jobs"] if job.get("name") == prefix + name]
+        if len(matches) != 1 or matches[0].get("conclusion") != "success":
+            raise ValueError(f"candidate job did not succeed: {name}")
+        job = matches[0]
+        if (job.get("run_id") != run_id or job.get("head_sha") != source_sha
+                or job.get("run_attempt") != run["run_attempt"]):
+            raise ValueError("candidate job has a different execution identity")
+    if (artifact.get("id") != artifact_id or artifact.get("name") != "NexGenVideo-app"
+            or artifact.get("expired") is not False or artifact.get("digest") != f"sha256:{digest}"
+            or artifact.get("workflow_run", {}).get("id") != run_id
+            or artifact.get("workflow_run", {}).get("head_sha") != source_sha):
+        raise ValueError("candidate artifact provenance mismatch")
+    if set(changed_paths) - CI_HARNESS_PATHS:
+        raise ValueError("application or build inputs changed; retained CI app cannot be used")
 
 
 def verify(run, jobs, artifact, run_id, source_sha, artifact_id, digest, changed_paths):
@@ -41,14 +77,16 @@ def main():
     parser.add_argument("artifact_id", type=int)
     parser.add_argument("digest")
     parser.add_argument("metadata", type=Path)
+    parser.add_argument("--candidate-kind", choices=("signed-release", "ci-runtime"), default="signed-release")
     args = parser.parse_args()
     subprocess.run(["git", "merge-base", "--is-ancestor", args.source_sha, "HEAD"], check=True)
     paths = subprocess.check_output([
         "git", "diff", "--no-renames", "--name-only", "-z", args.source_sha, "HEAD"
     ]).decode().split("\0")
-    verify(*(json.loads((args.metadata / name).read_text()) for name in ("run.json", "jobs.json", "artifact.json")),
+    verifier = verify_ci if args.candidate_kind == "ci-runtime" else verify
+    verifier(*(json.loads((args.metadata / name).read_text()) for name in ("run.json", "jobs.json", "artifact.json")),
            args.run_id, args.source_sha, args.artifact_id, args.digest, [path for path in paths if path])
-    print("Signed candidate provenance verified; only acceptance tooling changed.")
+    print(f"{args.candidate_kind} candidate provenance verified; only acceptance tooling changed.")
 
 
 if __name__ == "__main__":

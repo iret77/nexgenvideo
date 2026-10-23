@@ -1,10 +1,16 @@
 from pathlib import Path
+import json
+import os
+import subprocess
+import tempfile
+import textwrap
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+import zipfile
 
-from hang_diagnostic_acceptance import verify_retained_key
-from verify_diagnostic_candidate import HARNESS_PATHS, verify
+from hang_diagnostic_acceptance import capture_helper_failure, verify_helper_recovery, verify_retained_key
+from verify_diagnostic_candidate import CI_HARNESS_PATHS, HARNESS_PATHS, verify, verify_ci
 
 
 class CandidateProvenanceTests(unittest.TestCase):
@@ -67,6 +73,176 @@ class CandidateProvenanceTests(unittest.TestCase):
                      "musicvideo/manifest.json"):
             with self.subTest(path=path), self.assertRaisesRegex(ValueError, "new signed build"):
                 self.check([*HARNESS_PATHS, path])
+
+
+class CICandidateProvenanceTests(unittest.TestCase):
+    def setUp(self):
+        self.source = "a" * 40
+        self.digest = "b" * 64
+        self.run = dict(id=12, head_sha=self.source, path=".github/workflows/ci-batch.yml",
+                        event="workflow_dispatch", status="completed", run_attempt=1,
+                        repository=dict(full_name="iret77/nexgenvideo"), conclusion="failure")
+        self.jobs = dict(total_count=4, jobs=[
+            dict(name="Compile, unit tests, app and native bpy acceptance / " + name,
+                 conclusion="success", run_id=12, run_attempt=1, head_sha=self.source)
+            for name in ("Light Checks", "Build & Test", "bpy-source / source", "Agent UI Evidence")])
+        self.artifact = dict(id=34, name="NexGenVideo-app", expired=False,
+                             digest=f"sha256:{self.digest}", workflow_run=dict(id=12, head_sha=self.source))
+
+    def check(self, paths=CI_HARNESS_PATHS):
+        verify_ci(self.run, self.jobs, self.artifact, 12, self.source, 34, self.digest, paths)
+
+    def test_failed_runtime_batch_can_reuse_successful_exact_build(self):
+        self.check()
+
+    def test_rejects_failed_missing_duplicate_or_other_attempt_build(self):
+        from copy import deepcopy
+        original = deepcopy(self.jobs)
+        for field, value in (("conclusion", "failure"), ("run_id", 13),
+                             ("run_attempt", 2), ("head_sha", "c" * 40)):
+            self.jobs = deepcopy(original)
+            self.jobs["jobs"][1][field] = value
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                self.check()
+        self.jobs = deepcopy(original)
+        self.jobs["jobs"].append(self.jobs["jobs"][1])
+        self.jobs["total_count"] = 5
+        with self.assertRaises(ValueError):
+            self.check()
+        self.jobs = deepcopy(original)
+        self.jobs["jobs"].pop()
+        with self.assertRaises(ValueError):
+            self.check()
+
+    def test_rejects_other_producer_expired_or_substituted_archive(self):
+        for field, value in (("path", ".github/workflows/release.yml"), ("status", "in_progress"),
+                             ("head_sha", "c" * 40), ("event", "pull_request"), ("run_attempt", 0),
+                             ("repository", {"full_name": "other/repo"})):
+            original = self.run
+            self.run = {**original, field: value}
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                self.check()
+            self.run = original
+        for field, value in (("expired", True), ("digest", "sha256:" + "c" * 64),
+                             ("id", 35), ("name", "workspace-ui-app"),
+                             ("workflow_run", {"id": 13, "head_sha": self.source})):
+            original = self.artifact
+            self.artifact = {**original, field: value}
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                self.check()
+            self.artifact = original
+
+    def test_product_pack_runtime_and_build_input_changes_require_new_build(self):
+        for path in ("Sources/NexGenVideo/App/AppDelegate.swift", "Package.swift", "Package.resolved",
+                     "Runtime/bpy/runtime-lock.json", "scripts/bundle.sh", "scripts/stage_bpy_runtime.sh",
+                     "Info.plist", "musicvideo/manifest.json", ".github/workflows/release.yml"):
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                self.check([*CI_HARNESS_PATHS, path])
+
+    def test_runtime_selectors_cannot_override_normal_or_signed_source(self):
+        workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/bpy-runtime-acceptance.yml").read_text()
+        step = workflow.split("      - name: Validate original app selectors\n", 1)[1].split("      - uses:", 1)[0]
+        script = textwrap.dedent(step.split("        run: |\n", 1)[1])
+        empty = dict(ORIGINAL_RUN="", ORIGINAL_SOURCE="", ORIGINAL_ARTIFACT="", ORIGINAL_DIGEST="", DISTRIBUTION="false")
+        complete = {**empty, "ORIGINAL_RUN": "12", "ORIGINAL_SOURCE": self.source,
+                    "ORIGINAL_ARTIFACT": "34", "ORIGINAL_DIGEST": self.digest}
+        cases = [(empty, True), ({**empty, "DISTRIBUTION": "true"}, True), (complete, True),
+                 ({**complete, "DISTRIBUTION": "true"}, False)]
+        for key in ("ORIGINAL_RUN", "ORIGINAL_SOURCE", "ORIGINAL_ARTIFACT", "ORIGINAL_DIGEST"):
+            cases.append(({**complete, key: ""}, False))
+            cases.append(({**complete, key: "invalid"}, False))
+        for environment, valid in cases:
+            with self.subTest(environment=environment):
+                result = subprocess.run(["bash", "-c", script], env={**os.environ, **environment},
+                                        stdin=subprocess.DEVNULL, capture_output=True, timeout=5)
+                self.assertEqual(result.returncode == 0, valid, result.stderr.decode())
+
+
+class HelperRecoveryEvidenceTests(unittest.TestCase):
+    def test_timeout_preserves_capture_and_still_fails_and_reaps_own_process(self):
+        process = Mock(pid=123, returncode=None)
+        failure = subprocess.TimeoutExpired(["app"], 65)
+        process.wait.side_effect = [failure, 0]
+        process.poll.return_value = None
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with patch("hang_diagnostic_acceptance.Path.home", return_value=root), patch(
+                "hang_diagnostic_acceptance.subprocess.Popen", return_value=process,
+            ) as launch, patch("hang_diagnostic_acceptance.capture_helper_failure") as capture:
+                with self.assertRaises(subprocess.TimeoutExpired) as caught:
+                    verify_helper_recovery(Path("app"), output=root / "evidence")
+                self.assertIs(caught.exception, failure)
+                self.assertEqual(capture.call_args.args[0], process)
+                self.assertIs(capture.call_args.args[-1], failure)
+                self.assertEqual(process.wait.call_args_list[0].kwargs, {"timeout": 65})
+                self.assertEqual(process.wait.call_args_list[-1].kwargs, {"timeout": 5})
+                process.kill.assert_called_once()
+                self.assertNotEqual(launch.call_args.kwargs["stdout"], subprocess.DEVNULL)
+                self.assertEqual(launch.call_args.kwargs["stderr"], subprocess.STDOUT)
+
+    def test_capture_failure_cannot_replace_original_timeout(self):
+        process = Mock(pid=123)
+        process.poll.return_value = None
+        failure = subprocess.TimeoutExpired(["app"], 65)
+        process.wait.side_effect = [failure, 0]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with patch("hang_diagnostic_acceptance.Path.home", return_value=root), patch(
+                "hang_diagnostic_acceptance.subprocess.Popen", return_value=process,
+            ), patch("hang_diagnostic_acceptance.capture_helper_failure", side_effect=OSError("full")):
+                with self.assertRaises(subprocess.TimeoutExpired) as caught:
+                    verify_helper_recovery(Path("app"), output=root / "evidence")
+                self.assertIs(caught.exception, failure)
+                process.kill.assert_called_once()
+
+    def test_capture_keeps_only_new_recordings_bound_to_launched_pid(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "recordings"
+            root.mkdir()
+            output = Path(temporary) / "evidence"
+            output.mkdir()
+            for name, pid in (("old", 123), ("own", 123), ("other", 456)):
+                folder = root / name
+                folder.mkdir()
+                (folder / "heartbeat.json").write_text(json.dumps({"processID": pid}))
+                (folder / "sample.stacks").write_text("stack")
+            (root / "linked").symlink_to(root / "own", target_is_directory=True)
+            process = Mock(pid=123)
+            process.poll.return_value = None
+            with patch("hang_diagnostic_acceptance.subprocess.run", side_effect=OSError("no sample")):
+                capture_helper_failure(process, root, {root / "old"}, output, RuntimeError("failed"))
+            receipt = json.loads((output / "helper-recovery-failure.json").read_text())
+            self.assertEqual(receipt["recordings"], ["own"])
+            self.assertEqual(receipt["captureErrors"], ["OSError"])
+            with zipfile.ZipFile(output / "helper-recovery-recordings.zip") as archive:
+                self.assertEqual(set(archive.namelist()), {"own/heartbeat.json", "own/sample.stacks"})
+                self.assertEqual(archive.read("own/sample.stacks"), b"stack")
+            process.kill.assert_not_called()
+
+    def test_sample_is_bounded_and_bad_heartbeat_does_not_hide_other_recordings(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "recordings"
+            root.mkdir()
+            output = Path(temporary) / "evidence"
+            output.mkdir()
+            for name, value in (("a-bad", []), ("b-valid", {"processID": 123})):
+                folder = root / name
+                folder.mkdir()
+                (folder / "heartbeat.json").write_text(json.dumps(value))
+            process = Mock(pid=123)
+            process.poll.return_value = None
+            result = SimpleNamespace(returncode=0, stdout=b"sample complete", stderr=b"")
+            with patch("hang_diagnostic_acceptance.subprocess.run", return_value=result) as sample:
+                capture_helper_failure(process, root, set(), output, RuntimeError("failed"))
+            self.assertEqual(sample.call_args.args[0], ["/usr/bin/sample", "123", "1", "-file",
+                                                      str(output / "helper-recovery-sample.log")])
+            self.assertEqual(sample.call_args.kwargs["timeout"], 10)
+            self.assertEqual(sample.call_args.kwargs["stdin"], subprocess.DEVNULL)
+            receipt = json.loads((output / "helper-recovery-failure.json").read_text())
+            self.assertEqual(receipt["sampleExitCode"], 0)
+            self.assertEqual(receipt["recordings"], ["b-valid"])
+            self.assertEqual(receipt["unmatched"], [{"folder": "a-bad", "reason": "invalid-heartbeat"}])
+            self.assertEqual((output / "helper-recovery-sample-tool.log").read_bytes(), b"sample complete")
 
 
 class RetainedKeyAcceptanceTests(unittest.TestCase):
