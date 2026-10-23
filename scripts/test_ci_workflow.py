@@ -70,8 +70,12 @@ class CIWorkflowTests(unittest.TestCase):
         step = workflow.split("      - name: Prove pre-lease and post-exec host-crash cleanup\n", 1)[1]
         step = step.split("      - name:", 1)[0]
         run = textwrap.dedent(step.split("        run: |\n", 1)[1])
-        for orphan, ordinary_failure in ((True, False), (False, False), (False, True)):
-            with self.subTest(first_mode_orphan=orphan, ordinary_failure=ordinary_failure), tempfile.TemporaryDirectory() as directory:
+        cases = ((True, False, False, False), (False, False, False, False),
+                 (False, True, False, False), (False, False, True, False), (False, False, False, True))
+        for orphan, ordinary_failure, capture_orphan, capture_failure in cases:
+            with self.subTest(first_mode_orphan=orphan, ordinary_failure=ordinary_failure,
+                              capture_orphan=capture_orphan, capture_failure=capture_failure), \
+                 tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 app = root / "relocated/NexGenVideo.app/Contents/MacOS/NexGenVideo"
                 app.parent.mkdir(parents=True)
@@ -96,7 +100,28 @@ class CIWorkflowTests(unittest.TestCase):
                     os.kill(os.getpid(), signal.SIGKILL)
                     """))
                 (root / "scripts").mkdir()
-                shutil.copyfile(ROOT / "scripts/bpy_runtime_acceptance.py", root / "scripts/bpy_runtime_acceptance.py")
+                shutil.copyfile(ROOT / "scripts/bpy_runtime_acceptance.py", root / "scripts/bpy_runtime_acceptance_impl.py")
+                (root / "scripts/bpy_runtime_acceptance.py").write_text(textwrap.dedent("""\
+                    from contextlib import contextmanager
+                    import os
+                    import bpy_runtime_acceptance_impl as harness
+
+                    @contextmanager
+                    def macos_log_fixture(output):
+                        def record(event):
+                            with open(os.environ["FAKE_CAPTURE_CALLS"], "a") as calls:
+                                calls.write(event + ":" + output.name + "\\n")
+                        record("enter")
+                        if os.environ["FAKE_CAPTURE_FAILURE"] == "1":
+                            raise AssertionError("synthetic macOS log startup failure")
+                        try:
+                            yield
+                        finally:
+                            record("exit")
+
+                    harness.capture_open_logs = macos_log_fixture
+                    harness.main()
+                    """))
                 app.chmod(0o755)
                 binary = root / "bin"
                 binary.mkdir()
@@ -104,6 +129,10 @@ class CIWorkflowTests(unittest.TestCase):
                 pgrep.write_text(textwrap.dedent("""\
                     #!/bin/bash
                     set -euo pipefail
+                    if [[ "$*" == *"/usr/bin/log stream"* ]]; then
+                      [ "$FAKE_CAPTURE_ORPHAN" = 1 ] && [ "$(cat "$FAKE_MODE")" = before-authorization ]
+                      exit $?
+                    fi
                     if [ "$FAKE_FIRST_ORPHAN" = 1 ] && [ "$(cat "$FAKE_MODE")" = before-authorization ]; then
                       exit 0
                     fi
@@ -115,6 +144,9 @@ class CIWorkflowTests(unittest.TestCase):
                 sleep.chmod(0o755)
                 env = dict(os.environ, RUNNER_TEMP=str(root), PATH=str(binary) + os.pathsep + os.environ["PATH"],
                            FAKE_APP_CALLS=str(root / "calls"), FAKE_MODE=str(root / "mode"),
+                           FAKE_CAPTURE_CALLS=str(root / "capture-calls"),
+                           FAKE_CAPTURE_ORPHAN="1" if capture_orphan else "0",
+                           FAKE_CAPTURE_FAILURE="1" if capture_failure else "0",
                            FAKE_FIRST_ORPHAN="1" if orphan else "0", EXPECTED_SOURCE="a" * 40,
                            FAKE_ORDINARY_FAILURE="1" if ordinary_failure else "0",
                            NGV_BPY_DIAGNOSTIC_DEADLINE=str(time.time() + 1200))
@@ -122,13 +154,22 @@ class CIWorkflowTests(unittest.TestCase):
                     ["bash", "--noprofile", "--norc", "-c", run], cwd=root, env=env,
                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=10,
                 )
-                self.assertEqual(result.returncode, 1 if orphan or ordinary_failure else 0, result.stdout)
-                expected = ["before-authorization"] if orphan or ordinary_failure else ["before-authorization", "after-authorization"]
-                self.assertEqual((root / "calls").read_text().splitlines(), expected)
+                failed = orphan or ordinary_failure or capture_orphan or capture_failure
+                self.assertEqual(result.returncode, 1 if failed else 0, result.stdout)
+                expected = [] if capture_failure else ["before-authorization"] if failed else ["before-authorization", "after-authorization"]
+                actual = (root / "calls").read_text().splitlines() if (root / "calls").exists() else []
+                self.assertEqual(actual, expected)
+                captures = (["enter:host-crash-before-authorization"] if capture_failure else
+                            [event + ":host-crash-" + mode for mode in expected for event in ("enter", "exit")])
+                self.assertEqual((root / "capture-calls").read_text().splitlines(), captures)
                 if orphan:
                     self.assertIn("orphan bpy process after before-authorization", result.stdout)
                 if ordinary_failure:
                     self.assertIn("host probe failed before its crash was armed", result.stdout)
+                if capture_orphan:
+                    self.assertIn("orphan open diagnostic capture after before-authorization", result.stdout)
+                if capture_failure:
+                    self.assertIn("synthetic macOS log startup failure", result.stdout)
 
     def test_merge_gate_requires_every_selected_job(self):
         text = CI.read_text().split("  merge_gate:\n", 1)[1]
