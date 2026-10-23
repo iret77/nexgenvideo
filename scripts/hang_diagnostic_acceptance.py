@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Verify the shipped app's independent capture path; never use owner data."""
 import argparse
-from contextlib import ExitStack
+from contextlib import ExitStack, suppress
 import hashlib
 import json
 import os
@@ -226,7 +226,8 @@ def verify_helper_recovery(app, *, output):
             try:
                 capture_helper_failure(process, root, before, output, error)
             except Exception as capture_error:
-                log.write(f"failure capture unavailable: {type(capture_error).__name__}\n".encode())
+                with suppress(OSError):
+                    log.write(f"failure capture unavailable: {type(capture_error).__name__}\n".encode())
         raise
     finally:
         try:

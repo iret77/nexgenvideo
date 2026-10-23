@@ -27,19 +27,41 @@ def verify_ci(run, jobs, artifact, run_id, source_sha, artifact_id, digest, chan
             or run.get("path") != ".github/workflows/ci-batch.yml"
             or run.get("event") != "workflow_dispatch" or run.get("status") != "completed"
             or run.get("repository", {}).get("full_name") != "iret77/nexgenvideo"
-            or type(run.get("run_attempt")) is not int or run["run_attempt"] < 1):
+            or type(run.get("run_attempt")) is not int or run["run_attempt"] != 1):
         raise ValueError("candidate must be a completed CI batch")
     if jobs.get("total_count") != len(jobs.get("jobs", [])):
         raise ValueError("incomplete candidate job inventory")
     prefix = "Compile, unit tests, app and native bpy acceptance / "
-    for name in ("Light Checks", "Build & Test", "bpy-source / source", "Agent UI Evidence"):
+
+    def require_job(name, conclusion):
         matches = [job for job in jobs["jobs"] if job.get("name") == prefix + name]
-        if len(matches) != 1 or matches[0].get("conclusion") != "success":
-            raise ValueError(f"candidate job did not succeed: {name}")
+        if (len(matches) != 1 or matches[0].get("conclusion") != conclusion
+                or matches[0].get("status") != "completed"):
+            raise ValueError(f"candidate job has an unexpected result: {name}")
         job = matches[0]
         if (job.get("run_id") != run_id or job.get("head_sha") != source_sha
                 or job.get("run_attempt") != run["run_attempt"]):
             raise ValueError("candidate job has a different execution identity")
+        return job
+
+    for name in ("Light Checks", "Build & Test", "bpy-source / source", "Agent UI Evidence"):
+        require_job(name, "success")
+    steps = require_job("diagnostic-startup", "failure").get("steps", [])
+    names = [step.get("name") for step in steps]
+    required = ["Prove shipped build 97 misses normal recorder startup",
+                "Verify normal startup and disabled preference",
+                "Exercise native Export Cancel, Retry and Reveal actions",
+                "Verify generation batch pricing recovery on macOS 26",
+                "Verify helper recovery during active work"]
+    if any(names.count(name) != 1 for name in required):
+        raise ValueError("candidate diagnostic steps are missing or duplicated")
+    indices = [names.index(name) for name in required]
+    helper = steps[indices[-1]]
+    if (indices != sorted(indices) or helper.get("conclusion") != "failure"
+            or helper.get("status") != "completed"
+            or any(step.get("conclusion") != "success" or step.get("status") != "completed"
+                   for step in steps[:indices[-1]])):
+        raise ValueError("candidate diagnostic failure is not isolated to helper recovery")
     if (artifact.get("id") != artifact_id or artifact.get("name") != "NexGenVideo-app"
             or artifact.get("expired") is not False or artifact.get("digest") != f"sha256:{digest}"
             or artifact.get("workflow_run", {}).get("id") != run_id
@@ -86,6 +108,11 @@ def main():
     verifier = verify_ci if args.candidate_kind == "ci-runtime" else verify
     verifier(*(json.loads((args.metadata / name).read_text()) for name in ("run.json", "jobs.json", "artifact.json")),
            args.run_id, args.source_sha, args.artifact_id, args.digest, [path for path in paths if path])
+    harness_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    (args.metadata / "harness.json").write_text(json.dumps({
+        "candidateKind": args.candidate_kind, "buildSourceSHA": args.source_sha,
+        "harnessSourceSHA": harness_sha, "changedPaths": sorted(path for path in paths if path),
+    }, indent=2) + "\n")
     print(f"{args.candidate_kind} candidate provenance verified; only acceptance tooling changed.")
 
 

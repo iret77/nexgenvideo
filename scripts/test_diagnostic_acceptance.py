@@ -2,11 +2,12 @@ from pathlib import Path
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import textwrap
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, mock_open, patch
 import zipfile
 
 from hang_diagnostic_acceptance import capture_helper_failure, verify_helper_recovery, verify_retained_key
@@ -84,8 +85,19 @@ class CICandidateProvenanceTests(unittest.TestCase):
                         repository=dict(full_name="iret77/nexgenvideo"), conclusion="failure")
         self.jobs = dict(total_count=4, jobs=[
             dict(name="Compile, unit tests, app and native bpy acceptance / " + name,
-                 conclusion="success", run_id=12, run_attempt=1, head_sha=self.source)
+                 conclusion="success", status="completed", run_id=12, run_attempt=1, head_sha=self.source)
             for name in ("Light Checks", "Build & Test", "bpy-source / source", "Agent UI Evidence")])
+        self.jobs["jobs"].append(dict(
+            name="Compile, unit tests, app and native bpy acceptance / diagnostic-startup",
+            conclusion="failure", status="completed", run_id=12, run_attempt=1, head_sha=self.source,
+            steps=[dict(name=name, status="completed", conclusion="failure" if index == 4 else "success")
+                   for index, name in enumerate([
+                       "Prove shipped build 97 misses normal recorder startup",
+                       "Verify normal startup and disabled preference",
+                       "Exercise native Export Cancel, Retry and Reveal actions",
+                       "Verify generation batch pricing recovery on macOS 26",
+                       "Verify helper recovery during active work"])]))
+        self.jobs["total_count"] = len(self.jobs["jobs"])
         self.artifact = dict(id=34, name="NexGenVideo-app", expired=False,
                              digest=f"sha256:{self.digest}", workflow_run=dict(id=12, head_sha=self.source))
 
@@ -106,7 +118,7 @@ class CICandidateProvenanceTests(unittest.TestCase):
                 self.check()
         self.jobs = deepcopy(original)
         self.jobs["jobs"].append(self.jobs["jobs"][1])
-        self.jobs["total_count"] = 5
+        self.jobs["total_count"] = len(self.jobs["jobs"])
         with self.assertRaises(ValueError):
             self.check()
         self.jobs = deepcopy(original)
@@ -116,7 +128,7 @@ class CICandidateProvenanceTests(unittest.TestCase):
 
     def test_rejects_other_producer_expired_or_substituted_archive(self):
         for field, value in (("path", ".github/workflows/release.yml"), ("status", "in_progress"),
-                             ("head_sha", "c" * 40), ("event", "pull_request"), ("run_attempt", 0),
+                             ("head_sha", "c" * 40), ("event", "pull_request"), ("run_attempt", 0), ("run_attempt", 2),
                              ("repository", {"full_name": "other/repo"})):
             original = self.run
             self.run = {**original, field: value}
@@ -139,6 +151,26 @@ class CICandidateProvenanceTests(unittest.TestCase):
             with self.subTest(path=path), self.assertRaises(ValueError):
                 self.check([*CI_HARNESS_PATHS, path])
 
+    def test_helper_continuation_cannot_hide_another_diagnostic_failure(self):
+        from copy import deepcopy
+        original = deepcopy(self.jobs)
+        for index in range(4):
+            for conclusion in ("failure", "skipped", "cancelled"):
+                self.jobs = deepcopy(original)
+                self.jobs["jobs"][-1]["steps"][index]["conclusion"] = conclusion
+                with self.subTest(index=index, conclusion=conclusion), self.assertRaises(ValueError):
+                    self.check()
+        for change in ("missing", "duplicate", "passed", "missing-prior", "reordered"):
+            self.jobs = deepcopy(original)
+            steps = self.jobs["jobs"][-1]["steps"]
+            if change == "missing": steps.pop()
+            elif change == "duplicate": steps.append(deepcopy(steps[-1]))
+            elif change == "passed": steps[-1]["conclusion"] = "success"
+            elif change == "missing-prior": steps.pop(0)
+            elif change == "reordered": steps[0], steps[1] = steps[1], steps[0]
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                self.check()
+
     def test_runtime_selectors_cannot_override_normal_or_signed_source(self):
         workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/bpy-runtime-acceptance.yml").read_text()
         step = workflow.split("      - name: Validate original app selectors\n", 1)[1].split("      - uses:", 1)[0]
@@ -156,6 +188,28 @@ class CICandidateProvenanceTests(unittest.TestCase):
                 result = subprocess.run(["bash", "-c", script], env={**os.environ, **environment},
                                         stdin=subprocess.DEVNULL, capture_output=True, timeout=5)
                 self.assertEqual(result.returncode == 0, valid, result.stderr.decode())
+
+    def test_resumed_source_preparation_passes_the_original_receipt_identity(self):
+        workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/bpy-runtime-acceptance.yml").read_text()
+        step = workflow.split("      - name: Prepare qualified source for the original CI app\n", 1)[1].split("      - name:", 1)[0]
+        self.assertIn("if: inputs.runtime_run_id != ''", step)
+        self.assertIn("ORIGINAL_SOURCE: ${{ inputs.expected_source_sha }}", step)
+        script = textwrap.dedent(step.split("        run: |\n", 1)[1])
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            interpreter = root / "python3"
+            interpreter.write_text(f"#!{sys.executable}\nimport json,sys\nprint(json.dumps(sys.argv[1:]))\n")
+            interpreter.chmod(0o755)
+            result = subprocess.run(["bash", "-c", script],
+                                    env={**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"],
+                                         "RUNNER_TEMP": temporary, "ORIGINAL_SOURCE": self.source,
+                                         "GITHUB_SHA": "c" * 40},
+                                    stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=5, check=True)
+            self.assertEqual(json.loads(result.stdout), ["scripts/consume_bpy_distributable_source.py",
+                             "--output-directory", str(root / "source"), "--source-sha", self.source,
+                             "--receipt", str(root / "download/bpy-source/bpy-source-receipt.json")])
+        normal = workflow.split("      - uses: ./.github/actions/prepare-bpy-source\n", 1)[1].split("      - name:", 1)[0]
+        self.assertIn("if: inputs.runtime_run_id == ''", normal)
 
 
 class HelperRecoveryEvidenceTests(unittest.TestCase):
@@ -189,7 +243,10 @@ class HelperRecoveryEvidenceTests(unittest.TestCase):
             root = Path(temporary)
             with patch("hang_diagnostic_acceptance.Path.home", return_value=root), patch(
                 "hang_diagnostic_acceptance.subprocess.Popen", return_value=process,
-            ), patch("hang_diagnostic_acceptance.capture_helper_failure", side_effect=OSError("full")):
+            ), patch("hang_diagnostic_acceptance.capture_helper_failure", side_effect=OSError("full")), patch(
+                "hang_diagnostic_acceptance.Path.open", mock_open(),
+            ) as opened:
+                opened.return_value.write.side_effect = OSError("disk full")
                 with self.assertRaises(subprocess.TimeoutExpired) as caught:
                     verify_helper_recovery(Path("app"), output=root / "evidence")
                 self.assertIs(caught.exception, failure)
