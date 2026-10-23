@@ -119,9 +119,11 @@ struct SearchQueryIsolationTests {
         let fixture = try fixture()
         defer { fixture.cleanup() }
         let coordinator = coordinator(fixture)
-        let gate = SearchQueryEncoderGate()
-        defer { gate.release() }
-        coordinator.queryEncoderOverride = .init(spec: fixture.spec, encode: { _ in gate.encode() })
+        let gate = SearchQueryEncoderGate(label: "source-bytes")
+        coordinator.queryEncoderOverride = .init(spec: fixture.spec, encode: { _ in
+            Issue.record("The gated query must use its asynchronous fixture encoder.")
+            return [1, 0]
+        }, encodeAsync: { _ in try await gate.encode() })
         let query = Task { @MainActor in
             gate.recordQueryEntered()
             let result = await coordinator.searchResult(query: "local test")
@@ -132,7 +134,7 @@ struct SearchQueryIsolationTests {
         try gate.installMutation {
             try Data("different source bytes and length".utf8).write(to: fixture.source, options: .atomic)
         }
-        let result = await settle(query, gate: gate)
+        let result = try await settle(query, gate: gate)
         try gate.requireMutationBeforeEncoderReturn()
         #expect(result.status == .stale)
         #expect(result.hits.isEmpty)
@@ -142,9 +144,11 @@ struct SearchQueryIsolationTests {
         let fixture = try fixture()
         defer { fixture.cleanup() }
         let coordinator = coordinator(fixture)
-        let gate = SearchQueryEncoderGate()
-        defer { gate.release() }
-        coordinator.queryEncoderOverride = .init(spec: fixture.spec, encode: { _ in gate.encode() })
+        let gate = SearchQueryEncoderGate(label: "query-cancellation")
+        coordinator.queryEncoderOverride = .init(spec: fixture.spec, encode: { _ in
+            Issue.record("The gated query must use its asynchronous fixture encoder.")
+            return [1, 0]
+        }, encodeAsync: { _ in try await gate.encode() })
         let query = Task { @MainActor in
             gate.recordQueryEntered()
             let result = await coordinator.searchResult(query: "local test")
@@ -153,7 +157,7 @@ struct SearchQueryIsolationTests {
         }
         defer { query.cancel() }
         try gate.installMutation { query.cancel() }
-        let result = await settle(query, gate: gate)
+        let result = try await settle(query, gate: gate)
         try gate.requireMutationBeforeEncoderReturn()
         #expect(result.status == .cancelled)
         #expect(result.hits.isEmpty)
@@ -165,10 +169,12 @@ struct SearchQueryIsolationTests {
         defer { fixture.cleanup() }
         let coordinator = coordinator(fixture)
         for changeModel in [true, false] {
-            let gate = SearchQueryEncoderGate()
-            defer { gate.release() }
+            let gate = SearchQueryEncoderGate(label: changeModel ? "model-change" : "asset-removal")
             coordinator.assetsProvider = { [fixture.asset] }
-            coordinator.queryEncoderOverride = .init(spec: fixture.spec, encode: { _ in gate.encode() })
+            coordinator.queryEncoderOverride = .init(spec: fixture.spec, encode: { _ in
+                Issue.record("The gated query must use its asynchronous fixture encoder.")
+                return [1, 0]
+            }, encodeAsync: { _ in try await gate.encode() })
             let query = Task { @MainActor in
                 gate.recordQueryEntered()
                 let result = await coordinator.searchResult(query: "local test")
@@ -180,28 +186,30 @@ struct SearchQueryIsolationTests {
                 if changeModel { coordinator.queryEncoderOverride = .init(spec: fixture.spec, encode: { _ in [0, 1] }) }
                 else { coordinator.assetsProvider = { [] } }
             }
-            let result = await settle(query, gate: gate)
+            let result = try await settle(query, gate: gate)
             try gate.requireMutationBeforeEncoderReturn()
             #expect(result.status == .stale)
             #expect(result.hits.isEmpty)
         }
     }
 
-    private func settle(_ query: Task<SearchIndexCoordinator.SearchResult, Never>, gate: SearchQueryEncoderGate) async -> SearchIndexCoordinator.SearchResult {
-        await withTaskCancellationHandler {
-            await query.value
+    private func settle(_ query: Task<SearchIndexCoordinator.SearchResult, Never>, gate: SearchQueryEncoderGate) async throws -> SearchIndexCoordinator.SearchResult {
+        try await withTaskCancellationHandler {
+            let result = await query.value
+            if Task.isCancelled { gate.recordParentCancellation() }
+            try Task.checkCancellation()
+            return result
         } onCancel: {
             query.cancel()
-            gate.release()
         }
     }
 }
 
-private final class SearchQueryEncoderGate: @unchecked Sendable {
+@MainActor
+private final class SearchQueryEncoderGate {
     private enum Failure: Error { case invalidInstallation }
-    private let condition = NSCondition()
+    private let label: String
     private var started = false
-    private var released = false
     private var queryEntered = false
     private var queryOutcome: String?
     private var mutation: (@MainActor @Sendable () throws -> Void)?
@@ -209,71 +217,41 @@ private final class SearchQueryEncoderGate: @unchecked Sendable {
     private var encoderReturned = false
     private var mutationBeforeReturn = false
 
+    init(label: String) { self.label = label }
+
+    private var observation: String {
+        "case=\(label), queryEntered=\(queryEntered), encoderEntered=\(started), encoderReturned=\(encoderReturned), mutationBeforeReturn=\(mutationBeforeReturn), outcome=\(queryOutcome ?? "pending")"
+    }
+
+    func recordParentCancellation() {
+        Issue.record(Testing.Comment(rawValue: "parentCancelledTimeout: \(observation)"))
+    }
+
     func recordQueryEntered() {
-        condition.lock()
         queryEntered = true
-        condition.unlock()
     }
     func recordQueryOutcome(_ value: String) {
-        condition.lock()
         queryOutcome = value
-        condition.unlock()
     }
     func installMutation(_ value: @escaping @MainActor @Sendable () throws -> Void) throws {
-        condition.lock()
-        defer { condition.unlock() }
-        guard !started, !released, mutation == nil else { throw Failure.invalidInstallation }
+        guard !started, mutation == nil else { throw Failure.invalidInstallation }
         mutation = value
     }
-    private func admitsMutation() -> Bool {
-        condition.lock()
-        defer { condition.unlock() }
-        return !released
-    }
-    private func finishMutation(_ result: Result<Void, Error>) {
-        condition.lock()
-        mutationResult = result
-        released = true
-        condition.broadcast()
-        condition.unlock()
-    }
-    func encode() -> [Float] {
-        condition.lock()
+    func encode() async throws -> [Float] {
         started = true
-        let operation = mutation
+        defer { encoderReturned = true }
+        try Task.checkCancellation()
+        guard let operation = mutation else { throw Failure.invalidInstallation }
         mutation = nil
-        condition.unlock()
-        let task = operation.map { operation in
-            Task { @MainActor [self, operation] in
-                guard !Task.isCancelled, admitsMutation() else { return }
-                let result = Result { try operation() }
-                finishMutation(result)
-            }
-        }
-        condition.lock()
-        let deadline = Date().addingTimeInterval(5)
-        while !released {
-            if !condition.wait(until: deadline) { break }
-        }
-        mutationBeforeReturn = released && mutationResult != nil
-        encoderReturned = true
-        released = true
-        condition.unlock()
-        task?.cancel()
+        let result = Result { try operation() }
+        mutationResult = result
+        mutationBeforeReturn = true
+        try result.get()
         return [1, 0]
     }
-    func release() {
-        condition.lock()
-        mutation = nil
-        released = true
-        condition.broadcast()
-        condition.unlock()
-    }
     func requireMutationBeforeEncoderReturn() throws {
-        condition.lock()
         let observation = (queryEntered, started, encoderReturned, mutationBeforeReturn, mutationResult,
-            "queryEntered=\(queryEntered), encoderEntered=\(started), encoderReturned=\(encoderReturned), mutationBeforeReturn=\(mutationBeforeReturn), outcome=\(queryOutcome ?? "pending")")
-        condition.unlock()
+            self.observation)
         let comment = Testing.Comment(rawValue: observation.5)
         try #require(observation.0 && observation.1 && observation.2 && observation.3, comment)
         let result = try #require(observation.4, comment)

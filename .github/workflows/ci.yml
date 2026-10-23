@@ -103,6 +103,19 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Upload Agent UI renderer diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-ui-render-diagnostics-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/agent-chat-spec/diagnostics
+            ${{ runner.temp }}/agent-chat-spec/*.png
+            ${{ runner.temp }}/workbench-reference/diagnostics
+            ${{ runner.temp }}/workbench-reference/*.png
+          if-no-files-found: error
+          retention-days: 14
+
   bpy-source:
     needs: source_gate
     if: needs.source_gate.outputs.bundle_required == 'true'

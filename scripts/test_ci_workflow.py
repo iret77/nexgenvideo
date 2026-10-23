@@ -46,6 +46,23 @@ def run_commands(text):
 
 
 class CIWorkflowTests(unittest.TestCase):
+    def test_ui_render_diagnostics_upload_on_failure_without_qualifying_partial_captures(self):
+        job = CI.read_text().split("  ui_render:\n", 1)[1].split("  bpy-source:\n", 1)[0]
+        render = job.split("      - name: Render Agent UI specification\n", 1)[1].split("      - name:", 1)[0]
+        for renderer in ("render_agent_chat_spec.py", "render_generation_batch_review_spec.py", "render_workbench_reference.py"):
+            self.assertEqual(render.count(f"python3 scripts/{renderer} --output"), 1)
+        self.assertNotIn("continue-on-error", job)
+        success = job.split("      - name: Upload Agent UI render evidence\n", 1)[1].split("      - name:", 1)[0]
+        self.assertIn("name: agent-chat-spec-${{ github.run_id }}", success)
+        self.assertNotIn("if: always()", success)
+        diagnostic = job.split("      - name: Upload Agent UI renderer diagnostics\n", 1)[1]
+        self.assertIn("if: always()", diagnostic)
+        self.assertIn("name: agent-ui-render-diagnostics-${{ github.run_id }}-a${{ github.run_attempt }}", diagnostic)
+        for path in ("agent-chat-spec/diagnostics", "agent-chat-spec/*.png", "workbench-reference/diagnostics", "workbench-reference/*.png"):
+            self.assertIn("${{ runner.temp }}/" + path, diagnostic)
+        self.assertIn("if-no-files-found: error", diagnostic)
+        self.assertIn("retention-days: 14", diagnostic)
+
     def test_bpy_host_crash_cleanup_rejects_an_orphan_in_the_first_mode(self):
         workflow = (WORKFLOWS / "bpy-runtime-acceptance.yml").read_text()
         step = workflow.split("      - name: Prove pre-lease and post-exec host-crash cleanup\n", 1)[1]

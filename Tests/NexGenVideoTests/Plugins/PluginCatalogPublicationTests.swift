@@ -111,18 +111,19 @@ struct PluginCatalogPublicationTests {
         #expect(try Data(contentsOf: stable) == stableData)
     }
 
-    @Test("preview builds cannot run production blocker or resume mutations")
+    @Test("preview and artifact-only builds skip production blocker and resume steps")
     func previewSkipsProductionGateMutations() throws {
         let workflow = try String(contentsOf: releaseWorkflowURL, encoding: .utf8)
-
-        #expect(workflow.contains("""
-              - name: Reject open release blockers
-                if: ${{ inputs.dry_run == false }}
-        """))
-        #expect(workflow.contains("""
-              - name: Inspect or resume release publication
-                if: ${{ inputs.dry_run == false }}
-        """))
+        let productionGuard = "if: ${{ inputs.artifact_only == false && inputs.dry_run == false }}"
+        let steps = workflow.components(separatedBy: "\n      - ")
+        for name in ["Reject open release blockers", "Inspect or resume release publication"] {
+            let matches = steps.filter { $0.hasPrefix("name: \(name)\n") }
+            try #require(matches.count == 1, Comment(rawValue: "Missing or duplicate production step: \(name)"))
+            let conditions = matches[0].split(separator: "\n")
+                .filter { $0.hasPrefix("        if: ") }
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+            #expect(conditions == [productionGuard], Comment(rawValue: name))
+        }
         #expect(workflow.contains("gh label list"))
         #expect(workflow.contains("--repo iret77/nexgenvideo"))
         #expect(!workflow.contains("gh label view"))

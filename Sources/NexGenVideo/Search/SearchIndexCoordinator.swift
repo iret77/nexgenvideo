@@ -31,6 +31,7 @@ final class SearchIndexCoordinator {
     struct QueryEncoder: Sendable {
         let spec: VisualEmbedder.Spec
         let encode: @Sendable (String) throws -> [Float]
+        var encodeAsync: (@Sendable (String) async throws -> [Float])? = nil
     }
 
     enum Availability: Equatable, Sendable {
@@ -442,7 +443,12 @@ final class SearchIndexCoordinator {
             var hits: [VisualSearch.Hit] = []
             if !indexes.isEmpty {
                 do {
-                    let vector = try encoder.encode(trimmed)
+                    let vector: [Float]
+                    if let encodeAsync = encoder.encodeAsync {
+                        vector = try await encodeAsync(trimmed)
+                    } else {
+                        vector = try encoder.encode(trimmed)
+                    }
                     guard vector.count == encoder.spec.embeddingDim, vector.allSatisfy(\.isFinite) else {
                         throw VisualEmbedder.ModelError.badOutput
                     }
