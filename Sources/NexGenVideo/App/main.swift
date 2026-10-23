@@ -1,6 +1,7 @@
 import AppKit
 
 Log.bootstrap()
+AppTerminationSelfTest.runIfRequested()
 ChatHangReplay.runIfRequested()
 HangDiagnosticReplay.runIfRequested()
 ProductionPackRecoveryAcceptance.runIfRequested()

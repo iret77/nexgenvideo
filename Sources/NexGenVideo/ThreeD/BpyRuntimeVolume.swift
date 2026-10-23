@@ -365,9 +365,11 @@ final class BpyRuntimeVolume: @unchecked Sendable {
             throw error
         }
         if completed.wait(timeout: .now() + 30) != .success {
+            recordCommandFailure(arguments.first ?? "unknown", status: nil, reason: nil, operationID: operationID, directoryFD: descriptor)
             throw BpyRuntimeError.unavailable("The 3D storage operation is still pending; its lease remains reserved until completion.")
         }
         guard process.terminationStatus == 0 else {
+            recordCommandFailure(arguments.first ?? "unknown", status: process.terminationStatus, reason: process.terminationReason, operationID: operationID, directoryFD: descriptor)
             try completeUnstartedIntent(intent, directoryFD: descriptor)
             try requireOperationStopped(directoryFD: descriptor)
             throw BpyRuntimeError.unavailable("The 3D runtime storage operation failed (\(process.terminationStatus)).")
@@ -375,6 +377,41 @@ final class BpyRuntimeVolume: @unchecked Sendable {
         try standardOutput.close()
         try standardError.close()
         return try readRegular("command.out", directoryFD: descriptor, maximum: 1_048_576)
+    }
+
+    private static func recordCommandFailure(_ command: String, status: Int32?, reason: Process.TerminationReason?, operationID: UUID, directoryFD: Int32) {
+        var record: [String: Any] = ["schema": 1, "command": command, "operationID": operationID.uuidString,
+            "pid": getpid(), "sourceSHA": Bundle.main.object(forInfoDictionaryKey: "NGVSourceCommit") as? String ?? ""]
+        record["status"] = status
+        record["terminationReason"] = reason.map { $0 == .exit ? "exit" : "signal" }
+        record["completed"] = status != nil
+        for name in ["command.out", "command.err"] {
+            do {
+                let (data, truncated) = try readCommandDiagnostic(name, directoryFD: directoryFD)
+                record[name] = data.base64EncodedString()
+                record[name + ".truncated"] = truncated
+                if name == "command.err" {
+                    Log.app.error("3D storage \(command) failed: \(String(decoding: data.prefix(16_384), as: UTF8.self))", telemetry: "bpy-storage-command-failed")
+                }
+            } catch { record[name + ".captureError"] = error.localizedDescription }
+        }
+        guard ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] == "true",
+              let path = ProcessInfo.processInfo.environment["NGV_BPY_COMMAND_EVIDENCE"] else { return }
+        do {
+            let url = URL(fileURLWithPath: path, isDirectory: true).appendingPathComponent("storage-\(operationID.uuidString).json")
+            try JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]).write(to: url, options: .atomic)
+        } catch { Log.app.error("3D storage diagnostics could not be saved: \(error.localizedDescription)", telemetry: "bpy-storage-diagnostics-write-failed") }
+    }
+
+    private static func readCommandDiagnostic(_ name: String, directoryFD: Int32) throws -> (Data, Bool) {
+        let descriptor = openat(directoryFD, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
+        guard descriptor >= 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        var value = stat()
+        guard fstat(descriptor, &value) == 0, value.st_mode & S_IFMT == S_IFREG,
+              value.st_nlink == 1, value.st_uid == getuid() else { throw CocoaError(.fileReadNoPermission) }
+        let data = try handle.read(upToCount: 1_048_577) ?? Data()
+        return (Data(data.prefix(1_048_576)), data.count > 1_048_576)
     }
 
     private static func storageLock(directoryFD: Int32) throws -> Int32 {

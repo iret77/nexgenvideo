@@ -170,10 +170,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var runtimeTerminationPending = false
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard !runtimeTerminationPending else { return .terminateLater }
+        guard !runtimeTerminationPending else { return .terminateCancel }
         runtimeTerminationPending = true
         Task { @MainActor in
             defer { runtimeTerminationPending = false }
+            if AppTerminationSelfTest.isRequested { await AppTerminationSelfTest.cleanupStarted() }
             let editors = NSDocumentController.shared.documents.compactMap { ($0 as? VideoProject)?.editorViewModel }
             for editor in editors {
                 let registry = editor.agentService.reviewChildRegistry
@@ -188,6 +189,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let completed = await BpyRuntimeHost.shared.shutdown()
             if completed {
                 await finishConfirmedTermination()
+                AppTerminationSelfTest.record("cleanup-done")
                 sender.reply(toApplicationShouldTerminate: true)
             } else if BpyRuntimeHost.shared.canQuitWithReservedStorage {
                 let alert = NSAlert()
@@ -228,7 +230,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        AppTerminationSelfTest.record("will-terminate")
         BpyRuntimeSelfTest.applicationWillTerminate()
         HangDiagnosticRecorder.shared.stop()
+        AppRelaunchSelfTest.applicationWillTerminate()
+        AppRelaunch.applicationWillTerminate()
     }
 }

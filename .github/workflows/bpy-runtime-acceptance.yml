@@ -35,6 +35,8 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 30
     steps:
+      - name: Reserve time for failure diagnostics and evidence upload
+        run: echo "NGV_BPY_DIAGNOSTIC_DEADLINE=$(( $(date +%s) + 27 * 60 ))" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
       - name: Validate original app selectors
         env:
@@ -130,18 +132,17 @@ jobs:
           printf '#!/bin/sh\nexit 99\n' > "$RUNNER_TEMP/fake-bin/blender"
           chmod +x "$RUNNER_TEMP/fake-bin/python3" "$RUNNER_TEMP/fake-bin/blender"
       - name: Prove pre-lease and post-exec host-crash cleanup
+        env:
+          EXPECTED_SOURCE: ${{ inputs.expected_source_sha || github.sha }}
         run: |
           set -euo pipefail
           APP="$RUNNER_TEMP/relocated/NexGenVideo.app"
           mkdir -p "$RUNNER_TEMP/evidence"
           for mode in before-authorization after-authorization; do
-            set +e
-            env NGV_SELFTEST_BPY_HOST_CRASH="$mode" \
-              "$APP/Contents/MacOS/NexGenVideo" < /dev/null \
-              > "$RUNNER_TEMP/evidence/host-crash-$mode.log" 2>&1
-            status=$?
-            set -e
-            [ "$status" -ne 0 ]
+            status=0
+            python3 scripts/bpy_runtime_acceptance.py "$APP" --mode "$mode" \
+              --source-sha "$EXPECTED_SOURCE" --deadline "$NGV_BPY_DIAGNOSTIC_DEADLINE" \
+              --output "$RUNNER_TEMP/evidence/host-crash-$mode" || status=$?
             for _ in $(seq 1 200); do
               if ! pgrep -f "$APP/Contents/Helpers/NexGenVideoBpySupervisor|$APP/Contents/Resources/BpyRuntime/python" >/dev/null; then
                 break
@@ -152,12 +153,15 @@ jobs:
               echo "orphan bpy process after $mode" >&2
               exit 1
             fi
+            [ "$status" -eq 0 ]
           done
       - name: Prepare the independent retained Bible YAML parser
         run: |
           python3 -m venv "$RUNNER_TEMP/panorama-parser"
           "$RUNNER_TEMP/panorama-parser/bin/python" -m pip install --quiet PyYAML==6.0.3
       - name: Run real bpy acceptance without ambient Blender or Python
+        env:
+          EXPECTED_SOURCE: ${{ inputs.expected_source_sha || github.sha }}
         run: |
           set -euo pipefail
           APP="$RUNNER_TEMP/relocated/NexGenVideo.app"
@@ -173,6 +177,7 @@ jobs:
           sw_vers > "$EVIDENCE/os.txt"
           before="$(pgrep -f 'BpyRuntime/python' || true)"
           [ -z "$before" ]
+          PYTHON="$(command -v python3)"
           /usr/bin/time -l env \
             PATH="$RUNNER_TEMP/fake-bin" \
             BLENDER_USER_CONFIG="$RUNNER_TEMP/denied/foreign-blender" \
@@ -181,8 +186,10 @@ jobs:
             NGV_BPY_DENIED_PATHS="$DENIED" \
             NGV_BPY_APPROVED_INPUT_DIR="$RUNNER_TEMP/approved-input" \
             NGV_SELFTEST_BPY="$EVIDENCE" \
-            "$APP/Contents/MacOS/NexGenVideo" < /dev/null \
-            > "$EVIDENCE/runtime.log" 2> "$EVIDENCE/time.txt"
+            "$PYTHON" -I scripts/bpy_runtime_acceptance.py "$APP" --mode runtime \
+            --source-sha "$EXPECTED_SOURCE" --deadline "$NGV_BPY_DIAGNOSTIC_DEADLINE" \
+            --output "$EVIDENCE" < /dev/null \
+            > "$EVIDENCE/runtime-supervisor.log" 2> "$EVIDENCE/time.txt"
           grep -q SELFTEST_BPY_OK "$EVIDENCE/runtime.log"
           jq -e --arg app "$APP" --arg foreign "$RUNNER_TEMP/denied/foreign-blender" '
             .schema == "nexgenvideo/bpy-runtime-acceptance/2"

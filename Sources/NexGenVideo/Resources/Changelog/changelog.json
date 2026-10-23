@@ -19,7 +19,8 @@
           "items": [
             "Object context connects production sources with shots, generated media and timeline placements. Shared editing and postproduction controls remain available throughout production.",
             "Generation request review presents the exact model, source range, references and destination before submission. Late replacement results preserve clips changed during generation.",
-            "Export provides delivery settings, output checks and a queue linked to the current cut."
+            "Export provides delivery settings, output checks and a queue linked to the current cut.",
+            "Quitting and restarting wait for active work to close. Canceling quit keeps NexGenVideo open and cancels the pending restart."
           ]
         },
         {

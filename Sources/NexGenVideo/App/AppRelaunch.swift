@@ -1,6 +1,4 @@
 import AppKit
-import Darwin
-import Dispatch
 import Foundation
 
 struct AppRelaunchRequestState {
@@ -92,8 +90,9 @@ enum AppRelaunch {
         case executable
     }
 
-    enum RelaunchFailure: LocalizedError {
+    enum RelaunchFailure: LocalizedError, Equatable {
         case requestAlreadyPending
+        case terminationAlreadyPending
         case appBundleMissing
         case documentsStillEdited
         case reopenerUnavailable
@@ -103,6 +102,8 @@ enum AppRelaunch {
             switch self {
             case .requestAlreadyPending:
                 return "A restart is already waiting for confirmation."
+            case .terminationAlreadyPending:
+                return "NexGenVideo is already quitting."
             case .appBundleMissing:
                 return "The installed NexGenVideo app could not be found."
             case .documentsStillEdited:
@@ -119,8 +120,7 @@ enum AppRelaunch {
     private static var pendingOpenArguments: [String] = []
     private static var requestState = AppRelaunchRequestState()
     private static var reopenerTask: Process?
-
-    nonisolated static let gracefulExitTimeout: Duration = .seconds(3)
+    private static var preparedArguments: [String]?
 
     nonisolated static func reopenerArguments(
         parentPID: Int32,
@@ -172,6 +172,10 @@ enum AppRelaunch {
         reopenArguments: [String] = [],
         beforeRelaunch action: (() -> Void)? = nil
     ) {
+        guard preparedArguments == nil else {
+            presentFailure(RelaunchFailure.terminationAlreadyPending)
+            return
+        }
         guard requestState.begin() else {
             presentFailure(RelaunchFailure.requestAlreadyPending)
             return
@@ -225,7 +229,7 @@ enum AppRelaunch {
             presentFailure(RelaunchFailure.appBundleMissing)
             return
         }
-        let launchMode: LaunchMode = ProductionPackRecoveryAcceptance.isRequested
+        let launchMode: LaunchMode = ProductionPackRecoveryAcceptance.isRequested || AppTerminationSelfTest.isRequested
             ? .executable : AppRelaunchSelfTest.reopenLaunchMode
         let launchCommandAvailable = launchMode == .executable
             || FileManager.default.isExecutableFile(atPath: "/usr/bin/open")
@@ -236,9 +240,7 @@ enum AppRelaunch {
             return
         }
 
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/bin/sh")
-        task.arguments = reopenerArguments(
+        preparedArguments = reopenerArguments(
             parentPID: ProcessInfo.processInfo.processIdentifier,
             executablePath: Bundle.main.executableURL?.path
                 ?? ProcessInfo.processInfo.arguments[0],
@@ -246,44 +248,62 @@ enum AppRelaunch {
             openArguments: pendingOpenArguments,
             launchMode: launchMode
         )
+        guard AppTermination.request(onCancelled: { clearRequest() }) else {
+            clearRequest()
+            presentFailure(RelaunchFailure.terminationAlreadyPending)
+            return
+        }
+    }
+
+    static func applicationWillTerminate() {
+        guard let arguments = preparedArguments else { return }
+        let action = pendingAction
+        clearRequest()
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/sh")
+        task.arguments = arguments
         task.standardInput = FileHandle.nullDevice
         task.standardOutput = FileHandle.nullDevice
         task.standardError = FileHandle.nullDevice
         do {
+            action?()
+            guard UserDefaults.standard.synchronize() else {
+                throw RelaunchFailure.restartSettingsUnconfirmed
+            }
             try task.run()
+            AppTerminationSelfTest.record("reopener-started", childPID: task.processIdentifier)
             if ProductionPackRecoveryAcceptance.isRequested {
                 try ProductionPackRecoveryAcceptance.recordOwnedProcess(role: "reopener", pid: task.processIdentifier)
             }
             reopenerTask = task
-            pendingAction?()
-            guard UserDefaults.standard.synchronize() else {
-                throw RelaunchFailure.restartSettingsUnconfirmed
-            }
-            clearRequest()
-            forceExitIfTerminationStalls()
-            NSApp.terminate(nil)
         } catch {
             if task.isRunning {
                 task.terminate()
+                task.waitUntilExit()
             }
             reopenerTask = nil
             clearRequest()
             Log.app.error("relaunch preparation failed: \(error.localizedDescription)")
-            presentFailure(error)
+            AppTerminationSelfTest.record("reopener-failed")
+            guard !AppTerminationSelfTest.isRequested, !AppRelaunchSelfTest.isRequested,
+                  !ProductionPackRecoveryAcceptance.isRequested else { return }
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "NexGenVideo couldn't reopen automatically"
+            alert.informativeText = error.localizedDescription + "\nNexGenVideo will close. Open it again to continue."
+            if action != nil, (error as? RelaunchFailure) != .restartSettingsUnconfirmed {
+                alert.informativeText += " The approved change applies the next time it opens."
+            }
+            alert.addButton(withTitle: "Quit")
+            NSApp.activate(ignoringOtherApps: true)
+            alert.runModal()
         }
     }
 
     private static func clearRequest() {
         pendingAction = nil
         pendingOpenArguments = []
-    }
-
-    private static func forceExitIfTerminationStalls() {
-        DispatchQueue.global(qos: .userInitiated).asyncAfter(
-            deadline: .now() + gracefulExitTimeout.timeInterval
-        ) {
-            Darwin._exit(EXIT_SUCCESS)
-        }
+        preparedArguments = nil
     }
 
     private static func presentFailure(_ error: Error) {
@@ -292,14 +312,6 @@ enum AppRelaunch {
         alert.messageText = "NexGenVideo couldn't restart"
         alert.informativeText = error.localizedDescription
         alert.runModal()
-    }
-}
-
-private extension Duration {
-    var timeInterval: TimeInterval {
-        let parts = components
-        return TimeInterval(parts.seconds)
-            + TimeInterval(parts.attoseconds) / 1_000_000_000_000_000_000
     }
 }
 

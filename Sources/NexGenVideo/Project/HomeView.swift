@@ -592,7 +592,7 @@ final class HomeWindowController: NSWindowController, NSWindowDelegate {
     /// Closing the launch window ends the session — the app doesn't linger headless in the Dock.
     /// Opening a project HIDES this window with `orderOut` (not a close), so that path is unaffected.
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        NSApp.terminate(nil)
+        AppTermination.request()
         return false
     }
 }

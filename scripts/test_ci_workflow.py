@@ -1,9 +1,11 @@
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import textwrap
+import time
 import unittest
 from pathlib import Path
 
@@ -68,18 +70,33 @@ class CIWorkflowTests(unittest.TestCase):
         step = workflow.split("      - name: Prove pre-lease and post-exec host-crash cleanup\n", 1)[1]
         step = step.split("      - name:", 1)[0]
         run = textwrap.dedent(step.split("        run: |\n", 1)[1])
-        for orphan in (True, False):
-            with self.subTest(first_mode_orphan=orphan), tempfile.TemporaryDirectory() as directory:
+        for orphan, ordinary_failure in ((True, False), (False, False), (False, True)):
+            with self.subTest(first_mode_orphan=orphan, ordinary_failure=ordinary_failure), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 app = root / "relocated/NexGenVideo.app/Contents/MacOS/NexGenVideo"
                 app.parent.mkdir(parents=True)
                 app.write_text(textwrap.dedent("""\
-                    #!/bin/bash
-                    set -euo pipefail
-                    printf '%s\\n' "$NGV_SELFTEST_BPY_HOST_CRASH" >> "$FAKE_APP_CALLS"
-                    printf '%s\\n' "$NGV_SELFTEST_BPY_HOST_CRASH" > "$FAKE_MODE"
-                    exit 1
+                    #!/usr/bin/env python3
+                    import json, os, signal, uuid
+                    from pathlib import Path
+                    mode = os.environ["NGV_SELFTEST_BPY_HOST_CRASH"]
+                    with open(os.environ["FAKE_APP_CALLS"], "a") as calls:
+                        calls.write(mode + "\\n")
+                    Path(os.environ["FAKE_MODE"]).write_text(mode + "\\n")
+                    if os.environ["FAKE_ORDINARY_FAILURE"] == "1":
+                        raise SystemExit(1)
+                    proof = dict(schema=1, mode=mode, state="running", pid=os.getpid(),
+                                 sourceSHA=os.environ["EXPECTED_SOURCE"], jobID=str(uuid.uuid4()),
+                                 supervisorPID=100000000)
+                    if mode == "before-authorization":
+                        proof["authorizationID"] = str(uuid.uuid4())
+                    else:
+                        proof["workerPID"] = 100000001
+                    Path(os.environ["NGV_SELFTEST_BPY_HOST_CRASH_EVIDENCE"]).write_text(json.dumps(proof))
+                    os.kill(os.getpid(), signal.SIGKILL)
                     """))
+                (root / "scripts").mkdir()
+                shutil.copyfile(ROOT / "scripts/bpy_runtime_acceptance.py", root / "scripts/bpy_runtime_acceptance.py")
                 app.chmod(0o755)
                 binary = root / "bin"
                 binary.mkdir()
@@ -98,16 +115,20 @@ class CIWorkflowTests(unittest.TestCase):
                 sleep.chmod(0o755)
                 env = dict(os.environ, RUNNER_TEMP=str(root), PATH=str(binary) + os.pathsep + os.environ["PATH"],
                            FAKE_APP_CALLS=str(root / "calls"), FAKE_MODE=str(root / "mode"),
-                           FAKE_FIRST_ORPHAN="1" if orphan else "0")
+                           FAKE_FIRST_ORPHAN="1" if orphan else "0", EXPECTED_SOURCE="a" * 40,
+                           FAKE_ORDINARY_FAILURE="1" if ordinary_failure else "0",
+                           NGV_BPY_DIAGNOSTIC_DEADLINE=str(time.time() + 1200))
                 result = subprocess.run(
                     ["bash", "--noprofile", "--norc", "-c", run], cwd=root, env=env,
                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=10,
                 )
-                self.assertEqual(result.returncode, 1 if orphan else 0, result.stdout)
-                expected = ["before-authorization"] if orphan else ["before-authorization", "after-authorization"]
+                self.assertEqual(result.returncode, 1 if orphan or ordinary_failure else 0, result.stdout)
+                expected = ["before-authorization"] if orphan or ordinary_failure else ["before-authorization", "after-authorization"]
                 self.assertEqual((root / "calls").read_text().splitlines(), expected)
                 if orphan:
                     self.assertIn("orphan bpy process after before-authorization", result.stdout)
+                if ordinary_failure:
+                    self.assertIn("host probe failed before its crash was armed", result.stdout)
 
     def test_merge_gate_requires_every_selected_job(self):
         text = CI.read_text().split("  merge_gate:\n", 1)[1]

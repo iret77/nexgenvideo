@@ -95,7 +95,20 @@ enum AppRelaunchSelfTest {
     static func recordBootIfRequested() {
         guard let config = startConfiguration else { return }
         Darwin.signal(SIGABRT, SIG_DFL)
+        guard atexit({
+            MainActor.assumeIsolated {
+                guard let config = AppRelaunchSelfTest.startConfiguration else { return }
+                do {
+                    try Data(String(getpid()).utf8).write(to: config.stateURL.appendingPathExtension("normal-exit"), options: .atomic)
+                } catch { Darwin._exit(1) }
+            }
+        }) == 0 else { fail("could not record normal process exit", stateURL: config.stateURL) }
         write("booted \(ProcessInfo.processInfo.processIdentifier)", to: config.stateURL)
+    }
+
+    static func applicationWillTerminate() {
+        guard let config = startConfiguration else { return }
+        write(String(getpid()), to: config.stateURL.appendingPathExtension("confirmed-termination"))
     }
 
     static func checkpoint(_ name: String) {
@@ -192,9 +205,14 @@ enum AppRelaunchSelfTest {
 
     private static func complete(_ config: CompletionConfiguration) async {
         validateBundle(config.expectedBundle, stateURL: config.stateURL)
-        guard (try? String(contentsOf: config.stateURL, encoding: .utf8))?.hasPrefix("pressing ")
-                == true else {
+        guard let previous = try? String(contentsOf: config.stateURL, encoding: .utf8),
+              previous.hasPrefix("pressing ") else {
             fail("the new process opened before the production button was pressed", stateURL: config.stateURL)
+        }
+        let previousPID = String(previous.dropFirst("pressing ".count))
+        guard (try? String(contentsOf: config.stateURL.appendingPathExtension("confirmed-termination"), encoding: .utf8)) == previousPID,
+              (try? String(contentsOf: config.stateURL.appendingPathExtension("normal-exit"), encoding: .utf8)) == previousPID else {
+            fail("the previous process did not finish cleanup and exit normally", stateURL: config.stateURL)
         }
 
         let ready = await waitUntil(timeout: .seconds(30)) {

@@ -118,7 +118,7 @@ enum BpyRuntimeSelfTest {
                 )
                 outputDirectory = output
                 pendingResult = try await run(output: output)
-                NSApp.terminate(nil)
+                AppTermination.request()
             } catch {
                 let message = "SELFTEST_BPY_FAIL \(error.localizedDescription)\n"
                 FileHandle.standardError.write(Data(message.utf8))
@@ -223,17 +223,36 @@ enum BpyRuntimeSelfTest {
                 if mode == "before-authorization",
                    response.activeProcessAuthorizationID != nil,
                    response.activeWorkerProcessIdentifier == nil {
+                    try recordHostCrashProof(mode: mode, jobID: jobID, response: response)
                     _ = Darwin.kill(getpid(), SIGKILL)
                 }
                 if mode == "after-authorization",
                    response.activeProcessAuthorizationID == nil,
                    response.activeWorkerProcessIdentifier.map({ $0 > 1 }) == true {
+                    try recordHostCrashProof(mode: mode, jobID: jobID, response: response)
                     _ = Darwin.kill(getpid(), SIGKILL)
                 }
             }
             Thread.sleep(forTimeInterval: 0.01)
         }
         throw BpyRuntimeError.timedOut
+    }
+
+    private static func recordHostCrashProof(mode: String, jobID: UUID, response: BpyServiceResponse) throws {
+        guard response.jobID == jobID else {
+            throw BpyRuntimeError.invalidOutput("The crash probe returned a different job identity.")
+        }
+        guard let path = ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY_HOST_CRASH_EVIDENCE"] else {
+            throw BpyRuntimeError.invalidOutput("The crash probe has no evidence destination.")
+        }
+        var proof: [String: Any] = ["schema": 1, "mode": mode, "pid": getpid(), "jobID": jobID.uuidString,
+            "state": response.state?.rawValue ?? "missing",
+            "sourceSHA": Bundle.main.object(forInfoDictionaryKey: "NGVSourceCommit") as? String ?? ""]
+        proof["supervisorPID"] = response.activeProcessIdentifier
+        proof["workerPID"] = response.activeWorkerProcessIdentifier
+        proof["authorizationID"] = response.activeProcessAuthorizationID?.uuidString
+        try JSONSerialization.data(withJSONObject: proof, options: [.sortedKeys])
+            .write(to: URL(fileURLWithPath: path), options: .atomic)
     }
 
     static func applicationWillTerminate() {

@@ -451,6 +451,9 @@ jobs:
             | grep -qx 'SELFTEST_GENERATION_BATCH_RECOVERY_OK'
       - name: Verify helper recovery during active work
         run: python3 scripts/hang_diagnostic_acceptance.py candidate/NexGenVideo.app --helper-recovery-only --output evidence
+      - name: Verify asynchronous termination, cancellation and restart
+        if: ${{ !cancelled() }}
+        run: python3 scripts/app_termination_acceptance.py candidate/NexGenVideo.app --output evidence/termination
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -460,6 +463,7 @@ jobs:
             evidence/*.log
             evidence/*.png
             evidence/helper-recovery-recordings.zip
+            evidence/termination/
 
   bpy-runtime:
     needs: [source_gate, build_test]

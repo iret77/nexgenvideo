@@ -57,7 +57,7 @@ enum HangDiagnosticSelfTest {
                             try await HangDiagnosticRecorder.shared.exportCurrentForSelfTest(to: URL(fileURLWithPath: output))
                         } catch { exit(70) }
                     }
-                    NSApp.terminate(nil)
+                    AppTermination.request()
                 }
             }
         }
