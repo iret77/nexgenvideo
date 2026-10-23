@@ -2,6 +2,13 @@ import BpyRuntimeProtocol
 import CryptoKit
 import Darwin
 import Foundation
+import os
+
+private let openDiagnostics = Logger(subsystem: "de.h5ventures.nexgenvideo.bpy-service", category: "open-diagnostic")
+
+private enum OpenStage: String {
+    case decode, contract, claim, preparation, bookmark, check, validateMount, reserve
+}
 
 @_silgen_name("proc_listchildpids")
 private func procListChildPIDs(
@@ -2813,15 +2820,19 @@ private final class BpyRuntimeService: NSObject, @unchecked Sendable {
 
     func openSession(_ data: Data, owner: UUID, withReply reply: @escaping (Data) -> Void) {
         var requestedID: UUID?
+        var stage = OpenStage.decode
         do {
             let request = try JSONDecoder().decode(BpyOpenSessionRequest.self, from: data)
+            requestedID = request.sessionID
+            stage = .contract
             guard request.limits.isValid, !request.documentID.isEmpty,
                   request.documentID.count <= 256,
                   request.confirmedRevision.map(isSafeName) ?? true else {
+                openDiagnostics.notice("open.fail session=\(request.sessionID.uuidString, privacy: .public) owner=\(owner.uuidString, privacy: .public) stage=contract")
                 reply(failure("invalid session contract"))
                 return
             }
-            requestedID = request.sessionID
+            stage = .claim
             let claimed = lock.access { () -> Bool in
                 guard !closedConnections.contains(owner), retiringSessions[request.sessionID] == nil,
                       connectionOwners[request.sessionID] == nil || connectionOwners[request.sessionID] == owner else { return false }
@@ -2830,25 +2841,34 @@ private final class BpyRuntimeService: NSObject, @unchecked Sendable {
             }
             guard claimed else { throw CocoaError(.fileWriteNoPermission) }
             guard let storage = request.storage else {
+                stage = .preparation
                 guard let identity = processUsage(getpid()) else { throw CocoaError(.executableLoad) }
                 let inUse = lock.access {
                     (Array(sessions.values) + Array(retiringSessions.values)).compactMap { $0.request.storage?.id }
                 }
+                openDiagnostics.notice("open.prepared session=\(request.sessionID.uuidString, privacy: .public) owner=\(owner.uuidString, privacy: .public) pid=\(getpid(), privacy: .public) start=\(identity.startAbsoluteTime, privacy: .public)")
                 reply(encoded(.init(ok: true, storagePreparation: .init(
                     id: request.sessionID, servicePID: getpid(),
                     serviceStart: identity.startAbsoluteTime, inUseStorageIDs: inUse
                 ))))
                 return
             }
+            stage = .bookmark
             var stale = false
             let scope = try URL(resolvingBookmarkData: storage.bookmark, options: .withoutUI,
                                 relativeTo: nil, bookmarkDataIsStale: &stale)
             var ownsScope = true
             defer { if ownsScope { scope.stopAccessingSecurityScopedResource() } }
-            guard !stale, scope.path == storage.mountPath else { throw CocoaError(.fileReadNoPermission) }
+            stage = .check
+            let pathMatches = scope.path == storage.mountPath
+            let serviceStart = processUsage(getpid())?.startAbsoluteTime ?? 0
+            openDiagnostics.notice("open.check session=\(request.sessionID.uuidString, privacy: .public) owner=\(owner.uuidString, privacy: .public) pid=\(getpid(), privacy: .public) start=\(serviceStart, privacy: .public) stale=\(stale, privacy: .public) pathMatches=\(pathMatches, privacy: .public)")
+            guard !stale, pathMatches else { throw CocoaError(.fileReadNoPermission) }
+            stage = .validateMount
             var descriptor: Int32? = try BpyStoragePaths.validateMount(storage, maximumBytes: request.limits.physicalStorageBytes)
             defer { if let descriptor { Darwin.close(descriptor) } }
             var retired: ServiceSession?
+            stage = .reserve
             let session: ServiceSession = try lock.access {
                 guard !closedConnections.contains(owner), connectionOwners[request.sessionID] == owner,
                       retiringSessions.isEmpty else { throw CocoaError(.fileWriteNoPermission) }
@@ -2882,7 +2902,9 @@ private final class BpyRuntimeService: NSObject, @unchecked Sendable {
             }
             if let retired { finishClosing(retired) }
             session.open { [weak self, weak session] response in
-                if (try? JSONDecoder().decode(BpyServiceResponse.self, from: response).ok) != true,
+                let opened = (try? JSONDecoder().decode(BpyServiceResponse.self, from: response).ok) == true
+                openDiagnostics.notice("open.result session=\(request.sessionID.uuidString, privacy: .public) owner=\(owner.uuidString, privacy: .public) ok=\(opened, privacy: .public)")
+                if !opened,
                    let self, let session {
                     let removed = self.lock.access { () -> ServiceSession? in
                         guard self.sessions[request.sessionID] === session else { return nil }
@@ -2894,6 +2916,9 @@ private final class BpyRuntimeService: NSObject, @unchecked Sendable {
                 reply(response)
             }
         } catch {
+            let diagnostic = error as NSError
+            let serviceStart = processUsage(getpid())?.startAbsoluteTime ?? 0
+            openDiagnostics.notice("open.fail session=\(requestedID?.uuidString ?? "none", privacy: .public) owner=\(owner.uuidString, privacy: .public) pid=\(getpid(), privacy: .public) start=\(serviceStart, privacy: .public) stage=\(stage.rawValue, privacy: .public) domain=\(diagnostic.domain, privacy: .public) code=\(diagnostic.code, privacy: .public)")
             lock.access {
                 if let id = requestedID, connectionOwners[id] == owner, sessions[id] == nil, retiringSessions[id] == nil {
                     connectionOwners.removeValue(forKey: id)

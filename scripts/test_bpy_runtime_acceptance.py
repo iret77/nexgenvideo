@@ -11,7 +11,131 @@ import unittest
 from unittest import mock
 import uuid
 
-from bpy_runtime_acceptance import collect_hangs, diagnostic_error, supervise, verify_crash
+from bpy_runtime_acceptance import capture_open_logs, collect_hangs, diagnostic_error, stop_open_capture, supervise, verify_crash
+
+
+class OpenCaptureTests(unittest.TestCase):
+    def test_isolated_runtime_entrypoint_keeps_working_without_local_imports(self):
+        script = Path(__file__).with_name("bpy_runtime_acceptance.py")
+        result = subprocess.run([sys.executable, "-I", str(script), "--help"],
+                                stdin=subprocess.DEVNULL, capture_output=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+
+    def test_probe_failure_is_preserved_and_capture_is_reaped(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            process = mock.Mock(pid=123, returncode=-signal.SIGTERM)
+            process.poll.side_effect = [None, None, None, -signal.SIGTERM]
+            with mock.patch("bpy_runtime_acceptance.subprocess.Popen", return_value=process), \
+                 mock.patch("bpy_runtime_acceptance.time.sleep"), \
+                 mock.patch("bpy_runtime_acceptance.stop_open_capture") as stop:
+                with self.assertRaisesRegex(AssertionError, "original probe failure"):
+                    with capture_open_logs(output):
+                        raise AssertionError("original probe failure")
+            stop.assert_called_once_with(process)
+            receipt = json.loads((output / "open-capture.json").read_text())
+            self.assertTrue(receipt["reaped"])
+            self.assertFalse(receipt["stoppedEarly"])
+
+    def test_early_capture_exit_does_not_pass_as_complete(self):
+        for during_probe in (False, True):
+            with self.subTest(during_probe=during_probe), tempfile.TemporaryDirectory() as temporary:
+                process = mock.Mock(pid=123, returncode=1)
+                process.poll.side_effect = [None if during_probe else 1, None if during_probe else 1, 1, 1]
+                with mock.patch("bpy_runtime_acceptance.subprocess.Popen", return_value=process), \
+                     mock.patch("bpy_runtime_acceptance.time.sleep"), \
+                     mock.patch("bpy_runtime_acceptance.stop_open_capture"):
+                    with self.assertRaisesRegex(AssertionError, "stream"):
+                        with capture_open_logs(Path(temporary)):
+                            self.assertTrue(during_probe)
+                receipt = json.loads((Path(temporary) / "open-capture.json").read_text())
+                self.assertTrue(receipt["stoppedEarly"])
+
+    def test_cleanup_escalates_only_the_owned_process_group(self):
+        process = mock.Mock(pid=123)
+        process.poll.return_value = None
+        process.wait.side_effect = [subprocess.TimeoutExpired("owned log", 5), -signal.SIGKILL]
+        with mock.patch("bpy_runtime_acceptance.subprocess.run") as signal_process:
+            stop_open_capture(process)
+        self.assertEqual([call.args[0] for call in signal_process.call_args_list], [
+            ["/usr/bin/sudo", "-n", "/bin/kill", "-TERM", "--", "-123"],
+            ["/usr/bin/sudo", "-n", "/bin/kill", "-KILL", "--", "-123"],
+        ])
+        self.assertEqual(process.wait.call_count, 2)
+
+    def test_cancellation_during_cleanup_is_recorded_after_reaping(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            process = mock.Mock(pid=123, returncode=-signal.SIGTERM)
+            process.poll.side_effect = [None, None, None, -signal.SIGTERM]
+            original_handler = signal.getsignal(signal.SIGTERM)
+
+            def stop(_process):
+                signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
+
+            with mock.patch("bpy_runtime_acceptance.subprocess.Popen", return_value=process), \
+                 mock.patch("bpy_runtime_acceptance.time.sleep"), \
+                 mock.patch("bpy_runtime_acceptance.stop_open_capture", side_effect=stop):
+                with self.assertRaisesRegex(InterruptedError, "cleanup"):
+                    with capture_open_logs(Path(temporary)):
+                        pass
+            self.assertEqual(signal.getsignal(signal.SIGTERM), original_handler)
+            receipt = json.loads((Path(temporary) / "open-capture.json").read_text())
+            self.assertEqual(receipt["cancelled"], [signal.SIGTERM])
+            self.assertTrue(receipt["reaped"])
+
+    def test_cleanup_failure_keeps_the_original_error_and_records_both_states(self):
+        for body_fails in (False, True):
+            with self.subTest(body_fails=body_fails), tempfile.TemporaryDirectory() as temporary:
+                process = mock.Mock(pid=123, returncode=None)
+                process.poll.return_value = None
+                with mock.patch("bpy_runtime_acceptance.subprocess.Popen", return_value=process), \
+                     mock.patch("bpy_runtime_acceptance.time.sleep"), \
+                     mock.patch("bpy_runtime_acceptance.stop_open_capture", side_effect=RuntimeError("capture stuck")):
+                    with self.assertRaisesRegex(AssertionError, "original failure" if body_fails else "cleanup failed"):
+                        with capture_open_logs(Path(temporary)):
+                            if body_fails:
+                                raise AssertionError("original failure")
+                receipt = json.loads((Path(temporary) / "open-capture.json").read_text())
+                self.assertFalse(receipt["reaped"])
+                self.assertIn("capture stuck", receipt["cleanupErrors"][0])
+
+    def test_receipt_write_failure_does_not_replace_the_probe_failure(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            process = mock.Mock(pid=123, returncode=0)
+            process.poll.side_effect = [None, None, None, 0]
+            with mock.patch("bpy_runtime_acceptance.subprocess.Popen", return_value=process), \
+                 mock.patch("bpy_runtime_acceptance.time.sleep"), \
+                 mock.patch("bpy_runtime_acceptance.stop_open_capture"), \
+                 mock.patch("bpy_runtime_acceptance.Path.write_text", side_effect=OSError("disk failure")):
+                with self.assertRaisesRegex(AssertionError, "original failure"):
+                    with capture_open_logs(Path(temporary)):
+                        raise AssertionError("original failure")
+
+    def test_exit_race_and_signal_timeout_still_wait_and_escalate(self):
+        for signal_timeout in (False, True):
+            with self.subTest(signal_timeout=signal_timeout):
+                process = mock.Mock(pid=123)
+                process.poll.return_value = None
+                process.wait.side_effect = ([subprocess.TimeoutExpired("owned log", 5), 0]
+                                            if signal_timeout else [0])
+                with mock.patch("bpy_runtime_acceptance.subprocess.run") as kill:
+                    kill.side_effect = ([subprocess.TimeoutExpired("signal", 5), mock.Mock(returncode=1)]
+                                        if signal_timeout else [mock.Mock(returncode=1)])
+                    stop_open_capture(process)
+                self.assertEqual(process.wait.call_count, 2 if signal_timeout else 1)
+                self.assertTrue(all(call.kwargs["check"] is False for call in kill.call_args_list))
+
+    def test_final_log_delivery_is_drained_before_capture_is_stopped(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            process = mock.Mock(pid=123, returncode=-signal.SIGTERM)
+            process.poll.side_effect = [None, None, None, -signal.SIGTERM]
+            events = []
+            with mock.patch("bpy_runtime_acceptance.subprocess.Popen", return_value=process), \
+                 mock.patch("bpy_runtime_acceptance.time.sleep", side_effect=lambda delay: events.append(delay)), \
+                 mock.patch("bpy_runtime_acceptance.stop_open_capture", side_effect=lambda _: events.append("stop")):
+                with capture_open_logs(Path(temporary)):
+                    events.append("probe")
+            self.assertEqual(events, [0.5, "probe", 2, "stop"])
 
 
 class HostCrashProofTests(unittest.TestCase):

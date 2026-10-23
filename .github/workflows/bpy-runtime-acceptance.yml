@@ -141,8 +141,13 @@ jobs:
           for mode in before-authorization after-authorization; do
             status=0
             python3 scripts/bpy_runtime_acceptance.py "$APP" --mode "$mode" \
+              --capture-open-logs \
               --source-sha "$EXPECTED_SOURCE" --deadline "$NGV_BPY_DIAGNOSTIC_DEADLINE" \
               --output "$RUNNER_TEMP/evidence/host-crash-$mode" || status=$?
+            if pgrep -fl '/usr/bin/log stream.*open-diagnostic'; then
+              echo "orphan open diagnostic capture after $mode" >&2
+              exit 1
+            fi
             for _ in $(seq 1 200); do
               if ! pgrep -f "$APP/Contents/Helpers/NexGenVideoBpySupervisor|$APP/Contents/Resources/BpyRuntime/python" >/dev/null; then
                 break

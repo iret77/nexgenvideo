@@ -5,6 +5,7 @@ import Darwin
 import Foundation
 
 private let bpyHostResultRetentionSeconds: TimeInterval = 15 * 60
+private let bpyOpenDiagnostics = CategoryLog("bpy-open")
 
 @_silgen_name("proc_pid_rusage")
 private func procPIDRusage(
@@ -964,16 +965,26 @@ final class BpyRuntimeSession: @unchecked Sendable {
         let shouldRotate = transportInvalidated
         lock.unlock()
         if shouldRotate { rotateTransport() }
+        let firstSession = currentSessionID()
         do {
             return try openCurrentTransport(restoreProbe: restoreProbe)
         } catch {
             lock.lock()
             let unfinishedStorage = storagePreparation != nil && storageVolume == nil
             lock.unlock()
+            let firstError = error as NSError
+            bpyOpenDiagnostics.notice("open.first.fail session=\(firstSession.uuidString) unfinishedStorage=\(unfinishedStorage) domain=\(firstError.domain) code=\(firstError.code)")
             guard !unfinishedStorage else { throw error }
             markTransportInvalid(currentSessionID())
             rotateTransport()
-            return try openCurrentTransport(restoreProbe: restoreProbe)
+            let retrySession = currentSessionID()
+            do {
+                return try openCurrentTransport(restoreProbe: restoreProbe)
+            } catch {
+                let retryError = error as NSError
+                bpyOpenDiagnostics.notice("open.retry.fail session=\(retrySession.uuidString) firstSession=\(firstSession.uuidString) domain=\(retryError.domain) code=\(retryError.code)")
+                throw error
+            }
         }
     }
 
@@ -1008,6 +1019,7 @@ final class BpyRuntimeSession: @unchecked Sendable {
                   processStartAbsoluteTime(preparation.servicePID) == preparation.serviceStart else {
                 throw BpyRuntimeError.invalidOutput("The 3D service changed its storage lease.")
             }
+            bpyOpenDiagnostics.notice("open.preparation session=\(identifier.uuidString) servicePID=\(preparation.servicePID) serviceStart=\(preparation.serviceStart)")
             lock.lock()
             storagePreparation = preparation
             lock.unlock()

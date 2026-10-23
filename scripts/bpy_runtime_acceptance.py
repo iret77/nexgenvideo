@@ -1,5 +1,6 @@
 """Keep owned-process diagnostics and require an actual armed host-crash probe."""
 import argparse
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -8,6 +9,75 @@ import signal
 import subprocess
 import time
 import uuid
+
+
+def stop_open_capture(process):
+    signal_errors = []
+    for name in ("TERM", "KILL"):
+        if process.poll() is not None:
+            return
+        try:
+            subprocess.run(["/usr/bin/sudo", "-n", "/bin/kill", "-" + name, "--", "-" + str(process.pid)],
+                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           timeout=5, check=False)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            signal_errors.append(repr(error))
+        try:
+            process.wait(timeout=5)
+            return
+        except subprocess.TimeoutExpired:
+            continue
+    raise RuntimeError("owned open diagnostic stream did not exit: " + "; ".join(signal_errors))
+
+
+@contextmanager
+def capture_open_logs(output):
+    output.mkdir(parents=True, exist_ok=True)
+    predicate = '(subsystem == "de.h5ventures.nexgenvideo.bpy-service" AND category == "open-diagnostic") OR (subsystem == "de.h5ventures.nexgenvideo" AND category == "bpy-open")'
+    process = None
+    cancelled = []
+    cleanup_errors = []
+    with (output / "open-events.ndjson").open("wb") as stream, \
+         (output / "open-stream-stderr.log").open("wb") as stream_errors:
+        try:
+            process = subprocess.Popen(["/usr/bin/sudo", "-n", "/usr/bin/log", "stream", "--level", "info",
+                                        "--style", "ndjson", "--predicate", predicate],
+                                       stdin=subprocess.DEVNULL, stdout=stream, stderr=stream_errors,
+                                       start_new_session=True)
+            time.sleep(0.5)
+            require(process.poll() is None, "open diagnostic stream failed before app launch")
+            yield
+        finally:
+            handlers = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
+            for sig in handlers:
+                signal.signal(sig, lambda number, _frame: cancelled.append(number))
+            try:
+                if process is not None and process.poll() is None:
+                    time.sleep(2)
+                stopped_early = process is not None and process.poll() is not None
+                if process is not None:
+                    try:
+                        stop_open_capture(process)
+                    except Exception as error:
+                        cleanup_errors.append(repr(error))
+                receipt = dict(
+                    stoppedEarly=stopped_early, cancelled=cancelled,
+                    returncode=process.returncode if process is not None else None,
+                    reaped=process is not None and process.poll() is not None,
+                    cleanupErrors=cleanup_errors,
+                )
+                try:
+                    (output / "open-capture.json").write_text(json.dumps(receipt) + "\n")
+                except OSError as error:
+                    cleanup_errors.append(repr(error))
+                    diagnostic_error(output, "open-capture-write", error)
+            finally:
+                for sig, handler in handlers.items():
+                    signal.signal(sig, handler)
+            if cancelled:
+                raise InterruptedError("CI interrupted open diagnostic cleanup")
+    require(not cleanup_errors, "open diagnostic cleanup failed: " + "; ".join(cleanup_errors))
+    require(not stopped_early, "open diagnostic stream stopped during app execution")
 
 
 def require(condition, message):
@@ -141,6 +211,7 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--deadline", type=float, required=True)
+    parser.add_argument("--capture-open-logs", action="store_true")
     args = parser.parse_args()
     require(re.fullmatch(r"[0-9a-f]{40}", args.source_sha), "invalid app source")
     binary = args.app.resolve() / "Contents/MacOS/NexGenVideo"
@@ -149,7 +220,12 @@ def main():
         signal.signal(sig, lambda number, _frame: (_ for _ in ()).throw(InterruptedError("CI interrupted the owned process: " + str(number))))
     remaining = args.deadline - time.time()
     require(remaining > 0, "job diagnostic deadline reached before app launch")
-    supervise(binary, args.output.resolve(), args.mode, args.source_sha, min(remaining, 1800 if args.mode == "runtime" else 300))
+    timeout = min(remaining, 1800 if args.mode == "runtime" else 300)
+    if args.capture_open_logs:
+        with capture_open_logs(args.output.resolve()):
+            supervise(binary, args.output.resolve(), args.mode, args.source_sha, timeout)
+    else:
+        supervise(binary, args.output.resolve(), args.mode, args.source_sha, timeout)
 
 
 if __name__ == "__main__":
