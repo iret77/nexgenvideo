@@ -11,17 +11,30 @@ import uuid
 
 
 def diagnostic_key(key):
-    return (key.startswith((b"MTL_", b"Malloc", b"OBJC_DEBUG_", b"NSZombie"))
+    return (key.startswith((b"MTL_", b"Malloc", b"OBJC_DEBUG_", b"NSZombie", b"DYLD_PRINT_"))
             or key in {b"NSDeallocateZombies", b"METAL_DEVICE_WRAPPER_TYPE", b"DYLD_INSERT_LIBRARIES"})
 
 
-def zombie_environment(environment):
+def profile_switch(profile):
+    if profile == "zombies":
+        return "NSZombieEnabled", "YES"
+    if profile == "glow-reproduction":
+        return "DYLD_PRINT_LIBRARIES", "1"
+    raise ValueError("Unknown owned App diagnostic profile")
+
+
+def diagnostic_environment(environment, profile):
     if any(diagnostic_key(key.encode()) for key in environment):
         raise ValueError("Another memory or Metal diagnostic is already configured")
-    return dict(environment, NSZombieEnabled="YES")
+    key, value = profile_switch(profile)
+    return dict(environment, **{key: value})
 
 
-def selected_environment(data, command):
+def zombie_environment(environment):
+    return diagnostic_environment(environment, "zombies")
+
+
+def selected_environment(data, command, profile="zombies"):
     if len(data) < 5:
         raise ValueError("Incomplete process argument header")
     argc = struct.unpack_from("=i", data)[0]
@@ -50,9 +63,10 @@ def selected_environment(data, command):
         key, separator, value = entry.partition(b"=")
         if separator and diagnostic_key(key):
             selected.append((key, value))
-    if selected != [(b"NSZombieEnabled", b"YES")]:
-        raise ValueError("Actual process does not have the sole requested zombie diagnostic")
-    return {"NSZombieEnabled": "YES", "otherDiagnosticVariablesPresent": False}
+    key, value = profile_switch(profile)
+    if selected != [(key.encode(), value.encode())]:
+        raise ValueError("Actual process does not have the sole requested diagnostic")
+    return {key: value, "otherDiagnosticVariablesPresent": False}
 
 
 class RUsageV4(ctypes.Structure):
@@ -106,7 +120,9 @@ class NativeReader:
 
 
 class ZombieCapture:
-    def __init__(self, pid, command, identity, folder, source_sha, reader=None):
+    def __init__(self, pid, command, identity, folder, source_sha, reader=None, profile="zombies"):
+        profile_switch(profile)
+        self.profile = profile
         if identity.get("hostExecutable") != command[0]:
             raise ValueError("Observed host and launched executable differ")
         self.pid = pid
@@ -116,7 +132,7 @@ class ZombieCapture:
         self.reader = reader
         self.stop = threading.Event()
         self.thread = None
-        self.receipt = {"schema": 1, "profile": "zombies", "status": "unavailable", "pid": pid,
+        self.receipt = {"schema": 1, "profile": profile, "status": "unavailable", "pid": pid,
                         "parentPID": os.getpid(), "sourceSHA": source_sha,
                         "harnessSourceSHA": source_sha, "productSourceSHA": identity.get("productSourceSHA"),
                         "hostUUID": self.identity["hostUUID"], "hostSHA256": identity["hostSHA256"],
@@ -126,7 +142,7 @@ class ZombieCapture:
                         "maximumObservedResidentBytes": 0}
 
     def write(self):
-        path = self.folder / "zombie-diagnostic.json"
+        path = self.folder / ("zombie-diagnostic.json" if self.profile == "zombies" else "glow-diagnostic.json")
         temporary = path.with_suffix(".pending")
         temporary.write_text(json.dumps(self.receipt, indent=2) + "\n")
         temporary.replace(path)
@@ -151,7 +167,7 @@ class ZombieCapture:
         try:
             self.reader = self.reader or NativeReader()
             self.sample()
-            self.receipt["environment"] = selected_environment(self.reader.arguments(self.pid), self.command)
+            self.receipt["environment"] = selected_environment(self.reader.arguments(self.pid), self.command, self.profile)
             self.sample()
             self.receipt["status"] = "verified"
             self.write()

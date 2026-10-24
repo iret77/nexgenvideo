@@ -39,6 +39,21 @@ Test Suite 'All tests' passed at 2026-10-20 20:07:18.844.
 
 
 class SwiftTestFailurePropagationTests(unittest.TestCase):
+    def test_retained_glow_capture_cannot_expand_or_change_the_selected_profile(self):
+        command = ["python3", str(Path(diagnostic.__file__).with_name("run_macos_tests.py")),
+                   "--scope", "app-swift-testing", "--app-diagnostic", "glow-reproduction",
+                   "--filter", "GlowKernelTests", "--bin-root", "/fixture/Debug",
+                   "--product-source-sha", "a" * 40]
+        diagnostic.validate_framework_selection(1, 0, True, True, command)
+        variants = [command + ["--filter", "GlowKernelTests"], command + ["--bin-root", "/other"],
+                    command[:7] + ["OtherTests"] + command[8:],
+                    command[:9] + ["relative/Debug"] + command[10:],
+                    command[:5] + ["zombies"] + command[6:],
+                    command + ["--bin-root=/other"], command[:6] + command[8:]]
+        for variant in variants:
+            with self.subTest(command=variant), self.assertRaises(ValueError):
+                diagnostic.validate_framework_selection(1, 0, True, True, variant)
+
     def test_app_only_selection_is_explicit_and_cannot_reduce_normal_ci_requirements(self):
         command = ["python3", str(Path(diagnostic.__file__).with_name("run_macos_tests.py")),
                    "--scope", "app-swift-testing", "--app-diagnostic", "zombies", "--evidence", "/fixture/evidence",

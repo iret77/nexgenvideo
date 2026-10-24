@@ -582,11 +582,26 @@ def validate_framework_selection(swift_runs, xctest_runs, app_only, without_prob
     driver = Path(__file__).resolve().with_name("run_macos_tests.py")
     if (swift_runs != 1 or xctest_runs != 0 or not without_probe or len(command) < 4
             or Path(command[1]).resolve() != driver
-            or any(value == "--filter" or value.startswith(("--filter=", "--scope=", "--app-diagnostic=", "--product-source-sha=")) for value in command)):
-        raise ValueError("App-only capture requires the complete owned zombie diagnostic")
-    for flag, value in (("--scope", "app-swift-testing"), ("--app-diagnostic", "zombies")):
+            or any(value.startswith(("--filter=", "--scope=", "--app-diagnostic=", "--product-source-sha=", "--bin-root=")) for value in command)):
+        raise ValueError("App-only capture requires an explicit owned diagnostic")
+
+    def argument(flag):
+        if command.count(flag) != 1 or command.index(flag) + 1 >= len(command):
+            raise ValueError("Missing or duplicated App diagnostic argument")
+        return command[command.index(flag) + 1]
+
+    profile = argument("--app-diagnostic")
+    if profile == "zombies":
+        if "--filter" in command or "--bin-root" in command:
+            raise ValueError("Zombie capture requires the complete original App backend")
+    elif profile == "glow-reproduction":
+        if argument("--filter") != "GlowKernelTests" or not Path(argument("--bin-root")).is_absolute():
+            raise ValueError("Glow capture requires the retained products and exact Glow selection")
+    else:
+        raise ValueError("Unknown App-only diagnostic profile")
+    for flag, value in (("--scope", "app-swift-testing"),):
         if command.count(flag) != 1 or command.index(flag) + 1 >= len(command) or command[command.index(flag) + 1] != value:
-            raise ValueError("App-only capture requires the complete owned zombie diagnostic")
+            raise ValueError("App-only capture requires its owned backend")
     flag = "--product-source-sha"
     if (command.count(flag) != 1 or command.index(flag) + 1 >= len(command)
             or not re.fullmatch(r"[a-f0-9]{40}", command[command.index(flag) + 1])):
@@ -594,7 +609,7 @@ def validate_framework_selection(swift_runs, xctest_runs, app_only, without_prob
 
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(allow_abbrev=False)
     parser.add_argument("--evidence", required=True, type=Path)
     parser.add_argument("--log", required=True, type=Path)
     parser.add_argument("--swift-testing-runs", required=True, type=int)

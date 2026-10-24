@@ -6,7 +6,7 @@ on:
       candidate_kind:
         description: Signed release verification or targeted failed CI diagnostics
         type: choice
-        options: [signed-release, ci-runtime, ci-bpy-open-diagnostic, ci-app-test-diagnostic]
+        options: [signed-release, ci-runtime, ci-bpy-open-diagnostic, ci-app-test-diagnostic, ci-app-glow-replay]
         default: signed-release
       run_id:
         description: "Original producer workflow run"
@@ -25,6 +25,27 @@ on:
         type: string
         required: true
 
+      product_source_sha:
+        description: Unchanged original product commit for retained replay
+        type: string
+        default: ""
+      products_artifact_id:
+        description: Original compiled products artifact ID for retained replay
+        type: string
+        default: ""
+      products_artifact_sha256:
+        description: Original compiled products archive SHA256 for retained replay
+        type: string
+        default: ""
+      failure_artifact_id:
+        description: Original failed test diagnostic artifact ID for retained replay
+        type: string
+        default: ""
+      failure_artifact_sha256:
+        description: Original failed test diagnostic SHA256 for retained replay
+        type: string
+        default: ""
+
 permissions:
   contents: read
   actions: read
@@ -38,6 +59,16 @@ env:
   CANDIDATE_SOURCE: ${{ inputs.source_sha }}
   CANDIDATE_ARTIFACT: ${{ inputs.artifact_id }}
   CANDIDATE_DIGEST: ${{ inputs.artifact_sha256 }}
+
+  PRODUCER_RUN: ${{ inputs.run_id }}
+  PRODUCER_SHA: ${{ inputs.source_sha }}
+  PRODUCT_SHA: ${{ inputs.product_source_sha }}
+  DIAGNOSTIC_ID: ${{ inputs.artifact_id }}
+  DIAGNOSTIC_DIGEST: ${{ inputs.artifact_sha256 }}
+  PRODUCTS_ID: ${{ inputs.products_artifact_id }}
+  PRODUCTS_DIGEST: ${{ inputs.products_artifact_sha256 }}
+  FAILURE_ID: ${{ inputs.failure_artifact_id }}
+  FAILURE_DIGEST: ${{ inputs.failure_artifact_sha256 }}
 
 jobs:
   source:
@@ -73,7 +104,32 @@ jobs:
           python3 -m unittest discover -s scripts -p 'test_appkit_host_stale_diagnostic.py'
           python3 -m unittest discover -s scripts -p 'test_runloop_probe_preparation.py'
           python3 -m unittest discover -s scripts -p 'test_ci_workflow.py'
+      - name: Verify changed replay and shared test tooling
+        if: inputs.candidate_kind == 'ci-app-glow-replay'
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_retained_app_test_products.py'
+          python3 -m unittest discover -s scripts -p 'test_run_macos_tests.py'
+          python3 -m unittest discover -s scripts -p 'test_app_host_zombie_diagnostic.py'
+          python3 -m unittest discover -s scripts -p 'test_swift_test_failure_propagation.py'
+          python3 -m unittest discover -s scripts -p 'test_appkit_host_stale_diagnostic.py'
+          python3 -m unittest discover -s scripts -p 'test_runloop_probe_preparation.py'
+          python3 -m unittest discover -s scripts -p 'test_diagnostic_acceptance.py'
+          python3 -m unittest discover -s scripts -p 'test_ci_workflow.py'
+      - name: Bind original failed and successful diagnostic producers
+        if: inputs.candidate_kind == 'ci-app-glow-replay'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/retained_app_test_products.py source --metadata "$RUNNER_TEMP/replay-metadata"
+      - uses: actions/upload-artifact@v4
+        if: always() && inputs.candidate_kind == 'ci-app-glow-replay'
+        with:
+          name: retained-glow-source
+          path: ${{ runner.temp }}/replay-metadata
+          if-no-files-found: error
+          retention-days: 90
+
       - name: Bind the successful release job and immutable artifact
+        if: inputs.candidate_kind != 'ci-app-glow-replay'
         env:
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_KIND: ${{ inputs.candidate_kind }}
@@ -97,6 +153,7 @@ jobs:
             "$CANDIDATE_ARTIFACT" "$CANDIDATE_DIGEST" "$RUNNER_TEMP/candidate-metadata" \
             --candidate-kind "$CANDIDATE_KIND" "${extra[@]}"
       - uses: actions/upload-artifact@v4
+        if: inputs.candidate_kind != 'ci-app-glow-replay'
         with:
           name: diagnostic-candidate-identity
           path: ${{ runner.temp }}/candidate-metadata/*.json
@@ -438,5 +495,83 @@ jobs:
           path: |
             evidence/
             ${{ runner.temp }}/evidence/
+          if-no-files-found: error
+          retention-days: 90
+
+  ci-app-glow-replay:
+    needs: source
+    if: inputs.candidate_kind == 'ci-app-glow-replay'
+    runs-on: macrunner
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: retained-glow-source
+          path: ${{ runner.temp }}/replay-metadata
+      - name: Preserve the reviewed harness and select unchanged product source
+        run: |
+          set -euo pipefail
+          python3 -I - <<'PY'
+          import hashlib, json, os, shutil, subprocess
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP'])
+          metadata = root / 'replay-metadata'
+          binding = json.loads((metadata / 'binding.json').read_text())
+          if (binding['harnessSHA'] != os.environ['GITHUB_SHA']
+                  or binding['productSHA'] != os.environ['PRODUCT_SHA']
+                  or subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip() != binding['harnessSHA']):
+              raise ValueError('Replay checkout or metadata differs')
+          harness = root / 'replay-harness'
+          harness.mkdir()
+          names = ('run_macos_tests.py', 'app_host_zombie_diagnostic.py', 'verify_swift_test_output.py',
+                   'capture_render_review_test_diagnostic.py', 'verify_diagnostic_candidate.py',
+                   'retained_app_test_products.py')
+          hashes = {}
+          for name in names:
+              source = Path('scripts') / name
+              shutil.copyfile(source, harness / name)
+              hashes[name] = hashlib.sha256(source.read_bytes()).hexdigest()
+          (metadata / 'copied-harness.json').write_text(json.dumps(hashes, indent=2) + '\n')
+          PY
+          git checkout --detach "$PRODUCT_SHA"
+          test "$(git rev-parse HEAD)" = "$PRODUCT_SHA"
+          test -z "$(git status --porcelain)"
+      - uses: ./.github/actions/setup-xcode-27
+      - name: Verify platform and restore the exact original products
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 "$RUNNER_TEMP/replay-harness/retained_app_test_products.py" restore \
+            --metadata "$RUNNER_TEMP/replay-metadata"
+      - name: Run the unchanged three Glow tests once
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          export SWIFT_BACKTRACE=enable=yes,interactive=no,demangle=yes,cache=no
+          python3 "$RUNNER_TEMP/replay-harness/capture_render_review_test_diagnostic.py" \
+            --evidence "$RUNNER_TEMP/glow-replay" --log "$RUNNER_TEMP/glow-replay.log" \
+            --swift-testing-runs 1 --xctest-runs 0 --without-runloop-probe --app-only -- \
+            python3 "$RUNNER_TEMP/replay-harness/run_macos_tests.py" --cache-path "$RUNNER_TEMP/unused-cache" \
+              --scope app-swift-testing --app-diagnostic glow-reproduction --filter GlowKernelTests \
+              --bin-root "$GITHUB_WORKSPACE/.build/out/Products/Debug" --product-source-sha "$PRODUCT_SHA" \
+              --evidence "$RUNNER_TEMP/glow-replay/hosted-suite"
+      - name: Verify exact exposure, actual loaded images and unchanged product bytes
+        run: |
+          set -euo pipefail
+          scripts/verify_tracked_source_state.sh
+          python3 "$RUNNER_TEMP/replay-harness/retained_app_test_products.py" verify \
+            --metadata "$RUNNER_TEMP/replay-metadata" --evidence "$RUNNER_TEMP/glow-replay"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: retained-glow-diagnostic-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/glow-replay
+            ${{ runner.temp }}/glow-replay.log
+            ${{ runner.temp }}/replay-metadata/*.json
+            ${{ runner.temp }}/replay-metadata/*.log
           if-no-files-found: error
           retention-days: 90

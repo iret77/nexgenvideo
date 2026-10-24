@@ -7,7 +7,7 @@ import unittest
 import uuid
 from unittest.mock import patch
 
-from app_host_zombie_diagnostic import RUsageV4, ZombieCapture, selected_environment, zombie_environment
+from app_host_zombie_diagnostic import RUsageV4, ZombieCapture, diagnostic_environment, selected_environment, zombie_environment
 import run_macos_tests as driver
 
 
@@ -40,6 +40,35 @@ class Reader:
 
 
 class ZombieDiagnosticTests(unittest.TestCase):
+    def test_glow_profile_observes_loader_logging_without_memory_or_metal_switches(self):
+        environment = {"PATH": "/fixture", "GITHUB_SHA": "a" * 40}
+        self.assertEqual(diagnostic_environment(environment, "glow-reproduction"),
+                         {**environment, "DYLD_PRINT_LIBRARIES": "1"})
+        raw = arguments([b"TOKEN=private-value", b"DYLD_PRINT_LIBRARIES=1"])
+        self.assertEqual(selected_environment(raw, COMMAND, "glow-reproduction"),
+                         {"DYLD_PRINT_LIBRARIES": "1", "otherDiagnosticVariablesPresent": False})
+        for extra in (b"NSZombieEnabled=YES", b"MallocStackLogging=1", b"MTL_DEBUG_LAYER=1",
+                      b"DYLD_INSERT_LIBRARIES=private-value", b"DYLD_PRINT_LIBRARIES=1", b"DYLD_PRINT_APIS=1"):
+            with self.subTest(extra=extra), self.assertRaises(ValueError):
+                selected_environment(arguments([b"DYLD_PRINT_LIBRARIES=1", extra]), COMMAND, "glow-reproduction")
+        with self.assertRaises(ValueError):
+            selected_environment(arguments([b"DYLD_PRINT_LIBRARIES=0"]), COMMAND, "glow-reproduction")
+        with self.assertRaises(ValueError):
+            diagnostic_environment(environment, "unknown")
+
+    def test_glow_capture_keeps_actual_pid_identity_and_the_selected_profile(self):
+        with tempfile.TemporaryDirectory() as directory:
+            reader = Reader([b"DYLD_PRINT_LIBRARIES=1"])
+            capture = ZombieCapture(123, COMMAND,
+                {"hostUUID": IMAGE_UUID, "hostSHA256": "b" * 64, "hostExecutable": COMMAND[0]},
+                Path(directory), "a" * 40, reader=reader, profile="glow-reproduction")
+            capture.start()
+            result = capture.finish()
+            self.assertEqual(result["status"], "verified")
+            self.assertEqual(result["profile"], "glow-reproduction")
+            self.assertEqual(json.loads((Path(directory) / "glow-diagnostic.json").read_text()), result)
+            self.assertFalse((Path(directory) / "zombie-diagnostic.json").exists())
+
     def test_unrelated_environment_is_never_returned_or_interpreted_as_a_switch(self):
         result = selected_environment(arguments([b"TOKEN=private-value", b"NSZombieEnabled=YES",
                                                   b"OTHER= NSZombieEnabled=NO"]), COMMAND)

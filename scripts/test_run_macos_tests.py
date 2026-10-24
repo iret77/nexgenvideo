@@ -65,7 +65,8 @@ class HostedTestDriverTests(unittest.TestCase):
 
     def invoke(self, root, *, filter="", scope="all", exits=None, empty=(), console=None,
                receipt_change=None, query_error=None, capture_error=None, watchdog_error=None,
-               app_diagnostic=None, diagnostic_status="verified", product_source_sha=None, checkout_source=None):
+               app_diagnostic=None, diagnostic_status="verified", product_source_sha=None, checkout_source=None,
+               retained=False):
         binary_root = root / "built products"
         binary_root.mkdir(exist_ok=True)
         host = binary_root / "NexGenVideoAppKitTestHost"
@@ -79,10 +80,11 @@ class HostedTestDriverTests(unittest.TestCase):
         compiler.touch()
         platform = root / "selected macOS.platform"
         platform.mkdir(exist_ok=True)
-        args = argparse.Namespace(cache_path="dependency cache", configuration="release",
-                                  scratch_path="release scratch", swiftc_flag=["-enable-testing"],
+        args = argparse.Namespace(cache_path="dependency cache", configuration="debug" if retained else "release",
+                                  scratch_path=None if retained else "release scratch", swiftc_flag=[] if retained else ["-enable-testing"],
                                   evidence=root / "evidence", filter=filter, scope=scope,
                                   app_diagnostic=app_diagnostic,
+                                  bin_root=binary_root if retained else None,
                                   product_source_sha=product_source_sha or ("c" * 40 if app_diagnostic else None))
         calls = []
         queries = []
@@ -164,6 +166,26 @@ class HostedTestDriverTests(unittest.TestCase):
             self.assertEqual(calls, [])
         with tempfile.TemporaryDirectory() as directory, self.assertRaises(driver.VerificationError):
             self.invoke(Path(directory), product_source_sha="c" * 40)
+
+    def test_retained_glow_profile_never_invokes_swiftpm_or_enables_zombies(self):
+        with tempfile.TemporaryDirectory() as directory:
+            code, receipt, calls, queries = self.invoke(Path(directory), scope="app-swift-testing",
+                filter="GlowKernelTests", app_diagnostic="glow-reproduction", retained=True)
+            self.assertEqual(code, 0, receipt)
+            self.assertFalse(any(command[0] == "swift" for command in queries))
+            self.assertEqual(receipt["binPathSource"], "explicit-retained-products; no SwiftPM invocation")
+            self.assertEqual(receipt["productSourceSHA"], "c" * 40)
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0][2]["DYLD_PRINT_LIBRARIES"], "1")
+            self.assertNotIn("NSZombieEnabled", calls[0][2])
+        for profile, filter, retained in (("glow-reproduction", "", True),
+                                         ("glow-reproduction", "OtherTests", True),
+                                         ("glow-reproduction", "GlowKernelTests", False),
+                                         ("zombies", "", True), (None, "GlowKernelTests", True)):
+            with self.subTest(profile=profile, filter=filter, retained=retained), tempfile.TemporaryDirectory() as directory:
+                with self.assertRaises(driver.VerificationError):
+                    self.invoke(Path(directory), scope="app-swift-testing", filter=filter,
+                                app_diagnostic=profile, retained=retained)
 
     def test_unknown_activation_fails_but_never_replaces_an_original_signal(self):
         for original, expected in ((0, 1), (-11, 139)):

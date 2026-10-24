@@ -15,7 +15,7 @@ import time
 import uuid
 
 from verify_swift_test_output import ANSI, assess_output
-from app_host_zombie_diagnostic import ZombieCapture, zombie_environment
+from app_host_zombie_diagnostic import ZombieCapture, diagnostic_environment
 
 
 NO_MATCH = "warning: No matching test cases were run"
@@ -185,10 +185,10 @@ def run_process(command, path, environment, observation=None):
             if observation is not None:
                 observation.update(pid=process.pid, launchLatest=time.time())
             diagnostic = None
-            if observation is not None and observation.get("diagnosticProfile") == "zombies":
+            if observation is not None and observation.get("diagnosticProfile") in ("zombies", "glow-reproduction"):
                 try:
                     diagnostic = ZombieCapture(process.pid, command, observation, path.parent,
-                                               environment["GITHUB_SHA"])
+                                               environment["GITHUB_SHA"], profile=observation["diagnosticProfile"])
                     diagnostic.start()
                 except Exception as error:
                     observation["diagnostic"] = {"status": "unavailable", "errorType": type(error).__name__}
@@ -571,8 +571,16 @@ def run(args):
         raise VerificationError("The actual Actions source SHA is required")
     profile = getattr(args, "app_diagnostic", None)
     product_source = getattr(args, "product_source_sha", None)
-    if profile and (profile != "zombies" or args.scope != "app-swift-testing" or args.filter):
-        raise VerificationError("The zombie diagnostic requires the full App SwiftTesting backend")
+    retained_root = getattr(args, "bin_root", None)
+    if profile and (profile not in ("zombies", "glow-reproduction") or args.scope != "app-swift-testing"):
+        raise VerificationError("The diagnostic requires its owned App SwiftTesting backend")
+    if profile == "zombies" and (args.filter or retained_root):
+        raise VerificationError("The zombie diagnostic requires the full original App build")
+    if profile == "glow-reproduction" and (args.filter != "GlowKernelTests" or not retained_root
+            or args.configuration != "debug" or args.scratch_path or args.swiftc_flag):
+        raise VerificationError("The Glow diagnostic requires the exact retained debug products and Glow selection")
+    if retained_root and profile != "glow-reproduction":
+        raise VerificationError("An explicit product path is restricted to the retained Glow diagnostic")
     if bool(profile) != bool(product_source) or product_source and not re.fullmatch(r"[a-f0-9]{40}", product_source):
         raise VerificationError("The App diagnostic requires its explicit original product source")
     args.evidence.mkdir(parents=True, exist_ok=False)
@@ -592,19 +600,25 @@ def run(args):
             if checkout.returncode or checkout.stdout.strip() != product_source:
                 raise VerificationError("The actual product checkout differs from the diagnostic source")
             result.update(productSourceSHA=product_source, harnessSourceSHA=source_sha)
-        query = ["swift", "build", *common, "--show-bin-path"]
-        query_result = subprocess.run(query, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                      stderr=subprocess.PIPE, text=True, timeout=60)
-        (args.evidence / "bin-path.stdout").write_text(query_result.stdout)
-        (args.evidence / "bin-path.stderr").write_text(query_result.stderr)
-        result["binPathCommand"] = query
-        result["binPathExitCode"] = query_result.returncode
-        if query_result.returncode:
-            raise VerificationError("Could not resolve the exact built products", query_result.returncode)
-        path_lines = query_result.stdout.strip().split("\n")
-        if len(path_lines) != 1 or not Path(path_lines[0]).is_absolute():
-            raise VerificationError("SwiftPM did not return one absolute bin path")
-        binary_root = Path(path_lines[0]).resolve(strict=True)
+        if retained_root:
+            if not Path(retained_root).is_absolute():
+                raise VerificationError("The retained product path must be absolute")
+            binary_root = Path(retained_root).resolve(strict=True)
+            result["binPathSource"] = "explicit-retained-products; no SwiftPM invocation"
+        else:
+            query = ["swift", "build", *common, "--show-bin-path"]
+            query_result = subprocess.run(query, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                          stderr=subprocess.PIPE, text=True, timeout=60)
+            (args.evidence / "bin-path.stdout").write_text(query_result.stdout)
+            (args.evidence / "bin-path.stderr").write_text(query_result.stderr)
+            result["binPathCommand"] = query
+            result["binPathExitCode"] = query_result.returncode
+            if query_result.returncode:
+                raise VerificationError("Could not resolve the exact built products", query_result.returncode)
+            path_lines = query_result.stdout.strip().split("\n")
+            if len(path_lines) != 1 or not Path(path_lines[0]).is_absolute():
+                raise VerificationError("SwiftPM did not return one absolute bin path")
+            binary_root = Path(path_lines[0]).resolve(strict=True)
         host = binary_root / "NexGenVideoAppKitTestHost"
         bundle = binary_root / "NexGenVideoTests.xctest/Contents/MacOS/NexGenVideoTests"
         if not host.is_file() or not os.access(host, os.X_OK) or not bundle.is_file():
@@ -637,7 +651,7 @@ def run(args):
                                    NGV_APPKIT_EXCEPTION_EVIDENCE=str((folder / "exception.jsonl").absolute()))
                 if profile:
                     try:
-                        environment = zombie_environment(environment)
+                        environment = diagnostic_environment(environment, profile)
                     except ValueError as error:
                         raise VerificationError(str(error)) from error
             phase = {"name": name, "command": command, "status": "running", "log": str(log)}
@@ -720,7 +734,7 @@ def run(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument("--cache-path", required=True)
     parser.add_argument("--evidence", required=True, type=Path)
     parser.add_argument("-c", "--configuration", choices=("debug", "release"), default="debug")
@@ -728,8 +742,9 @@ def main():
     parser.add_argument("--swiftc-flag", action="append", default=[])
     parser.add_argument("--filter", default="")
     parser.add_argument("--scope", choices=("all", "app-swift-testing"), default="all")
-    parser.add_argument("--app-diagnostic", choices=("zombies",))
+    parser.add_argument("--app-diagnostic", choices=("zombies", "glow-reproduction"))
     parser.add_argument("--product-source-sha")
+    parser.add_argument("--bin-root", type=Path)
     args = parser.parse_args()
     if args.filter and not args.filter.strip():
         parser.error("An explicit filter cannot be whitespace only")
