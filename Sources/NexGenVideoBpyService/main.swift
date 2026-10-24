@@ -2202,14 +2202,14 @@ private final class ServiceSession: @unchecked Sendable {
             ] {
                 let fields = BpyRuntimePreflight.diagnostics(at: url, pythonAlias: role == "pythonAlias")
                     .sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " ")
-                openDiagnostics.notice("open.runtime-resource session=\(request.sessionID.uuidString, privacy: .public) pid=\(getpid(), privacy: .public) start=\(started, privacy: .public) role=\(role, privacy: .public) \(fields, privacy: .public)")
+                openDiagnostics.notice("open.runtime-resource session=\(self.request.sessionID.uuidString, privacy: .public) pid=\(getpid(), privacy: .public) start=\(started, privacy: .public) role=\(role, privacy: .public) \(fields, privacy: .public)")
             }
         }
         let preflight = BpyRuntimePreflight(python: pythonURL, supervisor: supervisorURL,
                                             worker: workerURL, sitePackages: sitePackagesURL)
         if mode == "probe" {
             let started = processUsage(getpid())?.startAbsoluteTime ?? 0
-            openDiagnostics.notice("open.runtime-preflight session=\(request.sessionID.uuidString, privacy: .public) pid=\(getpid(), privacy: .public) start=\(started, privacy: .public) python=\(preflight.pythonExecutable, privacy: .public) supervisor=\(preflight.supervisorExecutable, privacy: .public) worker=\(preflight.workerExists, privacy: .public) sitePackages=\(preflight.sitePackagesExist, privacy: .public)")
+            openDiagnostics.notice("open.runtime-preflight session=\(self.request.sessionID.uuidString, privacy: .public) pid=\(getpid(), privacy: .public) start=\(started, privacy: .public) python=\(preflight.pythonExecutable, privacy: .public) supervisor=\(preflight.supervisorExecutable, privacy: .public) worker=\(preflight.workerExists, privacy: .public) sitePackages=\(preflight.sitePackagesExist, privacy: .public)")
         }
         try preflight.requireValid()
         for name in ["tmp", "home", "blender-config", "blender-scripts", "blender-data"] {
@@ -2299,7 +2299,7 @@ private final class ServiceSession: @unchecked Sendable {
                 let underlyingCode = underlying?.code ?? 0
                 let posixCode = domain == NSPOSIXErrorDomain ? failure.code
                     : underlyingDomain == NSPOSIXErrorDomain ? underlyingCode : 0
-                openDiagnostics.notice("open.runtime-launch-fail session=\(request.sessionID.uuidString, privacy: .public) pid=\(getpid(), privacy: .public) start=\(started, privacy: .public) domain=\(domain, privacy: .public) code=\(failure.code, privacy: .public) underlyingDomain=\(underlyingDomain, privacy: .public) underlyingCode=\(underlyingCode, privacy: .public) posixCode=\(posixCode, privacy: .public)")
+                openDiagnostics.notice("open.runtime-launch-fail session=\(self.request.sessionID.uuidString, privacy: .public) pid=\(getpid(), privacy: .public) start=\(started, privacy: .public) domain=\(domain, privacy: .public) code=\(failure.code, privacy: .public) underlyingDomain=\(underlyingDomain, privacy: .public) underlyingCode=\(underlyingCode, privacy: .public) posixCode=\(posixCode, privacy: .public)")
                 throw error
             }
             activeProcess = process
