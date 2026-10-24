@@ -2193,12 +2193,25 @@ private final class ServiceSession: @unchecked Sendable {
         injectSupervisorIdentityWriteFailure: Bool = false,
         injectSupervisorIdentityCaptureFailure: Bool = false
     ) throws -> ManagedProcessResult {
-        guard FileManager.default.isExecutableFile(atPath: pythonURL.path),
-              FileManager.default.isExecutableFile(atPath: supervisorURL.path),
-              FileManager.default.fileExists(atPath: workerURL.path),
-              FileManager.default.fileExists(atPath: sitePackagesURL.path) else {
-            throw CocoaError(.executableNotLoadable)
+        if mode == "probe" {
+            let started = processUsage(getpid())?.startAbsoluteTime ?? 0
+            for (role, url) in [
+                ("pythonAlias", runtimeRoot.appendingPathComponent("python/bin/python3")),
+                ("pythonTarget", pythonURL), ("supervisor", supervisorURL),
+                ("worker", workerURL), ("sitePackages", sitePackagesURL),
+            ] {
+                let fields = BpyRuntimePreflight.diagnostics(at: url, pythonAlias: role == "pythonAlias")
+                    .sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " ")
+                openDiagnostics.notice("open.runtime-resource session=\(request.sessionID.uuidString, privacy: .public) pid=\(getpid(), privacy: .public) start=\(started, privacy: .public) role=\(role, privacy: .public) \(fields, privacy: .public)")
+            }
         }
+        let preflight = BpyRuntimePreflight(python: pythonURL, supervisor: supervisorURL,
+                                            worker: workerURL, sitePackages: sitePackagesURL)
+        if mode == "probe" {
+            let started = processUsage(getpid())?.startAbsoluteTime ?? 0
+            openDiagnostics.notice("open.runtime-preflight session=\(request.sessionID.uuidString, privacy: .public) pid=\(getpid(), privacy: .public) start=\(started, privacy: .public) python=\(preflight.pythonExecutable, privacy: .public) supervisor=\(preflight.supervisorExecutable, privacy: .public) worker=\(preflight.workerExists, privacy: .public) sitePackages=\(preflight.sitePackagesExist, privacy: .public)")
+        }
+        try preflight.requireValid()
         for name in ["tmp", "home", "blender-config", "blender-scripts", "blender-data"] {
             try FileManager.default.createDirectory(
                 at: processRoot.appendingPathComponent(name, isDirectory: true),
@@ -2274,7 +2287,21 @@ private final class ServiceSession: @unchecked Sendable {
         let began = ProcessInfo.processInfo.systemUptime
         try lock.access {
             guard !closed, job == nil || job?.state == .running else { throw CocoaError(.userCancelled) }
-            try process.run()
+            do {
+                try process.run()
+            } catch {
+                let failure = error as NSError
+                let underlying = failure.userInfo[NSUnderlyingErrorKey] as? NSError
+                let started = processUsage(getpid())?.startAbsoluteTime ?? 0
+                let knownDomains = [NSCocoaErrorDomain, NSPOSIXErrorDomain, NSOSStatusErrorDomain]
+                let domain = knownDomains.contains(failure.domain) ? failure.domain : "other"
+                let underlyingDomain = underlying.map { knownDomains.contains($0.domain) ? $0.domain : "other" } ?? "none"
+                let underlyingCode = underlying?.code ?? 0
+                let posixCode = domain == NSPOSIXErrorDomain ? failure.code
+                    : underlyingDomain == NSPOSIXErrorDomain ? underlyingCode : 0
+                openDiagnostics.notice("open.runtime-launch-fail session=\(request.sessionID.uuidString, privacy: .public) pid=\(getpid(), privacy: .public) start=\(started, privacy: .public) domain=\(domain, privacy: .public) code=\(failure.code, privacy: .public) underlyingDomain=\(underlyingDomain, privacy: .public) underlyingCode=\(underlyingCode, privacy: .public) posixCode=\(posixCode, privacy: .public)")
+                throw error
+            }
             activeProcess = process
             activeProcessJobID = job?.id
         }
@@ -2626,7 +2653,7 @@ private final class ServiceSession: @unchecked Sendable {
     }
 
     private var pythonURL: URL {
-        runtimeRoot.appendingPathComponent("python/bin/python3")
+        runtimeRoot.appendingPathComponent("python/bin/python3.13")
     }
 
     private var workerURL: URL {

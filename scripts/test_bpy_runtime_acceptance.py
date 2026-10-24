@@ -28,8 +28,18 @@ class StorageScopeProofTests(unittest.TestCase):
             (456, f"open.beforeScope {common} pid=456 errno=1"),
             (456, f"open.check {common} pid=456 start=42 stale={str(stale).lower()} file=true pathMatches=true sha256={digest} volumeMatch=equal"),
             (456, f"open.validated {common} pid=456 start=42 sha256={digest}"),
-            (456, f"open.result {common} ok=true"),
         ]
+        diagnostics = ("lstatErrno=0 lstatType=32768 lstatMode=493 lstatFlags=0 statErrno=0 statType=32768 "
+                       "statMode=493 statFlags=0 existsErrno=0 readErrno=0 executeErrno=0 openErrno=0 "
+                       "closeErrno=0 foundationExecutable=1 quarantineErrno=93 quarantinePresent=0 "
+                       "provenanceErrno=93 provenancePresent=0")
+        for role in ("pythonAlias", "pythonTarget", "supervisor", "worker", "sitePackages"):
+            fields = diagnostics + (" readlinkErrno=0 targetMatches=1" if role == "pythonAlias" else "")
+            messages.append((456, f"open.runtime-resource session={session} pid=456 start=42 role={role} {fields}"))
+        messages.extend([
+            (456, f"open.runtime-preflight session={session} pid=456 start=42 python=true supervisor=true worker=true sitePackages=true"),
+            (456, f"open.result {common} ok=true"),
+        ])
         return [dict(processID=pid, eventMessage=message, machTimestamp=index + 1,
                      subsystem="de.h5ventures.nexgenvideo" + (".bpy-service" if pid == 456 else ""),
                      category="open-diagnostic" if pid == 456 else "bpy-open",
@@ -48,7 +58,7 @@ class StorageScopeProofTests(unittest.TestCase):
             self.assertEqual(proof["preScopeErrno"], 1)
 
     def test_missing_duplicated_foreign_or_reordered_events_cannot_prove_the_boundary(self):
-        for index in range(7):
+        for index in range(len(self.events())):
             for mutation in ("missing", "duplicate", "pid", "image", "category", "time"):
                 with self.subTest(index=index, mutation=mutation):
                     events = self.events()
@@ -72,12 +82,38 @@ class StorageScopeProofTests(unittest.TestCase):
                                (4, "file=true", "file=false"), (4, "pathMatches=true", "pathMatches=false"),
                                (4, "volumeMatch=equal", "volumeMatch=different"),
                                (5, "sha256=" + "a" * 64, "sha256=" + "b" * 64),
-                               (5, "start=42", "start=43"), (6, "ok=true", "ok=false")):
+                               (5, "start=42", "start=43"), (-1, "ok=true", "ok=false")):
             with self.subTest(index=index, new=new):
                 events = self.events()
                 events[index]["eventMessage"] = events[index]["eventMessage"].replace(old, new)
                 with self.assertRaises(AssertionError):
                     self.check(events)
+
+    def test_missing_denied_or_foreign_runtime_preflight_cannot_prove_startup(self):
+        for tag, old, new in (
+                ("role=pythonTarget", "executeErrno=0", "executeErrno=1"),
+                ("role=pythonTarget", "foundationExecutable=1", "foundationExecutable=0"),
+                ("role=pythonTarget", "statType=32768", "statType=16384"),
+                ("role=pythonAlias", "readlinkErrno=0", "readlinkErrno=unknown"),
+                ("role=supervisor", "start=42", "start=43"),
+                ("role=worker", "openErrno=0", "omitted=0"),
+                ("role=sitePackages", "provenancePresent=0", "provenancePresent=2"),
+                ("open.runtime-preflight", "supervisor=true", "supervisor=false")):
+            with self.subTest(tag=tag, new=new):
+                events = self.events()
+                event = next(item for item in events if tag in item["eventMessage"])
+                event["eventMessage"] = event["eventMessage"].replace(old, new)
+                with self.assertRaises(AssertionError):
+                    self.check(events)
+
+    def test_alias_denial_remains_visible_without_weakening_target_access(self):
+        events = self.events()
+        alias = next(item for item in events if "role=pythonAlias" in item["eventMessage"])
+        alias["eventMessage"] = alias["eventMessage"].replace("executeErrno=0", "executeErrno=1").replace(
+            "foundationExecutable=1", "foundationExecutable=0")
+        proof = self.check(events)
+        self.assertEqual(proof["runtimeResources"]["pythonAlias"]["executeErrno"], 1)
+        self.assertEqual(proof["runtimeResources"]["pythonTarget"]["executeErrno"], 0)
 
     def test_host_refresh_must_finish_fresh_and_malformed_capture_is_not_ignored(self):
         events = self.events()

@@ -21,7 +21,8 @@
             "Generation request review presents the exact model, source range, references and destination before submission. Late replacement results preserve clips changed during generation.",
             "Export provides delivery settings, output checks and a queue linked to the current cut.",
             "Quitting and restarting wait for active work to close. Canceling quit keeps NexGenVideo open and cancels the pending restart.",
-            "3D storage verifies the reserved volume’s identity when passing access from the app to its sandboxed runtime."
+            "3D storage verifies the reserved volume’s identity when passing access from the app to its sandboxed runtime.",
+            "3D startup diagnostics identify blocked runtime components without exposing project paths."
           ]
         },
         {

@@ -18,6 +18,10 @@ network, fork, the SBPL `signal` operation, and every write outside that process
 The inherited XPC container is therefore not the worker's write boundary.
 
 Native stdout and stderr are bounded diagnostic streams only. The service observes process termination and native resource limits; worker output cannot set state.
+The service addresses the signed `python/bin/python3.13` executable directly. Opening a session
+records separate access checks for that file, the `python3` alias, supervisor, worker and site-packages,
+bound to the service process and session. These diagnostics preserve the four startup guards and
+record only fixed resource roles and numeric results, not paths or bookmark capabilities.
 Untrusted exit codes without an observed limit fail the job rather than attest a resource violation. After a zero exit, a fresh verifier opens
 `scene.blend` with `use_scripts=false` and independently checks the exact Job ID and fingerprint,
 Python and bpy identities, evaluated geometry, render settings, object/modifier evidence, output

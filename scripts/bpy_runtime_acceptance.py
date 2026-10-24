@@ -131,9 +131,10 @@ def verify_storage_scope(log_text, process, binary):
     host_path = str(binary)
     service_path = re.escape(str(binary.parent.parent)) + r"/XPCServices/NexGenVideoBpyService[0-9]+\.xpc/Contents/MacOS/NexGenVideoBpyService"
 
-    def selected(tag, host=False):
+    def selected(tag, host=False, role=None):
         matches = [entry for entry in events if entry[0] == tag
-                   and entry[1].get("id" if tag == "bookmark.resolve" else "session") == session]
+                   and entry[1].get("id" if tag == "bookmark.resolve" else "session") == session
+                   and (role is None or entry[1].get("role") == role)]
         if tag == "bookmark.resolve":
             require(1 <= len(matches) <= 2, "bounded host bookmark resolution")
             require([item[1].get("attempt") for item in matches] == [str(n + 1) for n in range(len(matches))],
@@ -156,6 +157,9 @@ def verify_storage_scope(log_text, process, binary):
     before = selected("open.beforeScope")
     checked = selected("open.check")
     validated = selected("open.validated")
+    roles = ("pythonAlias", "pythonTarget", "supervisor", "worker", "sitePackages")
+    resources = [selected("open.runtime-resource", role=role) for role in roles]
+    preflight = selected("open.runtime-preflight")
     opened = selected("open.result")
     require(int(before[1]["errno"]) in (errno.EPERM, errno.EACCES), "mount accessible before bookmark scope")
     digest = host[1]["sha256"]
@@ -170,10 +174,31 @@ def verify_storage_scope(log_text, process, binary):
     require(all(item[1].get("start") == start for item in (prepared, checked, validated)), "storage process start")
     require(checked[1]["sha256"] == validated[1]["sha256"] == digest and opened[1].get("ok") == "true",
             "validated storage handoff")
-    times = [item[2]["machTimestamp"] for item in (prepared, preparation, host, before, checked, validated, opened)]
+    require(all(preflight[1].get(field) == "true" for field in ("python", "supervisor", "worker", "sitePackages")),
+            "all runtime executable preflight clauses required")
+    require(all(item[1].get("start") == start for item in (*resources, preflight)), "runtime preflight process start")
+    diagnostic_fields = {"lstatErrno", "lstatType", "lstatMode", "lstatFlags", "statErrno", "statType",
+                         "statMode", "statFlags", "existsErrno", "readErrno", "executeErrno", "openErrno",
+                         "closeErrno", "foundationExecutable", "quarantineErrno", "quarantinePresent",
+                         "provenanceErrno", "provenancePresent"}
+    for role, item in zip(roles, resources):
+        required = diagnostic_fields | ({"readlinkErrno", "targetMatches"} if role == "pythonAlias" else set())
+        require(all(re.fullmatch(r"[0-9]+", item[1].get(field, "")) for field in required),
+                "missing or malformed runtime resource diagnostics: " + role)
+        require(all(item[1][field] in ("0", "1") for field in
+                    ("foundationExecutable", "quarantinePresent", "provenancePresent")), "invalid runtime diagnostic boolean")
+    target = resources[1][1]
+    require(target["executeErrno"] == "0" and target["foundationExecutable"] == "1"
+            and target["statErrno"] == "0" and int(target["statType"]) == 0o100000,
+            "pinned Python executable access not proven")
+    times = [item[2]["machTimestamp"] for item in
+             (prepared, preparation, host, before, checked, validated, *resources, preflight, opened)]
     require(all(type(value) is int for value in times) and all(a < b for a, b in zip(times, times[1:])), "storage event order")
     return dict(hostPID=process["pid"], servicePID=service, serviceStart=start, sessionID=session,
-                bookmarkSHA256=digest, receiverStale=checked[1]["stale"] == "true", preScopeErrno=int(before[1]["errno"]))
+                bookmarkSHA256=digest, receiverStale=checked[1]["stale"] == "true", preScopeErrno=int(before[1]["errno"]),
+                runtimeResources={role: {key: int(value) for key, value in item[1].items() if key in diagnostic_fields
+                                        or key in ("readlinkErrno", "targetMatches")}
+                                  for role, item in zip(roles, resources)})
 
 
 def sample_owned(process, output, label):
