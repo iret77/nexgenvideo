@@ -88,6 +88,12 @@ An implicit security-scoped bookmark grants the service access to the mounted ro
 must drain its execution queue before closing that scope. Cleanup obtains a fresh ownership response,
 including retiring sessions, from the kernel-identified XPC process; a session-close reply alone does
 not authorize unmounting a lease still used by another session.
+The host resolves a newly created bookmark before storing it, refreshing stale data once from the
+resolved URL. A changed path or a still-stale refresh is rejected. The exact verified bytes enter
+both the durable lease and the service request. The service continues to reject stale bookmarks.
+Host resolution and service failure diagnostics compare bookmark digests and volume metadata without
+recording capability bytes.
+This path is prepared for native verification; successful cross-process resolution is not yet proven.
 Native acceptance includes a real 64 MiB-volume ENOSPC probe while fileports, Mach memory entries or
 queued SCM_RIGHTS retain an unlinked file (or the applicable channel is actually denied). These probes
 are prepared but unexecuted. Acceptance still must prove bounded image growth, XPC container access,

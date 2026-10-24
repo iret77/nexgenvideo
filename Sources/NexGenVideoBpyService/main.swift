@@ -10,6 +10,28 @@ private enum OpenStage: String {
     case decode, contract, claim, preparation, bookmark, check, validateMount, reserve
 }
 
+private func diagnoseStorageMount(_ storage: BpyStorageLease, maximumBytes: UInt64,
+                                  sessionID: UUID, owner: UUID, validate: Bool) {
+    let descriptor = Darwin.open(storage.mountPath, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+    let directOpenErrno = descriptor < 0 ? errno : 0
+    let directCloseErrno = descriptor >= 0 && Darwin.close(descriptor) != 0 ? errno : 0
+    var domain = "not-run"
+    var code = 0
+    if validate {
+        do {
+            let checked = try BpyStoragePaths.validateMount(storage, maximumBytes: maximumBytes)
+            if Darwin.close(checked) != 0 { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+            domain = "success"
+        } catch {
+            let failure = error as NSError
+            domain = failure.domain
+            code = failure.code
+        }
+    }
+    let started = processUsage(getpid())?.startAbsoluteTime ?? 0
+    openDiagnostics.notice("open.mount-probe session=\(sessionID.uuidString, privacy: .public) owner=\(owner.uuidString, privacy: .public) pid=\(getpid(), privacy: .public) start=\(started, privacy: .public) directOpenErrno=\(directOpenErrno, privacy: .public) directCloseErrno=\(directCloseErrno, privacy: .public) validationDomain=\(domain, privacy: .public) validationCode=\(code, privacy: .public)")
+}
+
 @_silgen_name("proc_listchildpids")
 private func procListChildPIDs(
     _ processIdentifier: pid_t,
@@ -2862,10 +2884,23 @@ private final class BpyRuntimeService: NSObject, @unchecked Sendable {
             stage = .check
             let pathMatches = scope.path == storage.mountPath
             let serviceStart = processUsage(getpid())?.startAbsoluteTime ?? 0
-            openDiagnostics.notice("open.check session=\(request.sessionID.uuidString, privacy: .public) owner=\(owner.uuidString, privacy: .public) pid=\(getpid(), privacy: .public) start=\(serviceStart, privacy: .public) stale=\(stale, privacy: .public) pathMatches=\(pathMatches, privacy: .public)")
+            let bookmarkDigest = sha256(storage.bookmark)
+            let volumeMatch = BpyStoragePaths.bookmarkVolumeMatch(storage.bookmark, mount: scope)
+            openDiagnostics.notice("open.check session=\(request.sessionID.uuidString, privacy: .public) owner=\(owner.uuidString, privacy: .public) pid=\(getpid(), privacy: .public) start=\(serviceStart, privacy: .public) stale=\(stale, privacy: .public) pathMatches=\(pathMatches, privacy: .public) sha256=\(bookmarkDigest, privacy: .public) volumeMatch=\(volumeMatch, privacy: .public)")
+            if stale, pathMatches {
+                diagnoseStorageMount(storage, maximumBytes: request.limits.physicalStorageBytes,
+                                     sessionID: request.sessionID, owner: owner, validate: true)
+            }
             guard !stale, pathMatches else { throw CocoaError(.fileReadNoPermission) }
             stage = .validateMount
-            var descriptor: Int32? = try BpyStoragePaths.validateMount(storage, maximumBytes: request.limits.physicalStorageBytes)
+            var descriptor: Int32?
+            do {
+                descriptor = try BpyStoragePaths.validateMount(storage, maximumBytes: request.limits.physicalStorageBytes)
+            } catch {
+                diagnoseStorageMount(storage, maximumBytes: request.limits.physicalStorageBytes,
+                                     sessionID: request.sessionID, owner: owner, validate: false)
+                throw error
+            }
             defer { if let descriptor { Darwin.close(descriptor) } }
             var retired: ServiceSession?
             stage = .reserve

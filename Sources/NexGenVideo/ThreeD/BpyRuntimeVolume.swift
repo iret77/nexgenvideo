@@ -1,6 +1,9 @@
 import BpyRuntimeProtocol
+import CryptoKit
 import Darwin
 import Foundation
+
+private let storageBookmarkDiagnostics = CategoryLog("bpy-open")
 
 @_silgen_name("proc_pid_rusage")
 private func volumeProcessUsage(_ pid: Int32, _ flavor: Int32, _ buffer: UnsafeMutableRawPointer) -> Int32
@@ -109,9 +112,21 @@ final class BpyRuntimeVolume: @unchecked Sendable {
             guard fstatfs(mountedFD, &filesystem) == 0 else { throw POSIXError(.EIO) }
             let capacity = filesystem.f_blocks.multipliedReportingOverflow(by: UInt64(filesystem.f_bsize))
             guard !capacity.overflow else { throw CocoaError(.fileReadTooLarge) }
+            let bookmark: Data
+            do {
+                bookmark = try verifiedBookmark(for: mount, observed: { data, resolved, stale, attempt in
+                    let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+                    let volume = BpyStoragePaths.bookmarkVolumeMatch(data, mount: mount)
+                    storageBookmarkDiagnostics.notice("bookmark.resolve id=\(preparation.id.uuidString) attempt=\(attempt) stale=\(stale) file=\(resolved.isFileURL) pathMatches=\(resolved.path == mount.path) sha256=\(digest) volumeMatch=\(volume)")
+                })
+            } catch {
+                let failure = error as NSError
+                storageBookmarkDiagnostics.notice("bookmark.fail id=\(preparation.id.uuidString) domain=\(failure.domain) code=\(failure.code)")
+                throw error
+            }
             let lease = BpyStorageLease(id: preparation.id, mountPath: mount.path,
                                         device: mountedIdentity.device, capacityBytes: capacity.partialValue,
-                                        bookmark: try mount.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil))
+                                        bookmark: bookmark)
             let checked = try BpyStoragePaths.validateMount(lease, maximumBytes: maximumBytes)
             Darwin.close(checked)
             record.lease = lease
@@ -124,6 +139,36 @@ final class BpyRuntimeVolume: @unchecked Sendable {
             try? dispose(record: record, directory: directory)
             throw error
         }
+    }
+
+    static func verifiedBookmark(
+        for url: URL,
+        make: (URL) throws -> Data = {
+            try $0.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
+        },
+        resolve: (Data) throws -> (url: URL, stale: Bool) = {
+            var stale = false
+            let url = try URL(resolvingBookmarkData: $0,
+                              options: [.withoutUI, .withoutMounting, .withoutImplicitStartAccessing],
+                              relativeTo: nil, bookmarkDataIsStale: &stale)
+            return (url, stale)
+        },
+        observed: (Data, URL, Bool, Int) -> Void = { _, _, _, _ in }
+    ) throws -> Data {
+        let original = try make(url)
+        let first = try resolve(original)
+        observed(original, first.url, first.stale, 1)
+        guard first.url.isFileURL, first.url.path == url.path else {
+            throw BpyRuntimeError.unavailable("3D storage resolves to another location. Export diagnostics before retrying.")
+        }
+        guard first.stale else { return original }
+        let refreshed = try make(first.url)
+        let second = try resolve(refreshed)
+        observed(refreshed, second.url, second.stale, 2)
+        guard !second.stale, second.url.isFileURL, second.url.path == url.path else {
+            throw BpyRuntimeError.unavailable("3D storage could not be verified. Export diagnostics before retrying.")
+        }
+        return refreshed
     }
 
     func bindService(_ processIdentifier: Int32) throws {

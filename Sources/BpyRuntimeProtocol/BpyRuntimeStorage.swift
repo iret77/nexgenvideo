@@ -32,6 +32,16 @@ public struct BpyStoragePreparation: Codable, Sendable, Equatable {
 }
 
 public enum BpyStoragePaths {
+    public static func bookmarkVolumeMatch(_ data: Data, mount: URL) -> String {
+        guard let recorded = URL.resourceValues(forKeys: [.volumeUUIDStringKey], fromBookmarkData: data)?
+            .volumeUUIDString else { return "absent" }
+        guard let recordedID = UUID(uuidString: recorded) else { return "invalid" }
+        guard let live = try? URL(fileURLWithPath: mount.path)
+            .resourceValues(forKeys: [.volumeUUIDStringKey]).volumeUUIDString,
+              let liveID = UUID(uuidString: live) else { return "unavailable" }
+        return recordedID == liveID ? "equal" : "different"
+    }
+
     public static func mount(home: URL, serviceName: String) -> URL {
         home.appendingPathComponent("Library/Caches/NexGenVideo/BpyVolumes")
             .appendingPathComponent(serviceName).appendingPathComponent("mount")
