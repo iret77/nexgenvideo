@@ -11,7 +11,86 @@ import unittest
 from unittest import mock
 import uuid
 
-from bpy_runtime_acceptance import capture_open_logs, collect_hangs, diagnostic_error, stop_open_capture, supervise, verify_crash
+from bpy_runtime_acceptance import capture_open_logs, collect_hangs, diagnostic_error, stop_open_capture, supervise, verify_crash, verify_storage_scope
+
+
+class StorageScopeProofTests(unittest.TestCase):
+    binary = Path("/fixture/NexGenVideo.app/Contents/MacOS/NexGenVideo")
+
+    def events(self, stale=True):
+        session, owner = str(uuid.uuid4()), str(uuid.uuid4())
+        digest = "a" * 64
+        common = f"session={session} owner={owner}"
+        messages = [
+            (456, f"open.prepared {common} pid=456 start=42"),
+            (123, f"open.preparation session={session} servicePID=456 serviceStart=42"),
+            (123, f"bookmark.resolve id={session} attempt=1 stale=false file=true pathMatches=true sha256={digest} volumeMatch=equal"),
+            (456, f"open.beforeScope {common} pid=456 errno=1"),
+            (456, f"open.check {common} pid=456 start=42 stale={str(stale).lower()} file=true pathMatches=true sha256={digest} volumeMatch=equal"),
+            (456, f"open.validated {common} pid=456 start=42 sha256={digest}"),
+            (456, f"open.result {common} ok=true"),
+        ]
+        return [dict(processID=pid, eventMessage=message, machTimestamp=index + 1,
+                     subsystem="de.h5ventures.nexgenvideo" + (".bpy-service" if pid == 456 else ""),
+                     category="open-diagnostic" if pid == 456 else "bpy-open",
+                     processImagePath=(str(self.binary) if pid == 123 else
+                         "/fixture/NexGenVideo.app/Contents/XPCServices/NexGenVideoBpyService0.xpc/Contents/MacOS/NexGenVideoBpyService"))
+                for index, (pid, message) in enumerate(messages)]
+
+    def check(self, events):
+        return verify_storage_scope("Filtering the log data using predicate\n" +
+            "\n".join(json.dumps(event) for event in events), dict(pid=123), self.binary)
+
+    def test_actual_boundary_evidence_accepts_either_receiver_freshness(self):
+        for stale in (False, True):
+            proof = self.check(self.events(stale))
+            self.assertEqual(proof["receiverStale"], stale)
+            self.assertEqual(proof["preScopeErrno"], 1)
+
+    def test_missing_duplicated_foreign_or_reordered_events_cannot_prove_the_boundary(self):
+        for index in range(7):
+            for mutation in ("missing", "duplicate", "pid", "image", "category", "time"):
+                with self.subTest(index=index, mutation=mutation):
+                    events = self.events()
+                    if mutation == "missing":
+                        del events[index]
+                    elif mutation == "duplicate":
+                        events.append(dict(events[index]))
+                    elif mutation == "pid":
+                        events[index]["processID"] = 999
+                    elif mutation == "image":
+                        events[index]["processImagePath"] = "/foreign/NexGenVideo"
+                    elif mutation == "category":
+                        events[index]["category"] = "foreign"
+                    else:
+                        events[index]["machTimestamp"] = events[(index + 1) % len(events)]["machTimestamp"]
+                    with self.assertRaises((AssertionError, KeyError, ValueError)):
+                        self.check(events)
+
+    def test_preexisting_access_wrong_identity_or_failed_open_is_rejected(self):
+        for index, old, new in ((3, "errno=1", "errno=0"), (3, "errno=1", "errno=2"),
+                               (4, "file=true", "file=false"), (4, "pathMatches=true", "pathMatches=false"),
+                               (4, "volumeMatch=equal", "volumeMatch=different"),
+                               (5, "sha256=" + "a" * 64, "sha256=" + "b" * 64),
+                               (5, "start=42", "start=43"), (6, "ok=true", "ok=false")):
+            with self.subTest(index=index, new=new):
+                events = self.events()
+                events[index]["eventMessage"] = events[index]["eventMessage"].replace(old, new)
+                with self.assertRaises(AssertionError):
+                    self.check(events)
+
+    def test_host_refresh_must_finish_fresh_and_malformed_capture_is_not_ignored(self):
+        events = self.events()
+        refresh = dict(events[2])
+        events[2]["eventMessage"] = events[2]["eventMessage"].replace("stale=false", "stale=true")
+        refresh["eventMessage"] = refresh["eventMessage"].replace("attempt=1", "attempt=2")
+        events.insert(3, refresh)
+        for index, event in enumerate(events):
+            event["machTimestamp"] = index + 1
+        self.check(events)
+        for text in ("malformed", "{bad json}"):
+            with self.assertRaises(ValueError):
+                verify_storage_scope(text, dict(pid=123), self.binary)
 
 
 class OpenCaptureTests(unittest.TestCase):

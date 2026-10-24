@@ -180,6 +180,7 @@ jobs:
             '[$secret,$canonical,$foreign,$home]')"
           system_profiler SPHardwareDataType > "$EVIDENCE/hardware.txt"
           sw_vers > "$EVIDENCE/os.txt"
+          uname -v > "$EVIDENCE/kernel.txt"
           before="$(pgrep -f 'BpyRuntime/python' || true)"
           [ -z "$before" ]
           PYTHON="$(command -v python3)"
@@ -192,6 +193,7 @@ jobs:
             NGV_BPY_APPROVED_INPUT_DIR="$RUNNER_TEMP/approved-input" \
             NGV_SELFTEST_BPY="$EVIDENCE" \
             "$PYTHON" -I scripts/bpy_runtime_acceptance.py "$APP" --mode runtime \
+            --capture-open-logs \
             --source-sha "$EXPECTED_SOURCE" --deadline "$NGV_BPY_DIAGNOSTIC_DEADLINE" \
             --output "$EVIDENCE" < /dev/null \
             > "$EVIDENCE/runtime-supervisor.log" 2> "$EVIDENCE/time.txt"
@@ -253,6 +255,10 @@ jobs:
             and .storageRecovery.staleHelperRejected == true
             and .storageRecovery.journalLockEnforced == true
             and .storageRecovery.crashedHelperRetained == true
+            and .storageRecovery.ancestorSymlinkRejected == true
+            and .storageRecovery.leafSymlinkRejected == true
+            and .storageRecovery.regularFileRejected == true
+            and .storageRecovery.searchOnlyAncestorOpened == true
             and .productionSpatial.nativeSceneAndCamera == true
             and .productionSpatial.storyboardNativeDerivation == true
             and .productionSpatial.completeShotState == true
@@ -349,7 +355,7 @@ jobs:
           python3 scripts/production_spatial_ui_evidence.py "$EVIDENCE"
           "$RUNNER_TEMP/panorama-parser/bin/python" scripts/retained_spatial_evidence.py "$EVIDENCE"
           python3 scripts/spatial_evaluated_geometry_evidence.py "$EVIDENCE" --runtime-root "$APP/Contents/Resources/BpyRuntime"
-          python3 scripts/bpy_protocol_evidence.py "$EVIDENCE"
+          python3 scripts/bpy_protocol_evidence.py "$EVIDENCE" --app "$APP"
           python3 scripts/bpy_worker_evidence.py "$EVIDENCE"
           test -s "$EVIDENCE/perspective.png"
           for artifact in production-spatial-storyboard.png production-spatial-start.png \

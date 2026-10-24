@@ -3,6 +3,7 @@ import base64
 import hashlib
 import json
 from pathlib import Path
+import re
 from uuid import UUID
 
 
@@ -148,8 +149,100 @@ def validate_reservation(requests, responses, owner_session):
     return set(labels)
 
 
+def validate_storage(evidence, requests, responses, owner_session):
+    reference = object_bytes(evidence["storageReference"])
+    require(str(UUID(reference["sessionID"])) == owner_session, "storage reference owner")
+    require({key: value for key, value in reference.items() if key != "storage"} == requests["foreign-open"],
+            "storage reference uses the valid owner contract")
+    storage = reference["storage"]
+    require(set(storage) == {"id", "mountPath", "device", "capacityBytes", "bookmarkSHA256"}, "redacted storage identity")
+    UUID(storage["id"])
+    require(integer(storage["device"]) and integer(storage["capacityBytes"], 1)
+            and storage["mountPath"].startswith("/") and re.fullmatch(r"[0-9a-f]{64}", storage["bookmarkSHA256"]),
+            "storage reference identity")
+    labels = ("storage-wrong-device", "storage-wrong-capacity", "storage-wrong-path")
+    sessions = {owner_session, str(UUID(requests["reservation-first-owner"]["sessionID"]))}
+    for label, field, changed in zip(labels, ("device", "capacityBytes", "mountPath"),
+                                     (storage["device"] ^ 1, storage["capacityBytes"] ^ 1, storage["mountPath"] + "/other")):
+        request = requests[label]
+        session = str(UUID(request["sessionID"]))
+        require(session not in sessions, "forged lease needs a fresh unreserved session")
+        sessions.add(session)
+        expected = dict(reference, sessionID=request["sessionID"], storage=dict(storage, **{field: changed}))
+        require(request == expected, "single forged lease field: " + label)
+        require(responses[label].get("ok") is False and responses[label].get("message") == "invalid open request",
+                "forged lease refused: " + label)
+    return set(labels)
+
+
+def validate_storage_refusals(evidence, result, log_text, app):
+    events = []
+    for line in log_text.splitlines():
+        if not line.strip() or line.startswith("Filtering the log data using "):
+            continue
+        event = json.loads(line)
+        parts = event.get("eventMessage", "").split()
+        if not parts or parts[0] not in ("open.check", "open.fail", "open.validated", "open.result"):
+            continue
+        fields = dict(item.split("=", 1) for item in parts[1:])
+        require(len(fields) == len(parts) - 1, "duplicate storage refusal fields")
+        events.append((parts[0], fields, event))
+    reference = object_bytes(evidence["storageReference"])
+    session = str(UUID(reference["sessionID"]))
+    digest = reference["storage"]["bookmarkSHA256"]
+    service = result["serviceA"]
+    service_path = re.escape(str(app)) + r"/Contents/XPCServices/NexGenVideoBpyService[0-9]+\.xpc/Contents/MacOS/NexGenVideoBpyService"
+
+    def identity(entry):
+        _, fields, event = entry
+        require(event.get("processID") == service and fields.get("pid") == str(service), "refusal service PID")
+        require(re.fullmatch(service_path, event.get("processImagePath", ""))
+                and event.get("subsystem") == "de.h5ventures.nexgenvideo.bpy-service"
+                and event.get("category") == "open-diagnostic", "refusal service image/origin")
+        require(type(event.get("machTimestamp")) is int and event["machTimestamp"] > 0, "refusal timestamp")
+        UUID(fields["owner"])
+
+    def has_session(entry, target):
+        try:
+            return str(UUID(entry[1].get("session", ""))) == target
+        except ValueError:
+            return False
+
+    anchors = [entry for entry in events if entry[0] == "open.check" and has_session(entry, session)]
+    require(len(anchors) == 1, "one original successful storage check")
+    for entry in anchors:
+        identity(entry)
+        require(entry[1].get("sha256") == digest and entry[1].get("file") == "true"
+                and entry[1].get("pathMatches") == "true" and entry[1].get("volumeMatch") == "equal", "original storage identity")
+    owners = {str(UUID(entry[1]["owner"])) for entry in anchors}
+    starts = {entry[1]["start"] for entry in anchors}
+    require(len(owners) == len(starts) == 1, "original storage ownership")
+    start = starts.pop()
+    preparation = object_bytes(evidence["responses"]["reservation-first-owner"])["storagePreparation"]
+    require(str(preparation["serviceStart"]) == start and preparation["servicePID"] == service, "refusal prepared service")
+    proof = {}
+    for label, code in (("storage-wrong-device", "259"), ("storage-wrong-capacity", "259"), ("storage-wrong-path", "257")):
+        target = str(UUID(object_bytes(evidence["requests"][label])["sessionID"]))
+        selected = [entry for entry in events if has_session(entry, target)]
+        require([entry[0] for entry in selected] == ["open.check", "open.fail"], "refusal must precede reserve/open: " + label)
+        checked, failed = selected
+        for entry in selected:
+            identity(entry)
+            require(str(UUID(entry[1]["owner"])) in owners and entry[1].get("start") == start, "refusal owner/start")
+        require(checked[1].get("sha256") == digest and checked[1].get("file") == "true"
+                and checked[1].get("volumeMatch") == "equal"
+                and checked[1].get("pathMatches") == ("false" if label == "storage-wrong-path" else "true"),
+                "actual forged lease resolution: " + label)
+        require(failed[1].get("stage") == "validateMount" and failed[1].get("domain") == "NSCocoaErrorDomain"
+                and failed[1].get("code") == code, "exact storage refusal: " + label)
+        require(min(entry[2]["machTimestamp"] for entry in anchors) < checked[2]["machTimestamp"] < failed[2]["machTimestamp"],
+                "storage refusal order")
+        proof[label] = dict(sessionID=target, servicePID=service, serviceStart=start, domain="NSCocoaErrorDomain", code=int(code))
+    return proof
+
+
 def validate(evidence, result, raw_bytes, checkpoint_bytes, restored_checkpoint_bytes):
-    require(evidence.get("schema") == "nexgenvideo/bpy-native-protocol-evidence/2", "protocol schema")
+    require(evidence.get("schema") == "nexgenvideo/bpy-native-protocol-evidence/3", "protocol schema")
     require(result.get("nativeProtocolEvidenceFile") == "native-protocol-evidence.json", "evidence filename")
     require(result.get("nativeProtocolEvidenceSHA256") == hashlib.sha256(raw_bytes).hexdigest(), "evidence digest")
     requests = {key: object_bytes(value) for key, value in evidence["requests"].items()}
@@ -164,15 +257,17 @@ def validate(evidence, result, raw_bytes, checkpoint_bytes, restored_checkpoint_
     }
     session = str(UUID(requests["foreign-open"]["sessionID"]))
     reservations = validate_reservation(requests, responses, session)
+    storage = validate_storage(evidence, requests, responses, session)
     require(decode(evidence["requests"]["reservation-stale-reopen"])
             == decode(evidence["requests"]["reservation-new-owner"]), "exact valid replacement reservation request")
-    require(set(requests) == expected | reservations == set(responses), "request/response coverage")
+    require(set(requests) == expected | reservations | storage == set(responses), "request/response coverage")
     require(set(chunks) == {"invalid-final-hash", "valid-final-after-failure", "reserve-global-input-budget",
         "cross-job-budget-refused", "budget-released-after-cancel", "literal-part-name", "partial-input",
         "completed-partial-input"}, "actual staging chunk coverage")
     poll_count = sum(item["method"] == "jobStatus" for item in evidence["completion"])
     expected_order = ["foreign-open", "foreign-status", "foreign-close", "owner-after-foreign-close",
-        "reservation-first-owner", "reservation-failed-bookmark", "reservation-new-owner", "reservation-stale-close",
+        "reservation-first-owner", "storage-wrong-device", "storage-wrong-capacity", "storage-wrong-path",
+        "reservation-failed-bookmark", "reservation-new-owner", "reservation-stale-close",
         "reservation-stale-reopen", "reservation-survived-stale-close", "reservation-cleanup", "confirm-replay", "invalid-final-hash",
         "valid-final-after-failure", "reserve-global-input-budget", "cross-job-budget-refused", "cancel-reservation",
         "budget-released-after-cancel", "cancel-unrelated-unknown-job", "literal-part-name", "partial-input",
@@ -248,8 +343,17 @@ def validate(evidence, result, raw_bytes, checkpoint_bytes, restored_checkpoint_
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("evidence", type=Path)
+    parser.add_argument("--app", type=Path, required=True)
     args = parser.parse_args()
     raw = (args.evidence / "native-protocol-evidence.json").read_bytes()
-    validate(json.loads(raw), json.loads((args.evidence / "result.json").read_bytes()), raw,
+    evidence = json.loads(raw)
+    result = json.loads((args.evidence / "result.json").read_bytes())
+    validate(evidence, result, raw,
              (args.evidence / "native-protocol-checkpoint.blend").read_bytes(),
              (args.evidence / "native-protocol-restored-checkpoint.blend").read_bytes())
+    logs = (args.evidence / "open-events.ndjson").read_bytes()
+    refusals = validate_storage_refusals(evidence, result, logs.decode(), args.app.resolve())
+    process = json.loads((args.evidence / "process-result.json").read_bytes())
+    proof = dict(sourceSHA=process["sourceSHA"], protocolSHA256=hashlib.sha256(raw).hexdigest(),
+                 openEventsSHA256=hashlib.sha256(logs).hexdigest(), refusals=refusals)
+    (args.evidence / "native-storage-refusals.json").write_text(json.dumps(proof, sort_keys=True) + "\n")

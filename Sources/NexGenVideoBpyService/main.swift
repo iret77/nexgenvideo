@@ -2876,8 +2876,12 @@ private final class BpyRuntimeService: NSObject, @unchecked Sendable {
                 return
             }
             stage = .bookmark
+            let beforeScope = Darwin.open(storage.mountPath, O_RDONLY | O_DIRECTORY | O_NOFOLLOW_ANY | O_CLOEXEC)
+            let beforeScopeError = beforeScope < 0 ? errno : 0
+            if beforeScope >= 0 { Darwin.close(beforeScope) }
+            openDiagnostics.notice("open.beforeScope session=\(request.sessionID.uuidString, privacy: .public) owner=\(owner.uuidString, privacy: .public) pid=\(getpid(), privacy: .public) errno=\(beforeScopeError, privacy: .public)")
             var stale = false
-            let scope = try URL(resolvingBookmarkData: storage.bookmark, options: .withoutUI,
+            let scope = try URL(resolvingBookmarkData: storage.bookmark, options: [.withoutUI, .withoutMounting],
                                 relativeTo: nil, bookmarkDataIsStale: &stale)
             var ownsScope = true
             defer { if ownsScope { scope.stopAccessingSecurityScopedResource() } }
@@ -2886,16 +2890,13 @@ private final class BpyRuntimeService: NSObject, @unchecked Sendable {
             let serviceStart = processUsage(getpid())?.startAbsoluteTime ?? 0
             let bookmarkDigest = sha256(storage.bookmark)
             let volumeMatch = BpyStoragePaths.bookmarkVolumeMatch(storage.bookmark, mount: scope)
-            openDiagnostics.notice("open.check session=\(request.sessionID.uuidString, privacy: .public) owner=\(owner.uuidString, privacy: .public) pid=\(getpid(), privacy: .public) start=\(serviceStart, privacy: .public) stale=\(stale, privacy: .public) pathMatches=\(pathMatches, privacy: .public) sha256=\(bookmarkDigest, privacy: .public) volumeMatch=\(volumeMatch, privacy: .public)")
-            if stale, pathMatches {
-                diagnoseStorageMount(storage, maximumBytes: request.limits.physicalStorageBytes,
-                                     sessionID: request.sessionID, owner: owner, validate: true)
-            }
-            guard !stale, pathMatches else { throw CocoaError(.fileReadNoPermission) }
+            openDiagnostics.notice("open.check session=\(request.sessionID.uuidString, privacy: .public) owner=\(owner.uuidString, privacy: .public) pid=\(getpid(), privacy: .public) start=\(serviceStart, privacy: .public) stale=\(stale, privacy: .public) file=\(scope.isFileURL, privacy: .public) pathMatches=\(pathMatches, privacy: .public) sha256=\(bookmarkDigest, privacy: .public) volumeMatch=\(volumeMatch, privacy: .public)")
             stage = .validateMount
             var descriptor: Int32?
             do {
-                descriptor = try BpyStoragePaths.validateMount(storage, maximumBytes: request.limits.physicalStorageBytes)
+                descriptor = try BpyStoragePaths.validateResolvedMount(storage, resolved: scope,
+                                                                      maximumBytes: request.limits.physicalStorageBytes)
+                openDiagnostics.notice("open.validated session=\(request.sessionID.uuidString, privacy: .public) owner=\(owner.uuidString, privacy: .public) pid=\(getpid(), privacy: .public) start=\(serviceStart, privacy: .public) sha256=\(bookmarkDigest, privacy: .public)")
             } catch {
                 diagnoseStorageMount(storage, maximumBytes: request.limits.physicalStorageBytes,
                                      sessionID: request.sessionID, owner: owner, validate: false)

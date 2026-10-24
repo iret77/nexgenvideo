@@ -1508,7 +1508,7 @@ final class BpyRuntimeSession: @unchecked Sendable {
         var chunks: [String: String] = [:]
         func send(_ label: String, request: Data, connection foreign: NSXPCConnection? = nil,
                   _ invoke: (BpyRuntimeServiceProtocol, Data, @escaping (Data) -> Void) -> Void) throws -> BpyServiceResponse {
-            requests[label] = request.base64EncodedString()
+            requests[label] = try (label.hasPrefix("storage-") ? Self.storageEvidenceRequest(request) : request).base64EncodedString()
             let response: BpyServiceResponse
             var responseBytes: Data?
             if let foreign {
@@ -1561,6 +1561,21 @@ final class BpyRuntimeSession: @unchecked Sendable {
         let currentStorage = storageVolume?.lease
         lock.unlock()
         guard let currentStorage else { throw BpyRuntimeError.invalidOutput("The protocol probe has no actual storage lease.") }
+        let storageReference = try Self.storageEvidenceRequest(Self.encode(BpyOpenSessionRequest(
+            sessionID: identifier, documentID: documentID, limits: limits, storage: currentStorage)))
+        for (label, storage) in [
+            ("storage-wrong-device", BpyStorageLease(id: currentStorage.id, mountPath: currentStorage.mountPath,
+                device: currentStorage.device ^ 1, capacityBytes: currentStorage.capacityBytes, bookmark: currentStorage.bookmark)),
+            ("storage-wrong-capacity", BpyStorageLease(id: currentStorage.id, mountPath: currentStorage.mountPath,
+                device: currentStorage.device, capacityBytes: currentStorage.capacityBytes ^ 1, bookmark: currentStorage.bookmark)),
+            ("storage-wrong-path", BpyStorageLease(id: currentStorage.id, mountPath: currentStorage.mountPath + "/other",
+                device: currentStorage.device, capacityBytes: currentStorage.capacityBytes, bookmark: currentStorage.bookmark))
+        ] {
+            let probe = BpyOpenSessionRequest(sessionID: UUID(), documentID: documentID, limits: limits, storage: storage)
+            guard try !send(label, request: Self.encode(probe), { $0.openSession($1, withReply: $2) }).ok else {
+                throw BpyRuntimeError.invalidOutput("The service accepted a forged storage lease: " + label)
+            }
+        }
         let brokenStorage = BpyStorageLease(id: currentStorage.id, mountPath: currentStorage.mountPath,
             device: currentStorage.device, capacityBytes: currentStorage.capacityBytes, bookmark: Data([1, 2, 3]))
         let failedOpen = try Self.encode(BpyOpenSessionRequest(sessionID: reservationID, documentID: documentID,
@@ -1676,8 +1691,9 @@ final class BpyRuntimeSession: @unchecked Sendable {
         _ = try cancel("cleanup-other", otherID)
         cleanedUp = true
         return try JSONEncoder().encode(BpyNativeProtocolProbeEvidence(
-            schema: "nexgenvideo/bpy-native-protocol-evidence/2", requests: requests, chunks: chunks,
-            responses: responses, exchangeOrder: exchangeOrder, completion: completion, restoreOpen: nil, restore: nil))
+            schema: "nexgenvideo/bpy-native-protocol-evidence/3", requests: requests, chunks: chunks,
+            responses: responses, exchangeOrder: exchangeOrder, completion: completion, restoreOpen: nil, restore: nil,
+            storageReference: storageReference.base64EncodedString()))
     }
 
     func nativeProtocolRestoreProbe(addingTo evidence: Data) throws -> (ready: BpyServiceResponse, evidence: Data, checkpoint: Data) {
@@ -1685,7 +1701,7 @@ final class BpyRuntimeSession: @unchecked Sendable {
             throw BpyRuntimeError.unavailable("The native restore probe requires explicit acceptance.")
         }
         var document = try JSONDecoder().decode(BpyNativeProtocolProbeEvidence.self, from: evidence)
-        guard document.schema == "nexgenvideo/bpy-native-protocol-evidence/2", document.restore == nil else {
+        guard document.schema == "nexgenvideo/bpy-native-protocol-evidence/3", document.restore == nil else {
             throw BpyRuntimeError.invalidOutput("The protocol evidence already contains a restore.")
         }
         let probe = BpyNativeRestoreProbe()
@@ -1693,7 +1709,12 @@ final class BpyRuntimeSession: @unchecked Sendable {
         guard let checkpoint = probe.checkpoint, let open = probe.open, !probe.exchanges.isEmpty else {
             throw BpyRuntimeError.invalidOutput("No actual checkpoint upload occurred.")
         }
-        document.restoreOpen = open
+        guard let openBytes = Data(base64Encoded: open.request) else {
+            throw BpyRuntimeError.invalidOutput("The restore probe has no open request bytes.")
+        }
+        document.restoreOpen = .init(method: open.method,
+            request: try Self.storageEvidenceRequest(openBytes).base64EncodedString(),
+            response: open.response)
         document.restore = probe.exchanges
         return (ready, try JSONEncoder().encode(document), checkpoint)
     }
@@ -1887,6 +1908,23 @@ final class BpyRuntimeSession: @unchecked Sendable {
     private static func decode(_ data: Data) throws -> BpyServiceResponse {
         try JSONDecoder().decode(BpyServiceResponse.self, from: data)
     }
+
+    private static func storageEvidenceRequest(_ data: Data) throws -> Data {
+        guard var request = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw BpyRuntimeError.invalidOutput("The storage probe request is not an object.")
+        }
+        if request["storage"] != nil {
+            guard var storage = request["storage"] as? [String: Any],
+                  let encoded = storage.removeValue(forKey: "bookmark") as? String,
+                  let bookmark = Data(base64Encoded: encoded) else {
+                throw BpyRuntimeError.invalidOutput("The storage probe cannot redact its bookmark.")
+            }
+            // Archive identity evidence without the transferable filesystem capability.
+            storage["bookmarkSHA256"] = SHA256.hash(data: bookmark).map { String(format: "%02x", $0) }.joined()
+            request["storage"] = storage
+        }
+        return try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+    }
 }
 
 struct BpyNativeProtocolProbeEvidence: Codable, Sendable {
@@ -1898,6 +1936,7 @@ struct BpyNativeProtocolProbeEvidence: Codable, Sendable {
     let completion: [BpyNativeProtocolExchange]
     var restoreOpen: BpyNativeProtocolExchange?
     var restore: [BpyNativeProtocolExchange]?
+    let storageReference: String
 }
 
 struct BpyNativeProtocolExchange: Codable, Sendable {

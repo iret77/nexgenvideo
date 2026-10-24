@@ -13,6 +13,7 @@ nonisolated enum BpyStorageRecoveryAcceptance {
                                                    attributes: [.posixPermissions: 0o700])
             let descriptor = try BpyStoragePaths.openDirectory(root)
             defer { Darwin.close(descriptor) }
+            let lookup = try verifyDirectoryLookup(root: root)
             let boot = try BpyStorageJournal.bootSessionID()
             guard boot == (try BpyStorageJournal.bootSessionID()), let ownerStart = start(getpid()) else {
                 throw SpatialSceneError.invalid("Native storage boot/process identity is unavailable.")
@@ -83,9 +84,45 @@ nonisolated enum BpyStorageRecoveryAcceptance {
             guard retained, try BpyStorageJournal.read(directoryFD: descriptor) == crashed else {
                 throw SpatialSceneError.invalid("A crashed same-boot operation was released without completion.")
             }
-            return ["bootIdentityRead": true, "normalHelperCompletion": true,
-                    "staleHelperRejected": true, "journalLockEnforced": true, "crashedHelperRetained": true]
+            return lookup.merging(["bootIdentityRead": true, "normalHelperCompletion": true,
+                    "staleHelperRejected": true, "journalLockEnforced": true, "crashedHelperRetained": true]) { _, new in new }
         }.value
+    }
+
+    private static func verifyDirectoryLookup(root: URL) throws -> [String: Bool] {
+        let target = root.appendingPathComponent("directory-target")
+        let child = target.appendingPathComponent("child")
+        let alias = root.appendingPathComponent("directory-alias")
+        try FileManager.default.createDirectory(at: child, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: target)
+        for candidate in [alias, alias.appendingPathComponent("child")] {
+            var rejected = false
+            do {
+                let opened = try BpyStoragePaths.openDirectory(candidate)
+                Darwin.close(opened)
+            } catch let error as POSIXError where error.code == .ELOOP { rejected = true }
+            guard rejected else { throw SpatialSceneError.invalid("The kernel followed a storage directory symlink.") }
+        }
+        let file = root.appendingPathComponent("regular-file")
+        try Data([1]).write(to: file)
+        var rejectedFile = false
+        do {
+            let opened = try BpyStoragePaths.openDirectory(file)
+            Darwin.close(opened)
+        } catch let error as POSIXError where error.code == .ENOTDIR { rejectedFile = true }
+        guard rejectedFile else { throw SpatialSceneError.invalid("A regular file opened as a storage directory.") }
+        guard chmod(target.path, 0o100) == 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+        defer { _ = chmod(target.path, 0o700) }
+        let opened = try BpyStoragePaths.openDirectory(child)
+        defer { Darwin.close(opened) }
+        let identity = try BpyStoragePaths.identity(opened)
+        var actual = stat()
+        guard stat(child.path, &actual) == 0, identity.inode == actual.st_ino,
+              identity.device == UInt64(UInt32(bitPattern: actual.st_dev)) else {
+            throw SpatialSceneError.invalid("A search-only ancestor changed storage directory identity.")
+        }
+        return ["ancestorSymlinkRejected": true, "leafSymlinkRejected": true,
+                "regularFileRejected": true, "searchOnlyAncestorOpened": true]
     }
 
     private static func start(_ pid: Int32) -> UInt64? {

@@ -90,9 +90,21 @@ including retiring sessions, from the kernel-identified XPC process; a session-c
 not authorize unmounting a lease still used by another session.
 The host resolves a newly created bookmark before storing it, refreshing stale data once from the
 resolved URL. A changed path or a still-stale refresh is rejected. The exact verified bytes enter
-both the durable lease and the service request. The service continues to reject stale bookmarks.
+both the durable lease and the service request. For the transient cross-process handoff, the service
+requires a file URL, the exact mount path, matching bookmark/live volume UUIDs, and the kernel-opened
+directory's owner, device, APFS mountpoint and capacity. Receiver staleness is diagnostic metadata,
+not resource identity: the same bytes can resolve fresh in the host and stale in the sandbox.
+The kernel rejects symlinks anywhere in the path using `O_NOFOLLOW_ANY`; opening the mounted directory
+does not require read access to ancestors outside the bookmark's granted subtree.
 Host resolution and service failure diagnostics compare bookmark digests and volume metadata without
 recording capability bytes.
+Native acceptance requires PID- and session-bound evidence that the first sandboxed open is denied
+before resolving the bookmark and that the same mount passes all checks afterwards. Forged device,
+capacity and path leases must fail on fresh session IDs at the storage validation stage, with the
+specific Cocoa identity error; missing-path or later session failures cannot satisfy those controls.
+Their evidence stores bookmark hashes only.
+The macOS 26 kernel must reject both ancestor and leaf symlinks while permitting a searchable but
+unreadable ancestor. The existing host-crash, sandbox-denial and physical-storage probes still apply.
 This path is prepared for native verification; successful cross-process resolution is not yet proven.
 Native acceptance includes a real 64 MiB-volume ENOSPC probe while fileports, Mach memory entries or
 queued SCM_RIGHTS retain an unlinked file (or the applicable channel is actually denied). These probes

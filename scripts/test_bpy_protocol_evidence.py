@@ -3,8 +3,9 @@ import copy
 import hashlib
 import json
 import unittest
+from pathlib import Path
 
-from bpy_protocol_evidence import CHUNK_BYTES, fingerprint, validate
+from bpy_protocol_evidence import CHUNK_BYTES, fingerprint, validate, validate_storage_refusals
 
 
 def encoded(value):
@@ -16,9 +17,9 @@ def decoded(value):
 
 
 def fixture(*, restored=b"restored", completed_by_authorization=False):
-    session = "00000000-0000-0000-0000-000000000001"
+    session = "AAAAAAAA-BBBB-CCCC-DDDD-000000000001"
     owner, staged, reserved, other, unknown, reclaimed, recovered = [
-        "00000000-0000-0000-0000-%012d" % n for n in range(2, 9)]
+        "AAAAAAAA-BBBB-CCCC-DDDD-%012d" % n for n in range(2, 9)]
     requests, chunks, responses = {}, {}, {}
     limits = dict(inputBytes=100, timeoutSeconds=120)
 
@@ -32,6 +33,14 @@ def fixture(*, restored=b"restored", completed_by_authorization=False):
     add("owner-after-foreign-close", dict(jobID=owner), state="confirmed", jobID=owner)
     add("confirm-replay", dict(jobID=owner, revision="revision-a", sceneSHA256=hashlib.sha256(b"ab").hexdigest()), state="confirmed", jobID=owner)
     preparation = dict(id=reclaimed, servicePID=123, serviceStart=100)
+    storage = dict(id=session, mountPath="/private/fixture/mount", device=100, capacityBytes=67108864,
+                   bookmarkSHA256="a" * 64)
+    storage_reference = dict(sessionID=session, documentID="parser-fixture", limits=limits, storage=storage)
+    for number, (label, field, changed) in enumerate((
+        ("storage-wrong-device", "device", 101), ("storage-wrong-capacity", "capacityBytes", 67108865),
+        ("storage-wrong-path", "mountPath", storage["mountPath"] + "/other")), 10):
+        add(label, dict(documentID="parser-fixture", limits=limits, storage=dict(storage, **{field: changed})),
+            False, target="AAAAAAAA-BBBB-CCCC-DDDD-%012d" % number, message="invalid open request")
     for label in ("reservation-first-owner", "reservation-new-owner", "reservation-survived-stale-close"):
         add(label, dict(documentID="parser-fixture", limits=limits), target=reclaimed, storagePreparation=preparation)
     add("reservation-failed-bookmark", dict(documentID="parser-fixture", limits=limits,
@@ -95,17 +104,92 @@ def fixture(*, restored=b"restored", completed_by_authorization=False):
             chunkBytes=len(chunk), chunkSHA256=hashlib.sha256(chunk).hexdigest()))
     restore.append(dict(restore[-1], method="restoreCheckpointReplay"))
     order = ["foreign-open", "foreign-status", "foreign-close", "owner-after-foreign-close",
-        "reservation-first-owner", "reservation-failed-bookmark", "reservation-new-owner", "reservation-stale-close",
+        "reservation-first-owner", "storage-wrong-device", "storage-wrong-capacity", "storage-wrong-path",
+        "reservation-failed-bookmark", "reservation-new-owner", "reservation-stale-close",
         "reservation-stale-reopen", "reservation-survived-stale-close", "reservation-cleanup", "confirm-replay", "invalid-final-hash",
         "valid-final-after-failure", "reserve-global-input-budget", "cross-job-budget-refused", "cancel-reservation",
         "budget-released-after-cancel", "cancel-unrelated-unknown-job", "literal-part-name", "partial-input",
         "submit-with-partial-input", "completed-partial-input", "service-submit", "service-submit-replay"]
     order += ["service-completed"] * (1 if completed_by_authorization else 2)
     order += ["cleanup-staged", "cleanup-reserved", "cleanup-other"]
-    return dict(schema="nexgenvideo/bpy-native-protocol-evidence/2", requests=requests, chunks=chunks,
+    return dict(schema="nexgenvideo/bpy-native-protocol-evidence/3", requests=requests, chunks=chunks,
+        storageReference=encoded(storage_reference),
         responses=responses, exchangeOrder=order, completion=completion, restore=restore,
         restoreOpen=dict(method="openSession", request=encoded(dict(sessionID=recovered, confirmedRevision="revision-e")),
             response=encoded(dict(ok=True, confirmedRevision="revision-e", runtime=dict(serviceProcessIdentifier=124)))))
+
+
+class StorageRefusalTests(unittest.TestCase):
+    app = Path("/fixture/NexGenVideo.app")
+
+    def events(self, evidence):
+        reference = decoded(evidence["storageReference"])
+        owner = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
+        common = "owner=" + owner + " pid=123 start=100"
+        digest = reference["storage"]["bookmarkSHA256"]
+        messages = [f'open.check session={reference["sessionID"]} {common} file=true pathMatches=true volumeMatch=equal sha256={digest}']
+        for label, code in (("storage-wrong-device", 259), ("storage-wrong-capacity", 259), ("storage-wrong-path", 257)):
+            session = decoded(evidence["requests"][label])["sessionID"]
+            path = "false" if label == "storage-wrong-path" else "true"
+            messages.extend([f"open.check session={session} {common} file=true pathMatches={path} volumeMatch=equal sha256={digest}",
+                             f"open.fail session={session} {common} stage=validateMount domain=NSCocoaErrorDomain code={code}"])
+        return [dict(eventMessage=message, processID=123, machTimestamp=index + 1,
+                     subsystem="de.h5ventures.nexgenvideo.bpy-service", category="open-diagnostic",
+                     processImagePath=str(self.app) + "/Contents/XPCServices/NexGenVideoBpyService0.xpc/Contents/MacOS/NexGenVideoBpyService")
+                for index, message in enumerate(messages)]
+
+    def check(self, evidence, events):
+        return validate_storage_refusals(evidence, dict(serviceA=123),
+            "\n".join(json.dumps(event) for event in events), self.app)
+
+    def test_exact_refusal_stages_prove_each_distinct_identity_check(self):
+        evidence = fixture()
+        proof = self.check(evidence, self.events(evidence))
+        self.assertEqual({key: value["code"] for key, value in proof.items()},
+                         {"storage-wrong-device": 259, "storage-wrong-capacity": 259, "storage-wrong-path": 257})
+
+    def test_incidental_missing_path_or_later_session_failure_is_not_a_path_guard(self):
+        for old, new in (("domain=NSCocoaErrorDomain code=257", "domain=NSPOSIXErrorDomain code=2"),
+                         ("stage=validateMount", "stage=reserve"), ("code=257", "code=259")):
+            with self.subTest(new=new):
+                evidence = fixture()
+                events = self.events(evidence)
+                events[-1]["eventMessage"] = events[-1]["eventMessage"].replace(old, new)
+                with self.assertRaises(ValueError):
+                    self.check(evidence, events)
+
+    def test_missing_duplicated_foreign_or_out_of_order_evidence_fails(self):
+        for index in range(7):
+            for mutation in ("missing", "duplicate", "pid", "image", "start", "owner", "time"):
+                with self.subTest(index=index, mutation=mutation):
+                    evidence = fixture()
+                    events = self.events(evidence)
+                    if mutation == "missing":
+                        del events[index]
+                    elif mutation == "duplicate":
+                        events.append(dict(events[index]))
+                    elif mutation == "pid":
+                        events[index]["processID"] = 456
+                    elif mutation == "image":
+                        events[index]["processImagePath"] = "/foreign/Service"
+                    elif mutation == "start":
+                        events[index]["eventMessage"] = events[index]["eventMessage"].replace("start=100", "start=101")
+                    elif mutation == "owner":
+                        events[index]["eventMessage"] = events[index]["eventMessage"].replace("EEEEEEEEEEEE", "FFFFFFFFFFFF")
+                    else:
+                        events[index]["machTimestamp"] = 0
+                    with self.assertRaises(ValueError):
+                        self.check(evidence, events)
+
+    def test_different_bookmark_and_unproven_resolution_are_rejected(self):
+        for index in (0, 1, 3, 5):
+            for old, new in (("sha256=" + "a" * 64, "sha256=" + "b" * 64),
+                             ("file=true", "file=false"), ("volumeMatch=equal", "volumeMatch=absent")):
+                evidence = fixture()
+                events = self.events(evidence)
+                events[index]["eventMessage"] = events[index]["eventMessage"].replace(old, new)
+                with self.subTest(index=index, new=new), self.assertRaises(ValueError):
+                    self.check(evidence, events)
 
 
 class ProtocolEvidenceTests(unittest.TestCase):
@@ -123,6 +207,31 @@ class ProtocolEvidenceTests(unittest.TestCase):
     def test_parser_fixture_and_actual_authorization_completion_shapes(self):
         self.check(fixture())
         self.check(fixture(completed_by_authorization=True))
+
+    def test_forged_storage_probes_require_one_changed_field_and_fresh_sessions(self):
+        for label in ("storage-wrong-device", "storage-wrong-capacity", "storage-wrong-path"):
+            for mutation in ("unchanged", "another-bookmark", "existing-session", "reservation-session", "accepted", "missing", "capability-bytes"):
+                with self.subTest(label=label, mutation=mutation):
+                    evidence = fixture()
+                    reference = decoded(evidence["storageReference"])
+                    request = decoded(evidence["requests"][label])
+                    if mutation == "unchanged":
+                        request["storage"] = reference["storage"]
+                    elif mutation == "another-bookmark":
+                        request["storage"]["bookmarkSHA256"] = "b" * 64
+                    elif mutation == "existing-session":
+                        request["sessionID"] = reference["sessionID"]
+                    elif mutation == "reservation-session":
+                        request["sessionID"] = decoded(evidence["requests"]["reservation-first-owner"])["sessionID"]
+                    elif mutation == "accepted":
+                        self.change(evidence, "responses", label, ok=True)
+                    elif mutation == "capability-bytes":
+                        request["storage"]["bookmark"] = "capability"
+                    evidence["requests"][label] = encoded(request)
+                    if mutation == "missing":
+                        del evidence["responses"][label]
+                    with self.assertRaises((ValueError, KeyError)):
+                        self.check(evidence)
 
     def test_false_flag_and_missing_response(self):
         for label in ("foreign-open", "cross-job-budget-refused", "cleanup-staged", "submit-with-partial-input", "reservation-stale-close"):

@@ -49,21 +49,21 @@ public enum BpyStoragePaths {
 
     public static func openDirectory(_ url: URL) throws -> Int32 {
         guard url.isFileURL, url.path.hasPrefix("/") else { throw CocoaError(.fileReadInvalidFileName) }
-        var descriptor = Darwin.open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC)
-        guard descriptor >= 0 else { throw POSIXError(.EIO) }
-        do {
-            for component in url.path.split(separator: "/") {
-                guard component != ".", component != ".." else { throw CocoaError(.fileReadInvalidFileName) }
-                let next = openat(descriptor, String(component), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-                guard next >= 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
-                Darwin.close(descriptor)
-                descriptor = next
-            }
-            return descriptor
-        } catch {
-            Darwin.close(descriptor)
-            throw error
+        for component in url.path.split(separator: "/") {
+            guard component != ".", component != ".." else { throw CocoaError(.fileReadInvalidFileName) }
         }
+        // A directory scope grants its subtree, not read access to its ancestors.
+        let descriptor = Darwin.open(url.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW_ANY | O_CLOEXEC)
+        guard descriptor >= 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+        return descriptor
+    }
+
+    public static func validateResolvedMount(_ lease: BpyStorageLease, resolved: URL, maximumBytes: UInt64) throws -> Int32 {
+        guard resolved.isFileURL, resolved.path == lease.mountPath,
+              bookmarkVolumeMatch(lease.bookmark, mount: resolved) == "equal" else {
+            throw CocoaError(.fileReadNoPermission)
+        }
+        return try validateMount(lease, maximumBytes: maximumBytes)
     }
 
     public static func identity(_ descriptor: Int32) throws -> (device: UInt64, inode: UInt64) {

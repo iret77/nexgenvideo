@@ -8,6 +8,7 @@ import textwrap
 import time
 import unittest
 from pathlib import Path
+import test_bpy_runtime_acceptance as scope_fixtures
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -70,13 +71,15 @@ class CIWorkflowTests(unittest.TestCase):
         step = workflow.split("      - name: Prove pre-lease and post-exec host-crash cleanup\n", 1)[1]
         step = step.split("      - name:", 1)[0]
         run = textwrap.dedent(step.split("        run: |\n", 1)[1])
-        cases = ((True, False, False, False), (False, False, False, False),
-                 (False, True, False, False), (False, False, True, False), (False, False, False, True))
-        for orphan, ordinary_failure, capture_orphan, capture_failure in cases:
+        cases = ((True, False, False, False, False), (False, False, False, False, False),
+                 (False, True, False, False, False), (False, False, True, False, False),
+                 (False, False, False, True, False), (False, False, False, False, True))
+        for orphan, ordinary_failure, capture_orphan, capture_failure, scope_failure in cases:
             with self.subTest(first_mode_orphan=orphan, ordinary_failure=ordinary_failure,
-                              capture_orphan=capture_orphan, capture_failure=capture_failure), \
+                              capture_orphan=capture_orphan, capture_failure=capture_failure, scope_failure=scope_failure), \
                  tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
+                (root / "scope-events.json").write_text(json.dumps(scope_fixtures.StorageScopeProofTests().events()))
                 app = root / "relocated/NexGenVideo.app/Contents/MacOS/NexGenVideo"
                 app.parent.mkdir(parents=True)
                 app.write_text(textwrap.dedent("""\
@@ -103,7 +106,8 @@ class CIWorkflowTests(unittest.TestCase):
                 shutil.copyfile(ROOT / "scripts/bpy_runtime_acceptance.py", root / "scripts/bpy_runtime_acceptance_impl.py")
                 (root / "scripts/bpy_runtime_acceptance.py").write_text(textwrap.dedent("""\
                     from contextlib import contextmanager
-                    import os
+                    import json, os
+                    from pathlib import Path
                     import bpy_runtime_acceptance_impl as harness
 
                     @contextmanager
@@ -118,6 +122,16 @@ class CIWorkflowTests(unittest.TestCase):
                             yield
                         finally:
                             record("exit")
+                            process = json.loads((output / "process.json").read_text())
+                            events = json.loads(Path(os.environ["FAKE_SCOPE_EVENTS"]).read_text())
+                            for event in events:
+                                if event["processID"] == 123:
+                                    event["processID"] = process["pid"]
+                                event["processImagePath"] = event["processImagePath"].replace(
+                                    "/fixture", str(Path(os.environ["RUNNER_TEMP"]) / "relocated"))
+                                if os.environ["FAKE_SCOPE_FAILURE"] == "1":
+                                    event["eventMessage"] = event["eventMessage"].replace("errno=1", "errno=0")
+                            (output / "open-events.ndjson").write_text("\\n".join(json.dumps(event) for event in events))
 
                     harness.capture_open_logs = macos_log_fixture
                     harness.main()
@@ -147,6 +161,7 @@ class CIWorkflowTests(unittest.TestCase):
                            FAKE_CAPTURE_CALLS=str(root / "capture-calls"),
                            FAKE_CAPTURE_ORPHAN="1" if capture_orphan else "0",
                            FAKE_CAPTURE_FAILURE="1" if capture_failure else "0",
+                           FAKE_SCOPE_EVENTS=str(root / "scope-events.json"), FAKE_SCOPE_FAILURE="1" if scope_failure else "0",
                            FAKE_FIRST_ORPHAN="1" if orphan else "0", EXPECTED_SOURCE="a" * 40,
                            FAKE_ORDINARY_FAILURE="1" if ordinary_failure else "0",
                            NGV_BPY_DIAGNOSTIC_DEADLINE=str(time.time() + 1200))
@@ -154,7 +169,7 @@ class CIWorkflowTests(unittest.TestCase):
                     ["bash", "--noprofile", "--norc", "-c", run], cwd=root, env=env,
                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=10,
                 )
-                failed = orphan or ordinary_failure or capture_orphan or capture_failure
+                failed = orphan or ordinary_failure or capture_orphan or capture_failure or scope_failure
                 self.assertEqual(result.returncode, 1 if failed else 0, result.stdout)
                 expected = [] if capture_failure else ["before-authorization"] if failed else ["before-authorization", "after-authorization"]
                 actual = (root / "calls").read_text().splitlines() if (root / "calls").exists() else []
@@ -170,6 +185,8 @@ class CIWorkflowTests(unittest.TestCase):
                     self.assertIn("orphan open diagnostic capture after before-authorization", result.stdout)
                 if capture_failure:
                     self.assertIn("synthetic macOS log startup failure", result.stdout)
+                if scope_failure:
+                    self.assertIn("mount accessible before bookmark scope", result.stdout)
 
     def test_merge_gate_requires_every_selected_job(self):
         text = CI.read_text().split("  merge_gate:\n", 1)[1]

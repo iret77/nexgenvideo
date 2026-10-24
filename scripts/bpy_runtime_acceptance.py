@@ -1,6 +1,8 @@
 """Keep owned-process diagnostics and require an actual armed host-crash probe."""
 import argparse
 from contextlib import contextmanager
+import errno
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -100,6 +102,78 @@ def verify_crash(proof, mode, pid, source_sha, returncode):
         require(proof.get("authorizationID") is None, "post-authorization lease still pending")
         worker = proof.get("workerPID")
         require(type(worker) is int and worker > 1 and worker not in (pid, supervisor), "missing authorized worker")
+
+
+def verify_storage_scope(log_text, process, binary):
+    events = []
+    for line in log_text.splitlines():
+        if line.startswith("Filtering the log data using "):
+            continue
+        if not line.strip():
+            continue
+        event = json.loads(line)
+        message = event.get("eventMessage", "")
+        if not message.startswith(("open.", "bookmark.resolve ")):
+            continue
+        parts = message.split()
+        fields = dict(item.split("=", 1) for item in parts[1:])
+        require(len(fields) == len(parts) - 1, "duplicate storage event fields")
+        events.append((parts[0], fields, event))
+    preparations = [entry for entry in events if entry[0] == "open.preparation"
+                    and entry[2].get("processID") == process["pid"]]
+    require(len(preparations) == 1, "one original host storage preparation required")
+    preparation = preparations[0]
+    session = preparation[1]["session"]
+    uuid.UUID(session)
+    service = int(preparation[1]["servicePID"])
+    start = preparation[1]["serviceStart"]
+    require(service > 1 and service != process["pid"] and int(start) > 0, "storage service identity")
+    host_path = str(binary)
+    service_path = re.escape(str(binary.parent.parent)) + r"/XPCServices/NexGenVideoBpyService[0-9]+\.xpc/Contents/MacOS/NexGenVideoBpyService"
+
+    def selected(tag, host=False):
+        matches = [entry for entry in events if entry[0] == tag
+                   and entry[1].get("id" if tag == "bookmark.resolve" else "session") == session]
+        if tag == "bookmark.resolve":
+            require(1 <= len(matches) <= 2, "bounded host bookmark resolution")
+            require([item[1].get("attempt") for item in matches] == [str(n + 1) for n in range(len(matches))],
+                    "ordered host bookmark refresh")
+        else:
+            require(len(matches) == 1, "one storage event required: " + tag)
+        for _, fields, event in matches:
+            require(event.get("processID") == (process["pid"] if host else service), "foreign storage event PID")
+            require(event.get("processImagePath") == host_path if host else
+                    re.fullmatch(service_path, event.get("processImagePath", "")), "foreign storage event image")
+            require(event.get("subsystem") == ("de.h5ventures.nexgenvideo" if host else "de.h5ventures.nexgenvideo.bpy-service")
+                    and event.get("category") == ("bpy-open" if host else "open-diagnostic"), "storage event origin")
+            if not host:
+                require((tag == "open.result" or fields.get("pid") == str(service)), "storage event reported PID")
+        return matches[-1]
+
+    preparation = selected("open.preparation", host=True)
+    prepared = selected("open.prepared")
+    host = selected("bookmark.resolve", host=True)
+    before = selected("open.beforeScope")
+    checked = selected("open.check")
+    validated = selected("open.validated")
+    opened = selected("open.result")
+    require(int(before[1]["errno"]) in (errno.EPERM, errno.EACCES), "mount accessible before bookmark scope")
+    digest = host[1]["sha256"]
+    require(re.fullmatch(r"[0-9a-f]{64}", digest), "bookmark digest")
+    for item in (host, checked):
+        require(item[1].get("file") == "true" and item[1].get("pathMatches") == "true"
+                and item[1].get("volumeMatch") == "equal", "resolved storage identity")
+    require(host[1].get("stale") == "false" and checked[1].get("stale") in ("true", "false"), "bookmark freshness evidence")
+    owner = prepared[1]["owner"]
+    uuid.UUID(owner)
+    require(all(item[1].get("owner") == owner for item in (before, checked, validated, opened)), "storage connection owner")
+    require(all(item[1].get("start") == start for item in (prepared, checked, validated)), "storage process start")
+    require(checked[1]["sha256"] == validated[1]["sha256"] == digest and opened[1].get("ok") == "true",
+            "validated storage handoff")
+    times = [item[2]["machTimestamp"] for item in (prepared, preparation, host, before, checked, validated, opened)]
+    require(all(type(value) is int for value in times) and all(a < b for a, b in zip(times, times[1:])), "storage event order")
+    return dict(hostPID=process["pid"], servicePID=service, serviceStart=start, sessionID=session,
+                bookmarkSHA256=digest, receiverStale=checked[1]["stale"] == "true", preScopeErrno=int(before[1]["errno"]))
 
 
 def sample_owned(process, output, label):
@@ -224,6 +298,13 @@ def main():
     if args.capture_open_logs:
         with capture_open_logs(args.output.resolve()):
             supervise(binary, args.output.resolve(), args.mode, args.source_sha, timeout)
+        if args.mode != "runtime":
+            output = args.output.resolve()
+            raw = (output / "open-events.ndjson").read_bytes()
+            process = json.loads((output / "process-result.json").read_text())
+            proof = verify_storage_scope(raw.decode(), process, binary)
+            proof.update(sourceSHA=args.source_sha, openEventsSHA256=hashlib.sha256(raw).hexdigest())
+            (output / "storage-scope-proof.json").write_text(json.dumps(proof, sort_keys=True) + "\n")
     else:
         supervise(binary, args.output.resolve(), args.mode, args.source_sha, timeout)
 
