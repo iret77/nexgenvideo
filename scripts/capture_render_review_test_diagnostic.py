@@ -574,7 +574,20 @@ class TestProcessObservation:
         self.swift_events.close()
 
 
-def validate_framework_selection(swift_runs, xctest_runs, app_only, without_probe, command):
+def validate_framework_selection(swift_runs, xctest_runs, app_only, without_probe, command, core_resume=None):
+    if core_resume is not None:
+        driver = Path(__file__).resolve().with_name("run_macos_tests.py")
+        allowed = {"--scope": "app-swift-testing", "--cache-path": None, "--evidence": None}
+        pairs = list(zip(command[2::2], command[3::2]))
+        if (app_only or swift_runs != 1 or xctest_runs != 0 or not without_probe
+                or len(command) != 8 or command[0] != "python3"
+                or Path(command[1]).resolve() != driver or len(dict(pairs)) != 3
+                or set(dict(pairs)) != set(allowed)
+                or any(not value or allowed[flag] is not None and value != allowed[flag] for flag, value in pairs)):
+            raise ValueError("Core resume requires the complete normal App backend and retained successful backends")
+        from resume_core_tests import verify_local
+        verify_local(core_resume)
+        return
     if not app_only:
         if min(swift_runs, xctest_runs) < 1:
             raise ValueError("Both selected framework run counts must be positive")
@@ -619,6 +632,7 @@ def main():
     parser.add_argument("--xctest-runs", required=True, type=int)
     parser.add_argument("--without-runloop-probe", action="store_true")
     parser.add_argument("--app-only", action="store_true")
+    parser.add_argument("--core-resume", type=Path)
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
@@ -626,7 +640,7 @@ def main():
         parser.error("The existing swift test command is required")
     try:
         validate_framework_selection(args.swift_testing_runs, args.xctest_runs, args.app_only,
-                                     args.without_runloop_probe, command)
+                                     args.without_runloop_probe, command, args.core_resume)
     except ValueError as error:
         parser.error(str(error))
     args.evidence.mkdir(parents=True, exist_ok=False)

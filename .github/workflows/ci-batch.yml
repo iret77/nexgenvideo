@@ -18,6 +18,14 @@ on:
         description: Same-source producer run required in followup mode
         type: string
         default: ''
+      completed_backends_run_id:
+        description: Optional failed Core producer; reuse its verified XCTest and Engine backends across harness-only changes
+        type: string
+        default: ''
+      app_inventory_run_id:
+        description: Completed diagnostic inventory anchored to that Core failure; inventory only, never App acceptance
+        type: string
+        default: ''
       qualification_binary_run_id:
         description: Optional prior qualification run; reuse its passing binary evidence without another Mac job
         type: string
@@ -96,6 +104,8 @@ jobs:
           NGV_SETTINGS_SCOPE: ${{ inputs.settings_scope }}
           NGV_INTERFACE_SCALE: ${{ inputs.interface_scale }}
           NGV_TEST_BUNDLE_RUN: ${{ inputs.test_bundle_run_id }}
+          NGV_COMPLETED_BACKENDS: ${{ inputs.completed_backends_run_id }}
+          NGV_APP_INVENTORY: ${{ inputs.app_inventory_run_id }}
         run: |
           python3 - <<'PYTHON'
           import os, re
@@ -107,6 +117,12 @@ jobs:
           settings = os.environ['NGV_SETTINGS_SCOPE']
           scale = os.environ['NGV_INTERFACE_SCALE']
           test_run = os.environ.get('NGV_TEST_BUNDLE_RUN', '')
+          completed_backends = os.environ.get('NGV_COMPLETED_BACKENDS', '')
+          app_inventory = os.environ.get('NGV_APP_INVENTORY', '')
+          if bool(completed_backends) != bool(app_inventory) or app_inventory and not re.fullmatch(r'[1-9][0-9]*', app_inventory):
+              raise SystemExit('Core resume needs both the failed Core producer and completed App inventory.')
+          if completed_backends and (mode != 'initial' or not re.fullmatch(r'[1-9][0-9]*', completed_backends)):
+              raise SystemExit('Completed Core backends apply only to initial mode with a positive producer run.')
           if test_run and (mode != 'followup' or followup != 'externalgui'
                            or not re.fullmatch(r'[1-9][0-9]*', test_run)):
               raise SystemExit('UI test producer applies only to an externalgui followup.')
@@ -168,6 +184,9 @@ jobs:
     if: needs.validate.outputs.mode == 'initial'
     name: Compile, unit tests, app and native bpy acceptance
     uses: ./.github/workflows/ci.yml
+    with:
+      completed_backends_run_id: ${{ inputs.completed_backends_run_id }}
+      app_inventory_run_id: ${{ inputs.app_inventory_run_id }}
 
   chat-hang-replay:
     needs: [validate, ci]

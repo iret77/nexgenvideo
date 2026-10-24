@@ -9,6 +9,13 @@ on:
         type: string
         default: ''
   workflow_call:
+    inputs:
+      completed_backends_run_id:
+        type: string
+        default: ''
+      app_inventory_run_id:
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -51,6 +58,26 @@ jobs:
             --transaction "$transaction_dir/release-${METADATA_VERSION}.transaction.json" \
             --version "$METADATA_VERSION" --head "$GITHUB_SHA")"
           echo "verified=$verified" >> "$GITHUB_OUTPUT"
+
+      - name: Bind completed Core backends before allocating Mac jobs
+        if: inputs.completed_backends_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ORIGINAL_CORE_RUN: ${{ inputs.completed_backends_run_id }}
+          APP_INVENTORY_RUN: ${{ inputs.app_inventory_run_id }}
+        run: |
+          python3 scripts/resume_core_tests.py prepare --run-id "$ORIGINAL_CORE_RUN" \
+            --inventory-run-id "$APP_INVENTORY_RUN" \
+            --evidence "$RUNNER_TEMP/core-backend-resume"
+
+      - name: Transfer original completed backend evidence
+        if: inputs.completed_backends_run_id != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-backend-resume-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/core-backend-resume
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Classify changes
         id: classify
@@ -130,11 +157,23 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Show toolchain
         run: swift --version
 
       - uses: ./.github/actions/setup-xcode-27
+
+      - uses: actions/download-artifact@v4
+        if: inputs.completed_backends_run_id != ''
+        with:
+          name: core-backend-resume-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/core-backend-resume
+
+      - name: Verify retained backends against this checkout and native toolchain
+        if: inputs.completed_backends_run_id != ''
+        run: python3 scripts/resume_core_tests.py verify --evidence "$RUNNER_TEMP/core-backend-resume"
 
       - uses: ./.github/actions/cache-swiftpm-dependencies
         id: swiftpm_dependencies
@@ -142,6 +181,7 @@ jobs:
           restore-only: 'true'
 
       - name: Verify native app signing with nested runtime content
+        if: inputs.completed_backends_run_id == ''
         timeout-minutes: 5
         run: python3 -m unittest discover -s scripts -p test_sign_app.py -v
 
@@ -167,15 +207,37 @@ jobs:
         timeout-minutes: 30
         env:
           NGV_BLOCKOUT_ORIENTATION_EVIDENCE_DIR: ${{ runner.temp }}/blockout-orientation-evidence
+          NGV_COMPLETED_BACKENDS: ${{ inputs.completed_backends_run_id }}
         shell: bash
         run: |
           set -euo pipefail
           export SWIFT_BACKTRACE=enable=yes,interactive=no,demangle=yes,cache=no
+          if [ -n "${NGV_COMPLETED_BACKENDS:-}" ]; then
+            python3 scripts/capture_render_review_test_diagnostic.py \
+              --evidence "$RUNNER_TEMP/render-review-test-diagnostic" --log test.log \
+              --swift-testing-runs 1 --xctest-runs 0 --without-runloop-probe \
+              --core-resume "$RUNNER_TEMP/core-backend-resume" -- \
+              python3 scripts/run_macos_tests.py --cache-path "$NGV_SWIFTPM_CACHE_PATH" \
+                --scope app-swift-testing --evidence "$RUNNER_TEMP/render-review-test-diagnostic/hosted-suite"
+            python3 scripts/resume_core_tests.py finish --evidence "$RUNNER_TEMP/core-backend-resume" \
+              --suite "$RUNNER_TEMP/render-review-test-diagnostic/hosted-suite" \
+              --capture "$RUNNER_TEMP/render-review-test-diagnostic"
+            exit 0
+          fi
           python3 scripts/capture_render_review_test_diagnostic.py \
             --evidence "$RUNNER_TEMP/render-review-test-diagnostic" --log test.log \
             --swift-testing-runs 2 --xctest-runs 2 --without-runloop-probe -- \
             python3 scripts/run_macos_tests.py --cache-path "$NGV_SWIFTPM_CACHE_PATH" \
               --evidence "$RUNNER_TEMP/render-review-test-diagnostic/hosted-suite"
+
+      - name: Upload Core backend composition
+        if: always() && inputs.completed_backends_run_id != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-backend-completion-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/core-backend-resume
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Upload render review test diagnosis
         if: always()
