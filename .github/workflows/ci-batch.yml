@@ -22,6 +22,10 @@ on:
         description: Optional failed Core producer; reuse its verified XCTest and Engine backends across harness-only changes
         type: string
         default: ''
+      completed_full_core_run_id:
+        description: Original full Core with passed tests and a failed source transfer; reconstruct and finish its bundle
+        type: string
+        default: ''
       app_inventory_run_id:
         description: Completed diagnostic inventory anchored to that Core failure; inventory only, never App acceptance
         type: string
@@ -111,6 +115,7 @@ jobs:
           NGV_COMPLETED_BACKENDS: ${{ inputs.completed_backends_run_id }}
           NGV_APP_INVENTORY: ${{ inputs.app_inventory_run_id }}
           NGV_SOURCE_CHECKS: ${{ inputs.completed_source_checks_run_id }}
+          NGV_COMPLETED_FULL: ${{ inputs.completed_full_core_run_id }}
         run: |
           python3 - <<'PYTHON'
           import os, re
@@ -125,6 +130,10 @@ jobs:
           completed_backends = os.environ.get('NGV_COMPLETED_BACKENDS', '')
           app_inventory = os.environ.get('NGV_APP_INVENTORY', '')
           source_checks = os.environ.get('NGV_SOURCE_CHECKS', '')
+          completed_full = os.environ.get('NGV_COMPLETED_FULL', '')
+          if completed_full and (mode != 'initial' or not re.fullmatch(r'[1-9][0-9]*', completed_full)
+                                 or any((completed_backends, app_inventory, source_checks, binary_run_id, source_run_id))):
+              raise SystemExit('Full Core continuation needs one original run in initial mode and no other reuse inputs.')
           if source_checks and (not completed_backends or not re.fullmatch(r'[1-9][0-9]*', source_checks)):
               raise SystemExit('Completed source checks require a Core backend continuation and a positive producer run.')
           if bool(completed_backends) != bool(app_inventory) or app_inventory and not re.fullmatch(r'[1-9][0-9]*', app_inventory):
@@ -194,6 +203,7 @@ jobs:
     uses: ./.github/workflows/ci.yml
     with:
       completed_backends_run_id: ${{ inputs.completed_backends_run_id }}
+      completed_full_core_run_id: ${{ inputs.completed_full_core_run_id }}
       app_inventory_run_id: ${{ inputs.app_inventory_run_id }}
       completed_source_checks_run_id: ${{ inputs.completed_source_checks_run_id }}
 

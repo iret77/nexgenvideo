@@ -18,6 +18,7 @@ import zipfile
 from verify_bpy_binary_evidence import validate
 from assemble_bpy_source_closure import SourceDownloads
 from verify_bpy_source_closure import validate as validate_source_closure
+from pinned_download import download_file
 
 
 REPOSITORY = "iret77/nexgenvideo"
@@ -104,7 +105,34 @@ def require_producer(run_id, run, artifacts, jobs):
     return artifact, latest
 
 
+def source_response(artifact, offset, timeout):
+    opener = urllib.request.build_opener(NoRedirect())
+    try:
+        response = opener.open(request(f"/actions/artifacts/{artifact['id']}/zip"), timeout=min(30, timeout))
+    except urllib.error.HTTPError as error:
+        with error:
+            if error.code != 302:
+                raise
+            location = error.headers.get("Location", "")
+    else:
+        response.close()
+        raise ValueError("GitHub did not return the exact source artifact redirect")
+    target = urllib.parse.urlsplit(location)
+    if target.scheme != "https" or not target.hostname or target.username or target.password:
+        raise ValueError("GitHub returned an invalid source artifact redirect")
+    headers = {"Accept-Encoding": "identity"}
+    if offset:
+        headers["Range"] = f"bytes={offset}-"
+    try:
+        return opener.open(urllib.request.Request(location, headers=headers), timeout=timeout)
+    except ValueError:
+        raise ValueError("Invalid source artifact redirect; URL withheld") from None
+
+
 def download(artifact, destination=None):
+    if destination is not None:
+        return download_file(lambda offset, timeout: source_response(artifact, offset, timeout),
+                             destination, artifact["size_in_bytes"], artifact["digest"], SOURCE_LIMIT)
     opener = urllib.request.build_opener(NoRedirect())
     try:
         response = opener.open(request(f"/actions/artifacts/{artifact['id']}/zip"), timeout=30)
@@ -123,19 +151,6 @@ def download(artifact, destination=None):
             raise ValueError("The exact binary-evidence download failed") from None
     except urllib.error.URLError:
         raise ValueError("GitHub did not provide the exact binary-evidence artifact") from None
-    if destination is not None:
-        value = hashlib.sha256()
-        size = 0
-        with response, destination.open("wb") as output:
-            for block in iter(lambda: response.read(1024 * 1024), b""):
-                size += len(block)
-                if size > artifact["size_in_bytes"] or size > SOURCE_LIMIT:
-                    raise ValueError("Source artifact exceeds its bound")
-                value.update(block)
-                output.write(block)
-        if size != artifact["size_in_bytes"] or "sha256:" + value.hexdigest() != artifact["digest"]:
-            raise ValueError("Source artifact digest mismatch")
-        return destination
     with response:
         data = response.read(LIMIT + 1)
     if len(data) > LIMIT or "sha256:" + hashlib.sha256(data).hexdigest() != artifact["digest"]:

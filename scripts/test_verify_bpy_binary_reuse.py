@@ -278,15 +278,17 @@ class SourceReuseTests(unittest.TestCase):
         data = self.archive()
         valid = {**self.artifact, "size_in_bytes": len(data),
                  "digest": "sha256:" + hashlib.sha256(data).hexdigest()}
-        with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", GH_TOKEN="test"), \
-                patch.object(reuse.urllib.request, "build_opener") as opener:
-            target = Path(directory) / "artifact.zip"
-            for bad in ({**valid, "size_in_bytes": len(data) - 1},
-                        {**valid, "digest": "sha256:" + "0" * 64}):
-                opener.return_value.open.return_value = io.BytesIO(data)
+        with tempfile.TemporaryDirectory() as directory, patch.object(reuse, "source_response") as response:
+            for index, bad in enumerate(({**valid, "size_in_bytes": len(data) - 1},
+                                         {**valid, "digest": "sha256:" + "0" * 64})):
+                target = Path(directory) / f"bad-{index}.zip"
+                stream = io.BytesIO(data); stream.status = 200; stream.headers = {}
+                response.return_value = stream
                 with self.assertRaises(ValueError):
                     reuse.download(bad, target)
-            opener.return_value.open.return_value = io.BytesIO(data)
+            target = Path(directory) / "artifact.zip"
+            stream = io.BytesIO(data); stream.status = 200; stream.headers = {}
+            response.return_value = stream
             reuse.download(valid, target)
             self.assertEqual(target.read_bytes(), data)
 

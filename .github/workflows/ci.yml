@@ -13,6 +13,9 @@ on:
       completed_backends_run_id:
         type: string
         default: ''
+      completed_full_core_run_id:
+        type: string
+        default: ''
       app_inventory_run_id:
         type: string
         default: ''
@@ -71,6 +74,15 @@ jobs:
           python3 scripts/resume_core_source_checks.py prepare --run-id "$ORIGINAL_SOURCE_RUN" \
             --evidence "$RUNNER_TEMP/core-source-resume"
 
+      - name: Bind original full Core before reconstructing its bundle
+        if: inputs.completed_full_core_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ORIGINAL_FULL_CORE_RUN: ${{ inputs.completed_full_core_run_id }}
+        run: |
+          python3 scripts/resume_core_bundle.py prepare --run-id "$ORIGINAL_FULL_CORE_RUN" \
+            --evidence "$RUNNER_TEMP/core-full-resume"
+
       - name: Bind completed Core backends before allocating Mac jobs
         if: inputs.completed_backends_run_id != ''
         env:
@@ -100,15 +112,15 @@ jobs:
         run: python3 scripts/ci_changes.py --base "$BASE_SHA" --head "$HEAD_SHA" --metadata-verified "$METADATA_VERIFIED"
 
       - name: Require distributable bpy before app transfer
-        if: steps.classify.outputs.bundle_required == 'true' && inputs.completed_source_checks_run_id == ''
+        if: steps.classify.outputs.bundle_required == 'true' && inputs.completed_source_checks_run_id == '' && inputs.completed_full_core_run_id == ''
         run: python3 scripts/verify_bpy_runtime.py --distribution
 
       - name: Enforce AppTheme
-        if: steps.classify.outputs.build_required == 'true' && inputs.completed_source_checks_run_id == ''
+        if: steps.classify.outputs.build_required == 'true' && inputs.completed_source_checks_run_id == '' && inputs.completed_full_core_run_id == ''
         run: python3 scripts/lint_app_theme.py
 
       - name: Validate pack pipeline contracts
-        if: steps.classify.outputs.build_required == 'true' && inputs.completed_source_checks_run_id == ''
+        if: steps.classify.outputs.build_required == 'true' && inputs.completed_source_checks_run_id == '' && inputs.completed_full_core_run_id == ''
         run: |
           for manifest in plugins/*.json; do
             python3 scripts/validate_pipeline_contract.py "$manifest"
@@ -117,6 +129,25 @@ jobs:
       - name: Verify CI and fixture tooling
         if: (steps.classify.outputs.build_required == 'true' || steps.classify.outputs.ui_required == 'true') && inputs.completed_source_checks_run_id == ''
         run: python3 -m unittest discover -s scripts -p 'test_*.py'
+
+      - name: Verify all Core branches remain required
+        if: inputs.completed_full_core_run_id != ''
+        env:
+          BUILD_REQUIRED: ${{ steps.classify.outputs.build_required }}
+          BUNDLE_REQUIRED: ${{ steps.classify.outputs.bundle_required }}
+          UI_REQUIRED: ${{ steps.classify.outputs.ui_required }}
+        run: |
+          python3 scripts/resume_core_bundle.py verify --evidence "$RUNNER_TEMP/core-full-resume" \
+            --plan "$BUILD_REQUIRED" "$BUNDLE_REQUIRED" "$UI_REQUIRED"
+
+      - name: Transfer original full Core proofs
+        if: inputs.completed_full_core_run_id != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-full-resume-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/core-full-resume
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Complete changed source and workflow checks
         if: (steps.classify.outputs.build_required == 'true' || steps.classify.outputs.ui_required == 'true') && inputs.completed_source_checks_run_id != ''
@@ -139,12 +170,24 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        if: inputs.completed_full_core_run_id != ''
+        with:
+          name: core-full-resume-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/core-full-resume
+      - name: Verify original unchanged Agent UI evidence
+        if: inputs.completed_full_core_run_id != ''
+        run: python3 scripts/resume_core_bundle.py verify --evidence "$RUNNER_TEMP/core-full-resume"
       - name: Render Agent UI specification
+        if: inputs.completed_full_core_run_id == ''
         run: |
           python3 scripts/render_agent_chat_spec.py --output "$RUNNER_TEMP/agent-chat-spec"
           python3 scripts/render_generation_batch_review_spec.py --output "$RUNNER_TEMP/agent-chat-spec"
           python3 scripts/render_workbench_reference.py --output "$RUNNER_TEMP/workbench-reference"
       - name: Upload Agent UI render evidence
+        if: inputs.completed_full_core_run_id == ''
         uses: actions/upload-artifact@v4
         with:
           name: agent-chat-spec-${{ github.run_id }}
@@ -156,7 +199,7 @@ jobs:
           retention-days: 14
 
       - name: Upload Agent UI renderer diagnostics
-        if: always()
+        if: always() && inputs.completed_full_core_run_id == ''
         uses: actions/upload-artifact@v4
         with:
           name: agent-ui-render-diagnostics-${{ github.run_id }}-a${{ github.run_attempt }}
@@ -191,6 +234,16 @@ jobs:
       - uses: ./.github/actions/setup-xcode-27
 
       - uses: actions/download-artifact@v4
+        if: inputs.completed_full_core_run_id != ''
+        with:
+          name: core-full-resume-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/core-full-resume
+
+      - name: Verify original full tests and exact reconstruction toolchain
+        if: inputs.completed_full_core_run_id != ''
+        run: python3 scripts/resume_core_bundle.py verify --native --evidence "$RUNNER_TEMP/core-full-resume"
+
+      - uses: actions/download-artifact@v4
         if: inputs.completed_backends_run_id != ''
         with:
           name: core-backend-resume-${{ github.run_id }}-a${{ github.run_attempt }}
@@ -200,13 +253,38 @@ jobs:
         if: inputs.completed_backends_run_id != ''
         run: python3 scripts/resume_core_tests.py verify --evidence "$RUNNER_TEMP/core-backend-resume"
 
+      - uses: actions/download-artifact@v4
+        if: needs.source_gate.outputs.bundle_required == 'true'
+        with:
+          name: managed-bpy-source-receipt-${{ github.sha }}
+          path: .build/bpy-source
+      - name: Check source transfer disk headroom
+        if: needs.source_gate.outputs.bundle_required == 'true'
+        run: |
+          python3 - <<'PY'
+          import json, os, shutil
+          from pathlib import Path
+          public = json.loads(Path('Runtime/bpy/runtime-lock.json').read_text())['distributionClosure']['publicSourceAsset']
+          required = public['size'] + public['producer']['artifactSize'] + 16 * 1024 * 1024
+          free = {key: shutil.disk_usage(os.environ[key]).free for key in ('RUNNER_TEMP', 'GITHUB_WORKSPACE')}
+          print(json.dumps({'requiredSourceTransferBytes': required, 'availableBytes': free}))
+          if min(free.values()) < required:
+              raise SystemExit('Insufficient space for the pinned source archive and extracted pair')
+          PY
+      - uses: ./.github/actions/prepare-bpy-source
+        if: needs.source_gate.outputs.bundle_required == 'true'
+        timeout-minutes: 30
+        with:
+          directory: .build/bpy-source
+          receipt: .build/bpy-source/bpy-source-receipt.json
+
       - uses: ./.github/actions/cache-swiftpm-dependencies
         id: swiftpm_dependencies
         with:
           restore-only: 'true'
 
       - name: Verify native app signing with nested runtime content
-        if: inputs.completed_backends_run_id == ''
+        if: inputs.completed_backends_run_id == '' && inputs.completed_full_core_run_id == ''
         timeout-minutes: 5
         run: python3 -m unittest discover -s scripts -p test_sign_app.py -v
 
@@ -226,9 +304,11 @@ jobs:
           key: ${{ steps.swiftpm_dependencies.outputs.cache-primary-key }}
 
       - name: Stage test runtime inputs
+        if: inputs.completed_full_core_run_id == ''
         run: scripts/stage_test_runtime.sh debug
 
       - name: Test
+        if: inputs.completed_full_core_run_id == ''
         timeout-minutes: 30
         env:
           NGV_BLOCKOUT_ORIENTATION_EVIDENCE_DIR: ${{ runner.temp }}/blockout-orientation-evidence
@@ -265,7 +345,7 @@ jobs:
           retention-days: 14
 
       - name: Upload render review test diagnosis
-        if: always()
+        if: always() && inputs.completed_full_core_run_id == ''
         uses: actions/upload-artifact@v4
         with:
           name: render-review-test-diagnostic-${{ github.run_id }}
@@ -274,7 +354,7 @@ jobs:
           retention-days: 7
 
       - name: Upload blockout orientation evidence
-        if: always()
+        if: always() && inputs.completed_full_core_run_id == ''
         uses: actions/upload-artifact@v4
         with:
           name: blockout-orientation-evidence
@@ -283,6 +363,7 @@ jobs:
           retention-days: 7
 
       - name: HDR export QC
+        if: inputs.completed_full_core_run_id == ''
         env:
           NGV_HDR_RUNTIME_QC: '1'
           NGV_HDR_QC_OUTPUT_DIR: ${{ runner.temp }}/hdr-export-qc
@@ -292,7 +373,7 @@ jobs:
             --evidence "$RUNNER_TEMP/hdr-export-qc/hosted-suite"
 
       - name: Upload HDR export QC evidence
-        if: always()
+        if: always() && inputs.completed_full_core_run_id == ''
         uses: actions/upload-artifact@v4
         with:
           name: hdr-export-qc
@@ -301,7 +382,7 @@ jobs:
           retention-days: 14
 
       - name: Upload Lottie export evidence
-        if: always()
+        if: always() && inputs.completed_full_core_run_id == ''
         uses: actions/upload-artifact@v4
         with:
           name: lottie-export-evidence
@@ -311,17 +392,6 @@ jobs:
 
       - name: Verify tests did not mutate tracked source
         run: scripts/verify_tracked_source_state.sh
-
-      - uses: actions/download-artifact@v4
-        if: needs.source_gate.outputs.bundle_required == 'true'
-        with:
-          name: managed-bpy-source-receipt-${{ github.sha }}
-          path: .build/bpy-source
-      - uses: ./.github/actions/prepare-bpy-source
-        if: needs.source_gate.outputs.bundle_required == 'true'
-        with:
-          directory: .build/bpy-source
-          receipt: .build/bpy-source/bpy-source-receipt.json
 
       - name: Stage the verified bpy runtime
         if: needs.source_gate.outputs.bundle_required == 'true'
@@ -497,6 +567,21 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
+
+      - name: Bind reconstructed app to original full Core proofs
+        if: inputs.completed_full_core_run_id != ''
+        run: |
+          python3 scripts/resume_core_bundle.py finish --evidence "$RUNNER_TEMP/core-full-resume" \
+            --app .build/NexGenVideo.app
+
+      - name: Upload full Core continuation composition
+        if: always() && inputs.completed_full_core_run_id != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-full-completion-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/core-full-resume
+          if-no-files-found: error
+          retention-days: 14
 
   diagnostic-startup:
     needs: [source_gate, build_test]
