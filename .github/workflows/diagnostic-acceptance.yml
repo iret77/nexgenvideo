@@ -6,7 +6,7 @@ on:
       candidate_kind:
         description: Signed release verification or targeted failed CI diagnostics
         type: choice
-        options: [signed-release, ci-runtime, ci-bpy-open-diagnostic, ci-app-test-diagnostic, ci-app-glow-replay, ci-app-full-replay]
+        options: [signed-release, ci-runtime, ci-bpy-open-diagnostic, ci-app-test-diagnostic, ci-app-glow-replay, ci-app-full-replay, ci-builtin-blur]
         default: signed-release
       run_id:
         description: "Original producer workflow run"
@@ -105,6 +105,23 @@ jobs:
           python3 -m unittest discover -s scripts -p 'test_appkit_host_stale_diagnostic.py'
           python3 -m unittest discover -s scripts -p 'test_runloop_probe_preparation.py'
           python3 -m unittest discover -s scripts -p 'test_ci_workflow.py'
+      - name: Verify and bind standalone blur experiment
+        if: inputs.candidate_kind == 'ci-builtin-blur'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_ci_builtin_blur.py'
+          python3 -m unittest discover -s scripts -p 'test_diagnostic_acceptance.py'
+          python3 -m unittest discover -s scripts -p 'test_run_macos_tests.py'
+          python3 -m unittest discover -s scripts -p 'test_ci_workflow.py'
+          python3 scripts/ci_builtin_blur.py bind --evidence "$RUNNER_TEMP/builtin-blur-binding"
+      - uses: actions/upload-artifact@v4
+        if: always() && inputs.candidate_kind == 'ci-builtin-blur'
+        with:
+          name: builtin-blur-binding
+          path: ${{ runner.temp }}/builtin-blur-binding
+          if-no-files-found: error
+          retention-days: 90
       - name: Verify changed replay and shared test tooling
         if: (inputs.candidate_kind == 'ci-app-glow-replay' || inputs.candidate_kind == 'ci-app-full-replay')
         run: |
@@ -130,7 +147,7 @@ jobs:
           retention-days: 90
 
       - name: Bind the successful release job and immutable artifact
-        if: inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay'
+        if: inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur'
         env:
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_KIND: ${{ inputs.candidate_kind }}
@@ -154,10 +171,35 @@ jobs:
             "$CANDIDATE_ARTIFACT" "$CANDIDATE_DIGEST" "$RUNNER_TEMP/candidate-metadata" \
             --candidate-kind "$CANDIDATE_KIND" "${extra[@]}"
       - uses: actions/upload-artifact@v4
-        if: inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay'
+        if: inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur'
         with:
           name: diagnostic-candidate-identity
           path: ${{ runner.temp }}/candidate-metadata/*.json
+          if-no-files-found: error
+          retention-days: 90
+
+  ci-builtin-blur:
+    needs: source
+    if: inputs.candidate_kind == 'ci-builtin-blur'
+    runs-on: macrunner
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: builtin-blur-binding
+          path: ${{ runner.temp }}/builtin-blur-binding
+      - uses: ./.github/actions/setup-xcode-27
+      - name: Compile and execute bounded standalone blur experiment
+        timeout-minutes: 25
+        run: |
+          python3 scripts/ci_builtin_blur.py run --metadata "$RUNNER_TEMP/builtin-blur-binding" \
+            --evidence "$RUNNER_TEMP/builtin-blur"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: builtin-blur-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/builtin-blur
           if-no-files-found: error
           retention-days: 90
 
