@@ -11,7 +11,146 @@ from unittest.mock import Mock, mock_open, patch
 import zipfile
 
 from hang_diagnostic_acceptance import capture_helper_failure, verify_helper_recovery, verify_retained_key
-from verify_diagnostic_candidate import BPY_DIAGNOSTIC_PATHS, CI_HARNESS_PATHS, HARNESS_PATHS, verify, verify_bpy_diagnostic, verify_ci
+from verify_diagnostic_candidate import APP_DIAGNOSTIC_PATHS, BPY_DIAGNOSTIC_PATHS, CI_HARNESS_PATHS, HARNESS_PATHS, verify, verify_app_crash_archive, verify_app_diagnostic, verify_bpy_diagnostic, verify_ci
+
+
+class AppCrashCandidateTests(unittest.TestCase):
+    def setUp(self):
+        self.source = "a" * 40
+        self.digest = "b" * 64
+        self.run = dict(id=12, head_sha=self.source, path=".github/workflows/ci-batch.yml",
+                        event="workflow_dispatch", status="completed", conclusion="failure", run_attempt=1,
+                        repository=dict(full_name="iret77/nexgenvideo"))
+        prefix = "Compile, unit tests, app and native bpy acceptance / "
+        self.jobs = dict(jobs=[dict(name=prefix + name, status="completed", conclusion="success",
+                                   run_id=12, run_attempt=1, head_sha=self.source)
+                              for name in ("Light Checks", "Agent UI Evidence", "bpy-source / source")])
+        self.jobs["jobs"].append(dict(name=prefix + "Build & Test", status="completed", conclusion="failure",
+                                     run_id=12, run_attempt=1, head_sha=self.source,
+                                     started_at="2026-10-24T00:17:15Z", completed_at="2026-10-24T00:26:52Z",
+                                     steps=[dict(name=name, status="completed", conclusion=result) for name, result in (
+                                         ("Build", "success"), ("Verify build did not mutate tracked source", "success"),
+                                         ("Stage test runtime inputs", "success"), ("Test", "failure"),
+                                         ("Upload render review test diagnosis", "success"), ("Upload .app artifact", "skipped"))]))
+        self.jobs["total_count"] = len(self.jobs["jobs"])
+        self.artifact = dict(id=34, name="render-review-test-diagnostic-12", expired=False,
+                             digest="sha256:" + self.digest, workflow_run=dict(id=12, head_sha=self.source),
+                             created_at="2026-10-24T00:26:45Z", updated_at="2026-10-24T00:26:46Z",
+                             expires_at="2099-01-01T00:00:00Z")
+
+    def check(self, paths=APP_DIAGNOSTIC_PATHS):
+        verify_app_diagnostic(self.run, self.jobs, self.artifact, 12, self.source, 34, self.digest, paths)
+
+    def test_accepts_exact_failed_test_producer_with_successful_build(self):
+        self.check()
+
+    def test_rejects_foreign_or_nonfailed_producer(self):
+        for key, bad in (("head_sha", "c" * 40), ("id", 13), ("conclusion", "success"),
+                         ("status", "in_progress"), ("event", "push"), ("run_attempt", 0),
+                         ("path", ".github/workflows/ci.yml"), ("repository", dict(full_name="other/repo"))):
+            old = self.run[key]
+            self.run[key] = bad
+            with self.subTest(field=key), self.assertRaises(ValueError):
+                self.check()
+            self.run[key] = old
+
+    def test_every_prerequisite_must_belong_to_this_source_and_attempt(self):
+        for job in self.jobs["jobs"]:
+            for key, bad in (("run_attempt", 2), ("head_sha", "c" * 40), ("run_id", 13), ("status", "in_progress")):
+                old = job[key]
+                job[key] = bad
+                with self.subTest(job=job["name"], field=key), self.assertRaises(ValueError):
+                    self.check()
+                job[key] = old
+
+    def test_missing_duplicate_or_failed_prerequisites_cannot_be_hidden(self):
+        from copy import deepcopy
+        original = deepcopy(self.jobs)
+        for change in ("missing", "duplicate", "truncated", "failed"):
+            self.jobs = deepcopy(original)
+            if change == "missing": self.jobs["jobs"].pop(0)
+            elif change == "duplicate": self.jobs["jobs"].append(self.jobs["jobs"][0])
+            elif change == "failed": self.jobs["jobs"][0]["conclusion"] = "failure"
+            if change != "truncated": self.jobs["total_count"] = len(self.jobs["jobs"])
+            else: self.jobs["total_count"] += 1
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                self.check()
+
+    def test_a_failed_build_or_additional_failure_cannot_be_reclassified(self):
+        steps = self.jobs["jobs"][-1]["steps"]
+        for step in steps:
+            old = step["conclusion"]
+            step["conclusion"] = "success" if old != "success" else "failure"
+            with self.subTest(step=step["name"]), self.assertRaises(ValueError):
+                self.check()
+            step["conclusion"] = old
+        steps.append(dict(name="another failure", status="completed", conclusion="failure"))
+        with self.assertRaises(ValueError):
+            self.check()
+
+    def test_artifact_cannot_come_from_another_attempt_or_be_substituted(self):
+        for key, bad in (("created_at", "2026-10-24T00:00:00Z"), ("updated_at", "2026-10-24T00:27:00Z"),
+                         ("expires_at", "2020-01-01T00:00:00Z"), ("digest", "sha256:" + "c" * 64),
+                         ("expired", True), ("id", 35), ("name", "NexGenVideo-app"),
+                         ("workflow_run", dict(id=13, head_sha=self.source))):
+            old = self.artifact[key]
+            self.artifact[key] = bad
+            with self.subTest(field=key), self.assertRaises(ValueError):
+                self.check()
+            self.artifact[key] = old
+
+    def test_original_product_tests_and_capture_code_must_remain_identical(self):
+        for path in ("Tests/NexGenVideoTests/Rendering/GlowKernelTests.swift", "Metal/Glow.metal", "Package.swift",
+                     "Sources/NexGenVideo/Compositing/Kernels/GlowKernel.swift", "Tests/AppKitTestHost/AppKitTestHost.swift",
+                     "scripts/stage_test_runtime.sh", ".github/workflows/ci.yml"):
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                self.check([*APP_DIAGNOSTIC_PATHS, path])
+
+    def test_original_archive_must_prove_successful_prior_phases_and_owned_signal(self):
+        from copy import deepcopy
+        import hashlib
+        base = {
+            "run.json": dict(runID="12", sourceSHA=self.source, testExitCode=139, effectiveExitCode=139),
+            "hosted-suite/suite.json": dict(sourceSHA=self.source, completed=False, scope="all", filter="", phases=[
+                dict(name=name, exitCode=0, status="verified-execution", framework=dict(passed=True))
+                for name in ("xctest", "engine-swift-testing")] + [
+                    dict(name="app-swift-testing", exitCode=-11, status="failed", pid=123)]),
+            "hosted-suite/app-swift-testing/post-mortem/receipt.json": dict(
+                status="bound-report-captured", originalExitCode=-11, ownedChild=dict(pid=123),
+                reports=[dict(file="owned-host-0.ips")]),
+        }
+        changes = ("valid", "wrong-digest", "wrong-run", "wrong-source", "hidden-exit", "filtered", "engine-failed",
+                   "missing-phase", "completed", "wrong-signal", "foreign-pid", "unbound-report", "duplicate")
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "original.zip"
+            for change in changes:
+                records = deepcopy(base)
+                original = records["run.json"]
+                suite = records["hosted-suite/suite.json"]
+                receipt = records["hosted-suite/app-swift-testing/post-mortem/receipt.json"]
+                if change == "wrong-run": original["runID"] = "13"
+                elif change == "wrong-source": suite["sourceSHA"] = "c" * 40
+                elif change == "hidden-exit": original["effectiveExitCode"] = 0
+                elif change == "filtered": suite["filter"] = "GlowKernelTests"
+                elif change == "engine-failed": suite["phases"][1]["framework"]["passed"] = False
+                elif change == "missing-phase": suite["phases"].pop(0)
+                elif change == "completed": suite["completed"] = True
+                elif change == "wrong-signal": suite["phases"][-1]["exitCode"] = -6
+                elif change == "foreign-pid": receipt["ownedChild"]["pid"] = 999
+                elif change == "unbound-report": receipt["reports"] = []
+                with zipfile.ZipFile(path, "w") as archive:
+                    for name, value in records.items(): archive.writestr(name, json.dumps(value))
+                    if change == "duplicate":
+                        import warnings
+                        with warnings.catch_warnings():
+                            warnings.simplefilter("ignore", UserWarning)
+                            archive.writestr("run.json", json.dumps(original))
+                digest = hashlib.sha256(path.read_bytes()).hexdigest() if change != "wrong-digest" else "0" * 64
+                with self.subTest(change=change):
+                    if change == "valid": verify_app_crash_archive(path, 12, self.source, digest)
+                    else:
+                        with self.assertRaises(ValueError):
+                            verify_app_crash_archive(path, 12, self.source, digest)
 
 
 class CandidateProvenanceTests(unittest.TestCase):

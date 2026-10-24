@@ -4,20 +4,20 @@ on:
   workflow_dispatch:
     inputs:
       candidate_kind:
-        description: Signed release verification or only failed CI runtime checks
+        description: Signed release verification or targeted failed CI diagnostics
         type: choice
-        options: [signed-release, ci-runtime, ci-bpy-open-diagnostic]
+        options: [signed-release, ci-runtime, ci-bpy-open-diagnostic, ci-app-test-diagnostic]
         default: signed-release
       run_id:
         description: "Original producer workflow run"
         type: string
         required: true
       source_sha:
-        description: "Exact source commit embedded in the original app"
+        description: "Exact source commit of the original producer"
         type: string
         required: true
       artifact_id:
-        description: "Original diagnostic-release-evidence or NexGenVideo-app artifact ID"
+        description: "Original app or test diagnostic artifact ID"
         type: string
         required: true
       artifact_sha256:
@@ -63,6 +63,16 @@ jobs:
           python3 -m unittest discover -s scripts -p 'test_diagnostic_acceptance.py'
           python3 -m unittest discover -s scripts -p 'test_bpy_open_diagnostic.py'
           python3 -m unittest discover -s scripts -p 'test_ci_workflow.py'
+      - name: Verify isolated App diagnostic tooling
+        if: inputs.candidate_kind == 'ci-app-test-diagnostic'
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_diagnostic_acceptance.py'
+          python3 -m unittest discover -s scripts -p 'test_run_macos_tests.py'
+          python3 -m unittest discover -s scripts -p 'test_app_host_zombie_diagnostic.py'
+          python3 -m unittest discover -s scripts -p 'test_swift_test_failure_propagation.py'
+          python3 -m unittest discover -s scripts -p 'test_appkit_host_stale_diagnostic.py'
+          python3 -m unittest discover -s scripts -p 'test_runloop_probe_preparation.py'
+          python3 -m unittest discover -s scripts -p 'test_ci_workflow.py'
       - name: Bind the successful release job and immutable artifact
         env:
           GH_TOKEN: ${{ github.token }}
@@ -78,15 +88,185 @@ jobs:
           ATTEMPT="$(jq -r .run_attempt "$RUNNER_TEMP/candidate-metadata/run.json")"
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN/attempts/$ATTEMPT/jobs?per_page=100" > "$RUNNER_TEMP/candidate-metadata/jobs.json"
           gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$CANDIDATE_ARTIFACT" > "$RUNNER_TEMP/candidate-metadata/artifact.json"
+          extra=()
+          if [ "$CANDIDATE_KIND" = ci-app-test-diagnostic ]; then
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$CANDIDATE_ARTIFACT/zip" > "$RUNNER_TEMP/original-test-diagnostic.zip"
+            extra+=(--crash-archive "$RUNNER_TEMP/original-test-diagnostic.zip")
+          fi
           python3 scripts/verify_diagnostic_candidate.py "$CANDIDATE_RUN" "$CANDIDATE_SOURCE" \
             "$CANDIDATE_ARTIFACT" "$CANDIDATE_DIGEST" "$RUNNER_TEMP/candidate-metadata" \
-            --candidate-kind "$CANDIDATE_KIND"
+            --candidate-kind "$CANDIDATE_KIND" "${extra[@]}"
       - uses: actions/upload-artifact@v4
         with:
           name: diagnostic-candidate-identity
           path: ${{ runner.temp }}/candidate-metadata/*.json
           if-no-files-found: error
           retention-days: 90
+
+  ci-app-test:
+    needs: source
+    if: inputs.candidate_kind == 'ci-app-test-diagnostic'
+    runs-on: macrunner
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: diagnostic-candidate-identity
+          path: ${{ runner.temp }}/candidate-metadata
+      - name: Preserve the reviewed harness and bind the original test source
+        env:
+          HARNESS_SOURCE: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          python3 -I - <<'PY'
+          import hashlib, json, os, shutil, subprocess
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP'])
+          metadata = json.loads((root / 'candidate-metadata/harness.json').read_text())
+          assert metadata['candidateKind'] == 'ci-app-test-diagnostic'
+          assert metadata['buildSourceSHA'] == os.environ['CANDIDATE_SOURCE']
+          assert metadata['harnessSourceSHA'] == os.environ['HARNESS_SOURCE']
+          assert subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip() == os.environ['HARNESS_SOURCE']
+          harness = root / 'app-diagnostic-harness'
+          harness.mkdir()
+          hashes = {}
+          for name in ('run_macos_tests.py', 'app_host_zombie_diagnostic.py', 'verify_swift_test_output.py',
+                       'capture_render_review_test_diagnostic.py'):
+              source = Path('scripts') / name
+              shutil.copyfile(source, harness / name)
+              hashes[name] = hashlib.sha256(source.read_bytes()).hexdigest()
+          metadata['copiedHarnessSHA256'] = hashes
+          metadata['originalRunID'] = os.environ['CANDIDATE_RUN']
+          metadata['originalArtifactID'] = os.environ['CANDIDATE_ARTIFACT']
+          metadata['originalArtifactSHA256'] = os.environ['CANDIDATE_DIGEST']
+          (root / 'candidate-metadata/diagnostic-execution.json').write_text(json.dumps(metadata, indent=2) + '\n')
+          PY
+          git checkout --detach "$CANDIDATE_SOURCE"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SOURCE"
+          test -z "$(git status --porcelain)"
+      - uses: ./.github/actions/setup-xcode-27
+      - name: Check native diagnostic interfaces and ambient switches before compiling
+        timeout-minutes: 1
+        run: |
+          python3 -I - <<'PY'
+          import importlib.util, json, os
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP'])
+          module_path = root / 'app-diagnostic-harness/app_host_zombie_diagnostic.py'
+          spec = importlib.util.spec_from_file_location('zombie_diagnostic', module_path)
+          module = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(module)
+          receipt = {'scope': 'prebuild current-process API and ambient-environment check; actual App proof remains required'}
+          try:
+              module.zombie_environment(os.environ)
+              reader = module.NativeReader()
+              assert reader.usage(os.getpid())['startAbsoluteTime'] > 0
+              assert len(reader.arguments(os.getpid())) > 4
+              receipt['status'] = 'available'
+          except Exception as error:
+              receipt.update(status='unavailable', errorType=type(error).__name__, errno=getattr(error, 'errno', None))
+          (root / 'candidate-metadata/native-preflight.json').write_text(json.dumps(receipt, indent=2) + '\n')
+          raise SystemExit(0 if receipt['status'] == 'available' else 1)
+          PY
+      - uses: ./.github/actions/cache-swiftpm-dependencies
+        with:
+          restore-only: 'true'
+      - name: Compile unchanged original native test products
+        timeout-minutes: 40
+        run: |
+          set -euo pipefail
+          swift build --cache-path "$NGV_SWIFTPM_CACHE_PATH" --build-tests 2>&1 | tee "$RUNNER_TEMP/app-diagnostic-build.log"
+          scripts/verify_tracked_source_state.sh
+          scripts/stage_test_runtime.sh debug
+      - name: Retain compiled products before diagnostic execution
+        timeout-minutes: 10
+        env:
+          HARNESS_SOURCE: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          BIN_ROOT="$(swift build --cache-path "$NGV_SWIFTPM_CACHE_PATH" --show-bin-path)"
+          export BIN_ROOT
+          python3 -I - <<'PY'
+          import hashlib, json, os, subprocess
+          from pathlib import Path
+          binary = Path(os.environ['BIN_ROOT']).resolve(strict=True)
+          records = {}
+          for relative in ('NexGenVideoAppKitTestHost', 'NexGenVideoTests.xctest/Contents/MacOS/NexGenVideoTests'):
+              path = binary / relative
+              records[relative] = {'sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
+                                   'uuidOutput': subprocess.check_output(['xcrun', 'dwarfdump', '--uuid', str(path)], text=True)}
+          record = {'productSourceSHA': os.environ['CANDIDATE_SOURCE'], 'harnessSourceSHA': os.environ['HARNESS_SOURCE'],
+                    'binRoot': str(binary), 'binaries': records,
+                    'toolchain': subprocess.check_output(['xcodebuild', '-version'], text=True),
+                    'reuseStatus': 'Retained original products; relocation and consumer binding require verification'}
+          (Path(os.environ['RUNNER_TEMP']) / 'candidate-metadata/compiled-products.json').write_text(json.dumps(record, indent=2) + '\n')
+          PY
+          ditto -c -k --keepParent "$BIN_ROOT" "$RUNNER_TEMP/app-test-products.zip"
+          shasum -a 256 "$RUNNER_TEMP/app-test-products.zip" > "$RUNNER_TEMP/candidate-metadata/compiled-products.sha256"
+      - name: Diagnose the original full App SwiftTesting backend once
+        id: app_test
+        timeout-minutes: 30
+        env:
+          NGV_BLOCKOUT_ORIENTATION_EVIDENCE_DIR: ${{ runner.temp }}/blockout-orientation-evidence
+        run: |
+          set -euo pipefail
+          export SWIFT_BACKTRACE=enable=yes,interactive=no,demangle=yes,cache=no
+          python3 "$RUNNER_TEMP/app-diagnostic-harness/capture_render_review_test_diagnostic.py" \
+            --evidence "$RUNNER_TEMP/app-zombie-diagnostic" --log "$RUNNER_TEMP/app-zombie-test.log" \
+            --swift-testing-runs 1 --xctest-runs 0 --without-runloop-probe --app-only -- \
+            python3 "$RUNNER_TEMP/app-diagnostic-harness/run_macos_tests.py" --cache-path "$NGV_SWIFTPM_CACHE_PATH" \
+              --scope app-swift-testing --app-diagnostic zombies \
+              --product-source-sha "$CANDIDATE_SOURCE" \
+              --evidence "$RUNNER_TEMP/app-zombie-diagnostic/hosted-suite"
+      - name: Verify diagnostic completion and unchanged source
+        run: |
+          set -euo pipefail
+          scripts/verify_tracked_source_state.sh
+          python3 -I - <<'PY'
+          import json, os
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP']) / 'app-zombie-diagnostic/hosted-suite'
+          suite = json.loads((root / 'suite.json').read_text())
+          assert suite['sourceSHA'] == suite['harnessSourceSHA'] == os.environ['GITHUB_SHA']
+          assert suite['productSourceSHA'] == os.environ['CANDIDATE_SOURCE'] and suite['completed'] is True
+          assert suite['scope'] == 'app-swift-testing' and suite['filter'] == ''
+          assert len(suite['phases']) == 1
+          phase = suite['phases'][0]
+          assert phase['exitCode'] == 0 and phase['diagnostic']['status'] == 'verified'
+          assert phase['diagnostic']['pid'] == phase['pid'] == phase['originalHostReceipt']['pid']
+          ended = phase['events']['endedFunctionIDs']
+          for method in ('neutralIsNoOp', 'bleedsLightIntoNeighbors', 'warmthTintsTheBleedRed'):
+              assert sum(name.startswith('NexGenVideoTests.GlowKernelTests/' + method + '()/') for name in ended) == 1
+          assert sum(name.startswith('NexGenVideoTests.BpyStorageBookmarkTests/') for name in ended) == 7
+          (root / 'interpretation.json').write_text(json.dumps({
+              'status': 'diagnostic-run-completed', 'rootCause': 'not-established-by-a-pass',
+              'coreAcceptance': False, 'nativeUXAcceptance': False, 'releaseAcceptance': False,
+          }, indent=2) + '\n')
+          PY
+      - name: Upload original App diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-zombie-diagnostic-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/app-zombie-diagnostic
+            ${{ runner.temp }}/app-zombie-test.log
+            ${{ runner.temp }}/app-diagnostic-build.log
+            ${{ runner.temp }}/candidate-metadata
+            ${{ runner.temp }}/blockout-orientation-evidence
+          if-no-files-found: error
+          retention-days: 90
+      - name: Upload retained native test products
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-test-products-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/app-test-products.zip
+          if-no-files-found: ignore
+          retention-days: 7
 
   acceptance:
     needs: source

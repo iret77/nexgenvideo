@@ -574,6 +574,25 @@ class TestProcessObservation:
         self.swift_events.close()
 
 
+def validate_framework_selection(swift_runs, xctest_runs, app_only, without_probe, command):
+    if not app_only:
+        if min(swift_runs, xctest_runs) < 1:
+            raise ValueError("Both selected framework run counts must be positive")
+        return
+    driver = Path(__file__).resolve().with_name("run_macos_tests.py")
+    if (swift_runs != 1 or xctest_runs != 0 or not without_probe or len(command) < 4
+            or Path(command[1]).resolve() != driver
+            or any(value == "--filter" or value.startswith(("--filter=", "--scope=", "--app-diagnostic=", "--product-source-sha=")) for value in command)):
+        raise ValueError("App-only capture requires the complete owned zombie diagnostic")
+    for flag, value in (("--scope", "app-swift-testing"), ("--app-diagnostic", "zombies")):
+        if command.count(flag) != 1 or command.index(flag) + 1 >= len(command) or command[command.index(flag) + 1] != value:
+            raise ValueError("App-only capture requires the complete owned zombie diagnostic")
+    flag = "--product-source-sha"
+    if (command.count(flag) != 1 or command.index(flag) + 1 >= len(command)
+            or not re.fullmatch(r"[a-f0-9]{40}", command[command.index(flag) + 1])):
+        raise ValueError("App-only capture requires its exact original product source")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--evidence", required=True, type=Path)
@@ -581,13 +600,17 @@ def main():
     parser.add_argument("--swift-testing-runs", required=True, type=int)
     parser.add_argument("--xctest-runs", required=True, type=int)
     parser.add_argument("--without-runloop-probe", action="store_true")
+    parser.add_argument("--app-only", action="store_true")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
-    if min(args.swift_testing_runs, args.xctest_runs) < 1:
-        parser.error("Both selected framework run counts must be positive")
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
     if not command:
         parser.error("The existing swift test command is required")
+    try:
+        validate_framework_selection(args.swift_testing_runs, args.xctest_runs, args.app_only,
+                                     args.without_runloop_probe, command)
+    except ValueError as error:
+        parser.error(str(error))
     args.evidence.mkdir(parents=True, exist_ok=False)
     run = {"runID": os.environ.get("GITHUB_RUN_ID"), "sourceSHA": os.environ.get("GITHUB_SHA"),
            "command": command, "status": "running", "captureLimit": 1, "diagnosticDelaySeconds": 180,

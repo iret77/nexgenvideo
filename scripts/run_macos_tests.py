@@ -15,6 +15,7 @@ import time
 import uuid
 
 from verify_swift_test_output import ANSI, assess_output
+from app_host_zombie_diagnostic import ZombieCapture, zombie_environment
 
 
 NO_MATCH = "warning: No matching test cases were run"
@@ -183,11 +184,26 @@ def run_process(command, path, environment, observation=None):
                               stderr=subprocess.STDOUT, text=True, env=environment) as process:
             if observation is not None:
                 observation.update(pid=process.pid, launchLatest=time.time())
+            diagnostic = None
+            if observation is not None and observation.get("diagnosticProfile") == "zombies":
+                try:
+                    diagnostic = ZombieCapture(process.pid, command, observation, path.parent,
+                                               environment["GITHUB_SHA"])
+                    diagnostic.start()
+                except Exception as error:
+                    observation["diagnostic"] = {"status": "unavailable", "errorType": type(error).__name__}
             last_line = ""
-            for line in process.stdout:
-                log.write(line)
-                print(line, end="", flush=True)
-                last_line = line
+            try:
+                for line in process.stdout:
+                    log.write(line)
+                    print(line, end="", flush=True)
+                    last_line = line
+            finally:
+                if diagnostic is not None:
+                    try:
+                        observation["diagnostic"] = diagnostic.finish()
+                    except Exception as error:
+                        observation["diagnostic"] = {"status": "unavailable", "errorType": type(error).__name__}
             if last_line and not last_line.endswith("\n"):
                 print(flush=True)
             code = process.wait()
@@ -553,6 +569,12 @@ def run(args):
     source_sha = os.environ.get("GITHUB_SHA", "")
     if not re.fullmatch(r"[a-f0-9]{40}", source_sha):
         raise VerificationError("The actual Actions source SHA is required")
+    profile = getattr(args, "app_diagnostic", None)
+    product_source = getattr(args, "product_source_sha", None)
+    if profile and (profile != "zombies" or args.scope != "app-swift-testing" or args.filter):
+        raise VerificationError("The zombie diagnostic requires the full App SwiftTesting backend")
+    if bool(profile) != bool(product_source) or product_source and not re.fullmatch(r"[a-f0-9]{40}", product_source):
+        raise VerificationError("The App diagnostic requires its explicit original product source")
     args.evidence.mkdir(parents=True, exist_ok=False)
     result_path = args.evidence / "suite.json"
     result = {"schema": 1, "sourceSHA": source_sha, "scope": args.scope,
@@ -564,6 +586,12 @@ def run(args):
     for flag in args.swiftc_flag:
         common += ["-Xswiftc", flag]
     try:
+        if profile:
+            checkout = subprocess.run(["git", "rev-parse", "HEAD"], stdin=subprocess.DEVNULL,
+                                      capture_output=True, text=True, timeout=15)
+            if checkout.returncode or checkout.stdout.strip() != product_source:
+                raise VerificationError("The actual product checkout differs from the diagnostic source")
+            result.update(productSourceSHA=product_source, harnessSourceSHA=source_sha)
         query = ["swift", "build", *common, "--show-bin-path"]
         query_result = subprocess.run(query, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                       stderr=subprocess.PIPE, text=True, timeout=60)
@@ -607,14 +635,24 @@ def run(args):
                                    NGV_APPKIT_TEST_EVENTS=str(events_path.resolve()),
                                    NGV_APPKIT_TEST_RECEIPT=str(receipt_path.resolve()),
                                    NGV_APPKIT_EXCEPTION_EVIDENCE=str((folder / "exception.jsonl").absolute()))
+                if profile:
+                    try:
+                        environment = zombie_environment(environment)
+                    except ValueError as error:
+                        raise VerificationError(str(error)) from error
             phase = {"name": name, "command": command, "status": "running", "log": str(log)}
             result["phases"].append(phase)
             write_json(result_path, result)
             observation = prepare_post_mortem(host) if name == "app-swift-testing" else None
             if observation is not None:
                 observation["launchEarliest"] = time.time()
+                if profile:
+                    observation["diagnosticProfile"] = profile
+                    observation["productSourceSHA"] = product_source
             code, pid = run_process(command, log, environment, observation)
             phase.update(exitCode=code, pid=pid)
+            if profile:
+                phase["diagnostic"] = observation.get("diagnostic", {"status": "unavailable"})
             if name == "app-swift-testing":
                 try:
                     phase["watchdogReports"] = capture_watchdog_reports(folder / "watchdog", observation, code)
@@ -634,6 +672,8 @@ def run(args):
                     destination.write("\n")
             if code:
                 raise VerificationError(name + " returned a nonzero original exit", code)
+            if profile and phase["diagnostic"].get("status") != "verified":
+                raise VerificationError("The owned App diagnostic activation or process identity was not verified")
             if name == "xctest":
                 lines = [ANSI.sub("", line).rstrip("\r\n") for line in log.read_text().split("\n")]
                 count = sum(bool(XCTEST_START.fullmatch(line)) for line in lines)
@@ -688,6 +728,8 @@ def main():
     parser.add_argument("--swiftc-flag", action="append", default=[])
     parser.add_argument("--filter", default="")
     parser.add_argument("--scope", choices=("all", "app-swift-testing"), default="all")
+    parser.add_argument("--app-diagnostic", choices=("zombies",))
+    parser.add_argument("--product-source-sha")
     args = parser.parse_args()
     if args.filter and not args.filter.strip():
         parser.error("An explicit filter cannot be whitespace only")

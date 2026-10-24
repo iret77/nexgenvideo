@@ -5,10 +5,11 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import run_macos_tests as driver
 
@@ -40,8 +41,31 @@ def write_events(path, records):
 
 
 class HostedTestDriverTests(unittest.TestCase):
+    def test_process_capture_preserves_output_exit_and_finishes_before_reaping(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "console.log"
+            observation = {"diagnosticProfile": "zombies", "hostUUID": "test", "hostSHA256": "test"}
+            capture = Mock()
+            def finish():
+                os.kill(observation["pid"], 0)
+                return {"status": "unavailable"}
+            capture.finish.side_effect = finish
+            with patch.object(driver, "ZombieCapture", return_value=capture) as constructor, \
+                    contextlib.redirect_stdout(io.StringIO()):
+                code, pid = driver.run_process([sys.executable, "-c", "print('original output'); raise SystemExit(7)"],
+                                               log, dict(os.environ, GITHUB_SHA="a" * 40), observation)
+            self.assertEqual(code, 7)
+            self.assertEqual(log.read_text(), "original output\n")
+            self.assertEqual(constructor.call_args.args[0], pid)
+            capture.start.assert_called_once()
+            capture.finish.assert_called_once()
+            with self.assertRaises(ChildProcessError):
+                os.waitpid(pid, os.WNOHANG)
+            self.assertEqual(observation["diagnostic"]["status"], "unavailable")
+
     def invoke(self, root, *, filter="", scope="all", exits=None, empty=(), console=None,
-               receipt_change=None, query_error=None, capture_error=None, watchdog_error=None):
+               receipt_change=None, query_error=None, capture_error=None, watchdog_error=None,
+               app_diagnostic=None, diagnostic_status="verified", product_source_sha=None, checkout_source=None):
         binary_root = root / "built products"
         binary_root.mkdir(exist_ok=True)
         host = binary_root / "NexGenVideoAppKitTestHost"
@@ -57,7 +81,9 @@ class HostedTestDriverTests(unittest.TestCase):
         platform.mkdir(exist_ok=True)
         args = argparse.Namespace(cache_path="dependency cache", configuration="release",
                                   scratch_path="release scratch", swiftc_flag=["-enable-testing"],
-                                  evidence=root / "evidence", filter=filter, scope=scope)
+                                  evidence=root / "evidence", filter=filter, scope=scope,
+                                  app_diagnostic=app_diagnostic,
+                                  product_source_sha=product_source_sha or ("c" * 40 if app_diagnostic else None))
         calls = []
         queries = []
 
@@ -65,6 +91,8 @@ class HostedTestDriverTests(unittest.TestCase):
             queries.append(command)
             if query_error is not None:
                 raise query_error
+            if command[0] == "git":
+                return subprocess.CompletedProcess(command, 0, (checkout_source or "c" * 40) + "\n", "")
             selected = binary_root if command[0] == "swift" else compiler if "--find" in command else platform
             return subprocess.CompletedProcess(command, 0, str(selected) + "\n", "")
 
@@ -73,6 +101,8 @@ class HostedTestDriverTests(unittest.TestCase):
             calls.append((name, command, environment))
             if observation is not None:
                 observation.update(pid=123, launchLatest=100, exitObserved=101)
+                if observation.get("diagnosticProfile"):
+                    observation["diagnostic"] = {"status": diagnostic_status}
             default = XCTEST.replace("All tests", "Selected tests") if filter else XCTEST
             output = (console or {}).get(name, default if name == "xctest" else SWIFT)
             if name in empty:
@@ -105,6 +135,51 @@ class HostedTestDriverTests(unittest.TestCase):
         self.post_mortem_calls = capture.call_args_list
         self.watchdog_calls = watchdog.call_args_list
         return code, json.loads((args.evidence / "suite.json").read_text()), calls, queries
+
+    def test_zombies_only_apply_to_the_complete_failed_app_backend(self):
+        with tempfile.TemporaryDirectory() as directory:
+            code, receipt, calls, _ = self.invoke(Path(directory), scope="app-swift-testing", app_diagnostic="zombies")
+            self.assertEqual(code, 0, receipt)
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0][0], "app-swift-testing")
+            self.assertEqual(calls[0][2]["NSZombieEnabled"], "YES")
+            self.assertNotIn("MTL_DEBUG_LAYER", calls[0][2])
+            self.assertNotIn("MallocStackLogging", calls[0][2])
+            self.assertEqual(receipt["phases"][0]["diagnostic"]["status"], "verified")
+            self.assertEqual(receipt["sourceSHA"], "a" * 40)
+            self.assertEqual(receipt["harnessSourceSHA"], "a" * 40)
+            self.assertEqual(receipt["productSourceSHA"], "c" * 40)
+            self.assertEqual(calls[0][2]["GITHUB_SHA"], "a" * 40)
+        for scope, filter in (("all", ""), ("app-swift-testing", "GlowKernelTests")):
+            with self.subTest(scope=scope, filter=filter), tempfile.TemporaryDirectory() as directory:
+                with self.assertRaises(driver.VerificationError):
+                    self.invoke(Path(directory), scope=scope, filter=filter, app_diagnostic="zombies")
+
+    def test_product_source_mismatch_fails_before_any_native_process(self):
+        with tempfile.TemporaryDirectory() as directory:
+            code, receipt, calls, _ = self.invoke(Path(directory), scope="app-swift-testing", app_diagnostic="zombies",
+                                                 product_source_sha="d" * 40)
+            self.assertEqual(code, 1)
+            self.assertFalse(receipt["completed"])
+            self.assertEqual(calls, [])
+        with tempfile.TemporaryDirectory() as directory, self.assertRaises(driver.VerificationError):
+            self.invoke(Path(directory), product_source_sha="c" * 40)
+
+    def test_unknown_activation_fails_but_never_replaces_an_original_signal(self):
+        for original, expected in ((0, 1), (-11, 139)):
+            with self.subTest(original=original), tempfile.TemporaryDirectory() as directory:
+                code, receipt, _, _ = self.invoke(Path(directory), scope="app-swift-testing", app_diagnostic="zombies",
+                    diagnostic_status="unavailable", exits={"app-swift-testing": original})
+                self.assertEqual(code, expected)
+                self.assertFalse(receipt["completed"])
+                self.assertEqual(receipt["phases"][0]["exitCode"], original)
+
+    def test_normal_test_execution_does_not_enable_diagnostics(self):
+        with tempfile.TemporaryDirectory() as directory:
+            code, _, calls, _ = self.invoke(Path(directory))
+            self.assertEqual(code, 0)
+            for _, _, environment in calls:
+                self.assertNotIn("NSZombieEnabled", environment)
 
     def test_exact_release_products_run_once_and_preserve_framework_boundaries(self):
         with tempfile.TemporaryDirectory() as directory:

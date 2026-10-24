@@ -6,6 +6,8 @@ import textwrap
 import unittest
 from pathlib import Path
 
+import capture_render_review_test_diagnostic as diagnostic
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -37,6 +39,28 @@ Test Suite 'All tests' passed at 2026-10-20 20:07:18.844.
 
 
 class SwiftTestFailurePropagationTests(unittest.TestCase):
+    def test_app_only_selection_is_explicit_and_cannot_reduce_normal_ci_requirements(self):
+        command = ["python3", str(Path(diagnostic.__file__).with_name("run_macos_tests.py")),
+                   "--scope", "app-swift-testing", "--app-diagnostic", "zombies", "--evidence", "/fixture/evidence",
+                   "--product-source-sha", "a" * 40]
+        diagnostic.validate_framework_selection(1, 0, True, True, command)
+        diagnostic.validate_framework_selection(2, 2, False, True, command)
+        cases = [
+            (1, 0, False, True, command), (0, 0, True, True, command), (2, 0, True, True, command),
+            (1, 1, True, True, command), (1, 0, True, False, command),
+            (1, 0, True, True, ["echo", "success"]),
+            (1, 0, True, True, [*command, "--filter", "GlowKernelTests"]),
+            (1, 0, True, True, [*command, "--filter=GlowKernelTests"]),
+            (1, 0, True, True, [*command, "--scope=all"]),
+            (1, 0, True, True, [*command, "--scope", "app-swift-testing"]),
+            (1, 0, True, True, command[:4] + command[6:]),
+            (1, 0, True, True, command[:-2]),
+            (1, 0, True, True, command[:-1] + ["invalid"]),
+        ]
+        for case in cases:
+            with self.subTest(case=case), self.assertRaises(ValueError):
+                diagnostic.validate_framework_selection(*case)
+
     def test_nonzero_exit_is_final_and_zero_requires_complete_selected_runs(self):
         workflows = (
             ("ci.yml", "Test", "test.log", []),
