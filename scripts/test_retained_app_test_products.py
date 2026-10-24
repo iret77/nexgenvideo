@@ -7,7 +7,10 @@ import os
 from pathlib import Path
 import stat
 import struct
+import subprocess
+import sys
 import tempfile
+import textwrap
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -43,6 +46,64 @@ def metadata_bytes():
 
 
 class RetainedProductsTests(unittest.TestCase):
+    def test_shared_loader_records_stop_permanently_at_the_first_ambiguous_write(self):
+        root = "dyld[42]: <" + IMAGE_UUID + "> /root\n"
+        child = "dyld[43]: <" + IMAGE_UUID + "> /child\n"
+        movement = "dyld[42]: move loaded to delayed: Framework\n"
+        loaded, others, cutoff = replay.loader_records(root + movement + child, 42, shared=True)
+        self.assertEqual(loaded, [{"uuid": IMAGE_UUID, "path": "/root"}])
+        self.assertEqual(others, [{"pid": 43, "uuid": IMAGE_UUID, "path": "/child"}])
+        self.assertIsNone(cutoff)
+        # dyld writes each PID prefix separately from its message body.
+        collision = "dyld[43]: " + root + "dyld[42]: <" + IMAGE_UUID + "> /child\n"
+        for damaged in (collision, "unprefixed body\n", "\n", "dyld[42]: unknown message\n",
+                        "dyld[42]: move loaded to delayed: dyld[43]: Framework\n"):
+            with self.subTest(damaged=damaged):
+                loaded, others, cutoff = replay.loader_records(root + damaged + root, 42, shared=True)
+                self.assertEqual(loaded, [{"uuid": IMAGE_UUID, "path": "/root"}])
+                self.assertEqual(others, [])
+                self.assertEqual(cutoff["line"], 2)
+        loaded, _, cutoff = replay.loader_records(root.rstrip("\n"), 42, shared=True)
+        self.assertEqual(loaded, [])
+        self.assertEqual(cutoff["line"], 1)
+        with self.assertRaises(ValueError):
+            replay.loader_records(child, 42, shared=False)
+
+    def test_workflow_invokes_exactly_one_host_driver_with_the_selected_full_or_focused_scope(self):
+        workflow = Path(__file__).resolve().parents[1] / ".github/workflows/diagnostic-acceptance.yml"
+        job = workflow.read_text().split("  ci-app-retained-replay:\n", 1)[1].split("    steps:\n", 1)[0]
+        self.assertIn("timeout-minutes: ${{ inputs.candidate_kind == 'ci-app-full-replay' && 60 || 20 }}", job)
+        step = workflow.read_text().split("      - name: Run the selected unchanged App tests once\n", 1)[1]
+        self.assertIn("timeout-minutes: ${{ inputs.candidate_kind == 'ci-app-full-replay' && 30 || 10 }}",
+                      step.split("        run: |\n", 1)[0])
+        script = textwrap.dedent(step.split("        run: |\n", 1)[1].split("      - name:", 1)[0])
+        for kind, profile, filtered in (("ci-app-full-replay", "app-reproduction", False),
+                                        ("ci-app-glow-replay", "glow-reproduction", True)):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                binary = root / "python3"
+                binary.write_text("#!" + sys.executable + "\nimport json, os, sys\n"
+                                  "with open(os.environ['CAPTURE'], 'a') as stream: stream.write(json.dumps({'args': sys.argv[1:], 'blockout': os.environ.get('NGV_BLOCKOUT_ORIENTATION_EVIDENCE_DIR')}) + '\\n')\n")
+                binary.chmod(0o755)
+                environment = dict(os.environ, PATH=str(root) + os.pathsep + os.environ["PATH"],
+                    RUNNER_TEMP=str(root / "runner temp"), GITHUB_WORKSPACE=str(root / "workspace"),
+                    REPLAY_KIND=kind, PRODUCT_SHA=PRODUCT, CAPTURE=str(root / "calls.jsonl"))
+                result = subprocess.run(["/bin/bash", "-c", script], env=environment, stdin=subprocess.DEVNULL,
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                calls = [json.loads(line) for line in (root / "calls.jsonl").read_text().splitlines()]
+                self.assertEqual(len(calls), 1)
+                args = calls[0]["args"]
+                self.assertEqual(calls[0]["blockout"], None if filtered else str(root / "runner temp/blockout-orientation-evidence"))
+                self.assertEqual(args.count("--app-diagnostic"), 1)
+                self.assertEqual(args[args.index("--app-diagnostic") + 1], profile)
+                self.assertEqual(args[args.index("--scope") + 1], "app-swift-testing")
+                self.assertEqual(args[args.index("--product-source-sha") + 1], PRODUCT)
+                self.assertEqual(args[args.index("--bin-root") + 1], str(root / "workspace/.build/out/Products/Debug"))
+                self.assertEqual("--filter" in args, filtered)
+                if filtered:
+                    self.assertEqual(args[args.index("--filter") + 1], "GlowKernelTests")
+
     def archive(self, path, extra=None):
         with zipfile.ZipFile(path, "w") as archive:
             put(archive, "Debug/", mode=stat.S_IFDIR | 0o755)
@@ -293,7 +354,7 @@ class RetainedProductsTests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaises(ValueError):
                 replay.verify_artifact({**artifact, key: value}, run, job, 20, "c" * 64, "products")
 
-    def evidence(self, root):
+    def evidence(self, root, full=False):
         metadata, evidence = root / "metadata", root / "evidence"
         metadata.mkdir()
         phase_folder = evidence / "hosted-suite/app-swift-testing"
@@ -306,22 +367,45 @@ class RetainedProductsTests(unittest.TestCase):
                    "systemImages": {"CoreImage": {"path": "/System/CoreImage", "uuid": IMAGE_UUID}},
                    "originalProductImages": {name: IMAGE_UUID for name in (
                        "NexGenVideoAppKitTestHost", "NexGenVideoTests", "libNexGenEngine.dylib")}}
-        replay.write(metadata / "binding.json", binding)
         replay.write(metadata / "restored-manifest.json", {})
         ended = ["NexGenVideoTests.GlowKernelTests/" + name + "()/GlowKernelTests.swift:1:1" for name in
                  ("neutralIsNoOp", "bleedsLightIntoNeighbors", "warmthTintsTheBleedRed")]
+        if full:
+            ended.append("NexGenVideoTests.OtherTests/keepsCompleteAggregate()/Fixture.swift:1:1")
+        profile, selection = ("app-reproduction", "") if full else ("glow-reproduction", "GlowKernelTests")
+        binding.update(kind="ci-app-full-replay" if full else "ci-app-glow-replay", selection=selection,
+                       diagnosticProfile=profile, expectedFunctionIDs=sorted(ended), expectedSkippedFunctionIDs=[])
+        replay.write(metadata / "binding.json", binding)
         phase = {"exitCode": 0, "status": "verified-execution", "pid": 42,
-                 "diagnostic": {"status": "verified", "profile": "glow-reproduction", "pid": 42,
+                 "diagnostic": {"status": "verified", "profile": profile, "pid": 42,
                     "sourceSHA": SHA, "harnessSourceSHA": SHA, "productSourceSHA": PRODUCT,
                     "hostSHA256": "c" * 64, "hostUUID": IMAGE_UUID, "memoryErrors": [], "sampleCount": 2,
                     "environment": {"DYLD_PRINT_LIBRARIES": "1", "otherDiagnosticVariablesPresent": False}},
                  "originalHostReceipt": {"pid": 42, "abiSucceeded": True, "completed": True, "sourceSHA": SHA,
                      "hostExecutable": str(binary_root / "NexGenVideoAppKitTestHost"),
                      "bundleBinary": str(binary_root / "NexGenVideoTests.xctest/Contents/MacOS/NexGenVideoTests")},
-                 "events": {"endedFunctionIDs": ended, "functionExecutions": 3}}
+                 "events": {"endedFunctionIDs": ended, "functionExecutions": len(ended), "skippedFunctionIDs": []}}
         suite = {"sourceSHA": SHA, "harnessSourceSHA": SHA, "productSourceSHA": PRODUCT, "completed": True,
-                 "scope": "app-swift-testing", "filter": "GlowKernelTests", "binPath": str(binary_root),
-                 "testExecutions": 3, "phases": [phase]}
+                 "scope": "app-swift-testing", "filter": selection, "binPath": str(binary_root),
+                 "testExecutions": len(ended), "phases": [phase]}
+        if full:
+            phase["diagnostic"]["environment"]["DYLD_PRINT_TO_FILE"] = str((phase_folder / "dyld-images.log").resolve())
+            phase["diagnostic"].update(parentPID=40, startAbsoluteTime=1234)
+            sample = "Process: NexGenVideoAppKitTestHost [42]\nParent Process: Python [40]\n\nBinary Images:\n"
+            sample += "    0x1000 - 0x2000 CoreImage (1) <" + IMAGE_UUID + "> /System/CoreImage\n"
+            sample_path = phase_folder / "owned-images.sample.txt"
+            sample_path.write_text(sample)
+            phase["diagnostic"]["loadedImageCapture"] = {"status": "verified", "exitCode": 0,
+                "pid": 42, "parentPID": 40, "startAbsoluteTime": 1234, "startedAt": 7, "finishedAt": 8,
+                "sampleSHA256": hashlib.sha256(sample.encode()).hexdigest(),
+                "images": [{"uuid": IMAGE_UUID, "path": "/System/CoreImage"}]}
+            probe = evidence / "hosted-suite/child-stdio-probe"
+            probe.mkdir()
+            (probe / "stdout.log").write_bytes(b"")
+            (probe / "stderr.log").write_bytes(b"")
+            suite["childStdioPreflight"] = {"pid": 41, "status": "passed", "exitCode": 0,
+                                            "timedOut": False, "stdoutBytes": 0, "stderrBytes": 0}
+            replay.write(probe / "receipt.json", suite["childStdioPreflight"])
         replay.write(evidence / "hosted-suite/suite.json", suite)
         replay.write(evidence / "run.json", {"testExitCode": 0, "effectiveExitCode": 0, "sourceSHA": SHA, "runID": "30"})
         events = [{"kind": "event", "payload": {"testID": identity, "kind": kind,
@@ -329,8 +413,80 @@ class RetainedProductsTests(unittest.TestCase):
                   for kind, offset in (("testStarted", 0), ("testEnded", 4))]
         (phase_folder / "events.jsonl").write_text("\n".join(json.dumps(value) for value in events) + "\n")
         images = ["/System/CoreImage", str(binary_root / "libNexGenEngine.dylib"), *(str(binary_root / name) for name in binaries)]
-        (phase_folder / "console.log").write_text("\n".join("dyld[42]: <" + IMAGE_UUID + "> " + name for name in images))
+        lines = "\n".join("dyld[42]: <" + IMAGE_UUID + "> " + name for name in images) + "\n"
+        (phase_folder / "console.log").write_text("original native console" if full else lines)
+        if full:
+            (phase_folder / "dyld-images.log").write_text(lines)
         return metadata, evidence, suite
+
+    def test_original_full_inventory_cannot_drop_duplicate_or_substitute_functions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _, _, suite = self.evidence(Path(directory), full=True)
+            ended = suite["phases"][0]["events"]["endedFunctionIDs"]
+            self.assertEqual(replay.original_function_inventory(suite, ""), sorted(ended))
+            self.assertEqual(replay.original_function_inventory(suite, "GlowKernelTests"), sorted(ended[:3]))
+            for change in (lambda s: s.update(testExecutions=3),
+                           lambda s: s["phases"][0]["events"]["endedFunctionIDs"].append(ended[0]),
+                           lambda s: s["phases"][0]["events"].update(functionExecutions=0),
+                           lambda s: s["phases"][0]["events"]["endedFunctionIDs"].__setitem__(3, "OtherModule.bad()")):
+                altered = copy.deepcopy(suite)
+                change(altered)
+                with self.assertRaises(ValueError):
+                    replay.original_function_inventory(altered, "")
+        self.assertEqual(replay.replay_selection("ci-app-full-replay"), ("app-reproduction", ""))
+        self.assertEqual(replay.replay_selection("ci-app-glow-replay"), ("glow-reproduction", "GlowKernelTests"))
+        with self.assertRaises(ValueError):
+            replay.replay_selection("other")
+
+    def test_full_replay_requires_whole_inventory_and_the_original_fault_pair_overlap(self):
+        with tempfile.TemporaryDirectory() as directory:
+            metadata, evidence, suite = self.evidence(Path(directory), full=True)
+            with patch.object(replay, "command", return_value=PRODUCT), patch.object(replay, "verify_tree"), \
+                    patch.dict(os.environ, GITHUB_SHA=SHA, GITHUB_RUN_ID="30"):
+                replay.verify_replay(metadata, evidence)
+                result = json.loads((evidence / "interpretation.json").read_text())
+                self.assertEqual(result["status"], "single-full-app-exposure-completed")
+                self.assertEqual(result["testExecutions"], 4)
+                self.assertFalse(result["coreAcceptance"])
+                loader = evidence / "hosted-suite/app-swift-testing/dyld-images.log"
+                original_loader = loader.read_text()
+                loader.write_text(original_loader + "dyld[43]: <" + IMAGE_UUID + "> /different/child\n")
+                replay.verify_replay(metadata, evidence)
+                other = json.loads((evidence / "other-process-loaded-images.json").read_text())
+                self.assertEqual([image["pid"] for image in other], [43])
+                loader.write_text(original_loader.replace("dyld[42]", "dyld[43]"))
+                with self.assertRaises(ValueError):
+                    replay.verify_replay(metadata, evidence)
+                loader.write_text(original_loader)
+                for change in (lambda s: s.update(filter="GlowKernelTests"),
+                               lambda s: s.pop("childStdioPreflight"),
+                               lambda s: s["phases"][0]["diagnostic"].pop("loadedImageCapture"),
+                               lambda s: s["phases"][0]["diagnostic"]["loadedImageCapture"].update(pid=43),
+                               lambda s: s["phases"][0]["diagnostic"]["loadedImageCapture"].update(startedAt=0),
+                               lambda s: s["phases"][0]["diagnostic"]["loadedImageCapture"].update(sampleSHA256="bad"),
+                               lambda s: s["phases"][0]["diagnostic"]["loadedImageCapture"].update(startAbsoluteTime=1),
+                               lambda s: s["phases"][0]["diagnostic"].update(profile="glow-reproduction"),
+                               lambda s: s["phases"][0]["diagnostic"]["environment"].pop("DYLD_PRINT_TO_FILE"),
+                               lambda s: s["phases"][0]["events"]["endedFunctionIDs"].pop(),
+                               lambda s: s["phases"][0]["events"].update(skippedFunctionIDs=["missing"]),
+                               lambda s: s["phases"][0]["events"]["endedFunctionIDs"].__setitem__(3, "NexGenVideoTests.OtherTests/substitute()")):
+                    altered = copy.deepcopy(suite)
+                    change(altered)
+                    replay.write(evidence / "hosted-suite/suite.json", altered)
+                    with self.assertRaises(ValueError):
+                        replay.verify_replay(metadata, evidence)
+                replay.write(evidence / "hosted-suite/suite.json", suite)
+                path = evidence / "hosted-suite/app-swift-testing/events.jsonl"
+                records = [json.loads(line) for line in path.read_text().splitlines()]
+                ranges = {"neutralIsNoOp": (0, 10), "bleedsLightIntoNeighbors": (1, 2), "warmthTintsTheBleedRed": (3, 4)}
+                for record in records:
+                    event = record["payload"]
+                    for method, times in ranges.items():
+                        if method + "()" in event["testID"]:
+                            event["instant"]["since1970"] = times[event["kind"] == "testEnded"]
+                path.write_text("\n".join(json.dumps(record) for record in records))
+                with self.assertRaises(ValueError):
+                    replay.verify_replay(metadata, evidence)
 
     def test_completion_requires_exact_exposure_pid_loader_images_and_source(self):
         with tempfile.TemporaryDirectory() as directory:

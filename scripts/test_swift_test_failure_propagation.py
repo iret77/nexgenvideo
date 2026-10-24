@@ -39,6 +39,17 @@ Test Suite 'All tests' passed at 2026-10-20 20:07:18.844.
 
 
 class SwiftTestFailurePropagationTests(unittest.TestCase):
+    def test_full_retained_app_capture_rejects_every_filter_and_missing_product_root(self):
+        command = ["python3", str(Path(diagnostic.__file__).with_name("run_macos_tests.py")),
+                   "--scope", "app-swift-testing", "--app-diagnostic", "app-reproduction",
+                   "--bin-root", "/fixture/Debug", "--product-source-sha", "a" * 40]
+        diagnostic.validate_framework_selection(1, 0, True, True, command)
+        for variant in (command + ["--filter", ""], command + ["--filter", "GlowKernelTests"],
+                        command + ["--filter=GlowKernelTests"], command[:6] + command[8:],
+                        command[:7] + ["relative"] + command[8:]):
+            with self.subTest(command=variant), self.assertRaises(ValueError):
+                diagnostic.validate_framework_selection(1, 0, True, True, variant)
+
     def test_retained_glow_capture_cannot_expand_or_change_the_selected_profile(self):
         command = ["python3", str(Path(diagnostic.__file__).with_name("run_macos_tests.py")),
                    "--scope", "app-swift-testing", "--app-diagnostic", "glow-reproduction",

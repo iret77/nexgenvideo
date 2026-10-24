@@ -18,6 +18,7 @@ import urllib.request
 import zipfile
 
 from verify_diagnostic_candidate import APP_DIAGNOSTIC_PATHS, verify_app_crash_archive, verify_app_diagnostic
+from app_host_zombie_diagnostic import sample_image_records
 
 
 REPLAY_PATHS = {
@@ -29,6 +30,25 @@ REPLAY_PATHS = {
 }
 SYSTEM_IMAGES = {"AppleParavirtGPUMetalIOGPUFamily", "IOGPU", "CoreImage", "MPSCore", "MPSImage", "Metal"}
 UUID = r"[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}"
+
+
+def replay_selection(kind):
+    if kind == "ci-app-glow-replay":
+        return "glow-reproduction", "GlowKernelTests"
+    if kind == "ci-app-full-replay":
+        return "app-reproduction", ""
+    raise ValueError("Unknown retained App replay selection")
+
+
+def original_function_inventory(suite, selection):
+    events = suite["phases"][0]["events"]
+    ended = events["endedFunctionIDs"]
+    require(isinstance(ended, list) and len(ended) == len(set(ended))
+            == events["functionExecutions"] == suite["testExecutions"] > 0
+            and all(name.startswith("NexGenVideoTests.") for name in ended), "Original full App inventory is inconsistent")
+    selected = [name for name in ended if not selection or name.startswith("NexGenVideoTests.GlowKernelTests/")]
+    require(selected and (not selection or len(selected) == 3), "Original selected inventory is incomplete")
+    return sorted(selected)
 
 
 def require(condition, message):
@@ -331,6 +351,9 @@ def verify_tree(root, records):
 
 def restore(folder):
     binding = json.loads((folder / "binding.json").read_text())
+    profile, selection = replay_selection(binding["kind"])
+    require(binding["kind"] == os.environ["REPLAY_KIND"] and binding["diagnosticProfile"] == profile
+            and binding["selection"] == selection, "Restore mode differs from the bound execution")
     require(command(["git", "rev-parse", "HEAD"]) == binding["productSHA"]
             and os.environ["GITHUB_SHA"] == binding["harnessSHA"], "Replay source binding changed")
     require(command(["xcodebuild", "-version"]) == binding["compiled"]["toolchain"].strip(), "Replay toolchain differs")
@@ -388,8 +411,31 @@ def restore(folder):
           "outerSHA256": checksum(outer), "innerSHA256": checksum(inner)})
 
 
+def loader_records(console, pid, shared):
+    loaded, others = [], []
+    pattern = re.compile(r"^dyld\[([1-9][0-9]*)\]: <(" + UUID + r")> (.+)$")
+    movement = re.compile(r"^dyld\[([1-9][0-9]*)\]: move (?:loaded to delayed|delayed to loaded): [^\r\n]+$")
+    cutoff = None
+    for number, raw in enumerate(console.splitlines(keepends=True), 1):
+        line = raw.removesuffix("\n")
+        match = pattern.fullmatch(line)
+        if shared and (not raw.endswith("\n") or line.count("dyld[") != 1
+                       or "\r" in line or not (match or movement.fullmatch(line))):
+            cutoff = {"line": number, "reason": "Ambiguous or incomplete loader framing; later records are not credited"}
+            break
+        if match:
+            if int(match[1]) != pid:
+                require(shared, "Loader record belongs to another PID")
+                others.append({"pid": int(match[1]), "uuid": match[2].lower(), "path": match[3]})
+            else:
+                loaded.append({"uuid": match[2].lower(), "path": match[3]})
+    return loaded, others, cutoff
+
+
 def verify_replay(folder, evidence):
     binding = json.loads((folder / "binding.json").read_text())
+    profile, selection = replay_selection(binding["kind"])
+    require(binding["selection"] == selection and binding["diagnosticProfile"] == profile, "Replay mode binding differs")
     root = Path(binding["compiled"]["binRoot"])
     require(command(["git", "rev-parse", "HEAD"]) == binding["productSHA"]
             and os.environ["GITHUB_SHA"] == binding["harnessSHA"], "Replay source binding changed")
@@ -401,16 +447,30 @@ def verify_replay(folder, evidence):
             "Replay wrapper identity or exit differs")
     require(suite.get("sourceSHA") == suite.get("harnessSourceSHA") == binding["harnessSHA"]
             and suite.get("productSourceSHA") == binding["productSHA"] and suite.get("completed") is True
-            and suite.get("scope") == "app-swift-testing" and suite.get("filter") == "GlowKernelTests"
+            and suite.get("scope") == "app-swift-testing" and suite.get("filter") == selection
             and suite.get("binPath") == str(root) and len(suite.get("phases", [])) == 1,
             "Replay selection or source identity differs")
     phase = suite["phases"][0]
     diagnostic, receipt = phase.get("diagnostic", {}), phase.get("originalHostReceipt", {})
     host = binding["compiled"]["binaries"]["NexGenVideoAppKitTestHost"]
+    expected_environment = {"DYLD_PRINT_LIBRARIES": "1", "otherDiagnosticVariablesPresent": False}
+    loader_log = evidence / "hosted-suite/app-swift-testing/console.log"
+    if not selection:
+        loader_log = evidence / "hosted-suite/app-swift-testing/dyld-images.log"
+        expected_environment["DYLD_PRINT_TO_FILE"] = str(loader_log.resolve())
+        preflight_folder = evidence / "hosted-suite/child-stdio-probe"
+        preflight = json.loads((preflight_folder / "receipt.json").read_text())
+        require(preflight == suite.get("childStdioPreflight") and preflight.get("status") == "passed"
+                and preflight.get("exitCode") == 0 and preflight.get("timedOut") is False
+                and preflight.get("stdoutBytes") == preflight.get("stderrBytes") == 0
+                and type(preflight.get("pid")) is int and preflight["pid"] > 0 and preflight["pid"] != phase.get("pid")
+                and all((preflight_folder / name).is_file() and not (preflight_folder / name).is_symlink()
+                        and (preflight_folder / name).stat().st_size == 0 for name in ("stdout.log", "stderr.log")),
+                "Native child stdio preflight is unproven")
     require(phase.get("exitCode") == 0 and phase.get("status") == "verified-execution"
             and phase.get("diagnostic", {}).get("status") == "verified"
-            and phase["diagnostic"].get("profile") == "glow-reproduction"
-            and phase["diagnostic"].get("environment") == {"DYLD_PRINT_LIBRARIES": "1", "otherDiagnosticVariablesPresent": False}
+            and phase["diagnostic"].get("profile") == profile
+            and phase["diagnostic"].get("environment") == expected_environment
             and type(phase.get("pid")) is int and phase["pid"] > 0
             and phase["pid"] == diagnostic.get("pid") == receipt.get("pid")
             and diagnostic.get("sourceSHA") == diagnostic.get("harnessSourceSHA") == receipt.get("sourceSHA") == binding["harnessSHA"]
@@ -424,29 +484,54 @@ def verify_replay(folder, evidence):
             "Replay owned execution or actual diagnostic profile is unproven")
     expected_methods = {"neutralIsNoOp", "bleedsLightIntoNeighbors", "warmthTintsTheBleedRed"}
     ended = phase["events"]["endedFunctionIDs"]
-    require(len(ended) == 3 and suite.get("testExecutions") == phase["events"].get("functionExecutions") == 3
-            and {name.split("/", 2)[1].removesuffix("()") for name in ended} == expected_methods
-            and all(name.startswith("NexGenVideoTests.GlowKernelTests/") for name in ended), "Replay did not complete exactly three Glow functions")
+    expected = binding["expectedFunctionIDs"]
+    require(expected and len(expected) == len(set(expected)) and sorted(ended) == expected
+            and suite.get("testExecutions") == phase["events"].get("functionExecutions") == len(expected)
+            and sorted(phase["events"].get("skippedFunctionIDs", [])) == binding["expectedSkippedFunctionIDs"],
+            "Replay did not complete the exact original selected function inventory")
+    glow = [name for name in ended if name.startswith("NexGenVideoTests.GlowKernelTests/")]
+    require(len(glow) == 3 and {name.split("/", 2)[1].removesuffix("()") for name in glow} == expected_methods,
+            "Replay did not complete exactly three Glow functions")
     events_path = evidence / "hosted-suite/app-swift-testing/events.jsonl"
     events = [json.loads(line) for line in events_path.read_text().split("\n") if line.strip()]
     intervals = {}
     for record in events:
         event = record.get("payload", {})
-        if record.get("kind") == "event" and event.get("testID") in ended and event.get("kind") in ("testStarted", "testEnded"):
+        if record.get("kind") == "event" and event.get("testID") in glow and event.get("kind") in ("testStarted", "testEnded"):
             intervals.setdefault(event["testID"], {})[event["kind"]] = event["instant"]["since1970"]
+    require(set(intervals) == set(glow) and all(set(value) == {"testStarted", "testEnded"}
+            and value["testStarted"] < value["testEnded"] for value in intervals.values()), "Incomplete Glow exposure intervals")
     overlap = [(a, b) for a, first in intervals.items() for b, second in intervals.items() if a < b
                and min(first["testEnded"], second["testEnded"]) > max(first["testStarted"], second["testStarted"])]
-    require(overlap, "Focused replay did not prove concurrent Glow exposure")
-    console = (evidence / "hosted-suite/app-swift-testing/console.log").read_text()
-    loaded = []
-    pattern = re.compile(r"^dyld\[(\d+)\]: <(" + UUID + r")> (.+)$")
-    for line in console.split("\n"):
-        match = pattern.fullmatch(line)
-        if match:
-            require(int(match[1]) == phase["pid"], "Loader record belongs to another PID")
-            loaded.append({"uuid": match[2].lower(), "path": match[3]})
+    require(overlap, "Retained App replay did not prove concurrent Glow exposure")
+    if not selection:
+        fault_pair = {name for name in glow if any(method + "()" in name for method in
+                      ("bleedsLightIntoNeighbors", "warmthTintsTheBleedRed"))}
+        require(any(set(pair) == fault_pair for pair in overlap), "Full App replay did not overlap the original fault pair")
+    require(loader_log.is_file() and not loader_log.is_symlink(), "Owned loader log is missing or linked")
+    with loader_log.open(newline="") as stream:
+        console = stream.read()
+    loaded, other_process_images, cutoff = loader_records(console, phase["pid"], shared=not selection)
+    system_loaded = loaded
+    if not selection:
+        write(evidence / "loader-framing.json", {"trustedPrefixOnly": True, "cutoff": cutoff,
+              "hostImageCount": len(loaded), "otherProcessImageCount": len(other_process_images)})
+        write(evidence / "other-process-loaded-images.json", other_process_images)
+        capture = diagnostic.get("loadedImageCapture", {})
+        sample_path = loader_log.with_name("owned-images.sample.txt")
+        require(capture.get("status") == "verified" and capture.get("exitCode") == 0
+                and capture.get("pid") == phase["pid"] and capture.get("parentPID") == diagnostic.get("parentPID")
+                and type(capture.get("startAbsoluteTime")) is int and capture["startAbsoluteTime"] > 0
+                and capture["startAbsoluteTime"] == diagnostic.get("startAbsoluteTime")
+                and capture.get("startedAt", 0) >= max(value["testEnded"] for value in intervals.values())
+                and capture.get("finishedAt", 0) >= capture["startedAt"]
+                and sample_path.is_file() and not sample_path.is_symlink()
+                and checksum(sample_path) == capture.get("sampleSHA256"), "Owned native image sample is unproven")
+        system_loaded = sample_image_records(sample_path.read_text(), phase["pid"], diagnostic["parentPID"])
+        require(system_loaded == capture.get("images"), "Native image sample records differ")
+        write(evidence / "sample-loaded-images.json", system_loaded)
     for name, image in binding["systemImages"].items():
-        require(image in loaded, "Actual loaded system image differs: " + name)
+        require(image in system_loaded, "Actual loaded system image differs: " + name)
     for relative, original in binding["compiled"]["binaries"].items():
         uuids = {value.lower() for value in re.findall(UUID, original["uuidOutput"])}
         require(any(image["path"] == str(root / relative) and image["uuid"] in uuids for image in loaded),
@@ -458,13 +543,16 @@ def verify_replay(folder, evidence):
                 "Loaded product image differs from the original fault")
     require(not any(image["path"] == str(root / "NexGenVideo") for image in loaded), "App executable also loaded into the test host")
     write(evidence / "loaded-images.json", loaded)
-    write(evidence / "interpretation.json", {"status": "single-focused-exposure-completed", "launches": 1,
+    write(evidence / "interpretation.json", {"status": "single-focused-exposure-completed" if selection else "single-full-app-exposure-completed", "launches": 1,
+          "selection": selection, "testExecutions": len(expected),
           "overlappingFunctionPairs": overlap, "productSHA": binding["productSHA"], "harnessSHA": binding["harnessSHA"],
           "rootCause": "not-established", "failureRateInference": False, "coreAcceptance": False,
           "nativeUXAcceptance": False, "releaseAcceptance": False})
 
 
 def source(folder):
+    kind = os.environ["REPLAY_KIND"]
+    profile, selection = replay_selection(kind)
     names = ("PRODUCER_RUN", "PRODUCER_SHA", "PRODUCT_SHA", "DIAGNOSTIC_ID", "DIAGNOSTIC_DIGEST",
              "PRODUCTS_ID", "PRODUCTS_DIGEST", "FAILURE_ID", "FAILURE_DIGEST")
     inputs = {key: os.environ[key] for key in names}
@@ -501,6 +589,8 @@ def source(folder):
         suite = archive_json(archive, "app-zombie-diagnostic/hosted-suite/suite.json")
         wrapper = archive_json(archive, "app-zombie-diagnostic/run.json")
         verify_execution(compiled, execution, suite, wrapper, product_sha, producer_sha, run["id"])
+        expected_functions = original_function_inventory(suite, selection)
+        expected_skipped = sorted(suite["phases"][0]["events"]["skippedFunctionIDs"]) if not selection else []
         inner_digest = archive_bytes(archive, "candidate-metadata/compiled-products.sha256").decode().split()[0]
         require(re.fullmatch(r"[a-f0-9]{64}", inner_digest), "Invalid original product archive digest")
     require(execution.get("originalArtifactID") == inputs["FAILURE_ID"]
@@ -542,7 +632,9 @@ def source(folder):
               "harnessSHA": head, "changedPaths": changed, "compiled": compiled,
               "innerArchiveSHA256": inner_digest, "systemImages": images, "originalProductImages": product_images,
               "osBuild": crash["osVersion"]["build"], "originalFailureRunID": failure_run_id,
-              "launchLimit": 1, "selection": "GlowKernelTests", "qualification": "diagnostic-only"}
+              "launchLimit": 1, "kind": kind, "diagnosticProfile": profile, "selection": selection,
+              "expectedFunctionIDs": expected_functions, "expectedSkippedFunctionIDs": expected_skipped,
+              "qualification": "diagnostic-only"}
     write(folder / "binding.json", record)
     write(folder / "producer-run.json", run)
     write(folder / "producer-jobs.json", jobs)

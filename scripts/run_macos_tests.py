@@ -15,7 +15,7 @@ import time
 import uuid
 
 from verify_swift_test_output import ANSI, assess_output
-from app_host_zombie_diagnostic import ZombieCapture, diagnostic_environment
+from app_host_zombie_diagnostic import ZombieCapture, diagnostic_environment, probe_child_stdio
 
 
 NO_MATCH = "warning: No matching test cases were run"
@@ -185,7 +185,7 @@ def run_process(command, path, environment, observation=None):
             if observation is not None:
                 observation.update(pid=process.pid, launchLatest=time.time())
             diagnostic = None
-            if observation is not None and observation.get("diagnosticProfile") in ("zombies", "glow-reproduction"):
+            if observation is not None and observation.get("diagnosticProfile") in ("zombies", "glow-reproduction", "app-reproduction"):
                 try:
                     diagnostic = ZombieCapture(process.pid, command, observation, path.parent,
                                                environment["GITHUB_SHA"], profile=observation["diagnosticProfile"])
@@ -572,15 +572,19 @@ def run(args):
     profile = getattr(args, "app_diagnostic", None)
     product_source = getattr(args, "product_source_sha", None)
     retained_root = getattr(args, "bin_root", None)
-    if profile and (profile not in ("zombies", "glow-reproduction") or args.scope != "app-swift-testing"):
+    if profile and (profile not in ("zombies", "glow-reproduction", "app-reproduction") or args.scope != "app-swift-testing"):
         raise VerificationError("The diagnostic requires its owned App SwiftTesting backend")
     if profile == "zombies" and (args.filter or retained_root):
         raise VerificationError("The zombie diagnostic requires the full original App build")
-    if profile == "glow-reproduction" and (args.filter != "GlowKernelTests" or not retained_root
+    if profile in ("glow-reproduction", "app-reproduction") and (not retained_root
             or args.configuration != "debug" or args.scratch_path or args.swiftc_flag):
-        raise VerificationError("The Glow diagnostic requires the exact retained debug products and Glow selection")
-    if retained_root and profile != "glow-reproduction":
-        raise VerificationError("An explicit product path is restricted to the retained Glow diagnostic")
+        raise VerificationError("The replay diagnostic requires the exact retained debug products")
+    if profile == "glow-reproduction" and args.filter != "GlowKernelTests":
+        raise VerificationError("The Glow diagnostic requires the exact Glow selection")
+    if profile == "app-reproduction" and args.filter:
+        raise VerificationError("The full App replay cannot filter the original aggregate")
+    if retained_root and profile not in ("glow-reproduction", "app-reproduction"):
+        raise VerificationError("An explicit product path is restricted to retained App diagnostics")
     if bool(profile) != bool(product_source) or product_source and not re.fullmatch(r"[a-f0-9]{40}", product_source):
         raise VerificationError("The App diagnostic requires its explicit original product source")
     args.evidence.mkdir(parents=True, exist_ok=False)
@@ -651,9 +655,15 @@ def run(args):
                                    NGV_APPKIT_EXCEPTION_EVIDENCE=str((folder / "exception.jsonl").absolute()))
                 if profile:
                     try:
-                        environment = diagnostic_environment(environment, profile)
+                        log_path = (folder / "dyld-images.log").resolve() if profile == "app-reproduction" else None
+                        environment = diagnostic_environment(environment, profile, log_path)
                     except ValueError as error:
                         raise VerificationError(str(error)) from error
+                    if profile == "app-reproduction":
+                        try:
+                            result["childStdioPreflight"] = probe_child_stdio(environment, args.evidence)
+                        except (OSError, ValueError, subprocess.SubprocessError) as error:
+                            raise VerificationError(str(error), 78) from error
             phase = {"name": name, "command": command, "status": "running", "log": str(log)}
             result["phases"].append(phase)
             write_json(result_path, result)
@@ -742,7 +752,7 @@ def main():
     parser.add_argument("--swiftc-flag", action="append", default=[])
     parser.add_argument("--filter", default="")
     parser.add_argument("--scope", choices=("all", "app-swift-testing"), default="all")
-    parser.add_argument("--app-diagnostic", choices=("zombies", "glow-reproduction"))
+    parser.add_argument("--app-diagnostic", choices=("zombies", "glow-reproduction", "app-reproduction"))
     parser.add_argument("--product-source-sha")
     parser.add_argument("--bin-root", type=Path)
     args = parser.parse_args()

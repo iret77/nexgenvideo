@@ -1,9 +1,13 @@
 """Read activation and memory evidence for one owned App test host."""
 import ctypes
+import hashlib
 import json
 import os
 from pathlib import Path
+import re
+import signal
 import struct
+import subprocess
 import sys
 import threading
 import time
@@ -18,23 +22,65 @@ def diagnostic_key(key):
 def profile_switch(profile):
     if profile == "zombies":
         return "NSZombieEnabled", "YES"
-    if profile == "glow-reproduction":
+    if profile in ("glow-reproduction", "app-reproduction"):
         return "DYLD_PRINT_LIBRARIES", "1"
     raise ValueError("Unknown owned App diagnostic profile")
 
 
-def diagnostic_environment(environment, profile):
+def profile_environment(profile, log_path=None):
+    key, value = profile_switch(profile)
+    result = {key: value}
+    if profile == "app-reproduction":
+        if log_path is None or not Path(log_path).is_absolute():
+            raise ValueError("Full App diagnostics require an absolute separate loader log")
+        result["DYLD_PRINT_TO_FILE"] = str(Path(log_path).resolve())
+    elif log_path is not None:
+        raise ValueError("Only full App diagnostics use a separate loader log")
+    return result
+
+
+def diagnostic_environment(environment, profile, log_path=None):
     if any(diagnostic_key(key.encode()) for key in environment):
         raise ValueError("Another memory or Metal diagnostic is already configured")
-    key, value = profile_switch(profile)
-    return dict(environment, **{key: value})
+    selected = profile_environment(profile, log_path)
+    if log_path is not None and (Path(log_path).exists() or Path(log_path).is_symlink()):
+        raise ValueError("Loader diagnostic destination is already occupied")
+    return dict(environment, **selected)
 
 
 def zombie_environment(environment):
     return diagnostic_environment(environment, "zombies")
 
 
-def selected_environment(data, command, profile="zombies"):
+def probe_child_stdio(environment, evidence):
+    folder = Path(evidence) / "child-stdio-probe"
+    folder.mkdir()
+    loader = (folder / "dyld-images.log").resolve()
+    selected = dict(environment, DYLD_PRINT_TO_FILE=str(loader))
+    command = ["/bin/sh", "-c", "set -e; /bin/cat </dev/null; /usr/bin/head -c 0 /dev/zero >&2"]
+    stdout, stderr = folder / "stdout.log", folder / "stderr.log"
+    timed_out = False
+    with stdout.open("xb") as out, stderr.open("xb") as err:
+        process = subprocess.Popen(command, env=selected, stdin=subprocess.DEVNULL,
+                                   stdout=out, stderr=err, start_new_session=True)
+        try:
+            code = process.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            os.killpg(process.pid, signal.SIGKILL)
+            code = process.wait(timeout=5)
+    receipt = {"pid": process.pid, "command": command, "exitCode": code, "timedOut": timed_out,
+               "stdoutBytes": stdout.stat().st_size, "stderrBytes": stderr.stat().st_size,
+               "loaderLogPresent": loader.is_file(), "requestedLoaderLog": str(loader),
+               "scope": "Child stdio preflight only; no App host execution or image qualification"}
+    receipt["status"] = "passed" if code == 0 and not timed_out and not receipt["stdoutBytes"] and not receipt["stderrBytes"] else "failed"
+    (folder / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
+    if receipt["status"] != "passed":
+        raise ValueError("Native child stdio preflight failed before the App host launch")
+    return receipt
+
+
+def selected_environment(data, command, profile="zombies", log_path=None):
     if len(data) < 5:
         raise ValueError("Incomplete process argument header")
     argc = struct.unpack_from("=i", data)[0]
@@ -63,10 +109,10 @@ def selected_environment(data, command, profile="zombies"):
         key, separator, value = entry.partition(b"=")
         if separator and diagnostic_key(key):
             selected.append((key, value))
-    key, value = profile_switch(profile)
-    if selected != [(key.encode(), value.encode())]:
+    expected = profile_environment(profile, log_path)
+    if sorted(selected) != sorted((key.encode(), value.encode()) for key, value in expected.items()):
         raise ValueError("Actual process does not have the sole requested diagnostic")
-    return {key: value, "otherDiagnosticVariablesPresent": False}
+    return {**expected, "otherDiagnosticVariablesPresent": False}
 
 
 class RUsageV4(ctypes.Structure):
@@ -119,6 +165,23 @@ class NativeReader:
                 "lifetimePeakPhysicalFootprintBytes": value.ri_lifetime_max_phys_footprint}
 
 
+def sample_image_records(text, pid, parent_pid):
+    if (not re.search(r"^Process:\s+NexGenVideoAppKitTestHost \[" + str(pid) + r"\]$", text, re.M)
+            or not re.search(r"^Parent Process:\s+.+ \[" + str(parent_pid) + r"\]$", text, re.M)
+            or text.count("\nBinary Images:\n") != 1):
+        raise ValueError("Native sample does not identify the owned App host")
+    section = text.split("\nBinary Images:\n", 1)[1]
+    pattern = re.compile(r"^\s*0x[0-9a-f]+\s+-\s+0x[0-9a-f]+\s+.+ <([0-9A-Fa-f-]{36})> (/[^\r\n]+)$")
+    images = []
+    for line in section.split("\n"):
+        match = pattern.fullmatch(line)
+        if match:
+            images.append({"uuid": str(uuid.UUID(match[1])), "path": match[2]})
+    if not images:
+        raise ValueError("Native sample contains no loaded image records")
+    return images
+
+
 class ZombieCapture:
     def __init__(self, pid, command, identity, folder, source_sha, reader=None, profile="zombies"):
         profile_switch(profile)
@@ -142,7 +205,9 @@ class ZombieCapture:
                         "maximumObservedResidentBytes": 0}
 
     def write(self):
-        path = self.folder / ("zombie-diagnostic.json" if self.profile == "zombies" else "glow-diagnostic.json")
+        name = {"zombies": "zombie-diagnostic.json", "glow-reproduction": "glow-diagnostic.json",
+                "app-reproduction": "app-diagnostic.json"}[self.profile]
+        path = self.folder / name
         temporary = path.with_suffix(".pending")
         temporary.write_text(json.dumps(self.receipt, indent=2) + "\n")
         temporary.replace(path)
@@ -167,7 +232,8 @@ class ZombieCapture:
         try:
             self.reader = self.reader or NativeReader()
             self.sample()
-            self.receipt["environment"] = selected_environment(self.reader.arguments(self.pid), self.command, self.profile)
+            log_path = (self.folder / "dyld-images.log").resolve() if self.profile == "app-reproduction" else None
+            self.receipt["environment"] = selected_environment(self.reader.arguments(self.pid), self.command, self.profile, log_path)
             self.sample()
             self.receipt["status"] = "verified"
             self.write()
@@ -182,12 +248,68 @@ class ZombieCapture:
         while not self.stop.wait(1):
             try:
                 self.sample()
+                if self.profile == "app-reproduction" and "loadedImageCapture" not in self.receipt:
+                    self.capture_images_after_glow()
                 self.write()
             except Exception as error:
                 self.receipt["memoryErrors"].append({"errorType": type(error).__name__, "errno": getattr(error, "errno", None)})
                 if self.receipt["status"] == "verified":
                     self.receipt["status"] = "memory-unavailable"
                 return
+
+    def capture_images_after_glow(self):
+        if "loadedImageCapture" in self.receipt:
+            return
+        path = self.folder / "events.jsonl"
+        if not path.is_file():
+            return
+        methods = {"neutralIsNoOp", "bleedsLightIntoNeighbors", "warmthTintsTheBleedRed"}
+        ended = {}
+        with path.open("rb") as stream:
+            data = stream.read(32 * 1024 * 1024 + 1)
+        if len(data) > 32 * 1024 * 1024:
+            raise ValueError("Native event capture exceeds the observation bound")
+        for line in data.split(b"\n")[:-1]:
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            event = record.get("payload", {})
+            identity = event.get("testID", "")
+            if (record.get("kind") == "event" and event.get("kind") == "testEnded"
+                    and identity.startswith("NexGenVideoTests.GlowKernelTests/")):
+                method = identity.split("/", 2)[1].removesuffix("()")
+                if method in methods:
+                    ended[method] = event["instant"]["since1970"]
+        if set(ended) != methods:
+            return
+        capture = {"status": "unavailable", "pid": self.pid, "parentPID": os.getpid(),
+                   "startAbsoluteTime": self.receipt["startAbsoluteTime"],
+                   "glowEndedAt": ended, "startedAt": time.time(), "sampleSeconds": 1, "timeoutSeconds": 60}
+        self.receipt["loadedImageCapture"] = capture
+        self.write()
+        output = self.folder / "owned-images.sample.txt"
+        command = ["/usr/bin/sample", str(self.pid), "1", "-file", str(output)]
+        capture["command"] = command
+        try:
+            if output.exists() or output.is_symlink():
+                raise ValueError("Native image sample destination is occupied")
+            self.sample()
+            if self.receipt["lastProcessExitAbsoluteTime"]:
+                raise ValueError("Owned host exited before image capture")
+            with (self.folder / "owned-images-command.log").open("xb") as log:
+                result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
+                                        timeout=60, check=False)
+            capture["exitCode"] = result.returncode
+            self.sample()
+            if result.returncode != 0 or self.receipt["lastProcessExitAbsoluteTime"]:
+                raise ValueError("Native image capture did not finish within the owned host lifetime")
+            raw = output.read_bytes()
+            capture["sampleSHA256"] = hashlib.sha256(raw).hexdigest()
+            capture["images"] = sample_image_records(raw.decode("utf-8"), self.pid, os.getpid())
+            capture["status"] = "verified"
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            capture.update(errorType=type(error).__name__, error=str(error))
+        capture["finishedAt"] = time.time()
 
     def finish(self):
         self.stop.set()

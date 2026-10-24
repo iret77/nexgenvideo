@@ -597,6 +597,9 @@ def validate_framework_selection(swift_runs, xctest_runs, app_only, without_prob
     elif profile == "glow-reproduction":
         if argument("--filter") != "GlowKernelTests" or not Path(argument("--bin-root")).is_absolute():
             raise ValueError("Glow capture requires the retained products and exact Glow selection")
+    elif profile == "app-reproduction":
+        if "--filter" in command or not Path(argument("--bin-root")).is_absolute():
+            raise ValueError("Full App capture requires retained products and no filter")
     else:
         raise ValueError("Unknown App-only diagnostic profile")
     for flag, value in (("--scope", "app-swift-testing"),):

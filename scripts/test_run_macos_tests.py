@@ -64,7 +64,7 @@ class HostedTestDriverTests(unittest.TestCase):
             self.assertEqual(observation["diagnostic"]["status"], "unavailable")
 
     def invoke(self, root, *, filter="", scope="all", exits=None, empty=(), console=None,
-               receipt_change=None, query_error=None, capture_error=None, watchdog_error=None,
+               receipt_change=None, query_error=None, capture_error=None, watchdog_error=None, preflight_error=None,
                app_diagnostic=None, diagnostic_status="verified", product_source_sha=None, checkout_source=None,
                retained=False):
         binary_root = root / "built products"
@@ -127,6 +127,8 @@ class HostedTestDriverTests(unittest.TestCase):
         with patch.dict(os.environ, {"GITHUB_SHA": "a" * 40}, clear=True), \
                 patch.object(driver.subprocess, "run", side_effect=query), \
                 patch.object(driver, "run_process", side_effect=process), \
+                patch.object(driver, "probe_child_stdio", side_effect=preflight_error,
+                             return_value={"status": "passed"}) as preflight, \
                 patch.object(driver, "watchdog_report_directory", return_value=root / "watchdog-source"), \
                 patch.object(driver, "capture_watchdog_reports", side_effect=watchdog_error,
                              return_value={"status": "captured"}) as watchdog, \
@@ -136,6 +138,7 @@ class HostedTestDriverTests(unittest.TestCase):
             code = driver.run(args)
         self.post_mortem_calls = capture.call_args_list
         self.watchdog_calls = watchdog.call_args_list
+        self.preflight_calls = preflight.call_args_list
         return code, json.loads((args.evidence / "suite.json").read_text()), calls, queries
 
     def test_zombies_only_apply_to_the_complete_failed_app_backend(self):
@@ -178,6 +181,9 @@ class HostedTestDriverTests(unittest.TestCase):
             self.assertEqual(len(calls), 1)
             self.assertEqual(calls[0][2]["DYLD_PRINT_LIBRARIES"], "1")
             self.assertNotIn("NSZombieEnabled", calls[0][2])
+            self.assertNotIn("childStdioPreflight", receipt)
+            self.assertEqual(self.preflight_calls, [])
+            self.assertNotIn("DYLD_PRINT_TO_FILE", calls[0][2])
         for profile, filter, retained in (("glow-reproduction", "", True),
                                          ("glow-reproduction", "OtherTests", True),
                                          ("glow-reproduction", "GlowKernelTests", False),
@@ -186,6 +192,37 @@ class HostedTestDriverTests(unittest.TestCase):
                 with self.assertRaises(driver.VerificationError):
                     self.invoke(Path(directory), scope="app-swift-testing", filter=filter,
                                 app_diagnostic=profile, retained=retained)
+
+    def test_retained_full_app_runs_one_complete_backend_without_swiftpm(self):
+        with tempfile.TemporaryDirectory() as directory:
+            code, receipt, calls, queries = self.invoke(Path(directory), scope="app-swift-testing",
+                app_diagnostic="app-reproduction", retained=True)
+            self.assertEqual(code, 0, receipt)
+            self.assertEqual(receipt["filter"], "")
+            self.assertTrue(receipt["combinedFrameworks"]["passed"])
+            self.assertFalse(any(command[0] == "swift" for command in queries))
+            self.assertEqual(len(calls), 1)
+            self.assertNotIn("--filter", calls[0][1])
+            self.assertEqual(calls[0][2]["DYLD_PRINT_LIBRARIES"], "1")
+            self.assertEqual(calls[0][2]["DYLD_PRINT_TO_FILE"],
+                             str((Path(directory) / "evidence/app-swift-testing/dyld-images.log").resolve()))
+            self.assertNotIn("NSZombieEnabled", calls[0][2])
+            self.assertEqual(receipt["childStdioPreflight"], {"status": "passed"})
+            self.assertEqual(len(self.preflight_calls), 1)
+        for scope, filter, retained in (("all", "", True), ("app-swift-testing", "GlowKernelTests", True),
+                                       ("app-swift-testing", "", False)):
+            with self.subTest(scope=scope, filter=filter, retained=retained), tempfile.TemporaryDirectory() as directory, \
+                    self.assertRaises(driver.VerificationError):
+                self.invoke(Path(directory), scope=scope, filter=filter, app_diagnostic="app-reproduction", retained=retained)
+
+    def test_child_stdio_failure_stops_before_any_app_host_launch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            code, receipt, calls, _ = self.invoke(Path(directory), scope="app-swift-testing",
+                app_diagnostic="app-reproduction", retained=True, preflight_error=ValueError("child stderr contaminated"))
+            self.assertEqual(code, 78)
+            self.assertFalse(receipt["completed"])
+            self.assertEqual(calls, [])
+            self.assertEqual(receipt["phases"], [])
 
     def test_unknown_activation_fails_but_never_replaces_an_original_signal(self):
         for original, expected in ((0, 1), (-11, 139)):

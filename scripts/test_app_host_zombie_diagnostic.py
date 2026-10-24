@@ -1,13 +1,15 @@
 import ctypes
 import json
+import os
 from pathlib import Path
 import struct
+import subprocess
 import tempfile
 import unittest
 import uuid
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from app_host_zombie_diagnostic import RUsageV4, ZombieCapture, diagnostic_environment, selected_environment, zombie_environment
+from app_host_zombie_diagnostic import RUsageV4, ZombieCapture, diagnostic_environment, probe_child_stdio, sample_image_records, selected_environment, zombie_environment
 import run_macos_tests as driver
 
 
@@ -40,6 +42,110 @@ class Reader:
 
 
 class ZombieDiagnosticTests(unittest.TestCase):
+    def test_native_image_sample_requires_owned_pid_parent_and_actual_binary_images(self):
+        sample = "Process: NexGenVideoAppKitTestHost [123]\nParent Process: Python [45]\n\nBinary Images:\n"
+        sample += "  0x1000 - 0x2000 CoreImage (27) <" + IMAGE_UUID.upper() + "> /System/CoreImage\n"
+        self.assertEqual(sample_image_records(sample, 123, 45), [{"uuid": IMAGE_UUID, "path": "/System/CoreImage"}])
+        for altered in (sample.replace("[123]", "[124]"), sample.replace("[45]", "[46]"),
+                        sample.split("\nBinary Images:")[0], sample.replace("0x1000", "not-an-image")):
+            with self.assertRaises(ValueError):
+                sample_image_records(altered, 123, 45)
+
+    def test_native_image_capture_waits_for_glow_completion_and_checks_lifetime_after_sampling(self):
+        for replaced in (False, True, "timeout"):
+            with self.subTest(replaced=replaced), tempfile.TemporaryDirectory() as directory:
+                folder = Path(directory)
+                reader = Reader()
+                capture = ZombieCapture(123, COMMAND,
+                    {"hostUUID": IMAGE_UUID, "hostSHA256": "b" * 64, "hostExecutable": COMMAND[0]},
+                    folder, "a" * 40, reader=reader, profile="app-reproduction")
+                capture.sample()
+                methods = ["neutralIsNoOp", "bleedsLightIntoNeighbors", "warmthTintsTheBleedRed"]
+                records = [{"kind": "event", "payload": {"kind": "testEnded",
+                    "testID": "NexGenVideoTests.GlowKernelTests/" + method + "()/Glow.swift:1:1",
+                    "instant": {"since1970": 1}}} for method in methods]
+                path = folder / "events.jsonl"
+                path.write_text("\n".join(json.dumps(value) for value in records[:2]) + "\n")
+                def sample(command, **kwargs):
+                    self.assertEqual(command, ["/usr/bin/sample", "123", "1", "-file", str(folder / "owned-images.sample.txt")])
+                    self.assertEqual(kwargs["timeout"], 60)
+                    if replaced == "timeout":
+                        raise subprocess.TimeoutExpired(command, 60)
+                    text = "Process: NexGenVideoAppKitTestHost [123]\nParent Process: Python [" + str(os.getpid()) + "]\n\nBinary Images:\n"
+                    text += "  0x1000 - 0x2000 CoreImage (27) <" + IMAGE_UUID + "> /System/CoreImage\n"
+                    (folder / "owned-images.sample.txt").write_text(text)
+                    if replaced is True:
+                        reader.started += 1
+                    return subprocess.CompletedProcess(command, 0)
+                with patch("app_host_zombie_diagnostic.subprocess.run", side_effect=sample) as run:
+                    capture.capture_images_after_glow()
+                    run.assert_not_called()
+                    self.assertNotIn("loadedImageCapture", capture.receipt)
+                    path.write_text("\n".join(json.dumps(value) for value in records) + '\n{"partial":')
+                    capture.capture_images_after_glow()
+                    run.assert_called_once()
+                    capture.capture_images_after_glow()
+                    run.assert_called_once()
+                result = capture.receipt["loadedImageCapture"]
+                self.assertEqual(result["status"], "unavailable" if replaced else "verified")
+                if not replaced:
+                    self.assertEqual(result["images"], [{"uuid": IMAGE_UUID, "path": "/System/CoreImage"}])
+
+    def test_child_stdio_preflight_rejects_noise_nonzero_and_timeout_before_app_execution(self):
+        for noise, code, timeout in ((None, 0, False), ("stdout", 0, False), ("stderr", 0, False),
+                                     (None, 9, False), (None, -9, True)):
+            with self.subTest(noise=noise, code=code, timeout=timeout), tempfile.TemporaryDirectory() as directory:
+                process = Mock(pid=123)
+                process.wait.side_effect = [subprocess.TimeoutExpired("probe", 15), -9] if timeout else [code]
+                def launch(command, **kwargs):
+                    self.assertEqual(command[:2], ["/bin/sh", "-c"])
+                    self.assertEqual(kwargs["env"]["DYLD_PRINT_LIBRARIES"], "1")
+                    self.assertEqual(kwargs["stdin"], subprocess.DEVNULL)
+                    self.assertTrue(kwargs["start_new_session"])
+                    self.assertEqual(kwargs["env"]["DYLD_PRINT_TO_FILE"],
+                                     str((Path(directory) / "child-stdio-probe/dyld-images.log").resolve()))
+                    if noise:
+                        kwargs[noise].write(b"unexpected output\n")
+                    return process
+                with patch("app_host_zombie_diagnostic.subprocess.Popen", side_effect=launch), \
+                        patch("app_host_zombie_diagnostic.os.killpg") as kill:
+                    if noise or code or timeout:
+                        with self.assertRaises(ValueError):
+                            probe_child_stdio({"DYLD_PRINT_LIBRARIES": "1"}, directory)
+                    else:
+                        self.assertEqual(probe_child_stdio({"DYLD_PRINT_LIBRARIES": "1"}, directory)["status"], "passed")
+                    self.assertEqual(kill.call_count, int(timeout))
+                    self.assertEqual(process.wait.call_count, 2 if timeout else 1)
+                receipt = json.loads((Path(directory) / "child-stdio-probe/receipt.json").read_text())
+                self.assertEqual(receipt["exitCode"], code)
+                self.assertEqual(receipt["timedOut"], timeout)
+                self.assertFalse(receipt["loaderLogPresent"])
+
+    def test_full_app_profile_preserves_loader_only_activation_and_pid_capture(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log_path = Path(directory) / "dyld-images.log"
+            expected = {"DYLD_PRINT_LIBRARIES": "1", "DYLD_PRINT_TO_FILE": str(log_path.resolve())}
+            self.assertEqual(diagnostic_environment({}, "app-reproduction", log_path), expected)
+            capture = ZombieCapture(123, COMMAND,
+                {"hostUUID": IMAGE_UUID, "hostSHA256": "b" * 64, "hostExecutable": COMMAND[0]},
+                Path(directory), "a" * 40,
+                reader=Reader([key.encode() + b"=" + value.encode() for key, value in expected.items()]), profile="app-reproduction")
+            capture.start()
+            result = capture.finish()
+            self.assertEqual(result["status"], "verified")
+            self.assertEqual(result["profile"], "app-reproduction")
+            self.assertEqual(json.loads((Path(directory) / "app-diagnostic.json").read_text()), result)
+            self.assertEqual(result["environment"], {**expected, "otherDiagnosticVariablesPresent": False})
+            for values in ([b"DYLD_PRINT_LIBRARIES=1"], [b"DYLD_PRINT_LIBRARIES=1", b"DYLD_PRINT_TO_FILE=/wrong/log"]):
+                with self.assertRaises(ValueError):
+                    selected_environment(arguments(values), COMMAND, "app-reproduction", log_path)
+            log_path.write_text("occupied")
+            with self.assertRaises(ValueError):
+                diagnostic_environment({}, "app-reproduction", log_path)
+        for path in (None, "relative/log"):
+            with self.assertRaises(ValueError):
+                diagnostic_environment({}, "app-reproduction", path)
+
     def test_glow_profile_observes_loader_logging_without_memory_or_metal_switches(self):
         environment = {"PATH": "/fixture", "GITHUB_SHA": "a" * 40}
         self.assertEqual(diagnostic_environment(environment, "glow-reproduction"),

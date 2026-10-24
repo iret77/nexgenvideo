@@ -6,7 +6,7 @@ on:
       candidate_kind:
         description: Signed release verification or targeted failed CI diagnostics
         type: choice
-        options: [signed-release, ci-runtime, ci-bpy-open-diagnostic, ci-app-test-diagnostic, ci-app-glow-replay]
+        options: [signed-release, ci-runtime, ci-bpy-open-diagnostic, ci-app-test-diagnostic, ci-app-glow-replay, ci-app-full-replay]
         default: signed-release
       run_id:
         description: "Original producer workflow run"
@@ -60,6 +60,7 @@ env:
   CANDIDATE_ARTIFACT: ${{ inputs.artifact_id }}
   CANDIDATE_DIGEST: ${{ inputs.artifact_sha256 }}
 
+  REPLAY_KIND: ${{ inputs.candidate_kind }}
   PRODUCER_RUN: ${{ inputs.run_id }}
   PRODUCER_SHA: ${{ inputs.source_sha }}
   PRODUCT_SHA: ${{ inputs.product_source_sha }}
@@ -105,7 +106,7 @@ jobs:
           python3 -m unittest discover -s scripts -p 'test_runloop_probe_preparation.py'
           python3 -m unittest discover -s scripts -p 'test_ci_workflow.py'
       - name: Verify changed replay and shared test tooling
-        if: inputs.candidate_kind == 'ci-app-glow-replay'
+        if: (inputs.candidate_kind == 'ci-app-glow-replay' || inputs.candidate_kind == 'ci-app-full-replay')
         run: |
           python3 -m unittest discover -s scripts -p 'test_retained_app_test_products.py'
           python3 -m unittest discover -s scripts -p 'test_run_macos_tests.py'
@@ -116,12 +117,12 @@ jobs:
           python3 -m unittest discover -s scripts -p 'test_diagnostic_acceptance.py'
           python3 -m unittest discover -s scripts -p 'test_ci_workflow.py'
       - name: Bind original failed and successful diagnostic producers
-        if: inputs.candidate_kind == 'ci-app-glow-replay'
+        if: (inputs.candidate_kind == 'ci-app-glow-replay' || inputs.candidate_kind == 'ci-app-full-replay')
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/retained_app_test_products.py source --metadata "$RUNNER_TEMP/replay-metadata"
       - uses: actions/upload-artifact@v4
-        if: always() && inputs.candidate_kind == 'ci-app-glow-replay'
+        if: always() && (inputs.candidate_kind == 'ci-app-glow-replay' || inputs.candidate_kind == 'ci-app-full-replay')
         with:
           name: retained-glow-source
           path: ${{ runner.temp }}/replay-metadata
@@ -129,7 +130,7 @@ jobs:
           retention-days: 90
 
       - name: Bind the successful release job and immutable artifact
-        if: inputs.candidate_kind != 'ci-app-glow-replay'
+        if: inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay'
         env:
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_KIND: ${{ inputs.candidate_kind }}
@@ -153,7 +154,7 @@ jobs:
             "$CANDIDATE_ARTIFACT" "$CANDIDATE_DIGEST" "$RUNNER_TEMP/candidate-metadata" \
             --candidate-kind "$CANDIDATE_KIND" "${extra[@]}"
       - uses: actions/upload-artifact@v4
-        if: inputs.candidate_kind != 'ci-app-glow-replay'
+        if: inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay'
         with:
           name: diagnostic-candidate-identity
           path: ${{ runner.temp }}/candidate-metadata/*.json
@@ -498,11 +499,12 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-  ci-app-glow-replay:
+  ci-app-retained-replay:
+    name: ${{ inputs.candidate_kind }}
     needs: source
-    if: inputs.candidate_kind == 'ci-app-glow-replay'
+    if: (inputs.candidate_kind == 'ci-app-glow-replay' || inputs.candidate_kind == 'ci-app-full-replay')
     runs-on: macrunner
-    timeout-minutes: 20
+    timeout-minutes: ${{ inputs.candidate_kind == 'ci-app-full-replay' && 60 || 20 }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -546,16 +548,23 @@ jobs:
         run: |
           python3 "$RUNNER_TEMP/replay-harness/retained_app_test_products.py" restore \
             --metadata "$RUNNER_TEMP/replay-metadata"
-      - name: Run the unchanged three Glow tests once
-        timeout-minutes: 10
+      - name: Run the selected unchanged App tests once
+        timeout-minutes: ${{ inputs.candidate_kind == 'ci-app-full-replay' && 30 || 10 }}
         run: |
           set -euo pipefail
           export SWIFT_BACKTRACE=enable=yes,interactive=no,demangle=yes,cache=no
+          selection=(--app-diagnostic glow-reproduction --filter GlowKernelTests)
+          if [[ "$REPLAY_KIND" == ci-app-full-replay ]]; then
+            selection=(--app-diagnostic app-reproduction)
+            test ! -e "$RUNNER_TEMP/blockout-orientation-evidence"
+            test ! -L "$RUNNER_TEMP/blockout-orientation-evidence"
+            export NGV_BLOCKOUT_ORIENTATION_EVIDENCE_DIR="$RUNNER_TEMP/blockout-orientation-evidence"
+          fi
           python3 "$RUNNER_TEMP/replay-harness/capture_render_review_test_diagnostic.py" \
             --evidence "$RUNNER_TEMP/glow-replay" --log "$RUNNER_TEMP/glow-replay.log" \
             --swift-testing-runs 1 --xctest-runs 0 --without-runloop-probe --app-only -- \
             python3 "$RUNNER_TEMP/replay-harness/run_macos_tests.py" --cache-path "$RUNNER_TEMP/unused-cache" \
-              --scope app-swift-testing --app-diagnostic glow-reproduction --filter GlowKernelTests \
+              --scope app-swift-testing "${selection[@]}" \
               --bin-root "$GITHUB_WORKSPACE/.build/out/Products/Debug" --product-source-sha "$PRODUCT_SHA" \
               --evidence "$RUNNER_TEMP/glow-replay/hosted-suite"
       - name: Verify exact exposure, actual loaded images and unchanged product bytes
@@ -573,5 +582,6 @@ jobs:
             ${{ runner.temp }}/glow-replay.log
             ${{ runner.temp }}/replay-metadata/*.json
             ${{ runner.temp }}/replay-metadata/*.log
+            ${{ runner.temp }}/blockout-orientation-evidence/
           if-no-files-found: error
           retention-days: 90
