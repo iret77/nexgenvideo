@@ -26,6 +26,10 @@ on:
         description: Completed diagnostic inventory anchored to that Core failure; inventory only, never App acceptance
         type: string
         default: ''
+      completed_source_checks_run_id:
+        description: Optional original Core run failing only the cache workflow inventory; preserve its unchanged successful source checks
+        type: string
+        default: ''
       qualification_binary_run_id:
         description: Optional prior qualification run; reuse its passing binary evidence without another Mac job
         type: string
@@ -106,6 +110,7 @@ jobs:
           NGV_TEST_BUNDLE_RUN: ${{ inputs.test_bundle_run_id }}
           NGV_COMPLETED_BACKENDS: ${{ inputs.completed_backends_run_id }}
           NGV_APP_INVENTORY: ${{ inputs.app_inventory_run_id }}
+          NGV_SOURCE_CHECKS: ${{ inputs.completed_source_checks_run_id }}
         run: |
           python3 - <<'PYTHON'
           import os, re
@@ -119,6 +124,9 @@ jobs:
           test_run = os.environ.get('NGV_TEST_BUNDLE_RUN', '')
           completed_backends = os.environ.get('NGV_COMPLETED_BACKENDS', '')
           app_inventory = os.environ.get('NGV_APP_INVENTORY', '')
+          source_checks = os.environ.get('NGV_SOURCE_CHECKS', '')
+          if source_checks and (not completed_backends or not re.fullmatch(r'[1-9][0-9]*', source_checks)):
+              raise SystemExit('Completed source checks require a Core backend continuation and a positive producer run.')
           if bool(completed_backends) != bool(app_inventory) or app_inventory and not re.fullmatch(r'[1-9][0-9]*', app_inventory):
               raise SystemExit('Core resume needs both the failed Core producer and completed App inventory.')
           if completed_backends and (mode != 'initial' or not re.fullmatch(r'[1-9][0-9]*', completed_backends)):
@@ -187,6 +195,7 @@ jobs:
     with:
       completed_backends_run_id: ${{ inputs.completed_backends_run_id }}
       app_inventory_run_id: ${{ inputs.app_inventory_run_id }}
+      completed_source_checks_run_id: ${{ inputs.completed_source_checks_run_id }}
 
   chat-hang-replay:
     needs: [validate, ci]

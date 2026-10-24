@@ -46,6 +46,7 @@ class SwiftPMDependencyCacheTests(unittest.TestCase):
             set(workflows),
             {
                 "ci.yml",
+                "diagnostic-acceptance.yml",
                 "release.yml",
                 "private-example-analysis.yml",
                 "chat-hang-replay.yml",

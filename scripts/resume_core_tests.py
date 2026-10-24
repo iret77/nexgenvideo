@@ -22,6 +22,8 @@ HARNESS_PATHS = {
     "scripts/test_diagnostic_acceptance.py", "scripts/test_retained_app_test_products.py",
     "scripts/test_run_macos_tests.py", "scripts/test_swift_test_failure_propagation.py",
     "scripts/verify_diagnostic_candidate.py",
+    "scripts/test_swiftpm_dependency_cache.py", "scripts/resume_core_source_checks.py",
+    "scripts/test_resume_core_source_checks.py",
 }
 BUILD_JOB = "Compile, unit tests, app and native bpy acceptance / Build & Test"
 
