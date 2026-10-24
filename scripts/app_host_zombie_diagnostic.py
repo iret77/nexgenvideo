@@ -57,7 +57,7 @@ def probe_child_stdio(environment, evidence):
     folder.mkdir()
     loader = (folder / "dyld-images.log").resolve()
     selected = dict(environment, DYLD_PRINT_TO_FILE=str(loader))
-    command = ["/bin/sh", "-c", "set -e; /bin/cat </dev/null; /usr/bin/head -c 0 /dev/zero >&2"]
+    command = ["/bin/sh", "-c", "set -e; /bin/cat </dev/null; /usr/bin/head -c 1 /dev/null >&2"]
     stdout, stderr = folder / "stdout.log", folder / "stderr.log"
     timed_out = False
     with stdout.open("xb") as out, stderr.open("xb") as err:

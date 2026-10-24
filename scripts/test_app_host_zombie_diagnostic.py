@@ -2,6 +2,7 @@ import ctypes
 import json
 import os
 from pathlib import Path
+import shlex
 import struct
 import subprocess
 import tempfile
@@ -99,6 +100,11 @@ class ZombieDiagnosticTests(unittest.TestCase):
                 process.wait.side_effect = [subprocess.TimeoutExpired("probe", 15), -9] if timeout else [code]
                 def launch(command, **kwargs):
                     self.assertEqual(command[:2], ["/bin/sh", "-c"])
+                    words = shlex.split(command[2])
+                    head = words[words.index("/usr/bin/head") + 1:]
+                    self.assertEqual(head[0], "-c")
+                    self.assertGreater(int(head[1]), 0, "Apple head rejects zero byte counts")
+                    self.assertEqual(head[2:], ["/dev/null", ">&2"])
                     self.assertEqual(kwargs["env"]["DYLD_PRINT_LIBRARIES"], "1")
                     self.assertEqual(kwargs["stdin"], subprocess.DEVNULL)
                     self.assertTrue(kwargs["start_new_session"])
