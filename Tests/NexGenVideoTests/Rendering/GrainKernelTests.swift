@@ -6,7 +6,7 @@ import Testing
 @Suite("GrainKernel")
 struct GrainKernelTests {
 
-    private let ctx = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
+    private let ctx = VideoRenderContext.context
     private let n = 64
 
     private func solid(_ v: Double) -> CIImage {

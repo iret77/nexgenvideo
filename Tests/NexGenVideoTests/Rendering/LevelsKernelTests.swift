@@ -6,7 +6,7 @@ import Testing
 @Suite("LevelsKernel")
 struct LevelsKernelTests {
 
-    private let ctx = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
+    private let ctx = VideoRenderContext.context
 
     private func solid(_ v: Double) -> CIImage {
         CIImage(color: CIColor(red: v, green: v, blue: v)).cropped(to: CGRect(x: 0, y: 0, width: 4, height: 4))
