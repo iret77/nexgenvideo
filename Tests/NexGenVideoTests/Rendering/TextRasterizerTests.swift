@@ -8,7 +8,7 @@ import Testing
 @Suite("Text rasterizer — bounded tiles and style equivalence")
 @MainActor
 struct TextRasterizerTests {
-    private let context = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
+    private let context = VideoRenderContext.context
 
     private func clip() -> Clip {
         var clip = Fixtures.clip(id: "text", mediaRef: "", mediaType: .text, start: 0, duration: 60)

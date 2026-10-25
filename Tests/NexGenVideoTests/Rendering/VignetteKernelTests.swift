@@ -6,7 +6,7 @@ import Testing
 @Suite("VignetteKernel")
 struct VignetteKernelTests {
 
-    private let ctx = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
+    private let ctx = VideoRenderContext.context
     private let n = 100
 
     private func solid(_ v: Double) -> CIImage {

@@ -6,7 +6,7 @@ import Testing
 @Suite("ClarityKernel")
 struct ClarityKernelTests {
 
-    private let ctx = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
+    private let ctx = VideoRenderContext.context
     private let n = 64
 
     /// Left half dark, right half bright — a single vertical edge down the middle.

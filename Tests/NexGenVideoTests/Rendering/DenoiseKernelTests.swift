@@ -9,7 +9,7 @@ import Testing
 @Suite("DenoiseKernel")
 struct DenoiseKernelTests {
 
-    private let ctx = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
+    private let ctx = VideoRenderContext.context
     private let n = 64
 
     /// Builds an image from a per-pixel RGB rule (values 0…1).
