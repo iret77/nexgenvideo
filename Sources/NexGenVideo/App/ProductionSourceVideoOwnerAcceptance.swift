@@ -75,7 +75,7 @@ enum ProductionSourceVideoOwnerAcceptance {
                     dataRoot: root, executor: generation.first.executor(editor: editor))
                 let take = try await generation.first.render(context: firstContext, sourceVideo: source, driver: driver)
                 let range = try await ProductionV2TakeAcceptance.run(takeID: take, context: context, driver: driver,
-                    rangePlacement: .endingAtSourceEnd)
+                    rangePlacement: .endingAtSourceEnd, nextUnrenderedShotID: draft.shots[1].shotID)
                 selected.append(["shotID": draft.shots[0].shotID, "takeID": take, "rangeID": range.id])
                 guard let home = editor.workingRoot else { throw GateBlocked("The selected predecessor has no working copy.") }
                 let predecessor = try await TakeReview.capture(takeID: take, home: home)
