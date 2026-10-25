@@ -1,50 +1,114 @@
 import AVKit
 import Combine
+import Observation
 import NexGenEngine
 import SwiftUI
 
 struct ProductionSequenceReviewView: View {
     @Environment(EditorViewModel.self) private var editor
-    @State private var expanded = true
-    @State private var snapshot: PipelineProductionSequenceReviewStore.Snapshot?
-    @State private var player: AVPlayer?
-    @State private var busy = false
-    @State private var busyLabel = String(localized: "Preparing film review…")
-    @State private var operationID = UUID()
-    @State private var persistedBlocking: Set<String> = []
-    @State private var resolutions: [String: String] = [:]
-    @State private var stale = false
-    @State private var message: String?
-    @State private var adjacent = false
-    @State private var whole = false
-    @State private var cut = 0
-    @State private var scope = SequenceReviewScopeV1.wholePlayback
-    @State private var category = SequenceReviewCategoryV1.stateAndProps
-    @State private var severity = SequenceReviewSeverityV1.warning
-    @State private var action = SequenceReviewActionV1.localRepair
-    @State private var selectedShots: Set<String> = []
-    @State private var start = 0
-    @State private var end = 0
-    @State private var observation = ""
-    @State private var findings: [SequenceReviewFindingV1] = []
-    @State private var musicObservations: [String: CoverageDraft] = [:]
+    private var expanded: Bool { get { draft.expanded } nonmutating set { draft.expanded = newValue } }
+    private var snapshot: PipelineProductionSequenceReviewStore.Snapshot? { get { draft.snapshot } nonmutating set { draft.snapshot = newValue } }
+    private var player: AVPlayer? { get { draft.player } nonmutating set { draft.player = newValue } }
+    private var busy: Bool { get { draft.busy } nonmutating set { draft.busy = newValue } }
+    private var busyLabel: String { get { draft.busyLabel } nonmutating set { draft.busyLabel = newValue } }
+    private var operationID: UUID { get { draft.operationID } nonmutating set { draft.operationID = newValue } }
+    private var persistedBlocking: Set<String> { get { draft.persistedBlocking } nonmutating set { draft.persistedBlocking = newValue } }
+    private var resolutions: [String: String] { get { draft.resolutions } nonmutating set { draft.resolutions = newValue } }
+    private var stale: Bool { get { draft.stale } nonmutating set { draft.stale = newValue } }
+    private var message: String? { get { draft.message } nonmutating set { draft.message = newValue } }
+    private var adjacent: Bool { get { draft.adjacent } nonmutating set { draft.adjacent = newValue } }
+    private var whole: Bool { get { draft.whole } nonmutating set { draft.whole = newValue } }
+    private var cut: Int { get { draft.cut } nonmutating set { draft.cut = newValue } }
+    private var scope: SequenceReviewScopeV1 { get { draft.scope } nonmutating set { draft.scope = newValue } }
+    private var category: SequenceReviewCategoryV1 { get { draft.category } nonmutating set { draft.category = newValue } }
+    private var severity: SequenceReviewSeverityV1 { get { draft.severity } nonmutating set { draft.severity = newValue } }
+    private var action: SequenceReviewActionV1 { get { draft.action } nonmutating set { draft.action = newValue } }
+    private var selectedShots: Set<String> { get { draft.selectedShots } nonmutating set { draft.selectedShots = newValue } }
+    private var start: Int { get { draft.start } nonmutating set { draft.start = newValue } }
+    private var end: Int { get { draft.end } nonmutating set { draft.end = newValue } }
+    private var observation: String { get { draft.observation } nonmutating set { draft.observation = newValue } }
+    private var findings: [SequenceReviewFindingV1] { get { draft.findings } nonmutating set { draft.findings = newValue } }
+    private var musicObservations: [String: CoverageDraft] { get { draft.musicObservations } nonmutating set { draft.musicObservations = newValue } }
 
-    private struct CoverageDraft {
+    struct CoverageDraft {
         var visible = false
         var startFrame = 0
         var endFrame = 0
         var evidence = ""
     }
 
+    @Observable @MainActor
+    final class Draft {
+        let id = UUID()
+        var expanded = true
+        var snapshot: PipelineProductionSequenceReviewStore.Snapshot?
+        var player: AVPlayer?
+        var busy = false
+        var busyLabel = String(localized: "Preparing film review…")
+        var operationID = UUID()
+        var persistedBlocking: Set<String> = []
+        var resolutions: [String: String] = [:]
+        var stale = false
+        var message: String?
+        var adjacent = false
+        var whole = false
+        var cut = 0
+        var scope = SequenceReviewScopeV1.wholePlayback
+        var category = SequenceReviewCategoryV1.stateAndProps
+        var severity = SequenceReviewSeverityV1.warning
+        var action = SequenceReviewActionV1.localRepair
+        var selectedShots: Set<String> = []
+        var start = 0
+        var end = 0
+        var observation = ""
+        var findings: [SequenceReviewFindingV1] = []
+        var musicObservations: [String: CoverageDraft] = [:]
+        var home: URL?
+        var workingCopyKey: String?
+        var generation: UUID?
+        var revision = 0
+
+        func clear() {
+            player?.pause()
+            expanded = true
+            snapshot = nil
+            player = nil
+            busy = false
+            busyLabel = String(localized: "Preparing film review…")
+            operationID = UUID()
+            persistedBlocking = []
+            resolutions = [:]
+            stale = false
+            message = nil
+            adjacent = false
+            whole = false
+            cut = 0
+            scope = SequenceReviewScopeV1.wholePlayback
+            category = SequenceReviewCategoryV1.stateAndProps
+            severity = SequenceReviewSeverityV1.warning
+            action = SequenceReviewActionV1.localRepair
+            selectedShots = []
+            start = 0
+            end = 0
+            observation = ""
+            findings = []
+            musicObservations = [:]
+        }
+    }
+
+    private var draft: Draft { editor.productionSequenceReviewDraft }
+
     private var available: Bool {
         guard !busy, !editor.agentService.isStreaming, !editor.agentService.isComposerBlocked,
+              draft.home == editor.workingRoot, draft.workingCopyKey == editor.openWorkingCopyKey,
+              draft.generation == editor.openWorkingCopyGeneration,
               let root = editor.workingRoot.flatMap({ DataRootResolver.dataRoot(of: $0) }) else { return false }
         _ = editor.pipelinePhaseExecution.snapshot
         return editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: root) == nil
     }
 
     var body: some View {
-        DisclosureGroup("Film review", isExpanded: $expanded) {
+        DisclosureGroup("Film review", isExpanded: Binding(get: { expanded }, set: { expanded = $0 })) {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
                 Text("Review the actual edited film, including its picture, transitions and sound. Changes to the cut, sources or output range require another review.")
                     .foregroundStyle(AppTheme.Text.secondaryColor)
@@ -65,13 +129,13 @@ struct ProductionSequenceReviewView: View {
                         }
                     }
                     if stale {
-                        Text("The timeline changed. Build the current film before recording its review.")
+                        Text("The timeline changed. Build the current film to review or open findings.")
                             .foregroundStyle(AppTheme.Status.warningColor)
                     }
-                    Toggle("I reviewed every picture boundary and adjacent cut", isOn: $adjacent)
+                    Toggle("I reviewed every picture boundary and adjacent cut", isOn: Binding(get: { adjacent }, set: { adjacent = $0 }))
                         .disabled(busy || stale || snapshot.cutFrames.isEmpty)
                         .reviewAcceptanceProbe("sequence.adjacent", state: adjacent)
-                    Toggle("I watched the complete film and checked its sound", isOn: $whole)
+                    Toggle("I watched the complete film and checked its sound", isOn: Binding(get: { whole }, set: { whole = $0 }))
                         .disabled(busy || stale)
                         .reviewAcceptanceProbe("sequence.whole", state: whole)
                     musicCoverageEditor(snapshot)
@@ -82,6 +146,9 @@ struct ProductionSequenceReviewView: View {
                                 .textSelection(.enabled)
                             Spacer(minLength: AppTheme.Spacing.sm)
                             VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+                                Button("Open in timeline") { openFinding(finding, snapshot: snapshot) }
+                                    .buttonStyle(InlineActionButtonStyle()).disabled(!available || stale)
+                                    .reviewAcceptanceProbe("sequence.finding.open." + finding.id, state: available && !stale)
                                 if finding.severity == .blocking {
                                     TextField("Explain how this finding was resolved", text: Binding(get: { resolutions[finding.id] ?? "" },
                                         set: { resolutions[finding.id] = $0 }), axis: .vertical)
@@ -110,7 +177,7 @@ struct ProductionSequenceReviewView: View {
         }
         .interfaceFont(size: AppTheme.Typography.ui)
         .reviewAcceptanceProbe("sequence.disclosure", state: expanded)
-        .task(id: editor.workingRoot) { reset(); await loadExisting() }
+        .task(id: draft.id) { await prepareDraft() }
         .onChange(of: editor.timelineRenderRevision) { _, _ in if snapshot != nil { stale = true } }
         .onDisappear { player?.pause() }
         .onChange(of: severity) { _, value in if value == .blocking && action == .accept { action = .localRepair } }
@@ -125,7 +192,7 @@ struct ProductionSequenceReviewView: View {
     }
 
     private func boundaryPicker(_ snapshot: PipelineProductionSequenceReviewStore.Snapshot) -> some View {
-        Picker("Picture boundary", selection: $cut) {
+        Picker("Picture boundary", selection: Binding(get: { cut }, set: { cut = $0 })) {
             ForEach(snapshot.cutFrames, id: \.self) { frame in Text("Frame \(frame)").tag(frame) }
         }.disabled(busy).reviewAcceptanceProbe("sequence.cut", text: String(cut))
     }
@@ -137,6 +204,7 @@ struct ProductionSequenceReviewView: View {
 
     private func loadExisting() async {
         let operation = UUID(); operationID = operation; busyLabel = String(localized: "Loading film review…"); busy = true
+        let revision = editor.timelineRenderRevision
         defer { if operationID == operation { busy = false } }
         do {
             guard let saved = try await PipelineProductionSequenceReviewStore.loadCurrent(editor: editor) else { return }
@@ -144,7 +212,11 @@ struct ProductionSequenceReviewView: View {
                   let root = DataRootResolver.dataRoot(of: saved.0.home) else { return }
             let url = try await Task.detached { try ProjectLocalFile.requireHash(saved.0.reel.sha256, at: saved.0.reel.path, dataRoot: root) }.value
             guard operationID == operation, !Task.isCancelled, editor.workingRoot == saved.0.home else { return }
-            snapshot = saved.0; player = AVPlayer(url: url); stale = false
+            guard editor.timelineRenderRevision == revision else {
+                stale = true; message = "The cut changed while loading its review. Build the current film."
+                return
+            }
+            snapshot = saved.0; player = AVPlayer(url: url); stale = false; draft.revision = editor.timelineRenderRevision
             adjacent = saved.1.adjacentPairCompleted; whole = saved.1.wholePlaybackCompleted; findings = saved.1.findings
             persistedBlocking = Set(saved.1.findings.filter { $0.severity == .blocking }.map(\.id))
             resolutions = Dictionary(uniqueKeysWithValues: saved.1.findingResolutions.map { ($0.findingID, $0.reason) })
@@ -207,19 +279,19 @@ struct ProductionSequenceReviewView: View {
     private func findingEditor(_ snapshot: PipelineProductionSequenceReviewStore.Snapshot) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
             Text("Observed finding").fontWeight(AppTheme.FontWeight.semibold)
-            Picker("Scope", selection: $scope) {
+            Picker("Scope", selection: Binding(get: { scope }, set: { scope = $0 })) {
                 Text("Complete playback").tag(SequenceReviewScopeV1.wholePlayback)
                 Text("Adjacent cut").tag(SequenceReviewScopeV1.adjacentPair)
             }.reviewAcceptanceProbe("sequence.scope", text: scope.rawValue)
-            Picker("Category", selection: $category) {
+            Picker("Category", selection: Binding(get: { category }, set: { category = $0 })) {
                 ForEach(SequenceReviewCategoryV1.allCases, id: \.self) { category in Text(label(category)).tag(category) }
             }.reviewAcceptanceProbe("sequence.category", text: category.rawValue)
-            Picker("Severity", selection: $severity) {
+            Picker("Severity", selection: Binding(get: { severity }, set: { severity = $0 })) {
                 Text("Info").tag(SequenceReviewSeverityV1.info)
                 Text("Warning").tag(SequenceReviewSeverityV1.warning)
                 Text("Blocking").tag(SequenceReviewSeverityV1.blocking)
             }.reviewAcceptanceProbe("sequence.severity", text: severity.rawValue)
-            Picker("Recommended action", selection: $action) {
+            Picker("Recommended action", selection: Binding(get: { action }, set: { action = $0 })) {
                 Text("Accept").tag(SequenceReviewActionV1.accept)
                 Text("Local repair").tag(SequenceReviewActionV1.localRepair)
                 Text("Reroll").tag(SequenceReviewActionV1.reroll)
@@ -233,11 +305,11 @@ struct ProductionSequenceReviewView: View {
                     }))
                 }
             }
-            TextField("First frame in the review film", value: $start, format: .number)
+            TextField("First frame in the review film", value: Binding(get: { start }, set: { start = $0 }), format: .number)
                 .reviewAcceptanceProbe("sequence.start", text: String(start))
-            TextField("End frame", value: $end, format: .number)
+            TextField("End frame", value: Binding(get: { end }, set: { end = $0 }), format: .number)
                 .reviewAcceptanceProbe("sequence.end", text: String(end))
-            TextField("Describe what you observed", text: $observation, axis: .vertical)
+            TextField("Describe what you observed", text: Binding(get: { observation }, set: { observation = $0 }), axis: .vertical)
                 .reviewAcceptanceProbe("sequence.evidence", text: observation)
             Button("Add finding") {
                 findings.append(.init(id: UUID().uuidString.lowercased(), scope: scope, category: category,
@@ -270,6 +342,7 @@ struct ProductionSequenceReviewView: View {
     private func build() {
         guard available else { return }
         let operation = UUID(); operationID = operation
+        let revision = editor.timelineRenderRevision
         let previousInput = snapshot?.input
         let previousFindings = findings
         let previousCoverage = musicObservations
@@ -283,7 +356,11 @@ struct ProductionSequenceReviewView: View {
                       let root = DataRootResolver.dataRoot(of: value.home) else { return }
                 let url = try await Task.detached { try ProjectLocalFile.requireHash(value.reel.sha256, at: value.reel.path, dataRoot: root) }.value
                 guard operationID == operation, editor.workingRoot == value.home else { return }
-                snapshot = value; player = AVPlayer(url: url); stale = false
+                guard editor.timelineRenderRevision == revision else {
+                    stale = true; message = "The cut changed while building its review. Build the current film."
+                    return
+                }
+                snapshot = value; player = AVPlayer(url: url); stale = false; draft.revision = editor.timelineRenderRevision
                 adjacent = value.cutFrames.isEmpty; whole = false
                 var retained = Dictionary(uniqueKeysWithValues: (recorded?.1.findings ?? []).map { ($0.id, $0) })
                 if previousInput == value.input { for finding in previousFindings where retained[finding.id] == nil { retained[finding.id] = finding } }
@@ -300,6 +377,17 @@ struct ProductionSequenceReviewView: View {
                 })
                 message = "Review film ready. Observations apply to these exact picture and sound bytes."
             } catch { if operationID == operation { message = error.localizedDescription } }
+        }
+    }
+
+    private func openFinding(_ finding: SequenceReviewFindingV1, snapshot: PipelineProductionSequenceReviewStore.Snapshot) {
+        guard available, !stale else { return }
+        let operation = UUID(); operationID = operation
+        busy = true; busyLabel = String(localized: "Opening finding…"); message = nil; player?.pause()
+        Task {
+            defer { if operationID == operation { busy = false } }
+            do { try await PipelineProductionSequenceReviewStore.openFinding(finding, snapshot: snapshot, editor: editor) }
+            catch { if operationID == operation { message = error.localizedDescription } }
         }
     }
 
@@ -334,7 +422,27 @@ struct ProductionSequenceReviewView: View {
 
     private var hasBlockingFindings: Bool { findings.contains { $0.severity == .blocking && (resolutions[$0.id]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) } }
 
-    private func reset() { persistedBlocking = []; resolutions = [:]; operationID = UUID(); busy = false; player?.pause(); player = nil; snapshot = nil; findings = []; musicObservations = [:]; stale = false; whole = false; adjacent = false; message = nil }
+    private func prepareDraft() async {
+        if draft.home != editor.workingRoot || draft.workingCopyKey != editor.openWorkingCopyKey
+            || draft.generation != editor.openWorkingCopyGeneration { reset() }
+        guard !busy else { return }
+        guard snapshot == nil || stale || draft.revision != editor.timelineRenderRevision else { return }
+        reset()
+        busy = true
+        let identity = draft.id
+        Task {
+            guard draft.id == identity else { return }
+            await loadExisting()
+        }
+    }
+
+    private func reset() {
+        draft.clear()
+        draft.home = editor.workingRoot
+        draft.workingCopyKey = editor.openWorkingCopyKey
+        draft.generation = editor.openWorkingCopyGeneration
+        draft.revision = editor.timelineRenderRevision
+    }
 
     private func label(_ category: SequenceReviewCategoryV1) -> String {
         switch category {

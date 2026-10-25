@@ -37,7 +37,8 @@ jobs:
   source-gate:
     name: Private Fixture Gate
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    # The full source suite alone took 363 seconds; fixture download and isolation checks run here too.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:

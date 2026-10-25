@@ -5,7 +5,7 @@ import NexGenEngine
 
 @MainActor
 enum PipelineProductionSequenceReviewStore {
-    private struct SourceFileFence: Sendable {
+    struct SourceFileFence: Sendable {
         struct Entry: Sendable, Equatable {
             let url: URL
             let resolved: URL
@@ -251,6 +251,38 @@ enum PipelineProductionSequenceReviewStore {
         guard editor.workingRoot == home, editor.openWorkingCopyKey == key,
               try timelineHash(editor.timeline) == timelineHash(timeline) else { throw changed() }
         return result
+    }
+
+    static func openFinding(_ finding: SequenceReviewFindingV1, snapshot: Snapshot, editor: EditorViewModel) async throws {
+        let generation = editor.openWorkingCopyGeneration
+        let access = try PipelineNativeEditAccess(editor: editor, label: "Open film finding")
+        defer { access.end(editor: editor) }
+        guard access.home == snapshot.home, access.key == snapshot.key else { throw changed() }
+        let timeline = editor.timeline
+        let resolver = editor.mediaResolver.snapshot()
+        let result = try await background {
+            let canonicalFence = try PipelineSpatialSceneAuthority.SourceFence.capture(dataRoot: access.root,
+                additionalCanonicalPaths: snapshot.input.references.map(\.path) + [snapshot.timeline.path, snapshot.edl.path, snapshot.reel.path])
+            let fence = try SourceFileFence.capture(Array(resolver.expectedURLMap(for: Set(snapshot.input.sources.map(\.mediaID))).values))
+            guard try readInputs(dataRoot: access.root, timeline: timeline, resolver: resolver) == snapshot.input else { throw changed() }
+            try requireSnapshotFiles(snapshot, dataRoot: access.root)
+            guard let first = Int(exactly: try ProductionPlanAssemblyV1.frameIndex(for: snapshot.input.edl.outputStartTicks,
+                timebase: snapshot.input.edl.timebase)) else { throw changed() }
+            let target = try SequenceFindingNavigation(finding: finding, outputStart: first, duration: snapshot.durationFrames,
+                placements: snapshot.input.edl.clips.map { .init(clipID: $0.clipID, shotID: $0.shotID,
+                    startFrame: $0.startFrame, durationFrames: $0.durationFrames) })
+            try canonicalFence.requireUnchanged()
+            return (target, fence, canonicalFence)
+        }
+        try Task.checkCancellation()
+        try access.requireCurrent(editor: editor)
+        guard editor.openWorkingCopyGeneration == generation,
+              try timelineHash(editor.timeline) == snapshot.input.edl.timelineSHA256,
+              editor.mediaResolver.expectedURLMap(for: Set(snapshot.input.sources.map(\.mediaID)))
+                == resolver.expectedURLMap(for: Set(snapshot.input.sources.map(\.mediaID))) else { throw changed() }
+        try result.1.requireUnchanged()
+        try result.2.requireCanonicalRootsUnchanged()
+        result.0.open(editor: editor)
     }
 
     static func save(snapshot: Snapshot, adjacentPairCompleted: Bool, wholePlaybackCompleted: Bool,

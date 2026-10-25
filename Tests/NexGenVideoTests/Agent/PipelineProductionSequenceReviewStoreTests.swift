@@ -41,6 +41,15 @@ struct PipelineProductionSequenceReviewStoreTests {
                 timeline: originalTimeline, resolver: editor.mediaResolver.snapshot())
         }
         let snapshot = try await PipelineProductionSequenceReviewStore.capture(editor: editor)
+        let navigationFinding = SequenceReviewFindingV1(id: "inspect-opening", scope: .wholePlayback, category: .visualArtifact,
+            severity: .warning, shotIDs: [], startFrame: 1, endFrame: 10, evidence: "Inspect the opening frames.",
+            recommendedAction: .localRepair, provenance: .init(kind: .nativeUser, reviewerID: "native-sequence-review"))
+        try await PipelineProductionSequenceReviewStore.openFinding(navigationFinding, snapshot: snapshot, editor: editor)
+        #expect(editor.currentFrame == 1)
+        #expect(editor.selectedTimelineRange == TimelineRangeSelection(startFrame: 1, endFrame: 10))
+        #expect(editor.selectedClipIds == Set(originalTimeline.tracks.flatMap(\.clips)
+            .filter { $0.startFrame < 10 && $0.endFrame > 1 }.map(\.id)))
+        #expect(editor.workspaceFocus == .postproduction && editor.activePreviewTab == .timeline)
         #expect(editor.timeline == originalTimeline)
         #expect(editor.mediaResolver.resolveURL(for: clip.mediaRef) == external)
         let frozen = try #require(snapshot.input.sources.first(where: { $0.mediaID == clip.mediaRef }))
@@ -71,6 +80,11 @@ struct PipelineProductionSequenceReviewStoreTests {
                 timeline: originalTimeline, resolver: editor.mediaResolver.snapshot(overriding: [clip.mediaRef: alternate]))
         }
         try (originalBytes + Data("changed actual source".utf8)).write(to: external)
+        let selectionBeforeStaleSource = editor.selectedClipIds
+        await #expect(throws: (any Error).self) {
+            try await PipelineProductionSequenceReviewStore.openFinding(navigationFinding, snapshot: snapshot, editor: editor)
+        }
+        #expect(editor.selectedClipIds == selectionBeforeStaleSource)
         #expect(throws: (any Error).self) {
             _ = try PipelineProductionSequenceReviewStore.requireCurrent(dataRoot: context.dataRoot,
                 timeline: originalTimeline, resolver: editor.mediaResolver.snapshot())
@@ -87,6 +101,11 @@ struct PipelineProductionSequenceReviewStoreTests {
         let persisted = try #require(try await PipelineProductionSequenceReviewStore.loadCurrent(editor: editor))
         #expect(persisted.1.findings == [finding])
         editor.timeline = changed
+        let rangeBeforeStaleCut = editor.selectedTimelineRange
+        await #expect(throws: (any Error).self) {
+            try await PipelineProductionSequenceReviewStore.openFinding(navigationFinding, snapshot: snapshot, editor: editor)
+        }
+        #expect(editor.timeline == changed && editor.selectedTimelineRange == rangeBeforeStaleCut)
         let secondCut = try await PipelineProductionSequenceReviewStore.capture(editor: editor)
         #expect(secondCut.input.fingerprint != snapshot.input.fingerprint)
         try await PipelineProductionSequenceReviewStore.save(snapshot: secondCut, adjacentPairCompleted: true,
