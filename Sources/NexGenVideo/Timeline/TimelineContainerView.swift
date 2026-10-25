@@ -46,6 +46,7 @@ struct TimelineContainerView: NSViewRepresentable {
         context.coordinator.headerView = headerView
         context.coordinator.timelineView = timelineView
         context.coordinator.scrollView = scrollView
+        context.coordinator.editor = editor
 
         scrollView.contentView.postsBoundsChangedNotifications = true
         scrollView.contentView.postsFrameChangedNotifications = true
@@ -85,6 +86,7 @@ struct TimelineContainerView: NSViewRepresentable {
             context.coordinator.timelineView?.needsDisplay = true
             context.coordinator.headerView?.needsDisplay = true
         }
+        context.coordinator.revealFinding()
 
         if editor.isPlaying,
            let timelineView = context.coordinator.timelineView,
@@ -121,6 +123,8 @@ struct TimelineContainerView: NSViewRepresentable {
     }
 
     final class Coordinator: NSObject {
+        weak var editor: EditorViewModel?
+        private var revealedFinding: UUID?
         var headerView: TimelineHeaderView?
         var timelineView: TimelineView?
         var scrollView: NSScrollView?
@@ -129,6 +133,30 @@ struct TimelineContainerView: NSViewRepresentable {
         func needsRender(for next: RenderState) -> Bool {
             defer { renderState = next }
             return renderState != next
+        }
+
+        @MainActor func revealFinding() {
+            guard let editor, let request = editor.sequenceFindingNavigation,
+                  request.home == editor.workingRoot, request.target.id != revealedFinding,
+                  editor.selectedClipIds == request.target.clipIDs,
+                  editor.selectedTimelineRange?.startFrame == request.target.startFrame,
+                  editor.selectedTimelineRange?.endFrame == request.target.endFrame,
+                  let timelineView, let scrollView,
+                  scrollView.contentView.bounds.width > 0, scrollView.contentView.bounds.height > 0 else { return }
+            let geometry = timelineView.geometry
+            let bounds = scrollView.contentView.bounds
+            let track = editor.timeline.tracks.firstIndex { $0.clips.contains { request.target.clipIDs.contains($0.id) } }
+            let x = max(0, CGFloat(geometry.xForFrame(request.target.startFrame)) - AppTheme.Timeline.playbackFollowMargin)
+            let y = track.map { max(0, geometry.trackY(at: $0) - geometry.rulerHeight) } ?? bounds.origin.y
+            revealedFinding = request.target.id
+            scrollView.contentView.scroll(to: NSPoint(x: min(x, max(0, timelineView.bounds.width - bounds.width)),
+                y: min(y, max(0, timelineView.bounds.height - bounds.height))))
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+            DispatchQueue.main.async { [weak editor] in
+                if editor?.sequenceFindingNavigation?.target.id == request.target.id {
+                    editor?.sequenceFindingNavigation = nil
+                }
+            }
         }
 
         @MainActor @objc func scrollViewBoundsChanged(_ notification: Notification) {
@@ -143,6 +171,7 @@ struct TimelineContainerView: NSViewRepresentable {
 
         @MainActor @objc func clipViewFrameChanged(_ notification: Notification) {
             timelineView?.updateContentSize()
+            revealFinding()
             timelineView?.updatePlayheadLayer()
             timelineView?.snapOverlay.updateViewport()
         }

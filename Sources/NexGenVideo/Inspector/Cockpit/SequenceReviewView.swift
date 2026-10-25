@@ -1,30 +1,95 @@
 import AVKit
 import Combine
+import Observation
 import NexGenEngine
 import SwiftUI
 
 struct SequenceReviewView: View {
     @Environment(EditorViewModel.self) private var editor
-    @State private var expanded = false
-    @State private var snapshot: PipelineSequenceReviewStore.Snapshot?
-    @State private var player: AVPlayer?
-    @State private var playing = false
-    @State private var reviewedAdjacentPairs = false
-    @State private var reviewedWholePlayback = false
-    @State private var scope = SequenceReviewScopeV1.adjacentPair
-    @State private var category = SequenceReviewCategoryV1.stateAndProps
-    @State private var severity = SequenceReviewSeverityV1.warning
-    @State private var action = SequenceReviewActionV1.localRepair
-    @State private var shotIDs = ""
-    @State private var startFrame = 0
-    @State private var endFrame = 0
-    @State private var evidence = ""
-    @State private var findings: [SequenceReviewFindingV1] = []
-    @State private var busy = false
-    @State private var message: String?
+    private var expanded: Bool { get { draft.expanded } nonmutating set { draft.expanded = newValue } }
+    private var snapshot: PipelineSequenceReviewStore.Snapshot? { get { draft.snapshot } nonmutating set { draft.snapshot = newValue } }
+    private var player: AVPlayer? { get { draft.player } nonmutating set { draft.player = newValue } }
+    private var playing: Bool { get { draft.playing } nonmutating set { draft.playing = newValue } }
+    private var reviewedAdjacentPairs: Bool { get { draft.reviewedAdjacentPairs } nonmutating set { draft.reviewedAdjacentPairs = newValue } }
+    private var reviewedWholePlayback: Bool { get { draft.reviewedWholePlayback } nonmutating set { draft.reviewedWholePlayback = newValue } }
+    private var scope: SequenceReviewScopeV1 { get { draft.scope } nonmutating set { draft.scope = newValue } }
+    private var category: SequenceReviewCategoryV1 { get { draft.category } nonmutating set { draft.category = newValue } }
+    private var severity: SequenceReviewSeverityV1 { get { draft.severity } nonmutating set { draft.severity = newValue } }
+    private var action: SequenceReviewActionV1 { get { draft.action } nonmutating set { draft.action = newValue } }
+    private var shotIDs: String { get { draft.shotIDs } nonmutating set { draft.shotIDs = newValue } }
+    private var startFrame: Int { get { draft.startFrame } nonmutating set { draft.startFrame = newValue } }
+    private var endFrame: Int { get { draft.endFrame } nonmutating set { draft.endFrame = newValue } }
+    private var evidence: String { get { draft.evidence } nonmutating set { draft.evidence = newValue } }
+    private var findings: [SequenceReviewFindingV1] { get { draft.findings } nonmutating set { draft.findings = newValue } }
+    private var busy: Bool { get { draft.busy } nonmutating set { draft.busy = newValue } }
+    private var message: String? { get { draft.message } nonmutating set { draft.message = newValue } }
+    private var stale: Bool { get { draft.stale } nonmutating set { draft.stale = newValue } }
+    private var operationID: UUID { get { draft.operationID } nonmutating set { draft.operationID = newValue } }
+
+    @Observable @MainActor
+    final class Draft {
+        let id = UUID()
+        var expanded = false
+        var snapshot: PipelineSequenceReviewStore.Snapshot?
+        var player: AVPlayer?
+        var playing = false
+        var reviewedAdjacentPairs = false
+        var reviewedWholePlayback = false
+        var scope = SequenceReviewScopeV1.adjacentPair
+        var category = SequenceReviewCategoryV1.stateAndProps
+        var severity = SequenceReviewSeverityV1.warning
+        var action = SequenceReviewActionV1.localRepair
+        var shotIDs = ""
+        var startFrame = 0
+        var endFrame = 0
+        var evidence = ""
+        var findings: [SequenceReviewFindingV1] = []
+        var busy = false
+        var message: String?
+        var stale = false
+        var operationID = UUID()
+        var home: URL?
+        var workingCopyKey: String?
+        var generation: UUID?
+        var revision = 0
+
+        func clear() {
+            player?.pause()
+            expanded = false
+            snapshot = nil
+            player = nil
+            playing = false
+            reviewedAdjacentPairs = false
+            reviewedWholePlayback = false
+            scope = SequenceReviewScopeV1.adjacentPair
+            category = SequenceReviewCategoryV1.stateAndProps
+            severity = SequenceReviewSeverityV1.warning
+            action = SequenceReviewActionV1.localRepair
+            shotIDs = ""
+            startFrame = 0
+            endFrame = 0
+            evidence = ""
+            findings = []
+            busy = false
+            message = nil
+            stale = false
+            operationID = UUID()
+        }
+    }
+
+    private var draft: Draft { editor.sequenceReviewDraft }
+
+    private var canOpenFinding: Bool {
+        guard !busy, !stale, !editor.agentService.isStreaming, !editor.agentService.isComposerBlocked,
+              draft.home == editor.workingRoot, draft.workingCopyKey == editor.openWorkingCopyKey,
+              draft.generation == editor.openWorkingCopyGeneration,
+              let root = editor.workingRoot.flatMap({ DataRootResolver.dataRoot(of: $0) }) else { return false }
+        _ = editor.pipelinePhaseExecution.snapshot
+        return editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: root) == nil
+    }
 
     var body: some View {
-        DisclosureGroup(isExpanded: $expanded) {
+        DisclosureGroup(isExpanded: Binding(get: { expanded }, set: { expanded = $0 })) {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
                 Text("Build a canonical reel from the exact selected sources and review cut continuity separately from whole playback.")
                     .foregroundStyle(AppTheme.Text.secondaryColor)
@@ -47,12 +112,16 @@ struct SequenceReviewView: View {
                         .reviewAcceptanceProbe("sequence.player")
                     Text("\(snapshot.plan.selectedMedia.count) sources · \(snapshot.reel.durationFrames) frames · exact EDL \(snapshot.reel.edlSHA256.prefix(10))")
                         .foregroundStyle(AppTheme.Text.secondaryColor)
-                    Toggle("I reviewed every adjacent cut", isOn: $reviewedAdjacentPairs)
+                    if stale {
+                        Text("The timeline changed. Rebuild the reel before continuing this review.")
+                            .foregroundStyle(AppTheme.Status.warningColor)
+                    }
+                    Toggle("I reviewed every adjacent cut", isOn: Binding(get: { reviewedAdjacentPairs }, set: { reviewedAdjacentPairs = $0 }))
                         .reviewAcceptanceProbe("sequence.adjacent", state: reviewedAdjacentPairs)
-                        .disabled(busy || snapshot.plan.selectedMedia.count < 2)
-                    Toggle("I watched the complete reel and checked its sound", isOn: $reviewedWholePlayback)
+                        .disabled(busy || stale || snapshot.plan.selectedMedia.count < 2)
+                    Toggle("I watched the complete reel and checked its sound", isOn: Binding(get: { reviewedWholePlayback }, set: { reviewedWholePlayback = $0 }))
                         .reviewAcceptanceProbe("sequence.whole", state: reviewedWholePlayback)
-                        .disabled(busy)
+                        .disabled(busy || stale)
                     findingEditor(snapshot: snapshot)
                     if !findings.isEmpty {
                         ForEach(Array(findings.enumerated()), id: \.element.id) { index, finding in
@@ -64,6 +133,9 @@ struct SequenceReviewView: View {
                                         .foregroundStyle(AppTheme.Text.secondaryColor)
                                 }
                                 Spacer(minLength: AppTheme.Spacing.none)
+                                Button("Open in timeline") { openFinding(finding, snapshot: snapshot) }
+                                    .buttonStyle(InlineActionButtonStyle()).disabled(!canOpenFinding)
+                                    .reviewAcceptanceProbe("sequence.finding.open." + finding.id, state: canOpenFinding)
                                 Button("Remove") { findings.remove(at: index) }
                                     .buttonStyle(InlineActionButtonStyle())
                                     .reviewAcceptanceProbe("sequence.remove.\(index)")
@@ -80,7 +152,7 @@ struct SequenceReviewView: View {
                             .buttonStyle(InlineActionButtonStyle(variant: .approval))
                             .reviewAcceptanceProbe("sequence.record")
                             .disabled(
-                                busy
+                                busy || stale
                                     || !reviewedWholePlayback
                                     || (snapshot.plan.selectedMedia.count > 1 && !reviewedAdjacentPairs)
                             )
@@ -106,11 +178,12 @@ struct SequenceReviewView: View {
         .onReceive(player?.publisher(for: \.rate).eraseToAnyPublisher() ?? Just(Float.zero).eraseToAnyPublisher()) {
             playing = $0 > 0
         }
+        .task(id: draft.id) { await prepareDraft() }
         .onDisappear { player?.pause(); playing = false }
         .onReceive(NotificationCenter.default.publisher(for: AVPlayerItem.didPlayToEndTimeNotification)) { notification in
             if let item = notification.object as? AVPlayerItem, item === player?.currentItem { playing = false }
         }
-        .onChange(of: editor.workingRoot) { _, _ in reset() }
+        .onChange(of: editor.timelineRenderRevision) { _, _ in if snapshot != nil { stale = true } }
     }
 
     private func findingEditor(
@@ -119,25 +192,25 @@ struct SequenceReviewView: View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
             Text("Observed finding").fontWeight(AppTheme.FontWeight.semibold)
             VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
-                Picker("Scope", selection: $scope) {
+                Picker("Scope", selection: Binding(get: { scope }, set: { scope = $0 })) {
                     Text(SequenceReviewScopeV1.adjacentPair.label).tag(SequenceReviewScopeV1.adjacentPair)
                     Text(SequenceReviewScopeV1.wholePlayback.label).tag(SequenceReviewScopeV1.wholePlayback)
                 }
                 .reviewAcceptanceProbe("sequence.scope", text: scope.rawValue)
-                Picker("Category", selection: $category) {
+                Picker("Category", selection: Binding(get: { category }, set: { category = $0 })) {
                     ForEach(SequenceReviewCategoryV1.allCases, id: \.self) {
                         Text($0.label).tag($0)
                     }
                 }
             }
             VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
-                Picker("Severity", selection: $severity) {
+                Picker("Severity", selection: Binding(get: { severity }, set: { severity = $0 })) {
                     Text("Info").tag(SequenceReviewSeverityV1.info)
                     Text("Warning").tag(SequenceReviewSeverityV1.warning)
                     Text("Blocking").tag(SequenceReviewSeverityV1.blocking)
                 }
                 .reviewAcceptanceProbe("sequence.severity", text: severity.rawValue)
-                Picker("Action", selection: $action) {
+                Picker("Action", selection: Binding(get: { action }, set: { action = $0 })) {
                     Text("Accept").tag(SequenceReviewActionV1.accept)
                     Text("Local repair").tag(SequenceReviewActionV1.localRepair)
                     Text("Reroll").tag(SequenceReviewActionV1.reroll)
@@ -146,14 +219,14 @@ struct SequenceReviewView: View {
                 }
                 .reviewAcceptanceProbe("sequence.action", text: action.rawValue)
             }
-            TextField("Shot IDs, separated by commas", text: $shotIDs)
+            TextField("Shot IDs, separated by commas", text: Binding(get: { shotIDs }, set: { shotIDs = $0 }))
                 .reviewAcceptanceProbe("sequence.shots", text: shotIDs)
                 .disabled(busy)
-            TextField("First frame", value: $startFrame, format: .number)
+            TextField("First frame", value: Binding(get: { startFrame }, set: { startFrame = $0 }), format: .number)
                 .reviewAcceptanceProbe("sequence.start", text: String(startFrame))
-            TextField("End frame", value: $endFrame, format: .number)
+            TextField("End frame", value: Binding(get: { endFrame }, set: { endFrame = $0 }), format: .number)
                 .reviewAcceptanceProbe("sequence.end", text: String(endFrame))
-            TextField("Describe only what you observed", text: $evidence, axis: .vertical)
+            TextField("Describe only what you observed", text: Binding(get: { evidence }, set: { evidence = $0 }), axis: .vertical)
                 .reviewAcceptanceProbe("sequence.evidence", text: evidence)
                 .disabled(busy)
             Button("Add finding") { addFinding(snapshot: snapshot) }
@@ -161,7 +234,7 @@ struct SequenceReviewView: View {
                 .reviewAcceptanceProbe("sequence.add")
                 .disabled(busy || !validDraft(snapshot: snapshot))
         }
-        .disabled(busy)
+        .disabled(busy || stale)
         .padding(AppTheme.Spacing.sm)
         .background(AppTheme.Background.raisedColor)
         .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.md))
@@ -205,14 +278,21 @@ struct SequenceReviewView: View {
     }
 
     private func beginReview() {
+        guard !busy else { return }
+        let operation = UUID(); operationID = operation
+        let home = editor.workingRoot
+        let revision = editor.timelineRenderRevision
         player?.pause()
         playing = false
         busy = true
         message = nil
         Task {
+            defer { if operationID == operation { busy = false } }
             do {
                 let value = try await PipelineSequenceReviewStore.capture(editor: editor)
+                guard operationID == operation, editor.workingRoot == home, editor.timelineRenderRevision == revision else { return }
                 snapshot = value
+                stale = false; draft.revision = editor.timelineRenderRevision
                 let dataRoot = try Self.requireDataRoot(value.home)
                 let reelURL = try ProjectLocalFile.requireHash(
                     value.reel.sha256,
@@ -225,19 +305,33 @@ struct SequenceReviewView: View {
                 findings = []
                 message = "Review reel ready. Playback observations apply only to these exact bytes."
             } catch {
+                guard operationID == operation else { return }
                 snapshot = nil
                 player = nil
                 message = error.localizedDescription
             }
-            busy = false
+        }
+    }
+
+    private func openFinding(_ finding: SequenceReviewFindingV1, snapshot: PipelineSequenceReviewStore.Snapshot) {
+        guard canOpenFinding else { return }
+        let operation = UUID(); operationID = operation
+        player?.pause(); message = nil; busy = true
+        Task {
+            defer { if operationID == operation { busy = false } }
+            do { try await PipelineSequenceReviewStore.openFinding(finding, snapshot: snapshot, editor: editor) }
+            catch { if operationID == operation { message = error.localizedDescription } }
         }
     }
 
     private func save(snapshot: PipelineSequenceReviewStore.Snapshot) {
+        guard !busy, !stale else { return }
+        let operation = UUID(); operationID = operation
         busy = true
         message = nil
         let recordedFindings = findings
         Task {
+            defer { if operationID == operation { busy = false } }
             do {
                 try await PipelineSequenceReviewStore.save(
                     snapshot: snapshot,
@@ -246,6 +340,7 @@ struct SequenceReviewView: View {
                     findings: recordedFindings,
                     editor: editor
                 )
+                guard operationID == operation, editor.workingRoot == snapshot.home else { return }
                 message = recordedFindings.contains { $0.severity == .blocking }
                     ? "Review recorded. Blocking findings remain open for an explicit repair decision."
                     : "Review recorded for this exact reel, cut order and production input set."
@@ -254,22 +349,25 @@ struct SequenceReviewView: View {
                 playing = false
                 player = nil
             } catch {
+                guard operationID == operation else { return }
                 message = error.localizedDescription
             }
-            busy = false
         }
     }
 
+    private func prepareDraft() async {
+        if draft.home != editor.workingRoot || draft.workingCopyKey != editor.openWorkingCopyKey
+            || draft.generation != editor.openWorkingCopyGeneration { reset() }
+        guard !busy else { return }
+        if stale || draft.revision != editor.timelineRenderRevision { reset() }
+    }
+
     private func reset() {
-        player?.pause()
-        playing = false
-        player = nil
-        snapshot = nil
-        reviewedAdjacentPairs = false
-        reviewedWholePlayback = false
-        findings = []
-        busy = false
-        message = nil
+        draft.clear()
+        draft.home = editor.workingRoot
+        draft.workingCopyKey = editor.openWorkingCopyKey
+        draft.generation = editor.openWorkingCopyGeneration
+        draft.revision = editor.timelineRenderRevision
     }
 
     private static func requireDataRoot(_ home: URL) throws -> URL {

@@ -37,6 +37,19 @@ struct EditorWindowContentView: View {
             if editor.workspaceFocus == .production, let toast = editor.mediaPanelToast {
                 ProductionFeedbackBanner(toast: toast)
             }
+            if let notice = editor.sequenceFindingNotice {
+                HStack(spacing: AppTheme.Spacing.md) {
+                    Text(notice)
+                        .interfaceFont(size: AppTheme.Typography.ui)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: AppTheme.Spacing.sm)
+                    Button("Dismiss") { editor.sequenceFindingNotice = nil }
+                        .buttonStyle(.capsule(.secondary))
+                }
+                .padding(AppTheme.Spacing.md)
+                .background(AppTheme.Background.raisedColor)
+                .reviewAcceptanceProbe("sequence.finding.notice", text: notice)
+            }
             if let message = PipelineLedgerWriter.restoreMessage(editor: editor) {
                 HStack(spacing: AppTheme.Spacing.md) {
                     ProgressView().controlSize(.small)

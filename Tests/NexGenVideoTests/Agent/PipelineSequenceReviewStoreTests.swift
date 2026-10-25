@@ -7,6 +7,38 @@ import Testing
 @Suite("Pipeline sequence review")
 @MainActor
 struct PipelineSequenceReviewStoreTests {
+    @Test func findingNavigationRejectsChangedCutAndSourceWithoutRebuildingReel() async throws {
+        let fixture = try await makeFixture(withGap: true)
+        defer { try? FileManager.default.removeItem(at: fixture.home) }
+        let reel = try await ReviewReelBuilder.build(plan: fixture.plan, dataRoot: fixture.dataRoot)
+        let fingerprints = try PipelineSequenceReviewStore.productionFingerprints(selectedMedia: fixture.plan.selectedMedia,
+            dataRoot: fixture.dataRoot)
+        let snapshot = PipelineSequenceReviewStore.Snapshot(home: fixture.home, projectID: fixture.plan.projectID,
+            plan: fixture.plan, reel: reel, executionPlanSHA256: fingerprints.execution,
+            canonSHA256: fingerprints.canon, referencePlanSHA256: fingerprints.references)
+        let finding = SequenceReviewFindingV1(id: "opening", scope: .wholePlayback, category: .visualArtifact,
+            severity: .warning, shotIDs: ["shot-001"], startFrame: 1, endFrame: 10, evidence: "Inspect the opening.",
+            recommendedAction: .localRepair, provenance: .init(kind: .nativeUser, reviewerID: "native-sequence-review"))
+        let resolver = MediaResolver(manifest: { MediaManifest() }, projectURL: { fixture.home })
+        let target = try PipelineSequenceReviewStore.findingTarget(finding, snapshot: snapshot, dataRoot: fixture.dataRoot,
+            timeline: fixture.timeline, resolver: resolver)
+        #expect(target.startFrame == 1 && target.endFrame == 10)
+        #expect(target.clipIDs == Set(fixture.timeline.tracks.flatMap(\.clips).filter { $0.startFrame < 10 && $0.endFrame > 1 }.map(\.id)))
+        var changed = fixture.timeline
+        changed.tracks[0].clips[0].startFrame += 1
+        #expect(throws: (any Error).self) {
+            _ = try PipelineSequenceReviewStore.findingTarget(finding, snapshot: snapshot, dataRoot: fixture.dataRoot,
+                timeline: changed, resolver: resolver)
+        }
+        let source = try #require(fixture.plan.selectedMedia.first)
+        let url = try ProjectLocalFile.resolve(source.sourcePath, dataRoot: fixture.dataRoot)
+        try Data("changed media".utf8).write(to: url)
+        #expect(throws: (any Error).self) {
+            _ = try PipelineSequenceReviewStore.findingTarget(finding, snapshot: snapshot, dataRoot: fixture.dataRoot,
+                timeline: fixture.timeline, resolver: resolver)
+        }
+    }
+
     @Test("review reel preserves exact source trims, cut order and gaps")
     func reviewReelPreservesPlanEDL() async throws {
         let fixture = try await makeFixture(withGap: true)

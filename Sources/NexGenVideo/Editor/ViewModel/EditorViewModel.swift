@@ -153,6 +153,10 @@ final class EditorViewModel {
         }
     }
     var isMarqueeSelecting: Bool = false
+    var productionSequenceReviewDraft = ProductionSequenceReviewView.Draft()
+    var sequenceReviewDraft = SequenceReviewView.Draft()
+    var sequenceFindingNavigation: (home: URL, target: SequenceFindingNavigation)?
+    var sequenceFindingNotice: String?
     var selectedGap: GapSelection? {
         didSet {
             guard selectedGap != nil else { return }
@@ -393,6 +397,12 @@ final class EditorViewModel {
     }
 
     private func resetNativePlanningHistory() {
+        sequenceFindingNavigation = nil
+        sequenceFindingNotice = nil
+        productionSequenceReviewDraft.clear()
+        sequenceReviewDraft.clear()
+        productionSequenceReviewDraft = ProductionSequenceReviewView.Draft()
+        sequenceReviewDraft = SequenceReviewView.Draft()
         PipelineStoryboardEditor.resetHistory(editor: self)
         PipelineShotPlanningEditor.resetHistory(editor: self)
         PipelineBibleEditor.resetHistory(editor: self)

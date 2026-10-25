@@ -161,6 +161,26 @@ enum ProductionV2FilmAcceptance {
         try await driver.picker("sequence.action", title: "Accept", expected: SequenceReviewActionV1.accept.rawValue, in: window)
         let wholeObservation = "The complete native V2 film played from its first to last frame; picture and the intended source sound were checked."
         try await addFinding(start: 0, end: frames, observation: wholeObservation, driver: driver)
+        let draftText = "Keep this unrecorded observation while inspecting the timeline."
+        try await driver.fill("sequence.evidence", value: draftText, in: window)
+        guard let content = window.contentView,
+              let unsavedOpen = AppNativeMenuAcceptance.views(content).compactMap({ $0 as? AppRelaunchClickProbeView })
+                .compactMap({ $0.identifier?.rawValue }).first(where: { $0.hasPrefix("sequence.finding.open.") }) else {
+            throw failed("The unsaved film finding has no native navigation action.")
+        }
+        try await driver.click(unsavedOpen, in: window)
+        try await driver.wait("unrecorded film finding opens timeline") { editor.workspaceFocus == .postproduction }
+        try await driver.click("editor.workspace.production", in: window, enabled: false)
+        try await ProductionV2PlanningAcceptance.selectPhase("render", context: context, driver: driver)
+        try await driver.wait("unrecorded film review survives timeline round trip") {
+            ProductionNativePlaybackAcceptance.player("sequence.player", in: window) === player
+                && driver.state("sequence.whole", in: window) == true
+                && driver.text("sequence.evidence", in: window) == draftText
+                && driver.state(unsavedOpen, in: window) == true
+        }
+        try await driver.fill("sequence.evidence", value: "", in: window)
+        try driver.record("unrecorded film review preserved", fields: ["samePlayer": true,
+            "wholePlaybackRetained": true, "draftObservationRetained": true, "findingAction": unsavedOpen])
         for cut in cuts {
             try await driver.picker("sequence.cut", title: "Frame \(cut)", expected: String(cut), in: window)
             try await driver.click("sequence.inspect-boundary", in: window)
@@ -219,6 +239,77 @@ enum ProductionV2FilmAcceptance {
             throw failed("The saved native review differs from the film, boundary observations or explicit decisions.")
         }
         try driver.capture("review-film-saved", target: window)
+        guard let finding = review.findings.first(where: { $0.scope == .adjacentPair }) else {
+            throw failed("The native film review has no cut finding to open.")
+        }
+        let outputStart = Int(try ProductionPlanAssemblyV1.frameIndex(for: interval.startTicks, timebase: proof.timebase))
+        let first = outputStart + finding.startFrame, last = outputStart + finding.endFrame
+        let expectedClips = Set(timeline.tracks.flatMap(\.clips).filter { $0.startFrame < last && $0.endFrame > first }.map(\.id))
+        guard !expectedClips.isEmpty else { throw failed("The observed cut has no actual timeline clips.") }
+        try await driver.click("editor.workspace.postproduction", in: window, enabled: false)
+        try await driver.wait("postproduction review restored") {
+            editor.workspaceFocus == .postproduction && driver.state("sequence.finding.open." + finding.id, in: window) == true
+        }
+        let originalZoom = editor.zoomScale
+        defer { editor.zoomScale = originalZoom }
+        editor.zoomScale = 64
+        func timelineView() -> TimelineView? {
+            window.contentView.flatMap { AppNativeMenuAcceptance.views($0).compactMap { $0 as? TimelineView }
+                .first(where: { !$0.isHiddenOrHasHiddenAncestor }) }
+        }
+        try await driver.wait("zoomed timeline has offscreen content") {
+            guard let view = timelineView(), let scroll = view.enclosingScrollView else { return false }
+            return view.bounds.width > scroll.contentView.bounds.width * 2
+        }
+        guard let view = timelineView(), let scroll = view.enclosingScrollView else { throw failed("The native timeline is missing.") }
+        let beforeBounds = scroll.contentView.bounds
+        let targetX = view.geometry.xForFrame(first)
+        let farX = targetX < beforeBounds.width ? view.bounds.width - beforeBounds.width : 0
+        scroll.contentView.scroll(to: NSPoint(x: farX, y: beforeBounds.origin.y))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        guard targetX < scroll.contentView.bounds.minX || targetX > scroll.contentView.bounds.maxX else {
+            throw failed("The finding navigation fixture did not place its target offscreen.")
+        }
+        try await driver.click("sequence.finding.open." + finding.id, in: window)
+        try await driver.wait("film finding opens its exact timeline range", seconds: 30) {
+            editor.workspaceFocus == .postproduction && editor.activePreviewTab == .timeline
+                && editor.currentFrame == first && editor.selectedClipIds == expectedClips
+                && editor.selectedTimelineRange == TimelineRangeSelection(startFrame: first, endFrame: last)
+        }
+        try await driver.wait("finding start is visible in the actual timeline viewport") {
+            guard let view = timelineView(), let scroll = view.enclosingScrollView,
+                  let track = timeline.tracks.firstIndex(where: { $0.clips.contains { expectedClips.contains($0.id) } }) else { return false }
+            let point = NSPoint(x: view.geometry.xForFrame(first),
+                y: view.geometry.trackY(at: track) + view.geometry.trackHeight(at: track) / 2)
+            return scroll.contentView.bounds.contains(point)
+        }
+        guard editor.timeline == timeline, !editor.isPlaying,
+              editor.inspectedObject == editor.selectionInspectedObject else {
+            throw failed("Opening a film finding changed the cut or retained an unrelated inspector selection.")
+        }
+        try driver.capture("review-finding-timeline", target: window)
+        try driver.record("native finding timeline navigation", fields: ["findingID": finding.id,
+            "startFrame": first, "endFrame": last, "clipIDs": expectedClips.sorted(), "timelineUnchanged": true])
+        guard let track = timeline.tracks.firstIndex(where: { !$0.clips.isEmpty }) else { throw failed("The reviewed cut is empty.") }
+        var changed = timeline
+        changed.tracks[track].clips[0].opacity = timeline.tracks[track].clips[0].opacity == 1 ? 0.5 : 1
+        editor.timeline = changed
+        try await driver.wait("changed cut disables finding navigation") {
+            driver.state("sequence.finding.open." + finding.id, in: window) == false
+        }
+        editor.timeline = timeline
+        try await driver.click("editor.workspace.production", in: window, enabled: false)
+        try await ProductionV2PlanningAcceptance.selectPhase("render", context: context, driver: driver)
+        try await driver.wait("return to unchanged cut loads its persisted review", seconds: 30) {
+            driver.state("sequence.finding.open." + finding.id, in: window) == true
+                && driver.state("sequence.whole", in: window) == true
+                && editor.productionSequenceReviewDraft.snapshot?.reel == review.reel
+                && editor.productionSequenceReviewDraft.findings == review.findings
+                && !editor.productionSequenceReviewDraft.stale
+        }
+        guard editor.timeline == timeline else { throw failed("Reopening the persisted film review changed its cut.") }
+        try driver.record("stale draft replaced by current persisted review", fields: ["sameReelSHA256": review.reel.sha256,
+            "recordedFindingsRestored": true, "timelineUnchanged": true])
         return review
     }
 

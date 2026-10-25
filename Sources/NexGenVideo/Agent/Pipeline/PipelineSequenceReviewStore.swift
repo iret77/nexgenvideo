@@ -57,6 +57,63 @@ enum PipelineSequenceReviewStore {
     }
 
     @MainActor
+    static func openFinding(_ finding: SequenceReviewFindingV1, snapshot: Snapshot, editor: EditorViewModel) async throws {
+        let generation = editor.openWorkingCopyGeneration
+        let access = try PipelineNativeEditAccess(editor: editor, label: "Open sequence finding")
+        defer { access.end(editor: editor) }
+        guard access.home == snapshot.home else { throw ToolError("The active project changed. Build its review reel again.") }
+        _ = try ProjectPackGate.requireLiveMutation(projectURL: access.home,
+            declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding)
+        let timeline = editor.timeline, resolver = editor.mediaResolver.snapshot()
+        let ids = Set(timeline.tracks.flatMap(\.clips).filter { $0.mediaType != .text }.map(\.mediaRef))
+        let urls = resolver.expectedURLMap(for: ids)
+        let task = Task.detached(priority: .userInitiated) {
+            let sourceFence = try PipelineProductionSequenceReviewStore.SourceFileFence.capture(Array(urls.values))
+            let fence = try PipelineSpatialSceneAuthority.SourceFence.capture(dataRoot: access.root,
+                additionalCanonicalPaths: [snapshot.reel.path, snapshot.reel.edlPath])
+            let target = try findingTarget(finding, snapshot: snapshot, dataRoot: access.root, timeline: timeline, resolver: resolver)
+            try fence.requireUnchanged()
+            return (target, sourceFence, fence)
+        }
+        let result = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+        try Task.checkCancellation()
+        try access.requireCurrent(editor: editor)
+        guard editor.openWorkingCopyGeneration == generation,
+              editor.timeline == timeline, editor.mediaResolver.expectedURLMap(for: ids) == urls else {
+            throw ToolError("The cut or its sources changed. Build the current review reel again.")
+        }
+        try result.1.requireUnchanged()
+        try result.2.requireCanonicalRootsUnchanged()
+        result.0.open(editor: editor)
+    }
+
+    static func findingTarget(_ finding: SequenceReviewFindingV1, snapshot: Snapshot, dataRoot: URL,
+                                      timeline: Timeline, resolver: MediaResolver) throws -> SequenceFindingNavigation {
+        let assembly = try requireCurrentAssembly(dataRoot: dataRoot, timeline: timeline)
+        let fingerprints = try productionFingerprints(selectedMedia: assembly.plan.selectedMedia, dataRoot: dataRoot)
+        guard assembly.plan == snapshot.plan, fingerprints.execution == snapshot.executionPlanSHA256,
+              fingerprints.canon == snapshot.canonSHA256, fingerprints.references == snapshot.referencePlanSHA256,
+              let first = snapshot.plan.placements.map(\.timelineStartFrame).min() else {
+            throw ToolError("The cut or its production inputs changed. Build the current review reel again.")
+        }
+        try validateReelAgainstPlan(snapshot.reel, plan: snapshot.plan)
+        _ = try ProjectLocalFile.requireHash(snapshot.reel.sha256, at: snapshot.reel.path, dataRoot: dataRoot)
+        _ = try ProjectLocalFile.requireHash(snapshot.reel.edlSHA256, at: snapshot.reel.edlPath, dataRoot: dataRoot)
+        try ReviewReelSoundtrack.requireCurrent(reel: snapshot.reel, plan: snapshot.plan, dataRoot: dataRoot,
+            timeline: timeline, resolver: resolver)
+        let placements: [SequenceFindingNavigation.Placement] = try assembly.manifest.placements.flatMap { placement in
+            try placement.clipIDs.map { id -> SequenceFindingNavigation.Placement in
+                guard let clip = timeline.tracks.flatMap(\.clips).first(where: { $0.id == id }) else {
+                    throw ToolError("The reviewed clip is no longer in the timeline.")
+                }
+                return .init(clipID: id, shotID: placement.selected.shotID, startFrame: clip.startFrame, durationFrames: clip.durationFrames)
+            }
+        }
+        return try SequenceFindingNavigation(finding: finding, outputStart: first,
+            duration: snapshot.reel.durationFrames, placements: placements)
+    }
+
+    @MainActor
     static func save(
         snapshot: Snapshot,
         adjacentPairCompleted: Bool,
