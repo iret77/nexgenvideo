@@ -6,7 +6,7 @@ on:
       candidate_kind:
         description: Signed release verification or targeted failed CI diagnostics
         type: choice
-        options: [signed-release, ci-runtime, ci-bpy-open-diagnostic, ci-app-test-diagnostic, ci-app-glow-replay, ci-app-full-replay, ci-builtin-blur, ci-builtin-blur-scribble]
+        options: [signed-release, ci-runtime, ci-bpy-open-diagnostic, ci-app-test-diagnostic, ci-app-glow-replay, ci-app-full-replay, ci-builtin-blur, ci-builtin-blur-scribble, ci-builtin-blur-floor]
         default: signed-release
       run_id:
         description: "Original producer workflow run"
@@ -105,6 +105,23 @@ jobs:
           python3 -m unittest discover -s scripts -p 'test_appkit_host_stale_diagnostic.py'
           python3 -m unittest discover -s scripts -p 'test_runloop_probe_preparation.py'
           python3 -m unittest discover -s scripts -p 'test_ci_workflow.py'
+      - name: Verify and bind original standalone floor runtime
+        if: inputs.candidate_kind == 'ci-builtin-blur-floor'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_ci_builtin_blur*.py'
+          python3 -m unittest discover -s scripts -p 'test_diagnostic_acceptance.py'
+          python3 -m unittest discover -s scripts -p 'test_run_macos_tests.py'
+          python3 -m unittest discover -s scripts -p 'test_ci_workflow.py'
+          python3 scripts/ci_builtin_blur_floor.py bind --evidence "$RUNNER_TEMP/builtin-blur-floor-binding"
+      - uses: actions/upload-artifact@v4
+        if: always() && inputs.candidate_kind == 'ci-builtin-blur-floor'
+        with:
+          name: builtin-blur-floor-binding
+          path: ${{ runner.temp }}/builtin-blur-floor-binding
+          if-no-files-found: error
+          retention-days: 90
       - name: Verify and bind standalone blur experiment
         if: (inputs.candidate_kind == 'ci-builtin-blur' || inputs.candidate_kind == 'ci-builtin-blur-scribble')
         env:
@@ -147,7 +164,7 @@ jobs:
           retention-days: 90
 
       - name: Bind the successful release job and immutable artifact
-        if: inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble'
+        if: inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor'
         env:
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_KIND: ${{ inputs.candidate_kind }}
@@ -171,10 +188,35 @@ jobs:
             "$CANDIDATE_ARTIFACT" "$CANDIDATE_DIGEST" "$RUNNER_TEMP/candidate-metadata" \
             --candidate-kind "$CANDIDATE_KIND" "${extra[@]}"
       - uses: actions/upload-artifact@v4
-        if: inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble'
+        if: inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor'
         with:
           name: diagnostic-candidate-identity
           path: ${{ runner.temp }}/candidate-metadata/*.json
+          if-no-files-found: error
+          retention-days: 90
+
+  ci-builtin-blur-floor:
+    needs: source
+    if: inputs.candidate_kind == 'ci-builtin-blur-floor'
+    # ci-lint: allow-CI005 Run the original executable on the macOS 26 floor without rebuilding.
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: builtin-blur-floor-binding
+          path: ${{ runner.temp }}/builtin-blur-floor-binding
+      - name: Run original executable on the product floor
+        timeout-minutes: 25
+        run: |
+          python3 scripts/ci_builtin_blur_floor.py run --metadata "$RUNNER_TEMP/builtin-blur-floor-binding" \
+            --evidence "$RUNNER_TEMP/builtin-blur-floor"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: builtin-blur-floor-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/builtin-blur-floor
           if-no-files-found: error
           retention-days: 90
 

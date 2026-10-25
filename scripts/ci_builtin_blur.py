@@ -68,15 +68,14 @@ def selected_profile():
     return "scribble" if kind.endswith("-scribble") else "normal"
 
 
-def bind_normal_arm(folder, head):
-    source = os.environ["PRODUCT_SHA"]
-    checksum = os.environ["PRODUCTS_DIGEST"]
-    artifact_id = int(os.environ["PRODUCTS_ID"])
+def bind_normal_arm(folder, head, *, identity=None, allowed_paths=PATHS):
+    source, checksum, artifact_id = identity or (
+        os.environ["PRODUCT_SHA"], os.environ["PRODUCTS_DIGEST"], int(os.environ["PRODUCTS_ID"]))
     if not re.fullmatch(r"[0-9a-f]{40}", source) or not re.fullmatch(r"[0-9a-f]{64}", checksum):
         raise ValueError("Malformed normal-arm identity")
     command(["git", "merge-base", "--is-ancestor", source, head])
-    if set(command(["git", "diff", "--name-only", source, head]).splitlines()) != PATHS:
-        raise ValueError("Instrumented arm must change exactly the four diagnostic files")
+    if set(command(["git", "diff", "--no-renames", "--name-only", source, head]).splitlines()) != allowed_paths:
+        raise ValueError("Normal-arm continuation differs from its exact diagnostic file list")
     artifact = api(f"actions/artifacts/{artifact_id}")
     run_id = artifact["workflow_run"]["id"]
     run = api(f"actions/runs/{run_id}")
@@ -161,7 +160,7 @@ def bind(folder):
     if head != os.environ["GITHUB_SHA"] or command(["git", "status", "--porcelain"]).strip():
         raise ValueError("Unbound or dirty harness checkout")
     command(["git", "merge-base", "--is-ancestor", source, head])
-    changed = set(command(["git", "diff", "--name-only", source, head]).splitlines())
+    changed = set(command(["git", "diff", "--no-renames", "--name-only", source, head]).splitlines())
     if changed != PATHS:
         raise ValueError("Standalone experiment must change exactly its four harness files")
     run = api(f"actions/runs/{run_id}")
@@ -209,12 +208,14 @@ def intervals(folder, pid, rounds):
     return sum(max(a[0], b[0]) < min(a[1], b[1]) for a, b in zip(*lanes))
 
 
-def sample_proof(text, pid, parent):
+def sample_proof(text, pid, parent, *, images=IMAGES):
+    if set(images) != set(IMAGES):
+        raise ValueError("Calibration requires all six system images")
     if (not re.search(r"^Process:\s+NGVBuiltinBlur \[" + str(pid) + r"\]$", text, re.M)
             or not re.search(r"^Parent Process:\s+.+ \[" + str(parent) + r"\]$", text, re.M)):
         raise ValueError("Sample is not the owned calibration process")
     if any(not re.search(r"^.*<" + value + r">.*(?:/|\s)" + re.escape(name) + r"(?:\s|$)",
-                        text, re.M | re.I) for name, value in IMAGES.items()):
+                        text, re.M | re.I) for name, value in images.items()):
         raise ValueError("Sample does not prove all six exact system images")
     blur_depth = None
     for line in text.splitlines():
@@ -355,7 +356,9 @@ def crash_outcome(code, reports, profile):
     return "F" if scribble_pattern(report) else "G"
 
 
-def owned_process(binary, folder, mode, deadline, profile="normal"):
+def owned_process(binary, folder, mode, deadline, profile="normal", *, original_arguments=False):
+    if original_arguments and profile != "normal":
+        raise ValueError("Original executable only supports the normal profile")
     folder.mkdir()
     for lane in range(2):
         (folder / f"lane-{lane}.jsonl").touch(exist_ok=False)
@@ -365,9 +368,10 @@ def owned_process(binary, folder, mode, deadline, profile="normal"):
     context["launchEarliest"] = time.time()
     sampler = None
     with (folder / "stdout.log").open("xb") as out, (folder / "stderr.log").open("xb") as err:
-        process = subprocess.Popen([str(binary), str(folder), mode, profile], stdin=subprocess.DEVNULL,
+        args = [str(binary), str(folder), mode] + ([] if original_arguments else [profile])
+        process = subprocess.Popen(args, stdin=subprocess.DEVNULL,
                                    stdout=out, stderr=err, env=environment(os.environ, profile), start_new_session=True)
-        context.update(pid=process.pid, launchLatest=time.time())
+        context.update(pid=process.pid, launchLatest=time.time(), argv=args)
         save(folder / "launch.json", context)
         try:
             if mode == "calibration":
@@ -419,13 +423,14 @@ def owned_process(binary, folder, mode, deadline, profile="normal"):
     return (crash_outcome(code, reports, profile) if code != 0 else "clean"), context
 
 
-def run_measured(binary, folder, deadline, result, profile="normal"):
+def run_measured(binary, folder, deadline, result, profile="normal", *, original_arguments=False):
     for index in range(200):
         if deadline - time.monotonic() < 300:
             result.update(outcome="V", reason="Time box leaves insufficient time for another process")
             break
         current = folder / f"process-{index:03d}"
-        outcome, context = owned_process(binary, current, "measured", deadline, profile)
+        outcome, context = owned_process(binary, current, "measured", deadline, profile,
+                                         original_arguments=original_arguments)
         result["outcome"] = outcome
         if outcome != "clean":
             result["abnormalProcess"] = index
