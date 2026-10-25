@@ -250,6 +250,9 @@ final class PipelineAgentHarness {
             if let causality = StoryCausalityContext.prompt(dataRoot: dataRoot, phase: phase) {
                 prompt += "\n\n" + causality
             }
+            if let lyrics = try PipelineRecognizedLyricsContext.prompt(dataRoot: dataRoot, phase: phase, packName: packName) {
+                prompt += "\n\n" + lyrics
+            }
             if let iteration = TakeRepairPlan.runtimeInstructions(phase: phase) {
                 prompt += "\n\n" + iteration
             }

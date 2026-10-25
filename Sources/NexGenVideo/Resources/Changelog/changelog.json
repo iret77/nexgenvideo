@@ -28,6 +28,7 @@
         {
           "heading": "Music Video",
           "items": [
+            "Songs without supplied lyrics use local speech recognition. Recognized text and timing remain explicitly unreviewed; supplied lyrics retain priority.",
             "Music Video 0.6.0 requires NexGenVideo 1.8.0. Existing projects retain their exact pinned pack; adopting the new production contract uses an explicit Recovery-copy upgrade.",
             "After an upgrade, existing story and identity intake offers verified material from the previous workflow for explicit reuse, with readable previews and editable identity names.",
             "Choosing to develop a new story advances to optional character material. An interrupted new-story decision can be retried without replacing the confirmed story choice.",

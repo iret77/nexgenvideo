@@ -29,22 +29,38 @@ struct AnalysisMeasurementProof: Codable, Sendable, Equatable {
         }
     }
 
+    struct RecognizedLyricsProof: Codable, Sendable, Equatable {
+        let sourcePath: String
+        let sourceSHA256: String
+        let transcriptSHA256: String
+
+        enum CodingKeys: String, CodingKey {
+            case sourcePath = "source_path"
+            case sourceSHA256 = "source_sha256"
+            case transcriptSHA256 = "transcript_sha256"
+        }
+    }
+
     let schema: String
     let project: String
     let songSHA256: String
     let lyricsAlignment: LyricsAlignmentProof?
+    let recognizedLyrics: RecognizedLyricsProof?
 
     enum CodingKeys: String, CodingKey {
         case schema, project
         case songSHA256 = "song_sha256"
         case lyricsAlignment = "lyrics_alignment"
+        case recognizedLyrics = "recognized_lyrics"
     }
 
-    init(project: String, songSHA256: String, lyricsAlignment: LyricsAlignmentProof?) {
+    init(project: String, songSHA256: String, lyricsAlignment: LyricsAlignmentProof?,
+         recognizedLyrics: RecognizedLyricsProof? = nil) {
         schema = Self.currentSchema
         self.project = project
         self.songSHA256 = songSHA256
         self.lyricsAlignment = lyricsAlignment
+        self.recognizedLyrics = recognizedLyrics
     }
 }
 
@@ -92,5 +108,13 @@ enum AnalysisMeasurementProofStore {
 
     private static func sha256(_ data: Data) -> String {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func recognitionFingerprint(_ object: [String: Any]) throws -> String {
+        guard let transcript = object["recognized_lyrics"] as? [String: Any] else {
+            throw CocoaError(.coderInvalidValue)
+        }
+        return sha256(try JSONSerialization.data(withJSONObject: transcript,
+            options: [.sortedKeys, .withoutEscapingSlashes]))
     }
 }

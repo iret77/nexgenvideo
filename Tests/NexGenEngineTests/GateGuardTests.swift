@@ -8,6 +8,41 @@ import Testing
 /// stops the agent from advancing a phase whose real artifact (measured beats/downbeats) is missing.
 @Suite("Hard gates")
 struct GateGuardTests {
+    @Test("analysis gate binds recognized lyrics on both platform structure paths", arguments: [true, false])
+    func recognizedLyricsGate(systemHierarchy: Bool) throws {
+        let root = try tempRoot()
+        let url = try writeConsolidatedAnalysis(root, detectorBoundaries: [[16, 48], [16.4, 48.4]],
+            includeSystemHierarchy: systemHierarchy)
+        let source = root.appendingPathComponent("inputs/vocals.wav")
+        try FileManager.default.createDirectory(at: source.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("vocals".utf8).write(to: source)
+        let transcript = try RecognizedLyrics.transcript([
+            TranscribedWord(text: "Morning", start: 1, end: 2, confidence: 0.8),
+        ], sourcePath: "inputs/vocals.wav", duration: 64)
+        var object = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        object["recognized_lyrics"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(transcript))
+        var diagnostics = try #require(object["stage_diagnostics"] as? [[String: Any]])
+        diagnostics.append(["stage": "lyrics_recognition", "status": "succeeded"])
+        object["stage_diagnostics"] = diagnostics
+        try JSONSerialization.data(withJSONObject: object).write(to: url)
+        let previous = try AnalysisMeasurementProofStore.load(dataRoot: root)
+        try AnalysisMeasurementProofStore.save(AnalysisMeasurementProof(project: previous.project,
+            songSHA256: previous.songSHA256, lyricsAlignment: nil,
+            recognizedLyrics: .init(sourcePath: "inputs/vocals.wav",
+                sourceSHA256: try FileDigest.sha256(of: source),
+                transcriptSHA256: try AnalysisMeasurementProofStore.recognitionFingerprint(object))), dataRoot: root)
+        try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root)
+        let paths = try MusicvideoPipelineLineage.artifactPaths(phase: "analysis", dataRoot: root)
+        #expect(paths.contains("inputs/vocals.wav"))
+        let snapshot = try MusicvideoProductionLineageV2.snapshot(phase: "analysis", dataRoot: root)
+        try Data("changed vocals".utf8).write(to: source)
+        let changed = try MusicvideoProductionLineageV2.snapshot(phase: "analysis", dataRoot: root)
+        #expect(changed.artifactFingerprint != snapshot.artifactFingerprint)
+        #expect(throws: GateBlocked.self) {
+            try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root)
+        }
+    }
+
     private struct ExecutionPlanPublication: Codable {
         let schema: String
         let contextSHA256: String

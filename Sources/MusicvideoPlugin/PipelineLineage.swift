@@ -309,6 +309,9 @@ enum MusicvideoPipelineLineage {
                 if let sourcePath = proof.lyricsAlignment?.sourcePath {
                     files.append(try projectFile(sourcePath, dataRoot: dataRoot))
                 }
+                if let sourcePath = proof.recognizedLyrics?.sourcePath {
+                    files.append(try projectFile(sourcePath, dataRoot: dataRoot))
+                }
             }
             return files
         case "production_design":

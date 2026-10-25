@@ -27,7 +27,8 @@ All file paths below are relative to the **project data root**.
 - For A2: `analysis/<song>.json` — written by the A1 run with
   `schema=analysis/v3`, carrying **measured** `beats`, `downbeats`,
   `bpm`, canonical `sections`, measured `structure_candidates`,
-  `structure_resolution`, `stage_diagnostics`, `energy_curve`, `tempo_curve`.
+  `structure_resolution`, `stage_diagnostics`, `energy_curve`, `tempo_curve`,
+  and `recognized_lyrics` when no lyrics were supplied.
 
 ## What the analysis actually produces (read this first)
 
@@ -122,7 +123,7 @@ phase status identifies it. A decode failure can require a replacement track; an
 model or failed analysis stage does not establish a bad audio file. Follow the
 matching recovery path below. **Do not proceed to A2 or approve the gate on a failed run.**
 
-**Step 3 — Use the lyrics if they arrived (optional, improves labeling):**
+**Step 3 — Read supplied or recognized lyrics:**
 
 The host already offered the lyrics directly after the track; the user
 either supplied them or skipped them. Read `lyrics/lyrics.txt`; do not
@@ -131,8 +132,14 @@ offer your own lyrics dialog.
 - **Present** → lyrics are **preferred over guessing** for section labels:
   preserve lyric-derived labels already attached to their exact measured
   sections. Never remap markers by list position.
-- **Absent** → instrumental track or the user declined. Label
-  conservatively and move on.
+- **Absent** → read `recognized_lyrics` in the measured analysis artifact.
+  `recognized` contains unreviewed speech-recognition text, line/word timing and
+  model confidence when available. Use it as provisional lyrical context for
+  interpretation and section labels; it is not known-text alignment or proof of
+  section boundaries. `no_vocals_detected` reports no detected vocals;
+  `unavailable` or `failed` means recognition did not establish whether vocals exist.
+  Keep uncertainty visible and never write recognized text to `lyrics/lyrics.txt`.
+  Recognition language never changes the agent conversation language.
 
 After a successful run, continue with A2.
 
@@ -152,7 +159,8 @@ review decision; never summarize this state as fully resolved consensus.
 `run_phase(project_dir, "analysis")` was executed in A1;
 `analysis/<song>.json` exists with `schema=analysis/v3` and measured
 `beats`, `downbeats`, measured `sections`, `structure_candidates`,
-`structure_resolution`, `stage_diagnostics`, `energy_curve`, `tempo_curve`.
+`structure_resolution`, `stage_diagnostics`, `energy_curve`, `tempo_curve`,
+  and `recognized_lyrics` when no lyrics were supplied.
 
 ### A2 — Resume behavior (mandatory — check first)
 
@@ -241,6 +249,9 @@ Never hand-edit or rewrite the measured analysis artifact.
   availability-gated Apple Music Understanding strategy resolved on macOS 27.
   Reliable known-text alignment may provide a vocal time anchor; lyric text supplies
   the marker label and never invents timing.
+- `recognized_lyrics`: unreviewed local recognition with word times and heuristic
+  line grouping; confidence is omitted when the model did not supply it. An empty
+  vocal stem followed by mix-only text is explicitly degraded/provisional.
 - `stage_diagnostics`: explicit outcome of every optional analysis stage.
 - `energy_curve`, `tempo_curve`: for assessing dynamics.
 - Present only when their model/provider succeeded: `alignment`, `stems`,
@@ -277,8 +288,9 @@ Never hand-edit or rewrite the measured analysis artifact.
   explain the reported stage and recovery action; do not ask for a new track
   unless the evidence identifies the track as the cause. Retry after the failed
   stage or its input has changed, using the native retry action or `run_phase`.
-- Instrumental track / no lyrics → label sections conservatively from the
-  measured boundaries and flag low confidence; never invent labels as fact.
+- No detected vocals → label sections conservatively from measured boundaries.
+  Missing supplied lyrics alone does not establish an instrumental track.
+  Failed or unavailable recognition remains an explicit uncertainty, not silence.
 - `needs_review` structure → stop before interpretation; labels and prose cannot
   repair a missing bar grid or acoustic evidence. Report the persisted detail
   and stage diagnostics. Re-run only after the relevant input or failed analysis
