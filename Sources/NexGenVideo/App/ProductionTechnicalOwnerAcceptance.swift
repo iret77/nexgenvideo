@@ -10,6 +10,7 @@ enum ProductionTechnicalOwnerAcceptance {
         guard let shot = projection.shots.first, shot.sourceMode == .generated,
               context.editor.projectState?.nextPhaseName == "shotlist" else { throw failed("The actual generated Shot List must still await approval.") }
         try await ProductionV2PlanningAcceptance.selectPhase("shotlist", context: context, driver: driver)
+        try await requireCostState(shot.id, driver: driver)
         let initial = try await PipelineProductionPlanWriter.readCandidateSnapshot(shotID: shot.id, editor: editor)
         let desired = try changedSettings(initial)
         try driver.record("native technical begin", fields: ["shotID": shot.id, "fingerprint": initial.fingerprint])
@@ -60,6 +61,7 @@ enum ProductionTechnicalOwnerAcceptance {
               appliedShot.referenceDemands.map(\.assetID) == originalShot.referenceDemands.map(\.assetID),
               editor.projectState?.nextPhaseName == "shotlist" else { throw failed("Native technical changes altered editorial timing, another shot or its actual references.") }
         let afterApply = try await export(applied, label: "applied", root: root, driver: driver)
+        try await requireCostState(shot.id, driver: driver)
         let undo = try await restore(redo: false, expected: initial.proposal, shotID: shot.id, context: context, driver: driver)
         let afterUndo = try await export(undo, label: "undo", root: root, driver: driver)
         let redo = try await restore(redo: true, expected: applied.proposal, shotID: shot.id, context: context, driver: driver)
@@ -102,6 +104,15 @@ enum ProductionTechnicalOwnerAcceptance {
     private static func open(_ shotID: String, driver: ProductionVisualSourcesDriver) async throws -> NSWindow {
         try await driver.click("production.plan.edit." + shotID, in: driver.window)
         return try await driver.sheet("production.technical.delivery")
+    }
+
+    private static func requireCostState(_ shotID: String, driver: ProductionVisualSourcesDriver) async throws {
+        let probe = "production.plan.cost." + shotID
+        try await driver.wait("Shot List distinguishes route planning from a generation price") {
+            driver.text(probe, in: driver.window) == "not-quoted"
+        }
+        try await driver.reveal(probe, in: driver.window)
+        try driver.visible([probe], in: driver.window)
     }
 
     private static func enter(_ change: PipelineProductionPlanWriter.TechnicalChange,
