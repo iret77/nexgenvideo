@@ -19,6 +19,7 @@
           "items": [
             "Object context connects production sources with shots, generated media and timeline placements. Shared editing and postproduction controls remain available throughout production.",
             "Film review findings open their exact timeline range and affected clips. Changed cuts or sources require a current review before navigation.",
+            "Selecting a reviewed take shows the next planned video shot that still needs a selected take, without approving or generating it automatically.",
             "Preview, export and color scopes share the same GPU rendering context for video effects.",
             "Generation request review presents the exact model, source range, references and destination before submission. Late replacement results preserve clips changed during generation.",
             "Export provides delivery settings, output checks and a queue linked to the current cut.",

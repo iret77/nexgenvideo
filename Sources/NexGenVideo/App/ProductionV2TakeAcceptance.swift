@@ -8,7 +8,8 @@ enum ProductionV2TakeAcceptance {
 
     static func run(takeID: String, context: ProductionPlanningAcceptanceFixture.Context,
                     driver: ProductionVisualSourcesDriver,
-                    rangePlacement: RangePlacement = .withHandles) async throws -> ReviewedTakeRange.Stored {
+                    rangePlacement: RangePlacement = .withHandles,
+                    nextUnrenderedShotID: String? = nil) async throws -> ReviewedTakeRange.Stored {
         let editor = context.editor, root = context.dataRoot, window = driver.window
         guard let home = editor.workingRoot else { throw failed("The take project closed.") }
         let snapshot = try await TakeReview.capture(takeID: takeID, home: home)
@@ -92,6 +93,7 @@ enum ProductionV2TakeAcceptance {
             (try? PipelineProductionRenderWriter.requireSelected(shotID: snapshot.take.shotID, dataRoot: root).selection.takeID) == takeID
         }
         let wholeSelection = try await Task.detached { try PipelineProductionRenderWriter.requireSelected(shotID: snapshot.take.shotID, dataRoot: root) }.value
+        try await requireNextShot(nextUnrenderedShotID, driver: driver, sheet: sheet)
         guard wholeSelection.selection.nativeRange == nil, wholeSelection.record.output.sha256 == snapshot.take.output.sha256 else {
             throw failed("Whole-take selection is bound to different output or a range that was never chosen.")
         }
@@ -169,6 +171,7 @@ enum ProductionV2TakeAcceptance {
         try await driver.wait("native range selected for shot", seconds: 30) {
             (try? PipelineProductionRenderWriter.requireSelected(shotID: snapshot.take.shotID, dataRoot: root).selection.nativeRange?.id) == range.id
         }
+        try await requireNextShot(nextUnrenderedShotID, driver: driver, sheet: sheet)
         let timelineBeforeInsert = editor.timeline
         try await driver.click("take.range.add", in: sheet)
         try await driver.wait("reviewed range inserted", seconds: 30) { editor.timeline != timelineBeforeInsert }
@@ -201,6 +204,18 @@ enum ProductionV2TakeAcceptance {
             "sourceSHA256": range.review.source.sha256, "includedAvailableAudio": hasAudio,
             "insertUndoPreservedSelection": true, "selectionSHA256": selected.reference.sha256])
         return range
+    }
+
+    private static func requireNextShot(_ unrenderedShotID: String?, driver: ProductionVisualSourcesDriver,
+                                        sheet: NSWindow) async throws {
+        try await driver.wait("selected take exposes the next open shot or completed queue", seconds: 30) {
+            if let unrenderedShotID {
+                return driver.text("take.next.missing", in: sheet) == unrenderedShotID
+                    && driver.state("take.queue.complete", in: sheet) == nil
+            }
+            return driver.state("take.queue.complete", in: sheet) != nil
+                && driver.state("take.next.missing", in: sheet) == nil
+        }
     }
 
     private static func finding(_ text: String, start: Double, end: Double,
