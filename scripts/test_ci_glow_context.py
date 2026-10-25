@@ -120,14 +120,24 @@ class GlowContextTests(unittest.TestCase):
             def compile(args, **kwargs):
                 if args[0] == "xcrun":
                     Path(args[-1]).write_bytes(b"compiled")
+                    if args[1] == "swiftc":
+                        symbols=Path(args[-1]+".dSYM")
+                        symbols.mkdir();(symbols/"fixture-symbols").write_bytes(b"symbols")
                 elif "--sign" in args:
+                    self.assertEqual(sorted(path.name for path in (root/"products"/glow.APP/"Contents/MacOS").iterdir()),["NGVBuiltinBlur"])
+                    self.assertEqual((root/"products"/(glow.APP+".dSYM")/"fixture-symbols").read_bytes(),b"symbols")
                     seal=root/"products"/glow.SEAL
                     seal.parent.mkdir();seal.write_bytes(b"seal")
                     (root/"products"/glow.BINARY).write_bytes(b"signed")
                 else:
                     self.assertTrue((root/"products"/glow.SEAL).exists())
+            def toolchain(folder,sdk):
+                self.assertEqual(sdk,binding["originalSDK"][2])
+                (folder/"toolchain.json").write_text("{}")
+                return {}
             with patch.object(glow, "bound", return_value=binding), patch.object(glow,"command",side_effect=command), \
-                    patch.object(glow.subprocess,"run",side_effect=compile) as calls, patch.object(glow,"build_version",return_value=binding["originalSDK"]):
+                    patch.object(glow.subprocess,"run",side_effect=compile) as calls, patch.object(glow,"build_version",return_value=binding["originalSDK"]), \
+                    patch.object(glow,"toolchain_identity",side_effect=toolchain):
                 glow.compile_products(root/"products",metadata)
             args=[c.args[0] for c in calls.call_args_list]
             self.assertEqual(args[0][:5], ["xcrun","metal","-c","-fcikernel",glow.METAL])
@@ -138,6 +148,37 @@ class GlowContextTests(unittest.TestCase):
             self.assertEqual(proof["files"][glow.BINARY],hashlib.sha256(b"signed").hexdigest())
             self.assertEqual(args[3][:4],["codesign","--force","--sign","-"])
             self.assertEqual(args[4][:3],["codesign","--verify","--strict"])
+
+    def test_toolchain_allows_equivalent_environment_but_rejects_effective_drift(self):
+        developer="/Applications/Xcode_27.app/Contents/Developer"
+        compiler=developer+"/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+        sdk=developer+"/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.sdk"
+        value=dict(environment=dict(SDKROOT=sdk,TOOLCHAINS="com.apple.dt.toolchain.XcodeDefault",MACOSX_DEPLOYMENT_TARGET="26.0"),
+            xcrun="/usr/bin/xcrun",developer=developer,swiftc=compiler,selectedSDK=sdk,defaultSDK=sdk,sdkVersion="27.0")
+        glow.validate_toolchain(value,27<<16)
+        for key,bad in (("xcrun","/other/xcrun"),("swiftc","/other/swiftc"),("selectedSDK","/other/SDK"),
+                ("defaultSDK","/other/SDK"),("sdkVersion","26.0")):
+            with self.subTest(key=key),self.assertRaises(ValueError):glow.validate_toolchain(dict(value,**{key:bad}),27<<16)
+        for key,bad in (("MACOSX_DEPLOYMENT_TARGET","27.0"),("MACOSX_DEPLOYMENT_TARGET","garbage"),
+                ("NGV_XCRUN","/other/xcrun"),("SWIFT_EXEC","/other/swiftc")):
+            changed=deepcopy(value);changed["environment"][key]=bad
+            with self.subTest(envKey=key,bad=bad),self.assertRaises(ValueError):glow.validate_toolchain(changed,27<<16)
+
+    def test_toolchain_records_actual_selection_before_rejecting_it(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            def command(args):
+                if args==["xcode-select","-p"]:return "/Applications/Xcode_27.app/Contents/Developer"
+                if args==["xcrun","--show-sdk-version"]:return "27.0"
+                return "/wrong/selection"
+            with patch.dict(os.environ,SDKROOT="/wrong/SDK",TOOLCHAINS="custom"), \
+                    patch.object(glow,"command",side_effect=command),patch.object(glow.shutil,"which",return_value="/usr/bin/xcrun"):
+                with self.assertRaises(ValueError):glow.toolchain_identity(root,27<<16)
+            value=json.loads((root/"toolchain.json").read_text())
+            self.assertEqual(value["environment"]["SDKROOT"],"/wrong/SDK")
+            self.assertEqual(value["environment"]["TOOLCHAINS"],"custom")
+            self.assertEqual(value["swiftc"],"/wrong/selection")
+            self.assertFalse(value["errors"])
 
     def test_decision_table_requires_control_faults_and_exposure_before_interpretation(self):
         for valid, exposure, target, abnormal, expected in (

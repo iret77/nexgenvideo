@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import plistlib
 import re
+import shutil
 import subprocess
 import time
 import zipfile
@@ -78,6 +79,47 @@ def interpretation(result):
 def resource_proof(folder, expected):
     if json.loads((folder / "resources.json").read_text()) != expected:
         raise ValueError("Process resolved different shader bytes")
+
+
+def toolchain_identity(folder, expected_sdk):
+    keys = ("NGV_XCRUN", "SDKROOT", "MACOSX_DEPLOYMENT_TARGET", "TOOLCHAINS", "SWIFT_EXEC")
+    value = {"environment": {k: os.environ[k] for k in keys if os.environ.get(k)}, "errors": {},
+        "xcrun": str(Path(shutil.which("xcrun") or "missing-xcrun").resolve())}
+    probes = {"developer": ["xcode-select", "-p"], "swiftc": ["xcrun", "--find", "swiftc"],
+        "selectedSDK": ["xcrun", "--show-sdk-path"], "defaultSDK": ["xcrun", "--sdk", "macosx", "--show-sdk-path"],
+        "sdkVersion": ["xcrun", "--show-sdk-version"], "metal": ["xcrun", "--find", "metal"],
+        "metallib": ["xcrun", "--find", "metallib"]}
+    for name, args in probes.items():
+        try:
+            output = command(args).strip()
+            value[name] = output if name == "sdkVersion" else str(Path(output).resolve())
+        except Exception as error:
+            value["errors"][name] = str(error)
+    save(folder / "toolchain.json", value)
+    if value["errors"]:
+        raise ValueError("Cannot identify selected toolchain; see toolchain.json")
+    validate_toolchain(value, expected_sdk)
+    return value
+
+
+def validate_toolchain(value, expected_sdk):
+    env = value["environment"]
+    def version(text):
+        if not re.fullmatch(r"\d+(?:\.\d+){0,2}", text):
+            raise ValueError("Invalid toolchain/deployment version")
+        parts = tuple(int(x) for x in text.split("."))
+        return parts + (0,) * (3 - len(parts))
+    expected_version = (expected_sdk >> 16, (expected_sdk >> 8) & 255, expected_sdk & 255)
+    if (value["xcrun"] != "/usr/bin/xcrun" or value["selectedSDK"] != value["defaultSDK"]
+            or not Path(value["defaultSDK"]).is_relative_to(Path(value["developer"]) / "Platforms/MacOSX.platform")
+            or value["swiftc"] != str((Path(value["developer"]) / "Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc").resolve())
+            or version(value["sdkVersion"]) != expected_version):
+        raise ValueError("Selected compiler or SDK differs from original Xcode; see toolchain.json")
+    for key, expected in (("NGV_XCRUN", value["xcrun"]), ("SWIFT_EXEC", value["swiftc"])):
+        if env.get(key) and str(Path(shutil.which(env[key]) or env[key]).resolve()) != expected:
+            raise ValueError("Product compiler override differs from selected toolchain; see toolchain.json")
+    if env.get("MACOSX_DEPLOYMENT_TARGET") and not (10, 0, 0) <= version(env["MACOSX_DEPLOYMENT_TARGET"]) <= (26, 0, 0):
+        raise ValueError("Shader deployment override exceeds the product floor; see toolchain.json")
 
 
 def segment(source, start, end):
@@ -221,19 +263,19 @@ def compile_products(folder, metadata):
     xcode = command(["xcodebuild", "-version"]).strip()
     if xcode != "Xcode 27.0\nBuild version 27A266a" or command(["uname", "-m"]).strip() != "arm64":
         raise ValueError("Original Xcode toolchain differs")
-    if any(os.environ.get(k) for k in ("NGV_XCRUN", "SDKROOT", "MACOSX_DEPLOYMENT_TARGET", "TOOLCHAINS", "SWIFT_EXEC")):
-        raise ValueError("Ambient toolchain or deployment overrides")
+    selected_toolchain = toolchain_identity(folder, binding["originalSDK"][2])
     contract = binding["compilation"]
     binary, library, info = (folder / name for name in (BINARY, LIBRARY, INFO))
     binary.parent.mkdir(parents=True)
     library.parent.mkdir(parents=True)
     info.write_bytes(plistlib.dumps({"CFBundleIdentifier": "de.h5ventures.nexgenvideo.glow-context-diagnostic",
         "CFBundleExecutable": "NGVBuiltinBlur", "CFBundlePackageType": "APPL", "LSUIElement": True}))
+    unbundled = folder / "NGVBuiltinBlur"
     commands = [
         ["xcrun", "metal", "-c", "-fcikernel", METAL, "-o", str(folder / "Glow.air")],
         ["xcrun", "metallib", "-cikernel", str(folder / "Glow.air"), "-o", str(library)],
         ["xcrun", "swiftc", *contract["swiftFlags"], "-target", contract["target"],
-         str(metadata / "main.swift"), KERNEL, LOADER, "-o", str(binary)],
+         str(metadata / "main.swift"), KERNEL, LOADER, "-o", str(unbundled)],
         ["codesign", "--force", "--sign", "-", str(folder / APP)],
         ["codesign", "--verify", "--strict", str(folder / APP)],
         ["codesign", "--display", "--verbose=4", str(folder / APP)],
@@ -241,10 +283,14 @@ def compile_products(folder, metadata):
     for index, args in enumerate(commands):
         with (folder / f"compile-{index}.log").open("xb") as out:
             subprocess.run(args, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT, timeout=120, check=True)
+        if index == 2:
+            unbundled.rename(binary)
+            (folder / "NGVBuiltinBlur.dSYM").rename(folder / (APP + ".dSYM"))
     if build_version(binary.read_bytes()) != binding["originalSDK"]:
         raise ValueError("New SDK/minimum/platform differs from original")
     save(folder / "binary.json", {"harnessSHA": binding["harnessSHA"], "bindingSHA256": digest(metadata / "binding.json"),
         "generatedSHA256": binding["generatedSHA256"], "commands": commands, "xcode": xcode,
+        "toolchain": selected_toolchain, "toolchainReceiptSHA256": digest(folder / "toolchain.json"),
         "swift": command(["xcrun", "swiftc", "--version"]), "uuid": command(["dwarfdump", "--uuid", str(binary)]),
         "files": {name: digest(folder / name) for name in sorted(BUNDLE_FILES)},
         "diagnosticOnly": True, "productAcceptance": False})
