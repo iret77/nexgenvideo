@@ -313,21 +313,21 @@ class CIWorkflowTests(unittest.TestCase):
         self.assertNotIn("pattern: native-evidence-*", gate)
         self.assertIn("cancel-in-progress: false", workspace)
 
-    def test_only_the_light_pull_request_check_starts_automatically(self):
+    def test_only_linux_pull_request_checks_start_automatically(self):
+        allowed = {PR_CHECKS, WORKFLOWS / "ci-lint.yml"}
         for path in sorted(WORKFLOWS.glob("*.yml")):
             automatic = set(triggers(path)) & AUTOMATIC_TRIGGERS
             with self.subTest(workflow=path.name):
-                if path == PR_CHECKS:
-                    self.assertEqual(automatic, {"pull_request"})
-                else:
-                    self.assertEqual(automatic, set())
-        text = PR_CHECKS.read_text()
-        header = text.split("jobs:", 1)[0].splitlines()
-        self.assertFalse(any(line.strip().startswith(("paths:", "paths-ignore:")) for line in header))
-        self.assertNotIn("runs-on: macos", text)
-        self.assertNotIn("runs-on: xcode", text)
-        self.assertNotIn("runs-on: macrunner", text)
-        self.assertNotIn("uses: ./.github/workflows/", text)
+                self.assertEqual(automatic, {"pull_request"} if path in allowed else set())
+        for path in sorted(allowed):
+            with self.subTest(workflow=path.name):
+                text = path.read_text()
+                header = text.split("jobs:", 1)[0].splitlines()
+                self.assertFalse(any(line.strip().startswith(("paths:", "paths-ignore:")) for line in header))
+                runners = [line.split(":", 1)[1].strip() for line in text.splitlines()
+                           if line.strip().startswith("runs-on:")]
+                self.assertEqual(runners, ["ubuntu-24.04"])
+                self.assertNotIn("uses: ./.github/workflows/", text)
 
     def test_macos_builds_use_macrunner_and_runtime_acceptance_keeps_the_macos_26_floor(self):
         for path in sorted(WORKFLOWS.glob("*.yml")):
