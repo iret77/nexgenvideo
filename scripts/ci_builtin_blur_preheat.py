@@ -341,11 +341,11 @@ def abnormal_phase(folder, context):
     return "later-rounds"
 
 
-def summarize(folder, children, reports, invalid):
+def summarize(folder, children, reports, invalid, *, arms=("cold", "warm")):
     counts = {arm: dict(processes=0, abnormal=0, targetFaults=0, unknownAbnormal=0,
         clean=0, completeFirstRounds=0, overlappingFirstRounds=0, overlappingRounds=0,
         abnormalPhases={phase: 0 for phase in ("warmup-incomplete", "after-warmup-before-measured-ready",
-            "round-zero-incomplete", "later-rounds", "timeout")}) for arm in ("cold", "warm")}
+            "round-zero-incomplete", "later-rounds", "timeout")}) for arm in arms}
     for name, c in children:
         count = counts[c["arm"]]
         count["processes"] += 1
@@ -380,7 +380,7 @@ def summarize(folder, children, reports, invalid):
     exposure = all(c["completeFirstRounds"] > 0 and c["clean"] > 0
         and c["overlappingFirstRounds"] / c["completeFirstRounds"] >= 0.8
         and c["overlappingRounds"] / (c["clean"] * 4) >= 0.8 for c in counts.values())
-    a, b = counts["cold"]["abnormal"], counts["warm"]["abnormal"]
+    a, b = counts[arms[0]]["abnormal"], counts[arms[1]]["abnormal"]
     total = a + b
     p = (sum(math.comb(PER_ARM, k) * math.comb(PER_ARM, total-k)
         for k in range(a, min(PER_ARM, total) + 1) if 0 <= total-k <= PER_ARM)
@@ -388,8 +388,8 @@ def summarize(folder, children, reports, invalid):
     valid = complete and not invalid
     outcome = "invalid" if not valid else "inconclusive"
     if valid and b:
-        outcome = "warm-arm-abnormal"
-    elif valid and exposure and counts["cold"]["targetFaults"] >= 7:
+        outcome = arms[1] + "-arm-abnormal"
+    elif valid and exposure and counts[arms[0]]["targetFaults"] >= 7:
         outcome = "association-candidate"
     return {"diagnosticOnly": True, "productAcceptance": False, "outcome": outcome,
         "valid": valid, "complete": complete, "exposureValid": exposure, "counts": counts,
