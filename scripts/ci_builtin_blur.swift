@@ -89,7 +89,7 @@ func render(round: Int, lane: Int, folder: String, ready: DispatchSemaphore,
     }
 }
 
-guard CommandLine.arguments.count == 4 else { exit(2) }
+guard [4, 5].contains(CommandLine.arguments.count) else { exit(2) }
 let folder = CommandLine.arguments[1]
 let calibration = CommandLine.arguments[2] == "calibration"
 guard calibration || CommandLine.arguments[2] == "measured" else { exit(2) }
@@ -102,6 +102,32 @@ guard !environment.keys.contains(where: {
     $0 == "NSDeallocateZombies" || $0 == "METAL_DEVICE_WRAPPER_TYPE"
 }), environment["SWIFT_BACKTRACE"] == "enable=yes,interactive=no,demangle=yes,cache=no" else { exit(2) }
 guard !scribble || (environment["MallocScribble"] == "1" && environment["MallocDebugReport"] == "stderr") else { exit(2) }
+let arm = CommandLine.arguments.count == 5 ? CommandLine.arguments[4] : "cold"
+guard ["cold", "warm"].contains(arm), arm != "warm" || (!calibration && !scribble) else { exit(2) }
+if arm == "warm" {
+    let warmFolder = URL(fileURLWithPath: folder).appendingPathComponent("warmup")
+    do {
+        try FileManager.default.createDirectory(at: warmFolder, withIntermediateDirectories: false)
+        guard FileManager.default.createFile(atPath: warmFolder.appendingPathComponent("lane-0.jsonl").path,
+                                             contents: Data()) else { exit(2) }
+    } catch { exit(2) }
+    let finished = DispatchSemaphore(value: 0)
+    Thread.detachNewThread {
+        do {
+            try autoreleasepool {
+                let go = DispatchSemaphore(value: 0)
+                go.signal()
+                try render(round: -1, lane: 0, folder: warmFolder.path,
+                           ready: DispatchSemaphore(value: 0), go: go)
+            }
+        } catch {
+            FileHandle.standardError.write(Data("warmup failed: \(error)\n".utf8))
+            exit(2)
+        }
+        finished.signal()
+    }
+    guard finished.wait(timeout: .now() + 30) == .success else { exit(2) }
+}
 let start = DispatchTime.now().uptimeNanoseconds
 var round = 0
 repeat {

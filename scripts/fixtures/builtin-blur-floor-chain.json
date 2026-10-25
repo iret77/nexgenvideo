@@ -1,0 +1,284 @@
+{
+  "originalReportSHA256": "220d840d9656f0f32adcb6adf6528ebc44376e2d50a4f2ea118ccd1ee35b2b1c",
+  "report": {
+    "osVersion": {
+      "build": "25G83"
+    },
+    "usedImages": [
+      {
+        "uuid": "eca195c6-44b0-4751-ad17-facb4e8f32bf",
+        "name": "NGVBuiltinBlur"
+      },
+      {
+        "uuid": "aae20d61-da81-3422-9b0a-baa2e16c93a4",
+        "name": "AppleParavirtGPUMetalIOGPUFamily"
+      },
+      {
+        "uuid": "c6a4a4cb-92e6-3baf-aae0-e8306259209a",
+        "name": "libsystem_kernel.dylib"
+      },
+      {
+        "uuid": "b2000cd5-f580-314a-a141-e036719d854e",
+        "name": "libdispatch.dylib"
+      },
+      {
+        "uuid": "74e52480-c2bd-3c8d-812d-95fe2b74a096",
+        "name": "dyld"
+      },
+      {
+        "uuid": "00000000-0000-0000-0000-000000000000"
+      },
+      {
+        "uuid": "03bd9e32-cf0a-37b0-898a-3ce8de06d842",
+        "name": "libobjc.A.dylib"
+      },
+      {
+        "uuid": "91dace39-fa28-3191-818d-1fcc6a0e615a",
+        "name": "Foundation"
+      },
+      {
+        "uuid": "dbb5f038-e085-39c8-a9bf-c3b3cb3f6fd5",
+        "name": "MPSCore"
+      },
+      {
+        "uuid": "a0be8307-7ecf-3ab8-b382-3e4059c85778",
+        "name": "MPSImage"
+      },
+      {
+        "uuid": "0943679d-ff88-3f18-be4b-d8b4827ab0b5",
+        "name": "CoreImage"
+      },
+      {
+        "uuid": "a373f0b0-9880-326a-88b4-dd8be4e33072",
+        "name": "libsystem_pthread.dylib"
+      },
+      {
+        "uuid": "12372585-df92-33ef-b632-714faa13260a",
+        "name": "IOKit"
+      },
+      {
+        "uuid": "d969a907-3e43-3951-9365-8c2db3812e9d",
+        "name": "libsystem_malloc.dylib"
+      },
+      {
+        "uuid": "9b672762-7b1f-30bc-96de-f176b372d66d",
+        "name": "CoreFoundation"
+      },
+      {
+        "uuid": "493e76d9-74d4-333b-a3b2-e5f9bc86429d",
+        "name": "Metal"
+      }
+    ],
+    "threads": [
+      {
+        "triggered": true,
+        "frames": [
+          {
+            "imageOffset": 38944,
+            "symbol": "objc_msgSend",
+            "symbolLocation": 32,
+            "imageIndex": 6
+          },
+          {
+            "imageOffset": 353120,
+            "symbol": "-[NSData(NSData) getBytes:length:]",
+            "symbolLocation": 72,
+            "imageIndex": 7
+          },
+          {
+            "imageOffset": 125112,
+            "imageIndex": 1
+          },
+          {
+            "imageOffset": 53984,
+            "imageIndex": 1
+          },
+          {
+            "imageOffset": 482332,
+            "imageIndex": 8
+          },
+          {
+            "imageOffset": 481436,
+            "symbol": "MPSAutoCache::GetTempTexture(MPSPixelInfo const*, MTLSize const*, MTLTextureDescriptor*, bool, TextureSizeAndAlign*, bool)",
+            "symbolLocation": 492,
+            "imageIndex": 8
+          },
+          {
+            "imageOffset": 224976,
+            "imageIndex": 9
+          },
+          {
+            "imageOffset": 114428,
+            "imageIndex": 9
+          },
+          {
+            "imageOffset": 117948,
+            "imageIndex": 9
+          },
+          {
+            "imageOffset": 1160780,
+            "symbol": "+[CIBlurProcessor processWithInputs:arguments:output:error:]",
+            "symbolLocation": 584,
+            "imageIndex": 10
+          },
+          {
+            "imageOffset": 1326420,
+            "symbol": "__65+[CIImageProcessorKernel applyWithExtent:inputs:arguments:error:]_block_invoke.194",
+            "symbolLocation": 1252,
+            "imageIndex": 10
+          },
+          {
+            "imageOffset": 2687512,
+            "symbol": "CI::ProcessorNode::render(CI::TileTask*, CI::Context*, std::__1::vector<CI::intermediate_t const*, std::__1::allocator<CI::intermediate_t const*>> const&, std::__1::vector<CI::intermediate_t const*, std::__1::allocator<CI::intermediate_t const*>> const&, CGRect const&, int) const",
+            "symbolLocation": 2000,
+            "imageIndex": 10
+          },
+          {
+            "imageOffset": 2392772,
+            "symbol": "CI::Context::render_processor_node(CI::TileTask*, CI::parentROI const&, __IOSurface*, void const*)",
+            "symbolLocation": 1388,
+            "imageIndex": 10
+          },
+          {
+            "imageOffset": 2370412,
+            "symbol": "CI::MetalContext::render_node(CI::TileTask*, CI::parentROI const&, CGRect const&, void const**, void const**, __IOSurface**, unsigned long)",
+            "symbolLocation": 1452,
+            "imageIndex": 10
+          },
+          {
+            "imageOffset": 2377376,
+            "symbol": "CI::MetalContext::render_intermediate_node(CI::TileTask*, CI::parentROI const&, CI::intermediate_t*, bool, void () block_pointer)",
+            "symbolLocation": 1272,
+            "imageIndex": 10
+          },
+          {
+            "imageOffset": 2388708,
+            "symbol": "CI::Context::recursive_render(CI::TileTask*, CI::roiKey const&, CI::Node const*, bool)",
+            "symbolLocation": 3228,
+            "imageIndex": 10
+          },
+          {
+            "imageOffset": 2387392,
+            "symbol": "CI::Context::recursive_render(CI::TileTask*, CI::roiKey const&, CI::Node const*, bool)",
+            "symbolLocation": 1912,
+            "imageIndex": 10
+          },
+          {
+            "imageOffset": 127748,
+            "symbol": "CI::Context::render(CI::ProgramNode*, CGRect const&)",
+            "symbolLocation": 168,
+            "imageIndex": 10
+          },
+          {
+            "imageOffset": 2794800,
+            "symbol": "invocation function for block in CI::image_render(char const*, CI::Context*, CI::Image*, CI::RenderDestination const*)",
+            "symbolLocation": 72,
+            "imageIndex": 10
+          },
+          {
+            "imageOffset": 2815916,
+            "symbol": "CI::recursive_tile(CI::RenderTask*, CI::Context*, CI::RenderDestination const*, char const*, CI::GraphWithDepth, CGRect const&, CI::PixelFormat, CI::output_swizzle_info const&, CI::TileTask* (CI::ProgramNode*, CGRect) block_pointer)",
+            "symbolLocation": 4392,
+            "imageIndex": 10
+          },
+          {
+            "imageOffset": 2794324,
+            "symbol": "CI::tile_node_graph(CI::Context*, CI::RenderDestination const*, char const*, CI::GraphWithDepth, CGRect const&, CI::PixelFormat, CI::output_swizzle_info const&, CI::TileTask* (CI::ProgramNode*, CGRect) block_pointer)",
+            "symbolLocation": 456,
+            "imageIndex": 10
+          },
+          {
+            "imageOffset": 2793208,
+            "symbol": "CI::image_render(char const*, CI::Context*, CI::Image*, CI::RenderDestination const*)",
+            "symbolLocation": 320,
+            "imageIndex": 10
+          },
+          {
+            "imageOffset": 2779176,
+            "symbol": "CI::RenderToTexture<CI::Texture>::render_to_texture(CI::Image*, CI::Context*, CGSize const&, CI::Texture) const",
+            "symbolLocation": 132,
+            "imageIndex": 10
+          },
+          {
+            "imageOffset": 2780360,
+            "symbol": "CI::RenderToMTLTexture::render(CI::Image*, CI::Context*) const",
+            "symbolLocation": 316,
+            "imageIndex": 10
+          },
+          {
+            "imageOffset": 107332,
+            "symbol": "-[CIRenderDestination _render:withContext:]",
+            "symbolLocation": 1020,
+            "imageIndex": 10
+          },
+          {
+            "imageOffset": 105140,
+            "symbol": "-[CIContext(CIRenderDestination) _startTaskToRender:toDestination:forPrepareRender:forClear:error:]",
+            "symbolLocation": 2516,
+            "imageIndex": 10
+          },
+          {
+            "imageOffset": 102128,
+            "symbol": "-[CIContext(CIRenderDestination) startTaskToRender:fromRect:toDestination:atPoint:error:]",
+            "symbolLocation": 120,
+            "imageIndex": 10
+          },
+          {
+            "imageOffset": 16504,
+            "symbol": "render(round:lane:folder:ready:go:)",
+            "symbolLocation": 5836,
+            "imageIndex": 0
+          },
+          {
+            "imageOffset": 10592,
+            "symbol": "closure #1 in closure #3 in ",
+            "symbolLocation": 84,
+            "imageIndex": 0
+          },
+          {
+            "imageOffset": 42092,
+            "symbol": "partial apply for closure #1 in closure #3 in ",
+            "symbolLocation": 48,
+            "imageIndex": 0
+          },
+          {
+            "imageOffset": 21632,
+            "symbol": "autoreleasepool<A, B>(invoking:)",
+            "symbolLocation": 144,
+            "imageIndex": 0
+          },
+          {
+            "imageOffset": 9936,
+            "symbol": "closure #3 in ",
+            "symbolLocation": 284,
+            "imageIndex": 0
+          },
+          {
+            "imageOffset": 24584,
+            "symbol": "thunk for @escaping @callee_guaranteed @Sendable () -> ()",
+            "symbolLocation": 48,
+            "imageIndex": 0
+          },
+          {
+            "imageOffset": 11652344,
+            "symbol": "__NSThread__block_start__",
+            "symbolLocation": 76,
+            "imageIndex": 7
+          },
+          {
+            "imageOffset": 27736,
+            "symbol": "_pthread_start",
+            "symbolLocation": 136,
+            "imageIndex": 11
+          },
+          {
+            "imageOffset": 7196,
+            "symbol": "thread_start",
+            "symbolLocation": 8,
+            "imageIndex": 11
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -6,7 +6,7 @@ on:
       candidate_kind:
         description: Signed release verification or targeted failed CI diagnostics
         type: choice
-        options: [signed-release, ci-runtime, ci-bpy-open-diagnostic, ci-app-test-diagnostic, ci-app-glow-replay, ci-app-full-replay, ci-builtin-blur, ci-builtin-blur-scribble, ci-builtin-blur-floor]
+        options: [signed-release, ci-runtime, ci-bpy-open-diagnostic, ci-app-test-diagnostic, ci-app-glow-replay, ci-app-full-replay, ci-builtin-blur, ci-builtin-blur-scribble, ci-builtin-blur-floor, ci-builtin-blur-preheat]
         default: signed-release
       run_id:
         description: "Original producer workflow run"
@@ -105,6 +105,23 @@ jobs:
           python3 -m unittest discover -s scripts -p 'test_appkit_host_stale_diagnostic.py'
           python3 -m unittest discover -s scripts -p 'test_runloop_probe_preparation.py'
           python3 -m unittest discover -s scripts -p 'test_ci_workflow.py'
+      - name: Verify and bind standalone preheat comparison
+        if: inputs.candidate_kind == 'ci-builtin-blur-preheat'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_ci_builtin_blur*.py'
+          python3 -m unittest discover -s scripts -p 'test_run_macos_tests.py'
+          python3 -m unittest discover -s scripts -p 'test_diagnostic_acceptance.py'
+          python3 -m unittest discover -s scripts -p 'test_ci_workflow.py'
+          python3 scripts/ci_builtin_blur_preheat.py bind --evidence "$RUNNER_TEMP/preheat-binding"
+      - uses: actions/upload-artifact@v4
+        if: always() && inputs.candidate_kind == 'ci-builtin-blur-preheat'
+        with:
+          name: preheat-binding
+          path: ${{ runner.temp }}/preheat-binding
+          if-no-files-found: error
+          retention-days: 90
       - name: Verify and bind original standalone floor runtime
         if: inputs.candidate_kind == 'ci-builtin-blur-floor'
         env:
@@ -164,7 +181,7 @@ jobs:
           retention-days: 90
 
       - name: Bind the successful release job and immutable artifact
-        if: inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor'
+        if: inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor' && inputs.candidate_kind != 'ci-builtin-blur-preheat'
         env:
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_KIND: ${{ inputs.candidate_kind }}
@@ -188,7 +205,7 @@ jobs:
             "$CANDIDATE_ARTIFACT" "$CANDIDATE_DIGEST" "$RUNNER_TEMP/candidate-metadata" \
             --candidate-kind "$CANDIDATE_KIND" "${extra[@]}"
       - uses: actions/upload-artifact@v4
-        if: inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor'
+        if: inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor' && inputs.candidate_kind != 'ci-builtin-blur-preheat'
         with:
           name: diagnostic-candidate-identity
           path: ${{ runner.temp }}/candidate-metadata/*.json
@@ -242,6 +259,54 @@ jobs:
         with:
           name: builtin-blur-${{ github.run_id }}-a${{ github.run_attempt }}
           path: ${{ runner.temp }}/builtin-blur
+          if-no-files-found: error
+          retention-days: 90
+
+  ci-builtin-blur-preheat-build:
+    needs: source
+    if: inputs.candidate_kind == 'ci-builtin-blur-preheat'
+    runs-on: macrunner
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: preheat-binding
+          path: ${{ runner.temp }}/preheat-binding
+      - name: Compile standalone comparison executable
+        run: python3 scripts/ci_builtin_blur_preheat.py compile --metadata "$RUNNER_TEMP/preheat-binding" --evidence "$RUNNER_TEMP/preheat-products"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: preheat-products
+          path: ${{ runner.temp }}/preheat-products
+          if-no-files-found: error
+          retention-days: 90
+
+  ci-builtin-blur-preheat:
+    needs: ci-builtin-blur-preheat-build
+    if: inputs.candidate_kind == 'ci-builtin-blur-preheat'
+    # ci-lint: allow-CI005 Compare the exact macOS 26 GPU runtime without rebuilding the App.
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: preheat-binding
+          path: ${{ runner.temp }}/preheat-binding
+      - uses: actions/download-artifact@v4
+        with:
+          name: preheat-products
+          path: ${{ runner.temp }}/preheat-products
+      - name: Run bounded standalone preheat comparison
+        timeout-minutes: 25
+        run: python3 scripts/ci_builtin_blur_preheat.py run --metadata "$RUNNER_TEMP/preheat-binding" --products "$RUNNER_TEMP/preheat-products" --evidence "$RUNNER_TEMP/preheat-runtime"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: preheat-runtime-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/preheat-runtime
           if-no-files-found: error
           retention-days: 90
 
