@@ -64,7 +64,7 @@ jobs:
             test -n "$API_MODEL"
             test -n "$NGV_CI_ANTHROPIC_KEY" || { echo '::error::Missing CI secret ANTHROPIC_API_KEY'; exit 1; }
           fi
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ inputs.source_sha }}
           persist-credentials: false
@@ -96,7 +96,7 @@ jobs:
           if test "$BACKEND" = both || test "$BACKEND" = anthropicAPI; then
             python3 scripts/agent_backend_live_acceptance.py --backend anthropicAPI --source "$GITHUB_SHA" --output "$RUNNER_TEMP/agent-backend-live/anthropicAPI"
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: existing-claude-backends-live-evidence

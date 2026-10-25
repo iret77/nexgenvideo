@@ -25,7 +25,7 @@ struct EffectModelTests {
     /// The master curve is a true luma curve: lifting it raises luminance while keeping
     /// the R:G:B ratio (chroma) of a non-clipping voxel constant.
     @Test func masterCurveIsLumaPreservingChroma() {
-        let ctx = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
+        let ctx = VideoRenderContext.context
         let curve = GradeCurve(master: [CurvePoint(x: 0, y: 0.2), CurvePoint(x: 1, y: 1)])
         let (inR, inG, inB) = (0.6, 0.45, 0.3)
         let img = CIImage(color: CIColor(red: inR, green: inG, blue: inB)).cropped(to: CGRect(x: 0, y: 0, width: 4, height: 4))
@@ -42,7 +42,7 @@ struct EffectModelTests {
     }
 
     @Test func colorWheelGainMasterScalesAllChannels() {
-        let ctx = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
+        let ctx = VideoRenderContext.context
         let p = ResolvedEffectParams(values: [
             "lift_x": 0, "lift_y": 0, "lift_m": 0,
             "gamma_x": 0, "gamma_y": 0, "gamma_m": 1,

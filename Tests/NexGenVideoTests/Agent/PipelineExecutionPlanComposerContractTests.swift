@@ -5,6 +5,25 @@ import NexGenEngine
 
 @Suite("Pipeline execution-plan composer contract")
 struct PipelineExecutionPlanComposerContractTests {
+    @Test("historical analysis inputs retain recognized audio and fail when it is missing")
+    func recognizedAudioInput() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("audio"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("analysis"), withIntermediateDirectories: true)
+        try Data("track".utf8).write(to: root.appendingPathComponent("audio/song.wav"))
+        try Data("{}".utf8).write(to: root.appendingPathComponent("analysis/song.json"))
+        let proof: [String: Any] = ["schema": "analysis_measurement_proof/v1", "project": "test", "song_sha256": "test",
+            "recognized_lyrics": ["source_path": "analysis/vocals.wav"]]
+        try JSONSerialization.data(withJSONObject: proof).write(to: root.appendingPathComponent("analysis/song.measurement-proof.json"))
+        #expect(throws: (any Error).self) {
+            try PipelineExecutionPlanComposer.historicalPhaseArtifactPaths(phaseID: "analysis", dataRoot: root)
+        }
+        try Data("vocals".utf8).write(to: root.appendingPathComponent("analysis/vocals.wav"))
+        let paths = try PipelineExecutionPlanComposer.historicalPhaseArtifactPaths(phaseID: "analysis", dataRoot: root)
+        #expect(paths.contains("analysis/vocals.wav"))
+        #expect(paths.contains("analysis/song.measurement-proof.json"))
+    }
+
     @MainActor
     @Test("fractional shots route the whole render including handles through the provider envelope")
     func renderDurationMatchesProviderRequest() throws {

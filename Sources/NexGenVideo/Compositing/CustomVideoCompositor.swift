@@ -7,18 +7,7 @@ final class CustomVideoCompositor: NSObject, AVVideoCompositing, @unchecked Send
 
     struct RenderError: Error {}
 
-    // Shared across all instances. Color management off so CI keeps source pixels raw.
-    static let ciContext: CIContext = {
-        let options: [CIContextOption: Any] = [
-            .workingColorSpace: NSNull(),
-            .outputColorSpace: NSNull(),
-            .cacheIntermediates: true,
-        ]
-        if let device = MTLCreateSystemDefaultDevice() {
-            return CIContext(mtlDevice: device, options: options)
-        }
-        return CIContext(options: options)
-    }()
+    static let ciContext = VideoRenderContext.context
 
     private let queue = DispatchQueue(label: "de.h5ventures.nexgenvideo.compositor", qos: .userInteractive)
     private let lock = NSLock()

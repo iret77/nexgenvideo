@@ -17,13 +17,31 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class GlowContextTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.original = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls.original.cleanup)
+        cls.root = Path(cls.original.name)
+        for name in glow.CHANGED | glow.DEPENDENCIES:
+            path = cls.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes((ROOT / name).read_bytes())
+        fixture = (ROOT / "scripts/fixtures/glow-context-original-compositor.swift").read_bytes()
+        if hashlib.sha256(fixture).hexdigest() != "e5c89675d215ab4fff07f6c519a50434565a975fa477d050110074ee3eec81da":
+            raise AssertionError("Historical producer compositor fixture changed")
+        (cls.root / glow.COMPOSITOR).write_bytes(fixture)
+
+    def test_historical_generator_rejects_replaced_product_context(self):
+        with self.assertRaisesRegex(ValueError, "boundary changed or is ambiguous"):
+            glow.generated_source(ROOT)
+
     def test_generated_functions_preserve_original_gpu_render_body_and_production_context(self):
-        generated, receipt = glow.generated_source(ROOT)
-        source = (ROOT/glow.TEST_SOURCE).read_text()
+        generated, receipt = glow.generated_source(self.root)
+        source = (self.root/glow.TEST_SOURCE).read_text()
         original = source[source.index("    private func spot() throws -> CIImage {"):source.index("    @Test func neutralIsNoOp() throws {")]
         self.assertIn(original.replace("#require(", "required("), generated)
         self.assertEqual(receipt["fixtureFunctionsSHA256"], hashlib.sha256(original.encode()).hexdigest())
-        context_source = (ROOT/glow.COMPOSITOR).read_text()
+        context_source = (self.root/glow.COMPOSITOR).read_text()
         context = context_source[context_source.index("    static let ciContext: CIContext = {"):context_source.index("    private let queue =")]
         self.assertIn(context, generated)
         self.assertEqual(receipt["contextInitializerSHA256"], hashlib.sha256(context.encode()).hexdigest())
@@ -40,7 +58,7 @@ class GlowContextTests(unittest.TestCase):
             root = Path(temp)
             for name in (glow.TEST_SOURCE, glow.COMPOSITOR, glow.TEMPLATE):
                 (root/name).parent.mkdir(parents=True, exist_ok=True)
-                (root/name).write_bytes((ROOT/name).read_bytes())
+                (root/name).write_bytes((self.root/name).read_bytes())
             glow.generated_source(root)
             tests = (root/glow.TEST_SOURCE).read_text()
             for changed in (tests.replace("private let n = 48", "private let n = 64"),
@@ -52,7 +70,7 @@ class GlowContextTests(unittest.TestCase):
             with self.assertRaises(ValueError): glow.generated_source(root)
 
     def test_shader_is_actual_product_code_and_never_an_approximation_or_warmup(self):
-        generated, _ = glow.generated_source(ROOT)
+        generated, _ = glow.generated_source(self.root)
         self.assertIn("GlowKernel.apply", generated)
         self.assertNotIn('applyingFilter("CIColorMatrix"', generated)
         self.assertNotIn("prepareRender(", generated)
@@ -223,7 +241,7 @@ class GlowContextTests(unittest.TestCase):
                         self.assertEqual(download.call_args.kwargs,dict(run_id=glow.GLOW_BUILD_RUN,source_sha=glow.GLOW_BUILD_SOURCE))
 
     def test_shader_build_correction_rejects_any_additional_product_build_change(self):
-        corrected=(ROOT/glow.METAL_SCRIPT).read_text()
+        corrected=(self.root/glow.METAL_SCRIPT).read_text()
         original=corrected.replace(" -mmacosx-version-min=26.0", "")
         with tempfile.TemporaryDirectory() as temp, patch.object(glow,"command",return_value=original):
             root=Path(temp);path=root/glow.METAL_SCRIPT;path.parent.mkdir(parents=True)
@@ -284,7 +302,7 @@ class GlowContextTests(unittest.TestCase):
             root=Path(temp)
             for name in (glow.PACKAGE,glow.METAL_SCRIPT,"scripts/bundle.sh","scripts/stage_test_runtime.sh"):
                 (root/name).parent.mkdir(parents=True,exist_ok=True)
-                (root/name).write_bytes((ROOT/name).read_bytes())
+                (root/name).write_bytes((self.root/name).read_bytes())
             contract=glow.compilation_contract(root)
             self.assertIn("6",contract["swiftFlags"])
             self.assertEqual(contract["target"],"arm64-apple-macos26.0")
@@ -311,10 +329,10 @@ class GlowContextTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);metadata=root/"metadata";metadata.mkdir()
             for name in glow.CHANGED|glow.DEPENDENCIES:
-                (root/name).parent.mkdir(parents=True,exist_ok=True);(root/name).write_bytes((ROOT/name).read_bytes())
+                (root/name).parent.mkdir(parents=True,exist_ok=True);(root/name).write_bytes((self.root/name).read_bytes())
             generated,fragments=glow.generated_source(root)
             (metadata/"main.swift").write_text(generated)
-            original_shader=(ROOT/glow.METAL_SCRIPT).read_text().replace(" -mmacosx-version-min=26.0", "")
+            original_shader=(self.root/glow.METAL_SCRIPT).read_text().replace(" -mmacosx-version-min=26.0", "")
             with patch.object(glow,"command",return_value=original_shader):
                 shader_correction=glow.require_shader_floor_correction(root)
             binding=dict(harnessSHA="a"*40,baseSHA=glow.BASE,workflowRun="123",attempt="1",
@@ -360,7 +378,7 @@ class GlowContextTests(unittest.TestCase):
                     api.assert_not_called()
 
     def test_swift_cli_rejects_warmup_and_unknown_modes(self):
-        source=(ROOT/glow.TEMPLATE).read_text()
+        source=(self.root/glow.TEMPLATE).read_text()
         self.assertIn('guard [4, 5].contains(CommandLine.arguments.count)',source)
         self.assertIn('CommandLine.arguments[3] == "normal"',source)
         self.assertIn('guard calibration || CommandLine.arguments[2] == "measured"',source)
@@ -409,7 +427,7 @@ class GlowContextTests(unittest.TestCase):
             self.assertEqual(json.loads((root/"runtime/result.json").read_text())["outcome"],"invalid")
 
     def test_workflow_preserves_exact_source_build_runtime_order(self):
-        text=(ROOT/".github/workflows/diagnostic-acceptance.yml").read_text()
+        text=(self.root/".github/workflows/diagnostic-acceptance.yml").read_text()
         build=workflow_job(text,"ci-glow-context-build")
         runtime=workflow_job(text,"ci-glow-context")
         self.assertIn("needs: source",build)

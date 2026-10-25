@@ -174,7 +174,7 @@ struct ProjectEffectResourcesTests {
         let input = CIImage(color: CIColor(red: 0.8, green: 0.2, blue: 0.4)).cropped(to: CGRect(x: 0, y: 0, width: 1, height: 1))
         let rendered = LUTTetraKernel.apply(input, cube: lut, key: path, intensity: 1)
         var pixel = [Float](repeating: 0, count: 4)
-        CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()]).render(rendered,
+        VideoRenderContext.context.render(rendered,
             toBitmap: &pixel, rowBytes: 16, bounds: input.extent, format: .RGBAf, colorSpace: nil)
         #expect(abs(pixel[0] - 0.2) < 0.001 && abs(pixel[1] - 0.8) < 0.001 && abs(pixel[2] - 0.6) < 0.001)
         try frozen.verify()

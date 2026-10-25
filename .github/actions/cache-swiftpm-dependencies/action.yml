@@ -42,7 +42,7 @@ runs:
 
     - name: Cache resolved dependencies
       if: inputs.restore-only != 'true'
-      uses: actions/cache@v4
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: ${{ steps.cache-path.outputs.path }}
         key: spm-dependencies-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('Package.resolved', 'Package.swift', 'Engine/Package.swift') }}
@@ -50,7 +50,7 @@ runs:
     - name: Restore resolved dependencies
       id: restore
       if: inputs.restore-only == 'true'
-      uses: actions/cache/restore@v4
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: ${{ steps.cache-path.outputs.path }}
         key: spm-dependencies-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('Package.resolved', 'Package.swift', 'Engine/Package.swift') }}

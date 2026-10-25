@@ -6,13 +6,17 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: hang-capture-probe-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   sign:
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: macrunner
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: ./.github/actions/setup-xcode-27
       - name: Compile minimal normal-lifecycle capture probe
         run: |
@@ -54,7 +58,7 @@ jobs:
           NOTARY_KEY_FILE="$RUNNER_TEMP/capture.p8" scripts/notarize.sh probe/capture.zip
           xcrun stapler staple probe/CaptureProbe.app
           ditto -c -k --keepParent probe/CaptureProbe.app probe/capture.zip
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: signed-capture-probe
           path: |
@@ -67,7 +71,7 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 5
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: signed-capture-probe
       - name: Capture without debugger, sudo, or signing credentials
@@ -93,7 +97,7 @@ jobs:
           grep 'knownMainThreadWait' symbolized.txt
           if test -f capture.sample.txt.external.status; then cat capture.sample.txt.external.status; fi
           sw_vers
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: capture-feasibility-evidence

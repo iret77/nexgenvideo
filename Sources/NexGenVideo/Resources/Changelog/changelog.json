@@ -19,8 +19,10 @@
           "items": [
             "Object context connects production sources with shots, generated media and timeline placements. Shared editing and postproduction controls remain available throughout production.",
             "Film review findings open their exact timeline range and affected clips. Changed cuts or sources require a current review before navigation.",
+            "Preview, export and color scopes share the same GPU rendering context for video effects.",
             "Generation request review presents the exact model, source range, references and destination before submission. Late replacement results preserve clips changed during generation.",
             "Export provides delivery settings, output checks and a queue linked to the current cut.",
+            "AI and export activity distinguish running work, decisions needing attention and failures. Failed or interrupted exports remain visible with their recovery details.",
             "Quitting and restarting wait for active work to close. Canceling quit keeps NexGenVideo open and cancels the pending restart.",
             "3D storage verifies the reserved volume’s identity when passing access from the app to its sandboxed runtime.",
             "3D startup diagnostics identify blocked runtime components without exposing project paths.",
@@ -30,6 +32,7 @@
         {
           "heading": "Music Video",
           "items": [
+            "Songs without supplied lyrics use local speech recognition. Recognized text and timing remain explicitly unreviewed; supplied lyrics retain priority.",
             "Music Video 0.6.0 requires NexGenVideo 1.8.0. Existing projects retain their exact pinned pack; adopting the new production contract uses an explicit Recovery-copy upgrade.",
             "After an upgrade, existing story and identity intake offers verified material from the previous workflow for explicit reuse, with readable previews and editable identity names.",
             "Choosing to develop a new story advances to optional character material. An interrupted new-story decision can be retried without replacing the confirmed story choice.",

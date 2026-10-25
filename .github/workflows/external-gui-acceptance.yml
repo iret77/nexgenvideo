@@ -109,6 +109,7 @@ jobs:
           name: external-gui-tests-build-log-a${{ github.run_attempt }}
           path: ${{ runner.temp }}/external-tests-build/build.log
           if-no-files-found: warn
+          retention-days: 90
 
   test-runtime:
     needs: [cases, test-build]

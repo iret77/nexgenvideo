@@ -1,0 +1,6 @@
+status: applied
+tier: solo
+source: iret77/engineering-standards
+decided_on: 2026-10-25
+reviewed_on: 2026-10-25
+reason: "Adoption in progress in issue #674; test-value measurement and issue migration are not complete."

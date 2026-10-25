@@ -133,7 +133,7 @@ jobs:
             printf 'NGV_CODEX_HOSTILE_MCP_MARKER=%s\n' "$RUNNER_TEMP/foreign-mcp-started"
           } >> "$GITHUB_ENV"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ inputs.source_sha }}
 
@@ -351,7 +351,7 @@ jobs:
           ' "$NGV_CODEX_ACCEPTANCE_EVIDENCE" >/dev/null
 
       - name: Upload redacted evidence
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: codex-app-server-acceptance-${{ github.run_id }}
           path: ${{ runner.temp }}/codex-app-server-evidence.json

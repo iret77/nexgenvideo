@@ -370,7 +370,10 @@ jobs:
           done < <(jq -r '.productionSpatial | (.nativeStoryboardUI + .nativeBibleUI)[] | .screenshots[], .progress' "$EVIDENCE/result.json")
           [ "$(sips -g pixelWidth "$EVIDENCE/perspective.png" | awk '/pixelWidth/{print $2}')" = 640 ]
           [ "$(sips -g pixelHeight "$EVIDENCE/perspective.png" | awk '/pixelHeight/{print $2}')" = 360 ]
-          sleep 2
+          for attempt in {1..20}; do
+            pgrep -f 'BpyRuntime/python' > /dev/null || break
+            sleep 0.1
+          done
           after="$(pgrep -f 'BpyRuntime/python' || true)"
           [ -z "$after" ] || { echo "orphan bpy workers: $after"; exit 1; }
           du -sk "$APP" > "$EVIDENCE/app-size-kib.txt"

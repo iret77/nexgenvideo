@@ -13,11 +13,11 @@ struct GlowKernelTests {
     private let n = 48
 
     init() throws {
-        let device = try #require(MTLCreateSystemDefaultDevice(), "Glow pixel tests require a Metal device")
+        let device = try #require(VideoRenderContext.device, "Glow pixel tests require a Metal device")
         let queue = try #require(device.makeCommandQueue(), "Couldn't create the Glow pixel command queue")
         self.device = device
         self.queue = queue
-        ctx = CIContext(mtlDevice: device, options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
+        ctx = VideoRenderContext.context
     }
 
     private func spot() throws -> CIImage {

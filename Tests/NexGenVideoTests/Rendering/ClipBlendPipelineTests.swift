@@ -144,7 +144,7 @@ struct ClipBlendPipelineTests {
         let lazySource = try #require(lazy.textSource)
         #expect(lazySource.rasterizedTileCount == 0)
         let lazyImage = try #require(lazy.textSource?.image())
-        let context = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
+        let context = VideoRenderContext.context
         let bounds = CGRect(origin: .zero, size: eager.natSize)
         var eagerPixel = [Float](repeating: 0, count: Int(bounds.width * bounds.height) * 4)
         var lazyPixel = eagerPixel
@@ -165,7 +165,7 @@ struct ClipBlendPipelineTests {
         var budget = TextRasterizer.preparationBudget
         let plan = try #require(TextRasterizer.prepare(for: text, renderSize: CGSize(width: 1920, height: 1080), budget: &budget))
         let image = try #require(plan.stillImage)
-        let context = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
+        let context = VideoRenderContext.context
         func pixel(_ x: Int, _ y: Int) -> [Float] {
             var result = [Float](repeating: 0, count: 4)
             context.render(image, toBitmap: &result, rowBytes: 16,

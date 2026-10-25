@@ -5,7 +5,7 @@ import Testing
 
 @Suite("Blend modes — reference pixels")
 struct ClipBlendReferenceTests {
-    private let context = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
+    private let context = VideoRenderContext.context
     private let bounds = CGRect(x: 0, y: 0, width: 16, height: 16)
     private let backdrop = [0.25, 0.5, 0.75]
 

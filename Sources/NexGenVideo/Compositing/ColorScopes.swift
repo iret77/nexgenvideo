@@ -23,9 +23,7 @@ struct Scopes: Sendable {
 }
 
 enum ColorScopes {
-    static let context = CIContext(options: [
-        .workingColorSpace: NSNull(), .outputColorSpace: NSNull(),
-    ])
+    static let context = VideoRenderContext.context
 
     static func measure(_ image: CIImage, gridEdge n: Int = 256) -> Scopes? {
         let extent = image.extent

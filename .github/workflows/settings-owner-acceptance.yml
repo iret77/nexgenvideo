@@ -34,7 +34,7 @@ permissions:
 
 concurrency:
   group: settings-owner-acceptance-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   cases:

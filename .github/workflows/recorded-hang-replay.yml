@@ -9,14 +9,14 @@ permissions:
 
 concurrency:
   group: recorded-hang-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   source:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - run: python3 scripts/lint_app_theme.py
       - run: python3 -m unittest discover -s scripts -p 'test_*.py'
 
@@ -29,7 +29,7 @@ jobs:
       matrix:
         variant: [baseline, candidate]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
       - uses: ./.github/actions/setup-xcode-27
@@ -87,7 +87,7 @@ jobs:
         run: |
           scripts/bundle.sh release --without-bpy-runtime-for-ci-transfer
           ditto -c -k --keepParent .build/NexGenVideo.app "$RUNNER_TEMP/replay-app.zip"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: recorded-app-${{ matrix.variant }}
           path: ${{ runner.temp }}/replay-app.zip
@@ -103,8 +103,8 @@ jobs:
       matrix:
         variant: [baseline, candidate]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: recorded-app-${{ matrix.variant }}
           path: ${{ runner.temp }}/replay
@@ -121,7 +121,7 @@ jobs:
           # Legacy fixtures lack transcript width; this comparison is not original-viewport reproduction.
           python3 scripts/recorded_hang_replay.py "$RUNNER_TEMP/replay/NexGenVideo.app" Tests/PrivateFixtures/hang-recording.enc "$RUNNER_TEMP/evidence" --match-geometry --comparison-viewport 480x560
           python3 scripts/verify_recorded_hang_result.py "$RUNNER_TEMP/evidence/result.json" --expect "${{ matrix.variant }}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: recorded-hang-${{ matrix.variant }}

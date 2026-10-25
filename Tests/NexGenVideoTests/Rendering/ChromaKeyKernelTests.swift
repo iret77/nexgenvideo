@@ -6,7 +6,7 @@ import Testing
 @Suite("ChromaKeyKernel")
 struct ChromaKeyKernelTests {
 
-    private let ctx = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
+    private let ctx = VideoRenderContext.context
 
     private func solid(_ r: Double, _ g: Double, _ b: Double) -> CIImage {
         CIImage(color: CIColor(red: r, green: g, blue: b)).cropped(to: CGRect(x: 0, y: 0, width: 4, height: 4))
