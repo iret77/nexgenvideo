@@ -99,20 +99,21 @@ struct ProductionInspectorView: View {
 
 struct WorkbenchStatusBar: View {
     @Environment(EditorViewModel.self) private var editor
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showsBudget = false
     @State private var showsExports = false
 
-    private var activeExport: ExportJob? {
-        ExportQueue.shared.activeJob(ownerKey: editor.openWorkingCopyKey)
+    private var presentedExport: ExportJob? {
+        let queue = ExportQueue.shared
+        if let active = queue.activeJob(ownerKey: editor.openWorkingCopyKey) { return active }
+        guard let latest = queue.jobs(ownerKey: editor.openWorkingCopyKey).first,
+              latest.status == .failed || latest.status == .interrupted else { return nil }
+        return latest
     }
 
-    private var aiActive: Bool {
-        editor.agentService.isStreaming || editor.agentService.currentSpendRun != nil
-            || editor.generationBatchCoordinator.activeBatchID != nil
-            || editor.workingRoot.flatMap { DataRootResolver.dataRoot(of: $0) }.flatMap {
-                editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: $0)
-            } != nil
-    }
+    private var aiState: WorkbenchActivityState { .agent(editor: editor) }
+
+    private var exportState: WorkbenchActivityState { .export(presentedExport?.status) }
 
     private var budgetLabel: String {
         guard let state = editor.projectState else { return String(localized: "Budget") }
@@ -132,7 +133,7 @@ struct WorkbenchStatusBar: View {
                 }
             Spacer(minLength: AppTheme.Spacing.md)
             Button { editor.showsAgentActivity.toggle() } label: {
-                Label(aiActive ? String(localized: "AI · Working") : String(localized: "AI activity"), systemImage: "sparkles")
+                activityLabel(state: aiState, isExport: false)
             }
             .background {
                 if WorkspaceUIAcceptance.isRequested || ChatHangReplay.isRequested {
@@ -150,18 +151,21 @@ struct WorkbenchStatusBar: View {
                     .frame(width: AppTheme.Layout.activityFlyoutWidth, height: AppTheme.Layout.activityFlyoutHeight)
             }
             Button { showsExports.toggle() } label: {
-                Label(activeExport == nil ? String(localized: "Export") : String(localized: "Export · Working"),
-                      systemImage: "square.and.arrow.up")
+                activityLabel(state: exportState, isExport: true)
             }
-            .reviewAcceptanceProbe("production.export", text: activeExport.map { $0.id + ":" + $0.status.rawValue } ?? "idle")
+            .reviewAcceptanceProbe("production.export", text: presentedExport.map { $0.id + ":" + $0.status.rawValue } ?? "idle")
             .popover(isPresented: $showsExports, arrowEdge: .top) {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
                     Text("Export activity").interfaceFont(size: AppTheme.Typography.section, weight: AppTheme.FontWeight.semibold)
-                    if let job = activeExport {
+                    if let job = presentedExport {
                         Text(job.title)
                             .reviewAcceptanceProbe("production.export.title", text: job.title)
                         Text(job.detail).foregroundStyle(AppTheme.Text.secondaryColor)
                             .reviewAcceptanceProbe("production.export.state", text: job.status.rawValue)
+                        if let failure = job.failure {
+                            Text(failure).foregroundStyle(AppTheme.Status.errorColor)
+                                .textSelection(.enabled)
+                        }
                         if job.status == .exporting {
                             ProgressView(value: job.progress)
                                 .reviewAcceptanceProbe("production.export.progress", text: String(job.progress))
@@ -195,5 +199,45 @@ struct WorkbenchStatusBar: View {
                     .allowsHitTesting(false)
             }
         }
+    }
+
+    private func activityLabel(state: WorkbenchActivityState, isExport: Bool) -> some View {
+        let queued = isExport && presentedExport?.status == .pending
+        let statusTitle: String = switch (isExport, state) {
+        case (false, .idle): String(localized: "AI activity")
+        case (false, .working): String(localized: "AI · Working")
+        case (false, .needsAttention): String(localized: "AI · Review needed")
+        case (false, .failed): String(localized: "AI · Failed")
+        case (true, .idle): String(localized: "Export")
+        case (true, .working): String(localized: "Export · Working")
+        case (true, .needsAttention): String(localized: "Export · Interrupted")
+        case (true, .failed): String(localized: "Export · Failed")
+        }
+        let owner = AgentSurfaceState.resolve(.current(editor: editor)).statusOwner
+        let title = !isExport && owner == .backendUnavailable ? String(localized: "AI · Unavailable")
+            : queued ? String(localized: "Export · Queued")
+            : !isExport && state == .working && owner == .backendChecking
+                ? String(localized: "AI · Checking")
+                : !isExport && state == .idle && editor.agentService.hasPendingHostFollowUp
+                    ? String(localized: "AI · Pending") : statusTitle
+        return HStack(spacing: AppTheme.Spacing.xs) {
+            Image(systemName: isExport ? "square.and.arrow.up" : "sparkles")
+            if queued {
+                Image(systemName: "clock")
+            } else if state == .working {
+                if reduceMotion {
+                    Image(systemName: "circle.dotted")
+                } else {
+                    ProgressView().controlSize(.mini)
+                        .frame(width: AppTheme.IconSize.sm, height: AppTheme.IconSize.sm)
+                }
+            } else if state == .needsAttention || state == .failed {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .foregroundStyle(state == .failed ? AppTheme.Status.errorColor : AppTheme.Status.warningColor)
+            }
+            Text(title).fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
     }
 }

@@ -1,4 +1,5 @@
 import AppKit
+import NexGenEngine
 import SwiftUI
 
 @MainActor
@@ -17,7 +18,21 @@ enum AgentActivityAcceptance {
         let service = AgentService(backend: .claudeCode, refreshBackendStatusOnInit: false,
             runtimeAdapterFactory: { _ in runtime }, runtimeReadinessOverride: { needsAuthentication ? .authenticationRequired : nil },
             runtimeHostContextOverride: { .hostOwned(tools: []) })
+        let package = home.appendingPathComponent("Activity.ngv", isDirectory: true)
+        let pipeline = package.appendingPathComponent("pipeline", isDirectory: true)
+        try FileManager.default.createDirectory(at: pipeline, withIntermediateDirectories: true)
+        try JSONEncoder().encode(Timeline()).write(to: package.appendingPathComponent(Project.timelineFilename))
+        try JSONEncoder().encode(MediaManifest()).write(to: package.appendingPathComponent(Project.manifestFilename))
+        try JSONEncoder().encode(GenerationLog()).write(to: package.appendingPathComponent(Project.generationLogFilename))
+        try Data("project: Activity\nmode: test\n".utf8).write(to: pipeline.appendingPathComponent("project.yaml"))
+        _ = try ProjectIdentity.uuid(for: package)
         let editor = EditorViewModel(agentService: service)
+        editor.projectURL = package
+        defer { editor.releaseWorkingCopy() }
+        guard let root = editor.workingRoot.flatMap({ DataRootResolver.dataRoot(of: $0) }) else {
+            throw Failure("The activity fixture has no project data root")
+        }
+        await editor.refreshEngineState()
         editor.setWorkspaceFocus(.edit)
         service.loadSessions(from: home)
         guard service.currentSessionId == saved.id, service.messages.map(\.id) == [answer.id] else {
@@ -70,7 +85,7 @@ enum AgentActivityAcceptance {
         let phaseRelease = DispatchSemaphore(value: 0)
         defer { phaseRelease.signal() }
         let phaseTask = Task { @MainActor in
-            await editor.pipelinePhaseRunCoordinator.run(projectRoot: home, phase: "bible", sourceFilename: nil,
+            await editor.pipelinePhaseRunCoordinator.run(projectRoot: root, phase: "bible", sourceFilename: nil,
                 runner: { _ in
                     guard phaseRelease.wait(timeout: .now() + 15) == .success else {
                         throw Failure("The bounded phase fixture was not released")
@@ -87,7 +102,7 @@ enum AgentActivityAcceptance {
         try await activate("agent.stop", in: activityWindow, evidenceURL: evidenceURL, scale: scale)
         try await waitUntil { !service.isStreaming && service.currentTaskPhase == nil }
         guard editor.pipelinePhaseExecution.snapshot?.isRunning == true,
-              editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: home) == "bible" else {
+              editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: root) == "bible" else {
             throw Failure("Stopping the agent changed the independent canonical phase job")
         }
         try await waitUntil {
