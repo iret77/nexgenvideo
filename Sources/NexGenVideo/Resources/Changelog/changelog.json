@@ -22,7 +22,8 @@
             "Export provides delivery settings, output checks and a queue linked to the current cut.",
             "Quitting and restarting wait for active work to close. Canceling quit keeps NexGenVideo open and cancels the pending restart.",
             "3D storage verifies the reserved volume’s identity when passing access from the app to its sandboxed runtime.",
-            "3D startup diagnostics identify blocked runtime components without exposing project paths."
+            "3D startup diagnostics identify blocked runtime components without exposing project paths.",
+            "GPU effect libraries use the same macOS 26 deployment target as the app when built with newer SDKs."
           ]
         },
         {

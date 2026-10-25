@@ -478,7 +478,7 @@ class RuntimeStagingTests(unittest.TestCase):
                 0,
             )
 
-    def test_metal_resources_compile_one_library_per_source(self):
+    def test_metal_resources_target_product_floor_despite_newer_ambient_target(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = root / "Metal"
@@ -492,6 +492,12 @@ class RuntimeStagingTests(unittest.TestCase):
             fake_xcrun.write_text(
                 "#!/bin/bash\n"
                 "if [ \"$1\" = '--find' ]; then exit 0; fi\n"
+                "if [ \"$1\" = 'metal' ]; then\n"
+                "  case \" $* \" in\n"
+                "    *' -mmacosx-version-min=26.0 '*) ;;\n"
+                "    *) echo 'missing product deployment floor' >&2; exit 9 ;;\n"
+                "  esac\n"
+                "fi\n"
                 "output=''\n"
                 "while [ \"$#\" -gt 0 ]; do\n"
                 "  if [ \"$1\" = '-o' ]; then output=\"$2\"; shift 2; continue; fi\n"
@@ -502,6 +508,7 @@ class RuntimeStagingTests(unittest.TestCase):
             fake_xcrun.chmod(0o700)
             environment = os.environ.copy()
             environment["NGV_XCRUN"] = str(fake_xcrun)
+            environment["MACOSX_DEPLOYMENT_TARGET"] = "27.0"
 
             subprocess.run(
                 [ROOT / "scripts/compile_metal_resources.sh", source, destination],

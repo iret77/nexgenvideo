@@ -40,7 +40,7 @@ for source in "$SOURCE_DIRECTORY"/*.metal; do
   stem="$(basename "$source" .metal)"
   air="$staging/$stem.air"
   metallib="$staging/$stem.metallib"
-  "$XCRUN" metal -c -fcikernel "$source" -o "$air"
+  "$XCRUN" metal -c -fcikernel -mmacosx-version-min=26.0 "$source" -o "$air"
   "$XCRUN" metallib -cikernel "$air" -o "$metallib"
   rm -f "$air"
   if [ ! -f "$metallib" ]; then

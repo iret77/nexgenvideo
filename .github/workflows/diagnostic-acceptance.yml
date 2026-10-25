@@ -111,6 +111,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           python3 -m unittest discover -s scripts -p 'test_ci_glow_context.py'
+          python3 -m unittest discover -s scripts -p 'test_runtime_staging.py'
           python3 -m unittest discover -s scripts -p 'test_ci_builtin_blur*.py'
           python3 -m unittest discover -s scripts -p 'test_run_macos_tests.py'
           python3 -m unittest discover -s scripts -p 'test_diagnostic_acceptance.py'

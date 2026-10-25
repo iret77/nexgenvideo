@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+import zipfile
 from unittest.mock import patch
 
 import ci_builtin_blur_preheat as common
@@ -109,55 +110,144 @@ class GlowContextTests(unittest.TestCase):
             self.assertEqual(result["counts"]["shared"]["unknownAbnormal"], 1)
             self.assertEqual(result["counts"]["shared"]["abnormalPhases"]["later-rounds"], 1)
 
-    def test_compiler_uses_product_shader_and_original_swift_sources(self):
+    def test_shader_rebuild_reuses_executable_and_calls_shared_product_compiler(self):
         with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp);metadata=root/"metadata";metadata.mkdir()
+            root=Path(temp);metadata=root/"metadata";metadata.mkdir()
             (metadata/"binding.json").write_text("{}")
-            binding=dict(harnessSHA="a"*40, generatedSHA256="generated", originalSDK=[1,26<<16,27<<16],
-                compilation=glow.compilation_contract(ROOT))
+            with zipfile.ZipFile(metadata/"glow-context-products.zip","w") as archive:
+                for name in glow.ORIGINAL_BUNDLE_FILES:archive.writestr(name,b"original")
+                for name in ("Contents/Info.plist","Contents/Resources/DWARF/NGVBuiltinBlur",
+                             "Contents/Resources/Relocations/aarch64/NGVBuiltinBlur.yml"):
+                    archive.writestr(glow.APP+".dSYM/"+name,b"symbols")
+            binding=dict(harnessSHA="a"*40,generatedSHA256=glow.GLOW_GENERATED_SHA,originalSDK=[1,26<<16,27<<16],
+                originalGlow=dict(files={glow.BINARY:glow.GLOW_BINARY_SHA}))
             def command(args):
-                return "Xcode 27.0\nBuild version 27A266a" if args[0]=="xcodebuild" else "arm64" if args[0]=="uname" else "tool identity"
-            def compile(args, **kwargs):
-                if args[0] == "xcrun":
-                    Path(args[-1]).write_bytes(b"compiled")
-                    if args[1] == "swiftc":
-                        symbols=Path(args[-1]+".dSYM")
-                        symbols.mkdir();(symbols/"fixture-symbols").write_bytes(b"symbols")
+                return "Xcode 27.0\nBuild version 27A266a" if args[0]=="xcodebuild" else "arm64" if args[0]=="uname" else ""
+            def compile(args,**kwargs):
+                if args[0]==str((ROOT/glow.METAL_SCRIPT).resolve()):
+                    self.assertEqual(args[1],str((ROOT/"Metal").resolve()))
+                    for name in glow.SHADER_FILES:
+                        (root/"products"/name).write_bytes(b"MTLBair64_v28-apple-macosx26.0.0\0")
                 elif "--sign" in args:
-                    self.assertEqual(sorted(path.name for path in (root/"products"/glow.APP/"Contents/MacOS").iterdir()),["NGVBuiltinBlur"])
-                    self.assertEqual((root/"products"/(glow.APP+".dSYM")/"fixture-symbols").read_bytes(),b"symbols")
-                    seal=root/"products"/glow.SEAL
-                    seal.parent.mkdir();seal.write_bytes(b"seal")
-                    (root/"products"/glow.BINARY).write_bytes(b"signed")
-                else:
-                    self.assertTrue((root/"products"/glow.SEAL).exists())
+                    self.assertEqual((root/"products"/glow.BINARY).read_bytes(),b"original")
+                    self.assertEqual((root/"products"/glow.INFO).read_bytes(),b"original")
+                    self.assertEqual([p.name for p in (root/"products"/glow.APP/"Contents/MacOS").iterdir()],["NGVBuiltinBlur"])
+                    self.assertEqual((root/"products"/(glow.APP+".dSYM/Contents/Resources/DWARF/NGVBuiltinBlur")).read_bytes(),b"symbols")
+                    seal=root/"products"/glow.SEAL;seal.parent.mkdir();seal.write_bytes(b"seal")
+                    (root/"products"/glow.BINARY).write_bytes(b"resigned")
+                else:self.assertTrue((root/"products"/glow.SEAL).exists())
             def toolchain(folder,sdk):
-                self.assertEqual(sdk,binding["originalSDK"][2])
-                (folder/"toolchain.json").write_text("{}")
-                return {}
-            with patch.object(glow, "bound", return_value=binding), patch.object(glow,"command",side_effect=command), \
-                    patch.object(glow.subprocess,"run",side_effect=compile) as calls, patch.object(glow,"build_version",return_value=binding["originalSDK"]), \
-                    patch.object(glow,"toolchain_identity",side_effect=toolchain):
+                self.assertEqual(sdk,binding["originalSDK"][2]);(folder/"toolchain.json").write_text("{}");return {}
+            identity=dict(uuid=glow.GLOW_UUID,unsignedSHA256="same-code",buildVersion=binding["originalSDK"])
+            with patch.object(glow,"bound",return_value=binding),patch.object(glow,"command",side_effect=command), \
+                patch.object(glow.subprocess,"run",side_effect=compile) as calls, \
+                patch.object(glow,"unsigned_code_identity",return_value=identity) as identities, \
+                patch.object(glow,"toolchain_identity",side_effect=toolchain):
                 glow.compile_products(root/"products",metadata)
             args=[c.args[0] for c in calls.call_args_list]
-            self.assertEqual(args[0][:5], ["xcrun","metal","-c","-fcikernel",glow.METAL])
-            self.assertEqual(args[1][:3], ["xcrun","metallib","-cikernel"])
-            self.assertIn(glow.KERNEL,args[2]);self.assertIn(glow.LOADER,args[2])
+            self.assertEqual(len(args),4)
+            self.assertEqual(args[0][0],str((ROOT/glow.METAL_SCRIPT).resolve()))
+            self.assertFalse(any("swiftc" in command for command in args))
+            self.assertEqual(identities.call_count,2)
+            self.assertEqual(args[1][:4],["codesign","--force","--sign","-"])
+            self.assertEqual(args[2][:3],["codesign","--verify","--strict"])
             proof=json.loads((root/"products/binary.json").read_text())
             self.assertEqual(set(proof["files"]),glow.BUNDLE_FILES)
-            self.assertEqual(proof["files"][glow.BINARY],hashlib.sha256(b"signed").hexdigest())
-            self.assertEqual(args[3][:4],["codesign","--force","--sign","-"])
-            self.assertEqual(args[4][:3],["codesign","--verify","--strict"])
+            self.assertEqual(set(proof["shaderTargets"]),glow.SHADER_FILES)
+            self.assertEqual(proof["files"][glow.BINARY],hashlib.sha256(b"resigned").hexdigest())
+            self.assertEqual(proof["executableSourceSHA"],glow.GLOW_BUILD_SOURCE)
+            self.assertEqual(proof["unsignedCodeIdentity"],identity)
+
+    def test_shader_target_gate_rejects_newer_missing_and_mixed_targets(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            for name in glow.SHADER_FILES:
+                path=root/name;path.parent.mkdir(parents=True,exist_ok=True)
+                path.write_bytes(b"MTLBair64_v28-apple-macosx26.0.0\0")
+            self.assertEqual(set(glow.shader_targets(root)),glow.SHADER_FILES)
+            for raw in (b"MTLBair64_v29-apple-macosx27.0.0",b"MTLBno target",b"MTLBair64_v28-apple-macosx26.0.0\0air64_v29-apple-macosx27.0.0"):
+                (root/glow.LIBRARY).write_bytes(raw)
+                with self.assertRaises(ValueError):glow.shader_targets(root)
+
+    def test_unsigned_identity_checks_uuid_and_hashes_signature_removed_copy(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);binary=root/"binary";binary.write_bytes(b"signed")
+            def command(args):
+                if args[0]=="dwarfdump":return "UUID: "+glow.GLOW_UUID+" (arm64) "+str(binary)
+                self.assertEqual(args[:2],["codesign","--remove-signature"])
+                Path(args[2]).write_bytes(b"unsigned-code");return ""
+            with patch.object(glow,"command",side_effect=command),patch.object(glow,"build_version",return_value=[1,26<<16,27<<16]):
+                identity=glow.unsigned_code_identity(binary,root/"copy")
+                self.assertEqual(identity["unsignedSHA256"],hashlib.sha256(b"unsigned-code").hexdigest())
+                self.assertEqual(binary.read_bytes(),b"signed")
+            with patch.object(glow,"command",return_value="UUID: foreign (arm64) binary"),self.assertRaises(ValueError):
+                glow.unsigned_code_identity(binary,root/"bad")
+
+    def test_calibration_log_rejects_loader_error_foreign_process_and_capture_failure(self):
+        child=dict(pid=42,hostExecutable="/owned/app",launchEarliest=1000,exitObserved=1031)
+        event=dict(processID=42,processImagePath="/owned/app",processImageUUID=glow.GLOW_UUID,eventMessage="kernel loaded")
+        for change in (None,"kernel","pid","command"):
+            with tempfile.TemporaryDirectory() as temp:
+                root=Path(temp);value=dict(event)
+                if change=="kernel":value["eventMessage"]="Cannot initialize kernel with given library data."
+                if change=="pid":value["processID"]=43
+                def run(args,**kwargs):
+                    self.assertIn("42",args);self.assertIn("--predicate",args)
+                    kwargs["stdout"].write(json.dumps([value]).encode())
+                    return type("Result",(),dict(returncode=1 if change=="command" else 0))()
+                with patch.object(glow.subprocess,"run",side_effect=run):
+                    if change is None:glow.coreimage_log(root,child)
+                    else:
+                        with self.assertRaises(ValueError):glow.coreimage_log(root,child)
+                self.assertEqual(json.loads((root/"coreimage.json").read_text()),[value])
+                self.assertTrue((root/"coreimage-receipt.json").exists())
+
+    def test_reused_executable_requires_successful_exact_build_inside_failed_run(self):
+        run=dict(id=glow.GLOW_BUILD_RUN,run_attempt=1,head_sha=glow.GLOW_BUILD_SOURCE,
+            repository=dict(full_name="iret77/nexgenvideo"),event="workflow_dispatch",actor=dict(login="iret77"),
+            head_branch="iret77/activity-approval-layout",path=".github/workflows/diagnostic-acceptance.yml",
+            status="completed",conclusion="failure")
+        job=dict(id=121305704232,run_id=glow.GLOW_BUILD_RUN,run_attempt=1,head_sha=glow.GLOW_BUILD_SOURCE,
+            name="ci-glow-context-build",status="completed",conclusion="success")
+        for changed in (None,"head_sha","run_attempt","conclusion"):
+            with tempfile.TemporaryDirectory() as temp:
+                value=dict(job)
+                if changed:value[changed]=2 if changed=="run_attempt" else "wrong"
+                with patch.object(glow,"api",side_effect=[run,value]),patch.object(glow,"download") as download, \
+                    patch.object(glow,"original_glow",return_value={"verified":True}):
+                    if changed:
+                        with self.assertRaises(ValueError):glow.bind_original_glow(Path(temp))
+                        download.assert_not_called()
+                    else:
+                        self.assertEqual(glow.bind_original_glow(Path(temp)),{"verified":True})
+                        self.assertEqual(download.call_args.kwargs,dict(run_id=glow.GLOW_BUILD_RUN,source_sha=glow.GLOW_BUILD_SOURCE))
+
+    def test_shader_build_correction_rejects_any_additional_product_build_change(self):
+        corrected=(ROOT/glow.METAL_SCRIPT).read_text()
+        original=corrected.replace(" -mmacosx-version-min=26.0", "")
+        with tempfile.TemporaryDirectory() as temp, patch.object(glow,"command",return_value=original):
+            root=Path(temp);path=root/glow.METAL_SCRIPT;path.parent.mkdir(parents=True)
+            path.write_text(corrected)
+            receipt=glow.require_shader_floor_correction(root)
+            self.assertEqual(receipt["originalSHA256"],hashlib.sha256(original.encode()).hexdigest())
+            self.assertEqual(receipt["correctedSHA256"],glow.digest(path))
+            for content in (original,corrected.replace("26.0","27.0"),corrected+"\necho changed\n"):
+                path.write_text(content)
+                with self.assertRaises(ValueError):glow.require_shader_floor_correction(root)
 
     def test_toolchain_allows_equivalent_environment_but_rejects_effective_drift(self):
         developer="/Applications/Xcode_27.app/Contents/Developer"
         compiler=developer+"/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
         sdk=developer+"/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.sdk"
         value=dict(environment=dict(SDKROOT=sdk,TOOLCHAINS="com.apple.dt.toolchain.XcodeDefault",MACOSX_DEPLOYMENT_TARGET="26.0"),
-            xcrun="/usr/bin/xcrun",developer=developer,swiftc=compiler,selectedSDK=sdk,defaultSDK=sdk,sdkVersion="27.0")
+            xcrun="/usr/bin/xcrun",developer=developer,swiftc=compiler,selectedSDK=sdk,defaultSDK=sdk,sdkVersion="27.0",
+            metal="/private/var/run/com.apple.security.cryptexd/mnt/com.apple.MobileAsset.MetalToolchain-v27.1.266.1.fixture/Metal.xctoolchain/usr/bin/metal",
+            metalVersion="Apple metal version 32023.921 (metalfe-32023.921.6)")
+        value["metallib"]=str(Path(value["metal"]).with_name("air-lld"))
         glow.validate_toolchain(value,27<<16)
         for key,bad in (("xcrun","/other/xcrun"),("swiftc","/other/swiftc"),("selectedSDK","/other/SDK"),
-                ("defaultSDK","/other/SDK"),("sdkVersion","26.0")):
+                ("defaultSDK","/other/SDK"),("sdkVersion","26.0"),("metalVersion","other"),("metal","/other/metal"),
+                ("metallib","/other/air-lld")):
             with self.subTest(key=key),self.assertRaises(ValueError):glow.validate_toolchain(dict(value,**{key:bad}),27<<16)
         for key,bad in (("MACOSX_DEPLOYMENT_TARGET","27.0"),("MACOSX_DEPLOYMENT_TARGET","garbage"),
                 ("NGV_XCRUN","/other/xcrun"),("SWIFT_EXEC","/other/swiftc")):
@@ -202,6 +292,7 @@ class GlowContextTests(unittest.TestCase):
                 (glow.PACKAGE,"platforms: [.macOS(.v26)]","platforms: [.macOS(.v27)]"),
                 (glow.PACKAGE,"targets: [","swiftSettings: [], targets: ["),
                 (glow.METAL_SCRIPT,"-fcikernel","-ffast-math"),
+                (glow.METAL_SCRIPT,"-mmacosx-version-min=26.0","-mmacosx-version-min=27.0"),
                 ("scripts/stage_test_runtime.sh","compile_metal_resources.sh","different.sh")):
                 original=(root/name).read_text();(root/name).write_text(original.replace(old,new))
                 with self.subTest(name=name,old=old),self.assertRaises(ValueError):glow.compilation_contract(root)
@@ -223,17 +314,30 @@ class GlowContextTests(unittest.TestCase):
                 (root/name).parent.mkdir(parents=True,exist_ok=True);(root/name).write_bytes((ROOT/name).read_bytes())
             generated,fragments=glow.generated_source(root)
             (metadata/"main.swift").write_text(generated)
+            original_shader=(ROOT/glow.METAL_SCRIPT).read_text().replace(" -mmacosx-version-min=26.0", "")
+            with patch.object(glow,"command",return_value=original_shader):
+                shader_correction=glow.require_shader_floor_correction(root)
             binding=dict(harnessSHA="a"*40,baseSHA=glow.BASE,workflowRun="123",attempt="1",
                 hashes={n:glow.digest(root/n) for n in glow.CHANGED|glow.DEPENDENCIES},fragments=fragments,
                 generatedSHA256=glow.digest(metadata/"main.swift"),compilation=glow.compilation_contract(root),
-                appFailureSource=glow.APP_FAILURE_SOURCE,appProductInputsUnchanged=sorted(glow.PRODUCT_INPUTS))
+                appFailureSource=glow.APP_FAILURE_SOURCE,appProductInputsUnchanged=sorted(glow.UNCHANGED_PRODUCT_INPUTS),
+                shaderBuildCorrection=shader_correction,originalGlow={},executableSourceSHA=glow.GLOW_BUILD_SOURCE)
             (metadata/"binding.json").write_text(json.dumps(binding))
             env=dict(REPLAY_KIND=glow.MODE,GITHUB_SHA="a"*40,GITHUB_RUN_ID="123",GITHUB_RUN_ATTEMPT="1")
             real_digest=glow.digest
             def digest(path):return real_digest(path if path.is_absolute() else root/path)
+            def command(args):
+                if args != ["git","rev-parse","HEAD"]:raise AssertionError("Runtime checkout has no historical objects")
+                return "a"*40
             with patch.dict(os.environ,env),patch.object(glow.Path,"cwd",return_value=root), \
-                    patch.object(glow,"digest",side_effect=digest),patch.object(glow,"command",return_value="a"*40):
+                    patch.object(glow,"digest",side_effect=digest), \
+                    patch.object(glow,"command",side_effect=command), \
+                    patch.object(glow,"original_glow",return_value={}):
                 self.assertEqual(glow.bound(metadata),binding)
+                tampered=deepcopy(binding);tampered["shaderBuildCorrection"]["originalSHA256"]="foreign"
+                (metadata/"binding.json").write_text(json.dumps(tampered))
+                with self.assertRaises(ValueError):glow.bound(metadata)
+                (metadata/"binding.json").write_text(json.dumps(binding))
                 for path in (metadata/"main.swift",root/glow.KERNEL,root/glow.PACKAGE):
                     original=path.read_bytes();path.write_bytes(original+b"\nchanged")
                     with self.subTest(path=path),self.assertRaises(ValueError):glow.bound(metadata)
@@ -261,6 +365,7 @@ class GlowContextTests(unittest.TestCase):
         self.assertIn('CommandLine.arguments[3] == "normal"',source)
         self.assertIn('guard calibration || CommandLine.arguments[2] == "measured"',source)
         self.assertIn('guard ["separate", "shared"].contains(arm), !calibration || arm == "separate"',source)
+        self.assertIn('rgb.0.isFinite, rgb.1.isFinite, rgb.2.isFinite, rgb.0 > 0, rgb.0 <= 1',source)
 
     def test_runtime_checks_bundle_before_launch_and_counts_bad_resource_receipt_as_invalid(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -270,7 +375,8 @@ class GlowContextTests(unittest.TestCase):
                 path=products/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(name.encode())
             binding=dict(harnessSHA="a"*40,generatedSHA256="generated",originalSDK=[1,26<<16,27<<16],workflowRun="123",attempt="1")
             proof=dict(harnessSHA=binding["harnessSHA"],generatedSHA256="generated",bindingSHA256=glow.digest(metadata/"binding.json"),
-                files={name:glow.digest(products/name) for name in glow.BUNDLE_FILES})
+                files={name:glow.digest(products/name) for name in glow.BUNDLE_FILES},executableSourceSHA=glow.GLOW_BUILD_SOURCE,
+                originalExecutableSHA256=glow.GLOW_BINARY_SHA,unsignedCodeIdentity=dict(uuid=glow.GLOW_UUID),shaderTargets={})
             (products/"binary.json").write_text(json.dumps(proof))
             expected=dict(metallibSHA256=proof["files"][glow.LIBRARY],bytes=(products/glow.LIBRARY).stat().st_size)
             events=[]
@@ -295,6 +401,7 @@ class GlowContextTests(unittest.TestCase):
             with patch.object(glow,"bound",return_value=binding),patch.object(glow,"build_version",return_value=binding["originalSDK"]), \
                 patch.object(glow,"platform",side_effect=lambda _:events.append("platform")),patch.object(glow,"command",side_effect=command), \
                 patch.object(glow,"owned_process",side_effect=calibration),patch.object(glow,"sample_proof"), \
+                patch.object(glow,"coreimage_log"),patch.object(glow,"shader_targets",return_value={}), \
                 patch.object(glow,"prepare_post_mortem",return_value=dict(hostUUID="uuid")),patch.object(glow,"launch",side_effect=launch), \
                 patch.object(glow,"collect_reports",return_value={}),patch.object(glow,"summarize",side_effect=summary),patch("builtins.print"):
                 self.assertEqual(glow.execute(root/"runtime",metadata,products),1)

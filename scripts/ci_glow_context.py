@@ -1,9 +1,9 @@
 import argparse
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
 from pathlib import Path
-import plistlib
 import re
 import shutil
 import subprocess
@@ -29,12 +29,22 @@ KERNEL = "Sources/NexGenVideo/Compositing/Kernels/GlowKernel.swift"
 LOADER = "Sources/NexGenVideo/Compositing/Kernels/CIKernelLoader.swift"
 METAL = "Metal/Glow.metal"
 METAL_SCRIPT = "scripts/compile_metal_resources.sh"
+ORIGINAL_METAL_SCRIPT_SHA = "df153ba359633b9c7b2c914cfaf72ddeb723258307ace2d4ff3890aa1be6c6b4"
 PACKAGE = "Package.swift"
 APP_FAILURE_SOURCE = "eed03423b5e9fcd1f6cbf66618100ddada2ed17e"
+GLOW_BUILD_SOURCE = "2b2bac31ccf1503e88ad580c26facb5081933155"
+GLOW_BUILD_RUN = 40238684849
+GLOW_BUILD_ARTIFACT = (12615469604, "e245f827da1b50573a4dc47e39d8bb88927ef6b99ab72c671f0fc6646cde563f")
+GLOW_BINARY_SHA = "e28c092b3c550b84f67b3b18ab6207848b7a64db72acd73d6eed6aae36d02030"
+GLOW_GENERATED_SHA = "901f6c822a64365eedd36fa6219ac0d20d5e1054b9c4bbc2ca70609c72b84321"
+GLOW_UUID = "510c7af5-f8fe-42f0-91f6-4603bf8d71a4"
+METAL_SOURCES = {"Metal/" + p.name for p in (Path(__file__).resolve().parents[1] / "Metal").glob("*.metal")}
 PRODUCT_INPUTS = {TEST_SOURCE, COMPOSITOR, KERNEL, LOADER, METAL, METAL_SCRIPT,
-    PACKAGE, "scripts/bundle.sh", "scripts/stage_test_runtime.sh"}
+    PACKAGE, "scripts/bundle.sh", "scripts/stage_test_runtime.sh"} | METAL_SOURCES
+UNCHANGED_PRODUCT_INPUTS = PRODUCT_INPUTS - {METAL_SCRIPT}
 CHANGED = {TEMPLATE, "scripts/ci_glow_context.py", "scripts/test_ci_glow_context.py",
-    "scripts/ci_builtin_blur_preheat.py", "scripts/test_ci_builtin_blur_preheat.py", ".github/workflows/diagnostic-acceptance.yml"}
+    "scripts/ci_builtin_blur_preheat.py", "scripts/test_ci_builtin_blur_preheat.py", ".github/workflows/diagnostic-acceptance.yml",
+    METAL_SCRIPT, "scripts/test_runtime_staging.py", "Sources/NexGenVideo/Resources/Changelog/changelog.json"}
 DEPENDENCIES = PRODUCT_INPUTS | {
     "scripts/ci_builtin_blur.py", "scripts/ci_builtin_blur_floor.py", "scripts/run_macos_tests.py",
     "scripts/app_host_zombie_diagnostic.py", "scripts/verify_diagnostic_candidate.py",
@@ -44,7 +54,9 @@ BINARY = APP + "/Contents/MacOS/NGVBuiltinBlur"
 LIBRARY = APP + "/Contents/Resources/Glow.metallib"
 INFO = APP + "/Contents/Info.plist"
 SEAL = APP + "/Contents/_CodeSignature/CodeResources"
-BUNDLE_FILES = {BINARY, LIBRARY, INFO, SEAL}
+SHADER_FILES = {APP + "/Contents/Resources/" + Path(n).stem + ".metallib" for n in METAL_SOURCES}
+BUNDLE_FILES = {BINARY, INFO, SEAL} | SHADER_FILES
+ORIGINAL_BUNDLE_FILES = {BINARY, LIBRARY, INFO, SEAL}
 
 
 def compilation_contract(root):
@@ -56,7 +68,7 @@ def compilation_contract(root):
     if "platforms: [.macOS(.v26)]" not in package:
         raise ValueError("Product deployment floor changed")
     script = (root / METAL_SCRIPT).read_text()
-    if ('"$XCRUN" metal -c -fcikernel "$source" -o "$air"' not in script
+    if ('"$XCRUN" metal -c -fcikernel -mmacosx-version-min=26.0 "$source" -o "$air"' not in script
             or '"$XCRUN" metallib -cikernel "$air" -o "$metallib"' not in script):
         raise ValueError("Production Metal compiler flags changed")
     for caller in ("scripts/bundle.sh", "scripts/stage_test_runtime.sh"):
@@ -66,6 +78,17 @@ def compilation_contract(root):
         "target": "arm64-apple-macos26.0", "packageSHA256": digest(root / PACKAGE),
         "basis": "Swift tools6.2 defaults to Swift6; no swiftSettings/language override or build plugin. Debug fixture build; original source has no conditional compilation. Metal built by bundle.sh/stage_test_runtime.sh with default xcrun, not a SwiftPM plugin.",
         "languageReference": "https://www.swift.org/migration/documentation/swift-6-concurrency-migration-guide/enabledataracesafety/"}
+
+
+def require_shader_floor_correction(root):
+    original = command(["git", "show", APP_FAILURE_SOURCE + ":" + METAL_SCRIPT])
+    before = '"$XCRUN" metal -c -fcikernel "$source" -o "$air"'
+    after = '"$XCRUN" metal -c -fcikernel -mmacosx-version-min=26.0 "$source" -o "$air"'
+    if (hashlib.sha256(original.encode()).hexdigest() != ORIGINAL_METAL_SCRIPT_SHA
+            or original.count(before) != 1 or (root / METAL_SCRIPT).read_text() != original.replace(before, after)):
+        raise ValueError("Product shader build changed beyond the reviewed deployment correction")
+    return {"path": METAL_SCRIPT, "originalSHA256": hashlib.sha256(original.encode()).hexdigest(),
+        "correctedSHA256": digest(root / METAL_SCRIPT), "deploymentTarget": "26.0"}
 
 
 def interpretation(result):
@@ -88,11 +111,11 @@ def toolchain_identity(folder, expected_sdk):
     probes = {"developer": ["xcode-select", "-p"], "swiftc": ["xcrun", "--find", "swiftc"],
         "selectedSDK": ["xcrun", "--show-sdk-path"], "defaultSDK": ["xcrun", "--sdk", "macosx", "--show-sdk-path"],
         "sdkVersion": ["xcrun", "--show-sdk-version"], "metal": ["xcrun", "--find", "metal"],
-        "metallib": ["xcrun", "--find", "metallib"]}
+        "metallib": ["xcrun", "--find", "metallib"], "metalVersion": ["xcrun", "metal", "--version"]}
     for name, args in probes.items():
         try:
             output = command(args).strip()
-            value[name] = output if name == "sdkVersion" else str(Path(output).resolve())
+            value[name] = output if name in {"sdkVersion", "metalVersion"} else str(Path(output).resolve())
         except Exception as error:
             value["errors"][name] = str(error)
     save(folder / "toolchain.json", value)
@@ -120,6 +143,11 @@ def validate_toolchain(value, expected_sdk):
             raise ValueError("Product compiler override differs from selected toolchain; see toolchain.json")
     if env.get("MACOSX_DEPLOYMENT_TARGET") and not (10, 0, 0) <= version(env["MACOSX_DEPLOYMENT_TARGET"]) <= (26, 0, 0):
         raise ValueError("Shader deployment override exceeds the product floor; see toolchain.json")
+    asset = r"/com\.apple\.MobileAsset\.MetalToolchain-v27\.1\.266\.1\.[^/]+/Metal\.xctoolchain/usr/bin/"
+    if (not re.search(asset + "metal$", value["metal"])
+            or Path(value["metallib"]) != Path(value["metal"]).with_name("air-lld")
+            or "metalfe-32023.921.6" not in value["metalVersion"]):
+        raise ValueError("Metal compiler asset differs from the original shader producer; see toolchain.json")
 
 
 def segment(source, start, end):
@@ -173,13 +201,13 @@ def verify_run(run, jobs):
     return selected
 
 
-def download(folder, identity, name, job):
+def download(folder, identity, name, job, *, run_id=RUN, source_sha=BASE):
     artifact_id, checksum = identity
     artifact = api(f"actions/artifacts/{artifact_id}")
     if (artifact.get("id") != artifact_id or artifact.get("name") != name
             or artifact.get("expired") is not False or artifact.get("digest") != "sha256:" + checksum
-            or artifact.get("workflow_run", {}).get("id") != RUN
-            or artifact["workflow_run"].get("head_sha") != BASE
+            or artifact.get("workflow_run", {}).get("id") != run_id
+            or artifact["workflow_run"].get("head_sha") != source_sha
             or not job["started_at"] <= artifact["created_at"] <= artifact["updated_at"] <= job["completed_at"]):
         raise ValueError("Original artifact identity differs")
     path = folder / (name + ".zip")
@@ -190,6 +218,89 @@ def download(folder, identity, name, job):
         raise ValueError("Original artifact bytes differ")
     save(folder / (name + "-producer.json"), artifact)
     return path
+
+
+def bind_original_glow(folder):
+    run = api(f"actions/runs/{GLOW_BUILD_RUN}")
+    job = api("actions/jobs/121305704232")
+    if (run.get("id") != GLOW_BUILD_RUN or run.get("run_attempt") != 1 or run.get("head_sha") != GLOW_BUILD_SOURCE
+            or run.get("repository", {}).get("full_name") != "iret77/nexgenvideo"
+            or run.get("event") != "workflow_dispatch" or run.get("actor", {}).get("login") != "iret77"
+            or run.get("head_branch") != "iret77/activity-approval-layout"
+            or run.get("path") != ".github/workflows/diagnostic-acceptance.yml"
+            or run.get("status") != "completed" or run.get("conclusion") != "failure"
+            or job.get("id") != 121305704232 or job.get("run_id") != GLOW_BUILD_RUN
+            or job.get("run_attempt") != 1 or job.get("head_sha") != GLOW_BUILD_SOURCE
+            or job.get("name") != "ci-glow-context-build" or job.get("status") != "completed" or job.get("conclusion") != "success"):
+        raise ValueError("Original successful Glow build differs")
+    save(folder / "glow-build-producer.json", dict(run=run, job=job))
+    download(folder, GLOW_BUILD_ARTIFACT, "glow-context-products", job, run_id=GLOW_BUILD_RUN, source_sha=GLOW_BUILD_SOURCE)
+    return original_glow(folder)
+
+
+def original_glow(metadata):
+    archive = metadata / "glow-context-products.zip"
+    if digest(archive) != GLOW_BUILD_ARTIFACT[1] or archive.stat().st_size != 925343:
+        raise ValueError("Original Glow products changed")
+    with zipfile.ZipFile(archive) as z:
+        proof = json.loads(member(z, "binary.json"))
+        files = {name: member(z, name) for name in ORIGINAL_BUNDLE_FILES}
+    if (proof.get("harnessSHA") != GLOW_BUILD_SOURCE or proof.get("generatedSHA256") != GLOW_GENERATED_SHA
+            or proof.get("bindingSHA256") != "2c57d78f987044cd1d0c00ac51f5e4cd5c6a3300afa8c441700a581bd1852391"
+            or proof.get("xcode") != "Xcode 27.0\nBuild version 27A266a"
+            or set(proof.get("files", {})) != ORIGINAL_BUNDLE_FILES
+            or proof["files"][BINARY] != GLOW_BINARY_SHA
+            or any(hashlib.sha256(raw).hexdigest() != proof["files"][name] for name, raw in files.items())):
+        raise ValueError("Original Glow binary or resource provenance differs")
+    return proof
+
+
+def shader_targets(folder):
+    actual = {str(p.relative_to(folder)) for p in (folder / APP / "Contents/Resources").glob("*.metallib")}
+    if actual != SHADER_FILES or not actual:
+        raise ValueError("Compiled shader inventory differs")
+    result = {}
+    for name in sorted(actual):
+        raw = (folder / name).read_bytes()
+        targets = set(re.findall(rb"air64(?:_v\d+)?-apple-macosx\d+\.\d+(?:\.\d+)?", raw))
+        if (not raw.startswith(b"MTLB") or not targets
+                or any(not value.endswith(b"-apple-macosx26.0.0") for value in targets)
+                or b"macosx27" in raw):
+            raise ValueError("Shader does not exclusively target macOS 26: " + name)
+        result[name] = {"sha256": digest(folder / name), "targets": sorted(value.decode() for value in targets)}
+    return result
+
+
+def unsigned_code_identity(binary, copy):
+    raw_uuid = command(["dwarfdump", "--uuid", str(binary)]).strip()
+    if not re.fullmatch(r"UUID: " + GLOW_UUID + r" \(arm64\) .+", raw_uuid, flags=re.IGNORECASE):
+        raise ValueError("Reused executable UUID changed")
+    shutil.copyfile(binary, copy)
+    command(["codesign", "--remove-signature", str(copy)])
+    return {"unsignedSHA256": digest(copy), "uuid": GLOW_UUID, "buildVersion": build_version(binary.read_bytes())}
+
+
+def coreimage_log(folder, child):
+    start = datetime.fromtimestamp(child["launchEarliest"] - 1, timezone.utc).strftime("%Y-%m-%d %H:%M:%S%z")
+    end = datetime.fromtimestamp(child["exitObserved"] + 1, timezone.utc).strftime("%Y-%m-%d %H:%M:%S%z")
+    args = ["/usr/bin/log", "show", "--style", "json", "--no-pager", "--info", "--debug",
+        "--process", str(child["pid"]), "--start", start, "--end", end,
+        "--predicate", 'subsystem == "com.apple.coreimage" AND processImagePath == ' + json.dumps(child["hostExecutable"])]
+    with (folder / "coreimage.json").open("xb") as out, (folder / "coreimage.stderr").open("xb") as err:
+        result = subprocess.run(args, stdin=subprocess.DEVNULL, stdout=out, stderr=err, timeout=20)
+    save(folder / "coreimage-receipt.json", {"command": args, "exitCode": result.returncode,
+        "pid": child["pid"], "sha256": digest(folder / "coreimage.json")})
+    if result.returncode:
+        raise ValueError("Calibration Core Image logs unavailable")
+    events = json.loads((folder / "coreimage.json").read_text())
+    if not isinstance(events, list):
+        raise ValueError("Malformed calibration Core Image log")
+    for event in events:
+        if (event.get("processID") != child["pid"] or event.get("processImagePath") != child["hostExecutable"]
+                or event.get("processImageUUID", "").lower() != GLOW_UUID):
+            raise ValueError("Core Image log is not bound to the reused calibration process")
+        if "cannot initialize kernel" in event.get("eventMessage", "").lower():
+            raise ValueError("Core Image rejected a calibration kernel; see coreimage.json")
 
 
 def bind(folder):
@@ -203,9 +314,12 @@ def bind(folder):
     if head != os.environ["GITHUB_SHA"] or command(["git", "status", "--porcelain"]).strip():
         raise ValueError("Dirty or unbound checkout")
     command(["git", "merge-base", "--is-ancestor", BASE, head])
+    command(["git", "merge-base", "--is-ancestor", GLOW_BUILD_SOURCE, head])
     if set(command(["git", "diff", "--no-renames", "--name-only", BASE, head]).splitlines()) != CHANGED:
         raise ValueError("Source changed beyond the exact diagnostic file list")
-    command(["git", "diff", "--quiet", APP_FAILURE_SOURCE, head, "--", *sorted(PRODUCT_INPUTS)])
+    command(["git", "diff", "--quiet", APP_FAILURE_SOURCE, head, "--", *sorted(UNCHANGED_PRODUCT_INPUTS)])
+    command(["git", "diff", "--quiet", GLOW_BUILD_SOURCE, head, "--", TEMPLATE, *sorted(UNCHANGED_PRODUCT_INPUTS)])
+    shader_correction = require_shader_floor_correction(Path.cwd())
     contract = compilation_contract(Path.cwd())
     run, jobs = api(f"actions/runs/{RUN}"), api(f"actions/runs/{RUN}/attempts/1/jobs?per_page=100")
     selected = verify_run(run, jobs)
@@ -225,13 +339,17 @@ def bind(folder):
             or binary_record.get("harnessSHA") != BASE or binary_record.get("xcode") != "Xcode 27.0\nBuild version 27A266a"):
         raise ValueError("Original comparison outcome or executable differs")
     generated, fragments = generated_source(Path.cwd())
+    if hashlib.sha256(generated.encode()).hexdigest() != GLOW_GENERATED_SHA:
+        raise ValueError("Reused executable Swift inputs changed")
+    original_glow_proof = bind_original_glow(folder)
     (folder / "main.swift").write_text(generated)
     save(folder / "binding.json", {"harnessSHA": head, "baseSHA": BASE,
         "hashes": {name: digest(Path(name)) for name in sorted(CHANGED | DEPENDENCIES)},
         "workflowRun": os.environ["GITHUB_RUN_ID"], "attempt": os.environ["GITHUB_RUN_ATTEMPT"],
         "generatedSHA256": digest(folder / "main.swift"), "fragments": fragments,
         "compilation": contract, "appFailureSource": APP_FAILURE_SOURCE,
-        "appProductInputsUnchanged": sorted(PRODUCT_INPUTS),
+        "appProductInputsUnchanged": sorted(UNCHANGED_PRODUCT_INPUTS), "shaderBuildCorrection": shader_correction,
+        "originalGlow": original_glow_proof, "executableSourceSHA": GLOW_BUILD_SOURCE,
         "originalSDK": build_version(original), "diagnosticOnly": True, "productAcceptance": False})
 
 
@@ -252,7 +370,11 @@ def bound(metadata):
             or digest(metadata / "main.swift") != binding["generatedSHA256"]):
         raise ValueError("Generated product-function bytes differ")
     if (binding["compilation"] != compilation_contract(Path.cwd()) or binding["appFailureSource"] != APP_FAILURE_SOURCE
-            or binding["appProductInputsUnchanged"] != sorted(PRODUCT_INPUTS)):
+            or binding["appProductInputsUnchanged"] != sorted(UNCHANGED_PRODUCT_INPUTS)
+            or binding["shaderBuildCorrection"] != {"path": METAL_SCRIPT, "originalSHA256": ORIGINAL_METAL_SCRIPT_SHA,
+                "correctedSHA256": digest(Path(METAL_SCRIPT)), "deploymentTarget": "26.0"}
+            or binding["executableSourceSHA"] != GLOW_BUILD_SOURCE or binding["originalGlow"] != original_glow(metadata)
+            or binding["generatedSHA256"] != GLOW_GENERATED_SHA):
         raise ValueError("Original product compilation provenance differs")
     return binding
 
@@ -264,18 +386,31 @@ def compile_products(folder, metadata):
     if xcode != "Xcode 27.0\nBuild version 27A266a" or command(["uname", "-m"]).strip() != "arm64":
         raise ValueError("Original Xcode toolchain differs")
     selected_toolchain = toolchain_identity(folder, binding["originalSDK"][2])
-    contract = binding["compilation"]
-    binary, library, info = (folder / name for name in (BINARY, LIBRARY, INFO))
-    binary.parent.mkdir(parents=True)
-    library.parent.mkdir(parents=True)
-    info.write_bytes(plistlib.dumps({"CFBundleIdentifier": "de.h5ventures.nexgenvideo.glow-context-diagnostic",
-        "CFBundleExecutable": "NGVBuiltinBlur", "CFBundlePackageType": "APPL", "LSUIElement": True}))
-    unbundled = folder / "NGVBuiltinBlur"
+    original = binding["originalGlow"]
+    original_folder = folder / "original-products"
+    with zipfile.ZipFile(metadata / "glow-context-products.zip") as archive:
+        for name in sorted(ORIGINAL_BUNDLE_FILES):
+            destination = original_folder / name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(member(archive, name))
+        for name in ("Contents/Info.plist", "Contents/Resources/DWARF/NGVBuiltinBlur",
+                     "Contents/Resources/Relocations/aarch64/NGVBuiltinBlur.yml"):
+            relative = APP + ".dSYM/" + name
+            destination = folder / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(member(archive, relative))
+    (original_folder / BINARY).chmod(0o755)
+    command(["codesign", "--verify", "--strict", str(original_folder / APP)])
+    before = unsigned_code_identity(original_folder / BINARY, folder / "original-unsigned")
+    for name in (BINARY, INFO):
+        destination = folder / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(original_folder / name, destination)
+    binary = folder / BINARY
+    binary.chmod(0o755)
+    (folder / LIBRARY).parent.mkdir(parents=True)
     commands = [
-        ["xcrun", "metal", "-c", "-fcikernel", METAL, "-o", str(folder / "Glow.air")],
-        ["xcrun", "metallib", "-cikernel", str(folder / "Glow.air"), "-o", str(library)],
-        ["xcrun", "swiftc", *contract["swiftFlags"], "-target", contract["target"],
-         str(metadata / "main.swift"), KERNEL, LOADER, "-o", str(unbundled)],
+        [str(Path(METAL_SCRIPT).resolve()), str(Path("Metal").resolve()), str((folder / LIBRARY).parent)],
         ["codesign", "--force", "--sign", "-", str(folder / APP)],
         ["codesign", "--verify", "--strict", str(folder / APP)],
         ["codesign", "--display", "--verbose=4", str(folder / APP)],
@@ -283,15 +418,16 @@ def compile_products(folder, metadata):
     for index, args in enumerate(commands):
         with (folder / f"compile-{index}.log").open("xb") as out:
             subprocess.run(args, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT, timeout=120, check=True)
-        if index == 2:
-            unbundled.rename(binary)
-            (folder / "NGVBuiltinBlur.dSYM").rename(folder / (APP + ".dSYM"))
-    if build_version(binary.read_bytes()) != binding["originalSDK"]:
-        raise ValueError("New SDK/minimum/platform differs from original")
+        if index == 0:
+            save(folder / "shader-targets.json", shader_targets(folder))
+    after = unsigned_code_identity(binary, folder / "resigned-unsigned")
+    if before != after or after["buildVersion"] != binding["originalSDK"]:
+        raise ValueError("Shader rebuild changed the original executable code or platform")
     save(folder / "binary.json", {"harnessSHA": binding["harnessSHA"], "bindingSHA256": digest(metadata / "binding.json"),
         "generatedSHA256": binding["generatedSHA256"], "commands": commands, "xcode": xcode,
         "toolchain": selected_toolchain, "toolchainReceiptSHA256": digest(folder / "toolchain.json"),
-        "swift": command(["xcrun", "swiftc", "--version"]), "uuid": command(["dwarfdump", "--uuid", str(binary)]),
+        "executableSourceSHA": GLOW_BUILD_SOURCE, "originalExecutableSHA256": original["files"][BINARY],
+        "unsignedCodeIdentity": after, "shaderTargets": shader_targets(folder),
         "files": {name: digest(folder / name) for name in sorted(BUNDLE_FILES)},
         "diagnosticOnly": True, "productAcceptance": False})
 
@@ -307,7 +443,10 @@ def execute(folder, metadata, products):
     proof = json.loads((products / "binary.json").read_text())
     if (proof["harnessSHA"] != binding["harnessSHA"] or proof["bindingSHA256"] != digest(metadata / "binding.json")
             or proof["generatedSHA256"] != binding["generatedSHA256"]
-            or set(proof["files"]) != BUNDLE_FILES):
+            or set(proof["files"]) != BUNDLE_FILES or proof["executableSourceSHA"] != GLOW_BUILD_SOURCE
+            or proof["originalExecutableSHA256"] != GLOW_BINARY_SHA
+            or proof["unsignedCodeIdentity"]["uuid"] != GLOW_UUID
+            or proof["shaderTargets"] != shader_targets(products)):
         raise ValueError("Compiled product binding differs")
     for name, checksum in proof["files"].items():
         if digest(products / name) != checksum:
@@ -319,6 +458,7 @@ def execute(folder, metadata, products):
     platform(folder)
     command(["codesign", "--verify", "--strict", str(products / APP)])
     outcome, calibration = owned_process(binary, folder / "calibration", "calibration", deadline)
+    coreimage_log(folder / "calibration", calibration)
     if outcome != "clean" or calibration.get("sampleExitCode") != 0 or calibration.get("sampleTimedOut"):
         raise ValueError("Exact-product calibration failed; no cohort started")
     sample_proof((folder / "calibration/sample.txt").read_text(), calibration["pid"], os.getpid(), images=IMAGES)
