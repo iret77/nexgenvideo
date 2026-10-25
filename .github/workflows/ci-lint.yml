@@ -1,0 +1,28 @@
+name: ci-lint
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  ci-lint:
+    name: ci-lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check workflow policy and syntax
+        env:
+          CI_LINT_VISIBILITY: ${{ github.event.repository.visibility }}
+        run: |
+          bash script/ci-lint --tier solo --strict --visibility "$CI_LINT_VISIBILITY"
+          ruby -ryaml -e 'Dir[".github/workflows/*.{yml,yaml}"].each { |path| YAML.load_file(path) }'

@@ -39,7 +39,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
@@ -126,7 +126,7 @@ jobs:
     runs-on: macrunner
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - uses: ./.github/actions/setup-xcode-27
 
@@ -143,7 +143,7 @@ jobs:
             plugins/musicvideo.ngvpack
 
       - name: Transfer runtime harness
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: private-analysis-runtime-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/runtime-harness.tar.gz
@@ -161,7 +161,7 @@ jobs:
     # Bootstrap ceiling for the first measured real-file run; replace with p90 × 2 once run data exists.
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Require the macOS 26 production runtime
         shell: bash
@@ -175,7 +175,7 @@ jobs:
           fi
 
       - name: Download runtime harness
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: ${{ inputs.runtime_artifact || format('private-analysis-runtime-{0}-{1}', github.run_id, github.run_attempt) }}
           path: ${{ runner.temp }}/runtime-harness

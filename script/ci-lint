@@ -1,0 +1,1055 @@
+#!/usr/bin/env bash
+# ci-lint — deterministische Strukturpruefung von GitHub-Actions-Workflows gegen
+# den CI-Standard der engineering-standards
+# (skills/repo-setup/reference/ci-standard.md).
+#
+# Ziel: ein CI-Fehlschlag soll BILLIG sein. Die teuren Fehler sind strukturell
+# und lassen sich ohne LLM und ohne Netz in Millisekunden finden. Gedacht als
+# leichter Required Check auf jedem PR und als lokaler Check vor jedem Push.
+#
+# Usage:
+#   ci-lint [pfad ...] [--strict] [--enforce] [--advisory] [--quiet]
+#           [--tier team|solo] [--visibility public|private|internal|unknown]
+#     pfad ...      Workflow-Dateien oder Verzeichnisse
+#                   (Default: .github/workflows/ im Repo-Root)
+#     --strict      WARN zaehlt wie FAIL fuer den Exit-Code (INFO nie)
+#     --enforce     Findings blockieren auch im Team-Tier (Opt-in)
+#     --advisory    nur berichten, nie blockieren (auch im Solo-Tier)
+#     --quiet       nur Findings ausgeben, keine Zusammenfassung
+#     --tier        Tier des Repos; Default: Feld `tier:` im Marker
+#                   .github/engineering-standards.yml, fehlt es -> team
+#     --visibility  Sichtbarkeit des Repos (in CI aus
+#                   github.event.repository.visibility); Default: unknown
+#
+# Exit-Verhalten nach Tier:
+#   team (auch ohne tier-Feld): beratend — Findings werden ausgegeben, Exit 0;
+#        blockierend nur mit --enforce
+#   solo: Exit 1 bei FAIL (bzw. WARN mit --strict)
+# Exit: 0 = PASS bzw. beratend, 1 = blockierende Findings, 2 = Nutzungsfehler
+#
+# REGELN
+#   CI001 WARN  Runner-Label *-latest (Image wechselt still, z.B. Xcode-Version)
+#   CI002 FAIL  Job ohne timeout-minutes (Haengeschutz, grosszuegig ~3x typisch)
+#   CI003 FAIL  PR-Workflow ohne concurrency + cancel-in-progress
+#   CI004 WARN  blindes sleep als Befehl in einem Shell-run-Block (Kommentare,
+#               Strings, Heredocs, Argumente wie `echo sleep 5` und Polling-
+#               Schleifen mit echter Bedingung oder break zaehlen nicht)
+#   CI005 WARN  Runner passt nicht zur Runner-Policy des Tiers
+#               Team: self-hosted bzw. eigenes Label
+#               Solo: GitHub-hosted macOS ausser *-intel; Blacksmith macOS
+#                     fest im Workflow (runs-on, Matrix, Input-Default) statt
+#                     nur als Option eines workflow_dispatch-Inputs
+#   CI006 FAIL  self-hosted Runner (auch aus jedem Matrix-Ausdruck) auf pull_request in
+#               einem OEFFENTLICHEN Repo ohne sichtbare Bestaetigung von
+#               Fork-PR-Approval + frischer VM/Container pro Job;
+#               auf pull_request_target ohne Ausnahme (Approval greift dort
+#               nicht). WARN bei unbekannter Sichtbarkeit und bei Runnern,
+#               die ein Ausdruck liefert (nicht aufloesbar)
+#   CI007 WARN  push auf alle Branches + pull_request: Doppellauf je PR-Commit
+#   CI008 WARN  schwerer Runner (macOS, Windows, self-hosted) auf automatischem
+#               Trigger (pull_request, push, merge_group) statt workflow_dispatch
+#   CI009 FAIL  schedule:-Trigger (startet Runner ohne Aenderung und Freigabe)
+#   CI010 WARN  paths/paths-ignore auf Trigger-Ebene in einem PR-Workflow
+#               (ein Required Check, der nie startet, blockiert den Merge)
+#   CI011 FAIL  pull_request_target-Workflow checkt PR-Head-Code aus oder
+#               fuehrt ihn aus (Fork-Code mit Secrets) — ohne Ausnahme
+#   CI012 INFO  Aufruf eines engineering-standards-Workflows nicht ueber den
+#               Major-Tag (z.B. @main, @v1.2.0, Commit-SHA statt @v1). Nur
+#               Hinweis, blockiert nie (auch nicht mit --strict): Die Aufrufer
+#               stellt der Rollout per Sync-PR um, siehe ci-standard.md.
+#   CI013 WARN  pull_request mit branches-/branches-ignore-Filter (gestapelte
+#               PRs bekommen keine Checks und wirken trotzdem mergebar)
+#   CI014 WARN  pull_request abonniert edited (types:): jede Aenderung an
+#               Titel oder Beschreibung startet einen Lauf
+#   CI015 WARN  cancel-in-progress: true in einem reinen Dispatch-Workflow
+#               (nur workflow_dispatch, workflow_call, repository_dispatch):
+#               bricht einen laufenden Dispatch ab, statt ihn warten zu lassen
+#   CI016 FAIL  -retry-tests-on-failure als Argument (z.B. an xcodebuild) oder
+#               als Wert ausserhalb von run (env, with); kaschiert Flaky Tests.
+#               Text in Strings, Kommentaren, Heredocs und in name/description
+#               zaehlt nicht
+#   CI017 WARN  actions/upload-artifact ohne retention-days-Schluessel in with
+#
+# AUSNAHMEN — sichtbar im Workflow, nicht durch Abschalten des Linters:
+#   # ci-lint: allow-CI004  <Begruendung>
+#   Steht der Kommentar innerhalb eines Job-Blocks (oder direkt ueber dem
+#   Job-Namen), gilt er fuer diesen Job; steht er ausserhalb von jobs:, fuer
+#   die ganze Datei. Kommentare INNERHALB eines run-Blocks zaehlen nicht.
+#   CI011 und CI006 auf pull_request_target lassen sich nicht abschalten.
+#   Die dispatch-Ausnahme von CI008 greift nur, wenn `if:` genau
+#   github.event_name == 'workflow_dispatch' als eigenen Konjunkt enthaelt
+#   (optional mit && weiteren Bedingungen); ||, !, != und Vergleiche mit
+#   true/false heben sie auf.
+#
+# GRENZEN (bewusst, statt eines halbgaren YAML-Parsers):
+#   Erwartet Block-Style-YAML mit Leerzeichen-Einrueckung. Flow-Style
+#   (`jobs: {build: {...}}`) und Tab-Einrueckung werden NICHT verstanden;
+#   solche Dateien werden mit CI000 gemeldet statt still falsch bewertet.
+#   Der Linter prueft Struktur, nicht YAML-Syntax.
+#
+# Bash 3.2-kompatibel (macOS-Default), keine Abhaengigkeiten ausser awk/sed/grep.
+set -uo pipefail
+
+readonly EXIT_PASS=0
+readonly EXIT_FINDINGS=1
+readonly EXIT_USAGE=2
+readonly MARKER_REL=".github/engineering-standards.yml"
+readonly DEFAULT_WORKFLOW_DIR_REL=".github/workflows"
+readonly RULES_DOC="skills/repo-setup/reference/ci-standard.md (engineering-standards)"
+
+usage_error() {
+  echo "ci-lint: $1" >&2
+  echo "Hilfe: ci-lint --help" >&2
+  exit "$EXIT_USAGE"
+}
+
+# >>> es_read_tier — identical in script/ci-lint, templates/pre-push,
+# templates/check and worktree-sweep/sweep (tests/tier.bats enforces it).
+# Prints "team" or "solo" for the marker file in $1. Accepts plain, "double"-
+# and 'single'-quoted values and trailing comments. A missing file or field
+# means team; any other value warns on stderr and also means team.
+es_read_tier() {
+  local marker="$1" raw value
+  if [ ! -f "$marker" ]; then
+    echo "team"
+    return 0
+  fi
+  raw="$(tr -d '\r' < "$marker" | sed -n 's/^tier:[[:space:]]*//p' | head -n 1)"
+  value="$(printf '%s\n' "$raw" | sed -e 's/[[:space:]]#.*$//' -e 's/[[:space:]]*$//' \
+    -e 's/^"\(.*\)"$/\1/' -e "s/^'\\(.*\\)'\$/\\1/")"
+  case "$value" in
+    "") echo "team" ;;
+    team|solo) echo "$value" ;;
+    *)
+      echo "warning: unknown tier '$value' in $marker - treating as team" >&2
+      echo "team"
+      ;;
+  esac
+}
+# <<< es_read_tier
+
+print_help() {
+  # Kopfkommentar bis zur ersten Nicht-Kommentarzeile ausgeben.
+  awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
+}
+
+STRICT=0
+ENFORCE=0
+ADVISORY=0
+QUIET=0
+TIER=""
+VISIBILITY="unknown"
+TARGETS=()
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --strict) STRICT=1; shift ;;
+    --advisory) ADVISORY=1; shift ;;
+    --enforce) ENFORCE=1; shift ;;
+    --quiet) QUIET=1; shift ;;
+    --tier)
+      [ $# -ge 2 ] || usage_error "--tier braucht einen Wert (team|solo)"
+      TIER="$2"; shift 2 ;;
+    --tier=*) TIER="${1#--tier=}"; shift ;;
+    --visibility)
+      [ $# -ge 2 ] || usage_error "--visibility braucht einen Wert"
+      VISIBILITY="$2"; shift 2 ;;
+    --visibility=*) VISIBILITY="${1#--visibility=}"; shift ;;
+    -h|--help) print_help; exit "$EXIT_PASS" ;;
+    --) shift; while [ $# -gt 0 ]; do TARGETS+=("$1"); shift; done ;;
+    -*) usage_error "unbekanntes Argument: $1" ;;
+    *) TARGETS+=("$1"); shift ;;
+  esac
+done
+
+case "$VISIBILITY" in
+  public|private|internal|unknown) ;;
+  "") VISIBILITY="unknown" ;;
+  *) usage_error "ungueltige --visibility: $VISIBILITY (public|private|internal|unknown)" ;;
+esac
+
+# Repo-Root: Default-Scope, Marker-Quelle und Basis fuer relative Ausgabe.
+TOP="$(git rev-parse --show-toplevel 2>/dev/null)" || TOP=""
+
+if [ -n "$TIER" ]; then
+  case "$TIER" in
+    team|solo) ;;
+    *) usage_error "ungueltiger --tier: $TIER (team|solo)" ;;
+  esac
+else
+  TIER="team"
+  if [ -n "$TOP" ]; then
+    TIER="$(es_read_tier "$TOP/$MARKER_REL")"
+  fi
+fi
+
+if [ ${#TARGETS[@]} -eq 0 ]; then
+  [ -n "$TOP" ] || usage_error "nicht in einem git-Repo und kein Pfad angegeben"
+  TARGETS=("$TOP/$DEFAULT_WORKFLOW_DIR_REL")
+  # Repo ohne Workflow-Verzeichnis: nichts zu pruefen, kein Fehler.
+  if [ ! -d "${TARGETS[0]}" ]; then
+    [ "$QUIET" -eq 1 ] || echo "Keine Workflow-Dateien gefunden — nichts zu pruefen."
+    exit "$EXIT_PASS"
+  fi
+fi
+
+FILES=()
+for target in "${TARGETS[@]}"; do
+  if [ -d "$target" ]; then
+    for f in "$target"/*.yml "$target"/*.yaml; do
+      [ -f "$f" ] && FILES+=("$f")
+    done
+  elif [ -f "$target" ]; then
+    FILES+=("$target")
+  else
+    usage_error "Pfad nicht gefunden: $target"
+  fi
+done
+
+if [ ${#FILES[@]} -eq 0 ]; then
+  [ "$QUIET" -eq 1 ] || echo "Keine Workflow-Dateien gefunden — nichts zu pruefen."
+  exit "$EXIT_PASS"
+fi
+
+# ---------------------------------------------------------------------------
+# Kern: eine Datei analysieren. Ausgabe je Finding: LEVEL|ZEILE|REGEL|TEXT
+# ---------------------------------------------------------------------------
+lint_file() {
+  awk -v tier="$TIER" -v vis="$VISIBILITY" '
+    function trim(s) { sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
+    # YAML-Kommentar am Zeilenende entfernen (braucht Leerzeichen vor dem #).
+    function strip_comment(s) { sub(/[[:space:]]+#.*$/, "", s); return s }
+    function key_of(s) {
+      s = trim(s); sub(/^-[[:space:]]+/, "", s); sub(/:.*$/, "", s)
+      gsub(QRE, "", s); return s
+    }
+    function value_of(s,   p) {
+      s = strip_comment(s); p = index(s, ":")
+      if (p == 0) return ""
+      return trim(substr(s, p + 1))
+    }
+    function suppressed(rule, scope,   re) {
+      re = "ci-lint:[[:space:]]*allow-" rule "([^0-9]|$)"
+      if (filescope ~ re) return 1
+      if (scope == "job" && jobscope ~ re) return 1
+      return 0
+    }
+    function finding(level, line, rule, msg, scope) {
+      if (suppressed(rule, scope)) return
+      out_buf = out_buf sprintf("%s|%d|%s|%s\n", level, line, rule, msg)
+    }
+    # Sicherheitsregeln ohne Ausnahme-Mechanismus.
+    function hard_finding(level, line, rule, msg) {
+      out_buf = out_buf sprintf("%s|%d|%s|%s\n", level, line, rule, msg)
+    }
+    # Fundstelle von CI016: im Job fuer den Job, sonst fuer die Datei.
+    function note_retry(lno) {
+      if (injobs && jobname != "") { if (!retry_line) retry_line = lno }
+      else if (!file_retry_line) file_retry_line = lno
+    }
+    function new_job(name, line) {
+      jobname = name; jobstart = line; key_ind = -1; sub_key = ""
+      has_timeout = 0; is_call = 0; call_ref = ""; call_line = 0; runs_text = ""; runs_line = 0
+      strat_text = ""; strat_line = 0; sleep_line = 0; head_line = 0
+      jconc_text = ""; jconc_line = 0; dispatch_guard = 0; step_ind = -1; st_active = 0
+      retry_line = 0; upload_line = 0
+      jobscope = pending_comments; pending_comments = ""
+    }
+
+    # --- Steps: run-Inhalt, shell, uses, with.ref je Step sammeln -----------
+    function begin_step() {
+      st_active = 1; st_run = ""; st_n = 0; st_shell = ""; st_uses = ""
+      st_ref = ""; st_ref_line = 0; st_in_with = 0; st_with_ind = -1; st_kind = -1
+      st_uses_line = 0; st_retention = 0; st_with_flow = 0
+    }
+    function add_run_line(txt, lno,   n, parts, i) {
+      n = split(txt, parts, "\n")
+      for (i = 1; i <= n; i++) {
+        if (st_n > 0) st_run = st_run "\n"
+        st_run = st_run parts[i]
+        st_lno[++st_n] = lno
+      }
+    }
+    # Wert nach dem ersten Doppelpunkt, ohne Kommentar-Abschnitt.
+    function raw_value(s,   p) {
+      p = index(s, ":")
+      if (p == 0) return ""
+      return trim(substr(s, p + 1))
+    }
+    # YAML-Skalar lesen: doppelt gequotet (mit Escapes), einfach gequotet (zwei Apostrophe = einer), sonst bis Kommentar.
+    function yaml_scalar(s,   v, q, i, c, out) {
+      v = raw_value(s); q = substr(v, 1, 1); out = ""
+      if (q == "\"") {
+        for (i = 2; i <= length(v); i++) {
+          c = substr(v, i, 1)
+          if (c == "\\") { i++; c = substr(v, i, 1); if (c == "n") c = "\n"; else if (c == "t") c = " "; out = out c; continue }
+          if (c == "\"") break
+          out = out c
+        }
+        return out
+      }
+      if (q == SQ) {
+        for (i = 2; i <= length(v); i++) {
+          c = substr(v, i, 1)
+          if (c == SQ) { if (substr(v, i + 1, 1) == SQ) { out = out SQ; i++; continue }; break }
+          out = out c
+        }
+        return out
+      }
+      return strip_comment(v)
+    }
+    function step_key_line(txt, ind,   k, v) {
+      k = key_of(txt); v = value_of(txt)
+      st_in_with = 0
+      if (k == "run") {
+        if (v !~ /^[|>]/ && v != "") add_run_line(yaml_scalar(txt), FNR)
+      } else if (k == "shell") st_shell = yaml_scalar(txt)
+      else if (k == "uses") { st_uses = v; st_uses_line = FNR }
+      else if (k == "with") {
+        st_in_with = 1; st_with_ind = ind; st_with_flow = (v ~ /^[{]/)
+        # Flow-Mapping: nur ein Schluessel retention-days zaehlt, kein Wert.
+        if (st_with_flow && v ~ RETENTION_FLOW_RE) st_retention = 1
+      }
+    }
+    function step_sub_line(txt, ind) {
+      if (st_in_with && ind > st_with_ind && key_of(txt) == "ref") {
+        st_ref = value_of(txt); st_ref_line = FNR
+      }
+      if (st_in_with && ind > st_with_ind && key_of(txt) == "retention-days") st_retention = 1
+      # Fortsetzungszeile eines mehrzeiligen Flow-Mappings
+      if (st_in_with && st_with_flow && ind > st_with_ind && ("," trim(txt)) ~ RETENTION_FLOW_RE) st_retention = 1
+    }
+    function end_step() {
+      if (st_active) analyze_step()
+      st_active = 0
+    }
+    function is_shell(sh) {
+      return (sh == "" || sh ~ /^(bash|sh|zsh|dash|ksh)([[:space:]]|$)/)
+    }
+    # Heredoc-Inhalte sind Daten, kein ausgefuehrter Code: Zeilen leeren.
+    function blank_heredocs(n,   i, tag, t, rest) {
+      tag = ""
+      for (i = 1; i <= n; i++) {
+        if (tag != "") {
+          t = sl[i]; sub(/^[\t ]+/, "", t)
+          sl[i] = ""
+          if (t == tag) tag = ""
+          continue
+        }
+        if (match(sl[i], HEREDOC_RE)) {
+          rest = substr(sl[i], RSTART, RLENGTH)
+          sub(/^[^<]*<<-?[[:space:]]*/, "", rest); gsub(QRE, "", rest)
+          tag = rest
+        }
+      }
+    }
+    # Quoting und Kommentare entfernen; Zeilenumbrueche bleiben erhalten.
+    # Zeilen, die einen Befehl fortsetzen (Backslash am Zeilenende, mehrzeilige
+    # Strings), beginnen mit CONT. HEADMARK bleibt auch in Strings erhalten.
+    # Ein String, der genau RETRY_FLAG ist ("-retry-…"), bleibt als Argument stehen.
+    function clean_shell(s,   out, i, c, n, st, prev, hl, qbuf) {
+      out = ""; st = 0; n = length(s); prev = "\n"; hl = length(HEADMARK); qbuf = ""
+      for (i = 1; i <= n; i++) {
+        c = substr(s, i, 1)
+        if (st == 3) { if (c == "\n") { st = 0; out = out c }; prev = c; continue }
+        if (st == 1 || st == 2) {
+          if (substr(s, i, hl) == HEADMARK) { out = out " " HEADMARK " "; i += hl - 1; continue }
+          if (c == "\n") { out = out "\n" CONT; qbuf = qbuf c; prev = c; continue }
+          if (st == 1) {
+            if (c == SQ) { st = 0; if (qbuf == RETRY_FLAG) out = out RETRY_FLAG " " } else qbuf = qbuf c
+            prev = c; continue
+          }
+          if (c == "\\") { i++; qbuf = qbuf c; if (substr(s, i, 1) == "\n") out = out "\n" CONT; continue }
+          if (c == "\"") { st = 0; if (qbuf == RETRY_FLAG) out = out RETRY_FLAG " " } else qbuf = qbuf c
+          prev = c; continue
+        }
+        if (c == "\\") {
+          i++
+          if (substr(s, i, 1) == "\n") out = out "\n" CONT; else out = out " "
+          prev = " "; continue
+        }
+        if (c == SQ) { st = 1; out = out " "; qbuf = ""; prev = c; continue }
+        if (c == "\"") { st = 2; out = out " "; qbuf = ""; prev = c; continue }
+        if (c == "#" && prev ~ /[[:space:];&|(]/) { st = 3; continue }
+        out = out c; prev = c
+      }
+      return out
+    }
+    # Head-Bezuege (PR-Code) markieren, uebrige Ausdruecke neutralisieren.
+    function mark_heads(t,   out, e) {
+      out = ""
+      while (match(t, /[$][{][{][^}]*[}][}]/)) {
+        e = substr(t, RSTART, RLENGTH)
+        out = out substr(t, 1, RSTART - 1) ((e ~ HEADREF_RE) ? HEADMARK : "__EXPR__")
+        t = substr(t, RSTART + RLENGTH)
+      }
+      t = out t
+      gsub(/refs\/pull\//, HEADMARK "/", t)
+      gsub(/pull\/(__EXPR__|[0-9])/, HEADMARK, t)
+      return t
+    }
+    function record_sleep(lno) {
+      if (!want_sleep) return
+      if (sh_d == 0) { if (!sleep_line) sleep_line = lno }
+      else sh_pend[sh_d] = sh_pend[sh_d] " " lno
+    }
+    # Schleife schliessen: Polling (echte Bedingung oder break als Befehl)
+    # verwirft die Wartezeiten, sonst wandern sie nach aussen bzw. werden gemeldet.
+    function close_loop(   k, np, pl) {
+      if (sh_d == 0) return
+      if (sh_lt[sh_d] != "poll" && !sh_lb[sh_d] && sh_pend[sh_d] != "") {
+        if (sh_d > 1) sh_pend[sh_d - 1] = sh_pend[sh_d - 1] " " sh_pend[sh_d]
+        else {
+          np = split(sh_pend[sh_d], pl, " ")
+          for (k = 1; k <= np; k++) if (pl[k] != "" && !sleep_line) sleep_line = pl[k]
+        }
+      }
+      sh_d--
+    }
+    # Ende eines einfachen Befehls: Checkout/Ausfuehrung von PR-Head-Code?
+    function end_cmd(   k, sub_ok, has_head) {
+      if (cur_n == 0) return
+      if (cur_n >= 3 && cur_w[1] == "gh" && cur_w[2] == "pr" && cur_w[3] == "checkout" && !head_line) head_line = cur_line
+      if (cur_w[1] == "git") {
+        sub_ok = 0; has_head = 0
+        for (k = 2; k <= cur_n; k++) {
+          if (cur_w[k] ~ /^(fetch|checkout|switch|worktree|reset|pull|clone|merge|rebase|cherry-pick)$/) sub_ok = 1
+          if (index(cur_w[k], HEADMARK)) has_head = 1
+        }
+        if (sub_ok && has_head && !head_line) head_line = cur_line
+      }
+      cur_n = 0
+    }
+    # Shell-Inhalt eines Steps in Befehle zerlegen (Befehlsposition beachten).
+    function analyze_shell(   n, i, j, m, tk, w, L, t) {
+      n = split(mark_heads(st_run), sl, "\n")
+      blank_heredocs(n)
+      t = ""
+      for (i = 1; i <= n; i++) t = t (i > 1 ? "\n" : "") sl[i]
+      n = split(clean_shell(t), sl, "\n")
+      sh_d = 0; cmdpos = 1; cur_n = 0; awaitc = 0; pfx = ""; skip_arg = 0
+      for (i = 1; i <= n; i++) {
+        L = sl[i]
+        if (substr(L, 1, 1) == CONT) L = substr(L, 2)
+        else if (i > 1) { end_cmd(); cmdpos = 1; pfx = ""; skip_arg = 0 }
+        gsub(/[;&|(){}]/, " ; ", L)
+        m = split(L, tk, /[[:space:]]+/)
+        for (j = 1; j <= m; j++) {
+          w = tk[j]
+          if (w == "") continue
+          # CI016: die Option als Wort eines Befehls (auch in args+=(...)).
+          if (w == RETRY_FLAG) note_retry(st_lno[i])
+          if (w == ";") { end_cmd(); cmdpos = 1; pfx = ""; skip_arg = 0; continue }
+          if (!cmdpos) { cur_w[++cur_n] = w; continue }
+          # Befehlspraefixe (env, sudo, xargs, ...): ihre Optionen und
+          # Zuweisungen ueberspringen, das naechste Wort ist der eigentliche Befehl.
+          if (skip_arg) { skip_arg = 0; continue }
+          if (pfx != "") {
+            if (w == "--") continue
+            if (w ~ /^-/) { if ((pfx SUBSEP w) in PFX_OPTARG) skip_arg = 1; continue }
+          }
+          if (w == "while" || w == "until") { sh_d++; sh_lt[sh_d] = "await"; sh_lb[sh_d] = 0; sh_pend[sh_d] = ""; awaitc = sh_d; continue }
+          if (w == "for" || w == "select") { sh_d++; sh_lt[sh_d] = "blind"; sh_lb[sh_d] = 0; sh_pend[sh_d] = ""; cmdpos = 0; cur_n = 0; continue }
+          if (w == "do" || w == "then" || w == "else" || w == "elif" || w == "if" || w == "!") continue
+          if (w in PFX) { pfx = w; continue }
+          if (w == "done") { close_loop(); cmdpos = 0; continue }
+          if (w == "fi" || w == "esac" || w == "case") { cmdpos = 0; cur_n = 0; continue }
+          if (w ~ /^[A-Za-z_][A-Za-z0-9_]*=/) continue
+          # Befehlswort
+          cur_n = 1; cur_w[1] = w; cur_line = st_lno[i]; cmdpos = 0; pfx = ""
+          if (awaitc > 0 && awaitc <= sh_d && sh_lt[awaitc] == "await") {
+            sh_lt[awaitc] = (w == "true" || w == ":" || w == "false" || w == "sleep") ? "blind" : "poll"
+            awaitc = 0
+          }
+          if (w == "sleep" && j < m && tk[j + 1] ~ /^[0-9]/) record_sleep(st_lno[i])
+          if ((w == "break" || w == "exit" || w == "return") && sh_d > 0) sh_lb[sh_d] = 1
+        }
+      }
+      end_cmd()
+    }
+    function analyze_step() {
+      if (st_uses ~ /actions\/checkout/ && st_ref ~ HEADREF_RE && !head_line)
+        head_line = (st_ref_line ? st_ref_line : st_uses_line)
+      if (st_uses ~ UPLOAD_RE && !st_retention && !upload_line) upload_line = st_uses_line
+      if (st_n == 0) return
+      want_sleep = is_shell(st_shell)
+      analyze_shell()
+    }
+
+    # --- Runner-Klassifikation ----------------------------------------------
+    function classify_reset() {
+      r_known = 0; r_self = 0; r_bs = 0; r_gh = 0; r_ghmac = 0; r_heavy = 0; r_latest = 0; r_unresolved = 0
+      r_bsmac = 0
+    }
+    # Ein Runner-Wert (ein Label oder eine Label-Liste) -> Flags per ODER.
+    function classify_add(text,   t, n, i, tok, toks, custom, group, self, bs, gh, ghmac, heavy, latest, known, expr) {
+      t = tolower(text)
+      expr = (t ~ /[$][{][{]/)
+      group = (t ~ /(^|[^a-z])group:/)
+      gsub(/[$][{][{][^}]*[}][}]/, " ", t)
+      gsub(/(labels|group):/, " ", t)
+      gsub(BRKRE, " ", t)
+      gsub(/(^|[[:space:]])-[[:space:]]/, " ", t)
+      n = split(t, toks, /[[:space:]]+/)
+      custom = 0; self = 0; bs = 0; gh = 0; ghmac = 0; heavy = 0; latest = 0; known = 0
+      for (i = 1; i <= n; i++) {
+        tok = toks[i]
+        if (tok == "") continue
+        known = 1
+        if (tok == "self-hosted") { self = 1; continue }
+        if (tok ~ /^blacksmith/) { bs = 1; if (tok ~ /macos|windows/) heavy = 1; if (tok ~ /macos/) r_bsmac = 1; continue }
+        if (tok ~ /^(ubuntu|macos|windows)(-|$)/) {
+          gh = 1
+          if (tok ~ /^(macos|windows)/) heavy = 1
+          if (tok ~ /^macos/ && tok !~ /intel/) ghmac = 1
+          if (tok ~ /-latest/) latest = 1
+          continue
+        }
+        custom = 1
+      }
+      # Eigene Labels / Runner-Gruppen gelten als self-hosted (konservativ).
+      if (self || custom || group) { self = 1; known = 1; gh = 0; ghmac = 0; bs = 0; heavy = 1 }
+      if (expr && !known) r_unresolved = 1
+      if (known) r_known = 1
+      if (self) r_self = 1
+      if (bs) r_bs = 1
+      if (gh) r_gh = 1
+      if (ghmac) r_ghmac = 1
+      if (heavy) r_heavy = 1
+      if (latest) r_latest = 1
+    }
+    # Werte eines Matrix-Schluessels (Liste, Skalar, Block-Liste, include).
+    function matrix_values(key, text,   n, L, i, v, out, cind, collecting, li) {
+      n = split(text, L, "\n"); out = ""; collecting = 0
+      for (i = 1; i <= n; i++) {
+        if (L[i] ~ /^[[:space:]]*$/) continue
+        match(L[i], /^ */); li = RLENGTH
+        if (collecting) {
+          if (li > cind && trim(L[i]) ~ /^-/) {
+            v = trim(L[i]); sub(/^-[[:space:]]*/, "", v)
+            out = out SUBSEP v
+            continue
+          }
+          collecting = 0
+        }
+        if (key_of(L[i]) == key) {
+          v = value_of(L[i])
+          if (v == "") { collecting = 1; cind = li; continue }
+          out = out SUBSEP v
+        }
+      }
+      return out
+    }
+    # Alternativen eines Matrix-Werts: Flow-Liste an Kommas der obersten Ebene
+    # teilen (verschachtelte [..] bleiben ein Runner), sonst der Wert selbst.
+    function split_alternatives(v, arr, n,   i, c, depth, cur) {
+      v = trim(v)
+      if (v !~ /^\[/) { arr[++n] = v; return n }
+      v = substr(v, 2); sub(/\][[:space:]]*$/, "", v)
+      depth = 0; cur = ""
+      for (i = 1; i <= length(v); i++) {
+        c = substr(v, i, 1)
+        if (c == "[") depth++
+        if (c == "]") depth--
+        if (c == "," && depth == 0) { if (trim(cur) != "") arr[++n] = cur; cur = ""; continue }
+        cur = cur c
+      }
+      if (trim(cur) != "") arr[++n] = cur
+      return n
+    }
+    # Jeden Ausdruck in runs-on aufloesen; alle Labels einer Runner-Angabe
+    # gehoeren zu EINEM Runner (Kombinationen der Matrix-Werte).
+    function classify_job(   t, e, lit, nslots, slot, key, vals, nv, vl, j, na, alts, ncomb, comb, newc, nn, c, a, i) {
+      classify_reset()
+      if (runs_text == "") return
+      # Blacksmith macOS auch als Literal in einem Ausdruck (z.B. als Fallback).
+      if (tolower(runs_text) ~ BSMAC_RE) r_bsmac = 1
+      if (runs_text !~ /[$][{][{]/) { classify_add(runs_text); return }
+      t = runs_text; lit = ""; nslots = 0
+      while (match(t, /[$][{][{][^}]*[}][}]/)) {
+        e = substr(t, RSTART, RLENGTH)
+        lit = lit substr(t, 1, RSTART - 1) " "
+        t = substr(t, RSTART + RLENGTH)
+        if (e ~ /^[$][{][{][[:space:]]*matrix[.][A-Za-z0-9_-]+[[:space:]]*[}][}]$/) {
+          key = e; sub(/^[$][{][{][[:space:]]*matrix[.]/, "", key); sub(/[[:space:]]*[}][}]$/, "", key)
+          slot[++nslots] = key
+        } else r_unresolved = 1
+      }
+      lit = lit t
+      ncomb = 1; comb[1] = lit
+      for (i = 1; i <= nslots; i++) {
+        vals = matrix_values(slot[i], strat_text)
+        na = 0
+        if (vals != "") {
+          nv = split(vals, vl, SUBSEP)
+          for (j = 1; j <= nv; j++) if (trim(vl[j]) != "") na = split_alternatives(vl[j], alts, na)
+        }
+        if (na == 0) { r_unresolved = 1; continue }
+        if (ncomb * na > MAX_COMBOS) {
+          for (a = 1; a <= na; a++) classify_add(lit " " alts[a])
+          continue
+        }
+        nn = 0
+        for (c = 1; c <= ncomb; c++) for (a = 1; a <= na; a++) newc[++nn] = comb[c] " " alts[a]
+        ncomb = nn
+        for (c = 1; c <= nn; c++) comb[c] = newc[c]
+      }
+      for (c = 1; c <= ncomb; c++) classify_add(comb[c])
+    }
+    function cancel_ok(text) {
+      return (text ~ /cancel-in-progress:[[:space:]]*(true|[$][{][{])/)
+    }
+    function balanced(x,   i, c, d) {
+      d = 0
+      for (i = 1; i <= length(x); i++) {
+        c = substr(x, i, 1)
+        if (c == "(") d++
+        else if (c == ")") { d--; if (d < 0) return 0 }
+      }
+      return d == 0
+    }
+    # Aeussere Klammern entfernen, solange sie den ganzen Ausdruck umschliessen.
+    function unwrap(p) {
+      p = trim(p)
+      while (p ~ /^\(.*\)$/ && balanced(substr(p, 2, length(p) - 2))) p = trim(substr(p, 2, length(p) - 2))
+      return p
+    }
+    # An && auf oberster Klammer-Ebene teilen.
+    function split_and(t, parts,   n, i, c, d, cur) {
+      n = 0; d = 0; cur = ""
+      for (i = 1; i <= length(t); i++) {
+        c = substr(t, i, 1)
+        if (c == "(") d++
+        else if (c == ")") d--
+        if (d == 0 && substr(t, i, 2) == "&&") { parts[++n] = cur; cur = ""; i++; continue }
+        cur = cur c
+      }
+      parts[++n] = cur
+      return n
+    }
+    # Dispatch-Beschraenkung: `github.event_name == workflow_dispatch` ist ein
+    # eigener Konjunkt der obersten Ebene (auch in voll geklammerten
+    # Konjunktionen, mit oder ohne Ausdrucks-Klammern), beliebig mit && weiteren
+    # Bedingungen verknuepft. ||, ! und != heben die Ausnahme auf; ein Vergleich
+    # des Vergleichs (z.B. `(...) == false`) ist kein eigener Konjunkt.
+    function dispatch_only(v,   t, n, parts, i, p, hit) {
+      t = v
+      gsub(/[$][{][{]|[}][}]/, " ", t)
+      if (t ~ /[|][|]/ || t ~ /!/) return 0
+      t = unwrap(t)
+      if (!balanced(t)) return 0
+      n = split_and(t, parts)
+      hit = 0
+      for (i = 1; i <= n; i++) {
+        p = unwrap(parts[i])
+        # Nur echte (abgeklammerte) Teil-Konjunktionen rekursiv pruefen.
+        if (p != trim(parts[i]) && p ~ /&&/) { if (dispatch_only(p)) hit = 1; continue }
+        if (p ~ DISPATCH_EXACT_RE || p ~ DISPATCH_EXACT_REV_RE) hit = 1
+      }
+      return hit
+    }
+    # Aufruf eines engineering-standards-Workflows: nur ueber den Major-Tag
+    # (v1, v2, ...), der mit jedem Release der Major-Version mitwandert.
+    function check_es_ref(   u, ref) {
+      u = call_ref; gsub(QRE, "", u)
+      if (u !~ /(^|\/)engineering-standards\/[.]github\/workflows\/[^@]+@/) return
+      ref = u; sub(/^.*@/, "", ref)
+      if (ref ~ /^v[0-9]+$/) return
+      finding("INFO", call_line, "CI012", "Job \"" jobname "\": ruft einen engineering-standards-Workflow mit @" ref " auf — @v1 (Major-Tag) verwenden; v1 wandert mit jedem 1.x-Release mit", "job")
+    }
+    function flush_job(   rline) {
+      if (jobname == "") return
+      end_step()
+      if (!is_call && !has_timeout)
+        finding("FAIL", jobstart, "CI002", "Job \"" jobname "\": kein timeout-minutes (Haengeschutz, ~3x typische Laufzeit)", "job")
+      if (sleep_line)
+        finding("WARN", sleep_line, "CI004", "Job \"" jobname "\": sleep ohne Zustandspruefung — auf den Zustand pollen (until/while-Schleife mit echter Bedingung)", "job")
+      if (call_ref != "") check_es_ref()
+      if (retry_line)
+        finding("FAIL", retry_line, "CI016", "Job \"" jobname "\": Testwiederholung per xcodebuild-Option (retry-tests-on-failure) kaschiert Flaky Tests — reparieren oder entfernen; eng begrenzter Retry nur auf eine dokumentierte Infrastruktur-Crash-Signatur", "job")
+      if (upload_line)
+        finding("WARN", upload_line, "CI017", "Job \"" jobname "\": actions/upload-artifact ohne retention-days — Zwischenprodukte 1 Tag, Nachweise wenige Tage", "job")
+      if (dispatch_only_trig && jconc_text ~ CANCEL_TRUE_RE)
+        finding("WARN", jconc_line, "CI015", "Job \"" jobname "\": cancel-in-progress: true in einem reinen Dispatch-Workflow bricht einen laufenden Lauf ab — false setzen (neuer Dispatch wartet)", "job")
+      if (head_line && prt_trigger)
+        hard_finding("FAIL", head_line, "CI011", "Job \"" jobname "\": pull_request_target checkt PR-Head-Code aus bzw. fuehrt ihn aus — Fork-Code laeuft mit Secrets und Schreib-Token; untrusted Builds nur ueber pull_request (keine Ausnahme moeglich)")
+
+      jobs_total++
+      if (jconc_text != "" && cancel_ok(jconc_text)) jobs_with_conc++
+
+      classify_job()
+      rline = ((runs_text ~ /matrix[.]/ && strat_line) ? strat_line : runs_line)
+
+      if (r_unresolved && !r_self && fork_trigger && !is_call)
+        finding("WARN", rline, "CI006", "Job \"" jobname "\": Runner nicht aufloesbar (Ausdruck) — self-hosted auf Fork-PR-Trigger nicht ausschliessbar; Labels direkt oder als Matrix-Liste angeben", "job")
+      if (r_known) {
+        if (r_latest)
+          finding("WARN", rline, "CI001", "Job \"" jobname "\": *-latest-Runner wechselt still das Image — pinnen (z.B. macos-15, ubuntu-24.04), wenn das Ergebnis vom Image abhaengt", "job")
+        if (tier == "team" && r_self)
+          finding("WARN", rline, "CI005", "Job \"" jobname "\": Team-Tier erlaubt GitHub-hosted oder Blacksmith — self-hosted/eigenes Label nur mit Begruendung", "job")
+        if (tier == "solo" && r_ghmac)
+          finding("WARN", rline, "CI005", "Job \"" jobname "\": Solo-Tier: macOS-Jobs laufen auf dem eigenen macOS-Runner — GitHub-hosted macOS nur fuer Tests auf Intel-Hardware (macos-*-intel)", "job")
+        if (r_self && pr_trigger) {
+          if (vis == "public")
+            finding("FAIL", rline, "CI006", "Job \"" jobname "\": self-hosted Runner auf pull_request in oeffentlichem Repo — nur mit Fork-PR-Approval \"Require approval for all external contributors\" UND frischer VM/Container pro Job; mit allow-CI006 bestaetigen", "job")
+          else if (vis == "unknown")
+            finding("WARN", rline, "CI006", "Job \"" jobname "\": self-hosted Runner auf pull_request — Sichtbarkeit unbekannt; bei oeffentlichem Repo Fork-PR-Approval + frische VM/Container pro Job Pflicht", "job")
+        }
+        if (r_self && prt_trigger) {
+          if (vis == "public")
+            hard_finding("FAIL", rline, "CI006", "Job \"" jobname "\": self-hosted Runner auf pull_request_target — Fork-PR-Approval greift dort nicht, jeder Fork-PR startet den Lauf; GitHub-hosted Runner verwenden (keine Ausnahme moeglich)")
+          else if (vis == "unknown")
+            hard_finding("WARN", rline, "CI006", "Job \"" jobname "\": self-hosted Runner auf pull_request_target — Fork-PR-Approval greift dort nicht; bei oeffentlichem Repo GitHub-hosted Runner verwenden")
+        }
+        if (r_heavy && auto_trigger && !dispatch_guard)
+          finding("WARN", rline, "CI008", "Job \"" jobname "\": schwerer Runner auf automatischem Trigger — schwere Laeufe nur per workflow_dispatch; leichter Check (<15 min)? mit allow-CI008 begruenden", "job")
+      }
+      if (tier == "solo" && r_bsmac)
+        finding("WARN", rline, "CI005", "Job \"" jobname "\": Solo-Tier: Blacksmith macOS nur als Ausweichen mit Zustimmung des Users — als Option eines workflow_dispatch-Inputs runner (Default macrunner), nie fest im Workflow", "job")
+      jobname = ""
+    }
+    function add_trigger(name, line) {
+      name = trim(name)
+      gsub(QRE, "", name)
+      if (name == "") return
+      if (!(name in trig)) trig[name] = line
+    }
+    # Trigger-Konfiguration einer Zeile im on:-Block auswerten.
+    function on_config(line, txt, ind,   k, v) {
+      # Inline-Flow-Mapping, z.B. `push: {branches: [main]}`: grob auswerten.
+      if (trim(txt) ~ /^[{]/) {
+        if (cur_trig ~ /^pull_request/ && txt ~ /paths/ && !pr_paths_line) pr_paths_line = line
+        if (cur_trig == "pull_request" && txt ~ /branches/ && !pr_branches_line) pr_branches_line = line
+        if (cur_trig == "pull_request" && txt ~ /types/ && txt ~ EDITED_RE && !pr_edited_line) pr_edited_line = line
+        if (cur_trig == "push") {
+          if (txt ~ /branches-ignore/) push_branches_ignore = 1
+          else if (txt ~ /branches/) { push_branches = 1; push_br_text = push_br_text " " txt }
+          if (txt ~ /tags/) push_tags = 1
+        }
+        return
+      }
+      k = key_of(txt); v = value_of(txt)
+      if (cur_trig == "pull_request" || cur_trig == "pull_request_target") {
+        if ((k == "paths" || k == "paths-ignore") && !pr_paths_line) pr_paths_line = line
+      }
+      if (cur_trig == "pull_request") {
+        if (ty_collect && ind > ty_ind) {
+          if (trim(txt) ~ /^-/ && txt ~ EDITED_RE && !pr_edited_line) pr_edited_line = line
+          return
+        }
+        ty_collect = 0
+        if ((k == "branches" || k == "branches-ignore") && !pr_branches_line) pr_branches_line = line
+        if (k == "types") {
+          ty_collect = 1; ty_ind = ind
+          if (v ~ EDITED_RE && !pr_edited_line) pr_edited_line = line
+        }
+      }
+      if (cur_trig == "push") {
+        if (br_collect && ind > br_ind) {
+          if (trim(txt) ~ /^-/) push_br_text = push_br_text " " txt
+          return
+        }
+        br_collect = 0
+        if (k == "branches") { push_branches = 1; br_ind = ind; br_collect = 1; push_br_text = push_br_text " " v }
+        else if (k == "branches-ignore") push_branches_ignore = 1
+        else if (k == "tags" || k == "tags-ignore") push_tags = 1
+      }
+    }
+
+    BEGIN {
+      SQ = sprintf("%c", 39)
+      QRE = "[\"" SQ "]"
+      BRKRE = "[][\"," SQ "]"
+      TOPKEYRE = "^[\"" SQ "]?[A-Za-z_][A-Za-z0-9_-]*[\"" SQ "]?:"
+      JOBKEYRE = "^ *[\"" SQ "]?[A-Za-z0-9_-]+[\"" SQ "]?:[[:space:]]*(#.*)?$"
+      DISPATCH_EXACT_RE = "^github[.]event_name[[:space:]]*==[[:space:]]*[\"" SQ "]workflow_dispatch[\"" SQ "]$"
+      DISPATCH_EXACT_REV_RE = "^[\"" SQ "]workflow_dispatch[\"" SQ "][[:space:]]*==[[:space:]]*github[.]event_name$"
+      HEADMARK = "__PRHEAD__"
+      # Befehlspraefixe und ihre Optionen, die ein Argument verlangen.
+      npfx = split("env sudo command exec time nice nohup xargs", pfxl, " ")
+      for (pi = 1; pi <= npfx; pi++) PFX[pfxl[pi]] = 1
+      nopt = split("env:-u env:-C env:-S sudo:-u sudo:-g sudo:-h sudo:-p sudo:-C sudo:-D sudo:-r sudo:-t sudo:-U exec:-a nice:-n xargs:-n xargs:-I xargs:-P xargs:-L xargs:-d xargs:-s xargs:-E xargs:-a", optl, " ")
+      for (pi = 1; pi <= nopt; pi++) { split(optl[pi], op, ":"); PFX_OPTARG[op[1], op[2]] = 1 }
+      CONT = sprintf("%c", 29)
+      MAX_COMBOS = 64
+      HEREDOC_RE = "(^|[^<])<<-?[[:space:]]*[\"" SQ "]?[A-Za-z_][A-Za-z0-9_]*"
+      HEADREF_RE = "pull_request[.]head[.](sha|ref)|github[.]head_ref|refs/pull/|merge_commit_sha"
+      # Zusammengesetzt, damit der eingebettete Linter (ci-lint.yml) sich nicht selbst meldet.
+      RETRY_RE = "(^|[^A-Za-z0-9_-])-retry-tests-on" "-failure([^A-Za-z0-9_-]|$)"
+      RETRY_FLAG = "-retry-tests-on" "-failure"
+      # Reiner Anzeigetext: dort ist die Option nie ein Argument (CI016).
+      ntk = split("name description run-name", tkl, " ")
+      for (pi = 1; pi <= ntk; pi++) TEXTKEY[tkl[pi]] = 1
+      RETENTION_FLOW_RE = "[{,][[:space:]]*[\"" SQ "]?retention-days[\"" SQ "]?[[:space:]]*:"
+      UPLOAD_RE = "actions/upload-artifact([@/]|$)"
+      BSMAC_RE = "blacksmith[a-z0-9._-]*macos"
+      EDITED_RE = "(^|[^A-Za-z0-9_-])edited([^A-Za-z0-9_-]|$)"
+      CANCEL_TRUE_RE = "cancel-in-progress:[[:space:]]*[\"" SQ "]?true[\"" SQ "]?([[:space:],}]|$)"
+      out_buf = ""
+      injobs = 0; in_on = 0; in_conc = 0; jobs_ind = -1; jobname = ""
+      bs_ind = -1; bs_is_run = 0; flowstyle = 0; filescope = ""; pending_comments = ""
+      trig_ind = -1; cur_trig = ""; on_start = 0; conc_text = ""
+      pr_paths_line = 0; push_branches = 0; push_branches_ignore = 0
+      push_tags = 0; push_br_text = ""; br_collect = 0; br_ind = -1
+      pr_branches_line = 0; pr_edited_line = 0; ty_collect = 0; ty_ind = -1
+      bsmac_default_line = 0; file_retry_line = 0; conc_line = 0; dispatch_only_trig = 0
+      jobs_total = 0; jobs_with_conc = 0
+      fork_trigger = 0; auto_trigger = 0; pr_trigger = 0; prt_trigger = 0
+    }
+
+    # Pass 1 (FNR == NR): nur Trigger einsammeln, damit Job-Regeln sie kennen.
+    # Pass 2: alles andere. Beide Durchlaeufe nutzen dieselbe Zeilenlogik.
+    {
+      pass = (FNR == NR) ? 1 : 2
+      line = $0
+      if (pass == 2 && FNR == 1) {
+        pr_trigger = ("pull_request" in trig)
+        prt_trigger = ("pull_request_target" in trig)
+        fork_trigger = (pr_trigger || prt_trigger)
+        auto_trigger = (fork_trigger || ("push" in trig) || ("merge_group" in trig))
+        dispatch_only_trig = 0
+        for (tn in trig) {
+          if (tn == "workflow_dispatch" || tn == "workflow_call" || tn == "repository_dispatch") dispatch_only_trig = 1
+          else { dispatch_only_trig = 0; break }
+        }
+        injobs = 0; in_on = 0; in_conc = 0; bs_ind = -1; bs_is_run = 0
+      }
+      match(line, /^ */); ind = RLENGTH
+
+      # Block-Scalar-Inhalt (run: |, description: >, ...): Daten, keine Struktur.
+      if (bs_ind >= 0) {
+        if (line ~ /^[[:space:]]*$/ || ind > bs_ind) {
+          if (pass == 2 && bs_is_run && st_active) add_run_line(line, FNR)
+          # run-Inhalt prueft die Shell-Analyse (Argumente), Anzeigetext nie.
+          if (pass == 2 && !in_on && !bs_is_run && !(bs_key in TEXTKEY) && trim(line) !~ /^#/ && strip_comment(line) ~ RETRY_RE) note_retry(FNR)
+          next
+        }
+        bs_ind = -1; bs_is_run = 0
+      }
+      if (line ~ /^[[:space:]]*$/) next
+      if (pass == 2 && line ~ /^\t/) flowstyle = 1
+
+      is_comment = (line ~ /^[[:space:]]*#/)
+      if (!is_comment && (line ~ /:[[:space:]]*[|>][-+0-9]*[[:space:]]*(#.*)?$/ || line ~ /^[[:space:]]*-[[:space:]]+[|>][-+0-9]*[[:space:]]*(#.*)?$/))
+        starts_bs = 1
+      else
+        starts_bs = 0
+
+      # Top-Level-Schluessel beendet jeden offenen Block.
+      if (ind == 0 && !is_comment && line ~ TOPKEYRE) {
+        if (pass == 2) flush_job()
+        injobs = 0; in_on = 0; in_conc = 0
+        k = key_of(line); v = value_of(line)
+        if (k == "on") {
+          in_on = 1; on_start = FNR; trig_ind = -1; cur_trig = ""
+          if (v ~ /^[{]/ && pass == 2) flowstyle = 1
+          else if (v != "" && pass == 1) {
+            gsub(/[][]/, " ", v)
+            nt = split(v, tl, /[,[:space:]]+/)
+            for (ti = 1; ti <= nt; ti++) add_trigger(tl[ti], FNR)
+          }
+        } else if (k == "jobs") {
+          injobs = 1
+          if (v ~ /^[{]/ && pass == 2) flowstyle = 1
+        } else if (k == "concurrency") {
+          in_conc = 1; conc_text = v; conc_line = FNR
+        }
+        if (starts_bs) { bs_ind = ind; bs_key = k }
+        next
+      }
+
+      if (is_comment) {
+        if (pass == 1) next
+        if (injobs) {
+          if (jobs_ind < 0 || ind <= jobs_ind) pending_comments = pending_comments "\n" line
+          else if (jobname != "") jobscope = jobscope "\n" line
+        } else {
+          filescope = filescope "\n" line
+        }
+        next
+      }
+
+      if (starts_bs) {
+        bs_ind = ind; bs_key = key_of(line)
+        bs_is_run = (pass == 2 && injobs && jobname != "" && sub_key == "steps" && key_of(line) == "run")
+      }
+
+      # Werte ausserhalb von run (env, with, ...): die Option als Wort. Ein
+      # run-Einzeiler geht durch die Shell-Analyse, Anzeigetext zaehlt nicht.
+      if (pass == 2 && !in_on && !(key_of(line) in TEXTKEY) && key_of(line) != "run" && strip_comment(line) ~ RETRY_RE) note_retry(FNR)
+
+      if (in_on) {
+        if (pass == 2) next
+        if (trig_ind < 0) trig_ind = ind
+        if (ind > trig_ind && key_of(line) == "default" && tolower(value_of(line)) ~ BSMAC_RE && !bsmac_default_line)
+          bsmac_default_line = FNR
+        if (ind == trig_ind) {
+          br_collect = 0; ty_collect = 0
+          if (trim(line) ~ /^-/) { add_trigger(key_of(line), FNR); cur_trig = ""; next }
+          cur_trig = key_of(line)
+          add_trigger(cur_trig, FNR)
+          v = value_of(line)
+          if (v != "" && v != "{}") on_config(FNR, v, ind + 2)
+        } else if (ind > trig_ind && cur_trig != "") {
+          on_config(FNR, line, ind)
+        }
+        next
+      }
+
+      if (pass == 1) next
+
+      if (in_conc) { conc_text = conc_text "\n" line; next }
+
+      if (injobs) {
+        if (jobs_ind < 0) jobs_ind = ind
+        if (ind == jobs_ind) {
+          flush_job()
+          if (line ~ JOBKEYRE) {
+            new_job(key_of(line), FNR)
+          } else {
+            flowstyle = 1
+          }
+          next
+        }
+        if (jobname == "") next
+        if (key_ind < 0) key_ind = ind
+
+        if (ind == key_ind) {
+          end_step()
+          sub_key = key_of(line); v = value_of(line)
+          if (sub_key == "timeout-minutes" && v ~ /^([0-9]|[$][{][{])/) has_timeout = 1
+          if (sub_key == "uses") { is_call = 1; call_ref = v; call_line = FNR }
+          if (sub_key == "runs-on") { runs_text = v; runs_line = FNR }
+          if (sub_key == "strategy") { strat_line = FNR }
+          if (sub_key == "concurrency") { jconc_text = v; jconc_line = FNR }
+          if (sub_key == "if" && dispatch_only(v)) dispatch_guard = 1
+          next
+        }
+        if (ind > key_ind) {
+          if (sub_key == "runs-on") runs_text = runs_text "\n" strip_comment(line)
+          else if (sub_key == "strategy") strat_text = strat_text "\n" strip_comment(line)
+          else if (sub_key == "concurrency") jconc_text = jconc_text "\n" line
+          else if (sub_key == "steps") {
+            t = trim(line)
+            if (step_ind < 0 && t ~ /^-/) step_ind = ind
+            if (ind == step_ind && t ~ /^-/) {
+              end_step(); begin_step()
+              if (match(line, /^ *-[[:space:]]+/) && t ~ /^-[[:space:]]+[^[:space:]]/) {
+                st_kind = RLENGTH
+                step_key_line(line, st_kind)
+              }
+            } else if (st_active) {
+              if (st_kind < 0) st_kind = ind
+              if (ind == st_kind) step_key_line(line, ind)
+              else if (ind > st_kind) step_sub_line(line, ind)
+            }
+          }
+        }
+      }
+    }
+
+    END {
+      flush_job()
+      jobscope = ""
+      if (flowstyle) {
+        printf "SKIP|1|CI000|Flow-Style-YAML oder Tab-Einrueckung — Datei nicht analysierbar, bitte manuell gegen den CI-Standard pruefen\n"
+        exit
+      }
+      ln = (on_start ? on_start : 1)
+      has_pr = (("pull_request" in trig) || ("pull_request_target" in trig))
+
+      conc_ok = cancel_ok(conc_text) || (jobs_total > 0 && jobs_with_conc == jobs_total)
+      if (has_pr && !conc_ok)
+        finding("FAIL", ln, "CI003", "PR-Workflow ohne concurrency + cancel-in-progress — jeder neue Push bezahlt den alten Lauf zu Ende", "file")
+
+      if ("schedule" in trig)
+        finding("FAIL", trig["schedule"], "CI009", "schedule:-Trigger startet Runner ohne Aenderung und ohne Freigabe — entfernen, schwere Laeufe per workflow_dispatch", "file")
+
+      if ("push" in trig) {
+        push_all = push_branches_ignore || (!push_branches && !push_tags) || (push_branches && push_br_text ~ /[*]/)
+        if (has_pr && push_all)
+          finding("WARN", trig["push"], "CI007", "push auf alle Branches + pull_request — jeder PR-Commit laeuft doppelt; push auf main beschraenken", "file")
+      }
+
+      if (has_pr && pr_paths_line)
+        finding("WARN", pr_paths_line, "CI010", "paths/paths-ignore auf Trigger-Ebene: ist der Job ein Required Check, startet er bei nicht passenden PRs nie und blockiert den Merge — Filter in den Job verlegen (Pfadtest, dann gruen beenden)", "file")
+
+      if (pr_branches_line)
+        finding("WARN", pr_branches_line, "CI013", "pull_request mit branches-Filter: gestapelte PRs (Basis ist ein Feature-Branch) bekommen keine Checks und wirken trotzdem mergebar — Filter entfernen", "file")
+
+      if (pr_edited_line)
+        finding("WARN", pr_edited_line, "CI014", "pull_request abonniert edited: jede Aenderung an Titel oder Beschreibung startet einen Lauf — edited aus types streichen", "file")
+
+      if (dispatch_only_trig && conc_text ~ CANCEL_TRUE_RE)
+        finding("WARN", conc_line, "CI015", "cancel-in-progress: true in einem reinen Dispatch-Workflow bricht einen laufenden Lauf ab — false setzen (neuer Dispatch wartet)", "file")
+
+      if (file_retry_line)
+        finding("FAIL", file_retry_line, "CI016", "Testwiederholung per xcodebuild-Option (retry-tests-on-failure) kaschiert Flaky Tests — reparieren oder entfernen; eng begrenzter Retry nur auf eine dokumentierte Infrastruktur-Crash-Signatur", "file")
+
+      if (tier == "solo" && bsmac_default_line)
+        finding("WARN", bsmac_default_line, "CI005", "Solo-Tier: Blacksmith macOS als Input-Default — Default ist macrunner, Blacksmith nur als Option mit Zustimmung des Users", "file")
+
+      printf "%s", out_buf
+    }
+  ' "$1" "$1"
+}
+
+# ---------------------------------------------------------------------------
+# Lauf ueber alle Dateien
+# ---------------------------------------------------------------------------
+FAILS=0
+WARNS=0
+INFOS=0
+SKIPS=0
+NFILES=0
+
+for f in "${FILES[@]}"; do
+  NFILES=$((NFILES + 1))
+  if ! out="$(lint_file "$f")"; then
+    echo "ci-lint: Analyse von $f fehlgeschlagen (awk)" >&2
+    exit "$EXIT_USAGE"
+  fi
+  [ -z "$out" ] && continue
+
+  rel="$f"
+  if [ -n "$TOP" ]; then
+    rel="${f#"$TOP"/}"
+  fi
+
+  while IFS='|' read -r level line rule msg; do
+    [ -n "$level" ] || continue
+    printf '  %s %s:%s  [%s] %s\n' "$level" "$rel" "$line" "$rule" "$msg"
+    case "$level" in
+      FAIL) FAILS=$((FAILS + 1)) ;;
+      WARN) WARNS=$((WARNS + 1)) ;;
+      INFO) INFOS=$((INFOS + 1)) ;;
+      SKIP) SKIPS=$((SKIPS + 1)) ;;
+    esac
+  done <<EOF
+$out
+EOF
+done
+
+# Blockierend nur im Solo-Tier oder mit --enforce; --advisory hat Vorrang.
+BLOCKING=0
+if [ "$TIER" = "solo" ] || [ "$ENFORCE" -eq 1 ]; then BLOCKING=1; fi
+if [ "$ADVISORY" -eq 1 ]; then BLOCKING=0; fi
+
+if [ "$QUIET" -eq 0 ]; then
+  echo
+  printf 'ci-lint: %d Datei(en) geprueft (tier %s, visibility %s) — %d FAIL, %d WARN' \
+    "$NFILES" "$TIER" "$VISIBILITY" "$FAILS" "$WARNS"
+  [ "$INFOS" -gt 0 ] && printf ', %d INFO' "$INFOS"
+  [ "$SKIPS" -gt 0 ] && printf ', %d uebersprungen' "$SKIPS"
+  [ "$BLOCKING" -eq 0 ] && printf ' (advisory: nur Hinweise, blockiert nicht)'
+  echo
+  if [ "$FAILS" -gt 0 ] || [ "$WARNS" -gt 0 ]; then
+    echo "Regeln + Begruendungen: $RULES_DOC"
+    echo "Bewusste Ausnahme? '# ci-lint: allow-<Regel>  <Begruendung>' in den Workflow schreiben."
+  fi
+fi
+
+if [ "$BLOCKING" -eq 0 ]; then exit "$EXIT_PASS"; fi
+if [ "$FAILS" -gt 0 ]; then exit "$EXIT_FINDINGS"; fi
+if [ "$STRICT" -eq 1 ] && [ "$WARNS" -gt 0 ]; then exit "$EXIT_FINDINGS"; fi
+exit "$EXIT_PASS"

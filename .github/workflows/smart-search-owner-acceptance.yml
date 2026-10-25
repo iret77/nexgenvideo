@@ -19,7 +19,7 @@ permissions:
 
 concurrency:
   group: smart-search-owner-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   cold:
@@ -75,6 +75,7 @@ jobs:
             !${{ runner.temp }}/search-evidence/**/isolated-user/**
             !${{ runner.temp }}/search-evidence/**/installed-model-cache/**
             !${{ runner.temp }}/search-evidence/**/verified-archives/**
+          retention-days: 90
 
   layout:
     needs: cold
@@ -132,6 +133,7 @@ jobs:
             !${{ runner.temp }}/search-evidence/**/isolated-user/**
             !${{ runner.temp }}/search-evidence/**/installed-model-cache/**
             !${{ runner.temp }}/search-evidence/**/verified-archives/**
+          retention-days: 90
 
   cleanup-cache:
     needs: [cold, layout]

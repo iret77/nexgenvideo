@@ -8,7 +8,7 @@ permissions:
 
 concurrency:
   group: native-acceptance-probes-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
