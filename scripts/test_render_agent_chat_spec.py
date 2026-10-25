@@ -56,7 +56,7 @@ def write_process_fixture(directory):
 def process_running(pid):
     try:
         return Path(f"/proc/{pid}/stat").read_text().split(") ", 1)[1].split()[0] != "Z"
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):
         return False
 
 
@@ -80,6 +80,17 @@ def write_rgb_png(path, width, height, pixel):
 
 
 class AgentChatSpecRendererTests(unittest.TestCase):
+    def test_process_observation_distinguishes_exit_from_unreadable_state(self):
+        for error in (FileNotFoundError(), ProcessLookupError()):
+            with self.subTest(error=type(error).__name__), mock.patch.object(Path, "read_text", side_effect=error):
+                self.assertFalse(process_running(123))
+        for state in ("R", "S", "Z"):
+            with self.subTest(state=state), mock.patch.object(Path, "read_text", return_value=f"123 (fixture) {state} 1 1"):
+                self.assertEqual(process_running(123), state != "Z")
+        with mock.patch.object(Path, "read_text", side_effect=PermissionError()):
+            with self.assertRaises(PermissionError):
+                process_running(123)
+
     @unittest.skipUnless(sys.platform == "linux", "Process fixtures target the Linux UI runner")
     def test_browser_calls_use_private_profiles_closed_stdin_and_common_flags(self):
         with tempfile.TemporaryDirectory() as directory:

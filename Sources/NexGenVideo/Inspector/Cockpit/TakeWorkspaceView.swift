@@ -14,6 +14,9 @@ struct TakeWorkspaceView: View {
     @State private var showsHistory = false
     @State private var loadedHome: URL?
     @State private var loadGeneration = UUID()
+    @State private var queue: TakeReviewQueue?
+    @State private var queueGeneration: UUID?
+    @State private var queueRevision = 0
 
     private var writesAvailable: Bool {
         guard canWrite, !loading, !editor.agentService.isStreaming, !editor.agentService.isComposerBlocked,
@@ -69,6 +72,13 @@ struct TakeWorkspaceView: View {
                     if let name = takes.first(where: { $0.id == snapshot.take.id })?.shotName { Text(name).textSelection(.enabled) }
                     TakeRangeReviewView(snapshot: snapshot, wholeTakePlayer: player, canWrite: writesAvailable)
                         .id(snapshot.take.id)
+                    if snapshot.take.phase == "final", loadedHome == editor.workingRoot,
+                       queueGeneration == editor.openWorkingCopyGeneration, queueRevision == editor.engineStateRevision,
+                       let queue {
+                        TakeReviewNextShotView(queue: queue, shotID: snapshot.take.shotID, enabled: !loading) { takeID in
+                            player?.pause(); selectedID = takeID
+                        }
+                    }
                     TakeRepairView(snapshot: snapshot, canWrite: writesAvailable).id(snapshot.take.id)
                     DisclosureGroup("Submitted direction and image references") {
                         VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
@@ -128,6 +138,9 @@ struct TakeWorkspaceView: View {
     private func load() async {
         let token = UUID(); loadGeneration = token
         let home = editor.workingRoot
+        let generation = editor.openWorkingCopyGeneration
+        let revision = editor.engineStateRevision
+        queue = nil
         if loadedHome != home {
             loadedHome = home; takes = []; selectedID = ""; snapshot = nil; player?.pause(); player = nil
         }
@@ -146,7 +159,7 @@ struct TakeWorkspaceView: View {
             let values = try await Task.detached(priority: .userInitiated) {
                 let project = try YAMLArtifactStore(dataRoot: root).load(ProjectMeta.self, at: PipelineLayout.projectFile).project
                 let projection = productionV2 ? try ProductionPlanningLineageV2.projection(dataRoot: root) : nil
-                return try ["preview", "final"].flatMap { phase in
+                let items = try ["preview", "final"].flatMap { phase in
                     let index = try PipelineRenderTakeStore.load(dataRoot: root, project: project, phase: phase)
                     return try index.takeIDs.map { id in
                         let take = try PipelineRenderTakeStore.take(id: id, dataRoot: root)
@@ -157,13 +170,21 @@ struct TakeWorkspaceView: View {
                             shotName: number.flatMap { projection?.shots[$0].primaryAction })
                     }
                 }.sorted { $0.take.recordedAt > $1.take.recordedAt }
+                return items
             }.value
-            guard !Task.isCancelled, token == loadGeneration, editor.workingRoot == home else { return }
-            takes = values
+            guard !Task.isCancelled, token == loadGeneration, editor.workingRoot == home,
+                  editor.openWorkingCopyGeneration == generation, editor.engineStateRevision == revision else { return }
+            takes = values; loading = false
             if !takes.contains(where: { $0.id == selectedID }) { selectedID = "" }
             failure = nil
+            guard productionV2 else { return }
+            let loadedQueue = try await TakeReviewQueue.load(takes: values.map(\.take), dataRoot: root)
+            guard !Task.isCancelled, token == loadGeneration, editor.workingRoot == home,
+                  editor.openWorkingCopyGeneration == generation, editor.engineStateRevision == revision else { return }
+            queue = loadedQueue; queueGeneration = generation; queueRevision = revision
         } catch {
-            guard !Task.isCancelled, token == loadGeneration, editor.workingRoot == home else { return }
+            guard !Task.isCancelled, token == loadGeneration, editor.workingRoot == home,
+                  editor.openWorkingCopyGeneration == generation, editor.engineStateRevision == revision else { return }
             takes = []; selectedID = ""; player?.pause(); player = nil; snapshot = nil
             failure = error.localizedDescription
         }

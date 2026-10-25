@@ -19,6 +19,11 @@ struct TakeReviewView: View {
     @State private var busy = false
     @State private var canSelect = false
     @State private var canWrite = false
+    @State private var queue: TakeReviewQueue?
+    @State private var queueHome: URL?
+    @State private var queueGeneration: UUID?
+    @State private var queueRevision = 0
+    @State private var loadToken = UUID()
 
     private struct TakeChoice: Identifiable, Sendable {
         let take: PipelineRenderTakeV1
@@ -86,6 +91,7 @@ struct TakeReviewView: View {
                     }.buttonStyle(InlineActionButtonStyle(variant: .approval))
                         .reviewAcceptanceProbe("take.use", state: !busy && canSelect && canWrite)
                         .disabled(busy || !canSelect || !canWrite)
+                    nextShotView(snapshot)
                     if findings.count < TakeReview.Pass.allCases.count && findings.last?.verdict != .rejected {
                         let pass = TakeReview.Pass.allCases[findings.count]
                         Text("\(findings.count + 1) of 6 · \(pass.label)").fontWeight(AppTheme.FontWeight.semibold)
@@ -157,16 +163,21 @@ struct TakeReviewView: View {
     }
 
     private func load() async {
+        let token = UUID(); loadToken = token
+        let generation = editor.openWorkingCopyGeneration
+        let revision = editor.engineStateRevision
         canWrite = false
+        queue = nil
         guard let home = editor.workingRoot, let root = DataRootResolver.dataRoot(of: home) else { return }
         canWrite = (try? PipelinePhaseAccess.requireCurrentPhaseAndIntake("render", dataRoot: root,
-            declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding)) != nil
+            declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding,
+            declaredProductionContract: editor.declaredProductionContract)) != nil
         do {
             let productionV2 = editor.usesProductionPlanningV2
             let values = try await Task.detached(priority: .userInitiated) {
                 let project = try YAMLArtifactStore(dataRoot: root).load(ProjectMeta.self, at: PipelineLayout.projectFile).project
                 let projection = productionV2 ? try ProductionPlanningLineageV2.projection(dataRoot: root) : nil
-                return try ["preview", "final"].flatMap { phase in
+                let choices = try ["preview", "final"].flatMap { phase in
                     try PipelineRenderTakeStore.load(dataRoot: root, project: project, phase: phase).takeIDs.map {
                         let take = try PipelineRenderTakeStore.take(id: $0, dataRoot: root)
                         let number = projection?.shots.firstIndex { $0.id == take.shotID }
@@ -174,10 +185,31 @@ struct TakeReviewView: View {
                             ?? (productionV2 ? String(localized: "Previous plan shot") : take.shotID))
                     }
                 }
+                return choices
             }.value
-            guard editor.workingRoot == home else { return }
+            guard !Task.isCancelled, loadToken == token, editor.workingRoot == home,
+                  editor.openWorkingCopyGeneration == generation, editor.engineStateRevision == revision else { return }
             takes = values.sorted { $0.take.recordedAt > $1.take.recordedAt }
-        } catch { if editor.workingRoot == home { message = error.localizedDescription } }
+            guard productionV2 else { return }
+            let loadedQueue = try await TakeReviewQueue.load(takes: values.map(\.take), dataRoot: root)
+            guard !Task.isCancelled, loadToken == token, editor.workingRoot == home,
+                  editor.openWorkingCopyGeneration == generation, editor.engineStateRevision == revision else { return }
+            queue = loadedQueue; queueHome = home; queueGeneration = generation; queueRevision = revision
+        } catch {
+            if !Task.isCancelled, loadToken == token, editor.workingRoot == home,
+               editor.openWorkingCopyGeneration == generation { message = error.localizedDescription }
+        }
+    }
+
+    @ViewBuilder
+    private func nextShotView(_ snapshot: TakeReview.Snapshot) -> some View {
+        if snapshot.take.phase == "final", queueHome == editor.workingRoot,
+           queueGeneration == editor.openWorkingCopyGeneration, queueRevision == editor.engineStateRevision,
+           let queue {
+            TakeReviewNextShotView(queue: queue, shotID: snapshot.take.shotID, enabled: !busy) { takeID in
+                player?.pause(); selectedID = takeID
+            }
+        }
     }
 
     private func select() async {
