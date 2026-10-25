@@ -89,16 +89,19 @@ func render(round: Int, lane: Int, folder: String, ready: DispatchSemaphore,
     }
 }
 
-guard CommandLine.arguments.count == 3 else { exit(2) }
+guard CommandLine.arguments.count == 4 else { exit(2) }
 let folder = CommandLine.arguments[1]
 let calibration = CommandLine.arguments[2] == "calibration"
 guard calibration || CommandLine.arguments[2] == "measured" else { exit(2) }
+let scribble = CommandLine.arguments[3] == "scribble"
+guard scribble || CommandLine.arguments[3] == "normal" else { exit(2) }
 let environment = ProcessInfo.processInfo.environment
 guard !environment.keys.contains(where: {
-    $0.hasPrefix("MTL_") || $0.hasPrefix("Malloc") || $0.hasPrefix("NSZombie") ||
+    $0.hasPrefix("MTL_") || ($0.hasPrefix("Malloc") && !(scribble && ["MallocScribble", "MallocDebugReport"].contains($0))) || $0.hasPrefix("NSZombie") ||
     $0.hasPrefix("OBJC_DEBUG_") || $0.hasPrefix("DYLD_") ||
     $0 == "NSDeallocateZombies" || $0 == "METAL_DEVICE_WRAPPER_TYPE"
 }), environment["SWIFT_BACKTRACE"] == "enable=yes,interactive=no,demangle=yes,cache=no" else { exit(2) }
+guard !scribble || (environment["MallocScribble"] == "1" && environment["MallocDebugReport"] == "stderr") else { exit(2) }
 let start = DispatchTime.now().uptimeNanoseconds
 var round = 0
 repeat {

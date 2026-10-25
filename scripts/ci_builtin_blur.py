@@ -9,9 +9,10 @@ import re
 import signal
 import subprocess
 import time
+import zipfile
 
 from app_host_zombie_diagnostic import diagnostic_key
-from run_macos_tests import prepare_post_mortem, capture_post_mortem
+from run_macos_tests import prepare_post_mortem, capture_post_mortem, owned_crash_report
 from verify_diagnostic_candidate import verify_app_diagnostic, verify_app_crash_archive
 
 
@@ -46,12 +47,108 @@ def api(path):
     return json.loads(command(["gh", "api", "repos/iret77/nexgenvideo/" + path]))
 
 
-def environment(source):
+def environment(source, profile="normal"):
+    if profile not in {"normal", "scribble"}:
+        raise ValueError("Unknown memory diagnostic profile")
     if any(diagnostic_key(key.encode()) or key.startswith("DYLD_") for key in source):
         raise ValueError("Ambient diagnostic changes would invalidate the experiment")
     if source.get("SWIFT_BACKTRACE", BACKTRACE) != BACKTRACE:
         raise ValueError("Unexpected Swift backtrace settings")
-    return dict(source, SWIFT_BACKTRACE=BACKTRACE)
+    result = dict(source, SWIFT_BACKTRACE=BACKTRACE)
+    if profile == "scribble":
+        result["MallocScribble"] = "1"
+        result["MallocDebugReport"] = "stderr"
+    return result
+
+
+def selected_profile():
+    kind = os.environ["REPLAY_KIND"]
+    if kind not in {"ci-builtin-blur", "ci-builtin-blur-scribble"}:
+        raise ValueError("Unexpected workflow mode")
+    return "scribble" if kind.endswith("-scribble") else "normal"
+
+
+def bind_normal_arm(folder, head):
+    source = os.environ["PRODUCT_SHA"]
+    checksum = os.environ["PRODUCTS_DIGEST"]
+    artifact_id = int(os.environ["PRODUCTS_ID"])
+    if not re.fullmatch(r"[0-9a-f]{40}", source) or not re.fullmatch(r"[0-9a-f]{64}", checksum):
+        raise ValueError("Malformed normal-arm identity")
+    command(["git", "merge-base", "--is-ancestor", source, head])
+    if set(command(["git", "diff", "--name-only", source, head]).splitlines()) != PATHS:
+        raise ValueError("Instrumented arm must change exactly the four diagnostic files")
+    artifact = api(f"actions/artifacts/{artifact_id}")
+    run_id = artifact["workflow_run"]["id"]
+    run = api(f"actions/runs/{run_id}")
+    jobs = api(f"actions/runs/{run_id}/attempts/1/jobs?per_page=100")
+    if (run_id != 40093865040 or run.get("id") != run_id
+            or run.get("head_branch") != "iret77/activity-approval-layout"
+            or run.get("actor", {}).get("login") != "iret77"
+            or run.get("run_attempt") != 1 or run.get("head_sha") != source
+            or run.get("path") != ".github/workflows/diagnostic-acceptance.yml"
+            or run.get("repository", {}).get("full_name") != "iret77/nexgenvideo"
+            or run.get("event") != "workflow_dispatch" or run.get("status") != "completed"
+            or run.get("conclusion") != "failure" or jobs.get("total_count") != len(jobs["jobs"])
+            or artifact.get("name") != f"builtin-blur-{run_id}-a1"
+            or artifact.get("id") != artifact_id or artifact.get("digest") != "sha256:" + checksum
+            or artifact.get("expired") is not False or artifact["workflow_run"].get("head_sha") != source):
+        raise ValueError("Normal-arm producer or artifact differs")
+    producer = None
+    for name, conclusion in (("source", "success"), ("ci-builtin-blur", "failure")):
+        found = [j for j in jobs["jobs"] if j.get("name") == name]
+        if (len(found) != 1 or found[0].get("run_attempt") != 1 or found[0].get("run_id") != run_id
+                or found[0].get("head_sha") != source or found[0].get("status") != "completed"
+                or found[0].get("conclusion") != conclusion):
+            raise ValueError("Normal-arm job identity differs")
+        if name == "ci-builtin-blur":
+            producer = found[0]
+    if ([s["name"] for s in producer["steps"] if s["conclusion"] == "failure"]
+            != ["Compile and execute bounded standalone blur experiment"]
+            or not producer["started_at"] <= artifact["created_at"] <= artifact["updated_at"] <= producer["completed_at"]):
+        raise ValueError("Normal-arm failure or artifact attempt differs")
+    archive = folder / "normal-arm.zip"
+    with archive.open("xb") as stream:
+        subprocess.run(["gh", "api", f"repos/iret77/nexgenvideo/actions/artifacts/{artifact_id}/zip"],
+                       stdin=subprocess.DEVNULL, stdout=stream, check=True, timeout=120)
+    if archive.stat().st_size != artifact["size_in_bytes"] or digest(archive) != checksum:
+        raise ValueError("Normal-arm archive digest differs")
+    with zipfile.ZipFile(archive) as original:
+        def raw(name):
+            entries = [i for i in original.infolist() if i.filename == name]
+            if len(entries) != 1 or entries[0].file_size > 4 * 1024 * 1024:
+                raise ValueError("Missing or oversized normal-arm record")
+            return original.read(entries[0])
+        result = json.loads(raw("result.json"))
+        binary = json.loads(raw("binary.json"))
+        source_bytes = subprocess.check_output(["git", "show", source + ":scripts/ci_builtin_blur.swift"], timeout=40)
+        if (result.get("outcome") != "C" or result.get("productAcceptance") is not False
+                or binary.get("productCode") is not False
+                or binary.get("sourceSHA256") != hashlib.sha256(source_bytes).hexdigest()
+                or binary.get("sha256") != hashlib.sha256(raw("NGVBuiltinBlur")).hexdigest()):
+            raise ValueError("Normal-arm binary/source/result proof differs")
+        index = result.get("abnormalProcess")
+        if type(index) is not int or not 0 <= index < 200:
+            raise ValueError("Missing abnormal process index")
+        prefix = f"process-{index:03d}/"
+        context = json.loads(raw(prefix + "exit.json"))
+        receipt = json.loads(raw(prefix + "post-mortem/receipt.json"))
+        if (context.get("exitCode") != -11 or context.get("hostSHA256") != binary["sha256"]
+                or receipt.get("status") != "bound-report-captured" or len(receipt.get("reports", [])) != 1):
+            raise ValueError("Normal-arm owned crash proof differs")
+        report_bytes = raw(prefix + "post-mortem/owned-host-0.ips")
+        if receipt["reports"][0].get("sha256") != hashlib.sha256(report_bytes).hexdigest():
+            raise ValueError("Normal-arm crash receipt differs")
+        uuids = re.findall(r"UUID: ([0-9a-fA-F-]{36}) \(arm64\)", binary.get("uuid", ""))
+        if len(uuids) != 1 or context.get("hostUUID") != uuids[0].lower():
+            raise ValueError("Normal-arm crash executable UUID differs")
+        owned_crash_report(report_bytes, context)
+        report = json.loads(report_bytes.split(b"\n", 1)[1])
+        if not shared_chain(report):
+            raise ValueError("Normal-arm crash is not on the declared shared allocation path")
+    proof = {"runID": run_id, "attempt": 1, "sourceSHA": source, "artifactID": artifact_id,
+             "artifactSHA256": checksum, "binarySHA256": binary["sha256"], "result": result}
+    save(folder / "normal-arm-producer.json", {"run": run, "jobs": jobs, "artifact": artifact})
+    return proof
 
 
 def bind(folder):
@@ -78,11 +175,14 @@ def bind(folder):
         subprocess.run(["gh", "api", f"repos/iret77/nexgenvideo/actions/artifacts/{artifact_id}/zip"],
                        stdin=subprocess.DEVNULL, stdout=stream, check=True, timeout=120)
     verify_app_crash_archive(archive, run_id, source, checksum)
+    profile = selected_profile()
+    normal_arm = bind_normal_arm(folder, head) if profile == "scribble" else None
     save(folder / "binding.json", {"harnessSHA": head, "productSHA": source,
         "producerRunID": run_id, "producerAttempt": run["run_attempt"],
         "artifactID": artifact_id, "artifactSHA256": checksum,
         "harnessHashes": {name: digest(Path(name)) for name in sorted(PATHS)},
-        "diagnosticOnly": True, "processes": 200, "roundsPerProcess": 4,
+        "diagnosticOnly": True, "profile": profile, "normalArm": normal_arm,
+        "processes": 200, "roundsPerProcess": 4,
         "executionSeconds": 1200, "perProcessSeconds": 300,
         "calibrationSeconds": 30, "calibrationMaxRounds": 10000,
         "scope": "Built-in filters only; not an App replay or Core acceptance"})
@@ -171,7 +271,91 @@ def signature(report):
             and 4 < cache < blur)
 
 
-def owned_process(binary, folder, mode, deadline):
+def shared_chain(report):
+    images = report.get("usedImages", [])
+    threads = [t for t in report.get("threads", []) if t.get("triggered")]
+    if (report.get("osVersion", {}).get("build") != "26A428" or len(threads) != 1
+            or report.get("exception", {}).get("signal") not in {"SIGSEGV", "SIGBUS"}):
+        return False
+    frames = threads[0].get("frames", [])
+    def frame_at(index, name, offset=None, symbol=None):
+        if not 0 <= index < len(frames):
+            return False
+        frame = frames[index]
+        image_index = frame.get("imageIndex")
+        return (type(image_index) is int and 0 <= image_index < len(images)
+                and images[image_index].get("name") == name
+                and images[image_index].get("uuid", "").lower() == FAULT_IMAGES[name]
+                and (offset is None or frame.get("imageOffset") == offset)
+                and (symbol is None or symbol in frame.get("symbol", "")))
+    data = [i for i in range(len(frames)) if frame_at(i, "Foundation", symbol="getBytes:length:")
+            and type(frames[i].get("imageOffset")) is int and 353376 <= frames[i]["imageOffset"] <= 353400]
+    if len(data) != 1:
+        return False
+    start = data[0]
+    if not (frame_at(start + 1, "AppleParavirtGPUMetalIOGPUFamily", 131268)
+            and frame_at(start + 2, "AppleParavirtGPUMetalIOGPUFamily", 55244)
+            and frame_at(start + 3, "MPSCore", 487936)):
+        return False
+    cache = [i for i in range(start + 4, len(frames))
+             if frame_at(i, "MPSCore", 487512, "MPSAutoCache::GetTempTexture")]
+    blur = [i for i in range(start + 4, len(frames))
+            if frame_at(i, "CoreImage", 1186196, "CIBlurProcessor")]
+    return (len(cache) == len(blur) == 1 and cache[0] < blur[0]
+            and any(frame_at(i, "MPSImage") for i in range(cache[0] + 1, blur[0])))
+
+
+def scribble_pattern(report):
+    thread = next(t for t in report["threads"] if t.get("triggered"))
+    state = thread.get("threadState", {})
+    values = {"far": state.get("far", {}).get("value")}
+    registers = state.get("x", [])
+    values.update({f"x{index}": item.get("value") for index, item in enumerate(registers[:29])})
+    raw, low_mask = 0x5555555555555555, 0xFFFFFFFFFFFF
+    bases = {raw & mask & low_mask for mask in (0x007FFFFFFFFFFFF8, 0x00007FFFFFFFFFF8, 0x0000000FFFFFFFF8)}
+    objc_send = thread.get("frames", [{}])[0].get("symbol", "").startswith("objc_msgSend")
+    matches = {}
+    for name, value in values.items():
+        if type(value) is not int or not 0 <= value < 2**64:
+            continue
+        pattern = None
+        if value == raw:
+            pattern = "raw-repeated-byte"
+        elif name == "far" and any(0 <= (value & low_mask) - base <= 128 for base in bases):
+            pattern = "masked-pointer-plus-bounded-offset"
+        elif name == "x16" and objc_send and value & low_mask in bases:
+            pattern = "masked-isa-at-objc-msgSend"
+        if pattern:
+            matches[name] = {"value": value, "pattern": pattern}
+    return matches
+
+
+def memory_activity(text, pid, profile):
+    matches = re.findall(r"^NGVBuiltinBlur\((\d+),0x[0-9a-fA-F]+\) malloc: "
+                         r"enabling scribbling to detect mods to free blocks\r?$", text, re.M)
+    if profile == "scribble":
+        if matches != [str(pid)]:
+            raise ValueError("Missing, duplicate or foreign libmalloc activation banner")
+    elif profile != "normal" or matches:
+        raise ValueError("Unexpected memory diagnostic activity")
+    return {"profile": profile, "pid": pid, "activationBannerCount": len(matches)}
+
+
+def crash_outcome(code, reports, profile):
+    if len(reports) != 1:
+        return "V"
+    report = reports[0]
+    if profile == "normal":
+        return "R" if code == -11 and signature(report) else "C"
+    if profile != "scribble":
+        raise ValueError("Unknown memory diagnostic profile")
+    expected = {-11: "SIGSEGV", -10: "SIGBUS"}.get(code)
+    if expected is None or report.get("exception", {}).get("signal") != expected or not shared_chain(report):
+        return "C"
+    return "F" if scribble_pattern(report) else "G"
+
+
+def owned_process(binary, folder, mode, deadline, profile="normal"):
     folder.mkdir()
     for lane in range(2):
         (folder / f"lane-{lane}.jsonl").touch(exist_ok=False)
@@ -181,8 +365,8 @@ def owned_process(binary, folder, mode, deadline):
     context["launchEarliest"] = time.time()
     sampler = None
     with (folder / "stdout.log").open("xb") as out, (folder / "stderr.log").open("xb") as err:
-        process = subprocess.Popen([str(binary), str(folder), mode], stdin=subprocess.DEVNULL,
-                                   stdout=out, stderr=err, env=environment(os.environ), start_new_session=True)
+        process = subprocess.Popen([str(binary), str(folder), mode, profile], stdin=subprocess.DEVNULL,
+                                   stdout=out, stderr=err, env=environment(os.environ, profile), start_new_session=True)
         context.update(pid=process.pid, launchLatest=time.time())
         save(folder / "launch.json", context)
         try:
@@ -213,25 +397,35 @@ def owned_process(binary, folder, mode, deadline):
                     "sha256": digest(sample) if sample.exists() else None, "pid": process.pid})
     context.update(exitObserved=time.time(), exitCode=code)
     save(folder / "exit.json", context)
+    reports = []
     if code != 0:
         receipt = capture_post_mortem(folder / "post-mortem", context, code)
         reports = [json.loads((folder / "post-mortem" / item["file"]).read_bytes().split(b"\n", 1)[1])
                    for item in receipt.get("reports", [])]
         save(folder / "crash-images.json", [{name: [i for i in report.get("usedImages", []) if i.get("name") == name]
              for name in (*FAULT_IMAGES, "Metal", "IOGPU")} for report in reports])
-        if context.get("timedOut") or not reports:
-            return "V", context
-        return "R" if code == -11 and any(signature(report) for report in reports) else "C", context
-    return "clean", context
+        save(folder / "crash-classification.json", [{"originalSignatureMatch": signature(report),
+            "sharedChainMatch": shared_chain(report),
+            "scribblePattern": scribble_pattern(report) if shared_chain(report) else {}}
+            for report in reports])
+    try:
+        activity = memory_activity((folder / "stderr.log").read_text(errors="replace"), process.pid, profile)
+    except ValueError as error:
+        save(folder / "memory-activity.json", {"profile": profile, "pid": process.pid, "error": str(error)})
+        return "V", context
+    save(folder / "memory-activity.json", activity)
+    if context.get("timedOut"):
+        return "V", context
+    return (crash_outcome(code, reports, profile) if code != 0 else "clean"), context
 
 
-def run_measured(binary, folder, deadline, result):
+def run_measured(binary, folder, deadline, result, profile="normal"):
     for index in range(200):
         if deadline - time.monotonic() < 300:
             result.update(outcome="V", reason="Time box leaves insufficient time for another process")
             break
         current = folder / f"process-{index:03d}"
-        outcome, context = owned_process(binary, current, "measured", deadline)
+        outcome, context = owned_process(binary, current, "measured", deadline, profile)
         result["outcome"] = outcome
         if outcome != "clean":
             result["abnormalProcess"] = index
@@ -253,7 +447,11 @@ def execute(folder, metadata, result):
     for name, checksum in binding["harnessHashes"].items():
         if digest(Path(name)) != checksum:
             raise ValueError("Reviewed harness file changed")
-    environment(os.environ)
+    profile = selected_profile()
+    if binding.get("profile") != profile or (profile == "scribble" and not binding.get("normalArm")):
+        raise ValueError("Diagnostic profile differs from source binding")
+    environment(os.environ, profile)
+    result["profile"] = profile
     platform = {"os": command(["sw_vers"]), "xcode": command(["xcodebuild", "-version"]),
                 "swift": command(["xcrun", "swiftc", "--version"]), "arch": command(["uname", "-m"]).strip()}
     save(folder / "platform.json", platform)
@@ -269,13 +467,15 @@ def execute(folder, metadata, result):
          "command": args, "sourceSHA256": digest(Path("scripts/ci_builtin_blur.swift")), "productCode": False})
     start = time.monotonic()
     deadline = start + 1200
-    outcome, calibration = owned_process(binary, folder / "calibration", "calibration", deadline)
+    outcome, calibration = owned_process(binary, folder / "calibration", "calibration", deadline, profile)
     result["outcome"] = outcome
     if outcome == "clean":
         if calibration.get("sampleExitCode") != 0 or calibration.get("sampleTimedOut"):
             raise ValueError("Calibration sample incomplete")
         sample_proof((folder / "calibration/sample.txt").read_text(), calibration["pid"], os.getpid())
-        run_measured(binary, folder, deadline, result)
+        run_measured(binary, folder, deadline, result, profile)
+    elif profile == "scribble":
+        result.update(outcome="V", calibrationOutcome=outcome, reason="Calibration did not complete")
     result["elapsedSeconds"] = time.monotonic() - start
     save(folder / "result.json", result)
     print(json.dumps(result))

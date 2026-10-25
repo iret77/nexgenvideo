@@ -6,7 +6,7 @@ on:
       candidate_kind:
         description: Signed release verification or targeted failed CI diagnostics
         type: choice
-        options: [signed-release, ci-runtime, ci-bpy-open-diagnostic, ci-app-test-diagnostic, ci-app-glow-replay, ci-app-full-replay, ci-builtin-blur]
+        options: [signed-release, ci-runtime, ci-bpy-open-diagnostic, ci-app-test-diagnostic, ci-app-glow-replay, ci-app-full-replay, ci-builtin-blur, ci-builtin-blur-scribble]
         default: signed-release
       run_id:
         description: "Original producer workflow run"
@@ -26,15 +26,15 @@ on:
         required: true
 
       product_source_sha:
-        description: Unchanged original product commit for retained replay
+        description: Original product commit for replay, or normal blur experiment commit
         type: string
         default: ""
       products_artifact_id:
-        description: Original compiled products artifact ID for retained replay
+        description: Original compiled products artifact ID, or normal blur diagnostic artifact ID
         type: string
         default: ""
       products_artifact_sha256:
-        description: Original compiled products archive SHA256 for retained replay
+        description: SHA256 of compiled products, or the normal blur diagnostic archive
         type: string
         default: ""
       failure_artifact_id:
@@ -106,7 +106,7 @@ jobs:
           python3 -m unittest discover -s scripts -p 'test_runloop_probe_preparation.py'
           python3 -m unittest discover -s scripts -p 'test_ci_workflow.py'
       - name: Verify and bind standalone blur experiment
-        if: inputs.candidate_kind == 'ci-builtin-blur'
+        if: (inputs.candidate_kind == 'ci-builtin-blur' || inputs.candidate_kind == 'ci-builtin-blur-scribble')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -116,7 +116,7 @@ jobs:
           python3 -m unittest discover -s scripts -p 'test_ci_workflow.py'
           python3 scripts/ci_builtin_blur.py bind --evidence "$RUNNER_TEMP/builtin-blur-binding"
       - uses: actions/upload-artifact@v4
-        if: always() && inputs.candidate_kind == 'ci-builtin-blur'
+        if: always() && (inputs.candidate_kind == 'ci-builtin-blur' || inputs.candidate_kind == 'ci-builtin-blur-scribble')
         with:
           name: builtin-blur-binding
           path: ${{ runner.temp }}/builtin-blur-binding
@@ -147,7 +147,7 @@ jobs:
           retention-days: 90
 
       - name: Bind the successful release job and immutable artifact
-        if: inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur'
+        if: inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble'
         env:
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_KIND: ${{ inputs.candidate_kind }}
@@ -171,7 +171,7 @@ jobs:
             "$CANDIDATE_ARTIFACT" "$CANDIDATE_DIGEST" "$RUNNER_TEMP/candidate-metadata" \
             --candidate-kind "$CANDIDATE_KIND" "${extra[@]}"
       - uses: actions/upload-artifact@v4
-        if: inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur'
+        if: inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble'
         with:
           name: diagnostic-candidate-identity
           path: ${{ runner.temp }}/candidate-metadata/*.json
@@ -180,7 +180,7 @@ jobs:
 
   ci-builtin-blur:
     needs: source
-    if: inputs.candidate_kind == 'ci-builtin-blur'
+    if: (inputs.candidate_kind == 'ci-builtin-blur' || inputs.candidate_kind == 'ci-builtin-blur-scribble')
     runs-on: macrunner
     timeout-minutes: 30
     steps:
