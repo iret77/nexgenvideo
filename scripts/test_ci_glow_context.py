@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import ci_builtin_blur_preheat as common
 import ci_glow_context as glow
-from test_ci_builtin_blur_preheat import records
+from test_ci_builtin_blur_preheat import records, workflow_job
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -262,8 +262,8 @@ class GlowContextTests(unittest.TestCase):
 
     def test_workflow_preserves_exact_source_build_runtime_order(self):
         text=(ROOT/".github/workflows/diagnostic-acceptance.yml").read_text()
-        build=text.split("  ci-glow-context-build:\n")[1].split("  ci-glow-context:\n")[0]
-        runtime=text.split("  ci-glow-context:\n")[1].split("  ci-app-test:\n")[0]
+        build=workflow_job(text,"ci-glow-context-build")
+        runtime=workflow_job(text,"ci-glow-context")
         self.assertIn("needs: source",build)
         self.assertIn("runs-on: macrunner",build)
         self.assertIn("setup-xcode-27",build)

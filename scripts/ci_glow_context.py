@@ -33,7 +33,7 @@ APP_FAILURE_SOURCE = "eed03423b5e9fcd1f6cbf66618100ddada2ed17e"
 PRODUCT_INPUTS = {TEST_SOURCE, COMPOSITOR, KERNEL, LOADER, METAL, METAL_SCRIPT,
     PACKAGE, "scripts/bundle.sh", "scripts/stage_test_runtime.sh"}
 CHANGED = {TEMPLATE, "scripts/ci_glow_context.py", "scripts/test_ci_glow_context.py",
-    "scripts/ci_builtin_blur_preheat.py", ".github/workflows/diagnostic-acceptance.yml"}
+    "scripts/ci_builtin_blur_preheat.py", "scripts/test_ci_builtin_blur_preheat.py", ".github/workflows/diagnostic-acceptance.yml"}
 DEPENDENCIES = PRODUCT_INPUTS | {
     "scripts/ci_builtin_blur.py", "scripts/ci_builtin_blur_floor.py", "scripts/run_macos_tests.py",
     "scripts/app_host_zombie_diagnostic.py", "scripts/verify_diagnostic_candidate.py",

@@ -14,6 +14,13 @@ import ci_builtin_blur_preheat as probe
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def workflow_job(text, name):
+    matches = re.findall(r"(?ms)^  " + re.escape(name) + r":\n(.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)", text)
+    if len(matches) != 1:
+        raise ValueError("Missing or duplicate workflow job")
+    return matches[0]
+
+
 def records(folder, pid=42, arm="cold", overlap=True):
     folder.mkdir(parents=True)
     (folder / "stdout.log").write_text("completed 4 rounds\n")
@@ -213,8 +220,8 @@ class PreheatTests(unittest.TestCase):
 
     def test_workflow_compiles_only_standalone_and_runs_floor_after_build(self):
         text = (ROOT/".github/workflows/diagnostic-acceptance.yml").read_text()
-        build = text.split("  ci-builtin-blur-preheat-build:\n")[1].split("  ci-builtin-blur-preheat:\n")[0]
-        run = text.split("  ci-builtin-blur-preheat:\n")[1].split("  ci-app-test:\n")[0]
+        build = workflow_job(text, "ci-builtin-blur-preheat-build")
+        run = workflow_job(text, "ci-builtin-blur-preheat")
         self.assertIn("runs-on: macrunner", build)
         self.assertIn("needs: source", build)
         self.assertIn("ci_builtin_blur_preheat.py compile", build)
@@ -223,6 +230,15 @@ class PreheatTests(unittest.TestCase):
         self.assertIn("ci_builtin_blur_preheat.py run", run)
         self.assertNotIn("continue-on-error", build+run)
         self.assertNotIn("setup-xcode", run)
+
+    def test_workflow_job_boundary_excludes_neighbors_and_preserves_own_build_step(self):
+        text = "jobs:\n  runtime:\n    steps:\n      - run: execute\n  later-build:\n    steps:\n      - uses: setup-xcode\n"
+        self.assertNotIn("setup-xcode", workflow_job(text, "runtime"))
+        self.assertIn("setup-xcode", workflow_job(text, "later-build"))
+        changed = text.replace("run: execute", "uses: setup-xcode")
+        self.assertIn("setup-xcode", workflow_job(changed, "runtime"))
+        for changed in ("jobs:\n", text + "  runtime:\n    steps: []\n"):
+            with self.assertRaises(ValueError): workflow_job(changed, "runtime")
 
 
 if __name__ == "__main__":
