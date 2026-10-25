@@ -213,6 +213,8 @@ struct GenerationBatchTests {
         coordinator.cancelRemaining(batchID: batch.id, editor: editor)
         #expect(service.hasPendingHostFollowUp)
         #expect(coordinator.pausedBatches[batch.id] == nil)
+        #expect(coordinator.error == nil)
+        #expect(coordinator.activityError == nil)
         #expect(try GenerationBatchStore.load(id: batch.id, home: home).journal.executions.allSatisfy { $0.state == .canceled })
         let texts = service.messages.flatMap(\.blocks).flatMap { block -> [String] in
             guard case .toolResult(let id, let content, _) = block, id == "paused-batch" else { return [] }

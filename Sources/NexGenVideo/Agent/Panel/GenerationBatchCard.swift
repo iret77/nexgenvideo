@@ -661,15 +661,23 @@ struct GenerationBatchProgressView: View {
 
     var body: some View {
         let coordinator = editor.generationBatchCoordinator
+        let notices = coordinator.activityNotices(projectID: editor.projectId).filter { batchID == nil || $0.batchID == batchID }
         if coordinator.pending == nil, let error = coordinator.error {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
-                Text("Generation needs attention. Open AI activity to continue.")
+                Text(coordinator.activityError == nil ? "Previous generation message" : "Generation needs attention. Review the details below.")
                 DisclosureGroup("Diagnostic details") { Text(error).textSelection(.enabled) }
+                if coordinator.activityError != nil {
+                    Button("Dismiss alert for this session") { coordinator.acknowledgeActivityError() }
+                        .buttonStyle(InlineActionButtonStyle())
+                        .help("Hide the alert until the project is reopened or a new error occurs. No request is retried or cancelled.")
+                }
             }
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .padding(.horizontal, AppTheme.Spacing.sm)
         }
-        let snapshots = coordinator.snapshots.filter { batchID == nil || $0.batch.id == batchID }
+        let snapshots = coordinator.snapshots.filter {
+            $0.batch.payload.projectKey == editor.projectId && (batchID == nil || $0.batch.id == batchID)
+        }
         if !snapshots.isEmpty {
             DisclosureGroup(isExpanded: $expanded) {
                 ScrollView {
@@ -715,6 +723,13 @@ struct GenerationBatchProgressView: View {
                                     Text(pause.detail).foregroundStyle(AppTheme.Text.secondaryColor).textSelection(.enabled)
                                 }
                             }
+                            if let notice = notices.first(where: { $0.batchID == snapshot.batch.id }) {
+                                Button("Dismiss alert for this session") {
+                                    coordinator.acknowledgeActivity(notice, projectID: editor.projectId)
+                                }
+                                .buttonStyle(InlineActionButtonStyle())
+                                .help("Hide the alert until the project is reopened or the job changes. No request is retried or cancelled.")
+                            }
                             if let continuation = coordinator.continuation(for: snapshot, editor: editor) {
                                 Button(continuation == .queuedRequests ? "Continue approved requests" : "Resume status checks") {
                                     coordinator.continueBatch(batchID: snapshot.batch.id, editor: editor)
@@ -746,7 +761,8 @@ struct GenerationBatchProgressView: View {
             }
             .padding(.horizontal, AppTheme.Spacing.sm)
             .reviewAcceptanceProbe("generation-batch.history", text: expanded ? "open" : "closed")
-            .onAppear { if batchID != nil { expanded = true } }
+            .onAppear { if batchID != nil || !notices.isEmpty { expanded = true } }
+            .onChange(of: notices) { _, value in if !value.isEmpty { expanded = true } }
         }
     }
 

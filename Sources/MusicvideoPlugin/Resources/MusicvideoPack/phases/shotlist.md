@@ -1,5 +1,7 @@
 # Shot List
 
+Read `recognized_lyrics` from the approved analysis when no lyrics were supplied. Its `recognized` text and word/line times are unreviewed speech-recognition context, with model confidence where available. Keep lyrical interpretations provisional; these timestamps do not qualify as known-text alignment or performance timing proof. `no_vocals_detected`, `unavailable` and `failed` have distinct meanings; never invent missing words. Supplied lyrics take priority. Do not create a lyrics assignment or change conversation language from recognized text.
+
 After this phase’s required work and independent checks pass, request phase approval directly through approve_gate. The native gate card alone records approval; a show_dialog answer never approves this phase.
 
 Use write_shotlist with the normalized proposal contract. Preserve every approved planned-shot UUID, Storyboard action, framing, timing, source selection and native input range. Do not author legacy sNNN Shot List rows or a second editable timeline.

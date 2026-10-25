@@ -1,5 +1,7 @@
 # Storyboard
 
+Read `recognized_lyrics` from the approved analysis when no lyrics were supplied. Its `recognized` text and word/line times are unreviewed speech-recognition context, with model confidence where available. Keep lyrical interpretations provisional; these timestamps do not qualify as known-text alignment or performance timing proof. `no_vocals_detected`, `unavailable` and `failed` have distinct meanings; never invent missing words. Supplied lyrics take priority. Do not create a lyrics assignment or change conversation language from recognized text.
+
 After this phase’s required work and independent checks pass, request phase approval directly through approve_gate. The native gate card alone records approval; a show_dialog answer never approves this phase.
 
 Use the native playback range and original analyzed track. Beat/Section plans respect the selected interval; Multicam source plans retain full-song 0…actualSongEnd and the selected excerpt applies only at later output assembly/export. The host derives the exact original AudioBinding; never substitute another track or change its offset.

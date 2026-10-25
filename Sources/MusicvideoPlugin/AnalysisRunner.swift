@@ -325,9 +325,117 @@ public enum MusicvideoAnalysisRunner {
         }
 
         report(5)
+        let lyricMeasurement = try measureLyrics(lyrics: lyrics, lyricsLoadError: lyricsLoadError,
+            transcriber: transcriber, stems: stems, song: song, dataRoot: dataRoot,
+            duration: raw.durationS, songSHA256: songSHA256)
+        let alignment = lyricMeasurement.alignment
+        let alignmentReport = lyricMeasurement.alignmentReport
+        let alignmentSource = lyricMeasurement.alignmentSource
+        let recognition = lyricMeasurement.recognition
+        stages += lyricMeasurement.stages
+        diagnostics += lyricMeasurement.diagnostics
+
+        report(6)
+        let songPath = FrameInventory.relativePath(of: song, to: dataRoot)
+        let canonical = try toCanonicalDetailed(
+            raw, project: project, songPath: songPath,
+            stems: stems.map { relativeStems($0, dataRoot: dataRoot) },
+            lyricsAlignment: alignment, alignmentReport: alignmentReport,
+            chords: chords, pipelineStages: stages,
+            songSha256: songSHA256,
+            musicUnderstanding: musicUnderstanding)
+
+        if musicUnderstanding != nil,
+           let index = diagnostics.firstIndex(where: { $0.stage == "music_understanding" }) {
+            let hierarchyResolved = canonical.structureResolution.method
+                == "music_understanding_hierarchy"
+            let detail: String
+            switch (hierarchyResolved, systemRhythmApplied) {
+            case (true, true):
+                detail = "Measured rhythm and a verified section/segment/phrase hierarchy on device."
+            case (true, false):
+                detail = "Verified the measured section/segment/phrase hierarchy; retained fallback rhythm because the system rhythm report was inconsistent."
+            case (false, true):
+                detail = "Measured canonical rhythm, but the section/segment/phrase hierarchy was invalid."
+            case (false, false):
+                detail = "System rhythm was inconsistent and the section/segment/phrase hierarchy was invalid."
+            }
+            diagnostics[index] = StageDiagnostic(
+                stage: "music_understanding",
+                status: hierarchyResolved && systemRhythmApplied ? .succeeded : .degraded,
+                detail: detail
+            )
+        }
+
+        let outDir = dataRoot.appendingPathComponent("analysis")
+        try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
+        let outURL = outDir.appendingPathComponent("\(song.deletingPathExtension().lastPathComponent).json")
+        let data = try encodeArtifact(
+            canonical.analysis,
+            structureResolution: canonical.structureResolution,
+            stageDiagnostics: diagnostics,
+            recognizedLyrics: recognition?.value
+        )
+        guard let artifactObject = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { throw CocoaError(.coderInvalidValue) }
+        let alignmentProof: AnalysisMeasurementProof.LyricsAlignmentProof?
+        if let lyrics, let alignmentReport, let alignmentSource {
+            alignmentProof = AnalysisMeasurementProof.LyricsAlignmentProof(
+                sourcePath: FrameInventory.relativePath(of: alignmentSource, to: dataRoot),
+                sourceSHA256: try sha256(alignmentSource),
+                lyricsSHA256: AnalysisMeasurementProofStore.lyricsFingerprint(lyrics),
+                alignmentSHA256: try AnalysisMeasurementProofStore.alignmentFingerprint(
+                    artifactObject
+                ),
+                timingEvidence: alignmentReport.timingEvidence,
+                timingMethod: alignmentReport.timingMethod,
+                markerCount: alignmentReport.markerCount,
+                lyricTokenCount: alignmentReport.lines.flatMap(\.words).count,
+                matchedTokenCount: alignmentReport.lines
+                    .flatMap(\.words)
+                    .filter { $0.score != nil }
+                    .count
+            )
+        } else {
+            alignmentProof = nil
+        }
+        try data.write(to: outURL, options: .atomic)
+        try AnalysisMeasurementProofStore.save(
+            AnalysisMeasurementProof(
+                project: project,
+                songSHA256: songSHA256,
+                lyricsAlignment: alignmentProof,
+                recognizedLyrics: try recognition.map {
+                    AnalysisMeasurementProof.RecognizedLyricsProof(
+                        sourcePath: $0.value.sourcePath, sourceSHA256: $0.sourceSHA256,
+                        transcriptSHA256: try AnalysisMeasurementProofStore.recognitionFingerprint(artifactObject))
+                }
+            ),
+            dataRoot: dataRoot
+        )
+
+        return Outcome(analysis: canonical.analysis, artifactURL: outURL, songFilename: song.lastPathComponent)
+    }
+
+    struct LyricMeasurement {
+        let alignment: [AlignmentLine]
+        let alignmentReport: LyricsAlignment.Result?
+        let alignmentSource: URL?
+        let recognition: RecognizedLyrics.Measurement?
+        let stages: [String]
+        let diagnostics: [StageDiagnostic]
+    }
+
+    static func measureLyrics(lyrics: String?, lyricsLoadError: String?,
+                              transcriber: (any AudioTranscribing)?, stems: SeparatedStems?,
+                              song: URL, dataRoot: URL, duration: Double,
+                              songSHA256: String) throws -> LyricMeasurement {
+        var stages: [String] = []
+        var diagnostics: [StageDiagnostic] = []
         var alignment: [AlignmentLine] = []
         var alignmentReport: LyricsAlignment.Result?
         var alignmentSource: URL?
+        var recognition: RecognizedLyrics.Measurement?
         if let lyrics, let transcriber {
             let preferredSource = stems?.vocals ?? song
             let selection = selectLyricsAlignment(
@@ -392,85 +500,18 @@ public enum MusicvideoAnalysisRunner {
         } else if let lyricsLoadError {
             diagnostics.append(StageDiagnostic(stage: "lyrics_alignment", status: .unavailable, detail: "Lyrics input failed: \(lyricsLoadError)"))
         } else if lyrics == nil {
-            diagnostics.append(StageDiagnostic(stage: "lyrics_alignment", status: .notApplicable, detail: "No lyrics were attached."))
+            let measured = try RecognizedLyrics.measure(transcriber: transcriber,
+                vocals: stems?.vocals, song: song, dataRoot: dataRoot, duration: duration,
+                expectedSongSHA256: songSHA256)
+            recognition = measured
+            diagnostics.append(measured.diagnostic)
+            if measured.value.status == .recognized { stages.append("lyrics_recognition") }
         } else {
             diagnostics.append(StageDiagnostic(stage: "lyrics_alignment", status: .unavailable, detail: "Lyrics are present, but no transcriber is registered."))
         }
 
-        report(6)
-        let songPath = FrameInventory.relativePath(of: song, to: dataRoot)
-        let canonical = try toCanonicalDetailed(
-            raw, project: project, songPath: songPath,
-            stems: stems.map { relativeStems($0, dataRoot: dataRoot) },
-            lyricsAlignment: alignment, alignmentReport: alignmentReport,
-            chords: chords, pipelineStages: stages,
-            songSha256: songSHA256,
-            musicUnderstanding: musicUnderstanding)
-
-        if musicUnderstanding != nil,
-           let index = diagnostics.firstIndex(where: { $0.stage == "music_understanding" }) {
-            let hierarchyResolved = canonical.structureResolution.method
-                == "music_understanding_hierarchy"
-            let detail: String
-            switch (hierarchyResolved, systemRhythmApplied) {
-            case (true, true):
-                detail = "Measured rhythm and a verified section/segment/phrase hierarchy on device."
-            case (true, false):
-                detail = "Verified the measured section/segment/phrase hierarchy; retained fallback rhythm because the system rhythm report was inconsistent."
-            case (false, true):
-                detail = "Measured canonical rhythm, but the section/segment/phrase hierarchy was invalid."
-            case (false, false):
-                detail = "System rhythm was inconsistent and the section/segment/phrase hierarchy was invalid."
-            }
-            diagnostics[index] = StageDiagnostic(
-                stage: "music_understanding",
-                status: hierarchyResolved && systemRhythmApplied ? .succeeded : .degraded,
-                detail: detail
-            )
-        }
-
-        let outDir = dataRoot.appendingPathComponent("analysis")
-        try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
-        let outURL = outDir.appendingPathComponent("\(song.deletingPathExtension().lastPathComponent).json")
-        let data = try encodeArtifact(
-            canonical.analysis,
-            structureResolution: canonical.structureResolution,
-            stageDiagnostics: diagnostics
-        )
-        guard let artifactObject = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else { throw CocoaError(.coderInvalidValue) }
-        let alignmentProof: AnalysisMeasurementProof.LyricsAlignmentProof?
-        if let lyrics, let alignmentReport, let alignmentSource {
-            alignmentProof = AnalysisMeasurementProof.LyricsAlignmentProof(
-                sourcePath: FrameInventory.relativePath(of: alignmentSource, to: dataRoot),
-                sourceSHA256: try sha256(alignmentSource),
-                lyricsSHA256: AnalysisMeasurementProofStore.lyricsFingerprint(lyrics),
-                alignmentSHA256: try AnalysisMeasurementProofStore.alignmentFingerprint(
-                    artifactObject
-                ),
-                timingEvidence: alignmentReport.timingEvidence,
-                timingMethod: alignmentReport.timingMethod,
-                markerCount: alignmentReport.markerCount,
-                lyricTokenCount: alignmentReport.lines.flatMap(\.words).count,
-                matchedTokenCount: alignmentReport.lines
-                    .flatMap(\.words)
-                    .filter { $0.score != nil }
-                    .count
-            )
-        } else {
-            alignmentProof = nil
-        }
-        try data.write(to: outURL, options: .atomic)
-        try AnalysisMeasurementProofStore.save(
-            AnalysisMeasurementProof(
-                project: project,
-                songSHA256: songSHA256,
-                lyricsAlignment: alignmentProof
-            ),
-            dataRoot: dataRoot
-        )
-
-        return Outcome(analysis: canonical.analysis, artifactURL: outURL, songFilename: song.lastPathComponent)
+        return LyricMeasurement(alignment: alignment, alignmentReport: alignmentReport,
+            alignmentSource: alignmentSource, recognition: recognition, stages: stages, diagnostics: diagnostics)
     }
 
     static func selectLyricsAlignment(
@@ -727,12 +768,13 @@ public enum MusicvideoAnalysisRunner {
     static func encodeArtifact(
         _ analysis: Analysis,
         structureResolution: Consolidator.StructureResolution? = nil,
-        stageDiagnostics: [StageDiagnostic] = []
+        stageDiagnostics: [StageDiagnostic] = [],
+        recognizedLyrics: RecognizedLyrics? = nil
     ) throws -> Data {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         let encoded = try encoder.encode(analysis)
-        guard structureResolution != nil || !stageDiagnostics.isEmpty else {
+        guard structureResolution != nil || !stageDiagnostics.isEmpty || recognizedLyrics != nil else {
             var data = encoded
             data.append(0x0A)
             return data
@@ -749,6 +791,10 @@ public enum MusicvideoAnalysisRunner {
             object["stage_diagnostics"] = try JSONSerialization.jsonObject(
                 with: encoder.encode(stageDiagnostics)
             )
+        }
+        if let recognizedLyrics {
+            object["recognized_lyrics"] = try JSONSerialization.jsonObject(
+                with: encoder.encode(recognizedLyrics))
         }
         var data = try JSONSerialization.data(
             withJSONObject: object,

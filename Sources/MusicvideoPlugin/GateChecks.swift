@@ -632,6 +632,12 @@ enum MusicvideoGateChecks {
                 "Can't approve \"analysis\": the project lyrics are unreadable or ambiguous."
             )
         }
+        do {
+            try RecognizedLyrics.verify(object: object, proof: proof, dataRoot: dataRoot,
+                hasProvidedLyrics: lyrics != nil)
+        } catch {
+            throw GateBlocked("Can't approve \"analysis\": recognized lyrics or their input assignment no longer match the measurement proof. Re-run run_phase(\"analysis\").")
+        }
         let expectedMarkerCount = lyrics.map {
             LyricsAlignment.linesAndMarkers($0).filter { $0.marker != nil }.count
         } ?? 0

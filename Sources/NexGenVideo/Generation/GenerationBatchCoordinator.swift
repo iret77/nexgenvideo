@@ -48,7 +48,12 @@ final class GenerationBatchPreparation {
 final class GenerationBatchCoordinator {
     var pending: GenerationBatch?
     private(set) var snapshots: [GenerationBatchStore.Snapshot] = []
-    private(set) var error: String?
+    private(set) var error: String? {
+        didSet {
+            activityErrorBatchID = nil
+            if oldValue != error { acknowledgedActivityError = nil }
+        }
+    }
     private(set) var approving = false
     /// Set while a batch is approved under the user's phase approval, so the dock shows no card.
     private(set) var autoApprovingPhase: String?
@@ -84,9 +89,56 @@ final class GenerationBatchCoordinator {
     var hasCloseWork: Bool { !jobs.isEmpty || !restorationReads.isEmpty || !preparationTasks.isEmpty || continuationAfterCancellation != nil || closeDrain != nil }
 
     struct Pause: Equatable {
+        let id = UUID()
         enum Reason: String { case hostBusy, requestRefused }
         let reason: Reason
         let detail: String
+    }
+
+    struct ActivityNotice: Equatable {
+        let batchID: String
+        let revision: Int
+        let pause: Pause?
+        let needsAttention: Bool
+        let failed: Bool
+    }
+
+    private var acknowledgedActivity: [String: ActivityNotice] = [:]
+    private var acknowledgedActivityError: String?
+    private var activityErrorBatchID: String?
+
+    var activityError: String? { error == acknowledgedActivityError ? nil : error }
+
+    func activityNotices(projectID: String?) -> [ActivityNotice] {
+        snapshots.filter { $0.batch.payload.projectKey == projectID }.compactMap { snapshot in
+            let pause = pausedBatches[snapshot.batch.id]
+            let blocked = snapshot.journal.executions.contains { $0.state == .blocked }
+            let failed = snapshot.journal.executions.contains { $0.state == .failed }
+            guard pause != nil || blocked || failed else { return nil }
+            let notice = ActivityNotice(batchID: snapshot.batch.id, revision: snapshot.journal.revision,
+                pause: pause, needsAttention: pause != nil || blocked, failed: failed)
+            return acknowledgedActivity[notice.batchID] == notice ? nil : notice
+        }
+    }
+
+    func acknowledgeActivity(_ notice: ActivityNotice, projectID: String?) {
+        guard activityNotices(projectID: projectID).contains(notice) else { return }
+        acknowledgedActivity[notice.batchID] = notice
+        if activityErrorBatchID == notice.batchID { acknowledgeActivityError() }
+    }
+
+    func acknowledgeActivityError() { acknowledgedActivityError = error }
+
+    func recordPause(batchID: String, reason: Pause.Reason, detail: String, message: String) {
+        pausedBatches[batchID] = Pause(reason: reason, detail: detail)
+        error = message
+        acknowledgedActivityError = nil
+        activityErrorBatchID = batchID
+    }
+
+    func clearPause(batchID: String) {
+        pausedBatches.removeValue(forKey: batchID)
+        if activityErrorBatchID == batchID { error = nil }
     }
 
     var canApprovePending: Bool {
@@ -447,7 +499,7 @@ final class GenerationBatchCoordinator {
             let canceled = try GenerationBatchStore.update(snapshot, editor: editor) { $0.cancelRemaining() }
             if activeBatchID != batchID,
                !canceled.journal.executions.contains(where: { [.queued, .submitting, .running].contains($0.state) }) {
-                pausedBatches.removeValue(forKey: batchID)
+                clearPause(batchID: batchID)
                 editor.agentService.completeGenerationBatch(batchID,
                     message: "Generation batch \(batchID) has settled after cancellation. Read get_generation_batches for completed outputs and canceled or blocked items before continuing the phase.")
                 resumeAfterTerminalCancellation(editor: editor)
@@ -519,7 +571,7 @@ final class GenerationBatchCoordinator {
                remainingBatchIDs: [String] = []) {
         guard !preventingNewWork, jobs.isEmpty, closeDrain == nil, let home = editor.workingRoot else { return }
         activeBatchID = batchID
-        pausedBatches.removeValue(forKey: batchID)
+        clearPause(batchID: batchID)
         providerConfirmedAt.removeValue(forKey: batchID)
         let projectID = editor.projectId, generation = editor.openWorkingCopyGeneration
         let lifetime = GenerationBatchExecutionLifetime()
@@ -695,9 +747,9 @@ final class GenerationBatchCoordinator {
                        let root = DataRootResolver.dataRoot(of: home) {
                         guard let id = editor.pipelinePhaseRunCoordinator.beginMutation(projectRoot: root, label: manifest.payload.phase ?? "Generation batch") else {
                             record(snapshot)
-                            pausedBatches[batchID] = Pause(reason: .hostBusy,
-                                detail: editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: root) ?? "Pipeline work")
-                            error = "Generation is paused while another pipeline job runs. Continue the approved requests when that work finishes."
+                            recordPause(batchID: batchID, reason: .hostBusy,
+                                detail: editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: root) ?? "Pipeline work",
+                                message: "Generation is paused while another pipeline job runs. Continue the approved requests when that work finishes.")
                             pausedForHost = true
                             return
                         }
@@ -734,8 +786,8 @@ final class GenerationBatchCoordinator {
                     let current = try GenerationBatchStore.load(id: batchID, home: home)
                     if let execution = current.journal.executions.first(where: { $0.itemID == item.id }), execution.state == .queued {
                         record(current)
-                        pausedBatches[batchID] = Pause(reason: .requestRefused, detail: error.localizedDescription)
-                        self.error = "The approved request has not been sent. \(error.localizedDescription) Continue after resolving this issue, or cancel the remaining requests."
+                        recordPause(batchID: batchID, reason: .requestRefused, detail: error.localizedDescription,
+                            message: "The approved request has not been sent. \(error.localizedDescription) Continue after resolving this issue, or cancel the remaining requests.")
                         pausedForHost = true
                         return
                     }

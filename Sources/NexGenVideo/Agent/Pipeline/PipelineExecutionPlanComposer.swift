@@ -805,7 +805,7 @@ enum PipelineExecutionPlanComposer {
         return Array(Set(paths)).sorted()
     }
 
-    private static func historicalPhaseArtifactPaths(
+    static func historicalPhaseArtifactPaths(
         phaseID: String,
         dataRoot: URL
     ) throws -> [String] {
@@ -822,39 +822,40 @@ enum PipelineExecutionPlanComposer {
                 let proofURL = analysisURL.deletingPathExtension()
                     .appendingPathExtension("measurement-proof.json")
                 let proofPath = try canonicalRelativePath(proofURL, dataRoot: dataRoot)
+                let safeProofURL: URL
                 do {
-                    let safeProofURL = try ProjectLocalFile.resolve(
+                    safeProofURL = try ProjectLocalFile.resolve(
                         proofPath,
                         dataRoot: dataRoot
                     )
-                    paths.append(proofPath)
-                    let data = try Data(contentsOf: safeProofURL)
-                    guard let object = try JSONSerialization.jsonObject(with: data)
-                        as? [String: Any],
-                          let schema = object["schema"] as? String,
-                          !schema.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                          object["project"] is String,
-                          object["song_sha256"] is String else {
-                        throw PipelineExecutionPlanComposerError.invalidReference(proofPath)
-                    }
-                    if let rawAlignment = object["lyrics_alignment"],
-                       !(rawAlignment is NSNull) {
-                        guard let alignment = rawAlignment as? [String: Any],
-                              let sourcePath = alignment["source_path"] as? String,
-                              !sourcePath.isEmpty else {
-                            throw PipelineExecutionPlanComposerError.invalidReference(proofPath)
-                        }
-                        let sourceURL = try ProjectLocalFile.resolve(
-                            sourcePath,
-                            dataRoot: dataRoot
-                        )
-                        paths.append(try canonicalRelativePath(
-                            sourceURL,
-                            dataRoot: dataRoot
-                        ))
-                    }
                 } catch ProjectLocalFileError.missingOrNonRegularFile(_) {
                     break
+                }
+                paths.append(proofPath)
+                let data = try Data(contentsOf: safeProofURL)
+                guard let object = try JSONSerialization.jsonObject(with: data)
+                    as? [String: Any],
+                      let schema = object["schema"] as? String,
+                      !schema.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      object["project"] is String,
+                      object["song_sha256"] is String else {
+                    throw PipelineExecutionPlanComposerError.invalidReference(proofPath)
+                }
+                for key in ["lyrics_alignment", "recognized_lyrics"] {
+                    guard let rawAlignment = object[key], !(rawAlignment is NSNull) else { continue }
+                    guard let alignment = rawAlignment as? [String: Any],
+                          let sourcePath = alignment["source_path"] as? String,
+                          !sourcePath.isEmpty else {
+                        throw PipelineExecutionPlanComposerError.invalidReference(proofPath)
+                    }
+                    let sourceURL = try ProjectLocalFile.resolve(
+                        sourcePath,
+                        dataRoot: dataRoot
+                    )
+                    paths.append(try canonicalRelativePath(
+                        sourceURL,
+                        dataRoot: dataRoot
+                    ))
                 }
             }
         case "brief":

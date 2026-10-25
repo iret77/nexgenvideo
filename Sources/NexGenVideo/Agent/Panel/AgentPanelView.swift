@@ -62,7 +62,7 @@ struct AgentPanelView: View {
     private var service: AgentService { editor.agentService }
 
     private var pendingGateIsBlockedByPhaseRun: Bool {
-        _ = editor.pipelinePhaseExecution.snapshot
+        _ = editor.activityPhaseSnapshot
         guard let root = service.pendingGateApproval?.dataRoot else {
             return false
         }
@@ -173,7 +173,7 @@ struct AgentPanelView: View {
     }
 
     private var hangContext: MainThreadHangContext {
-        let execution = editor.pipelinePhaseExecution.snapshot
+        let execution = editor.activityPhaseSnapshot
         return MainThreadHangContext(
             surface: "agentTranscript",
             phase: execution?.phase ?? editor.projectState?.nextPhaseName,
@@ -188,34 +188,8 @@ struct AgentPanelView: View {
     }
 
     private var surfaceState: AgentSurfaceState {
-        let snapshot = editor.pipelinePhaseExecution.snapshot
-        let activityVisible = runningTranscriptActivity != nil
-        return AgentSurfaceState.resolve(.init(
-            hasSpendApproval: service.pendingSpendApproval != nil || editor.generationBatchCoordinator.pending != nil,
-            hasGateApproval: service.pendingGateApproval != nil,
-            gateApprovalBlocked: pendingGateIsBlockedByPhaseRun,
-            gateApprovalIsWriting: service.gateApprovalIsWriting,
-            spendApprovalIsRunning: service.spendApprovalIsRunning
-                || editor.generationBatchCoordinator.approving || editor.generationBatchCoordinator.isRecovering,
-            hasDialog: service.pendingDialog != nil,
-            hasSpendRun: service.currentSpendRun != nil,
-            hasBatchRun: editor.generationBatchCoordinator.activeBatchID != nil,
-            phaseIsRunning: snapshot?.isRunning == true,
-            phaseHasTranscriptActivity: activityVisible,
-            phaseHasFailed: {
-                if case .failed? = snapshot?.status { return true }
-                return false
-            }(),
-            hasHostFollowUp: service.hasPendingHostFollowUp,
-            isStreaming: service.isStreaming,
-            streamHasTranscriptActivity: activityVisible,
-            hasTurnFailure: service.streamError != nil && !showsAuthenticationError,
-            isCheckingBackend: service.isCheckingBackend,
-            needsBackendRecovery: !service.isCheckingBackend
-                && (!service.canStream || showsAuthenticationError),
-            hasRepairPause: service.currentPipelineRepairFailure != nil,
-            hasOutdatedApproval: !outdatedApprovalPhases.isEmpty
-        ))
+        AgentSurfaceState.resolve(.current(editor: editor,
+            hasTranscriptActivity: runningTranscriptActivity != nil))
     }
 
     private var outdatedApprovalPhases: [String] {
@@ -225,6 +199,18 @@ struct AgentPanelView: View {
     }
 
     private var liveStatus: AgentLiveStatus {
+        let notices = editor.generationBatchCoordinator.activityNotices(projectID: editor.projectId)
+        let attention = WorkbenchActivityState.attentionDetail(.current(editor: editor),
+            batchPaused: notices.contains { $0.needsAttention }, decisionLocation: decisionLocation)
+        if surfaceState.statusOwner == .ready || surfaceState.statusOwner == .hostFollowUp {
+            let batches = editor.generationBatchCoordinator
+            if !notices.isEmpty || batches.activityError != nil {
+                return AgentLiveStatus(state: notices.contains { $0.needsAttention } ? .waiting : .failed,
+                    title: "Generation needs attention",
+                    detail: "Review Generation batches below. Dismissing an activity alert keeps the job and its results unchanged.")
+            }
+        }
+
         switch surfaceState.statusOwner {
         case .repairPaused:
             guard let failure = service.currentPipelineRepairFailure else {
@@ -248,7 +234,7 @@ struct AgentPanelView: View {
                 title: run.cancellationRequested
                     ? "Cancelling generation"
                     : "Generation in progress",
-                detail: "\(run.actionLabel) · \(run.modelName) via \(run.providerName)",
+                detail: [attention, "\(run.actionLabel) · \(run.modelName) via \(run.providerName)"].compactMap { $0 }.joined(separator: " · "),
                 canCancel: true,
                 cancellationRequested: run.cancellationRequested,
                 stopLabel: String(localized: "Stop generation")
@@ -258,15 +244,15 @@ struct AgentPanelView: View {
             let hasQueued = coordinator.snapshots.first { $0.batch.id == coordinator.activeBatchID }?
                 .journal.executions.contains { $0.state == .queued } == true
             return AgentLiveStatus(state: .working, title: String(localized: "Generation batch in progress"),
-                detail: hasQueued ? String(localized: "Stop requests that have not been submitted. Accepted provider jobs continue.")
-                    : String(localized: "No queued requests remain. Accepted provider jobs continue; results appear in Generation batches."),
+                detail: [attention, hasQueued ? String(localized: "Stop requests that have not been submitted. Accepted provider jobs continue.")
+                    : String(localized: "No queued requests remain. Accepted provider jobs continue; results appear in Generation batches.")].compactMap { $0 }.joined(separator: " · "),
                 canCancel: hasQueued, stopLabel: String(localized: "Stop remaining requests"))
         case .decisionWorking:
             return AgentLiveStatus(state: .working,
                 title: surfaceState.dockOwner == .gateApproval
                     ? String(localized: "Recording approval") : String(localized: "Preparing generation options"))
         case .phaseRun:
-            guard let snapshot = editor.pipelinePhaseExecution.snapshot, snapshot.isRunning else {
+            guard let snapshot = editor.activityPhaseSnapshot, snapshot.isRunning else {
                 return AgentLiveStatus(state: .working, title: "Finishing the current phase",
                     detail: "Approval is unavailable until this operation finishes.", canCancel: service.isStreaming,
                     stopLabel: String(localized: "Stop agent"))
@@ -290,7 +276,7 @@ struct AgentPanelView: View {
         case .phaseFailure:
             return AgentLiveStatus(
                 state: .failed,
-                title: editor.pipelinePhaseExecution.snapshot.map { "\(PhaseDisplay.label($0.phase)) failed" } ?? "Phase failed"
+                title: editor.activityPhaseSnapshot.map { "\(PhaseDisplay.label($0.phase)) failed" } ?? "Phase failed"
             )
         case .actionRequired:
             if surfaceState.dockOwner == .gateApproval, let gate = service.pendingGateApproval {
@@ -301,10 +287,7 @@ struct AgentPanelView: View {
                 title: surfaceState.dockOwner == .spendApproval ? "Generation approval requested" : "Your response is needed",
                 detail: decisionLocation)
         case .hostFollowUp:
-            return AgentLiveStatus(
-                state: .working,
-                title: "Resuming agent"
-            )
+            return AgentLiveStatus(state: .ready, title: "Agent continuation pending")
         case .stream:
             return AgentLiveStatus(state: .working, title: taskActivity.title,
                 detail: [taskActivity.expectedResult, service.activityEvents.last?.label]
@@ -325,7 +308,7 @@ struct AgentPanelView: View {
         if service.isStreaming {
             return AgentTaskActivityPresentation(task: service.currentTaskActivity)
         }
-        return AgentTaskActivityPresentation(messages: [], phase: editor.pipelinePhaseExecution.snapshot?.phase)
+        return AgentTaskActivityPresentation(messages: [], phase: editor.activityPhaseSnapshot?.phase)
     }
 
     private var decisionLocation: String {
@@ -457,7 +440,7 @@ struct AgentPanelView: View {
                     AgentActivityEvent(at: nil, label: "Generation \($0.offset + 1): \($0.element.state.rawValue)")
                 })
         } else if surfaceState.statusOwner == .phaseRun,
-           let run = editor.pipelinePhaseExecution.snapshot, run.isRunning {
+           let run = editor.activityPhaseSnapshot, run.isRunning {
             AgentActivityProgressView(timing: .init(startedAt: run.startedAt, lastEventAt: run.lastEventAt),
                 completed: run.completedUnitCount, total: run.totalUnitCount,
                 scope: "stages in this phase",
@@ -472,7 +455,7 @@ struct AgentPanelView: View {
 
     private var statusOwnerIsRunning: Bool {
         switch surfaceState.statusOwner {
-        case .spendRun, .batchRun, .decisionWorking, .phaseRun, .hostFollowUp, .stream: true
+        case .spendRun, .batchRun, .decisionWorking, .phaseRun, .stream: true
         default: false
         }
     }
@@ -902,7 +885,7 @@ struct AgentPanelView: View {
         if let error = service.streamError, !showsAuthenticationError {
             return error.localizedDescription
         }
-        if case .failed(let message)? = editor.pipelinePhaseExecution.snapshot?.status {
+        if case .failed(let message)? = editor.activityPhaseSnapshot?.status {
             return message
         }
         return nil

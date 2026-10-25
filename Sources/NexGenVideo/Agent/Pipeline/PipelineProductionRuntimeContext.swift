@@ -62,6 +62,9 @@ enum PipelineProductionRuntimeContext {
         }
         if let style = try ProductionStyleContext.prompt(dataRoot: dataRoot, phase: phase) { prompt += "\n\n" + style }
         if let packName = workflow.packID {
+            if let lyrics = try PipelineRecognizedLyricsContext.prompt(dataRoot: dataRoot, phase: phase, packName: packName) {
+                prompt += "\n\n" + lyrics
+            }
             prompt = try PipelineProductionKnowledgeContext.append(to: prompt,
                 dataRoot: dataRoot, phase: phase, packName: packName)
         }
@@ -80,6 +83,7 @@ enum PipelineProductionRuntimeContext {
                    StorySourceV1.currentPath, ScriptV1.currentPath, StoryboardTimingV1.currentPath,
                    ShotPlanningDraftV1.currentPath, RenderReviewV1.currentPath, ProductionSequenceReviewV2.relativePath,
                    PlaybackRangeV1.currentPath, "shotlist"].map { root.appendingPathComponent($0) }
+            paths += try PipelineRecognizedLyricsContext.sourceURLs(dataRoot: root)
             if let bytes = try? Data(contentsOf: root.appendingPathComponent(ProductionSequenceReviewV2.relativePath)),
                let review = try? JSONDecoder().decode(ProductionSequenceReviewV2.self, from: bytes) {
                 paths += review.artifactReferences.compactMap { try? ProjectLocalFile.resolve($0.path, dataRoot: root) }
