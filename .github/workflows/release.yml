@@ -123,7 +123,7 @@ jobs:
           [ "$ALLOW_MERGE_COMMIT" = "true" ] \
             || { echo "::error::Release metadata requires repository merge commits"; exit 1; }
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
@@ -363,12 +363,12 @@ jobs:
       contents: write
       actions: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - uses: ./.github/actions/setup-xcode-27
 
       # macrunner's system Python is 3.9; dmgbuild 1.6.7 and the release scripts need a current one.
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
 
@@ -503,7 +503,7 @@ jobs:
 
       - name: Upload release test evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-test-evidence
           path: |
@@ -515,7 +515,7 @@ jobs:
       - name: Verify release tests did not mutate tracked source
         run: scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: managed-bpy-source-receipt-${{ github.sha }}
           path: .build/bpy-source
@@ -792,7 +792,7 @@ jobs:
           pathlib.Path('.build/release-workspace-producer.json').write_text(json.dumps(proof, indent=2) + '\n')
           PY
       - name: Upload final DMG app for selected workspace acceptance
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: workspace-ui-app
           path: |
@@ -803,7 +803,7 @@ jobs:
           retention-days: 14
           compression-level: 0
       - name: Upload final DMG workspace producer binding
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-workspace-producer
           path: .build/release-workspace-producer.json
@@ -817,7 +817,7 @@ jobs:
           DMG_SHA256="$(shasum -a 256 .build/NexGenVideo.dmg | awk '{print $1}')"
           [ "$(jq -r .dmgSHA256 .build/release-workspace-producer.json)" = "$DMG_SHA256" ]
           echo "dmg_sha256=$DMG_SHA256" >> "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-user-journey-input
           path: .build/NexGenVideo.dmg
@@ -974,7 +974,7 @@ jobs:
 
       - name: Upload dry-run candidate for manual verification
         if: ${{ inputs.artifact_only == false && env.REL_DRY == 'true' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: NexGenVideo-${{ env.REL_VERSION }}-dry-run
           path: |
@@ -1042,7 +1042,7 @@ jobs:
 
       - name: Upload unpublished candidate
         if: ${{ inputs.artifact_only }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: NexGenVideo-${{ env.REL_VERSION }}-artifact-only
           path: |
@@ -1072,7 +1072,7 @@ jobs:
           dwarfdump --uuid .build/NexGenVideo.app/Contents/MacOS/NexGenVideo
           dwarfdump --uuid .build/NexGenVideo.dSYM
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: diagnostic-release-evidence
           path: |
@@ -1103,7 +1103,7 @@ jobs:
 
       - name: Hand off stable publication transaction
         if: ${{ inputs.artifact_only == false && env.REL_DRY == 'false' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-publication-${{ inputs.version }}
           path: |
@@ -1125,8 +1125,8 @@ jobs:
       contents: read
       actions: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: diagnostic-release-evidence
       - name: Verify signed production capture and exact symbolization
@@ -1136,7 +1136,7 @@ jobs:
           codesign --verify --strict --verbose=2 NexGenVideo.app
           xcrun stapler validate NexGenVideo.app
           python3 scripts/hang_diagnostic_acceptance.py NexGenVideo.app diagnostic-symbols/NexGenVideo.dSYM --output evidence
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: diagnostic-runtime-acceptance
@@ -1177,12 +1177,12 @@ jobs:
       contents: write
       pull-requests: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
       - name: Download publication transaction
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: release-publication-${{ inputs.version }}
           path: .build/publication

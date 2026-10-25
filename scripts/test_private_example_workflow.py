@@ -18,7 +18,7 @@ class PrivateExampleWorkflowTests(unittest.TestCase):
         self.assertIn("runs-on: macrunner", build)
         self.assertIn("scripts/bundle.sh debug", build)
         self.assertIn("scripts/assemble_ngvpack.sh", build)
-        self.assertIn("actions/upload-artifact@v4", build)
+        self.assertIn("actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02", build)
         self.assertIn("runs-on: macos-26", analyze)
         self.assertNotIn("NGV_MACOS_27_RUNNER", text)
         self.assertIn("needs: [source-gate, build-runtime-harness]", analyze)
@@ -28,7 +28,7 @@ class PrivateExampleWorkflowTests(unittest.TestCase):
             "(needs.build-runtime-harness.result == 'skipped' && inputs.runtime_artifact != '')) }}",
             analyze,
         )
-        self.assertIn("actions/download-artifact@v4", analyze)
+        self.assertIn("actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093", analyze)
         self.assertIn(
             "name: ${{ inputs.runtime_artifact || "
             "format('private-analysis-runtime-{0}-{1}', github.run_id, github.run_attempt) }}",
@@ -37,8 +37,8 @@ class PrivateExampleWorkflowTests(unittest.TestCase):
         self.assertNotIn("scripts/bundle.sh", analyze)
         self.assertNotIn("scripts/assemble_ngvpack.sh", analyze)
         self.assertIn("run: .build/NexGenVideo.app/Contents/MacOS/NexGenVideo -ApplePersistenceIgnoreState YES", analyze)
-        self.assertLess(analyze.index("sw_vers -productVersion"), analyze.index("actions/download-artifact@v4"))
-        self.assertLess(analyze.index("actions/download-artifact@v4"), analyze.index("oras pull"))
+        self.assertLess(analyze.index("sw_vers -productVersion"), analyze.index("actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"))
+        self.assertLess(analyze.index("actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"), analyze.index("oras pull"))
 
     def test_failure_provenance_publishes_without_a_partial_analysis(self):
         text = WORKFLOW.read_text()
@@ -72,7 +72,7 @@ class PrivateExampleWorkflowTests(unittest.TestCase):
         self.assertIn('[ "$(jq -r \'.repository // empty\' <<<"$REPORT_PACKAGE_JSON")" = "" ]', source_gate)
         self.assertNotIn("actions/upload-artifact", source_gate)
         self.assertNotIn("actions/upload-artifact", analyze)
-        self.assertEqual(text.count("uses: actions/upload-artifact@v4"), 1)
+        self.assertEqual(text.count("uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"), 1)
         self.assertIn("path: ${{ runner.temp }}/runtime-harness.tar.gz", build)
         self.assertIn("REPORT_REFERENCE: ghcr.io/iret77/nexgenvideo-analysis-reports:", analyze)
         self.assertIn('REPORT_DIGEST="$(oras push', analyze)

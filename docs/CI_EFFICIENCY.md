@@ -2,9 +2,11 @@
 
 ## Triggers
 
-A pull request starts only `pr-checks.yml`: one Linux job, `Light Checks`
-(AppTheme lint, pack pipeline contracts, script tests), without a paths filter.
-It is the required status check for `main`, without an up-to-date requirement.
+A pull request starts two Linux workflows without path filters: `pr-checks.yml`
+provides `Light Checks` (AppTheme lint, pack pipeline contracts, script tests),
+and `ci-lint.yml` checks workflow policy and YAML syntax. `Light Checks` is the
+required status check for `main`, without an up-to-date requirement. `ci-lint`
+is not yet required; issue #674 tracks its activation after successful CI.
 No push, pull request or schedule starts a macOS runner (`macrunner` or `macos-26`).
 
 Heavy verification starts manually through `ci-batch.yml` or a focused acceptance
@@ -283,3 +285,32 @@ changes:
 The bundle baseline includes assembly and signing; it is not all removable
 compilation time. Wall-clock savings also depend on the former parallelism and
 runner queues. Measure the resulting runs before claiming a percentage.
+
+## Standards adoption, 2026-10-25
+
+Issue #674 tracks the incomplete standards adoption. The standalone `ci-lint`
+workflow runs strict policy and YAML syntax checks on Linux for every PR and
+manual diagnostic dispatch. `script/ci-lint` is the unchanged 1.10.0 copy from
+`iret77/engineering-standards` commit
+`f69060bdfef550f9efa293a43368217034a60575` (SHA256
+`d98eb34e03b83284df7482b153f035942f4d7e858d9e7e60bfb196087594ebc3`).
+Manual replay, signing and native diagnostic workflows preserve the active run.
+A newer dispatch waits; GitHub retains only the latest pending run per group.
+Previously implicit artifact retention now requests 90 days, subject to the
+repository retention limit. The bpy orphan
+check polls for worker exit within its existing two-second grace period.
+
+Before this standards patch, PR run `40226274208` on source
+`6995fd36512b955af14a547464e3280adf6d4f33` completed Light Checks in 220 seconds on `ubuntu-24.04`:
+AppTheme, pack contracts and 1,261 Python tests (three skips; 207.200 seconds for
+the Python suite). This is a timing comparison point, not verification of this
+standards patch. The patch requires its own PR run including `ci-lint`. Older 20–24 second PR
+runs have a different source/test inventory. Successful qualification-only and
+full Core batches, and the different diagnostic modes, are not interchangeable
+samples for a runtime estimate. No full-suite per-test coverage measurement or
+completed test-value audit is claimed here.
+
+Actions used by jobs that read signing, private-fixture or provider credentials
+are pinned to full commits, including the dependency-cache composite they call.
+The pins resolve the same existing major-version tags; no action major upgrade
+or additional credential use is introduced.

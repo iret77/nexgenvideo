@@ -636,6 +636,7 @@ jobs:
             evidence/*.png
             evidence/helper-recovery-recordings.zip
             evidence/termination/
+          retention-days: 90
 
   bpy-runtime:
     needs: [source_gate, build_test]
