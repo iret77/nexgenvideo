@@ -135,7 +135,7 @@ struct ProductionPlanView: View {
                     .textSelection(.enabled)
             }
             if let routing = snapshot.inventory.shots.first(where: { $0.shotID == shot.id }) {
-                ProductionPlanRoutingView(routing: routing)
+                ProductionPlanRoutingView(routing: routing, costProbe: "production.plan.cost." + routing.shotID)
             }
             if let chain = snapshot.projection.chains.first(where: { $0.shotID == shot.id }) {
                 Label("\(chain.kind == .frameContinuation ? "Continues the last frame of" : "Extends the video from") Shot \(snapshot.number(chain.predecessorShotID) ?? 0)",
@@ -219,7 +219,7 @@ struct ProductionPlanInspector: View {
                     field("Camera", [shot.camera.framingID, shot.camera.movementID, shot.camera.movementDetail,
                         shot.camera.placement, shot.camera.endpoint].compactMap { $0 }.joined(separator: " · "))
                     if let routing = selection.snapshot.inventory.shots.first(where: { $0.shotID == shot.id }) {
-                        ProductionPlanRoutingView(routing: routing)
+                        ProductionPlanRoutingView(routing: routing, costProbe: "production.inspector.cost." + routing.shotID)
                     }
                     if !shot.blocking.isEmpty {
                         field("Blocking", shot.blocking.map { [$0.entityID, $0.relation, $0.performance].compactMap { $0 }.joined(separator: ": ") }.joined(separator: "\n"))
@@ -254,12 +254,19 @@ struct ProductionPlanInspector: View {
 
 private struct ProductionPlanRoutingView: View {
     let routing: PipelineProductionPlanReadStore.Shot
+    let costProbe: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
             if let route = routing.route {
                 Text("\(route.offering.providerID) · \(route.offering.catalogModelID)")
                     .fontWeight(AppTheme.FontWeight.medium).textSelection(.enabled)
+                Text("Generation cost is not quoted in this plan.")
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+                    .reviewAcceptanceProbe(costProbe, text: "not-quoted")
+                Text("Each prepared generation request shows its estimate or an explicit unknown price before you approve generation.")
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             if !routing.plannedInputs.isEmpty {
                 Text("Input plan").foregroundStyle(AppTheme.Text.secondaryColor)
