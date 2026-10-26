@@ -196,7 +196,16 @@ def observe_files(output, pid, started, seen):
             continue
 
 
-def run(app, output, source, probe_output):
+def capture_predicate(policy=False):
+    base = ('(subsystem == "com.apple.sandbox.reporting") OR (process BEGINSWITH "NexGenVideo") '
+            'OR (process IN {"xpcproxy","secinitd","sandboxd","launchd","kernel"} '
+            'AND eventMessage CONTAINS[c] "nexgenvideo")')
+    if policy:
+        base += ' OR (process IN {"tccd","syspolicyd","amfid","containermanagerd","secinitd"})'
+    return base
+
+
+def run(app, output, source, probe_output, *, policy=False):
     if probe_output.exists() or probe_output.is_symlink():
         raise ValueError("occupied original probe output")
     output.mkdir(parents=True, exist_ok=False)
@@ -217,9 +226,7 @@ def run(app, output, source, probe_output):
     cleanup_errors = []
     samples = {}
     marker = "ngv-ctl-" + uuid.uuid4().hex[:16]
-    predicate = ('(subsystem == "com.apple.sandbox.reporting") OR (process BEGINSWITH "NexGenVideo") '
-                 'OR (process IN {"xpcproxy","secinitd","sandboxd","launchd","kernel"} '
-                 'AND eventMessage CONTAINS[c] "nexgenvideo")')
+    predicate = capture_predicate(policy)
 
     def identity():
         try:
@@ -358,7 +365,7 @@ def run(app, output, source, probe_output):
                 except Exception as error:
                     cleanup_errors.append("final report collection: " + str(error))
     for args, name, limit in ((["sudo", "-n", "/usr/bin/log", "show", "--last", "10m", "--style", "compact",
-                               "--info", "--debug", "--predicate", predicate], "unified.log", 30),
+                               "--info", "--debug", "--predicate", predicate], "unified.log", 60 if policy else 30),
                               (["/usr/bin/hdiutil", "info", "-plist"], "mounted-images.plist", 20),
                               (["/sbin/mount"], "mounts.log", 20)):
         if cancelled:
@@ -382,7 +389,8 @@ def run(app, output, source, probe_output):
                   probeOutput=str(probe_output),
                   streamStoppedEarly=stream_stopped_early, fsUsageSuffixIsThreadID=True,
                   traceReturnCode=trace.returncode if trace else None,
-                  fidelity="Original relocated app, original probe-output location, synthetic resources, harness and 300-second app deadline; EXPECTED_SOURCE and NGV_BPY_DIAGNOSTIC_DEADLINE supplied; parallel observers, CANDIDATE_* metadata and a new process session added; previously proven source-archive preparation omitted.",
+                  fidelity="Caller-selected original app location, synthetic resources, original harness and 300-second app deadline; EXPECTED_SOURCE and NGV_BPY_DIAGNOSTIC_DEADLINE supplied; inherited CANDIDATE_*, REPLAY_KIND, PRODUCER_*, PRODUCT_SHA, DIAGNOSTIC_*, PRODUCTS_* and FAILURE_* workflow metadata, parallel observers and a new process session added. The original direct service-binary directory-deletion pre-run and source-archive preparation are omitted. This is the first app/service execution in this worker. Original --capture-open-logs and its dedicated stream/orphan check are replaced by this observer's debug stream and controls. Only before-authorization is attempted; after-authorization is omitted. A non-reproduction is not equivalent to the original job's complete conditions.",
+                  policyCapture=policy,
                   cancellationLimit="An external SIGKILL can prevent final cleanup and evidence writing.")
     (output / "evidence-verdict.json").write_text(json.dumps(result, indent=2) + "\n")
     for sig, handler in previous_handlers.items():
