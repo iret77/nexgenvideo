@@ -1,5 +1,6 @@
 """Run XCTest, Engine Swift Testing and hosted App Swift Testing once each."""
 import argparse
+import codecs
 from collections import Counter
 from datetime import datetime, timezone
 import hashlib
@@ -7,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import re
+import selectors
 import stat
 import struct
 import subprocess
@@ -179,9 +181,11 @@ def empty_swift_output(path):
 
 
 def run_process(command, path, environment, observation=None):
-    with path.open("w") as log:
+    if not all(hasattr(os, name) for name in ("waitid", "P_PID", "WEXITED", "WNOHANG", "WNOWAIT")):
+        raise VerificationError("Non-reaping child exit observation requires Python 3.13 or newer on macOS")
+    with path.open("wb") as log:
         with subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                              stderr=subprocess.STDOUT, text=True, env=environment) as process:
+                              stderr=subprocess.STDOUT, env=environment) as process:
             if observation is not None:
                 observation.update(pid=process.pid, launchLatest=time.time())
             diagnostic = None
@@ -192,23 +196,57 @@ def run_process(command, path, environment, observation=None):
                     diagnostic.start()
                 except Exception as error:
                     observation["diagnostic"] = {"status": "unavailable", "errorType": type(error).__name__}
-            last_line = ""
+            decoder = codecs.getincrementaldecoder("utf-8")("replace")
+            last_text = ""
+            exited = None
+            eof = False
             try:
-                for line in process.stdout:
-                    log.write(line)
-                    print(line, end="", flush=True)
-                    last_line = line
+                with selectors.DefaultSelector() as selector:
+                    os.set_blocking(process.stdout.fileno(), False)
+                    selector.register(process.stdout, selectors.EVENT_READ)
+                    while not eof or exited is None:
+                        if exited is None:
+                            status = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+                            if status is not None and status.si_pid == process.pid:
+                                exited = time.monotonic()
+                                if observation is not None:
+                                    observation["exitObserved"] = time.time()
+                        if exited is not None and not eof and time.monotonic() - exited >= 2:
+                            break
+                        if eof:
+                            time.sleep(0.05)
+                            continue
+                        for key, _ in selector.select(0.05):
+                            block = os.read(key.fd, 65536)
+                            if not block:
+                                eof = True
+                                selector.unregister(process.stdout)
+                                break
+                            log.write(block)
+                            log.flush()
+                            decoded = decoder.decode(block)
+                            if decoded:
+                                print(decoded, end="", flush=True)
+                                last_text = decoded
+                    tail = decoder.decode(b"", final=True)
+                    if tail:
+                        print(tail, end="", flush=True)
+                        last_text = tail
             finally:
                 if diagnostic is not None:
                     try:
                         observation["diagnostic"] = diagnostic.finish()
                     except Exception as error:
                         observation["diagnostic"] = {"status": "unavailable", "errorType": type(error).__name__}
-            if last_line and not last_line.endswith("\n"):
+            if last_text and not last_text.endswith("\n"):
                 print(flush=True)
             code = process.wait()
             if observation is not None:
-                observation["exitObserved"] = time.time()
+                observation["outputCapture"] = {"eof": eof, "originalExitCode": code,
+                                                "postExitDrainSeconds": 2}
+            if not eof:
+                print("Test output pipe remained open after the owned process exited", file=sys.stderr, flush=True)
+                return code or 1, process.pid
             return code, process.pid
 
 
@@ -667,7 +705,7 @@ def run(args):
             phase = {"name": name, "command": command, "status": "running", "log": str(log)}
             result["phases"].append(phase)
             write_json(result_path, result)
-            observation = prepare_post_mortem(host) if name == "app-swift-testing" else None
+            observation = prepare_post_mortem(host) if name == "app-swift-testing" else {}
             if observation is not None:
                 observation["launchEarliest"] = time.time()
                 if profile:
@@ -675,31 +713,34 @@ def run(args):
                     observation["productSourceSHA"] = product_source
             code, pid = run_process(command, log, environment, observation)
             phase.update(exitCode=code, pid=pid)
+            original_code = observation.get("outputCapture", {}).get("originalExitCode", code)
+            if observation is not None and "outputCapture" in observation:
+                phase["outputCapture"] = observation["outputCapture"]
             if profile:
                 phase["diagnostic"] = observation.get("diagnostic", {"status": "unavailable"})
             if name == "app-swift-testing":
                 try:
-                    phase["watchdogReports"] = capture_watchdog_reports(folder / "watchdog", observation, code)
+                    phase["watchdogReports"] = capture_watchdog_reports(folder / "watchdog", observation, original_code)
                 except Exception as error:
                     phase["watchdogReports"] = {"status": "diagnostic-unavailable", "error": str(error),
-                                                "originalExitCode": code}
-            if name == "app-swift-testing" and code < 0:
+                                                "originalExitCode": original_code}
+            if name == "app-swift-testing" and original_code < 0:
                 try:
-                    phase["postMortem"] = capture_post_mortem(folder / "post-mortem", observation, code)
+                    phase["postMortem"] = capture_post_mortem(folder / "post-mortem", observation, original_code)
                 except Exception as error:
                     phase["postMortem"] = {"status": "diagnostic-unavailable", "error": str(error),
-                                           "originalExitCode": code}
+                                           "originalExitCode": original_code}
             with combined.open("a") as destination:
-                text = log.read_text()
+                text = log.read_text(encoding="utf-8", errors="replace")
                 destination.write(text)
                 if text and not text.endswith("\n"):
                     destination.write("\n")
             if code:
-                raise VerificationError(name + " returned a nonzero original exit", code)
+                raise VerificationError(name + " process or output capture failed", code)
             if profile and phase["diagnostic"].get("status") != "verified":
                 raise VerificationError("The owned App diagnostic activation or process identity was not verified")
             if name == "xctest":
-                lines = [ANSI.sub("", line).rstrip("\r\n") for line in log.read_text().split("\n")]
+                lines = [ANSI.sub("", line).rstrip("\r\n") for line in log.read_text(encoding="utf-8", errors="replace").split("\n")]
                 count = sum(bool(XCTEST_START.fullmatch(line)) for line in lines)
                 if args.filter and count == 0 and NO_MATCH in lines:
                     phase.update(status="empty-selection", framework=framework_output(log, 0, 0))

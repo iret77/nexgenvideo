@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -41,6 +42,73 @@ def write_events(path, records):
 
 
 class HostedTestDriverTests(unittest.TestCase):
+    def test_exit_with_inherited_open_pipe_is_bounded_and_never_passes(self):
+        for original_exit in (0, 7):
+            with self.subTest(original_exit=original_exit), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                release, done = root / "release", root / "done"
+                fixture = """
+import os, pathlib, sys, time
+release, done = map(pathlib.Path, sys.argv[1:3])
+if os.fork() == 0:
+    deadline = time.monotonic() + 10
+    while not release.exists() and time.monotonic() < deadline:
+        time.sleep(.01)
+    done.write_text('finished')
+    os._exit(0)
+os.write(1, b'original partial output')
+os._exit(int(sys.argv[3]))
+"""
+                observation = {}
+                start = time.monotonic()
+                try:
+                    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                        code, pid = driver.run_process(
+                            [sys.executable, "-c", fixture, str(release), str(done), str(original_exit)],
+                            root / "console.log", os.environ.copy(), observation)
+                    self.assertLess(time.monotonic() - start, 5)
+                    self.assertEqual(code, original_exit or 1)
+                    self.assertEqual((root / "console.log").read_bytes(), b"original partial output")
+                    self.assertFalse(observation["outputCapture"]["eof"])
+                    self.assertEqual(observation["outputCapture"]["originalExitCode"], original_exit)
+                    with self.assertRaises(ChildProcessError):
+                        os.waitpid(pid, os.WNOHANG)
+                finally:
+                    release.touch()
+                    deadline = time.monotonic() + 3
+                    while not done.exists() and time.monotonic() < deadline:
+                        time.sleep(.01)
+                    self.assertTrue(done.exists(), "The owned pipe holder did not finish")
+
+    def test_raw_capture_preserves_split_unicode_and_waits_after_pipe_eof(self):
+        fixture = """
+import os, time
+os.write(1, b'line\\r\\n\\xf0\\x9f')
+time.sleep(.05)
+os.write(2, b'\\x8e\\xac tail')
+os.close(1)
+os.close(2)
+time.sleep(.15)
+raise SystemExit(7)
+"""
+        with tempfile.TemporaryDirectory() as directory, contextlib.redirect_stdout(io.StringIO()) as console:
+            log = Path(directory) / "console.log"
+            observation = {}
+            code, _ = driver.run_process([sys.executable, "-c", fixture], log, os.environ.copy(), observation)
+            self.assertEqual(code, 7)
+            self.assertEqual(log.read_bytes(), "line\r\n🎬 tail".encode())
+            self.assertEqual(console.getvalue(), "line\r\n🎬 tail\n")
+            self.assertTrue(observation["outputCapture"]["eof"])
+
+    def test_missing_nonreaping_observation_fails_before_spawn(self):
+        with patch.object(driver.os, "waitid", create=True) as waitid, \
+                patch.object(driver, "hasattr", side_effect=lambda obj, name: name != "waitid", create=True), \
+                patch.object(driver.subprocess, "Popen") as spawn:
+            with self.assertRaises(driver.VerificationError):
+                driver.run_process(["unused"], Path("unused"), {})
+            waitid.assert_not_called()
+            spawn.assert_not_called()
+
     def test_process_capture_preserves_output_exit_and_finishes_before_reaping(self):
         with tempfile.TemporaryDirectory() as directory:
             log = Path(directory) / "console.log"
@@ -66,7 +134,7 @@ class HostedTestDriverTests(unittest.TestCase):
     def invoke(self, root, *, filter="", scope="all", exits=None, empty=(), console=None,
                receipt_change=None, query_error=None, capture_error=None, watchdog_error=None, preflight_error=None,
                app_diagnostic=None, diagnostic_status="verified", product_source_sha=None, checkout_source=None,
-               retained=False):
+               retained=False, output_capture=None):
         binary_root = root / "built products"
         binary_root.mkdir(exist_ok=True)
         host = binary_root / "NexGenVideoAppKitTestHost"
@@ -103,13 +171,18 @@ class HostedTestDriverTests(unittest.TestCase):
             calls.append((name, command, environment))
             if observation is not None:
                 observation.update(pid=123, launchLatest=100, exitObserved=101)
+                if output_capture is not None:
+                    observation["outputCapture"] = output_capture
                 if observation.get("diagnosticProfile"):
                     observation["diagnostic"] = {"status": diagnostic_status}
             default = XCTEST.replace("All tests", "Selected tests") if filter else XCTEST
             output = (console or {}).get(name, default if name == "xctest" else SWIFT)
             if name in empty:
                 output = driver.NO_MATCH + "\n" if name == "xctest" else ""
-            log.write_text(output)
+            if isinstance(output, bytes):
+                log.write_bytes(output)
+            else:
+                log.write_text(output)
             if name != "xctest":
                 module = "NexGenEngineTests" if name == "engine-swift-testing" else "NexGenVideoTests"
                 records = events(module, empty=name in empty)
@@ -285,6 +358,26 @@ class HostedTestDriverTests(unittest.TestCase):
                 self.assertEqual(phase["exitCode"], -5)
                 self.assertEqual(phase["postMortem"]["originalExitCode"], -5)
                 self.assertEqual(len(self.post_mortem_calls), 1)
+
+    def test_truncated_unicode_does_not_mask_original_signal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            code, receipt, _, _ = self.invoke(Path(directory), scope="app-swift-testing",
+                exits={"app-swift-testing": -5}, console={"app-swift-testing": b"original crash\xf0\x9f"})
+            self.assertEqual(code, 133)
+            self.assertEqual(receipt["phases"][0]["exitCode"], -5)
+            self.assertEqual(self.post_mortem_calls[0].args[2], -5)
+            self.assertEqual((Path(directory) / "evidence/app-swift-testing/console.log").read_bytes(),
+                             b"original crash\xf0\x9f")
+
+    def test_pipe_capture_failure_does_not_invent_a_nonzero_original_exit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            capture = {"eof": False, "originalExitCode": 0, "postExitDrainSeconds": 2}
+            code, receipt, _, _ = self.invoke(Path(directory), scope="app-swift-testing",
+                exits={"app-swift-testing": 1}, output_capture=capture)
+            self.assertEqual(code, 1)
+            self.assertEqual(receipt["phases"][0]["outputCapture"], capture)
+            self.assertEqual(self.watchdog_calls[0].args[2], 0)
+            self.assertFalse(self.post_mortem_calls)
 
     def test_post_mortem_runs_only_for_original_negative_app_exit(self):
         for name, code in (("app-swift-testing", 0), ("app-swift-testing", 133),
