@@ -14,6 +14,7 @@ import struct
 import subprocess
 import sys
 import time
+import zipfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,6 +26,18 @@ DIGEST = "91ffd9d3d344476959ea31f4c2c147c65aa84d16623de17731c74bc561d6900f"
 FILES = {".github/workflows/native-acceptance-probes.yml", "scripts/bpy_worker_sandbox_probe.py",
          "scripts/bpy_worker_sandbox_probe.c", "scripts/bpy_worker_sandbox_probe.sb",
          "scripts/bpy_worker_sandbox_payload.py", "scripts/test_bpy_worker_sandbox_probe.py"}
+RETAINED_RUN = 40394670788
+RETAINED_SOURCE = "0ffbddd688621c025f861b0a66fc3f59a2acc012"
+RETAINED_ARTIFACTS = {
+    "binary": (12685777245, "worker-sandbox-binaries", 4982,
+               "989b8f556e4da2055e61026af640c1747eaa4e341628d42fd01a10086192ed59", 121824609450),
+    "runtime": (12686128132, "worker-sandbox-component-40394670788", 751257,
+                "fb588678db6f9905f8972b001175e1ab29fc179304c7e47ffc1c3afbf6c01ba2", 121824891750),
+}
+RETAINED_NATIVE_FILES = {
+    "scripts/bpy_worker_sandbox_probe.c": "1cac5edf294d6d306dc4fb67890751b4e577c2c0bdebf9a51fef390ab0576c2d",
+    "scripts/bpy_worker_sandbox_probe.sb": "a6327af409af37c1db419ddadcaa84f08ab5fbb477972e8687750caaf120d146",
+}
 
 
 def require(condition, message):
@@ -91,6 +104,90 @@ def api(path):
     return json.loads(subprocess.check_output(["gh", "api", "repos/iret77/nexgenvideo/" + path], timeout=45))
 
 
+def validate_retained(run, jobs, artifacts, now):
+    require(run.get("id") == RETAINED_RUN and run.get("head_sha") == RETAINED_SOURCE
+            and run.get("run_attempt") == 1 and run.get("status") == "completed"
+            and run.get("conclusion") == "failure" and run.get("event") == "workflow_dispatch"
+            and run.get("path") == ".github/workflows/native-acceptance-probes.yml"
+            and run.get("actor", {}).get("login") == "iret77"
+            and run.get("repository", {}).get("full_name") == "iret77/nexgenvideo", "retained component run")
+    require(jobs.get("total_count") == len(jobs.get("jobs", [])), "complete retained jobs")
+    selected = {}
+    for name, identifier, conclusion in [("sandbox-source", 121824433566, "success"),
+            ("sandbox-build", 121824609450, "success"), ("sandbox-runtime", 121824891750, "failure")]:
+        matches = [job for job in jobs["jobs"] if job.get("name") == name]
+        require(len(matches) == 1, "unique retained job")
+        job = matches[0]
+        require(job.get("id") == identifier and job.get("status") == "completed"
+                and job.get("conclusion") == conclusion and job.get("run_id") == RETAINED_RUN
+                and job.get("run_attempt") == 1 and job.get("head_sha") == RETAINED_SOURCE,
+                "retained job identity")
+        selected[identifier] = job
+    instant = lambda value: datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    require(set(artifacts) == set(RETAINED_ARTIFACTS), "complete retained artifact metadata")
+    for kind, (identifier, name, size, digest, job_id) in RETAINED_ARTIFACTS.items():
+        artifact = artifacts[kind]
+        job = selected[job_id]
+        require(artifact.get("id") == identifier and artifact.get("name") == name
+                and artifact.get("size_in_bytes") == size and artifact.get("digest") == "sha256:" + digest
+                and artifact.get("expired") is False
+                and artifact.get("workflow_run", {}).get("id") == RETAINED_RUN
+                and artifact.get("workflow_run", {}).get("head_sha") == RETAINED_SOURCE
+                and instant(job["started_at"]) <= instant(artifact["created_at"])
+                <= instant(artifact["updated_at"]) <= instant(job["completed_at"])
+                and instant(artifact["expires_at"]) > now, "retained artifact producer and availability")
+
+
+def retained_component(output, download):
+    run = api(f"actions/runs/{RETAINED_RUN}")
+    jobs = api(f"actions/runs/{RETAINED_RUN}/attempts/1/jobs?per_page=100")
+    artifacts = {kind: api(f"actions/artifacts/{value[0]}") for kind, value in RETAINED_ARTIFACTS.items()}
+    validate_retained(run, jobs, artifacts, datetime.datetime.now(datetime.timezone.utc))
+    require(all(sha(ROOT / name) == digest for name, digest in RETAINED_NATIVE_FILES.items()),
+            "retained native binary and policy source must be unchanged")
+    for kind, (identifier, _, size, digest, _) in RETAINED_ARTIFACTS.items():
+        archive = output / ("retained-" + kind + ".zip")
+        if download:
+            with archive.open("xb") as stream, (output / ("retained-" + kind + ".stderr.log")).open("wb") as errors:
+                subprocess.run(["gh", "api", f"repos/iret77/nexgenvideo/actions/artifacts/{identifier}/zip"],
+                               stdin=subprocess.DEVNULL, stdout=stream, stderr=errors, check=True, timeout=60)
+        require(archive.stat().st_size == size and sha(archive) == digest, "retained complete archive hash")
+    with zipfile.ZipFile(output / "retained-runtime.zip") as archive:
+        prefix = "_temp/worker-sandbox/"
+        for mode, expected in [("native-control", 0), ("native-sandbox", 0), ("exec-control", 93), ("exec-sandbox", 0)]:
+            receipt = json.loads(archive.read(prefix + mode + ".process.json"))
+            require(receipt["exitCode"] == expected and receipt["reaped"] is True
+                    and receipt["timedOut"] is False and receipt["cleanupError"] is None, "retained native exit and cleanup")
+        failure = json.loads(archive.read(prefix + "failure.json"))
+        require(failure == dict(error="component command failed: python-control", type="ValueError", runtimeAcceptance=False),
+                "resume only the original failed Python stage")
+        python = json.loads(archive.read(prefix + "python-control.process.json"))
+        require(python["exitCode"] == 1 and python["reaped"] is True and python["timedOut"] is False
+                and python["cleanupError"] is None, "retained Python failure and cleanup")
+        stderr = archive.read(prefix + "python-control.stderr.log").decode()
+        require("resource.setrlimit(resource.RLIMIT_AS, (6 * 1024 * 1024 * 1024,) * 2)" in stderr
+                and stderr.endswith("ValueError: current limit exceeds maximum limit\n")
+                and not any(name.startswith(prefix + "python-sandbox") for name in archive.namelist()),
+                "retained failed call and unexecuted confined Python stage")
+        require(json.loads(archive.read(prefix + "original-app-verified.json"))
+                == dict(artifact=ARTIFACT, bytes=SIZE, sha256=DIGEST), "retained original app binding")
+    with zipfile.ZipFile(output / "retained-binary.zip") as archive:
+        require(set(archive.namelist()) == {"probe", "build.json", "clang.log", "xcode.log"}, "retained binary inventory")
+        build = json.loads(archive.read("build.json"))
+        require(build["execution"] == dict(runID=RETAINED_RUN, runAttempt=1)
+                and build["sourceSHA"] == RETAINED_SOURCE
+                and build["probeSourceSHA256"] == RETAINED_NATIVE_FILES["scripts/bpy_worker_sandbox_probe.c"]
+                and build["binarySHA256"] == "0aeec754aaaf404264f65cee5e18a8e9a16fd388241b14c43d798089bf0d8487"
+                and hashlib.sha256(archive.read("probe")).hexdigest() == build["binarySHA256"], "retained compiled helper")
+        if download:
+            binaries = output / "retained-binaries"
+            binaries.mkdir()
+            for name in archive.namelist():
+                (binaries / name).write_bytes(archive.read(name))
+    return dict(run=run, jobs=jobs, artifacts=artifacts, build=build,
+                reusedModes=["native-control", "native-sandbox", "exec-control", "exec-sandbox"])
+
+
 def validate(run, jobs, artifact, changed, now):
     require(run.get("id") == RUN and run.get("head_sha") == SOURCE and run.get("run_attempt") == 1
             and run.get("status") == "completed" and run.get("conclusion") == "failure"
@@ -134,8 +231,11 @@ def bind(output):
     artifact = api(f"actions/artifacts/{ARTIFACT}")
     changed = subprocess.check_output(["git", "diff", "--name-only", SOURCE, "HEAD"], cwd=ROOT, text=True, timeout=30).splitlines()
     validate(run, jobs, artifact, changed, datetime.datetime.now(datetime.timezone.utc))
+    resume = os.environ.get("NGV_SANDBOX_RESUME_PYTHON", "false")
+    require(resume in ("true", "false"), "explicit Python continuation mode")
+    retained = retained_component(output, download=True) if resume == "true" else None
     save(output / "identity.json", dict(run=run, jobs=jobs, artifact=artifact, changedPaths=changed, execution=execution,
-        harnessSHA=os.environ["GITHUB_SHA"], files={name: sha(ROOT / name) for name in sorted(FILES)}))
+        harnessSHA=os.environ["GITHUB_SHA"], files={name: sha(ROOT / name) for name in sorted(FILES)}, retained=retained))
 
 
 def native_sections(data):
@@ -228,8 +328,16 @@ def observe(output, identity, binaries):
             and subprocess.check_output(["uname", "-m"], text=True).strip() == "arm64", "macOS26 arm64")
     build = json.loads((binaries / "build.json").read_text())
     probe = binaries / "probe"
-    require(build["execution"] == execution and build["sourceSHA"] == os.environ["GITHUB_SHA"] and build["binarySHA256"] == sha(probe)
+    resume = os.environ.get("NGV_SANDBOX_RESUME_PYTHON", "false")
+    require(resume in ("true", "false") and (evidence.get("retained") is not None) == (resume == "true"),
+            "source and runtime continuation modes agree")
+    retained = retained_component(identity, download=False) if resume == "true" else None
+    require(retained is None or build == retained["build"], "retained extracted build receipt")
+    build_execution = dict(runID=RETAINED_RUN, runAttempt=1) if retained else execution
+    build_source = RETAINED_SOURCE if retained else os.environ["GITHUB_SHA"]
+    require(build["execution"] == build_execution and build["sourceSHA"] == build_source and build["binarySHA256"] == sha(probe)
             and build["probeSourceSHA256"] == sha(ROOT / "scripts/bpy_worker_sandbox_probe.c"), "compiled probe binding")
+    save(output / "continuation.json", dict(retained=retained, execution=execution, harnessSHA=os.environ["GITHUB_SHA"]))
     archive = output / "original-app.zip"
     with archive.open("xb") as stream, (output / "download.stderr.log").open("wb") as errors:
         subprocess.run(["gh", "api", f"repos/iret77/nexgenvideo/actions/artifacts/{ARTIFACT}/zip"],
@@ -291,7 +399,9 @@ def observe(output, identity, binaries):
         require(ready.exists() and json.loads(ready.read_text())["pid"] == peer.pid and peer.poll() is None, "owned live signal control")
         server.bind(("127.0.0.1", 0))
         server.listen(8)
-        for mode in ("native-control", "native-sandbox", "exec-control", "exec-sandbox", "python-control", "python-sandbox"):
+        modes = ("python-control", "python-sandbox") if retained else (
+            "native-control", "native-sandbox", "exec-control", "exec-sandbox", "python-control", "python-sandbox")
+        for mode in modes:
             require(peer.poll() is None, "signal target must remain owned and unreaped")
             work = output / mode
             work.mkdir(mode=0o700)
@@ -343,6 +453,7 @@ def observe(output, identity, binaries):
         require(outside.read_text() == "outside-worker-root\n", "outside data retained")
         result = dict(passed=True, runtimeAcceptance=False, scope="isolated component only",
             sourceSHA=os.environ["GITHUB_SHA"], originalSource=SOURCE, artifact=ARTIFACT, execution=execution,
+            retained=retained, compositeAcrossRuns=retained is not None,
             limitations=["No host/XPC integration or restart ownership proof", "No full bpy or native UI acceptance",
                          "Ad-hoc derivative fixture, no Developer ID/notarized distribution proof",
                          "Standalone helper, not the real supervisor or complete product B4 policy",

@@ -1,5 +1,6 @@
 from copy import deepcopy
 import datetime
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -9,8 +10,10 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
+import bpy_worker_sandbox_payload as payload
 from bpy_worker_sandbox_probe import (ARTIFACT, DIGEST, FILES, RUN, SIZE, SOURCE, entitlements,
-    execution_identity, native_sections, records, require_python_only_change, run_command, signal_group, tree_manifest, validate)
+    RETAINED_ARTIFACTS, RETAINED_NATIVE_FILES, RETAINED_RUN, RETAINED_SOURCE, execution_identity, native_sections, records,
+    require_python_only_change, run_command, signal_group, tree_manifest, validate, validate_retained)
 
 
 class ComponentProvenanceTests(unittest.TestCase):
@@ -90,6 +93,197 @@ class ComponentProvenanceTests(unittest.TestCase):
                      "scripts/verify_bpy_signing.py", "scripts/bundle.sh", "Package.swift"]:
             with self.subTest(path=path), self.assertRaises(ValueError):
                 self.check(FILES | {path})
+
+
+class MemoryDiagnosticTests(unittest.TestCase):
+    def test_moving_threshold_is_not_reported_as_confirmed(self):
+        original = (32, 64)
+        current = [original]
+        seven_attempts = []
+
+        def setter(_, pair):
+            if pair != original:
+                if pair[0] == 7:
+                    seven_attempts.append(pair)
+                if pair[0] < 8 and not (pair[0] == 7 and len(seven_attempts) == 2):
+                    raise ValueError("current limit exceeds maximum limit")
+            current[0] = pair
+
+        with patch.object(payload.resource, "getrlimit", side_effect=lambda _: current[0]), \
+             patch.object(payload.resource, "setrlimit", side_effect=setter), \
+             patch.object(payload.resource, "getpagesize", return_value=1), \
+             patch.object(payload, "emit_limit") as emit:
+            payload.address_space_boundary("moving")
+        summaries = [call for call in emit.call_args_list if call.args[0] == "boundary"]
+        self.assertEqual(len(summaries), 1)
+        self.assertFalse(summaries[0].kwargs["endpointsConfirmed"])
+        self.assertEqual(current[0], original)
+
+    def test_boundary_search_restores_limits_after_each_attempt(self):
+        original = (payload.resource.RLIM_INFINITY,) * 2
+        current = [original]
+        attempts = []
+        threshold = 16 * 1024 * 1024 * 1024
+
+        def setter(which, pair):
+            self.assertEqual(which, payload.resource.RLIMIT_AS)
+            self.assertEqual(pair[1], original[1])
+            if pair != original:
+                self.assertEqual(current[0], original)
+                attempts.append(pair)
+                if pair[0] < threshold:
+                    raise ValueError("current limit exceeds maximum limit")
+            current[0] = pair
+
+        with patch.object(payload.resource, "getrlimit", side_effect=lambda _: current[0]), \
+             patch.object(payload.resource, "setrlimit", side_effect=setter), \
+             patch.object(payload.resource, "getpagesize", return_value=16384), \
+             patch.object(payload, "emit_limit"):
+            lower, upper = payload.address_space_boundary("test")
+        self.assertEqual(upper, threshold)
+        self.assertEqual(lower, threshold - 16384)
+        self.assertEqual(current[0], original)
+        self.assertLessEqual(len(attempts), 64)
+
+    def test_probe_memory_error_is_not_a_refused_allocation_pass(self):
+        original = (payload.resource.RLIM_INFINITY,) * 2
+        calls = []
+
+        def setter(which, pair):
+            calls.append(pair)
+            if pair != original:
+                raise MemoryError("probe bookkeeping failed")
+
+        with patch.object(payload.resource, "getrlimit", return_value=original), \
+             patch.object(payload.resource, "setrlimit", side_effect=setter), \
+             patch.object(payload, "emit_limit"):
+            with self.assertRaises(MemoryError):
+                payload.address_space_boundary("test")
+        self.assertEqual(calls[-1], original)
+
+    def test_diagnostic_error_does_not_mask_original_setrlimit_failure(self):
+        original_error = ValueError("current limit exceeds maximum limit")
+        limits = (payload.resource.RLIM_INFINITY,) * 2
+        with patch.object(payload.resource, "getrlimit", return_value=limits), \
+             patch.object(payload.resource, "setrlimit", side_effect=original_error), \
+             patch.object(payload, "address_space_boundary", side_effect=RuntimeError("diagnostic failed")), \
+             patch.object(payload, "post_failure_map") as mapping, patch.object(payload, "emit_limit") as emit:
+            with self.assertRaises(ValueError) as raised:
+                payload.set_address_space_limit(6 * 1024 ** 3)
+        self.assertIs(raised.exception, original_error)
+        mapping.assert_not_called()
+        self.assertIn("diagnostic-failure", [call.args[0] for call in emit.call_args_list])
+
+    def test_success_does_not_probe_or_raise_the_requested_limit(self):
+        with patch.object(payload.resource, "getrlimit", return_value=(123, 123)), \
+             patch.object(payload.resource, "setrlimit") as setter, \
+             patch.object(payload, "address_space_boundary") as boundary, \
+             patch.object(payload, "post_failure_map") as mapping, patch.object(payload, "emit_limit"):
+            payload.set_address_space_limit(123)
+        setter.assert_called_once_with(payload.resource.RLIMIT_AS, (123, 123))
+        boundary.assert_not_called()
+        mapping.assert_not_called()
+
+    def test_failed_logging_and_restore_preserve_original_limit_error(self):
+        original = ValueError("current limit exceeds maximum limit")
+
+        def emit(stage, **_):
+            if stage != "before-original-call":
+                raise OSError("stdout unavailable")
+
+        with patch.object(payload.resource, "getrlimit", return_value=(-1, -1)), \
+             patch.object(payload.resource, "setrlimit", side_effect=original), \
+             patch.object(payload, "address_space_boundary", side_effect=OSError("restore failed")), \
+             patch.object(payload, "emit_limit", side_effect=emit):
+            with self.assertRaises(ValueError) as raised:
+                payload.set_address_space_limit(6 * 1024 ** 3)
+        self.assertIs(raised.exception, original)
+
+    def test_permission_failure_is_not_an_address_space_lower_bracket(self):
+        original = (-1, -1)
+
+        def setter(_, pair):
+            if pair != original:
+                raise ValueError("not allowed to raise maximum limit")
+
+        with patch.object(payload.resource, "getrlimit", return_value=original), \
+             patch.object(payload.resource, "setrlimit", side_effect=setter), \
+             patch.object(payload, "emit_limit"):
+            with self.assertRaisesRegex(ValueError, "not allowed"):
+                payload.address_space_boundary("permission")
+
+
+class RetainedComponentTests(unittest.TestCase):
+    def test_retained_native_receipts_cannot_cover_changed_native_sources(self):
+        root = Path(__file__).resolve().parents[1]
+        for name, digest in RETAINED_NATIVE_FILES.items():
+            with self.subTest(name=name):
+                self.assertEqual(hashlib.sha256((root / name).read_bytes()).hexdigest(), digest)
+
+    def setUp(self):
+        self.now = datetime.datetime(2026, 10, 27, tzinfo=datetime.timezone.utc)
+        self.run = dict(id=RETAINED_RUN, head_sha=RETAINED_SOURCE, run_attempt=1, status="completed",
+            conclusion="failure", event="workflow_dispatch", path=".github/workflows/native-acceptance-probes.yml",
+            actor=dict(login="iret77"), repository=dict(full_name="iret77/nexgenvideo"))
+        self.jobs = dict(total_count=3, jobs=[])
+        for name, identifier, conclusion in [("sandbox-source", 121824433566, "success"),
+                ("sandbox-build", 121824609450, "success"), ("sandbox-runtime", 121824891750, "failure")]:
+            self.jobs["jobs"].append(dict(id=identifier, name=name, status="completed", conclusion=conclusion,
+                run_id=RETAINED_RUN, run_attempt=1, head_sha=RETAINED_SOURCE,
+                started_at="2026-10-26T20:20:00Z", completed_at="2026-10-26T20:26:00Z"))
+        self.artifacts = {}
+        for kind, (identifier, name, size, digest, _) in RETAINED_ARTIFACTS.items():
+            self.artifacts[kind] = dict(id=identifier, name=name, size_in_bytes=size, digest="sha256:" + digest,
+                expired=False, workflow_run=dict(id=RETAINED_RUN, head_sha=RETAINED_SOURCE),
+                created_at="2026-10-26T20:25:00Z", updated_at="2026-10-26T20:25:00Z",
+                expires_at="2026-11-25T20:25:00Z")
+
+    def check(self):
+        validate_retained(self.run, self.jobs, self.artifacts, self.now)
+
+    def test_exact_failed_component_can_reuse_its_successful_helper(self):
+        self.check()
+
+    def test_different_run_attempt_source_workflow_or_actor_is_rejected(self):
+        original = deepcopy(self.run)
+        for field, value in [("id", RETAINED_RUN + 1), ("head_sha", "f" * 40), ("run_attempt", 2),
+                             ("conclusion", "success"), ("status", "in_progress"), ("event", "pull_request"),
+                             ("path", ".github/workflows/ci.yml"), ("actor", dict(login="another-owner")),
+                             ("repository", dict(full_name="iret77/other"))]:
+            self.run = deepcopy(original)
+            self.run[field] = value
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                self.check()
+
+    def test_partial_duplicate_failed_build_or_other_attempt_cannot_supply_helper(self):
+        original = deepcopy(self.jobs)
+        for mutate in [lambda j: j.update(total_count=4), lambda j: j["jobs"].pop(),
+                       lambda j: j["jobs"].append(deepcopy(j["jobs"][1])),
+                       lambda j: j["jobs"][1].update(conclusion="failure"),
+                       lambda j: j["jobs"][1].update(id=999),
+                       lambda j: j["jobs"][1].update(run_attempt=2),
+                       lambda j: j["jobs"][1].update(head_sha="f" * 40)]:
+            self.jobs = deepcopy(original)
+            mutate(self.jobs)
+            with self.assertRaises(ValueError):
+                self.check()
+
+    def test_substituted_expired_or_other_attempt_artifact_is_rejected(self):
+        original = deepcopy(self.artifacts)
+        for kind in original:
+            for field, value in [("id", 999), ("name", "substituted"), ("size_in_bytes", 1),
+                                 ("digest", "sha256:" + "f" * 64), ("expired", True),
+                                 ("workflow_run", dict(id=RETAINED_RUN + 1, head_sha=RETAINED_SOURCE)),
+                                 ("created_at", "2026-10-25T20:25:00Z"),
+                                 ("updated_at", "2026-10-27T20:25:00Z"),
+                                 ("expires_at", "2026-10-26T20:26:00Z")]:
+                self.artifacts = deepcopy(original)
+                self.artifacts[kind][field] = value
+                with self.subTest(kind=kind, field=field), self.assertRaises(ValueError):
+                    self.check()
+        self.artifacts = {"binary": original["binary"]}
+        with self.assertRaises(ValueError):
+            self.check()
 
 
 class NativeSectionEvidenceTests(unittest.TestCase):

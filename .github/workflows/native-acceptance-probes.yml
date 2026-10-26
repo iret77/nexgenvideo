@@ -12,6 +12,10 @@ on:
         description: Optional exact retained owned-child diagnostic binary
         type: string
         default: ''
+      worker_sandbox_resume:
+        description: Resume Python using the verified helper and native evidence from run 40394670788
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -183,6 +187,7 @@ jobs:
       - name: Bind the original successful app producer
         env:
           GH_TOKEN: ${{ github.token }}
+          NGV_SANDBOX_RESUME_PYTHON: ${{ inputs.worker_sandbox_resume }}
         run: python3 scripts/bpy_worker_sandbox_probe.py bind --output "$RUNNER_TEMP/sandbox-identity"
       - uses: actions/upload-artifact@v4
         if: always()
@@ -193,6 +198,7 @@ jobs:
           retention-days: 30
 
   sandbox-build:
+    if: inputs.scope == 'worker-sandbox' && !inputs.worker_sandbox_resume
     needs: sandbox-source
     runs-on: macrunner
     timeout-minutes: 3
@@ -228,6 +234,10 @@ jobs:
           retention-days: 30
 
   sandbox-runtime:
+    if: >-
+      ${{ !cancelled() && needs.sandbox-source.result == 'success' &&
+      (needs.sandbox-build.result == 'success' ||
+      (inputs.worker_sandbox_resume && needs.sandbox-build.result == 'skipped')) }}
     needs: [sandbox-source, sandbox-build]
     # ci-lint: allow-CI005 Prove the isolated worker policy on the macOS 26 product floor.
     runs-on: macos-26
@@ -241,16 +251,23 @@ jobs:
           name: worker-sandbox-identity
           path: sandbox-identity
       - uses: actions/download-artifact@v4
+        if: ${{ !inputs.worker_sandbox_resume }}
         with:
           name: worker-sandbox-binaries
           path: sandbox-binaries
       - name: Exercise native controls and real bpy in the isolated worker fixture
         env:
           GH_TOKEN: ${{ github.token }}
+          NGV_SANDBOX_RESUME_PYTHON: ${{ inputs.worker_sandbox_resume }}
         run: |
-          chmod +x sandbox-binaries/probe
+          set -euo pipefail
+          binaries=sandbox-binaries
+          if test "$NGV_SANDBOX_RESUME_PYTHON" = true; then
+            binaries=sandbox-identity/retained-binaries
+          fi
+          chmod +x "$binaries/probe"
           python3 scripts/bpy_worker_sandbox_probe.py observe --identity sandbox-identity \
-            --binaries sandbox-binaries --output "$RUNNER_TEMP/worker-sandbox"
+            --binaries "$binaries" --output "$RUNNER_TEMP/worker-sandbox"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -267,5 +284,6 @@ jobs:
             ${{ runner.temp }}/worker-sandbox/python-control/scene.blend
             sandbox-binaries/build.json
             sandbox-binaries/*.log
+            sandbox-identity/retained-binaries/build.json
           if-no-files-found: error
           retention-days: 30
