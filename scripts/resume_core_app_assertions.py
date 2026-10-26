@@ -164,8 +164,11 @@ def verify_local(root, platform=True):
 
 
 def finish(root, suite_root, capture_root):
-    receipt = verify_local(root)
-    records = [json.loads(line) for line in (suite_root / "app-swift-testing/events.jsonl").read_text().splitlines()]
+    complete_verified_app(root, suite_root, capture_root, verify_local(root))
+
+
+def complete_verified_app(root, suite_root, capture_root, receipt):
+    records = [json.loads(line) for line in (suite_root / "app-swift-testing/events.jsonl").read_bytes().splitlines()]
     require(records and all(record.get("version") == "6.4.0" for record in records), "Current event schema differs from original")
     complete_app(root, suite_root, capture_root, receipt, identity=test_identity)
     completed = json.loads((root / "completed.json").read_text())

@@ -229,7 +229,7 @@ jobs:
 
   runtime:
     needs: [source, build]
-    if: ${{ !cancelled() && needs.source.result == 'success' && (needs.build.outputs.app_ready == 'true' || (needs.build.result == 'skipped' && (inputs.runtime_artifact != '' || inputs.runtime_run_id != ''))) }}
+    if: ${{ !cancelled() && needs.source.result == 'success' && ((needs.build.result == 'success' && needs.build.outputs.app_ready == 'true') || (needs.build.result == 'skipped' && (inputs.runtime_artifact != '' || inputs.runtime_run_id != ''))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -278,7 +278,7 @@ jobs:
 
   acceptance:
     needs: [source, runtime]
-    if: ${{ needs.source.outputs.native == 'true' }}
+    if: ${{ !cancelled() && needs.source.result == 'success' && needs.runtime.result == 'success' && needs.source.outputs.native == 'true' }}
     strategy:
       # Independent case/scale qualifications survive other failures and never start dependent native groups.
       fail-fast: false
@@ -335,7 +335,7 @@ jobs:
   batch-review:
     name: Native generationbatch
     needs: [source, runtime]
-    if: ${{ needs.source.outputs.batch == 'true' }}
+    if: ${{ !cancelled() && needs.source.result == 'success' && needs.runtime.result == 'success' && needs.source.outputs.batch == 'true' }}
     # ci-lint: allow-CI005 Native pointer/keyboard acceptance on the shipped macOS 26 floor.
     runs-on: macos-26
     timeout-minutes: 10

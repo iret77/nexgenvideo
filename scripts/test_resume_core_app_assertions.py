@@ -199,6 +199,8 @@ class AppAssertionResumeTests(unittest.TestCase):
             raw, _ = native_events("NexGenVideoTests")
             raw = raw.replace("NexGenVideoTests.Example/testOne()/Example.swift:1:1", current)
             raw = raw.replace('"version": 0', '"version": "6.4.0"')
+            raw = raw.replace('"kind": "runStarted"', '"kind": "runStarted", "messages": [{"text": "\u0085\u2028\u2029"}]')
+            self.assertIn("\u0085", raw)
             (phase_root / "events.jsonl").write_text(raw)
             events = resume.swift_events(phase_root / "events.jsonl", "NexGenVideoTests")
             host = {"pid": 42, "parentPID": 43, "sourceSHA": HEAD, "eventRecordCount": 5,
@@ -230,7 +232,7 @@ class AppAssertionResumeTests(unittest.TestCase):
                 bad = {**receipt, "completedAppInventory": {"functions": [candidate], "skips": []}}
                 with patch.object(resume, "verify_local", return_value=bad), self.assertRaises(ValueError):
                     resume.finish(root, suite_root, root)
-            for modified in (raw.replace('"6.4.0"', '"6.5.0"'), "\n".join(raw.splitlines()[:-1])):
+            for modified in (raw.replace('"6.4.0"', '"6.5.0"'), "\n".join(raw.rstrip("\n").split("\n")[:-1])):
                 (phase_root / "events.jsonl").write_text(modified)
                 with patch.object(resume, "verify_local", return_value=receipt), self.assertRaises((ValueError, resume.VerificationError)):
                     resume.finish(root, suite_root, root)

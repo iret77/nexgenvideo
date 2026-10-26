@@ -238,6 +238,9 @@ def check_artifacts(root, receipt, jobs):
 
 
 def prepare(run_id, root):
+    from resume_core_completed_app import RUN, prepare as prepare_completed_app
+    if run_id == RUN:
+        return prepare_completed_app(root)
     root.mkdir(parents=True, exist_ok=False)
     run = api(f"actions/runs/{run_id}")
     require(run.get("id") == run_id, "Original run identity differs")
@@ -279,6 +282,9 @@ def prepare(run_id, root):
 
 def verify(root, native=False):
     receipt = json.loads((root / "receipt.json").read_text())
+    if receipt.get("schema") == "core-completed-app-resume/v1":
+        from resume_core_completed_app import verify as verify_completed_app
+        return verify_completed_app(root, native=native)
     require(receipt.get("schema") == "core-full-resume/v1" and receipt.get("sourceSHA") == os.environ.get("GITHUB_SHA")
             and receipt.get("runID") == os.environ.get("GITHUB_RUN_ID")
             and receipt.get("attempt") == os.environ.get("GITHUB_RUN_ATTEMPT"), "Full continuation belongs to another execution")
@@ -336,13 +342,20 @@ def finish(root, app):
               "workspaceReceiptSHA256": checksum(transfer / "workspace-ui-input.json"),
               "bpySourceReceiptSHA256": checksum(source_path),
               "reconstructed": "Identical product source and toolchain; objects are not byte-proven against original tested objects",
-              "reused": ["full native tests", "native signing fixtures", "HDR QC", "Agent UI rendering", "unchanged static source gates"],
+              "reused": receipt.get("reused", ["full native tests", "native signing fixtures", "HDR QC", "Agent UI rendering", "unchanged static source gates"]),
               "limitations": "Original Glow SIGSEGV, watchdog and Current93 helper65s timeout causes UNKNOWN. "
                              "b95 cross-process bpy acceptance remains unproven until the current runtime job passes. "
                              "No native UX or RC-DMG qualification. No release/tag/catalog authorization."}
+    origin = f"Native tests reused from run {receipt['originalRun']['id']} at {receipt['originalRun']['head_sha']}. "
+    if receipt.get("schema") == "core-completed-app-resume/v1":
+        from resume_core_completed_app import finish_evidence
+        result.update(finish_evidence(root, receipt))
+        backend = result['backendExecution']
+        origin = (f"App tests reused from run {receipt['originalRun']['id']} at {receipt['originalRun']['head_sha']}; "
+                  f"XCTest/Engine from run {backend['runID']} at {backend['sourceSHA']}. Fresh HDR QC passed in this execution. ")
     write(root / "completed.json", result)
     with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
-        summary.write(f"Native tests reused from run {receipt['originalRun']['id']} at {receipt['originalRun']['head_sha']}. "
+        summary.write(origin +
                       "The current app was reconstructed with unchanged product source and toolchain; original object-byte identity is unproven. "
                       "All bundle/runtime gates remain required.\n")
 
