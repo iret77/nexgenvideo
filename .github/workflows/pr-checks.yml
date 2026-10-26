@@ -32,4 +32,4 @@ jobs:
           done
 
       - name: Verify CI and fixture tooling
-        run: python3 -m unittest discover -s scripts -p 'test_*.py'
+        run: python3 -m unittest discover -s scripts -p 'test_*.py' -v

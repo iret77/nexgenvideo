@@ -1,0 +1,62 @@
+name: Select native test Python
+description: Bind macOS test tooling to Python 3.13 and verify non-reaping child observation.
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      with:
+        python-version: '3.13'
+        architecture: arm64
+    - name: Prove the selected interpreter and native wait interface
+      shell: bash
+      run: |
+        python3 -I - <<'PY'
+        import json, os, platform, subprocess, sys, time
+        from pathlib import Path
+        required = ('waitid', 'P_PID', 'WEXITED', 'WNOHANG', 'WNOWAIT', 'CLD_EXITED')
+        receipt = {'executable': sys.executable, 'version': sys.version, 'machine': platform.machine(),
+                   'platform': sys.platform, 'interfaces': {key: hasattr(os, key) for key in required},
+                   'passed': False}
+        process = None
+        try:
+            if (sys.version_info[:2] != (3, 13) or sys.platform != 'darwin'
+                    or platform.machine() != 'arm64' or not all(receipt['interfaces'].values())):
+                raise ValueError('Selected native test Python does not satisfy its required interfaces')
+            process = subprocess.Popen([sys.executable, '-I', '-c', 'raise SystemExit(7)'],
+                                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            receipt['pid'] = process.pid
+            deadline = time.monotonic() + 5
+            while True:
+                status = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+                if status is not None:
+                    break
+                if time.monotonic() >= deadline:
+                    raise TimeoutError('Owned interpreter probe did not exit within five seconds')
+                time.sleep(.01)
+            again = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+            if (status.si_pid != process.pid or status.si_code != os.CLD_EXITED or status.si_status != 7
+                    or again != status or process.wait(timeout=1) != 7):
+                raise ValueError('Non-reaping child exit observation returned an inconsistent result')
+            try:
+                os.waitpid(process.pid, os.WNOHANG)
+            except ChildProcessError:
+                receipt['passed'] = True
+            else:
+                raise ValueError('The interpreter probe was not reaped')
+        except Exception as error:
+            receipt['error'] = str(error)
+        finally:
+            if process is not None:
+                try:
+                    if process.poll() is None:
+                        process.kill()
+                    process.wait(timeout=1)
+                except Exception as error:
+                    receipt['passed'] = False
+                    receipt['cleanupError'] = str(error)
+            encoded = json.dumps(receipt, indent=2) + '\n'
+            (Path(os.environ['RUNNER_TEMP']) / 'native-test-python.json').write_text(encoded)
+            print(encoded, end='', flush=True)
+        raise SystemExit(0 if receipt['passed'] else 1)
+        PY

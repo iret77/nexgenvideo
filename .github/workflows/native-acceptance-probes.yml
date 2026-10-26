@@ -107,25 +107,29 @@ jobs:
           ACCESSIBILITY_OUTCOME: ${{ steps.accessibility.outcome }}
         run: test "$AUDIO_OUTCOME" = success && test "$ACCESSIBILITY_OUTCOME" = success
 
-  capture-tests:
-    if: inputs.scope == 'owned-child'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-      - name: Verify exit-aware output capture and existing callers
-        run: python3 -m unittest discover -s scripts -p test_run_macos_tests.py -v
-
   owned-child:
     if: inputs.scope == 'owned-child'
-    needs: capture-tests
     runs-on: macrunner
     timeout-minutes: 3
     steps:
       - uses: actions/checkout@v4
+      - name: Preserve the original interpreter before selection
+        run: |
+          mkdir -p "$RUNNER_TEMP/owned-child"
+          python3 -I - <<'PY' > "$RUNNER_TEMP/owned-child/original-python.json"
+          import json, os, shutil, sys
+          required = ('waitid', 'P_PID', 'WEXITED', 'WNOHANG', 'WNOWAIT', 'CLD_EXITED')
+          print(json.dumps({'executable': sys.executable, 'version': sys.version,
+                            'pathSelection': shutil.which('python3'),
+                            'interfaces': {key: hasattr(os, key) for key in required}}))
+          PY
+      - uses: ./.github/actions/setup-native-test-python
       - uses: ./.github/actions/setup-xcode-27
       - name: Verify output capture on the failed producer platform
-        run: python3 -m unittest discover -s scripts -p test_run_macos_tests.py -v
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s scripts -p test_run_macos_tests.py -v 2>&1 \
+            | tee "$RUNNER_TEMP/owned-child/capture-tests.log"
       - name: Compile unchanged owned-child implementation and diagnostic
         run: |
           set -euo pipefail
@@ -141,6 +145,8 @@ jobs:
         if: always()
         with:
           name: owned-child-diagnostic-${{ github.run_id }}
-          path: ${{ runner.temp }}/owned-child
+          path: |
+            ${{ runner.temp }}/owned-child
+            ${{ runner.temp }}/native-test-python.json
           if-no-files-found: error
           retention-days: 7

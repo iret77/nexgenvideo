@@ -249,6 +249,7 @@ jobs:
         with:
           fetch-depth: 0
 
+      - uses: ./.github/actions/setup-native-test-python
       - name: Show toolchain
         run: swift --version
 

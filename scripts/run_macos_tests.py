@@ -181,8 +181,10 @@ def empty_swift_output(path):
 
 
 def run_process(command, path, environment, observation=None):
-    if not all(hasattr(os, name) for name in ("waitid", "P_PID", "WEXITED", "WNOHANG", "WNOWAIT")):
-        raise VerificationError("Non-reaping child exit observation requires Python 3.13 or newer on macOS")
+    missing = [name for name in ("waitid", "P_PID", "WEXITED", "WNOHANG", "WNOWAIT") if not hasattr(os, name)]
+    if missing:
+        raise VerificationError(f"Python {sys.version.split()[0]} at {sys.executable} lacks {', '.join(missing)}; "
+                                "native child observation requires Python 3.13 or newer on macOS")
     with path.open("wb") as log:
         with subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                               stderr=subprocess.STDOUT, env=environment) as process:

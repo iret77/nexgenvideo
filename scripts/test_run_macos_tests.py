@@ -75,10 +75,12 @@ os._exit(int(sys.argv[3]))
                         os.waitpid(pid, os.WNOHANG)
                 finally:
                     release.touch()
-                    deadline = time.monotonic() + 3
-                    while not done.exists() and time.monotonic() < deadline:
-                        time.sleep(.01)
-                    self.assertTrue(done.exists(), "The owned pipe holder did not finish")
+                    if "pid" in observation:
+                        deadline = time.monotonic() + 3
+                        while not done.exists() and time.monotonic() < deadline:
+                            time.sleep(.01)
+                        with self.subTest(cleanup=True):
+                            self.assertTrue(done.exists(), "The owned pipe holder did not finish")
 
     def test_raw_capture_preserves_split_unicode_and_waits_after_pipe_eof(self):
         fixture = """
@@ -104,8 +106,9 @@ raise SystemExit(7)
         with patch.object(driver.os, "waitid", create=True) as waitid, \
                 patch.object(driver, "hasattr", side_effect=lambda obj, name: name != "waitid", create=True), \
                 patch.object(driver.subprocess, "Popen") as spawn:
-            with self.assertRaises(driver.VerificationError):
+            with self.assertRaisesRegex(driver.VerificationError, "waitid") as raised:
                 driver.run_process(["unused"], Path("unused"), {})
+            self.assertIn(sys.executable, str(raised.exception))
             waitid.assert_not_called()
             spawn.assert_not_called()
 
