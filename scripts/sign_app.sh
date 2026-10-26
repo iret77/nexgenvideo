@@ -36,22 +36,34 @@ esac
 
 if [ "$BPY_BUNDLE_MODE" != "omitted" ]; then
   codesign "${SIGN_OPTIONS[@]}" "$APP/Contents/Helpers/NexGenVideoBpyStorage"
+  BPY_FIRST="$APP/Contents/XPCServices/NexGenVideoBpyService0.xpc"
+  BPY_SECOND="$APP/Contents/XPCServices/NexGenVideoBpyService1.xpc"
   if [ "$BPY_BUNDLE_MODE" = "full" ]; then
-    BPY_RUNTIME="$APP/Contents/Resources/BpyRuntime"
+    python3 "$ROOT/scripts/bpy_bundle_layout.py" compare "$APP"
+    if [ -e "$APP/Contents/Resources/BpyRuntimeCompliance/runtime-tree-manifest.json" ]; then
+      python3 "$ROOT/scripts/bpy_bundle_layout.py" verify "$APP"
+    fi
+    BPY_RUNTIME="$BPY_FIRST/Contents/Resources/BpyRuntime"
+    BPY_COPY="$BPY_SECOND/Contents/Resources/BpyRuntime"
     echo "==> Codesigning managed bpy runtime"
     while IFS= read -r -d '' binary; do
       [ "$binary" = "$BPY_RUNTIME/python/bin/python3.13" ] && continue
-      if [[ "$(file --brief "$binary")" == *Mach-O* ]]; then
+      description="$(file --brief "$binary")"
+      if [[ "$description" == *Mach-O* ]]; then
         codesign "${SIGN_OPTIONS[@]}" "$binary"
+        cp "$binary" "$BPY_COPY/${binary#"$BPY_RUNTIME/"}"
       fi
     done < <(find "$BPY_RUNTIME" -depth -type f -print0)
     codesign "${SIGN_OPTIONS[@]}" \
       --entitlements "$ROOT/Runtime/bpy/PythonChild.entitlements" \
       "$BPY_RUNTIME/python/bin/python3.13"
+    cp "$BPY_RUNTIME/python/bin/python3.13" "$BPY_COPY/python/bin/python3.13"
+    python3 "$ROOT/scripts/bpy_bundle_layout.py" seal "$APP"
   fi
   codesign "${SIGN_OPTIONS[@]}" \
     --entitlements "$ROOT/Runtime/bpy/PythonChild.entitlements" \
-    "$APP/Contents/Helpers/NexGenVideoBpySupervisor"
+    "$BPY_FIRST/Contents/MacOS/NexGenVideoBpySupervisor"
+  cp "$BPY_FIRST/Contents/MacOS/NexGenVideoBpySupervisor" "$BPY_SECOND/Contents/MacOS/NexGenVideoBpySupervisor"
   for slot in 0 1; do
     BPY_XPC="$APP/Contents/XPCServices/NexGenVideoBpyService$slot.xpc"
     codesign "${SIGN_OPTIONS[@]}" \

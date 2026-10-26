@@ -15,8 +15,6 @@ case "$APP" in
   *) echo "invalid boundary-probe app destination: $APP" >&2; exit 1 ;;
 esac
 
-cp "$SUPERVISOR_BINARY" "$APP/Contents/Helpers/NexGenVideoBpySupervisor"
-chmod 755 "$APP/Contents/Helpers/NexGenVideoBpySupervisor"
 cp "$STORAGE_BINARY" "$APP/Contents/Helpers/NexGenVideoBpyStorage"
 chmod 755 "$APP/Contents/Helpers/NexGenVideoBpyStorage"
 
@@ -24,6 +22,8 @@ for slot in 0 1; do
   XPC="$APP/Contents/XPCServices/NexGenVideoBpyService$slot.xpc"
   rm -rf "$XPC"
   mkdir -p "$XPC/Contents/MacOS"
+  cp "$SUPERVISOR_BINARY" "$XPC/Contents/MacOS/NexGenVideoBpySupervisor"
+  chmod 755 "$XPC/Contents/MacOS/NexGenVideoBpySupervisor"
   cp "$SERVICE_BINARY" "$XPC/Contents/MacOS/NexGenVideoBpyService"
   cp "$ROOT/Runtime/bpy/NexGenVideoBpyService-Info.plist" "$XPC/Contents/Info.plist"
   /usr/libexec/PlistBuddy -c \

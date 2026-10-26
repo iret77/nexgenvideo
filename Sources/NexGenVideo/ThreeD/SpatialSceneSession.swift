@@ -31,7 +31,7 @@ final class SpatialSceneSession {
     var snap = true
 
     private let pipelineRoot: URL
-    private let runtimeRoot: URL
+    private var runtimeRoot: URL { get throws { try runtime.bundledRuntimeRoot } }
     private let runtime: BpyRuntimeSession
     private let authority: any SpatialSceneAuthority
     private var undoRevisions: [SpatialSceneHead] = []
@@ -44,7 +44,6 @@ final class SpatialSceneSession {
         self.pipelineRoot = pipelineRoot
         self.runtime = runtime
         self.authority = authority
-        runtimeRoot = Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/BpyRuntime")
     }
 
     var selectedObject: BpySpatialObject? { snapshot?.objects.first { $0.id == selectedObjectID } }
@@ -184,7 +183,7 @@ final class SpatialSceneSession {
             let runtime = runtime
             let job = SpatialEditCancellation(runtime: runtime)
             activeJob = job
-            let root = runtimeRoot
+            let root = try runtimeRoot
             let result = try await Task.detached {
                 try job.check()
                 try runtime.loadProjectCheckpoint(scene: current.sceneData,
@@ -267,7 +266,7 @@ final class SpatialSceneSession {
         let head = previous.flatMap { value in locations.first { $0.id == value.manifest.sceneID } }
         do {
             let source = try python ?? commandSource(command)
-            let root = runtimeRoot
+            let root = try runtimeRoot
             let runtime = runtime
             let sceneID = previous?.manifest.sceneID ?? UUID()
             let name = newName ?? previous!.manifest.name

@@ -753,7 +753,7 @@ jobs:
           status=0
           for _ in $(seq 1 200); do
             status=0
-            pgrep -f "$APP/Contents/Helpers/NexGenVideoBpySupervisor|$APP/Contents/Resources/BpyRuntime/python" \
+            pgrep -f "$APP/Contents/(Helpers/NexGenVideoBpySupervisor|Resources/BpyRuntime/python|XPCServices/NexGenVideoBpyService[01]\.xpc/Contents/(MacOS/NexGenVideoBpySupervisor|Resources/BpyRuntime/python))" \
               > evidence/remaining-runtime-pids.log || status=$?
             [ "$status" -eq 0 ] || break
             sleep 0.05

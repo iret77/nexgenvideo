@@ -32,45 +32,11 @@ private func diagnoseStorageMount(_ storage: BpyStorageLease, maximumBytes: UInt
     openDiagnostics.notice("open.mount-probe session=\(sessionID.uuidString, privacy: .public) owner=\(owner.uuidString, privacy: .public) pid=\(getpid(), privacy: .public) start=\(started, privacy: .public) directOpenErrno=\(directOpenErrno, privacy: .public) directCloseErrno=\(directCloseErrno, privacy: .public) validationDomain=\(domain, privacy: .public) validationCode=\(code, privacy: .public)")
 }
 
-@_silgen_name("proc_listchildpids")
-private func procListChildPIDs(
-    _ processIdentifier: pid_t,
-    _ buffer: UnsafeMutableRawPointer?,
-    _ bufferSize: Int32
-) -> Int32
-
 @_silgen_name("proc_pid_rusage")
 private func procPIDRusage(
     _ processIdentifier: pid_t,
     _ flavor: Int32,
     _ buffer: UnsafeMutableRawPointer
-) -> Int32
-
-@_silgen_name("proc_pidinfo")
-private func procPIDInfo(
-    _ processIdentifier: pid_t,
-    _ flavor: Int32,
-    _ argument: UInt64,
-    _ buffer: UnsafeMutableRawPointer?,
-    _ bufferSize: Int32
-) -> Int32
-
-@_silgen_name("proc_pidfdinfo")
-private func procPIDFDInfo(
-    _ processIdentifier: pid_t,
-    _ descriptor: Int32,
-    _ flavor: Int32,
-    _ buffer: UnsafeMutableRawPointer,
-    _ bufferSize: Int32
-) -> Int32
-
-@_silgen_name("proc_pidfileportinfo")
-private func procPIDFileportInfo(
-    _ processIdentifier: pid_t,
-    _ fileport: UInt32,
-    _ flavor: Int32,
-    _ buffer: UnsafeMutableRawPointer,
-    _ bufferSize: Int32
 ) -> Int32
 
 private struct DarwinAttrList {
@@ -173,32 +139,9 @@ private func processUsage(_ processIdentifier: pid_t) -> ProcessUsage? {
     )
 }
 
-private func processTree(root: pid_t, start: UInt64) throws -> [pid_t] {
-    try BpyProcessTreeInspection.descendants(root: root, start: start,
-        identity: { processUsage($0)?.startAbsoluteTime }) { parent, capacity in
-        var children = [pid_t](repeating: 0, count: capacity)
-        errno = 0
-        let count = children.withUnsafeMutableBytes {
-            procListChildPIDs(parent, $0.baseAddress, Int32($0.count))
-        }
-        let failure = errno
-        return .init(count: Int(count), error: failure, pids: children)
-    }
-}
-
-private func kernelParent(_ processIdentifier: pid_t, start: UInt64) -> pid_t? {
-    guard processUsage(processIdentifier)?.startAbsoluteTime == start else { return nil }
-    let buffer = UnsafeMutableRawPointer.allocate(byteCount: 64, alignment: 8)
-    defer { buffer.deallocate() }
-    guard procPIDInfo(processIdentifier, 13, 0, buffer, 64) == 64,
-          buffer.load(as: UInt32.self) == UInt32(processIdentifier),
-          processUsage(processIdentifier)?.startAbsoluteTime == start else { return nil }
-    return pid_t(buffer.load(fromByteOffset: 4, as: UInt32.self))
-}
-
-private func stopProcess(_ process: Process) {
-    guard process.processIdentifier > 1, process.isRunning else { return }
-    process.terminate()
+private func stopProcess(_ process: BpyOwnedProcess) {
+    do { try process.signal(SIGTERM) }
+    catch { openDiagnostics.error("runtime.stop-fail code=\((error as NSError).code, privacy: .public)") }
 }
 
 private struct DirectoryUsage {
@@ -230,17 +173,7 @@ private enum DirectoryScanError: Error {
     case unresolvedDirectory
 }
 
-private let procPIDListFDs: Int32 = 1
-private let procFDTypeVnode: UInt32 = 1
-private let procPIDFDVnodePathInfo: Int32 = 2
-private let procPIDRegionPathInfo: Int32 = 8
-private let procFDInfoSize = 8
-private let vnodeFDInfoWithPathSize = 1_200
-private let procRegionWithPathInfoSize = 1_272
-private let vnodePathLength = 1_024
-private let kernelFRead: UInt32 = 1
 private let kernelFWrite: UInt32 = 2
-private let maximumMappedRegionCount = 65_536
 private let attributeBitmapCount: UInt16 = 5
 private let attributeCommonName: UInt32 = 0x0000_0001
 private let attributeCommonDevice: UInt32 = 0x0000_0002
@@ -687,28 +620,6 @@ private func directoryDeletionProbe() throws -> [String: Any] {
             "payloadSHA256": sha256(payload), "retainedSHA256": try sha256(retained)]
 }
 
-private func processMatches(_ identity: SupervisorWorkerIdentity) -> Bool {
-    processUsage(identity.processIdentifier)?.startAbsoluteTime == identity.startAbsoluteTime
-}
-
-private func kernelPath(
-    _ buffer: UnsafeRawPointer,
-    offset: Int
-) throws -> String? {
-    let bytes = UnsafeBufferPointer(
-        start: buffer.advanced(by: offset).assumingMemoryBound(to: UInt8.self),
-        count: vnodePathLength
-    )
-    guard let end = bytes.firstIndex(of: 0) else {
-        throw CocoaError(.fileReadCorruptFile)
-    }
-    guard end > 0 else { return nil }
-    guard let path = String(bytes: bytes[..<end], encoding: .utf8), path.hasPrefix("/") else {
-        throw CocoaError(.fileReadCorruptFile)
-    }
-    return path
-}
-
 private func managedRootPaths(_ roots: [URL]) throws -> [String] {
     try roots.map { root in
         let descriptor = Darwin.open(root.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
@@ -737,200 +648,31 @@ private func mergeVnodes(
     }
 }
 
-private func ownedOpenVnodes(
-    _ identity: SupervisorWorkerIdentity,
-    roots: [URL],
-    fileports: Bool = false
-) throws -> [VnodeIdentity: UInt64] {
-    guard processMatches(identity) else { return [:] }
-    let listFlavor: Int32 = fileports ? 14 : procPIDListFDs
-    let rootPaths = try managedRootPaths(roots)
-    let maximumBytes = procFDInfoSize * 4_096
-    errno = 0
-    let required = Int(procPIDInfo(
-        identity.processIdentifier,
-        listFlavor,
-        0,
-        nil,
-        0
-    ))
-    let requiredError = errno
-    if required == 0 && fileports && requiredError == 0 { return [:] }
-    if required <= 0 {
-        if !processMatches(identity) {
-            return [:]
-        }
-        throw POSIXError(.init(rawValue: requiredError) ?? .EIO)
-    }
-    guard required <= maximumBytes else { throw CocoaError(.fileReadTooLarge) }
-    let capacity = min(maximumBytes, max(required + procFDInfoSize * 64, procFDInfoSize * 128))
-    let descriptors = UnsafeMutableRawPointer.allocate(byteCount: capacity, alignment: 8)
-    defer { descriptors.deallocate() }
-    descriptors.initializeMemory(as: UInt8.self, repeating: 0, count: capacity)
-    errno = 0
-    let returned = Int(procPIDInfo(
-        identity.processIdentifier,
-        listFlavor,
-        0,
-        descriptors,
-        Int32(capacity)
-    ))
-    let returnedError = errno
-    if returned == 0 && fileports && returnedError == 0 { return [:] }
-    if returned <= 0 {
-        if !processMatches(identity) {
-            return [:]
-        }
-        throw POSIXError(.init(rawValue: returnedError) ?? .EIO)
-    }
-    guard returned < capacity, returned % procFDInfoSize == 0 else {
-        throw CocoaError(.fileReadTooLarge)
-    }
+private func ownedRetainedVnodes(_ observations: [BpyObservedVnode], roots: [URL]) throws -> [VnodeIdentity: UInt64] {
+    let paths = try managedRootPaths(roots)
     var resources: [VnodeIdentity: UInt64] = [:]
-    for offset in stride(from: 0, to: returned, by: procFDInfoSize) {
-        let descriptor = descriptors.load(fromByteOffset: offset, as: Int32.self)
-        let type = descriptors.load(fromByteOffset: offset + 4, as: UInt32.self)
-        guard (fileports || descriptor >= 0), type == procFDTypeVnode else { continue }
-        let vnode = UnsafeMutableRawPointer.allocate(byteCount: vnodeFDInfoWithPathSize, alignment: 8)
-        defer { vnode.deallocate() }
-        vnode.initializeMemory(as: UInt8.self, repeating: 0, count: vnodeFDInfoWithPathSize)
-        errno = 0
-        let result = fileports
-            ? procPIDFileportInfo(identity.processIdentifier, UInt32(bitPattern: descriptor),
-                                  2, vnode, Int32(vnodeFDInfoWithPathSize))
-            : procPIDFDInfo(identity.processIdentifier, descriptor, procPIDFDVnodePathInfo,
-                            vnode, Int32(vnodeFDInfoWithPathSize))
-        let vnodeError = errno
-        guard Int(result) == vnodeFDInfoWithPathSize else {
-            if !processMatches(identity) {
-                return [:]
-            }
-            if result == 0 && [EBADF, ENOENT, EINVAL].contains(vnodeError) { continue }
-            throw POSIXError(.init(rawValue: vnodeError) ?? .EIO)
-        }
-        let openFlags = vnode.load(fromByteOffset: 0, as: UInt32.self)
-        let mode = vnode.load(fromByteOffset: 28, as: UInt16.self)
-        guard mode & UInt16(S_IFMT) == UInt16(S_IFREG) else { continue }
-        let device = vnode.load(fromByteOffset: 24, as: UInt32.self)
-        let linkCount = vnode.load(fromByteOffset: 30, as: UInt16.self)
-        let inode = vnode.load(fromByteOffset: 32, as: UInt64.self)
-        let logical = vnode.load(fromByteOffset: 112, as: Int64.self)
-        let blocks = vnode.load(fromByteOffset: 120, as: Int64.self)
-        let path = try kernelPath(vnode, offset: 176)
-        let belongsToJob = linkCount == 0 || isManagedPath(path, roots: rootPaths)
-        if !belongsToJob {
-            let accessFlags = openFlags & (kernelFRead | kernelFWrite)
-            guard accessFlags & kernelFWrite == 0 else {
-                throw CocoaError(.fileWriteNoPermission)
-            }
+    for observation in observations {
+        if observation.links != 0 && !isManagedPath(observation.path, roots: paths) {
+            guard (observation.openFlags ?? 0) & kernelFWrite == 0 else { throw CocoaError(.fileWriteNoPermission) }
             continue
         }
-        let key = VnodeIdentity(
-            device: UInt64(device),
-            inode: inode
-        )
-        resources[key] = max(
-            resources[key] ?? 0,
-            vnodeBytes(logical: logical, blocks: blocks)
-        )
+        let key = VnodeIdentity(device: observation.device, inode: observation.inode)
+        resources[key] = max(resources[key] ?? 0, vnodeBytes(logical: observation.logical, blocks: observation.blocks))
     }
-    guard processMatches(identity) else {
-        return [:]
-    }
-    return resources
-}
-
-private func ownedMappedVnodes(
-    _ identity: SupervisorWorkerIdentity,
-    roots: [URL]
-) throws -> [VnodeIdentity: UInt64] {
-    guard processMatches(identity) else { return [:] }
-    let rootPaths = try managedRootPaths(roots)
-    let region = UnsafeMutableRawPointer.allocate(
-        byteCount: procRegionWithPathInfoSize,
-        alignment: 8
-    )
-    defer { region.deallocate() }
-    var resources: [VnodeIdentity: UInt64] = [:]
-    var address: UInt64 = 0
-    var traversedRegions = 0
-    for _ in 0..<maximumMappedRegionCount {
-        region.initializeMemory(
-            as: UInt8.self,
-            repeating: 0,
-            count: procRegionWithPathInfoSize
-        )
-        errno = 0
-        let result = procPIDInfo(
-            identity.processIdentifier,
-            procPIDRegionPathInfo,
-            address,
-            region,
-            Int32(procRegionWithPathInfoSize)
-        )
-        let regionError = errno
-        guard Int(result) == procRegionWithPathInfoSize else {
-            if !processMatches(identity) { return [:] }
-            if result == 0 && regionError == EINVAL && traversedRegions > 0 { return resources }
-            throw POSIXError(.init(rawValue: regionError) ?? .EIO)
-        }
-        traversedRegions += 1
-        let regionAddress = region.load(fromByteOffset: 80, as: UInt64.self)
-        let regionSize = region.load(fromByteOffset: 88, as: UInt64.self)
-        guard regionAddress >= address,
-              regionSize > 0,
-              regionAddress <= UInt64.max - regionSize else {
-            throw CocoaError(.fileReadCorruptFile)
-        }
-        let nextAddress = regionAddress + regionSize
-        let mode = region.load(fromByteOffset: 100, as: UInt16.self)
-        if mode & UInt16(S_IFMT) == UInt16(S_IFREG) {
-            let linkCount = region.load(fromByteOffset: 102, as: UInt16.self)
-            let path = try kernelPath(region, offset: 248)
-            if linkCount == 0 || isManagedPath(path, roots: rootPaths) {
-                let device = region.load(fromByteOffset: 96, as: UInt32.self)
-                let inode = region.load(fromByteOffset: 104, as: UInt64.self)
-                let logical = region.load(fromByteOffset: 184, as: Int64.self)
-                let blocks = region.load(fromByteOffset: 192, as: Int64.self)
-                let key = VnodeIdentity(device: UInt64(device), inode: inode)
-                resources[key] = max(
-                    resources[key] ?? 0,
-                    vnodeBytes(logical: logical, blocks: blocks)
-                )
-            }
-        }
-        if nextAddress == UInt64.max {
-            guard processMatches(identity) else { return [:] }
-            return resources
-        }
-        address = nextAddress
-    }
-    guard processMatches(identity) else { return [:] }
-    throw CocoaError(.fileReadTooLarge)
-}
-
-private func ownedRetainedVnodes(
-    _ identity: SupervisorWorkerIdentity,
-    roots: [URL]
-) throws -> [VnodeIdentity: UInt64] {
-    var resources = try ownedOpenVnodes(identity, roots: roots)
-    mergeVnodes(try ownedOpenVnodes(identity, roots: roots, fileports: true), into: &resources)
-    mergeVnodes(try ownedMappedVnodes(identity, roots: roots), into: &resources)
-    guard processMatches(identity) else { return [:] }
     return resources
 }
 
 private func resourceUsage(
     roots: [URL],
-    worker: SupervisorWorkerIdentity?,
+    observedVnodes: [BpyObservedVnode],
     byteLimit: UInt64,
     fileLimit: Int
 ) throws -> DirectoryUsage {
     let named = try directoryUsage(roots, byteLimit: byteLimit, fileLimit: fileLimit)
-    guard named.limitReason == nil, let worker else { return named }
+    guard named.limitReason == nil else { return named }
     var resources = named.resources
     var files = named.files
-    for (identity, bytes) in try ownedRetainedVnodes(worker, roots: roots) {
+    for (identity, bytes) in try ownedRetainedVnodes(observedVnodes, roots: roots) {
         if resources[identity] == nil { files += 1 }
         resources[identity] = max(resources[identity] ?? 0, bytes)
     }
@@ -1115,6 +857,10 @@ private struct AutoexecManifest: Decodable {
     let autorunMarkerPresent: Bool
 }
 
+private struct SupervisorChildPID: Decodable {
+    let processIdentifier: Int32
+}
+
 private struct SupervisorWorkerIdentity: Decodable {
     let processIdentifier: Int32
     let startAbsoluteTime: UInt64
@@ -1128,6 +874,7 @@ private struct ManagedProcessResult {
     let peakDiskBytes: UInt64
     let peakFileCount: Int
     let peakDescendantCount: Int
+    let hostMonitorSamples: Int
     let limitReason: String?
     let log: String
 }
@@ -1162,7 +909,6 @@ private struct BoundarySupervisorIdentity: Decodable {
     let supervisorParentProcessIdentifier: Int32
     let supervisorStartAbsoluteTime: UInt64
     let childProcessIdentifier: Int32
-    let childStartAbsoluteTime: UInt64
 }
 
 private struct BoundaryRun {
@@ -1179,60 +925,11 @@ private struct BoundaryRun {
     let retentionDenied: Bool
 }
 
-private func waitForExit(_ process: Process, timeout: TimeInterval) -> Bool {
-    let deadline = ProcessInfo.processInfo.systemUptime + timeout
-    while process.isRunning {
-        if ProcessInfo.processInfo.systemUptime >= deadline { return false }
-        Thread.sleep(forTimeInterval: 0.005)
-    }
-    return true
-}
-
-private func terminateBoundaryProcess(
-    _ process: Process,
-    startAbsoluteTime: UInt64
-) -> Bool {
-    guard process.isRunning else { return true }
-    process.terminate()
-    if waitForExit(process, timeout: 3) { return true }
-    if let current = processUsage(process.processIdentifier), current.startAbsoluteTime != startAbsoluteTime {
-        return !process.isRunning
-    }
-    guard process.isRunning else { return true }
-    let stopped = Darwin.kill(process.processIdentifier, SIGSTOP) == 0
-    let stoppedIdentity = processUsage(process.processIdentifier)
-    if stoppedIdentity?.startAbsoluteTime == startAbsoluteTime
-        || (stopped && stoppedIdentity == nil && process.isRunning) {
-        _ = Darwin.kill(process.processIdentifier, SIGKILL)
-    }
-    return waitForExit(process, timeout: 2)
-}
-
-private func boundaryIdentityGone(_ identity: SupervisorWorkerIdentity) -> Bool {
-    if let current = processUsage(identity.processIdentifier) { return current.startAbsoluteTime != identity.startAbsoluteTime }
-    errno = 0
-    let result = Darwin.kill(identity.processIdentifier, 0)
-    let failure = errno
-    return result != 0 && failure == ESRCH
-}
-
-private func terminateBoundaryChild(_ identity: SupervisorWorkerIdentity) -> Bool {
-    if boundaryIdentityGone(identity) { return true }
-    guard identity.processIdentifier > 1,
-          processUsage(identity.processIdentifier)?.startAbsoluteTime == identity.startAbsoluteTime else { return false }
-    _ = Darwin.kill(identity.processIdentifier, SIGKILL)
-    let deadline = ProcessInfo.processInfo.systemUptime + 2
-    while !boundaryIdentityGone(identity) {
-        guard ProcessInfo.processInfo.systemUptime < deadline else { return false }
-        Thread.sleep(forTimeInterval: 0.005)
-    }
-    return true
-}
-
 private func runBoundarySupervisor(
     supervisorURL: URL,
     root: URL,
-    mode: String
+    mode: String,
+    monitor: BpyServiceMonitor
 ) throws -> BoundaryRun {
     let writeRoot = root.appendingPathComponent("write", isDirectory: true)
     let outsideRoot = root.appendingPathComponent("outside", isDirectory: true)
@@ -1246,53 +943,42 @@ private func runBoundarySupervisor(
     }
     guard let service = processUsage(getpid()) else { throw CocoaError(.executableLoad) }
 
-    let process = Process()
-    process.executableURL = supervisorURL
-    process.arguments = [
-        "boundary-supervise",
-        String(getpid()),
-        String(service.startAbsoluteTime),
-        identityURL.path,
-        writeRoot.path,
-        outsidePath.path,
-        reportURL.path,
-        mode,
-    ]
-    process.currentDirectoryURL = writeRoot
-    process.standardInput = FileHandle.nullDevice
-    process.standardOutput = FileHandle.nullDevice
-    process.standardError = FileHandle.nullDevice
-    try process.run()
-    let supervisorPID = process.processIdentifier
-    var supervisorStart: UInt64?
-    for _ in 0..<40 where supervisorStart == nil && process.isRunning {
-        supervisorStart = processUsage(supervisorPID)?.startAbsoluteTime
-        if supervisorStart == nil { Thread.sleep(forTimeInterval: 0.005) }
-    }
-    guard let supervisorStart else {
-        process.terminate()
-        _ = waitForExit(process, timeout: 1)
-        throw CocoaError(.executableLoad)
-    }
-    var observedChild: SupervisorWorkerIdentity?
+    let authorizationURL = root.appendingPathComponent("authorized")
+    let authorizationToken = (UUID().uuidString + UUID().uuidString).replacingOccurrences(of: "-", with: "")
+    let process = try BpyOwnedProcess(executable: supervisorURL, arguments: [
+        "boundary-supervise", String(getpid()), String(service.startAbsoluteTime), identityURL.path,
+        writeRoot.path, outsidePath.path, reportURL.path, mode, authorizationURL.path, authorizationToken,
+    ], environment: [:], directory: writeRoot, output: .nullDevice, errors: .nullDevice, allowsForcedTermination: false)
     defer {
-        if process.isRunning {
-            _ = terminateBoundaryProcess(process, startAbsoluteTime: supervisorStart)
+        var reaped = false
+        while !reaped {
+            do { try process.terminateAndReap(grace: 3); reaped = true }
+            catch {
+                openDiagnostics.error("boundary.cleanup-pending code=\((error as NSError).code, privacy: .public)")
+                Thread.sleep(forTimeInterval: 1)
+            }
         }
-        if let observedChild { _ = terminateBoundaryChild(observedChild) }
     }
+    let supervisorPID = process.processIdentifier
+    let observation = try monitor.attach(process: process, serviceStart: service.startAbsoluteTime)
+    let supervisorStart = observation.supervisor.start
+    try Data(authorizationToken.utf8).write(to: authorizationURL, options: .atomic)
+    var observedChild: SupervisorWorkerIdentity?
     var boundaryIdentity: BoundarySupervisorIdentity?
     var report: BoundaryChildReport?
     let readyDeadline = ProcessInfo.processInfo.systemUptime + 5
     while ProcessInfo.processInfo.systemUptime < readyDeadline {
+        let sample = try observation.sample()
         if boundaryIdentity == nil,
            let data = try? Data(contentsOf: identityURL),
            let value = try? JSONDecoder().decode(BoundarySupervisorIdentity.self, from: data),
-           processUsage(value.childProcessIdentifier)?.startAbsoluteTime == value.childStartAbsoluteTime,
-           kernelParent(supervisorPID, start: supervisorStart) == getpid(),
-           kernelParent(value.childProcessIdentifier, start: value.childStartAbsoluteTime) == supervisorPID {
+           let child = sample.worker, child.pid == value.childProcessIdentifier,
+           child.parent == supervisorPID, value.supervisorProcessIdentifier == supervisorPID,
+           value.supervisorStartAbsoluteTime == supervisorStart,
+           value.supervisorParentProcessIdentifier == getpid() {
             boundaryIdentity = value
-            observedChild = .init(processIdentifier: value.childProcessIdentifier, startAbsoluteTime: value.childStartAbsoluteTime)
+            observedChild = .init(processIdentifier: child.pid, startAbsoluteTime: child.start)
+            try Data(authorizationToken.utf8).write(to: identityURL.appendingPathExtension("observed"), options: .atomic)
         }
         if report == nil,
            let data = try? Data(contentsOf: reportURL),
@@ -1300,36 +986,31 @@ private func runBoundarySupervisor(
             report = value
         }
         if boundaryIdentity != nil, report != nil { break }
-        if !process.isRunning && boundaryResourceModes.contains(mode) { break }
+        if try !process.isRunning { break }
         Thread.sleep(forTimeInterval: 0.01)
     }
-    guard let boundaryIdentity, let report,
+    guard let boundaryIdentity, let report, let child = observedChild,
           boundaryIdentity.supervisorProcessIdentifier == supervisorPID,
           boundaryIdentity.supervisorParentProcessIdentifier == getpid(),
           boundaryIdentity.supervisorStartAbsoluteTime == supervisorStart,
-          kernelParent(supervisorPID, start: supervisorStart) == getpid(),
-          kernelParent(boundaryIdentity.childProcessIdentifier, start: boundaryIdentity.childStartAbsoluteTime) == supervisorPID,
           report.schema == "nexgenvideo/bpy-boundary-child/2",
           report.mode == mode,
           report.processIdentifier == boundaryIdentity.childProcessIdentifier,
           report.parentProcessIdentifier == supervisorPID else {
-        _ = terminateBoundaryProcess(process, startAbsoluteTime: supervisorStart)
         throw CocoaError(.executableLoad)
     }
     if mode == "denials" {
         try Data("observed".utf8).write(to: writeRoot.appendingPathComponent("service-observed"), options: .atomic)
     }
-    let child = SupervisorWorkerIdentity(
-        processIdentifier: boundaryIdentity.childProcessIdentifier,
-        startAbsoluteTime: boundaryIdentity.childStartAbsoluteTime
-    )
-
     var observedRetainedBytes: UInt64 = 0
     var limitReason: String?
     var internalLinkedWritableDeduplicated = false
     var retentionDenied = false
     if boundaryResourceModes.contains(mode) {
-        let retainedResources = try ownedRetainedVnodes(child, roots: [writeRoot])
+        let sample = try observation.sample()
+        guard let worker = sample.worker, worker.pid == child.processIdentifier,
+              worker.start == child.startAbsoluteTime else { throw CocoaError(.executableLoad) }
+        let retainedResources = try ownedRetainedVnodes(sample.vnodes, roots: [writeRoot])
         observedRetainedBytes = retainedResources.values.reduce(0, +)
         let named = try directoryUsage(
             [writeRoot],
@@ -1338,7 +1019,7 @@ private func runBoundarySupervisor(
         )
         let quota = try resourceUsage(
             roots: [writeRoot],
-            worker: child,
+            observedVnodes: sample.vnodes,
             byteLimit: 512 * 1_024,
             fileLimit: 64
         )
@@ -1367,24 +1048,16 @@ private func runBoundarySupervisor(
                 && observedRetainedBytes >= boundaryProbeResourceBytes
                 && limitReason == "disk"
         }
-        guard validResourceResult else {
-            _ = terminateBoundaryProcess(process, startAbsoluteTime: supervisorStart)
-            throw CocoaError(.fileReadTooLarge)
-        }
-        guard terminateBoundaryProcess(process, startAbsoluteTime: supervisorStart) else {
-            throw CocoaError(.executableLoad)
-        }
+        guard validResourceResult else { throw CocoaError(.fileReadTooLarge) }
+        try process.signal(SIGTERM)
+        _ = try process.waitUntilExit(timeout: 3)
     } else {
-        guard waitForExit(process, timeout: 5) else {
-            _ = terminateBoundaryProcess(process, startAbsoluteTime: supervisorStart)
-            throw CocoaError(.executableLoad)
-        }
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else { throw CocoaError(.executableLoad) }
+        guard try process.waitUntilExit(timeout: 5) == 0 else { throw CocoaError(.executableLoad) }
     }
-    guard terminateBoundaryChild(child) else { throw CocoaError(.executableLoad) }
-    let childGone = boundaryIdentityGone(child)
-    let supervisorGone = boundaryIdentityGone(.init(processIdentifier: supervisorPID, startAbsoluteTime: supervisorStart))
+    let detached = try observation.detach()
+    let childGone = detached.ended.contains { $0.pid == child.processIdentifier && $0.start == child.startAbsoluteTime }
+    let supervisorGone = detached.ended.contains { $0.pid == supervisorPID && $0.start == supervisorStart }
+    guard childGone, supervisorGone else { throw CocoaError(.executableLoad) }
     return .init(
         supervisorProcessIdentifier: supervisorPID,
         supervisorParentProcessIdentifier: boundaryIdentity.supervisorParentProcessIdentifier,
@@ -1404,6 +1077,7 @@ private final class ServiceSession: @unchecked Sendable {
     let request: BpyOpenSessionRequest
     private let root: URL
     private let runtimeRoot: URL
+    private let monitor: BpyServiceMonitor
     private let capacity: DispatchSemaphore
     private let queue: DispatchQueue
     private let lock = NSLock()
@@ -1413,7 +1087,15 @@ private final class ServiceSession: @unchecked Sendable {
     private var jobs: [UUID: JobRecord] = [:]
     private var confirmedRevision: String?
     private var confirmedSceneData: Data?
-    private var activeProcess: Process?
+    private struct PendingCleanup {
+        let process: BpyOwnedProcess
+        let observation: BpyServiceObservation?
+        let controlRoot: URL
+    }
+    private let cleanupLock = NSLock()
+    private let closeLock = NSLock()
+    private var pendingCleanup: PendingCleanup?
+    private var activeProcess: BpyOwnedProcess?
     private var activeProcessStartAbsoluteTime: UInt64?
     private var activeProcessExecutable: String?
     private var activeProcessJobID: UUID?
@@ -1434,6 +1116,7 @@ private final class ServiceSession: @unchecked Sendable {
         request: BpyOpenSessionRequest,
         root: URL,
         runtimeRoot: URL,
+        monitor: BpyServiceMonitor,
         capacity: DispatchSemaphore,
         storageDescriptor: Int32,
         storageScope: URL
@@ -1443,6 +1126,7 @@ private final class ServiceSession: @unchecked Sendable {
         self.request = request
         self.root = root
         self.runtimeRoot = runtimeRoot
+        self.monitor = monitor
         self.capacity = capacity
         confirmedRevision = request.confirmedRevision
         queue = DispatchQueue(label: "de.h5ventures.nexgenvideo.bpy.\(request.sessionID.uuidString)")
@@ -1753,10 +1437,8 @@ private final class ServiceSession: @unchecked Sendable {
                   activeProcessJobID == request.jobID,
                   activeProcessAuthorizationID == request.authorizationID,
                   activeProcess?.processIdentifier == request.processIdentifier,
-                  activeProcess?.isRunning == true,
+                  try activeProcess?.isRunning == true,
                   activeProcessStartAbsoluteTime == request.processStartAbsoluteTime,
-                  processUsage(request.processIdentifier)?.startAbsoluteTime
-                    == request.processStartAbsoluteTime,
                   activeProcessExecutable == request.processExecutable,
                   let authorizationURL = activeProcessAuthorizationURL,
                   let authorizationToken = activeProcessAuthorizationToken else {
@@ -1859,15 +1541,18 @@ private final class ServiceSession: @unchecked Sendable {
             }
         }
         if shouldStop {
-            stopActiveProcess(jobID: jobID)
-            lock.access { if !closed { try? FileManager.default.removeItem(at: jobDirectory(jobID)) } }
+            if stopActiveProcess(jobID: jobID) {
+                lock.access { if !closed { try? FileManager.default.removeItem(at: jobDirectory(jobID)) } }
+            }
         }
         return status(jobID)
     }
 
-    func close() {
+    func close() -> Bool {
+        closeLock.lock()
+        defer { closeLock.unlock() }
         lock.access { closed = true }
-        stopActiveProcess()
+        guard stopActiveProcess() else { return false }
         if DispatchQueue.getSpecific(key: queueKey) == nil { queue.sync { } }
         lock.access {
             for upload in uploads.values { try? upload.handle.close() }
@@ -1884,6 +1569,7 @@ private final class ServiceSession: @unchecked Sendable {
             Darwin.close(descriptor)
             storageScope.stopAccessingSecurityScopedResource()
         }
+        return true
     }
 
     private func execute(_ job: JobRecord) {
@@ -1980,6 +1666,8 @@ private final class ServiceSession: @unchecked Sendable {
                     "verification_seconds": verification.manifest.verificationSeconds,
                     "worker_peak_memory_bytes": Double(worker.peakMemoryBytes),
                     "verifier_peak_memory_bytes": Double(verification.process.peakMemoryBytes),
+                    "worker_host_monitor_samples": Double(worker.hostMonitorSamples),
+                    "verifier_host_monitor_samples": Double(verification.process.hostMonitorSamples),
                     "service_peak_memory_bytes": Double(servicePeakMemoryBytes),
                     "physical_storage_capacity_bytes": Double(request.storage?.capacityBytes ?? 0),
                     "disk_peak_bytes": Double(max(worker.peakDiskBytes, verification.process.peakDiskBytes)),
@@ -2020,8 +1708,7 @@ private final class ServiceSession: @unchecked Sendable {
                     job.terminalAt = Date()
                 }
             }
-            stopActiveProcess()
-            try? FileManager.default.removeItem(at: jobDirectory(job.id))
+            if stopActiveProcess() { try? FileManager.default.removeItem(at: jobDirectory(job.id)) }
         }
     }
 
@@ -2313,28 +2000,11 @@ private final class ServiceSession: @unchecked Sendable {
         guard let serviceUsage = processUsage(getpid()) else {
             throw CocoaError(.executableLoad)
         }
-        if job == nil {
-            try Data(authorizationToken.utf8).write(to: authorizationURL, options: .atomic)
-        }
-        let process = Process()
-        process.executableURL = supervisorURL
-        process.arguments = [
-            "supervise",
-            String(getpid()),
-            String(serviceUsage.startAbsoluteTime),
-            authorizationURL.path,
-            authorizationToken,
-            identityURL.path,
-            processRoot.path,
-            pythonURL.path,
-            workerURL.path,
-            mode,
-            configuration.path,
+        let arguments = [
+            "supervise", String(getpid()), String(serviceUsage.startAbsoluteTime),
+            authorizationURL.path, authorizationToken, identityURL.path, processRoot.path,
+            pythonURL.path, workerURL.path, mode, configuration.path,
         ]
-        process.currentDirectoryURL = processRoot
-        process.standardInput = FileHandle.nullDevice
-        process.standardOutput = output
-        process.standardError = errors
         var environment = [
             "HOME": processRoot.appendingPathComponent("home").path,
             "TMPDIR": processRoot.appendingPathComponent("tmp").path,
@@ -2354,12 +2024,14 @@ private final class ServiceSession: @unchecked Sendable {
             environment["NGV_BPY_SUPERVISOR_FAIL_CHILD_IDENTITY_CAPTURE"] = "1"
             environment["NGV_BPY_SUPERVISOR_CHILD_IGNORE_TERM"] = "1"
         }
-        process.environment = environment
         let began = ProcessInfo.processInfo.systemUptime
-        try lock.access {
+        let process = try lock.access { () -> BpyOwnedProcess in
             guard !closed, job == nil || job?.state == .running else { throw CocoaError(.userCancelled) }
+            let process: BpyOwnedProcess
             do {
-                try process.run()
+                process = try BpyOwnedProcess(executable: supervisorURL, arguments: arguments,
+                    environment: environment, directory: processRoot,
+                    output: output.fileHandleForWriting, errors: errors.fileHandleForWriting, allowsForcedTermination: false)
             } catch {
                 let failure = error as NSError
                 let underlying = failure.userInfo[NSUnderlyingErrorKey] as? NSError
@@ -2375,17 +2047,26 @@ private final class ServiceSession: @unchecked Sendable {
             }
             activeProcess = process
             activeProcessJobID = job?.id
+            return process
         }
-        let supervisorProcessIdentifier = process.processIdentifier
+        var attachedObservation: BpyServiceObservation?
+        var monitorDetached = false
         defer {
-            if process.isRunning {
-                stopProcess(process)
-                process.waitUntilExit()
-            }
+            var cleanupComplete = false
+            do {
+                _ = try process.terminateAndReap(grace: 3)
+                let termination = try process.waitForTermination(timeout: 0)
+                if let attachedObservation, !monitorDetached {
+                    do { try attachedObservation.detach() }
+                    catch { if !termination.exitedNormally { throw error } }
+                }
+                cleanupComplete = true
+            } catch { openDiagnostics.error("runtime.cleanup-fail code=\((error as NSError).code, privacy: .public)") }
             output.fileHandleForReading.readabilityHandler = nil
             errors.fileHandleForReading.readabilityHandler = nil
             lock.access {
-                if activeProcess === process {
+                guard activeProcess === process else { return }
+                if cleanupComplete {
                     activeProcess = nil
                     activeProcessStartAbsoluteTime = nil
                     activeProcessExecutable = nil
@@ -2395,24 +2076,26 @@ private final class ServiceSession: @unchecked Sendable {
                     activeProcessAuthorizationToken = nil
                     activeProcessAuthorized = false
                     activeWorkerProcessIdentifier = nil
+                } else {
+                    closed = true
+                    pendingCleanup = .init(process: process, observation: monitorDetached ? nil : attachedObservation,
+                                           controlRoot: controlRoot)
                 }
             }
-            try? FileManager.default.removeItem(at: controlRoot)
+            if cleanupComplete { try? FileManager.default.removeItem(at: controlRoot) }
         }
-        var initialUsage: ProcessUsage?
-        for _ in 0..<20 where initialUsage == nil && process.isRunning {
-            initialUsage = processUsage(supervisorProcessIdentifier)
-            if initialUsage == nil { Thread.sleep(forTimeInterval: 0.005) }
-        }
-        guard let initialUsage else {
-            stopProcess(process)
-            process.waitUntilExit()
-            throw CocoaError(.executableLoad)
-        }
+        try output.fileHandleForWriting.close()
+        try errors.fileHandleForWriting.close()
+        let observation = try monitor.attach(process: process, serviceStart: serviceUsage.startAbsoluteTime)
+        attachedObservation = observation
+        let initialUsage = ProcessUsage(physicalFootprint: observation.supervisor.footprint,
+                                        startAbsoluteTime: observation.supervisor.start)
+        if job == nil { try Data(authorizationToken.utf8).write(to: authorizationURL, options: .atomic) }
+        let executable = try BpyRuntimePath.canonical(supervisorURL)
         lock.access {
             guard activeProcess === process else { return }
             activeProcessStartAbsoluteTime = initialUsage.startAbsoluteTime
-            activeProcessExecutable = supervisorURL.resolvingSymlinksInPath().path
+            activeProcessExecutable = executable
             activeProcessJobID = job?.id
             activeProcessAuthorizationID = job == nil ? nil : authorizationID
             activeProcessAuthorizationURL = job == nil ? nil : authorizationURL
@@ -2423,42 +2106,40 @@ private final class ServiceSession: @unchecked Sendable {
         var peakDisk: UInt64 = 0
         var peakFiles = 0
         var peakDescendants = 0
+        var hostMonitorSamples = 0
         var limitReason: String?
         var workerIdentity: SupervisorWorkerIdentity?
-        while process.isRunning {
+        while try process.isRunning {
             let now = ProcessInfo.processInfo.systemUptime
-            let descendants = try processTree(root: supervisorProcessIdentifier, start: initialUsage.startAbsoluteTime)
-            let unexpectedDescendants = max(0, descendants.count - 1)
+            let sample = try observation.sample()
+            if sample.status == .gone { break }
+            hostMonitorSamples += 1
+            let unexpectedDescendants = max(0, sample.descendants.count - 1)
             peakDescendants = max(peakDescendants, unexpectedDescendants)
-            let processFootprint = ([supervisorProcessIdentifier] + descendants)
-                .compactMap { processUsage($0)?.physicalFootprint }
-                .reduce(UInt64(0), +)
+            guard let sampledSupervisor = sample.supervisor else { throw POSIXError(.EIO) }
+            var processFootprint = sampledSupervisor.footprint
+            for child in sample.descendants {
+                let sum = processFootprint.addingReportingOverflow(child.footprint)
+                guard !sum.overflow else { throw POSIXError(.EOVERFLOW) }
+                processFootprint = sum.partialValue
+            }
             peakMemory = max(peakMemory, processFootprint)
-            if workerIdentity == nil,
+            if workerIdentity == nil, let worker = sample.worker,
                let data = try? Data(contentsOf: identityURL),
-               let decoded = try? JSONDecoder().decode(SupervisorWorkerIdentity.self, from: data),
-               processUsage(decoded.processIdentifier)?.startAbsoluteTime == decoded.startAbsoluteTime {
-                workerIdentity = decoded
+               let decoded = try? JSONDecoder().decode(SupervisorChildPID.self, from: data),
+               decoded.processIdentifier == worker.pid {
+                workerIdentity = .init(processIdentifier: worker.pid, startAbsoluteTime: worker.start)
                 lock.access {
-                    if activeProcess === process {
-                        activeWorkerProcessIdentifier = decoded.processIdentifier
-                    }
+                    if activeProcess === process { activeWorkerProcessIdentifier = worker.pid }
                 }
+                try Data(authorizationToken.utf8).write(to: identityURL.appendingPathExtension("observed"), options: .atomic)
             }
-            let serviceFootprint = processUsage(getpid())?.physicalFootprint ?? 0
-            lock.access {
-                servicePeakMemoryBytes = max(servicePeakMemoryBytes, serviceFootprint)
-            }
+            guard let currentService = processUsage(getpid()) else { throw POSIXError(.EIO) }
+            let serviceFootprint = currentService.physicalFootprint
+            lock.access { servicePeakMemoryBytes = max(servicePeakMemoryBytes, serviceFootprint) }
             let resourceRoots = job.map { workerWritableRoots($0.id) } ?? [processRoot]
-            let accountingWorker = workerIdentity ?? descendants.first.flatMap { pid in
-                processUsage(pid).map { SupervisorWorkerIdentity(processIdentifier: pid, startAbsoluteTime: $0.startAbsoluteTime) }
-            }
-            let disk = try resourceUsage(
-                roots: resourceRoots,
-                worker: accountingWorker,
-                byteLimit: request.limits.diskBytes,
-                fileLimit: request.limits.files
-            )
+            let disk = try resourceUsage(roots: resourceRoots, observedVnodes: sample.vnodes,
+                                         byteLimit: request.limits.diskBytes, fileLimit: request.limits.files)
             peakDisk = max(peakDisk, disk.bytes)
             peakFiles = max(peakFiles, disk.files)
             if lock.access({ closed || activeProcess !== process }) {
@@ -2481,10 +2162,14 @@ private final class ServiceSession: @unchecked Sendable {
                 limitReason = "process-count"
                 stopProcess(process)
             }
-            if process.isRunning { Thread.sleep(forTimeInterval: 0.05) }
+            if limitReason != nil || lock.access({ closed || job.map { $0.state != .running } == true }) {
+                _ = try process.waitUntilExit(timeout: 3)
+            } else if try process.isRunning { Thread.sleep(forTimeInterval: 0.05) }
         }
-        process.waitUntilExit()
-        do { let finalUsage = try resourceUsage(roots: job.map { workerWritableRoots($0.id) } ?? [processRoot], worker: nil,
+        let exitStatus = try process.waitUntilExit()
+        try observation.detach()
+        monitorDetached = true
+        do { let finalUsage = try resourceUsage(roots: job.map { workerWritableRoots($0.id) } ?? [processRoot], observedVnodes: [],
                 byteLimit: request.limits.diskBytes, fileLimit: request.limits.files)
             peakDisk = max(peakDisk, finalUsage.bytes); peakFiles = max(peakFiles, finalUsage.files)
             if limitReason == nil { limitReason = finalUsage.limitReason }
@@ -2495,34 +2180,66 @@ private final class ServiceSession: @unchecked Sendable {
         let remainingErrors = errors.fileHandleForReading.readDataToEndOfFile()
         log.append(remainingOutput)
         log.append(remainingErrors)
-        if workerIdentity == nil,
-           let data = try? Data(contentsOf: identityURL) {
-            workerIdentity = try? JSONDecoder().decode(SupervisorWorkerIdentity.self, from: data)
-        }
-        guard process.terminationStatus != 0 || workerIdentity != nil || limitReason != nil else {
+        guard exitStatus != 0 || workerIdentity != nil || limitReason != nil else {
             throw CocoaError(.executableLoad)
         }
         return ManagedProcessResult(
             workerProcessIdentifier: workerIdentity?.processIdentifier ?? -1,
-            exitStatus: process.terminationStatus,
+            exitStatus: exitStatus,
             duration: ProcessInfo.processInfo.systemUptime - began,
             peakMemoryBytes: peakMemory,
             peakDiskBytes: peakDisk,
             peakFileCount: peakFiles,
             peakDescendantCount: peakDescendants,
+            hostMonitorSamples: hostMonitorSamples,
             limitReason: limitReason,
             log: log.text
         )
     }
 
-    private func stopActiveProcess(jobID: UUID? = nil) {
+    @discardableResult
+    private func stopActiveProcess(jobID: UUID? = nil) -> Bool {
         guard let process = lock.access({
             jobID == nil || activeProcessJobID == jobID ? activeProcess : nil
-        }) else { return }
+        }) else { return true }
         stopProcess(process)
+        let deadline = ProcessInfo.processInfo.systemUptime + 8
         while lock.access({ activeProcess === process }) {
+            if retryPendingCleanup(process) { return true }
+            guard DispatchQueue.getSpecific(key: queueKey) == nil,
+                  ProcessInfo.processInfo.systemUptime < deadline else { return false }
             Thread.sleep(forTimeInterval: 0.005)
         }
+        return true
+    }
+
+    private func retryPendingCleanup(_ process: BpyOwnedProcess) -> Bool {
+        cleanupLock.lock()
+        defer { cleanupLock.unlock() }
+        guard let pending = lock.access({ pendingCleanup }), pending.process === process else { return false }
+        do {
+            _ = try process.terminateAndReap(grace: 3)
+            let termination = try process.waitForTermination(timeout: 0)
+            if let observation = pending.observation {
+                do { try observation.detach() }
+                catch { if !termination.exitedNormally { throw error } }
+            }
+            lock.access {
+                guard activeProcess === process else { return }
+                activeProcess = nil
+                activeProcessStartAbsoluteTime = nil
+                activeProcessExecutable = nil
+                activeProcessJobID = nil
+                activeProcessAuthorizationID = nil
+                activeProcessAuthorizationURL = nil
+                activeProcessAuthorizationToken = nil
+                activeProcessAuthorized = false
+                activeWorkerProcessIdentifier = nil
+                pendingCleanup = nil
+            }
+            try? FileManager.default.removeItem(at: pending.controlRoot)
+            return true
+        } catch { return false }
     }
 
     private var geometryLimits: [String: Any] {
@@ -2734,7 +2451,7 @@ private final class ServiceSession: @unchecked Sendable {
     private var supervisorURL: URL {
         runtimeRoot.deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("Helpers/NexGenVideoBpySupervisor")
+            .appendingPathComponent("MacOS/NexGenVideoBpySupervisor")
     }
 
     private var sitePackagesURL: URL {
@@ -2789,6 +2506,7 @@ private final class BpyRuntimeService: NSObject, @unchecked Sendable {
     private let capacity = DispatchSemaphore(value: 1)
     private var sessions: [UUID: ServiceSession] = [:]
     private var retiringSessions: [UUID: ServiceSession] = [:]
+    private var cleanupScheduled = Set<UUID>()
     private let sessionsRoot: URL
     private let runtimeRoot: URL
 
@@ -2801,14 +2519,12 @@ private final class BpyRuntimeService: NSObject, @unchecked Sendable {
         try? FileManager.default.removeItem(at: root)
         sessionsRoot = root
         runtimeRoot = Bundle.main.bundleURL
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent("Resources", isDirectory: true)
+            .appendingPathComponent("Contents/Resources", isDirectory: true)
             .appendingPathComponent("BpyRuntime", isDirectory: true)
         super.init()
     }
 
-    func runBoundaryProbe(_ data: Data, withReply reply: @escaping (Data) -> Void) {
+    func runBoundaryProbe(_ data: Data, monitor: BpyServiceMonitor, withReply reply: @escaping (Data) -> Void) {
         do {
             let request = try JSONDecoder().decode(BpyBoundaryProbeRequest.self, from: data)
             guard request.schema == "nexgenvideo/bpy-boundary-probe-request/1" else {
@@ -2821,8 +2537,8 @@ private final class BpyRuntimeService: NSObject, @unchecked Sendable {
             let marker = app.appendingPathComponent(
                 "Contents/Resources/BPY_BOUNDARY_PROBE_NONPRODUCT_CI"
             )
-            let supervisor = app.appendingPathComponent(
-                "Contents/Helpers/NexGenVideoBpySupervisor"
+            let supervisor = Bundle.main.bundleURL.appendingPathComponent(
+                "Contents/MacOS/NexGenVideoBpySupervisor"
             )
             guard FileManager.default.fileExists(atPath: marker.path),
                   FileManager.default.isExecutableFile(atPath: supervisor.path),
@@ -2841,42 +2557,42 @@ private final class BpyRuntimeService: NSObject, @unchecked Sendable {
             let first = try runBoundarySupervisor(
                 supervisorURL: supervisor,
                 root: probeRoot.appendingPathComponent("denials", isDirectory: true),
-                mode: "denials"
+                mode: "denials", monitor: monitor
             )
             let openUnlinked = try runBoundarySupervisor(
                 supervisorURL: supervisor,
                 root: probeRoot.appendingPathComponent("open-unlinked", isDirectory: true),
-                mode: "open-unlinked-hold"
+                mode: "open-unlinked-hold", monitor: monitor
             )
             let readOnlyUnlinked = try runBoundarySupervisor(
                 supervisorURL: supervisor,
                 root: probeRoot.appendingPathComponent("readonly-unlinked", isDirectory: true),
-                mode: "readonly-unlinked-hold"
+                mode: "readonly-unlinked-hold", monitor: monitor
             )
             let mappedUnlinked = try runBoundarySupervisor(
                 supervisorURL: supervisor,
                 root: probeRoot.appendingPathComponent("mapped-unlinked", isDirectory: true),
-                mode: "mapped-unlinked-hold"
+                mode: "mapped-unlinked-hold", monitor: monitor
             )
             let externalReadOnly = try runBoundarySupervisor(
                 supervisorURL: supervisor,
                 root: probeRoot.appendingPathComponent("external-readonly", isDirectory: true),
-                mode: "external-readonly-hold"
+                mode: "external-readonly-hold", monitor: monitor
             )
             let internalLinkedWritable = try runBoundarySupervisor(
                 supervisorURL: supervisor,
                 root: probeRoot.appendingPathComponent("internal-linked", isDirectory: true),
-                mode: "internal-linked-writable-hold"
+                mode: "internal-linked-writable-hold", monitor: monitor
             )
             let fileportRetention = try runBoundarySupervisor(
                 supervisorURL: supervisor,
                 root: probeRoot.appendingPathComponent("fileport-retention", isDirectory: true),
-                mode: "fileport-unlinked-hold"
+                mode: "fileport-unlinked-hold", monitor: monitor
             )
             let followup = try runBoundarySupervisor(
                 supervisorURL: supervisor,
                 root: probeRoot.appendingPathComponent("followup", isDirectory: true),
-                mode: "denials"
+                mode: "denials", monitor: monitor
             )
             guard first.supervisorGone,
                   first.childGone,
@@ -2938,7 +2654,7 @@ private final class BpyRuntimeService: NSObject, @unchecked Sendable {
         }
     }
 
-    func openSession(_ data: Data, owner: UUID, withReply reply: @escaping (Data) -> Void) {
+    func openSession(_ data: Data, owner: UUID, monitor: BpyServiceMonitor, withReply reply: @escaping (Data) -> Void) {
         var requestedID: UUID?
         var stage = OpenStage.decode
         do {
@@ -3001,8 +2717,22 @@ private final class BpyRuntimeService: NSObject, @unchecked Sendable {
                 throw error
             }
             defer { if let descriptor { Darwin.close(descriptor) } }
-            var retired: ServiceSession?
             stage = .reserve
+            try awaitRetiredConnections(owner: owner, documentID: request.documentID)
+            let retired: ServiceSession? = try lock.access {
+                guard !closedConnections.contains(owner), connectionOwners[request.sessionID] == owner,
+                      retiringSessions.isEmpty else { throw CocoaError(.fileWriteNoPermission) }
+                guard sessions[request.sessionID] == nil, let existing = sessions.values.first else { return nil }
+                guard sessions.count == 1, connectionOwners[existing.request.sessionID] == owner,
+                      existing.request.documentID == request.documentID else { throw CocoaError(.fileWriteNoPermission) }
+                return retire(existing.request.sessionID)
+            }
+            if let retired {
+                finishClosing(retired)
+                guard lock.access({ retiringSessions[retired.request.sessionID] == nil }) else {
+                    throw CocoaError(.fileWriteNoPermission)
+                }
+            }
             let session: ServiceSession = try lock.access {
                 guard !closedConnections.contains(owner), connectionOwners[request.sessionID] == owner,
                       retiringSessions.isEmpty else { throw CocoaError(.fileWriteNoPermission) }
@@ -3012,20 +2742,12 @@ private final class BpyRuntimeService: NSObject, @unchecked Sendable {
                     }
                     return existing
                 }
-                if let existing = sessions.values.first {
-                    guard sessions.count == 1,
-                          connectionOwners[existing.request.sessionID] == owner,
-                          existing.request.documentID == request.documentID else {
-                        throw CocoaError(.fileWriteNoPermission)
-                    }
-                    retired = existing
-                    retiringSessions[existing.request.sessionID] = existing
-                    sessions.removeAll()
-                }
+                guard sessions.isEmpty else { throw CocoaError(.fileWriteNoPermission) }
                 let session = ServiceSession(
                     request: request,
                     root: URL(fileURLWithPath: storage.mountPath).appendingPathComponent(request.sessionID.uuidString),
                     runtimeRoot: runtimeRoot,
+                    monitor: monitor,
                     capacity: capacity,
                     storageDescriptor: descriptor!, storageScope: scope
                 )
@@ -3034,7 +2756,6 @@ private final class BpyRuntimeService: NSObject, @unchecked Sendable {
                 sessions[request.sessionID] = session
                 return session
             }
-            if let retired { finishClosing(retired) }
             session.open { [weak self, weak session] response in
                 let opened = (try? JSONDecoder().decode(BpyServiceResponse.self, from: response).ok) == true
                 openDiagnostics.notice("open.result session=\(request.sessionID.uuidString, privacy: .public) owner=\(owner.uuidString, privacy: .public) ok=\(opened, privacy: .public)")
@@ -3045,7 +2766,9 @@ private final class BpyRuntimeService: NSObject, @unchecked Sendable {
                         self.retiringSessions[request.sessionID] = session
                         return self.sessions.removeValue(forKey: request.sessionID)
                     }
-                    if let removed { self.finishClosing(removed) }
+                    if let removed {
+                        DispatchQueue.global(qos: .utility).async { self.finishClosing(removed) }
+                    }
                 }
                 reply(response)
             }
@@ -3186,21 +2909,47 @@ private final class BpyRuntimeService: NSObject, @unchecked Sendable {
 
     func shutdown(_ data: Data, withReply reply: @escaping (Data) -> Void) {
         let closing = lock.access { () -> [ServiceSession] in
-            Array(sessions.keys).compactMap { retire($0) }
+            Array(Set(sessions.keys).union(retiringSessions.keys)).compactMap { retire($0) }
         }
         closing.forEach { finishClosing($0) }
         let complete = lock.access { retiringSessions.isEmpty }
         reply(complete ? encoded(.init(ok: true)) : failure("session cleanup is still in progress"))
     }
 
+    private func awaitRetiredConnections(owner: UUID, documentID: String) throws {
+        let deadline = ProcessInfo.processInfo.systemUptime + 10
+        while true {
+            let pending = lock.access {
+                (Array(sessions.values) + Array(retiringSessions.values)).filter { session in
+                    connectionOwners[session.request.sessionID] != owner
+                }
+            }
+            if pending.isEmpty { return }
+            guard pending.allSatisfy({ $0.request.documentID == documentID }) else { throw POSIXError(.EPERM) }
+            guard ProcessInfo.processInfo.systemUptime < deadline else { throw POSIXError(.EBUSY) }
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+    }
+
     private func retire(_ id: UUID) -> ServiceSession? {
-        guard let session = sessions.removeValue(forKey: id) else { return nil }
+        guard let session = sessions.removeValue(forKey: id) else { return retiringSessions[id] }
         retiringSessions[id] = session
         return session
     }
 
     private func finishClosing(_ session: ServiceSession) {
-        session.close()
+        guard session.close() else {
+            let id = session.request.sessionID
+            let schedule = lock.access { cleanupScheduled.insert(id).inserted }
+            if schedule {
+                DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1) { [self, session] in
+                    lock.access { _ = cleanupScheduled.remove(id) }
+                    guard lock.access({ retiringSessions[id] === session }) else { return }
+                    finishClosing(session)
+                }
+            }
+            return
+        }
         lock.access {
             let id = session.request.sessionID
             if retiringSessions[id] === session {
@@ -3247,9 +2996,11 @@ private final class BpyRuntimeConnection: NSObject, BpyRuntimeServiceProtocol, @
     private var sessionIDs = Set<UUID>()
     private var invalidated = false
     private let ownerID = UUID()
+    private weak var connection: NSXPCConnection?
 
-    init(service: BpyRuntimeService) {
+    init(service: BpyRuntimeService, connection: NSXPCConnection) {
         self.service = service
+        self.connection = connection
     }
 
     func runBoundaryProbe(_ request: Data, withReply reply: @escaping (Data) -> Void) {
@@ -3257,7 +3008,15 @@ private final class BpyRuntimeConnection: NSObject, BpyRuntimeServiceProtocol, @
             reply(failure("XPC connection is unavailable"))
             return
         }
-        service.runBoundaryProbe(request, withReply: reply)
+        guard let connection, let decoded = try? JSONDecoder().decode(BpyBoundaryProbeRequest.self, from: request) else {
+            reply(failure("XPC connection is unavailable"))
+            return
+        }
+        let monitor = BpyServiceMonitor(connection: connection, transport: decoded.nonce)
+        let callback = ResponseCallback(reply)
+        DispatchQueue.global(qos: .userInitiated).async { [self] in
+            service.runBoundaryProbe(request, monitor: monitor, withReply: callback.body)
+        }
     }
 
     private func owns<T: Decodable>(
@@ -3275,22 +3034,28 @@ private final class BpyRuntimeConnection: NSObject, BpyRuntimeServiceProtocol, @
             reply(failure("XPC connection is unavailable"))
             return
         }
-        service.openSession(request, owner: ownerID) { [self] response in
-            guard (try? JSONDecoder().decode(BpyServiceResponse.self, from: response).ok) == true else {
-                reply(response)
-                return
+        guard let connection else { reply(failure("XPC connection is unavailable")); return }
+        let monitor = BpyServiceMonitor(connection: connection, transport: value.sessionID)
+        let callback = ResponseCallback(reply)
+        DispatchQueue.global(qos: .userInitiated).async { [self] in
+            guard lock.access({ !invalidated }) else { callback.body(failure("XPC connection is unavailable")); return }
+            service.openSession(request, owner: ownerID, monitor: monitor) { [self] response in
+                guard (try? JSONDecoder().decode(BpyServiceResponse.self, from: response).ok) == true else {
+                    callback.body(response)
+                    return
+                }
+                let accepted = lock.access { () -> Bool in
+                    guard !invalidated else { return false }
+                    sessionIDs.insert(value.sessionID)
+                    return true
+                }
+                guard accepted else {
+                    service.invalidateSessions([value.sessionID], owner: ownerID)
+                    callback.body(failure("XPC connection is unavailable"))
+                    return
+                }
+                callback.body(response)
             }
-            let accepted = lock.access { () -> Bool in
-                guard !invalidated else { return false }
-                sessionIDs.insert(value.sessionID)
-                return true
-            }
-            guard accepted else {
-                service.invalidateSessions([value.sessionID], owner: ownerID)
-                reply(failure("XPC connection is unavailable"))
-                return
-            }
-            reply(response)
         }
     }
 
@@ -3355,7 +3120,10 @@ private final class BpyRuntimeConnection: NSObject, BpyRuntimeServiceProtocol, @
             reply(failure("XPC session is unavailable"))
             return
         }
-        service.cancelJob(request, owner: ownerID, withReply: reply)
+        let callback = ResponseCallback(reply)
+        DispatchQueue.global(qos: .userInitiated).async { [self] in
+            service.cancelJob(request, owner: ownerID, withReply: callback.body)
+        }
     }
 
     func closeSession(_ request: Data, withReply reply: @escaping (Data) -> Void) {
@@ -3364,11 +3132,14 @@ private final class BpyRuntimeConnection: NSObject, BpyRuntimeServiceProtocol, @
             reply(failure("XPC session is unavailable"))
             return
         }
-        service.closeSession(request, owner: ownerID) { [self] response in
-            if (try? JSONDecoder().decode(BpyServiceResponse.self, from: response).ok) == true {
-                lock.access { _ = sessionIDs.remove(value.sessionID) }
+        let callback = ResponseCallback(reply)
+        DispatchQueue.global(qos: .userInitiated).async { [self] in
+            service.closeSession(request, owner: ownerID) { [self] response in
+                if (try? JSONDecoder().decode(BpyServiceResponse.self, from: response).ok) == true {
+                    lock.access { _ = sessionIDs.remove(value.sessionID) }
+                }
+                callback.body(response)
             }
-            reply(response)
         }
     }
 
@@ -3377,9 +3148,12 @@ private final class BpyRuntimeConnection: NSObject, BpyRuntimeServiceProtocol, @
             invalidated = true
             return sessionIDs
         }
-        let complete = service.invalidateConnection(owner: ownerID)
-        if complete { lock.access { sessionIDs.subtract(identifiers) } }
-        reply(complete ? encoded(.init(ok: true)) : failure("session cleanup is still in progress"))
+        let callback = ResponseCallback(reply)
+        DispatchQueue.global(qos: .userInitiated).async { [self] in
+            let complete = service.invalidateConnection(owner: ownerID)
+            if complete { lock.access { sessionIDs.subtract(identifiers) } }
+            callback.body(complete ? encoded(.init(ok: true)) : failure("session cleanup is still in progress"))
+        }
     }
 
     func invalidate() {
@@ -3387,7 +3161,9 @@ private final class BpyRuntimeConnection: NSObject, BpyRuntimeServiceProtocol, @
             invalidated = true
             sessionIDs.removeAll()
         }
-        _ = service.invalidateConnection(owner: ownerID)
+        DispatchQueue.global(qos: .userInitiated).async { [self] in
+            _ = service.invalidateConnection(owner: ownerID)
+        }
     }
 }
 
@@ -3398,7 +3174,8 @@ private final class ListenerDelegate: NSObject, NSXPCListenerDelegate {
         _ listener: NSXPCListener,
         shouldAcceptNewConnection connection: NSXPCConnection
     ) -> Bool {
-        let exported = BpyRuntimeConnection(service: service)
+        let exported = BpyRuntimeConnection(service: service, connection: connection)
+        connection.remoteObjectInterface = NSXPCInterface(with: BpyHostMonitorProtocol.self)
         connection.exportedInterface = NSXPCInterface(with: BpyRuntimeServiceProtocol.self)
         connection.exportedObject = exported
         connection.interruptionHandler = { [weak exported] in exported?.invalidate() }

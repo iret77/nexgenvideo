@@ -1,4 +1,5 @@
 import hashlib
+import json
 import plistlib
 import shutil
 import subprocess
@@ -79,24 +80,28 @@ class AppSigningTests(unittest.TestCase):
         for helper in ["Downloader", "Installer"]:
             self.bundle(version / "XPCServices" / f"{helper}.xpc", helper, "XPC!")
         if runtime_mode != "omitted":
-            self.copy_binary(contents / "Helpers/NexGenVideoBpySupervisor")
             self.copy_binary(contents / "Helpers/NexGenVideoBpyStorage")
             for slot in range(2):
                 self.bundle(contents / "XPCServices" / f"NexGenVideoBpyService{slot}.xpc",
                             "NexGenVideoBpyService", "XPC!")
+        if runtime_mode != "omitted":
+            for slot in range(2):
+                self.copy_binary(contents / f"XPCServices/NexGenVideoBpyService{slot}.xpc/Contents/MacOS/NexGenVideoBpySupervisor")
         if runtime_mode == "full":
-            runtime = contents / "Resources/BpyRuntime"
-            self.copy_binary(runtime / "python/bin/python3.13")
-            (runtime / "python/bin/python3").symlink_to("python3.13")
-            self.copy_binary(runtime / "python/lib/libpython3.13.dylib", library=True)
-            self.copy_binary(runtime / "python/lib/python3.13/lib-dynload/fixture.so", extension=True)
-            self.copy_binary(runtime / "site-packages/bpy/__init__.so", extension=True)
-            for relative in ["python/include/python3.13/Python.h", "python/lib/python3.13/fixture.py",
-                             "site-packages/bpy-5.2.2.dist-info/RECORD", "worker.py", "PYTHON.json",
-                             ".complete", "licenses/python/LICENSE"]:
-                path = runtime / relative
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text("signing fixture data\n")
+            (contents / "Resources/BpyRuntimeCompliance").mkdir()
+            for slot in range(2):
+                runtime = contents / f"XPCServices/NexGenVideoBpyService{slot}.xpc/Contents/Resources/BpyRuntime"
+                self.copy_binary(runtime / "python/bin/python3.13")
+                (runtime / "python/bin/python3").symlink_to("python3.13")
+                self.copy_binary(runtime / "python/lib/libpython3.13.dylib", library=True)
+                self.copy_binary(runtime / "python/lib/python3.13/lib-dynload/fixture.so", extension=True)
+                self.copy_binary(runtime / "site-packages/bpy/__init__.so", extension=True)
+                for relative in ["python/include/python3.13/Python.h", "python/lib/python3.13/fixture.py",
+                                 "site-packages/bpy-5.2.2.dist-info/RECORD", "worker.py", "PYTHON.json",
+                                 ".complete", "licenses/python/LICENSE"]:
+                    path = runtime / relative
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text("signing fixture data\n")
         return app
 
     def verify(self, app):
@@ -121,8 +126,11 @@ class AppSigningTests(unittest.TestCase):
         for mode in ["dev", "fast"]:
             with self.subTest(mode=mode):
                 app = self.app(mode, "full")
-                header = app / "Contents/Resources/BpyRuntime/python/include/python3.13/Python.h"
+                header = app / "Contents/XPCServices/NexGenVideoBpyService0.xpc/Contents/Resources/BpyRuntime/python/include/python3.13/Python.h"
                 original = hashlib.sha256(header.read_bytes()).hexdigest()
+                self.run_command([ROOT / "scripts/sign_app.sh", app, mode, "full", "-"])
+                self.verify(app)
+                validate(app, development=True)
                 self.run_command([ROOT / "scripts/sign_app.sh", app, mode, "full", "-"])
                 self.verify(app)
                 validate(app, development=True)
@@ -130,8 +138,35 @@ class AppSigningTests(unittest.TestCase):
                 self.assertEqual(entitlements(app / "Contents/Helpers/NexGenVideoDiagnostics"), {})
                 self.assertFalse((app / "Contents/Helpers/BpyRuntime").exists())
                 header.write_text("changed after signing\n")
-                tampered = self.run_command(["codesign", "--verify", "--strict", app], check=False)
+                tampered = self.run_command(["codesign", "--verify", "--deep", "--strict", app], check=False)
                 self.assertNotEqual(tampered.returncode, 0)
+
+    def test_bundling_preserves_hidden_payload_and_shares_compliance(self):
+        app = self.app("bundled", "omitted")
+        stage = self.root / "stage"
+        (stage / "python/bin").mkdir(parents=True)
+        self.copy_binary(stage / "python/bin/python3.13")
+        (stage / "python/bin/python3").symlink_to("python3.13")
+        lock = json.loads((ROOT / "Runtime/bpy/runtime-lock.json").read_text())
+        self.copy_binary(stage / "site-packages" / lock["bpyWheelLayout"]["entryPoint"], extension=True)
+        for relative in [".complete", ".hidden", ".metadata/source", "licenses/LICENSE",
+                         "corresponding-source/archive", "runtime-lock.json"]:
+            path = stage / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"retained stage bytes")
+        binaries = self.root / "binaries"
+        for name in ["NexGenVideoBpyService", "NexGenVideoBpySupervisor", "NexGenVideoBpyStorage"]:
+            self.copy_binary(binaries / name)
+        self.run_command([ROOT / "scripts/bundle_bpy_runtime.sh", stage, binaries / "NexGenVideoBpyService", app])
+        for slot in range(2):
+            runtime = app / f"Contents/XPCServices/NexGenVideoBpyService{slot}.xpc/Contents/Resources/BpyRuntime"
+            for relative in [".complete", ".hidden", ".metadata/source"]:
+                self.assertEqual((runtime / relative).read_bytes(), b"retained stage bytes")
+            self.assertFalse((runtime / "licenses").exists())
+            self.assertFalse((runtime / "corresponding-source").exists())
+        compliance = app / "Contents/Resources/BpyRuntimeCompliance"
+        self.assertEqual((compliance / "licenses/LICENSE").read_bytes(), b"retained stage bytes")
+        self.assertEqual((compliance / "corresponding-source/archive").read_bytes(), b"retained stage bytes")
 
     def test_nonproduct_development_modes_keep_their_signing_boundaries(self):
         for runtime_mode in ["boundary", "omitted"]:
@@ -142,12 +177,12 @@ class AppSigningTests(unittest.TestCase):
                 self.assertFalse((app / "Contents/Resources/BpyRuntime").exists())
                 self.assertFalse((app / "Contents/Helpers/BpyRuntime").exists())
                 if runtime_mode == "boundary":
-                    self.assertEqual(entitlements(app / "Contents/Helpers/NexGenVideoBpySupervisor"),
-                                     {SANDBOX: True, INHERIT: True})
                     self.assertEqual(entitlements(app / "Contents/Helpers/NexGenVideoBpyStorage"), {})
                     for slot in range(2):
                         service = app / "Contents/XPCServices" / f"NexGenVideoBpyService{slot}.xpc"
                         self.assertEqual(entitlements(service), {SANDBOX: True})
+                        self.assertEqual(entitlements(service / "Contents/MacOS/NexGenVideoBpySupervisor"),
+                                         {SANDBOX: True, INHERIT: True})
 
 
 if __name__ == "__main__":

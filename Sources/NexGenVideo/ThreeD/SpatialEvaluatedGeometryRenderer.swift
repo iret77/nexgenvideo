@@ -1,3 +1,4 @@
+import BpyRuntimeProtocol
 import Foundation
 import NexGenEngine
 
@@ -33,7 +34,7 @@ enum SpatialEvaluatedGeometryRenderer {
         try geometry.validate(state: state, scene: scene)
         try geometry.validateFiles(files)
         try geometry.validateRecordedSources(files, state: state, scene: scene,
-            runtimeRoot: Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/BpyRuntime"))
+            runtimeRoot: BpyRuntimeBundleLayout(app: Bundle.main.bundleURL, serviceName: bpyRuntimeServiceNames[0]).runtime)
     }
 
     static func prepare(state: SpatialClayState, revision: SpatialSceneRevision,

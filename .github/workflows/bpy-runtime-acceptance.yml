@@ -33,7 +33,7 @@ jobs:
   runtime:
     # ci-lint: allow-CI005 Runtime evidence requires the released macOS 26 floor.
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: 43
     steps:
       - name: Reserve time for failure diagnostics and evidence upload
         run: echo "NGV_BPY_DIAGNOSTIC_DEADLINE=$(( $(date +%s) + 27 * 60 ))" >> "$GITHUB_ENV"
@@ -155,12 +155,12 @@ jobs:
               exit 1
             fi
             for _ in $(seq 1 200); do
-              if ! pgrep -f "$APP/Contents/Helpers/NexGenVideoBpySupervisor|$APP/Contents/Resources/BpyRuntime/python" >/dev/null; then
+              if ! pgrep -f "$APP/Contents/XPCServices/NexGenVideoBpyService[01]\.xpc/Contents/(MacOS/NexGenVideoBpySupervisor|Resources/BpyRuntime/python)" >/dev/null; then
                 break
               fi
               sleep 0.05
             done
-            if pgrep -f "$APP/Contents/Helpers/NexGenVideoBpySupervisor|$APP/Contents/Resources/BpyRuntime/python" >/dev/null; then
+            if pgrep -f "$APP/Contents/XPCServices/NexGenVideoBpyService[01]\.xpc/Contents/(MacOS/NexGenVideoBpySupervisor|Resources/BpyRuntime/python)" >/dev/null; then
               echo "orphan bpy process after $mode" >&2
               exit 1
             fi
@@ -232,6 +232,7 @@ jobs:
             and .closeBeforeOpenReleased == true
             and .forgedResultState == "timedOut"
             and .cancelState == "cancelled"
+            and .transportTimeoutRecovered == true
             and .rlimitASAllocationDenied == true
             and (.outOfMemoryState == "failed" or .outOfMemoryState == "resourceLimited")
             and .structuralLimitState == "resourceLimited"
@@ -360,7 +361,7 @@ jobs:
           ' "$EVIDENCE/result.json"
           python3 scripts/production_spatial_ui_evidence.py "$EVIDENCE"
           "$RUNNER_TEMP/panorama-parser/bin/python" scripts/retained_spatial_evidence.py "$EVIDENCE"
-          python3 scripts/spatial_evaluated_geometry_evidence.py "$EVIDENCE" --runtime-root "$APP/Contents/Resources/BpyRuntime"
+          python3 scripts/spatial_evaluated_geometry_evidence.py "$EVIDENCE" --runtime-root "$APP/Contents/XPCServices/NexGenVideoBpyService0.xpc/Contents/Resources/BpyRuntime"
           python3 scripts/bpy_protocol_evidence.py "$EVIDENCE" --app "$APP"
           python3 scripts/bpy_worker_evidence.py "$EVIDENCE"
           test -s "$EVIDENCE/perspective.png"
@@ -383,6 +384,13 @@ jobs:
           after="$(pgrep -f 'BpyRuntime/python' || true)"
           [ -z "$after" ] || { echo "orphan bpy workers: $after"; exit 1; }
           du -sk "$APP" > "$EVIDENCE/app-size-kib.txt"
+      - name: Prove both sandbox boundary slots using an explicitly derived fixture
+        timeout-minutes: 12
+        env:
+          EXPECTED_SOURCE: ${{ inputs.expected_source_sha || github.sha }}
+        run: |
+          python3 scripts/bpy_boundary_acceptance.py "$RUNNER_TEMP/relocated/NexGenVideo.app" \
+            --source-sha "$EXPECTED_SOURCE" --output "$RUNNER_TEMP/evidence/boundary"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

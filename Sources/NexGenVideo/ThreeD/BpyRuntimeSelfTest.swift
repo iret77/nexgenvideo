@@ -128,8 +128,18 @@ enum BpyRuntimeSelfTest {
     }
 
     private static func runBoundaryProbe(outputPath: String) throws {
-        let connection = NSXPCConnection(serviceName: bpyRuntimeServiceNames[0])
+        for slot in bpyRuntimeServiceNames.indices {
+            try runBoundaryProbe(outputPath: outputPath + ".slot\(slot).json", slot: slot)
+        }
+    }
+
+    private static func runBoundaryProbe(outputPath: String, slot: Int) throws {
+        let connection = NSXPCConnection(serviceName: bpyRuntimeServiceNames[slot])
         connection.remoteObjectInterface = NSXPCInterface(with: BpyRuntimeServiceProtocol.self)
+        let nonce = UUID()
+        let layout = try BpyRuntimeBundleLayout(app: Bundle.main.bundleURL, serviceName: bpyRuntimeServiceNames[slot])
+        connection.exportedInterface = NSXPCInterface(with: BpyHostMonitorProtocol.self)
+        connection.exportedObject = BpyHostMonitor(connection: connection, transport: nonce, layout: layout)
         let box = BpyBoundaryReplyBox()
         let finished = DispatchSemaphore(value: 0)
         connection.resume()
@@ -140,7 +150,6 @@ enum BpyRuntimeSelfTest {
         }) as? BpyRuntimeServiceProtocol else {
             throw BpyRuntimeError.unavailable("The boundary XPC service is unavailable.")
         }
-        let nonce = UUID()
         service.runBoundaryProbe(
             try JSONEncoder().encode(BpyBoundaryProbeRequest(nonce: nonce))
         ) { response in
@@ -189,7 +198,17 @@ enum BpyRuntimeSelfTest {
               result.healthyFollowupSucceeded else {
             throw BpyRuntimeError.invalidOutput("The signed boundary probe did not prove every denial and cleanup invariant.")
         }
-        try data.write(to: URL(fileURLWithPath: outputPath), options: .atomic)
+        guard let peer = try BpyKernelInspection.process(connection.processIdentifier),
+              peer.pid == result.serviceProcessIdentifier, peer.start == result.serviceStartAbsoluteTime,
+              peer.executable == (try BpyRuntimePath.canonical(layout.service.appendingPathComponent("Contents/MacOS/NexGenVideoBpyService"))),
+              var proof = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw BpyRuntimeError.invalidOutput("The boundary reply does not match its service slot.")
+        }
+        proof["slot"] = slot
+        proof["serviceName"] = bpyRuntimeServiceNames[slot]
+        proof["serviceExecutable"] = peer.executable
+        try JSONSerialization.data(withJSONObject: proof, options: [.sortedKeys])
+            .write(to: URL(fileURLWithPath: outputPath), options: .atomic)
     }
 
     private static func runHostCrashProbe(mode: String) throws {
@@ -435,6 +454,8 @@ enum BpyRuntimeSelfTest {
         )
         let hostJobSeconds = Date().timeIntervalSince(firstStarted)
         guard first.response.state == .awaitingConfirmation,
+              (first.response.metrics["worker_host_monitor_samples"] ?? 0) > 0,
+              (first.response.metrics["verifier_host_monitor_samples"] ?? 0) > 0,
               first.stagedOutputs["scene.blend"] != nil,
               let render = first.stagedOutputs["render.png"],
               let verificationURL = first.stagedOutputs["verification.json"] else {
@@ -553,6 +574,8 @@ enum BpyRuntimeSelfTest {
             diagnosticDeniedPaths: [firstSessionRoot]
         )
         guard secondDocument.response.state == .awaitingConfirmation,
+              (secondDocument.response.metrics["worker_host_monitor_samples"] ?? 0) > 0,
+              (secondDocument.response.metrics["verifier_host_monitor_samples"] ?? 0) > 0,
               let secondVerificationURL = secondDocument.stagedOutputs["verification.json"] else {
             throw BpyRuntimeError.invalidOutput("The second document did not complete.")
         }
@@ -606,6 +629,43 @@ enum BpyRuntimeSelfTest {
               cancelResult.response.state == .cancelled else {
             throw BpyRuntimeError.invalidOutput("Cancellation did not stop the active process.")
         }
+
+        let transportJobID = UUID()
+        let transportBox = BpySelfTestBox()
+        DispatchQueue.global(qos: .userInitiated).async {
+            transportBox.store(Result {
+                try sessionA.runJob(id: transportJobID, expectedRevision: "revision-b",
+                                    source: "while True: pass", timeoutSeconds: 30)
+            })
+        }
+        try waitUntilRunning(sessionA, jobID: transportJobID)
+        let authorizationDeadline = ProcessInfo.processInfo.systemUptime + 10
+        while true {
+            let status = try sessionA.status(jobID: transportJobID)
+            if status.activeProcessIdentifier != nil, status.activeProcessStartAbsoluteTime != nil,
+               status.activeProcessExecutable != nil, status.activeWorkerProcessIdentifier != nil,
+               status.activeProcessAuthorizationID == nil { break }
+            guard ProcessInfo.processInfo.systemUptime < authorizationDeadline else { throw BpyRuntimeError.timedOut }
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        let droppedReply = try sessionA.nativeDroppedStatusReplyProbe(jobID: transportJobID)
+        try droppedReply.write(to: output.appendingPathComponent("native-dropped-reply.json"), options: .atomic)
+        guard await transportBox.wait(timeout: .seconds(10)), let lostTransport = transportBox.load() else {
+            throw BpyRuntimeError.invalidOutput("The lost transport did not settle the prior job.")
+        }
+        if case .success(let result) = lostTransport,
+           result.response.state == .awaitingConfirmation || result.response.state == .confirmed {
+            throw BpyRuntimeError.invalidOutput("A transport-lost job became a candidate.")
+        }
+        let transportReady = try sessionA.ready()
+        guard transportReady.confirmedRevision == "revision-b" else {
+            throw BpyRuntimeError.invalidOutput("Transport recovery lost the confirmed checkpoint.")
+        }
+        let afterTransportID = UUID()
+        let afterTransport = try sessionA.runJob(id: afterTransportID, expectedRevision: "revision-b",
+                                               source: inspectionSource(label: "after-dropped-reply"))
+        try assertRecovered(afterTransport, label: "dropped XPC reply")
+        _ = try sessionA.cancel(jobID: afterTransportID)
 
         let threadID = UUID()
         let threadResult = try sessionA.runJob(
@@ -1227,6 +1287,8 @@ enum BpyRuntimeSelfTest {
             "nativeProtocolEvidenceFile": "native-protocol-evidence.json",
             "forgedResultState": forged.response.state?.rawValue ?? "",
             "cancelState": cancelResult.response.state?.rawValue ?? "",
+            "transportTimeoutRecovered": afterTransport.response.state == .awaitingConfirmation,
+            "droppedReplyEvidenceSHA256": FileDigest.sha256(of: droppedReply),
             "rlimitASAllocationDenied": true,
             "outOfMemoryState": outOfMemory.response.state?.rawValue ?? "",
             "untrustedExitEvidenceFile": "native-untrusted-exits.json",
@@ -1282,9 +1344,7 @@ enum BpyRuntimeSelfTest {
         )
         defer { session.close() }
         _ = try session.ready()
-        let script = try String(contentsOf: Bundle.main.bundleURL.appendingPathComponent(
-            "Contents/Resources/BpyRuntime/storage_probe.py"
-        ), encoding: .utf8)
+        let script = try String(contentsOf: session.bundledRuntimeRoot.appendingPathComponent("storage_probe.py"), encoding: .utf8)
         var proofs: [[String: Any]] = []
         for mode in ["fileport", "memory-entry", "scm-rights"] {
             let jobID = UUID()

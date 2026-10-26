@@ -72,14 +72,14 @@ let package = Package(
             cSettings: [.unsafeFlags(["-fobjc-arc"])],
             linkerSettings: [.linkedFramework("AppKit")]
         ),
-        .target(name: "BpyRuntimeProtocol", path: "Sources/BpyRuntimeProtocol"),
+        .target(name: "BpyRuntimeProtocol", dependencies: ["BpySupervisorPOSIX"], path: "Sources/BpyRuntimeProtocol"),
         .target(name: "BpySupervisorPOSIX", path: "Sources/BpySupervisorPOSIX"),
         .executableTarget(
             name: "NexGenVideoBpyService", dependencies: ["BpyRuntimeProtocol"],
             path: "Sources/NexGenVideoBpyService", linkerSettings: [.linkedLibrary("proc", .when(platforms: [.macOS]))]
         ),
         .executableTarget(
-            name: "NexGenVideoBpySupervisor", dependencies: ["BpySupervisorPOSIX"], path: "Sources/NexGenVideoBpySupervisor",
+            name: "NexGenVideoBpySupervisor", dependencies: ["BpyRuntimeProtocol", "BpySupervisorPOSIX"], path: "Sources/NexGenVideoBpySupervisor",
             linkerSettings: [.linkedLibrary("proc", .when(platforms: [.macOS]))]
         ),
         .executableTarget(

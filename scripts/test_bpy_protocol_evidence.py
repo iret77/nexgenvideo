@@ -5,7 +5,7 @@ import json
 import unittest
 from pathlib import Path
 
-from bpy_protocol_evidence import CHUNK_BYTES, fingerprint, validate, validate_storage_refusals
+from bpy_protocol_evidence import CHUNK_BYTES, fingerprint, validate, validate_storage_refusals, validate_dropped_reply
 
 
 def encoded(value):
@@ -84,7 +84,7 @@ def fixture(*, restored=b"restored", completed_by_authorization=False):
     common = dict(ok=True, jobID=staged, jobFingerprint=request["fingerprint"])
     needs_authorization = dict(common, state="running", activeProcessAuthorizationID=unknown,
         activeProcessIdentifier=456, activeProcessStartAbsoluteTime=200,
-        activeProcessExecutable="/parser-fixture.app/Contents/Helpers/NexGenVideoBpySupervisor")
+        activeProcessExecutable="/parser-fixture.app/Contents/XPCServices/NexGenVideoBpyService0.xpc/Contents/MacOS/NexGenVideoBpySupervisor")
     authorize = dict(status, authorizationID=unknown, processIdentifier=456, processStartAbsoluteTime=200,
                      processExecutable=needs_authorization["activeProcessExecutable"])
     completion = [dict(method="jobStatus", request=encoded(status), response=encoded(needs_authorization)),
@@ -282,6 +282,18 @@ class ProtocolEvidenceTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.check(evidence)
 
+    def test_authorization_rejects_outer_bundle_and_unknown_service_slot(self):
+        for path in ("/parser-fixture.app/Contents/Helpers/NexGenVideoBpySupervisor",
+                     "/parser-fixture.app/Contents/XPCServices/NexGenVideoBpyService2.xpc/Contents/MacOS/NexGenVideoBpySupervisor"):
+            with self.subTest(path=path):
+                evidence = fixture()
+                pending = decoded(evidence["completion"][0]["response"])
+                evidence["completion"][0]["response"] = encoded(dict(pending, activeProcessExecutable=path))
+                request = decoded(evidence["completion"][1]["request"])
+                evidence["completion"][1]["request"] = encoded(dict(request, processExecutable=path))
+                with self.assertRaisesRegex(ValueError, "actual supervisor identity"):
+                    self.check(evidence)
+
     def test_actual_multichunk_restore_and_exact_last_replay(self):
         restored = b"a" * CHUNK_BYTES + b"tail"
         self.check(fixture(restored=restored), restored)
@@ -390,6 +402,56 @@ class ProtocolEvidenceTests(unittest.TestCase):
         order[first], order[second] = order[second], order[first]
         with self.assertRaises(ValueError):
             self.check(evidence)
+
+
+class DroppedReplyTests(unittest.TestCase):
+    app = Path("/fixture/NexGenVideo.app")
+
+    def receipt(self):
+        service = self.app / "Contents/XPCServices/NexGenVideoBpyService0.xpc/Contents/MacOS/NexGenVideoBpyService"
+        job = "AAAAAAAA-BBBB-CCCC-DDDD-000000000001"
+        return dict(schema="nexgenvideo/bpy-dropped-reply/1", servicePID=101, serviceStart=10001,
+                    serviceExecutable=str(service), jobID=job,
+                    transport="AAAAAAAA-BBBB-CCCC-DDDD-000000000002",
+                    response=encoded(dict(ok=True, state="running", jobID=job,
+                        runtime=dict(serviceProcessIdentifier=101), activeProcessIdentifier=102,
+                        activeWorkerProcessIdentifier=103, activeProcessStartAbsoluteTime=10002,
+                        activeProcessExecutable=str(service.with_name("NexGenVideoBpySupervisor")))))
+
+    def check(self, receipt, **changes):
+        raw = json.dumps(receipt).encode()
+        result = dict(droppedReplyEvidenceSHA256=hashlib.sha256(raw).hexdigest(), transportTimeoutRecovered=True)
+        result.update(changes)
+        validate_dropped_reply(raw, result, self.app)
+
+    def test_live_reply_and_actual_recovery_are_both_required(self):
+        receipt = self.receipt()
+        self.check(receipt)
+        for changes in [dict(transportTimeoutRecovered=False), dict(droppedReplyEvidenceSHA256="0" * 64)]:
+            with self.assertRaises(ValueError):
+                self.check(receipt, **changes)
+
+    def test_forged_or_incomplete_response_is_rejected_even_with_matching_hash(self):
+        for key, value in [("ok", False), ("state", "accepted"), ("jobID", "AAAAAAAA-BBBB-CCCC-DDDD-000000000003"),
+                           ("runtime", {"serviceProcessIdentifier": 104}), ("activeProcessIdentifier", True),
+                           ("activeWorkerProcessIdentifier", None), ("activeWorkerProcessIdentifier", 102),
+                           ("activeProcessStartAbsoluteTime", 0), ("activeProcessExecutable", "/foreign/supervisor"),
+                           ("activeProcessAuthorizationID", "not-authorized")]:
+            receipt = self.receipt()
+            response = decoded(receipt["response"])
+            response[key] = value
+            receipt["response"] = encoded(response)
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                self.check(receipt)
+
+    def test_receipt_requires_kernel_identity_and_exact_slot(self):
+        for key, value in [("schema", "unknown"), ("servicePID", True), ("serviceStart", 0),
+                           ("serviceExecutable", "/foreign/service"), ("jobID", "invalid"),
+                           ("transport", "invalid"), ("response", "not base64")]:
+            receipt = self.receipt()
+            receipt[key] = value
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                self.check(receipt)
 
 
 if __name__ == "__main__":
