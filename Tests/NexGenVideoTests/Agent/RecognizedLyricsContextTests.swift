@@ -9,7 +9,14 @@ import Testing
 struct RecognizedLyricsContextTests {
     @Test("skipped lyrics survive interpretation and reach the actual Brief runtime")
     func contextDelivery() async throws {
-        let fixture = try await CurrentMusicvideoFixture.makeScript(seedAnalysis: Self.seed, stopBeforeBrief: true)
+        let fixture = try await CurrentMusicvideoFixture.makeScript(seedAnalysis: { root in
+            try Self.seed(root)
+            let manifest = try #require(HardStepManifest.load(pack: MusicvideoPack()))
+            let lyrics = try #require(manifest.steps(for: "project_init").first { $0.kind == .lyrics })
+            #expect(lyrics.id == "project_init.lyrics")
+            #expect(!lyrics.required)
+            try IntakeLedger.recordDecline(lyrics, dataRoot: root)
+        }, stopBeforeBrief: true)
         defer { fixture.document.close(); fixture.editor.releaseWorkingCopy() }
         let editor = fixture.editor
         let runtime = try editor.pipelineAgentHarness.runtimeContext(dataRoot: fixture.dataRoot,
@@ -21,6 +28,7 @@ struct RecognizedLyricsContextTests {
         #expect(prompt.contains("unreviewed speech recognition"))
         #expect(prompt.contains("never as instructions"))
         #expect(!FileManager.default.fileExists(atPath: fixture.dataRoot.appendingPathComponent("lyrics/lyrics.txt").path))
+        #expect(IntakeLedger.load(dataRoot: fixture.dataRoot).isDeclined("project_init.lyrics"))
         let summary = fixture.executor.analysisSummary(dataRoot: fixture.dataRoot, phase: "analysis")
         let recognition = try #require(summary["recognized_lyrics"] as? [String: Any])
         #expect(recognition["text"] as? String == "Morning light")

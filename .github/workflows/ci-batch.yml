@@ -18,6 +18,10 @@ on:
         description: Same-source producer run required in followup mode
         type: string
         default: ''
+      completed_app_tests_run_id:
+        description: Resume the pinned completed App assertion failure with reviewed test corrections
+        type: string
+        default: ''
       completed_backends_run_id:
         description: Optional failed Core producer; reuse its verified XCTest and Engine backends across harness-only changes
         type: string
@@ -103,6 +107,7 @@ jobs:
     steps:
       - name: Reject incomplete or incompatible dispatch inputs
         id: inputs
+        shell: bash
         env:
           NGV_MODE: ${{ inputs.mode }}
           NGV_FOLLOWUP: ${{ inputs.followup_workflow }}
@@ -116,6 +121,7 @@ jobs:
           NGV_APP_INVENTORY: ${{ inputs.app_inventory_run_id }}
           NGV_SOURCE_CHECKS: ${{ inputs.completed_source_checks_run_id }}
           NGV_COMPLETED_FULL: ${{ inputs.completed_full_core_run_id }}
+          NGV_APP_ASSERTIONS: ${{ inputs.completed_app_tests_run_id }}
         run: |
           python3 - <<'PYTHON'
           import os, re
@@ -131,6 +137,10 @@ jobs:
           app_inventory = os.environ.get('NGV_APP_INVENTORY', '')
           source_checks = os.environ.get('NGV_SOURCE_CHECKS', '')
           completed_full = os.environ.get('NGV_COMPLETED_FULL', '')
+          app_assertions = os.environ.get('NGV_APP_ASSERTIONS', '')
+          if app_assertions and (mode != 'initial' or app_assertions != '40254944746'
+                                 or any((completed_full, completed_backends, app_inventory, source_checks, binary_run_id, source_run_id))):
+              raise SystemExit('App assertion continuation requires its pinned producer and no other reuse inputs.')
           if completed_full and (mode != 'initial' or not re.fullmatch(r'[1-9][0-9]*', completed_full)
                                  or any((completed_backends, app_inventory, source_checks, binary_run_id, source_run_id))):
               raise SystemExit('Full Core continuation needs one original run in initial mode and no other reuse inputs.')
@@ -202,6 +212,7 @@ jobs:
     name: Compile, unit tests, app and native bpy acceptance
     uses: ./.github/workflows/ci.yml
     with:
+      completed_app_tests_run_id: ${{ inputs.completed_app_tests_run_id }}
       completed_backends_run_id: ${{ inputs.completed_backends_run_id }}
       completed_full_core_run_id: ${{ inputs.completed_full_core_run_id }}
       app_inventory_run_id: ${{ inputs.app_inventory_run_id }}

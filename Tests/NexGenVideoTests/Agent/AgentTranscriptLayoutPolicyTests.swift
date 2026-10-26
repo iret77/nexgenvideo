@@ -156,13 +156,19 @@ struct AgentTranscriptLayoutPolicyTests {
         #expect(implementation.contains("service.cancelRunningSpend()"))
     }
 
-    @Test func runningTranscriptActivityRetainsAnActiveStatusIndicator() throws {
+    @Test @MainActor func runningTranscriptActivityRetainsAnActiveStatusIndicator() throws {
         let panel = try agentPanelSource()
         let state = try sourceFile(
             "Sources/NexGenVideo/Agent/Panel/AgentSurfaceState.swift"
         )
-        #expect(panel.contains("streamHasTranscriptActivity: activityVisible"))
-        #expect(panel.contains("phaseHasTranscriptActivity: activityVisible"))
+        #expect(panel.contains("AgentSurfaceState.resolve(.current(editor: editor,"))
+        #expect(panel.contains("hasTranscriptActivity: runningTranscriptActivity != nil"))
+        let editor = EditorViewModel()
+        for hasActivity in [false, true] {
+            let input = AgentSurfaceState.Input.current(editor: editor, hasTranscriptActivity: hasActivity)
+            #expect(input.streamHasTranscriptActivity == hasActivity)
+            #expect(input.phaseHasTranscriptActivity == hasActivity)
+        }
         #expect(state.contains("case .phaseRun: input.phaseHasTranscriptActivity"))
         #expect(state.contains("case .stream: input.streamHasTranscriptActivity"))
         let statusStart = try #require(panel.range(of: "private var liveStatus:"))
