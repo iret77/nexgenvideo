@@ -2,6 +2,12 @@ name: Native Acceptance Probes
 
 on:
   workflow_dispatch:
+    inputs:
+      scope:
+        description: Existing native probes or isolated owned-child diagnosis
+        type: choice
+        options: [native, owned-child]
+        default: native
 
 permissions:
   contents: read
@@ -12,6 +18,7 @@ concurrency:
 
 jobs:
   build:
+    if: inputs.scope != 'owned-child'
     runs-on: macrunner
     timeout-minutes: 3
     steps:
@@ -99,3 +106,41 @@ jobs:
           AUDIO_OUTCOME: ${{ steps.audio.outcome }}
           ACCESSIBILITY_OUTCOME: ${{ steps.accessibility.outcome }}
         run: test "$AUDIO_OUTCOME" = success && test "$ACCESSIBILITY_OUTCOME" = success
+
+  capture-tests:
+    if: inputs.scope == 'owned-child'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify exit-aware output capture and existing callers
+        run: python3 -m unittest discover -s scripts -p test_run_macos_tests.py -v
+
+  owned-child:
+    if: inputs.scope == 'owned-child'
+    needs: capture-tests
+    runs-on: macrunner
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-xcode-27
+      - name: Verify output capture on the failed producer platform
+        run: python3 -m unittest discover -s scripts -p test_run_macos_tests.py -v
+      - name: Compile unchanged owned-child implementation and diagnostic
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/owned-child"
+          xcrun clang -std=c11 -Wall -Wextra -Werror -target arm64-apple-macos26.0 \
+            -I Sources/BpySupervisorPOSIX/include \
+            Sources/BpySupervisorPOSIX/OwnedChild.c scripts/bpy_owned_child_probe.c \
+            -lproc -o "$RUNNER_TEMP/owned-child/probe"
+      - name: Record exact source, environment and signal lifecycle
+        run: |
+          python3 scripts/run_bpy_owned_child_probe.py "$RUNNER_TEMP/owned-child"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: owned-child-diagnostic-${{ github.run_id }}
+          path: ${{ runner.temp }}/owned-child
+          if-no-files-found: error
+          retention-days: 7
