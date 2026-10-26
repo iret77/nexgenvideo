@@ -14,7 +14,8 @@ runs:
         python3 -I - <<'PY'
         import json, os, platform, subprocess, sys, time
         from pathlib import Path
-        required = ('waitid', 'P_PID', 'WEXITED', 'WNOHANG', 'WNOWAIT', 'CLD_EXITED')
+        required = ('waitid', 'P_PID', 'WEXITED', 'WNOHANG', 'WNOWAIT',
+                    'CLD_EXITED', 'CLD_KILLED', 'CLD_DUMPED')
         receipt = {'executable': sys.executable, 'version': sys.version, 'machine': platform.machine(),
                    'platform': sys.platform, 'interfaces': {key: hasattr(os, key) for key in required},
                    'passed': False}

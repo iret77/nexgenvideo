@@ -42,6 +42,25 @@ def write_events(path, records):
 
 
 class HostedTestDriverTests(unittest.TestCase):
+    def test_nonterminal_child_observation_does_not_start_exit_capture(self):
+        original_waitid = os.waitid
+        for code in (0, os.CLD_STOPPED, os.CLD_TRAPPED, os.CLD_CONTINUED):
+            with self.subTest(code=code), tempfile.TemporaryDirectory() as directory:
+                calls = 0
+                def observe(kind, pid, options):
+                    nonlocal calls
+                    calls += 1
+                    if calls == 1:
+                        return SimpleNamespace(si_pid=pid, si_code=code)
+                    return original_waitid(kind, pid, options)
+                with patch.object(driver.os, "waitid", side_effect=observe), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    result, _ = driver.run_process(
+                        [sys.executable, "-c", "import time; time.sleep(.1); raise SystemExit(7)"],
+                        Path(directory) / "console.log", os.environ.copy())
+                self.assertEqual(result, 7)
+                self.assertGreater(calls, 1, "A nonterminal child observation ended exit monitoring")
+
     def test_exit_with_inherited_open_pipe_is_bounded_and_never_passes(self):
         for original_exit in (0, 7):
             with self.subTest(original_exit=original_exit), tempfile.TemporaryDirectory() as directory:

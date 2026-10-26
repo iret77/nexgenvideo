@@ -9,7 +9,7 @@ import sys
 import time
 
 
-ORIGINAL_CHILD_SHA256 = "0a6052abb3a616764fb4ca270ccb4911dfd1d05ea3d030f932cd9ab7d5ecb061"
+EXPECTED_CHILD_SHA256 = "7444d80b48bcec309b19a0c219f71f9fe7d9d913b1e069876f8ca58e4cb07e4e"
 
 
 def inventory(root, name):
@@ -29,8 +29,8 @@ def main():
     root = Path(sys.argv[1]).resolve()
     source = Path("Sources/BpySupervisorPOSIX/OwnedChild.c")
     digest = hashlib.sha256(source.read_bytes()).hexdigest()
-    if digest != ORIGINAL_CHILD_SHA256:
-        raise ValueError("The diagnostic requires the unchanged failing producer's owned-child source")
+    if digest != EXPECTED_CHILD_SHA256:
+        raise ValueError("The diagnostic requires the exact reviewed owned-child correction")
     if platform.system() != "Darwin" or platform.machine() != "arm64" or not hasattr(os, "waitid"):
         raise ValueError("The diagnostic requires Apple Silicon macOS and Python 3.13+")
     version = subprocess.check_output(["sw_vers", "-productVersion"], text=True).strip()
@@ -40,8 +40,9 @@ def main():
     if source_sha != os.environ["GITHUB_SHA"]:
         raise ValueError("Checkout and workflow source differ")
     binary = root / "probe"
-    receipt = {"sourceSHA": source_sha, "producerRun": 40324341845, "producerAttempt": 1,
-               "producerSource": "6e704ffb36e39147d61e723e7d9152f887eec142",
+    receipt = {"sourceSHA": source_sha, "referenceRun": 40353688164, "referenceAttempt": 1,
+               "referenceSource": "13743d3e7ff32aec9af6d6047d6c43dd4ade7455",
+               "referenceOwnedChildSHA256": "0a6052abb3a616764fb4ca270ccb4911dfd1d05ea3d030f932cd9ab7d5ecb061",
                "ownedChildSHA256": digest, "macOS": version, "kernel": platform.release(),
                "python": sys.version, "runID": os.environ["GITHUB_RUN_ID"],
                "attempt": os.environ["GITHUB_RUN_ATTEMPT"], "startedAt": time.time(),
@@ -62,7 +63,8 @@ def main():
         try:
             while True:
                 status = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
-                if status is not None and status.si_pid == process.pid:
+                if (status is not None and status.si_pid == process.pid
+                        and status.si_code in (os.CLD_EXITED, os.CLD_KILLED, os.CLD_DUMPED)):
                     receipt["kernelExit"] = {"code": status.si_code, "status": status.si_status}
                     break
                 if time.monotonic() >= deadline:
@@ -88,12 +90,16 @@ def main():
     records = [json.loads(line) for line in (root / "events.jsonl").read_text().split("\n") if line]
     cases = [record for record in records if record.get("stage") == "case-result"]
     destroys = [record for record in records if record.get("stage") == "destroy"]
-    expected = {(mode, iteration) for mode in range(3) for iteration in range(3)}
-    receipt["completed"] = ("after" in receipt and not receipt["timedOut"] and receipt["exitCode"] == 0 and len(cases) == 9
+    stopped = [record for record in records if record.get("stage") == "stopped-owned"]
+    expected = {(mode, iteration) for mode in range(4) for iteration in range(3)}
+    receipt["completed"] = ("after" in receipt and not receipt["timedOut"] and receipt["exitCode"] == 0 and len(cases) == 12
                             and {(case["mode"], case["iteration"]) for case in cases} == expected
                             and all(case["error"] == 0 for case in cases)
-                            and len(destroys) == 9 and all(item["error"] == 0 for item in destroys)
-                            and records[-1] == {"stage": "complete", "cases": 9})
+                            and len(destroys) == 12 and all(item["error"] == 0 for item in destroys)
+                            and len(stopped) == 3 and all(item["result"] == 0 and item["pollError"] == 0
+                                and item["running"] == 1 and item["waitCode"] == os.CLD_STOPPED
+                                and item["waitPID"] == item["pid"] for item in stopped)
+                            and records[-1] == {"stage": "complete", "cases": 12})
     destination.write_text(json.dumps(receipt, indent=2) + "\n")
     return 0 if receipt["completed"] else 1
 

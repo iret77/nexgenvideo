@@ -108,7 +108,8 @@ static int poll_locked(ngv_bpy_child *child, int *running) {
     while (result < 0 && errno == EINTR);
     if (result < 0) return errno;
     if (info.si_pid != 0 && info.si_pid != child->pid) return EIO;
-    *running = info.si_pid == 0;
+    *running = info.si_pid == 0 || (info.si_code != CLD_EXITED &&
+        info.si_code != CLD_KILLED && info.si_code != CLD_DUMPED);
     return 0;
 }
 
