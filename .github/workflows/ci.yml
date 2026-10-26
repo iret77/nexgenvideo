@@ -149,7 +149,7 @@ jobs:
 
       - name: Verify CI and fixture tooling
         if: (steps.classify.outputs.build_required == 'true' || steps.classify.outputs.ui_required == 'true') && inputs.completed_source_checks_run_id == ''
-        run: python3 -m unittest discover -s scripts -p 'test_*.py'
+        run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
 
       - name: Verify all Core branches remain required
         if: inputs.completed_full_core_run_id != ''
