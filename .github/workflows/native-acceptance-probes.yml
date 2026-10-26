@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       scope:
-        description: Existing native probes or isolated owned-child diagnosis
+        description: Native probes or isolated owned-child and worker-sandbox components
         type: choice
-        options: [native, owned-child]
+        options: [native, owned-child, worker-sandbox]
         default: native
       owned_child_binary_run_id:
         description: Optional exact retained owned-child diagnostic binary
@@ -23,7 +23,7 @@ concurrency:
 
 jobs:
   build:
-    if: inputs.scope != 'owned-child'
+    if: inputs.scope == 'native'
     runs-on: macrunner
     timeout-minutes: 3
     steps:
@@ -167,3 +167,105 @@ jobs:
             ${{ runner.temp }}/native-test-python.json
           if-no-files-found: error
           retention-days: 7
+
+  sandbox-source:
+    if: inputs.scope == 'worker-sandbox'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Refuse replayed component attempts
+        run: test "$GITHUB_RUN_ATTEMPT" = 1
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify isolated component provenance checks
+        run: python3 -m unittest discover -s scripts -p test_bpy_worker_sandbox_probe.py -v
+      - name: Bind the original successful app producer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/bpy_worker_sandbox_probe.py bind --output "$RUNNER_TEMP/sandbox-identity"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: worker-sandbox-identity
+          path: ${{ runner.temp }}/sandbox-identity
+          if-no-files-found: error
+          retention-days: 30
+
+  sandbox-build:
+    needs: sandbox-source
+    runs-on: macrunner
+    timeout-minutes: 3
+    steps:
+      - name: Refuse replayed component attempts
+        run: test "$GITHUB_RUN_ATTEMPT" = 1
+      - uses: actions/checkout@v4
+      - name: Compile only the isolated native component probe
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/sandbox-binaries"
+          xcodebuild -version | tee "$RUNNER_TEMP/sandbox-binaries/xcode.log"
+          test "$(xcodebuild -version | awk 'NR == 1 {split($2,v,"."); print v[1]}')" -ge 27
+          xcrun clang --version | tee "$RUNNER_TEMP/sandbox-binaries/clang.log"
+          xcrun clang -std=c11 -Wall -Wextra -Werror -target arm64-apple-macos26.0 \
+            scripts/bpy_worker_sandbox_probe.c -o "$RUNNER_TEMP/sandbox-binaries/probe"
+          codesign --force --sign - --timestamp=none "$RUNNER_TEMP/sandbox-binaries/probe"
+          python3 - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          root = Path(os.environ["RUNNER_TEMP"]) / "sandbox-binaries"
+          receipt = {"sourceSHA": os.environ["GITHUB_SHA"],
+              "execution": {"runID": int(os.environ["GITHUB_RUN_ID"]), "runAttempt": int(os.environ["GITHUB_RUN_ATTEMPT"])},
+              "binarySHA256": hashlib.sha256((root / "probe").read_bytes()).hexdigest(),
+              "probeSourceSHA256": hashlib.sha256(Path("scripts/bpy_worker_sandbox_probe.c").read_bytes()).hexdigest()}
+          (root / "build.json").write_text(json.dumps(receipt, indent=2) + "\n")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: worker-sandbox-binaries
+          path: ${{ runner.temp }}/sandbox-binaries
+          if-no-files-found: error
+          retention-days: 30
+
+  sandbox-runtime:
+    needs: [sandbox-source, sandbox-build]
+    # ci-lint: allow-CI005 Prove the isolated worker policy on the macOS 26 product floor.
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - name: Refuse replayed component attempts
+        run: test "$GITHUB_RUN_ATTEMPT" = 1
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: worker-sandbox-identity
+          path: sandbox-identity
+      - uses: actions/download-artifact@v4
+        with:
+          name: worker-sandbox-binaries
+          path: sandbox-binaries
+      - name: Exercise native controls and real bpy in the isolated worker fixture
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          chmod +x sandbox-binaries/probe
+          python3 scripts/bpy_worker_sandbox_probe.py observe --identity sandbox-identity \
+            --binaries sandbox-binaries --output "$RUNNER_TEMP/worker-sandbox"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: worker-sandbox-component-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/worker-sandbox/*.json
+            ${{ runner.temp }}/worker-sandbox/*.log
+            ${{ runner.temp }}/worker-sandbox/failed-original-app.zip
+            ${{ runner.temp }}/worker-sandbox/python-sandbox/result.json
+            ${{ runner.temp }}/worker-sandbox/python-sandbox/render.png
+            ${{ runner.temp }}/worker-sandbox/python-sandbox/scene.blend
+            ${{ runner.temp }}/worker-sandbox/python-control/result.json
+            ${{ runner.temp }}/worker-sandbox/python-control/render.png
+            ${{ runner.temp }}/worker-sandbox/python-control/scene.blend
+            sandbox-binaries/build.json
+            sandbox-binaries/*.log
+          if-no-files-found: error
+          retention-days: 30
