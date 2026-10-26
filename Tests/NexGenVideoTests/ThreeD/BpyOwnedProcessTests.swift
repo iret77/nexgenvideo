@@ -163,24 +163,29 @@ struct BpyOwnedProcessTests {
         let observed = try BpyKernelInspection.process(getpid())
         let identity = try #require(observed)
         let churn = MappingChurn()
+        let ready = DispatchSemaphore(value: 0)
         let group = DispatchGroup()
         group.enter()
-        DispatchQueue.global(qos: .utility).async {
+        let worker = Thread {
             defer { group.leave() }
+            var announced = false
             while !churn.shouldStop() {
                 let size = 4 * 1_024 * 1_024
                 guard let region = Darwin.mmap(nil, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0),
                       region != UnsafeMutableRawPointer(bitPattern: -1) else { churn.stop(error: errno); return }
                 region.storeBytes(of: UInt8(1), as: UInt8.self)
                 if Darwin.munmap(region, size) != 0 { churn.stop(error: errno); return }
+                if !announced { announced = true; ready.signal() }
                 Thread.sleep(forTimeInterval: 0.001)
             }
         }
+        worker.start()
         defer {
             churn.stop()
             #expect(group.wait(timeout: .now() + 3) == .success)
             #expect(churn.error() == 0)
         }
+        try #require(ready.wait(timeout: .now() + 3) == .success)
         for _ in 0..<8 {
             #expect(try !BpyKernelInspection.mappings(identity).isEmpty)
             #expect(try BpyKernelInspection.matches(identity))

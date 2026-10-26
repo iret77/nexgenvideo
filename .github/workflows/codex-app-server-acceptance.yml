@@ -145,6 +145,7 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
 
+      - uses: ./.github/actions/setup-native-test-python
       - uses: ./.github/actions/setup-xcode-27
 
       - uses: ./.github/actions/cache-swiftpm-dependencies

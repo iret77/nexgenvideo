@@ -163,6 +163,7 @@ jobs:
       app_artifact_id: ${{ steps.upload_app.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-native-test-python
       - uses: ./.github/actions/setup-xcode-27
       - uses: ./.github/actions/cache-swiftpm-dependencies
       - uses: actions/download-artifact@v4
