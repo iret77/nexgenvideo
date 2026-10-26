@@ -646,7 +646,7 @@ enum BpyRuntimeSelfTest {
                status.activeProcessExecutable != nil, status.activeWorkerProcessIdentifier != nil,
                status.activeProcessAuthorizationID == nil { break }
             guard ProcessInfo.processInfo.systemUptime < authorizationDeadline else { throw BpyRuntimeError.timedOut }
-            Thread.sleep(forTimeInterval: 0.01)
+            try await Task.sleep(for: .milliseconds(10))
         }
         let droppedReply = try sessionA.nativeDroppedStatusReplyProbe(jobID: transportJobID)
         try droppedReply.write(to: output.appendingPathComponent("native-dropped-reply.json"), options: .atomic)
