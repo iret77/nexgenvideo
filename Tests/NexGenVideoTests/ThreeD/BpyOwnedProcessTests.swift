@@ -97,7 +97,8 @@ struct BpyOwnedProcessTests {
         let process = try BpyOwnedProcess(executable: URL(fileURLWithPath: "/bin/sh"),
             arguments: ["-c", "read value; exit 7"], environment: [:], directory: URL(fileURLWithPath: "/"),
             input: input.fileHandleForReading, output: .nullDevice, errors: .nullDevice)
-        let live = try #require(BpyKernelInspection.process(process.processIdentifier))
+        let observed = try BpyKernelInspection.process(process.processIdentifier)
+        let live = try #require(observed)
         #expect(try BpyKernelInspection.matches(live))
         try input.fileHandleForWriting.write(contentsOf: Data("finish\n".utf8))
         let deadline = ProcessInfo.processInfo.systemUptime + 3
@@ -151,7 +152,8 @@ struct BpyOwnedProcessTests {
     }
 
     @Test func mappingInspectionHandlesConcurrentRegionChanges() throws {
-        let identity = try #require(BpyKernelInspection.process(getpid()))
+        let observed = try BpyKernelInspection.process(getpid())
+        let identity = try #require(observed)
         let churn = MappingChurn()
         let group = DispatchGroup()
         group.enter()

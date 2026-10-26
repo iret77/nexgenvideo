@@ -232,8 +232,10 @@ struct BpyHostMonitorTests {
         var descriptor = pollfd(fd: output.fileHandleForReading.fileDescriptor, events: Int16(POLLIN), revents: 0)
         try #require(Darwin.poll(&descriptor, 1, 3_000) == 1)
         try #require(output.fileHandleForReading.read(upToCount: 5) == Data("ready".utf8))
-        let host = try #require(BpyKernelInspection.process(getpid()))
-        let shell = try #require(BpyKernelInspection.process(supervisor.processIdentifier)).executable
+        let observedHost = try BpyKernelInspection.process(getpid())
+        let host = try #require(observedHost)
+        let observedSupervisor = try BpyKernelInspection.process(supervisor.processIdentifier)
+        let shell = try #require(observedSupervisor).executable
         let transport = UUID(), execution = UUID()
         let layout = try BpyRuntimeBundleLayout(app: URL(fileURLWithPath: "/Fixture.app"), serviceName: bpyRuntimeServiceNames[0])
         let inspector = BpyHostMonitor.Inspector(canonical: { url in

@@ -310,7 +310,9 @@ class FullCoreContinuationTests(unittest.TestCase):
     def test_workflow_reuses_proofs_without_relabeling_or_bypassing_remaining_gates(self):
         text = (ROOT / ".github/workflows/ci.yml").read_text()
         mac = text.split("  build_test:\n", 1)[1].split("  diagnostic-startup:\n", 1)[0]
-        self.assertLess(mac.index("uses: ./.github/actions/prepare-bpy-source"), mac.index("      - name: Build\n"))
+        self.assertLess(mac.index("      - name: Build\n"), mac.index("uses: ./.github/actions/prepare-bpy-source"))
+        self.assertLess(mac.index("uses: ./.github/actions/prepare-bpy-source"), mac.index("      - name: Stage test runtime inputs\n"))
+        self.assertIn("needs.bpy-source.result == 'success' || needs.bpy-source.result == 'skipped'", mac)
         self.assertIn("run: " + resume.BUILD, mac)
         for name in ("Stage test runtime inputs", "Test", "HDR export QC", "Upload render review test diagnosis",
                      "Upload blockout orientation evidence", "Upload HDR export QC evidence", "Upload Lottie export evidence"):
