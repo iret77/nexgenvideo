@@ -50,6 +50,12 @@ identical process ends the address-space walk only after at least one region. Pr
 stale ownership, and visibility or malformed-kernel-view errors fail closed. Normal file renames do
 not create a path-to-`lstat` gap; incomplete directory re-resolution, permission failures, entry-level
 errors, and malformed attribute records remain fatal.
+The runtime workflow also invokes the bundled service's fixed directory-deletion probe directly.
+It first traverses a nested file, then deletes that queued directory before the real scanner resolves
+its inode. Exact event order, retained-file identity/bytes and a healthy three-snapshot followup are
+required. This checks the macOS 26 directory scanner; it does not substitute for XPC or bpy execution.
+The retained-runtime preflight rejects changes to this service's source. Earlier app artifacts remain
+bound to their earlier harness; they cannot supply this new probe's evidence.
 The service deliberately does not treat cumulative process write-I/O as disk occupancy: overwrites
 and healthy temp-file churn can increase it without increasing retained storage. A violation asks
 the exact native supervisor to terminate its directly owned worker and does not yield a candidate.
