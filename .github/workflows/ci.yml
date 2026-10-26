@@ -25,10 +25,14 @@ on:
       completed_source_checks_run_id:
         type: string
         default: ''
+      verified_pr_run_id:
+        type: string
+        default: ''
 
 permissions:
   contents: read
   actions: read
+  pull-requests: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -67,6 +71,18 @@ jobs:
             --transaction "$transaction_dir/release-${METADATA_VERSION}.transaction.json" \
             --version "$METADATA_VERSION" --head "$GITHUB_SHA")"
           echo "verified=$verified" >> "$GITHUB_OUTPUT"
+
+      - name: Bind exact PR source checks
+        id: pr_source
+        if: inputs.verified_pr_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ORIGINAL_PR_RUN: ${{ inputs.verified_pr_run_id }}
+          OTHER_SOURCE_REUSE: ${{ inputs.completed_source_checks_run_id != '' || inputs.completed_full_core_run_id != '' || inputs.completed_backends_run_id != '' || inputs.completed_app_tests_run_id != '' || inputs.app_inventory_run_id != '' }}
+        run: |
+          test "$OTHER_SOURCE_REUSE" = false
+          python3 scripts/verified_pr_source_checks.py prepare --run-id "$ORIGINAL_PR_RUN" \
+            --output "$RUNNER_TEMP/core-pr-source"
 
       - name: Bind successful source checks from the original full Linux run
         if: inputs.completed_source_checks_run_id != ''
@@ -137,19 +153,28 @@ jobs:
         run: python3 scripts/verify_bpy_runtime.py --distribution
 
       - name: Enforce AppTheme
-        if: steps.classify.outputs.build_required == 'true' && inputs.completed_source_checks_run_id == '' && inputs.completed_full_core_run_id == ''
+        if: steps.classify.outputs.build_required == 'true' && inputs.completed_source_checks_run_id == '' && inputs.completed_full_core_run_id == '' && steps.pr_source.outputs.verified != 'true'
         run: python3 scripts/lint_app_theme.py
 
       - name: Validate pack pipeline contracts
-        if: steps.classify.outputs.build_required == 'true' && inputs.completed_source_checks_run_id == '' && inputs.completed_full_core_run_id == ''
+        if: steps.classify.outputs.build_required == 'true' && inputs.completed_source_checks_run_id == '' && inputs.completed_full_core_run_id == '' && steps.pr_source.outputs.verified != 'true'
         run: |
           for manifest in plugins/*.json; do
             python3 scripts/validate_pipeline_contract.py "$manifest"
           done
 
       - name: Verify CI and fixture tooling
-        if: (steps.classify.outputs.build_required == 'true' || steps.classify.outputs.ui_required == 'true') && inputs.completed_source_checks_run_id == ''
+        if: (steps.classify.outputs.build_required == 'true' || steps.classify.outputs.ui_required == 'true') && inputs.completed_source_checks_run_id == '' && steps.pr_source.outputs.verified != 'true'
         run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
+
+      - name: Upload exact PR source composition
+        if: always() && inputs.verified_pr_run_id != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-pr-source-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/core-pr-source
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Verify all Core branches remain required
         if: inputs.completed_full_core_run_id != ''

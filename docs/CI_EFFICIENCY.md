@@ -24,6 +24,24 @@ satisfies the required check.
 
 ### Existing-artifact followups
 
+For a fresh Core build immediately after a PR merge, `verified_pr_run_id` reuses
+that PR's three successful Linux checks: AppTheme, pack contracts and the complete
+tooling suite. The producer must be the owned `pr-checks.yml` run at attempt 1,
+with every check and proof-upload step successful. Its artifact records the actual
+checkout commit and tree, separately from the PR head. Core verifies the artifact
+digest, original job output, merged PR identity and equality with its entire current
+Git tree before omitting those checks. A changed tree, failed or skipped check,
+expired artifact, fork or missing proof fails before Mac work starts.
+
+The composition retains original metadata, archive and job output. Distributable
+bpy qualification, UI rendering, compilation, native tests and runtime checks keep
+their existing requirements. No input selects reuse by itself: the verification
+step must emit success. This mode cannot be combined with historical failed-Core
+continuations; their restricted input contracts remain unchanged. Without this input,
+the normal source checks still execute. Proof recording and upload run after the
+PR checks; their failures also fail Light Checks. The proof does not replace a
+check or claim native product verification.
+
 Use the registered `CI Batch` entrypoint on the exact producer commit with
 `mode=followup`, its `runtime_run_id`, and exactly one `followup_workflow`:
 `externalgui`, `settings`, or `smartsearch`. This calls the reusable workflow from

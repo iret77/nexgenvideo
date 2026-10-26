@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -34,21 +35,45 @@ def triggers(path):
 
 def run_commands(text):
     commands = []
-    for block in text.split("run: ")[1:]:
-        first = block.split("\n", 1)[0]
-        if first.strip() == "|":
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        match = re.fullmatch(r"( +)(- )?run:(?: (.*))?", line)
+        if not match:
+            continue
+        first = match[3] or ""
+        indent = len(match[1]) + len(match[2] or "")
+        if not first.strip() or first.strip().startswith(("|", ">")) and first.strip() not in ("|", "|-", "|+"):
+            raise ValueError("Unsupported run body requires an explicit comparison implementation")
+        if first.strip() in ("|", "|-", "|+"):
             body = []
-            for line in block.split("\n")[1:]:
-                if line.strip() and not line.startswith("            "):
+            for line in lines[index + 1:]:
+                if line.strip() and len(line) - len(line.lstrip()) <= indent:
                     break
-                body.append(line.strip())
-            commands.append("\n".join(line for line in body if line))
+                body.append(line)
+            commands.append(textwrap.dedent("\n".join(body)).strip())
         else:
             commands.append(first.strip())
     return commands
 
 
 class CIWorkflowTests(unittest.TestCase):
+    def test_multiline_command_comparison_observes_real_body_and_nested_indentation(self):
+        block = "        run: |\n          for manifest in plugins/*.json; do\n            validate original\n          done\n      - name: next\n        run: echo next\n"
+        commands = run_commands(block)
+        self.assertEqual(commands, ["for manifest in plugins/*.json; do\n  validate original\ndone", "echo next"])
+        self.assertNotEqual(commands, run_commands(block.replace("validate original", "validate changed")))
+        self.assertNotIn("", commands)
+        for marker in ("|", "|-", "|+"):
+            for header in ("        run:", "      - run:"):
+                text = block.replace("        run: |", header + " " + marker)
+                self.assertEqual(run_commands(text), commands)
+        self.assertEqual(run_commands("      - run: echo direct\n"), ["echo direct"])
+        for marker in (">", ">-", ">+", "|2", "|-2", ""):
+            with self.assertRaises(ValueError):
+                run_commands(block.replace("run: |", "run: " + marker))
+        with self.assertRaises(ValueError):
+            run_commands(block.replace("run: |", "run:"))
+
     def test_ui_render_diagnostics_upload_on_failure_without_qualifying_partial_captures(self):
         job = CI.read_text().split("  ui_render:\n", 1)[1].split("  bpy-source:\n", 1)[0]
         render = job.split("      - name: Render Agent UI specification\n", 1)[1].split("      - name:", 1)[0]
@@ -392,8 +417,9 @@ class CIWorkflowTests(unittest.TestCase):
         code = "\n".join(line[10:] for line in code.splitlines())
         defaults = {"NGV_MODE": "initial", "NGV_FOLLOWUP": "none", "NGV_RUNTIME_RUN": "",
                     "NGV_SETTINGS_SCOPE": "all", "NGV_INTERFACE_SCALE": "all", "NGV_QUALIFICATION_RUN": "",
-                    "NGV_SOURCE_RUN": ""}
+                    "NGV_SOURCE_RUN": "", "NGV_VERIFIED_PR": ""}
         valid = [({}, "initial"),
+                 ({"NGV_VERIFIED_PR": "123"}, "initial"),
                  ({"NGV_MODE": "followup", "NGV_FOLLOWUP": "externalgui",
                    "NGV_RUNTIME_RUN": "123", "NGV_INTERFACE_SCALE": "1.25"}, "followup"),
                  ({"NGV_MODE": "followup", "NGV_FOLLOWUP": "settings",
@@ -410,6 +436,12 @@ class CIWorkflowTests(unittest.TestCase):
                     "NGV_SETTINGS_SCOPE": scope}, "followup")
                   for scope in ("packresume172", "packresume172100", "packresume172125", "packresume172150")]
         invalid = [{"NGV_MODE": ""}, {"NGV_MODE": "unknown"}, {"NGV_MODE": "followup"},
+                   *[{"NGV_VERIFIED_PR": value} for value in ("0", "-1", " 123", "abc", "1.5")],
+                   {**followup, "NGV_VERIFIED_PR": "123"},
+                   {"NGV_MODE": "qualification", "NGV_VERIFIED_PR": "123"},
+                   *[{"NGV_VERIFIED_PR": "123", key: "456"} for key in
+                     ("NGV_COMPLETED_FULL", "NGV_COMPLETED_BACKENDS", "NGV_APP_INVENTORY", "NGV_SOURCE_CHECKS",
+                      "NGV_APP_ASSERTIONS", "NGV_QUALIFICATION_RUN", "NGV_SOURCE_RUN")],
                    {"NGV_RUNTIME_RUN": "123"}, {"NGV_FOLLOWUP": "settings"},
                    {"NGV_SETTINGS_SCOPE": "settings125"}, {"NGV_INTERFACE_SCALE": "1"},
                    *[{**followup, "NGV_RUNTIME_RUN": value} for value in ("", "0", "-1", " 123", "abc", "1.5")],

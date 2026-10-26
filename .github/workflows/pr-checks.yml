@@ -33,3 +33,14 @@ jobs:
 
       - name: Verify CI and fixture tooling
         run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
+
+      - name: Record verified source checkout
+        uses: ./.github/actions/record-source-checks
+
+      - name: Upload verified source checkout
+        uses: actions/upload-artifact@v4
+        with:
+          name: verified-pr-source-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/verified-source-checks
+          if-no-files-found: error
+          retention-days: 14
