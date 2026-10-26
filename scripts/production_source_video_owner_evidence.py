@@ -14,6 +14,28 @@ def sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def validate_next_shot_navigation(native, first_take_id, next_take_id, next_shot_id, selection_sha256):
+    rows = [row for row in native["interactions"] if row.get("kind") == "verified-state"
+            and row.get("label") == "native next open shot in sheet and workspace"]
+    require(len(rows) == 1, "Native next-shot navigation receipt is absent or ambiguous")
+    evidence = rows[0]["evidence"]
+    require(evidence.get("selectionAndReviewUnchanged") is True, "Navigation did not preserve review and selection truth")
+    require(evidence == {"firstTakeID": first_take_id, "nextTakeID": next_take_id,
+                        "nextShotID": next_shot_id, "selectionAndReviewUnchanged": True,
+                        "selectionSHA256Before": selection_sha256, "selectionSHA256After": selection_sha256},
+            "Next-shot navigation changed selection or references another actual Take")
+    clicks = [row for row in native["interactions"] if row.get("kind") == "pointer" and row.get("id") == "take.next"]
+    require(len(clicks) == 2 and len({row["window"] for row in clicks}) == 2,
+            "Next-shot navigation did not click both the sheet and workspace")
+    main_windows = {row["window"] for row in native["interactions"]
+                    if row.get("kind") == "pointer" and row.get("id") == "take.open"}
+    require(main_windows == {clicks[1]["window"]} and clicks[0]["window"] not in main_windows,
+            "Next-shot navigation did not bind the main window and its separate sheet")
+    for label in ["sheet-before", "sheet-after", "workspace-before", "workspace-after"]:
+        require(sum(name.endswith("-next-shot-" + label + ".png") for name in native["screenshots"]) == 1,
+                "Next-shot navigation has no unique before/after native image")
+
+
 def validate(directory, kind):
     require(kind in {"aiEnhanced", "frameContinuation", "nativeExtension"}, "Unknown actual source recipe")
     result = json.loads(read(directory, "result.json"))
@@ -144,6 +166,9 @@ def validate(directory, kind):
                     "Actual assembly does not use its explicitly reviewed native Take range")
             ref_bytes(row["nativeRange"])
     native = result["nativeEvidence"]
+    if kind != "aiEnhanced":
+        validate_next_shot_navigation(native, by_shot[ids[0]]["takeID"], by_shot[ids[1]]["takeID"],
+                                      ids[1], predecessor["selectionReceipt"]["sha256"])
     clicks = Counter(row.get("id") for row in native["interactions"] if row.get("kind") == "pointer")
     required = ["pipeline.overview.approve.shot_planning", "pipeline.overview.approve.bible",
                 "render-review.record-native", "generation-batch.approve", "take.use", "production.assembly.build",
