@@ -16,6 +16,8 @@ import sys
 import time
 import zipfile
 
+from bpy_worker_memory_probe import case_specs, validate_case
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = "05c763fc9393119cafc9cf9df4e2fb0b6d52c14a"
@@ -25,7 +27,8 @@ SIZE = 1646525831
 DIGEST = "91ffd9d3d344476959ea31f4c2c147c65aa84d16623de17731c74bc561d6900f"
 FILES = {".github/workflows/native-acceptance-probes.yml", "scripts/bpy_worker_sandbox_probe.py",
          "scripts/bpy_worker_sandbox_probe.c", "scripts/bpy_worker_sandbox_probe.sb",
-         "scripts/bpy_worker_sandbox_payload.py", "scripts/test_bpy_worker_sandbox_probe.py"}
+         "scripts/bpy_worker_sandbox_payload.py", "scripts/test_bpy_worker_sandbox_probe.py",
+         "scripts/bpy_worker_memory_probe.py", "scripts/test_bpy_worker_memory_probe.py"}
 RETAINED_RUN = 40394670788
 RETAINED_SOURCE = "0ffbddd688621c025f861b0a66fc3f59a2acc012"
 RETAINED_ARTIFACTS = {
@@ -223,6 +226,14 @@ def validate(run, jobs, artifact, changed, now):
     require(set(changed) <= FILES, "only isolated component tooling may change")
 
 
+def memory_mode(environment):
+    value = environment.get("NGV_SANDBOX_MEMORY_PROBE", "false")
+    require(value in ("true", "false"), "explicit memory diagnostic selection")
+    require(value != "true" or environment.get("NGV_SANDBOX_RESUME_PYTHON") == "true",
+            "memory diagnostic requires retained successful helper")
+    return value == "true"
+
+
 def bind(output):
     output.mkdir(parents=True, exist_ok=False)
     execution = execution_identity(os.environ)
@@ -235,7 +246,8 @@ def bind(output):
     require(resume in ("true", "false"), "explicit Python continuation mode")
     retained = retained_component(output, download=True) if resume == "true" else None
     save(output / "identity.json", dict(run=run, jobs=jobs, artifact=artifact, changedPaths=changed, execution=execution,
-        harnessSHA=os.environ["GITHUB_SHA"], files={name: sha(ROOT / name) for name in sorted(FILES)}, retained=retained))
+        harnessSHA=os.environ["GITHUB_SHA"], files={name: sha(ROOT / name) for name in sorted(FILES)},
+        retained=retained, memoryProbe=memory_mode(os.environ)))
 
 
 def native_sections(data):
@@ -316,6 +328,52 @@ def records(path):
     return result
 
 
+def observe_memory(output, runtime, probe, outside, peer, port):
+    deadline = time.monotonic() + 180
+    outcomes = []
+    for case in case_specs():
+        require(time.monotonic() < deadline, "memory diagnostic overall deadline")
+        require(peer.poll() is None, "owned peer exited before diagnostic")
+        name = "memory-" + case["name"]
+        work = output / name
+        work.mkdir(mode=0o700)
+        for directory in ("home", "tmp"):
+            (work / directory).mkdir(mode=0o700)
+        payload = work / "bpy_worker_memory_probe.py"
+        for filename in ("bpy_worker_memory_probe.py", "bpy_worker_sandbox_payload.py"):
+            shutil.copyfile(ROOT / "scripts" / filename, work / filename)
+            require(sha(ROOT / "scripts" / filename) == sha(work / filename), "exact diagnostic payload copy")
+        save(work / "input.json", dict(memoryCase=case))
+        environment = dict(HOME=str(work / "home"), TMPDIR=str(work / "tmp"), PATH="", LANG="C.UTF-8", LC_ALL="C.UTF-8")
+        receipt = output / (name + ".process.json")
+        error = None
+        try:
+            pid = run_command([str(probe), "python-control", str(ROOT / "scripts/bpy_worker_sandbox_probe.sb"),
+                str(work), str(runtime), str(outside), str(payload), str(peer.pid), str(port)], output / name,
+                timeout=min(30, max(1, deadline - time.monotonic())), environment=environment)
+            observed = [json.loads(line.removeprefix("NGV_MEMORY "))
+                        for line in (output / (name + ".stdout.log")).read_text().splitlines()
+                        if line.startswith("NGV_MEMORY ")]
+            validate_case(case, observed, pid)
+        except Exception as failure:
+            error = dict(type=type(failure).__name__, message=str(failure))
+        require(receipt.exists(), "owned memory process receipt missing")
+        process = json.loads(receipt.read_text())
+        require(process["reaped"] and process["cleanupError"] is None, "owned memory process cleanup failed")
+        outcomes.append(dict(case=case, process=process, error=error, candidateSupported=error is None))
+        save(output / "memory-cases.json", dict(cases=outcomes, runtimeAcceptance=False))
+        require(not process["timedOut"], "memory diagnostic timed out")
+    result = dict(scope="isolated memory candidate measurements", runtimeAcceptance=False,
+                  cases=outcomes, candidateSupported=all(item["candidateSupported"] for item in outcomes),
+                  limitations=["No bpy import or render in this diagnostic", "No product or sandbox integration proof",
+                               "Only the enumerated original-interpreter exec variants tested",
+                               "Candidate region flags are not universal permanence proof",
+                               "No physical-memory ceiling or memory-entry allocation proof"])
+    save(output / "memory-result.json", result)
+    require(result["candidateSupported"], "memory candidate contradicted or measurement incomplete")
+    return result
+
+
 def observe(output, identity, binaries):
     output.mkdir(parents=True, exist_ok=False)
     execution = execution_identity(os.environ)
@@ -324,6 +382,8 @@ def observe(output, identity, binaries):
              api(f"actions/artifacts/{ARTIFACT}"), evidence["changedPaths"], datetime.datetime.now(datetime.timezone.utc))
     require(evidence["execution"] == execution and evidence["harnessSHA"] == os.environ["GITHUB_SHA"]
             and evidence["files"] == {name: sha(ROOT / name) for name in sorted(FILES)}, "reviewed harness source")
+    memory = memory_mode(os.environ)
+    require(evidence.get("memoryProbe") is memory, "source and runtime memory diagnostic selections agree")
     require(subprocess.check_output(["sw_vers", "-productVersion"], text=True).startswith("26.")
             and subprocess.check_output(["uname", "-m"], text=True).strip() == "arm64", "macOS26 arm64")
     build = json.loads((binaries / "build.json").read_text())
@@ -399,7 +459,8 @@ def observe(output, identity, binaries):
         require(ready.exists() and json.loads(ready.read_text())["pid"] == peer.pid and peer.poll() is None, "owned live signal control")
         server.bind(("127.0.0.1", 0))
         server.listen(8)
-        modes = ("python-control", "python-sandbox") if retained else (
+        memory_result = observe_memory(output, runtime, probe, outside, peer, server.getsockname()[1]) if memory else None
+        modes = () if memory else ("python-control", "python-sandbox") if retained else (
             "native-control", "native-sandbox", "exec-control", "exec-sandbox", "python-control", "python-sandbox")
         for mode in modes:
             require(peer.poll() is None, "signal target must remain owned and unreaped")
@@ -451,7 +512,8 @@ def observe(output, identity, binaries):
                         and (work / "scene.blend").stat().st_size > 0, "actual render and scene outputs")
                 require(tree_manifest(runtime) == fixture_manifest, "Python execution changed the runtime fixture")
         require(outside.read_text() == "outside-worker-root\n", "outside data retained")
-        result = dict(passed=True, runtimeAcceptance=False, scope="isolated component only",
+        result = dict(passed=True, runtimeAcceptance=False,
+            scope="isolated memory candidate only" if memory else "isolated component only", memory=memory_result,
             sourceSHA=os.environ["GITHUB_SHA"], originalSource=SOURCE, artifact=ARTIFACT, execution=execution,
             retained=retained, compositeAcrossRuns=retained is not None,
             limitations=["No host/XPC integration or restart ownership proof", "No full bpy or native UI acceptance",
