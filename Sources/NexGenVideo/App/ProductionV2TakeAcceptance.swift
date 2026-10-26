@@ -9,7 +9,8 @@ enum ProductionV2TakeAcceptance {
     static func run(takeID: String, context: ProductionPlanningAcceptanceFixture.Context,
                     driver: ProductionVisualSourcesDriver,
                     rangePlacement: RangePlacement = .withHandles,
-                    nextUnrenderedShotID: String? = nil) async throws -> ReviewedTakeRange.Stored {
+                    nextUnrenderedShotID: String? = nil,
+                    expectedPreviewTakeID: String = "") async throws -> ReviewedTakeRange.Stored {
         let editor = context.editor, root = context.dataRoot, window = driver.window
         guard let home = editor.workingRoot else { throw failed("The take project closed.") }
         let snapshot = try await TakeReview.capture(takeID: takeID, home: home)
@@ -23,7 +24,7 @@ enum ProductionV2TakeAcceptance {
         try await ProductionV2PlanningAcceptance.selectPhase("render", context: context, driver: driver)
         try await driver.click("take.open", in: window)
         let sheet = try await driver.sheet("take.picker")
-        guard driver.text("take.picker", in: sheet) == "" else { throw failed("Take review did not start with an explicit selection.") }
+        guard driver.text("take.picker", in: sheet) == expectedPreviewTakeID else { throw failed("Take review did not preserve the explicit preview choice.") }
         let title = try await pickerTitle(takeID: takeID, context: context)
         try await driver.picker("take.picker", title: title, expected: takeID, in: sheet)
         try await driver.wait("unreviewed take controls") {
@@ -204,6 +205,79 @@ enum ProductionV2TakeAcceptance {
             "sourceSHA256": range.review.source.sha256, "includedAvailableAudio": hasAudio,
             "insertUndoPreservedSelection": true, "selectionSHA256": selected.reference.sha256])
         return range
+    }
+
+    static func nextShot(firstTakeID: String, nextTakeID: String,
+                         context: ProductionPlanningAcceptanceFixture.Context,
+                         driver: ProductionVisualSourcesDriver) async throws {
+        let editor = context.editor, root = context.dataRoot, window = driver.window
+        guard let home = editor.workingRoot else { throw failed("The next-shot project closed.") }
+        let first = try await TakeReview.capture(takeID: firstTakeID, home: home)
+        let next = try await TakeReview.capture(takeID: nextTakeID, home: home)
+        let initial = try await Task.detached {
+            try PipelineRenderTakeStore.load(dataRoot: root, project: first.take.project, phase: "final")
+        }.value
+        guard first.take.phase == "final", next.take.phase == "final",
+              first.take.shotID != next.take.shotID, initial.selected[first.take.shotID] == firstTakeID,
+              initial.selected[next.take.shotID] == nil else { throw failed("Next-shot navigation needs a selected predecessor and an unselected successor.") }
+        let reviewBefore = try await Task.detached { try TakeReview.load(take: first.take, dataRoot: root) }.value
+        let selectionBefore = try await Task.detached {
+            try PipelineProductionRenderWriter.requireSelected(shotID: first.take.shotID, dataRoot: root).reference
+        }.value
+        let nextReviewBefore = try await Task.detached { try TakeReview.load(take: next.take, dataRoot: root) }.value
+        guard reviewBefore != nil, nextReviewBefore == nil else {
+            throw failed("Next-shot navigation needs an existing first review and a genuinely unreviewed successor.")
+        }
+        try await ProductionV2PlanningAcceptance.selectPhase("render", context: context, driver: driver)
+        try await driver.click("take.open", in: window)
+        let sheet = try await driver.sheet("take.picker")
+        let title = try await pickerTitle(takeID: firstTakeID, context: context)
+        try await driver.picker("take.picker", title: title, expected: firstTakeID, in: sheet)
+        try await driver.wait("next available take in the review sheet") {
+            driver.state("take.next", in: sheet) == true && driver.text("take.next", in: sheet) == next.take.shotID
+        }
+        try await driver.reveal("take.next", in: sheet)
+        try driver.visible(["take.next"], in: sheet)
+        try driver.capture("next-shot-sheet-before", target: sheet)
+        try await driver.click("take.next", in: sheet)
+        try await driver.reveal("take.picker", in: sheet)
+        try await driver.wait("next unreviewed take opened without approval") {
+            driver.text("take.picker", in: sheet) == nextTakeID
+                && driver.text("take.pass", in: sheet) == TakeReview.Pass.identity.rawValue
+                && driver.state("take.use", in: sheet) == false
+        }
+        try driver.capture("next-shot-sheet-after", target: sheet)
+        try await driver.click("take.close", in: sheet)
+        try await driver.wait("next-shot sheet closed") { window.attachedSheet == nil && window.isKeyWindow }
+        try await driver.click("take.workspace.select.\(firstTakeID)", in: window)
+        try await driver.wait("selected predecessor preview and next action") {
+            driver.text("take.workspace.player", in: window) == firstTakeID
+                && driver.state("take.next", in: window) == true
+                && driver.text("take.next", in: window) == next.take.shotID
+        }
+        try await driver.reveal("take.next", in: window)
+        try driver.visible(["take.next"], in: window)
+        try driver.capture("next-shot-workspace-before", target: window)
+        try await driver.click("take.next", in: window)
+        try await driver.reveal("take.workspace.player", in: window)
+        try await driver.wait("workspace opens the next exact take") {
+            driver.text("take.workspace.player", in: window) == nextTakeID
+                && driver.state("take.next", in: window) == nil
+        }
+        try driver.capture("next-shot-workspace-after", target: window)
+        let final = try await Task.detached {
+            (try PipelineRenderTakeStore.load(dataRoot: root, project: first.take.project, phase: "final"),
+             try TakeReview.load(take: first.take, dataRoot: root), try TakeReview.load(take: next.take, dataRoot: root))
+        }.value
+        let selectionAfter = try await Task.detached {
+            try PipelineProductionRenderWriter.requireSelected(shotID: first.take.shotID, dataRoot: root).reference
+        }.value
+        guard final.0 == initial, final.1 == reviewBefore, final.2 == nil, selectionAfter == selectionBefore else {
+            throw failed("Next-shot navigation changed a take selection or review.")
+        }
+        try driver.record("native next open shot in sheet and workspace", fields: ["firstTakeID": firstTakeID,
+            "nextTakeID": nextTakeID, "nextShotID": next.take.shotID, "selectionAndReviewUnchanged": true,
+            "selectionSHA256Before": selectionBefore.sha256, "selectionSHA256After": selectionAfter.sha256])
     }
 
     private static func requireNextShot(_ unrenderedShotID: String?, driver: ProductionVisualSourcesDriver,

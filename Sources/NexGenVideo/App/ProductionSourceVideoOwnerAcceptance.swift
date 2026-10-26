@@ -85,7 +85,10 @@ enum ProductionSourceVideoOwnerAcceptance {
                     label: "selected-predecessor-output", context: context, generation: generation, driver: driver, output: output)
                 let second = try await generation.render(shotID: draft.shots[1].shotID, context: context,
                     outputVideo: source, driver: driver, output: output)
-                let secondRange = try await ProductionV2TakeAcceptance.run(takeID: second, context: context, driver: driver)
+                try await ProductionV2TakeAcceptance.nextShot(firstTakeID: take, nextTakeID: second,
+                    context: context, driver: driver)
+                let secondRange = try await ProductionV2TakeAcceptance.run(takeID: second, context: context, driver: driver,
+                    expectedPreviewTakeID: second)
                 selected.append(["shotID": draft.shots[1].shotID, "takeID": second, "rangeID": secondRange.id])
             }
             let film = try await ProductionV2FilmAcceptance.run(context: context, driver: driver, output: output,
