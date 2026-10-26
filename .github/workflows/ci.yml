@@ -335,7 +335,7 @@ jobs:
           key: ${{ steps.swiftpm_dependencies.outputs.cache-primary-key }}
 
       - name: Stage test runtime inputs
-        if: inputs.completed_full_core_run_id == ''
+        if: inputs.completed_full_core_run_id == '' || inputs.completed_full_core_run_id == '40265902971'
         run: scripts/stage_test_runtime.sh debug
 
       - name: Test
@@ -416,7 +416,7 @@ jobs:
           retention-days: 7
 
       - name: HDR export QC
-        if: inputs.completed_full_core_run_id == ''
+        if: inputs.completed_full_core_run_id == '' || inputs.completed_full_core_run_id == '40265902971'
         env:
           NGV_HDR_RUNTIME_QC: '1'
           NGV_HDR_QC_OUTPUT_DIR: ${{ runner.temp }}/hdr-export-qc
@@ -426,7 +426,7 @@ jobs:
             --evidence "$RUNNER_TEMP/hdr-export-qc/hosted-suite"
 
       - name: Upload HDR export QC evidence
-        if: always() && inputs.completed_full_core_run_id == ''
+        if: always() && (inputs.completed_full_core_run_id == '' || inputs.completed_full_core_run_id == '40265902971')
         uses: actions/upload-artifact@v4
         with:
           name: hdr-export-qc
