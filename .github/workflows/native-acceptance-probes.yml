@@ -8,9 +8,14 @@ on:
         type: choice
         options: [native, owned-child]
         default: native
+      owned_child_binary_run_id:
+        description: Optional exact retained owned-child diagnostic binary
+        type: string
+        default: ''
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: native-acceptance-probes-${{ github.ref }}
@@ -113,6 +118,8 @@ jobs:
     timeout-minutes: 3
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Preserve the original interpreter before selection
         run: |
           mkdir -p "$RUNNER_TEMP/owned-child"
@@ -126,11 +133,13 @@ jobs:
       - uses: ./.github/actions/setup-native-test-python
       - uses: ./.github/actions/setup-xcode-27
       - name: Verify output capture on the failed producer platform
+        if: inputs.owned_child_binary_run_id == ''
         run: |
           set -euo pipefail
           python3 -m unittest discover -s scripts -p test_run_macos_tests.py -v 2>&1 \
             | tee "$RUNNER_TEMP/owned-child/capture-tests.log"
       - name: Compile reviewed owned-child implementation and diagnostic
+        if: inputs.owned_child_binary_run_id == ''
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/owned-child"
@@ -138,6 +147,14 @@ jobs:
             -I Sources/BpySupervisorPOSIX/include \
             Sources/BpySupervisorPOSIX/OwnedChild.c scripts/bpy_owned_child_probe.c \
             -lproc -o "$RUNNER_TEMP/owned-child/probe"
+      - name: Verify retained binary and original capture evidence
+        if: inputs.owned_child_binary_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ORIGINAL_RUN: ${{ inputs.owned_child_binary_run_id }}
+        run: |
+          python3 scripts/resume_bpy_owned_child_probe.py --run-id "$ORIGINAL_RUN" \
+            --output "$RUNNER_TEMP/owned-child"
       - name: Record exact source, environment and signal lifecycle
         run: |
           python3 scripts/run_bpy_owned_child_probe.py "$RUNNER_TEMP/owned-child"

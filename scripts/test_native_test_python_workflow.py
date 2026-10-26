@@ -88,6 +88,18 @@ class NativeTestPythonWorkflowTests(unittest.TestCase):
         self.assertIn("native-test-python.json", upload["with"]["path"])
         self.assertIn("/owned-child", upload["with"]["path"])
 
+    def test_retained_probe_requires_validation_and_does_not_repeat_capture_or_compile(self):
+        workflow = yaml.safe_load((ROOT / ".github/workflows/native-acceptance-probes.yml").read_text())
+        steps = workflow["jobs"]["owned-child"]["steps"]
+        retained = next(i for i, step in enumerate(steps) if "resume_bpy_owned_child_probe.py" in step.get("run", ""))
+        execute = next(i for i, step in enumerate(steps) if "python3 scripts/run_bpy_owned_child_probe.py" in step.get("run", ""))
+        self.assertLess(retained, execute)
+        self.assertEqual(steps[retained]["if"], "inputs.owned_child_binary_run_id != ''")
+        for step in steps:
+            if "test_run_macos_tests.py" in step.get("run", "") or "xcrun clang" in step.get("run", ""):
+                self.assertEqual(step["if"], "inputs.owned_child_binary_run_id == ''")
+        self.assertFalse(steps[retained].get("continue-on-error", False))
+
 
 if __name__ == "__main__":
     unittest.main()
