@@ -85,9 +85,17 @@ struct BpyOwnedProcessTests {
         #expect(try process.waitUntilExit() == 0)
         let closed = try FileHandle(forReadingFrom: URL(fileURLWithPath: "/dev/null"))
         try closed.close()
-        #expect(throws: POSIXError(.EBADF)) {
-            try BpyOwnedProcess(executable: URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", "exit 0"],
-                environment: [:], directory: URL(fileURLWithPath: "/"), input: closed)
+        let streams: [(FileHandle, FileHandle, FileHandle)] = [
+            (closed, .nullDevice, .nullDevice),
+            (.nullDevice, closed, .nullDevice),
+            (.nullDevice, .nullDevice, closed),
+        ]
+        for (input, output, errors) in streams {
+            #expect(throws: POSIXError(.EBADF)) {
+                try BpyOwnedProcess(executable: URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", "exit 0"],
+                    environment: [:], directory: URL(fileURLWithPath: "/"), input: input,
+                    output: output, errors: errors)
+            }
         }
     }
 

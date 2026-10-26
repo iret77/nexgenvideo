@@ -73,7 +73,8 @@ let package = Package(
             linkerSettings: [.linkedFramework("AppKit")]
         ),
         .target(name: "BpyRuntimeProtocol", dependencies: ["BpySupervisorPOSIX"], path: "Sources/BpyRuntimeProtocol"),
-        .target(name: "BpySupervisorPOSIX", path: "Sources/BpySupervisorPOSIX"),
+        .target(name: "BpySupervisorPOSIX", path: "Sources/BpySupervisorPOSIX",
+                linkerSettings: [.linkedFramework("Foundation")]),
         .executableTarget(
             name: "NexGenVideoBpyService", dependencies: ["BpyRuntimeProtocol"],
             path: "Sources/NexGenVideoBpyService", linkerSettings: [.linkedLibrary("proc", .when(platforms: [.macOS]))]

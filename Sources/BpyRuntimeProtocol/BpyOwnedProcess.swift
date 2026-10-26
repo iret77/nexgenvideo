@@ -18,8 +18,10 @@ public final class BpyOwnedProcess: @unchecked Sendable {
                 errors: FileHandle? = .standardError, allowsForcedTermination: Bool = true) throws {
         func descriptor(_ handle: FileHandle?) throws -> Int32 {
             guard let handle, handle !== FileHandle.nullDevice else { return -1 }
-            guard handle.fileDescriptor >= 0 else { throw POSIXError(.EBADF) }
-            return handle.fileDescriptor
+            var descriptor: Int32 = -1
+            let error = ngv_bpy_file_handle_descriptor(Unmanaged.passUnretained(handle).toOpaque(), &descriptor)
+            guard error == 0 else { throw POSIXError(.init(rawValue: error) ?? .EIO) }
+            return descriptor
         }
         let inputFD = try descriptor(input), outputFD = try descriptor(output), errorFD = try descriptor(errors)
         let argvStrings = [executable.path] + arguments
