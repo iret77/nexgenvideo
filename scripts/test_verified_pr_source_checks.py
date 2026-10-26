@@ -215,7 +215,7 @@ class VerifiedPRSourceChecksTests(unittest.TestCase):
         self.assertIn("verified_pr_run_id: ${{ inputs.verified_pr_run_id }}", batch)
         self.assertIn("if verified_pr and (mode != 'initial'", batch)
         for workflow in (ci, batch):
-            self.assertIn("  pull-requests: read\n", workflow.split("jobs:", 1)[0])
+            self.assertIn("  pull-requests: read\n", re.split(r"(?m)^jobs:\s*\n", workflow, maxsplit=1)[0])
 
     def test_core_shell_rejects_other_reuse_before_invoking_preparation(self):
         root = Path(__file__).resolve().parents[1]
@@ -247,8 +247,8 @@ class VerifiedPRSourceChecksTests(unittest.TestCase):
             if "uses: ./.github/workflows/ci.yml" not in text:
                 continue
             callers.add(path.name)
-            self.assertIn("  pull-requests: read\n", text.split("jobs:", 1)[0], path.name)
-            for job in re.split(r"(?m)^  [A-Za-z0-9_-]+:\n", text.split("jobs:\n", 1)[1]):
+            self.assertIn("  pull-requests: read\n", re.split(r"(?m)^jobs:\s*\n", text, maxsplit=1)[0], path.name)
+            for job in re.split(r"(?m)^  [A-Za-z0-9_-]+:\n", re.split(r"(?m)^jobs:\s*\n", text, maxsplit=1)[1]):
                 if "uses: ./.github/workflows/ci.yml" in job and "    permissions:\n" in job:
                     self.assertIn("      pull-requests: read\n", job, path.name)
         self.assertEqual(callers, {"bundle.yml", "ci-batch.yml"})
