@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 import argparse
+import hashlib
 import plistlib
 import re
 import subprocess
 from pathlib import Path
+
+from bpy_bundle_layout import verify
 
 
 SANDBOX = "com.apple.security.app-sandbox"
@@ -42,13 +45,20 @@ def validate(app, development=False):
         if not team:
             raise ValueError("the host has no Developer ID team")
         require_identity(host, team)
-    runtime = app / "Contents/Resources/BpyRuntime"
-    supervisor = app / "Contents/Helpers/NexGenVideoBpySupervisor"
+    verify(app)
+    supervisors = [app / f"Contents/XPCServices/NexGenVideoBpyService{slot}.xpc/Contents/MacOS/NexGenVideoBpySupervisor"
+                   for slot in range(2)]
+    if hashlib.sha256(supervisors[0].read_bytes()).digest() != hashlib.sha256(supervisors[1].read_bytes()).digest():
+        raise ValueError("service supervisor copies differ")
     storage = app / "Contents/Helpers/NexGenVideoBpyStorage"
-    expected = {runtime / "python/bin/python3.13": {SANDBOX: True, INHERIT: True},
-                supervisor: {SANDBOX: True, INHERIT: True}, storage: {}}
+    expected = {storage: {}}
+    runtimes = []
     for slot in range(2):
         service = app / f"Contents/XPCServices/NexGenVideoBpyService{slot}.xpc"
+        runtime = service / "Contents/Resources/BpyRuntime"
+        runtimes.append(runtime)
+        expected[runtime / "python/bin/python3.13"] = {SANDBOX: True, INHERIT: True}
+        expected[service / "Contents/MacOS/NexGenVideoBpySupervisor"] = {SANDBOX: True, INHERIT: True}
         expected[service] = {SANDBOX: True}
         expected[service / "Contents/MacOS/NexGenVideoBpyService"] = {SANDBOX: True}
     for path, wanted in expected.items():
@@ -56,7 +66,7 @@ def validate(app, development=False):
         if not development:
             require_identity(details(path), team)
     if not development:
-        for path in runtime.rglob("*"):
+        for path in (path for runtime in runtimes for path in runtime.rglob("*")):
             if not path.is_file() or path.is_symlink():
                 continue
             kind = subprocess.run(["file", "--brief", str(path)], stdin=subprocess.DEVNULL,

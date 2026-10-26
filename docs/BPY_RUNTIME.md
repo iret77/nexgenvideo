@@ -17,6 +17,28 @@ Before Python starts, a signed native supervisor applies an additional Seatbelt 
 network, fork, the SBPL `signal` operation, and every write outside that process's private write root.
 The inherited XPC container is therefore not the worker's write boundary.
 
+Each XPC bundle contains its own `Contents/Resources/BpyRuntime` and its supervisor in
+`Contents/MacOS`. No runtime executable or script falls back to the outer app bundle. The two
+runtime copies use identical signed bytes; the outer app seals their exact paired inventory in
+`Contents/Resources/BpyRuntimeCompliance/runtime-tree-manifest.json`. Corresponding source and
+license evidence live once in that shared compliance directory. Bundle verification checks both
+copies, their signatures and inheritance entitlements, and the shared source closure.
+
+The service requests kernel process measurements through its existing XPC connection back to the
+host. The host binds each observation to the actual connection peer, service slot, execution nonce,
+kernel start identities, parent relationships and executable paths. An epoch and monotonic request
+sequence prevent reuse across executions. Unknown or failed kernel views fail the execution; they
+never become zero usage. The service retains directory scanning, resource classification and limit
+decisions. Python cannot submit measurements or select processes for inspection.
+
+The service and supervisor spawn their direct children through an owned POSIX handle. Exit
+observation keeps the child unreaped until the owner collects its status, so a signal cannot target
+a recycled PID. A native child waits for host observation before executing Python. Parent loss is
+detected through `getppid` and an inherited pipe, without inspecting a foreign process from inside
+the sandbox. The supervisor stops and reaps its worker before exiting; the service never escalates
+to killing the supervisor while its worker might survive. Failed cleanup retains the slot and its
+storage. The host observes process exit and does not signal a foreign PID.
+
 Native stdout and stderr are bounded diagnostic streams only. The service observes process termination and native resource limits; worker output cannot set state.
 The service addresses the signed `python/bin/python3.13` executable directly. Opening a session
 records separate access checks for that file, the `python3` alias, supervisor, worker and site-packages,
@@ -36,7 +58,7 @@ deadline, and the live descendant tree. Recursive accounting uses `getattrlistbu
 identity, type, logical size, and allocated size in the same directory-entry operation. Renamed
 directories are reopened by `fsgetpath` and verified by device/inode before traversal. Three complete
 bounded scans are identity-unioned, stop immediately at the file or byte limit, and fail closed after
-bounded unresolved-directory retries. The service joins that scan with the
+bounded unresolved-directory retries. The service joins that scan with host measurements of the
 exact owned worker's regular-vnode descriptors from XNU `proc_pidinfo(PROC_PIDLISTFDS)` plus
 `proc_pidfdinfo(PROC_PIDFDVNODEPATHINFO)`, and its file-backed mappings from
 `proc_pidinfo(PROC_PIDREGIONPATHINFO)`. Device/inode identity deduplicates directory, descriptor, fileport, and mapping views and the
@@ -70,7 +92,7 @@ View Layer is rejected. The callback measures the public render-evaluated depend
 so render-only modifiers, viewport-hidden renderable objects, and non-active scenes do not escape the
 bound. The verifier restores scene settings and produces no image.
 
-FD, fileport, and mapping inspection are layered sampled controls. The service uses XNU's
+FD, fileport, and mapping inspection are layered sampled controls. The host uses XNU's
 `PROC_PIDLISTFILEPORTS` and `proc_pidfileportinfo` to include retained vnode fileports in the same
 (device, inode) inventory. Native acceptance requires either a proven fileport denial or the actual
 retained bytes and disk-limit outcome; an allowed but uncounted fileport fails.
@@ -130,18 +152,26 @@ identity. Process-tree polling is cleanup and evidence around that barrier, not 
 it. The service launches a native supervisor while Python is still gated. The host
 must record the supervisor's exact PID, bundled executable, XNU start time, and
 one-use authorization ID before the service releases the gate. The supervisor is Python's direct
-parent, so an in-place `execve` does not change ownership; it also verifies the service parent's PID
-and start time and kills/reaps its exact child if that parent dies. On XPC invalidation the service
-terminates the supervisor through its live `Process` handle; the host can independently send SIGTERM
-only after rechecking the in-memory lease's PID, XNU start time, and executable. The supervisor owns
-the only SIGKILL path and uses its unreaped direct child's PID/start identity when observable. Every
-post-launch error unwinds through direct-child cleanup; before a start identity is observable it uses
-the live Foundation `Process` handle it just launched, gives SIGTERM a bounded interval, and then
-stops and kills that still-running owned child. A failed later identity query uses the same bounded
-handle path; a confirmed mismatched start identity is never signaled. Afterward cleanup signals only
-the matching PID/start identity. No
-worker-writable registry, global process scan, unrelated PID, or app configuration participates, and
-an app restart does not need the lost in-memory lease to reap an old worker.
+parent, so an in-place `execve` does not change ownership. A retained parent pipe and `getppid`
+identify parent loss without a sandbox-denied foreign-process query. On XPC invalidation the service
+requests termination through its owned POSIX handle. The host invalidates the transport, drains prior monitor requests on the monitor's serial queue,
+and observes both the supervisor and every recorded worker exiting; it never signals a foreign PID.
+A retained detach receipt can be fetched again after a lost reply. The owned child handle separately
+records normal exit and signal death; only normal supervisor exit proves local child cleanup when
+the host connection has already disappeared. The supervisor alone escalates termination of
+its unreaped direct child, then waits for the exact `waitpid` result before exiting. Cleanup failures
+retain the owner, session slot and storage until reaping succeeds. Reverse-XPC replies remain serviceable during close, cancel, retirement and shutdown. Checkpoint
+and upload hashing still run synchronously, when no worker is executing. A host observation lease includes the
+connection, execution nonce, epoch, sequence and kernel process identities. Completed processes,
+including unreaped zombies, are distinguished from unreadable live processes; permission errors never
+become a successful zero-resource sample. No worker-writable registry or global process scan owns
+termination authority.
+Recovery covers the supervisor and its single recorded worker; the kernel fork barrier prevents
+additional Python descendants. Detach receipts are bounded by the 65,536-execution transport cap.
+Recovery's five-second observation budget includes queue drain. If an external actor forcibly kills
+the supervisor while its transport is lost, a surviving worker or unavailable cleanup proof retains
+the service slot and storage for restart recovery. This case does not authorize foreign-PID signals
+or a successful cleanup claim.
 
 Primary platform references:
 
@@ -199,16 +229,21 @@ canonical revision.
 
 ## Runtime and distribution
 
-The immutable Python/bpy tree lives in `Contents/Resources/BpyRuntime`, keeping its internal
-library and module paths intact. Every Mach-O in that tree is signed individually before the app's
-outer resource seal; bundle verification checks each signature independently. Native supervisor and
-storage tools remain in `Contents/Helpers`, and the two services remain in `Contents/XPCServices`.
-This deliberately accepts the extra resource sealing described in Apple's
-[code-signing guidance](https://developer.apple.com/library/archive/technotes/tn2206/): runtime
-updates replace the whole app through Sparkle, never individual files inside the signed tree.
-Python bytecode and job output cannot modify that tree. The native signing fixture exercises the
-complete resource layout before the full app build; distribution signing and runtime execution still
-require their separate Actions gates.
+Each XPC service owns an immutable Python/bpy tree in its own
+`Contents/Resources/BpyRuntime`, preserving internal library and module paths. Its supervisor resides
+in that service's `Contents/MacOS`. Only the storage helper remains in the app's `Contents/Helpers`.
+Every runtime Mach-O is signed once, then the exact signed bytes are copied to the second slot;
+verification compares both trees and their app-sealed inventory. Source archives and licenses are
+shared in the outer `Contents/Resources/BpyRuntimeCompliance`. Resealing validates an existing
+inventory before signing, then atomically replaces it after checking the new paired trees. This is
+build-time verification plus the app's code-signing seal, not a claim of a complete startup rehash.
+Geometry evidence may select slot zero only because distribution verification requires byte parity.
+
+Runtime updates replace the whole app through Sparkle, never individual files inside the signed tree.
+Python bytecode and job output cannot modify it. The native signing fixture exercises the complete
+resource layout; distribution signing and runtime execution retain their separate Actions gates.
+Historical original-app diagnostics stay bound to their original sources. Their harness-only reuse
+gates reject this product/bundle change; an old host-level runtime cannot qualify the new layout.
 
 `Runtime/bpy/runtime-lock.json` pins CPython, the `bpy` wheel, all declared Python dependencies,
 python-build-standalone inputs, source locations, hashes, and licenses. The wheel entry point is the

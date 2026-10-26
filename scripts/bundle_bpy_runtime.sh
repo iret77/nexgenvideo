@@ -20,23 +20,38 @@ case "$APP" in
   *) echo "invalid bpy app destination: $APP" >&2; exit 1 ;;
 esac
 
-DESTINATION="$APP/Contents/Resources/BpyRuntime"
-rm -rf "$DESTINATION"
-mkdir -p "$DESTINATION"
-cp -R "$RUNTIME_ROOT/." "$DESTINATION/"
-cp "$ROOT/Runtime/bpy/worker.py" "$DESTINATION/worker.py"
-cp "$ROOT/Runtime/bpy/scene_operations.py" "$DESTINATION/scene_operations.py"
-cp "$ROOT/Runtime/bpy/storage_probe.py" "$DESTINATION/storage_probe.py"
-chmod 755 "$DESTINATION/python/bin/python3"*
-cp "$SUPERVISOR_BINARY" "$APP/Contents/Helpers/NexGenVideoBpySupervisor"
-chmod 755 "$APP/Contents/Helpers/NexGenVideoBpySupervisor"
+COMPLIANCE="$APP/Contents/Resources/BpyRuntimeCompliance"
+test ! -e "$APP/Contents/Resources/BpyRuntime"
+test ! -e "$APP/Contents/Helpers/NexGenVideoBpySupervisor"
+mkdir -p "$COMPLIANCE"
+cp -R "$RUNTIME_ROOT/licenses" "$COMPLIANCE/"
+if [ -d "$RUNTIME_ROOT/corresponding-source" ]; then
+  cp -R "$RUNTIME_ROOT/corresponding-source" "$COMPLIANCE/"
+fi
+cp "$RUNTIME_ROOT/runtime-lock.json" "$COMPLIANCE/"
 cp "$STORAGE_BINARY" "$APP/Contents/Helpers/NexGenVideoBpyStorage"
 chmod 755 "$APP/Contents/Helpers/NexGenVideoBpyStorage"
 
 for slot in 0 1; do
   XPC="$APP/Contents/XPCServices/NexGenVideoBpyService$slot.xpc"
   rm -rf "$XPC"
-  mkdir -p "$XPC/Contents/MacOS"
+  mkdir -p "$XPC/Contents/MacOS" "$XPC/Contents/Resources/BpyRuntime"
+  DESTINATION="$XPC/Contents/Resources/BpyRuntime"
+  (
+    shopt -s dotglob nullglob
+    for entry in "$RUNTIME_ROOT"/*; do
+      case "$(basename "$entry")" in licenses|corresponding-source) continue ;; esac
+      cp -R "$entry" "$DESTINATION/"
+    done
+  )
+  cp "$ROOT/Runtime/bpy/worker.py" "$DESTINATION/worker.py"
+  cp "$ROOT/Runtime/bpy/scene_operations.py" "$DESTINATION/scene_operations.py"
+  cp "$ROOT/Runtime/bpy/storage_probe.py" "$DESTINATION/storage_probe.py"
+  chmod 755 "$DESTINATION/python/bin/python3"*
+  cp "$SUPERVISOR_BINARY" "$XPC/Contents/MacOS/NexGenVideoBpySupervisor"
+  chmod 755 "$XPC/Contents/MacOS/NexGenVideoBpySupervisor"
+  test ! -e "$DESTINATION/python/bin/pip"
+  test ! -e "$DESTINATION/python/bin/pip3"
   cp "$SERVICE_BINARY" "$XPC/Contents/MacOS/NexGenVideoBpyService"
   cp "$ROOT/Runtime/bpy/NexGenVideoBpyService-Info.plist" "$XPC/Contents/Info.plist"
   /usr/libexec/PlistBuddy -c \
@@ -45,5 +60,3 @@ for slot in 0 1; do
   chmod 755 "$XPC/Contents/MacOS/NexGenVideoBpyService"
 done
 
-test ! -e "$DESTINATION/python/bin/pip"
-test ! -e "$DESTINATION/python/bin/pip3"

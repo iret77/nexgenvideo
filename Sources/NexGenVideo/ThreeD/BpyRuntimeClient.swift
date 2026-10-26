@@ -21,11 +21,33 @@ private func procPIDPath(
     _ bufferSize: UInt32
 ) -> Int32
 
-private struct BpyProcessLease {
+private struct BpyProcessLease: Sendable {
     let transportID: UUID
     let processIdentifier: pid_t
     let startAbsoluteTime: UInt64
     let executable: String
+}
+
+private final class BpyTransportRecovery: @unchecked Sendable {
+    private let completed = DispatchGroup()
+    private let lock = NSLock()
+    private var exited = false
+
+    init() { completed.enter() }
+
+    func finish(exited: Bool) {
+        lock.lock()
+        self.exited = exited
+        lock.unlock()
+        completed.leave()
+    }
+
+    func wait() -> Bool {
+        guard completed.wait(timeout: .now() + 6) == .success else { return false }
+        lock.lock()
+        defer { lock.unlock() }
+        return exited
+    }
 }
 
 private func processStartAbsoluteTime(_ processIdentifier: pid_t) -> UInt64? {
@@ -44,29 +66,11 @@ private func processExecutable(_ processIdentifier: pid_t) -> String? {
     }
     guard count > 0 else { return nil }
     return bytes.withUnsafeBytes {
-        String(cString: $0.bindMemory(to: CChar.self).baseAddress!)
+        let path = String(cString: $0.bindMemory(to: CChar.self).baseAddress!)
+        return try? BpyRuntimePath.canonical(URL(fileURLWithPath: path))
     }
 }
 
-private func terminateLeasedProcess(_ lease: BpyProcessLease) -> Bool {
-    guard lease.processIdentifier > 1,
-          processStartAbsoluteTime(lease.processIdentifier) == lease.startAbsoluteTime,
-          processExecutable(lease.processIdentifier) == lease.executable else {
-        return true
-    }
-    guard Darwin.kill(lease.processIdentifier, SIGTERM) == 0 || errno == ESRCH else {
-        return false
-    }
-    let deadline = Date().addingTimeInterval(5)
-    while Date() < deadline {
-        guard processStartAbsoluteTime(lease.processIdentifier) == lease.startAbsoluteTime,
-              processExecutable(lease.processIdentifier) == lease.executable else {
-            return true
-        }
-        Thread.sleep(forTimeInterval: 0.005)
-    }
-    return false
-}
 
 enum BpyRuntimeError: LocalizedError {
     case unavailable(String)
@@ -175,9 +179,10 @@ final class BpyRuntimeSession: @unchecked Sendable {
     private let openLock = NSLock()
     private let submissionLock = NSLock()
     private var connection: NSXPCConnection?
+    private var hostMonitor: BpyHostMonitor?
     private var opened = false
     private var transportInvalidated = false
-    private var transportRecoveryBlocked = false
+    private var transportRecovery: BpyTransportRecovery?
     private var closing = false
     private var closed = false
     private var validatedCandidates: [UUID: (sha256: String, url: URL)] = [:]
@@ -224,6 +229,10 @@ final class BpyRuntimeSession: @unchecked Sendable {
 
     deinit {
         close()
+    }
+
+    var bundledRuntimeRoot: URL {
+        get throws { try BpyRuntimeBundleLayout(app: Bundle.main.bundleURL, serviceName: serviceName).runtime }
     }
 
     var occupiesHostSlot: Bool {
@@ -574,7 +583,7 @@ final class BpyRuntimeSession: @unchecked Sendable {
             return data
         }
         let verification = try JSONDecoder().decode(Verification.self, from: output("verification.json"))
-        let runtime = Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/BpyRuntime")
+        let runtime = try bundledRuntimeRoot
         guard verification.schema == "nexgenvideo/bpy-verification/1",
               verification.jobID == receipt.jobID, verification.fingerprint == receipt.jobFingerprint,
               verification.blenderBuildHash == receipt.blenderBuildHash, let snapshot = verification.spatial,
@@ -697,7 +706,7 @@ final class BpyRuntimeSession: @unchecked Sendable {
               result.response.state == .awaitingConfirmation else {
             throw BpyRuntimeError.invalidOutput("The Clay output has no authenticated runtime execution.")
         }
-        let root = Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/BpyRuntime")
+        let root = try bundledRuntimeRoot
         let script = try Data(contentsOf: root.appendingPathComponent("scene_operations.py"))
         let settings = try SpatialClayRenderer.renderSettings(proof.request, state: proof.state)
         let literal = try JSONEncoder().encode(String(decoding: settings, as: UTF8.self))
@@ -780,7 +789,7 @@ final class BpyRuntimeSession: @unchecked Sendable {
         }
         let staged = Array(cachedResults.keys)
         lock.unlock()
-        rotateTransport()
+        try rotateTransport()
         let response = try ensureOpen()
         lock.lock()
         jobFingerprints.removeAll()
@@ -823,7 +832,7 @@ final class BpyRuntimeSession: @unchecked Sendable {
         cachedResultOrder.removeAll()
         cachedResultDates.removeAll()
         lock.unlock()
-        rotateTransport()
+        try rotateTransport()
         _ = try ensureOpen()
         removeStagedResults(staged)
     }
@@ -858,7 +867,7 @@ final class BpyRuntimeSession: @unchecked Sendable {
                 service.closeSession(try Self.encode(request), withReply: reply)
             }
         }
-        activeConnection?.invalidate()
+        markTransportInvalid(identifier)
         lock.lock()
         let volume = storageVolume
         let preparation = claimedStoragePreparation
@@ -871,11 +880,9 @@ final class BpyRuntimeSession: @unchecked Sendable {
         var restartRequired = false
         do {
             let serviceProof = try? queryStorageOwnership()
-            let workerStopped = lock.withLock {
-                if let lease = activeProcessLease {
-                    return processStartAbsoluteTime(lease.processIdentifier) != lease.startAbsoluteTime
-                }
-                return submittedJobIDs.isEmpty
+            let recovery = lock.withLock { transportRecovery }
+            let workerStopped = recovery?.wait() ?? lock.withLock {
+                activeProcessLease == nil && submittedJobIDs.isEmpty
             }
             if let volume {
                 serviceReleased = volume.serviceReleasedForRecovery(serviceProof, workerStopped: workerStopped)
@@ -951,12 +958,6 @@ final class BpyRuntimeSession: @unchecked Sendable {
             lock.unlock()
             throw BpyRuntimeError.unavailable("The 3D document session is closed.")
         }
-        if transportRecoveryBlocked {
-            lock.unlock()
-            throw BpyRuntimeError.unavailable(
-                "The previous 3D worker could not be observed exiting; recovery is blocked."
-            )
-        }
         if opened, !transportInvalidated {
             let response = lastReadyResponse
             lock.unlock()
@@ -964,7 +965,7 @@ final class BpyRuntimeSession: @unchecked Sendable {
         }
         let shouldRotate = transportInvalidated
         lock.unlock()
-        if shouldRotate { rotateTransport() }
+        if shouldRotate { try rotateTransport() }
         let firstSession = currentSessionID()
         do {
             return try openCurrentTransport(restoreProbe: restoreProbe)
@@ -976,7 +977,7 @@ final class BpyRuntimeSession: @unchecked Sendable {
             bpyOpenDiagnostics.notice("open.first.fail session=\(firstSession.uuidString) unfinishedStorage=\(unfinishedStorage) domain=\(firstError.domain) code=\(firstError.code)")
             guard !unfinishedStorage else { throw error }
             markTransportInvalid(currentSessionID())
-            rotateTransport()
+            try rotateTransport()
             let retrySession = currentSessionID()
             do {
                 return try openCurrentTransport(restoreProbe: restoreProbe)
@@ -1426,6 +1427,14 @@ final class BpyRuntimeSession: @unchecked Sendable {
         let identifier = currentSessionID()
         let value = NSXPCConnection(serviceName: serviceName)
         value.remoteObjectInterface = NSXPCInterface(with: BpyRuntimeServiceProtocol.self)
+        var monitor: BpyHostMonitor?
+        if let layout = try? BpyRuntimeBundleLayout(app: Bundle.main.bundleURL, serviceName: serviceName) {
+            value.exportedInterface = NSXPCInterface(with: BpyHostMonitorProtocol.self)
+            monitor = BpyHostMonitor(connection: value, transport: identifier, layout: layout) { [weak self] process in
+                self?.recordMonitoredProcess(process, transportID: identifier)
+            }
+            value.exportedObject = monitor
+        }
         value.interruptionHandler = { [weak self] in self?.markTransportInvalid(identifier) }
         value.invalidationHandler = { [weak self] in self?.markTransportInvalid(identifier) }
         lock.lock()
@@ -1435,11 +1444,20 @@ final class BpyRuntimeSession: @unchecked Sendable {
             return
         }
         connection = value
+        hostMonitor = monitor
         lock.unlock()
         value.resume()
     }
 
-    private func rotateTransport() {
+    private func rotateTransport() throws {
+        let identifier = currentSessionID()
+        markTransportInvalid(identifier)
+        lock.lock()
+        let recovery = transportRecovery
+        lock.unlock()
+        guard recovery?.wait() == true else {
+            throw BpyRuntimeError.unavailable("The previous 3D worker could not be observed exiting; recovery is blocked.")
+        }
         lock.lock()
         guard !closed, !closing else {
             lock.unlock()
@@ -1450,6 +1468,8 @@ final class BpyRuntimeSession: @unchecked Sendable {
         sessionID = UUID()
         opened = false
         transportInvalidated = false
+        transportRecovery = nil
+        activeProcessLease = nil
         lastReadyResponse = nil
         lock.unlock()
         previous?.invalidate()
@@ -1458,16 +1478,18 @@ final class BpyRuntimeSession: @unchecked Sendable {
 
     private func markTransportInvalid(_ identifier: UUID) {
         lock.lock()
-        guard sessionID == identifier else {
+        guard sessionID == identifier, !transportInvalidated else {
             lock.unlock()
             return
         }
+        let recovery = BpyTransportRecovery()
+        transportRecovery = recovery
+        let invalidConnection = connection
+        let monitor = hostMonitor
         transportInvalidated = true
         opened = false
         validatedCandidates.removeAll()
         candidateJobIDs.removeAll()
-        let lease = activeProcessLease?.transportID == identifier ? activeProcessLease : nil
-        if lease != nil { activeProcessLease = nil }
         let unconfirmed = cachedResults.compactMap { key, value in
             value.response.state == .awaitingConfirmation ? key : nil
         }
@@ -1477,18 +1499,55 @@ final class BpyRuntimeSession: @unchecked Sendable {
         }
         cachedResultOrder.removeAll(where: { unconfirmed.contains($0) })
         lock.unlock()
-        if let lease, !terminateLeasedProcess(lease) {
-            lock.lock()
-            if sessionID == identifier { transportRecoveryBlocked = true }
-            lock.unlock()
+        invalidConnection?.invalidate()
+        if let monitor {
+            monitor.recover { recovery.finish(exited: $0) }
+        } else { recovery.finish(exited: false) }
+        let root = stagingRoot
+        DispatchQueue.global(qos: .utility).async {
+            unconfirmed.forEach {
+                try? FileManager.default.removeItem(at: root.appendingPathComponent($0.uuidString, isDirectory: true))
+            }
         }
-        removeStagedResults(unconfirmed)
     }
 
     private func currentSessionID() -> UUID {
         lock.lock()
         defer { lock.unlock() }
         return sessionID
+    }
+
+    func nativeDroppedStatusReplyProbe(jobID: UUID) throws -> Data {
+        guard ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"]?.isEmpty == false else {
+            throw BpyRuntimeError.unavailable("The transport probe requires explicit verification.")
+        }
+        let (connection, transport) = try currentConnection()
+        guard let service = try BpyKernelInspection.process(connection.processIdentifier) else {
+            throw BpyRuntimeError.invalidOutput("The transport probe requires a live service.")
+        }
+        let captured = BpyReplyBox()
+        let request = BpyJobReference(sessionID: transport, jobID: jobID)
+        do {
+            _ = try call(timeout: 2) { proxy, _ in
+                proxy.jobStatus(try Self.encode(request)) { data in _ = captured.store(response: data) }
+            }
+            throw BpyRuntimeError.invalidOutput("The dropped reply did not exercise the timeout.")
+        } catch BpyRuntimeError.timedOut { }
+        guard let bytes = captured.load().0 else {
+            throw BpyRuntimeError.invalidOutput("The live service did not answer the controlled request.")
+        }
+        let response = try Self.decode(bytes)
+        guard response.ok, response.jobID == jobID, response.state == .running,
+              response.activeProcessIdentifier != nil, response.activeProcessStartAbsoluteTime != nil,
+              response.activeProcessExecutable != nil, response.activeWorkerProcessIdentifier != nil,
+              response.runtime?.serviceProcessIdentifier == service.pid,
+              response.activeProcessAuthorizationID == nil else {
+            throw BpyRuntimeError.invalidOutput("The timeout probe did not observe an authorized live worker.")
+        }
+        return try JSONSerialization.data(withJSONObject: ["schema": "nexgenvideo/bpy-dropped-reply/1",
+            "servicePID": service.pid, "serviceStart": service.start, "serviceExecutable": service.executable,
+            "jobID": jobID.uuidString, "transport": transport.uuidString,
+            "response": bytes.base64EncodedString()] as [String: Any], options: [.sortedKeys])
     }
 
     func nativeProtocolProbe(confirmedJobID: UUID) throws -> Data {
@@ -1763,7 +1822,6 @@ final class BpyRuntimeSession: @unchecked Sendable {
             throw BpyRuntimeError.unavailable("Empty 3D service reply.")
         }
         let response = try Self.decode(data)
-        recordProcessLease(response, transportID: transportID)
         observing?(data)
         return response
     }
@@ -1797,7 +1855,6 @@ final class BpyRuntimeSession: @unchecked Sendable {
             throw BpyRuntimeError.unavailable("Empty 3D service reply.")
         }
         let response = try Self.decode(responseData)
-        recordProcessLease(response, transportID: transportID)
         guard response.ok else {
             throw BpyRuntimeError.rejected(response.message ?? "The 3D output was rejected.")
         }
@@ -1807,28 +1864,13 @@ final class BpyRuntimeSession: @unchecked Sendable {
         return chunk
     }
 
-    private func recordProcessLease(_ response: BpyServiceResponse, transportID: UUID) {
-        let expectedExecutable = Bundle.main.bundleURL
-            .appendingPathComponent("Contents/Helpers/NexGenVideoBpySupervisor")
-            .resolvingSymlinksInPath().path
+    private func recordMonitoredProcess(_ process: BpyObservedProcess?, transportID: UUID) {
         lock.lock()
         defer { lock.unlock() }
-        guard sessionID == transportID else { return }
-        if let processIdentifier = response.activeProcessIdentifier,
-           let startAbsoluteTime = response.activeProcessStartAbsoluteTime,
-           let executable = response.activeProcessExecutable,
-           processIdentifier > 1,
-           URL(fileURLWithPath: executable).resolvingSymlinksInPath().path == expectedExecutable,
-           processStartAbsoluteTime(processIdentifier) == startAbsoluteTime,
-           processExecutable(processIdentifier) == expectedExecutable {
-            activeProcessLease = .init(
-                transportID: transportID,
-                processIdentifier: processIdentifier,
-                startAbsoluteTime: startAbsoluteTime,
-                executable: expectedExecutable
-            )
-        } else if response.state?.isTerminal == true || response.state == .awaitingConfirmation {
-            activeProcessLease = nil
+        guard sessionID == transportID, !transportInvalidated else { return }
+        activeProcessLease = process.map {
+            .init(transportID: transportID, processIdentifier: $0.pid,
+                  startAbsoluteTime: $0.start, executable: $0.executable)
         }
     }
 

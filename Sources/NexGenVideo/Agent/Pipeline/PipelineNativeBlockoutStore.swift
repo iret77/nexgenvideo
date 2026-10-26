@@ -183,7 +183,7 @@ enum PipelineNativeBlockoutStore {
             } else {
                 guard let operation else { throw changed() }
                 let evaluated = try await SpatialEvaluatedGeometryRenderer.prepare(state: state, revision: context.scene,
-                    runtime: operation.session, runtimeRoot: Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/BpyRuntime"))
+                    runtime: operation.session, runtimeRoot: operation.session.bundledRuntimeRoot)
                 let projection = try NativeBlockoutPlanProjection(snapshot: context.scene.snapshot, snapshotData: context.scene.snapshotData, state: state,
                     geometry: evaluated.geometry, locationID: head.id.uuidString)
                 for (name, bytes) in evaluated.files.sorted(by: { $0.key < $1.key }) {

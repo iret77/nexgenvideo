@@ -1,4 +1,5 @@
 import BpySupervisorPOSIX
+import BpyRuntimeProtocol
 import Darwin
 import Foundation
 
@@ -25,7 +26,6 @@ private typealias SandboxFreeError = @convention(c) (UnsafeMutablePointer<CChar>
 
 private struct WorkerIdentity: Codable {
     let processIdentifier: Int32
-    let startAbsoluteTime: UInt64
 }
 
 private struct BoundaryChildReport: Codable {
@@ -58,7 +58,6 @@ private struct BoundaryIdentity: Codable {
     let supervisorParentProcessIdentifier: Int32
     let supervisorStartAbsoluteTime: UInt64
     let childProcessIdentifier: Int32
-    let childStartAbsoluteTime: UInt64
 }
 
 nonisolated(unsafe) private var terminationRequested: sig_atomic_t = 0
@@ -85,8 +84,7 @@ private func processStartAbsoluteTime(_ processIdentifier: pid_t) -> UInt64? {
 }
 
 private func parentIsAlive(_ processIdentifier: pid_t, startAbsoluteTime: UInt64) -> Bool {
-    getppid() == processIdentifier
-        && processStartAbsoluteTime(processIdentifier) == startAbsoluteTime
+    startAbsoluteTime > 0 && ngv_bpy_parent_alive(processIdentifier) == 1
 }
 
 private func isAuthorized(at url: URL, token: String) -> Bool {
@@ -100,6 +98,16 @@ private func isAuthorized(at url: URL, token: String) -> Bool {
         return false
     }
     return true
+}
+
+private func awaitHostObservation(at url: URL, token: String, parent: Int32) throws {
+    let deadline = ProcessInfo.processInfo.systemUptime + 10
+    while !isAuthorized(at: url, token: token) {
+        guard terminationRequested == 0, ngv_bpy_parent_alive(parent) == 1,
+              ProcessInfo.processInfo.systemUptime < deadline else { throw SupervisorError.invalidParent }
+        usleep(5_000)
+    }
+    guard ngv_bpy_parent_alive(parent) == 1 else { throw SupervisorError.invalidParent }
 }
 
 private func sandboxSymbol(_ name: String) -> UnsafeMutableRawPointer? {
@@ -153,7 +161,7 @@ private func applyWorkerSandbox(writeRoot: URL) throws {
 }
 
 private func execPython(arguments: [String]) throws -> Never {
-    guard arguments.count == 5 else { throw SupervisorError.invalidArguments }
+    guard arguments.count == 8, let parent = Int32(arguments[7]) else { throw SupervisorError.invalidArguments }
     let writeRoot = URL(fileURLWithPath: arguments[0], isDirectory: true).standardizedFileURL
     let python = URL(fileURLWithPath: arguments[1]).standardizedFileURL
     let worker = URL(fileURLWithPath: arguments[2]).standardizedFileURL
@@ -172,6 +180,8 @@ private func execPython(arguments: [String]) throws -> Never {
             options: .atomic
         )
     }
+    try awaitHostObservation(at: URL(fileURLWithPath: arguments[5]), token: arguments[6], parent: parent)
+    ngv_bpy_close_parent_lifeline()
     try applyWorkerSandbox(writeRoot: writeRoot)
     let values = [python.path, "-I", "-S", worker.path, arguments[3], configuration.path]
     let allocated = values.map { strdup($0) }
@@ -209,7 +219,7 @@ private func writeBoundaryResource(_ descriptor: Int32, byteCount: Int) throws {
 }
 
 private func boundaryChild(arguments: [String]) throws -> Never {
-    guard arguments.count == 4,
+    guard arguments.count == 7, let parent = Int32(arguments[6]),
           arguments[3] == "denials" || boundaryResourceModes.contains(arguments[3]) else {
         throw SupervisorError.invalidArguments
     }
@@ -224,6 +234,8 @@ private func boundaryChild(arguments: [String]) throws -> Never {
     if boundaryResourceModes.contains(mode) {
         _ = Darwin.signal(SIGTERM, SIG_IGN)
     }
+    try awaitHostObservation(at: URL(fileURLWithPath: arguments[4]), token: arguments[5], parent: parent)
+    ngv_bpy_close_parent_lifeline()
     try applyWorkerSandbox(writeRoot: writeRoot)
     usleep(100_000)
 
@@ -423,49 +435,14 @@ private func boundaryChild(arguments: [String]) throws -> Never {
     Darwin.exit(0)
 }
 
-private func waitForOwnedChildExit(_ process: Process, timeoutNanoseconds: UInt64) -> Bool {
-    let deadline = DispatchTime.now().uptimeNanoseconds &+ timeoutNanoseconds
-    while process.isRunning {
-        if DispatchTime.now().uptimeNanoseconds >= deadline { return false }
-        usleep(5_000)
-    }
-    return true
-}
-
-private func terminateOwnedChildThroughProcess(_ process: Process, processIdentifier: pid_t) {
-    process.terminate()
-    if waitForOwnedChildExit(process, timeoutNanoseconds: 250_000_000) { return }
-    guard process.isRunning else { return }
-    _ = Darwin.kill(processIdentifier, SIGSTOP)
-    if process.isRunning {
-        _ = Darwin.kill(processIdentifier, SIGKILL)
-    }
-    _ = waitForOwnedChildExit(process, timeoutNanoseconds: 2_000_000_000)
-}
-
-private func terminateAndReapOwnedChild(_ process: Process, startAbsoluteTime: UInt64?) {
-    guard process.isRunning else { return }
-    let processIdentifier = process.processIdentifier
-    if let startAbsoluteTime {
-        guard let currentStart = processStartAbsoluteTime(processIdentifier) else {
-            terminateOwnedChildThroughProcess(process, processIdentifier: processIdentifier)
-            return
+private func reapBeforeExiting(_ process: BpyOwnedProcess) {
+    while true {
+        do { try process.terminateAndReap(); return }
+        catch {
+            try? FileHandle.standardError.write(contentsOf: Data("bpy child cleanup pending: \(error)\n".utf8))
+            usleep(250_000)
         }
-        guard currentStart == startAbsoluteTime else {
-            _ = waitForOwnedChildExit(process, timeoutNanoseconds: 10_000_000)
-            return
-        }
-        let stopped = Darwin.kill(processIdentifier, SIGSTOP) == 0
-        let stoppedStart = stopped ? processStartAbsoluteTime(processIdentifier) : nil
-        if stoppedStart == startAbsoluteTime
-            || (stopped && stoppedStart == nil && process.isRunning) {
-            _ = Darwin.kill(processIdentifier, SIGKILL)
-        }
-    } else {
-        terminateOwnedChildThroughProcess(process, processIdentifier: processIdentifier)
-        return
     }
-    _ = waitForOwnedChildExit(process, timeoutNanoseconds: 2_000_000_000)
 }
 
 private func supervise(arguments: [String]) throws -> Int32 {
@@ -499,64 +476,55 @@ private func supervise(arguments: [String]) throws -> Int32 {
     }
     if terminationRequested != 0 { return 0 }
 
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
-    process.arguments = ["launch"] + pythonArguments
-    process.currentDirectoryURL = writeRoot
-    process.standardInput = FileHandle.nullDevice
-    process.standardOutput = FileHandle.standardOutput
-    process.standardError = FileHandle.standardError
-    try process.run()
+    let observedURL = identityURL.appendingPathExtension("observed")
+    let process = try BpyOwnedProcess(
+        executable: URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL,
+        arguments: ["launch"] + pythonArguments + [observedURL.path, authorizationToken, String(getpid())],
+        environment: ProcessInfo.processInfo.environment, directory: writeRoot)
     let childPID = process.processIdentifier
     var childReaped = false
-    var childStart: UInt64?
     defer {
-        if !childReaped {
-            terminateAndReapOwnedChild(process, startAbsoluteTime: childStart)
-        }
+        if !childReaped { reapBeforeExiting(process) }
     }
     let failChildIdentityCapture = ProcessInfo.processInfo.environment[
         "NGV_BPY_SUPERVISOR_FAIL_CHILD_IDENTITY_CAPTURE"
     ] == "1"
     if failChildIdentityCapture {
         let readyURL = writeRoot.appendingPathComponent(".ngv-supervisor-child-term-ignored")
-        for _ in 0..<200 where !FileManager.default.fileExists(atPath: readyURL.path) && process.isRunning {
+        for _ in 0..<200 {
+            if FileManager.default.fileExists(atPath: readyURL.path) { break }
+            if try !process.isRunning { break }
             usleep(5_000)
         }
         guard FileManager.default.fileExists(atPath: readyURL.path) else {
             throw SupervisorError.processLaunch
         }
     }
-    for _ in 0..<20 where childStart == nil && process.isRunning {
-        if !failChildIdentityCapture {
-            childStart = processStartAbsoluteTime(childPID)
-        }
-        if childStart == nil { usleep(5_000) }
-    }
-    guard let confirmedChildStart = childStart else { throw SupervisorError.processLaunch }
-    childStart = confirmedChildStart
+    guard !failChildIdentityCapture, try process.isRunning else { throw SupervisorError.processLaunch }
     if ProcessInfo.processInfo.environment["NGV_BPY_SUPERVISOR_FAIL_AFTER_CHILD_START"] == "1" {
         throw SupervisorError.injectedIdentityWriteFailure
     }
     let identity = try JSONEncoder().encode(
-        WorkerIdentity(processIdentifier: childPID, startAbsoluteTime: confirmedChildStart)
+        WorkerIdentity(processIdentifier: childPID)
     )
     try identity.write(to: identityURL, options: .atomic)
 
-    while process.isRunning {
+    while try process.isRunning {
         if terminationRequested != 0
             || !parentIsAlive(servicePID, startAbsoluteTime: serviceStart) {
+            try process.terminateAndReap()
+            childReaped = true
             return terminationRequested != 0 ? 0 : 70
         }
         usleep(10_000)
     }
-    process.waitUntilExit()
+    let status = try process.waitUntilExit()
     childReaped = true
-    return process.terminationStatus
+    return status
 }
 
 private func superviseBoundary(arguments: [String]) throws -> Int32 {
-    guard arguments.count == 7,
+    guard arguments.count == 9,
           let servicePID = Int32(arguments[0]),
           let serviceStart = UInt64(arguments[1]),
           servicePID > 1,
@@ -572,32 +540,22 @@ private func superviseBoundary(arguments: [String]) throws -> Int32 {
     _ = Darwin.signal(SIGTERM, requestTermination)
     _ = Darwin.signal(SIGINT, requestTermination)
 
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
-    process.arguments = [
-        "boundary-child",
-        writeRoot.path,
-        outsidePath.path,
-        reportURL.path,
-        mode,
-    ]
-    process.currentDirectoryURL = writeRoot
-    process.standardInput = FileHandle.nullDevice
-    process.standardOutput = FileHandle.nullDevice
-    process.standardError = FileHandle.standardError
-    try process.run()
+    let authorizationURL = URL(fileURLWithPath: arguments[7])
+    let authorizationToken = arguments[8]
+    guard authorizationToken.count == 64, authorizationToken.allSatisfy({ $0.isHexDigit }) else {
+        throw SupervisorError.invalidArguments
+    }
+    try awaitHostObservation(at: authorizationURL, token: authorizationToken, parent: servicePID)
+    let process = try BpyOwnedProcess(
+        executable: URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL,
+        arguments: ["boundary-child", writeRoot.path, outsidePath.path, reportURL.path, mode,
+                    identityURL.appendingPathExtension("observed").path, authorizationToken, String(getpid())],
+        environment: ProcessInfo.processInfo.environment, directory: writeRoot,
+        output: .nullDevice)
     var childReaped = false
-    var childStart: UInt64?
     defer {
-        if !childReaped {
-            terminateAndReapOwnedChild(process, startAbsoluteTime: childStart)
-        }
+        if !childReaped { reapBeforeExiting(process) }
     }
-    for _ in 0..<40 where childStart == nil && process.isRunning {
-        childStart = processStartAbsoluteTime(process.processIdentifier)
-        if childStart == nil { usleep(5_000) }
-    }
-    guard let childStart else { throw SupervisorError.processLaunch }
     guard let supervisorStart = processStartAbsoluteTime(getpid()) else {
         throw SupervisorError.processLaunch
     }
@@ -605,20 +563,21 @@ private func superviseBoundary(arguments: [String]) throws -> Int32 {
         supervisorProcessIdentifier: getpid(),
         supervisorParentProcessIdentifier: getppid(),
         supervisorStartAbsoluteTime: supervisorStart,
-        childProcessIdentifier: process.processIdentifier,
-        childStartAbsoluteTime: childStart
+        childProcessIdentifier: process.processIdentifier
     )).write(to: identityURL, options: .atomic)
 
-    while process.isRunning {
+    while try process.isRunning {
         if terminationRequested != 0
             || !parentIsAlive(servicePID, startAbsoluteTime: serviceStart) {
+            try process.terminateAndReap()
+            childReaped = true
             return terminationRequested != 0 ? 0 : 70
         }
         usleep(10_000)
     }
-    process.waitUntilExit()
+    let status = try process.waitUntilExit()
     childReaped = true
-    return process.terminationStatus
+    return status
 }
 
 @main
@@ -629,10 +588,12 @@ private enum BpySupervisorMain {
             let arguments = Array(CommandLine.arguments.dropFirst(2))
             switch CommandLine.arguments[1] {
             case "supervise":
+                _ = Darwin.signal(SIGPIPE, SIG_IGN)
                 Darwin.exit(try supervise(arguments: arguments))
             case "launch":
                 try execPython(arguments: arguments)
             case "boundary-supervise":
+                _ = Darwin.signal(SIGPIPE, SIG_IGN)
                 Darwin.exit(try superviseBoundary(arguments: arguments))
             case "boundary-child":
                 try boundaryChild(arguments: arguments)
@@ -640,7 +601,7 @@ private enum BpySupervisorMain {
                 throw SupervisorError.invalidArguments
             }
         } catch {
-            FileHandle.standardError.write(Data("bpy supervisor failed: \(error)\n".utf8))
+            try? FileHandle.standardError.write(contentsOf: Data("bpy supervisor failed: \(error)\n".utf8))
             Darwin.exit(70)
         }
     }

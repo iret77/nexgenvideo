@@ -3,9 +3,7 @@ set -euo pipefail
 
 APP="${1:?NexGenVideo.app required}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-RUNTIME="$APP/Contents/Resources/BpyRuntime"
-PYTHON="$RUNTIME/python/bin/python3.13"
-SUPERVISOR="$APP/Contents/Helpers/NexGenVideoBpySupervisor"
+COMPLIANCE="$APP/Contents/Resources/BpyRuntimeCompliance"
 STORAGE="$APP/Contents/Helpers/NexGenVideoBpyStorage"
 VERIFY_MODE="${2:---distribution}"
 case "$VERIFY_MODE" in
@@ -14,33 +12,22 @@ case "$VERIFY_MODE" in
   *) echo "unknown bpy verification mode: $VERIFY_MODE" >&2; exit 1 ;;
 esac
 
-test -x "$PYTHON"
-test -x "$SUPERVISOR"
 test -x "$STORAGE"
-BPY_ENTRYPOINT="$(jq -r .bpyWheelLayout.entryPoint "$ROOT/Runtime/bpy/runtime-lock.json")"
-test -f "$RUNTIME/site-packages/$BPY_ENTRYPOINT"
-test -f "$RUNTIME/PYTHON.json"
-test ! -e "$RUNTIME/python/bin/pip"
-test ! -e "$RUNTIME/python/bin/pip3"
-test ! -e "$RUNTIME/python/bin/pip3.13"
-cmp -s "$RUNTIME/runtime-lock.json" "$ROOT/Runtime/bpy/runtime-lock.json"
-[ "$(cat "$RUNTIME/.complete")" = "$(shasum -a 256 "$ROOT/Runtime/bpy/runtime-lock.json" | awk '{print $1}')" ]
+cmp -s "$COMPLIANCE/runtime-lock.json" "$ROOT/Runtime/bpy/runtime-lock.json"
 if [ "$(jq -r .distributionStatus "$ROOT/Runtime/bpy/runtime-lock.json")" = ready ]; then
   while IFS=$'\t' read -r filename sha size; do
-    SOURCE="$RUNTIME/corresponding-source/$filename"
+    SOURCE="$COMPLIANCE/corresponding-source/$filename"
     test -f "$SOURCE"
     test "$(shasum -a 256 "$SOURCE" | awk '{print $1}')" = "$sha"
     test "$(stat -f %z "$SOURCE")" = "$size"
   done < <(jq -r '.distributionClosure.sourceArchives[] | [.filename,.sha256,.size] | @tsv' "$ROOT/Runtime/bpy/runtime-lock.json")
   while IFS=$'\t' read -r relative sha; do
-    EVIDENCE="$RUNTIME/licenses/distribution/$(basename "$relative")"
+    EVIDENCE="$COMPLIANCE/licenses/distribution/$(basename "$relative")"
     test -f "$EVIDENCE"
     test "$(shasum -a 256 "$EVIDENCE" | awk '{print $1}')" = "$sha"
   done < <(jq -r '[(.distributionClosure.wheelBinaryCorrespondence), (.distributionClosure.noticeCoverage), .distributionClosure.noticeFiles[]] | .[] | [.path,.sha256] | @tsv' "$ROOT/Runtime/bpy/runtime-lock.json")
 fi
 
-codesign --verify --strict --verbose=2 "$PYTHON"
-codesign --verify --strict --verbose=2 "$SUPERVISOR"
 codesign --verify --strict --verbose=2 "$STORAGE"
 if codesign -d --entitlements :- "$STORAGE" 2>/dev/null | grep -q 'com.apple.security.\(app-sandbox\|inherit\)'; then
   echo "storage helper must retain the non-sandboxed host's mount authority" >&2
@@ -49,6 +36,21 @@ fi
 for slot in 0 1; do
   XPC="$APP/Contents/XPCServices/NexGenVideoBpyService$slot.xpc"
   test -d "$XPC"
+  RUNTIME="$XPC/Contents/Resources/BpyRuntime"
+  PYTHON="$RUNTIME/python/bin/python3.13"
+  SUPERVISOR="$XPC/Contents/MacOS/NexGenVideoBpySupervisor"
+  test -x "$PYTHON"
+  test -x "$SUPERVISOR"
+  BPY_ENTRYPOINT="$(jq -r .bpyWheelLayout.entryPoint "$ROOT/Runtime/bpy/runtime-lock.json")"
+  test -f "$RUNTIME/site-packages/$BPY_ENTRYPOINT"
+  test -f "$RUNTIME/PYTHON.json"
+  test ! -e "$RUNTIME/python/bin/pip"
+  test ! -e "$RUNTIME/python/bin/pip3"
+  test ! -e "$RUNTIME/python/bin/pip3.13"
+  cmp -s "$RUNTIME/runtime-lock.json" "$ROOT/Runtime/bpy/runtime-lock.json"
+  [ "$(cat "$RUNTIME/.complete")" = "$(shasum -a 256 "$ROOT/Runtime/bpy/runtime-lock.json" | awk '{print $1}')" ]
+  codesign --verify --strict --verbose=2 "$PYTHON"
+  codesign --verify --strict --verbose=2 "$SUPERVISOR"
   [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$XPC/Contents/Info.plist")" \
     = "de.h5ventures.nexgenvideo.bpy-service-$slot" ]
   codesign --verify --strict --verbose=2 "$XPC"
@@ -64,6 +66,6 @@ while IFS= read -r -d '' binary; do
     exit 1
   }
   python3 "$ROOT/scripts/verify_macho_dependencies.py" "$binary"
-done < <(find "$RUNTIME" "$SUPERVISOR" "$STORAGE" "$APP/Contents/XPCServices" -type f -print0)
+done < <(find "$STORAGE" "$APP/Contents/XPCServices" -type f -print0)
 
 echo "managed bpy bundle is signed, arm64-only, and relocatable"

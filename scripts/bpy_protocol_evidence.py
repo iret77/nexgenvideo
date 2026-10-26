@@ -29,6 +29,31 @@ def integer(value, minimum=0):
     return type(value) is int and value >= minimum
 
 
+def validate_dropped_reply(raw, result, app):
+    require(hashlib.sha256(raw).hexdigest() == result.get("droppedReplyEvidenceSHA256"), "dropped reply hash")
+    require(result.get("transportTimeoutRecovered") is True, "transport recovery outcome")
+    receipt = json.loads(raw)
+    require(receipt.get("schema") == "nexgenvideo/bpy-dropped-reply/1", "dropped reply schema")
+    job, transport = str(UUID(receipt["jobID"])), str(UUID(receipt["transport"]))
+    require(job != transport, "distinct job and transport")
+    require(integer(receipt.get("servicePID"), 2) and integer(receipt.get("serviceStart"), 1), "service identity")
+    services = [app / f"Contents/XPCServices/NexGenVideoBpyService{slot}.xpc/Contents/MacOS/NexGenVideoBpyService"
+                for slot in range(2)]
+    require(receipt.get("serviceExecutable") in [str(path.resolve()) for path in services], "bundled service")
+    response = object_bytes(receipt["response"])
+    require(response.get("ok") is True and response.get("state") == "running"
+            and str(UUID(response["jobID"])) == job, "live dropped response")
+    require(response.get("runtime", {}).get("serviceProcessIdentifier") == receipt["servicePID"], "response service binding")
+    supervisor, worker = response.get("activeProcessIdentifier"), response.get("activeWorkerProcessIdentifier")
+    require(integer(supervisor, 2) and integer(worker, 2)
+            and len({receipt["servicePID"], supervisor, worker}) == 3, "active worker lineage")
+    require(integer(response.get("activeProcessStartAbsoluteTime"), 1)
+            and response.get("activeProcessAuthorizationID") is None, "authorized supervisor")
+    service_index = [str(path.resolve()) for path in services].index(receipt["serviceExecutable"])
+    expected = services[service_index].with_name("NexGenVideoBpySupervisor").resolve()
+    require(response.get("activeProcessExecutable") == str(expected), "bundled supervisor")
+
+
 def fingerprint(request, limits, inputs):
     timeout = request.get("timeoutSeconds")
     require(integer(limits.get("timeoutSeconds"), 1), "session timeout")
@@ -118,7 +143,7 @@ def validate_completion(evidence, requests, responses, session, job, expected_fi
                                    ("processExecutable", "activeProcessExecutable")):
                 require(request[actual] == pending[source], "authorization lease: " + actual)
             require(integer(request["processIdentifier"], 2) and integer(request["processStartAbsoluteTime"], 1)
-                    and request["processExecutable"].endswith("/Contents/Helpers/NexGenVideoBpySupervisor"), "actual supervisor identity")
+                    and any(request["processExecutable"].endswith(f"/Contents/XPCServices/NexGenVideoBpyService{slot}.xpc/Contents/MacOS/NexGenVideoBpySupervisor") for slot in (0, 1)), "actual supervisor identity")
             require(response.get("activeProcessAuthorizationID") is None, "authorization acknowledged")
             pending = None
         require(response.get("state") in (("awaitingConfirmation",) if index == len(exchanges) - 1 else ("accepted", "running")), "completion order/state")
@@ -348,6 +373,7 @@ if __name__ == "__main__":
     raw = (args.evidence / "native-protocol-evidence.json").read_bytes()
     evidence = json.loads(raw)
     result = json.loads((args.evidence / "result.json").read_bytes())
+    validate_dropped_reply((args.evidence / "native-dropped-reply.json").read_bytes(), result, args.app.resolve())
     validate(evidence, result, raw,
              (args.evidence / "native-protocol-checkpoint.blend").read_bytes(),
              (args.evidence / "native-protocol-restored-checkpoint.blend").read_bytes())

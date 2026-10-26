@@ -92,7 +92,7 @@ extension PipelineSpatialDerivationWriter {
         try Task.checkCancellation()
         guard editor.workingRoot == home, BpyRuntimeHost.shared.isOperationActive(operation) else { throw changed() }
         let candidate = try await SpatialClayRenderer.prepareSequence(request: input.4, revision: input.0.scene, state: input.1,
-            timing: input.5, runtime: runtime, runtimeRoot: Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/BpyRuntime"))
+            timing: input.5, runtime: runtime, runtimeRoot: runtime.bundledRuntimeRoot)
         defer { candidate.discard() }
         let transaction = try await background {
             try Task.checkCancellation()

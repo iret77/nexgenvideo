@@ -88,7 +88,7 @@ extension PipelineSpatialDerivationWriter {
         guard editor.workingRoot == home, editor.openWorkingCopyKey == key, editor.openWorkingCopyGeneration == generation,
               BpyRuntimeHost.shared.isOperationActive(operation) else { throw bibleViewChanged() }
         let candidate = try await SpatialClayRenderer.prepare(request: input.3, revision: input.2, runtime: runtime,
-            runtimeRoot: Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/BpyRuntime"))
+            runtimeRoot: runtime.bundledRuntimeRoot)
         let prepared = try await background {
             try runtime.authenticateSpatialDerivation(candidate, source: input.2)
             try SpatialClayRenderer.validate(candidate, against: input.2)
