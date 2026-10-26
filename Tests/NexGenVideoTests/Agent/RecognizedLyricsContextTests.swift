@@ -36,7 +36,7 @@ struct RecognizedLyricsContextTests {
         let fence = try PipelineProductionRuntimeContext.ReadFence.capture(dataRoot: fixture.dataRoot)
         try Data("changed".utf8).write(to: fixture.dataRoot.appendingPathComponent("analysis/stems/vocals.wav"))
         #expect(throws: (any Error).self) { try fence.requireCurrent() }
-        let stale = try #require(PipelineRecognizedLyricsContext.prompt(dataRoot: fixture.dataRoot,
+        let stale = try #require(try PipelineRecognizedLyricsContext.prompt(dataRoot: fixture.dataRoot,
             phase: "brief", packName: "musicvideo"))
         #expect(!stale.contains("Morning light"))
         #expect(stale.contains("stale or unavailable"))
@@ -87,7 +87,7 @@ struct RecognizedLyricsContextTests {
                 .init(stage: "lyrics_recognition", status: .succeeded, detail: "Measured words."),
             ], recognizedLyrics: recognition)
         try data.write(to: root.appendingPathComponent("analysis/song.json"))
-        let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
         try AnalysisMeasurementProofStore.save(AnalysisMeasurementProof(project: "demo", songSHA256: songHash,
             lyricsAlignment: nil, recognizedLyrics: .init(sourcePath: "analysis/stems/vocals.wav",
                 sourceSHA256: try FileDigest.sha256(of: vocals),
