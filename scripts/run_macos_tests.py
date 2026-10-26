@@ -181,7 +181,8 @@ def empty_swift_output(path):
 
 
 def run_process(command, path, environment, observation=None):
-    missing = [name for name in ("waitid", "P_PID", "WEXITED", "WNOHANG", "WNOWAIT") if not hasattr(os, name)]
+    missing = [name for name in ("waitid", "P_PID", "WEXITED", "WNOHANG", "WNOWAIT",
+                               "CLD_EXITED", "CLD_KILLED", "CLD_DUMPED") if not hasattr(os, name)]
     if missing:
         raise VerificationError(f"Python {sys.version.split()[0]} at {sys.executable} lacks {', '.join(missing)}; "
                                 "native child observation requires Python 3.13 or newer on macOS")
@@ -209,7 +210,8 @@ def run_process(command, path, environment, observation=None):
                     while not eof or exited is None:
                         if exited is None:
                             status = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
-                            if status is not None and status.si_pid == process.pid:
+                            if (status is not None and status.si_pid == process.pid
+                                    and status.si_code in (os.CLD_EXITED, os.CLD_KILLED, os.CLD_DUMPED)):
                                 exited = time.monotonic()
                                 if observation is not None:
                                     observation["exitObserved"] = time.time()

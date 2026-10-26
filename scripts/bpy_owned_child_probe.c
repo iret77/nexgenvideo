@@ -80,12 +80,32 @@ static int run_case(int mode, int iteration) {
     }
     snapshot(child, "term-grace", error);
     if (error != ETIMEDOUT) { error = EIO; goto cleanup; }
-    if (mode == 2) {
+    if (mode >= 2) {
         error = ngv_bpy_child_signal(child, SIGSTOP);
         if (error) goto cleanup;
     }
+    if (mode == 3) {
+        double deadline = now() + 3;
+        while (1) {
+            siginfo_t stopped = {0};
+            if (waitid(P_PID, ngv_bpy_child_pid(child), &stopped, WSTOPPED | WNOHANG | WNOWAIT) < 0) {
+                if (errno == EINTR) continue;
+                error = errno;
+                goto cleanup;
+            }
+            if (stopped.si_pid == ngv_bpy_child_pid(child) && stopped.si_code == CLD_STOPPED) break;
+            if (now() >= deadline) { error = ETIMEDOUT; goto cleanup; }
+            struct timespec pause = {.tv_nsec = 5000000};
+            nanosleep(&pause, NULL);
+        }
+        int running = 0;
+        error = ngv_bpy_child_poll(child, &running);
+        snapshot(child, "stopped-owned", error);
+        if (!error && !running) error = EIO;
+        if (error) goto cleanup;
+    }
     error = ngv_bpy_child_signal(child, SIGKILL);
-    if (mode == 2) printf("{\"stage\":\"stop-result\",\"error\":0}\n");
+    if (mode >= 2) printf("{\"stage\":\"stop-result\",\"error\":0}\n");
     snapshot(child, "kill", error);
     if (error) goto cleanup;
     error = reap(child, 2, &status, &signal_number);
@@ -110,11 +130,11 @@ cleanup:
 
 int main(void) {
     for (int iteration = 0; iteration < 3; iteration++) {
-        for (int mode = 0; mode < 3; mode++) {
+        for (int mode = 0; mode < 4; mode++) {
             int error = run_case(mode, iteration);
             if (error) return 1;
         }
     }
-    puts("{\"stage\":\"complete\",\"cases\":9}");
+    puts("{\"stage\":\"complete\",\"cases\":12}");
     return 0;
 }
