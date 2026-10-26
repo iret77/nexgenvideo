@@ -284,31 +284,6 @@ jobs:
         if: inputs.completed_app_tests_run_id != ''
         run: python3 scripts/resume_core_app_assertions.py verify --evidence "$RUNNER_TEMP/core-app-assertion-resume"
 
-      - uses: actions/download-artifact@v4
-        if: needs.source_gate.outputs.bundle_required == 'true'
-        with:
-          name: managed-bpy-source-receipt-${{ github.sha }}
-          path: .build/bpy-source
-      - name: Check source transfer disk headroom
-        if: needs.source_gate.outputs.bundle_required == 'true'
-        run: |
-          python3 - <<'PY'
-          import json, os, shutil
-          from pathlib import Path
-          public = json.loads(Path('Runtime/bpy/runtime-lock.json').read_text())['distributionClosure']['publicSourceAsset']
-          required = public['size'] + public['producer']['artifactSize'] + 16 * 1024 * 1024
-          free = {key: shutil.disk_usage(os.environ[key]).free for key in ('RUNNER_TEMP', 'GITHUB_WORKSPACE')}
-          print(json.dumps({'requiredSourceTransferBytes': required, 'availableBytes': free}))
-          if min(free.values()) < required:
-              raise SystemExit('Insufficient space for the pinned source archive and extracted pair')
-          PY
-      - uses: ./.github/actions/prepare-bpy-source
-        if: needs.source_gate.outputs.bundle_required == 'true'
-        timeout-minutes: 30
-        with:
-          directory: .build/bpy-source
-          receipt: .build/bpy-source/bpy-source-receipt.json
-
       - uses: ./.github/actions/cache-swiftpm-dependencies
         id: swiftpm_dependencies
         with:
@@ -333,6 +308,31 @@ jobs:
         with:
           path: ${{ steps.swiftpm_dependencies.outputs.cache-path }}
           key: ${{ steps.swiftpm_dependencies.outputs.cache-primary-key }}
+
+      - uses: actions/download-artifact@v4
+        if: needs.source_gate.outputs.bundle_required == 'true'
+        with:
+          name: managed-bpy-source-receipt-${{ github.sha }}
+          path: .build/bpy-source
+      - name: Check source transfer disk headroom
+        if: needs.source_gate.outputs.bundle_required == 'true'
+        run: |
+          python3 - <<'PY'
+          import json, os, shutil
+          from pathlib import Path
+          public = json.loads(Path('Runtime/bpy/runtime-lock.json').read_text())['distributionClosure']['publicSourceAsset']
+          required = public['size'] + public['producer']['artifactSize'] + 16 * 1024 * 1024
+          free = {key: shutil.disk_usage(os.environ[key]).free for key in ('RUNNER_TEMP', 'GITHUB_WORKSPACE')}
+          print(json.dumps({'requiredSourceTransferBytes': required, 'availableBytes': free}))
+          if min(free.values()) < required:
+              raise SystemExit('Insufficient space for the pinned source archive and extracted pair')
+          PY
+      - uses: ./.github/actions/prepare-bpy-source
+        if: needs.source_gate.outputs.bundle_required == 'true'
+        timeout-minutes: 30
+        with:
+          directory: .build/bpy-source
+          receipt: .build/bpy-source/bpy-source-receipt.json
 
       - name: Stage test runtime inputs
         if: inputs.completed_full_core_run_id == '' || inputs.completed_full_core_run_id == '40265902971'
