@@ -10,6 +10,7 @@ struct RecognizedLyricsContextTests {
     @Test("skipped lyrics survive interpretation and reach the actual Brief runtime")
     func contextDelivery() async throws {
         let fixture = try await CurrentMusicvideoFixture.makeScript(seedAnalysis: { root in
+            try FullflowAcceptanceFixture.writeTone(to: root.appendingPathComponent("audio/song.wav"), duration: 12)
             try Self.seed(root)
             let manifest = try #require(HardStepManifest.load(pack: MusicvideoPack()))
             let lyrics = try #require(manifest.steps(for: "project_init").first { $0.kind == .lyrics })
@@ -35,20 +36,17 @@ struct RecognizedLyricsContextTests {
         #expect(recognition["reviewed"] as? Bool == false)
         let workflow = try #require(try PhaseContractRuntime.resolveWorkflow(dataRoot: fixture.dataRoot,
             expectedPack: editor.declaredPluginBinding, expectedProductionContract: editor.declaredProductionContract))
-        for phase in ["analysis", "treatment", "storyboard", "shotlist"] {
-            let context = try PipelineProductionRuntimeContext.instructions(dataRoot: fixture.dataRoot,
-                workflow: workflow, phase: phase)
-            #expect(context.contains("Morning light"))
-            #expect(context.contains("unreviewed speech recognition"))
-        }
+        let source = fixture.dataRoot.appendingPathComponent("analysis/stems/vocals.wav")
+        let proof = fixture.dataRoot.appendingPathComponent("analysis/song.measurement-proof.json")
+        let originalSource = try Data(contentsOf: source)
+        let originalProof = try Data(contentsOf: proof)
         let fence = try PipelineProductionRuntimeContext.ReadFence.capture(dataRoot: fixture.dataRoot)
-        try Data("changed".utf8).write(to: fixture.dataRoot.appendingPathComponent("analysis/stems/vocals.wav"))
+        try Data("changed".utf8).write(to: source)
         #expect(throws: (any Error).self) { try fence.requireCurrent() }
         let stale = try #require(try PipelineRecognizedLyricsContext.prompt(dataRoot: fixture.dataRoot,
             phase: "brief", packName: "musicvideo"))
         #expect(!stale.contains("Morning light"))
         #expect(stale.contains("stale or unavailable"))
-        let source = fixture.dataRoot.appendingPathComponent("analysis/stems/vocals.wav")
         try FileManager.default.removeItem(at: source)
         let declaration = ProjectPackGate.MutationDeclaration(packName: editor.declaredPluginName,
             binding: editor.declaredPluginBinding, productionContract: editor.declaredProductionContract)
@@ -60,21 +58,38 @@ struct RecognizedLyricsContextTests {
         #expect(throws: (any Error).self) {
             try prepared.requireCurrent(dataRoot: fixture.dataRoot, workflow: workflow, phase: "brief")
         }
-        try Data("malformed proof".utf8).write(to: fixture.dataRoot.appendingPathComponent("analysis/song.measurement-proof.json"))
+        try Data("malformed proof".utf8).write(to: proof)
         let corrupt = try PipelineProductionRuntimeContext.prepare(dataRoot: fixture.dataRoot,
             declaration: declaration, timeline: editor.timeline, resolver: editor.mediaResolver.snapshot())
         #expect(corrupt.instructions?.contains("stale or unavailable") == true)
+        try originalSource.write(to: source)
+        try originalProof.write(to: proof)
+        try await ProductionPlanningAcceptanceFixture.run("record_affect", args: [
+            "detected": [["tag": "meditative", "weight": 1.0]], "basis": "inferred",
+            "rationale": "Deterministic test interpretation of the measured track.",
+        ], in: fixture)
+        try await ProductionPlanningAcceptanceFixture.run("write_brief", args: [
+            "mission": "single_release", "target_platform": "YouTube", "aspect_ratio": "16:9",
+            "project_mode": "section", "concept_type": "abstract", "visual_medium": "live_action_realistic",
+            "figures": "none", "lyrics_integration": "metaphorical", "final_resolution": VideoResolution.res1080p.rawValue,
+        ], in: fixture)
+        try await ProductionPlanningAcceptanceFixture.approve("brief", in: fixture)
+        for phase in ["analysis", "treatment", "storyboard", "shotlist"] {
+            let context = try PipelineProductionRuntimeContext.instructions(dataRoot: fixture.dataRoot,
+                workflow: workflow, phase: phase)
+            #expect(context.contains("Morning light"))
+            #expect(context.contains("unreviewed speech recognition"))
+        }
     }
 
     nonisolated private static func seed(_ root: URL) throws {
         let song = root.appendingPathComponent("audio/song.wav")
-        try Data("track".utf8).write(to: song)
         let vocals = root.appendingPathComponent("analysis/stems/vocals.wav")
         try FileManager.default.createDirectory(at: vocals.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data("measured-vocals".utf8).write(to: vocals)
         let beats = stride(from: 0.0, through: 12.0, by: 0.5).map { $0 }
         let bars = stride(from: 0.0, through: 12.0, by: 2.0).map { $0 }
-        let raw = AudioAnalysis(sampleRate: 44_100, durationS: 12, bpm: 120, beats: beats,
+        let raw = AudioAnalysis(sampleRate: 48_000, durationS: 12, bpm: 120, beats: beats,
             downbeats: bars, downbeatSource: "music-understanding",
             sections: [AudioSection(index: 0, start: 0, end: 4, cluster: 0, source: "librosa"),
                        AudioSection(index: 1, start: 4, end: 12, cluster: 1, source: "librosa")],

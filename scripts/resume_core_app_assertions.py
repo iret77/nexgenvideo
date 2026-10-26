@@ -22,7 +22,7 @@ TESTS = {
     "Tests/NexGenVideoTests/Agent/AgentTranscriptLayoutPolicyTests.swift":
         "6f728e7c60ce665e80460180597c07ff934bff763eacd8c0245680427c03b96a",
     "Tests/NexGenVideoTests/Agent/RecognizedLyricsContextTests.swift":
-        "26adf1256e91981ff2292a75c378971216597dd499228dbce1fe22cc89426448",
+        "5bed2d51e8ce0719b11fa0771594eaf66d0d4d8c11b6705586f1a682fec2cc41",
 }
 HARNESS = {
     ".github/workflows/ci.yml", ".github/workflows/ci-batch.yml",
