@@ -78,41 +78,46 @@ def inventory(raw):
     return {"functions": sorted(functions), "skips": sorted(set(functions) & skipped)}
 
 
+def verify_backends(archive, root, source):
+    suite = archive_json(archive, "hosted-suite/suite.json")
+    require(suite.get("schema") == 1 and suite.get("sourceSHA") == source
+            and suite.get("scope") == "all" and suite.get("configuration") == "debug"
+            and not suite.get("filter") and not suite.get("scratchPath")
+            and suite.get("completed") is False
+            and [p.get("name") for p in suite.get("phases", [])]
+            == ["xctest", "engine-swift-testing", "app-swift-testing"], "Original suite selection differs")
+    require(suite["phases"][2].get("status") == "failed"
+            and suite["phases"][2].get("exitCode", 0) != 0, "Original App phase did not fail")
+    proofs = []
+    for phase, swift, xctest in ((suite["phases"][0], 0, 2), (suite["phases"][1], 1, 0)):
+        require(phase.get("status") == "verified-execution" and phase.get("exitCode") == 0
+                and "--filter" not in phase.get("command", [])
+                and not any(v.startswith("--filter=") for v in phase.get("command", [])),
+                "Original backend is failed, incomplete or filtered")
+        log = root / (phase["name"] + ".log")
+        log.write_bytes(archive_bytes(archive, "hosted-suite/" + phase["name"] + "/console.log"))
+        framework = assess_output(log, swift_testing_runs=swift, xctest_runs=xctest)
+        require(framework["passed"] and framework == phase.get("framework"), "Original framework proof differs")
+        proof = {"name": phase["name"], "framework": framework, "logSHA256": checksum(log)}
+        if xctest:
+            count = sum(bool(XCTEST_START.fullmatch(ANSI.sub("", line))) for line in log.read_text().splitlines())
+            require(count > 0 and count == phase.get("testCaseExecutions"), "Original XCTest execution count differs")
+            proof["testCaseExecutions"] = count
+        else:
+            events = root / "engine-events.jsonl"
+            events.write_bytes(archive_bytes(archive, "hosted-suite/engine-swift-testing/events.jsonl"))
+            parsed = swift_events(events, "NexGenEngineTests")
+            require(parsed == phase.get("events") and parsed["functionExecutions"] > 0
+                    and set(parsed["discoveredFunctionIDs"]) == set(parsed["endedFunctionIDs"]) | set(parsed["skippedFunctionIDs"]),
+                    "Original Engine inventory is incomplete")
+            proof.update(events=parsed, eventsSHA256=checksum(events))
+        proofs.append(proof)
+    return suite, proofs
+
+
 def verify_archive(root, source):
     with zipfile.ZipFile(root / "original.zip") as archive:
-        suite = archive_json(archive, "hosted-suite/suite.json")
-        require(suite.get("schema") == 1 and suite.get("sourceSHA") == source
-                and suite.get("scope") == "all" and suite.get("configuration") == "debug"
-                and not suite.get("filter") and not suite.get("scratchPath")
-                and suite.get("completed") is False
-                and [p.get("name") for p in suite.get("phases", [])]
-                == ["xctest", "engine-swift-testing", "app-swift-testing"], "Original suite selection differs")
-        require(suite["phases"][2].get("status") == "failed"
-                and suite["phases"][2].get("exitCode", 0) != 0, "Original App phase did not fail")
-        proofs = []
-        for phase, swift, xctest in ((suite["phases"][0], 0, 2), (suite["phases"][1], 1, 0)):
-            require(phase.get("status") == "verified-execution" and phase.get("exitCode") == 0
-                    and "--filter" not in phase.get("command", [])
-                    and not any(v.startswith("--filter=") for v in phase.get("command", [])),
-                    "Original backend is failed, incomplete or filtered")
-            log = root / (phase["name"] + ".log")
-            log.write_bytes(archive_bytes(archive, "hosted-suite/" + phase["name"] + "/console.log"))
-            framework = assess_output(log, swift_testing_runs=swift, xctest_runs=xctest)
-            require(framework["passed"] and framework == phase.get("framework"), "Original framework proof differs")
-            proof = {"name": phase["name"], "framework": framework, "logSHA256": checksum(log)}
-            if xctest:
-                count = sum(bool(XCTEST_START.fullmatch(ANSI.sub("", line))) for line in log.read_text().splitlines())
-                require(count > 0 and count == phase.get("testCaseExecutions"), "Original XCTest execution count differs")
-                proof["testCaseExecutions"] = count
-            else:
-                events = root / "engine-events.jsonl"
-                events.write_bytes(archive_bytes(archive, "hosted-suite/engine-swift-testing/events.jsonl"))
-                parsed = swift_events(events, "NexGenEngineTests")
-                require(parsed == phase.get("events") and parsed["functionExecutions"] > 0
-                        and set(parsed["discoveredFunctionIDs"]) == set(parsed["endedFunctionIDs"]) | set(parsed["skippedFunctionIDs"]),
-                        "Original Engine inventory is incomplete")
-                proof.update(events=parsed, eventsSHA256=checksum(events))
-            proofs.append(proof)
+        suite, proofs = verify_backends(archive, root, source)
         discovery = inventory(archive_bytes(archive, "hosted-suite/app-swift-testing/events.jsonl"))
         raw = archive_bytes(archive, "hosted-suite/app-swift-testing/post-mortem/owned-host-0.ips").decode()
         decoder = json.JSONDecoder()
@@ -233,7 +238,10 @@ def verify_local(root, platform=True):
 
 
 def finish(root, suite_root, capture_root):
-    receipt = verify_local(root)
+    complete_app(root, suite_root, capture_root, verify_local(root))
+
+
+def complete_app(root, suite_root, capture_root, receipt, identity=lambda value: value):
     suite = json.loads((suite_root / "suite.json").read_text())
     capture = json.loads((capture_root / "run.json").read_text())
     require(suite.get("sourceSHA") == receipt["sourceSHA"] and suite.get("completed") is True
@@ -247,9 +255,13 @@ def finish(root, suite_root, capture_root):
             "Current App native execution failed or was instrumented")
     events = swift_events(suite_root / "app-swift-testing/events.jsonl", "NexGenVideoTests")
     original = receipt["completedAppInventory"]
-    require(events == phase.get("events") and events["discoveredFunctionIDs"] == original["functions"]
-            and events["skippedFunctionIDs"] == original["skips"]
-            and set(events["endedFunctionIDs"]) == set(original["functions"]) - set(original["skips"])
+    def identities(values):
+        result = [identity(value) for value in values]
+        require(len(result) == len(set(result)), "App identity normalization collides")
+        return sorted(result)
+    require(events == phase.get("events") and identities(events["discoveredFunctionIDs"]) == identities(original["functions"])
+            and identities(events["skippedFunctionIDs"]) == identities(original["skips"])
+            and set(identities(events["endedFunctionIDs"])) == set(identities(original["functions"])) - set(identities(original["skips"]))
             and events["functionExecutions"] == len(events["endedFunctionIDs"]), "Current App inventory differs")
     framework = assess_output(suite_root / "combined.log", swift_testing_runs=1, xctest_runs=0)
     require(framework["passed"] and framework == suite.get("combinedFrameworks"), "Current App framework did not complete")

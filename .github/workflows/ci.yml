@@ -10,6 +10,9 @@ on:
         default: ''
   workflow_call:
     inputs:
+      completed_app_tests_run_id:
+        type: string
+        default: ''
       completed_backends_run_id:
         type: string
         default: ''
@@ -100,6 +103,24 @@ jobs:
         with:
           name: core-backend-resume-${{ github.run_id }}-a${{ github.run_attempt }}
           path: ${{ runner.temp }}/core-backend-resume
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Bind completed backends from the pinned App assertion failure
+        if: inputs.completed_app_tests_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ORIGINAL_ASSERTION_RUN: ${{ inputs.completed_app_tests_run_id }}
+        run: |
+          python3 scripts/resume_core_app_assertions.py prepare --run-id "$ORIGINAL_ASSERTION_RUN" \
+            --evidence "$RUNNER_TEMP/core-app-assertion-resume"
+
+      - name: Transfer original App assertion evidence
+        if: inputs.completed_app_tests_run_id != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-app-assertion-resume-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/core-app-assertion-resume
           if-no-files-found: error
           retention-days: 14
 
@@ -254,6 +275,16 @@ jobs:
         run: python3 scripts/resume_core_tests.py verify --evidence "$RUNNER_TEMP/core-backend-resume"
 
       - uses: actions/download-artifact@v4
+        if: inputs.completed_app_tests_run_id != ''
+        with:
+          name: core-app-assertion-resume-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/core-app-assertion-resume
+
+      - name: Verify assertion continuation source and platform
+        if: inputs.completed_app_tests_run_id != ''
+        run: python3 scripts/resume_core_app_assertions.py verify --evidence "$RUNNER_TEMP/core-app-assertion-resume"
+
+      - uses: actions/download-artifact@v4
         if: needs.source_gate.outputs.bundle_required == 'true'
         with:
           name: managed-bpy-source-receipt-${{ github.sha }}
@@ -284,7 +315,7 @@ jobs:
           restore-only: 'true'
 
       - name: Verify native app signing with nested runtime content
-        if: inputs.completed_backends_run_id == '' && inputs.completed_full_core_run_id == ''
+        if: inputs.completed_backends_run_id == '' && inputs.completed_full_core_run_id == '' && inputs.completed_app_tests_run_id == ''
         timeout-minutes: 5
         run: python3 -m unittest discover -s scripts -p test_sign_app.py -v
 
@@ -313,10 +344,23 @@ jobs:
         env:
           NGV_BLOCKOUT_ORIENTATION_EVIDENCE_DIR: ${{ runner.temp }}/blockout-orientation-evidence
           NGV_COMPLETED_BACKENDS: ${{ inputs.completed_backends_run_id }}
+          NGV_APP_ASSERTIONS: ${{ inputs.completed_app_tests_run_id }}
         shell: bash
         run: |
           set -euo pipefail
           export SWIFT_BACKTRACE=enable=yes,interactive=no,demangle=yes,cache=no
+          if [ -n "${NGV_APP_ASSERTIONS:-}" ]; then
+            python3 scripts/capture_render_review_test_diagnostic.py \
+              --evidence "$RUNNER_TEMP/render-review-test-diagnostic" --log test.log \
+              --swift-testing-runs 1 --xctest-runs 0 --without-runloop-probe \
+              --app-assertion-resume "$RUNNER_TEMP/core-app-assertion-resume" -- \
+              python3 scripts/run_macos_tests.py --cache-path "$NGV_SWIFTPM_CACHE_PATH" \
+                --scope app-swift-testing --evidence "$RUNNER_TEMP/render-review-test-diagnostic/hosted-suite"
+            python3 scripts/resume_core_app_assertions.py finish --evidence "$RUNNER_TEMP/core-app-assertion-resume" \
+              --suite "$RUNNER_TEMP/render-review-test-diagnostic/hosted-suite" \
+              --capture "$RUNNER_TEMP/render-review-test-diagnostic"
+            exit 0
+          fi
           if [ -n "${NGV_COMPLETED_BACKENDS:-}" ]; then
             python3 scripts/capture_render_review_test_diagnostic.py \
               --evidence "$RUNNER_TEMP/render-review-test-diagnostic" --log test.log \
@@ -334,6 +378,15 @@ jobs:
             --swift-testing-runs 2 --xctest-runs 2 --without-runloop-probe -- \
             python3 scripts/run_macos_tests.py --cache-path "$NGV_SWIFTPM_CACHE_PATH" \
               --evidence "$RUNNER_TEMP/render-review-test-diagnostic/hosted-suite"
+
+      - name: Upload App assertion continuation proof
+        if: always() && inputs.completed_app_tests_run_id != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-app-assertion-completion-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/core-app-assertion-resume
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Upload Core backend composition
         if: always() && inputs.completed_backends_run_id != ''
