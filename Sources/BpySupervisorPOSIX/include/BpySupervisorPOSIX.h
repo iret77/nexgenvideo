@@ -4,6 +4,7 @@
 #include <sys/types.h>
 
 int ngv_bpy_probe_fork(int *fork_errno);
+int ngv_bpy_file_handle_descriptor(void *handle, int *descriptor);
 
 typedef struct ngv_bpy_child ngv_bpy_child;
 int ngv_bpy_child_spawn(const char *path, char *const argv[], char *const envp[],
