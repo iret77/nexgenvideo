@@ -339,7 +339,9 @@ private func directoryDescriptor(
 private func directorySnapshot(
     _ roots: [URL],
     byteLimit: UInt64,
-    fileLimit: Int
+    fileLimit: Int,
+    beforeResolve: ((DirectoryReference) throws -> Void)? = nil,
+    missingDirectory: ((DirectoryReference) -> Void)? = nil
 ) throws -> DirectorySnapshot {
     var snapshot = DirectorySnapshot(bytes: 0, resources: [:], files: 0, limitReason: nil)
     let managedRoots = try managedRootPaths(roots)
@@ -393,10 +395,14 @@ private func directorySnapshot(
     }
 
     while let reference = pending.popLast() {
+        try beforeResolve?(reference)
         guard let descriptor = try directoryDescriptor(
             reference,
             managedRoots: managedRoots
-        ) else { continue }
+        ) else {
+            missingDirectory?(reference)
+            continue
+        }
         do {
             var directoryStatus = stat()
             guard Darwin.fstat(descriptor, &directoryStatus) == 0 else {
@@ -614,6 +620,71 @@ private func directoryUsage(
         byteLimit: byteLimit,
         fileLimit: fileLimit
     )
+}
+
+private func directoryDeletionProbe() throws -> [String: Any] {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("bpy-directory-probe-\(UUID().uuidString)")
+    let child = root.appendingPathComponent("queued")
+    let nested = child.appendingPathComponent("inside.bin")
+    let retained = root.appendingPathComponent("retained.bin")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: child, withIntermediateDirectories: true)
+    try Data(repeating: 0x5a, count: 4096).write(to: nested)
+    let payload = Data(repeating: 0xa5, count: 8192)
+    try payload.write(to: retained)
+    func status(_ url: URL) throws -> stat {
+        var value = stat()
+        guard Darwin.lstat(url.path, &value) == 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+        return value
+    }
+    let childIdentity = vnodeIdentity(try status(child))
+    let nestedIdentity = vnodeIdentity(try status(nested))
+    let retainedStatus = try status(retained)
+    let retainedIdentity = vnodeIdentity(retainedStatus)
+    let retainedBytes = vnodeBytes(logical: retainedStatus.st_size, blocks: Int64(retainedStatus.st_blocks))
+    let baseline = try directorySnapshot([root], byteLimit: 1_048_576, fileLimit: 10)
+    let childBytes = baseline.resources[childIdentity] ?? 0
+    guard baseline.limitReason == nil, baseline.files == 3,
+          let nestedBytes = baseline.resources[nestedIdentity], nestedBytes >= 4096,
+          baseline.resources[retainedIdentity] == retainedBytes else {
+        throw CocoaError(.fileReadCorruptFile)
+    }
+    var events: [String] = []
+    let interrupted = try directorySnapshot([root], byteLimit: 1_048_576, fileLimit: 10,
+        beforeResolve: { reference in
+            guard reference.identity == childIdentity else { return }
+            guard events.isEmpty, reference.path == nil, reference.fileSystem != nil,
+                  vnodeIdentity(try status(child)) == childIdentity else { throw CocoaError(.fileReadCorruptFile) }
+            events.append("enumerated")
+            guard Darwin.unlink(nested.path) == 0, Darwin.rmdir(child.path) == 0 else {
+                throw POSIXError(.init(rawValue: errno) ?? .EIO)
+            }
+            events.append("unlinked")
+        }, missingDirectory: { reference in
+            if reference.identity == childIdentity { events.append("missing") }
+        })
+    guard events == ["enumerated", "unlinked", "missing"], interrupted.limitReason == nil,
+          interrupted.files == 2, interrupted.resources[retainedIdentity] == retainedBytes,
+          (interrupted.resources[childIdentity] ?? 0) == childBytes, interrupted.resources[nestedIdentity] == nil,
+          interrupted.bytes >= retainedBytes, try Data(contentsOf: retained) == payload else {
+        throw CocoaError(.fileReadCorruptFile)
+    }
+    let followup = try directoryUsage([root], byteLimit: 1_048_576, fileLimit: 10)
+    guard followup.limitReason == nil, followup.files == 1,
+          followup.resources[retainedIdentity] == retainedBytes,
+          followup.resources[childIdentity] == nil, followup.resources[nestedIdentity] == nil else {
+        throw CocoaError(.fileReadCorruptFile)
+    }
+    events.append("completed")
+    return ["schema": "nexgenvideo/bpy-directory-deletion/1", "events": events, "processIdentifier": getpid(),
+            "queuedDevice": childIdentity.device, "queuedInode": childIdentity.inode,
+            "queuedDirectoryBytes": childBytes, "interruptedDirectoryBytes": interrupted.resources[childIdentity] ?? 0,
+            "retainedDevice": retainedIdentity.device, "retainedInode": retainedIdentity.inode,
+            "baselineFiles": baseline.files, "interruptedFiles": interrupted.files, "followupFiles": followup.files,
+            "payloadBytes": payload.count, "retainedBytes": retainedBytes,
+            "interruptedRetainedBytes": interrupted.resources[retainedIdentity]!,
+            "followupRetainedBytes": followup.resources[retainedIdentity]!,
+            "payloadSHA256": sha256(payload), "retainedSHA256": try sha256(retained)]
 }
 
 private func processMatches(_ identity: SupervisorWorkerIdentity) -> Bool {
@@ -3334,6 +3405,17 @@ private final class ListenerDelegate: NSObject, NSXPCListenerDelegate {
         connection.invalidationHandler = { [weak exported] in exported?.invalidate() }
         connection.resume()
         return true
+    }
+}
+
+if CommandLine.arguments == [CommandLine.arguments[0], "--selftest-directory-deletion"] {
+    do {
+        let evidence = try JSONSerialization.data(withJSONObject: directoryDeletionProbe(), options: [.sortedKeys])
+        FileHandle.standardOutput.write(evidence)
+        Darwin.exit(0)
+    } catch {
+        FileHandle.standardError.write(Data("Directory deletion probe failed: \(error.localizedDescription)\n".utf8))
+        Darwin.exit(1)
     }
 }
 
