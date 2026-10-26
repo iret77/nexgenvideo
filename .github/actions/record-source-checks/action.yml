@@ -1,0 +1,7 @@
+name: Record verified source checkout
+description: Preserve the exact PR checkout tree after successful source checks.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: python3 scripts/verified_pr_source_checks.py record --output "$RUNNER_TEMP/verified-source-checks"

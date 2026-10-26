@@ -38,6 +38,10 @@ on:
         description: Optional original Core run failing only the cache workflow inventory; preserve its unchanged successful source checks
         type: string
         default: ''
+      verified_pr_run_id:
+        description: Successful PR source checks for the exact current merge tree
+        type: string
+        default: ''
       qualification_binary_run_id:
         description: Optional prior qualification run; reuse its passing binary evidence without another Mac job
         type: string
@@ -92,6 +96,7 @@ on:
 permissions:
   contents: read
   actions: read
+  pull-requests: read
 
 concurrency:
   group: ci-batch-${{ github.ref }}
@@ -120,6 +125,7 @@ jobs:
           NGV_COMPLETED_BACKENDS: ${{ inputs.completed_backends_run_id }}
           NGV_APP_INVENTORY: ${{ inputs.app_inventory_run_id }}
           NGV_SOURCE_CHECKS: ${{ inputs.completed_source_checks_run_id }}
+          NGV_VERIFIED_PR: ${{ inputs.verified_pr_run_id }}
           NGV_COMPLETED_FULL: ${{ inputs.completed_full_core_run_id }}
           NGV_APP_ASSERTIONS: ${{ inputs.completed_app_tests_run_id }}
         run: |
@@ -136,8 +142,13 @@ jobs:
           completed_backends = os.environ.get('NGV_COMPLETED_BACKENDS', '')
           app_inventory = os.environ.get('NGV_APP_INVENTORY', '')
           source_checks = os.environ.get('NGV_SOURCE_CHECKS', '')
+          verified_pr = os.environ.get('NGV_VERIFIED_PR', '')
           completed_full = os.environ.get('NGV_COMPLETED_FULL', '')
           app_assertions = os.environ.get('NGV_APP_ASSERTIONS', '')
+          if verified_pr and (mode != 'initial' or not re.fullmatch(r'[1-9][0-9]*', verified_pr)
+                              or any((completed_full, completed_backends, app_inventory, source_checks,
+                                      app_assertions, binary_run_id, source_run_id))):
+              raise SystemExit('PR source reuse requires the exact merged PR in initial mode without other reuse inputs.')
           if app_assertions and (mode != 'initial' or app_assertions != '40254944746'
                                  or any((completed_full, completed_backends, app_inventory, source_checks, binary_run_id, source_run_id))):
               raise SystemExit('App assertion continuation requires its pinned producer and no other reuse inputs.')
@@ -217,6 +228,7 @@ jobs:
       completed_full_core_run_id: ${{ inputs.completed_full_core_run_id }}
       app_inventory_run_id: ${{ inputs.app_inventory_run_id }}
       completed_source_checks_run_id: ${{ inputs.completed_source_checks_run_id }}
+      verified_pr_run_id: ${{ inputs.verified_pr_run_id }}
 
   chat-hang-replay:
     needs: [validate, ci]
