@@ -103,7 +103,8 @@ final class MusicvideoHostFlowAcceptance {
         try capture("analysis-measured")
     }
 
-    func finishPlanningIntake(sectionLabels: [String], finalResolution: VideoResolution = .res1080p) async throws {
+    func finishPlanningIntake(sectionLabels: [String], finalResolution: VideoResolution = .res1080p,
+                              conceptType: ConceptType = .narrative) async throws {
         guard let url = AudioProjectLayout.expectedAnalysisArtifactURL(dataRoot: dataRoot),
               let object = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any],
               let sections = object["sections"] as? [[String: Any]], sections.count == sectionLabels.count else {
@@ -157,7 +158,7 @@ final class MusicvideoHostFlowAcceptance {
         try await tool("record_affect", ["detected": [["tag": "meditative", "weight": 1.0]],
             "basis": "inferred", "rationale": "Supplied acceptance interpretation; no live LLM inference."])
         try await tool("write_brief", ["mission": "single_release", "target_platform": "YouTube",
-            "aspect_ratio": "16:9", "project_mode": "section", "concept_type": "narrative",
+            "aspect_ratio": "16:9", "project_mode": "section", "concept_type": conceptType.rawValue,
             "visual_medium": "live_action_realistic", "figures": "none", "lyrics_integration": "metaphorical",
             "final_resolution": finalResolution.rawValue])
         try await approve("brief")
@@ -326,14 +327,42 @@ final class MusicvideoHostFlowAcceptance {
                   let working = request.workingDirectory, let root = DataRootResolver.dataRoot(of: working) else {
                 throw Failure("The actual backend request omitted the current pack phase instructions")
             }
+            guard let binding = ProjectPackBinding(id: pack.id, version: pack.version, projectSchema: pack.projectSchema),
+                  let workflow = try PhaseContractRuntime.resolveWorkflow(dataRoot: root, expectedPack: binding, expectedProductionContract: nil) else {
+                throw Failure("The recording runtime has no exact loaded workflow identity")
+            }
             let projectState = try JSONDecoder().decode(ProjectStateData.self,
-                from: NativeCockpitReader.stateJSON(dataRoot: root, activePack: pack.id))
+                from: NativeCockpitReader.stateJSON(dataRoot: root, activePack: pack.id, workflow: workflow))
             if projectState.isComplete {
                 guard request.hostContext.pack?.currentPhase == nil, request.hostContext.phaseInstructions == nil else {
                     throw Failure("The completed workflow invented another phase or phase instructions")
                 }
                 phase = "complete"
                 instructionsSHA256 = nil
+                state = .ready(sessionID: request.sessionID)
+                return
+            }
+            if workflow.isProductionV2 {
+                guard let phase = pack.currentPhase, projectState.nextPhaseName == phase,
+                      let instructions = request.hostContext.phaseInstructions else {
+                    throw Failure("The V2 runtime request omitted its actual current phase")
+                }
+                let exact = try PhaseContractRuntime.contract(workflow: workflow).instructions(for: phase)
+                guard !exact.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, instructions.contains(exact) else {
+                    throw Failure("The V2 runtime request omitted the exact packaged phase document")
+                }
+                if ["treatment", "script", "storyboard", "shot_planning", "shotlist", "render_review", "render"].contains(phase) {
+                    let requiredKnowledge = [
+                        "Keep the original song once at timeline zero; mute provider song audio so generated clips cannot double or replace it.",
+                        "A voice has one visible mouth owner within the phrase",
+                        "Dance roles requiring the full body also preserve floor contact",
+                    ]
+                    guard requiredKnowledge.allSatisfy(instructions.contains) else {
+                        throw Failure("The V2 runtime request omitted the actual selected music-performance guidance for " + phase)
+                    }
+                }
+                self.phase = phase
+                instructionsSHA256 = FileDigest.sha256(of: Data(instructions.utf8))
                 state = .ready(sessionID: request.sessionID)
                 return
             }
