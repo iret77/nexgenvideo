@@ -41,9 +41,10 @@ struct ProjectCockpitView: View {
         let selectedTitle = selectedSurface?.title ?? editor.cockpitTab.rawValue
 
         return GeometryReader { geometry in
-        let dockMaximumHeight = max(AppTheme.Spacing.none, geometry.size.height
-            - AppTheme.Layout.workspaceHeaderHeight * interfaceScale
-            - AppTheme.ComponentSize.productionArtifactMinHeight - AppTheme.BorderWidth.thin)
+        let contentHeight = max(AppTheme.Spacing.none, geometry.size.height
+            - AppTheme.Layout.workspaceHeaderHeight * interfaceScale - AppTheme.BorderWidth.thin)
+        let dockMaximumHeight = min(contentHeight * AppTheme.Layout.productionDockMaximumFraction,
+            max(AppTheme.Spacing.none, contentHeight - AppTheme.ComponentSize.productionArtifactReviewMinHeight))
         VStack(spacing: AppTheme.Spacing.none) {
             if production {
                 HStack {
@@ -108,9 +109,10 @@ struct ProjectCockpitView: View {
                 AppDivider()
                 ScrollView {
                     PipelinePanelView(presentation: .dock)
+                        .environment(\.productionDecisionCompact, true)
                         .environment(\.generationDecisionMaximumHeight,
-                            max(AppTheme.Spacing.none, dockMaximumHeight - AppTheme.Layout.workspaceHeaderHeight * interfaceScale
-                                - AppTheme.Spacing.md - AppTheme.Spacing.md))
+                            max(AppTheme.Spacing.none, dockMaximumHeight - AppTheme.Layout.productionDockStatusLineHeight * interfaceScale
+                                - AppTheme.Spacing.md - AppTheme.Spacing.md - AppTheme.Spacing.sm))
                         .fixedSize(horizontal: false, vertical: true)
                         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { dockContentHeight = $0 }
                 }
