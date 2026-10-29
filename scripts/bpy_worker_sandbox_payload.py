@@ -90,7 +90,7 @@ def address_space_boundary(label):
             raise RuntimeError("address-space limit restoration failed")
 
 
-def post_failure_map():
+def post_failure_map(measure_boundary=True):
     import ctypes
 
     class TaskInfo(ctypes.Structure):
@@ -196,12 +196,14 @@ def post_failure_map():
         cursor = end
     else:
         raise RuntimeError("own VM region count exhausted")
-    address_space_boundary("post-ctypes-inventory")
+    if measure_boundary:
+        address_space_boundary("post-ctypes-inventory")
     received = pidinfo(os.getpid(), 4, 0, ctypes.byref(info), ctypes.sizeof(info))
     if received != ctypes.sizeof(info):
         raise RuntimeError(f"own final proc_pidinfo failed: bytes={received}, errno={ctypes.get_errno()}")
-    emit_limit("post-boundary-task", virtualBytes=info.virtual, residentBytes=info.resident,
-               timing="immediately after third boundary probe and limit restoration")
+    emit_limit("post-boundary-task" if measure_boundary else "post-inventory-task",
+               virtualBytes=info.virtual, residentBytes=info.resident,
+               timing="immediately after third boundary probe and limit restoration" if measure_boundary else "read-only inventory")
 
 
 def set_address_space_limit(limit):

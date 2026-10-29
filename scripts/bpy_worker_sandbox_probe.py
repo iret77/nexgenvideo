@@ -16,7 +16,9 @@ import sys
 import time
 import zipfile
 
-from bpy_worker_memory_probe import case_specs, validate_case
+from bpy_worker_memory_probe import (ENVIRONMENT, ENVIRONMENT_POLICY, PREFLIGHT, CandidateContradiction,
+                                     case_specs, environment_identity, environment_observation,
+                                     parse_observations, retention_state, validate_case, validate_preflight)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -328,50 +330,124 @@ def records(path):
     return result
 
 
-def observe_memory(output, runtime, probe, outside, peer, port):
+def memory_worker(output, runtime, probe, outside, peer, port, case, reference, deadline, runtime_environment):
+    require(time.monotonic() < deadline, "memory diagnostic overall deadline")
+    require(peer.poll() is None, "owned peer exited before diagnostic")
+    name = "memory-" + case["name"]
+    work = output / name
+    work.mkdir(mode=0o700)
+    for directory in ("home", "tmp"):
+        (work / directory).mkdir(mode=0o700)
+    payload = work / "bpy_worker_memory_probe.py"
+    for filename in ("bpy_worker_memory_probe.py", "bpy_worker_sandbox_payload.py"):
+        shutil.copyfile(ROOT / "scripts" / filename, work / filename)
+        require(sha(ROOT / "scripts" / filename) == sha(work / filename), "exact diagnostic payload copy")
+    save(work / "input.json", dict(memoryCase=case, referenceRegions=reference, runtimeEnvironment=runtime_environment))
+    environment = dict(HOME=str(work / "home"), TMPDIR=str(work / "tmp"), PATH="", LANG="C.UTF-8", LC_ALL="C.UTF-8")
+    receipt = output / (name + ".process.json")
+    error = None
+    observed = []
+    try:
+        run_command([str(probe), "python-control", str(ROOT / "scripts/bpy_worker_sandbox_probe.sb"),
+            str(work), str(runtime), str(outside), str(payload), str(peer.pid), str(port)], output / name,
+            timeout=min(30, max(1, deadline - time.monotonic())), environment=environment)
+    except Exception as failure:
+        error = dict(type=type(failure).__name__, message=str(failure))
+    require(receipt.exists(), "owned memory process receipt missing")
+    process = json.loads(receipt.read_text())
+    require(process["reaped"] and process["cleanupError"] is None, "owned memory process cleanup failed")
+    try:
+        observed = parse_observations((output / (name + ".stdout.log")).read_text())
+    except Exception as failure:
+        error = dict(type=type(failure).__name__, message=str(failure), commandError=error)
+    return observed, process, error
+
+
+def observe_memory(output, runtime, probe, outside, peer, port, runtime_environment):
     deadline = time.monotonic() + 180
     outcomes = []
-    for case in case_specs():
-        require(time.monotonic() < deadline, "memory diagnostic overall deadline")
-        require(peer.poll() is None, "owned peer exited before diagnostic")
-        name = "memory-" + case["name"]
-        work = output / name
-        work.mkdir(mode=0o700)
-        for directory in ("home", "tmp"):
-            (work / directory).mkdir(mode=0o700)
-        payload = work / "bpy_worker_memory_probe.py"
-        for filename in ("bpy_worker_memory_probe.py", "bpy_worker_sandbox_payload.py"):
-            shutil.copyfile(ROOT / "scripts" / filename, work / filename)
-            require(sha(ROOT / "scripts" / filename) == sha(work / filename), "exact diagnostic payload copy")
-        save(work / "input.json", dict(memoryCase=case))
-        environment = dict(HOME=str(work / "home"), TMPDIR=str(work / "tmp"), PATH="", LANG="C.UTF-8", LC_ALL="C.UTF-8")
-        receipt = output / (name + ".process.json")
-        error = None
-        try:
-            pid = run_command([str(probe), "python-control", str(ROOT / "scripts/bpy_worker_sandbox_probe.sb"),
-                str(work), str(runtime), str(outside), str(payload), str(peer.pid), str(port)], output / name,
-                timeout=min(30, max(1, deadline - time.monotonic())), environment=environment)
-            observed = [json.loads(line.removeprefix("NGV_MEMORY "))
-                        for line in (output / (name + ".stdout.log")).read_text().splitlines()
-                        if line.startswith("NGV_MEMORY ")]
-            validate_case(case, observed, pid)
-        except Exception as failure:
-            error = dict(type=type(failure).__name__, message=str(failure))
-        require(receipt.exists(), "owned memory process receipt missing")
-        process = json.loads(receipt.read_text())
-        require(process["reaped"] and process["cleanupError"] is None, "owned memory process cleanup failed")
-        outcomes.append(dict(case=case, process=process, error=error, candidateSupported=error is None))
-        save(output / "memory-cases.json", dict(cases=outcomes, runtimeAcceptance=False))
-        require(not process["timedOut"], "memory diagnostic timed out")
     result = dict(scope="isolated memory candidate measurements", runtimeAcceptance=False,
-                  cases=outcomes, candidateSupported=all(item["candidateSupported"] for item in outcomes),
+                  candidateSupported=None, cases=outcomes, classification="precondition-unverified", observationsComplete=False,
                   limitations=["No bpy import or render in this diagnostic", "No product or sandbox integration proof",
                                "Only the enumerated original-interpreter exec variants tested",
-                               "Candidate region flags are not universal permanence proof",
+                               "Only whole-region deallocation and first-page overwrite/copy-protection observed",
+                               "Submap interior reclaimability is unproved; no universal permanence conclusion",
                                "No physical-memory ceiling or memory-entry allocation proof"])
+    try:
+        observed, process, error = memory_worker(output, runtime, probe, outside, peer, port,
+                                               PREFLIGHT, None, deadline, runtime_environment)
+        save(output / "memory-preflight.json", dict(records=observed, process=process, error=error))
+        require(error is None and not process["timedOut"], "precondition measurement failed")
+        reference = validate_preflight([r for r in observed if r["channel"] == "memory"],
+                                       process["pid"], runtime_environment)
+    except Exception as failure:
+        result.update(classification="precondition-mismatch-or-unmeasured", error=str(failure))
+        save(output / "memory-result.json", result)
+        raise
+    tested = {operation: set() for operation in ("deallocate", "overwrite", "protect")}
+    try:
+        for case in case_specs():
+            observed, process, error = memory_worker(output, runtime, probe, outside, peer, port,
+                                                   case, reference, deadline, runtime_environment)
+            classification = "measurement-incomplete" if error else "candidate-supported"
+            region_observation = None
+            if error is None:
+                try:
+                    target = validate_case(case, observed, process["pid"], reference, runtime_environment)
+                    if target is not None:
+                        require(target not in tested[case["operation"]], "duplicate region target")
+                        tested[case["operation"]].add(target)
+                        if observed:
+                            completed = next(r for r in observed if r.get("stage") == "complete")
+                            region_observation = dict(state=retention_state(completed["before"], completed["after"]),
+                                                      returnCode=completed["code"])
+                except CandidateContradiction as failure:
+                    classification = "candidate-contradicted"
+                    error = dict(type=type(failure).__name__, message=str(failure))
+                    if failure.target is not None:
+                        if failure.target in tested[case["operation"]]:
+                            classification = "measurement-incomplete"
+                            error["duplicateTarget"] = True
+                        tested[case["operation"]].add(failure.target)
+                except Exception as failure:
+                    classification = "measurement-incomplete"
+                    error = dict(type=type(failure).__name__, message=str(failure))
+            outcomes.append(dict(case=case, process=process, error=error,
+                                 classification=classification, regionObservation=region_observation,
+                                 candidateSupported=error is None))
+            save(output / "memory-cases.json", dict(cases=outcomes, runtimeAcceptance=False))
+            require(not process["timedOut"], "memory diagnostic timed out")
+        required = {(r["address"], r["bytes"]) for r in reference}
+        complete = (all(targets == required for targets in tested.values())
+                    and all(r["classification"] != "measurement-incomplete" for r in outcomes))
+        supported = complete and all(r["candidateSupported"] for r in outcomes)
+        result.update(classification=("candidate-supported" if supported else "candidate-contradicted") if complete
+                      else "measurement-incomplete", observationsComplete=complete, candidateSupported=supported)
+    except Exception as failure:
+        result.update(classification="measurement-incomplete", error=str(failure), candidateSupported=False)
     save(output / "memory-result.json", result)
     require(result["candidateSupported"], "memory candidate contradicted or measurement incomplete")
     return result
+
+
+def memory_environment_preflight(output, environment):
+    observed = None
+    try:
+        observed = environment_observation(environment)
+        identity = environment_identity(observed)
+    except Exception as failure:
+        result = dict(policy=ENVIRONMENT_POLICY, observed=observed,
+                      classification="precondition-mismatch" if observed is not None else "precondition-unmeasured",
+                      error=str(failure),
+                      candidateSupported=None, runtimeAcceptance=False, cases=[])
+        save(output / "memory-environment-preflight.json", result)
+        save(output / "memory-result.json", result)
+        raise
+    result = dict(policy=ENVIRONMENT_POLICY, historical=ENVIRONMENT, observed=observed,
+                  sameAsHistoricalKernelBuild=all(observed[key] == ENVIRONMENT[key] for key in ("kernel", "osBuild")),
+                  classification="precondition-matched", candidateSupported=None, runtimeAcceptance=False)
+    save(output / "memory-environment-preflight.json", result)
+    return identity
 
 
 def observe(output, identity, binaries):
@@ -384,8 +460,11 @@ def observe(output, identity, binaries):
             and evidence["files"] == {name: sha(ROOT / name) for name in sorted(FILES)}, "reviewed harness source")
     memory = memory_mode(os.environ)
     require(evidence.get("memoryProbe") is memory, "source and runtime memory diagnostic selections agree")
-    require(subprocess.check_output(["sw_vers", "-productVersion"], text=True).startswith("26.")
-            and subprocess.check_output(["uname", "-m"], text=True).strip() == "arm64", "macOS26 arm64")
+    if memory:
+        runtime_environment = memory_environment_preflight(output, os.environ)
+    else:
+        require(subprocess.check_output(["sw_vers", "-productVersion"], text=True).startswith("26.")
+                and subprocess.check_output(["uname", "-m"], text=True).strip() == "arm64", "macOS26 arm64")
     build = json.loads((binaries / "build.json").read_text())
     probe = binaries / "probe"
     resume = os.environ.get("NGV_SANDBOX_RESUME_PYTHON", "false")
@@ -459,7 +538,8 @@ def observe(output, identity, binaries):
         require(ready.exists() and json.loads(ready.read_text())["pid"] == peer.pid and peer.poll() is None, "owned live signal control")
         server.bind(("127.0.0.1", 0))
         server.listen(8)
-        memory_result = observe_memory(output, runtime, probe, outside, peer, server.getsockname()[1]) if memory else None
+        memory_result = observe_memory(output, runtime, probe, outside, peer, server.getsockname()[1],
+                                       runtime_environment) if memory else None
         modes = () if memory else ("python-control", "python-sandbox") if retained else (
             "native-control", "native-sandbox", "exec-control", "exec-sandbox", "python-control", "python-sandbox")
         for mode in modes:
