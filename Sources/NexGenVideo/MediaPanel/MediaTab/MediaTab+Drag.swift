@@ -35,7 +35,7 @@ extension MediaTab {
         let parts = line[line.index(after: hash)...].split(separator: "-", omittingEmptySubsequences: false)
         guard parts.count == 2,
               let start = Double(parts[0]), let end = Double(parts[1]),
-              start >= 0, end > start else { return nil }
+              start.isFinite, end.isFinite, start >= 0, end > start else { return nil }
         return start...end
     }
 }
@@ -45,11 +45,22 @@ extension MediaTab {
 extension MediaTab {
     func dragPayload(for asset: MediaAsset) -> String {
         if editor.selectedMediaAssetIds.contains(asset.id) {
-            return selectedMediaAssetsInOrder
-                .map { Self.assetDragString(forAssetId: $0.id) }
-                .joined(separator: "\n")
+            return selectedLibraryDragPayload
         }
         return Self.assetDragString(forAssetId: asset.id)
+    }
+
+    func dragPayload(for folder: MediaFolder) -> String {
+        editor.selectedFolderIds.contains(folder.id) ? selectedLibraryDragPayload : Self.folderDragString(forFolderId: folder.id)
+    }
+
+    private var selectedLibraryDragPayload: String {
+        editor.mediaPanelOrderedItemIds.compactMap { key -> String? in
+            if let id = MediaPanelItemKey.folderId(from: key), editor.selectedFolderIds.contains(id) {
+                return Self.folderDragString(forFolderId: id)
+            }
+            return editor.selectedMediaAssetIds.contains(key) ? Self.assetDragString(forAssetId: key) : nil
+        }.joined(separator: "\n")
     }
 
     @ViewBuilder
@@ -170,6 +181,12 @@ extension MediaTab {
                       editor.mediaAssets.contains(where: { $0.id == id }) {
                 assetIds.insert(id)
             }
+        }
+        guard !assetIds.isEmpty || !folderIds.isEmpty else { return }
+        editor.undoManager?.beginUndoGrouping()
+        defer {
+            editor.undoManager?.endUndoGrouping()
+            editor.undoManager?.setActionName("Move Media")
         }
         if !assetIds.isEmpty {
             editor.moveAssetsToFolder(assetIds: assetIds, folderId: destFolderId)

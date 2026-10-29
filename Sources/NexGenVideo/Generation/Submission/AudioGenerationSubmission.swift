@@ -65,8 +65,12 @@ struct AudioGenerationSubmission {
         trimmedSourceOverride: TrimmedSource? = nil,
         preprocessRef: (@Sendable (Int, MediaAsset) async throws -> URL?)? = nil
     ) -> AudioGenerationSubmission {
-        AudioGenerationSubmission(
-            genInput: genInput,
+        var input = genInput
+        if !references.isEmpty {
+            input.sourceRange = GenerationSourceRange(trim: trimmedSourceOverride?.hasTrim == true ? trimmedSourceOverride?.record : nil)
+        }
+        return AudioGenerationSubmission(
+            genInput: input,
             model: model,
             params: params,
             placeholderDuration: placeholderDuration(model: model, params: params),

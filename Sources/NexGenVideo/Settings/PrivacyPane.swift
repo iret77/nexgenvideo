@@ -1,10 +1,18 @@
 import SwiftUI
 
 struct PrivacyPane: View {
-    @State private var telemetryEnabled: Bool = Telemetry.isEnabled
+    @State private var telemetryEnabled: Bool
+    private let launchEnabled: Bool
+    private let save: (Bool) -> Void
+
+    init(enabled: Bool = Telemetry.isEnabled, launchEnabled: Bool = Telemetry.enabledForCurrentLaunch,
+         save: @escaping (Bool) -> Void = { Telemetry.isEnabled = $0 }) {
+        _telemetryEnabled = State(initialValue: enabled)
+        self.launchEnabled = launchEnabled; self.save = save
+    }
 
     private var didChange: Bool {
-        telemetryEnabled != Telemetry.enabledForCurrentLaunch
+        telemetryEnabled != launchEnabled
     }
 
     var body: some View {
@@ -16,8 +24,9 @@ struct PrivacyPane: View {
                     isOn: $telemetryEnabled
                 )
                 .onChange(of: telemetryEnabled) { _, newValue in
-                    Telemetry.isEnabled = newValue
+                    save(newValue)
                 }
+                .reviewAcceptanceProbe("settings.general.telemetry", text: String(telemetryEnabled))
 
                 if didChange {
                     SettingsDivider()
@@ -26,6 +35,7 @@ struct PrivacyPane: View {
                         systemImage: "arrow.clockwise",
                         tone: .neutral
                     )
+                    .reviewAcceptanceProbe("settings.general.telemetry.restart")
                 }
             }
         }

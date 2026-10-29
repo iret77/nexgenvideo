@@ -895,7 +895,7 @@ final class TimelineInputController {
     func audioVolumeKfHit(at point: NSPoint, clip: Clip, clipRect: NSRect) -> Int? {
         guard let track = clip.volumeTrack, track.isActive else { return nil }
         let geo = view.geometry
-        for kf in track.keyframes {
+        for kf in track.keyframes where kf.frame >= 0 && kf.frame < clip.durationFrames {
             if geo.audioVolumeKfRect(clip: clip, kfOffset: kf.frame, kfDb: kf.value, in: clipRect).contains(point) {
                 return clip.startFrame + kf.frame
             }
@@ -927,8 +927,9 @@ final class TimelineInputController {
 
         let curOffset = drag.currentFrame - clip.startFrame
         var leftBound = 0
-        var rightBound = clip.durationFrames
-        for kf in clip.volumeTrack?.keyframes ?? [] where kf.frame != curOffset {
+        var rightBound = clip.durationFrames - 1
+        for kf in clip.volumeTrack?.keyframes ?? []
+            where kf.frame != curOffset && kf.frame >= 0 && kf.frame < clip.durationFrames {
             if kf.frame < curOffset {
                 leftBound = max(leftBound, kf.frame + 1)
             } else {

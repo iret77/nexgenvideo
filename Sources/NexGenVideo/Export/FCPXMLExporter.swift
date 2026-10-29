@@ -839,7 +839,7 @@ enum FCPXMLExporter {
                        resolver.resolveURL(for: clip.mediaRef) == nil {
                         warn("offline_media", clip, "Clip \(clip.id) was omitted because its media is offline.")
                     }
-                    if clip.effects?.contains(where: \.enabled) == true {
+                    if clip.effects?.contains(where: { $0.enabled && $0.type != ClipAnimationEnvelope.effectType }) == true {
                         warn("effects_not_exported", clip, "Effects on clip \(clip.id) were not exported.")
                     }
                     if clip.fadeInFrames > 0 || clip.fadeOutFrames > 0 {
@@ -1068,7 +1068,7 @@ enum FCPXMLExporter {
             for clip: Clip,
             localTimeline: KeyframeLocalTimeline
         ) -> FCPXMLNode? {
-            let frames = clip.keyframeFrames(for: .opacity)
+            let frames = clip.exportKeyframeFrames(for: .opacity)
             guard clip.opacity < 0.999_5 || !frames.isEmpty else { return nil }
             let children = frames.isEmpty ? [] : [
                 keyframeParam(
@@ -1094,9 +1094,9 @@ enum FCPXMLExporter {
             localTimeline: KeyframeLocalTimeline
         ) -> FCPXMLNode? {
             let transform = clip.transform
-            let positionFrames = clip.keyframeFrames(for: .position)
-            let rotationFrames = clip.keyframeFrames(for: .rotation)
-            let scaleFrames = clip.keyframeFrames(for: .scale)
+            let positionFrames = clip.exportKeyframeFrames(for: .position)
+            let rotationFrames = clip.exportKeyframeFrames(for: .rotation)
+            let scaleFrames = clip.exportKeyframeFrames(for: .scale)
             let scale = scaleValue(width: transform.width, height: transform.height, for: clip)
             let moved = abs(transform.centerX - 0.5) > 0.000_5 || abs(transform.centerY - 0.5) > 0.000_5
             let rotated = abs(transform.rotation) > 0.005
@@ -1167,7 +1167,7 @@ enum FCPXMLExporter {
                     "time",
                     keyframeTime(frame, clip: clip, localTimeline: localTimeline)
                 )]
-                if clip.interpolation(for: property, atFrame: frame) == .linear {
+                if clip.exportInterpolation(for: property, atFrame: frame) == .linear {
                     attributes.append(("curve", "linear"))
                 }
                 attributes.append(("value", value(frame)))

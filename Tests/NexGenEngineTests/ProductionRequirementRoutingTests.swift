@@ -1203,6 +1203,64 @@ struct ProductionRequirementRoutingTests {
         return plan
     }
 
+    @Test("immutable input bundles retain strict legacy defaults")
+    func immutableInputBundlePaths() throws {
+        let fixture = try makeFixture([])
+        defer { fixture.remove() }
+        let graphPath = "execution/materialized/shot-001/bundle/asset-graph.v1.json"
+        let demandPath = "execution/materialized/shot-001/bundle/demands.v1.json"
+        let graphData = try AssetGraphCanonicalCodecV1.encode(fixture.graph)
+        let demand = ReferenceDemandSetV1(id: fixture.demandSet.id, projectID: fixture.graph.projectID,
+            shotID: fixture.demandSet.shotID,
+            assetGraph: .init(id: fixture.graph.id, role: AssetGraphV1.artifactRole, path: graphPath, sha256: FileDigest.sha256(of: graphData)), demands: [])
+        let requirement = makeRequirement()
+        let candidate = makeCandidate(offeringID: "available")
+        guard case .matched(let route, _) = try ProductionRequirementResolverV1.resolve(requirement: requirement,
+            demandSet: demand, assetGraph: fixture.graph, dataRoot: fixture.dataRoot, candidates: [candidate], assetGraphPath: graphPath),
+              case .plan(let plan) = try ReferencePlannerV2.plan(id: "plan", dataRoot: fixture.dataRoot, route: route,
+                requirement: requirement, demandSet: demand, graph: fixture.graph, candidate: candidate,
+                assetGraphPath: graphPath, demandSetPath: demandPath) else { Issue.record("expected an immutable input plan"); return }
+        #expect(plan.demandSet.path == demandPath)
+        try ReferencePlannerV2.validate(plan, dataRoot: fixture.dataRoot, route: route, requirement: requirement,
+            demandSet: demand, graph: fixture.graph, candidate: candidate, assetGraphPath: graphPath, demandSetPath: demandPath)
+        #expect(throws: AssetGraphValidationError.assetGraphMismatch) {
+            try ProductionRequirementResolverV1.resolve(requirement: requirement, demandSet: demand,
+                assetGraph: fixture.graph, dataRoot: fixture.dataRoot, candidates: [candidate])
+        }
+        #expect(throws: ReferencePlanValidationErrorV2.demandBindingMismatch) {
+            try ReferencePlannerV2.validate(plan, dataRoot: fixture.dataRoot, route: route, requirement: requirement,
+                demandSet: demand, graph: fixture.graph, candidate: candidate)
+        }
+    }
+
+    @Test("planned first frames are capacity declarations, never fabricated graph assets")
+    func plannedRouteNeedsNoFictitiousImage() throws {
+        let fixture = try makeFixture([])
+        defer { fixture.remove() }
+        let requirement = makeRequirement(requiresFirstFrame: true)
+        let demand = ReferenceDemandSetV1(id: fixture.demandSet.id, projectID: fixture.graph.projectID,
+            shotID: fixture.demandSet.shotID, assetGraph: fixture.demandSet.assetGraph,
+            demands: [.init(id: "future-first", assetID: "recipe.first-frame", modality: .image,
+                semanticJobID: CoreReferenceSemanticJobIDV1.firstFrame, isRequired: true, priority: 0,
+                inputSlotID: CoreReferenceInputSlotIDV1.firstFrame, modeID: "text-to-video")])
+        let slot = ProductionInputSlotCapabilityV1(id: CoreReferenceInputSlotIDV1.firstFrame, modality: .image,
+            modeIDs: ["text-to-video"], requestOrder: 0, countsTowardModalityBudget: false,
+            countsTowardTotalBudget: false, countsTowardCombinedDuration: false)
+        func candidate(_ supported: Bool) -> ProductionRouteCandidateV1 {
+            .init(capabilities: makeCapabilities(offeringID: "available", firstFrame: supported),
+                providerActivated: true, liveAvailable: true, inputSlots: [slot])
+        }
+        guard case .matched = try ProductionRequirementResolverV1.plannedRoute(requirement: requirement,
+            demandSet: demand, assetGraph: fixture.graph, candidate: candidate(true)) else { Issue.record("expected planned capacity"); return }
+        #expect(fixture.graph.assets.isEmpty)
+        #expect(throws: AssetGraphValidationError.unknownAsset("recipe.first-frame")) {
+            try AssetGraphValidatorV1.validate(demand, against: fixture.graph)
+        }
+        guard case .noMatch(let missing) = try ProductionRequirementResolverV1.plannedRoute(requirement: requirement,
+            demandSet: demand, assetGraph: fixture.graph, candidate: candidate(false)) else { Issue.record("missing capacity must fail"); return }
+        #expect(missing.evaluations.flatMap(\.deficits).contains { $0.code == .firstFrameUnsupported })
+    }
+
     private func makeRequirement(
         visibleEntityCount: Int = 0,
         referenceDemandIDs: [String] = [],

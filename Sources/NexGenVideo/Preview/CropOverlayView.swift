@@ -54,6 +54,7 @@ struct CropOverlayView: View {
                         Rectangle()
                             .fill(borderColor)
                             .frame(width: handleSize, height: handleSize)
+                            .reviewAcceptanceProbe("preview.crop." + String(describing: corner) + "." + clip.id, state: true)
                             .position(x: pos.x, y: pos.y)
                             .gesture(resizeGesture(clip: clip, corner: corner, clipRect: clipRect))
                     }

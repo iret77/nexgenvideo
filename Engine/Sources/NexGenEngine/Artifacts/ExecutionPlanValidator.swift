@@ -94,6 +94,10 @@ public enum ExecutionPlanValidator {
     }
 
     public static func validate(_ plan: ExecutionPlanV1) throws {
+        try validate(plan, creativeContextPath: PipelineLayout.creativeContextFile)
+    }
+
+    public static func validate(_ plan: ExecutionPlanV1, creativeContextPath: String) throws {
         guard plan.schema == executionPlanV1Schema else {
             throw ExecutionPlanValidationError.unsupportedSchema(plan.schema)
         }
@@ -102,7 +106,7 @@ public enum ExecutionPlanValidator {
         try validate(plan.creativeContext, allowCreativeContextOutput: true)
         guard plan.creativeContext.id == ExecutionPlanV1.creativeContextArtifactID,
               plan.creativeContext.role == ExecutionPlanV1.creativeContextArtifactRole,
-              plan.creativeContext.path == PipelineLayout.creativeContextFile else {
+              plan.creativeContext.path == creativeContextPath else {
             throw ExecutionPlanValidationError.invalidCreativeContextReference
         }
         try validateUnique(plan.extensionReferences.map(\.id), field: "extension")
@@ -152,8 +156,16 @@ public enum ExecutionPlanValidator {
         _ plan: ExecutionPlanV1,
         against context: ProjectCreativeContextV1
     ) throws {
+        try validate(plan, against: context, creativeContextPath: PipelineLayout.creativeContextFile)
+    }
+
+    public static func validate(
+        _ plan: ExecutionPlanV1,
+        against context: ProjectCreativeContextV1,
+        creativeContextPath: String
+    ) throws {
         try validate(context)
-        try validate(plan)
+        try validate(plan, creativeContextPath: creativeContextPath)
         guard plan.projectID == context.projectID else {
             throw ExecutionPlanValidationError.projectMismatch(
                 plan: plan.projectID,
@@ -485,7 +497,7 @@ public enum ExecutionPlanValidator {
         try require(reference.schema, field: "extension.schema")
         try require(reference.path, field: "extension.path")
         try validateExtensionSchema(reference.schema)
-        try validateExtensionPath(reference.path)
+        try validateExtensionPath(reference.path, id: reference.id, schema: reference.schema)
         try validateSHA256(reference.sha256, path: reference.path)
     }
 
@@ -525,7 +537,7 @@ public enum ExecutionPlanValidator {
         }
     }
 
-    private static func validateExtensionPath(_ path: String) throws {
+    private static func validateExtensionPath(_ path: String, id: String, schema: String) throws {
         try validateReferencePath(path)
         let prefix = PipelineLayout.executionExtensionsDir + "/"
         let hostOwnedExtensions = Set([
@@ -533,7 +545,11 @@ public enum ExecutionPlanValidator {
             StoryboardCausalityV1.relativePath,
             ResolvedProductionStyleV1.relativePath,
         ])
-        guard hostOwnedExtensions.contains(path)
+        let parts = path.split(separator: "/")
+        let revision = parts.count == 4 && parts[2].hasPrefix("v") ? Int(parts[2].dropFirst()) : nil
+        let musicvideo = revision.map { $0 > 0 && path == MusicvideoProductionExtensionV2.path(revision: $0)
+            && id == MusicvideoProductionExtensionV2.artifactID && schema == MusicvideoProductionExtensionV2.schemaVersion } ?? false
+        guard hostOwnedExtensions.contains(path) || musicvideo
                 || (path.hasPrefix(prefix) && path.count > prefix.count) else {
             throw ExecutionPlanValidationError.invalidReferencePath(path)
         }

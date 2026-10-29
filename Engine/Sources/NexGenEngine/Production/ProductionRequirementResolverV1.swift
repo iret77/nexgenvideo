@@ -434,7 +434,21 @@ public enum ProductionRequirementResolverV1 {
         dataRoot: URL,
         candidates: [ProductionRouteCandidateV1]
     ) throws -> ProductionRouteResolutionV1 {
-        try AssetGraphValidatorV1.validate(demandSet, against: assetGraph)
+        try resolve(
+            requirement: requirement, demandSet: demandSet, assetGraph: assetGraph, dataRoot: dataRoot,
+            candidates: candidates, assetGraphPath: PipelineLayout.assetGraphFile
+        )
+    }
+
+    public static func resolve(
+        requirement: ProductionRequirementV1,
+        demandSet: ReferenceDemandSetV1,
+        assetGraph: AssetGraphV1,
+        dataRoot: URL,
+        candidates: [ProductionRouteCandidateV1],
+        assetGraphPath: String
+    ) throws -> ProductionRouteResolutionV1 {
+        try AssetGraphValidatorV1.validate(demandSet, against: assetGraph, assetGraphPath: assetGraphPath)
         try AssetGraphValidatorV1.validateProjectFiles(assetGraph, dataRoot: dataRoot)
         try validateBindings(requirement, demandSet: demandSet)
         let routeableCandidates = candidates.filter(isValid)
@@ -478,6 +492,36 @@ public enum ProductionRequirementResolverV1 {
         )
     }
 
+    public static func plannedRoute(
+        requirement: ProductionRequirementV1,
+        demandSet: ReferenceDemandSetV1,
+        assetGraph: AssetGraphV1,
+        candidate: ProductionRouteCandidateV1
+    ) throws -> ProductionRouteResolutionV1 {
+        try AssetGraphValidatorV1.validate(assetGraph)
+        try validate(candidate)
+        try validateBindings(requirement, demandSet: demandSet)
+        guard demandSet.projectID == assetGraph.projectID else { throw ProductionRequirementResolverErrorV1.projectMismatch }
+        // Deferred template inputs describe capacity; they are never published as real graph assets.
+        var declaredDurations: [String: Double] = [:]
+        for demand in demandSet.demands where ProductionIdentifierNormalizerV1.matches(demand.semanticJobID, CoreReferenceSemanticJobIDV1.sourceVideo)
+            || ProductionIdentifierNormalizerV1.matches(demand.semanticJobID, CoreReferenceSemanticJobIDV1.audioTiming) {
+            if let duration = demand.durationSeconds {
+                guard duration.isFinite, duration > 0 else { throw ProductionRequirementResolverErrorV1.invalidRequirement("planned_input_duration") }
+                declaredDurations[demand.id] = duration
+            }
+        }
+        let found = deficits(requirement: requirement, demandSet: demandSet, assetGraph: assetGraph, candidate: candidate,
+                             plannedDurations: declaredDurations)
+        guard found.isEmpty else {
+            let evaluation = ProductionRouteEvaluationV1(candidate: candidate, deficits: found)
+            return .noMatch(.init(requirementSHA256: try fingerprints(requirement: requirement, candidate: candidate).requirementSHA256,
+                evaluations: [evaluation], recoveryActions: recoveryActions(for: [evaluation], rejectedMalformedCandidate: false)))
+        }
+        return .matched(route: try route(requirement: requirement, demandSet: demandSet, assetGraph: assetGraph, candidate: candidate),
+                        candidate: candidate)
+    }
+
     public static func matchingRoutes(
         requirement: ProductionRequirementV1,
         demandSet: ReferenceDemandSetV1,
@@ -485,7 +529,21 @@ public enum ProductionRequirementResolverV1 {
         dataRoot: URL,
         candidates: [ProductionRouteCandidateV1]
     ) throws -> [ProductionRouteMatchV1] {
-        try AssetGraphValidatorV1.validate(demandSet, against: assetGraph)
+        try matchingRoutes(
+            requirement: requirement, demandSet: demandSet, assetGraph: assetGraph, dataRoot: dataRoot,
+            candidates: candidates, assetGraphPath: PipelineLayout.assetGraphFile
+        )
+    }
+
+    public static func matchingRoutes(
+        requirement: ProductionRequirementV1,
+        demandSet: ReferenceDemandSetV1,
+        assetGraph: AssetGraphV1,
+        dataRoot: URL,
+        candidates: [ProductionRouteCandidateV1],
+        assetGraphPath: String
+    ) throws -> [ProductionRouteMatchV1] {
+        try AssetGraphValidatorV1.validate(demandSet, against: assetGraph, assetGraphPath: assetGraphPath)
         try AssetGraphValidatorV1.validateProjectFiles(assetGraph, dataRoot: dataRoot)
         try validateBindings(requirement, demandSet: demandSet)
         return try candidates
@@ -520,12 +578,28 @@ public enum ProductionRequirementResolverV1 {
         dataRoot: URL,
         candidate: ProductionRouteCandidateV1
     ) throws -> Bool {
+        return try revalidate(
+            route,
+            requirement: requirement, demandSet: demandSet, assetGraph: assetGraph, dataRoot: dataRoot,
+            candidate: candidate, assetGraphPath: PipelineLayout.assetGraphFile
+        )
+    }
+
+    public static func revalidate(
+        _ route: ProductionRouteV1,
+        requirement: ProductionRequirementV1,
+        demandSet: ReferenceDemandSetV1,
+        assetGraph: AssetGraphV1,
+        dataRoot: URL,
+        candidate: ProductionRouteCandidateV1,
+        assetGraphPath: String
+    ) throws -> Bool {
         let resolution = try resolve(
             requirement: requirement,
             demandSet: demandSet,
             assetGraph: assetGraph,
             dataRoot: dataRoot,
-            candidates: [candidate]
+            candidates: [candidate], assetGraphPath: assetGraphPath
         )
         guard case .matched(let current, _) = resolution else { return false }
         return current.requirementSHA256 == route.requirementSHA256
@@ -799,7 +873,8 @@ public enum ProductionRequirementResolverV1 {
         requirement: ProductionRequirementV1,
         demandSet: ReferenceDemandSetV1,
         assetGraph: AssetGraphV1,
-        candidate: ProductionRouteCandidateV1
+        candidate: ProductionRouteCandidateV1,
+        plannedDurations: [String: Double] = [:]
     ) -> [ProductionRouteDeficitV1] {
         var result: [ProductionRouteDeficitV1] = []
         let profile = candidate.capabilities.effective
@@ -866,14 +941,14 @@ public enum ProductionRequirementResolverV1 {
             assets: assets,
             field: CapabilityFieldIDV1.combinedVideoReferenceSeconds,
             profile: profile,
-            into: &result
+            into: &result, plannedDurations: plannedDurations
         )
         checkCombinedDuration(
             demands: durationBudgetedDemands.filter { $0.modality == .audio },
             assets: assets,
             field: CapabilityFieldIDV1.combinedAudioReferenceSeconds,
             profile: profile,
-            into: &result
+            into: &result, plannedDurations: plannedDurations
         )
 
         if requirement.requiresFirstFrame,
@@ -1148,11 +1223,12 @@ public enum ProductionRequirementResolverV1 {
         assets: [String: AssetGraphNodeV1],
         field: String,
         profile: ResolvedCapabilityProfileV1,
-        into result: inout [ProductionRouteDeficitV1]
+        into result: inout [ProductionRouteDeficitV1],
+        plannedDurations: [String: Double] = [:]
     ) {
         guard !demands.isEmpty,
               profile.fields.decimals[field] != nil else { return }
-        let durations = demands.map { duration($0, assets: assets) }
+        let durations = demands.map { plannedDurations[$0.id] ?? duration($0, assets: assets) }
         guard durations.allSatisfy({ $0 != nil }) else {
             result.append(deficit(
                 .referenceDurationUnknown,

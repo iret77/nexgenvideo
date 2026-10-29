@@ -41,10 +41,13 @@ struct TextTab: View {
                     }
                 ),
                 onCommit: { new in
-                    editor.commitClipProperty(clipId: clip.id) { $0.textContent = new }
+                    editor.applyClipProperty(clipId: clip.id) { $0.textContent = new }
                     editor.fitTextClipToContent(clipId: clip.id)
+                    editor.commitClipProperty(clipId: clip.id) { _ in }
                 }
             )
+            .id(clip.id)
+            .reviewAcceptanceProbe("text.content", text: clip.textContent ?? "")
             .frame(minHeight: AppTheme.ComponentSize.textEditorMinHeight)
             .padding(AppTheme.Spacing.xs)
             .background(
@@ -62,8 +65,9 @@ struct TextTab: View {
                     editor.applyTextStyle(clipId: clip.id) { $0.fontName = name }
                 },
                 onChange: { newName in
-                    editor.commitTextStyle(clipId: clip.id) { $0.fontName = newName }
+                    editor.applyTextStyle(clipId: clip.id) { $0.fontName = newName }
                     editor.fitTextClipToContent(clipId: clip.id)
+                    editor.commitClipProperty(clipId: clip.id) { _ in }
                 },
                 onCancel: {
                     editor.revertClipProperty(clipId: clip.id)
@@ -86,8 +90,9 @@ struct TextTab: View {
                     editor.fitTextClipToContent(clipId: clip.id)
                 }
             ) { newVal in
-                editor.commitTextStyle(clipId: clip.id) { $0.fontSize = newVal }
+                editor.applyTextStyle(clipId: clip.id) { $0.fontSize = newVal }
                 editor.fitTextClipToContent(clipId: clip.id)
+                editor.commitClipProperty(clipId: clip.id) { _ in }
             }
         }
     }
@@ -95,7 +100,7 @@ struct TextTab: View {
     private var opacitySlider: some View {
         InspectorRow(icon: "circle.lefthalf.filled", label: "Opacity") {
             ScrubbableNumberField(
-                value: clip.opacity,
+                value: clip.rawOpacityAt(frame: editor.activeFrame),
                 range: 0...1,
                 displayMultiplier: 100,
                 format: "%.0f",
@@ -103,11 +108,12 @@ struct TextTab: View {
                 accessibilityName: "Text opacity",
                 fieldWidth: AppTheme.ComponentSize.scrubFieldStandard,
                 onChanged: { newVal in
-                    editor.applyClipProperty(clipId: clip.id) { $0.opacity = newVal }
+                    editor.applyOpacity(clipId: clip.id, value: newVal)
                 }
             ) { newVal in
-                editor.commitClipProperty(clipId: clip.id) { $0.opacity = newVal }
+                editor.commitOpacity(clipId: clip.id, value: newVal)
             }
+            .disabled(clip.opacityTrack?.isActive == true && !clip.contains(timelineFrame: editor.activeFrame))
         }
     }
 
@@ -143,6 +149,7 @@ struct TextTab: View {
             .labelsHidden()
             .tint(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.strong))
             .fixedSize()
+            .reviewAcceptanceProbe("text.alignment", text: style.alignment.rawValue)
         }
     }
 
@@ -192,6 +199,7 @@ struct TextTab: View {
                 .toggleStyle(.switch)
                 .controlSize(.regular)
                 .accessibilityLabel(label)
+                .reviewAcceptanceProbe("text.toggle." + label, text: String(enabled))
             }
             InspectorFormRow(label: "Color") {
                 ColorField(

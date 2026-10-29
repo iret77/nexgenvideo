@@ -9,7 +9,7 @@ enum FixtureVideo {
         let seconds: Double
     }
 
-    static func write(scenes: [Scene], fps: Int32 = 5, size: Int = 320) async throws -> URL {
+    static func write(scenes: [Scene], fps: Int32 = 5, size: Int = 320, transform: CGAffineTransform = .identity) async throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("fixture-\(UUID().uuidString).mp4")
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
@@ -23,6 +23,7 @@ enum FixtureVideo {
                 AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
             ],
         ])
+        input.transform = transform
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(
             assetWriterInput: input,
             sourcePixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]

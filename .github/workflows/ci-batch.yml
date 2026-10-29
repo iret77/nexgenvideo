@@ -20,6 +20,10 @@ on:
         description: Run the workspace UI acceptance
         type: boolean
         default: true
+      settings_owner_acceptance:
+        description: Run native Settings and genuine pack Recovery/restart acceptance
+        type: boolean
+        default: true
       musicvideo_analysis_acceptance:
         description: Run real audio analysis and startup handoffs with the private fixture
         type: boolean
@@ -35,6 +39,7 @@ concurrency:
 
 jobs:
   ci:
+    name: Compile, unit tests, app and native bpy acceptance
     uses: ./.github/workflows/ci.yml
 
   chat-hang-replay:
@@ -55,8 +60,18 @@ jobs:
     secrets: inherit
 
   workspace-ui-acceptance:
+    needs: ci
     if: inputs.workspace_ui_acceptance
     uses: ./.github/workflows/workspace-ui-acceptance.yml
+    with:
+      runtime_artifact: workspace-ui-app
+
+  settings-owner-acceptance:
+    needs: ci
+    if: inputs.settings_owner_acceptance
+    uses: ./.github/workflows/settings-owner-acceptance.yml
+    with:
+      runtime_artifact: workspace-ui-app
 
   musicvideo-analysis-acceptance:
     needs: workspace-ui-acceptance

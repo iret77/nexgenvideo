@@ -9,8 +9,13 @@ struct GateArtifactFingerprint: Equatable, Sendable {
 
     func matches(dataRoot: URL) -> Bool {
         if phase == "shotlist" {
-            guard let version = latestShotlistVersion(dataRoot: dataRoot),
-                  path == PipelineLayout.shotlistVersionFile(version) else { return false }
+            if path.hasSuffix(".v5.yaml") {
+                guard let plan = try? ProductionPlanningLineageV2.projection(dataRoot: dataRoot),
+                      path == ProductionPlanProjectionV1.versionPath(plan.header.revision) else { return false }
+            } else {
+                guard let version = latestShotlistVersion(dataRoot: dataRoot),
+                      path == PipelineLayout.shotlistVersionFile(version) else { return false }
+            }
         }
         guard let url = try? ProjectLocalFile.resolve(path, dataRoot: dataRoot),
               (try? FileDigest.sha256(of: url)) == sha256 else { return false }
@@ -83,6 +88,7 @@ struct GateApproval: Identifiable, Equatable, Sendable {
     let action: Action
     let declaredPack: String?
     let declaredBinding: ProjectPackBinding?
+    let declaredProductionContract: HostProductionContractBinding?
     let sourceToolName: String
     let sourceToolUseID: String?
     let sourceHostStateID: UUID
@@ -100,6 +106,7 @@ struct GateApproval: Identifiable, Equatable, Sendable {
         action: Action = .approve,
         declaredPack: String? = nil,
         declaredBinding: ProjectPackBinding? = nil,
+        declaredProductionContract: HostProductionContractBinding? = nil,
         sourceToolName: String = ToolName.approveGate.rawValue,
         sourceToolUseID: String? = nil,
         sourceHostStateID: UUID = UUID(),
@@ -117,6 +124,7 @@ struct GateApproval: Identifiable, Equatable, Sendable {
         self.action = action
         self.declaredPack = declaredPack
         self.declaredBinding = declaredBinding
+        self.declaredProductionContract = declaredProductionContract
         self.sourceToolName = sourceToolName
         self.sourceToolUseID = sourceToolUseID
         self.sourceHostStateID = sourceHostStateID
@@ -151,6 +159,7 @@ struct GateApproval: Identifiable, Equatable, Sendable {
             action: action,
             declaredPack: declaredPack,
             declaredBinding: declaredBinding,
+            declaredProductionContract: declaredProductionContract,
             sourceToolName: sourceToolName,
             sourceToolUseID: sourceToolUseID,
             sourceHostStateID: sourceHostStateID,
@@ -201,6 +210,7 @@ struct GateApproval: Identifiable, Equatable, Sendable {
             && action == other.action
             && declaredPack == other.declaredPack
             && declaredBinding == other.declaredBinding
+            && declaredProductionContract == other.declaredProductionContract
             && sourceToolName == other.sourceToolName
             && sessionId == other.sessionId
     }

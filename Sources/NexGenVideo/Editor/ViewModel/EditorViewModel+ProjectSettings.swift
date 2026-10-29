@@ -17,12 +17,12 @@ extension EditorViewModel {
     }
 
     func applyTimelineSettings(fps: Int, width: Int, height: Int) {
+        guard fps > 0, width > 0, height > 0 else { return }
         rememberSourcePosition()
+        let before = TimelineSettingsSnapshot(timeline: timeline, currentFrame: currentFrame, sourceFrame: sourcePlayheadFrame)
         let prevFPS = timeline.fps
         let prevWidth = timeline.width
         let prevHeight = timeline.height
-        let prevConfigured = timeline.settingsConfigured
-        let prevMarkers = timeline.markers
 
         // Rescale all frame-based values when FPS changes
         if fps != prevFPS && prevFPS > 0 && fps > 0 {
@@ -46,8 +46,10 @@ extension EditorViewModel {
                     clip.trimStartFrame = Int((Double(clip.trimStartFrame) * scale).rounded())
                     clip.trimEndFrame = Int((Double(clip.trimEndFrame) * scale).rounded())
                     clip.rescaleKeyframes(by: scale)
-                    clip.fadeInFrames = Int((Double(clip.fadeInFrames) * scale).rounded())
-                    clip.fadeOutFrames = Int((Double(clip.fadeOutFrames) * scale).rounded())
+                    if ClipAnimationEnvelope.read(from: clip) == nil {
+                        clip.fadeInFrames = Int((Double(clip.fadeInFrames) * scale).rounded())
+                        clip.fadeOutFrames = Int((Double(clip.fadeOutFrames) * scale).rounded())
+                    }
                     clip.clampKeyframesToDuration()
                     clip.clampFadesToDuration()
                     timeline.tracks[ti].clips[ci] = clip
@@ -73,14 +75,30 @@ extension EditorViewModel {
         timeline.width = width
         timeline.height = height
         timeline.settingsConfigured = true
-        undoManager?.registerUndo(withTarget: self) { vm in
-            vm.applyTimelineSettings(fps: prevFPS, width: prevWidth, height: prevHeight)
-            vm.timeline.settingsConfigured = prevConfigured
-            vm.timeline.markers = prevMarkers
-            vm.notifyTimelineChanged()
+        let after = TimelineSettingsSnapshot(timeline: timeline, currentFrame: currentFrame, sourceFrame: sourcePlayheadFrame)
+        if before != after { registerSettingsSwap(undo: before, redo: after) }
+        notifyTimelineChanged()
+    }
+
+    private struct TimelineSettingsSnapshot: Equatable, Sendable {
+        let timeline: Timeline
+        let currentFrame: Int
+        let sourceFrame: Int
+    }
+
+    private func registerSettingsSwap(undo: TimelineSettingsSnapshot, redo: TimelineSettingsSnapshot) {
+        let opensGroup = undoManager?.groupingLevel == 0
+        if opensGroup { undoManager?.beginUndoGrouping() }
+        undoManager?.registerUndo(withTarget: self) { editor in
+            editor.timeline = undo.timeline
+            editor.currentFrame = undo.currentFrame
+            editor.sourcePlayheadFrame = undo.sourceFrame
+            editor.rememberSourcePosition()
+            editor.notifyTimelineChanged()
+            editor.registerSettingsSwap(undo: redo, redo: undo)
         }
         undoManager?.setActionName("Change Project Settings")
-        notifyTimelineChanged()
+        if opensGroup { undoManager?.endUndoGrouping() }
     }
 
     func checkProjectSettings(for assets: [MediaAsset]) -> ProjectSettingsAction {

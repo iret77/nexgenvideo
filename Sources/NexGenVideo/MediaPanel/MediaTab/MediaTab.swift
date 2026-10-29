@@ -59,7 +59,9 @@ struct MediaTab: View {
     // Drop + marquee
     @State var isDropTargeted = false
     @State var visualHits: [VisualSearch.Hit] = []
+    @State var visualSearchResult: SearchIndexCoordinator.SearchResult?
     @State var spokenHits: [TranscriptSearch.Hit] = []
+    @State var unavailableSpokenIDs: Set<String> = []
     @State var documentSearch = DocumentContentSearch.Result()
     @State var isSearchingContents = false
     @State var collapsedSearchSections: Set<String> = []
@@ -142,6 +144,12 @@ struct MediaTab: View {
             .onChange(of: filterAI) { _, _ in scheduleMomentSearch() }
             .onChange(of: editor.mediaAssets.map(\.id)) { _, _ in scheduleMomentSearch() }
             .onChange(of: editor.mediaAssets.map(\.url)) { _, _ in scheduleMomentSearch() }
+            .onChange(of: editor.searchIndex.indexingActive) { _, active in
+                if !active { scheduleMomentSearch() }
+            }
+            .onChange(of: editor.searchIndex.visualAvailability) { old, new in
+                if old == .ready || new == .ready { scheduleMomentSearch() }
+            }
 
             if editor.showGenerationPanel && !mediaAreaCollapsed {
                 GenerationView(
@@ -260,6 +268,7 @@ struct MediaTab: View {
                 .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                 .foregroundStyle(toast.kind == .success ? AppTheme.Status.successColor : AppTheme.Accent.timecodeColor)
             Text(toast.message)
+                .reviewAcceptanceProbe("media.toast", text: toast.message)
                 .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                 .foregroundStyle(AppTheme.Text.primaryColor)
                 .lineLimit(2)
@@ -515,6 +524,7 @@ struct MediaTab: View {
         }
         .buttonStyle(.plain)
         .focusable(false)
+        .reviewAcceptanceProbe("media.breadcrumb." + item.id, text: item.name)
         .onDrop(of: [.fileURL, .text], isTargeted: nil) { providers in
             handleProviderDrop(providers, into: item.folderId)
             return true
@@ -524,7 +534,9 @@ struct MediaTab: View {
     // MARK: - Selection / state derivations
 
     var selectedMediaAssetsInOrder: [MediaAsset] {
-        editor.mediaAssets.filter { editor.selectedMediaAssetIds.contains($0.id) }
+        editor.mediaPanelOrderedItemIds.compactMap { id in
+            editor.mediaAssets.first { $0.id == id && editor.selectedMediaAssetIds.contains(id) }
+        }
     }
 
     private var showsEmptyState: Bool {
@@ -586,6 +598,7 @@ struct MediaTab: View {
             .monospacedDigit()
             .lineLimit(1)
             .fixedSize()
+            .reviewAcceptanceProbe("media.item-count", text: String(currentFolderItemCount))
     }
 
     private var searchField: some View {
@@ -594,12 +607,7 @@ struct MediaTab: View {
                 .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
             TextField("Search", text: Binding(get: { searchQuery }, set: { searchQuery = $0 }))
-                .background {
-                    if WorkspaceUIAcceptance.isRequested {
-                        AppRelaunchClickProbe(identifier: "media.search")
-                            .allowsHitTesting(false)
-                    }
-                }
+                .reviewAcceptanceProbe("media.search", text: searchQuery)
                 .textFieldStyle(.plain)
                 .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.primaryColor)
@@ -642,7 +650,7 @@ struct MediaTab: View {
         }
         .buttonStyle(.capsule(.secondary, isSelected: isSelected))
         .fixedSize(horizontal: true, vertical: false)
-        .background { toolbarProbe("media.action.\(title)") }
+        .reviewAcceptanceProbe("media.action.\(title)")
         .help(title)
     }
 
@@ -681,7 +689,8 @@ struct MediaTab: View {
         }
         _ = editor.agentService.stageTask(AgentTask(
             title: title, systemImage: "folder.badge.gearshape",
-            prompt: "Review the assets, group related ones into clearly named folders, and give generically named assets descriptive names. Inspect an asset when its name is unclear. Do not delete assets or change the timeline. \(scope)"
+            prompt: "Review the assets and prepare a media organization proposal using propose_media_organization. Suggest clear folder paths and descriptive display names. Inspect unclear assets first. Nothing is changed before native selection and approval. \(scope)",
+            mediaOrganizationScope: .init(folderID: currentFolderId)
         ))
     }
 
@@ -710,6 +719,7 @@ struct MediaTab: View {
         .tint(foregroundStyle)
         .hoverHighlight(isActive: isActive)
         .accessibilityValue(isActive ? "Active" : "")
+        .reviewAcceptanceProbe("media.menu." + title)
     }
 
     // MARK: - Folder commands
@@ -745,7 +755,7 @@ struct MediaTab: View {
                 if !marqueeSelection.isActive {
                     let startOnCell = assetFrames.values.contains { $0.contains(value.startLocation) }
                     if startOnCell { return }
-                    let extending = NSEvent.modifierFlags.contains(.shift)
+                    let extending = (NSApp.currentEvent?.modifierFlags ?? NSEvent.modifierFlags).contains(.shift)
                     marqueeSelection.begin(
                         baseAssets: extending ? editor.selectedMediaAssetIds : [],
                         baseFolders: extending ? editor.selectedFolderIds : []
@@ -766,12 +776,7 @@ struct MediaTab: View {
                     }
                 }
 
-                if assetIds != editor.selectedMediaAssetIds {
-                    editor.selectedMediaAssetIds = assetIds
-                }
-                if folderIds != editor.selectedFolderIds {
-                    editor.selectedFolderIds = folderIds
-                }
+                editor.selectMediaPanelMarquee(assets: assetIds, folders: folderIds)
             }
             .onEnded { _ in
                 marqueeSelection.reset()
