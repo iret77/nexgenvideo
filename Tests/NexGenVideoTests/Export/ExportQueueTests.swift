@@ -6,6 +6,207 @@ import Testing
 @Suite("Export queue", .serialized)
 @MainActor
 struct ExportQueueTests {
+    @Test("poster delivery retries its original frame snapshot and verifies both published files")
+    func posterRetryKeepsBoundFrameAndVerifiesPublishedPair() async throws {
+        let fixture = try await makeDeliveryFixture(name: "PosterRetry", durationFrames: 3)
+        defer { fixture.remove() }
+        let selection = try ExportArtwork.filmFrame(editor: fixture.editor)
+        let refs = try await ExportArtwork.prepare(selection, editor: fixture.editor)
+        let spec = try posterSpec(fixture, refs: refs)
+        let snapshot = try #require(ExportArtwork.load(spec: spec, dataRoot: fixture.dataRoot,
+            timelineSHA256: ExportArtwork.timelineHash(fixture.timeline)))
+        let output = fixture.root.appendingPathComponent("film.mp4")
+        let queue = ExportQueue()
+        await ExportCoordinator.acquireExport()
+        var gateHeld = true
+        defer { if gateHeld { ExportCoordinator.endExport() } }
+        let id = UUID().uuidString
+        let original = try await queue.enqueueDelivery(editor: fixture.editor, spec: spec,
+            format: .h264, resolution: .r720p, outputURL: output, requestID: id)
+        queue.cancel(jobID: original.id)
+        _ = await queue.waitForCompletion(jobID: original.id)
+        #expect(original.status == .cancelled)
+
+        fixture.editor.currentFrame = 1
+        let laterSelection = try ExportArtwork.filmFrame(editor: fixture.editor)
+        let laterRefs = try await ExportArtwork.prepare(laterSelection, editor: fixture.editor)
+        #expect(laterRefs != refs)
+        await #expect(throws: (any Error).self) {
+            _ = try await queue.enqueueDelivery(editor: fixture.editor, spec: posterSpec(fixture, refs: laterRefs),
+                format: .h264, resolution: .r720p, outputURL: output, requestID: id)
+        }
+        let retry = try queue.retry(jobID: original.id)
+        ExportCoordinator.endExport()
+        gateHeld = false
+        _ = await queue.waitForCompletion(jobID: retry.id)
+        #expect(retry.status == .completed)
+        let receipt = try PipelineDeliveryStore.loadAttempt(id: retry.id, dataRoot: fixture.dataRoot)
+        #expect(receipt.spec.extensionRefs == refs)
+        #expect(receipt.probeQC?.passed == true)
+        let poster = ExportArtwork.outputURL(for: output)
+        #expect(try FileDigest.sha256(of: poster) == snapshot.pngSHA256)
+        #expect(FileManager.default.fileExists(atPath: output.path))
+        try Data("changed poster".utf8).write(to: poster)
+        #expect(throws: (any Error).self) {
+            _ = try PipelineDeliveryStore.loadAttempt(id: retry.id, dataRoot: fixture.dataRoot)
+        }
+    }
+
+    @Test("missing or corrupt frozen poster blocks video publication", arguments: [false, true])
+    func damagedFrozenPosterCannotPublishVideo(removePoster: Bool) async throws {
+        let fixture = try await makeDeliveryFixture(name: "PosterMissing", durationFrames: 3)
+        defer { fixture.remove() }
+        let refs = try await ExportArtwork.prepare(ExportArtwork.filmFrame(editor: fixture.editor), editor: fixture.editor)
+        let queue = ExportQueue()
+        let output = fixture.root.appendingPathComponent("film.mp4")
+        await ExportCoordinator.acquireExport()
+        var gateHeld = true
+        defer { if gateHeld { ExportCoordinator.endExport() } }
+        let job = try await queue.enqueueDelivery(editor: fixture.editor, spec: posterSpec(fixture, refs: refs),
+            format: .h264, resolution: .r720p, outputURL: output)
+        let sources = ExportQueue.SourceBinding.snapshotRoot(jobID: job.id).appendingPathComponent("sources")
+        let png = try #require(FileManager.default.contentsOfDirectory(at: sources,
+            includingPropertiesForKeys: nil).first { $0.pathExtension == "png" })
+        if removePoster { try FileManager.default.removeItem(at: png) }
+        else { try Data("corrupt PNG".utf8).write(to: png) }
+        ExportCoordinator.endExport()
+        gateHeld = false
+        _ = await queue.waitForCompletion(jobID: job.id)
+        #expect(job.status == .failed)
+        #expect(!FileManager.default.fileExists(atPath: output.path))
+        #expect(!FileManager.default.fileExists(atPath: ExportArtwork.outputURL(for: output).path))
+        #expect(try currentAttempt(id: job.id, dataRoot: fixture.dataRoot).status == .failed)
+    }
+
+    @Test("a changed poster destination preserves the existing movie and foreign image")
+    func posterDestinationCollisionPreservesBothFiles() async throws {
+        let fixture = try await makeDeliveryFixture(name: "PosterCollision", durationFrames: 3)
+        defer { fixture.remove() }
+        let refs = try await ExportArtwork.prepare(ExportArtwork.filmFrame(editor: fixture.editor), editor: fixture.editor)
+        let output = fixture.root.appendingPathComponent("film.mp4")
+        let poster = ExportArtwork.outputURL(for: output)
+        try Data("old movie".utf8).write(to: output)
+        try Data("old poster".utf8).write(to: poster)
+        let queue = ExportQueue()
+        await ExportCoordinator.acquireExport()
+        var gateHeld = true
+        defer { if gateHeld { ExportCoordinator.endExport() } }
+        let job = try await queue.enqueueDelivery(editor: fixture.editor, spec: posterSpec(fixture, refs: refs),
+            format: .h264, resolution: .r720p, outputURL: output)
+        try Data("foreign poster".utf8).write(to: poster, options: .atomic)
+        ExportCoordinator.endExport()
+        gateHeld = false
+        _ = await queue.waitForCompletion(jobID: job.id)
+        #expect(job.status == .failed)
+        #expect(job.failure?.contains("destination changed") == true)
+        #expect(try Data(contentsOf: output) == Data("old movie".utf8))
+        #expect(try Data(contentsOf: poster) == Data("foreign poster".utf8))
+    }
+
+    @Test("poster selection rejects a changed film, stale image and source destination")
+    func posterSelectionAndSourceIdentityFailClosed() async throws {
+        let fixture = try await makeDeliveryFixture(name: "PosterStale", durationFrames: 3)
+        defer { fixture.remove() }
+        let frame = try ExportArtwork.filmFrame(editor: fixture.editor)
+        fixture.editor.timeline.width += 2
+        await #expect(throws: (any Error).self) {
+            _ = try await ExportArtwork.prepare(frame, editor: fixture.editor)
+        }
+        fixture.editor.timeline = fixture.timeline
+        let refs = try await ExportArtwork.prepare(frame, editor: fixture.editor)
+        let pngPath = try #require(refs.first { $0.hasSuffix(".png") })
+        let source = fixture.root.appendingPathComponent("film.poster.png")
+        let bytes = try Data(contentsOf: fixture.dataRoot.appendingPathComponent(pngPath))
+        try bytes.write(to: source)
+        let asset = MediaAsset(id: "poster", url: source, type: .image, name: "Cover")
+        fixture.editor.mediaManifest.entries.append(MediaManifestEntry(id: asset.id, name: asset.name,
+            type: .image, source: .external(absolutePath: source.path), duration: 0))
+        let selection = try await ExportArtwork.projectImage(asset: asset, editor: fixture.editor)
+        try Data("changed source".utf8).write(to: source)
+        await #expect(throws: (any Error).self) {
+            _ = try await ExportArtwork.prepare(selection, editor: fixture.editor)
+        }
+        try bytes.write(to: source)
+        let imageRefs = try await ExportArtwork.prepare(selection, editor: fixture.editor)
+        let spec = try posterSpec(fixture, refs: imageRefs)
+        let queue = ExportQueue()
+        await #expect(throws: (any Error).self) {
+            _ = try await queue.enqueueDelivery(editor: fixture.editor, spec: spec,
+                format: .h264, resolution: .r720p, outputURL: fixture.root.appendingPathComponent("film.mp4"))
+        }
+        await ExportCoordinator.acquireExport()
+        var gateHeld = true
+        defer { if gateHeld { ExportCoordinator.endExport() } }
+        let output = fixture.root.appendingPathComponent("different.mp4")
+        let job = try await queue.enqueueDelivery(editor: fixture.editor, spec: spec,
+            format: .h264, resolution: .r720p, outputURL: output)
+        try Data("later source".utf8).write(to: source)
+        ExportCoordinator.endExport()
+        gateHeld = false
+        _ = await queue.waitForCompletion(jobID: job.id)
+        #expect(job.status == .failed)
+        #expect(!FileManager.default.fileExists(atPath: output.path))
+    }
+
+    @Test("interrupted movie and PNG publication restores the previous pair")
+    func posterPublicationRollsBackTogether() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("poster-recovery-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let output = root.appendingPathComponent("film.mp4")
+        let poster = ExportArtwork.outputURL(for: output)
+        let id = UUID().uuidString.lowercased()
+        let publications = try [output, poster].map { target in
+            try Data("old-\(target.lastPathComponent)".utf8).write(to: target)
+            let temporary = ExportQueue.DestinationBinding.makeTemporaryURL(url: target, jobID: id)
+            try Data("new-\(target.lastPathComponent)".utf8).write(to: temporary)
+            return try ExportPublishRecoveryStore.Publication(targetURL: target, temporaryURL: temporary,
+                initialState: ExportQueue.PathState.capture(target), initialIdentity: ExportFileIdentity.capture(target),
+                publishedState: ExportQueue.PathState.capture(temporary), publishedIdentity: ExportFileIdentity.capture(temporary),
+                jobID: id, expectsDirectory: false)
+        }
+        let recovery = root.appendingPathComponent("recovery")
+        #expect(throws: (any Error).self) {
+            _ = try ExportPublishRecoveryStore.publish(publications, root: recovery, crashAfterMutationForTesting: 3)
+        }
+        try ExportPublishRecoveryStore.recoverAll(root: recovery)
+        for target in [output, poster] {
+            #expect(try Data(contentsOf: target) == Data("old-\(target.lastPathComponent)".utf8))
+        }
+    }
+
+    private func posterSpec(_ fixture: DeliveryFixture, refs: [String]) throws -> DeliverySpecV1 {
+        try PipelineDeliveryStore.defaultSpec(id: fixture.spec.id, targetKind: .master, timeline: fixture.timeline,
+            format: .h264, resolution: .r720p, requireSequenceReview: false, extensionRefs: refs)
+    }
+
+    @Test("recovery removes only the bound poster temporary file", arguments: [false, true])
+    func posterRecoveryPreservesForeignTemporaryFile(foreign: Bool) async throws {
+        let fixture = try await makeDeliveryFixture(name: "PosterRecovery", durationFrames: 3)
+        defer { fixture.remove() }
+        let refs = try await ExportArtwork.prepare(ExportArtwork.filmFrame(editor: fixture.editor), editor: fixture.editor)
+        let spec = try posterSpec(fixture, refs: refs)
+        let output = fixture.root.appendingPathComponent("film.mp4")
+        let id = UUID().uuidString.lowercased()
+        let finished = try PipelineDeliveryStore.requireCurrentFinished(dataRoot: fixture.dataRoot, timeline: fixture.timeline)
+        _ = try PipelineDeliveryStore.enqueueAttempt(id: id, dataRoot: fixture.dataRoot, finished: finished, spec: spec,
+            format: .h264, resolution: .r720p, outputURL: output, timeline: fixture.timeline,
+            resolver: fixture.editor.mediaResolver.snapshot())
+        let temporary = ExportQueue.DestinationBinding.makeTemporaryURL(url: ExportArtwork.outputURL(for: output), jobID: id)
+        let pngPath = try #require(refs.first { $0.hasSuffix(".png") })
+        let bytes: Data
+        if foreign { bytes = Data("foreign temporary image".utf8) }
+        else { bytes = try Data(contentsOf: fixture.dataRoot.appendingPathComponent(pngPath)) }
+        try bytes.write(to: temporary)
+        let queue = ExportQueue()
+        #expect(queue.loadPersistedDeliveryJobs(ownerKey: fixture.editor.openWorkingCopyKey, dataRoot: fixture.dataRoot))
+        #expect(queue.jobs(ownerKey: fixture.editor.openWorkingCopyKey).first?.status == .interrupted)
+        #expect(FileManager.default.fileExists(atPath: temporary.path) == foreign)
+        if foreign { #expect(try Data(contentsOf: temporary) == bytes) }
+        #expect(!FileManager.default.fileExists(atPath: output.path))
+        #expect(!FileManager.default.fileExists(atPath: ExportArtwork.outputURL(for: output).path))
+    }
+
     @Test("serial jobs join by stable ID, cancel pending work, and reject target collisions")
     func serializationJoinCancellationAndCollision() async throws {
         let root = FileManager.default.temporaryDirectory
