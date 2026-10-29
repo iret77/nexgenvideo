@@ -26,6 +26,8 @@ struct InspectorView: View {
     @State private var transformExpanded = true
     @State private var shotSourceModeMutationID: String?
     @State private var shotSourceModeAvailableID: String?
+    @State var lutMutationID: UUID?
+    @State var lutLoadError: String?
     @State var collapsedAdjustSections: Set<String> = ["Curves", "Color Wheels", "Hue Curves", "LUTs", "Effects"]
     @State var collapsedAdjustSubgroups: Set<String> = [
         "Detail", "Blur", "Motion Blur", "Vignette", "Film Grain", "Glow", "Chroma Key",
@@ -53,6 +55,13 @@ struct InspectorView: View {
         .onChange(of: editor.isMarqueeSelecting) { _, selecting in
             if !selecting { resolvePreferredTab() }
             promoteSelection()
+        }
+        .onChange(of: editor.workingRoot) { _, _ in lutMutationID = nil; lutLoadError = nil }
+        .onChange(of: editor.requestedLUTClipID, initial: true) { _, id in
+            guard let id, editor.selectedClipIds == [id] else { return }
+            preferredTab = .effects
+            collapsedAdjustSections.remove("LUTs")
+            editor.requestedLUTClipID = nil
         }
         .onChange(of: preferredTab) { _, newTab in
             if newTab != .video { editor.cropEditingActive = false }
@@ -466,8 +475,8 @@ struct InspectorView: View {
 
     private func contextualPromptField(placeholder: String) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
-            if let hint = editor.selectionContextHint {
-                ScopeChip(text: hint)
+            if let hint = AgentTaskSelectionContext.capture(editor: editor).label {
+                ScopeChip(text: hint).reviewAcceptanceProbe("inspector.task.scope", text: hint)
             }
             HStack(spacing: AppTheme.Spacing.sm) {
                 TextField(placeholder, text: $contextualPromptDraft)
@@ -483,7 +492,7 @@ struct InspectorView: View {
                 .buttonStyle(.inlineAction())
                 .disabled(contextualPromptDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     || editor.agentService.isStreaming || editor.agentService.isComposerBlocked
-                    || editor.selectionContextHint == nil)
+                    || editor.selectedObjectRevisionTask == nil)
             }
         }
     }
@@ -491,12 +500,8 @@ struct InspectorView: View {
     private func sendContextualPrompt() {
         let text = contextualPromptDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        guard let target = editor.selectionContextHint else { return }
-        let accepted = editor.agentService.sendWorkOrder(
-            .init(title: "Revise: " + target, systemImage: "pencil",
-                prompt: "Revise only this selected object: " + target + ". Respect phase gates and use the existing project tools.",
-                requiresDirection: true),
-            direction: text, mentions: [])
+        guard let task = editor.selectedObjectRevisionTask else { return }
+        let accepted = editor.agentService.sendWorkOrder(task, direction: text, mentions: [])
         if accepted { contextualPromptDraft = "" }
         editor.agentPanelVisible = true
     }
@@ -755,9 +760,9 @@ struct InspectorView: View {
                     }
                 }
             }
-            if activeTab == .video || activeTab == .audio {
+            if activeTab == .video || activeTab == .audio || activeTab == .effects {
                 keyframesToggleBar(
-                    enabled: activeTab == .video
+                    enabled: activeTab != .audio
                         ? nonTextVisualClips.count == 1
                         : selectedAudioClips.count == 1
                 )
@@ -936,6 +941,7 @@ struct InspectorView: View {
             keyframeNavButton(systemName: "chevron.left", help: "Go to previous keyframe", enabled: prev != nil) {
                 if let f = prev { editor.seekToFrame(f) }
             }
+            .reviewAcceptanceProbe("editing.keyframe." + property.rawValue + ".previous", state: prev != nil)
             Button {
                 if onKeyframe {
                     editor.removeKeyframe(clipId: clipId, property: property, at: frame)
@@ -948,6 +954,7 @@ struct InspectorView: View {
             }
             .buttonStyle(ToolbarIconButtonStyle(isSelected: onKeyframe))
             .disabled(!inRange)
+            .reviewAcceptanceProbe("editing.keyframe." + property.rawValue + ".stamp", state: inRange)
             .accessibilityLabel(onKeyframe ? "Remove keyframe" : "Add keyframe")
             .help(!inRange ? "Move playhead inside the clip"
                   : onKeyframe ? "Remove keyframe at playhead"
@@ -955,10 +962,11 @@ struct InspectorView: View {
             keyframeNavButton(systemName: "chevron.right", help: "Go to next keyframe", enabled: next != nil) {
                 if let f = next { editor.seekToFrame(f) }
             }
+            .reviewAcceptanceProbe("editing.keyframe." + property.rawValue + ".next", state: next != nil)
         }
     }
 
-    private func keyframeNavButton(
+    func keyframeNavButton(
         systemName: String,
         help: String,
         enabled: Bool,
@@ -992,10 +1000,7 @@ struct InspectorView: View {
                         $0.positionTrack = nil
                         $0.scaleTrack = nil
                         $0.rotationTrack = nil
-                        $0.fadeInFrames = 0
-                        $0.fadeOutFrames = 0
-                        $0.fadeInInterpolation = .linear
-                        $0.fadeOutInterpolation = .linear
+                        $0.resetFades()
                     }
                 }
             } : nil
@@ -1096,6 +1101,7 @@ struct InspectorView: View {
         .buttonStyle(.plain)
         .help(help ?? "Reset")
         .accessibilityLabel(help ?? "Reset")
+        .reviewAcceptanceProbe("inspector.reset." + (help ?? "Reset"))
     }
 
     func propertyRow<Trailing: View>(
@@ -1151,6 +1157,7 @@ struct InspectorView: View {
         .buttonStyle(ToolbarIconButtonStyle(isSelected: isOn))
         .accessibilityLabel(help)
         .help(help)
+        .reviewAcceptanceProbe("inspector.transform." + systemName, text: isOn ? "on" : "off")
     }
 
     // MARK: - Crop
@@ -1171,6 +1178,7 @@ struct InspectorView: View {
                     editor.cropEditingActive.toggle()
                 }
                 .disabled(disabled)
+                .reviewAcceptanceProbe("inspector.crop.edit", state: !disabled, text: editing ? "editing" : "idle")
             } second: {
                 cropMenu(single: single)
             }

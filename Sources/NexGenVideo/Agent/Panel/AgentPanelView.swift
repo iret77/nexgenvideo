@@ -5,6 +5,7 @@ struct AgentPanelView: View {
     @Environment(EditorViewModel.self) var editor
     var presentation: AgentPanelPresentation = .tasks
     var replayTranscriptOnly = false
+    var onClose: (() -> Void)?
 
     private static let starterPrompts: [AgentStarterPrompt] = [
         AgentStarterPrompt(
@@ -53,7 +54,8 @@ struct AgentPanelView: View {
         AgentStarterPrompt(
             title: "Organize my media into structured folders",
             systemImage: "folder",
-            prompt: "Organize my media into structured folders. Review all assets, create clearly named folders by role, scene, or type, move assets into them, and rename generic files when useful. Don't delete anything or change the timeline."
+            prompt: "Inspect my media and use propose_media_organization to prepare a selectable plan for folder paths and display names. Wait for native approval before any change.",
+            mediaOrganization: true
         ),
     ]
 
@@ -252,9 +254,13 @@ struct AgentPanelView: View {
                 stopLabel: String(localized: "Stop generation")
             )
         case .batchRun:
+            let coordinator = editor.generationBatchCoordinator
+            let hasQueued = coordinator.snapshots.first { $0.batch.id == coordinator.activeBatchID }?
+                .journal.executions.contains { $0.state == .queued } == true
             return AgentLiveStatus(state: .working, title: "Generation batch in progress",
-                detail: "View progress and results in Generation batches.", canCancel: true,
-                stopLabel: String(localized: "Stop generation"))
+                detail: hasQueued ? "Stop requests that have not been submitted. Accepted provider jobs continue."
+                    : "No queued requests remain. Accepted provider jobs continue; results appear in Generation batches.",
+                canCancel: hasQueued, stopLabel: String(localized: "Stop remaining requests"))
         case .decisionWorking:
             return AgentLiveStatus(state: .working,
                 title: surfaceState.dockOwner == .gateApproval ? "Recording approval" : "Preparing generation options")
@@ -467,7 +473,17 @@ struct AgentPanelView: View {
                 Text(presentation == .activity ? "AI activity" : "Tasks")
                     .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                 Spacer(minLength: AppTheme.Spacing.sm)
-                utilityButton(iconOnly: false)
+                utilityButton(iconOnly: onClose != nil)
+                if let onClose {
+                    Button(action: onClose) {
+                        Image(systemName: "xmark")
+                            .interfaceFont(size: AppTheme.Typography.ui)
+                    }
+                    .buttonStyle(.capsule(.secondary, size: .regular))
+                    .accessibilityLabel("Close AI activity")
+                    .help("Close AI activity and return to Inspector")
+                    .reviewAcceptanceProbe("production.activity.close")
+                }
             }
             .padding(.horizontal, AppTheme.Spacing.md)
             .panelHeaderBar()
@@ -1056,7 +1072,7 @@ struct AgentPanelView: View {
                 HStack(spacing: AppTheme.Spacing.xs) {
                     FunctionPill(title: fn.title, systemImage: fn.systemImage) {
                         service.pendingFunction = nil
-                    }
+                    }.reviewAcceptanceProbe("agent.task.staged", text: fn.title)
                     Spacer(minLength: AppTheme.Spacing.none)
                 }
             }
@@ -1110,6 +1126,7 @@ struct AgentPanelView: View {
         .menuIndicator(.hidden)
         .buttonStyle(.capsule(.secondary, size: .regular))
         .disabled(service.isStreaming || service.isComposerBlocked)
+        .reviewAcceptanceProbe("agent.task.choose", state: !service.isStreaming && !service.isComposerBlocked)
     }
 
     private func submit() {
@@ -1122,7 +1139,8 @@ struct AgentPanelView: View {
 
     private func runStarter(_ starter: AgentStarterPrompt) {
         service.stageTask(.init(title: starter.title, systemImage: starter.systemImage,
-            prompt: starter.prompt, requiresDirection: starter.requiresDirection))
+            prompt: starter.prompt, requiresDirection: starter.requiresDirection,
+            mediaOrganizationScope: starter.mediaOrganization ? .init(folderID: nil) : nil))
     }
 
 }
@@ -1133,6 +1151,7 @@ private struct AgentStarterPrompt: Identifiable {
     let systemImage: String
     let prompt: String
     var requiresDirection: Bool = false
+    var mediaOrganization = false
 }
 
 private struct AgentStarterPromptButton: View {

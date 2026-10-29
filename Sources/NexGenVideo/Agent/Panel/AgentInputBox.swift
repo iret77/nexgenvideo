@@ -155,6 +155,7 @@ struct AgentInputBox<LeadingTools: View>: View {
         ZStack(alignment: .topLeading) {
             TextEditor(text: $draft)
                 .id(textEditorID)
+                .reviewAcceptanceProbe("agent.composer.input", text: draft)
                 .interfaceFont(size: AppTheme.Typography.ui)
                 .scrollContentBackground(.hidden)
                 .scrollIndicators(.never)
@@ -236,6 +237,7 @@ struct AgentInputBox<LeadingTools: View>: View {
             Button("Run Task", action: onSend)
                 .buttonStyle(.capsule(.prominent, size: .regular))
                 .disabled(!canSend)
+                .background(ReviewAcceptanceProbe(id: "agent.task.run", state: canSend))
         } else {
             Button(action: onSend) {
                 Image(systemName: "arrow.up")
@@ -248,6 +250,7 @@ struct AgentInputBox<LeadingTools: View>: View {
             .tint(AppTheme.Accent.primary)
             .glassEffectID("sendStop", in: sendStopNamespace)
             .disabled(!canSend)
+            .reviewAcceptanceProbe("agent.composer.send", state: canSend)
             .opacity(canSend ? AppTheme.Opacity.opaque : AppTheme.Opacity.strong)
             .transition(reduceMotion ? .opacity : .scale.combined(with: .opacity))
         }

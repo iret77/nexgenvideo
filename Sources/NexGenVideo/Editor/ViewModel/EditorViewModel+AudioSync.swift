@@ -142,15 +142,22 @@ extension EditorViewModel {
         mode: SyncMode = .auto,
         searchWindowSeconds: Double = SyncDefaults.searchWindowSeconds,
         minConfidence: Double = SyncDefaults.minConfidence,
-        evidence: SyncEvidence? = nil
+        evidence: SyncEvidence? = nil,
+        beforePublication: (@MainActor @Sendable () async -> Void)? = nil,
+        beforeEvaluation: (@MainActor @Sendable () async -> Void)? = nil
     ) async -> SyncBatchReport {
-        let fps = Double(timeline.fps)
+        let originalTimeline = timeline
+        let destination = MediaLibraryDestination(self, folderID: nil)
+        let snapshotClips = originalTimeline.tracks.flatMap(\.clips)
+        let knownMediaRefs = Set(mediaAssets.map(\.id))
+        let audioBearingRefs = Set(mediaAssets.filter { $0.type == .audio || ($0.type == .video && $0.hasAudio) }.map(\.id))
+        let fps = Double(originalTimeline.fps)
         var uniqueTargets: [String] = []
         var seenTargetIds = Set<String>()
         for id in targetClipIds where id != referenceClipId && seenTargetIds.insert(id).inserted {
             uniqueTargets.append(id)
         }
-        guard fps > 0, fps.isFinite, let refLocation = findClip(id: referenceClipId) else {
+        guard fps > 0, fps.isFinite, let refClip = snapshotClips.first(where: { $0.id == referenceClipId }) else {
             return SyncBatchReport(failures: uniqueTargets.map {
                 SyncFailure(clipId: $0, method: nil, confidence: nil, reason: "Reference clip unavailable.")
             })
@@ -161,30 +168,60 @@ extension EditorViewModel {
             ? searchWindowSeconds
             : SyncDefaults.searchWindowSeconds
         let safeMinConfidence = min(1, max(0, minConfidence.isFinite ? minConfidence : SyncDefaults.minConfidence))
-        let refClip = timeline.tracks[refLocation.trackIndex].clips[refLocation.clipIndex]
         let refUnitKey = refClip.linkGroupId ?? refClip.id
 
 
-        func liveClip(_ id: String) -> Clip? {
-            findClip(id: id).map { timeline.tracks[$0.trackIndex].clips[$0.clipIndex] }
+        func snapshotClip(_ id: String) -> Clip? {
+            snapshotClips.first { $0.id == id }
         }
         func unit(of clip: Clip) -> [Clip] {
             guard let group = clip.linkGroupId else { return [clip] }
-            return timeline.tracks.flatMap(\.clips).filter { $0.linkGroupId == group }
+            return snapshotClips.filter { $0.linkGroupId == group }
+        }
+        func hasAudio(_ clip: Clip) -> Bool {
+            (clip.mediaType == .video || clip.mediaType == .audio)
+                && (!knownMediaRefs.contains(clip.mediaRef) || audioBearingRefs.contains(clip.mediaRef))
         }
         func audioBearer(in clips: [Clip]) -> Clip? {
-            clips.first(where: { $0.mediaType == .audio && captionCanTranscribe($0) })
-                ?? clips.first(where: { captionCanTranscribe($0) })
+            clips.first(where: { $0.mediaType == .audio && hasAudio($0) })
+                ?? clips.first(where: { hasAudio($0) })
         }
 
         var mediaRefs = Set(unit(of: refClip).map(\.mediaRef))
         for id in uniqueTargets {
-            guard let clip = liveClip(id) else { continue }
+            guard let clip = snapshotClip(id) else { continue }
             mediaRefs.formUnion(unit(of: clip).map(\.mediaRef))
         }
-        let urlMap = mediaRefs.reduce(into: [String: URL]()) { result, mediaRef in
+        let originalURLs = mediaRefs.reduce(into: [String: URL]()) { result, mediaRef in
             result[mediaRef] = mediaResolver.resolveURL(for: mediaRef)
         }
+        let urlMap = originalURLs.mapValues { $0.resolvingSymlinksInPath() }
+        func failureReport(_ reason: String) -> SyncBatchReport {
+            SyncBatchReport(failures: uniqueTargets.map {
+                SyncFailure(clipId: $0, method: nil, confidence: nil, reason: reason)
+            })
+        }
+        func staleSourceReport() -> SyncBatchReport {
+            failureReport("The project, timeline or source changed. Synchronize the clips again.")
+        }
+        func captureSourceStates() async throws -> [String: ExportQueue.PathState] {
+            try Task.checkCancellation()
+            let capture = Task.detached(priority: .utility) {
+                try urlMap.mapValues { url in
+                    let state = try ExportQueue.PathState.capture(url, isCancelled: { Task.isCancelled })
+                    guard case .file = state else { throw ToolError("A source file is unavailable.") }
+                    return state
+                }
+            }
+            return try await withTaskCancellationHandler {
+                try await capture.value
+            } onCancel: { capture.cancel() }
+        }
+        let sourceStates: [String: ExportQueue.PathState]
+        do { sourceStates = try await captureSourceStates() }
+        catch is CancellationError { return failureReport("Synchronization was cancelled.") }
+        catch { return failureReport("A source file could not be read for verification. Relink it, then synchronize again.") }
+        await beforeEvaluation?()
         let timingCache: [String: SourceTiming]
         if let evidence {
             timingCache = evidence.timings
@@ -204,7 +241,7 @@ extension EditorViewModel {
             if let evidence {
                 loadedEnvelope = evidence.envelopes[bearer.mediaRef]
             } else {
-                loadedEnvelope = await envelope(of: bearer, fps: fps)
+                loadedEnvelope = await envelope(of: bearer, fps: fps, url: urlMap[bearer.mediaRef])
             }
             guard let loadedEnvelope, !loadedEnvelope.samples.isEmpty else {
                 return nil
@@ -229,7 +266,7 @@ extension EditorViewModel {
         var seenUnits = Set<String>()
 
         for targetId in uniqueTargets {
-            guard let targetClip = liveClip(targetId) else {
+            guard let targetClip = snapshotClip(targetId) else {
                 report.failures.append(SyncFailure(
                     clipId: targetId,
                     method: nil,
@@ -257,8 +294,8 @@ extension EditorViewModel {
                let (targetCarrier, targetTimecode) = timecodeCarrier(in: targetUnit) {
                 let compatibility = refTimecode.compatibility(with: targetTimecode)
                 if compatibility.isCompatible,
-                   let liveReference = liveClip(refCarrier.id),
-                   let liveTarget = liveClip(targetCarrier.id),
+                   let liveReference = snapshotClip(refCarrier.id),
+                   let liveTarget = snapshotClip(targetCarrier.id),
                    let rawStart = Self.timecodeAlignedStart(
                        refStartFrame: liveReference.startFrame,
                        refTrimStartFrame: liveReference.trimStartFrame,
@@ -525,6 +562,19 @@ extension EditorViewModel {
             }
         }
 
+        await beforePublication?()
+        guard !Task.isCancelled else { return failureReport("Synchronization was cancelled.") }
+        let finalSourceStates = try? await captureSourceStates()
+        guard !Task.isCancelled else { return failureReport("Synchronization was cancelled.") }
+        guard (try? destination.validate(self)) != nil,
+              timeline == originalTimeline,
+              finalSourceStates == sourceStates,
+              mediaRefs.allSatisfy({ ref in
+                  let current = mediaResolver.resolveURL(for: ref)
+                  return current == originalURLs[ref] && current?.resolvingSymlinksInPath() == urlMap[ref]
+              }) else {
+            return staleSourceReport()
+        }
         applySyncPlacements(referenceClipId: referenceClipId, placements: placements, report: &report)
         return report
     }
@@ -901,8 +951,8 @@ extension EditorViewModel {
         return nil
     }
 
-    private func envelope(of clip: Clip, fps: Double) async -> AudioEnvelope? {
-        guard let url = mediaResolver.resolveURL(for: clip.mediaRef) else { return nil }
+    private func envelope(of clip: Clip, fps: Double, url: URL?) async -> AudioEnvelope? {
+        guard let url else { return nil }
         let start = Double(clip.trimStartFrame) / fps
         let speed = clip.speed.isFinite && clip.speed > 0
             ? max(clip.speed, SyncDefaults.minSpeed)

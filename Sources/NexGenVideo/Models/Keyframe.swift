@@ -108,6 +108,15 @@ extension Clip {
     private func toAbs(_ offset: Int) -> Int { startFrame + offset }
 
     func keyframeFrames(for property: AnimatableProperty) -> [Int] {
+        authoredKeyframeFrames(for: property).filter { contains(timelineFrame: $0) }
+    }
+
+    func exportKeyframeFrames(for property: AnimatableProperty) -> [Int] {
+        guard !authoredKeyframeFrames(for: property).isEmpty else { return [] }
+        return Array(Set(keyframeFrames(for: property) + [startFrame, endFrame])).sorted()
+    }
+
+    func authoredKeyframeFrames(for property: AnimatableProperty) -> [Int] {
         let offsets: [Int]
         switch property {
         case .opacity:  offsets = opacityTrack?.keyframes.map(\.frame) ?? []
@@ -118,6 +127,12 @@ extension Clip {
         case .volume:   offsets = volumeTrack?.keyframes.map(\.frame) ?? []
         }
         return offsets.map(toAbs)
+    }
+
+    func exportInterpolation(for property: AnimatableProperty, atFrame frame: Int) -> Interpolation {
+        let frames = authoredKeyframeFrames(for: property).sorted()
+        guard let previous = frames.last(where: { $0 <= frame }), previous != frames.last else { return .linear }
+        return interpolation(for: property, atFrame: previous) ?? .linear
     }
 
     func interpolation(for property: AnimatableProperty, atFrame frame: Int) -> Interpolation? {
@@ -134,15 +149,16 @@ extension Clip {
 
     /// Union of every animatable property's kf frames as absolute timeline frames.
     var allKeyframeFrames: [Int] {
-        var s = Set<Int>()
-        let absStart = startFrame
-        for kf in opacityTrack?.keyframes ?? [] { s.insert(kf.frame + absStart) }
-        for kf in positionTrack?.keyframes ?? [] { s.insert(kf.frame + absStart) }
-        for kf in scaleTrack?.keyframes ?? [] { s.insert(kf.frame + absStart) }
-        for kf in rotationTrack?.keyframes ?? [] { s.insert(kf.frame + absStart) }
-        for kf in cropTrack?.keyframes ?? [] { s.insert(kf.frame + absStart) }
-        for kf in volumeTrack?.keyframes ?? [] { s.insert(kf.frame + absStart) }
-        return s.sorted()
+        var frames = Set(AnimatableProperty.allCases.flatMap { keyframeFrames(for: $0) })
+        for effect in effects ?? [] {
+            for parameter in effect.params.values {
+                for keyframe in parameter.track?.keyframes ?? [] {
+                    let frame = startFrame + keyframe.frame
+                    if contains(timelineFrame: frame) { frames.insert(frame) }
+                }
+            }
+        }
+        return frames.sorted()
     }
 
     mutating func upsertKeyframe<V>(
@@ -150,13 +166,16 @@ extension Clip {
         frame: Int,
         value: V
     ) {
+        guard contains(timelineFrame: frame) else { return }
         var t = self[keyPath: keyPath] ?? KeyframeTrack<V>()
-        // `frame` is an absolute timeline frame; storage is converted to clip-relative via `toOffset`
-        t.upsert(Keyframe(frame: toOffset(frame), value: value))
+        let offset = toOffset(frame)
+        let interpolation = t.keyframes.first(where: { $0.frame == offset })?.interpolationOut ?? .smooth
+        t.upsert(Keyframe(frame: offset, value: value, interpolationOut: interpolation))
         self[keyPath: keyPath] = t
     }
 
     mutating func removeKeyframe(for property: AnimatableProperty, at frame: Int) {
+        guard contains(timelineFrame: frame) else { return }
         let o = toOffset(frame)
         switch property {
         case .opacity:
@@ -192,6 +211,7 @@ extension Clip {
     }
 
     mutating func setInterpolation(for property: AnimatableProperty, atFrame frame: Int, _ interpolation: Interpolation) {
+        guard contains(timelineFrame: frame) else { return }
         let o = toOffset(frame)
         switch property {
         case .opacity:
@@ -222,6 +242,7 @@ extension Clip {
     }
 
     mutating func moveKeyframe(for property: AnimatableProperty, from: Int, to: Int) {
+        guard contains(timelineFrame: from), contains(timelineFrame: to) else { return }
         let fromO = toOffset(from), toO = toOffset(to)
         switch property {
         case .opacity:  opacityTrack?.move(from: fromO, to: toO)

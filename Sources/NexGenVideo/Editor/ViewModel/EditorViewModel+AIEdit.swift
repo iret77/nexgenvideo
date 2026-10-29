@@ -43,7 +43,7 @@ extension EditorViewModel {
     func runAIUpscale(clipId: String, selection: UpscaleSelection) {
         guard let (clip, asset) = aiEditClipAsset(clipId) else { return }
         let trim = aiEditTrimmedSource(clip: clip, asset: asset)
-        let handlers = clipReplacementHandlers(clipId: clipId, resetTrim: trim != nil)
+        let replacement = GenerationClipReplacement.Snapshot(clipID: clipId, resetTrim: trim != nil, editor: self)
         Task { @MainActor in
             _ = await EditSubmitter.submitUpscale(
                 asset: asset,
@@ -51,17 +51,16 @@ extension EditorViewModel {
                 targetResolution: selection.targetResolution,
                 editor: self,
                 trimmedSource: trim,
-                onComplete: handlers.onComplete,
-                onFailure: handlers.onFailure
+                replacementTarget: replacement
             )
         }
     }
 
     /// Music/SFX: output is new audio, so no source replacement — place it on the timeline at the clip.
     func beginAIVideoAudio(clipId: String, kind: VideoToAudioEditKind) {
-        guard let (clip, asset) = aiEditClipAsset(clipId),
-              let stored = EditSubmitter.videoAudioSeed(for: asset, kind: kind) else { return }
+        guard let (clip, asset) = aiEditClipAsset(clipId) else { return }
         let trim = aiEditTrimmedSource(clip: clip, asset: asset)
+        guard let stored = EditSubmitter.videoAudioSeed(for: asset, kind: kind, effectiveDuration: trim?.durationSeconds) else { return }
         let span = trim?.durationSeconds
             ?? (asset.duration > 0 ? asset.duration : Double(clip.durationFrames) / Double(max(1, timeline.fps)))
         let placement = PendingAudioPlacement(
@@ -76,15 +75,13 @@ extension EditorViewModel {
         guard let (_, asset) = aiEditClipAsset(clipId) else { return }
         let modelId = asset.generationInput?.model ?? ""
         if UpscaleModelConfig.allIds.contains(modelId) {
-            let handlers = clipReplacementHandlers(clipId: clipId, resetTrim: false)
+            let replacement = GenerationClipReplacement.Snapshot(clipID: clipId, resetTrim: false, editor: self)
             Task { @MainActor in
                 do {
                     _ = try await EditSubmitter.rerun(
-                        asset: asset, editor: self,
-                        onComplete: handlers.onComplete, onFailure: handlers.onFailure
+                        asset: asset, editor: self, replacementTarget: replacement
                     )
                 } catch {
-                    handlers.onFailure?()
                     mediaPanelToast = MediaPanelToast(message: error.localizedDescription)
                 }
             }
@@ -131,21 +128,4 @@ extension EditorViewModel {
         )
     }
 
-    /// onComplete/onFailure for a direct (non-panel) submission that replaces the clip's source.
-    private func clipReplacementHandlers(
-        clipId: String,
-        resetTrim: Bool
-    ) -> (onComplete: (@MainActor (MediaAsset) -> Void)?, onFailure: (@MainActor () -> Void)?) {
-        markPendingReplacement(clipId: clipId)
-        let fired = FirstOnlyFlag()
-        let onComplete: @MainActor (MediaAsset) -> Void = { [weak self] newAsset in
-            guard fired.fire() else { return }
-            self?.replaceClipMediaRef(clipId: clipId, newAssetId: newAsset.id, resetTrim: resetTrim)
-            self?.clearPendingReplacement(clipId: clipId)
-        }
-        let onFailure: @MainActor () -> Void = { [weak self] in
-            self?.clearPendingReplacement(clipId: clipId)
-        }
-        return (onComplete, onFailure)
-    }
 }

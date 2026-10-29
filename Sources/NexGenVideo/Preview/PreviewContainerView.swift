@@ -28,6 +28,7 @@ struct PreviewContainerView: View {
                 let scaledWidth = fitSize.width * editor.canvasZoom
                 let scaledHeight = fitSize.height * editor.canvasZoom
                 ZStack {
+                ZStack {
                     PreviewView()
                     if let referenceImage {
                         ProjectReferenceImageView(projectHome: referenceImage.projectHome, path: referenceImage.path)
@@ -75,8 +76,13 @@ struct PreviewContainerView: View {
                 )
                 .position(x: geo.size.width / 2, y: geo.size.height / 2)
                 .offset(x: editor.canvasOffset.width, y: editor.canvasOffset.height)
+                PreviewCanvasNavigation(editor: editor, contentSize: referenceImage == nil ? fitSize : geo.size,
+                    enabled: !isSubtitle && editor.activePreviewTab.clipType != .document)
+                }.frame(width: geo.size.width, height: geo.size.height)
             }
             .clipped()
+            .reviewAcceptanceProbe("preview.canvas", text: editor.activePreviewTab.id)
+            .help("Scroll to pan a zoomed image. Command-scroll to zoom. Choose Fit to center the image.")
             if !editor.theaterActive {
                 if !isImage && !isSubtitle && editor.activePreviewTab.clipType != .document {
 
@@ -236,6 +242,7 @@ struct PreviewContainerView: View {
         }
         .buttonStyle(.plain)
         .tourAnchor(.screenshotButton)
+        .reviewAcceptanceProbe("preview.capture-frame")
     }
 
     // MARK: - Project settings
@@ -386,18 +393,12 @@ struct PreviewContainerView: View {
     }
 
     private func relinkFile(assetId: String) {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = false
-        panel.message = "Choose the source file for this clip"
-        panel.begin { response in
-            guard response == .OK, let url = panel.url else { return }
-            Task { await editor.relinkAsset(id: assetId, to: url) }
-        }
+        guard let asset = editor.mediaAssets.first(where: { $0.id == assetId }) else { return }
+        editor.presentRelinkPanel(for: asset)
     }
 
     private func relinkFolder() {
+        let destination = MediaLibraryDestination(editor, folderID: nil)
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
@@ -406,7 +407,12 @@ struct PreviewContainerView: View {
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
             Task {
+                guard (try? destination.validate(editor)) != nil else {
+                    editor.mediaPanelToast = "The project changed. Relink the media again."
+                    return
+                }
                 let result = await editor.relinkOfflineAssets(fromFolder: url)
+                guard (try? destination.validate(editor)) != nil else { return }
                 if let failure = result.failure {
                     editor.mediaPanelToast = MediaPanelToast(message: failure)
                 } else {
@@ -492,9 +498,11 @@ struct PreviewContainerView: View {
                     HStack(spacing: AppTheme.Spacing.sm) {
                         if let assetId {
                             Button("Relink…") { relinkFile(assetId: assetId) }
+                                .reviewAcceptanceProbe("preview.relink.file." + assetId)
                                 .buttonStyle(.capsule(.prominent, size: .regular))
                         }
                         Button("Relink Folder…") { relinkFolder() }
+                            .reviewAcceptanceProbe("preview.relink.folder")
                             .buttonStyle(.capsule(.secondary, size: .regular))
                     }
                     .padding(.top, AppTheme.Spacing.xs)
@@ -580,6 +588,7 @@ struct PreviewContainerView: View {
                 .fixedSize(horizontal: true, vertical: false)
                 .layoutPriority(1)
         }
+        .reviewAcceptanceProbe("preview.history")
         .contextMenu {
             Button("Previous Preview") { editor.goBackPreviewTab() }
                 .disabled(!editor.canGoBackPreviewTab)
@@ -669,6 +678,7 @@ struct PreviewContainerView: View {
             )
         }
         .frame(height: AppTheme.ComponentSize.previewScrubberHeight)
+        .reviewAcceptanceProbe("preview.scrubber")
         .animation(.easeOut(duration: AppTheme.Anim.hover), value: isScrubbing)
         .animation(.easeOut(duration: AppTheme.Anim.hover), value: isScrubHovered)
         .onDisappear {
@@ -732,6 +742,7 @@ struct PreviewContainerView: View {
                 .hoverHighlight()
         }
         .buttonStyle(.plain)
+        .reviewAcceptanceProbe("preview.transport." + systemName)
     }
 }
 
@@ -792,7 +803,7 @@ private struct PreviewTimecodeText: View {
         .fixedSize(horizontal: true, vertical: false)
         .background {
             if WorkspaceUIAcceptance.isRequested {
-                AppRelaunchClickProbe(identifier: "preview.timecode")
+                AppRelaunchClickProbe(identifier: "preview.timecode", acceptanceText: String(frame))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .allowsHitTesting(false)
             }

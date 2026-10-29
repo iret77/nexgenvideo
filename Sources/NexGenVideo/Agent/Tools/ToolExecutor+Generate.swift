@@ -230,6 +230,12 @@ extension ToolExecutor {
                 asset = MediaAsset(id: "pipeline-reference:\(binding.path)", url: plannedURL, type: expectedType,
                     name: plannedURL.deletingPathExtension().lastPathComponent, originalFilename: plannedURL.lastPathComponent)
                 await asset.loadMetadata()
+                if try PipelineProductionRouting.isProductionV2(dataRoot: dataRoot) {
+                    let projection = try ProductionPlanningLineageV2.projection(dataRoot: dataRoot)
+                    let number = (projection.shots.firstIndex(where: { $0.id == selection.route.shotID }) ?? 0) + 1
+                    asset.name = "Shot \(number) · \(binding.semanticJobID)"
+                    editor.importMediaAsset(asset)
+                }
             }
             let currentURL = try ProjectLocalFile.requireHash(binding.sha256, at: binding.path, dataRoot: dataRoot)
                 .standardizedFileURL.resolvingSymlinksInPath()
@@ -304,11 +310,20 @@ extension ToolExecutor {
                 "The provider submission cannot preserve the ReferencePlan's exact input order."
             )
         }
-        let historicalInputs = try PipelineProductionInputsWriter.load(
-            shotID: selection.route.shotID,
-            dataRoot: dataRoot
-        )
-        let (historicalAssetGraph, historicalDemandSet, _) = historicalInputs
+        let materialized: PipelineProductionInputMaterializer.Bundle?
+        if try PipelineProductionRouting.isProductionV2(dataRoot: dataRoot) {
+            materialized = try PipelineProductionInputMaterializer.requireCurrent(shotID: selection.route.shotID, dataRoot: dataRoot)
+        } else { materialized = nil }
+        let historicalAssetGraph: AssetGraphV1
+        let historicalDemandSet: ReferenceDemandSetV1
+        if let materialized {
+            historicalAssetGraph = materialized.graph
+            historicalDemandSet = materialized.demands
+        } else {
+            let loaded = try PipelineProductionInputsWriter.load(shotID: selection.route.shotID, dataRoot: dataRoot)
+            historicalAssetGraph = loaded.0
+            historicalDemandSet = loaded.1
+        }
         let demandData = try AssetGraphCanonicalCodecV1.encode(
             historicalDemandSet
         )
@@ -360,7 +375,8 @@ extension ToolExecutor {
                 of: offeringCapabilitiesData
             ),
             historicalAssetGraph: historicalAssetGraph,
-            historicalDemandSet: historicalDemandSet
+            historicalDemandSet: historicalDemandSet,
+            productionMaterialization: materialized?.reference
         )
         return ProductionVideoGenerationInputs(
             assets: assets,
@@ -557,6 +573,13 @@ extension ToolExecutor {
     ) throws {
         let shotId = try args.requireString("shotId")
         guard shotId != "none" else { return }
+        if try PipelineProductionPromptCompiler.workflow(editor: editor)?.isProductionV2 == true {
+            guard let root = editor.workingRoot.flatMap({ DataRootResolver.dataRoot(of: $0) }),
+                  !(try ProductionPlanningLineageV2.projection(dataRoot: root)).requiredFrameRoles(for: shotId).isEmpty else {
+                throw ToolError("This production shot does not require generated Frames.")
+            }
+            return
+        }
         guard let root = editor.workingRoot.flatMap({
             DataRootResolver.dataRoot(of: $0)
         }), let shotlist = (try? loadShotlist(dataRoot: root)) ?? nil,
@@ -577,6 +600,19 @@ extension ToolExecutor {
     ) async throws {
         let shotId = try args.requireString("shotId")
         guard shotId != "none" else { return }
+        if try PipelineProductionPromptCompiler.workflow(editor: editor)?.isProductionV2 == true {
+            guard let root = editor.workingRoot.flatMap({ DataRootResolver.dataRoot(of: $0) }) else {
+                throw ToolError("Open the production project before generating its shot.")
+            }
+            let selection = try PipelineProductionRouting.requireCurrent(shotID: shotId, dataRoot: root,
+                activation: providerActivation(), candidateProvider: productionRouteCandidates)
+            let actual = try await productionVideoInputs(selection: selection, editor: editor, dataRoot: root)
+            guard (actual.assets.sourceVideo != nil) == requiresSourceVideo else {
+                throw ToolError("The exact reviewed source-video operation does not match the selected provider adapter.")
+            }
+            try Self.validateProductionArguments(args, against: actual.assets)
+            return
+        }
         guard let root = editor.workingRoot.flatMap({
             DataRootResolver.dataRoot(of: $0)
         }), let shotlist = (try? loadShotlist(dataRoot: root)) ?? nil,
@@ -657,7 +693,7 @@ extension ToolExecutor {
         success: @escaping (String) -> String
     ) async throws -> AgentPreparedGeneration {
         let generation = try await GenerationController.prepare(request, editor: editor, preflight: preflight).get()
-        let package = try await GenerationController.prepareReviewPackage(generation, editor: editor)
+        let package = try await GenerationController.prepareReviewPackage(generation, editor: editor, quoteLoader: generationQuoteLoader)
         return AgentPreparedGeneration(package: package, generation: generation) {
             try await self.routePreparedThroughController(generation, editor: editor, success: success)
         }
@@ -734,7 +770,8 @@ extension ToolExecutor {
         prompt: String,
         modality: PromptComposer.Modality,
         modelId: String,
-        editor: EditorViewModel
+        editor: EditorViewModel,
+        modelCatalog: ModelCatalog = .shared
     ) async throws -> (
         precompiled: (text: String, token: String, binding: PromptBinding)?,
         raw: Bool
@@ -756,11 +793,12 @@ extension ToolExecutor {
             }
             return (nil, false)
         }
+        let remembered = args.string("compileToken").flatMap { PromptCompiler.rememberedBinding(token: $0, text: prompt, modelId: modelId) }
         let currentBinding = try await PromptCompiler.currentBinding(
             editor: editor,
             shotId: shotId,
             modality: modality,
-            modelId: modelId
+            modelId: modelId, modelCatalog: modelCatalog, frameRole: remembered?.frameRole
         )
         guard let token = args.string("compileToken"),
               let binding = PromptCompiler.rememberedBinding(
@@ -991,7 +1029,7 @@ extension ToolExecutor {
 
     @MainActor
     private func activeImageProviderScope() -> [GenerationProvider] {
-        ModelCatalog.shared.activeImageProviderScope()
+        ModelCatalog.activeImageProviderScope(activation: providerActivation())
     }
 
     @MainActor
@@ -1051,7 +1089,7 @@ extension ToolExecutor {
         outputCompression: Int? = nil,
         hasMask: Bool = false
     ) -> [CatalogImageOfferingCandidate] {
-        ModelCatalog.shared.compatibleImageOfferings(
+        imageOfferingEvaluation(
             preferredModelID: preferredModelID,
             aspectRatio: aspectRatio,
             resolution: resolution,
@@ -1062,7 +1100,18 @@ extension ToolExecutor {
             outputFormat: outputFormat,
             outputCompression: outputCompression,
             hasMask: hasMask
-        )
+        ).offerings
+    }
+
+    private func imageOfferingEvaluation(
+        preferredModelID: String, aspectRatio: String, resolution: String?, quality: String?,
+        referenceCount: Int, numImages: Int = 1, background: String? = nil, outputFormat: String? = nil,
+        outputCompression: Int? = nil, hasMask: Bool = false
+    ) -> CatalogImageOfferingEvaluation {
+        modelCatalog.imageOfferingEvaluation(
+            preferredModelID: preferredModelID, aspectRatio: aspectRatio, resolution: resolution, quality: quality,
+            referenceCount: referenceCount, numImages: numImages, background: background, outputFormat: outputFormat,
+            outputCompression: outputCompression, hasMask: hasMask, activation: providerActivation(), isEnabled: isModelEnabled)
     }
 
     private func availableImageSpendOptions(
@@ -1132,7 +1181,7 @@ extension ToolExecutor {
             editor: editor,
             shotId: precompiled.binding.shotId,
             modality: PromptCompiler.modalityForModel(approvedModelId),
-            modelId: approvedModelId
+            modelId: approvedModelId, frameRole: precompiled.binding.frameRole
         )
         let preserveComposition = approvedTarget?.binding?
             .resolvedVideoCapabilities?.inputPolicy.preservesSourceComposition
@@ -1743,9 +1792,9 @@ extension ToolExecutor {
             $0.dataRoot.standardizedFileURL.resolvingSymlinksInPath()
         }
         let briefImageBinding = productionDesign?.binding
-        let requestedModelID = args.string("model").map { ModelCatalog.shared.internalId(forLogical: $0) }
+        let requestedModelID = args.string("model").map { self.modelCatalog.internalId(forLogical: $0) }
         let requiredModel = try briefImageBinding.flatMap { binding in
-            try Self.requiredBriefImageModel(binding, requestedModelID: requestedModelID)
+            try Self.requiredBriefImageModel(binding, requestedModelID: requestedModelID, catalog: self.modelCatalog.image)
         }
         let requestedEditInputs = !args.stringArray("referenceMediaRefs").isEmpty
             || !args.stringArray("referenceProjectPaths").isEmpty
@@ -1754,14 +1803,14 @@ extension ToolExecutor {
         let defaultModelID = requestedEditInputs
             ? "fal-ai/gpt-image-2.5/flare/edit"
             : "fal-ai/gpt-image-2.5/flare/text-to-image"
-        let defaultModel = ImageModelConfig.allModels.first {
+        let defaultModel = self.modelCatalog.image.first {
             $0.id == defaultModelID
-        } ?? ImageModelConfig.allModels.first
+        } ?? self.modelCatalog.image.first
         guard let modelId = requiredModel?.id ?? requestedModelID ?? defaultModel?.id else {
             throw ToolError("Model catalog not loaded yet. Try again in a moment.")
         }
-        guard let model = ImageModelConfig.allModels.first(where: { $0.id == modelId }) else {
-            throw ToolError("Unknown model '\(modelId)'. Available: \(ImageModelConfig.allModels.map(\.id).joined(separator: ", "))")
+        guard let model = self.modelCatalog.image.first(where: { $0.id == modelId }) else {
+            throw ToolError("Unknown model '\(modelId)'. Available: \(self.modelCatalog.image.map(\.id).joined(separator: ", "))")
         }
         let aspectRatio = args.string("aspectRatio") ?? model.aspectRatios.first ?? ""
         let resolution = args.string("resolution") ?? model.defaultResolution(for: aspectRatio)
@@ -1777,13 +1826,24 @@ extension ToolExecutor {
             prompt: prompt,
             modality: .image,
             modelId: model.id,
-            editor: editor
+            editor: editor,
+            modelCatalog: self.modelCatalog
         )
+        let storyboardCompilePath: String?
+        if try PipelineProductionPromptCompiler.workflow(editor: editor)?.isProductionV2 == true,
+           let storyboardRoot = editor.workingRoot.flatMap({ DataRootResolver.dataRoot(of: $0) }),
+           try currentPhaseIfEnforced(tool: .generateImage, editor: editor, dataRoot: storyboardRoot) == "storyboard" {
+            guard let path = args.string("storyboardCompileReceipt"), numImages == 1, !raw else {
+                throw ToolError("Compile the current Storyboard moment with compile_storyboard_sketch, then generate its one exact image request.")
+            }
+            try PipelineStoryboardSketchGeneration.requireCompileForGeneration(path: path, compiled: precompiled, modelID: model.id, editor: editor)
+            storyboardCompilePath = path
+        } else { storyboardCompilePath = nil }
         let shotId = precompiled?.binding.shotId ?? "none"
-        let initialFramePlan = try PromptCompiler.currentFrameReferencePlan(
+        let initialFramePlan = try await PromptCompiler.currentFrameReferencePlan(
             editor: editor,
             shotId: shotId,
-            modelId: model.id
+            modelId: model.id, frameRole: precompiled?.binding.frameRole
         )
         let frameReferenceDataRoot = editor.workingRoot.flatMap {
             DataRootResolver.dataRoot(of: $0)
@@ -1842,7 +1902,7 @@ extension ToolExecutor {
         let originalModelId = model.id
         let modelRequirement: SpendModelRequirementInput? = briefImageBinding.map { binding in
             let evaluation: @MainActor () -> CatalogImageOfferingEvaluation = {
-                ModelCatalog.shared.imageOfferingEvaluation(
+                self.imageOfferingEvaluation(
                     preferredModelID: model.id,
                     aspectRatio: aspectRatio,
                     resolution: resolution,
@@ -1938,17 +1998,17 @@ extension ToolExecutor {
 
                 let submit: @MainActor ([MediaAsset]) async throws -> AgentPreparedGeneration = {
                     submittedReferences in
-                    guard let approvedModel = ImageModelConfig.allModels.first(where: {
+                    guard let approvedModel = self.modelCatalog.image.first(where: {
                         $0.id == approved.target.modelId
                     }) else {
                         throw ToolError(
                             "The approved image model is no longer in the live catalog. Review the refreshed provider and model choices."
                         )
                     }
-                    let framePlan = try PromptCompiler.currentFrameReferencePlan(
+                    let framePlan = try await PromptCompiler.currentFrameReferencePlan(
                         editor: editor,
                         shotId: shotId,
-                        modelId: approvedModel.id
+                        modelId: approvedModel.id, frameRole: precompiled?.binding.frameRole
                     )
                     let generationReferences = try framePlan.map { plan in
                         guard let frameReferenceDataRoot else {
@@ -2030,6 +2090,16 @@ extension ToolExecutor {
                         return input
                     }
                     let preflight: GenerationController.Preflight = {
+                        do {
+                            if shotId != "none", try PipelineProductionPromptCompiler.workflow(editor: editor)?.isProductionV2 == true {
+                                try PipelineProductionFramesWriter.requireGeneration(compiled: approvedPrompt,
+                                    modelID: finalModelID, editor: editor)
+                            }
+                        } catch { return error.localizedDescription }
+                        if let storyboardCompilePath {
+                            do { try PipelineStoryboardSketchGeneration.requireCompileForGeneration(path: storyboardCompilePath, compiled: approvedPrompt, modelID: finalModelID, editor: editor) }
+                            catch { return error.localizedDescription }
+                        }
                         if let productionDesignSnapshot {
                             guard let root = verifiedProductionDesignRoot,
                                   let current = try? Self.productionDesignReferenceSnapshot(dataRoot: root),
@@ -2650,11 +2720,15 @@ extension ToolExecutor {
 
     func compilePrompt(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
         let intent = try args.requireString("intent")
-        let modelId = ModelCatalog.shared.internalId(forLogical: try args.requireString("model"))
+        let requestedModel = try args.requireString("model")
+        let imageID = modelCatalog.internalId(forLogical: requestedModel)
+        let isImage = modelCatalog.image.contains { $0.id == imageID }
+        let modelId = isImage ? imageID : ModelCatalog.shared.internalId(forLogical: requestedModel)
+        let modality: PromptComposer.Modality = isImage ? .image : PromptCompiler.modalityForModel(modelId)
         let shotId = try args.requireString("shotId")
-        if PromptCompiler.modalityForModel(modelId) == .image,
+        if modality == .image,
            let binding = try productionDesignImageBinding(tool: .compilePrompt, editor: editor)?.binding {
-            _ = try Self.requiredBriefImageModel(binding, requestedModelID: modelId)
+            _ = try Self.requiredBriefImageModel(binding, requestedModelID: modelId, catalog: modelCatalog.image)
         }
         // #231: `shotId` is REQUIRED and has no default — "none" is the explicit free-intent choice. It
         // used to be optional, so forgetting it degraded the compile silently: no camera projection from
@@ -2668,11 +2742,11 @@ extension ToolExecutor {
         // the old local ledger text-append, then the gate mints the token over the result.
         let compiled = try await PromptCompiler.compile(
             intent: intent, modelId: modelId,
-            modality: PromptCompiler.modalityForModel(modelId), editor: editor,
+            modality: modality, editor: editor,
             setting: args.string("setting") ?? "",
             lighting: args.string("lighting") ?? "",
             style: args.string("style") ?? "",
-            shotId: shotId, shot: projection)
+            shotId: shotId, shot: projection, modelCatalog: isImage ? modelCatalog : .shared)
         let body: [String: Any] = [
             "compiledPrompt": compiled.text,
             "compileToken": compiled.token,
@@ -2908,46 +2982,14 @@ extension ToolExecutor {
             pipelineTool: .upscaleMedia,
             origin: origin,
             alternatives: { [] },
-            execute: { editor, approved in
-                let result = try await AgentGenerationAwaiter.waitForSubmission(
-                    start: { awaiter in
-                        guard let placeholderId = await EditSubmitter.submitUpscale(
-                            asset: asset,
-                            model: model,
-                            targetResolution: selection.targetResolution,
-                            editor: editor,
-                            trimmedSource: trimmed,
-                            origin: .agentTool,
-                            target: approved.target,
-                            onComplete: { awaiter.resolve(.succeeded($0)) },
-                            onFailure: { awaiter.resolve(.failed(nil)) }
-                        ) else {
-                            throw ToolError("Failed to start upscale")
-                        }
-                        return placeholderId
-                    }, cancel: { placeholderId in
-                        editor.generationService.cancelGeneration(
-                            placeholderId: placeholderId
-                        )
-                    }
-                )
-                switch result.completion {
-                case .failed(let explicitMessage):
-                    let message = editor.mediaAssets.first(where: {
-                        $0.id == result.placeholderId
-                    }).flatMap { placeholder -> String? in
-                        guard case .failed(let message) = placeholder.generationStatus else {
-                            return nil
-                        }
-                        return message
-                    } ?? explicitMessage ?? "The provider did not return a usable upscale result."
-                    throw ToolError(message)
-                case .succeeded(let completed):
-                    return try await Self.completedGenerationResult(
-                        text: "Upscale completed. Asset ID: \(result.placeholderId). Model: \(model.displayName)\(selection.targetResolution.map { ", target: \($0)" } ?? ""), source: \(asset.name)\(trimmed != nil ? " (trimmed range)" : "")",
-                        asset: asset.type == .image ? completed : nil
-                    )
-                }
+            prepare: { editor, approved in
+                let request = try EditSubmitter.upscaleRequest(asset: asset, model: model,
+                    targetResolution: selection.targetResolution, trimmedSource: trimmed,
+                    origin: .agentTool, target: approved.target)
+                return try await self.prepareController(request, editor: editor,
+                    success: { id in
+                        "Upscale completed. Asset ID: \(id). Model: \(model.displayName)\(selection.targetResolution.map { ", target: \($0)" } ?? ""), source: \(asset.name)\(trimmed != nil ? " (trimmed range)" : "")"
+                    })
             }
         )
     }

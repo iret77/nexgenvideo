@@ -168,6 +168,37 @@ struct HDRExportTests {
         try publishEvidence(hdrQC, movie: output)
     }
 
+    @Test("HDR excerpt preserves exact subframe bounds", .enabled(if: hdrRuntimeQCEnabled), arguments: [1300, 1301])
+    func exactExcerpt(startMilliseconds: Int64) async throws {
+        let source = try await FixtureVideo.write(scenes: [
+            .init(rgb: (104, 104, 104), seconds: 2),
+            .init(rgb: (255, 0, 0), seconds: 2),
+        ], fps: 30, size: 320)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let fixture = fixtureTimeline(source: source, durationFrames: 120)
+        let result = try await CompositionBuilder.build(timeline: fixture.timeline,
+            resolveURL: { fixture.resolver.resolveURL(for: $0) }, renderSize: CGSize(width: 320, height: 320))
+        let output = FileManager.default.temporaryDirectory.appendingPathComponent("hdr-excerpt-\(UUID().uuidString).mov")
+        defer { try? FileManager.default.removeItem(at: output) }
+        let range = CMTimeRange(start: CMTime(value: startMilliseconds, timescale: 1000), duration: CMTime(value: 1501, timescale: 1000))
+        try await HDRVideoExporter.export(.init(composition: result.composition, videoComposition: result.videoComposition,
+            audioMix: result.audioMix, textOverlays: [], fps: 30), renderSize: CGSize(width: 320, height: 320),
+            to: output, timeRange: range, cancellation: .init())
+        let movie = AVURLAsset(url: output)
+        let duration = try await movie.load(.duration)
+        #expect(CMTimeCompare(duration, range.duration) == 0)
+        let generator = AVAssetImageGenerator(asset: movie)
+        generator.appliesPreferredTrackTransform = true
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
+        let first = try await generator.image(at: .zero)
+        generator.requestedTimeToleranceBefore = CMTime(value: 1, timescale: 30)
+        let last = try await generator.image(at: CMTimeSubtract(duration, CMTime(value: 1, timescale: 1000)))
+        #expect(first.image.width == 320 && last.image.height == 320)
+        #expect(CMTimeCompare(first.actualTime, .zero) == 0)
+        #expect(CMTimeCompare(last.actualTime, duration) < 0)
+    }
+
     private func fixtureTimeline(
         source: URL,
         durationFrames: Int

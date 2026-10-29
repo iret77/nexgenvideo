@@ -737,7 +737,7 @@ extension ToolExecutor {
 
     private static let getTranscriptAllowedKeys: Set<String> = ["startFrame", "endFrame", "clipId", "wordTimestamps"]
 
-    func getTranscript(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
+    func getTranscript(_ editor: EditorViewModel, _ args: [String: Any], origin: ToolCallOrigin = .direct) async throws -> ToolResult {
         try validateUnknownKeys(args, allowed: Self.getTranscriptAllowedKeys, path: "get_transcript")
         let fps = editor.timeline.fps
         let clipFilter = args.string("clipId")
@@ -755,7 +755,8 @@ extension ToolExecutor {
             }
         }
 
-        let (allWords, skipped) = try await timelineWords(editor)
+        let assigned = editor.agentService.captionRevisionScope(from: origin)
+        let (allWords, skipped) = try await timelineWords(editor, scope: assigned?.kind == .speechCuts ? assigned : nil)
 
         var clipsOut: [[String: Any]] = []
         var totalWords = 0
@@ -797,7 +798,9 @@ extension ToolExecutor {
         return .ok(json)
     }
 
-    func timelineWords(_ editor: EditorViewModel) async throws -> (words: [TimelineWord], skipped: [[String: Any]]) {
+    func timelineWords(_ editor: EditorViewModel, scope: CaptionRevisionScope? = nil) async throws -> (words: [TimelineWord], skipped: [[String: Any]]) {
+        try scope?.validateIdentity(editor)
+        let state = CaptionProjectState(editor)
         let fps = editor.timeline.fps
         let assetsById = Dictionary(editor.mediaAssets.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let filenamesByURL = Dictionary(
@@ -806,33 +809,56 @@ extension ToolExecutor {
         )
         struct Frag { let clipId: String; let trackIndex: Int; let clip: Clip; let url: URL; let isVideo: Bool }
         var frags: [Frag] = []
+        var skipped: [[String: Any]] = []
         var isVideoByURL: [URL: Bool] = [:]
         for clip in editor.captionTargets(ids: []) {
-            guard let loc = editor.findClip(id: clip.id), let asset = assetsById[clip.mediaRef] else { continue }
+            guard let loc = editor.findClip(id: clip.id) else { continue }
+            guard let asset = assetsById[clip.mediaRef] else {
+                skipped.append(["clipId": clip.id, "reason": "The source is unavailable."]); continue
+            }
             let isVideo = asset.type == .video
             frags.append(Frag(clipId: clip.id, trackIndex: loc.trackIndex, clip: clip, url: asset.url, isVideo: isVideo))
             isVideoByURL[asset.url] = isVideo
         }
 
-        // Transcribe each unique source once (cached); skip — don't fail — on per-asset errors.
+        let inputs = Dictionary(frags.map { ($0.clip.mediaRef, $0.url) }, uniquingKeysWith: { first, _ in first })
+        let preparation = Task.detached(priority: .userInitiated) { try CaptionInputSnapshot.freeze(inputs, skippingUnavailable: scope == nil) }
+        let frozen = try await withTaskCancellationHandler { try await preparation.value } onCancel: { preparation.cancel() }
+        defer { frozen.discard() }
+        try state.validate(editor)
+        try scope?.validateFrozen(frozen)
+        var reported = Set<URL>()
+        for (id, reason) in frozen.unavailable.sorted(by: { $0.key < $1.key }) {
+            guard let url = inputs[id], reported.insert(url).inserted else { continue }
+            skipped.append(["file": filenamesByURL[url] ?? "Unavailable source", "reason": reason])
+        }
         var transcripts: [URL: TranscriptionResult] = [:]
-        var skipped: [[String: Any]] = []
-        for url in Set(frags.map(\.url)) {
-            do { transcripts[url] = try await TranscriptCache.shared.transcript(for: url, isVideo: isVideoByURL[url] ?? true, range: nil) }
-            catch {
-                skipped.append([
-                    "file": filenamesByURL[url] ?? MediaFilename.display(
-                        originalFilename: nil,
-                        name: "",
-                        storageURL: url
-                    ),
-                    "reason": error.localizedDescription,
-                ])
+        var attempted = Set<URL>()
+        for source in frozen.sources.values.sorted(by: { $0.original.path < $1.original.path }) where attempted.insert(source.original).inserted {
+            do {
+                transcripts[source.original] = try await editor.captionTranscriptionClient.transcribeFrozen(source,
+                    video: isVideoByURL[source.original] ?? true, range: nil, censor: false, locale: nil)
+            } catch {
+                try Task.checkCancellation()
+                if error is CancellationError { throw error }
+                skipped.append(["file": filenamesByURL[source.original] ?? MediaFilename.display(
+                    originalFilename: nil, name: "", storageURL: source.original), "reason": error.localizedDescription])
             }
+            try state.validate(editor)
+        }
+        let verification = Task.detached(priority: .userInitiated) { try frozen.validateSources() }
+        try await withTaskCancellationHandler { try await verification.value } onCancel: { verification.cancel() }
+        try state.validate(editor)
+        guard inputs.allSatisfy({ editor.mediaResolver.resolveURL(for: $0.key) == $0.value }) else {
+            throw EditorViewModel.CaptionError.sourceChanged
         }
 
+        try scope?.validateIdentity(editor)
+        if scope != nil, !skipped.isEmpty {
+            throw ToolError("The complete speech transcript is unavailable. Relink or transcribe the missing source before requesting cuts.")
+        }
         var words: [TimelineWord] = []
-        for frag in frags.sorted(by: { $0.clip.startFrame < $1.clip.startFrame }) {
+        for frag in frags.sorted(by: { ($0.clip.startFrame, $0.trackIndex, $0.clipId) < ($1.clip.startFrame, $1.trackIndex, $1.clipId) }) {
             guard let transcript = transcripts[frag.url] else { continue }
             let visStart = Double(frag.clip.trimStartFrame)
             let visEnd = visStart + Double(frag.clip.durationFrames) * max(frag.clip.speed, 0.0001)

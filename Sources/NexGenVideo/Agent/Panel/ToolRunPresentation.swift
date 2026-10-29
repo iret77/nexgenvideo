@@ -64,6 +64,7 @@ enum ToolRunPresentation {
         "slip_clip": "Slipping a clip",
         "ripple_delete_ranges": "Closing gaps in the cut",
         "remove_words": "Cutting words from speech",
+        "propose_caption_revision": "Preparing caption and speech changes",
         "sync_audio": "Synchronizing clips",
         "undo": "Undoing the last edit",
         "add_texts": "Adding titles",

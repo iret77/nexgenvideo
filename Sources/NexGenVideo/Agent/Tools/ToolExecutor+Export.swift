@@ -124,8 +124,7 @@ extension ToolExecutor {
             "codec": format.displayName,
             "resolution": resolution.rawValue,
             "durationFrames": job.durationFrames ?? timeline.totalFrames,
-            "durationSeconds": Double(job.durationFrames ?? timeline.totalFrames)
-                / Double(max(1, job.fps ?? timeline.fps)),
+            "durationSeconds": job.durationSeconds ?? Double(timeline.totalFrames) / Double(max(1, timeline.fps)),
             "fps": job.fps ?? timeline.fps,
             "note": videoExportNote(for: job),
         ]
@@ -159,8 +158,7 @@ extension ToolExecutor {
             "width": job.width ?? timeline.width,
             "height": job.height ?? timeline.height,
             "durationFrames": job.durationFrames ?? timeline.totalFrames,
-            "durationSeconds": Double(job.durationFrames ?? timeline.totalFrames)
-                / Double(max(1, job.fps ?? timeline.fps)),
+            "durationSeconds": job.durationSeconds ?? Double(timeline.totalFrames) / Double(max(1, timeline.fps)),
             "fps": job.fps ?? timeline.fps,
             "outputSha256": job.outputSHA256 ?? "",
             "outputByteCount": job.outputByteCount ?? 0,
@@ -232,8 +230,7 @@ extension ToolExecutor {
             "width": job.width ?? timeline.width,
             "height": job.height ?? timeline.height,
             "durationFrames": job.durationFrames ?? timeline.totalFrames,
-            "durationSeconds": Double(job.durationFrames ?? timeline.totalFrames)
-                / Double(max(1, job.fps ?? timeline.fps)),
+            "durationSeconds": job.durationSeconds ?? Double(timeline.totalFrames) / Double(max(1, timeline.fps)),
             "fps": job.fps ?? timeline.fps,
             "schemaProfile": report.validation.schemaProfile,
             "assetCount": report.validation.assetCount,

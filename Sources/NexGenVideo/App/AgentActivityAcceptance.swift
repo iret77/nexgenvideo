@@ -18,17 +18,17 @@ enum AgentActivityAcceptance {
             runtimeAdapterFactory: { _ in runtime }, runtimeReadinessOverride: { needsAuthentication ? .authenticationRequired : nil },
             runtimeHostContextOverride: { .hostOwned(tools: []) })
         let editor = EditorViewModel(agentService: service)
+        editor.setWorkspaceFocus(.edit)
         service.loadSessions(from: home)
         guard service.currentSessionId == saved.id, service.messages.map(\.id) == [answer.id] else {
             throw Failure("Reopening the project lost its last answer")
         }
-        let statusHost = NSHostingView(rootView: WorkbenchStatusBar()
-            .frame(maxHeight: .infinity, alignment: .bottom)
+        let statusHost = NSHostingView(rootView: EditorWindowContentView()
             .environment(editor).environment(\.interfaceScale, scale)
             .background(AppTheme.Background.surfaceColor))
         statusHost.sizingOptions = []
         let window = NSWindow(contentRect: NSRect(origin: .zero,
-            size: NSSize(width: AppTheme.Layout.activityFlyoutWidth, height: AppTheme.Layout.activityFlyoutHeight)),
+            size: AppTheme.Window.projectMin),
             styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = statusHost

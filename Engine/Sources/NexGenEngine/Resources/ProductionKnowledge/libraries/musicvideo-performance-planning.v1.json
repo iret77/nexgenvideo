@@ -1,0 +1,175 @@
+{
+  "schemaVersion": "creative-library.v1",
+  "id": "musicvideo-performance-planning",
+  "version": "1.0.0",
+  "applicability": {
+    "packIDs": [
+      "musicvideo"
+    ],
+    "phases": [
+      "treatment",
+      "storyboard",
+      "shotlist",
+      "review",
+      "assembly",
+      "render"
+    ],
+    "intentTags": [
+      "music-performance",
+      "visual-arc",
+      "performance-coverage"
+    ],
+    "activeProfileIDs": []
+  },
+  "entries": [
+    {
+      "id": "original-song-and-phrase",
+      "title": "Original song and phrase ownership",
+      "applicability": {
+        "packIDs": [
+          "musicvideo"
+        ],
+        "phases": [
+          "treatment",
+          "storyboard",
+          "shotlist",
+          "review",
+          "assembly",
+          "render"
+        ],
+        "intentTags": [
+          "music-performance"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [
+        {
+          "role": "approved_song",
+          "purpose": "The exact original song and independently measured word timing.",
+          "required": true
+        }
+      ],
+      "outputIntent": "Preserve the original performance while planning visual coverage.",
+      "guidance": [
+        "Keep the original song once at timeline zero; mute provider song audio so generated clips cannot double or replace it.",
+        "Choose performance segments at real phrase boundaries. A voice has one visible mouth owner within the phrase, and the performer and vocal timing remain explicit.",
+        "Use separately approved additional audio only for a declared role; a timing input is conditioning, not permission to replace the song."
+      ],
+      "verifyCriteria": [
+        "Every performed phrase names its singer, audible voice and measured words.",
+        "Original-song mixing and any additional audio layers are explicit."
+      ],
+      "incompatibilities": [
+        "Invented lyric timing, an anonymous singing mouth, or provider music replacing the track."
+      ]
+    },
+    {
+      "id": "musical-visual-arc",
+      "title": "Musical and visual development",
+      "applicability": {
+        "packIDs": [
+          "musicvideo"
+        ],
+        "phases": [
+          "treatment",
+          "storyboard",
+          "shotlist",
+          "review",
+          "assembly",
+          "render"
+        ],
+        "intentTags": [
+          "visual-arc"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [
+        {
+          "role": "approved_analysis",
+          "purpose": "Measured song sections and their musical function.",
+          "required": true
+        },
+        {
+          "role": "approved_story",
+          "purpose": "The approved story, motifs and selected visual approach.",
+          "required": true
+        }
+      ],
+      "outputIntent": "Give each musical section an intentional visual function.",
+      "guidance": [
+        "Declare what remains constant and what changes in camera, state, light, performance or guidance.",
+        "Relate imagery to the lyrics explicitly: literal, metaphorical, contrapuntal or intentionally unused.",
+        "Use actual musical intervals and shot placements; a shot crossing a section boundary may serve both sections without becoming a second shot identity."
+      ],
+      "verifyCriteria": [
+        "Every planned musical section has a visual function and change explanation.",
+        "Motifs and setup references refer to the actual approved plan."
+      ],
+      "incompatibilities": [
+        "A copied chorus label standing in for a visual arc, or duplicate shot identities per musical section."
+      ]
+    },
+    {
+      "id": "performance-space-coverage",
+      "title": "Performance and spatial coverage",
+      "applicability": {
+        "packIDs": [
+          "musicvideo"
+        ],
+        "phases": [
+          "treatment",
+          "storyboard",
+          "shotlist",
+          "review",
+          "assembly",
+          "render"
+        ],
+        "intentTags": [
+          "performance-coverage"
+        ],
+        "activeProfileIDs": []
+      },
+      "inputs": [
+        {
+          "role": "performance_intent",
+          "purpose": "Dance, concert, instrument or staged-vocal intent and required coverage roles.",
+          "required": true
+        },
+        {
+          "role": "approved_spatial_sources",
+          "purpose": "The actual location, performer references and verified camera/blocking geometry.",
+          "required": true
+        }
+      ],
+      "outputIntent": "Plan readable performance coverage and prove it in the final cut.",
+      "guidance": [
+        "Dance roles requiring the full body also preserve floor contact; instrument roles preserve the instrument, hands and orientation.",
+        "Declare the minimum continuous performance interval, its actual shot references and assembly role before production.",
+        "Use native Clay views only for geometry, pose, camera and blocking. They do not establish final appearance, identity, lighting or style.",
+        "Record a deliberate exception explicitly; do not silently omit a required role."
+      ],
+      "verifyCriteria": [
+        "Required coverage roles have concrete shots, performers and real reference demands or an explicit accepted exception.",
+        "The actual assembled selected clips prove the continuous interval; planning prose alone is not final delivery evidence."
+      ],
+      "incompatibilities": [
+        "Neutral Clay passed as a look reference, unbound setup names, or cutaway fragments substituted for required continuous performance."
+      ]
+    }
+  ],
+  "provenance": {
+    "sourceURL": "https://github.com/iret77/nexgenvideo/tree/0b4a4e311d17c6c0673cbebd70b2c8d57531fa65",
+    "sourceCommit": "0b4a4e311d17c6c0673cbebd70b2c8d57531fa65",
+    "sourceSections": [
+      "Engine/Sources/NexGenEngine/Artifacts/MusicvideoProductionExtensionsV1.swift",
+      "Sources/NexGenVideo/Agent/Pipeline/PipelineMusicvideoProductionWriter.swift",
+      "docs/CONCEPT.md"
+    ],
+    "adaptation": "Condensed existing music-performance, visual-arc, mixing and coverage semantics into reusable format-scoped craft context; project IDs and mutable project facts remain in canonical artifacts."
+  },
+  "license": {
+    "spdxIdentifier": "GPL-3.0-only",
+    "copyrightNotice": "Copyright (c) 2026 NexGenVideo contributors",
+    "sourceURL": "https://github.com/iret77/nexgenvideo/blob/0b4a4e311d17c6c0673cbebd70b2c8d57531fa65/LICENSE"
+  }
+}

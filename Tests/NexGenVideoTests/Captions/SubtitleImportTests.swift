@@ -121,6 +121,23 @@ struct SubtitleImportTests {
         #expect(remaining.first?.captionGroupId == firstGroup)
     }
 
+    @Test func librarySubtitleUsesReadableImportFilenameAndKeepsSourceBytes() async throws {
+        let fixture = try temporaryFile(name: "a93f8b6c4d2e1a0987654321abcdef012345.srt",
+            contents: "1\n00:00:01,000 --> 00:00:02,000\nReadable source.\n")
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let before = try Data(contentsOf: fixture.file)
+        let editor = EditorViewModel()
+        let asset = MediaAsset(id: "captions", url: fixture.file, type: .subtitle, name: "Display name")
+        asset.originalFilename = "Dialogue.fr.srt"
+        editor.mediaAssets = [asset]; editor.mediaManifest.entries = [asset.toManifestEntry(projectURL: nil)]
+        let ids = try await editor.placeCaptions(fromSubtitleAssets: [asset])
+        let clip = try #require(ids.first.flatMap { editor.clipFor(id: $0) })
+        #expect(clip.captionProvenance?.sourceFilename == "Dialogue.fr.srt")
+        #expect(clip.captionProvenance?.sourceAssetID == asset.id)
+        #expect(clip.captionProvenance?.languageIdentifier == "fr")
+        #expect(try Data(contentsOf: fixture.file) == before)
+    }
+
     @Test func captionProvenanceSurvivesProjectRoundTrip() throws {
         var clip = Fixtures.clip(mediaType: .text, start: 10, duration: 20)
         clip.textContent = "Persistent"

@@ -27,6 +27,7 @@ struct AnthropicToolSchema: @unchecked Sendable {
 }
 
 enum AnthropicStreamEvent: Sendable {
+    case responseMetadata(messageID: String, modelID: String)
     case textDelta(String)
     case thinkingComplete(AnthropicThinkingBlock)
     case serverToolComplete(AnthropicServerToolBlock)
@@ -99,9 +100,14 @@ enum AnthropicSSE {
             }
             switch type {
             case "message_start":
-                if let message = event["message"] as? [String: Any],
-                   let usage = message["usage"] as? [String: Any] {
-                    return [.usage(AnthropicSSE.runtimeUsage(usage))]
+                if let message = event["message"] as? [String: Any] {
+                    var events: [AnthropicStreamEvent] = []
+                    if let id = message["id"] as? String, !id.isEmpty,
+                       let model = message["model"] as? String, !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        events.append(.responseMetadata(messageID: id, modelID: model))
+                    }
+                    if let usage = message["usage"] as? [String: Any] { events.append(.usage(AnthropicSSE.runtimeUsage(usage))) }
+                    return events
                 }
             case "content_block_start":
                 guard let index = event["index"] as? Int,

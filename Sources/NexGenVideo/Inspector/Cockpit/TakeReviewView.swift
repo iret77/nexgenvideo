@@ -3,6 +3,7 @@ import SwiftUI
 import NexGenEngine
 
 struct TakeReviewView: View {
+    private let onOpen: (() -> Void)?
     @Environment(EditorViewModel.self) private var editor
     @State private var presented = false
     @State private var takes: [PipelineRenderTakeV1] = []
@@ -19,8 +20,13 @@ struct TakeReviewView: View {
     @State private var canSelect = false
     @State private var canWrite = false
 
+    init(initialTakeID: String = "", onOpen: (() -> Void)? = nil) {
+        _selectedID = State(initialValue: initialTakeID)
+        self.onOpen = onOpen
+    }
+
     var body: some View {
-        Button("Review video takes") { presented = true }
+        Button("Review video takes") { onOpen?(); presented = true }
             .buttonStyle(InlineActionButtonStyle())
             .reviewAcceptanceProbe("take.open")
             .sheet(isPresented: $presented) { reviewSheet }
@@ -47,6 +53,7 @@ struct TakeReviewView: View {
                     .disabled(busy)
                 if let snapshot {
                     VideoPlayer(player: player).frame(minHeight: AppTheme.Layout.previewMinHeight)
+                        .reviewAcceptanceProbe("take.preview.player")
                     TakeRangeReviewView(snapshot: snapshot, wholeTakePlayer: player, canWrite: canWrite).id(snapshot.take.id)
                     TakeRepairView(snapshot: snapshot, canWrite: canWrite).id(snapshot.take.id)
                     DisclosureGroup("Submitted direction and image references") {
@@ -70,7 +77,7 @@ struct TakeReviewView: View {
                             busy = false
                         }
                     }.buttonStyle(InlineActionButtonStyle(variant: .approval))
-                        .reviewAcceptanceProbe("take.use")
+                        .reviewAcceptanceProbe("take.use", state: !busy && canSelect && canWrite)
                         .disabled(busy || !canSelect || !canWrite)
                     if findings.count < TakeReview.Pass.allCases.count && findings.last?.verdict != .rejected {
                         let pass = TakeReview.Pass.allCases[findings.count]
@@ -95,14 +102,15 @@ struct TakeReviewView: View {
                             TextField("End seconds", value: $end, format: .number)
                                 .reviewAcceptanceProbe("take.end", text: String(end))
                         }
+                        let canRecord = !busy && !observation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            && start.isFinite && end.isFinite && start >= 0 && end > start && end <= snapshot.durationSeconds
                         Button("Record pass") {
                             findings.append(.init(pass: pass, verdict: verdict, observation: observation, startSeconds: start, endSeconds: end))
                             observation = ""; verdict = .conforms; start = 0; end = snapshot.durationSeconds
                         }
                         .buttonStyle(InlineActionButtonStyle(variant: .approval))
-                        .reviewAcceptanceProbe("take.record-pass", text: String(findings.count))
-                        .disabled(busy || observation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                            || !start.isFinite || !end.isFinite || start < 0 || end <= start || end > snapshot.durationSeconds)
+                        .reviewAcceptanceProbe("take.record-pass", state: canRecord, text: String(findings.count))
+                        .disabled(!canRecord)
                     } else {
                         ForEach(findings, id: \.pass) { finding in
                             Text("\(finding.pass.label): \(finding.verdict.rawValue) — \(finding.observation)")
@@ -118,9 +126,10 @@ struct TakeReviewView: View {
                                 busy = false
                             }
                         }.buttonStyle(InlineActionButtonStyle(variant: .approval))
-                            .reviewAcceptanceProbe("take.save", text: String(findings.count))
+                            .reviewAcceptanceProbe("take.save", state: !busy && canWrite, text: String(findings.count))
                             .disabled(busy || !canWrite)
                         Button("Review again") { findings = []; observation = ""; verdict = .conforms; start = 0; end = snapshot.durationSeconds; canSelect = false }
+                            .reviewAcceptanceProbe("take.review-again", state: !busy)
                             .buttonStyle(InlineActionButtonStyle()).disabled(busy)
                     }
                 }

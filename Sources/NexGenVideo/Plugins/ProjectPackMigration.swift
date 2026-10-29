@@ -6,6 +6,14 @@ enum ProjectPackMigration {
     struct Request: Codable, Equatable, Sendable {
         let source: ProjectPackBinding
         let target: ProjectPackBinding
+        let productionReset: ProductionWorkflowRecoveryMigration.Intent?
+
+        init(source: ProjectPackBinding, target: ProjectPackBinding,
+             productionReset: ProductionWorkflowRecoveryMigration.Intent? = nil) {
+            self.source = source
+            self.target = target
+            self.productionReset = productionReset
+        }
     }
 
     struct PreparedRequest {
@@ -59,6 +67,7 @@ enum ProjectPackMigration {
 
     nonisolated private static let keyPrefix = "NGVPackMigration."
     nonisolated private static let legacyKeyPrefix = "NGVLegacyPackMigration."
+    nonisolated private static let resetKeyPrefix = "NGVProductionReset."
 
     nonisolated static func authorizesRecoveredUpgrade(
         projectURL: URL,
@@ -77,12 +86,23 @@ enum ProjectPackMigration {
            request.source != request.target,
            persisted == .bound(request.source),
            recovered == request.target {
+            if let reset = request.productionReset {
+                return (try? ProductionWorkflowRecoveryMigration.requireSavedSource(reset, projectURL: projectURL)) != nil
+                    && (try? ProductionWorkflowRecoveryMigration.requireCommittedHistory(reset, staging: recoveryURL)) != nil
+            }
+            if ProductionWorkflowRecoveryMigration.isProductionTarget(request.target) { return false }
             return true
         }
         if let data = UserDefaults.standard.data(forKey: legacyKeyPrefix + workingCopyKey),
            let target = try? JSONDecoder().decode(ProjectPackBinding.self, from: data),
            persisted == .legacy(target.id),
            recovered == target {
+            if ProductionWorkflowRecoveryMigration.isProductionTarget(target) {
+                guard let data = UserDefaults.standard.data(forKey: resetKeyPrefix + workingCopyKey),
+                      let reset = try? JSONDecoder().decode(ProductionWorkflowRecoveryMigration.Intent.self, from: data) else { return false }
+                return (try? ProductionWorkflowRecoveryMigration.requireSavedSource(reset, projectURL: projectURL)) != nil
+                    && (try? ProductionWorkflowRecoveryMigration.requireCommittedHistory(reset, staging: recoveryURL)) != nil
+            }
             return true
         }
         return false
@@ -144,15 +164,24 @@ enum ProjectPackMigration {
     static func prepareSchedule(
         projectURL: URL,
         source: ProjectPackBinding,
-        target: ProjectPackBinding
+        target: ProjectPackBinding,
+        productionReset: ProductionWorkflowRecoveryMigration.Intent? = nil,
+        sourceRoot: URL? = nil
     ) throws -> PreparedRequest {
         guard source.id == target.id,
               source != target,
               let key = ProjectIdentity.existingKey(for: projectURL) else {
             throw MigrationError.invalidSource
         }
+        if ProductionWorkflowRecoveryMigration.isProductionTarget(target) {
+            guard let productionReset, productionReset.source == .pack(source), productionReset.target == .pack(target) else {
+                throw ProductionWorkflowRecoveryMigration.MigrationError.confirmationRequired
+            }
+            try ProductionWorkflowRecoveryMigration.requireSavedSource(productionReset, projectURL: projectURL)
+            try ProductionWorkflowRecoveryMigration.requireSourceCurrent(productionReset, root: sourceRoot ?? projectURL)
+        } else if productionReset != nil { throw MigrationError.invalidSource }
         let data = try JSONEncoder().encode(
-            Request(source: source, target: target)
+            Request(source: source, target: target, productionReset: productionReset)
         )
         return PreparedRequest(key: key, data: data, target: target)
     }
@@ -170,9 +199,21 @@ enum ProjectPackMigration {
 
     static func scheduleLegacy(
         projectURL: URL,
-        target: ProjectPackBinding
+        target: ProjectPackBinding,
+        productionReset: ProductionWorkflowRecoveryMigration.Intent? = nil,
+        sourceRoot: URL? = nil
     ) throws {
         let key = try ProjectIdentity.key(for: projectURL)
+        if ProductionWorkflowRecoveryMigration.isProductionTarget(target) {
+            guard let productionReset, productionReset.source == .legacyPack(target.id), productionReset.target == .pack(target) else {
+                throw ProductionWorkflowRecoveryMigration.MigrationError.confirmationRequired
+            }
+            try ProductionWorkflowRecoveryMigration.requireSavedSource(productionReset, projectURL: projectURL)
+            try ProductionWorkflowRecoveryMigration.requireSourceCurrent(productionReset, root: sourceRoot ?? projectURL)
+            UserDefaults.standard.set(try JSONEncoder().encode(productionReset), forKey: resetKeyPrefix + key)
+        } else {
+            UserDefaults.standard.removeObject(forKey: resetKeyPrefix + key)
+        }
         UserDefaults.standard.set(
             try JSONEncoder().encode(target),
             forKey: legacyKeyPrefix + key
@@ -252,6 +293,12 @@ enum ProjectPackMigration {
             )
         }
         guard let request = request(for: projectURL) else { return false }
+        if ProductionWorkflowRecoveryMigration.isProductionTarget(request.target) {
+            guard let reset = request.productionReset, reset.source == .pack(request.source), reset.target == .pack(request.target) else {
+                throw ProductionWorkflowRecoveryMigration.MigrationError.confirmationRequired
+            }
+            try ProductionWorkflowRecoveryMigration.requireSavedSource(reset, projectURL: projectURL)
+        }
         guard PluginLoader.liveBinding(id: request.target.id)
                 == request.target else {
             throw MigrationError.targetNotLive(
@@ -267,6 +314,9 @@ enum ProjectPackMigration {
         if ProjectPluginSettings.bindingResolution(
             projectURL: ProjectWorkingCopy.home(workingCopyKey)
         ) == .bound(request.target) {
+            if let reset = request.productionReset {
+                try ProductionWorkflowRecoveryMigration.requireCommittedHistory(reset, staging: ProjectWorkingCopy.home(workingCopyKey))
+            }
             return true
         }
         guard let info = PluginLoader.installedInfo(
@@ -306,8 +356,10 @@ enum ProjectPackMigration {
         }
 
         try migrateWorkingCopy(
+            projectURL: projectURL,
             key: workingCopyKey,
             target: request.target,
+            productionReset: request.productionReset,
             migrate: migrate
         )
         return true
@@ -358,6 +410,7 @@ enum ProjectPackMigration {
         guard let key = ProjectIdentity.existingKey(for: projectURL) else { return }
         UserDefaults.standard.removeObject(forKey: keyPrefix + key)
         UserDefaults.standard.removeObject(forKey: legacyKeyPrefix + key)
+        UserDefaults.standard.removeObject(forKey: resetKeyPrefix + key)
     }
 
     private static func applyLegacy(
@@ -365,6 +418,16 @@ enum ProjectPackMigration {
         workingCopyKey: String,
         target: ProjectPackBinding
     ) throws -> Bool {
+        let reset = ProductionWorkflowRecoveryMigration.isProductionTarget(target)
+            ? UserDefaults.standard.data(forKey: resetKeyPrefix + workingCopyKey).flatMap {
+                try? JSONDecoder().decode(ProductionWorkflowRecoveryMigration.Intent.self, from: $0)
+            } : nil
+        if ProductionWorkflowRecoveryMigration.isProductionTarget(target) {
+            guard let reset, reset.source == .legacyPack(target.id), reset.target == .pack(target) else {
+                throw ProductionWorkflowRecoveryMigration.MigrationError.confirmationRequired
+            }
+            try ProductionWorkflowRecoveryMigration.requireSavedSource(reset, projectURL: projectURL)
+        }
         guard case .legacy(let id) = ProjectPluginSettings.bindingResolution(
             projectURL: projectURL
         ), id == target.id else {
@@ -379,6 +442,7 @@ enum ProjectPackMigration {
         if ProjectPluginSettings.bindingResolution(
             projectURL: ProjectWorkingCopy.home(workingCopyKey)
         ) == .bound(target) {
+            if let reset { try ProductionWorkflowRecoveryMigration.requireCommittedHistory(reset, staging: ProjectWorkingCopy.home(workingCopyKey)) }
             return true
         }
         let sourceSchema = "\(id)/legacy"
@@ -403,25 +467,49 @@ enum ProjectPackMigration {
             )
         }
         try migrateWorkingCopy(
+            projectURL: projectURL,
             key: workingCopyKey,
             target: target,
+            productionReset: reset,
             migrate: migration.migrate
         )
         return true
     }
 
     private static func migrateWorkingCopy(
+        projectURL: URL,
         key: String,
         target: ProjectPackBinding,
+        productionReset: ProductionWorkflowRecoveryMigration.Intent? = nil,
         migrate: @escaping @Sendable (URL) throws -> Void
     ) throws {
         try ProjectWorkingCopy.transact(key: key) { staging in
+            if let productionReset { try ProductionWorkflowRecoveryMigration.archiveAndReset(productionReset, staging: staging) }
             try migrate(staging)
             try ProjectPluginSettings.setActivePlugin(
                 target,
                 projectURL: staging
             )
+            if let productionReset { try ProductionWorkflowRecoveryMigration.finish(productionReset, staging: staging) }
             try VideoProject.validateEditableContents(at: staging)
+            if let productionReset {
+                try ProductionWorkflowRecoveryMigration.requireSavedSource(productionReset, projectURL: projectURL)
+                try ProductionWorkflowRecoveryMigration.requireSourceCurrent(productionReset, root: ProjectWorkingCopy.home(key))
+            }
+        }
+    }
+
+    static func migrateCoreWorkingCopy(projectURL: URL, workingCopyKey: String,
+                                      intent: ProductionWorkflowRecoveryMigration.Intent) throws {
+        guard intent.source == .core && intent.target == .core else { throw MigrationError.invalidSource }
+        try ProductionWorkflowRecoveryMigration.requireSavedSource(intent, projectURL: projectURL)
+        try ProjectWorkingCopy.transact(key: workingCopyKey) { staging in
+            try ProductionWorkflowRecoveryMigration.archiveAndReset(intent, staging: staging)
+            try ProjectPluginSettings.setProductionContract(.current, projectURL: staging)
+            try ProductionWorkflowRecoveryMigration.finish(intent, staging: staging)
+            try VideoProject.validateEditableContents(at: staging)
+            try ProductionWorkflowRecoveryMigration.requireSavedSource(intent, projectURL: projectURL)
+            try ProductionWorkflowRecoveryMigration.requireSourceCurrent(intent, root: ProjectWorkingCopy.home(workingCopyKey))
         }
     }
 }

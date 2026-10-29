@@ -6,7 +6,8 @@ import Testing
 @Suite("Agent dialog submission")
 @MainActor
 struct AgentDialogSubmissionTests {
-    @Test func failedIntakeCompletionRetainsDecisionInputsUntilAbandoned() throws {
+    @Test(arguments: [0, 1, 2, 3])
+    func failedIntakeCompletionRetainsDecisionInputsUntilAbandoned(input: Int) throws {
         let service = AgentService()
         let dialog = AgentDialog(
             id: "identity-intake", title: "Character 1", symbol: "person",
@@ -23,17 +24,23 @@ struct AgentDialogSubmissionTests {
             customValues: ["style": "Hand drawn"],
             fileURLs: [URL(fileURLWithPath: "/tmp/lead-singer.png")]
         )
-        service.dialogDraft = draft
+        let candidate: AgentDialogDraft = switch input {
+        case 0: AgentDialogDraft(direction: "Unfinished location")
+        case 1: AgentDialogDraft(fileURLs: draft.fileURLs)
+        case 2: draft
+        default: AgentDialogDraft(toggles: draft.toggles, customValues: draft.customValues)
+        }
+        service.dialogDraft = candidate
         service.dialogChoiceSelections = ["style": ["custom"]]
-
+        #expect(service.dialogSubmissionError == nil && service.submittingDialogID == nil)
         service.completeDialog(dialog)
-
         #expect(service.pendingDialog?.id == dialog.id)
-        #expect(service.dialogSubmissionError != nil)
-        #expect(service.dialogDraft == draft)
+        #expect(service.dialogSubmissionError == (input == 3
+            ? "The project is unavailable. Reopen it and try again."
+            : "Attach or clear the current item before continuing."))
+        #expect(service.dialogDraft == candidate)
         #expect(service.dialogChoiceSelections == ["style": ["custom"]])
-        #expect(service.submittingDialogID == nil)
-        #expect(service.messages.isEmpty)
+        #expect(service.submittingDialogID == nil && service.messages.isEmpty)
         service.abandonDialog()
         #expect(service.dialogDraft == AgentDialogDraft())
         #expect(service.dialogChoiceSelections.isEmpty)

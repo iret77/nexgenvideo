@@ -58,6 +58,15 @@ enum XMLExporter {
         }
     }
 
+    static func limitationSummary(timeline: Timeline) -> [String] {
+        let clips = timeline.tracks.flatMap(\.clips)
+        var warnings = ["Text, blend modes, flips, adjustments, effects, and keyframe easing aren't included in XMEML."]
+        if clips.contains(where: \.hasRetainedFade) {
+            warnings.append("Retained fade segments are sampled as keyframes; the destination editor may apply different easing.")
+        }
+        return warnings
+    }
+
     static func export(
         timeline: Timeline,
         resolver: MediaResolver,
@@ -382,7 +391,7 @@ enum XMLExporter {
         /// A fade exports as a single-sided dissolve to black/silence (no clip-to-clip model).
         private func fadeTransition(_ clip: Clip, edge: FadeEdge, isAudio: Bool) -> XMLNode? {
             let frames = clip.fadeFrames(edge)
-            guard frames > 0 else { return nil }
+            guard frames > 0, !clip.hasRetainedFade else { return nil }
 
             let start: Int, end: Int, alignment: String, cutFrames: Int
             switch edge {
@@ -427,13 +436,21 @@ enum XMLExporter {
         /// export separately as a transition.
         private func volumeFilters(_ clip: Clip) -> [XMLNode] {
             func clampLevel(_ v: Double) -> Double { max(0, min(v, 3.98)) }
-            let frames = clip.keyframeFrames(for: .volume)
+            let ramps = CompositionBuilder.audioEnvelopeRamps(for: clip)
+            let frames = clip.hasRetainedFade
+                ? Array(Set(ramps.flatMap { [clip.startFrame + $0.startOffset, clip.startFrame + $0.endOffset] })).sorted()
+                : clip.exportKeyframeFrames(for: .volume)
+            func exportedVolume(at frame: Int) -> Double {
+                guard clip.hasRetainedFade else { return clip.rawVolumeAt(frame: frame) }
+                let offset = frame - clip.startFrame
+                return Double(ramps.first(where: { $0.startOffset == offset })?.startGain ?? ramps.last?.endGain ?? 0)
+            }
             let level: XMLNode
             if frames.isEmpty {
                 guard clip.volume != 1.0 else { return [] }
                 level = scalarParam(id: "level", name: "Level", min: "0", max: "3.98107", base: clampLevel(clip.volume), spec: "%.4f")
             } else {
-                let kfs = frames.map { (when: $0 - clip.startFrame, value: clampLevel(clip.rawVolumeAt(frame: $0))) }
+                let kfs = frames.map { (when: $0 - clip.startFrame, value: clampLevel(exportedVolume(at: $0))) }
                 level = scalarParam(id: "level", name: "Level", min: "0", max: "3.98107", base: kfs[0].value, keyframes: kfs, spec: "%.4f")
             }
             return [filter(effect(name: "Audio Levels", id: "audiolevels", type: "audio", mediatype: "audio", body: [level]))]
@@ -456,9 +473,9 @@ enum XMLExporter {
             }
 
             // Center depends on position + scale, so sample all transform params at the union of frames.
-            let frames = Set(clip.keyframeFrames(for: .position)
-                + clip.keyframeFrames(for: .scale)
-                + clip.keyframeFrames(for: .rotation)).sorted()
+            let frames = Set(clip.exportKeyframeFrames(for: .position)
+                + clip.exportKeyframeFrames(for: .scale)
+                + clip.exportKeyframeFrames(for: .rotation)).sorted()
 
             var params: [XMLNode] = []
             if frames.isEmpty {
@@ -488,7 +505,7 @@ enum XMLExporter {
 
         /// Crop filter — edge insets as 0–100 percentages (our model stores 0–1 fractions).
         private func cropFilter(_ clip: Clip) -> XMLNode? {
-            let frames = clip.keyframeFrames(for: .crop)
+            let frames = clip.exportKeyframeFrames(for: .crop)
             if frames.isEmpty && clip.crop.isIdentity { return nil }
 
             func edge(_ id: String, _ kp: KeyPath<Crop, Double>) -> XMLNode {
@@ -504,13 +521,15 @@ enum XMLExporter {
 
         /// FCP7 keeps opacity in its own Opacity effect (Basic Motion has no opacity parameter).
         private func opacityFilter(_ clip: Clip) -> XMLNode? {
-            let frames = clip.keyframeFrames(for: .opacity)
+            let frames = clip.hasRetainedFade
+                ? Array(0...clip.durationFrames).map { clip.startFrame + $0 }
+                : clip.exportKeyframeFrames(for: .opacity)
             let opacity: XMLNode
             if frames.isEmpty {
                 guard clip.opacity != 1.0 else { return nil }
                 opacity = scalarParam(id: "opacity", name: "Opacity", min: "0", max: "100", base: clip.opacity * 100, spec: "%.1f")
             } else {
-                let kfs = frames.map { (when: $0 - clip.startFrame, value: clip.rawOpacityAt(frame: $0) * 100) }
+                let kfs = frames.map { (when: $0 - clip.startFrame, value: (clip.hasRetainedFade ? clip.opacityAt(frame: $0) : clip.rawOpacityAt(frame: $0)) * 100) }
                 opacity = scalarParam(id: "opacity", name: "Opacity", min: "0", max: "100", base: kfs[0].value, keyframes: kfs, spec: "%.1f")
             }
             return filter(effect(name: "Opacity", id: "opacity", type: "motion", mediatype: "video", body: [opacity]))

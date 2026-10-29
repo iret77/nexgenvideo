@@ -24,6 +24,10 @@ struct AgentActivity: Identifiable {
 struct AgentTurnActivity: Equatable {
     let title: String
     let phase: String?
+    var mediaOrganizationScope: MediaOrganizationScope? = nil
+    var mediaOrganizationFinished = false
+    var captionRevisionScope: CaptionRevisionScope? = nil
+    var captionRevisionFinished = false
 
     static func workOrder(_ presentation: AgentUserPresentation?) -> Self? {
         guard let selections = presentation?.choiceRecord?.selections,
