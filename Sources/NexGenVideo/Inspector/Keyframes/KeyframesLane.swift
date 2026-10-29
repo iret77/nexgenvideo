@@ -72,7 +72,7 @@ struct ClipRulerBlock: View {
 /// Per-property keyframe track
 struct KeyframesLaneRow: View {
     let clip: Clip
-    let property: AnimatableProperty
+    let target: InspectorKeyframeTarget
     let accessibilityName: String
     let frames: [Int]
     let tint: Color
@@ -122,6 +122,7 @@ struct KeyframesLaneRow: View {
                             height: AppTheme.Timeline.keyframeRowHeight
                         )
                         .position(x: x, y: AppTheme.Timeline.keyframeRowHeight / 2)
+                        .reviewAcceptanceProbe("editing.keyframe." + target.identifier + "." + String(kf))
                         .contextMenu { contextMenu(for: kf) }
                 }
             }
@@ -130,6 +131,7 @@ struct KeyframesLaneRow: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(accessibilityName)
+        .reviewAcceptanceProbe("editing.keyframe-lane." + target.identifier)
     }
 
     private func displayedFrames() -> [Int] {
@@ -156,10 +158,8 @@ struct KeyframesLaneRow: View {
                 let raw = KeyframesMetrics.frameAt(x: value.location.x, clipStart: clip.startFrame, span: span, width: width)
                 let snapped = applySnap(raw: raw, pxPerFrame: pxPerFrame, width: width)
                 if snapped != d.currentFrame {
-                    editor.applyMoveKeyframe(clipId: clip.id, property: property,
-                                             fromFrame: d.currentFrame, toFrame: snapped)
-                    let kfStillAtCurrent = editor.clipFor(id: clip.id)?
-                        .keyframeFrames(for: property).contains(d.currentFrame) ?? false
+                    target.move(clipID: clip.id, from: d.currentFrame, to: snapped, editor: editor)
+                    let kfStillAtCurrent = editor.clipFor(id: clip.id).map { target.frames(in: $0).contains(d.currentFrame) } ?? false
                     if !kfStillAtCurrent {
                         d.currentFrame = snapped
                         drag = d
@@ -219,7 +219,7 @@ struct KeyframesLaneRow: View {
         }
         targets.append(.init(frame: clip.startFrame, kind: .clipEdge))
         targets.append(.init(frame: clip.endFrame, kind: .clipEdge))
-        for p in AnimatableProperty.allCases where p != property {
+        for p in AnimatableProperty.allCases where InspectorKeyframeTarget.clip(p) != target {
             for f in editor.keyframeFrames(clipId: clip.id, property: p) {
                 targets.append(.init(frame: f, kind: .clipEdge))
             }
@@ -250,23 +250,23 @@ struct KeyframesLaneRow: View {
 
     @ViewBuilder
     private func contextMenu(for frame: Int) -> some View {
-        let current = editor.interpolation(clipId: clip.id, property: property, atFrame: frame) ?? .smooth
-        Button { editor.setInterpolation(clipId: clip.id, property: property, frame: frame, interpolation: .linear) } label: {
+        let current = target.interpolation(in: clip, at: frame) ?? .smooth
+        Button { target.setInterpolation(.linear, clipID: clip.id, frame: frame, editor: editor) } label: {
             Label("Linear", systemImage: current == .linear ? "checkmark" : "")
         }
-        Button { editor.setInterpolation(clipId: clip.id, property: property, frame: frame, interpolation: .smooth) } label: {
+        Button { target.setInterpolation(.smooth, clipID: clip.id, frame: frame, editor: editor) } label: {
             Label("Smooth", systemImage: current == .smooth ? "checkmark" : "")
         }
-        Button { editor.setInterpolation(clipId: clip.id, property: property, frame: frame, interpolation: .hold) } label: {
+        Button { target.setInterpolation(.hold, clipID: clip.id, frame: frame, editor: editor) } label: {
             Label("Hold", systemImage: current == .hold ? "checkmark" : "")
         }
         Divider() // app-theme: native-menu-divider
         Button("Delete Keyframe", role: .destructive) {
-            editor.removeKeyframe(clipId: clip.id, property: property, at: frame)
+            target.remove(clipID: clip.id, frame: frame, editor: editor)
         }
         Divider() // app-theme: native-menu-divider
         Button("Clear Animation", role: .destructive) {
-            editor.clearAnimation(clipId: clip.id, property: property)
+            target.clear(clipID: clip.id, editor: editor)
         }
     }
 }
@@ -274,12 +274,14 @@ struct KeyframesLaneRow: View {
 /// Right-side panel: ruler + clip strip + per-property lane rows + single playhead.
 struct KeyframesPanel: View {
     let clip: Clip
+    let effectsOnly: Bool
     @Environment(EditorViewModel.self) private var editor
     @Environment(\.interfaceScale) private var interfaceScale
     @State private var snapX: CGFloat?
 
-    init(clip: Clip, initialSnapX: CGFloat? = nil) {
+    init(clip: Clip, initialSnapX: CGFloat? = nil, effectsOnly: Bool = false) {
         self.clip = clip
+        self.effectsOnly = effectsOnly
         _snapX = State(initialValue: initialSnapX)
     }
 
@@ -288,8 +290,16 @@ struct KeyframesPanel: View {
     ]
     private static let audioRows: [AnimatableProperty] = [.volume]
 
-    private var rows: [AnimatableProperty] {
-        clip.mediaType == .audio ? Self.audioRows : Self.videoRows
+    private var rows: [InspectorKeyframeTarget] {
+        if effectsOnly {
+            return (clip.effects ?? []).flatMap { effect in
+                (EffectRegistry.descriptor(id: effect.type)?.params ?? []).compactMap { parameter in
+                    guard effect.params[parameter.key]?.track?.isActive == true else { return nil }
+                    return InspectorKeyframeTarget.effect(type: effect.type, key: parameter.key)
+                }
+            }
+        }
+        return (clip.mediaType == .audio ? Self.audioRows : Self.videoRows).map(InspectorKeyframeTarget.clip)
     }
 
     private var tint: Color { Color(nsColor: clip.sourceClipType.themeColor) }
@@ -315,6 +325,12 @@ struct KeyframesPanel: View {
     private func panel(labelsAboveTracks: Bool) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
             rulerRow(labelsAboveTracks: labelsAboveTracks)
+            if effectsOnly && rows.isEmpty {
+                Text("Add an effect keyframe with the diamond beside a value.")
+                    .interfaceFont(size: AppTheme.Typography.metadata)
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             ForEach(rows, id: \.self) { property in
                 laneRow(property, labelsAboveTracks: labelsAboveTracks)
             }
@@ -338,6 +354,7 @@ struct KeyframesPanel: View {
     private var ruler: some View {
         ClipRulerBlock(clip: clip, tint: tint, onSeek: { editor.seekToFrame($0) })
             .frame(maxWidth: .infinity)
+            .reviewAcceptanceProbe("editing.keyframe-ruler")
             .background {
                 AppRelaunchClickProbe(identifier: "inspector.keyframes.ruler")
             }
@@ -350,7 +367,7 @@ struct KeyframesPanel: View {
     }
 
     @ViewBuilder
-    private func laneRow(_ property: AnimatableProperty, labelsAboveTracks: Bool) -> some View {
+    private func laneRow(_ property: InspectorKeyframeTarget, labelsAboveTracks: Bool) -> some View {
         if labelsAboveTracks {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
                 laneLabel(property, alignment: .leading, fixedWidth: false)
@@ -365,11 +382,11 @@ struct KeyframesPanel: View {
     }
 
     private func laneLabel(
-        _ property: AnimatableProperty,
+        _ property: InspectorKeyframeTarget,
         alignment: Alignment,
         fixedWidth: Bool
     ) -> some View {
-        Text(property.displayName)
+        Text(property.label)
             .interfaceFont(
                 size: AppTheme.Typography.metadata,
                 weight: AppTheme.FontWeight.medium
@@ -384,17 +401,17 @@ struct KeyframesPanel: View {
             .accessibilityHidden(true)
             .background {
                 AppRelaunchClickProbe(
-                    identifier: "inspector.keyframes.lane.\(property.rawValue).label"
+                    identifier: "inspector.keyframes.lane.\(property.identifier).label"
                 )
             }
     }
 
-    private func laneTrack(_ property: AnimatableProperty) -> some View {
+    private func laneTrack(_ property: InspectorKeyframeTarget) -> some View {
         KeyframesLaneRow(
             clip: clip,
-            property: property,
-            accessibilityName: property.displayName,
-            frames: editor.keyframeFrames(clipId: clip.id, property: property),
+            target: property,
+            accessibilityName: property.label,
+            frames: property.frames(in: clip),
             tint: tint,
             snapX: $snapX
         )
@@ -402,13 +419,13 @@ struct KeyframesPanel: View {
         .frame(height: AppTheme.Timeline.keyframeRowHeight)
         .background {
             AppRelaunchClickProbe(
-                identifier: "inspector.keyframes.lane.\(property.rawValue).track"
+                identifier: "inspector.keyframes.lane.\(property.identifier).track"
             )
         }
         .overlay {
             timelineOverlay(
                 showsPlayheadTriangle: false,
-                identifier: "inspector.keyframes.lane.\(property.rawValue).overlay"
+                identifier: "inspector.keyframes.lane.\(property.identifier).overlay"
             )
         }
     }

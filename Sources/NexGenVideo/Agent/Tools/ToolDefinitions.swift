@@ -28,6 +28,8 @@ enum ToolName: String, CaseIterable, Sendable {
     case showDialog = "show_dialog"
     case showBlocks = "show_blocks"
     case compilePrompt = "compile_prompt"
+    case compileStoryboardSketch = "compile_storyboard_sketch"
+    case assignStoryboardSketch = "assign_storyboard_sketch"
     case generateVideo = "generate_video"
     case generateImage = "generate_image"
     case prepareGenerationBatch = "prepare_generation_batch"
@@ -43,6 +45,9 @@ enum ToolName: String, CaseIterable, Sendable {
     case applyColor = "apply_color"
     case applyEffect = "apply_effect"
     case inspectColor = "inspect_color"
+    case proposeColorMatch = "propose_color_match"
+    case proposeMediaOrganization = "propose_media_organization"
+    case proposeCaptionRevision = "propose_caption_revision"
     case listFolders = "list_folders"
     case createFolder = "create_folder"
     case moveToFolder = "move_to_folder"
@@ -92,6 +97,12 @@ enum ToolName: String, CaseIterable, Sendable {
     case writeProductionDesign = "write_production_design"
     case writeTreatment = "write_treatment"
     case writeStoryboard = "write_storyboard"
+    case writeScript = "write_script"
+    case writeStoryboardBundle = "write_storyboard_bundle"
+    case writeShotPlanningDraft = "write_shot_planning_draft"
+    case prepareProductionAssets = "prepare_production_assets"
+    case writeRenderReview = "write_render_review"
+    case getRenderReviewInputs = "get_render_review_inputs"
     case writeBible = "write_bible"
     case writeShotlist = "write_shotlist"
     case writePhaseExtension = "write_phase_extension"
@@ -100,13 +111,14 @@ enum ToolName: String, CaseIterable, Sendable {
     var isDurableWrite: Bool {
         switch self {
         // Approving gate tools defer their write to the user's later click.
-        case .generateVideo, .generateImage, .prepareGenerationBatch, .generateAudio, .upscaleMedia, .importMedia,
+        case .compileStoryboardSketch, .assignStoryboardSketch, .getRenderReviewInputs, .generateVideo, .generateImage, .prepareGenerationBatch, .prepareProductionAssets, .generateAudio, .upscaleMedia, .importMedia,
              .initProject, .rewind, .runPhase, .recordRender, .recordAffect, .saveFrameAudit,
              .setLedgerAttribute, .lockLedgerAttribute, .removeLedgerAttribute,
              .attachSong, .copyProjectFile, .extractScene3dPovs, .writeBrief,
              .recoverConfirmedIdentityProvenance,
              .writeAnalysisInterpretation,
              .writeProductionDesign, .writeTreatment, .writeStoryboard, .writeBible,
+             .writeScript, .writeStoryboardBundle, .writeShotPlanningDraft, .writeRenderReview,
              .writeShotlist, .writePhaseExtension, .cropToAspect, .assembleTimeline, .runSanity:
             return true
         case .nextRenderShot:
@@ -129,6 +141,10 @@ enum ToolName: String, CaseIterable, Sendable {
         case .writeProductionDesign:      return "production_design"
         case .writeTreatment:             return "treatment"
         case .writeStoryboard:            return "storyboard"
+        case .writeScript:                return "script"
+        case .writeStoryboardBundle, .assignStoryboardSketch: return "storyboard"
+        case .writeShotPlanningDraft:     return "shot_planning"
+        case .writeRenderReview:          return "render_review"
         case .writeBible:                 return "bible"
         case .writeShotlist:              return "shotlist"
         case .writePhaseExtension:
@@ -146,7 +162,7 @@ enum ToolName: String, CaseIterable, Sendable {
 
     var usesCurrentPipelinePhase: Bool {
         switch self {
-        case .compilePrompt, .generateVideo, .generateImage, .prepareGenerationBatch, .generateAudio,
+        case .compileStoryboardSketch, .getRenderReviewInputs, .prepareProductionAssets, .compilePrompt, .generateVideo, .generateImage, .prepareGenerationBatch, .generateAudio,
              .upscaleMedia, .importMedia, .runProviderTool, .copyProjectFile,
              .cropToAspect, .setLedgerAttribute, .lockLedgerAttribute,
              .removeLedgerAttribute:
@@ -158,9 +174,9 @@ enum ToolName: String, CaseIterable, Sendable {
 
     var isCanonicalArtifactWriter: Bool {
         switch self {
-        case .writeAnalysisInterpretation, .writeBrief, .writeProductionDesign,
+        case .assignStoryboardSketch, .writeAnalysisInterpretation, .writeBrief, .writeProductionDesign,
              .writeTreatment, .writeStoryboard, .writeBible, .writeShotlist,
-             .writePhaseExtension:
+             .writePhaseExtension, .writeScript, .writeStoryboardBundle, .writeShotPlanningDraft, .writeRenderReview:
             true
         default:
             false
@@ -182,9 +198,10 @@ enum ToolName: String, CaseIterable, Sendable {
         case .recordRender:
             let phase = args["phase"] as? String
             return phase == "frames" || phase == "final"
-        case .writeAnalysisInterpretation, .writeBrief,
+        case .assignStoryboardSketch, .writeAnalysisInterpretation, .writeBrief,
              .writeProductionDesign, .writeTreatment, .writeStoryboard,
-             .writeBible, .writeShotlist, .writePhaseExtension, .runSanity, .saveFrameAudit:
+             .writeBible, .writeShotlist, .writePhaseExtension, .writeScript, .writeStoryboardBundle,
+             .writeShotPlanningDraft, .writeRenderReview, .runSanity, .saveFrameAudit:
             return true
         default:
             return false
@@ -909,6 +926,7 @@ enum ToolDefinitions {
                     "outputCompression": ["type": "integer", "minimum": 0, "maximum": 100, "description": "JPEG/WebP compression quality when supported. Omit for PNG."],
                     "maskMediaRef": ["type": "string", "description": "Optional image mask asset for an edit model that reports supportsMask=true."],
                     "referenceMediaRefs": ["type": "array", "items": ["type": "string"], "description": "Media asset IDs to use as reference images for free generation. Omit for format-pack Frames shots; the host supplies their semantic plan."],
+                    "storyboardCompileReceipt": ["type": "string", "description": "Required during Storyboard v2: exact host receipt path returned by compile_storyboard_sketch. Generate one image and keep prompt/token/shotId unchanged."],
                     "referenceProjectPaths": ["type": "array", "items": ["type": "string"], "description": "Project-local image paths under pipeline/ for free or design-sheet generation. Production Design and format-pack Frames shots attach their host-owned sets automatically; omit this field there."],
                     "folderId": ["type": "string", "description": "Optional. Folder id (from list_folders or create_folder) to place the result in. Omit for the project root."],
                 ],
@@ -973,6 +991,34 @@ enum ToolDefinitions {
                 ],
                 required: ["source"]
             )
+        ),
+        AgentTool(
+            name: .proposeMediaOrganization,
+            description: "Prepare a native, selectable media organization plan. This does not rename or move anything. The user reviews before/after names and folders and applies only selected rows in one undoable operation. folderId scopes both source assets and destinations to that folder and descendants; omit for the whole library. Omit folderPath to keep the current folder. A provided folderPath is relative to that scope; [] explicitly moves to its root. Original files and timeline remain unchanged. Stop after preparing and wait for the user.",
+            inputSchema: objectSchema(properties: [
+                "folderId": ["type": "string"],
+                "changes": ["type": "array", "minItems": 1, "maxItems": 500, "items": [
+                    "type": "object", "additionalProperties": false,
+                    "properties": ["assetId": ["type": "string"], "name": ["type": "string", "minLength": 1, "maxLength": 200],
+                        "folderPath": ["type": "array", "maxItems": 12, "items": ["type": "string", "minLength": 1, "maxLength": 200]]],
+                    "required": ["assetId"]]],
+            ], required: ["changes"])
+        ),
+        AgentTool(
+            name: .proposeCaptionRevision,
+            description: "Prepare bounded caption changes or speech cuts for native review. Nothing changes until the user selects and applies the proposal. kind=captions takes existing caption clipId/text changes, preserving timing/audio; kind=speech_cuts takes get_transcript word indices and optional cutAggressiveness, using remove_words and linked ripple semantics. Never combine the two kinds. Show before/after text and exact time ranges; stop after this tool and wait for the user's decision. Caption revision tasks cannot directly mutate the timeline.",
+            inputSchema: objectSchema(properties: [
+                "kind": ["type": "string", "enum": ["captions", "speech_cuts"]],
+                "changes": ["type": "array", "minItems": 1, "maxItems": 500, "items": [
+                    "type": "object", "additionalProperties": false,
+                    "properties": ["clipId": ["type": "string", "minLength": 1], "text": ["type": "string", "maxLength": 4000]],
+                    "required": ["clipId", "text"]]],
+                "words": ["type": "array", "minItems": 1, "maxItems": 5000, "items": [
+                    "anyOf": [["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame] as [String: Any],
+                        ["type": "array", "minItems": 2, "maxItems": 2,
+                         "items": ["type": "integer", "minimum": 0, "maximum": ToolIntegerArgument.maximumFrame]] as [String: Any]]]],
+                "cutAggressiveness": ["type": "string", "enum": ["tight", "balanced", "loose"]],
+            ], required: ["kind"])
         ),
         AgentTool(
             name: .listFolders,
@@ -1155,7 +1201,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .applyColor,
-            description: "Author/refine a color grade on video/image clips with named controls — the colorist path, distinct from apply_effect (looks/FX). MERGES with the clip's current grade: only the params you pass change, the rest are preserved, so you can nudge one knob at a time (pass reset:true to start from neutral). Applies as live, editable color.* effects; non-color effects untouched. Iterate: apply_color → inspect_color(clipId, reference) → read the gap → adjust → repeat. Undoable. All knobs optional. Color WHEELS use HUE (0–360°, standard) + AMOUNT per tonal zone — to push shadows teal, set shadowsHue 180 and shadowsAmount ~0.15. CURVES (master + per-channel R/G/B) give precise tone shaping — per-channel curves are tone-selective (e.g. pull the blue curve down in the highlights to tame a bright sky). HUE CURVES do secondary/qualified correction — target a source hue and shift its hue/saturation/lightness (e.g. desaturate greens, warm the skin) without a mask; pair with inspect_color's hueHistogram to find which hues are present. LUT applies a .cube film-look pack on top of the grade.",
+            description: "Author/refine a color grade on video/image clips with named controls — the colorist path, distinct from apply_effect (looks/FX). MERGES with the clip's current grade: only the params you pass change; existing effect identities, order, disabled state and untouched animation are preserved. Static changes to animated controls are rejected; edit their keyframes in Adjust, or pass reset:true only to clear the entire grade and its animation. Applies as live, editable color.* effects; non-color effects untouched. Iterate: apply_color → inspect_color(clipId, reference) → read the gap → adjust → repeat. Undoable. All knobs optional. Color WHEELS use HUE (0–360°, standard) + AMOUNT per tonal zone — to push shadows teal, set shadowsHue 180 and shadowsAmount ~0.15. CURVES (master + per-channel R/G/B) give precise tone shaping — per-channel curves are tone-selective (e.g. pull the blue curve down in the highlights to tame a bright sky). HUE CURVES do secondary/qualified correction — target a source hue and shift its hue/saturation/lightness (e.g. desaturate greens, warm the skin) without a mask; pair with inspect_color's hueHistogram to find which hues are present. LUT applies a .cube film-look pack on top of the grade.",
             inputSchema: objectSchema(
                 properties: [
                     "clipIds": ["type": "array", "items": ["type": "string"], "description": "Clip ids from get_timeline."],
@@ -1219,6 +1265,11 @@ enum ToolDefinitions {
                 ],
                 required: ["clipIds"]
             )
+        ),
+        AgentTool(
+            name: .proposeColorMatch,
+            description: "Propose a color correction for an actual native reference comparison. The host supplies comparisonID, clipID and referenceID. This stages bounded color controls and rationale for explicit native Apply; it never changes a clip. Only callable from that native comparison's agent turn. Compare the supplied actual measured scopes and frame images. Do not represent a creative proposal as a measurement.",
+            inputSchema: ColorReferenceProposal.schema
         ),
         AgentTool(
             name: .inspectColor,
@@ -1359,6 +1410,36 @@ enum ToolDefinitions {
             description: "Write the next validated storyboard version and update storyboard/current.yaml as an exact mirror. Use this instead of authoring YAML. The host owns schema/project/version/generated/generator. Provide every measured analysis section in order, with its exact interval/label and 4–12 gaplessly numbered, fully composed steps; every nested field is closed and enum-constrained.",
             inputSchema: PipelineArtifactWriteContract.storyboardSchema
         ),
+        AgentTool(name: .writeScript,
+            description: "Write the next canonical Script revision from approved Treatment beats and exact source anchors. Host-owned headers, immutable inputs and revision are not arguments.",
+            inputSchema: PipelineArtifactWriteContract.scriptV1Schema),
+        AgentTool(name: .writeStoryboardBundle,
+            description: "Atomically write Storyboard v2, adaptation, timing and stable shot identity. Omit shot id to allocate a new UUID; retain an id only for unchanged action. Sketch assets may reference existing verified host evidence; this tool cannot fabricate selection or generation receipts. Image-less plans remain drafts.",
+            inputSchema: PipelineArtifactWriteContract.storyboardBundleSchema),
+        AgentTool(name: .compileStoryboardSketch,
+            description: "Compile an actual current Storyboard shot moment and framing into an image request. The host owns the subject, composition and compiler provenance. Pass returned prompt, compileToken, shotId=none and storyboardCompileReceipt unchanged to generate_image with numImages=1. This compiles only; generation still requires the existing phase spend approval.",
+            inputSchema: objectSchema(properties: ["project_dir": projectDirProperty,
+                "shot_id": ["type": "string"], "moment_id": ["type": "string"], "model": ["type": "string"],
+                "expected_fingerprint": ["type": "string", "pattern": "^[a-f0-9]{64}$"]],
+                required: ["shot_id", "moment_id", "model", "expected_fingerprint"])),
+        AgentTool(name: .assignStoryboardSketch,
+            description: "Assign the exact completed generated image to its compiled Storyboard moment. The host verifies actual compiler IR, generation package, provider/spend evidence and decoded output bytes, then publishes the sketch proof and new Storyboard bundle atomically. This cannot adopt an arbitrary uploaded or unrelated generated image.",
+            inputSchema: objectSchema(properties: ["project_dir": projectDirProperty,
+                "media_ref": ["type": "string"], "compilation_receipt": ["type": "string"],
+                "expected_fingerprint": ["type": "string", "pattern": "^[a-f0-9]{64}$"]],
+                required: ["media_ref", "compilation_receipt", "expected_fingerprint"])),
+        AgentTool(name: .writeShotPlanningDraft,
+            description: "Write a technical draft for every approved planned-shot UUID. Preserve Storyboard framing/timing, declare source modes and explicit unresolved obligations; nonexistent files never count as source evidence.",
+            inputSchema: PipelineArtifactWriteContract.shotPlanningDraftSchema),
+        AgentTool(name: .prepareProductionAssets,
+            description: "Prepare actual project-local Bible, Design, source-media and verified scene assets for native obligation assignment. The host hashes and validates the actual files, derives content identities and returns the exact graph/draft fingerprints. This does not confirm user choices or approve obligations. Future generated Frames and Takes are not planning assets.",
+            inputSchema: ProductionPlanToolContract.prepareAssets),
+        AgentTool(name: .getRenderReviewInputs,
+            description: "Read and deliver the exact current Render Review inputs, final compiled prompts, live planned routes and actual inspection images. Deferred predecessor recipes are identified explicitly. Use the returned fingerprint unchanged in write_render_review; inspect the returned media before reporting findings.",
+            inputSchema: objectSchema(properties: ["project_dir": projectDirProperty], required: [])),
+        AgentTool(name: .writeRenderReview,
+            description: "Record structured findings against the exact inputs delivered by get_render_review_inputs in this host turn. The host records the actual response model/message/tool arguments; reviewer identity and acceptances are never agent arguments. Existing findings on unchanged inputs are retained. Structural errors and unresolved findings cannot be waived; semantic concerns require an explicit native user acceptance.",
+            inputSchema: ProductionPlanningToolContract.renderReview),
         AgentTool(
             name: .writeBible,
             description: "Write bible/bible.yaml and its versioned identity-variant contract through the engine models. Use this instead of authoring YAML or JSON. The host owns schema/project/generated/generator and variant revision; validates globally unique ids, exact generated or explicitly user-confirmed Canon provenance, every Storyboard-requested entity/view, synchronized Production Design style/lighting, and variant inheritance. Represent a real outfit/state variant as its own Bible entity plus identity_variants entry; unchanged attributes must equal the base and inherited_identity_paths must name the base Canon inherited by the variant. The previous artifacts are preserved in history.",
@@ -1367,7 +1448,7 @@ enum ToolDefinitions {
         AgentTool(
             name: .writeShotlist,
             description: "Write the next validated Shot List and its complete execution plan as one transaction. Supply `shots`, matching `execution_shots`, and any activated `spatial_plan`; the current Music Video pack also requires `musicvideo_plan`. The host derives project, Song, exact source bindings, hashes and provenance, exports native blockouts and exact performance-audio segments, and rolls back every artifact if validation fails. Generated and AI-enhanced shots carry generation requirements; imported shots keep directorial execution semantics without a generation requirement. Before authoring execution_shots, read get_project_state.execution_input_contract and list_models.production_routes for exact semantic roles, input slots and compatible modes; each generated video shot must bind its required reference_demands, core_inputs and generation_requirement.mode_ids together on one activated route within its reference limits, and every optional demand must use a slot and mode some activated route offers. Entity kinds (location, character, prop) are not semantic_job_id values. Resolve validation errors from these host contracts, never by guessing synonyms or asking the user for internal identifiers.",
-            inputSchema: PipelineArtifactWriteContract.shotlistSchema
+            inputSchema: ["anyOf": [PipelineArtifactWriteContract.shotlistSchema, ProductionPlanToolContract.write]]
         ),
         AgentTool(
             name: .writePhaseExtension,
@@ -1890,6 +1971,7 @@ enum ToolDefinitions {
             properties[field.key] = field.schemaProperty
         }
         properties["project_dir"] = projectDirProperty
+        properties["project_mode"]?["enum"] = BriefWriteContract.briefProjectModes + [Mode.generic.rawValue]
         return objectSchema(properties: properties, required: BriefWriteContract.requiredKeys)
     }
 

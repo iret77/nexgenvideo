@@ -43,10 +43,12 @@ struct NewProjectFormatSheet: View {
                 Button("Cancel") { dismiss() }
                     .buttonStyle(.capsule(.secondary, size: .regular))
                     .keyboardShortcut(.cancelAction)
+                    .reviewAcceptanceProbe("home.format.cancel")
                 Spacer()
                 Button("Create") { onCreate(selected); dismiss() }
                     .buttonStyle(.capsule(.prominent, size: .regular))
                     .keyboardShortcut(.defaultAction)
+                    .reviewAcceptanceProbe("home.format.create")
             }
         }
         .padding(AppTheme.Spacing.xl)
@@ -112,5 +114,6 @@ struct NewProjectFormatSheet: View {
             .contentShape(RoundedRectangle(cornerRadius: AppTheme.Radius.md))
         }
         .buttonStyle(.plain)
+        .reviewAcceptanceProbe("home.format." + (id ?? "generic"), text: isSelected ? "selected" : "unselected")
     }
 }

@@ -65,6 +65,7 @@ struct VideoGenerationSubmission {
         var genInput = baseInput
         let inputPolicy = offeringCapabilities.inputPolicy
         genInput.generateAudio = generateAudio
+        genInput.sourceRange = GenerationSourceRange(trim: trimmedSourceOverride?.hasTrim == true ? trimmedSourceOverride?.record : nil)
         if inputPolicy.requiresSourceVideo {
             let references = inputAssets.editReferences
             genInput.imageURLAssetIds = assetIds(references)

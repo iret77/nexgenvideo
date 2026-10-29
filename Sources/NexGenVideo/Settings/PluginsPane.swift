@@ -1,13 +1,40 @@
 import AppKit
 import SwiftUI
 
+@MainActor
+struct PluginSettingsServices {
+    let projectEntries: () -> [ProjectEntry]
+    let openRoots: () -> [[URL]]
+    let relaunch: () -> Void
+    let activePackID: () -> String?
+    let canApplyUpdate: (String) -> Bool
+    let upgradeProject: () -> Void
+    let applyUpdates: () -> Void
+
+    static var live: Self {
+        .init(projectEntries: { ProjectRegistry.shared.entries }, openRoots: {
+            NSDocumentController.shared.documents.compactMap { $0 as? VideoProject }.map {
+                [$0.editorViewModel.workingRoot, $0.fileURL].compactMap { $0 }
+            }
+        }, relaunch: { AppRelaunch.now() }, activePackID: { AppState.shared.activeProject?.editorViewModel.activePluginName },
+            canApplyUpdate: { PluginUpdateCenter.shared.restartTarget(for: $0) != nil },
+            upgradeProject: { AppState.shared.upgradeActiveProjectPack() },
+            applyUpdates: { PluginUpdateCenter.shared.restartToApplyUpdates() })
+    }
+}
+
 struct PluginsPane: View {
     let manager: PluginManager
+    private let services: PluginSettingsServices
     @State private var pendingRemoval: InstalledPluginVersion?
     @State private var removalError: String?
     @State private var isRemoving = false
     @State private var usageRevision = 0
     @State private var usageModel = PluginUsageSnapshotModel()
+
+    init(manager: PluginManager, services: PluginSettingsServices = .live) {
+        self.manager = manager; self.services = services
+    }
 
     var body: some View {
         SettingsSection(
@@ -112,13 +139,14 @@ struct PluginsPane: View {
         presentation: PluginRemovalPresentation
     ) -> some View {
         if !installedVersion.isPresentOnDisk {
-            Button("Restart now") { AppRelaunch.now() }
+            Button("Restart now") { services.relaunch() }
                 .buttonStyle(.capsule(.prominent, size: .regular))
         } else {
             Button("Remove", role: .destructive) {
                 removalError = nil
                 pendingRemoval = installedVersion
             }
+            .reviewAcceptanceProbe("settings.pack.remove." + installedVersion.id)
             .buttonStyle(.capsule(.secondary, size: .regular))
             .disabled(!presentation.canRemove)
             .help(presentation.help)
@@ -136,14 +164,10 @@ struct PluginsPane: View {
 
     private func refreshUsageSnapshot() {
         usageRevision += 1
-        let openProjectRoots = NSDocumentController.shared.documents
-            .compactMap { $0 as? VideoProject }
-            .map { project in
-                [project.editorViewModel.workingRoot, project.fileURL].compactMap { $0 }
-            }
+        let openProjectRoots = services.openRoots()
         usageModel.refresh(
             installedVersions: manager.installedVersions,
-            registryEntries: ProjectRegistry.shared.entries,
+            registryEntries: services.projectEntries(),
             openProjectRoots: openProjectRoots
         )
     }
@@ -153,19 +177,15 @@ struct PluginsPane: View {
         isRemoving = true
         removalError = nil
         defer { isRemoving = false }
-        let openRoots = NSDocumentController.shared.documents
-            .compactMap { $0 as? VideoProject }
-            .map { [$0.editorViewModel.workingRoot, $0.fileURL].compactMap { $0 } }
+        let openRoots = services.openRoots()
         let revision = usageRevision
-        let entries = ProjectRegistry.shared.entries
+        let entries = services.projectEntries()
         let usage = await PluginRemovalPolicy.loadSnapshot(
             installedVersions: manager.installedVersions,
             registryEntries: entries,
             openProjectRoots: openRoots
         )
-        let currentRoots = NSDocumentController.shared.documents
-            .compactMap { $0 as? VideoProject }
-            .map { [$0.editorViewModel.workingRoot, $0.fileURL].compactMap { $0 } }
+        let currentRoots = services.openRoots()
         guard currentRoots == openRoots, usageRevision == revision else {
             removalError = "Project use changed. Review the installed version and try again."
             refreshUsageSnapshot()
@@ -186,7 +206,7 @@ struct PluginsPane: View {
         switch result {
         case .removed(let restartRequired):
             pendingRemoval = nil
-            if restartRequired { AppRelaunch.now() }
+            if restartRequired { services.relaunch() }
         case .blocked(let message): removalError = message
         }
     }
@@ -197,23 +217,21 @@ struct PluginsPane: View {
         } else {
             switch rowData.status {
             case .updatePendingRestart:
-                let isActiveProjectPack = AppState.shared.activeProject?
-                    .editorViewModel.activePluginName == rowData.id
-                let canApplyUpdate = PluginUpdateCenter.shared.restartTarget(
-                    for: rowData.id
-                ) != nil
+                let isActiveProjectPack = services.activePackID() == rowData.id
+                let canApplyUpdate = services.canApplyUpdate(rowData.id)
                 Button(
                     isActiveProjectPack
                         ? "Upgrade Project"
                         : "Restart now"
                 ) {
                     if isActiveProjectPack {
-                        AppState.shared.upgradeActiveProjectPack()
+                        services.upgradeProject()
                     } else {
-                        PluginUpdateCenter.shared.restartToApplyUpdates()
+                        services.applyUpdates()
                     }
                 }
                     .buttonStyle(.capsule(.prominent, size: .regular))
+                    .reviewAcceptanceProbe("settings.pack.apply." + rowData.id)
                     .disabled(!canApplyUpdate)
                     .help(
                         isActiveProjectPack
@@ -223,6 +241,7 @@ struct PluginsPane: View {
             case .installed(_, let update):
                 if let update {
                     Button("Update") { Task { _ = await manager.install(update); await manager.refresh() } }
+                        .reviewAcceptanceProbe("settings.pack.update." + rowData.id)
                         .buttonStyle(.capsule(.prominent, size: .regular))
                 } else {
                     Text("Up to date")
@@ -232,6 +251,7 @@ struct PluginsPane: View {
             case .incompatible(let reason, let reinstall):
                 if let reinstall {
                     Button("Update") { Task { _ = await manager.install(reinstall); await manager.refresh() } }
+                        .reviewAcceptanceProbe("settings.pack.update." + rowData.id)
                         .buttonStyle(.capsule(.secondary, size: .regular))
                 } else {
                     Text(reason)

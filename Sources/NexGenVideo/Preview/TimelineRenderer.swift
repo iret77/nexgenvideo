@@ -4,6 +4,14 @@ import Foundation
 /// Renders a frame range of the timeline to a temp mp4
 /// Caller owns the temp file.
 enum TimelineRenderer {
+    static func sourceTimeline(_ timeline: Timeline, startFrame: Int, endFrame: Int) -> Timeline {
+        var source = timeline
+        for index in source.tracks.indices {
+            source.tracks[index].clips.removeAll { $0.startFrame >= endFrame || $0.endFrame <= startFrame }
+        }
+        return source
+    }
+
     struct RenderError: LocalizedError {
         let reason: String
         var errorDescription: String? { "Could not render selection: \(reason)" }
@@ -20,16 +28,18 @@ enum TimelineRenderer {
         includeAudio: Bool = true,
         preset: String = AVAssetExportPresetMediumQuality
     ) async throws -> URL {
-        guard timeline.fps > 0 else { throw RenderError(reason: "invalid fps") }
-        guard frameCount > 0 else { throw RenderError(reason: "empty selection") }
+        guard timeline.fps > 0, timeline.fps <= Int(Int32.max) else { throw RenderError(reason: "invalid fps") }
+        let end = startFrame.addingReportingOverflow(frameCount)
+        guard startFrame >= 0, frameCount > 0, !end.overflow else { throw RenderError(reason: "invalid selection") }
 
         let canvas = CGSize(width: timeline.width, height: timeline.height)
         let renderSize = Self.renderSize(canvas: canvas, shortSide: shortSide)
 
         let result = try await CompositionBuilder.build(
-            timeline: timeline,
+            timeline: sourceTimeline(timeline, startFrame: startFrame, endFrame: end.partialValue),
             resolveURL: { resolver.resolveURL(for: $0) },
-            renderSize: renderSize
+            renderSize: renderSize,
+            minimumDurationFrames: end.partialValue
         )
 
         guard let session = AVAssetExportSession(asset: result.composition, presetName: preset) else {

@@ -39,7 +39,7 @@ struct AnthropicThinkingTests {
                 case .toolUseComplete(let id, let name, let input):
                     blocks.append(.toolUse(id: id, name: name, inputJSON: input))
                 case .messageStop(let reason): stopReason = reason
-                case .usage: break
+                case .usage, .responseMetadata: break
                 }
             }
         }

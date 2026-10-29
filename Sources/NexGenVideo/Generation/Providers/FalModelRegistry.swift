@@ -530,7 +530,7 @@ enum FalModelRegistry {
                     maxReferenceAudios: maxAudios, maxTotalReferences: maxTotal,
                     maxCombinedVideoRefSeconds: maxCombinedVideoRefSeconds,
                     maxCombinedAudioRefSeconds: maxCombinedAudioRefSeconds,
-                    framesAndReferencesExclusive: false, referenceTagNoun: "reference",
+                    framesAndReferencesExclusive: false, referenceTagNoun: "Image",
                     requiresSourceVideo: false, requiresReferenceImage: false
                 ))
             ),

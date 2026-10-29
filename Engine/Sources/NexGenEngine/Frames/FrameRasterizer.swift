@@ -60,7 +60,7 @@ public enum FrameRasterizer {
         return plan
     }
 
-    static func loadImage(at url: URL) throws -> CGImage {
+    public static func loadImage(at url: URL) throws -> CGImage {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
         else {

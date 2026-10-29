@@ -26,6 +26,17 @@ private func mediaAsset(_ id: String, hasAudio: Bool = true) -> MediaAsset {
 
 @MainActor
 @Suite struct CaptionPlacementTests {
+    @Test func nativeTitleCreationUndoRedoRestoresItsTrackAndExactClip() throws {
+        let e = editor([Fixtures.videoTrack(clips: [Fixtures.clip(start: 0, duration: 300)])])
+        let undo = UndoManager(); undo.groupsByEvent = false; e.undoManager = undo
+        let before = e.timeline
+        let id = try #require(e.addTextClip(content: "Final title"))
+        let after = e.timeline
+        #expect(e.clipFor(id: id)?.textContent == "Final title" && after.tracks.count == before.tracks.count + 1)
+        undo.undo(); #expect(e.timeline == before && !undo.canUndo)
+        undo.redo(); #expect(e.timeline == after)
+    }
+
     @Test func textClipsStayOnInsertedTrackWhenAClipIsOverwritten() {
         let e = editor([Fixtures.videoTrack(clips: [Fixtures.clip(start: 0, duration: 300)])])
         e.timeline.tracks.insert(Track(type: .video), at: 0)

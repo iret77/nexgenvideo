@@ -79,7 +79,7 @@ enum PipelineArtifactWriteContract {
             "title": string,
             "notes": string,
             "body_markdown": string,
-            "causality_plan": causalitySchema,
+            "causality_plan": ["oneOf": [causalitySchema, treatmentCausalityV2Schema]],
         ],
         required: ["origin", "summary_oneline", "body_markdown", "causality_plan"]
     ) }
@@ -118,6 +118,19 @@ enum PipelineArtifactWriteContract {
             ], required: ["question", "verdict", "explanation"])),
         ], required: ["reviewer", "upstreamCause", "downstreamConsequence", "affectedBeatIDs", "checks"]),
     ], required: ["mode", "applicationReason", "beats", "chronology", "edges", "elements", "stateChanges", "unresolvedDecisions", "changeReview"]) }
+
+    static var treatmentCausalityV2Schema: [String: Any] {
+        var schema = causalitySchema
+        var properties = schema["properties"] as? [String: Any] ?? [:]
+        properties.removeValue(forKey: "chronology")
+        properties["temporalRelations"] = array(object([
+            "firstBeatID": nonEmptyString, "secondBeatID": nonEmptyString,
+            "kind": enumeration(["before", "parallel", "unknown"]), "reason": nonEmptyString,
+        ], required: ["firstBeatID", "secondBeatID", "kind", "reason"]))
+        schema["properties"] = properties
+        schema["required"] = ((schema["required"] as? [String]) ?? []).filter { $0 != "chronology" } + ["temporalRelations"]
+        return schema
+    }
 
     static var storyboardSchema: [String: Any] { object(
         [
@@ -694,7 +707,7 @@ enum PipelineArtifactWriteContract {
         ]
     ) }
 
-    private static var musicvideoProductionPlan: [String: Any] { object(
+    static var musicvideoProductionPlan: [String: Any] { object(
         [
             "performance_segments": array(musicPerformanceSegment),
             "final_mix": object([

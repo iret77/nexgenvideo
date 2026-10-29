@@ -46,6 +46,7 @@ struct ProviderRunReconciliation: Sendable {
     var mcpClient: @Sendable (GenerationProvider) async -> (any MCPStatusClient)? = {
         await ProviderMCP.client(for: $0) as (any MCPStatusClient)?
     }
+    var mcpReferenceUploader: MCPMediaUpload.ReferenceUploader? = nil
 }
 
 /// A submitted run whose provider receipt can be queried for its status.

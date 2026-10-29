@@ -14,9 +14,13 @@ extension EnvironmentValues {
 struct GenerationApprovalCard<Content: View, Footer: View>: View {
     @Environment(\.interfaceScale) private var interfaceScale
     @Environment(\.generationDecisionMaximumHeight) private var availableHeight
+    @Environment(\.productionDecisionCompact) private var compact
+    @State private var showsReview = false
     let title: String
     var subtitle: String? = nil
     var fillsMaximumHeight = false
+    var identifier = "generation-approval"
+    var runtimeEvidenceEnabled = false
     @ViewBuilder let content: () -> Content
     @ViewBuilder let footer: () -> Footer
 
@@ -24,29 +28,49 @@ struct GenerationApprovalCard<Content: View, Footer: View>: View {
         GenerationBatchDecisionLayout(
             maximumHeight: max(AppTheme.Spacing.none,
                 (availableHeight ?? AppTheme.ComponentSize.agentDecisionMaxHeight * interfaceScale)
-                    - AppTheme.Spacing.md - AppTheme.Spacing.md),
+                    - cardPadding - cardPadding),
             minimumBodyHeight: AppTheme.ComponentSize.generationBatchListMinHeight * interfaceScale,
             spacing: AppTheme.Spacing.smMd,
             fillsMaximumHeight: fillsMaximumHeight,
             hasExplicitHeightLimit: availableHeight != nil
         ) {
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
-                Label(title, systemImage: "sparkles")
-                    .interfaceFont(size: AppTheme.Typography.section, weight: AppTheme.FontWeight.semibold)
-                    .foregroundStyle(AppTheme.Text.primaryColor)
-                    .fixedSize(horizontal: false, vertical: true)
-                if let subtitle {
-                    Text(subtitle)
-                        .interfaceFont(size: AppTheme.FontSize.xxs)
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
+                if compact {
+                    Button("Review inputs…", systemImage: "arrow.up.left.and.arrow.down.right") { showsReview = true }
+                        .buttonStyle(.inlineAction(.neutral))
+                        .accessibilityLabel("Review inputs for \(title)")
+                        .accessibilityIdentifier("\(identifier).review.open")
+                        .modifier(GenerationBatchRuntimeProbe(identifier: "\(identifier).review.open", enabled: evidenceEnabled))
+                } else {
+                    VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+                        Label(title, systemImage: "sparkles")
+                            .interfaceFont(size: AppTheme.Typography.section, weight: AppTheme.FontWeight.semibold)
+                            .foregroundStyle(AppTheme.Text.primaryColor)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let subtitle {
+                            Text(subtitle)
+                                .interfaceFont(size: AppTheme.FontSize.xxs)
+                                .foregroundStyle(AppTheme.Text.secondaryColor)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Group {
+                if !showsReview { content() }
+                else {
+                    Text("Input review is open.")
+                        .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Text.secondaryColor)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            content()
-            footer()
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
+                if !showsReview { footer() }
+            }
         }
-        .padding(AppTheme.Spacing.md)
+        .padding(cardPadding)
         .background {
             RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
                 .fill(AppTheme.Background.raisedColor)
@@ -56,13 +80,29 @@ struct GenerationApprovalCard<Content: View, Footer: View>: View {
                             lineWidth: AppTheme.BorderWidth.thin)
                 }
         }
-        .padding(.horizontal, AppTheme.Spacing.mdLg)
+        .padding(.horizontal, compact ? AppTheme.Spacing.none : AppTheme.Spacing.mdLg)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(title)
+        .sheet(isPresented: $showsReview) {
+            ProductionDecisionReview(title: title, identifier: identifier, runtimeEvidenceEnabled: evidenceEnabled) {
+                content()
+            } footer: {
+                footer()
+            }
+        }
+    }
+
+    private var cardPadding: CGFloat { compact ? AppTheme.Spacing.none : AppTheme.Spacing.md }
+
+    private var evidenceEnabled: Bool {
+        runtimeEvidenceEnabled || WorkspaceUIAcceptance.isRequested || MusicvideoHostFlowAcceptance.isRequested
+            || GenerationBatchReviewSelfTest.isRequested
     }
 }
 
 struct GenerationApprovalActions: View {
+    @Environment(\.productionDecisionCompact) private var compact
+    @Environment(\.productionDecisionReviewActive) private var reviewActive
     let actionLabel: String
     let phase: String?
     let canApprove: Bool
@@ -78,6 +118,72 @@ struct GenerationApprovalActions: View {
     var revisionRequired = false
 
     var body: some View {
+        if compact {
+            compactActions
+        } else {
+            expandedActions
+        }
+    }
+
+    private var compactActions: some View {
+        HStack(alignment: .center, spacing: AppTheme.Spacing.sm) {
+            Button("Decline", action: onDecline)
+                .buttonStyle(.capsule(.secondary, size: .regular))
+                .keyboardShortcut(reviewActive ? nil : .cancelAction)
+                .accessibilityIdentifier("\(identifier).decline")
+                .modifier(GenerationBatchRuntimeProbe(identifier: "\(identifier).decline", enabled: runtimeEvidenceEnabled))
+                .disabled(!canEdit)
+                .fixedSize()
+            if hasSecondaryActions {
+                Menu {
+                    if let onRevise {
+                        Button("Ask agent to revise", action: onRevise)
+                            .accessibilityIdentifier("\(identifier).revise")
+                            .disabled(!canEdit)
+                    }
+                    if let onRetryPricing {
+                        Button("Retry pricing", action: onRetryPricing)
+                            .accessibilityIdentifier("\(identifier).retry-pricing")
+                            .disabled(!canRetryPricing)
+                    }
+                    if let onApprovePhase, let phase {
+                        Section("Until phase approval, rewind, withdrawal or app quit") {
+                            Button("Allow all paid AI runs in \(PhaseDisplay.label(phase))", action: onApprovePhase)
+                                .accessibilityIdentifier("\(identifier).approve-phase")
+                                .disabled(!canApprove)
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
+                        .foregroundStyle(AppTheme.Text.secondaryColor)
+                        .frame(width: AppTheme.IconSize.md, height: AppTheme.IconSize.md)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .accessibilityLabel("More generation actions")
+                .accessibilityIdentifier("\(identifier).actions")
+                .modifier(GenerationBatchRuntimeProbe(identifier: "\(identifier).actions", enabled: runtimeEvidenceEnabled))
+                .help("Revision, pricing and phase approval")
+            }
+            Button(action: onApprove) {
+                Text(actionLabel)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.capsule(.prominent, size: .regular))
+            .accessibilityIdentifier("\(identifier).approve")
+            .modifier(GenerationBatchRuntimeProbe(identifier: "\(identifier).approve", enabled: runtimeEvidenceEnabled))
+            .disabled(!canApprove)
+        }
+    }
+
+    private var hasSecondaryActions: Bool {
+        onRevise != nil || onRetryPricing != nil || (onApprovePhase != nil && phase != nil)
+    }
+
+    private var expandedActions: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
             if let phase, onApprovePhase != nil {
                 Text("Allow all paid AI runs in \(PhaseDisplay.label(phase)) until phase approval, rewind, withdrawal or app quit.")
@@ -88,7 +194,7 @@ struct GenerationApprovalActions: View {
             WrapLayout(spacing: AppTheme.Spacing.sm, trailingLastItem: true) {
                 Button("Decline", action: onDecline)
                     .buttonStyle(.capsule(.secondary, size: .regular))
-                    .keyboardShortcut(.cancelAction)
+                    .keyboardShortcut(reviewActive ? nil : .cancelAction)
                     .accessibilityIdentifier("\(identifier).decline")
                     .modifier(GenerationBatchRuntimeProbe(identifier: "\(identifier).decline", enabled: runtimeEvidenceEnabled))
                     .disabled(!canEdit)

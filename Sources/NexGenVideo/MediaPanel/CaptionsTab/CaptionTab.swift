@@ -13,6 +13,8 @@ struct CaptionTab: View {
     @State private var supportedLocales: [Locale] = []
     @State private var isGenerating = false
     @State private var note: String?
+    @State private var noteIsError = false
+    @State private var generationTask: Task<Void, Never>?
 
     private static let previewText = "Captions will look like this"
 
@@ -69,18 +71,24 @@ struct CaptionTab: View {
             }
             if isGenerating {
                 AppTheme.Background.surfaceColor.opacity(AppTheme.Opacity.prominent)
-                GeneratingOverlay(label: "Transcribing…", size: .preview)
+                VStack(spacing: AppTheme.Spacing.md) {
+                    GeneratingOverlay(label: "Transcribing…", size: .preview)
+                    Button("Cancel") { generationTask?.cancel() }
+                        .buttonStyle(.capsule(.secondary, size: .regular))
+                        .reviewAcceptanceProbe("captions.cancel")
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(AppTheme.Background.surfaceColor)
         .task {
             guard supportedLocales.isEmpty else { return }
-            supportedLocales = (await Transcription.supportedLocales())
+            supportedLocales = (await editor.captionTranscriptionClient.supportedLocales())
                 .sorted { languageName($0) < languageName($1) }
         }
         .onAppear { rememberSelectedClipTargets() }
         .onChange(of: editor.selectedClipIds) { _, _ in rememberSelectedClipTargets() }
+        .onDisappear { generationTask?.cancel() }
     }
 
     private var sourceSection: some View {
@@ -92,51 +100,35 @@ struct CaptionTab: View {
             ) { sourceMenu }
             InspectorRow(icon: "globe", label: "Language") {
                 Menu {
-                    Button("Auto") { locale = nil }
-                    if !supportedLocales.isEmpty {
-                        Divider() // app-theme: native-menu-divider
-                        ForEach(supportedLocales, id: \.identifier) { loc in
-                            Button(languageName(loc)) { locale = loc }
-                        }
+                    Picker("Language", selection: Binding(get: { locale?.identifier ?? "" }, set: { locale = $0.isEmpty ? nil : Locale(identifier: $0) })) {
+                        Text("Auto").tag("")
+                        ForEach(supportedLocales, id: \.identifier) { loc in Text(languageName(loc)).tag(loc.identifier) }
                     }
+                    .pickerStyle(.inline)
                 } label: { menuValueLabel(locale.map(languageName) ?? "Auto") }
-                .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize().focusable(false)
+                .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+                .reviewAcceptanceProbe("captions.language", text: locale?.identifier ?? "auto")
             }
         }
     }
 
     private var sourceMenu: some View {
         Menu {
-            Button {
-                selectedTrackId = nil
-            } label: {
-                Label(automaticSourceSummary, systemImage: selectedTrackId == nil ? "checkmark" : "")
-            }
-
-            Divider() // app-theme: native-menu-divider
-
-            if captionTrackIndices.isEmpty {
-                Text("No Tracks")
-            } else {
+            Picker("Source", selection: $selectedTrackId) {
+                Text(automaticSourceSummary).tag(Optional<String>.none)
                 ForEach(captionTrackIndices, id: \.self) { index in
                     if editor.timeline.tracks.indices.contains(index) {
                         let track = editor.timeline.tracks[index]
                         let count = editor.captionTargets(trackIds: [track.id]).count
-                        Button {
-                            selectedTrackId = track.id
-                        } label: {
-                            Label(
-                                "\(trackTitle(index)) · \(count) \(count == 1 ? "clip" : "clips")",
-                                systemImage: selectedTrackId == track.id ? "checkmark" : ""
-                            )
-                        }
+                        Text("\(trackTitle(index)) · \(count) \(count == 1 ? "clip" : "clips")")
+                            .tag(Optional(track.id))
                     }
                 }
             }
-        } label: {
-            menuValueLabel(sourceSummary)
-        }
-        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize().focusable(false)
+            .pickerStyle(.inline)
+        } label: { menuValueLabel(sourceSummary) }
+        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+        .reviewAcceptanceProbe("captions.source", text: sourceSummary)
     }
 
     private func rememberSelectedClipTargets() {
@@ -179,6 +171,7 @@ struct CaptionTab: View {
                         .controlSize(.mini)
                         .tint(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.strong))
                         .accessibilityLabel("Caption background")
+                    .reviewAcceptanceProbe("captions.background", text: String(style.background.enabled))
                 }
                 InspectorFormRow(label: "Color") {
                     ColorField(displayColor: style.background.color.swiftUIColor) {
@@ -190,9 +183,10 @@ struct CaptionTab: View {
             }
             InspectorRow(icon: "textformat", label: "Case") {
                 Menu {
-                    ForEach(EditorViewModel.CaptionCase.allCases, id: \.self) { c in
-                        Button(c.label) { textCase = c }
+                    Picker("Case", selection: $textCase) {
+                        ForEach(EditorViewModel.CaptionCase.allCases, id: \.self) { c in Text(c.label).tag(c) }
                     }
+                    .pickerStyle(.inline)
                 } label: {
                     HStack(spacing: AppTheme.Spacing.xxs) {
                         Text(textCase.label)
@@ -201,7 +195,8 @@ struct CaptionTab: View {
                     .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
                 }
-                .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize().focusable(false)
+                .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+                .reviewAcceptanceProbe("captions.case", text: textCase.rawValue)
             }
             InspectorRow(icon: "exclamationmark.bubble", label: "Censor profanity") {
                 Toggle("Censor profanity", isOn: $censorProfanity)
@@ -210,6 +205,7 @@ struct CaptionTab: View {
                     .controlSize(.mini)
                     .tint(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.strong))
                     .accessibilityLabel("Censor profanity")
+                    .reviewAcceptanceProbe("captions.censor", text: String(censorProfanity))
             }
         }
     }
@@ -230,7 +226,12 @@ struct CaptionTab: View {
         Menu {
             Button {
                 removeFillerWords()
-            } label: { Label("Remove filler words", systemImage: "text.badge.minus") }
+            } label: { Label("Remove filler words from captions", systemImage: "text.badge.minus") }
+            .disabled(editor.agentService.isStreaming || editor.agentService.isComposerBlocked)
+            Button {
+                prefillCaptionTask(title: "Propose Speech Cuts", "read the current transcript and propose removal of filler words and repeated false starts. Use kind=speech_cuts with exact get_transcript word indices; preserve the intended meaning.")
+            } label: { Label("Propose speech cuts…", systemImage: "scissors") }
+            .disabled(effectiveCount == 0 || editor.agentService.isStreaming || editor.agentService.isComposerBlocked)
             Button {
                 prefillCaptionTask(title: "Fix Caption Names and Jargon", "fix any misspelled names, brand names, or technical jargon in the captions using the surrounding context, keeping timing unchanged.")
             } label: { Label("Fix names & jargon", systemImage: "checkmark.bubble") }
@@ -253,18 +254,39 @@ struct CaptionTab: View {
         .menuStyle(.button)
         .buttonStyle(.capsule(.secondary, size: .regular))
         .menuIndicator(.hidden)
-        .help("Let Agent create captions for you. Choose a task and review its instructions before running.")
+        .help("Review proposed caption changes or speech cuts before applying them.")
+        .reviewAcceptanceProbe("captions.actions")
     }
 
     private func removeFillerWords() {
-        note = nil
-        let count = editor.removeFillerWordsFromCaptions()
-        if count == 0 { note = "No filler words found." }
+        note = nil; noteIsError = false
+        do {
+            let changes = editor.timeline.tracks.flatMap(\.clips).compactMap { clip -> CaptionRevisionPlan.Change? in
+                guard clip.captionGroupId != nil, clip.mediaType == .text, let before = clip.textContent else { return nil }
+                let after = EditorViewModel.stripFillerWords(before)
+                return after == before ? nil : .init(clipID: clip.id, text: after)
+            }
+            guard !changes.isEmpty else { note = "No filler words found."; return }
+            let plan = try CaptionRevisionPlan.captions(changes, scope: CaptionRevisionScope.capture(editor), editor: editor)
+            try editor.agentService.presentDialog(plan.dialog)
+        } catch { note = error.localizedDescription; noteIsError = true }
+
     }
 
     private func prefillCaptionTask(title: String, _ task: String) {
-        let prompt = "Captions: If the timeline has no captions yet, transcribe the spoken audio and add captions on word boundaries first. Then \(task)"
-        editor.agentService.stageTask(.init(title: title, systemImage: "captions.bubble", prompt: prompt))
+        do {
+            let scope = try CaptionRevisionScope.capture(editor, kind: title == "Propose Speech Cuts" ? .speechCuts : .captions)
+            if title != "Propose Speech Cuts", scope.captionIDs.isEmpty {
+                note = "Generate or import captions before requesting changes."; noteIsError = true
+                return
+            }
+            let prompt = "Prepare a bounded caption revision proposal. Inspect the existing timeline and transcript. Then " + task
+                + " Use propose_caption_revision; never edit directly or add captions. Stop after the proposal and wait for the native decision."
+            editor.agentService.stageTask(.init(title: title, systemImage: "captions.bubble", prompt: prompt,
+                originContext: "Existing captions: \(scope.captionIDs.count). Speech and caption changes are bound to the current timeline and source bytes.",
+                captionRevisionScope: scope))
+        } catch { note = error.localizedDescription; noteIsError = true }
+
     }
 
     private func menuValueLabel(_ text: String) -> some View {
@@ -358,9 +380,10 @@ struct CaptionTab: View {
             if let note {
                 Text(note)
                     .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
-                    .foregroundStyle(AppTheme.Status.errorColor)
+                    .foregroundStyle(noteIsError ? AppTheme.Status.errorColor : AppTheme.Text.secondaryColor)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
+                    .reviewAcceptanceProbe("captions.note", text: note)
             }
             HStack(spacing: AppTheme.Spacing.sm) {
                 Button(action: generate) {
@@ -369,6 +392,7 @@ struct CaptionTab: View {
                 }
                 .buttonStyle(.capsule(.prominent, size: .regular))
                 .disabled(effectiveCount == 0 || isGenerating)
+                .reviewAcceptanceProbe("captions.generate", state: effectiveCount > 0 && !isGenerating)
 
                 agentMenu
             }
@@ -381,24 +405,27 @@ struct CaptionTab: View {
     }
 
     private func generate() {
-        note = nil
+        note = nil; noteIsError = false
         let sourceIds = sourceClipIds
         if selectedTrackId != nil && sourceIds.isEmpty {
-            note = "No audio selected."
+            note = "No audio selected."; noteIsError = true
             return
         }
         let request = EditorViewModel.CaptionRequest(
             sourceClipIds: sourceIds, autoDetect: isAutoSource, style: style, center: center,
             textCase: textCase, censorProfanity: censorProfanity, locale: locale
         )
-        Task {
-            isGenerating = true
-            defer { isGenerating = false }
+        guard !isGenerating else { return }
+        isGenerating = true
+        generationTask = Task {
+            defer { isGenerating = false; generationTask = nil }
             do {
                 let ids = try await editor.generateCaptions(for: request)
                 if ids.isEmpty { note = "No speech detected." }
+            } catch is CancellationError {
+                note = "Caption generation cancelled."
             } catch {
-                note = error.localizedDescription
+                note = error.localizedDescription; noteIsError = true
             }
         }
     }

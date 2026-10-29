@@ -90,18 +90,22 @@ enum GenerationProvider: String, CaseIterable, Identifiable, Codable, Sendable {
 }
 
 enum ProviderKeychain {
-    static func save(_ key: String, for provider: GenerationProvider) {
-        KeychainStore.save(key, account: provider.keychainAccount)
+    @discardableResult
+    static func save(_ key: String, for provider: GenerationProvider) -> Bool {
+        guard KeychainStore.save(key, account: provider.keychainAccount) else { return false }
         NotificationCenter.default.post(name: .providerKeysChanged, object: nil)
+        return true
     }
 
     static func load(_ provider: GenerationProvider) -> String? {
         KeychainStore.load(account: provider.keychainAccount)
     }
 
-    static func delete(_ provider: GenerationProvider) {
-        KeychainStore.delete(account: provider.keychainAccount)
+    @discardableResult
+    static func delete(_ provider: GenerationProvider) -> Bool {
+        guard KeychainStore.delete(account: provider.keychainAccount) else { return false }
         NotificationCenter.default.post(name: .providerKeysChanged, object: nil)
+        return true
     }
 }
 

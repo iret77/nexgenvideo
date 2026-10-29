@@ -135,7 +135,7 @@ jobs:
       - name: Bundle real app and external pack
         run: |
           set -euo pipefail
-          scripts/bundle.sh debug
+          scripts/bundle.sh debug --without-bpy-runtime-for-ci-transfer
           scripts/assemble_ngvpack.sh plugins/musicvideo.json debug .build/plugins
           tar -czf "$RUNNER_TEMP/runtime-harness.tar.gz" \
             -C .build \
@@ -234,6 +234,9 @@ jobs:
           NGV_EXAMPLE_REPORT_DIR: ${{ runner.temp }}/analysis-report
           NGV_GIT_COMMIT: ${{ github.sha }}
         run: .build/NexGenVideo.app/Contents/MacOS/NexGenVideo -ApplePersistenceIgnoreState YES
+
+      - name: Verify actual optional material intake
+        run: python3 scripts/musicvideo_intake_evidence.py "$RUNNER_TEMP/analysis-report"
 
       - name: Publish private analysis report
         if: ${{ always() }}
