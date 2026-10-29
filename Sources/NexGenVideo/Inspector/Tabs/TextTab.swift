@@ -45,6 +45,8 @@ struct TextTab: View {
                     editor.fitTextClipToContent(clipId: clip.id)
                 }
             )
+            .id(clip.id)
+            .reviewAcceptanceProbe("text.content", text: clip.textContent ?? "")
             .frame(minHeight: AppTheme.ComponentSize.textEditorMinHeight)
             .padding(AppTheme.Spacing.xs)
             .background(
@@ -95,7 +97,7 @@ struct TextTab: View {
     private var opacitySlider: some View {
         InspectorRow(icon: "circle.lefthalf.filled", label: "Opacity") {
             ScrubbableNumberField(
-                value: clip.opacity,
+                value: clip.rawOpacityAt(frame: editor.activeFrame),
                 range: 0...1,
                 displayMultiplier: 100,
                 format: "%.0f",
@@ -103,11 +105,12 @@ struct TextTab: View {
                 accessibilityName: "Text opacity",
                 fieldWidth: AppTheme.ComponentSize.scrubFieldStandard,
                 onChanged: { newVal in
-                    editor.applyClipProperty(clipId: clip.id) { $0.opacity = newVal }
+                    editor.applyOpacity(clipId: clip.id, value: newVal)
                 }
             ) { newVal in
-                editor.commitClipProperty(clipId: clip.id) { $0.opacity = newVal }
+                editor.commitOpacity(clipId: clip.id, value: newVal)
             }
+            .disabled(clip.opacityTrack?.isActive == true && !clip.contains(timelineFrame: editor.activeFrame))
         }
     }
 
@@ -143,6 +146,7 @@ struct TextTab: View {
             .labelsHidden()
             .tint(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.strong))
             .fixedSize()
+            .reviewAcceptanceProbe("text.alignment", text: style.alignment.rawValue)
         }
     }
 
@@ -192,6 +196,7 @@ struct TextTab: View {
                 .toggleStyle(.switch)
                 .controlSize(.regular)
                 .accessibilityLabel(label)
+                .reviewAcceptanceProbe("text.toggle." + label, text: String(enabled))
             }
             InspectorFormRow(label: "Color") {
                 ColorField(

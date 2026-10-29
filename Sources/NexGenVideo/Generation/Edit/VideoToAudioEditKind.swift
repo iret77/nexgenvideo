@@ -61,17 +61,20 @@ enum VideoToAudioEditKind {
     }
 
     @MainActor
-    var model: AudioModelConfig? {
-        if let preferred = AudioModelConfig.allModels.first(where: {
-            $0.id == preferredModelId && $0.category == category && $0.inputs.contains(.video)
-        }) {
-            return preferred
+    var model: AudioModelConfig? { model(spanSeconds: nil) }
+
+    @MainActor
+    func model(spanSeconds: Double?) -> AudioModelConfig? {
+        select(in: AudioModelConfig.allModels, spanSeconds: spanSeconds,
+            isEnabled: ModelPreferences.shared.isEnabled, canRun: { GenerationProvider.canRun(modelId: $0) })
+    }
+
+    func select(in models: [AudioModelConfig], spanSeconds: Double?,
+                isEnabled: (String) -> Bool, canRun: (String) -> Bool) -> AudioModelConfig? {
+        let available = models.filter { model in
+            model.category == category && model.inputs.contains(.video) && isEnabled(model.id) && canRun(model.id)
+                && (spanSeconds.map { $0.isFinite && $0 > 0 && model.validate(spanSeconds: $0) == nil } ?? true)
         }
-        return AudioModelConfig.allModels.first {
-            $0.category == category
-                && $0.inputs.contains(.video)
-                && ($0.id.localizedCaseInsensitiveContains(providerName)
-                    || $0.displayName.localizedCaseInsensitiveContains(providerName))
-        }
+        return available.first { $0.id == preferredModelId } ?? available.first
     }
 }

@@ -8,6 +8,7 @@ private struct ProjectEditableContents: Sendable {
     var manifest: MediaManifest?
     var generationLog: GenerationLog?
     var thumbnail: Data?
+    var effectResourceProblems: [ProjectEffectResources.Problem]
 }
 
 private struct ProjectPackageContents: Sendable {
@@ -17,6 +18,7 @@ private struct ProjectPackageContents: Sendable {
     var thumbnail: Data?
     var workingCopyKey: String
     var workingCopy: ProjectWorkingCopy.OpenResult
+    var effectResourceProblems: [ProjectEffectResources.Problem]
 }
 
 private struct ProjectPackageSnapshot: Sendable {
@@ -58,6 +60,7 @@ final class VideoProject: NSDocument {
     private nonisolated(unsafe) var loadedManifest: MediaManifest?
     private nonisolated(unsafe) var loadedGenerationLog: GenerationLog?
     private nonisolated(unsafe) var loadedThumbnail: Data?
+    private nonisolated(unsafe) var loadedEffectResourceProblems: [ProjectEffectResources.Problem] = []
     private nonisolated(unsafe) var loadedWorkingCopyKey: String?
     private nonisolated(unsafe) var loadedWorkingCopy: ProjectWorkingCopy.OpenResult?
 
@@ -118,6 +121,7 @@ final class VideoProject: NSDocument {
         loadedManifest = contents.manifest
         loadedGenerationLog = contents.generationLog
         loadedThumbnail = contents.thumbnail
+        loadedEffectResourceProblems = contents.effectResourceProblems
         loadedWorkingCopyKey = contents.workingCopyKey
         loadedWorkingCopy = contents.workingCopy
         Log.project.notice(
@@ -154,7 +158,7 @@ final class VideoProject: NSDocument {
     private nonisolated static func readProjectPackage(at url: URL) throws -> ProjectPackageContents {
         if ProjectIdentity.existingKey(for: url) == nil {
             try ProjectWorkingCopy.validateForOpen(url)
-            _ = try readEditableContents(at: url)
+            _ = try readEditableContents(at: url, normalizeResources: false)
         }
         let key = try ProjectIdentity.key(for: url)
         let workingCopy = try ProjectWorkingCopy.open(key: key, packageURL: url)
@@ -166,13 +170,16 @@ final class VideoProject: NSDocument {
             generationLog: contents.generationLog,
             thumbnail: contents.thumbnail,
             workingCopyKey: key,
-            workingCopy: workingCopy
+            workingCopy: workingCopy,
+            effectResourceProblems: contents.effectResourceProblems
         )
     }
 
     private nonisolated static func readEditableContents(
-        at root: URL
+        at root: URL,
+        normalizeResources: Bool = true
     ) throws -> ProjectEditableContents {
+        try ProjectPluginSettings.validateProductionContractForOpen(projectURL: root)
         let data = try requiredData(Project.timelineFilename, in: root)
         let timeline: Timeline
         do {
@@ -182,6 +189,7 @@ final class VideoProject: NSDocument {
             throw error
         }
 
+        let resources = try ProjectEffectResources.open(timeline: timeline, projectRoot: root, importLegacy: normalizeResources)
         let manifest: MediaManifest?
         if let manifestData = try optionalData(Project.manifestFilename, in: root) {
             do {
@@ -214,10 +222,11 @@ final class VideoProject: NSDocument {
         let thumbnail = try optionalData(Project.thumbnailFilename, in: root)
 
         return ProjectEditableContents(
-            timeline: timeline,
+            timeline: resources.timeline,
             manifest: manifest,
             generationLog: generationLog,
-            thumbnail: thumbnail
+            thumbnail: thumbnail,
+            effectResourceProblems: resources.problems
         )
     }
 
@@ -339,7 +348,8 @@ final class VideoProject: NSDocument {
                 _ = try ProjectPackGate.requireLiveMutation(
                     projectURL: verificationRoot,
                     declaredPack: editorViewModel.declaredPluginName,
-                    declaredBinding: editorViewModel.declaredPluginBinding
+                    declaredBinding: editorViewModel.declaredPluginBinding,
+                    declaredProductionContract: editorViewModel.declaredProductionContract
                 )
                 return nil
             } catch {
@@ -425,7 +435,8 @@ final class VideoProject: NSDocument {
         clearSaveSnapshot()
         snapshotPackDeclaration = ProjectPackGate.MutationDeclaration(
             packName: editorViewModel.declaredPluginName,
-            binding: editorViewModel.declaredPluginBinding
+            binding: editorViewModel.declaredPluginBinding,
+            productionContract: editorViewModel.declaredProductionContract
         )
         snapshotPackVerificationRoot = verificationRoot
         do {
@@ -470,23 +481,9 @@ final class VideoProject: NSDocument {
     }
 
     private func checkpointWorkingCopy() {
-        guard let key = editorViewModel.openWorkingCopyKey else { return }
         do {
-            var chatFiles: [(name: String, data: Data)] = []
-            for session in editorViewModel.agentService.sessions where session.hasPersistedContent {
-                guard let data = ChatSessionStore.encodeSession(session) else {
-                    throw CocoaError(.fileWriteUnknown)
-                }
-                chatFiles.append((name: "\(session.id.uuidString).json", data: data))
-            }
-            let snapshot = ProjectWorkingCopy.Checkpoint(
-                timeline: try JSONEncoder().encode(editorViewModel.timeline),
-                manifest: try JSONEncoder().encode(editorViewModel.mediaManifest),
-                generationLog: try JSONEncoder().encode(editorViewModel.generationLog),
-                thumbnail: cachedThumbnail,
-                chatSessionFiles: chatFiles
-            )
-            try ProjectWorkingCopy.checkpoint(key: key, snapshot: snapshot)
+            guard editorViewModel.openWorkingCopyKey != nil else { return }
+            try checkpointForProductionUpgrade()
             checkpointFailurePresented = false
         } catch {
             Log.project.error("working-copy checkpoint failed: \(error.localizedDescription)")
@@ -495,6 +492,25 @@ final class VideoProject: NSDocument {
                 presentError(error)
             }
         }
+    }
+
+    func checkpointForProductionUpgrade() throws {
+        draftCheckpointTask?.cancel()
+        draftCheckpointTask = nil
+        guard let key = editorViewModel.openWorkingCopyKey else { throw CocoaError(.fileWriteUnknown) }
+        var chatFiles: [(name: String, data: Data)] = []
+        for session in editorViewModel.agentService.sessions where session.hasPersistedContent {
+            guard let data = ChatSessionStore.encodeSession(session) else { throw CocoaError(.fileWriteUnknown) }
+            chatFiles.append((name: "\(session.id.uuidString).json", data: data))
+        }
+        let snapshot = ProjectWorkingCopy.Checkpoint(
+            timeline: try JSONEncoder().encode(editorViewModel.timeline),
+            manifest: try JSONEncoder().encode(editorViewModel.mediaManifest),
+            generationLog: try JSONEncoder().encode(editorViewModel.generationLog),
+            thumbnail: cachedThumbnail,
+            chatSessionFiles: chatFiles
+        )
+        try ProjectWorkingCopy.checkpoint(key: key, snapshot: snapshot)
     }
 
     private nonisolated static func requiredData(_ name: String, in packageURL: URL) throws -> Data {
@@ -517,15 +533,19 @@ final class VideoProject: NSDocument {
             _ = try ProjectPackGate.requireMutation(
                 projectURL: snapshot.packVerificationRoot,
                 declaredPack: snapshot.packDeclaration.packName,
-                declaredBinding: snapshot.packDeclaration.binding
+                declaredBinding: snapshot.packDeclaration.binding,
+                declaredProductionContract: snapshot.packDeclaration.productionContract
             )
         }
         try validateBinding()
+        let liveTimeline = try JSONDecoder().decode(Timeline.self, from: snapshot.timeline)
+        let portableTimeline = try ProjectEffectResources.portable(liveTimeline, projectRoot: snapshot.packVerificationRoot)
+        let portableData = try JSONEncoder().encode(portableTimeline)
         if let key = snapshot.workingCopyKey {
             try ProjectWorkingCopy.checkpoint(
                 key: key,
                 snapshot: ProjectWorkingCopy.Checkpoint(
-                    timeline: snapshot.timeline,
+                    timeline: portableData,
                     manifest: snapshot.manifest,
                     generationLog: snapshot.generationLog,
                     thumbnail: snapshot.thumbnail,
@@ -557,7 +577,13 @@ final class VideoProject: NSDocument {
         } else {
             try fm.createDirectory(at: staging, withIntermediateDirectories: true)
         }
-        try snapshot.timeline.write(
+        for resource in try ProjectEffectResources.capture(timeline: portableTimeline, projectRoot: snapshot.packVerificationRoot) {
+            let destination = try ProjectEffectResources.url(for: resource.path, projectRoot: staging)
+            try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if !FileManager.default.fileExists(atPath: destination.path) { try FileManager.default.copyItem(at: resource.url, to: destination) }
+        }
+        _ = try ProjectEffectResources.capture(timeline: portableTimeline, projectRoot: staging)
+        try portableData.write(
             to: staging.appendingPathComponent(Project.timelineFilename),
             options: .atomic
         )
@@ -660,6 +686,7 @@ final class VideoProject: NSDocument {
     // MARK: - Close
 
     override func close() {
+        BpyRuntimeHost.shared.unregister(document: self)
         draftCheckpointTask?.cancel()
         draftCheckpointTask = nil
         // Clean close (any save/don't-save prompt already resolved) → drop the working copy so the next
@@ -699,6 +726,8 @@ final class VideoProject: NSDocument {
     override func makeWindowControllers() {
         cachedThumbnail = loadedThumbnail
         loadedThumbnail = nil
+        editorViewModel.effectResourceProblems = loadedEffectResourceProblems
+        loadedEffectResourceProblems = []
         if let loaded = loadedTimeline {
             editorViewModel.timeline = loaded
             loadedTimeline = nil
@@ -825,6 +854,7 @@ final class VideoProject: NSDocument {
         switch result {
         case .success(let contents):
             editorViewModel.timeline = contents.timeline
+            editorViewModel.effectResourceProblems = contents.effectResourceProblems
             editorViewModel.mediaManifest = contents.manifest ?? MediaManifest()
             editorViewModel.generationLog = contents.generationLog ?? GenerationLog()
             cachedThumbnail = contents.thumbnail

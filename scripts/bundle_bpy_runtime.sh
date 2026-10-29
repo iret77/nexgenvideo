@@ -1,0 +1,49 @@
+#!/bin/bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+RUNTIME_ROOT="${1:?staged bpy runtime required}"
+SERVICE_BINARY="${2:?bpy XPC service binary required}"
+APP="${3:?NexGenVideo app destination required}"
+SUPERVISOR_BINARY="$(dirname "$SERVICE_BINARY")/NexGenVideoBpySupervisor"
+
+test -f "$RUNTIME_ROOT/.complete"
+test -x "$RUNTIME_ROOT/python/bin/python3"
+BPY_ENTRYPOINT="$(jq -r .bpyWheelLayout.entryPoint "$ROOT/Runtime/bpy/runtime-lock.json")"
+test -f "$RUNTIME_ROOT/site-packages/$BPY_ENTRYPOINT"
+test -x "$SERVICE_BINARY"
+test -x "$SUPERVISOR_BINARY"
+STORAGE_BINARY="$(dirname "$SERVICE_BINARY")/NexGenVideoBpyStorage"
+test -x "$STORAGE_BINARY"
+case "$APP" in
+  *.app) ;;
+  *) echo "invalid bpy app destination: $APP" >&2; exit 1 ;;
+esac
+
+DESTINATION="$APP/Contents/Helpers/BpyRuntime"
+rm -rf "$DESTINATION"
+mkdir -p "$DESTINATION"
+cp -R "$RUNTIME_ROOT/." "$DESTINATION/"
+cp "$ROOT/Runtime/bpy/worker.py" "$DESTINATION/worker.py"
+cp "$ROOT/Runtime/bpy/scene_operations.py" "$DESTINATION/scene_operations.py"
+cp "$ROOT/Runtime/bpy/storage_probe.py" "$DESTINATION/storage_probe.py"
+chmod 755 "$DESTINATION/python/bin/python3"*
+cp "$SUPERVISOR_BINARY" "$APP/Contents/Helpers/NexGenVideoBpySupervisor"
+chmod 755 "$APP/Contents/Helpers/NexGenVideoBpySupervisor"
+cp "$STORAGE_BINARY" "$APP/Contents/Helpers/NexGenVideoBpyStorage"
+chmod 755 "$APP/Contents/Helpers/NexGenVideoBpyStorage"
+
+for slot in 0 1; do
+  XPC="$APP/Contents/XPCServices/NexGenVideoBpyService$slot.xpc"
+  rm -rf "$XPC"
+  mkdir -p "$XPC/Contents/MacOS"
+  cp "$SERVICE_BINARY" "$XPC/Contents/MacOS/NexGenVideoBpyService"
+  cp "$ROOT/Runtime/bpy/NexGenVideoBpyService-Info.plist" "$XPC/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c \
+    "Set :CFBundleIdentifier de.h5ventures.nexgenvideo.bpy-service-$slot" \
+    "$XPC/Contents/Info.plist"
+  chmod 755 "$XPC/Contents/MacOS/NexGenVideoBpyService"
+done
+
+test ! -e "$DESTINATION/python/bin/pip"
+test ! -e "$DESTINATION/python/bin/pip3"

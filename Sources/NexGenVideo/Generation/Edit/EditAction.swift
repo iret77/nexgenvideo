@@ -25,7 +25,8 @@ enum EditAction: Equatable {
     }
 
     @MainActor
-    func availability(for asset: MediaAsset, effectiveDurationOverride: Double? = nil) -> EditActionAvailability {
+    func availability(for asset: MediaAsset, effectiveDurationOverride: Double? = nil,
+                      isModelRunnable: ((String) -> Bool)? = nil) -> EditActionAvailability {
         switch self {
         case .upscale:
             guard asset.type == .video || asset.type == .image else {
@@ -42,10 +43,11 @@ enum EditAction: Equatable {
             if asset.isGenerating {
                 return .disabled(reason: "Generation in progress")
             }
-            guard !UpscaleModelConfig.selections(
-                for: asset,
-                effectiveDuration: effectiveDurationOverride
-            ).isEmpty else {
+            let models = UpscaleModelConfig.availableModels(in: UpscaleModelConfig.allModels, for: asset.type,
+                isEnabled: ModelPreferences.shared.isEnabled,
+                canRun: isModelRunnable ?? { GenerationProvider.canRun(modelId: $0) })
+            guard models.contains(where: { !$0.selections(sourceType: asset.type, sourceWidth: asset.sourceWidth,
+                sourceHeight: asset.sourceHeight, durationSeconds: effectiveDurationOverride ?? asset.duration).isEmpty }) else {
                 return .disabled(reason: "No enabled upscaler supports this source")
             }
             return .available
@@ -118,6 +120,9 @@ enum EditAction: Equatable {
             guard let modelId = asset.generationInput?.model, ModelRegistry.exists(id: modelId) else {
                 return .disabled(reason: "Model no longer available")
             }
+            guard isModelRunnable?(modelId) ?? (ModelPreferences.shared.isEnabled(modelId) && GenerationProvider.canRun(modelId: modelId)) else {
+                return .disabled(reason: "Enable an available provider and this model before rerunning")
+            }
             return .available
         }
     }
@@ -152,8 +157,8 @@ enum EditAction: Equatable {
         guard duration > 0 else {
             return .disabled(reason: "Loading video metadata…")
         }
-        guard let model = kind.model else {
-            return .disabled(reason: "\(kind.providerName) model not available")
+        guard let model = kind.model(spanSeconds: duration) else {
+            return .disabled(reason: "No enabled model accepts this video range for \(kind.title).")
         }
         if let err = model.validate(spanSeconds: duration) {
             return .disabled(reason: err)

@@ -90,7 +90,7 @@ enum CompositionBuilder {
                             preferredTrackID: kCMPersistentTrackID_Invalid
                         ) else { continue }
                         var cursor = CMTime.zero
-                        if await insertClip(
+                        if try await insertClip(
                             clip,
                             sourceAsset: source.asset,
                             sourceTrack: source.track,
@@ -116,7 +116,7 @@ enum CompositionBuilder {
                             )
                         }
                         guard let compTrack = normalTrack else { continue }
-                        if await insertClip(
+                        if try await insertClip(
                             clip,
                             sourceAsset: source.asset,
                             sourceTrack: source.track,
@@ -172,7 +172,7 @@ enum CompositionBuilder {
                     clipTransforms[clip.id] = pt.concatenating(CGAffineTransform(translationX: -box.minX, y: -box.minY))
                 }
 
-                if await insertClip(
+                if try await insertClip(
                     clip,
                     sourceAsset: source.asset,
                     sourceTrack: source.track,
@@ -433,6 +433,21 @@ enum CompositionBuilder {
         }
     }
 
+    static func availableSourceRange(start: CMTime, requestedDuration: CMTime, available: CMTimeRange,
+                                     coverage: CMTime) throws -> CMTimeRange {
+        guard start.isNumeric, requestedDuration.isNumeric, coverage.isNumeric,
+              available.start.isNumeric, available.duration.isNumeric,
+              CMTimeCompare(requestedDuration, .zero) > 0, CMTimeCompare(coverage, .zero) > 0,
+              CMTimeCompare(start, available.start) >= 0, CMTimeCompare(start, available.end) < 0 else {
+            throw InvalidTimelineError(reason: "The selected source range is outside its actual media track.")
+        }
+        let end = CMTimeAdd(start, requestedDuration)
+        guard end.isNumeric, CMTimeCompare(CMTimeSubtract(end, available.end), coverage) <= 0 else {
+            throw InvalidTimelineError(reason: "The selected source range extends beyond its actual media track.")
+        }
+        return CMTimeRange(start: start, end: CMTimeCompare(end, available.end) < 0 ? end : available.end)
+    }
+
     private static func insertClip(
         _ clip: Clip,
         sourceAsset: AVURLAsset,
@@ -440,7 +455,7 @@ enum CompositionBuilder {
         into compTrack: AVMutableCompositionTrack,
         cursor: inout CMTime,
         timescale: CMTimeScale
-    ) async -> Bool {
+    ) async throws -> Bool {
         let clipStart = CMTime(value: CMTimeValue(clip.startFrame), timescale: timescale)
         let trimStartFrame = clip.mediaType == .image ? max(0, clip.trimStartFrame) : clip.trimStartFrame
         let sourceTimescale = (try? await sourceTrack.load(.naturalTimeScale)) ?? timescale
@@ -457,8 +472,11 @@ enum CompositionBuilder {
             ? clip.durationFrames
             : max(1, Int(Double(clip.durationFrames) * clip.speed))
         let durationSeconds = Double(sourceFrames) / Double(timescale)
-        let sourceDuration = CMTime(seconds: durationSeconds, preferredTimescale: sourceTimescale)
-        let sourceRange = CMTimeRange(start: trimStart, duration: sourceDuration)
+        let requestedDuration = CMTime(seconds: durationSeconds, preferredTimescale: sourceTimescale)
+        let available = try await sourceTrack.load(.timeRange)
+        let sourceRange = try availableSourceRange(start: trimStart, requestedDuration: requestedDuration,
+            available: available, coverage: CMTime(value: 1, timescale: timescale))
+        let sourceDuration = sourceRange.duration
 
         do {
             try compTrack.insertTimeRange(sourceRange, of: sourceTrack, at: clipStart)
@@ -471,7 +489,7 @@ enum CompositionBuilder {
                 speed=\(clip.speed) sourceSeconds=\(String(format: "%.3f", srcSeconds)) \
                 error=\(error.localizedDescription)
                 """)
-            return false
+            throw InvalidTimelineError(reason: "Clip \(clip.id) cannot read its selected media range: \(error.localizedDescription)")
         }
         if clip.speed != 1.0 {
             compTrack.scaleTimeRange(CMTimeRange(start: clipStart, duration: sourceDuration), toDuration: clipDuration)

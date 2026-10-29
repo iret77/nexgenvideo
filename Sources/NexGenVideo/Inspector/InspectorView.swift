@@ -26,6 +26,8 @@ struct InspectorView: View {
     @State private var transformExpanded = true
     @State private var shotSourceModeMutationID: String?
     @State private var shotSourceModeAvailableID: String?
+    @State var lutMutationID: UUID?
+    @State var lutLoadError: String?
     @State var collapsedAdjustSections: Set<String> = ["Curves", "Color Wheels", "Hue Curves", "LUTs", "Effects"]
     @State var collapsedAdjustSubgroups: Set<String> = [
         "Detail", "Blur", "Motion Blur", "Vignette", "Film Grain", "Glow", "Chroma Key",
@@ -53,6 +55,13 @@ struct InspectorView: View {
         .onChange(of: editor.isMarqueeSelecting) { _, selecting in
             if !selecting { resolvePreferredTab() }
             promoteSelection()
+        }
+        .onChange(of: editor.workingRoot) { _, _ in lutMutationID = nil; lutLoadError = nil }
+        .onChange(of: editor.requestedLUTClipID, initial: true) { _, id in
+            guard let id, editor.selectedClipIds == [id] else { return }
+            preferredTab = .effects
+            collapsedAdjustSections.remove("LUTs")
+            editor.requestedLUTClipID = nil
         }
         .onChange(of: preferredTab) { _, newTab in
             if newTab != .video { editor.cropEditingActive = false }
@@ -755,9 +764,9 @@ struct InspectorView: View {
                     }
                 }
             }
-            if activeTab == .video || activeTab == .audio {
+            if activeTab == .video || activeTab == .audio || activeTab == .effects {
                 keyframesToggleBar(
-                    enabled: activeTab == .video
+                    enabled: activeTab != .audio
                         ? nonTextVisualClips.count == 1
                         : selectedAudioClips.count == 1
                 )
@@ -936,6 +945,7 @@ struct InspectorView: View {
             keyframeNavButton(systemName: "chevron.left", help: "Go to previous keyframe", enabled: prev != nil) {
                 if let f = prev { editor.seekToFrame(f) }
             }
+            .reviewAcceptanceProbe("editing.keyframe." + property.rawValue + ".previous", state: prev != nil)
             Button {
                 if onKeyframe {
                     editor.removeKeyframe(clipId: clipId, property: property, at: frame)
@@ -948,6 +958,7 @@ struct InspectorView: View {
             }
             .buttonStyle(ToolbarIconButtonStyle(isSelected: onKeyframe))
             .disabled(!inRange)
+            .reviewAcceptanceProbe("editing.keyframe." + property.rawValue + ".stamp", state: inRange)
             .accessibilityLabel(onKeyframe ? "Remove keyframe" : "Add keyframe")
             .help(!inRange ? "Move playhead inside the clip"
                   : onKeyframe ? "Remove keyframe at playhead"
@@ -955,10 +966,11 @@ struct InspectorView: View {
             keyframeNavButton(systemName: "chevron.right", help: "Go to next keyframe", enabled: next != nil) {
                 if let f = next { editor.seekToFrame(f) }
             }
+            .reviewAcceptanceProbe("editing.keyframe." + property.rawValue + ".next", state: next != nil)
         }
     }
 
-    private func keyframeNavButton(
+    func keyframeNavButton(
         systemName: String,
         help: String,
         enabled: Bool,
@@ -1096,6 +1108,7 @@ struct InspectorView: View {
         .buttonStyle(.plain)
         .help(help ?? "Reset")
         .accessibilityLabel(help ?? "Reset")
+        .reviewAcceptanceProbe("inspector.reset." + (help ?? "Reset"))
     }
 
     func propertyRow<Trailing: View>(
@@ -1151,6 +1164,7 @@ struct InspectorView: View {
         .buttonStyle(ToolbarIconButtonStyle(isSelected: isOn))
         .accessibilityLabel(help)
         .help(help)
+        .reviewAcceptanceProbe("inspector.transform." + systemName, text: isOn ? "on" : "off")
     }
 
     // MARK: - Crop

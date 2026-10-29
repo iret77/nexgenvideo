@@ -10,6 +10,7 @@ set -euo pipefail
 
 CONFIG="release"
 MODE="dev"
+BPY_BUNDLE_MODE="full"
 for arg in "$@"; do
   case "$arg" in
     release|debug) CONFIG="$arg" ;;
@@ -17,6 +18,8 @@ for arg in "$@"; do
     --sign)        MODE="sign" ;;
     --dist)        MODE="dist" ;;
     --package)     MODE="package" ;;
+    --without-bpy-runtime-for-ci-transfer) BPY_BUNDLE_MODE="omitted" ;;
+    --bpy-boundary-probe-for-ci-transfer) BPY_BUNDLE_MODE="boundary" ;;
     *) echo "unknown arg: $arg" >&2; exit 1 ;;
   esac
 done
@@ -128,6 +131,15 @@ if [ "$MODE" = "fast" ] || [ "$MODE" = "sign" ] || [ "$MODE" = "dist" ] || [ "$M
   [ -n "$SIGN_IDENTITY" ] || { echo "!! no 'Developer ID Application' identity in the keychain (set SIGN_IDENTITY or import the cert)" >&2; exit 1; }
 fi
 
+if [ "$BPY_BUNDLE_MODE" != "full" ] && [ "$MODE" != "dev" ]; then
+  echo "!! alternate bpy bundle modes are valid only for CI dev bundles" >&2
+  exit 1
+fi
+
+if [ "$MODE" = "dist" ] || [ "$MODE" = "package" ]; then
+  python3 "$ROOT/scripts/verify_bpy_runtime.py" --distribution
+fi
+
 if [ "$MODE" = "package" ]; then
   [ "$CONFIG" = "release" ] || { echo "!! --package requires release configuration" >&2; exit 1; }
   [ -d "$APP" ] || { echo "!! signed app not found at $APP — run release --sign first" >&2; exit 1; }
@@ -148,7 +160,7 @@ BIN="$BIN_DIRECTORY/NexGenVideo"
 echo "==> Assembling $APP"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
-mkdir -p "$APP/Contents/Helpers"
+mkdir -p "$APP/Contents/Helpers" "$APP/Contents/XPCServices"
 cp "$BIN_DIRECTORY/NexGenVideoDiagnostics" "$APP/Contents/Helpers/NexGenVideoDiagnostics"
 cp "$BIN" "$APP/Contents/MacOS/NexGenVideo"
 cp "$RESOURCES/Info.plist" "$APP/Contents/Info.plist"
@@ -175,6 +187,30 @@ else
 fi
 
 cp "$RESOURCES/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
+
+if [ "$BPY_BUNDLE_MODE" = "full" ]; then
+  BPY_RUNTIME_ROOT="${NGV_BPY_RUNTIME_ROOT:-$ROOT/.build/bpy-runtime}"
+  "$ROOT/scripts/bundle_bpy_runtime.sh" \
+    "$BPY_RUNTIME_ROOT" \
+    "$BIN_DIRECTORY/NexGenVideoBpyService" \
+    "$APP"
+elif [ "$BPY_BUNDLE_MODE" = "boundary" ]; then
+  [ "${CI:-}" = true ] || {
+    echo "!! --bpy-boundary-probe-for-ci-transfer is restricted to CI test harnesses" >&2
+    exit 1
+  }
+  "$ROOT/scripts/bundle_bpy_boundary_probe.sh" \
+    "$BIN_DIRECTORY/NexGenVideoBpyService" \
+    "$APP"
+else
+  [ "${CI:-}" = true ] || {
+    echo "!! --without-bpy-runtime-for-ci-transfer is restricted to CI test harnesses" >&2
+    exit 1
+  }
+  printf '%s\n' \
+    'Managed bpy runtime intentionally omitted: non-product CI transfer while distribution is blocked.' \
+    > "$APP/Contents/Resources/BPY_RUNTIME_OMITTED_FROM_NONPRODUCT_CI.txt"
+fi
 
 "$ROOT/scripts/stage_runtime_dependencies.sh" \
   "$APP/Contents/Frameworks" \
@@ -213,9 +249,28 @@ install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/Mac
 touch "$APP"
 
 if [ "$MODE" = "fast" ]; then
-  echo "==> Codesigning main app with $SIGN_IDENTITY (no timestamp, no helpers)"
+  echo "==> Codesigning fast app"
+  codesign --force --deep --sign "$SIGN_IDENTITY" "$APP"
+  if [ "$BPY_BUNDLE_MODE" = "full" ]; then
+    BPY_RUNTIME="$APP/Contents/Helpers/BpyRuntime"
+    codesign --force --sign "$SIGN_IDENTITY" "$APP/Contents/Helpers/NexGenVideoBpyStorage"
+    codesign --force --sign "$SIGN_IDENTITY" \
+      --entitlements "$ROOT/Runtime/bpy/PythonChild.entitlements" \
+      "$BPY_RUNTIME/python/bin/python3.13"
+    codesign --force --sign "$SIGN_IDENTITY" \
+      --entitlements "$ROOT/Runtime/bpy/PythonChild.entitlements" \
+      "$APP/Contents/Helpers/NexGenVideoBpySupervisor"
+    for BPY_XPC in "$APP/Contents/XPCServices"/NexGenVideoBpyService*.xpc; do
+      codesign --force --sign "$SIGN_IDENTITY" \
+        --entitlements "$ROOT/Runtime/bpy/NexGenVideoBpyService.entitlements" \
+        "$BPY_XPC/Contents/MacOS/NexGenVideoBpyService"
+      codesign --force --sign "$SIGN_IDENTITY" \
+        --entitlements "$ROOT/Runtime/bpy/NexGenVideoBpyService.entitlements" \
+        "$BPY_XPC"
+    done
+  fi
   codesign --force --sign "$SIGN_IDENTITY" "$APP"
-  echo "==> Done: $APP (fast mode — stable identity, no dSYM, no nested re-sign)"
+  echo "==> Done: $APP (fast mode — stable identity, no dSYM)"
   exit 0
 fi
 
@@ -228,10 +283,63 @@ dsymutil "$BIN_DIRECTORY/libNexGenEngine.dylib" -o "$ROOT/.build/NexGenEngine.dS
 if [ "$MODE" = "dev" ]; then
   echo "==> Ad-hoc signing dev app"
   codesign --force --deep --sign - "$APP"
+  if [ "$BPY_BUNDLE_MODE" != "omitted" ]; then
+    codesign --force --sign - "$APP/Contents/Helpers/NexGenVideoBpyStorage"
+    if [ "$BPY_BUNDLE_MODE" = "full" ]; then
+      BPY_RUNTIME="$APP/Contents/Helpers/BpyRuntime"
+      codesign --force --sign - \
+        --entitlements "$ROOT/Runtime/bpy/PythonChild.entitlements" \
+        "$BPY_RUNTIME/python/bin/python3.13"
+    fi
+    codesign --force --sign - \
+      --entitlements "$ROOT/Runtime/bpy/PythonChild.entitlements" \
+      "$APP/Contents/Helpers/NexGenVideoBpySupervisor"
+    for BPY_XPC in "$APP/Contents/XPCServices"/NexGenVideoBpyService*.xpc; do
+      codesign --force --sign - \
+        --entitlements "$ROOT/Runtime/bpy/NexGenVideoBpyService.entitlements" \
+        "$BPY_XPC/Contents/MacOS/NexGenVideoBpyService"
+      codesign --force --sign - \
+        --entitlements "$ROOT/Runtime/bpy/NexGenVideoBpyService.entitlements" \
+        "$BPY_XPC"
+    done
+  fi
+  codesign --force --sign - "$APP"
   codesign --verify --strict --verbose=2 "$APP"
   upload_dsyms
   echo "==> Done: $APP (ad-hoc signed)"
   exit 0
+fi
+
+if [ "$BPY_BUNDLE_MODE" = "full" ]; then
+  BPY_RUNTIME="$APP/Contents/Helpers/BpyRuntime"
+  echo "==> Codesigning managed bpy runtime"
+  codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" \
+    "$APP/Contents/Helpers/NexGenVideoBpyStorage"
+  while IFS= read -r -d '' binary; do
+    [ "$binary" = "$BPY_RUNTIME/python/bin/python3.13" ] && continue
+    if file "$binary" | grep -q 'Mach-O'; then
+      codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$binary"
+    fi
+  done < <(find "$BPY_RUNTIME" -depth -type f -print0)
+  codesign --force --options runtime --timestamp \
+    --entitlements "$ROOT/Runtime/bpy/PythonChild.entitlements" \
+    --sign "$SIGN_IDENTITY" \
+    "$BPY_RUNTIME/python/bin/python3.13"
+  codesign --force --options runtime --timestamp \
+    --entitlements "$ROOT/Runtime/bpy/PythonChild.entitlements" \
+    --sign "$SIGN_IDENTITY" \
+    "$APP/Contents/Helpers/NexGenVideoBpySupervisor"
+  for BPY_XPC in "$APP/Contents/XPCServices"/NexGenVideoBpyService*.xpc; do
+    codesign --force --options runtime --timestamp \
+      --entitlements "$ROOT/Runtime/bpy/NexGenVideoBpyService.entitlements" \
+      --sign "$SIGN_IDENTITY" \
+      "$BPY_XPC/Contents/MacOS/NexGenVideoBpyService"
+    codesign --force --options runtime --timestamp \
+      --entitlements "$ROOT/Runtime/bpy/NexGenVideoBpyService.entitlements" \
+      --sign "$SIGN_IDENTITY" \
+      "$BPY_XPC"
+    codesign --verify --strict --verbose=2 "$BPY_XPC"
+  done
 fi
 
 SPARKLE_CURRENT="$APP/Contents/Frameworks/Sparkle.framework/Versions/Current"

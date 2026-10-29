@@ -220,7 +220,8 @@ final class ToolExecutor {
            workingRoot.standardizedFileURL.resolvingSymlinksInPath() == target {
             return ProjectPackGate.MutationDeclaration(
                 packName: editor.declaredPluginName,
-                binding: editor.declaredPluginBinding
+                binding: editor.declaredPluginBinding,
+                productionContract: editor.declaredProductionContract
             )
         }
         do {
@@ -281,7 +282,8 @@ final class ToolExecutor {
             tool: tool,
             dataRoot: dataRoot,
             declaredPack: declaration.packName,
-            declaredBinding: declaration.binding
+            declaredBinding: declaration.binding,
+            declaredProductionContract: declaration.productionContract
         )
     }
 
@@ -357,6 +359,11 @@ final class ToolExecutor {
             data: ["tool": tool.rawValue, "projectId": editor.projectId ?? "unknown"]
         )
         do {
+            if editor.agentService.currentTaskActivity?.mediaOrganizationScope != nil,
+               ![ToolName.getMedia, .listFolders, .inspectMedia, .getTranscript, .searchMedia,
+                 .getTimeline, .inspectTimeline, .proposeMediaOrganization].contains(tool) {
+                throw ToolError("This organization task may inspect media and propose_media_organization only. Native approval applies selected changes; direct mutation is unavailable.")
+            }
             if let reason = editor.agentService.toolCallBlockReason(
                 tool: tool,
                 args: args,
@@ -388,7 +395,8 @@ final class ToolExecutor {
                         phase: phase,
                         dataRoot: root,
                         declaredPack: declaration.packName,
-                        declaredBinding: declaration.binding
+                        declaredBinding: declaration.binding,
+                        declaredProductionContract: declaration.productionContract
                     )
                 } else if tool.usesCurrentPipelinePhase {
                     let root = try resolveDataRoot(resolved, editor: editor)
@@ -400,7 +408,8 @@ final class ToolExecutor {
                         tool: tool,
                         dataRoot: root,
                         declaredPack: declaration.packName,
-                        declaredBinding: declaration.binding
+                        declaredBinding: declaration.binding,
+                        declaredProductionContract: declaration.productionContract
                     )
                     guardedRoot = root
                     guardedDeclaration = declaration
@@ -435,7 +444,8 @@ final class ToolExecutor {
                     _ = try ProjectPackGate.requireLiveMutation(
                         projectURL: FrameInventory.projectHome(of: mutationRoot),
                         declaredPack: declaration.packName,
-                        declaredBinding: declaration.binding
+                        declaredBinding: declaration.binding,
+                        declaredProductionContract: declaration.productionContract
                     )
                 } catch {
                     throw ToolError(error.localizedDescription, kind: .reopenProject)
@@ -501,6 +511,10 @@ final class ToolExecutor {
                 && !result.isError
                 && result.turnDisposition == .continueTurn
             if tool != .runPhase,
+               !ProductionWorkflowV2.newWriterNames.contains(tool.rawValue),
+               !([ToolName.writeBrief, .writeTreatment].contains(tool)
+                    && (guardedDeclaration?.productionContract != nil
+                        || guardedDeclaration?.binding?.projectSchema == HostWorkflowKey.musicvideoV2Schema)),
                tool != .writeShotlist,
                !result.isError,
                result.turnDisposition == .continueTurn,
@@ -520,17 +534,17 @@ final class ToolExecutor {
                     )
                 }
                 do {
-                    try await phaseMutationRecorder(
-                        editor,
-                        phase,
-                        root,
-                        tool.writesPhaseArtifact(
-                            args: resolved,
-                            dataRoot: root
-                        ),
-                        declaration.packName,
-                        declaration.binding
-                    )
+                    let captureLineage = tool.writesPhaseArtifact(args: resolved, dataRoot: root)
+                    let workflow = try PhaseContractRuntime.resolveWorkflow(dataRoot: root,
+                        expectedPack: declaration.binding, expectedProductionContract: declaration.productionContract)
+                    if workflow?.isProductionV2 == true {
+                        try await editor.pipelineAgentHarness.recordPhaseMutation(phase: phase, dataRoot: root,
+                            captureLineage: captureLineage, declaredPack: declaration.packName,
+                            declaredBinding: declaration.binding, declaredProductionContract: declaration.productionContract)
+                    } else {
+                        try await phaseMutationRecorder(editor, phase, root, captureLineage,
+                            declaration.packName, declaration.binding)
+                    }
                     await editor.refreshEngineState()
                 } catch {
                     phaseRecordFailed = true
@@ -847,6 +861,36 @@ final class ToolExecutor {
 
     private func currentArtifactURL(phase: String, dataRoot: URL, declaredPack: String?) -> URL? {
         let relative: String?
+        if let editor {
+            do {
+                let declaration = try mutationPackDeclaration(editor, dataRoot: dataRoot)
+                let workflow = try PhaseContractRuntime.resolveWorkflow(dataRoot: dataRoot,
+                    expectedPack: declaration.binding, expectedProductionContract: declaration.productionContract)
+                if workflow?.isProductionV2 == true {
+                    let path: String
+                    switch phase {
+                    case "project_init": path = PipelineLayout.projectFile
+                    case "analysis": return AudioProjectLayout.expectedAnalysisArtifactURL(dataRoot: dataRoot)
+                    case "brief": path = PipelineLayout.briefFile
+                    case "production_design": path = PipelineLayout.productionDesignFile
+                    case "treatment": path = PipelineLayout.treatmentCurrentFile
+                    case "script": path = ScriptV1.currentPath
+                    case "storyboard": path = StoryboardV2.currentPath
+                    case "shot_planning": path = ShotPlanningDraftV1.currentPath
+                    case "bible": path = PipelineLayout.bibleFile
+                    case "shotlist":
+                        let projection = try ProductionPlanningLineageV2.projection(dataRoot: dataRoot)
+                        path = ProductionPlanProjectionV1.versionPath(projection.header.revision)
+                    case "sanity": path = PipelineLayout.sanityReportFile
+                    case "frames": path = PipelineLayout.framesManifestFile
+                    case "render_review": path = RenderReviewV1.currentPath
+                    case "render": path = PipelineLayout.renderManifestFile(phase: "final")
+                    default: return nil
+                    }
+                    return try ProjectLocalFile.resolve(path, dataRoot: dataRoot)
+                }
+            } catch { return nil }
+        }
         switch phase {
         case "analysis":
             return AudioProjectLayout.expectedAnalysisArtifactURL(dataRoot: dataRoot)
@@ -911,7 +955,7 @@ final class ToolExecutor {
         case .getTranscript: return try await getTranscript(editor, args)
         case .inspectTimeline: return try await inspectTimeline(editor, args)
         case .searchMedia:   return try await searchMedia(editor, args)
-        case .applyColor:    return try applyColor(editor, args)
+        case .applyColor:    return try await applyColor(editor, args)
         case .applyEffect:   return try applyEffect(editor, args)
         case .inspectColor:  return try await inspectColor(editor, args)
         case .addClips:         return try addClips(editor, args)
@@ -935,6 +979,8 @@ final class ToolExecutor {
         case .showDialog: return try showDialog(editor, args, origin: origin)
         case .showBlocks: return try showBlocks(args)
         case .compilePrompt: return try await compilePrompt(editor, args)
+        case .compileStoryboardSketch: return try await compileStoryboardSketchTool(editor, args)
+        case .assignStoryboardSketch: return try assignStoryboardSketchTool(editor, args)
         case .generateVideo:
             _ = await catalogReadiness()
             return try await generate(editor, args, type: .video, origin: origin)
@@ -955,6 +1001,7 @@ final class ToolExecutor {
         case .listModels:
             _ = await catalogReadiness()
             return listModels(args)
+        case .proposeMediaOrganization: return try proposeMediaOrganization(editor, args, origin: origin)
         case .listFolders:   return listFolders(editor)
         case .createFolder:  return try createFolder(editor, args)
         case .moveToFolder:  return try moveToFolder(editor, args)
@@ -971,11 +1018,19 @@ final class ToolExecutor {
         case .recordAffect:         return try recordAffectTool(editor, args)
         case .writeAnalysisInterpretation:
             return try writeAnalysisInterpretationTool(editor, args)
-        case .writeBrief:           return try writeBriefTool(editor, args)
+        case .writeBrief:           return try await writeProductionBriefTool(editor, args)
         case .writeProductionDesign: return try writeProductionDesignTool(editor, args)
         case .writeTreatment:       return try writeTreatmentTool(editor, args)
         case .writeStoryboard:      return try writeStoryboardTool(editor, args)
-        case .writeBible:           return try writeBibleTool(editor, args)
+        case .writeScript: return try writeScriptTool(editor, args)
+        case .writeStoryboardBundle: return try writeStoryboardBundleTool(editor, args)
+        case .writeShotPlanningDraft: return try writeShotPlanningDraftTool(editor, args)
+        case .prepareProductionAssets: return try await prepareProductionAssetsTool(editor, args)
+        case .getRenderReviewInputs:
+            return try await renderReviewInputsTool(editor, args, origin: origin, toolUseID: toolUseID)
+        case .writeRenderReview:
+            return try await writeRenderReviewTool(editor, args, origin: origin, toolUseID: toolUseID)
+        case .writeBible:           return try await writeBibleTool(editor, args)
         case .writeShotlist:        return try await writeShotlistTool(editor, args)
         case .writePhaseExtension:  return try writePhaseExtensionTool(editor, args)
         case .getPattern:           return try getPatternTool(editor, args)

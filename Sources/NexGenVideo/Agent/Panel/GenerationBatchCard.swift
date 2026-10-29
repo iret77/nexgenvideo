@@ -57,6 +57,7 @@ struct GenerationBatchReviewControls: Equatable {
 }
 
 struct GenerationBatchCard: View {
+    @Environment(\.productionDecisionCompact) private var compact
     let editor: EditorViewModel
     var runtimeEvidenceEnabled = false
     var runtimeEvidence: GenerationBatchReviewRuntimeEvidence? = nil
@@ -82,7 +83,9 @@ struct GenerationBatchCard: View {
             GenerationApprovalCard(
                 title: [GenerationApprovalPresentation.actionLabel(packages: batch.payload.items.map(\.package)),
                     batch.payload.phase.map(PhaseDisplay.label)].compactMap { $0 }.joined(separator: " · "),
-                fillsMaximumHeight: projection.itemCount > 1
+                fillsMaximumHeight: projection.itemCount > 1,
+                identifier: "generation-batch",
+                runtimeEvidenceEnabled: runtimeEvidenceEnabled
             ) {
                 body(batch: batch, projection: projection, controls: controls)
             } footer: {
@@ -134,6 +137,7 @@ struct GenerationBatchCard: View {
     ) -> some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+                if compact { decisionMessages }
                 if let summary = requestSummary(projection) {
                     Text(summary)
                         .interfaceFont(size: AppTheme.FontSize.xxs)
@@ -213,6 +217,39 @@ struct GenerationBatchCard: View {
         return VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
             AppDivider()
             priceSummary(batch: batch, projection: projection)
+                .modifier(GenerationBatchRuntimeProbe(identifier: "generation-batch.cost", enabled: runtimeEvidenceEnabled))
+            if !compact { decisionMessages }
+            GenerationApprovalActions(
+                actionLabel: GenerationApprovalPresentation.actionLabel(packages: batch.payload.items.map(\.package)),
+                phase: batch.payload.phase,
+                canApprove: controls.canApprove || controls.canApproveWithoutEstimate,
+                canEdit: controls.canEdit,
+                onApprove: {
+                    if let phase = batch.payload.phase { editor.revealReviewSurface(for: phase) }
+                    Task {
+                        await coordinator.approve(editor: editor, expectedBatchID: batch.id,
+                            approval: batch.totalEUR == nil ? .acceptUnknownPrices : .verifiedPrices)
+                    }
+                },
+                onDecline: { coordinator.decline(editor: editor) },
+                onApprovePhase: {
+                    if let phase = batch.payload.phase { editor.revealReviewSurface(for: phase) }
+                    Task { await coordinator.approveForPhase(editor: editor, expectedBatchID: batch.id) }
+                },
+                onRevise: { coordinator.requestRevision(editor: editor) },
+                onRetryPricing: coordinator.canRetryPricing
+                    ? { Task { await coordinator.retryPricing(editor: editor) } } : nil,
+                canRetryPricing: controls.canRetryPricing,
+                identifier: "generation-batch",
+                runtimeEvidenceEnabled: runtimeEvidenceEnabled,
+                revisionRequired: coordinator.preflightIssue != nil
+            )
+        }
+    }
+
+    private var decisionMessages: some View {
+        let coordinator = editor.generationBatchCoordinator
+        return Group {
             if let reason = busyReason {
                 Text(reason)
                     .interfaceFont(size: AppTheme.FontSize.xxs)
@@ -247,31 +284,6 @@ struct GenerationBatchCard: View {
                     Text(error).interfaceFont(size: AppTheme.FontSize.xxs).textSelection(.enabled)
                 }
             }
-            GenerationApprovalActions(
-                actionLabel: GenerationApprovalPresentation.actionLabel(packages: batch.payload.items.map(\.package)),
-                phase: batch.payload.phase,
-                canApprove: controls.canApprove || controls.canApproveWithoutEstimate,
-                canEdit: controls.canEdit,
-                onApprove: {
-                    if let phase = batch.payload.phase { editor.revealReviewSurface(for: phase) }
-                    Task {
-                        await coordinator.approve(editor: editor, expectedBatchID: batch.id,
-                            approval: batch.totalEUR == nil ? .acceptUnknownPrices : .verifiedPrices)
-                    }
-                },
-                onDecline: { coordinator.decline(editor: editor) },
-                onApprovePhase: {
-                    if let phase = batch.payload.phase { editor.revealReviewSurface(for: phase) }
-                    Task { await coordinator.approveForPhase(editor: editor, expectedBatchID: batch.id) }
-                },
-                onRevise: { coordinator.requestRevision(editor: editor) },
-                onRetryPricing: coordinator.canRetryPricing
-                    ? { Task { await coordinator.retryPricing(editor: editor) } } : nil,
-                canRetryPricing: controls.canRetryPricing,
-                identifier: "generation-batch",
-                runtimeEvidenceEnabled: runtimeEvidenceEnabled,
-                revisionRequired: coordinator.preflightIssue != nil
-            )
         }
     }
 
@@ -291,7 +303,9 @@ struct GenerationBatchCard: View {
                     .foregroundStyle(AppTheme.Text.primaryColor)
             }
         } else {
-            Text(unknownPriceLabel(batch: batch, projection: projection))
+            Text(compact
+                ? unknownPriceLabel(batch: batch, projection: projection) + String(localized: " · Provider charges apply")
+                : unknownPriceLabel(batch: batch, projection: projection))
                 .interfaceFont(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .fixedSize(horizontal: false, vertical: true)
@@ -566,13 +580,14 @@ struct GenerationBatchDecisionLayout: SwiftUI.Layout {
         let fixed = (finite(subviews[0].sizeThatFits(childProposal).height) ?? AppTheme.Spacing.none)
             + (finite(subviews[2].sizeThatFits(childProposal).height) ?? AppTheme.Spacing.none)
             + spacing + spacing
-        let body = finite(subviews[1].sizeThatFits(childProposal).height) ?? minimumBodyHeight
+        let measuredBody = finite(subviews[1].sizeThatFits(childProposal).height) ?? minimumBodyHeight
         let minimumBody = hasExplicitHeightLimit
             ? min(minimumBodyHeight, AppTheme.ComponentSize.generationBatchCompactBodyMinHeight) : minimumBodyHeight
+        let body = hasExplicitHeightLimit ? max(measuredBody, minimumBody) : measuredBody
         let proposedHeight = finite(proposal.height)
         let preferredMaximum = fillsMaximumHeight && !hasExplicitHeightLimit
             ? max(maximumHeight, proposedHeight ?? maximumHeight) : maximumHeight
-        let ceiling = max(preferredMaximum, fixed + minimumBody)
+        let ceiling = max(preferredMaximum, fixed + (hasExplicitHeightLimit ? AppTheme.Spacing.none : minimumBody))
         let available = min(max(proposedHeight ?? ceiling, fixed), ceiling)
         let height = fillsMaximumHeight ? available : min(fixed + body, available)
         return CGSize(width: width, height: height)

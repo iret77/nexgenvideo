@@ -65,7 +65,7 @@ enum ClaudeModelCapabilityResearchError: Error, Sendable, Equatable {
 enum ClaudeCapabilityResearchProbe {
     static let requiredFlags: Set<String> = [
         "--allowedTools", "--disable-slash-commands", "--disallowedTools", "--effort",
-        "--input-format", "--json-schema", "--max-budget-usd", "--mcp-config", "--model",
+        "--input-format", "--json-schema", "--mcp-config", "--model",
         "--no-chrome", "--no-session-persistence", "--output-format", "--permission-mode",
         "--print", "--restricted", "--safe-mode", "--setting-sources", "--strict-mcp-config",
         "--system-prompt", "--tools", "--verbose",
@@ -186,8 +186,7 @@ enum ClaudeModelCapabilityResearchLaunch {
 
     static func arguments(
         request: ModelCapabilityResearchRequestV1,
-        model: String? = nil,
-        maximumBudgetUSD: Decimal = Decimal(string: "0.75")!
+        model: String? = nil
     ) throws -> [String] {
         let outputSchema = try ModelCapabilityResearchOutputSchema.json(for: request)
         var arguments = [
@@ -208,7 +207,6 @@ enum ClaudeModelCapabilityResearchLaunch {
             "--no-chrome",
             "--no-session-persistence",
             "--effort", "low",
-            "--max-budget-usd", NSDecimalNumber(decimal: maximumBudgetUSD).stringValue,
             "--system-prompt", ModelCapabilityResearchPrompt.system,
             "--json-schema", outputSchema,
         ]

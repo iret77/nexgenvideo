@@ -19,6 +19,7 @@ final class VisualModelLoader {
     private(set) var enabled = SearchIndexConfig.enabled
     @ObservationIgnored private(set) var embedder: VisualEmbedder?
     private let downloader = ModelDownloader()
+    private var isRemovingModel = false
 
     var isReady: Bool { state == .ready }
 
@@ -26,7 +27,7 @@ final class VisualModelLoader {
 
     /// Loads an installed model if present; never downloads. Idempotent
     func prepare() async {
-        guard enabled, state == .unknown else { return }
+        guard enabled, state == .unknown, !isRemovingModel else { return }
         guard let installed = ModelDownloader.installed(for: SearchIndexConfig.manifest) else {
             state = .notInstalled
             return
@@ -36,6 +37,7 @@ final class VisualModelLoader {
     }
 
     func download() {
+        guard !isRemovingModel else { return }
         switch state {
         case .downloading, .preparing, .ready: return
         default: break
@@ -81,6 +83,35 @@ final class VisualModelLoader {
         embedder = nil
         state = .notInstalled
         try? FileManager.default.removeItem(at: ModelDownloader.modelsDir)
+    }
+
+    func removeChecked() async throws {
+        guard !isRemovingModel else {
+            throw NSError(domain: "NexGenVideo.Storage", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Finish the search model operation before removing it."])
+        }
+        switch state {
+        case .downloading, .preparing:
+            throw NSError(domain: "NexGenVideo.Storage", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Finish the search model operation before removing it."])
+        default: break
+        }
+        isRemovingModel = true
+        defer { isRemovingModel = false }
+        state = .preparing
+        await SearchIndexCoordinator.resetAll()
+        do {
+            try await Task.detached {
+                do { try FileManager.default.removeItem(at: ModelDownloader.modelsDir) }
+                catch let error as CocoaError where error.code == .fileNoSuchFile { }
+            }.value
+            embedder = nil
+            state = .notInstalled
+        } catch {
+            state = enabled && embedder != nil ? .ready : .unknown
+            if enabled { SearchIndexCoordinator.sweepAll() }
+            throw error
+        }
     }
 
     private func load(_ installed: ModelDownloader.InstalledModel) async {

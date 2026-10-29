@@ -34,6 +34,7 @@ struct InspectorSectionHeading<Accessory: View>: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel(title)
                 .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+                .reviewAcceptanceProbe("inspector.section." + title, text: expanded ? "expanded" : "collapsed")
             } else {
                 InspectorSectionLabel(title: title)
             }

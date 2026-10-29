@@ -49,6 +49,12 @@ final class SearchIndexCoordinator {
         sweepAll()
     }
 
+    static func clearIndexGloballyChecked() async throws {
+        await resetAll()
+        defer { sweepAll() }
+        try await Task.detached { try EmbeddingStore.clearAllChecked() }.value
+    }
+
     // MARK: - Triggers
 
     func projectOpened() {

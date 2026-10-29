@@ -620,6 +620,7 @@ final class GenerationService {
             editor.importMediaAsset(asset, skipAppend: true)
             editor.appendGenerationLog(for: asset)
             await editor.finalizeImportedAsset(asset)
+            try await GenerationOutputReceipt.record(asset: asset, editor: editor)
             if let batchItem { try await GenerationBatchOutput.record(asset: asset, authorization: batchItem, editor: editor) }
             return true
         } catch {
@@ -1973,6 +1974,7 @@ final class GenerationService {
             editor.appendGenerationLog(for: placeholder)
             await editor.finalizeImportedAsset(placeholder)
             do {
+                try await GenerationOutputReceipt.record(asset: placeholder, editor: editor)
                 if let batchItem { try await GenerationBatchOutput.record(asset: placeholder, authorization: batchItem, editor: editor) }
             } catch {
                 placeholder.generationStatus = .failed(error.localizedDescription)
@@ -2073,6 +2075,7 @@ final class GenerationService {
                 editor.appendGenerationLog(for: placeholder)
                 await editor.finalizeImportedAsset(placeholder)
                 do {
+                    try await GenerationOutputReceipt.record(asset: placeholder, editor: editor)
                     if let batchItem { try await GenerationBatchOutput.record(asset: placeholder, authorization: batchItem, editor: editor) }
                 } catch {
                     placeholder.generationStatus = .failed(error.localizedDescription)
@@ -2276,6 +2279,7 @@ final class GenerationService {
             editor.importMediaAsset(placeholder, skipAppend: true)
             editor.appendGenerationLog(for: placeholder)
             await editor.finalizeImportedAsset(placeholder)
+            try await GenerationOutputReceipt.record(asset: placeholder, editor: editor)
             if let batchItem = authorization.batchItem {
                 try await GenerationBatchOutput.record(asset: placeholder, authorization: batchItem, editor: editor)
             }

@@ -118,4 +118,9 @@ struct EmbeddingStore {
         try? FileManager.default.removeItem(at: directory)
     }
 
+    static func clearAllChecked(at root: URL = EmbeddingStore.directory) throws {
+        do { try FileManager.default.removeItem(at: root) }
+        catch let error as CocoaError where error.code == .fileNoSuchFile { }
+    }
+
 }

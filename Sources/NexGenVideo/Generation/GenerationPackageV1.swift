@@ -11,6 +11,7 @@ struct GenerationPackageV1: Codable, Sendable, Equatable {
         let resetTrim: Bool?
         let timelineFPS: Int?
         let clipSHA256: String?
+        var linkedSourcesSHA256: String? = nil
 
         @MainActor
         init(_ placement: GenerationRequest.Placement, editor: EditorViewModel) throws {
@@ -26,6 +27,8 @@ struct GenerationPackageV1: Codable, Sendable, Equatable {
                 timelineFPS = editor.timeline.fps
                 guard let clip = editor.clipFor(id: id) else { throw GenerationRequestError.optionsInvalid("The replacement clip is no longer available.") }
                 clipSHA256 = FileDigest.sha256(of: try GenerationPackageV1.canonicalData(clip))
+                linkedSourcesSHA256 = FileDigest.sha256(of: try GenerationPackageV1.canonicalData(
+                    GenerationClipReplacement.Snapshot.targets(clipID: id, timeline: editor.timeline)))
             }
             try requireCurrent(editor: editor)
         }
@@ -35,6 +38,12 @@ struct GenerationPackageV1: Codable, Sendable, Equatable {
             if let folderID, editor.folder(id: folderID) == nil { throw GenerationRequestError.gate("The destination folder changed. Prepare the request again.") }
             if let timelineFPS, timelineFPS != editor.timeline.fps { throw GenerationRequestError.gate("The timeline frame rate changed. Prepare the request again.") }
             if let clipID {
+                if let linkedSourcesSHA256 {
+                    guard try FileDigest.sha256(of: GenerationPackageV1.canonicalData(
+                        GenerationClipReplacement.Snapshot.targets(clipID: clipID, timeline: editor.timeline))) == linkedSourcesSHA256 else {
+                        throw GenerationRequestError.gate("The destination clip or linked sources changed. Prepare the replacement again.")
+                    }
+                }
                 guard let clip = editor.clipFor(id: clipID), try FileDigest.sha256(of: GenerationPackageV1.canonicalData(clip)) == clipSHA256 else {
                     throw GenerationRequestError.gate("The destination clip changed. Prepare the replacement again.")
                 }
@@ -180,6 +189,7 @@ struct GenerationPackageV1: Codable, Sendable, Equatable {
             switch parameters.parameters {
             case .image(let image): return image.maskURL == slot ? "image_mask" : "image_reference"
             case .audio: return "source_video"
+            case .upscale: return "source"
 
             case .video(let video):
                 if video.sourceVideoURL == slot { return "source_video" }
@@ -214,10 +224,11 @@ struct GenerationPackageV1: Codable, Sendable, Equatable {
     @MainActor
     func requireCurrentContext(editor: EditorViewModel) async throws {
         let modality: PromptComposer.Modality
-        switch payload.modality {
+        switch payload.operation == "upscale" ? "image" : (payload.operation == "music" ? "music" : payload.modality) {
         case "image": modality = .image
         case "video": modality = .video
         case "audio": modality = .audio
+        case "music": modality = .music
         default: throw GenerationRequestError.gate("The generation package has an unsupported modality.")
         }
         let home = editor.workingRoot
@@ -225,7 +236,7 @@ struct GenerationPackageV1: Codable, Sendable, Equatable {
             editor: editor,
             shotId: payload.binding.shotId,
             modality: modality,
-            modelId: payload.target.modelId
+            modelId: payload.target.modelId, frameRole: payload.binding.frameRole
         ).matchesCurrentState(of: payload.binding),
               try await PromptComposer.inputFingerprint(projectDir: home) == payload.compilerInputsSHA256,
               editor.workingRoot == home else {

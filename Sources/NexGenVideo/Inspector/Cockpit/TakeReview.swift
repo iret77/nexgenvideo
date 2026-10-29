@@ -31,7 +31,21 @@ struct TakeReview: Codable, Sendable, Equatable {
         let durationValue: Int64
         let durationTimescale: Int32
         let referenceImages: [RenderInputProof]
+        let shotNumber: Int?
+        let shotName: String?
         var durationSeconds: Double { Double(durationValue) / Double(durationTimescale) }
+
+        init(home: URL, take: PipelineRenderTakeV1, mediaURL: URL, durationValue: Int64, durationTimescale: Int32,
+             referenceImages: [RenderInputProof], shotNumber: Int? = nil, shotName: String? = nil) {
+            self.home = home
+            self.take = take
+            self.mediaURL = mediaURL
+            self.durationValue = durationValue
+            self.durationTimescale = durationTimescale
+            self.referenceImages = referenceImages
+            self.shotNumber = shotNumber
+            self.shotName = shotName
+        }
     }
     let schema: String
     let takeID: String
@@ -60,8 +74,19 @@ struct TakeReview: Codable, Sendable, Equatable {
             guard try FileDigest.sha256(of: url) == take.output.sha256 else { throw ToolError("The take's media bytes changed. Restore its original output before review.") }
             let duration = try await AVURLAsset(url: url).load(.duration)
             guard duration.isNumeric, duration.value > 0, duration.timescale > 0 else { throw ToolError("The take has no finite playable duration.") }
+            let declaration = try ProjectPackGate.captureMutationDeclaration(projectURL: home)
+            let workflow = try PhaseContractRuntime.resolveWorkflow(dataRoot: root, expectedPack: declaration.binding,
+                expectedProductionContract: declaration.productionContract)
+            let number: Int?
+            let name: String?
+            if workflow?.isProductionV2 == true {
+                let projection = try ProductionPlanningLineageV2.projection(dataRoot: root)
+                let index = projection.shots.firstIndex { $0.id == take.shotID }
+                number = index.map { $0 + 1 }
+                name = index.map { projection.shots[$0].primaryAction }
+            } else { number = nil; name = nil }
             return Snapshot(home: home, take: take, mediaURL: url, durationValue: duration.value, durationTimescale: duration.timescale,
-                referenceImages: references)
+                referenceImages: references, shotNumber: number, shotName: name)
         }.value
     }
 
@@ -124,8 +149,9 @@ struct TakeReview: Codable, Sendable, Equatable {
             return asset
         }
         if let asset = try existing() { return asset }
+        let label = snapshot.shotNumber.map { String(localized: "Shot \($0)") } ?? snapshot.take.shotID
         let asset = MediaAsset(id: snapshot.take.generationEventID, url: snapshot.mediaURL, type: .video,
-            name: "\(snapshot.take.shotID) · \(snapshot.take.phase) take", duration: snapshot.durationSeconds, generationInput: snapshot.take.generationInput)
+            name: "\(label) · \(snapshot.take.phase) take", duration: snapshot.durationSeconds, generationInput: snapshot.take.generationInput)
         await asset.loadMetadata()
         guard editor.workingRoot == snapshot.home, let root = DataRootResolver.dataRoot(of: snapshot.home),
               let key = editor.openWorkingCopyKey,
@@ -133,9 +159,9 @@ struct TakeReview: Codable, Sendable, Equatable {
             throw ToolError("The project or pipeline operation changed. Select the take again when Render is idle.")
         }
         defer { editor.pipelinePhaseRunCoordinator.endMutation(projectRoot: root, id: lease) }
-        _ = try ProjectPackGate.requireLiveMutation(projectURL: snapshot.home, declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding)
+        _ = try ProjectPackGate.requireLiveMutation(projectURL: snapshot.home, declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding, declaredProductionContract: editor.declaredProductionContract)
         try PipelinePhaseAccess.requireCurrentPhaseAndIntake("render", dataRoot: root,
-            declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding)
+            declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding, declaredProductionContract: editor.declaredProductionContract)
         if let asset = try existing() { return asset }
         try ProjectWorkingCopy.markDirty(key: key)
         editor.importMediaAsset(asset)
@@ -149,9 +175,16 @@ struct TakeReview: Codable, Sendable, Equatable {
             throw ToolError("Review the take before selecting it in the active project.")
         }
         try PipelinePhaseAccess.requireCurrentPhaseAndIntake("render", dataRoot: root,
-            declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding)
+            declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding, declaredProductionContract: editor.declaredProductionContract)
         let source = try await capture(takeID: take.id, home: home)
         _ = try await retainedAsset(snapshot: source, editor: editor)
+        let declaration = ProjectPackGate.MutationDeclaration(packName: editor.declaredPluginName,
+            binding: editor.declaredPluginBinding, productionContract: editor.declaredProductionContract)
+        if try PhaseContractRuntime.resolveWorkflow(dataRoot: root, expectedPack: declaration.binding,
+            expectedProductionContract: declaration.productionContract)?.isProductionV2 == true {
+            try await PipelineProductionRenderWriter.selectNative(snapshot: source, editor: editor)
+            return
+        }
         let proof = try JSONDecoder().decode(RenderShotProvenanceProofV1.self,
             from: Data(contentsOf: ProjectLocalFile.requireHash(take.provenance.sha256, at: take.provenance.path, dataRoot: root)))
         let result = await ToolExecutor(editor: editor).execute(name: ToolName.recordRender.rawValue, args: [
@@ -179,9 +212,9 @@ struct TakeReview: Codable, Sendable, Equatable {
             throw ToolError("Wait for the active pipeline operation before recording the review.")
         }
         defer { editor.pipelinePhaseRunCoordinator.endMutation(projectRoot: root, id: lease) }
-        _ = try ProjectPackGate.requireLiveMutation(projectURL: snapshot.home, declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding)
+        _ = try ProjectPackGate.requireLiveMutation(projectURL: snapshot.home, declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding, declaredProductionContract: editor.declaredProductionContract)
         try PipelinePhaseAccess.requireCurrentPhaseAndIntake("render", dataRoot: root,
-            declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding)
+            declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding, declaredProductionContract: editor.declaredProductionContract)
         let review = Self(schema: "take-review/v1", takeID: snapshot.take.id, outputSHA256: snapshot.take.output.sha256,
             durationValue: snapshot.durationValue, durationTimescale: snapshot.durationTimescale,
             reviewer: "native-user", findings: findings, reviewedAt: currentTimestamp())

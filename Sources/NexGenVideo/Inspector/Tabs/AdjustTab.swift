@@ -91,6 +91,8 @@ extension InspectorView {
         [
             EffectControl(effectId: "blur.sharpen", paramKey: "amount", label: "Sharpen"),
             EffectControl(effectId: "blur.noiseReduction", paramKey: "amount", label: "Noise Reduction"),
+            EffectControl(effectId: "blur.noiseReduction", paramKey: "chroma", label: "Noise Chroma"),
+            EffectControl(effectId: "blur.noiseReduction", paramKey: "detail", label: "Noise Detail"),
             EffectControl(effectId: "detail.clarity", paramKey: "clarity", label: "Clarity"),
             EffectControl(effectId: "detail.clarity", paramKey: "dehaze", label: "Dehaze"),
         ]
@@ -107,6 +109,16 @@ extension InspectorView {
     @ViewBuilder
     func effectsTabContent() -> some View {
         let clips = nonTextVisualClips
+        let single = clips.count == 1 ? clips.first : nil
+        InspectorKeyframesContent(isPresented: single != nil && editor.keyframesPanelVisible, keyframesFirstWhenStacked: true) {
+            effectAdjustmentSections(clips: clips)
+        } keyframes: {
+            if let single { KeyframesPanel(clip: single, effectsOnly: true) }
+        }
+        .inspectorKeyframeAccessoryColumn(single != nil)
+    }
+
+    private func effectAdjustmentSections(clips: [Clip]) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
             adjustSection(title: "Basic Correction", effectIds: basicEffectIds, clips: clips) {
                 adjustSubgroup(title: "Tone", controls: toneControls, clips: clips)
@@ -176,6 +188,7 @@ extension InspectorView {
                     : "No adjustments yet")
                 .accessibilityLabel("\(enablement == .on ? "Disable" : "Enable") \(title)")
                 .accessibilityValue(enablement.accessibilityValue)
+                .reviewAcceptanceProbe("inspector.adjust.bypass." + title, state: hasEffects, text: enablement.accessibilityValue)
             }
             .padding(.horizontal, AppTheme.Spacing.lg)
             .padding(.vertical, AppTheme.Spacing.smMd)
@@ -310,7 +323,7 @@ extension InspectorView {
 
     @ViewBuilder
     private func wheelsContent(clips: [Clip]) -> some View {
-        HStack(alignment: .top, spacing: AppTheme.Spacing.md) {
+        WrapLayout(spacing: AppTheme.Spacing.md) {
             wheelControl("Lift", prefix: "lift", clips: clips)
             wheelControl("Gamma", prefix: "gamma", clips: clips)
             wheelControl("Gain", prefix: "gain", clips: clips)
@@ -335,25 +348,18 @@ extension InspectorView {
             onMasterChanged: { setControlParam(EffectControl(effectId: "color.wheels", paramKey: mKey), label: title, value: $0, clips: clips, commit: false) },
             onMasterCommit: { setControlParam(EffectControl(effectId: "color.wheels", paramKey: mKey), label: title, value: $0, clips: clips, commit: true) }
         )
+        .disabled(!canEditEffect(clips, type: "color.wheels", keys: [prefix + "_x", prefix + "_y", mKey]))
+        .help(canEditEffect(clips, type: "color.wheels", keys: [prefix + "_x", prefix + "_y", mKey]) ? title : "Move playhead inside the animated clip")
     }
 
     private func wheelParam(_ clip: Clip, _ key: String, default def: Double) -> Double {
-        (clip.effects ?? []).first { $0.type == "color.wheels" }?.params[key]?.resolved(at: 0, default: def) ?? def
+        (clip.effects ?? []).first { $0.type == "color.wheels" }?.params[key]?.resolved(at: editor.activeFrame - clip.startFrame, default: def) ?? def
     }
 
     /// Both pad axes upserted in one mutation so a drag is a single undo entry.
     private func setWheelColor(_ prefix: String, _ x: Double, _ y: Double, clips: [Clip], commit: Bool) {
-        let xc = EffectControl(effectId: "color.wheels", paramKey: "\(prefix)_x")
-        let yc = EffectControl(effectId: "color.wheels", paramKey: "\(prefix)_y")
-        let mutate: (inout [Effect]) -> Void = { [self] effects in
-            upsertControl(&effects, control: xc, value: x)
-            upsertControl(&effects, control: yc, value: y)
-        }
-        if commit {
-            commitEffects(clips, actionName: "Adjust \(prefix.capitalized)", mutate)
-        } else {
-            applyEffects(clips, mutate)
-        }
+        editor.setEffectParameters(clipIDs: clips.map(\.id), type: "color.wheels",
+            values: [prefix + "_x": x, prefix + "_y": y], commit: commit, action: "Adjust " + prefix.capitalized)
     }
 
     // MARK: LUT
@@ -361,9 +367,37 @@ extension InspectorView {
     @ViewBuilder
     private func lutContent(clips: [Clip]) -> some View {
         let path = lutPath(in: clips)
+        let problems = editor.unresolvedEffectResourceProblems.filter { problem in clips.contains { $0.id == problem.clipID } }
         VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+            ForEach(problems) { problem in
+                Text(problem.message)
+                    .interfaceFont(size: AppTheme.Typography.ui)
+                    .foregroundStyle(AppTheme.Status.errorColor)
+                    .reviewAcceptanceProbe("inspector.lut.offline", text: problem.name)
+            }
+            if !problems.isEmpty {
+                HStack(spacing: AppTheme.Spacing.sm) {
+                    Button("Relink…") { chooseLUT(clips: clips) }
+                        .buttonStyle(.capsule(.secondary))
+                        .reviewAcceptanceProbe("inspector.lut.relink")
+                    Button("Remove LUT") {
+                        let ids = Set(problems.map(\.effectID))
+                        commitEffects(clips, actionName: "Remove Missing LUT") { effects in
+                            effects.removeAll { ids.contains($0.id) }
+                        }
+                    }
+                    .buttonStyle(.capsule(.secondary))
+                    .reviewAcceptanceProbe("inspector.lut.remove")
+                }
+                .disabled(lutMutationID != nil)
+            }
             lutFileRow(path: path, clips: clips)
             if path != nil { lutIntensityRow(clips: clips) }
+            if lutMutationID != nil { ProgressView("Loading LUT…").interfaceFont(size: AppTheme.Typography.ui) }
+            if let lutLoadError {
+                Text(lutLoadError).interfaceFont(size: AppTheme.Typography.ui).foregroundStyle(AppTheme.Status.errorColor)
+                    .reviewAcceptanceProbe("inspector.lut.error", text: lutLoadError)
+            }
         }
     }
 
@@ -373,24 +407,19 @@ extension InspectorView {
                 HStack(spacing: AppTheme.Spacing.xs) {
                     Image(systemName: "square.stack.3d.up")
                         .interfaceFont(size: AppTheme.Typography.ui)
-                        .foregroundStyle(AppTheme.Text.tertiaryColor)
-                    Text(path.map { ($0 as NSString).lastPathComponent } ?? "Choose…")
+                    Text(lutDisplayName(in: clips) ?? "Choose…")
                         .interfaceFont(size: AppTheme.Typography.ui)
-                        .foregroundStyle(path == nil ? AppTheme.Text.tertiaryColor : AppTheme.Text.primaryColor)
                         .lineLimit(1)
                         .truncationMode(.middle)
+                        .reviewAcceptanceProbe("inspector.lut.name", text: lutDisplayName(in: clips) ?? "Choose…")
                     Spacer(minLength: 0)
                 }
-                .padding(.horizontal, AppTheme.Spacing.smMd)
-                .padding(.vertical, AppTheme.Spacing.xs)
                 .frame(maxWidth: .infinity)
-                .background(
-                    RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
-                        .fill(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.hint))
-                )
             }
-            .buttonStyle(.plain)
-            .help(path ?? "Choose a .cube LUT file")
+            .buttonStyle(.capsule(.secondary))
+            .help(lutDisplayName(in: clips) ?? "Choose a .cube LUT file")
+            .disabled(lutMutationID != nil)
+            .reviewAcceptanceProbe("inspector.lut.choose", state: lutMutationID == nil, text: path ?? "")
         }
         .frame(minHeight: AppTheme.Timeline.keyframeRowHeight)
     }
@@ -399,7 +428,7 @@ extension InspectorView {
         let spec = EffectRegistry.descriptor(id: "color.lut")?.params.first { $0.key == "intensity" }
         let range = spec?.range ?? 0...1
         let value = lutIntensity(in: clips)
-        return InspectorFormRow(label: "Intensity") {
+        return InspectorAnimatableFormRow(label: "Intensity", showsAccessory: clips.count == 1) {
             HStack(spacing: AppTheme.Spacing.sm) {
                 AdjustSlider(
                     value: value, range: range, defaultValue: spec?.defaultValue ?? 1,
@@ -410,10 +439,17 @@ extension InspectorView {
                 .frame(minWidth: AppTheme.ComponentSize.inspectorSliderMinWidth)
                 ScrubbableNumberField(
                     value: value, range: range, displayMultiplier: 100, format: "%.0f",
-                    valueSuffix: "%", accessibilityName: "LUT intensity",
+                    valueSuffix: "%", accessibilityName: "LUT intensity value",
+                    acceptanceIdentifier: "inspector.lut.intensity",
                     dragSensitivity: 0.5, fieldWidth: AppTheme.ComponentSize.scrubFieldStandard,
                     onChanged: { setLUTIntensity($0, clips: clips, commit: false) }
                 ) { setLUTIntensity($0, clips: clips, commit: true) }
+            }
+            .disabled(!canEditEffect(clips, type: "color.lut", keys: ["intensity"]))
+            .help(canEditEffect(clips, type: "color.lut", keys: ["intensity"]) ? "LUT intensity" : "Move playhead inside the animated clip")
+        } accessory: {
+            if clips.count == 1, let clip = clips.first {
+                effectKeyframeControls(EffectControl(effectId: "color.lut", paramKey: "intensity"), clip: clip, label: "LUT intensity")
             }
         }
         .frame(minHeight: AppTheme.Timeline.keyframeRowHeight)
@@ -423,14 +459,25 @@ extension InspectorView {
         (clips.first?.effects ?? []).first { $0.type == "color.lut" }?.params["path"]?.string
     }
 
+    private func lutDisplayName(in clips: [Clip]) -> String? {
+        guard let effect = clips.first?.effects?.first(where: { $0.type == "color.lut" }) else { return nil }
+        if let name = effect.params["name"]?.string, !name.isEmpty { return name }
+        guard let path = effect.params["path"]?.string else { return nil }
+        return ProjectEffectResources.isPortable(path) ? "Project LUT" : URL(fileURLWithPath: path).lastPathComponent
+    }
+
     private func lutIntensity(in clips: [Clip]) -> Double? {
         sharedClipValue(clips) { clip in
             (clip.effects ?? []).first { $0.type == "color.lut" }?
-                .params["intensity"]?.resolved(at: 0, default: 1) ?? 1
+                .params["intensity"]?.resolved(at: editor.activeFrame - clip.startFrame, default: 1) ?? 1
         }
     }
 
     private func chooseLUT(clips: [Clip]) {
+        let home = editor.workingRoot, key = editor.openWorkingCopyKey
+        let selection = editor.selectedClipIds, timeline = editor.timeline
+        let declaredName = editor.declaredPluginName, binding = editor.declaredPluginBinding
+        let contract = editor.declaredProductionContract
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
@@ -439,34 +486,64 @@ extension InspectorView {
         if let cube = UTType(filenameExtension: "cube") { panel.allowedContentTypes = [cube] }
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
+            guard editor.workingRoot == home, editor.openWorkingCopyKey == key,
+                  editor.selectedClipIds == selection, editor.timeline == timeline,
+                  editor.declaredPluginName == declaredName, editor.declaredPluginBinding == binding,
+                  editor.declaredProductionContract == contract else {
+                lutLoadError = "The project or clip selection changed. Choose the LUT again."; return
+            }
             setLUTPath(url.path, clips: clips)
         }
     }
 
     private func setLUTPath(_ path: String, clips: [Clip]) {
-        // Copy into project storage so the LUT survives saves/moves (project packages drop unknown files).
-        guard let stored = try? LUTLoader.store(path: path, projectId: editor.projectId) else { return }
-        commitEffects(clips, actionName: "Apply LUT") { effects in
-            if let i = effects.firstIndex(where: { $0.type == "color.lut" }) {
-                effects[i].params["path"] = EffectParam(string: stored)
-            } else {
-                var effect = Effect(type: "color.lut")
-                effect.params["path"] = EffectParam(string: stored)
-                effects.insert(effect, at: alwaysOnInsertIndex(effects, for: "color.lut"))
+        guard lutMutationID == nil else { return }
+        guard let home = editor.workingRoot, let key = editor.openWorkingCopyKey else {
+            lutLoadError = "Open a project before loading a LUT."; return
+        }
+        let operation = UUID(), timeline = editor.timeline, selection = editor.selectedClipIds
+        let binding = editor.declaredPluginBinding, contract = editor.declaredProductionContract
+        let declaredName = editor.declaredPluginName
+        let name = URL(fileURLWithPath: path).lastPathComponent
+        lutMutationID = operation; lutLoadError = nil
+        Task { @MainActor in
+            defer { if lutMutationID == operation { lutMutationID = nil } }
+            do {
+                _ = try ProjectPackGate.requireLiveMutation(projectURL: home, declaredPack: declaredName,
+                    declaredBinding: binding, declaredProductionContract: contract)
+                try ProjectWorkingCopy.markDirty(key: key)
+                let stored = try await Task.detached(priority: .userInitiated) {
+                    try LUTLoader.store(path: path, projectRoot: home)
+                }.value
+                guard lutMutationID == operation, editor.workingRoot == home, editor.openWorkingCopyKey == key,
+                      editor.timeline == timeline, editor.selectedClipIds == selection,
+                      editor.declaredPluginName == declaredName, editor.declaredPluginBinding == binding,
+                      editor.declaredProductionContract == contract else {
+                    throw ToolError("The project or clip selection changed. Choose the LUT again.")
+                }
+                _ = try ProjectPackGate.requireLiveMutation(projectURL: home, declaredPack: declaredName,
+                    declaredBinding: binding, declaredProductionContract: contract)
+                commitEffects(clips, actionName: "Apply LUT") { effects in
+                    if let i = effects.firstIndex(where: { $0.type == "color.lut" }) {
+                        effects[i].params["path"] = EffectParam(string: stored)
+                        effects[i].params["name"] = EffectParam(string: name)
+                    } else {
+                        var effect = Effect(type: "color.lut")
+                        effect.params["path"] = EffectParam(string: stored)
+                        effect.params["name"] = EffectParam(string: name)
+                        effects.insert(effect, at: alwaysOnInsertIndex(effects, for: "color.lut"))
+                    }
+                }
+            } catch {
+                if lutMutationID == operation, editor.workingRoot == home { lutLoadError = error.localizedDescription }
             }
         }
     }
 
     private func setLUTIntensity(_ value: Double, clips: [Clip], commit: Bool) {
-        let mutate: (inout [Effect]) -> Void = { effects in
-            guard let i = effects.firstIndex(where: { $0.type == "color.lut" }) else { return }
-            effects[i].params["intensity"] = EffectParam(value: value)
-        }
-        if commit {
-            commitEffects(clips, actionName: "Change LUT Intensity", mutate)
-        } else {
-            applyEffects(clips, mutate)
-        }
+        let existing = clips.filter { $0.effects?.contains(where: { $0.type == "color.lut" }) == true }
+        editor.setEffectParameter(clipIDs: existing.map(\.id), type: "color.lut", key: "intensity",
+                                  value: value, commit: commit, action: "Change LUT Intensity")
     }
 
     // MARK: Adjustment rows
@@ -477,7 +554,7 @@ extension InspectorView {
            let spec = descriptor.params.first(where: { $0.key == control.paramKey }) {
             let label = control.label ?? spec.label
             let value = sharedClipValue(clips) { controlValue($0, control, spec) }
-            InspectorFormRow(label: label) {
+            InspectorAnimatableFormRow(label: label, showsAccessory: clips.count == 1) {
                 HStack(spacing: AppTheme.Spacing.sm) {
                     AdjustSlider(
                         value: value,
@@ -494,53 +571,40 @@ extension InspectorView {
                         range: spec.range,
                         format: effectParamFormat(spec),
                         valueSuffix: spec.unit.isEmpty ? "" : " \(spec.unit)",
-                        accessibilityName: label,
+                        accessibilityName: label + " value",
+                        acceptanceIdentifier: "inspector.adjust.value." + control.effectId + "." + control.paramKey,
                         dragSensitivity: effectParamSensitivity(spec),
                         fieldWidth: AppTheme.ComponentSize.scrubFieldStandard,
                         onChanged: { setControlParam(control, label: label, value: $0, clips: clips, commit: false) }
                     ) { setControlParam(control, label: label, value: $0, clips: clips, commit: true) }
                 }
+                .disabled(!canEditEffect(clips, type: control.effectId, keys: [control.paramKey]))
+                .help(canEditEffect(clips, type: control.effectId, keys: [control.paramKey]) ? label : "Move playhead inside the animated clip")
+            } accessory: {
+                if clips.count == 1, let clip = clips.first { effectKeyframeControls(control, clip: clip, label: label) }
             }
             .frame(minHeight: AppTheme.Timeline.keyframeRowHeight)
         }
     }
 
+    private func canEditEffect(_ clips: [Clip], type: String, keys: [String]) -> Bool {
+        clips.allSatisfy { clip in
+            clip.contains(timelineFrame: editor.activeFrame) || keys.allSatisfy { key in
+                clip.effects?.first(where: { $0.type == type })?.params[key]?.track?.isActive != true
+            }
+        }
+    }
+
     private func controlValue(_ clip: Clip, _ control: EffectControl, _ spec: EffectParamSpec) -> Double {
         (clip.effects ?? []).first { $0.type == control.effectId }?
-            .params[control.paramKey]?.resolved(at: 0, default: spec.defaultValue) ?? spec.defaultValue
+            .params[control.paramKey]?.resolved(at: editor.activeFrame - clip.startFrame, default: spec.defaultValue) ?? spec.defaultValue
     }
 
     private func setControlParam(
         _ control: EffectControl, label: String, value: Double, clips: [Clip], commit: Bool
     ) {
-        let mutate: (inout [Effect]) -> Void = { [self] effects in
-            upsertControl(&effects, control: control, value: value)
-        }
-        if commit {
-            commitEffects(clips, actionName: "Change \(label)", mutate)
-        } else {
-            applyEffects(clips, mutate)
-        }
-    }
-
-    /// Upsert one param into the singleton effect of its type, inserting in canonical
-    /// order when first touched and pruning it when every param returns to default
-    /// (so a neutral adjustment carries no effect / no render pass).
-    private func upsertControl(_ effects: inout [Effect], control: EffectControl, value: Double) {
-        guard let descriptor = EffectRegistry.descriptor(id: control.effectId) else { return }
-        if let i = effects.firstIndex(where: { $0.type == control.effectId }) {
-            effects[i].params[control.paramKey] = EffectParam(value: value)
-            let allDefault = descriptor.params.allSatisfy { spec in
-                (effects[i].params[spec.key]?.value ?? spec.defaultValue) == spec.defaultValue
-            }
-            if allDefault { effects.remove(at: i) }
-        } else {
-            let paramDefault = descriptor.params.first { $0.key == control.paramKey }?.defaultValue
-            guard value != paramDefault else { return }
-            var effect = descriptor.makeEffect()
-            effect.params[control.paramKey] = EffectParam(value: value)
-            effects.insert(effect, at: alwaysOnInsertIndex(effects, for: control.effectId))
-        }
+        editor.setEffectParameter(clipIDs: clips.map(\.id), type: control.effectId, key: control.paramKey,
+                                  value: value, commit: commit, action: "Change " + label)
     }
 
     private func alwaysOnInsertIndex(_ effects: [Effect], for effectId: String) -> Int {

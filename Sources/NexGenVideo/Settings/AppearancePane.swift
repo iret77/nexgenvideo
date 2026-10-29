@@ -14,6 +14,7 @@ struct AppearancePane: View {
                     }
                     .labelsHidden()
                     .accessibilityLabel("Interface text size")
+                    .reviewAcceptanceProbe("settings.general.scale", text: String(textScale))
                 }
             }
         }

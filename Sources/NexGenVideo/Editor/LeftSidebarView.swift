@@ -70,5 +70,6 @@ struct LeftSidebarView: View {
             .contentShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
         }
         .buttonStyle(.plain)
+        .reviewAcceptanceProbe("editor.sidebar." + tab.rawValue)
     }
 }
