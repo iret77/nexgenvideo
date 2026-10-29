@@ -175,6 +175,10 @@ enum PluginLoader {
         UserDefaults.standard.set(selected, forKey: selectedVersionsKey)
     }
 
+    static func requestedVersionForNextLaunch(id: String) -> String? {
+        (UserDefaults.standard.dictionary(forKey: selectedVersionsKey) as? [String: String])?[id]
+    }
+
     static func clearRequestedVersion(id: String, version: String? = nil) {
         var selected = UserDefaults.standard.dictionary(
             forKey: selectedVersionsKey
@@ -441,7 +445,8 @@ enum PluginLoader {
                 resourceRoot: preparedContract.resourceRoot,
                 hardSteps: preparedContract.hardSteps,
                 registry: registry,
-                historicalCompatibility: preparedContract.historicalCompatibility
+                historicalCompatibility: preparedContract.historicalCompatibility,
+                projectSchema: info.projectSchema
             )
             try PhaseContractRuntime.validateLockedMusicvideoIfNeeded(
                 resolvedContract,

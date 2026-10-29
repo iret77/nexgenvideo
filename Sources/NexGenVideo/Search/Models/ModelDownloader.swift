@@ -69,6 +69,15 @@ final class ModelDownloader: @unchecked Sendable {
         baseURL: URL,
         progress: (@Sendable (Double) -> Void)? = nil
     ) async throws -> InstalledModel {
+        try await install(manifest: manifest, baseURL: baseURL, verifiedArchive: nil, progress: progress)
+    }
+
+    func install(
+        manifest: Manifest,
+        baseURL: URL,
+        verifiedArchive: (@Sendable (URL, Manifest.File) throws -> Void)?,
+        progress: (@Sendable (Double) -> Void)? = nil
+    ) async throws -> InstalledModel {
         if let existing = Self.installed(for: manifest) { return existing }
 
         let fm = FileManager.default
@@ -87,6 +96,10 @@ final class ModelDownloader: @unchecked Sendable {
                 progress?((base + fileFraction * Double(file.bytes)) / Double(totalBytes))
             }
             try Self.verify(zipURL, sha256: file.sha256)
+            if let verifiedArchive {
+                try verifiedArchive(zipURL, file)
+                try Self.verify(zipURL, sha256: file.sha256)
+            }
             let extracted = try Self.unzip(zipURL, in: staging)
             // Encoder zips contain an .mlpackage to compile; the tokenizer zip is plain files.
             if extracted.pathExtension == "mlpackage" {

@@ -135,9 +135,18 @@ struct GenerationBatchAuthorization: Sendable, Equatable {
             throw GenerationRequestError.gate("The approved provider and model are unavailable. This item cannot switch routes automatically.")
         }
         if let root = DataRootResolver.dataRoot(of: home) {
+            let tool: ToolName
+            switch package.payload.operation == "upscale" ? "upscale" : package.payload.modality {
+            case "upscale": tool = .upscaleMedia
+            case "image": tool = .generateImage
+            case "video": tool = .generateVideo
+            case "audio": tool = .generateAudio
+            default: throw GenerationRequestError.gate("The approved batch operation is not supported by this phase.")
+            }
             let phase = try editor.pipelineAgentHarness.guardCurrentPhaseWork(
-                tool: package.payload.modality == "image" ? .generateImage : .generateVideo,
-                dataRoot: root, declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding)
+                tool: tool, dataRoot: root, declaredPack: editor.declaredPluginName,
+                declaredBinding: editor.declaredPluginBinding,
+                declaredProductionContract: editor.declaredProductionContract)
             guard phase == snapshot.batch.payload.phase else {
                 throw GenerationRequestError.gate("The pipeline phase changed after batch approval.")
             }

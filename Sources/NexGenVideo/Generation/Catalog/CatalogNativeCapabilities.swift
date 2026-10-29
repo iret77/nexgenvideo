@@ -55,6 +55,28 @@ enum CatalogNativeCapabilities {
                 value: (known ?? true) && caps.supportsLyrics, semantics: .hardAPILimit,
                 origin: origin, evidence: (current?.evidence ?? []) + [evidence]
             )
+        case .video(let caps) where offer.provider == .runway && entry.id == "runway/seedance2_5"
+                && caps.sourceVideoOperation == .extendForward:
+            func flag(_ id: String, _ supported: Bool) {
+                let prior = fields.booleans[id]
+                let known = prior.flatMap { $0.semantics == .defensiveDefault ? nil : $0.value }
+                fields.booleans[id] = .init(value: (known ?? true) && supported, semantics: .hardAPILimit,
+                    origin: origin, evidence: (prior?.evidence ?? []) + [CapabilityEvidenceV1(
+                        sourceURL: "https://docs.dev.runwayml.com/openapi.json",
+                        sourceTitle: "Runway Seedance 2.5 video-to-video OpenAPI", observedAt: "2026-10-18",
+                        kind: .documentedAPI, confidence: 1)])
+            }
+            flag(CapabilityFieldIDV1.sourceVideo, true)
+            flag(CapabilityFieldIDV1.firstFrame, false)
+            flag(CapabilityFieldIDV1.lastFrame, false)
+            flag(CapabilityFieldIDV1.nativeAudio, true)
+            count(CapabilityFieldIDV1.referenceImages, 0)
+            count(CapabilityFieldIDV1.referenceVideos, 0)
+            count(CapabilityFieldIDV1.referenceAudios, 0)
+            count(CapabilityFieldIDV1.totalReferences, 0)
+            seconds(CapabilityFieldIDV1.durationMinimum, 4, minimum: true)
+            seconds(CapabilityFieldIDV1.durationMaximum, 30, minimum: false)
+            values(CapabilityFieldIDV1.modes, ["video-to-video"])
         case .video, .upscale:
             return capability
         }

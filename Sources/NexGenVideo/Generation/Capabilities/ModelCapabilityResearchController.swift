@@ -107,15 +107,22 @@ enum ModelCapabilityResearchTargetBuilder {
         catalog: ModelCatalog,
         records: [ModelCapabilityResearchOverlayRecordV1],
         corpus: ModelCapabilityCorpusDocument?,
-        now: Date = Date()
+        now: Date = Date(),
+        activation: ProviderActivation = .current()
     ) -> [ModelCapabilityResearchTargetV1] {
         guard let corpus else { return [] }
         var result: [ModelCapabilityResearchTargetV1] = []
         var seen = Set<String>()
         for modelID in catalog.curatedOfferingCapabilitiesByModelID.keys.sorted() {
-            guard GenerationProvider.canRun(modelId: modelID),
+            let runnable = catalog.settingsBindings(forModelID: modelID, activation: activation)
+            guard !runnable.isEmpty,
                   let capabilities = catalog.curatedOfferingCapabilitiesByModelID[modelID],
-                  let capability = preferredCapability(capabilities, modelID: modelID),
+                  let capability = capabilities.first(where: { capability in
+                      runnable.contains { binding in
+                          binding.provider.rawValue == capability.offering.providerID
+                              && binding.providerRef == capability.offering.endpointID
+                      }
+                  }),
                   let target = target(
                     capability: capability,
                     modelDisplayName: ModelRegistry.displayName(for: modelID),
@@ -339,6 +346,7 @@ final class ModelCapabilityResearchController {
     @ObservationIgnored private let locateExecutable: @Sendable () -> URL?
     @ObservationIgnored private let probe: Probe
     @ObservationIgnored private let research: Research
+    @ObservationIgnored private let catalog: ModelCatalog
     @ObservationIgnored private var didStart = false
     @ObservationIgnored private var researchTask: Task<Void, Never>?
     @ObservationIgnored private var operationID = UUID()
@@ -351,12 +359,14 @@ final class ModelCapabilityResearchController {
         probe: @escaping Probe = { try ClaudeCapabilityResearchProbe.run(executableURL: $0) },
         research: @escaping Research = {
             try await ClaudeModelCapabilityResearchTransport().research($0, proof: $1)
-        }
+        },
+        catalog: ModelCatalog = .shared
     ) {
         self.store = store
         self.locateExecutable = locateExecutable
         self.probe = probe
         self.research = research
+        self.catalog = catalog
     }
 
     func start() {
@@ -454,11 +464,12 @@ final class ModelCapabilityResearchController {
         Task {
             do {
                 _ = try await store.accept(review, fieldIDs: selectedFieldIDs)
-                await reloadRecords(refreshCatalog: true)
+                guard await reloadRecords(refreshCatalog: true) else { return }
                 self.review = nil
                 self.selectedFieldIDs = []
                 phase = .accepted
-                statusMessage = "Local specifications saved and applied."
+                statusMessage = catalog.lastError.map { "Local specifications saved. \($0)" }
+                    ?? "Local specifications saved."
             } catch {
                 phase = .failed
                 statusMessage = Self.message(for: error)
@@ -491,7 +502,7 @@ final class ModelCapabilityResearchController {
                 case .enable: try await store.enable(recordID)
                 case .delete: try await store.delete(recordID)
                 }
-                await reloadRecords(refreshCatalog: true)
+                guard await reloadRecords(refreshCatalog: true) else { return }
             } catch {
                 phase = .failed
                 statusMessage = Self.message(for: error)
@@ -499,18 +510,21 @@ final class ModelCapabilityResearchController {
         }
     }
 
-    private func reloadRecords(refreshCatalog: Bool = false) async {
+    @discardableResult
+    private func reloadRecords(refreshCatalog: Bool = false) async -> Bool {
         do {
             let snapshot = try await store.snapshot()
             records = snapshot.records
             recordsLoaded = true
             if refreshCatalog {
-                ModelCatalog.shared.refreshCapabilityResolution()
+                catalog.applyResearchRecords(snapshot.records)
             }
+            return true
         } catch {
             recordsLoaded = false
             phase = .failed
             statusMessage = "Local capability knowledge could not be loaded."
+            return false
         }
     }
 

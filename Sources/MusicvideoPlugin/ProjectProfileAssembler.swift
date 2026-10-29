@@ -29,7 +29,7 @@ public enum ProjectProfileAssembler {
     static let audioConfidence = 0.9
 
     /// Confidence for an agent-detected affect (audio analysis + lyrics), and for a user override.
-    static let agentAffectConfidence = 0.85
+    static let agentAffectConfidence = 0.7
     static let overrideConfidence = 1.0
 
     public static func assemble(

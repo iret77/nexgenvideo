@@ -105,6 +105,7 @@ enum RunwayModelRegistry {
             maxReferences: 3, maxImages: 1
         ),
         videoEdit("runway/aleph2", "Runway Aleph 2 (restyle)", apiModel: "aleph2"),
+        videoExtension(),
     ]
 
     static let entries: [CatalogEntry] = models.map(entryWithOffer)
@@ -156,7 +157,7 @@ enum RunwayModelRegistry {
                 guard case .video(let capabilities) = entry.uiCapabilities else { return nil }
                 return ResolvedVideoOfferingCapabilitiesV1(
                     videoCapabilities: capabilities,
-                    supportsNativeAudio: false
+                    supportsNativeAudio: capabilities.sourceVideoOperation == .extendForward
                 )
             }()
         )]
@@ -244,6 +245,17 @@ enum RunwayModelRegistry {
             apiModel: apiModel,
             imageRequest: nil
         )
+    }
+
+    private static func videoExtension() -> RunwayModel {
+        RunwayModel(entry: CatalogEntry(id: "runway/seedance2_5", kind: .video,
+            displayName: "Seedance 2.5 (Runway extension)", allowedEndpoints: ["runway/seedance2_5"],
+            responseShape: .video, uiCapabilities: .video(VideoCaps(durationRange: .init(min: 4, max: 30),
+                resolutions: nil, aspectRatios: [], supportsFirstFrame: false, supportsLastFrame: false,
+                maxReferenceImages: 0, maxReferenceVideos: 0, maxReferenceAudios: 0, maxTotalReferences: 0,
+                maxCombinedVideoRefSeconds: nil, maxCombinedAudioRefSeconds: nil, framesAndReferencesExclusive: false,
+                referenceTagNoun: "image", requiresSourceVideo: true, requiresReferenceImage: false,
+                sourceVideoOperation: .extendForward))), apiModel: "seedance2_5", imageRequest: nil)
     }
 
     private static func image(

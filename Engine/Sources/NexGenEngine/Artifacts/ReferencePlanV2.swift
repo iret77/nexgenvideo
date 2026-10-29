@@ -339,8 +339,26 @@ public enum ReferencePlannerV2 {
         graph: AssetGraphV1,
         candidate: ProductionRouteCandidateV1
     ) throws -> ReferencePlanBuildResultV2 {
+        return try plan(
+            id: id, dataRoot: dataRoot, route: route, requirement: requirement,
+            demandSet: demandSet, graph: graph, candidate: candidate,
+            assetGraphPath: PipelineLayout.assetGraphFile, demandSetPath: PipelineLayout.referenceDemandSetFile(shotID: demandSet.shotID)
+        )
+    }
+
+    public static func plan(
+        id: String,
+        dataRoot: URL,
+        route: ProductionRouteV1,
+        requirement: ProductionRequirementV1,
+        demandSet: ReferenceDemandSetV1,
+        graph: AssetGraphV1,
+        candidate: ProductionRouteCandidateV1,
+        assetGraphPath: String,
+        demandSetPath: String
+    ) throws -> ReferencePlanBuildResultV2 {
         try require(id, field: "reference_plan.id")
-        try AssetGraphValidatorV1.validate(demandSet, against: graph)
+        try AssetGraphValidatorV1.validate(demandSet, against: graph, assetGraphPath: assetGraphPath)
         try AssetGraphValidatorV1.validateProjectFiles(graph, dataRoot: dataRoot)
         try ProductionRequirementResolverV1.validateBindings(
             requirement,
@@ -425,7 +443,7 @@ public enum ReferencePlannerV2 {
             demandSet: demandSet,
             assetGraph: graph,
             dataRoot: dataRoot,
-            candidate: candidate
+            candidate: candidate, assetGraphPath: assetGraphPath
         ) else {
             throw ReferencePlanValidationErrorV2.routeBindingMismatch
         }
@@ -499,7 +517,7 @@ public enum ReferencePlannerV2 {
             demandSet: CanonicalArtifactReferenceV1(
                 id: demandSet.id,
                 role: ReferenceDemandSetV1.artifactRole,
-                path: PipelineLayout.referenceDemandSetFile(shotID: demandSet.shotID),
+                path: demandSetPath,
                 sha256: FileDigest.sha256(of: demandData)
             ),
             route: ReferencePlanRouteBindingV2(
@@ -517,7 +535,7 @@ public enum ReferencePlannerV2 {
             },
             optionalDrops: drops
         )
-        try validateStructure(plan, demandSet: demandSet, graph: graph)
+        try validateStructure(plan, demandSet: demandSet, graph: graph, demandSetPath: demandSetPath)
         try validateProjectFiles(plan, dataRoot: dataRoot)
         return .plan(plan)
     }
@@ -559,7 +577,25 @@ public enum ReferencePlannerV2 {
         graph: AssetGraphV1,
         candidate: ProductionRouteCandidateV1
     ) throws {
-        try validateStructure(plan, demandSet: demandSet, graph: graph)
+        try validate(
+            plan, dataRoot: dataRoot, route: route, requirement: requirement,
+            demandSet: demandSet, graph: graph, candidate: candidate,
+            assetGraphPath: PipelineLayout.assetGraphFile, demandSetPath: PipelineLayout.referenceDemandSetFile(shotID: demandSet.shotID)
+        )
+    }
+
+    public static func validate(
+        _ plan: ReferencePlanV2,
+        dataRoot: URL,
+        route: ProductionRouteV1,
+        requirement: ProductionRequirementV1,
+        demandSet: ReferenceDemandSetV1,
+        graph: AssetGraphV1,
+        candidate: ProductionRouteCandidateV1,
+        assetGraphPath: String,
+        demandSetPath: String
+    ) throws {
+        try validateStructure(plan, demandSet: demandSet, graph: graph, demandSetPath: demandSetPath)
         let result = try self.plan(
             id: plan.id,
             dataRoot: dataRoot,
@@ -567,7 +603,7 @@ public enum ReferencePlannerV2 {
             requirement: requirement,
             demandSet: demandSet,
             graph: graph,
-            candidate: candidate
+            candidate: candidate, assetGraphPath: assetGraphPath, demandSetPath: demandSetPath
         )
         guard case .plan(let expected) = result, expected == plan else {
             throw ReferencePlanValidationErrorV2.nonDeterministicPlan
@@ -587,7 +623,8 @@ public enum ReferencePlannerV2 {
     private static func validateStructure(
         _ plan: ReferencePlanV2,
         demandSet: ReferenceDemandSetV1,
-        graph: AssetGraphV1
+        graph: AssetGraphV1,
+        demandSetPath: String
     ) throws {
         guard plan.schema == referencePlanV2Schema else {
             throw ReferencePlanValidationErrorV2.unsupportedSchema(plan.schema)
@@ -601,9 +638,7 @@ public enum ReferencePlannerV2 {
         let demandData = try AssetGraphCanonicalCodecV1.encode(demandSet)
         guard plan.demandSet.id == demandSet.id,
               plan.demandSet.role == ReferenceDemandSetV1.artifactRole,
-              plan.demandSet.path == PipelineLayout.referenceDemandSetFile(
-                shotID: demandSet.shotID
-              ),
+              plan.demandSet.path == demandSetPath,
               plan.demandSet.sha256 == FileDigest.sha256(of: demandData) else {
             throw ReferencePlanValidationErrorV2.demandBindingMismatch
         }

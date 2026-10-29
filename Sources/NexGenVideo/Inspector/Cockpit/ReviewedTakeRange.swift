@@ -95,9 +95,9 @@ struct ReviewedTakeRange: Codable, Sendable, Equatable {
             throw ToolError("Wait for the active pipeline operation before saving the range review.")
         }
         defer { editor.pipelinePhaseRunCoordinator.endMutation(projectRoot: root, id: lease) }
-        _ = try ProjectPackGate.requireLiveMutation(projectURL: snapshot.home, declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding)
+        _ = try ProjectPackGate.requireLiveMutation(projectURL: snapshot.home, declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding, declaredProductionContract: editor.declaredProductionContract)
         try PipelinePhaseAccess.requireCurrentPhaseAndIntake("render", dataRoot: root,
-            declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding)
+            declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding, declaredProductionContract: editor.declaredProductionContract)
         let record = Self(schema: "reviewed-take-range/v1", takeID: snapshot.take.id, source: snapshot.take.output,
             range: range, sourceDurationValue: snapshot.durationValue, sourceDurationTimescale: snapshot.durationTimescale,
             reviewer: "native-user", findings: findings, reviewedAt: currentTimestamp())
@@ -140,9 +140,9 @@ struct ReviewedTakeRange: Codable, Sendable, Equatable {
             throw ToolError("The timeline or pipeline operation changed. Add the reviewed range again when it is idle.")
         }
         defer { editor.pipelinePhaseRunCoordinator.endMutation(projectRoot: root, id: lease) }
-        _ = try ProjectPackGate.requireLiveMutation(projectURL: home, declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding)
+        _ = try ProjectPackGate.requireLiveMutation(projectURL: home, declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding, declaredProductionContract: editor.declaredProductionContract)
         try PipelinePhaseAccess.requireCurrentPhaseAndIntake("render", dataRoot: root,
-            declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding)
+            declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding, declaredProductionContract: editor.declaredProductionContract)
         guard try load(id: id, dataRoot: root) == review else { throw ToolError("The immutable range review changed.") }
         try ProjectWorkingCopy.markDirty(key: key)
         try editor.withTimelineSwap(actionName: "Add Reviewed Range") {

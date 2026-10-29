@@ -8,10 +8,193 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
+from test_workspace_ui_v2_owner import owner_fixture
+
 from workspace_ui_acceptance import (
     ALL_CASES, main, native_film_screenshots, run_scale,
-    valid_musicvideo_review, valid_production_workbench,
+    activity_evidence, generic_nle_evidence, valid_musicvideo_review, valid_production_workbench,
+    POSTPRODUCTION_CONTROL_IDS, postproduction_control_evidence,
+    POSTPRODUCTION_NATIVE_VALUES, POSTPRODUCTION_CAPTURE_LABELS, postproduction_native_evidence,
+    native_lut_evidence,
 )
+
+
+class GenericNLEEvidenceTests(unittest.TestCase):
+    def lut_inputs(self):
+        value = {"firstSHA256": "c" * 64, "secondSHA256": "d" * 64,
+                 "firstPath": "resources/luts/" + "c" * 64 + ".cube",
+                 "secondPath": "resources/luts/" + "d" * 64 + ".cube", "readableName": "Look.cube", "selectedIntensity": 1,
+                 "invalidError": "The LUT is unreadable or its stored bytes changed. Choose a valid .cube LUT, or remove the effect.",
+                 **{key: True for key in ("cancelPreservedTimeline", "invalidFileVisible", "sameFilenameBytesPreserved",
+                     "intensityBypassReset", "nativeUndoRedo", "playerItemCompositionVerified", "nativeSaveAndReopen", "exportGradeVerified")}}
+        interactions = [{"kind": "file-panel", "path": name, "selectedURLVerified": True, "nativePathEditorVerified": True}
+                        for name in ("Invalid.cube", "Look.cube", "Look.cube")]
+        interactions += [{"kind": "file-panel-cancel"}]
+        interactions += [{"kind": "text", "field": {"id": "inspector.lut.intensity",
+            "actual": value, "expected": value, "requiresFocusExit": True, "focusLeftTarget": True,
+            "ownsEditor": False, "stage": "commit-requested"}} for value in ("50", "100")]
+        interactions += [{"kind": "pointer", "id": key} for key in (
+            "inspector.adjust.bypass.LUTs", "inspector.adjust.bypass.LUTs", "inspector.reset.Reset luts")]
+        images = ["generic-nle-150-lut-" + label + ".png" for label in ("invalid", "inverted", "intensity", "portable-replacement")]
+        recovery_images = ["native-lut-recovery-150-" + label + ".png" for label in ("missing-on-open", "relinked")]
+        value["legacyRecovery"] = {**{key: True for key in (
+            "openedWithVisibleProblem", "nativeRemoveUndo", "nativeRelink", "nativeSaveAndReopen", "originalProjectPreserved",
+            "replacementAbsentBeforeSave")},
+            "originalPackageSHA256Before": "e" * 64, "originalPackageSHA256After": "e" * 64,
+            "replacementSHA256": value["secondSHA256"], "screenshots": recovery_images,
+            "interactions": [{"kind": "pointer", "id": key} for key in (
+                "editor.lut.review", "inspector.lut.remove", "inspector.lut.relink")]
+            + [{"kind": "keyboard", "characters": key} for key in ("z", "s")]
+            + [{"kind": "file-panel", "path": "Look.cube", "selectedURLVerified": True, "nativePathEditorVerified": True}]}
+        images += recovery_images
+        return value, interactions, images
+
+    def test_lut_evidence_requires_distinct_portable_bytes_and_native_path(self):
+        value, interactions, images = self.lut_inputs()
+        self.assertTrue(native_lut_evidence(value, interactions, images))
+        for key in value:
+            changed = dict(value)
+            changed.pop(key)
+            self.assertFalse(native_lut_evidence(changed, interactions, images))
+        for index in range(len(interactions)):
+            self.assertFalse(native_lut_evidence(value, interactions[:index] + interactions[index + 1:], images))
+        for index in range(len(images)):
+            self.assertFalse(native_lut_evidence(value, interactions, images[:index] + images[index + 1:]))
+        self.assertFalse(native_lut_evidence({**value, "firstSHA256": value["secondSHA256"],
+            "firstPath": value["secondPath"]}, interactions, images))
+        for index in range(len(value["legacyRecovery"]["interactions"])):
+            changed = copy.deepcopy(value)
+            changed["legacyRecovery"]["interactions"].pop(index)
+            self.assertFalse(native_lut_evidence(changed, interactions, images))
+
+    def test_lut_recovery_requires_missing_resource_and_unchanged_original_package(self):
+        value, interactions, images = self.lut_inputs()
+        for key, invalid in (("replacementAbsentBeforeSave", False), ("originalPackageSHA256Before", ""),
+                             ("originalPackageSHA256After", "f" * 64)):
+            changed = copy.deepcopy(value)
+            changed["legacyRecovery"][key] = invalid
+            self.assertFalse(native_lut_evidence(changed, interactions, images))
+        self.assertFalse(native_lut_evidence({**value, "invalidError": "Choose a LUT."}, interactions, images))
+
+    def finishing_inputs(self):
+        fields = [{"kind": "text", "field": {"id": key, "expected": value, "actual": value,
+                   "stage": "commit-requested", "commitInput": "Tab", "requiresFocusExit": True,
+                   "focusLeftTarget": True, "ownsEditor": False, "window": 7}}
+                  for key, values in POSTPRODUCTION_NATIVE_VALUES.items() for value in values]
+        drags = [{"kind": "drag", "id": key, "window": 7, "start": [0.5, 0.5],
+                  "end": [0.7, 0.4] if key.startswith("inspector.wheel.") else [0.5, 0.25]}
+                 for key in ("inspector.wheel.Lift", "inspector.wheel.Gamma", "inspector.wheel.Gain",
+                             *(["inspector.curve.canvas"] * 4), *(["inspector.hue-curve.canvas"] * 3))]
+        segments = [{"kind": "segment-accessibility", "id": key, "item": channel}
+                    for key, channels in (("inspector.curve.channel", ("Y", "R", "G", "B")),
+                                          ("inspector.hue-curve.channel", ("Hue", "Sat", "Luma")))
+                    for channel in channels]
+        clicks = [{"kind": "pointer", "id": key} for key in (
+            "inspector.transform.arrow.left.and.right", "inspector.transform.arrow.up.and.down",
+            "inspector.adjust.bypass.Basic Correction", "inspector.adjust.bypass.Basic Correction",
+            "inspector.reset.Reset basic correction", "inspector.wheel.level.Lift",
+            "inspector.wheel.level.Gamma", "inspector.wheel.level.Gain")]
+        images = [f"generic-nle-150-{index}-finishing-{label}.png"
+                  for index, label in enumerate(POSTPRODUCTION_CAPTURE_LABELS)]
+        return fields + drags + segments + clicks, images
+
+    def test_finishing_labels_cannot_replace_native_inputs_and_captures(self):
+        interactions, images = self.finishing_inputs()
+        self.assertTrue(postproduction_native_evidence(interactions, images))
+        for index, item in enumerate(interactions):
+            with self.subTest(index=index, kind=item["kind"]):
+                self.assertFalse(postproduction_native_evidence(interactions[:index] + interactions[index + 1:], images))
+        for index in range(len(images)):
+            self.assertFalse(postproduction_native_evidence(interactions, images[:index] + images[index + 1:]))
+        for key, value in (("actual", "0"), ("focusLeftTarget", False), ("requiresFocusExit", False),
+                           ("ownsEditor", True), ("stage", "type"), ("window", 9)):
+            changed = copy.deepcopy(interactions)
+            changed[0]["field"][key] = value
+            self.assertFalse(postproduction_native_evidence(changed, images))
+        self.assertFalse(postproduction_native_evidence(interactions + [interactions[0]], images))
+
+    def test_finishing_requires_each_independent_control_and_render_restore(self):
+        record = {"controls": sorted(POSTPRODUCTION_CONTROL_IDS),
+                  "playerItemCompositionExposureAndWheels": True, "baselineRestored": True}
+        self.assertTrue(postproduction_control_evidence(record))
+        for control in POSTPRODUCTION_CONTROL_IDS:
+            self.assertFalse(postproduction_control_evidence({**record,
+                "controls": [item for item in record["controls"] if item != control]}))
+        for key in ("playerItemCompositionExposureAndWheels", "baselineRestored"):
+            self.assertFalse(postproduction_control_evidence({**record, key: False}))
+        self.assertFalse(postproduction_control_evidence({**record, "controls": record["controls"] * 2}))
+
+    @patch("workspace_ui_acceptance.color_reference_evidence", side_effect=lambda value, *_: (value == {"fixture": "bounded-color"}, []))
+    def test_native_round_trip_requires_real_inputs_decode_and_visible_captures(self, color_check):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            finishing_interactions, finishing_images = self.finishing_inputs()
+            lut, lut_interactions, lut_images = self.lut_inputs()
+            images = [f"native-{index}.png" for index in range(6)] + finishing_images + lut_images
+            for name in images:
+                (output / name).write_bytes(b"\x89PNG\r\n\x1a\n" + b"image" * 250)
+            interactions = [{"kind": "keyboard", "characters": key} for key in ("k", "z", "Z", "c", "v", "s")]
+            interactions += finishing_interactions + lut_interactions
+            record = {"event": "generic-nle", "scale": 1.5, "viewport": [960, 640],
+                      "decodedFrames": 240, "durationSeconds": 8, "motionPixels": 50,
+                      "finishingControls": {"controls": sorted(POSTPRODUCTION_CONTROL_IDS),
+                          "playerItemCompositionExposureAndWheels": True, "baselineRestored": True},
+                      "screenshots": images, "interactions": interactions, "nativeLUT": lut, "colorReference": {"fixture": "bounded-color"},
+                      **{key: True for key in ("nativeImport", "libraryImportDidNotInsert", "nativeSourceInsert",
+                          "nativeSplitUndoRedo", "nativeClipboardUndoRedo", "nativePostproduction",
+                          "nativeExportAndPoster", "visibleQC", "nativeSaveAndReopen", "noProductionEnrollment",
+                          "splitBoundaryVerified", "unsavedBaselineVerified")},
+                      **{key: "a" * 64 for key in ("timelineSHA256", "outputSHA256", "posterSHA256")}}
+            completed = {"event": "completed", "case": "genericnle", "scale": 1.5}
+            self.assertTrue(generic_nle_evidence([record, completed], output, 1.5)[0])
+            for field, value in (("motionPixels", 0), ("decodedFrames", 239), ("nativeSaveAndReopen", False), ("colorReference", None),
+                                 ("visibleQC", False), ("splitBoundaryVerified", False), ("unsavedBaselineVerified", False),
+                                 ("durationSeconds", 8.1), ("posterSHA256", ""), ("finishingControls", {}), ("interactions", interactions[:5]),
+                                 ("screenshots", images[:5]), ("viewport", [1470, 950])):
+                with self.subTest(field=field):
+                    self.assertFalse(generic_nle_evidence([{**record, field: value}, completed], output, 1.5)[0])
+            self.assertFalse(generic_nle_evidence([record], output, 1.5)[0])
+            self.assertFalse(generic_nle_evidence([record, completed, {"event": "failed"}], output, 1.5)[0])
+
+
+class ActivityEvidenceTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.output = Path(self.directory.name)
+        self.row = {"event": "production-activity", "scale": 1.5,
+                    "inspectorRestored": True, "preferencesPreserved": True, "workspaceTransitions": True,
+                    "minimumViewport": {"width": 960, "height": 640}, "decisions": [], "screenshots": []}
+        for operation in ("decline", "approve", "rewind"):
+            name = f"activity-{operation}.png"
+            (self.output / name).write_bytes(b"\x89PNG\r\n\x1a\nfixture")
+            self.row["screenshots"].append(name)
+            self.row["decisions"].append({"operation": operation,
+                "phase": "storyboard" if operation == "rewind" else "brief",
+                "controlID": "agent.gate.decline" if operation == "decline" else "agent.gate.approve",
+                "activityStayedOpen": True, "disjointControls": True, "nativeClick": True,
+                "gatesBeforeSHA256": "a" * 64, "gatesAfterSHA256": ("a" if operation == "decline" else "b") * 64,
+                "activityFrame": {"x": 700, "y": 0, "width": 260, "height": 600},
+                "primaryFrame": {"x": 500, "y": 500, "width": 180, "height": 40},
+                "declineFrame": {"x": 250, "y": 500, "width": 100, "height": 40}})
+
+    def test_native_decisions_need_disjoint_controls_and_matching_gate_changes(self):
+        self.assertTrue(activity_evidence([self.row], self.output, 1.5)[0])
+        for field, value in (("nativeClick", False), ("activityStayedOpen", False),
+                             ("gatesAfterSHA256", "a" * 64),
+                             ("primaryFrame", {"x": 750, "y": 500, "width": 180, "height": 40})):
+            with self.subTest(field=field):
+                changed = copy.deepcopy(self.row)
+                changed["decisions"][1][field] = value
+                self.assertFalse(activity_evidence([changed], self.output, 1.5)[0])
+
+    def test_missing_scale_restoration_or_capture_cannot_pass(self):
+        self.assertFalse(activity_evidence([self.row], self.output, 1.0)[0])
+        self.row["preferencesPreserved"] = False
+        self.assertFalse(activity_evidence([self.row], self.output, 1.5)[0])
+        self.row["preferencesPreserved"] = True
+        self.row["screenshots"][0] = "missing.png"
+        self.assertFalse(activity_evidence([self.row], self.output, 1.5)[0])
 
 
 class FilmReviewEvidenceTests(unittest.TestCase):
@@ -94,7 +277,7 @@ class FilmReviewEvidenceTests(unittest.TestCase):
                 "screenshots": [f"{phase}-{state}.png" for state in ("blocked", "ready", "approved")],
             })
         generation = self.row["generation"]
-        generation["nativeScreenshots"] = ["native-approval.png", "native-take-review.png", "native-take-selected.png"]
+        generation["nativeScreenshots"] = ["native-approval.png", "native-take-review.png", "native-take-selected.png", "native-take-workspace.png"]
         generation["nativeApproval"] = {
             "authorityBefore": False, "journalCountBefore": 0, "requestCountBefore": 0, "spendCountBefore": 0,
             "authorityAfterID": "authority", "approvedPackageSHA256": generation["packageID"], "pricingOverrideItemIDs": ["item"],
@@ -120,9 +303,10 @@ class FilmReviewEvidenceTests(unittest.TestCase):
             actions.extend([("take.observation", "", finding["observation"]), ("take.start", "0.0", "1.0"),
                             ("take.end", "4.0", "3.0"), ("take.record-pass", str(index), str(index + 1))])
         actions.extend([("take.save", "0", "6"), ("take.use", "none", "take"), ("take.close", "open", "closed")])
+        actions.append(("take.workspace.select.take", "none", "take"))
         generation["nativeInteractions"] = [
             {"index": index, "controlID": control, "before": before, "after": after,
-             "windowNumber": 100 if index < 2 else 200, "documentWindowNumber": 100,
+             "windowNumber": 100 if index < 2 or control.startswith("take.workspace.select.") else 200, "documentWindowNumber": 100,
              "frame": [10, 10, 200, 30], "viewport": [0, 0, 960, 640]}
             for index, (control, before, after) in enumerate(actions)
         ]
@@ -140,20 +324,16 @@ class FilmReviewEvidenceTests(unittest.TestCase):
         self.assertTrue(valid_musicvideo_review(self.row, self.output))
 
     def film_rows(self, scale=1.0):
-        return [{**self.row, "event": "musicvideo-film-review", "scale": scale},
-                {"event": "completed", "case": "filmreview", "scale": scale}]
+        return owner_fixture(self.output, scale)
 
     def write_film_images(self):
-        for name in self.row["screenshots"] + native_film_screenshots(self.row):
-            (self.output / name).write_bytes(b"\x89PNG\r\n\x1a\n" + b"pixels" * 200)
+        owner_fixture(self.output)
 
     def test_film_scope_runs_all_scales_without_claiming_full_workspace_acceptance(self):
-        self.write_film_images()
-
         def launch(command, **kwargs):
             self.assertEqual(command, ["fixture-app", "-ApplePersistenceIgnoreState", "YES"])
             self.assertEqual(kwargs["env"]["NGV_WORKSPACE_UI_CASE"], "filmreview")
-            self.assertEqual(kwargs["timeout"], 180)
+            self.assertEqual(kwargs["timeout"], 600)
             scale = float(kwargs["env"]["NGV_WORKSPACE_UI_SCALE"])
             return SimpleNamespace(returncode=0, stdout="\n".join(map(json.dumps, self.film_rows(scale))))
 
@@ -165,16 +345,16 @@ class FilmReviewEvidenceTests(unittest.TestCase):
         self.assertFalse(report["fullWorkspaceAcceptance"])
         self.assertEqual(report["scope"], "filmreview")
         self.assertEqual(report["selectedCases"], ["filmreview"])
-        self.assertEqual(report["unexecutedCases"], list(ALL_CASES[:-1]))
+        self.assertEqual(report["unexecutedCases"], [case for case in ALL_CASES if case != "filmreview"])
         self.assertEqual([run["scale"] for run in report["runs"]], [1.0, 1.25, 1.5])
-        self.assertTrue(all(run["scope"] == "filmreview" and len(run["screenshots"]) == 45 for run in report["runs"]))
+        self.assertTrue(all(run["scope"] == "filmreview" and len(run["screenshots"]) == 43 for run in report["runs"]))
 
     def test_film_scope_requires_exit_completion_native_actions_and_all_delivery_files(self):
         for failure in ("exit", "missing-completion", "wrong-case", "wrong-scale", "duplicate-review",
-                        "failed-event", "native-action", "film-image", "gate-image", "generation-image", "movie", "receipt"):
+                        "failed-event", "native-action", "film-image", "gate-image", "movie", "receipt", "legacy-report"):
             with self.subTest(failure=failure):
-                self.write_film_images()
-                rows = copy.deepcopy(self.film_rows())
+                rows = self.film_rows()
+                directory = self.output / rows[0]["evidenceDirectory"]
                 code = 1 if failure == "exit" else 0
                 if failure == "missing-completion":
                     rows.pop()
@@ -187,15 +367,17 @@ class FilmReviewEvidenceTests(unittest.TestCase):
                 elif failure == "failed-event":
                     rows.append({"event": "failed", "scale": 1.0})
                 elif failure == "native-action":
-                    rows[0]["generation"]["nativeInteractions"].pop()
-                elif failure in ("movie", "receipt"):
-                    rows[0]["movie" if failure == "movie" else "deliveryReceipt"] = "missing"
+                    rows[0]["nativeEvidence"]["interactions"].pop(0)
+                elif failure == "movie":
+                    (directory / "owner-v2-film.mp4").write_bytes(b"changed")
+                elif failure == "receipt":
+                    (directory / "owner-v2-delivery.json").write_text("{}")
                 elif failure == "film-image":
-                    (self.output / rows[0]["screenshots"][0]).write_bytes(b"invalid")
+                    (directory / rows[0]["nativeEvidence"]["screenshots"][0]).write_bytes(b"invalid")
                 elif failure == "gate-image":
-                    (self.output / rows[0]["nativeGateApprovals"][0]["screenshots"][0]).write_bytes(b"invalid")
-                elif failure == "generation-image":
-                    (self.output / rows[0]["generation"]["nativeScreenshots"][0]).write_bytes(b"invalid")
+                    (directory / rows[0]["nativeGateApprovals"][0]["screenshots"][0]).write_bytes(b"invalid")
+                elif failure == "legacy-report":
+                    rows[0] = {**self.row, "event": "musicvideo-film-review", "scale": 1.0}
                 output = "\n".join(map(json.dumps, rows))
                 with patch("workspace_ui_acceptance.subprocess.run", return_value=SimpleNamespace(returncode=code, stdout=output)):
                     result = run_scale("fixture-app", self.output, 1.0, "filmreview")

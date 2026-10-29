@@ -65,8 +65,9 @@ struct ImageModelConfig: Identifiable, Sendable {
     /// model, falling back to any reference-capable image model.
     @MainActor
     static var nanoBananaPro: ImageModelConfig? {
-        allModels.first(where: { $0.id == "fal-ai/gemini-25-flash-image/edit" })
-            ?? allModels.first(where: { $0.supportsImageReference })
+        let models = allModels.filter { $0.supportsImageReference && ModelPreferences.shared.isEnabled($0.id)
+            && GenerationProvider.canRun(modelId: $0.id) }
+        return models.first(where: { $0.id == "fal-ai/gemini-25-flash-image/edit" }) ?? models.first
     }
 
     let entry: CatalogEntry

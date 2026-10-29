@@ -26,7 +26,7 @@ struct HueCurveEditorView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .fixedSize()
+            .reviewAcceptanceProbe("inspector.hue-curve.channel", text: channel.rawValue)
 
             GeometryReader { geo in
                 let size = CGSize(width: geo.size.width, height: AppTheme.Curve.editorHeight)
@@ -80,6 +80,7 @@ struct HueCurveEditorView: View {
                 .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
             }
             .frame(height: AppTheme.Curve.editorHeight)
+            .reviewAcceptanceProbe("inspector.hue-curve.canvas", text: channel.rawValue)
 
             Text("Drag to add or shape a point · double-click to remove")
                 .interfaceFont(size: AppTheme.Typography.metadata)
