@@ -33,6 +33,9 @@ let package = Package(
     products: [
         .executable(name: "NexGenVideo", targets: ["NexGenVideo"]),
         .executable(name: "NexGenVideoDiagnostics", targets: ["NexGenVideoDiagnostics"]),
+        .executable(name: "NexGenVideoBpyService", targets: ["NexGenVideoBpyService"]),
+        .executable(name: "NexGenVideoBpySupervisor", targets: ["NexGenVideoBpySupervisor"]),
+        .executable(name: "NexGenVideoBpyStorage", targets: ["NexGenVideoBpyStorage"]),
         // The first loadable pack — built as a dynamic library, then assembled +
         // signed into `musicvideo.ngvpack` by the release workflow. NOT a
         // dependency of the app: it ships OUTSIDE the DMG and loads at runtime.
@@ -59,6 +62,19 @@ let package = Package(
         .package(url: "https://github.com/microsoft/onnxruntime-swift-package-manager", from: "1.19.2"),
     ],
     targets: [
+        .target(name: "BpyRuntimeProtocol", path: "Sources/BpyRuntimeProtocol"),
+        .executableTarget(
+            name: "NexGenVideoBpyService", dependencies: ["BpyRuntimeProtocol"],
+            path: "Sources/NexGenVideoBpyService", linkerSettings: [.linkedLibrary("proc", .when(platforms: [.macOS]))]
+        ),
+        .executableTarget(
+            name: "NexGenVideoBpySupervisor", path: "Sources/NexGenVideoBpySupervisor",
+            linkerSettings: [.linkedLibrary("proc", .when(platforms: [.macOS]))]
+        ),
+        .executableTarget(
+            name: "NexGenVideoBpyStorage", dependencies: ["BpyRuntimeProtocol"], path: "Sources/NexGenVideoBpyStorage",
+            linkerSettings: [.linkedLibrary("proc", .when(platforms: [.macOS]))]
+        ),
         .target(name: "HangStackSampler", path: "Sources/HangStackSampler"),
         .target(name: "HangDiagnostics", path: "Sources/HangDiagnostics"),
         .executableTarget(
@@ -69,6 +85,7 @@ let package = Package(
         .executableTarget(
             name: "NexGenVideo",
             dependencies: [
+                "BpyRuntimeProtocol",
                 "HangDiagnostics",
                 "HangStackSampler",
                 .product(name: "MCP", package: "swift-sdk"),
@@ -89,6 +106,7 @@ let package = Package(
             ],
             resources: appResourceEntries.map { .copy("Resources/\($0)") },
             linkerSettings: [
+                .linkedLibrary("proc", .when(platforms: [.macOS])),
                 .unsafeFlags(
                     ["-Xlinker", "-weak_framework", "-Xlinker", "MusicUnderstanding"],
                     .when(platforms: [.macOS])
@@ -121,6 +139,7 @@ let package = Package(
         .testTarget(
             name: "NexGenVideoTests",
             dependencies: [
+                "BpyRuntimeProtocol",
                 "HangDiagnostics",
                 "NexGenVideo",
                 .product(name: "NexGenEngine", package: "Engine"),

@@ -12,6 +12,7 @@ struct SourceRangeInspector: View {
                         timecode(range.lowerBound)
                         Button("Mark In") { editor.markSourceIn(asset) }
                             .buttonStyle(.inlineAction())
+                            .reviewAcceptanceProbe("source.in.\(asset.id)", text: String(range.lowerBound))
                     }
                 }
                 InspectorFormRow(label: "Out", labelHelp: "The out point is the first frame excluded from the edit.") {
@@ -19,6 +20,7 @@ struct SourceRangeInspector: View {
                         timecode(range.upperBound)
                         Button("Mark Out") { editor.markSourceOut(asset) }
                             .buttonStyle(.inlineAction())
+                            .reviewAcceptanceProbe("source.out.\(asset.id)", text: String(range.upperBound))
                     }
                 }
                 InspectorFormRow(label: "Duration") {
@@ -28,6 +30,7 @@ struct SourceRangeInspector: View {
                             .buttonStyle(.inlineAction())
                             .disabled(editor.sourcePreviewStates[asset.id]?.inSeconds == nil
                                       && editor.sourcePreviewStates[asset.id]?.outSeconds == nil)
+                            .reviewAcceptanceProbe("source.clear.\(asset.id)", enabledState: editor.sourcePreviewStates[asset.id]?.inSeconds != nil || editor.sourcePreviewStates[asset.id]?.outSeconds != nil)
                     }
                 }
             }
@@ -48,12 +51,15 @@ struct SourceRangeInspector: View {
                     }
                 }
                 .labelsHidden()
+                .reviewAcceptanceProbe("source.target.\(asset.id)", text: editor.sourcePreviewStates[asset.id]?.targetTrackID ?? "")
             }
             WrapLayout(spacing: AppTheme.Spacing.md) {
                 Button("Insert") { place(.insert) }
                     .buttonStyle(.capsule(.prominent, size: .regular))
+                    .reviewAcceptanceProbe("source.insert.\(asset.id)", enabledState: editor.sourceEditUnavailableReason(for: asset) == nil)
                 Button("Overwrite") { place(.overwrite) }
                     .buttonStyle(.capsule(.secondary, size: .regular))
+                    .reviewAcceptanceProbe("source.overwrite.\(asset.id)", enabledState: editor.sourceEditUnavailableReason(for: asset) == nil)
             }
             .disabled(editor.sourceEditUnavailableReason(for: asset) != nil)
             if let reason = editor.sourceEditUnavailableReason(for: asset) {

@@ -483,6 +483,7 @@ extension EditorViewModel {
 
     /// Bidirectional undo/redo for a single clip's property change.
     fileprivate func registerClipPropertySwap(clipId: String, undoTarget: Clip, redoTarget: Clip) {
+        guard undoTarget != redoTarget else { return }
         undoManager?.registerUndo(withTarget: self) { vm in
             if let loc = vm.findClip(id: clipId) {
                 vm.timeline.tracks[loc.trackIndex].clips[loc.clipIndex] = undoTarget
@@ -536,33 +537,16 @@ extension EditorViewModel {
 
         let targetIds = linkedClipIdsSharingMedia(anchor: clipId)
 
-        var oldTrims: [String: (start: Int, end: Int)] = [:]
-        for id in targetIds {
-            if let l = findClip(id: id) {
-                if resetTrim {
-                    let c = timeline.tracks[l.trackIndex].clips[l.clipIndex]
-                    oldTrims[id] = (c.trimStartFrame, c.trimEndFrame)
-                    timeline.tracks[l.trackIndex].clips[l.clipIndex].trimStartFrame = 0
-                    timeline.tracks[l.trackIndex].clips[l.clipIndex].trimEndFrame = 0
-                }
-                timeline.tracks[l.trackIndex].clips[l.clipIndex].mediaRef = newAssetId
-            }
-        }
-
-        undoManager?.registerUndo(withTarget: self) { vm in
+        withTimelineSwap(actionName: "Replace Clip Source") {
             for id in targetIds {
-                if let l = vm.findClip(id: id) {
-                    vm.timeline.tracks[l.trackIndex].clips[l.clipIndex].mediaRef = oldMediaRef
-                    if let old = oldTrims[id] {
-                        vm.timeline.tracks[l.trackIndex].clips[l.clipIndex].trimStartFrame = old.start
-                        vm.timeline.tracks[l.trackIndex].clips[l.clipIndex].trimEndFrame = old.end
-                    }
+                guard let location = findClip(id: id) else { continue }
+                if resetTrim {
+                    timeline.tracks[location.trackIndex].clips[location.clipIndex].trimStartFrame = 0
+                    timeline.tracks[location.trackIndex].clips[location.clipIndex].trimEndFrame = 0
                 }
+                timeline.tracks[location.trackIndex].clips[location.clipIndex].mediaRef = newAssetId
             }
-            vm.notifyTimelineChanged()
         }
-        undoManager?.setActionName("Replace Clip Source")
-        notifyTimelineChanged()
     }
 
     // MARK: - Playhead-relative operations

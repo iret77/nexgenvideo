@@ -31,6 +31,7 @@ struct AssetThumbnailView: View {
         .contextMenu { contextMenuItems }
         .opacity(isSwapDimmed ? AppTheme.Opacity.muted : AppTheme.Opacity.opaque)
         .allowsHitTesting(!isSwapDimmed)
+        .reviewAcceptanceProbe("media.asset.\(asset.id)", text: asset.libraryDisplayName)
     }
 
     private var gridContent: some View {
@@ -86,6 +87,7 @@ struct AssetThumbnailView: View {
         }
         .padding(.horizontal, AppTheme.Spacing.xs)
         .padding(.vertical, AppTheme.Spacing.xxs)
+        .reviewAcceptanceProbe("media.rename." + asset.id, text: isRenaming ? renameDraft : asset.libraryDisplayName)
         .background(
             RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
                 .fill(isRenaming ? AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.faint) : AppTheme.Background.clearColor)

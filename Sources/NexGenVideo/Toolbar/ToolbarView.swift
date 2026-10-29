@@ -30,6 +30,7 @@ struct ToolbarView: View {
             // Add content
             HStack(spacing: AppTheme.Spacing.md) {
                 textGlyphButton("T", help: "Add Text", action: { _ = editor.addTextClip() })
+                    .reviewAcceptanceProbe("editing.add-text")
                 Button {
                     editor.markerPanelPresented = true
                 } label: {

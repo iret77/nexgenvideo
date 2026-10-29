@@ -297,6 +297,11 @@ protocol AgentRuntimeAdapter: AnyObject {
     func cancel(sessionID: UUID)
     func resume(_ request: AgentRuntimeSessionRequest) throws
     func end(sessionID: UUID)
+    func modelResponseEvidence(toolUseID: String) -> AgentModelResponseEvidence?
+}
+
+extension AgentRuntimeAdapter {
+    func modelResponseEvidence(toolUseID: String) -> AgentModelResponseEvidence? { nil }
 }
 
 enum AgentRuntimeContractError: LocalizedError, Equatable, Sendable {

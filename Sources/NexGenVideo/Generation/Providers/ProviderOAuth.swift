@@ -24,23 +24,59 @@ enum OAuthError: LocalizedError {
 /// Token persistence + refresh + the network steps of the MCP OAuth flow (RFC 9728 discovery, RFC
 /// 7591 registration, RFC 6749 token exchange). Nonisolated so sync activation (`ProviderMCP`) and the
 /// async MCP client can consult it off the main actor. The browser step lives in `ProviderOAuth`.
+extension Notification.Name {
+    static let providerOAuthStateChanged = Notification.Name("providerOAuthStateChanged")
+}
+
 enum ProviderOAuthStore {
+    // Token and rejection state always holds the same lock.
+    private final class Persistence: @unchecked Sendable {
+        let lock = NSLock()
+        var rejected: [GenerationProvider: OAuthCore.StoredTokens] = [:]
+    }
+    private static let persistence = Persistence()
+    private static let refreshCoordinator = RefreshCoordinator()
+
+    private actor RefreshCoordinator {
+        private var active: [GenerationProvider: (UUID, Task<String?, Never>)] = [:]
+
+        func token(_ provider: GenerationProvider, now: Date) async -> String? {
+            if let current = active[provider] { return await current.1.value }
+            let id = UUID()
+            let task = Task { await ProviderOAuthStore.refreshAccessToken(provider, now: now) }
+            active[provider] = (id, task)
+            let result = await task.value
+            if active[provider]?.0 == id { active[provider] = nil }
+            return result
+        }
+    }
     static func account(_ p: GenerationProvider) -> String { "provider.\(p.rawValue).oauth" }
 
     static func isConnected(_ provider: GenerationProvider, now: Date = Date()) -> Bool {
-        guard let tokens = load(provider) else { return false }
+        guard let tokens = loadUsable(provider) else { return false }
         return tokens.sessionState(now: now) != .reauthenticationRequired
     }
 
-    static func disconnect(_ provider: GenerationProvider) {
-        KeychainStore.delete(account: account(provider))
+    @discardableResult
+    static func disconnect(_ provider: GenerationProvider) -> Bool {
+        guard persistence.lock.withLock({
+            guard KeychainStore.delete(account: account(provider)) else { return false }
+            persistence.rejected[provider] = nil
+            return true
+        }) else { return false }
         NotificationCenter.default.post(name: .providerKeysChanged, object: nil)
+        return true
     }
 
     /// A currently-valid access token, refreshing transparently when expired. Nil when not signed in
     /// or a refresh failed (→ the UI prompts a fresh sign-in).
     static func validAccessToken(_ provider: GenerationProvider, now: Date = Date()) async -> String? {
-        guard var tokens = load(provider) else { return nil }
+        await refreshCoordinator.token(provider, now: now)
+    }
+
+    private static func refreshAccessToken(_ provider: GenerationProvider, now: Date) async -> String? {
+        guard let original = loadUsable(provider) else { return nil }
+        var tokens = original
         if tokens.isFresh(now: now) { return tokens.accessToken }
         guard let refresh = tokens.refreshToken, !refresh.isEmpty else { return nil }
         do {
@@ -48,15 +84,19 @@ enum ProviderOAuthStore {
             tokens.accessToken = resp.accessToken
             if let r = resp.refreshToken { tokens.refreshToken = r }
             tokens.expiresAt = resp.expiresIn.map { now.addingTimeInterval(TimeInterval($0)) }
-            store(tokens, for: provider)
+            guard replace(original, with: tokens, for: provider) else {
+                return freshToken(provider, now: now)
+            }
             return tokens.accessToken
         } catch let error as TokenRequestError where error.requiresReauthentication {
-            KeychainStore.delete(account: account(provider))
-            NotificationCenter.default.post(name: .providerKeysChanged, object: nil)
-            Log.generation.notice(
-                "OAuth refresh rejected for \(provider.rawValue); a new sign-in is required"
-            )
-            return nil
+            if replace(original, with: nil, for: provider) {
+                NotificationCenter.default.post(name: .providerKeysChanged, object: nil)
+                Log.generation.notice("OAuth refresh rejected for \(provider.rawValue); a new sign-in is required")
+            } else if load(provider) == original {
+                NotificationCenter.default.post(name: .providerOAuthStateChanged, object: nil)
+                Log.generation.error("Rejected OAuth sign-in for \(provider.rawValue) could not be removed from Keychain")
+            }
+            return freshToken(provider, now: now)
         } catch {
             Log.generation.notice(
                 "OAuth refresh failed for \(provider.rawValue): \(error.localizedDescription)"
@@ -66,15 +106,54 @@ enum ProviderOAuthStore {
     }
 
     static func load(_ provider: GenerationProvider) -> OAuthCore.StoredTokens? {
+        persistence.lock.withLock { loadUnlocked(provider) }
+    }
+
+    private static func loadUsable(_ provider: GenerationProvider) -> OAuthCore.StoredTokens? {
+        persistence.lock.withLock {
+            guard let tokens = loadUnlocked(provider), persistence.rejected[provider] != tokens else { return nil }
+            return tokens
+        }
+    }
+
+    static func failureMessage(_ provider: GenerationProvider) -> String? {
+        persistence.lock.withLock {
+            guard let tokens = loadUnlocked(provider), persistence.rejected[provider] == tokens else { return nil }
+            return "Sign in again. Keychain could not remove the rejected sign-in."
+        }
+    }
+
+    private static func loadUnlocked(_ provider: GenerationProvider) -> OAuthCore.StoredTokens? {
         guard let raw = KeychainStore.load(account: account(provider)),
               let data = raw.data(using: .utf8),
               let tokens = try? JSONDecoder().decode(OAuthCore.StoredTokens.self, from: data) else { return nil }
         return tokens
     }
 
-    static func store(_ tokens: OAuthCore.StoredTokens, for provider: GenerationProvider) {
-        guard let data = try? JSONEncoder().encode(tokens), let raw = String(data: data, encoding: .utf8) else { return }
-        KeychainStore.save(raw, account: account(provider))
+    @discardableResult
+    static func store(_ tokens: OAuthCore.StoredTokens, for provider: GenerationProvider) -> Bool {
+        persistence.lock.withLock { storeUnlocked(tokens, for: provider) }
+    }
+
+    private static func replace(_ expected: OAuthCore.StoredTokens, with replacement: OAuthCore.StoredTokens?, for provider: GenerationProvider) -> Bool {
+        persistence.lock.withLock {
+            guard loadUnlocked(provider) == expected else { return false }
+            if let replacement { return storeUnlocked(replacement, for: provider) }
+            persistence.rejected[provider] = expected
+            return KeychainStore.delete(account: account(provider))
+        }
+    }
+
+    private static func freshToken(_ provider: GenerationProvider, now: Date) -> String? {
+        guard let tokens = loadUsable(provider), tokens.isFresh(now: now) else { return nil }
+        return tokens.accessToken
+    }
+
+    private static func storeUnlocked(_ tokens: OAuthCore.StoredTokens, for provider: GenerationProvider) -> Bool {
+        guard let data = try? JSONEncoder().encode(tokens), let raw = String(data: data, encoding: .utf8) else { return false }
+        guard KeychainStore.save(raw, account: account(provider)) else { return false }
+        persistence.rejected[provider] = nil
+        return true
     }
 
     // MARK: - Network steps
@@ -117,10 +196,12 @@ enum ProviderOAuthStore {
         for provider: GenerationProvider, now: Date = Date()
     ) async throws {
         let resp = try await postToken(server.tokenEndpoint, body: OAuthCore.tokenExchangeBody(code: code, clientID: clientID, verifier: verifier))
-        store(OAuthCore.StoredTokens(
+        guard store(OAuthCore.StoredTokens(
             accessToken: resp.accessToken, refreshToken: resp.refreshToken,
             expiresAt: resp.expiresIn.map { now.addingTimeInterval(TimeInterval($0)) },
-            clientID: clientID, tokenEndpoint: server.tokenEndpoint), for: provider)
+            clientID: clientID, tokenEndpoint: server.tokenEndpoint), for: provider) else {
+            throw OAuthError.tokenExchangeFailed("Keychain could not save this sign-in. Try again.")
+        }
     }
 
     private struct TokenRequestError: LocalizedError {

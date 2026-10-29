@@ -4,6 +4,8 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct ExportView: View {
+    enum Presentation { case sheet, workspaceSettings }
+    var presentation: Presentation = .sheet
     @Environment(EditorViewModel.self) var editor
     @State private var queue = ExportQueue.shared
     @State private var mode: ExportMode = .video
@@ -20,29 +22,36 @@ struct ExportView: View {
     @State private var ngvResult: String?
     @State private var ngvSummary: (collect: Int, missing: Int, bytes: Int64) = (0, 0, 0)
     @State private var hdrCapability: HDRExportCapability?
+    @State private var artworkSelection: ExportArtworkSelection?
+    @State private var choosingArtwork = false
 
     var body: some View {
         VStack(spacing: AppTheme.Spacing.none) {
             HStack(spacing: AppTheme.Spacing.none) {
                 settingsPanel
-                    .frame(width: AppTheme.ComponentSize.exportSidebarWidth)
-                previewPanel
-                    .frame(maxWidth: .infinity)
+                    .frame(width: presentation == .sheet ? AppTheme.ComponentSize.exportSidebarWidth : nil)
+                if presentation == .sheet {
+                    previewPanel.frame(maxWidth: .infinity)
+                }
             }
             .frame(maxHeight: .infinity)
 
-            bottomBar
+            if presentation == .sheet { bottomBar }
+            else { workspaceActions }
         }
-        .frame(width: AppTheme.ComponentSize.exportWindow.width, height: AppTheme.ComponentSize.exportWindow.height)
+        .frame(width: presentation == .sheet ? AppTheme.ComponentSize.exportWindow.width : nil,
+               height: presentation == .sheet ? AppTheme.ComponentSize.exportWindow.height : nil)
         .presentationBackground(AppTheme.Background.surfaceColor)
-        .task {
-            await loadPreview()
+        .task(id: editor.openWorkingCopyKey) {
+            preview = nil
+            if presentation == .sheet { await loadPreview() }
+            guard !Task.isCancelled else { return }
             ngvSummary = computeNGVSummary()
-            let recovered = queue.loadPersistedDeliveryJobs(
-                ownerKey: editor.openWorkingCopyKey,
-                dataRoot: editor.workingRoot.flatMap { DataRootResolver.dataRoot(of: $0) }
-            )
-            if recovered { editor.onPipelineChanged?() }
+            if presentation == .sheet {
+                let recovered = queue.loadPersistedDeliveryJobs(ownerKey: editor.openWorkingCopyKey,
+                    dataRoot: editor.workingRoot.flatMap { try? ExportDataRoot.resolve(in: $0) })
+                if recovered { editor.onPipelineChanged?() }
+            }
         }
         .task(id: hdrCapabilityKey) {
             guard codec == .hdr else {
@@ -55,6 +64,18 @@ struct ExportView: View {
             )
             guard !Task.isCancelled else { return }
             hdrCapability = capability
+        }
+        .onChange(of: editor.openWorkingCopyKey) {
+            artworkSelection = nil
+            selectedJobID = nil
+            exportError = nil
+            ngvResult = nil
+        }
+        .onChange(of: editor.timelineRenderRevision) {
+            if let artworkSelection, artworkSelection.timelineSHA256 != (try? ExportArtwork.timelineHash(editor.timeline)) {
+                self.artworkSelection = nil
+                exportError = "The film changed. Choose its poster image again before exporting with artwork."
+            }
         }
     }
 
@@ -116,6 +137,7 @@ struct ExportView: View {
                         }
                     }
                     .labelsHidden()
+                        .reviewAcceptanceProbe("export.mode", text: mode.rawValue)
                 }
 
                 AppDivider().opacity(AppTheme.Opacity.dim)
@@ -128,6 +150,7 @@ struct ExportView: View {
                             Text("Derivative").tag(DeliveryTargetKindV1.derivative)
                         }
                         .labelsHidden()
+                        .reviewAcceptanceProbe("export.target", text: deliveryTarget.rawValue)
                     }
 
                     AppDivider().opacity(AppTheme.Opacity.dim)
@@ -139,6 +162,7 @@ struct ExportView: View {
                             }
                         }
                         .labelsHidden()
+                        .reviewAcceptanceProbe("export.codec", text: codec.rawValue)
                     }
 
                     AppDivider().opacity(AppTheme.Opacity.dim)
@@ -150,6 +174,7 @@ struct ExportView: View {
                             }
                         }
                         .labelsHidden()
+                        .reviewAcceptanceProbe("export.resolution", text: resolution.rawValue)
                     }
 
                     AppDivider().opacity(AppTheme.Opacity.dim)
@@ -182,6 +207,11 @@ struct ExportView: View {
                         AppDivider().opacity(AppTheme.Opacity.dim)
                     }
 
+                    if editor.usesProductionPlanningV2 {
+                        Text("A current film review is required before export.")
+                            .foregroundStyle(AppTheme.Text.secondaryColor)
+                            .reviewAcceptanceProbe("export.require-sequence", state: true)
+                    } else {
                     Toggle("Require current sequence review", isOn: $requireSequenceReview)
                         .interfaceFont(size: AppTheme.Typography.ui)
                         .accessibilityIdentifier("export.require-sequence")
@@ -190,11 +220,14 @@ struct ExportView: View {
                                 AppRelaunchClickProbe(identifier: "export.require-sequence", acceptanceState: requireSequenceReview)
                             }
                         }
+                    }
 
                     Text("Export adopts the current timeline as the exact finish source and records output hash, media bindings and probe QC.")
                         .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                         .padding(.top, AppTheme.Spacing.sm)
+
+                    artworkPicker.padding(.top, AppTheme.Spacing.md)
 
                 case .xml:
                     VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
@@ -265,7 +298,7 @@ struct ExportView: View {
                 }
             }
 
-            if !projectJobs.isEmpty {
+            if presentation == .sheet && !projectJobs.isEmpty {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
                     Text("Queue")
                         .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
@@ -351,6 +384,73 @@ struct ExportView: View {
 
     // MARK: - Bottom bar
 
+    private var artworkPicker: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+            Text("Poster image (optional)").fontWeight(AppTheme.FontWeight.semibold)
+            Text(artworkSelection?.displayName ?? "No poster image")
+                .foregroundStyle(AppTheme.Text.secondaryColor)
+                .reviewAcceptanceProbe("export.artwork.selection", text: artworkSelection?.displayName ?? "none")
+            WrapLayout(spacing: AppTheme.Spacing.sm) {
+                Button("Use film frame") {
+                    do { artworkSelection = try ExportArtwork.filmFrame(editor: editor); exportError = nil }
+                    catch { exportError = error.localizedDescription }
+                }
+                .disabled(editor.activePreviewTab != .timeline || editor.timeline.totalFrames <= 0)
+                .reviewAcceptanceProbe("export.artwork.frame")
+                LibraryAssetPickerButton(purpose: .workspace(.export), acceptedTypes: [.image], title: "Choose image") { asset in
+                    choosingArtwork = true
+                    Task {
+                        defer { choosingArtwork = false }
+                        do {
+                            artworkSelection = try await ExportArtwork.projectImage(asset: asset, editor: editor)
+                            editor.selectMediaAsset(asset)
+                            exportError = nil
+                        }
+                        catch { exportError = error.localizedDescription }
+                    }
+                }
+                if artworkSelection != nil {
+                    Button("Remove image") { artworkSelection = nil }
+                        .reviewAcceptanceProbe("export.artwork.remove")
+                }
+                if editor.activePreviewTab != .timeline {
+                    Button("Show film") { editor.selectPreviewTab(id: PreviewTab.timeline.id) }
+                        .reviewAcceptanceProbe("export.artwork.show-film")
+                }
+            }
+            .buttonStyle(.capsule(.secondary, size: .small))
+            .disabled(choosingArtwork || preparingDelivery)
+            if choosingArtwork { ProgressView("Checking image…") }
+            if artworkSelection != nil {
+                Text("A PNG poster is saved beside the video. Both files must succeed.")
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+            }
+        }
+        .interfaceFont(size: AppTheme.Typography.ui)
+    }
+
+    private var workspaceActions: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+            AppDivider()
+            Text("\(formatTimecode(frame: editor.timeline.totalFrames, fps: editor.timeline.fps)) · \(editor.timeline.fps) fps")
+                .interfaceFont(size: AppTheme.Typography.ui)
+                .foregroundStyle(AppTheme.Text.secondaryColor)
+            WrapLayout(spacing: AppTheme.Spacing.sm) {
+                if let activeJob {
+                    Button(activeJob.status == .cancelling ? "Cancelling" : "Cancel Export") { queue.cancel(jobID: activeJob.id) }
+                        .buttonStyle(.capsule(.secondary, size: .regular))
+                        .disabled(!activeJob.canCancel)
+                        .reviewAcceptanceProbe("export.cancel", text: activeJob.id)
+                }
+                Button("Export…") { startExport() }
+                    .buttonStyle(.capsule(.prominent, size: .regular))
+                    .disabled(preparingDelivery || choosingArtwork || (mode == .video && codec == .hdr && hdrCapability?.isSupported != true))
+                    .reviewAcceptanceProbe("export.start")
+            }
+        }
+        .padding(AppTheme.Spacing.md)
+    }
+
     private var bottomBar: some View {
         HStack {
             let duration = formatTimecode(frame: editor.timeline.totalFrames, fps: editor.timeline.fps)
@@ -399,12 +499,12 @@ struct ExportView: View {
             }
             Button("Export") { startExport() }
                 .buttonStyle(.capsule(.prominent, size: .regular))
-                .disabled(preparingDelivery || (mode == .video && codec == .hdr && hdrCapability?.isSupported != true))
+                .disabled(preparingDelivery || choosingArtwork || (mode == .video && codec == .hdr && hdrCapability?.isSupported != true))
                 .keyboardShortcut(.defaultAction)
                 .accessibilityIdentifier("export.start")
                 .background {
                     if WorkspaceUIAcceptance.isRequested || MusicvideoHostFlowAcceptance.isRequested {
-                        AppRelaunchClickProbe(identifier: "export.start", acceptanceState: !preparingDelivery && (mode != .video || codec != .hdr || hdrCapability?.isSupported == true))
+                        AppRelaunchClickProbe(identifier: "export.start", acceptanceState: !preparingDelivery && !choosingArtwork && (mode != .video || codec != .hdr || hdrCapability?.isSupported == true))
                     }
                 }
         }
@@ -580,7 +680,7 @@ struct ExportView: View {
     }
 
     private var hdrCapabilityKey: String {
-        "\(codec.id)-\(resolution.id)-\(Int(selectedRenderSize.width))x\(Int(selectedRenderSize.height))-\(editor.timeline.fps)"
+        "\(editor.openWorkingCopyKey ?? "")-\(codec.id)-\(resolution.id)-\(Int(selectedRenderSize.width))x\(Int(selectedRenderSize.height))-\(editor.timeline.fps)"
     }
 
     /// Quick estimate for exporting a NexGenVideo Project
@@ -600,7 +700,10 @@ struct ExportView: View {
     }
 
     private func loadPreview() async {
+        let ownerKey = editor.openWorkingCopyKey
+        let revision = editor.timelineRenderRevision
         let timeline = editor.timeline
+        let frame = min(max(0, editor.currentFrame), timeline.totalFrames - 1)
         guard timeline.totalFrames > 0 else { return }
         let resolver = editor.mediaResolver.snapshot()
         let canvas = CGSize(width: timeline.width, height: timeline.height)
@@ -617,12 +720,13 @@ struct ExportView: View {
         generator.appliesPreferredTrackTransform = true
         generator.requestedTimeToleranceBefore = .zero
         generator.requestedTimeToleranceAfter = .zero
-        let frame = min(max(0, editor.currentFrame), timeline.totalFrames - 1)
         let time = CMTime(
             value: CMTimeValue(frame),
             timescale: CMTimeScale(max(1, timeline.fps))
         )
-        guard let video = try? await generator.image(at: time).image else { return }
+        guard let video = try? await generator.image(at: time).image,
+              !Task.isCancelled, ownerKey == editor.openWorkingCopyKey,
+              revision == editor.timelineRenderRevision else { return }
         preview = NSImage(
             cgImage: video,
             size: NSSize(width: video.width, height: video.height)
@@ -630,7 +734,16 @@ struct ExportView: View {
     }
 
     private func startExport() {
+        let mode = self.mode
         if mode == .ngvProject { startNGVExport(); return }
+        let codec = self.codec
+        let resolution = self.resolution
+        let deliveryTarget = self.deliveryTarget
+        let requireSequenceReview = editor.usesProductionPlanningV2 || self.requireSequenceReview
+        let fcpxmlVersion = self.fcpxmlVersion
+        let fcpxmlTarget = self.fcpxmlTarget
+        let artworkSelection = mode == .video ? self.artworkSelection : nil
+        let ownerKey = editor.openWorkingCopyKey
         let format = exportFormat
         let panel = NSSavePanel()
         panel.allowedContentTypes = [
@@ -645,12 +758,37 @@ struct ExportView: View {
 
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
+            guard ownerKey != nil, editor.openWorkingCopyKey == ownerKey else {
+                exportError = "The project changed while choosing the export destination."
+                return
+            }
+            var preserveExistingPoster = false
+            if artworkSelection != nil, FileManager.default.fileExists(atPath: ExportArtwork.outputURL(for: url).path) {
+                let alert = NSAlert()
+                alert.messageText = String(localized: "Replace the existing poster image?")
+                alert.informativeText = ExportArtwork.outputURL(for: url).lastPathComponent
+                alert.addButton(withTitle: String(localized: "Replace"))
+                alert.addButton(withTitle: String(localized: "Cancel"))
+                guard alert.runModal() == .alertFirstButtonReturn else { return }
+            } else if mode == .video, FileManager.default.fileExists(atPath: ExportArtwork.outputURL(for: url).path) {
+                let alert = NSAlert()
+                alert.messageText = String(localized: "Keep the existing poster unchanged?")
+                alert.informativeText = String(localized: "This export has no poster selected. The existing image will remain beside the new video and may belong to an earlier film.")
+                alert.addButton(withTitle: String(localized: "Export Video Only"))
+                alert.addButton(withTitle: String(localized: "Cancel"))
+                guard alert.runModal() == .alertFirstButtonReturn else { return }
+                preserveExistingPoster = true
+            }
+            let keepUnboundPoster = preserveExistingPoster
             Task {
                 preparingDelivery = true
                 exportError = nil
                 ngvResult = nil
                 defer { preparingDelivery = false }
                 do {
+                    guard ownerKey != nil, editor.openWorkingCopyKey == ownerKey else {
+                        throw ToolError("The project changed while choosing the export destination.")
+                    }
                     if mode == .xml || mode == .fcpxml {
                         let job = try await queue.enqueueInterchange(
                             editor: editor,
@@ -669,20 +807,25 @@ struct ExportView: View {
                         requireSequenceReview: requireSequenceReview
                     )
                     let target = deliveryTarget == .master ? "master" : "derivative"
+                    let artworkRefs: [String]
+                    if let artworkSelection { artworkRefs = try await ExportArtwork.prepare(artworkSelection, editor: editor) }
+                    else { artworkRefs = [] }
                     let spec = try PipelineDeliveryStore.defaultSpec(
                         id: "\(target).\(codec.id).\(resolution.id)",
                         targetKind: deliveryTarget,
                         timeline: editor.timeline,
                         format: format,
                         resolution: resolution,
-                        requireSequenceReview: requireSequenceReview
+                        requireSequenceReview: requireSequenceReview,
+                        extensionRefs: artworkRefs
                     )
                     let job = try await queue.enqueueDelivery(
                         editor: editor,
                         spec: spec,
                         format: format,
                         resolution: resolution,
-                        outputURL: url
+                        outputURL: url,
+                        preserveExistingPoster: keepUnboundPoster
                     )
                     selectedJobID = job.id
                     ngvResult = "Queued · \(job.id.prefix(8))"

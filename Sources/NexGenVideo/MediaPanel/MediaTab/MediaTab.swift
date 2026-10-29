@@ -260,6 +260,7 @@ struct MediaTab: View {
                 .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                 .foregroundStyle(toast.kind == .success ? AppTheme.Status.successColor : AppTheme.Accent.timecodeColor)
             Text(toast.message)
+                .reviewAcceptanceProbe("media.toast", text: toast.message)
                 .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                 .foregroundStyle(AppTheme.Text.primaryColor)
                 .lineLimit(2)
@@ -515,6 +516,7 @@ struct MediaTab: View {
         }
         .buttonStyle(.plain)
         .focusable(false)
+        .reviewAcceptanceProbe("media.breadcrumb." + item.id, text: item.name)
         .onDrop(of: [.fileURL, .text], isTargeted: nil) { providers in
             handleProviderDrop(providers, into: item.folderId)
             return true
@@ -586,6 +588,7 @@ struct MediaTab: View {
             .monospacedDigit()
             .lineLimit(1)
             .fixedSize()
+            .reviewAcceptanceProbe("media.item-count", text: String(currentFolderItemCount))
     }
 
     private var searchField: some View {
@@ -594,12 +597,7 @@ struct MediaTab: View {
                 .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
             TextField("Search", text: Binding(get: { searchQuery }, set: { searchQuery = $0 }))
-                .background {
-                    if WorkspaceUIAcceptance.isRequested {
-                        AppRelaunchClickProbe(identifier: "media.search")
-                            .allowsHitTesting(false)
-                    }
-                }
+                .reviewAcceptanceProbe("media.search", text: searchQuery)
                 .textFieldStyle(.plain)
                 .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.primaryColor)
@@ -642,7 +640,7 @@ struct MediaTab: View {
         }
         .buttonStyle(.capsule(.secondary, isSelected: isSelected))
         .fixedSize(horizontal: true, vertical: false)
-        .background { toolbarProbe("media.action.\(title)") }
+        .reviewAcceptanceProbe("media.action.\(title)")
         .help(title)
     }
 
@@ -681,7 +679,8 @@ struct MediaTab: View {
         }
         _ = editor.agentService.stageTask(AgentTask(
             title: title, systemImage: "folder.badge.gearshape",
-            prompt: "Review the assets, group related ones into clearly named folders, and give generically named assets descriptive names. Inspect an asset when its name is unclear. Do not delete assets or change the timeline. \(scope)"
+            prompt: "Review the assets and prepare a media organization proposal using propose_media_organization. Suggest clear folder paths and descriptive display names. Inspect unclear assets first. Nothing is changed before native selection and approval. \(scope)",
+            mediaOrganizationScope: .init(folderID: currentFolderId)
         ))
     }
 
@@ -710,6 +709,7 @@ struct MediaTab: View {
         .tint(foregroundStyle)
         .hoverHighlight(isActive: isActive)
         .accessibilityValue(isActive ? "Active" : "")
+        .reviewAcceptanceProbe("media.menu." + title)
     }
 
     // MARK: - Folder commands

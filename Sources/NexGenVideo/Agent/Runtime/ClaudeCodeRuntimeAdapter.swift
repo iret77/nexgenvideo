@@ -34,6 +34,10 @@ final class ClaudeCodeRuntimeAdapter: AgentRuntimeAdapter {
     private var runtime: (any ClaudeCodeRuntimeDriving)?
     private var activeRelay: AgentRuntimeEventRelay?
     private var activeTurnID: UUID?
+    private var modelByMessageID: [String: String] = [:]
+    private var responseByToolID: [String: AgentModelResponseEvidence] = [:]
+
+    func modelResponseEvidence(toolUseID: String) -> AgentModelResponseEvidence? { responseByToolID[toolUseID] }
 
     private(set) var descriptor: AgentRuntimeDescriptor
     private(set) var state: AgentRuntimeState = .idle
@@ -58,6 +62,8 @@ final class ClaudeCodeRuntimeAdapter: AgentRuntimeAdapter {
         let relay = AgentRuntimeEventRelay(sessionID: request.sessionID, turnID: request.turnID)
         activeRelay = relay
         activeTurnID = request.turnID
+        modelByMessageID = [:]
+        responseByToolID = [:]
         state = .running(sessionID: request.sessionID, turnID: request.turnID)
         let runtime = runtime ?? makeRuntime(session)
         self.runtime = runtime
@@ -133,6 +139,8 @@ final class ClaudeCodeRuntimeAdapter: AgentRuntimeAdapter {
         guard let relay = activeRelay, relay.terminal == nil else { return }
         for event in events where relay.terminal == nil {
             switch event {
+            case .responseMetadata(let messageID, let modelID):
+                modelByMessageID[messageID] = modelID
             case .sessionStarted(let sessionID):
                 relay.yield(.providerSessionStarted(sessionID))
             case .assistantBlock(let messageID, let block):
@@ -140,6 +148,10 @@ final class ClaudeCodeRuntimeAdapter: AgentRuntimeAdapter {
                 case .text(let value):
                     relay.yield(.text(messageID: messageID, value: value, isDelta: false))
                 case .toolUse(let id, let name, let inputJSON):
+                    if let session, let turn = activeTurnID, let modelID = modelByMessageID[messageID] {
+                        responseByToolID[id] = try? AgentModelResponseEvidence(sessionID: session.sessionID,
+                            turnID: turn, messageID: messageID, modelID: modelID, toolUseID: id, toolName: name, inputJSON: inputJSON)
+                    }
                     relay.yield(.toolCall(
                         messageID: messageID,
                         id: id,

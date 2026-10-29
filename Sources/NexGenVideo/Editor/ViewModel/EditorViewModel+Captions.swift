@@ -42,6 +42,8 @@ extension EditorViewModel {
     enum CaptionError: LocalizedError {
         case noSource
         case timelineChanged
+        case sourceChanged
+        case sourceUnavailable
         case notSubtitle(String)
         case subtitleOffline(String)
         case placementFailed
@@ -49,7 +51,9 @@ extension EditorViewModel {
         var errorDescription: String? {
             switch self {
             case .noSource: "No audio clips to caption."
-            case .timelineChanged: "The timeline changed during caption import. Import again."
+            case .timelineChanged: "The project or timeline changed while preparing captions. Start again."
+            case .sourceChanged: "A source changed while preparing captions. Start again."
+            case .sourceUnavailable: "A caption source is unavailable. Relink it, then start again."
             case .notSubtitle(let name): "“\(name)” is not an SRT or WebVTT file."
             case .subtitleOffline(let name): "“\(name)” is offline. Relink it, then import again."
             case .placementFailed: "The captions couldn't be placed. The timeline was not changed."
@@ -104,15 +108,31 @@ extension EditorViewModel {
 
     @discardableResult
     func generateCaptions(for request: CaptionRequest) async throws -> [String] {
+        let state = CaptionProjectState(self)
         let candidates = request.autoDetect ? captionTargets(ids: []) : captionTargets(ids: request.sourceClipIds)
         guard !candidates.isEmpty else { throw CaptionError.noSource }
+
+        var inputs: [String: URL] = [:]
+        for clip in candidates {
+            guard let url = mediaResolver.resolveURL(for: clip.mediaRef) else { throw CaptionError.sourceUnavailable }
+            inputs[clip.mediaRef] = url
+        }
 
         var targets = candidates.compactMap { c in
             findClip(id: c.id).map {
                 CaptionTarget(id: c.id, trackId: timeline.tracks[$0.trackIndex].id, clip: timeline.tracks[$0.trackIndex].clips[$0.clipIndex])
             }
         }
-        let results = try await transcribe(targets, request: request)
+        let capturedInputs = inputs
+        let preparation = Task.detached(priority: .userInitiated) { try CaptionInputSnapshot.freeze(capturedInputs) }
+        let frozen = try await withTaskCancellationHandler { try await preparation.value } onCancel: { preparation.cancel() }
+        defer { frozen.discard() }
+        try state.validate(self)
+        let results = try await transcribe(targets, request: request, inputs: frozen, state: state)
+        let verification = Task.detached(priority: .userInitiated) { try frozen.validateSources() }
+        try await withTaskCancellationHandler { try await verification.value } onCancel: { verification.cancel() }
+        try state.validate(self)
+        guard inputs.allSatisfy({ mediaResolver.resolveURL(for: $0.key) == $0.value }) else { throw CaptionError.sourceChanged }
 
         if request.autoDetect {
             guard let winner = dominantSpeechTrack(targets, results) else { return [] }
@@ -124,27 +144,15 @@ extension EditorViewModel {
         return placeCaptionTrack(specs, actionName: "Generate Captions")
     }
 
-    private func transcribe(_ targets: [CaptionTarget], request: CaptionRequest) async throws -> [String: TranscriptionResult] {
+    private func transcribe(_ targets: [CaptionTarget], request: CaptionRequest, inputs: CaptionInputSnapshot, state: CaptionProjectState) async throws -> [String: TranscriptionResult] {
         var results: [String: TranscriptionResult] = [:]
-        var firstError: Error?
         for t in targets where results[t.clip.mediaRef] == nil {
-            do {
-                guard let url = mediaResolver.resolveURL(for: t.clip.mediaRef) else { continue }
-                let range = visibleSourceUnion(for: t.clip.mediaRef, in: targets)
-                let isVideo = captionUsesVideoAudioExtraction(for: t.clip)
-                if request.censorProfanity || request.locale != nil {
-                    // option variants produce different transcripts — bypass the cache
-                    results[t.clip.mediaRef] = isVideo
-                        ? try await Transcription.transcribeVideoAudio(videoURL: url, censorProfanity: request.censorProfanity, preferredLocale: request.locale, sourceRange: range)
-                        : try await Transcription.transcribe(fileURL: url, censorProfanity: request.censorProfanity, preferredLocale: request.locale, sourceRange: range)
-                } else {
-                    results[t.clip.mediaRef] = try await TranscriptCache.shared.transcript(for: url, isVideo: isVideo, range: range)
-                }
-            } catch {
-                firstError = firstError ?? error
-            }
+            try state.validate(self)
+            guard let url = inputs.sources[t.clip.mediaRef]?.frozen else { throw CaptionError.sourceUnavailable }
+            let range = visibleSourceUnion(for: t.clip.mediaRef, in: targets)
+            let isVideo = captionUsesVideoAudioExtraction(for: t.clip)
+            results[t.clip.mediaRef] = try await captionTranscriptionClient.transcribe(url, isVideo, range, request.censorProfanity, request.locale)
         }
-        if results.isEmpty, let firstError { throw firstError }
         return results
     }
 
@@ -245,7 +253,8 @@ extension EditorViewModel {
         sourceFilename: String? = nil,
         sourceAssetID: String? = nil
     ) async throws -> SubtitleCaptionPlan {
-        let snapshot = timeline
+        let state = CaptionProjectState(self)
+        let snapshot = state.timeline
         let document = try await SubtitleFileParser.parseFile(at: url)
         let filename = MediaFilename.normalized(sourceFilename)
             ?? MediaFilename.normalized(url.lastPathComponent)
@@ -267,7 +276,7 @@ extension EditorViewModel {
             provenance: provenance
         )
         try Task.checkCancellation()
-        guard timeline == snapshot else { throw CaptionError.timelineChanged }
+        try state.validate(self)
         return plan
     }
 
@@ -287,7 +296,7 @@ extension EditorViewModel {
 
     @discardableResult
     func placeCaptions(fromSubtitleAssets assets: [MediaAsset]) async throws -> [String] {
-        let snapshot = timeline
+        let state = CaptionProjectState(self)
         var plans: [SubtitleCaptionPlan] = []
         for asset in assets {
             guard asset.type == .subtitle else { throw CaptionError.notSubtitle(asset.userFacingFilename) }
@@ -300,7 +309,7 @@ extension EditorViewModel {
                 sourceAssetID: asset.id
             ))
         }
-        guard timeline == snapshot else { throw CaptionError.timelineChanged }
+        try state.validate(self)
         return try placeSubtitleCaptionPlans(plans)
     }
 

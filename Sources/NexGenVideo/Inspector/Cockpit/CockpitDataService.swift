@@ -79,8 +79,8 @@ enum CockpitDataService {
 
     /// Fetch and decode the project state (phase gates + budget). Never `null` from the engine, but a
     /// `{"error": ...}` document (e.g. a project without a state file) surfaces as an engine error.
-    static func projectState(projectDir: URL) async -> Result<ProjectStateData?, CockpitError> {
-        await decoded(kind: "state", projectDir: projectDir, decodeError: "Couldn't read the project state.")
+    static func projectState(projectDir: URL, declaration: ProjectPackGate.MutationDeclaration? = nil) async -> Result<ProjectStateData?, CockpitError> {
+        await decoded(kind: "state", projectDir: projectDir, decodeError: "Couldn't read the project state.", declaration: declaration)
     }
 
     /// Fetch and decode the sanity audit. The CLI emits `{"error": "no shotlist", ...}` when the
@@ -133,8 +133,8 @@ enum CockpitDataService {
     }
 
     /// The per-phase UI contract (`contract` read kind, projectless but tolerant of a project arg).
-    static func contract(projectDir: URL) async -> Result<ContractData?, CockpitError> {
-        await decoded(kind: "contract", projectDir: projectDir, decodeError: "Couldn't read the contract.")
+    static func contract(projectDir: URL, declaration: ProjectPackGate.MutationDeclaration? = nil) async -> Result<ContractData?, CockpitError> {
+        await decoded(kind: "contract", projectDir: projectDir, decodeError: "Couldn't read the contract.", declaration: declaration)
     }
 
     /// The canonical storyboard bytes (`.success(nil)` until one exists), bound to `approval` in the same read.
@@ -162,10 +162,10 @@ enum CockpitDataService {
     /// Shared run + decode for kinds that follow the Bible idiom: literal `null` → `.success(nil)`,
     /// a `{"error": ...}` envelope → `.failure(.engine)`, otherwise decode `T`.
     private static func decoded<T: Decodable & Sendable>(
-        kind: String, projectDir: URL, decodeError: String
+        kind: String, projectDir: URL, decodeError: String, declaration: ProjectPackGate.MutationDeclaration? = nil
     ) async -> Result<T?, CockpitError> {
         let raw: Data
-        switch await run(kind: kind, projectDir: projectDir) {
+        switch await run(kind: kind, projectDir: projectDir, declaration: declaration) {
         case .failure(let e): return .failure(e)
         case .success(let d): raw = d
         }
@@ -188,21 +188,34 @@ enum CockpitDataService {
 
     /// Serve a cockpit read entirely in-process via NativeCockpitReader — no venv, no subprocess.
     /// Every cockpit kind is native (M7+); an unknown kind reports a process error.
-    private static func run(kind: String, projectDir: URL) async -> Result<Data, CockpitError> {
-        nativeRun(kind: kind, projectDir: projectDir)
+    private static func run(kind: String, projectDir: URL, declaration: ProjectPackGate.MutationDeclaration? = nil) async -> Result<Data, CockpitError> {
+        nativeRun(kind: kind, projectDir: projectDir, declaration: declaration)
     }
 
     /// In-process native read for a kind NativeCockpitReader serves. Projectless kinds (contract,
     /// router, phases) answer without a data root; state/brief/treatment resolve `<projectDir>/pipeline`
     /// first and report `.notInitialized` (the calm "no pipeline yet" state) when it isn't a project.
-    private static func nativeRun(kind: String, projectDir: URL) -> Result<Data, CockpitError> {
+    private static func nativeRun(kind: String, projectDir: URL, declaration: ProjectPackGate.MutationDeclaration? = nil) -> Result<Data, CockpitError> {
         let activePack = ProjectPluginSettings.activePlugin(projectURL: projectDir)
         do {
+            let workflow: HostWorkflowKey?
+            if let root = NativeCockpitReader.dataRoot(of: projectDir) {
+                if let declaration {
+                    workflow = try PhaseContractRuntime.resolveWorkflow(dataRoot: root, expectedPack: declaration.binding,
+                        expectedProductionContract: declaration.productionContract)
+                } else if case .legacy = ProjectPluginSettings.bindingResolution(projectURL: projectDir) {
+                    workflow = nil
+                } else {
+                    let captured = try ProjectPackGate.captureMutationDeclaration(projectURL: projectDir)
+                    workflow = try PhaseContractRuntime.resolveWorkflow(dataRoot: root, expectedPack: captured.binding,
+                        expectedProductionContract: captured.productionContract)
+                }
+            } else { workflow = nil }
             switch kind {
             case "phases":
-                return .success(try NativeCockpitReader.phasesJSON(activePack: activePack))
+                return .success(try NativeCockpitReader.phasesJSON(activePack: activePack, workflow: workflow))
             case "contract":
-                return .success(try NativeCockpitReader.contractJSON(activePack: activePack))
+                return .success(try NativeCockpitReader.contractJSON(activePack: activePack, workflow: workflow))
             case "router":
                 return .success(try NativeCockpitReader.routerJSON(dataRoot: NativeCockpitReader.dataRoot(of: projectDir)))
             default:
@@ -210,13 +223,13 @@ enum CockpitDataService {
                     return .failure(.notInitialized)
                 }
                 switch kind {
-                case "state": return .success(try NativeCockpitReader.stateJSON(dataRoot: root, activePack: activePack))
+                case "state": return .success(try NativeCockpitReader.stateJSON(dataRoot: root, activePack: activePack, workflow: workflow))
                 case "brief": return .success(try NativeCockpitReader.briefJSON(dataRoot: root))
                 case "treatment": return .success(try NativeCockpitReader.treatmentJSON(dataRoot: root))
                 case "bible": return .success(try NativeCockpitReader.bibleJSON(dataRoot: root))
-                case "shotlist": return .success(try NativeCockpitReader.shotlistJSON(dataRoot: root))
-                case "sanity": return .success(try NativeCockpitReader.sanityJSON(dataRoot: root, activePack: activePack))
-                case "frames": return .success(try NativeCockpitReader.framesJSON(dataRoot: root))
+                case "shotlist": return .success(try NativeCockpitReader.shotlistJSON(dataRoot: root, workflow: workflow))
+                case "sanity": return .success(try NativeCockpitReader.sanityJSON(dataRoot: root, activePack: activePack, workflow: workflow))
+                case "frames": return .success(try NativeCockpitReader.framesJSON(dataRoot: root, workflow: workflow))
                 case "ledger": return .success(try NativeCockpitReader.ledgerJSON(dataRoot: root))
                 case "cost": return .success(try NativeCockpitReader.costJSON(dataRoot: root, activePack: activePack))
                 default: return .failure(.process("Unsupported native kind \(kind)."))

@@ -13,6 +13,7 @@ struct CaptionTab: View {
     @State private var supportedLocales: [Locale] = []
     @State private var isGenerating = false
     @State private var note: String?
+    @State private var generationTask: Task<Void, Never>?
 
     private static let previewText = "Captions will look like this"
 
@@ -69,18 +70,24 @@ struct CaptionTab: View {
             }
             if isGenerating {
                 AppTheme.Background.surfaceColor.opacity(AppTheme.Opacity.prominent)
-                GeneratingOverlay(label: "Transcribing…", size: .preview)
+                VStack(spacing: AppTheme.Spacing.md) {
+                    GeneratingOverlay(label: "Transcribing…", size: .preview)
+                    Button("Cancel") { generationTask?.cancel() }
+                        .buttonStyle(.capsule(.secondary, size: .regular))
+                        .reviewAcceptanceProbe("captions.cancel")
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(AppTheme.Background.surfaceColor)
         .task {
             guard supportedLocales.isEmpty else { return }
-            supportedLocales = (await Transcription.supportedLocales())
+            supportedLocales = (await editor.captionTranscriptionClient.supportedLocales())
                 .sorted { languageName($0) < languageName($1) }
         }
         .onAppear { rememberSelectedClipTargets() }
         .onChange(of: editor.selectedClipIds) { _, _ in rememberSelectedClipTargets() }
+        .onDisappear { generationTask?.cancel() }
     }
 
     private var sourceSection: some View {
@@ -101,6 +108,7 @@ struct CaptionTab: View {
                     }
                 } label: { menuValueLabel(locale.map(languageName) ?? "Auto") }
                 .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize().focusable(false)
+                .reviewAcceptanceProbe("captions.language", text: locale?.identifier ?? "auto")
             }
         }
     }
@@ -179,6 +187,7 @@ struct CaptionTab: View {
                         .controlSize(.mini)
                         .tint(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.strong))
                         .accessibilityLabel("Caption background")
+                    .reviewAcceptanceProbe("captions.background", text: String(style.background.enabled))
                 }
                 InspectorFormRow(label: "Color") {
                     ColorField(displayColor: style.background.color.swiftUIColor) {
@@ -202,6 +211,7 @@ struct CaptionTab: View {
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
                 }
                 .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize().focusable(false)
+                .reviewAcceptanceProbe("captions.case", text: textCase.rawValue)
             }
             InspectorRow(icon: "exclamationmark.bubble", label: "Censor profanity") {
                 Toggle("Censor profanity", isOn: $censorProfanity)
@@ -210,6 +220,7 @@ struct CaptionTab: View {
                     .controlSize(.mini)
                     .tint(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.strong))
                     .accessibilityLabel("Censor profanity")
+                    .reviewAcceptanceProbe("captions.censor", text: String(censorProfanity))
             }
         }
     }
@@ -254,6 +265,7 @@ struct CaptionTab: View {
         .buttonStyle(.capsule(.secondary, size: .regular))
         .menuIndicator(.hidden)
         .help("Let Agent create captions for you. Choose a task and review its instructions before running.")
+        .reviewAcceptanceProbe("captions.actions")
     }
 
     private func removeFillerWords() {
@@ -361,6 +373,7 @@ struct CaptionTab: View {
                     .foregroundStyle(AppTheme.Status.errorColor)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
+                    .reviewAcceptanceProbe("captions.note", text: note)
             }
             HStack(spacing: AppTheme.Spacing.sm) {
                 Button(action: generate) {
@@ -369,6 +382,7 @@ struct CaptionTab: View {
                 }
                 .buttonStyle(.capsule(.prominent, size: .regular))
                 .disabled(effectiveCount == 0 || isGenerating)
+                .reviewAcceptanceProbe("captions.generate", state: effectiveCount > 0 && !isGenerating)
 
                 agentMenu
             }
@@ -391,12 +405,15 @@ struct CaptionTab: View {
             sourceClipIds: sourceIds, autoDetect: isAutoSource, style: style, center: center,
             textCase: textCase, censorProfanity: censorProfanity, locale: locale
         )
-        Task {
-            isGenerating = true
-            defer { isGenerating = false }
+        guard !isGenerating else { return }
+        isGenerating = true
+        generationTask = Task {
+            defer { isGenerating = false; generationTask = nil }
             do {
                 let ids = try await editor.generateCaptions(for: request)
                 if ids.isEmpty { note = "No speech detected." }
+            } catch is CancellationError {
+                note = "Caption generation cancelled."
             } catch {
                 note = error.localizedDescription
             }

@@ -4,6 +4,7 @@ struct AIEditTab: View {
     let asset: MediaAsset
     /// Clip id from the timeline.
     let clipId: String?
+    let services: GenerationPanelServices
     @Environment(EditorViewModel.self) private var editor
     @State private var rerunError: String?
     @State private var replaceClipSource: Bool = false
@@ -12,9 +13,10 @@ struct AIEditTab: View {
     @State private var aiEnhanceExpanded: Bool = true
     @State private var aiAudioExpanded: Bool = true
 
-    init(asset: MediaAsset, clipId: String? = nil) {
+    init(asset: MediaAsset, clipId: String? = nil, services: GenerationPanelServices = .live) {
         self.asset = asset
         self.clipId = clipId
+        self.services = services
     }
 
     var body: some View {
@@ -171,6 +173,7 @@ struct AIEditTab: View {
                 .controlSize(.regular)
                 .labelsHidden()
                 .accessibilityLabel(label)
+                .reviewAcceptanceProbe("ai-edit.scope." + label, text: isOn.wrappedValue ? "on" : "off")
         }
         .help(help)
     }
@@ -212,7 +215,7 @@ struct AIEditTab: View {
     ) -> some View {
         let availability: EditActionAvailability = editor.isMediaOffline(asset.id) && action != .rerun
             ? .disabled(reason: "Relink the original media to use this action")
-            : action.availability(for: asset, effectiveDurationOverride: effectiveDurationForAvailability)
+            : action.availability(for: asset, effectiveDurationOverride: effectiveDurationForAvailability, isModelRunnable: services.canRun)
         let isEnabled = availability.isAvailable
         let disabledReason = availability.reason
 
@@ -268,10 +271,7 @@ struct AIEditTab: View {
         switch action {
         case .upscale:
             Menu {
-                ForEach(UpscaleModelConfig.selections(
-                    for: asset,
-                    effectiveDuration: effectiveDurationForAvailability
-                )) { selection in
+                ForEach(services.upscaleSelections(for: asset, duration: effectiveDurationForAvailability)) { selection in
                     Button {
                         runUpscale(selection)
                     } label: {
@@ -283,6 +283,7 @@ struct AIEditTab: View {
             .menuIndicator(.hidden)
             .buttonStyle(.capsule(.secondary))
             .disabled(!isEnabled)
+            .reviewAcceptanceProbe("ai-edit." + String(describing: action), state: isEnabled)
         case .createVideo:
             Menu {
                 Button("Set as first frame") { sendToVideo(asReference: false) }
@@ -294,12 +295,14 @@ struct AIEditTab: View {
             .menuIndicator(.hidden)
             .buttonStyle(.capsule(.secondary))
             .disabled(!isEnabled)
+            .reviewAcceptanceProbe("ai-edit." + String(describing: action), state: isEnabled)
         case .edit, .generateMusic, .generateSFX, .rerun:
             Button(title) {
                 present(action)
             }
             .buttonStyle(.capsule(.secondary))
             .disabled(!isEnabled)
+            .reviewAcceptanceProbe("ai-edit." + String(describing: action), state: isEnabled)
         }
     }
 
@@ -321,16 +324,14 @@ struct AIEditTab: View {
         case .rerun:
             let modelId = asset.generationInput?.model ?? ""
             if UpscaleModelConfig.allIds.contains(modelId) {
-                markReplacementPendingIfNeeded()
+                let replacement = replacementTarget()
                 Task { @MainActor in
                     do {
                         _ = try await EditSubmitter.rerun(
                             asset: asset, editor: editor,
-                            onComplete: replacementCompletion(),
-                            onFailure: replacementFailure()
+                            replacementTarget: replacement, services: services
                         )
                     } catch {
-                        unmarkReplacementPendingIfNeeded()
                         rerunError = error.localizedDescription
                     }
                 }
@@ -341,7 +342,7 @@ struct AIEditTab: View {
     }
 
     private func presentVideoAudio(kind: VideoToAudioEditKind) {
-        guard let stored = EditSubmitter.videoAudioSeed(for: asset, kind: kind) else { return }
+        guard let stored = EditSubmitter.videoAudioSeed(for: asset, kind: kind, effectiveDuration: effectiveDurationForAvailability) else { return }
         seedPanel(
             stored: stored,
             trimmed: trimmedSourceIfEnabled(),
@@ -385,8 +386,8 @@ struct AIEditTab: View {
     }
 
     private func runUpscale(_ selection: UpscaleSelection) {
-        markReplacementPendingIfNeeded()
         let trim = trimmedSourceIfEnabled()
+        let replacement = replacementTarget(resetTrim: trim != nil)
         Task { @MainActor in
             _ = await EditSubmitter.submitUpscale(
                 asset: asset,
@@ -394,40 +395,16 @@ struct AIEditTab: View {
                 targetResolution: selection.targetResolution,
                 editor: editor,
                 trimmedSource: trim,
-                onComplete: replacementCompletion(resetTrim: trim != nil),
-                onFailure: replacementFailure()
+                replacementTarget: replacement, services: services
             )
         }
     }
 
     private var shouldReplace: Bool { replaceClipSource && clipId != nil }
 
-    private func markReplacementPendingIfNeeded() {
-        guard shouldReplace, let clipId else { return }
-        editor.markPendingReplacement(clipId: clipId)
-    }
-
-    private func unmarkReplacementPendingIfNeeded() {
-        guard shouldReplace, let clipId else { return }
-        editor.clearPendingReplacement(clipId: clipId)
-    }
-
-    private func replacementCompletion(resetTrim: Bool = false) -> (@MainActor (MediaAsset) -> Void)? {
+    private func replacementTarget(resetTrim: Bool = false) -> GenerationClipReplacement.Snapshot? {
         guard shouldReplace, let clipId else { return nil }
-        // if generating more than one image, only replace with the first one
-        let fired = FirstOnlyFlag()
-        return { [weak editor] newAsset in
-            guard fired.fire() else { return }
-            editor?.replaceClipMediaRef(clipId: clipId, newAssetId: newAsset.id, resetTrim: resetTrim)
-            editor?.clearPendingReplacement(clipId: clipId)
-        }
-    }
-
-    private func replacementFailure() -> (@MainActor () -> Void)? {
-        guard shouldReplace, let clipId else { return nil }
-        return { [weak editor] in
-            editor?.clearPendingReplacement(clipId: clipId)
-        }
+        return .init(clipID: clipId, resetTrim: resetTrim, editor: editor)
     }
 
 }

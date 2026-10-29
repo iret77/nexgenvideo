@@ -18,12 +18,19 @@ extension GenerationPackageV1 {
                     : nil)
             resolution = video.resolution
             generateAudio = video.generateAudio
+        case .upscale(let upscale):
+            duration = Double(upscale.durationSeconds)
+            resolution = upscale.targetResolution
+        case .audio(let audio):
+            duration = audio.durationSeconds.map(Double.init)
+                ?? (payload.generationInput.duration > 0 ? Double(payload.generationInput.duration) : nil)
         default:
             throw GenerationRequestError.gate("This saved request has no supported pricing input.")
         }
         return GenerationPricingInput(
             modelId: payload.target.modelId,
-            modality: payload.modality == "image" ? .image : .video,
+            modality: payload.operation == "upscale" ? .upscale : (payload.operation == "music" ? .music
+                : (payload.modality == "image" ? .image : (payload.modality == "audio" ? .audio : .video))),
             durationSeconds: duration,
             outputCount: payload.outputCount,
             resolution: resolution,
@@ -38,7 +45,7 @@ extension GenerationPackageV1 {
     func restoreParameters() throws -> PreparedProviderParameters {
         struct Parameters: Decodable {
             let kind: String
-            let prompt: String
+            let prompt: String?
             let aspectRatio: String?
             let resolution: String?
             let quality: String?
@@ -62,17 +69,25 @@ extension GenerationPackageV1 {
             let instrumental: Bool?
             let durationSeconds: Int?
             let videoURL: String?
+            let sourceURL: String?
+            let targetResolution: String?
+            let scaleFactor: Int?
         }
         try validate()
         let data = Data(payload.requestParametersJSON.utf8)
         let saved = try JSONDecoder().decode(Parameters.self, from: data)
         let parameters: BackendGenerationParams
+        let prompt = saved.prompt ?? ""
+        guard saved.kind == "upscale" ? (saved.prompt == nil && payload.operation == "upscale" && payload.prompt.isEmpty)
+            : (saved.prompt != nil && payload.operation != "upscale") else {
+            throw GenerationRequestError.gate("The saved operation does not match its reviewed parameters.")
+        }
         switch saved.kind {
         case "image":
             guard let aspectRatio = saved.aspectRatio, let count = saved.numImages, count == payload.outputCount, payload.modality == "image" else {
                 throw GenerationRequestError.gate("The saved image output count is invalid.")
             }
-            parameters = .image(.init(prompt: saved.prompt, aspectRatio: aspectRatio, resolution: saved.resolution,
+            parameters = .image(.init(prompt: prompt, aspectRatio: aspectRatio, resolution: saved.resolution,
                 quality: saved.quality, imageURLs: saved.imageURLs ?? [], numImages: count,
                 maskURL: saved.maskURL, background: saved.background, outputFormat: saved.outputFormat,
                 outputCompression: saved.outputCompression))
@@ -82,7 +97,7 @@ extension GenerationPackageV1 {
                   payload.modality == "video", payload.outputCount == 1 else {
                 throw GenerationRequestError.gate("The saved video request is incomplete.")
             }
-            parameters = .video(.init(prompt: saved.prompt, duration: duration, aspectRatio: aspectRatio,
+            parameters = .video(.init(prompt: prompt, duration: duration, aspectRatio: aspectRatio,
                 resolution: saved.resolution, sourceVideoURL: saved.sourceVideoURL,
                 startFrameURL: saved.startFrameURL, endFrameURL: saved.endFrameURL,
                 referenceImageURLs: saved.referenceImageURLs ?? [], referenceVideoURLs: saved.referenceVideoURLs ?? [],
@@ -91,12 +106,19 @@ extension GenerationPackageV1 {
             guard payload.modality == "audio", payload.outputCount == 1, let instrumental = saved.instrumental else {
                 throw GenerationRequestError.gate("The saved audio request is incomplete.")
             }
-            parameters = .audio(.init(prompt: saved.prompt, voice: saved.voice, lyrics: saved.lyrics,
+            parameters = .audio(.init(prompt: prompt, voice: saved.voice, lyrics: saved.lyrics,
                 styleInstructions: saved.styleInstructions, instrumental: instrumental,
                 durationSeconds: saved.durationSeconds, videoURL: saved.videoURL))
+        case "upscale":
+            guard ["image", "video"].contains(payload.modality), payload.outputCount == 1,
+                  let sourceURL = saved.sourceURL, let duration = saved.durationSeconds, duration > 0 else {
+                throw GenerationRequestError.gate("The saved upscale request is incomplete.")
+            }
+            parameters = .upscale(.init(sourceURL: sourceURL, durationSeconds: duration,
+                targetResolution: saved.targetResolution, scaleFactor: saved.scaleFactor))
         default: throw GenerationRequestError.gate("This saved request has no supported generation operation.")
         }
-        guard try Self.canonicalData(parameters) == data, saved.prompt == payload.prompt else {
+        guard try Self.canonicalData(parameters) == data, prompt == payload.prompt else {
             throw GenerationRequestError.gate("The saved provider parameters cannot be restored without changing the request.")
         }
         let slots = payload.references.enumerated().map { "ngv-input://\($0.offset)/\($0.element.submittedSHA256)" }
@@ -161,7 +183,30 @@ extension GenerationController {
             submission = .video { _ in value }
             prepared = .video(value, parameters)
             modality = .video
-        default: throw GenerationRequestError.gate("Only visual generation items can resume from this batch.")
+        case .audio(let params):
+            guard let model = editor.generationBatchCoordinator.modelCatalog.audio.first(where: { $0.id == package.payload.target.modelId }) else {
+                throw GenerationRequestError.gate("The approved audio model is no longer in the current catalog. This item cannot switch models automatically.")
+            }
+            let value = AudioGenerationSubmission(genInput: input, model: model, params: params,
+                placeholderDuration: AudioGenerationSubmission.placeholderDuration(model: model, params: params),
+                name: item.purpose, folderId: package.payload.destination.folderID,
+                references: references, trimmedSourceOverride: nil, preprocessRef: nil)
+            submission = .audio { _ in value }
+            prepared = .audio(value, parameters)
+            modality = package.payload.operation == "music" ? .music : .audio
+        case .upscale(let params):
+            guard let source = references.first, references.count == 1, source.type.rawValue == package.payload.modality else {
+                throw GenerationRequestError.gate("The approved upscale source is unavailable or changed its media type.")
+            }
+            let value = UpscaleGenerationSubmission(genInput: input, source: source, trimmedSource: nil,
+                placeholderDuration: source.type == .image ? Defaults.imageDurationSeconds
+                    : (input.sourceRange?.trim?.durationSeconds ?? source.duration),
+                name: item.purpose, folderID: package.payload.destination.folderID,
+                targetResolution: params.targetResolution, scaleFactor: params.scaleFactor)
+            submission = .preparedUpscale(value)
+            prepared = .preparedUpscale(value, parameters)
+            modality = .upscale
+        default: throw GenerationRequestError.gate("This batch item has no supported saved generation operation.")
         }
         let request = GenerationRequest(modality: modality, modelId: package.payload.target.modelId,
             intent: package.payload.intent, aspectRatio: input.aspectRatio, durationSeconds: Double(input.duration),
@@ -170,7 +215,10 @@ extension GenerationController {
             compiledPrompt: package.payload.prompt, notes: [], home: home, scope: scope,
             binding: package.payload.binding, compilerInputsSHA256: package.payload.compilerInputsSHA256,
             destination: package.payload.destination, recipe: package.payload.recipe, repairPlanID: package.payload.repairPlanID,
-            references: snapshot, preflight: nil)
+            references: snapshot, preflight: nil,
+            replacementTarget: package.payload.destination.clipID.map {
+                .init(clipID: $0, resetTrim: package.payload.destination.resetTrim ?? false, editor: editor)
+            })
         try await package.requireCurrentContext(editor: editor)
         try scope.requireCurrent(editor: editor)
         try generation.attachReview(package)

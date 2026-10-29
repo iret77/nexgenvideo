@@ -6,10 +6,6 @@ enum EditSubmitter {
 
     // MARK: - Upscale
 
-    /// Upscale routes through the shared `GenerationController` like every other generation (#114),
-    /// but as the promptless `.upscale` modality — the controller skips the compile stage while
-    /// preflight/submit/feedback stay shared. Returns the placeholder id, or nil on a preflight/dispatch
-    /// failure.
     @discardableResult
     static func submitUpscale(
         asset: MediaAsset,
@@ -19,100 +15,62 @@ enum EditSubmitter {
         trimmedSource: TrimmedSource? = nil,
         origin: GenerationRequest.Origin = .panel,
         target: ResolvedGenerationTarget? = nil,
+        replacementTarget: GenerationClipReplacement.Snapshot? = nil,
+        services: GenerationPanelServices = .live,
         onComplete: (@MainActor (MediaAsset) -> Void)? = nil,
         onFailure: (@MainActor () -> Void)? = nil
     ) async -> String? {
-        let effectiveDurationSeconds: Double = {
-            if let trim = trimmedSource, trim.hasTrim {
-                return max(1, trim.durationSeconds)
+        do {
+            let selectedTarget = target ?? services.target(model.id)
+            let request = try upscaleRequest(asset: asset, model: model, targetResolution: targetResolution,
+                trimmedSource: trimmedSource, origin: origin, target: selectedTarget,
+                placement: replacementTarget.map { .replaceClip(id: $0.clipID, resetTrim: $0.resetTrim) })
+            let generation = try await GenerationController.prepare(request, editor: editor, preflight: {
+                do {
+                    try replacementTarget?.requireCurrent(editor: editor)
+                    guard services.isCurrent(selectedTarget) else { return "The selected upscaler or provider is unavailable." }
+                    return nil
+                }
+                catch { return error.localizedDescription }
+            }).get()
+            _ = try await GenerationController.prepareReviewPackage(generation, editor: editor, quoteLoader: services.quoteLoader)
+            guard try await GenerationReviewSheet.confirm(generation: generation, title: "Review Upscale", editor: editor, services: services) else {
+                onFailure?(); return nil
             }
-            return max(1, asset.duration)
-        }()
-        let recordedDuration = max(1, Int(effectiveDurationSeconds.rounded(.up)))
-        guard let selection = model.selection(
-            sourceType: asset.type,
-            sourceWidth: asset.sourceWidth,
-            sourceHeight: asset.sourceHeight,
-            durationSeconds: effectiveDurationSeconds,
-            targetResolution: targetResolution
-        ) else {
-            let target = targetResolution.map { " \($0)" } ?? ""
-            editor.mediaPanelToast = MediaPanelToast(
-                message: "\(model.displayName) cannot produce\(target) from this source."
-            )
+            let outcome = await GenerationController.submitPrepared(generation, editor: editor,
+                onSuccess: { value in if let value { onComplete?(value) } }, onFailure: onFailure, quoteLoader: services.quoteLoader)
+            switch outcome {
+            case .success(let result): return result.placeholderId
+            case .failure(let error): throw error
+            }
+        } catch {
+            editor.mediaPanelToast = MediaPanelToast(message: error.localizedDescription)
             onFailure?()
             return nil
         }
-        var genInput = GenerationInput(
-            prompt: "",
-            model: model.id,
-            duration: recordedDuration,
-            aspectRatio: "",
-            resolution: selection.targetResolution
-        )
-        genInput.sourceRange = GenerationSourceRange(
-            trim: asset.type == .video && trimmedSource?.hasTrim == true ? trimmedSource?.record : nil
-        )
+    }
 
-        let isImage = asset.type == .image
-        let placeholderDuration: Double
-        if isImage {
-            placeholderDuration = Defaults.imageDurationSeconds
-        } else if let trim = trimmedSource, trim.hasTrim {
-            placeholderDuration = trim.durationSeconds
-        } else {
-            placeholderDuration = asset.duration > 0 ? asset.duration : effectiveDurationSeconds
+    static func upscaleRequest(asset: MediaAsset, model: UpscaleModelConfig, targetResolution: String? = nil,
+                               trimmedSource: TrimmedSource? = nil, origin: GenerationRequest.Origin = .panel,
+                               target: ResolvedGenerationTarget? = nil, name: String? = nil,
+                               placement: GenerationRequest.Placement? = nil) throws -> GenerationRequest {
+        let duration = trimmedSource?.hasTrim == true ? trimmedSource!.durationSeconds : max(1, asset.duration)
+        guard duration.isFinite, duration > 0,
+              let selection = model.selection(sourceType: asset.type, sourceWidth: asset.sourceWidth,
+                sourceHeight: asset.sourceHeight, durationSeconds: duration, targetResolution: targetResolution) else {
+            throw RerunError.invalid("\(model.displayName) cannot produce this target from the selected source and range.")
         }
-
-        let sourceAssetId = asset.id
-        let request = GenerationRequest(
-            modality: .upscale, modelId: model.id, intent: "",
-            durationSeconds: effectiveDurationSeconds,
-            outputResolution: selection.targetResolution,
-            placement: .mediaLibrary(folderId: asset.folderId), origin: origin,
-            target: target,
-            submission: .upscale(run: { service, projectURL, editor, authorization, onComplete, onFailure in
-                service.generate(
-                    genInput: genInput,
-                    assetType: asset.type,
-                    placeholderDuration: placeholderDuration,
-                    references: [asset],
-                    trimmedSourceOverride: trimmedSource,
-                    name: upscaleName(for: asset),
-                    folderId: asset.folderId,
-                    buildParams: { uploaded in
-                        .upscale(UpscaleGenerationParams(
-                            sourceURL: uploaded.first ?? "",
-                            durationSeconds: isImage ? 1 : recordedDuration,
-                            targetResolution: selection.targetResolution,
-                            scaleFactor: selection.scaleFactor
-                        ))
-                    },
-                    snapshotRefs: { input, uploaded in
-                        recordUpscaleProvenance(
-                            in: &input,
-                            uploadedURLs: uploaded,
-                            sourceAssetID: sourceAssetId,
-                            sourceType: asset.type
-                        )
-                    },
-                    fileExtension: isImage ? "jpg" : "mp4",
-                    projectURL: projectURL,
-                    editor: editor,
-                    authorization: authorization,
-                    onComplete: onComplete,
-                    onFailure: onFailure
-                )
-            }))
-
-        let outcome = await GenerationController.submit(
-            request, editor: editor,
-            onSuccess: { asset in if let asset { onComplete?(asset) } },
-            onFailure: onFailure)
-        switch outcome {
-        case .success(let o): return o.placeholderId
-        case .failure: return nil
-        }
+        var input = GenerationInput(prompt: "", model: model.id, duration: max(1, Int(duration.rounded(.up))),
+            aspectRatio: "", resolution: selection.targetResolution)
+        input.sourceRange = .init(trim: asset.type == .video && trimmedSource?.hasTrim == true ? trimmedSource?.record : nil)
+        recordUpscaleProvenance(in: &input, uploadedURLs: [], sourceAssetID: asset.id, sourceType: asset.type)
+        let submission = UpscaleGenerationSubmission(genInput: input, source: asset, trimmedSource: trimmedSource,
+            placeholderDuration: asset.type == .image ? Defaults.imageDurationSeconds : duration,
+            name: name ?? upscaleName(for: asset), folderID: asset.folderId,
+            targetResolution: selection.targetResolution, scaleFactor: selection.scaleFactor)
+        return GenerationRequest(modality: .upscale, modelId: model.id, intent: "", durationSeconds: duration,
+            outputResolution: selection.targetResolution, placement: placement ?? .mediaLibrary(folderId: asset.folderId),
+            origin: origin, target: target, submission: .preparedUpscale(submission))
     }
 
     // MARK: - Rerun
@@ -207,13 +165,15 @@ enum EditSubmitter {
         editor: EditorViewModel,
         onComplete: (@MainActor (MediaAsset) -> Void)? = nil,
         onFailure: (@MainActor () -> Void)? = nil,
-        quoteLoader: GenerationBudgetGuard.QuoteLoader = LiveGenerationPricing.quote
+        quoteLoader: GenerationBudgetGuard.QuoteLoader = LiveGenerationPricing.quote,
+        replacementTarget: GenerationClipReplacement.Snapshot? = nil,
+        services: GenerationPanelServices = .live
     ) async throws -> String {
         guard let stored = asset.generationInput else { throw RerunError.notGenerated }
         var gen = stored
         gen.createdAt = nil
         let modelId = gen.model
-        let modelKind = ModelCatalog.shared.modelKindForRerun(id: modelId)
+        let modelKind = services.catalog.modelKindForRerun(id: modelId)
         // Recompile the ORIGINAL intent against the CURRENT ledger — a lock added or changed since the
         // first render now applies. Three cases (#114 gate):
         //   (a) no stored intent (pre-#114 asset, or upscale) → nil → replay the stored compiled prompt
@@ -228,6 +188,7 @@ enum EditSubmitter {
 
         if case .video(let videoModel)? = modelKind {
             let inputAssets = try videoInputAssets(gen, editor: editor)
+            let restoredSource = try GenerationPanelSeed.restore(gen, assets: editor.mediaAssets).sourceTrim
             let primaryDurableIDs = Set(
                 (gen.imageURLAssetIds ?? [])
                     + [gen.sourceVideoAssetId, gen.startFrameAssetId, gen.endFrameAssetId]
@@ -306,6 +267,7 @@ enum EditSubmitter {
                 placeholderDuration: asset.duration > 0
                     ? asset.duration
                     : Double(max(1, billedSeconds)),
+                trimmedSourceOverride: restoredSource,
                 name: rerunName(for: asset),
                 folderId: asset.folderId,
                 generateAudio: generateAudio
@@ -398,14 +360,13 @@ enum EditSubmitter {
         }
 
         if case .audio(let audioModel)? = modelKind {
-            let sourceVideoURL = audioModel.inputs.contains(.video) ? preUploaded?.first : nil
+            let sourceVideos = try referenceAssets(gen.referenceVideoAssetIds, editor: editor)
             let expectsVideoSource = audioModel.inputs.contains(.video)
-                && (!audioModel.inputs.contains(.text)
-                    || (gen.referenceVideoAssetIds?.isEmpty == false)
-                    || sourceVideoURL != nil)
-            if expectsVideoSource, sourceVideoURL == nil {
-                throw RerunError.missingSource
-            }
+                && (!audioModel.inputs.contains(.text) || !sourceVideos.isEmpty || preUploaded?.isEmpty == false)
+            guard !expectsVideoSource || sourceVideos.count == 1 else { throw RerunError.missingSource }
+            let restoredSource = expectsVideoSource
+                ? try GenerationPanelSeed.restore(gen, assets: editor.mediaAssets).sourceTrim : nil
+            gen.imageURLs = nil
             let placeholderDuration: Double = asset.duration > 0
                 ? asset.duration
                 : (audioModel.category == .music
@@ -418,7 +379,7 @@ enum EditSubmitter {
                 styleInstructions: gen.styleInstructions,
                 instrumental: gen.instrumental ?? false,
                 durationSeconds: (audioModel.durations != nil || expectsVideoSource) && gen.duration > 0 ? gen.duration : nil,
-                videoURL: sourceVideoURL
+                videoURL: nil
             )
             if let err = audioModel.validate(params: params) {
                 throw RerunError.invalid(err)
@@ -434,11 +395,15 @@ enum EditSubmitter {
                 genInput: gen,
                 assetType: .audio,
                 placeholderDuration: placeholderDuration,
-                references: [],
-                preUploadedURLs: preUploaded,
+                references: sourceVideos,
+                trimmedSourceOverride: restoredSource,
                 name: rerunName(for: asset),
                 folderId: asset.folderId,
-                buildParams: { _ in .audio(params) },
+                buildParams: { uploaded in
+                    var value = params
+                    value.videoURL = expectsVideoSource ? uploaded.first : nil
+                    return .audio(value)
+                },
                 fileExtension: "mp3",
                 projectURL: editor.workingRoot,
                 editor: editor,
@@ -448,95 +413,23 @@ enum EditSubmitter {
             )
         }
 
-        if case .upscale(let upscaleModel)? = modelKind {
-            let isImage = asset.type == .image
-            let sourceID = isImage
-                ? gen.imageURLAssetIds?.first
-                : (gen.sourceVideoAssetId ?? gen.imageURLAssetIds?.first)
-            let durableSource = sourceID.flatMap { id in
-                editor.mediaAssets.first { $0.id == id }
-            }
-            // Records without a source range may have uploaded a trim; only their original upload reproduces it.
-            let recordedRange = gen.sourceRange
-            let usesProjectSource = durableSource != nil && recordedRange != nil
-            guard usesProjectSource || preUploaded?.first != nil else {
+        if case .upscale(let model) = modelKind {
+            let restored = try GenerationPanelSeed.restore(gen, assets: editor.mediaAssets)
+            let sourceID = gen.sourceVideoAssetId ?? gen.imageURLAssetIds?.first
+            guard let sourceID, let source = editor.mediaAssets.first(where: { $0.id == sourceID }) else {
                 throw RerunError.missingSource
             }
-            let recordedTrim = isImage ? nil : recordedRange?.trim
-            let rerunDuration = recordedTrim?.durationSeconds
-                ?? (asset.duration > 0 ? asset.duration : Double(max(1, gen.duration)))
-            let selection: UpscaleSelection
-            if let targetResolution = gen.resolution {
-                guard let durableSource else { throw RerunError.missingSource }
-                guard let validated = upscaleModel.selection(
-                    sourceType: durableSource.type,
-                    sourceWidth: durableSource.sourceWidth,
-                    sourceHeight: durableSource.sourceHeight,
-                    durationSeconds: rerunDuration,
-                    targetResolution: targetResolution
-                ) else {
-                    throw RerunError.invalid(
-                        "The recorded upscale target is not supported for the project source."
-                    )
-                }
-                selection = validated
-            } else {
-                guard upscaleModel.supportedTypes.contains(asset.type) else {
-                    throw RerunError.invalid("The upscaler does not support this source type.")
-                }
-                selection = UpscaleSelection(
-                    model: upscaleModel,
-                    targetResolution: nil,
-                    scaleFactor: nil
-                )
+            let target: ResolvedGenerationTarget?
+            if let id = gen.generationPackageID, let home = editor.workingRoot {
+                let previous = try GenerationPackageV1.load(id: id, home: home).payload.target
+                target = services.target(model.id, preferred: previous)
+            } else { target = nil }
+            guard let result = await submitUpscale(asset: source, model: model, targetResolution: gen.resolution,
+                editor: editor, trimmedSource: restored.sourceTrim, origin: .rerun, target: target,
+                replacementTarget: replacementTarget, services: services, onComplete: onComplete, onFailure: onFailure) else {
+                throw RerunError.invalid("The upscale was discarded or could not be submitted. The original media was retained.")
             }
-            let replayURLs = usesProjectSource ? nil : preUploaded
-            let references = usesProjectSource ? (durableSource.map { [$0] } ?? []) : []
-            let trimOverride: TrimmedSource? = {
-                guard usesProjectSource, let recordedTrim, let durableSource else { return nil }
-                return TrimmedSource(sourceURL: durableSource.url, record: recordedTrim)
-            }()
-            let authorization = try await authorizeRerun(
-                gen: gen,
-                modality: .upscale,
-                durationSeconds: rerunDuration,
-                editor: editor,
-                quoteLoader: quoteLoader
-            )
-            return editor.generationService.generate(
-                genInput: gen,
-                assetType: asset.type,
-                placeholderDuration: isImage
-                    ? Defaults.imageDurationSeconds
-                    : (asset.duration > 0 ? asset.duration : Double(gen.duration)),
-                references: references,
-                trimmedSourceOverride: trimOverride,
-                preUploadedURLs: replayURLs,
-                name: rerunName(for: asset),
-                folderId: asset.folderId,
-                buildParams: { uploaded in
-                    .upscale(UpscaleGenerationParams(
-                        sourceURL: uploaded.first ?? "",
-                        durationSeconds: isImage ? 1 : gen.duration,
-                        targetResolution: selection.targetResolution,
-                        scaleFactor: selection.scaleFactor
-                    ))
-                },
-                snapshotRefs: { input, uploaded in
-                    recordUpscaleProvenance(
-                        in: &input,
-                        uploadedURLs: uploaded,
-                        sourceAssetID: sourceID,
-                        sourceType: asset.type
-                    )
-                },
-                fileExtension: isImage ? "jpg" : "mp4",
-                projectURL: editor.workingRoot,
-                editor: editor,
-                authorization: authorization,
-                onComplete: onComplete,
-                onFailure: onFailure
-            )
+            return result
         }
 
         throw RerunError.unknownModel(modelId)
@@ -665,8 +558,8 @@ enum EditSubmitter {
         return stored
     }
 
-    static func videoAudioSeed(for asset: MediaAsset, kind: VideoToAudioEditKind) -> GenerationInput? {
-        guard asset.type == .video, let model = kind.model else { return nil }
+    static func videoAudioSeed(for asset: MediaAsset, kind: VideoToAudioEditKind, effectiveDuration: Double? = nil) -> GenerationInput? {
+        guard asset.type == .video, let model = kind.model(spanSeconds: effectiveDuration ?? asset.duration) else { return nil }
         var stored = GenerationInput(
             prompt: "",
             model: model.id,

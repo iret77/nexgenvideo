@@ -15,12 +15,12 @@ struct TextContentField: NSViewRepresentable {
         scrollView.borderType = .noBorder
         scrollView.autohidesScrollers = true
 
-        let textView = NSTextView()
+        let textView = ContentTextView()
         textView.isEditable = true
         textView.isSelectable = true
         textView.isRichText = false
         textView.importsGraphics = false
-        textView.allowsUndo = false
+        textView.allowsUndo = true
         textView.font = .systemFont(ofSize: AppTheme.Typography.ui * interfaceScale)
         textView.textColor = AppTheme.Text.primary
         textView.insertionPointColor = AppTheme.Text.primary
@@ -51,6 +51,7 @@ struct TextContentField: NSViewRepresentable {
         guard textView.window?.firstResponder !== textView else { return }
         if textView.string != text {
             textView.string = text
+            textView.undoManager?.removeAllActions()
         }
     }
 
@@ -72,6 +73,24 @@ struct TextContentField: NSViewRepresentable {
         func textDidEndEditing(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
             parent.onCommit(textView.string)
+            textView.undoManager?.removeAllActions()
         }
+
+        func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            if commandSelector == #selector(NSResponder.insertTab(_:)) {
+                textView.window?.selectNextKeyView(nil)
+                return true
+            }
+            if commandSelector == #selector(NSResponder.insertBacktab(_:)) {
+                textView.window?.selectPreviousKeyView(nil)
+                return true
+            }
+            return false
+        }
+    }
+
+    private final class ContentTextView: NSTextView {
+        private let contentUndo = UndoManager()
+        override var undoManager: UndoManager? { contentUndo }
     }
 }
