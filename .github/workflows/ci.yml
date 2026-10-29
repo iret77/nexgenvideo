@@ -156,8 +156,9 @@ jobs:
           export SWIFT_BACKTRACE=enable=yes,interactive=no,demangle=yes,cache=no
           python3 scripts/capture_render_review_test_diagnostic.py \
             --evidence "$RUNNER_TEMP/render-review-test-diagnostic" --log test.log \
-            --swift-testing-runs 2 --xctest-runs 2 -- \
-            swift test --cache-path "$NGV_SWIFTPM_CACHE_PATH" --skip-build
+            --swift-testing-runs 2 --xctest-runs 2 --without-runloop-probe -- \
+            python3 scripts/run_macos_tests.py --cache-path "$NGV_SWIFTPM_CACHE_PATH" \
+              --evidence "$RUNNER_TEMP/render-review-test-diagnostic/hosted-suite"
 
       - name: Upload render review test diagnosis
         if: always()
@@ -181,7 +182,10 @@ jobs:
         env:
           NGV_HDR_RUNTIME_QC: '1'
           NGV_HDR_QC_OUTPUT_DIR: ${{ runner.temp }}/hdr-export-qc
-        run: swift test --cache-path "$NGV_SWIFTPM_CACHE_PATH" --skip-build --filter HDRExportTests
+        run: |
+          python3 scripts/run_macos_tests.py --cache-path "$NGV_SWIFTPM_CACHE_PATH" \
+            --scope app-swift-testing --filter HDRExportTests \
+            --evidence "$RUNNER_TEMP/hdr-export-qc/hosted-suite"
 
       - name: Upload HDR export QC evidence
         if: always()

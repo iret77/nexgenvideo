@@ -121,9 +121,23 @@ relaunch checks still run. Normal-startup acceptance consumes the zipped app on
 SwiftPM dependency caches use a stable directory inside `RUNNER_TEMP`;
 the key includes the platform, toolchain and package manifests. Run IDs are absent
 from the cache path because [GitHub's cache version also hashes that path](https://github.com/actions/cache/blob/v4/README.md#cache-version).
-The cache contains no compiled products. A failed job does not save a new cache.
-Debug and release test steps each execute once with pipeline failure propagation;
-a test-process crash cannot become successful evidence through an automatic retry.
+The cache contains no compiled products. Core saves resolved dependencies after a
+successful build, before testing; an exact cache hit needs no new save.
+Debug and release use `run_macos_tests.py`: XCTest runs once through SwiftPM with
+Swift Testing disabled, Engine Swift Testing runs once through its test product,
+then App Swift Testing runs once in `NexGenVideoAppKitTestHost`. That host enters
+`NSApplication.run` synchronously and invokes the public Swift Testing ABI after
+loading the exact built App test bundle. The same configuration, scratch path and
+compiler flags locate and exercise the built products. No phase retries a failure.
+Each phase retains original console output and exit status. Engine and App JSON
+records bind discovered opaque test IDs to actual starts, ends and run completion;
+executed functions must belong to the intended source module. App execution also
+requires the owned host receipt, successful ABI result, active AppKit main loop
+and healthy original event stream. Full-suite output still requires two genuine
+XCTest and two genuine Swift Testing completions. Neither exit zero nor an ABI
+result alone supplies missing test completion.
+Only the App child receives the selected toolchain, macOS platform and staged
+bundle loader paths; its recorded paths and native load result remain evidence.
 
 Agent UI specification rendering runs in a separate Linux job for changes to its
 inputs or CI wiring. A documentation-only UI specification edit now produces
@@ -156,7 +170,12 @@ successful evidence remains applicable to the scoped fix.
 An optional `unit_test_filter` on the standalone or reusable workspace workflow
 adds the affected unit suite, such as `MusicvideoChecksTests`. The existing
 `macrunner` build directory is extended with test targets, their runtime inputs
-are staged, and `swift test --skip-build --filter` runs only the selected tests
+are staged, and the same macOS driver forwards the unchanged native filter to
+XCTest, Engine Swift Testing and the AppKit host. Native discovery and JSON events
+prove a backend's empty selection; it is recorded as empty, never as a passed
+suite. A filter with no actual test execution in any backend fails. HDR QC selects
+the App Swift Testing backend explicitly and retains its exact filter. The full
+release and Core suites keep the fixed two-plus-two completion requirement. Tests run
 after the app artifact is uploaded. An empty filter skips this step. The build job
 exports `app_ready` only after a successful upload with an artifact ID. Native
 acceptance downloads that exact artifact from the same run even if the later unit
