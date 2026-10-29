@@ -3,9 +3,25 @@ import SwiftUI
 struct GenerationView: View {
     let maxPanelHeight: Double
     let workspace: EditorViewModel.WorkspaceFocus
+    private let suppliedServices: GenerationPanelServices?
+    private var services: GenerationPanelServices {
+        suppliedServices ?? (WorkspaceUIAcceptance.isRequested ? editor.generationPanelServicesOverride : nil) ?? .live
+    }
+
+    init(maxPanelHeight: Double, workspace: EditorViewModel.WorkspaceFocus, services: GenerationPanelServices? = nil) {
+        self.maxPanelHeight = maxPanelHeight; self.workspace = workspace; self.suppliedServices = services
+    }
+
+    private func probeID(_ suffix: String) -> String { "generation." + workspace.rawValue + "." + suffix }
 
     @Environment(EditorViewModel.self) var editor
     @State private var prompt = ""
+    @State private var isLoadingSeed = false
+    @State private var seedAttemptID: UUID?
+    @State private var seedContext: GenerationPanelSeed.Context?
+    @State private var seededTarget: ResolvedGenerationTarget?
+    @State private var seedError: String?
+    @State private var seededImageOptions: GenerationInput?
     @State private var reviewedGeneration: GenerationController.PreparedGeneration?
     @State private var reviewedDraft: [String]?
     @State private var reviewAttemptID: UUID?
@@ -61,6 +77,7 @@ struct GenerationView: View {
     @State private var audioVideoTargeted = false
 
     @State private var isPopulatingPanel = false
+    @State private var seededChanges = GenerationPanelSeedChanges()
     @State private var editFolderId: String?
 
     /// Bumped on `.providerKeysChanged` to re-evaluate the usable-model list and default
@@ -86,7 +103,9 @@ struct GenerationView: View {
             selectedQuality, String(selectedNumImages), selectedVoice, lyrics, styleInstructions, String(instrumental),
             String(selectedAudioDuration), String(generateAudio), framesRefsMode.rawValue, editFolderId ?? "",
             workspace.rawValue, editor.workspaceFocus.rawValue, editor.workingRoot?.path ?? "",
-            editor.mediaPanelCurrentFolderId ?? "", editor.pendingEditReplacementClipId ?? "", String(providerKeyRevision)]
+            editor.mediaPanelCurrentFolderId ?? "", editor.pendingEditReplacementClipId ?? "", String(providerKeyRevision),
+            seededImageOptions?.imageMaskAssetId ?? "", seedAttemptID?.uuidString ?? "",
+            editor.pendingPanelSeed?.id.uuidString ?? ""]
         for models in [videoModels.map(\.id), imageModels.map(\.id), audioModels.map(\.id)] {
             values.append("models:\(models.count)")
             values += models
@@ -166,9 +185,9 @@ struct GenerationView: View {
 
     // MARK: - Computed state
 
-    private var videoModels: [VideoModelConfig] { ModelCatalog.shared.video }
-    private var imageModels: [ImageModelConfig] { ModelCatalog.shared.image }
-    private var audioModels: [AudioModelConfig] { ModelCatalog.shared.audio }
+    private var videoModels: [VideoModelConfig] { services.catalog.video }
+    private var imageModels: [ImageModelConfig] { services.catalog.image }
+    private var audioModels: [AudioModelConfig] { services.catalog.audio }
 
     private var videoModel: VideoModelConfig { selectedModel(videoModels, at: selectedVideoModelIndex) }
     private var imageModel: ImageModelConfig { selectedModel(imageModels, at: selectedImageModelIndex) }
@@ -184,7 +203,7 @@ struct GenerationView: View {
     /// see GenerationProvider.canRun. NOT `servicing(_).hasKey`: the resolver can pick a keyless
     /// provider (e.g. MCP), which would wrongly hide a model runnable via another binding.
     private func isUsable(_ id: String) -> Bool {
-        ModelPreferences.shared.isEnabled(id) && GenerationProvider.canRun(modelId: id)
+        services.canRun(id)
     }
 
     private var usableVideoModels: [(index: Int, model: VideoModelConfig)] {
@@ -224,7 +243,7 @@ struct GenerationView: View {
     private func enabledIndex(_ current: Int, in ids: [String]) -> Int {
         if ids.indices.contains(current), isUsable(ids[current]) { return current }
         if let firstUsable = ids.firstIndex(where: { isUsable($0) }) { return firstUsable }
-        let prefs = ModelPreferences.shared
+        let prefs = services.preferences
         if ids.indices.contains(current), prefs.isEnabled(ids[current]) { return current }
         return ids.firstIndex { prefs.isEnabled($0) } ?? (ids.indices.contains(current) ? current : 0)
     }
@@ -233,9 +252,15 @@ struct GenerationView: View {
     private var isPromptEmpty: Bool { trimmedPrompt.isEmpty }
 
     private var canSubmit: Bool {
+        guard editor.pendingPanelSeed == nil, !isLoadingSeed, seedFailureReason == nil,
+              isUsable(currentModelId) else { return false }
         if selectedType == .video && selectedVideoCapabilities == nil { return false }
         if selectedType == .video && selectedVideoInputPolicy?.requiresSourceVideo == true {
             guard sourceVideo != nil else { return false }
+            if selectedVideoInputPolicy?.sourceOperation == .extendForward {
+                guard let width = sourceVideo?.sourceWidth, let height = sourceVideo?.sourceHeight,
+                      width > 0, height > 0 else { return false }
+            }
             if selectedVideoCapabilities?.requiresReferenceImage == true,
                imageReferences.isEmpty { return false }
             if selectedVideoCapabilities?.supportsReferences == false,
@@ -279,10 +304,7 @@ struct GenerationView: View {
     }
 
     private func videoTarget(for model: VideoModelConfig) -> ResolvedGenerationTarget {
-        GenerationService.dispatchTarget(
-            modelId: model.id,
-            requiringSourceVideo: sourceVideo != nil
-        )
+        services.videoTarget(model.id, hasSource: sourceVideo != nil, preferred: seededTarget)
     }
     private var selectedFrameCount: Int {
         return videoInputAssets(for: videoModel).frames.count
@@ -339,7 +361,7 @@ struct GenerationView: View {
                 || selectedVideoCapabilities?.resolutions != nil
                 || videoModel.audioDiscountRate != nil
         case .image: return !imageModel.aspectRatios.isEmpty || imageModel.resolutions != nil || imageModel.qualities != nil || imageModel.maxImages > 1
-        case .audio: return audioModel.supportsInstrumental || audioModel.durations != nil
+        case .audio: return audioModel.supportsInstrumental || (!audioModel.inputs.contains(.video) && audioModel.supportsDurationSelection)
         }
     }
 
@@ -390,7 +412,6 @@ struct GenerationView: View {
     private var supportsAudioToggle: Bool {
         selectedType == .video
             && selectedVideoCapabilities?.supportsNativeAudio == true
-            && videoModel.audioDiscountRate != nil
     }
 
     private var effectiveGenerateAudio: Bool {
@@ -412,7 +433,7 @@ struct GenerationView: View {
     }
 
     private var effectiveVideoSeconds: Int {
-        guard selectedVideoInputPolicy?.requiresSourceVideo == true else {
+        guard selectedVideoInputPolicy?.preservesSourceComposition == true else {
             return selectedDuration.seconds
                 ?? selectedVideoCapabilities?.durationCapabilities.maximumSeconds ?? 0
         }
@@ -422,6 +443,15 @@ struct GenerationView: View {
             return max(1, Int(trim.durationSeconds.rounded()))
         }
         return max(0, Int((sourceVideo?.duration ?? 0).rounded()))
+    }
+
+    private var effectiveVideoAspectRatio: String {
+        guard selectedVideoInputPolicy?.sourceOperation == .extendForward,
+              let width = sourceVideo?.sourceWidth, let height = sourceVideo?.sourceHeight,
+              width > 0, height > 0 else { return selectedAspectRatio }
+        var divisor = width, remainder = height
+        while remainder != 0 { (divisor, remainder) = (remainder, divisor % remainder) }
+        return "\(width / divisor):\(height / divisor)"
     }
 
     private var effectiveAudioVideoSpanSeconds: Double {
@@ -444,13 +474,17 @@ struct GenerationView: View {
     private var settingsSummary: String {
         var parts: [String] = []
         if selectedType == .audio {
-            if audioModel.durations != nil { parts.append("\(selectedAudioDuration)s") }
+            if audioModel.inputs.contains(.video) { parts.append("\(effectiveAudioVideoSeconds)s source") }
+            else if audioModel.supportsDurationSelection { parts.append("\(selectedAudioDuration)s") }
             if audioModel.supportsInstrumental && instrumental { parts.append("Instrumental") }
             return parts.isEmpty ? "Settings" : parts.joined(separator: " \u{00B7} ")
         }
         if currentResolutions != nil { parts.append(resolutionLabel(selectedResolution)) }
         if currentQualities != nil { parts.append(selectedQuality) }
-        if selectedType == .video { parts.append(selectedDuration.displayLabel) }
+        if selectedType == .video {
+            parts.append(selectedVideoInputPolicy?.preservesSourceComposition == true
+                ? "\(effectiveVideoSeconds)s source" : selectedDuration.displayLabel)
+        }
         if !selectedAspectRatio.isEmpty, !currentAspectRatios.isEmpty {
             parts.append(selectedAspectRatio)
         }
@@ -485,7 +519,7 @@ struct GenerationView: View {
 
     var body: some View {
         Group {
-            if !ModelCatalog.shared.isLoaded {
+            if !services.catalog.isLoaded {
                 catalogLoadingView
             } else if availableTypes.isEmpty {
                 emptyCatalogView
@@ -503,7 +537,18 @@ struct GenerationView: View {
             reviewedGeneration = nil
             reviewedDraft = nil
         }
-        .onDisappear { reviewAttemptID = nil; reviewedGeneration = nil; reviewedDraft = nil }
+        .onDisappear { reviewAttemptID = nil; reviewedGeneration = nil; reviewedDraft = nil; seedAttemptID = nil; isLoadingSeed = false }
+        .onChange(of: editor.workingRoot) { _, _ in
+            reviewAttemptID = nil; reviewedGeneration = nil; reviewedDraft = nil; seedAttemptID = nil
+            isLoadingSeed = false; seedError = nil; seedContext = nil; seededImageOptions = nil; seededTarget = nil
+            seededChanges = .init()
+            if isActiveWorkspace {
+                editor.pendingEditReplacementClipId = nil
+                editor.pendingEditTrimmedSource = nil
+                editor.pendingEditAudioPlacement = nil
+            }
+            prompt = ""; lyrics = ""; styleInstructions = ""; editFolderId = nil; clearReferences()
+        }
     }
 
     /// selectedType must never point at an empty modality; the model accessors trap on an empty array.
@@ -535,7 +580,7 @@ struct GenerationView: View {
     private var emptyCatalogView: some View {
         WorkspaceStateView(
             title: "No models available",
-            message: "Add a provider API key to get started.",
+            message: "Connect a provider, or refresh its model list in Providers.",
             systemImage: "square.stack.3d.up.slash",
             fillsSpace: false
         ) {
@@ -559,11 +604,12 @@ struct GenerationView: View {
                 Spacer()
                 ProjectActivityButton()
                 Button {
-                    editor.pendingEditReplacementClipId = nil
-                    editor.pendingEditTrimmedSource = nil
-                    editor.pendingEditAudioPlacement = nil
-                    editor.pendingPanelSeed = nil
-                    editFolderId = nil
+                    if editor.pendingPanelSeed == nil {
+                        editor.pendingEditReplacementClipId = nil
+                        editor.pendingEditTrimmedSource = nil
+                        editor.pendingEditAudioPlacement = nil
+                        editFolderId = nil
+                    }
                     editor.showGenerationPanel = false
                 } label: {
                     Image(systemName: "xmark")
@@ -587,8 +633,30 @@ struct GenerationView: View {
                     .layoutPriority(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
+                if isLoadingSeed { Text("Restoring generation inputs…").foregroundStyle(AppTheme.Text.secondaryColor) }
+                if let seedError = seedFailureReason {
+                    Text(seedError).foregroundStyle(AppTheme.Status.warningColor)
+                        .reviewAcceptanceProbe(probeID("seed-error"), text: seedError)
+                    if let seed = editor.pendingPanelSeed, seed.context.matches(editor: editor) {
+                        Button("Retry restoring edit inputs") { consumePendingPanelSeed() }
+                            .buttonStyle(InlineActionButtonStyle())
+                            .disabled(!isActiveWorkspace || isLoadingSeed)
+                            .reviewAcceptanceProbe(probeID("retry-seed"), state: isActiveWorkspace && !isLoadingSeed)
+                    }
+                    Button("Start a new request") {
+                        startNewRequest()
+                        prompt = ""; clearReferences()
+                    }.buttonStyle(InlineActionButtonStyle())
+                        .reviewAcceptanceProbe(probeID("new-request"))
+                }
+                if !isUsable(currentModelId) {
+                    Text("Choose an enabled model with an available provider.")
+                        .foregroundStyle(AppTheme.Status.warningColor)
+                        .reviewAcceptanceProbe(probeID("unavailable-model"))
+                }
                 if let dropError {
                     Text(dropError)
+                        .reviewAcceptanceProbe(probeID("error"), text: dropError)
                         .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Status.warningColor)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -605,6 +673,7 @@ struct GenerationView: View {
                             minHeight: AppTheme.ComponentSize.generationPromptMinHeight,
                             maxHeight: AppTheme.ComponentSize.generationPromptMaxHeight
                         )
+                        .reviewAcceptanceProbe(probeID("lyrics"), text: lyrics)
                     }
                     if selectedType == .audio && audioModel.supportsStyleInstructions {
                         inputDivider
@@ -614,6 +683,7 @@ struct GenerationView: View {
                             minHeight: AppTheme.ComponentSize.generationNegativePromptMinHeight,
                             maxHeight: AppTheme.ComponentSize.generationNegativePromptMaxHeight
                         )
+                        .reviewAcceptanceProbe(probeID("style"), text: styleInstructions)
                     }
                     inputToolbar
                 }
@@ -659,7 +729,7 @@ struct GenerationView: View {
             // A seeded edit may reuse a now-disabled model; keep its selection.
             if !hadSeed { normalizeModelSelection() }
         }
-        .onChange(of: editor.pendingPanelSeed?.asset.id) { _, _ in
+        .onChange(of: editor.pendingPanelSeed?.id) { _, _ in
             guard isActiveWorkspace else { return }
             consumePendingPanelSeed()
         }
@@ -669,7 +739,7 @@ struct GenerationView: View {
             consumePendingPanelSeed()
             if !hadSeed { normalizeModelSelection() }
         }
-        .onChange(of: ModelPreferences.shared.disabledIds) { _, _ in
+        .onChange(of: services.preferences.disabledIds) { _, _ in
             guard !isPopulatingPanel else { return }
             normalizeModelSelection()
         }
@@ -684,47 +754,59 @@ struct GenerationView: View {
             normalizeModelSelection()
         }
         .onChange(of: selectedType) { _, newValue in
-            guard !isPopulatingPanel else { return }
+            guard !isPopulatingPanel, !seededChanges.consume(.type, value: newValue.rawValue, currentValue: selectedType.rawValue) else { return }
+            startNewRequest()
             normalizeModelSelection()
             resetSettings()
             clearReferences()
             if newValue == .audio { resetAudioState() }
             editFolderId = nil
-            if isActiveWorkspace {
-                editor.pendingEditTrimmedSource = nil
-                editor.pendingEditAudioPlacement = nil
-            }
         }
-        .onChange(of: selectedVideoModelIndex) { _, _ in
-            guard !isPopulatingPanel else { return }
+        .onChange(of: selectedVideoModelIndex) { _, value in
+            guard !isPopulatingPanel, !seededChanges.consume(.videoModel, value: String(value), currentValue: String(selectedVideoModelIndex)) else { return }
+            seededTarget = nil
             if selectedType == .video {
                 resetSettings()
                 if selectedVideoInputPolicy?.requiresSourceVideo != true {
                     sourceVideo = nil
                 }
+                let hadReferences = !refImages.isEmpty || !refVideos.isEmpty || !refAudios.isEmpty
                 framesRefsMode = .firstLast
                 resetRefPools()
+                if hadReferences { flashDropError("Reference slots were cleared for the changed video model. Assign the inputs for this request before reviewing it.") }
+                if selectedVideoCapabilities?.supportsFirstFrame != true { firstFrame = nil }
+                if selectedVideoCapabilities?.supportsLastFrame != true { lastFrame = nil }
             }
         }
-        .onChange(of: selectedImageModelIndex) { _, _ in
-            guard !isPopulatingPanel else { return }
+        .onChange(of: selectedImageModelIndex) { _, value in
+            guard !isPopulatingPanel, !seededChanges.consume(.imageModel, value: String(value), currentValue: String(selectedImageModelIndex)) else { return }
+            seededTarget = nil
             if selectedType == .image {
                 resetSettings()
+                if seededImageOptions != nil {
+                    seededImageOptions = nil
+                    flashDropError("The changed image model starts a new request without the prior mask and output options.")
+                }
+                if !imageModel.supportsImageReference, !imageReferences.isEmpty {
+                    imageReferences = []
+                    flashDropError("The changed model does not accept reference images. The previous references were removed.")
+                }
             }
         }
-        .onChange(of: selectedAspectRatio) { _, _ in
-            guard !isPopulatingPanel, selectedType == .image else { return }
+        .onChange(of: selectedAspectRatio) { _, value in
+            guard !isPopulatingPanel, !seededChanges.consume(.aspect, value: value, currentValue: selectedAspectRatio), selectedType == .image else { return }
             if let resolution = imageModel.matchingResolution(for: selectedAspectRatio) {
                 selectedResolution = resolution
             }
         }
         .onChange(of: selectedResolution) { _, newValue in
-            guard !isPopulatingPanel, selectedType == .image,
+            guard !isPopulatingPanel, !seededChanges.consume(.resolution, value: newValue, currentValue: selectedResolution), selectedType == .image,
                   imageModel.customSize != nil, newValue == "auto" else { return }
             selectedAspectRatio = "auto"
         }
-        .onChange(of: selectedAudioModelIndex) { _, _ in
-            guard !isPopulatingPanel else { return }
+        .onChange(of: audioModel.id) { _, value in
+            guard !isPopulatingPanel, !seededChanges.consume(.audioModel, value: value, currentValue: audioModel.id) else { return }
+            seededTarget = nil
             if selectedType == .audio { resetAudioState() }
         }
     }
@@ -794,6 +876,7 @@ struct GenerationView: View {
                 .padding(.top, AppTheme.Spacing.sm)
                 .padding(.bottom, AppTheme.Spacing.xs)
                 .focused($isPromptFocused)
+                .reviewAcceptanceProbe(probeID("intent"), text: prompt)
                 .onChange(of: prompt) { _, new in updateRefMentionQuery(from: new) }
                 .onKeyPress(phases: [.down, .repeat]) { press in handleMentionKey(press) }
                 .popover(isPresented: Binding(
@@ -946,15 +1029,17 @@ struct GenerationView: View {
             inputDivider
             if let generation = reviewedGeneration, reviewedDraft == reviewDraft, let package = generation.reviewedPackage {
                 ScrollView {
-                    GenerationPackageReviewView(package: package)
+                    GenerationPackageReviewView(package: package, probePrefix: probeID("package"))
                         .interfaceFont(size: AppTheme.Typography.ui)
                         .padding(AppTheme.Spacing.md)
                 }
                 .frame(maxHeight: AppTheme.ComponentSize.agentAssetPickerHeight)
                 WrapLayout(spacing: AppTheme.Spacing.sm, trailingLastItem: true) {
                     Button("Discard Review") { reviewAttemptID = nil; reviewedGeneration = nil; reviewedDraft = nil }
+                        .reviewAcceptanceProbe(probeID("discard"))
                         .buttonStyle(.capsule(.secondary, size: .regular))
                     Button(isSubmittingReview ? "Submitting…" : "Approve and Generate") { submitReviewedGeneration() }
+                        .reviewAcceptanceProbe(probeID("approve"), state: !isSubmittingReview && !isPreparingReview && canSubmit)
                         .buttonStyle(.capsule(.prominent, size: .regular))
                         .disabled(isSubmittingReview || isPreparingReview || !canSubmit)
                 }
@@ -1007,6 +1092,7 @@ struct GenerationView: View {
             .padding(.horizontal, AppTheme.Spacing.xs)
             .padding(.vertical, AppTheme.Spacing.xs)
         }
+        .reviewAcceptanceProbe(probeID("voice"), text: selectedVoice.isEmpty ? audioModel.defaultVoice : selectedVoice)
         .menuStyle(.borderlessButton)
         .tint(AppTheme.Text.secondaryColor)
         .menuIndicator(.hidden)
@@ -1052,6 +1138,7 @@ struct GenerationView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .reviewAcceptanceProbe(probeID("mode." + mode.rawValue), state: framesRefsMode == mode)
             }
         }
         .fixedSize()
@@ -1098,6 +1185,7 @@ struct GenerationView: View {
                 onPick: addRefAsset
             )
             .disabled(isRefCapReached)
+            .reviewAcceptanceProbe(probeID("pick.References"), state: !isRefCapReached)
         }
     }
 
@@ -1319,7 +1407,9 @@ struct GenerationView: View {
                 acceptedTypes: acceptedTypes,
                 onPick: onDrop
             )
+            .reviewAcceptanceProbe(probeID("pick." + label), text: asset?.id ?? "")
         }
+        .reviewAcceptanceProbe(probeID("slot." + label), text: asset?.id ?? "")
     }
 
     // MARK: - Image references
@@ -1401,32 +1491,43 @@ struct GenerationView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .reviewAcceptanceProbe(probeID("reference.remove." + asset.id))
         }
+        .reviewAcceptanceProbe(probeID("reference." + asset.id), text: tag ?? "")
     }
 
     // MARK: - Edit (video-to-video) strip
 
     private var editVideoStrip: some View {
-        HStack(spacing: AppTheme.Spacing.xs) {
-            frameSlot(
-                label: "Source Video",
-                asset: sourceVideo,
-                isTargeted: $sourceVideoTargeted,
-                accepting: [.video],
-                iconName: "video.badge.plus",
-                onDrop: { sourceVideo = $0 },
-                onClear: { sourceVideo = nil }
-            )
-            if selectedVideoCapabilities?.supportsReferences == true {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+            HStack(spacing: AppTheme.Spacing.xs) {
                 frameSlot(
-                    label: "Reference Image",
-                    asset: imageReferences.first,
-                    isTargeted: $motionReferenceTargeted,
-                    accepting: [.image],
-                    iconName: "photo.badge.plus",
-                    onDrop: { imageReferences = [$0] },
-                    onClear: { imageReferences.removeAll() }
+                    label: "Source Video",
+                    asset: sourceVideo,
+                    isTargeted: $sourceVideoTargeted,
+                    accepting: [.video],
+                    iconName: "video.badge.plus",
+                    onDrop: { asset in sourceVideo = asset; Task { await asset.loadMetadata() } },
+                    onClear: { sourceVideo = nil }
                 )
+                if selectedVideoCapabilities?.supportsReferences == true {
+                    frameSlot(
+                        label: "Reference Image",
+                        asset: imageReferences.first,
+                        isTargeted: $motionReferenceTargeted,
+                        accepting: [.image],
+                        iconName: "photo.badge.plus",
+                        onDrop: { asset in imageReferences = [asset] + imageReferences.dropFirst().filter { $0.id != asset.id } },
+                        onClear: { if !imageReferences.isEmpty { imageReferences.removeFirst() } }
+                    )
+                }
+            }
+            if selectedVideoCapabilities?.supportsReferences == true, imageReferences.count > 1 {
+                LazyVGrid(columns: refGridColumns, alignment: .leading, spacing: AppTheme.Spacing.xs) {
+                    ForEach(Array(imageReferences.dropFirst())) { asset in
+                        refCard(asset: asset) { imageReferences.removeAll { $0.id == asset.id } }
+                    }
+                }
             }
         }
     }
@@ -1468,6 +1569,7 @@ struct GenerationView: View {
 
     private var submitButton: some View {
         Button(isPreparingReview ? "Preparing…" : "Review Request") { prepareGenerationReview() }
+            .reviewAcceptanceProbe(probeID("review"), state: canSubmit && !isPreparingReview && !isSubmittingReview)
             .buttonStyle(.capsule(.prominent, size: .regular))
             .disabled(!canSubmit || isPreparingReview || isSubmittingReview)
             .help("Compile the request and review its inputs and estimated cost before generating.")
@@ -1500,6 +1602,7 @@ struct GenerationView: View {
                 .buttonStyle(.plain)
                 .help(type.rawValue)
                 .accessibilityLabel(type.rawValue)
+                .reviewAcceptanceProbe(probeID("type." + type.rawValue), state: selectedType == type)
             }
         }
         .padding(AppTheme.Spacing.xxs)
@@ -1563,6 +1666,7 @@ struct GenerationView: View {
         .hoverHighlight()
         .help("Model — you decide. Changing it changes what this render costs and runs on.")
         .accessibilityLabel("Model, you decide. Currently \(currentModelName).")
+        .reviewAcceptanceProbe(probeID("model"), text: currentModelId)
     }
 
     // MARK: - Settings
@@ -1586,6 +1690,7 @@ struct GenerationView: View {
             .hoverHighlight()
         }
         .buttonStyle(.plain)
+        .reviewAcceptanceProbe(probeID("settings"))
         .popover(isPresented: $showSettingsPopover, arrowEdge: .bottom) {
             settingsPopoverContent
         }
@@ -1602,8 +1707,27 @@ struct GenerationView: View {
                     options: durationOptions
                 ) { $0.displayLabel }
             }
-            if selectedType == .audio, let durations = audioModel.durations {
-                settingsPicker("Duration", selection: $selectedAudioDuration, options: durations) { "\($0)s" }
+            if selectedType == .video, selectedVideoInputPolicy?.sourceOperation == .extendForward {
+                Text("Aspect ratio follows the source video: \(effectiveVideoAspectRatio)")
+                    .interfaceFont(size: AppTheme.Typography.ui)
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+            }
+            if selectedType == .audio, !audioModel.inputs.contains(.video) {
+                if let durations = audioModel.durations {
+                    settingsPicker("Duration", selection: $selectedAudioDuration, options: durations) { "\($0)s" }
+                } else if audioModel.supportsDurationSelection {
+                    HStack(spacing: AppTheme.Spacing.sm) {
+                        Text("Duration")
+                            .interfaceFont(size: AppTheme.Typography.ui)
+                            .foregroundStyle(AppTheme.Text.secondaryColor)
+                        ScrubbableNumberField(value: Double(selectedAudioDuration),
+                            range: Double(audioModel.minSeconds)...Double(audioModel.maxSeconds), format: "%.0f",
+                            valueSuffix: " s", onChanged: { selectedAudioDuration = Int($0.rounded()) }) {
+                                selectedAudioDuration = Int($0.rounded())
+                            }
+                            .reviewAcceptanceProbe(probeID("duration"), text: String(selectedAudioDuration))
+                    }
+                }
             }
             if !currentAspectRatios.isEmpty {
                 settingsPicker("Aspect Ratio", selection: $selectedAspectRatio, options: currentAspectRatios) { $0 }
@@ -1623,14 +1747,16 @@ struct GenerationView: View {
             }
             if selectedType == .audio && audioModel.supportsInstrumental {
                 Toggle("Instrumental", isOn: $instrumental)
+                    .reviewAcceptanceProbe(probeID("instrumental"), text: instrumental ? "on" : "off")
                     .controlSize(.small)
                     .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
             }
-            if selectedType == .video, videoModel.audioDiscountRate != nil {
+            if selectedType == .video, supportsAudioToggle {
                 let discount = videoModel.audioDiscount(for: effectiveResolution)
                 let savings = discount.map { Int(((1 - $0) * 100).rounded()) }
                 Toggle("Generate audio", isOn: $generateAudio)
+                    .reviewAcceptanceProbe(probeID("audio"), text: generateAudio ? "on" : "off")
                     .controlSize(.small)
                     .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
@@ -1652,6 +1778,7 @@ struct GenerationView: View {
                 }
                 .pickerStyle(.segmented)
                 .controlSize(.small)
+                .reviewAcceptanceProbe(probeID("option." + label), text: format(selection.wrappedValue))
             } else {
                 let cols = options.count == 6 ? 3 : 5
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: AppTheme.Spacing.xs), count: cols), spacing: AppTheme.Spacing.xs) {
@@ -1670,6 +1797,7 @@ struct GenerationView: View {
                                 )
                         }
                         .buttonStyle(.plain)
+                        .reviewAcceptanceProbe(probeID("option." + label + "." + format(option)), state: selection.wrappedValue == option)
                     }
                 }
             }
@@ -1694,10 +1822,7 @@ struct GenerationView: View {
         if inputPolicy.requiresSourceVideo {
             return VideoGenerationSubmission.InputAssets(
                 sourceVideo: sourceVideo,
-                imageRefs: offeringCapabilities.supportsReferences
-                    ? Array(imageReferences.prefix(
-                        offeringCapabilities.maxReferenceImages
-                    )) : []
+                imageRefs: offeringCapabilities.supportsReferences ? imageReferences : []
             )
         }
 
@@ -1730,7 +1855,7 @@ struct GenerationView: View {
             if inputPolicy.requiresSourceVideo {
                 modelError = capabilities.validate(
                     duration: .seconds(effectiveVideoSeconds),
-                    aspectRatio: selectedAspectRatio,
+                    aspectRatio: effectiveVideoAspectRatio,
                     resolution: effectiveResolution,
                     generateAudio: effectiveGenerateAudio,
                     displayName: videoModel.displayName
@@ -1749,6 +1874,10 @@ struct GenerationView: View {
                 offeringCapabilities: capabilities
             )
         case .image:
+            if let maskID = seededImageOptions?.imageMaskAssetId,
+               !editor.mediaAssets.contains(where: { $0.id == maskID && $0.type == .image }) {
+                return "The saved image mask is unavailable. Restore it or choose a new request before generating."
+            }
             let quality = imageModel.qualities != nil ? selectedQuality : nil
             let imageCount = imageModel.maxImages > 1
                 ? min(imageModel.maxImages, max(1, selectedNumImages)) : 1
@@ -1757,7 +1886,9 @@ struct GenerationView: View {
                 resolution: effectiveResolution,
                 quality: quality,
                 imageRefCount: imageReferences.count,
-                numImages: imageCount
+                numImages: imageCount, background: seededImageOptions?.imageBackground,
+                outputFormat: seededImageOptions?.imageOutputFormat, outputCompression: seededImageOptions?.imageOutputCompression,
+                hasMask: seededImageOptions?.imageMaskAssetId != nil
             )
         case .audio:
             if audioModel.inputs.contains(.video) {
@@ -1776,7 +1907,7 @@ struct GenerationView: View {
             styleInstructions: audioModel.supportsStyleInstructions && !styleInstructions.isEmpty
                 ? styleInstructions : nil,
             instrumental: audioModel.supportsInstrumental ? instrumental : false,
-            durationSeconds: (audioModel.durations != nil || audioModel.inputs.contains(.video)) ? audioDuration : nil,
+            durationSeconds: (audioModel.supportsDurationSelection || audioModel.inputs.contains(.video)) ? audioDuration : nil,
             videoURL: videoURL
         )
     }
@@ -1786,7 +1917,7 @@ struct GenerationView: View {
         let draft = reviewDraft
         let rawIntent = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let audioDuration: Int = selectedType == .audio
-            ? (audioModel.inputs.contains(.video) ? effectiveAudioVideoSeconds : audioModel.durations != nil ? selectedAudioDuration : 0)
+            ? (audioModel.inputs.contains(.video) ? effectiveAudioVideoSeconds : audioModel.supportsDurationSelection ? selectedAudioDuration : 0)
             : 0
         if let error = preflightValidation(audioDuration: audioDuration) { flashDropError(error); return }
         let replacement = workspace == .media ? nil : editor.pendingEditReplacementClipId
@@ -1799,7 +1930,12 @@ struct GenerationView: View {
                 return
             }
             request = value
-        case .image: request = buildImageRequest(intent: rawIntent, replacementClipId: replacement)
+        case .image:
+            guard let value = buildImageRequest(intent: rawIntent, replacementClipId: replacement) else {
+                flashDropError("The saved image mask is unavailable. Restore it or choose a new request before generating.")
+                return
+            }
+            request = value
         case .audio: request = buildAudioRequest(intent: rawIntent, audioDuration: audioDuration,
             replacementClipId: replacement, pendingAudioPlacement: audioPlacement)
         }
@@ -1813,9 +1949,12 @@ struct GenerationView: View {
             do {
                 let generation = try await GenerationController.prepare(request, editor: editor, preflight: {
                     guard reviewAttemptID == attemptID, reviewDraft == draft, isActiveWorkspace, editor.showGenerationPanel else { return "The inputs changed. Review the request again." }
+                    guard let target = request.target, services.isCurrent(target) else {
+                        return "The reviewed provider or model is unavailable. Prepare the request again."
+                    }
                     return preflightValidation(audioDuration: audioDuration)
                 }).get()
-                _ = try await GenerationController.prepareReviewPackage(generation, editor: editor)
+                _ = try await GenerationController.prepareReviewPackage(generation, editor: editor, quoteLoader: services.quoteLoader)
                 guard reviewAttemptID == attemptID, reviewDraft == draft, isActiveWorkspace, editor.showGenerationPanel else { return }
                 reviewedGeneration = generation
                 reviewedDraft = draft
@@ -1826,12 +1965,12 @@ struct GenerationView: View {
     }
 
     private func submitReviewedGeneration() {
-        guard let generation = reviewedGeneration, let draft = reviewedDraft, draft == reviewDraft,
+        guard canSubmit, let generation = reviewedGeneration, let draft = reviewedDraft, draft == reviewDraft,
               isActiveWorkspace, !isSubmittingReview else { return }
         isSubmittingReview = true
         Task { @MainActor in
             defer { isSubmittingReview = false }
-            let outcome = await GenerationController.submitPrepared(generation, editor: editor)
+            let outcome = await GenerationController.submitPrepared(generation, editor: editor, quoteLoader: services.quoteLoader)
             reviewedGeneration = nil
             reviewedDraft = nil
             switch outcome {
@@ -1865,7 +2004,7 @@ struct GenerationView: View {
             intent: prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : prompt,
             model: currentModelId,
             duration: selectedType == .video ? effectiveVideoSeconds : audioDuration,
-            aspectRatio: selectedAspectRatio,
+            aspectRatio: selectedType == .video ? effectiveVideoAspectRatio : selectedAspectRatio,
             resolution: effectiveResolution,
             quality: selectedType == .image && imageModel.qualities != nil ? selectedQuality : nil,
             voice: selectedType == .audio && audioModel.voices != nil && !selectedVoice.isEmpty
@@ -1879,13 +2018,15 @@ struct GenerationView: View {
             generateAudio: selectedType == .video ? effectiveGenerateAudio : nil
         )
         if selectedType == .video {
-            genInput.videoDuration = videoInputPolicy?.requiresSourceVideo == true
+            genInput.videoDuration = videoInputPolicy?.preservesSourceComposition == true
                 ? .seconds(effectiveVideoSeconds)
                 : selectedDuration
         }
         if imageCount > 1 { genInput.numImages = imageCount }
         if selectedType == .image {
-            genInput.imageOutputFormat = imageModel.defaultOutputFormat
+            genInput.imageOutputFormat = seededImageOptions == nil ? imageModel.defaultOutputFormat : seededImageOptions?.imageOutputFormat
+            genInput.imageBackground = seededImageOptions?.imageBackground
+            genInput.imageOutputCompression = seededImageOptions?.imageOutputCompression
         }
         return genInput
     }
@@ -1922,7 +2063,7 @@ struct GenerationView: View {
             return trim
         }()
         let placeholderDuration: Double
-        if inputPolicy.requiresSourceVideo {
+        if inputPolicy.preservesSourceComposition {
             if let trim = trimmedSource, trim.hasTrim {
                 placeholderDuration = trim.durationSeconds
             } else {
@@ -1939,7 +2080,7 @@ struct GenerationView: View {
         let generateAudioFlag = effectiveGenerateAudio
         return GenerationRequest(
             modality: .video, modelId: currentModelId, intent: intent,
-            aspectRatio: selectedAspectRatio, durationSeconds: Double(effectiveVideoSeconds),
+            aspectRatio: effectiveVideoAspectRatio, durationSeconds: Double(effectiveVideoSeconds),
             placement: placement(
                 replacementClipId: replacementClipId, folderId: folderId,
                 resetTrim: trimmedSource?.hasTrim == true),
@@ -1962,19 +2103,25 @@ struct GenerationView: View {
             }))
     }
 
-    private func buildImageRequest(intent: String, replacementClipId: String?) -> GenerationRequest {
+    private func buildImageRequest(intent: String, replacementClipId: String?) -> GenerationRequest? {
         let model = imageModel
         let imageCount = currentImageCount
+        let mask = seededImageOptions?.imageMaskAssetId.flatMap { id in
+            editor.mediaAssets.first { $0.id == id && $0.type == .image }
+        }
+        guard seededImageOptions?.imageMaskAssetId == nil || mask != nil else { return nil }
         let folderId = editFolderId ?? imageReferences.last?.folderId ?? editor.mediaPanelCurrentFolderId
         return GenerationRequest(
             modality: .image, modelId: currentModelId, intent: intent,
             aspectRatio: selectedAspectRatio,
             placement: placement(replacementClipId: replacementClipId, folderId: folderId),
-            origin: .panel,
+            origin: .panel, target: services.target(model.id, preferred: seededTarget),
             submission: .image(make: { compiled in
                 ImageGenerationSubmission.make(
                     genInput: baseGenInput(compiledPrompt: compiled, audioDuration: 0, imageCount: imageCount),
-                    model: model, references: imageReferences, numImages: imageCount, folderId: folderId)
+                    model: model, references: imageReferences,
+                    mask: mask,
+                    numImages: imageCount, folderId: folderId)
             }))
     }
 
@@ -1983,6 +2130,8 @@ struct GenerationView: View {
         pendingAudioPlacement: PendingAudioPlacement?
     ) -> GenerationRequest {
         let model = audioModel
+        let input = baseGenInput(compiledPrompt: "", audioDuration: audioDuration, imageCount: 1)
+        let parameters = audioParams(audioDuration: audioDuration)
         if model.inputs.contains(.video), let asset = audioVideoSource {
             let folderId = editFolderId ?? asset.folderId ?? editor.mediaPanelCurrentFolderId
             let trimmedSource = audioVideoTrimmedSource(for: asset)
@@ -1997,13 +2146,14 @@ struct GenerationView: View {
             return GenerationRequest(
                 modality: .audio, modelId: currentModelId, intent: intent,
                 durationSeconds: Double(audioDuration),
-                placement: placementValue, origin: .panel,
+                placement: placementValue, origin: .panel, target: services.target(model.id, preferred: seededTarget),
                 submission: .audio(make: { compiled in
-                    var genInput = baseGenInput(compiledPrompt: compiled, audioDuration: audioDuration, imageCount: 1)
+                    var genInput = input
+                    genInput.prompt = compiled
                     genInput.referenceVideoAssetIds = [asset.id]
                     return AudioGenerationSubmission.make(
                         genInput: genInput, model: model,
-                        params: audioParams(audioDuration: audioDuration, compiledPrompt: compiled),
+                        params: parameters.replacingPrompt(compiled),
                         folderId: folderId, references: [asset], trimmedSourceOverride: trimmedSource)
                 }))
         }
@@ -2012,11 +2162,13 @@ struct GenerationView: View {
             modality: .audio, modelId: currentModelId, intent: intent,
             durationSeconds: Double(audioDuration),
             placement: placement(replacementClipId: replacementClipId, folderId: folderId),
-            origin: .panel,
+            origin: .panel, target: services.target(model.id, preferred: seededTarget),
             submission: .audio(make: { compiled in
-                AudioGenerationSubmission.make(
-                    genInput: baseGenInput(compiledPrompt: compiled, audioDuration: audioDuration, imageCount: 1),
-                    model: model, params: audioParams(audioDuration: audioDuration, compiledPrompt: compiled),
+                var genInput = input
+                genInput.prompt = compiled
+                return AudioGenerationSubmission.make(
+                    genInput: genInput,
+                    model: model, params: parameters.replacingPrompt(compiled),
                     folderId: folderId)
             }))
     }
@@ -2031,35 +2183,92 @@ struct GenerationView: View {
     }
 
     private func consumePendingPanelSeed() {
-        guard isActiveWorkspace else { return }
-        guard let seed = editor.pendingPanelSeed else { return }
-        populatePanel(asset: seed.asset, stored: seed.stored)
-        editor.pendingPanelSeed = nil
+        guard isActiveWorkspace, let seed = editor.pendingPanelSeed else { return }
+        let context = seed.context
+        let attempt = UUID()
+        seedAttemptID = attempt; isLoadingSeed = true
+        seedContext = context
+        seededTarget = nil; seededImageOptions = nil; seededChanges = .init()
+        seedError = "The edit setup was interrupted. Retry restoring its inputs or start a new request."
+        Task { @MainActor in
+            defer { if seedAttemptID == attempt { isLoadingSeed = false } }
+            do {
+                guard context.matches(editor: editor) else { return }
+                let packageID = seed.stored.generationPackageID
+                let home = context.home
+                let target = try await Task.detached(priority: .userInitiated) {
+                    guard let packageID, let home else { return Optional<ResolvedGenerationTarget>.none }
+                    return try GenerationPackageV1.load(id: packageID, home: home).payload.target
+                }.value
+                guard seedAttemptID == attempt, editor.pendingPanelSeed?.id == seed.id,
+                      context.matches(editor: editor), isActiveWorkspace, editor.showGenerationPanel else { return }
+                seededTarget = target
+                guard let restored = populatePanel(asset: seed.asset, stored: seed.stored) else { return }
+                guard GenerationPanelSeed.commitEditContext(seed, restored: restored, editor: editor) else {
+                    seedError = "The edit setup changed. Choose the edit again or start a new request."
+                    return
+                }
+            } catch {
+                if seedAttemptID == attempt, editor.pendingPanelSeed?.id == seed.id, context.matches(editor: editor) {
+                    seedError = error.localizedDescription
+                }
+            }
+        }
     }
 
-    private func populatePanel(asset: MediaAsset, stored: GenerationInput) {
-        switch ModelRegistry.byId[stored.model] {
+    private func populatePanel(asset: MediaAsset, stored: GenerationInput) -> GenerationPanelSeed.Restored? {
+        let restored: GenerationPanelSeed.Restored
+        do { restored = try GenerationPanelSeed.restore(stored, assets: editor.mediaAssets) }
+        catch { seedError = error.localizedDescription; return nil }
+        seedError = "The original generation model is not in the current catalog. Choose an available model for a new request."
+        let previousSelection = panelSelection
+        switch services.catalog.byId[stored.model] {
         case .video:
-            guard let idx = videoModels.firstIndex(where: { $0.id == stored.model }) else { return }
+            guard let idx = videoModels.firstIndex(where: { $0.id == stored.model }) else { return nil }
             isPopulatingPanel = true
             selectedType = .video
             selectedVideoModelIndex = idx
         case .image:
-            guard let idx = imageModels.firstIndex(where: { $0.id == stored.model }) else { return }
+            guard let idx = imageModels.firstIndex(where: { $0.id == stored.model }) else { return nil }
             isPopulatingPanel = true
             selectedType = .image
             selectedImageModelIndex = idx
         case .audio:
-            guard let idx = audioModels.firstIndex(where: { $0.id == stored.model }) else { return }
+            guard let idx = audioModels.firstIndex(where: { $0.id == stored.model }) else { return nil }
             isPopulatingPanel = true
             selectedType = .audio
             selectedAudioModelIndex = idx
         case .upscale, .none:
-            return
+            seedError = "The original generation model is not in the current catalog. Choose an available model for a new request."
+            return nil
         }
-        defer { DispatchQueue.main.async { isPopulatingPanel = false } }
+        seedError = nil
+        defer {
+            seededChanges = .init(before: previousSelection, after: panelSelection)
+            isPopulatingPanel = false
+        }
+        do {
+            if selectedType == .audio {
+                try GenerationPanelSeed.requireAudioOptions(stored, model: audioModel)
+                let ids = Set((stored.referenceVideoAssetIds ?? []) + [stored.sourceVideoAssetId].compactMap { $0 }
+                    + (stored.imageURLAssetIds ?? []))
+                guard ids.count <= 1, ids.allSatisfy({ id in editor.mediaAssets.contains { $0.id == id && $0.type == .video } }) else {
+                    throw GenerationRequestError.optionsInvalid("The original audio request has unsupported or multiple sources. Start a new request and select one source video explicitly.")
+                }
+            }
+            if selectedType == .video, let capabilities = selectedVideoCapabilities {
+                let original = try EditSubmitter.videoInputAssets(stored, editor: editor)
+                if let error = original.validate(for: videoModel, offeringCapabilities: capabilities) {
+                    throw GenerationRequestError.optionsInvalid("The original references are no longer supported: " + error)
+                }
+                if stored.generateAudio == true, !capabilities.supportsNativeAudio {
+                    throw GenerationRequestError.optionsInvalid("The original request includes native audio, which this offering no longer supports. Start a new request to choose current options.")
+                }
+            }
+        } catch { seedError = error.localizedDescription; return nil }
 
-        prompt = stored.prompt
+        prompt = restored.intent
+        seededImageOptions = selectedType == .image ? stored : nil
         if !stored.aspectRatio.isEmpty { selectedAspectRatio = stored.aspectRatio }
         if let r = stored.resolution { selectedResolution = r }
         if let q = stored.quality { selectedQuality = q }
@@ -2068,7 +2277,7 @@ struct GenerationView: View {
             selectedAudioDuration = stored.duration
         }
         if let n = stored.numImages { selectedNumImages = max(1, n) }
-        if let v = stored.voice, !v.isEmpty { selectedVoice = v }
+        selectedVoice = stored.voice ?? ""
         lyrics = stored.lyrics ?? ""
         styleInstructions = stored.styleInstructions ?? ""
         instrumental = stored.instrumental ?? false
@@ -2085,22 +2294,19 @@ struct GenerationView: View {
             let semanticSource = stored.sourceVideoAssetId.flatMap(lookup)
             let legacySource = primary.first.flatMap { $0.type == .video ? $0 : nil }
             if let selectedSource = semanticSource ?? legacySource,
-               GenerationService.dispatchTarget(
-                    modelId: videoModel.id,
-                    requiringSourceVideo: true
-               ).binding?.resolvedVideoCapabilities?
+               services.target(videoModel.id, sourceVideo: true).binding?.resolvedVideoCapabilities?
                     .inputPolicy.requiresSourceVideo == true {
                 sourceVideo = selectedSource
-                if selectedVideoCapabilities?.supportsReferences == true,
-                   primary.count > 1 {
-                    imageReferences = [primary[1]]
+                if selectedVideoCapabilities?.supportsReferences == true {
+                    imageReferences = stored.referenceImageAssetIds.map { $0.compactMap(lookup) }
+                        ?? Array(primary.dropFirst())
                 }
             } else if selectedVideoInputPolicy?.requiresSourceVideo == false {
                 if selectedVideoCapabilities?.supportsFirstFrame == true {
-                    firstFrame = primary.first
+                    firstFrame = stored.startFrameAssetId.flatMap(lookup) ?? primary.first
                     if selectedVideoCapabilities?.supportsLastFrame == true,
-                       primary.count > 1 {
-                        lastFrame = primary[1]
+                       primary.count > 1 || stored.endFrameAssetId != nil {
+                        lastFrame = stored.endFrameAssetId.flatMap(lookup) ?? primary[1]
                     }
                 }
                 refImages = (stored.referenceImageAssetIds ?? []).compactMap(lookup)
@@ -2117,25 +2323,62 @@ struct GenerationView: View {
             imageReferences = primary
         case .audio:
             audioVideoSource = (stored.referenceVideoAssetIds ?? []).compactMap(lookup).first
+                ?? stored.sourceVideoAssetId.flatMap(lookup) ?? primary.first(where: { $0.type == .video })
         }
 
         editFolderId = asset.folderId
 
-        resetSettings()
+        resetSettings(resetAudio: false)
+        return restored
+    }
+
+    private var panelSelection: [GenerationPanelSeedChanges.Field: String] {
+        [.type: selectedType.rawValue, .videoModel: String(selectedVideoModelIndex),
+         .imageModel: String(selectedImageModelIndex), .audioModel: audioModels.isEmpty ? "" : audioModel.id,
+         .aspect: selectedAspectRatio, .resolution: selectedResolution]
+    }
+
+    private var seedFailureReason: String? {
+        if let context = editor.pendingPanelSeed?.context ?? seedContext, !context.matches(editor: editor) {
+            return "This edit belongs to a different project session. Choose the edit again or start a new request."
+        }
+        guard !isLoadingSeed else { return nil }
+        return seedError ?? (editor.pendingPanelSeed == nil ? nil
+            : "The edit setup was interrupted. Retry restoring its inputs or start a new request.")
+    }
+
+    private func startNewRequest() {
+        seedAttemptID = nil
+        isLoadingSeed = false
+        seededChanges = .init()
+        seedError = nil
+        seedContext = nil
+        seededTarget = nil
+        seededImageOptions = nil
+        editFolderId = nil
+        if isActiveWorkspace {
+            editor.pendingPanelSeed = nil
+            editor.pendingEditReplacementClipId = nil
+            editor.pendingEditTrimmedSource = nil
+            editor.pendingEditAudioPlacement = nil
+        }
     }
 
     private func resetAudioState() {
         let model = audioModel
         selectedVoice = model.defaultVoice ?? ""
+        if !model.inputs.contains(.video) { audioVideoSource = nil }
         if !model.supportsLyrics { lyrics = "" }
         if !model.supportsStyleInstructions { styleInstructions = "" }
         if !model.supportsInstrumental { instrumental = false }
         if let durations = model.durations, !durations.contains(selectedAudioDuration) {
             selectedAudioDuration = durations.first ?? 30
+        } else if model.supportsDurationSelection {
+            selectedAudioDuration = min(max(selectedAudioDuration, model.minSeconds), model.maxSeconds)
         }
     }
 
-    private func resetSettings() {
+    private func resetSettings(resetAudio: Bool = true) {
         if !currentAspectRatios.contains(selectedAspectRatio) {
             selectedAspectRatio = currentAspectRatios.first ?? "16:9"
         }
@@ -2152,7 +2395,7 @@ struct GenerationView: View {
            !durationCapabilities.accepts(selectedDuration) {
             selectedDuration = durationCapabilities.defaultValue
         }
-        if selectedType == .video { generateAudio = true }
+        if selectedType == .video && resetAudio { generateAudio = true }
         if selectedType == .image {
             selectedNumImages = min(max(1, selectedNumImages), imageModel.maxImages)
         }

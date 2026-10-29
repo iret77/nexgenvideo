@@ -73,6 +73,9 @@ actor MCPProviderClient {
     private var modernDiscoveryExpiresAt: Date?
     private var modernToolsExpireAt: Date?
     private var toolSchemaChecks: [ProviderToolSchemaCheck] = []
+    private let legacyTransportFactory: (@Sendable (URL, String?) -> HTTPClientTransport)?
+    private var connectingLegacyClient: Client?
+    private var connectionGeneration = UUID()
 
     private enum ProtocolMode: Sendable {
         case legacy
@@ -81,16 +84,22 @@ actor MCPProviderClient {
 
     private struct ModernFallback: Error {}
 
-    init(config: Config, urlSession: URLSession = .shared) {
+    init(config: Config, urlSession: URLSession = .shared,
+         legacyTransportFactory: (@Sendable (URL, String?) -> HTTPClientTransport)? = nil) {
         self.config = config
         self.urlSession = urlSession
+        self.legacyTransportFactory = legacyTransportFactory
     }
 
     private func connectedLegacyClient() async throws -> Client {
+        try Task.checkCancellation()
         if let client { return client }
+        let generation = connectionGeneration
         let client = Client(name: "nexgen", version: "1.0.0")
         let transport: HTTPClientTransport
-        if let token = config.bearerToken, !token.isEmpty {
+        if let legacyTransportFactory {
+            transport = legacyTransportFactory(config.endpoint, config.bearerToken)
+        } else if let token = config.bearerToken, !token.isEmpty {
             transport = HTTPClientTransport(endpoint: config.endpoint, requestModifier: { request in
                 var request = request
                 request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -99,9 +108,21 @@ actor MCPProviderClient {
         } else {
             transport = HTTPClientTransport(endpoint: config.endpoint)
         }
-        try await client.connect(transport: transport)
-        self.client = client
-        return client
+        connectingLegacyClient = client
+        do {
+            try await client.connect(transport: transport)
+            try Task.checkCancellation()
+            guard connectionGeneration == generation, connectingLegacyClient === client else {
+                throw CancellationError()
+            }
+            connectingLegacyClient = nil
+            self.client = client
+            return client
+        } catch {
+            if connectingLegacyClient === client { connectingLegacyClient = nil }
+            await client.disconnect()
+            throw error
+        }
     }
 
     /// Call a provider tool with a pre-compiled argument set and return its textual contents
@@ -123,6 +144,31 @@ actor MCPProviderClient {
                 onDispatched: nil
             )
         }
+    }
+
+    func readTextTool(name: String, arguments: [String: Value]) async throws -> String {
+        let texts: [String]
+        switch try await resolvedProtocolMode() {
+        case .legacy:
+            let client = try await connectedLegacyClient()
+            let context: RequestContext<CallTool.Result> = try await client.callTool(name: name, arguments: arguments)
+            let result = try await Self.awaitRequest(context) { id in
+                try await client.cancelRequest(id, reason: "The read was cancelled.")
+            }
+            if result.isError == true { throw ClientError.toolFailed(Self.toolErrorMessage(result)) }
+            texts = try result.content.map { part in
+                guard case .text(let text, _, _) = part else {
+                    throw ClientError.toolFailed("The read tool returned non-text content.")
+                }
+                return text
+            }
+        case .modern:
+            texts = try await callModernTool(name: name, arguments: arguments, onDispatched: nil, preserveText: true)
+        }
+        guard texts.count == 1, let text = texts.first, text.utf8.count <= 16 * 1_024 * 1_024 else {
+            throw ClientError.toolFailed("The read tool returned an unsupported or oversized text result.")
+        }
+        return text
     }
 
     func callGenerationTool(
@@ -385,6 +431,7 @@ actor MCPProviderClient {
     }
 
     private func resolvedProtocolMode() async throws -> ProtocolMode {
+        try Task.checkCancellation()
         if let protocolMode {
             switch protocolMode {
             case .legacy:
@@ -398,19 +445,23 @@ actor MCPProviderClient {
         if let protocolModeResolution {
             return try await protocolModeResolution.value
         }
+        let generation = connectionGeneration
         let resolution = Task { try await negotiateProtocolMode() }
         protocolModeResolution = resolution
         do {
             let mode = try await resolution.value
+            try Task.checkCancellation()
+            guard generation == connectionGeneration else { throw CancellationError() }
             protocolModeResolution = nil
             return mode
         } catch {
-            protocolModeResolution = nil
+            if generation == connectionGeneration { protocolModeResolution = nil }
             throw error
         }
     }
 
     private func negotiateProtocolMode() async throws -> ProtocolMode {
+        let generation = connectionGeneration
         do {
             let discovery = try await performModernRequest(
                 method: "server/discover",
@@ -428,6 +479,8 @@ actor MCPProviderClient {
                 )
             }
             let tools = try await loadModernTools()
+            try Task.checkCancellation()
+            guard generation == connectionGeneration else { throw CancellationError() }
             modernTools = tools.tools
             modernHeaderBindings = tools.bindings
             modernToolsExpireAt = tools.expiresAt
@@ -436,6 +489,8 @@ actor MCPProviderClient {
             return .modern
         } catch is ModernFallback {
             _ = try await connectedLegacyClient()
+            try Task.checkCancellation()
+            guard generation == connectionGeneration else { throw CancellationError() }
             protocolMode = .legacy
             return .legacy
         } catch is CancellationError {
@@ -551,7 +606,8 @@ actor MCPProviderClient {
     private func callModernTool(
         name: String,
         arguments: [String: Value],
-        onDispatched: (@MainActor @Sendable () -> Void)?
+        onDispatched: (@MainActor @Sendable () -> Void)?,
+        preserveText: Bool = false
     ) async throws -> [String] {
         try await refreshModernToolsIfExpired()
         var didRefresh = false
@@ -605,6 +661,18 @@ actor MCPProviderClient {
                             ? "provider tool reported an error"
                             : message
                     )
+                }
+                if preserveText {
+                    guard let contents = object["content"]?.arrayValue else {
+                        throw ClientError.toolFailed("The read tool has no text content.")
+                    }
+                    return try contents.map { item in
+                        guard let value = item.objectValue, value["type"]?.stringValue == "text",
+                              let text = value["text"]?.stringValue else {
+                            throw ClientError.toolFailed("The read tool returned non-text content.")
+                        }
+                        return text
+                    }
                 }
                 return Self.payloadContents(modernResult: result)
             } catch is CancellationError {
@@ -745,8 +813,11 @@ actor MCPProviderClient {
     }
 
     func disconnect() async {
-        await client?.disconnect()
+        let connected = client
+        let connecting = connectingLegacyClient
+        connectionGeneration = UUID()
         client = nil
+        connectingLegacyClient = nil
         protocolModeResolution?.cancel()
         protocolModeResolution = nil
         protocolMode = nil
@@ -755,6 +826,8 @@ actor MCPProviderClient {
         modernHeaderBindings = [:]
         modernDiscoveryExpiresAt = nil
         modernToolsExpireAt = nil
+        await connecting?.disconnect()
+        await connected?.disconnect()
     }
 
     private static func toolErrorMessage(_ result: CallTool.Result) -> String {

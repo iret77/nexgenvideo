@@ -2,7 +2,6 @@ import Foundation
 import Testing
 import NexGenEngine
 @testable import NexGenVideo
-@testable import MusicvideoPlugin
 
 /// PromptComposer per-shot compile: deterministic camera/framing projection + compliance drift linter
 /// on the running compile path (#197). Ports the camera/composition projection of
@@ -28,8 +27,7 @@ struct PromptComposerShotTests {
     private static func project(
         shots: [Shot],
         ledger: Ledger,
-        brief: Brief? = nil,
-        musicvideo: Bool = false
+        brief: Brief? = nil
     ) throws -> URL {
         let home = FileManager.default.temporaryDirectory
             .appendingPathComponent("prompt-compiler-\(UUID().uuidString)", isDirectory: true)
@@ -63,27 +61,7 @@ struct PromptComposerShotTests {
             ),
             to: dataRoot
         )
-        if musicvideo {
-            try store.save(
-                try Bible(
-                    project: "prompt-test",
-                    generated: "2026-09-09",
-                    generator: "test"
-                ),
-                to: PipelineLayout.bibleFile
-            )
-        }
         try Fixtures.prepareProjectPackage(at: home)
-        if musicvideo {
-            let pack = MusicvideoPack()
-            PackCatalog.register(pack)
-            let binding = try #require(ProjectPackBinding(
-                id: pack.name,
-                version: pack.version,
-                projectSchema: "musicvideo/2.0.0"
-            ))
-            try ProjectPluginSettings.setActivePlugin(binding, projectURL: home)
-        }
         return home
     }
 
@@ -440,7 +418,7 @@ struct PromptComposerShotTests {
         #expect(!prompt.contains("blue wool coat"))
     }
 
-    @Test("approved production style contributes lighting without overriding the shot camera")
+    @Test("generic host compiler applies approved style without overriding the shot camera")
     func approvedStyleDoesNotOverrideShotCamera() async throws {
         let modelCatalog = ModelCatalog()
         modelCatalog.load(entries: ModelCatalog.launchEntries)
@@ -462,8 +440,7 @@ struct PromptComposerShotTests {
         let project = try Self.project(
             shots: [shot],
             ledger: Ledger(),
-            brief: brief,
-            musicvideo: true
+            brief: brief
         )
         let root = try #require(DataRootResolver.dataRoot(of: project))
         let design = try ProductionDesign(project: "prompt-test", generated: "2026-09-09", generator: "test",
@@ -487,6 +464,12 @@ struct PromptComposerShotTests {
         let editor = EditorViewModel()
         editor.projectURL = project
         defer { Self.removeProject(project, editor: editor) }
+
+        let working = try #require(editor.workingRoot)
+        let declared = ProjectPluginSettings.bindingResolution(projectURL: working)
+        #expect(declared == .absent)
+        let workflow = try PipelineProductionPromptCompiler.workflow(editor: editor)
+        #expect(workflow == nil)
 
         let prompt = try await PromptCompiler.compile(
             intent: "The performer holds a precise opening pose.",

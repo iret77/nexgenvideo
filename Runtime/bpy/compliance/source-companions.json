@@ -1,0 +1,93 @@
+{
+  "schema": "nexgenvideo/bpy-source-companions/1",
+  "companions": [
+    {
+      "component": "blender-release-source:FLEXBISON",
+      "name": "winflexbison",
+      "version": "2.5.24",
+      "purpose": "Source companion for the Windows tools retained as conservative release candidates; no assertion they are linked into the macOS wheel.",
+      "tag": "v2.5.24",
+      "commit": "52333db801c89e1a7d504fbc5dcbceaad073a91c",
+      "releaseURL": "https://github.com/lexxmark/winflexbison/releases/tag/v2.5.24",
+      "dependency": {
+        "component": "blender-release-dependency:FLEXBISON",
+        "version": "2.5.24",
+        "url": "http://prdownloads.sourceforge.net/winflexbison/win_flex_bison-2.5.24.zip",
+        "upstreamHashType": "MD5",
+        "upstreamHash": "6b549d43e34ece0e8ed05af92daa31c4",
+        "sha256": "39c6086ce211d5415500acc5ed2d8939861ca1696aee48909c7f6daf5122b505",
+        "size": 1042625,
+        "binaryMembers": [
+          {
+            "path": "win_bison.exe",
+            "sha256": "3084acb68d67d301591f2f0f61fb50e4bcdcb865327286d0985db7ba02b06bcc",
+            "size": 665600
+          },
+          {
+            "path": "win_flex.exe",
+            "sha256": "d370f1880fd7606325aefdf1bc10a0023187d63eb70455630550b609ff06cc46",
+            "size": 569344
+          }
+        ]
+      },
+      "source": {
+        "url": "https://codeload.github.com/lexxmark/winflexbison/tar.gz/52333db801c89e1a7d504fbc5dcbceaad073a91c",
+        "sha256": "e0ae295e73e6307e9978e02c760bde750ab69cd4378c4748c5a9cd7cb9fb9e6a",
+        "size": 1382548,
+        "filename": "winflexbison-52333db801c89e1a7d504fbc5dcbceaad073a91c.tar.gz"
+      },
+      "notices": [
+        {
+          "path": "Runtime/bpy/compliance/flexbison-bison-COPYING.txt",
+          "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",
+          "size": 35147,
+          "upstream": {
+            "url": "https://raw.githubusercontent.com/lexxmark/winflexbison/52333db801c89e1a7d504fbc5dcbceaad073a91c/bison/src/COPYING"
+          }
+        },
+        {
+          "path": "Runtime/bpy/compliance/flexbison-flex-COPYING.txt",
+          "sha256": "97fd685958d93be7f8dab939bb8161dbd6afb0718c63bfc337c24321aea44273",
+          "size": 1855,
+          "upstream": {
+            "url": "https://raw.githubusercontent.com/lexxmark/winflexbison/52333db801c89e1a7d504fbc5dcbceaad073a91c/flex/src/COPYING"
+          }
+        },
+        {
+          "path": "Runtime/bpy/compliance/flexbison-Autoconf-Exception-3.0.txt",
+          "sha256": "23ed0b84fa023bfa33433b498192cd08a3bfb1f4864a8ed791a84f3eb48b2dd2",
+          "size": 1865,
+          "upstream": {
+            "url": "https://ftp.gnu.org/gnu/autoconf/autoconf-2.69.tar.xz",
+            "archiveMember": "autoconf-2.69/COPYING.EXCEPTION",
+            "archiveSHA256": "64ebcec9f8ac5b2487125a86a7760d2591ac9e1d3dbd59489633f9de62a57684"
+          }
+        },
+        {
+          "path": "Runtime/bpy/compliance/flexbison-FlexLexer-NOTICE.txt",
+          "sha256": "d3a08376bb2b0ede5c17e455b838f8b1aa4ea7a8538cc6ef44711a18d164e48b",
+          "size": 1138,
+          "upstream": {
+            "url": "https://github.com/lexxmark/winflexbison/releases/download/v2.5.24/win_flex_bison-2.5.24.zip",
+            "archiveSHA256": "39c6086ce211d5415500acc5ed2d8939861ca1696aee48909c7f6daf5122b505",
+            "archiveMember": "FlexLexer.h",
+            "byteStart": 104,
+            "byteEnd": 1242
+          }
+        },
+        {
+          "path": "Runtime/bpy/compliance/flexbison-Bison-skeleton-exception.txt",
+          "sha256": "53b62f6660e9974bac83771ac901b15438a602fe696b4a51f04d82edb45de05a",
+          "size": 667,
+          "upstream": {
+            "url": "https://github.com/lexxmark/winflexbison/releases/download/v2.5.24/win_flex_bison-2.5.24.zip",
+            "archiveSHA256": "39c6086ce211d5415500acc5ed2d8939861ca1696aee48909c7f6daf5122b505",
+            "archiveMember": "data/skeletons/bison.m4",
+            "byteStart": 2732,
+            "byteEnd": 3399
+          }
+        }
+      ]
+    }
+  ]
+}

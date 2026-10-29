@@ -97,6 +97,7 @@ enum AppRelaunch {
         case appBundleMissing
         case documentsStillEdited
         case reopenerUnavailable
+        case restartSettingsUnconfirmed
 
         var errorDescription: String? {
             switch self {
@@ -108,6 +109,8 @@ enum AppRelaunch {
                 return "NexGenVideo couldn't finish reviewing unsaved documents."
             case .reopenerUnavailable:
                 return "macOS could not prepare the app to reopen."
+            case .restartSettingsUnconfirmed:
+                return "Restart settings could not be confirmed. An approved update or project upgrade may still apply the next time NexGenVideo opens."
             }
         }
     }
@@ -174,7 +177,9 @@ enum AppRelaunch {
             return
         }
         pendingAction = action
-        pendingOpenArguments = AppRelaunchSelfTest.reopenArguments(reopenArguments)
+        pendingOpenArguments = ProductionPackRecoveryAcceptance.isRequested
+            ? ProductionPackRecoveryAcceptance.reopenArguments(reopenArguments)
+            : AppRelaunchSelfTest.reopenArguments(reopenArguments)
         let editStates = NSDocumentController.shared.documents.map(\.isDocumentEdited)
         guard AppRelaunchDocumentPolicy.requiresReview(editStates: editStates) else {
             documentReviewCompleted(true)
@@ -220,7 +225,8 @@ enum AppRelaunch {
             presentFailure(RelaunchFailure.appBundleMissing)
             return
         }
-        let launchMode = AppRelaunchSelfTest.reopenLaunchMode
+        let launchMode: LaunchMode = ProductionPackRecoveryAcceptance.isRequested
+            ? .executable : AppRelaunchSelfTest.reopenLaunchMode
         let launchCommandAvailable = launchMode == .executable
             || FileManager.default.isExecutableFile(atPath: "/usr/bin/open")
         guard FileManager.default.isExecutableFile(atPath: "/bin/sh"),
@@ -240,14 +246,18 @@ enum AppRelaunch {
             openArguments: pendingOpenArguments,
             launchMode: launchMode
         )
+        task.standardInput = FileHandle.nullDevice
         task.standardOutput = FileHandle.nullDevice
         task.standardError = FileHandle.nullDevice
         do {
             try task.run()
+            if ProductionPackRecoveryAcceptance.isRequested {
+                try ProductionPackRecoveryAcceptance.recordOwnedProcess(role: "reopener", pid: task.processIdentifier)
+            }
             reopenerTask = task
             pendingAction?()
             guard UserDefaults.standard.synchronize() else {
-                throw RelaunchFailure.reopenerUnavailable
+                throw RelaunchFailure.restartSettingsUnconfirmed
             }
             clearRequest()
             forceExitIfTerminationStalls()

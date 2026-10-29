@@ -1,6 +1,17 @@
 import Foundation
 import MCP
 import NexGenEngine
+import Observation
+
+@MainActor
+struct ModelDiscoveryActions {
+    let isRefreshing: () -> Bool
+    let refresh: () -> Void
+
+    static var live: Self {
+        .init(isRefreshing: { CatalogDiscovery.isRefreshing }, refresh: CatalogDiscovery.refresh)
+    }
+}
 
 protocol MCPCatalogClient: MCPToolCalling {
     func discoverTools() async throws -> [MCPProviderClient.DiscoveredTool]
@@ -120,13 +131,22 @@ enum CatalogDiscovery {
         }
     }
 
-    private static var running = false
+    @Observable fileprivate final class Activity {
+        var running = false
+    }
+    private static let activity = Activity()
+    private static var running: Bool {
+        get { activity.running }
+        set { activity.running = newValue }
+    }
+    static var isRefreshing: Bool { running }
     private static var queued = false
     private static var waiters: [UUID: CheckedContinuation<Bool, Never>] = [:]
     private static var lastCompletedAt: Date?
     private static var observer: NSObjectProtocol?
     private static var detailCache: [DetailCacheKey: DetailCacheValue] = [:]
     private static var detailCacheGeneration: UInt64 = 0
+    private static var directCredentialGeneration: UInt64 = 0
     /// Bound the enumeration so a misbehaving or huge provider catalog can't loop or balloon memory.
     private static let maxPagesPerModality = 12
     private static let maxModelsPerProvider = 400
@@ -140,6 +160,7 @@ enum CatalogDiscovery {
             ) { _ in
                 Task { @MainActor in
                     invalidateDetailCache()
+                    invalidateCredentialBoundDiscovery()
                     refresh()
                 }
             }
@@ -170,38 +191,51 @@ enum CatalogDiscovery {
         detailCache.removeAll()
     }
 
+    static func invalidateCredentialBoundDiscovery(catalog: ModelCatalog = .shared) {
+        directCredentialGeneration &+= 1
+        for provider in DirectImageDiscovery.providers {
+            catalog.applyDiscovered([], for: provider)
+            catalog.setProviderDiscoveryState(.inactive, for: provider)
+        }
+    }
+
     /// False when the wait ended before a discovery pass completed, so the catalog may still change.
     @discardableResult
     static func ensureCurrent(
         maxAge: TimeInterval = 60,
         maxWait: TimeInterval = 60
     ) async -> Bool {
+        guard !Task.isCancelled else { return false }
         if let lastCompletedAt,
            !running,
            Date().timeIntervalSince(lastCompletedAt) <= maxAge {
             return true
         }
         let waiterID = UUID()
-        return await withCheckedContinuation { continuation in
-            waiters[waiterID] = continuation
-            if !running { refresh() }
-            Task { @MainActor in
-                let boundedWait = maxWait.isFinite ? max(0, min(maxWait, 60)) : 10
-                if boundedWait > 0 {
-                    try? await Task.sleep(
-                        nanoseconds: UInt64(boundedWait * 1_000_000_000)
-                    )
-                }
-                guard let waiter = waiters.removeValue(forKey: waiterID) else { return }
-                Log.generation.notice(
-                    "catalog readiness wait ended after \(boundedWait)s; discovery continues"
-                )
-                waiter.resume(returning: false)
+        let timeout = Task { @MainActor in
+            let boundedWait = maxWait.isFinite ? max(0, min(maxWait, 60)) : 10
+            do {
+                if boundedWait > 0 { try await Task.sleep(nanoseconds: UInt64(boundedWait * 1_000_000_000)) }
+                try Task.checkCancellation()
+            } catch { return }
+            guard let waiter = waiters.removeValue(forKey: waiterID) else { return }
+            Log.generation.notice("catalog readiness wait ended after \(boundedWait)s; discovery continues")
+            waiter.resume(returning: false)
+        }
+        defer { timeout.cancel() }
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                guard !Task.isCancelled else { continuation.resume(returning: false); return }
+                waiters[waiterID] = continuation
+                if !running { refresh() }
             }
+        } onCancel: {
+            Task { @MainActor in waiters.removeValue(forKey: waiterID)?.resume(returning: false) }
         }
     }
 
     private static func runOnce() async {
+        let credentialGeneration = directCredentialGeneration
         let providers = GenerationProvider.allCases
         let configuredOAuthProviders = Set(providers.filter { provider in
             guard provider.mcpCapability?.auth == .oauth else { return false }
@@ -266,6 +300,8 @@ enum CatalogDiscovery {
             },
             consume: { result in
                 let provider = result.provider
+                guard !DirectImageDiscovery.providers.contains(provider)
+                        || credentialGeneration == directCredentialGeneration else { return }
                 var publishedEntries = result.entries
                 var directState: ProviderDiscoveryState?
                 let retainedCount = ModelCatalog.shared.discoveredModelCount(for: provider)

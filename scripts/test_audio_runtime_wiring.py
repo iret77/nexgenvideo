@@ -41,6 +41,7 @@ class AudioRuntimeWiringTests(unittest.TestCase):
         allowed = {
             "Sources/NexGenVideo/Agent/Tools/ToolExecutor.swift",
             "Sources/NexGenVideo/App/MusicvideoHostFlowAcceptance.swift",
+            "Sources/NexGenVideo/App/AnalysisRemeasurementOwnerAcceptance.swift",
         }
         for path in (ROOT / "Sources").rglob("*.swift"):
             text = path.read_text(encoding="utf-8")

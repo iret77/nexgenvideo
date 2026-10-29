@@ -195,6 +195,7 @@ struct DeclarativePackSurfaceView: View {
                                 BeatTimeline(duration: duration, beats: beats, downbeats: downbeats,
                                     sections: sections, selectedSectionIndex: selectedAnalysisSection?.index,
                                     onSelectSection: selectAnalysisSection)
+                                    .reviewAcceptanceProbe("analysis.grid", text: "beats=\(beats.count);downbeats=\(downbeats.count);sections=\(sections.count)")
                                 if loaded.analysis?.durationS == duration, let waveform = loaded.waveform,
                                    !waveform.isEmpty, waveform.allSatisfy({ $0.isFinite && (0...1).contains($0) }) {
                                     AnalysisWaveformTimeline(samples: waveform)
@@ -435,6 +436,7 @@ struct DeclarativePackSurfaceView: View {
                 .foregroundStyle(AppTheme.Status.errorColor)
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                 Text("Section structure unresolved")
+                    .reviewAcceptanceProbe("analysis.structure.unresolved", text: detail)
                     .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                     .foregroundStyle(AppTheme.Text.primaryColor)
                 Text(detail)
@@ -460,6 +462,7 @@ struct DeclarativePackSurfaceView: View {
                 .foregroundStyle(AppTheme.Status.warningColor)
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                 Text("Review section boundaries")
+                    .reviewAcceptanceProbe("analysis.structure.review", text: data.structureResolution?.detail ?? "Some boundaries have one acoustic detector source.")
                     .interfaceFont(
                         size: AppTheme.Typography.ui,
                         weight: AppTheme.FontWeight.semibold
@@ -491,6 +494,7 @@ struct DeclarativePackSurfaceView: View {
                 .foregroundStyle(AppTheme.Status.warningColor)
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                 Text("Analysis completed with reduced evidence")
+                    .reviewAcceptanceProbe("analysis.diagnostics", text: failures.map { $0.stage + ": " + $0.detail }.joined(separator: "\n"))
                     .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                     .foregroundStyle(AppTheme.Text.primaryColor)
                 ForEach(Array(failures.enumerated()), id: \.offset) { item in
@@ -586,6 +590,7 @@ struct DeclarativePackSurfaceView: View {
                     .interfaceFont(size: AppTheme.Typography.title)
                     .foregroundStyle(AppTheme.Accent.timecodeColor)
                 Text("Re-measuring \(progress.trackName)")
+                    .reviewAcceptanceProbe("analysis.remeasure", text: progress.trackName)
                     .interfaceFont(
                         size: AppTheme.Typography.ui,
                         weight: AppTheme.FontWeight.semibold

@@ -2,6 +2,37 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.8.0",
+      "date": "2026-10-19",
+      "sections": [
+        {
+          "heading": "Production",
+          "items": [
+            "Story development, visual Storyboard, Animatic, shot planning, References, Takes and film review have dedicated native workspaces. Phase decisions stay visible beside activity and generation requests.",
+            "Shot sources, sketches, frames, takes and accepted ranges retain their project identities and recorded inputs. Changed inputs require a current review before approval.",
+            "Bounded pre-render review runs show preparation, explicit authorization, cancellation and explicit resume without inserting generated requests as user messages.",
+            "Plan/elevation blockout clips keep labels upright, show clearer camera markers and distinguish camera movement from viewing direction. Both views retain usable space in compact previews and preserve Blender’s axis directions."
+          ]
+        },
+        {
+          "heading": "Editing and delivery",
+          "items": [
+            "Object context connects production sources with shots, generated media and timeline placements. Shared editing and postproduction controls remain available throughout production.",
+            "Generation request review presents the exact model, source range, references and destination before submission. Late replacement results preserve clips changed during generation.",
+            "Export provides delivery settings, output checks and a queue linked to the current cut."
+          ]
+        },
+        {
+          "heading": "Music Video",
+          "items": [
+            "Music Video 0.6.0 requires NexGenVideo 1.8.0. Existing projects retain their exact pinned pack; adopting the new production contract uses an explicit Recovery-copy upgrade.",
+            "After an upgrade, existing story and identity intake offers verified material from the previous workflow for explicit reuse, with readable previews and editable identity names.",
+            "Track, optional lyrics, setup and approved audio analysis precede optional existing story and identity material. Imported footage and generated shots share the production and editing workspaces."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.7.2",
       "date": "2026-10-18",
       "sections": [

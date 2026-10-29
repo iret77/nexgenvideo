@@ -20,6 +20,7 @@ public enum FileDigest {
     private static func digest(_ handle: FileHandle) throws -> String {
         var hasher = SHA256()
         while let data = try handle.read(upToCount: 1_048_576), !data.isEmpty {
+            try Task.checkCancellation()
             hasher.update(data: data)
         }
         return hasher.finalize()

@@ -31,6 +31,7 @@ enum TourTarget: Equatable {
         case .media, .mediaFolders: .media
         case .agent, .project: .production
         case .inspector, .timeline, .preview: .edit
+        case .exports: .export
         }
     }
 }
@@ -65,8 +66,9 @@ final class WeakView {
 @Observable
 final class TourController {
     private(set) var stepIndex: Int?
-    /// Highlighted region's frame in editor-view coords; set by the split controller.
+    /// Highlighted region in the registered overlay's top-left coordinates.
     var targetFrame: CGRect?
+    @ObservationIgnored weak var overlayCoordinateView: NSView?
     /// Live backing views for `.element` targets, registered by `.tourAnchor(_:)`.
     @ObservationIgnored var anchorViews: [TourAnchorID: WeakView] = [:]
     /// Bumped when an anchor view lays out, so the split controller recomputes the
@@ -112,6 +114,7 @@ final class TourController {
     /// Ensure a spotlight step's host panel is visible
     private func applyStep(_ index: Int) {
         guard let editor, steps.indices.contains(index) else { return }
+        editor.theaterActive = false
         if case .spotlight(let target) = steps[index].kind {
             editor.setWorkspaceFocus(target.workspace)
             editor.maximizedPanel = nil
@@ -122,7 +125,7 @@ final class TourController {
             case .agent: editor.agentPanelVisible = true
             case .inspector: editor.inspectorPanelVisible = true
             case .project: editor.revealCockpit(editor.cockpitTab)
-            case .timeline, .preview: break
+            case .timeline, .preview, .exports: break
             }
             editor.showGenerationPanel = (target == .element(.generation))
         } else {

@@ -17,13 +17,7 @@ struct HardStepIntakeTests {
     }
 
     private func activateMusicvideo(at package: URL) throws {
-        PackCatalog.register(MusicvideoPack())
-        let binding = try #require(ProjectPackBinding(
-            id: "musicvideo",
-            version: MusicvideoPack().version,
-            projectSchema: "musicvideo/2.0.0"
-        ))
-        try ProjectPluginSettings.setActivePlugin(binding, projectURL: package)
+        try CurrentMusicvideoFixture.activate(at: package, initialize: false)
     }
 
     private func write(_ relPath: String, in root: URL, contents: String = "x") throws {
@@ -463,7 +457,7 @@ struct HardStepIntakeTests {
     @Test("the visible first card stays Track when Media already contains track and lyrics")
     @MainActor
     func visibleFirstCardIgnoresUnassignedLibraryAssets() async throws {
-        PackCatalog.register(MusicvideoPack())
+        try CurrentMusicvideoFixture.load()
         let package = FileManager.default.temporaryDirectory
             .appendingPathComponent("visible-first-card-\(UUID().uuidString).ngv", isDirectory: true)
         let editor = EditorViewModel()
@@ -479,6 +473,7 @@ struct HardStepIntakeTests {
             mode: .beat,
             extraDirs: PackCatalog.projectDirs(activePack: "musicvideo")
         )
+        try CurrentMusicvideoFixture.initializeWorkflow(dataRoot: try #require(DataRootResolver.dataRoot(of: package)))
         editor.projectURL = package
         let workingRoot = try #require(editor.workingRoot)
         editor.mediaAssets = [
@@ -516,7 +511,7 @@ struct HardStepIntakeTests {
     @Test("Existing story becomes visible only after the analysis frontier is approved")
     @MainActor
     func visibleCreativeIntakeWaitsForAnalysis() async throws {
-        PackCatalog.register(MusicvideoPack())
+        try CurrentMusicvideoFixture.load()
         let package = FileManager.default.temporaryDirectory
             .appendingPathComponent("creative-frontier-\(UUID().uuidString).ngv", isDirectory: true)
         let editor = EditorViewModel()
@@ -532,6 +527,7 @@ struct HardStepIntakeTests {
             mode: .beat,
             extraDirs: PackCatalog.projectDirs(activePack: "musicvideo")
         )
+        try CurrentMusicvideoFixture.initializeWorkflow(dataRoot: try #require(DataRootResolver.dataRoot(of: package)))
         let packageStore = YAMLArtifactStore(dataRoot: packageDataRoot)
         var packageGates = try packageStore.load(Gates.self, at: PipelineLayout.gatesFile)
         GatesOperations.approve(&packageGates, phase: "project_init")
@@ -562,6 +558,7 @@ struct HardStepIntakeTests {
             editor.workingRoot.flatMap { DataRootResolver.dataRoot(of: $0) }
         )
         let liveStore = YAMLArtifactStore(dataRoot: liveDataRoot)
+        try writeApprovedAnalysis(in: liveDataRoot, project: "creative-frontier")
         var liveGates = try liveStore.load(Gates.self, at: PipelineLayout.gatesFile)
         GatesOperations.approve(&liveGates, phase: "analysis")
         try liveStore.save(liveGates, to: PipelineLayout.gatesFile)
@@ -571,9 +568,8 @@ struct HardStepIntakeTests {
         #expect(editor.projectState?.nextPhaseName == "brief")
         #expect(editor.agentService.pendingDialog?.title == "Existing story")
         #expect(editor.agentService.pendingDialog?.fileIntake?.attachAs == "script")
-        let prompt = try editor.pipelineAgentHarness.agentPrompt(
-            dataRoot: liveDataRoot
-        )
+        let prompt = try editor.pipelineAgentHarness.runtimeContext(dataRoot: liveDataRoot,
+            declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding).instructions
         let normalizedPrompt = prompt?
             .split(whereSeparator: \.isWhitespace)
             .joined(separator: " ")
@@ -604,7 +600,7 @@ struct HardStepIntakeTests {
     @Test("repeatable intake advances directly and Done finishes without attaching an empty item")
     @MainActor
     func repeatableIntakeDoneFinishesWithoutEmptyAttachment() async throws {
-        PackCatalog.register(MusicvideoPack())
+        try CurrentMusicvideoFixture.load()
         let package = FileManager.default.temporaryDirectory
             .appendingPathComponent("repeatable-intake-done-\(UUID().uuidString).ngv", isDirectory: true)
         let editor = EditorViewModel()
@@ -620,6 +616,7 @@ struct HardStepIntakeTests {
             mode: .beat,
             extraDirs: PackCatalog.projectDirs(activePack: "musicvideo")
         )
+        try CurrentMusicvideoFixture.initializeWorkflow(dataRoot: try #require(DataRootResolver.dataRoot(of: package)))
         let packageStore = YAMLArtifactStore(dataRoot: packageDataRoot)
         try writeApprovedAnalysis(in: packageDataRoot, project: "repeatable-intake-done")
         var packageGates = try packageStore.load(Gates.self, at: PipelineLayout.gatesFile)
@@ -633,12 +630,7 @@ struct HardStepIntakeTests {
         let dataRoot = try #require(
             editor.workingRoot.flatMap { DataRootResolver.dataRoot(of: $0) }
         )
-        let manifestURL = try #require(PackKnowledge.hardStepManifestURL())
-        let manifest = try HardStepManifest.decode(try Data(contentsOf: manifestURL))
-        let script = try #require(
-            manifest.steps(for: "brief").first { $0.kind == .script }
-        )
-        _ = try IntakeLedger.recordDecline(script, dataRoot: dataRoot)
+        try PipelineStorySourceWriter.confirmGreenfield(editor: editor)
         editor.agentService.abandonDialog()
         editor.pipelineAgentHarness.reset()
         _ = editor.pipelineAgentHarness.reconcile(editor: editor)
@@ -646,6 +638,7 @@ struct HardStepIntakeTests {
         let first = try #require(editor.agentService.pendingDialog)
         #expect(first.title == "Prepared character 1")
         try write("fixtures/first.png", in: dataRoot)
+        try FullflowAcceptanceFixture.writeReference(to: dataRoot.appendingPathComponent("fixtures/first.png"))
         editor.agentService.submitDialog(
             first,
             result: AgentDialogResult(
@@ -712,6 +705,7 @@ struct HardStepIntakeTests {
         #expect(editor.agentService.pendingDialog?.id == second.id)
         editor.agentService.dialogDraft = AgentDialogDraft()
         try write("fixtures/second.png", in: dataRoot)
+        try FullflowAcceptanceFixture.writeReference(to: dataRoot.appendingPathComponent("fixtures/second.png"))
         editor.agentService.submitDialog(
             second,
             result: AgentDialogResult(
@@ -741,6 +735,7 @@ struct HardStepIntakeTests {
 
         let firstLocation = try #require(editor.agentService.pendingDialog)
         try write("fixtures/location-first.png", in: dataRoot)
+        try FullflowAcceptanceFixture.writeReference(to: dataRoot.appendingPathComponent("fixtures/location-first.png"))
         editor.agentService.submitDialog(
             firstLocation,
             result: AgentDialogResult(
@@ -756,6 +751,7 @@ struct HardStepIntakeTests {
         )
         let secondLocation = try #require(awaitedSecondLocation)
         try write("fixtures/location-second.png", in: dataRoot)
+        try FullflowAcceptanceFixture.writeReference(to: dataRoot.appendingPathComponent("fixtures/location-second.png"))
         editor.agentService.submitDialog(
             secondLocation,
             result: AgentDialogResult(
@@ -779,7 +775,7 @@ struct HardStepIntakeTests {
     @Test("workflow intake failures keep the current card mounted")
     @MainActor
     func workflowIntakeFailureKeepsCardMounted() async throws {
-        PackCatalog.register(MusicvideoPack())
+        try CurrentMusicvideoFixture.load()
         let package = FileManager.default.temporaryDirectory
             .appendingPathComponent("location-intake-failure-\(UUID().uuidString).ngv", isDirectory: true)
         let editor = EditorViewModel()
@@ -795,7 +791,9 @@ struct HardStepIntakeTests {
             mode: .beat,
             extraDirs: PackCatalog.projectDirs(activePack: "musicvideo")
         )
+        try CurrentMusicvideoFixture.initializeWorkflow(dataRoot: try #require(DataRootResolver.dataRoot(of: package)))
         let packageStore = YAMLArtifactStore(dataRoot: packageDataRoot)
+        try writeApprovedAnalysis(in: packageDataRoot, project: "location-intake-failure")
         var packageGates = try packageStore.load(Gates.self, at: PipelineLayout.gatesFile)
         GatesOperations.approve(&packageGates, phase: "project_init")
         GatesOperations.approve(&packageGates, phase: "analysis")
@@ -808,7 +806,8 @@ struct HardStepIntakeTests {
         )
         let manifestURL = try #require(PackKnowledge.hardStepManifestURL())
         let manifest = try HardStepManifest.decode(try Data(contentsOf: manifestURL))
-        for kind in [HardStep.Kind.script, .character] {
+        try PipelineStorySourceWriter.confirmGreenfield(editor: editor)
+        for kind in [HardStep.Kind.character] {
             let step = try #require(manifest.steps(for: "brief").first { $0.kind == kind })
             _ = try IntakeLedger.recordDecline(step, dataRoot: dataRoot)
         }
@@ -936,7 +935,7 @@ struct HardStepIntakeTests {
     @Test("a workflow hard step leaves a durable transcript record without starting the agent")
     @MainActor
     func workflowStepDoesNotBecomeChat() async throws {
-        PackCatalog.register(MusicvideoPack())
+        try CurrentMusicvideoFixture.load()
         let package = FileManager.default.temporaryDirectory
             .appendingPathComponent("workflow-intake-\(UUID().uuidString).ngv", isDirectory: true)
         let editor = EditorViewModel()
@@ -952,6 +951,7 @@ struct HardStepIntakeTests {
             mode: .beat,
             extraDirs: PackCatalog.projectDirs(activePack: "musicvideo")
         )
+        try CurrentMusicvideoFixture.initializeWorkflow(dataRoot: try #require(DataRootResolver.dataRoot(of: package)))
         let packageStore = YAMLArtifactStore(dataRoot: packageDataRoot)
         try writeApprovedAnalysis(in: packageDataRoot, project: "workflow-intake")
         var packageGates = try packageStore.load(Gates.self, at: PipelineLayout.gatesFile)
@@ -995,7 +995,7 @@ struct HardStepIntakeTests {
     @Test("required track intake cannot advance without a file")
     @MainActor
     func requiredTrackStaysOpen() async throws {
-        PackCatalog.register(MusicvideoPack())
+        try CurrentMusicvideoFixture.load()
         let package = FileManager.default.temporaryDirectory
             .appendingPathComponent("required-track-intake-\(UUID().uuidString).ngv", isDirectory: true)
         let editor = EditorViewModel()
@@ -1011,6 +1011,7 @@ struct HardStepIntakeTests {
             mode: .beat,
             extraDirs: PackCatalog.projectDirs(activePack: "musicvideo")
         )
+        try CurrentMusicvideoFixture.initializeWorkflow(dataRoot: try #require(DataRootResolver.dataRoot(of: package)))
         editor.projectURL = package
 
         await editor.refreshEngineState()
@@ -1137,7 +1138,9 @@ struct HardStepIntakeTests {
         let manifest = try HardStepManifest.decode(try Data(contentsOf: manifestURL))
         let registry = EngineRegistry()
         MusicvideoPack().register(registry)
-        let order = PhaseOrder.merged(packPlacements: registry.phasePlacements)
+        let contract = try CurrentMusicvideoFixture.load()
+        let workflow = try HostWorkflowKey.resolve(binding: CurrentMusicvideoFixture.binding, contract: contract)
+        let order = try PhaseContractRuntime.order(workflow: workflow)
         #expect(Array(order.prefix(3)) == ["project_init", "analysis", "brief"])
 
         let package = FileManager.default.temporaryDirectory
@@ -1149,11 +1152,12 @@ struct HardStepIntakeTests {
             mode: .beat,
             extraDirs: registry.projectDirs
         )
+        try CurrentMusicvideoFixture.activate(at: package)
         let store = YAMLArtifactStore(dataRoot: dataRoot)
 
         var snapshot = try ProjectStateBuilder.buildSnapshot(
             dataRoot: dataRoot,
-            packPlacements: registry.phasePlacements
+            order: order
         )
         #expect(snapshot.nextPhase == "project_init")
         var ledger = IntakeLedger()
@@ -1191,7 +1195,7 @@ struct HardStepIntakeTests {
         try store.save(gates, to: PipelineLayout.gatesFile)
         snapshot = try ProjectStateBuilder.buildSnapshot(
             dataRoot: dataRoot,
-            packPlacements: registry.phasePlacements
+            order: order
         )
         #expect(snapshot.nextPhase == "analysis")
         #expect(manifest.steps(for: "analysis").isEmpty)
@@ -1292,7 +1296,7 @@ struct HardStepIntakeTests {
         try store.save(gates, to: PipelineLayout.gatesFile)
         snapshot = try ProjectStateBuilder.buildSnapshot(
             dataRoot: dataRoot,
-            packPlacements: registry.phasePlacements
+            order: order
         )
         #expect(snapshot.nextPhase == "brief")
         visible = IntakePlanner.next(

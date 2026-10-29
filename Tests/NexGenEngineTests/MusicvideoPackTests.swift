@@ -20,9 +20,10 @@ struct MusicvideoPackTests {
         #expect(reg.engine.gateRequirements["analysis"] != nil)
         #expect(reg.engine.artifactWriteRequirements["analysis"] != nil)
         #expect(reg.engine.artifactCandidateRequirements["analysis"] != nil)
-        #expect(Set(reg.engine.phaseArtifactProviders.keys) == Set(
-            MusicvideoPipelineLineage.executionInputPhases
-        ))
+        #expect(Set(reg.engine.phaseArtifactProviders.keys) == Set([
+            "analysis", "brief", "production_design", "treatment",
+            "script", "storyboard", "shot_planning", "bible",
+        ]))
         #expect(reg.engine.productionProfiles.map(\.id) == [
             .generativeFilm,
             .narrativeStorytelling,
@@ -46,10 +47,11 @@ struct MusicvideoPackTests {
         #expect(descriptor.profileResourceIDs == [
             "generative_film", "narrative_storytelling",
         ])
-        #expect(descriptor.version == "1.2.1")
+        #expect(descriptor.version == "1.3.0")
         #expect(descriptor.phaseSelections.map(\.phase) == [
-            "project_init", "analysis", "brief", "production_design", "treatment",
-            "storyboard", "bible", "shotlist", "sanity", "frames", "render",
+            "project_init", "analysis", "brief", "production_design", "treatment", "script",
+            "storyboard", "shot_planning", "bible", "shotlist", "sanity", "frames",
+            "render_review", "render",
         ])
         #expect(descriptor.selection(for: "project_init")?.knowledgePhase == "init")
         #expect(descriptor.selection(for: "analysis")?.libraryIDs.contains(
@@ -61,6 +63,13 @@ struct MusicvideoPackTests {
         #expect(descriptor.selection(for: "treatment")?.libraryIDs.contains(
             "film-production-film-craft"
         ) == true)
+        #expect(descriptor.selection(for: "script")?.knowledgePhase == "treatment")
+        #expect(descriptor.selection(for: "script")?.libraryIDs == [
+            "musicvideo-performance-planning", "story-containers",
+            "film-production-story-structures", "film-production-film-craft",
+        ])
+        #expect(descriptor.selection(for: "shot_planning")?.knowledgePhase == "shotlist")
+        #expect(descriptor.selection(for: "render_review")?.knowledgePhase == "review")
         #expect(descriptor.selection(for: "frames")?.libraryIDs.contains(
             "film-production-image-model-logic"
         ) == true)
@@ -142,6 +151,9 @@ struct MusicvideoPackTests {
             ("brief", Set(["narrative", "quiet", "poetic"])),
             ("production_design", Set(["stylized-3d", "animation", "shape-language"])),
             ("treatment", Set(["narrative", "quiet", "poetic"])),
+            ("script", Set(["narrative", "quiet", "poetic"])),
+            ("shot_planning", Set(["stylized-3d", "animation", "shape-language"])),
+            ("render_review", Set(["stylized-3d", "animation", "shape-language"])),
             ("storyboard", Set(["stylized-3d", "animation", "shape-language"])),
             ("bible", Set(["stylized-3d", "animation", "shape-language"])),
             ("shotlist", Set<String>()),
@@ -167,7 +179,7 @@ struct MusicvideoPackTests {
                 )
                 #expect((assembly.libraryEntryIDs + assembly.omittedLibraryEntryIDs).contains {
                     $0.hasPrefix("\(libraryID.rawValue)/")
-                })
+                }, "Missing phase-relevant entries: \(phase) / \(libraryID.rawValue)")
             }
         }
     }
@@ -429,8 +441,8 @@ struct MusicvideoPackTests {
     func packSatisfiesContract() {
         let pack: Pack = MusicvideoPack()
         #expect(pack.name == "musicvideo")
-        #expect(pack.version == "0.5.16")
-        #expect(pack.manifest.minAppVersion == "1.7.2")
+        #expect(pack.version == "0.6.0")
+        #expect(pack.manifest.minAppVersion == "1.8.0")
     }
 
     @Test("pack exposes gallery manifest and a starter")
@@ -458,14 +470,14 @@ struct MusicvideoPackTests {
         #expect(!starter.prompt.contains("Apply this profile only when `concept_type`"))
     }
 
-    @Test("storyboard setup distinguishes agent-created and user-supplied sequences")
-    func storyboardSetupUsesUserPerspective() throws {
+    @Test("current Storyboard instructions require real moment sketches before approval")
+    func storyboardInstructionsRequireVerifiedSketches() throws {
         let document = try PackKnowledge.phaseDoc(name: "storyboard")
-        #expect(document.contains("`agent_created` — **Create sequences for me**"))
-        #expect(document.contains("`user_supplied` — **I'll provide sequences**"))
-        #expect(document.contains("first person in an option label denotes the user"))
-        #expect(document.contains("this is the only Storyboard decision"))
-        #expect(document.contains("request its gate directly"))
+        #expect(document.contains("write_storyboard_bundle"))
+        #expect(document.contains("compile_storyboard_sketch"))
+        #expect(document.contains("storyboardCompileReceipt"))
+        #expect(document.contains("assign_storyboard_sketch"))
+        #expect(document.contains("Never ask for Storyboard approval before all required visual moments have genuine decoded images and verified proofs."))
         #expect(!document.contains("always run the 3-option resume question"))
         #expect(!document.contains("Split, or reduce the character-view demand?"))
         #expect(!document.contains("**Claude-only**"))
@@ -486,16 +498,19 @@ struct MusicvideoPackTests {
         reg.load(MusicvideoPack())
         let migrations = reg.engine.projectSchemaMigrations
         #expect(migrations.contains {
-            $0.from == "musicvideo/legacy" && $0.to == "musicvideo/2.0.0"
+            $0.from == "musicvideo/legacy" && $0.to == "musicvideo/3.0.0"
         })
         #expect(migrations.contains {
-            $0.from == "musicvideo/1.0.0" && $0.to == "musicvideo/2.0.0"
+            $0.from == "musicvideo/1.0.0" && $0.to == "musicvideo/3.0.0"
         })
-        #expect(migrations.count == 2)
+        #expect(migrations.contains {
+            $0.from == "musicvideo/2.0.0" && $0.to == "musicvideo/3.0.0"
+        })
+        #expect(migrations.count == 3)
     }
 
-    @Test("measured-structure migration rewinds analysis and downstream approvals")
-    func measuredStructureMigrationRewindsPipeline() throws {
+    @Test("pack schema adapter preserves legacy truth for the explicit host Recovery reset")
+    func schemaAdapterPreservesLegacyTruthForHostRecovery() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "musicvideo-migration-\(UUID().uuidString)",
             isDirectory: true
@@ -512,6 +527,8 @@ struct MusicvideoPackTests {
             GatesOperations.approve(&gates, phase: phase)
         }
         try store.save(gates, to: PipelineLayout.gatesFile)
+        let gateURL = dataRoot.appendingPathComponent(PipelineLayout.gatesFile)
+        let originalGateBytes = try Data(contentsOf: gateURL)
         let analysis = dataRoot.appendingPathComponent("analysis/legacy.json")
         try FileManager.default.createDirectory(
             at: analysis.deletingLastPathComponent(),
@@ -531,8 +548,9 @@ struct MusicvideoPackTests {
 
         let migrated = try store.load(Gates.self, at: PipelineLayout.gatesFile)
         #expect(MusicvideoPipelineLineage.phases.allSatisfy {
-            !migrated.get($0).approved
+            migrated.get($0).approved
         })
+        #expect(try Data(contentsOf: gateURL) == originalGateBytes)
         #expect(try Data(contentsOf: analysis) == before)
     }
 }

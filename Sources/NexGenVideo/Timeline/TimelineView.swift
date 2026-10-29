@@ -423,21 +423,23 @@ final class TimelineView: NSView {
                 if let (drag, isLeft) = trimDrag,
                    (clip.id == drag.clipId || trimPartnerIds.contains(clip.id)),
                    !(drag.isRipple && rippleResizes[clip.id] == nil) {
-                    var previewClip = clip
+                    var previewClip: Clip
                     if let resize = rippleResizes[clip.id] {
+                        let origin = isLeft ? clip.durationFrames - resize.duration : 0
+                        let extended: [FadeEdge] = resize.duration > clip.durationFrames ? [isLeft ? .left : .right] : []
+                        previewClip = clip.animationWindow(originOffset: origin, duration: resize.duration, extendedEdges: extended)
                         previewClip.trimStartFrame = resize.trimStart
                         previewClip.trimEndFrame = resize.trimEnd
-                        previewClip.durationFrames = resize.duration
                     } else {
-                        let sourceDelta = Int((Double(drag.deltaFrames) * clip.speed).rounded())
-                        if isLeft {
-                            previewClip.startFrame = clip.startFrame + drag.deltaFrames
-                            previewClip.trimStartFrame = clip.trimStartFrame + sourceDelta
-                            previewClip.durationFrames = clip.durationFrames - drag.deltaFrames
-                        } else {
-                            previewClip.durationFrames = clip.durationFrames + drag.deltaFrames
-                            previewClip.trimEndFrame = clip.trimEndFrame - sourceDelta
-                        }
+                        let values = editor.trimValues(for: clip, edge: isLeft ? .left : .right, delta: drag.deltaFrames)
+                        let sourceDelta = isLeft ? values.trimStart - clip.trimStartFrame : values.trimEnd - clip.trimEndFrame
+                        let timelineDelta = Int((Double(sourceDelta) / clip.speed).rounded())
+                        let duration = clip.durationFrames - timelineDelta
+                        let extended: [FadeEdge] = timelineDelta < 0 ? [isLeft ? .left : .right] : []
+                        previewClip = clip.animationWindow(originOffset: isLeft ? timelineDelta : 0, duration: duration, extendedEdges: extended)
+                        if isLeft { previewClip.startFrame += timelineDelta }
+                        previewClip.trimStartFrame = values.trimStart
+                        previewClip.trimEndFrame = values.trimEnd
                     }
                     let previewRect = geo.clipRect(for: previewClip, trackIndex: ti)
                     clipDisplayRects[clip.id] = previewRect
@@ -580,8 +582,7 @@ final class TimelineView: NSView {
         )
         sourceClip.trimStartFrame = 0
         sourceClip.trimEndFrame = 0
-        sourceClip.fadeInFrames = 0
-        sourceClip.fadeOutFrames = 0
+        sourceClip.resetFades()
 
         ClipRenderer.draw(
             sourceClip,
@@ -1460,8 +1461,8 @@ final class TimelineView: NSView {
                 insert(audioOnlyAssets, aIdx, nil)
             }
 
-            editor.undoManager?.endUndoGrouping()
             editor.undoManager?.setActionName("Add Clips")
+            editor.undoManager?.endUndoGrouping()
         }
 
         editor.addClipsWithSettingsCheck(assets: placeableAssets, operation: operation)

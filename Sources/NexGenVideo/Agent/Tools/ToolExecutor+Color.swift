@@ -43,6 +43,30 @@ extension ToolExecutor {
             "masterCurve", "redCurve", "greenCurve", "blueCurve",
             "hueCurves", "lut",
         ]
+        var changedParameters: [String: Set<String>] {
+            var result: [String: Set<String>] = [:]
+            func add(_ type: String, _ key: String, when present: Bool) {
+                if present { result[type, default: []].insert(key) }
+            }
+            for (type, key, value) in [
+                ("color.exposure", "ev", exposure), ("color.contrast", "amount", contrast),
+                ("color.temperature", "temperature", temperature), ("color.temperature", "tint", tint),
+                ("color.highlightsShadows", "highlights", highlights), ("color.highlightsShadows", "shadows", shadows),
+                ("color.blacksWhites", "blacks", blacks), ("color.blacksWhites", "whites", whites),
+                ("color.vibrance", "amount", vibrance), ("color.saturation", "amount", saturation),
+                ("color.wheels", "lift_m", shadowsLum), ("color.wheels", "gamma_m", midsGamma),
+                ("color.wheels", "gain_m", highsGain),
+            ] { add(type, key, when: value != nil) }
+            for (prefix, hue, amount) in [("lift", shadowsHue, shadowsAmount), ("gamma", midsHue, midsAmount), ("gain", highsHue, highsAmount)] {
+                for key in [prefix + "_x", prefix + "_y"] { add("color.wheels", key, when: hue != nil || amount != nil) }
+            }
+            add("color.curves", "curve", when: [masterCurve, redCurve, greenCurve, blueCurve].contains { $0 != nil })
+            add("color.hueCurves", "curves", when: hueCurves?.targets?.isEmpty == false)
+            let newLUT = lut?.path?.isEmpty == false
+            for key in ["path", "name"] { add("color.lut", key, when: newLUT) }
+            add("color.lut", "intensity", when: lut?.strength != nil)
+            return result
+        }
         var hasAnyParam: Bool {
             [exposure, contrast, saturation, vibrance, temperature, tint, highlights, shadows, blacks, whites,
              shadowsHue, shadowsAmount, shadowsLum, midsHue, midsAmount, midsGamma, highsHue, highsAmount, highsGain]
@@ -53,7 +77,7 @@ extension ToolExecutor {
         }
     }
 
-    func applyColor(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
+    func applyColor(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
         let input: ApplyColorInput = try decodeToolArgs(args, path: "apply_color")
         guard !input.clipIds.isEmpty else { throw ToolError("clipIds is empty.") }
         guard input.hasAnyParam || (input.reset ?? false) else { throw ToolError("No grade parameters provided.") }
@@ -62,25 +86,37 @@ extension ToolExecutor {
             guard clip.mediaType == .video || clip.mediaType == .image else {
                 throw ToolError("Clip \(id) is a \(clip.mediaType.rawValue) clip; apply_color needs a video or image clip.")
             }
+            if input.reset != true {
+                for effect in clip.effects ?? [] {
+                    for key in input.changedParameters[effect.type] ?? [] where effect.params[key]?.track?.isActive == true {
+                        throw ToolError("Clip \(id) has animated \(effect.type).\(key). Edit its keyframes in Adjust, or use reset:true only when the entire grade and its animation should be cleared.")
+                    }
+                }
+            }
         }
         // LUT file I/O up front so it can throw before mutating.
         var lutDestPath: String?
         if let path = input.lut?.path, !path.isEmpty {
-            do { lutDestPath = try LUTLoader.store(path: path, projectId: editor.projectId) }
-            catch let e as LUTStoreError { throw ToolError(e.errorDescription ?? "Invalid LUT.") }
+            guard let root = editor.workingRoot else { throw ToolError("Save the project before choosing a LUT.") }
+            let key = editor.openWorkingCopyKey
+            let timeline = editor.timeline
+            let preparation = Task.detached(priority: .userInitiated) { try LUTLoader.store(path: path, projectRoot: root) }
+            do {
+                lutDestPath = try await withTaskCancellationHandler { try await preparation.value } onCancel: { preparation.cancel() }
+                try Task.checkCancellation()
+                guard editor.workingRoot == root, editor.openWorkingCopyKey == key, editor.timeline == timeline else {
+                    throw ToolError("The project or selected clips changed while the LUT was being imported. Choose it again.")
+                }
+            } catch let error as LUTStoreError { throw ToolError(error.errorDescription ?? "Invalid LUT.") }
         }
         let reset = input.reset ?? false
         let actionName = input.clipIds.count == 1 ? "Color Grade (Agent)" : "Color Grade ×\(input.clipIds.count) (Agent)"
         withUndoGroup(editor, actionName: actionName) {
             editor.mutateClips(ids: Set(input.clipIds), actionName: actionName) { clip in
-                let disabledColor = reset ? []
-                    : Set((clip.effects ?? []).filter { $0.type.hasPrefix("color.") && !$0.enabled }.map(\.type))
                 var state = GradeState(effects: reset ? nil : clip.effects)
                 state.apply(input, lutDestPath: lutDestPath)
-                let nonColor = (clip.effects ?? []).filter { !$0.type.hasPrefix("color.") }
-                var color = state.buildStack()
-                for i in color.indices where disabledColor.contains(color[i].type) { color[i].enabled = false }
-                clip.effects = nonColor + color
+                let previous = (clip.effects ?? []).filter { !reset || !$0.type.hasPrefix("color.") }
+                clip.effects = state.merging(into: previous, changes: input.changedParameters)
             }
         }
         return .ok("Graded \(input.clipIds.count) clip\(input.clipIds.count == 1 ? "" : "s") (\(reset ? "reset" : "merged")). Verify with inspect_timeline.")
@@ -100,12 +136,12 @@ extension ToolExecutor {
     func inspectColor(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
         let input: InspectColorInput = try decodeToolArgs(args, path: "inspect_color")
 
-        let image: CIImage, scopes: Scopes, subjectKey: String
+        let image: CIImage, scopes: Scopes, sampling: [String: Any], subjectKey: String
         if let clipId = input.clipId {
-            (image, scopes) = try await gradedClip(clipId, atFrame: input.atFrame, editor: editor)
+            (image, scopes, sampling) = try await gradedClip(clipId, atFrame: input.atFrame, editor: editor)
             subjectKey = "clip"
         } else if let mediaRef = input.mediaRef {
-            (image, scopes) = try await rawAsset(mediaRef, editor: editor, label: "Media")
+            (image, scopes, sampling) = try await rawAsset(mediaRef, editor: editor, label: "Media")
             subjectKey = "media"
         } else {
             throw ToolError("Provide either clipId (measures the graded clip) or mediaRef (measures the raw asset).")
@@ -116,13 +152,15 @@ extension ToolExecutor {
             blocks.append(.image(base64: jpeg.base64EncodedString(), mediaType: "image/jpeg"))
         }
         var payload: [String: Any] = [subjectKey: Self.readout(scopes)]
+        payload[subjectKey + "Sampling"] = sampling
 
         if let reference = input.reference {
-            let (refImage, refScopes) = try await rawAsset(reference, editor: editor, label: "Reference")
+            let (refImage, refScopes, refSampling) = try await rawAsset(reference, editor: editor, label: "Reference")
             if let jpeg = Self.encodeJPEG(refImage) {
                 blocks.append(.image(base64: jpeg.base64EncodedString(), mediaType: "image/jpeg"))
             }
             payload["reference"] = Self.readout(refScopes)
+            payload["referenceSampling"] = refSampling
             payload["gap"] = Self.gap(current: scopes, reference: refScopes)
         }
 
@@ -132,7 +170,7 @@ extension ToolExecutor {
     }
 
     /// The clip's graded look (existing effects applied) at a representative frame.
-    private func gradedClip(_ clipId: String, atFrame: Int?, editor: EditorViewModel) async throws -> (CIImage, Scopes) {
+    private func gradedClip(_ clipId: String, atFrame: Int?, editor: EditorViewModel) async throws -> (CIImage, Scopes, [String: Any]) {
         guard let clip = editor.clipFor(id: clipId) else { throw ToolError("Clip not found: \(clipId)") }
         guard clip.mediaType == .video || clip.mediaType == .image else {
             throw ToolError("Clip \(clipId) is a \(clip.mediaType.rawValue) clip; inspect_color needs a video or image clip.")
@@ -157,14 +195,14 @@ extension ToolExecutor {
             throw ToolError("Could not decode a frame for clip \(clipId).")
         }
         // Match the render path: crop to the visible region before grading (FrameRenderer crops first).
-        let cropped = Self.cropping(frame, crop: clip.cropAt(frame: clip.startFrame + offset))
+        let cropped = Self.cropping(frame.image, crop: clip.cropAt(frame: clip.startFrame + offset))
         let graded = Self.applyingEffects(cropped, clip: clip, atOffset: offset)
         guard let scopes = ColorScopes.measure(graded) else { throw ToolError("Could not measure the clip frame.") }
-        return (graded, scopes)
+        return (graded, scopes, frame.sampling)
     }
 
     /// A raw media asset's frame (no effects), at its midpoint.
-    private func rawAsset(_ mediaRef: String, editor: EditorViewModel, label: String) async throws -> (CIImage, Scopes) {
+    private func rawAsset(_ mediaRef: String, editor: EditorViewModel, label: String) async throws -> (CIImage, Scopes, [String: Any]) {
         let media = try asset(mediaRef, editor: editor, label: label)
         guard media.type == .video || media.type == .image else {
             throw ToolError("\(label) \(mediaRef) is a \(media.type.rawValue) asset; inspect_color needs a video or image asset.")
@@ -172,25 +210,33 @@ extension ToolExecutor {
         guard let url = editor.mediaResolver.resolveURL(for: mediaRef) else {
             throw ToolError("Could not resolve a URL for \(mediaRef).")
         }
-        guard let image = await Self.frameImage(url: url, type: media.type, atSeconds: media.duration / 2),
-              let scopes = ColorScopes.measure(image) else {
+        guard let frame = await Self.frameImage(url: url, type: media.type, atSeconds: media.duration / 2),
+              let scopes = ColorScopes.measure(frame.image) else {
             throw ToolError("Could not measure \(mediaRef).")
         }
-        return (image, scopes)
+        return (frame.image, scopes, frame.sampling)
     }
 
     // MARK: - Color helpers
 
-    fileprivate static func frameImage(url: URL, type: ClipType, atSeconds: Double) async -> CIImage? {
-        if type == .image { return CIImage(contentsOf: url, options: [.colorSpace: NSNull()]) }
+    private static func frameImage(url: URL, type: ClipType, atSeconds: Double) async -> (image: CIImage, sampling: [String: Any])? {
+        if type == .image {
+            guard let image = CIImage(contentsOf: url, options: [.colorSpace: NSNull()]) else { return nil }
+            return (image, ["kind": "still"])
+        }
+        guard atSeconds.isFinite else { return nil }
         let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
         generator.appliesPreferredTrackTransform = true
-        let tolerance = CMTime(seconds: 1, preferredTimescale: 600)
-        generator.requestedTimeToleranceBefore = tolerance
-        generator.requestedTimeToleranceAfter = tolerance
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
         let time = CMTime(seconds: max(0, atSeconds), preferredTimescale: 600)
-        guard let cg = try? await generator.image(at: time).image else { return nil }
-        return CIImage(cgImage: cg, options: [.colorSpace: NSNull()])
+        guard time.isNumeric, let frame = try? await generator.image(at: time),
+              frame.actualTime.isNumeric, frame.actualTime.seconds.isFinite else { return nil }
+        return (CIImage(cgImage: frame.image, options: [.colorSpace: NSNull()]), [
+            "kind": "video", "requestedValue": time.value, "requestedTimescale": time.timescale,
+            "actualValue": frame.actualTime.value, "actualTimescale": frame.actualTime.timescale,
+            "actualEpoch": frame.actualTime.epoch,
+        ])
     }
 
     /// Crops a display-oriented frame to its visible region (insets are display-space, CI origin is bottom-left).
@@ -277,6 +323,7 @@ private struct GradeState {
     var curve: GradeCurve?
     var hueCurves: HueCurves?
     var lutPath: String?
+    var lutName: String?
     var lutIntensity: Double?
 
     init(effects: [Effect]?) {
@@ -293,7 +340,7 @@ private struct GradeState {
             case "color.saturation": saturation = p["amount"]?.value
             case "color.curves": curve = (p["curve"]?.string).flatMap { GradeCurve(json: $0) }
             case "color.hueCurves": hueCurves = (p["curves"]?.string).flatMap { HueCurves(json: $0) }
-            case "color.lut": lutPath = p["path"]?.string; lutIntensity = p["intensity"]?.value
+            case "color.lut": lutPath = p["path"]?.string; lutName = p["name"]?.string; lutIntensity = p["intensity"]?.value
             case "color.wheels":
                 (shadowsHue, shadowsAmount) = Self.hueAmount(p["lift_x"]?.value ?? 0, p["lift_y"]?.value ?? 0)
                 shadowsLum = p["lift_m"]?.value
@@ -339,11 +386,28 @@ private struct GradeState {
         }
         if let targets = i.hueCurves?.targets, !targets.isEmpty { hueCurves = Self.compileHueCurves(targets) }
         if let dest = lutDestPath {
+            if dest != lutPath { lutName = nil }
             lutPath = dest
-            lutIntensity = (i.lut?.strength).map { clamp3(min(1, max(0, $0))) } ?? 1
+            if let original = i.lut?.path, !ProjectEffectResources.isPortable(original) { lutName = URL(fileURLWithPath: original).lastPathComponent }
+            lutIntensity = (i.lut?.strength).map { clamp3(min(1, max(0, $0))) } ?? lutIntensity ?? 1
         } else if let st = i.lut?.strength {
             lutIntensity = clamp3(min(1, max(0, st)))   // re-blend the existing LUT
         }
+    }
+
+    func merging(into previous: [Effect], changes: [String: Set<String>]) -> [Effect] {
+        let generated = buildStack()
+        var effects = previous.compactMap { original -> Effect? in
+            guard let keys = changes[original.type] else { return original }
+            guard let replacement = generated.first(where: { $0.type == original.type }) else { return nil }
+            var updated = original
+            for key in keys { updated.params[key] = replacement.params[key] }
+            return updated
+        }
+        for effect in generated where changes[effect.type] != nil && !previous.contains(where: { $0.type == effect.type }) {
+            effects.insert(effect, at: EffectRegistry.insertIndex(effects, for: effect.type))
+        }
+        return effects
     }
 
     /// Emits effects in EffectRegistry.canonicalOrder so an agent grade renders identically to the UI's.
@@ -384,10 +448,9 @@ private struct GradeState {
             stack.append(e)
         }
         if let lutPath {
-            stack.append(Effect(type: "color.lut", params: [
-                "path": EffectParam(string: lutPath),
-                "intensity": EffectParam(value: clamp3(lutIntensity ?? 1)),
-            ]))
+            var parameters = ["path": EffectParam(string: lutPath), "intensity": EffectParam(value: clamp3(lutIntensity ?? 1))]
+            if let lutName { parameters["name"] = EffectParam(string: lutName) }
+            stack.append(Effect(type: "color.lut", params: parameters))
         }
         return stack
     }

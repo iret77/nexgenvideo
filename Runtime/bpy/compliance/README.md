@@ -1,0 +1,97 @@
+# Managed bpy source closure
+
+Public binary distribution remains blocked until the lock is `ready` and the source-closure
+workflow validates the exact public source asset. This is a technical distribution gate, not a
+request for generic legal approval.
+
+The pinned PyPI metadata identifies `bpy` 5.2.2, GPL-3.0, Python 3.13, Blender Foundation, and the
+Blender release source locations. The wheel hash, size, `RECORD`, native entry point, and 43 native
+library files bind the artifact NexGenVideo installs. Blender's exact v5.2.2 source archive binds the
+release build recipes, patches, dependency versions, URLs, upstream hashes, and license-generation
+metadata. The official v5.2.2 tag resolves to commit
+`d13f752e3b9c4f8c261cda552b1021f8bcc0382c`; the exact `versions.cmake` and release build-file
+inventory are pinned. The exact release submodule points to the official arm64 library repository
+at `a76ef917b4849ba2b1b1deb1a643e131a884a63b`. Repository-hashed `official-library-correspondence.json`
+records all 43 native libraries: each wheel member matches its official Git LFS pointer's SHA-256
+and size byte for byte. The archived `deps.md` binds each native family to its exact source version.
+The verification scripts check those three evidence files against their runtime-lock hashes and the
+independently read wheel RECORD. This establishes the native-library correspondence, including full
+OpenImageIO and SDL versions, without claiming all platform candidates were linked.
+
+`scripts/assemble_bpy_source_closure.py` downloads and verifies the exact wheel/release inputs, every
+wheel source, python-build-standalone plus its declared CPython inputs, and every dependency in the
+Blender v5.2.2 build manifest, including static/transitive candidates. It preserves source archives,
+the complete Blender build-file/patch inventory, wheel `RECORD` evidence, and notice candidates in a
+deterministic tar archive. `scripts/verify_bpy_source_closure.py` independently checks that archive.
+The `source` job in `.github/workflows/bpy-source-closure.yml` can assemble and validate this candidate
+on Ubuntu before the distribution gate is ready. Manual dispatch uses candidate mode; reusable
+release/build callers require `distribution: true`. A candidate never authorizes a binary for publication.
+Transient download errors retry only the failed download, at most twice, while verified sources remain
+in the current job. Missing sources, certificate errors, and checksum drift remain failures; other
+declared sources are still attempted. An untrusted Blender source or dependency manifest stops the
+run immediately. Failed jobs retain verified source bytes and their inventory in the source artifact,
+alongside a separate progress artifact. Partial inventories never claim a complete source closure.
+
+The registered `CI Batch` entrypoint with `mode=qualification` measures the binary and assembles
+sources independently through this reusable workflow with `distribution: false`; no app is built.
+After committing resolved notice and correspondence evidence, repeat qualification with the explicit
+`qualification_binary_run_id` of that measurement. This forwards `source_only: true` and
+`binary_evidence_run_id`. The standalone source workflow supports the same two inputs once its
+dispatch is registered. Reuse accepts only the standalone binary job or the named
+`bpy-qualification / binary-evidence` job in CI Batch, and checks the original repository, workflow,
+commit, latest passing binary job, exact artifact digest, timestamps and unchanged runtime inputs.
+The fingerprint includes the Python/wheel pins, native-library evidence and complete
+producer/validator sources; notice-closure and publication pins are excluded. The source artifact
+preserves the original measurement unchanged and records both commits and the exact reused job.
+Missing, expired, failed, changed or pre-fingerprint evidence is refused; it is never relabeled as a
+new measurement. Reusable distribution callers keep their existing gates and do not use this option.
+
+`qualification_source_run_id` is independent of the binary selection and forwards
+`source_evidence_run_id`. It selects an exact prior full or partial source artifact, with original
+repository, workflow/job, commit, latest attempt, timestamps and streamed artifact digest checked.
+Every retained file is rehashed against the current original URL/checksum before reuse; correspondence,
+notices and the final manifest are rebuilt from current metadata. A changed workflow still requires
+a fresh binary measurement. Successful artifacts keep the final tar rather than a duplicate full
+download cache; failed artifacts keep the verified subset for the next explicit continuation.
+Partial source artifacts are retained for seven days, successful evidence for 30 days.
+Cancellation or timeout may prevent upload; reuse requires an actually uploaded artifact,
+not progress metadata or the fact that files once existed in the terminated job.
+
+GHCR access is not needed for this bootstrap. The private song container belongs to the separate
+audio-analysis acceptance and does not gate source assembly or binary identity collection.
+
+To move the lock to `ready`, add repository-hashed evidence with these schemas:
+
+- `nexgenvideo/bpy-binary-source-correspondence/1`: the wheel and METADATA hashes, official release
+  commit, observed `blenderBuildHash` and `libraryVersions`, release source and build-manifest hashes,
+  `closureComponents` covering every component
+  emitted by the builder, and a distinct `buildInputComponents` list naming only actual build
+  inputs supported by its cited primary `evidence`. `unresolvedFacts` must be empty. Acceptable
+  evidence can combine official release/build records, the pinned wheel's `bpy.app.build_hash`,
+  Blender-exposed `LibraryVersion` values, and independently inspected binary metadata. No special
+  upstream per-wheel attestation or bit-identical rebuild is required. The evidence must not turn
+  the conservative all-candidate archive into a claim that every candidate was linked.
+- `nexgenvideo/bpy-notice-coverage/1`: a `components` object mapping every emitted component to one
+  or more paths listed in `distributionClosure.noticeFiles`.
+
+The `binary-evidence` job in the same workflow records `bpy.app.build_hash`
+and the Blender-exposed Alembic, OpenColorIO, OpenImageIO, OpenSubdiv, OpenVDB, and USD versions from
+the exact pinned wheel without building or publishing an app. Runtime acceptance independently
+records the same fields. The official byte-for-byte library correspondence also covers native families not exposed by that
+API, and distinguishes OpenImageIO's full `v3.1.13.1` and SDL `3.4.2` source versions. Actual native
+runtime identity, every generated `NOTICE-CANDIDATE.json`, the assembled source archive and final
+public asset hashes still require their independent workflow evidence before the gate becomes ready.
+
+The ready closure also pins the generated public tar and manifest filenames, archive SHA-256 and byte
+size, and manifest SHA-256. The release workflow publishes both beside the binary. A link or version
+instruction to another equally accessible source server is also valid if the lock and workflow are
+changed together to verify that exact public location.
+
+Primary policy references:
+
+- <https://pypi.org/pypi/bpy/5.2.2/json>
+- <https://github.com/blender/blender/commit/d13f752e3b9c4f8c261cda552b1021f8bcc0382c>
+- <https://docs.blender.org/api/5.2/bpy.app.html>
+- <https://www.blender.org/about/license/>
+- <https://www.gnu.org/licenses/gpl-faq.en.html#AnonFTPAndSendSources>
+- <https://www.gnu.org/licenses/gpl-faq.en.html#MustSourceBuildToMatchExactHashOfBinary>

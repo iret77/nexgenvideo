@@ -134,6 +134,7 @@ struct TimelineContainerView: NSViewRepresentable {
         @MainActor @objc func scrollViewBoundsChanged(_ notification: Notification) {
             timelineView?.needsDisplay = true
             timelineView?.updatePlayheadLayer()
+            timelineView?.snapOverlay.updateViewport()
             if let scrollY = scrollView?.contentView.bounds.origin.y {
                 headerView?.setBoundsOrigin(NSPoint(x: 0, y: scrollY))
                 headerView?.needsDisplay = true
@@ -143,6 +144,7 @@ struct TimelineContainerView: NSViewRepresentable {
         @MainActor @objc func clipViewFrameChanged(_ notification: Notification) {
             timelineView?.updateContentSize()
             timelineView?.updatePlayheadLayer()
+            timelineView?.snapOverlay.updateViewport()
         }
 
         deinit {

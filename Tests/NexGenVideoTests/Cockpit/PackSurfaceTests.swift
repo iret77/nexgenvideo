@@ -9,12 +9,9 @@ struct PackSurfaceTests {
 
     @Test @MainActor func selectedAnalysisAppearsWhenItsPackSurfaceBecomesAvailable() async throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("analysis-route-\(UUID().uuidString).ngv")
-        let pack = MusicvideoPack()
-        PackCatalog.register(pack)
         _ = try ProjectScaffold.initProject(home: home, name: "analysis-route")
         try Fixtures.prepareProjectPackage(at: home)
-        let binding = try #require(ProjectPackBinding(id: pack.name, version: pack.version, projectSchema: "musicvideo/2.0.0"))
-        try ProjectPluginSettings.setActivePlugin(binding, projectURL: home)
+        try CurrentMusicvideoFixture.activate(at: home)
         let editor = EditorViewModel()
         defer { editor.releaseWorkingCopy(); try? FileManager.default.removeItem(at: home) }
         editor.projectURL = home
@@ -338,9 +335,9 @@ struct PackSurfaceTests {
         #expect(unavailable.destination == .tab(.productionDesign))
         #expect(unavailable.destinationLabel == "Production Design")
         #expect(PipelineSurfaceRouting.route(for: "bible", contract: reviewContract,
-            availablePackSurfaces: [])?.destinationLabel == "Bible")
+            availablePackSurfaces: [])?.destinationLabel == "References")
         #expect(PipelineSurfaceRouting.route(for: "shotlist", contract: reviewContract,
-            availablePackSurfaces: [])?.destinationLabel == "Shotlist")
+            availablePackSurfaces: [])?.destinationLabel == "Shot List")
         #expect(PipelineSurfaceRouting.route(for: "frames", contract: reviewContract,
             availablePackSurfaces: [])?.destinationLabel == "Review")
 
@@ -350,7 +347,7 @@ struct PackSurfaceTests {
 
     @Test("native contract serializes the pack's declarative surface")
     func nativeContractSurface() throws {
-        PackCatalog.register(MusicvideoPack())
+        try CurrentMusicvideoFixture.load()
         let data = try NativeCockpitReader.contractJSON(activePack: "musicvideo")
         let contract = try JSONDecoder().decode(ContractData.self, from: data)
         let surface = try #require(contract.cockpitSurfaces.first)

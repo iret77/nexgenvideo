@@ -210,6 +210,13 @@
       "version": "3.1.1",
       "path": "libraries/film-production-blueprints.v3.json",
       "sha256": "f9c365f3a2fd4c399fb182afef8e170d5ae2a42ae10dc41cd4b90a3f58e5a250"
+    },
+    {
+      "kind": "library",
+      "id": "musicvideo-performance-planning",
+      "version": "1.0.0",
+      "path": "libraries/musicvideo-performance-planning.v1.json",
+      "sha256": "666598e0556a8ce7b9ca7082f8f5f906d3202d86382c81c6952a338c75055b9b"
     }
   ]
 }

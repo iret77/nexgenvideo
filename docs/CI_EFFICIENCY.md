@@ -20,6 +20,94 @@ passing evidence. `ci.yml`'s first job carries the same name,
 `Light Checks`, so a dispatched run (for example the release metadata flow) also
 satisfies the required check.
 
+### Existing-artifact followups
+
+Use the registered `CI Batch` entrypoint on the exact producer commit with
+`mode=followup`, its `runtime_run_id`, and exactly one `followup_workflow`:
+`externalgui`, `settings`, or `smartsearch`. This calls the reusable workflow from
+that commit even before its standalone dispatch is registered on the default branch.
+Followups skip Core compilation, workspace acceptance, signing, replays and private
+analysis regardless of the initial-mode checkbox defaults. Linux validation rejects
+missing or incompatible selectors and requires one unexpired, source-matching
+`workspace-ui-app` from the named producer before allocating any Mac job. Existing
+consumer archive, source and app checks remain in force.
+
+For `externalgui`, `interface_scale` selects `all`, `1`, `1.25`, or `1.5`. For
+`settings`, `settings_scope` selects all cases, the Settings or Recovery family,
+or one existing case such as `settings125` or `packrecovery100`. The separate
+`packresume172` family selects `packresume172100`, `packresume172125`, and
+`packresume172150`: the known released 1.7.2 preview pack, not an inferred user-project
+pin. Existing Settings and `packrecovery` cases retain their original 0.5.8 baseline;
+the additional family binds the unchanged 0.5.16 ZIP from `preview-39124049687`.
+Both use the same exact app artifact. The preparer's unqualified default still
+selects the newest compatible baseline; these RC matrix cases explicitly pin their
+baseline versions and verify original archive hashes. Smart Search keeps
+its existing cold-download and warm-layout sequence. Unrelated selectors must stay
+at `all`. Initial mode remains the default and keeps the existing checkbox behavior;
+it rejects supplied followup selectors or a producer run ID. Workspace cases retain
+their separate registered `Workspace UI Acceptance` entrypoint and artifact-reuse
+inputs. Followup success proves only the selected surface and cases.
+
+### Managed bpy qualification before app builds
+
+`CI Batch` with `mode=qualification` runs only the existing bpy source-closure
+workflow with `distribution: false`. Its first run assembles and independently
+validates the source candidate on Linux and records the pinned binary on macOS 26;
+it does not compile the app or run the normal batch jobs. App followup selectors
+must remain unset/default. A later qualification can name that producer through
+`qualification_binary_run_id`: only sources run, and the original passing binary
+measurement is reused after the existing repository, workflow/job, attempt, time,
+artifact-digest and runtime-input checks. The registered batch calls the reusable
+workflow without requiring its standalone dispatch to be registered on main.
+
+`qualification_source_run_id` separately selects retained source bytes from one
+exact completed qualification, including a failed source job with a verified
+partial inventory. Every reused file is checked again against its current original
+pin. Download failures are collected while other declared sources are attempted;
+the job remains failed and uploads its verified subset. A successful job uploads
+the assembled tar without a second full cache copy. Changes to the source workflow
+still change the binary fingerprint: leave `qualification_binary_run_id` empty
+once to obtain a fresh measurement after such a change.
+Partial source artifacts expire after seven days; successful evidence remains for
+30 days. Cancellation or job timeout does not guarantee an upload: only an actual
+uploaded, provenance-checked partial artifact can be reused.
+
+Use the actual candidate artifacts to complete binary/source correspondence,
+source-archive pins and notice text/coverage. A source-only qualification then
+produces the complete archive and manifest; pin their exact hashes and archive
+size before setting the lock to `ready`. Normal CI retains `--distribution` and
+the distributable-source checks before any app build. Candidate success alone
+does not authorize distribution or supply missing evidence.
+
+Initial CI, standalone workspace builds and releases consume the exact qualified
+Corresponding Source pair through `bpy-qualified-source.yml` and
+`prepare-bpy-source`. Before publication it comes from the pinned successful
+Actions producer; after publication it comes from the fixed original
+`publicSourceAsset.releaseTag`. Both paths retain the current public hashes and
+independent distribution validation. The complete producer identity is pinned in
+the lock and in the small same-source `bpy-source-receipt.json` handoff.
+Release publication attaches the exact source pair beside the binaries; Actions
+app/test/diagnostic artifacts carry only the receipt. An expired unpublished source
+artifact requires an explicit qualification rebuild and reviewed replacement pins; consumers never
+rebuild, repin or fall back after a hash mismatch. Candidate/partial source reuse
+in qualification remains separate and cannot satisfy the distribution gate.
+
+`external-gui-acceptance.yml` reuses the same-source `workspace-ui-app` artifact
+and builds only its external XCTest driver. Separate macrunner jobs exercise the
+normal installed app at 100/125/150%; a failed size can be selected independently.
+Each job checks the archive and app tree against the build producer's source-bound
+receipt, which is retained with the journey evidence. Independent workflow runs
+have separate concurrency groups so a new batch cannot displace a queued release journey.
+The journey covers generic import/edit/save/reopen/export without internal app
+acceptance flags. Screenshots, accessibility trees, input records, project snapshots
+and independently decoded output accompany the result. It supplements the macOS 26
+checks; the current macrunner desktop runs macOS 27.
+
+The release workflow uploads the exact notarized DMG for a separate external
+journey at 100%. Publication and publication recovery require that journey's
+success for the same source and DMG hash. A failed GUI job resumes against the
+existing DMG without repeating compilation, signing or notarization.
+
 ## CI pipeline
 
 CI classifies the diff (a run without a pull-request base verifies everything),
@@ -29,6 +117,27 @@ the same job assembles the app from that build directory through SwiftPM's
 incremental build. Real external pack loads, historical compatibility checks and
 relaunch checks still run. Normal-startup acceptance consumes the zipped app on
 `macos-26`. Build directories are never cached or restored across jobs.
+
+SwiftPM dependency caches use a stable directory inside `RUNNER_TEMP`;
+the key includes the platform, toolchain and package manifests. Run IDs are absent
+from the cache path because [GitHub's cache version also hashes that path](https://github.com/actions/cache/blob/v4/README.md#cache-version).
+The cache contains no compiled products. Core saves resolved dependencies after a
+successful build, before testing; an exact cache hit needs no new save.
+Debug and release use `run_macos_tests.py`: XCTest runs once through SwiftPM with
+Swift Testing disabled, Engine Swift Testing runs once through its test product,
+then App Swift Testing runs once in `NexGenVideoAppKitTestHost`. That host enters
+`NSApplication.run` synchronously and invokes the public Swift Testing ABI after
+loading the exact built App test bundle. The same configuration, scratch path and
+compiler flags locate and exercise the built products. No phase retries a failure.
+Each phase retains original console output and exit status. Engine and App JSON
+records bind discovered opaque test IDs to actual starts, ends and run completion;
+executed functions must belong to the intended source module. App execution also
+requires the owned host receipt, successful ABI result, active AppKit main loop
+and healthy original event stream. Full-suite output still requires two genuine
+XCTest and two genuine Swift Testing completions. Neither exit zero nor an ABI
+result alone supplies missing test completion.
+Only the App child receives the selected toolchain, macOS platform and staged
+bundle loader paths; its recorded paths and native load result remain evidence.
 
 Agent UI specification rendering runs in a separate Linux job for changes to its
 inputs or CI wiring. A documentation-only UI specification edit now produces
@@ -61,7 +170,12 @@ successful evidence remains applicable to the scoped fix.
 An optional `unit_test_filter` on the standalone or reusable workspace workflow
 adds the affected unit suite, such as `MusicvideoChecksTests`. The existing
 `macrunner` build directory is extended with test targets, their runtime inputs
-are staged, and `swift test --skip-build --filter` runs only the selected tests
+are staged, and the same macOS driver forwards the unchanged native filter to
+XCTest, Engine Swift Testing and the AppKit host. Native discovery and JSON events
+prove a backend's empty selection; it is recorded as empty, never as a passed
+suite. A filter with no actual test execution in any backend fails. HDR QC selects
+the App Swift Testing backend explicitly and retains its exact filter. The full
+release and Core suites keep the fixed two-plus-two completion requirement. Tests run
 after the app artifact is uploaded. An empty filter skips this step. The build job
 exports `app_ready` only after a successful upload with an artifact ID. Native
 acceptance downloads that exact artifact from the same run even if the later unit

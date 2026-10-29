@@ -200,17 +200,20 @@ struct GenerationProjectMutationScope: Equatable, Sendable {
     let projectHome: URL
     let declaredPack: String?
     let declaredBinding: ProjectPackBinding?
+    let declaredProductionContract: HostProductionContractBinding?
 
     @MainActor
     init(projectHome: URL, editor: EditorViewModel) throws {
         self.projectHome = projectHome.standardizedFileURL.resolvingSymlinksInPath()
         declaredPack = editor.declaredPluginName
         declaredBinding = editor.declaredPluginBinding
+        declaredProductionContract = editor.declaredProductionContract
         try requireCurrent(editor: editor)
     }
 
     @MainActor
     func requireCurrent(editor: EditorViewModel) throws {
+        try GenerationBatchExecutionLifetime.requireActive()
         guard let workingRoot = editor.workingRoot,
               workingRoot.standardizedFileURL.resolvingSymlinksInPath() == projectHome else {
             throw GenerationBackendError.transport(
@@ -218,7 +221,8 @@ struct GenerationProjectMutationScope: Equatable, Sendable {
             )
         }
         guard editor.declaredPluginName == declaredPack,
-              editor.declaredPluginBinding == declaredBinding else {
+              editor.declaredPluginBinding == declaredBinding,
+              editor.declaredProductionContract == declaredProductionContract else {
             throw GenerationBackendError.transport(
                 "The project format changed while generation was running. The provider result was not imported."
             )
@@ -227,7 +231,8 @@ struct GenerationProjectMutationScope: Equatable, Sendable {
             _ = try ProjectPackGate.requireLiveMutation(
                 projectURL: projectHome,
                 declaredPack: declaredPack,
-                declaredBinding: declaredBinding
+                declaredBinding: declaredBinding,
+                declaredProductionContract: declaredProductionContract
             )
         } catch {
             throw GenerationBackendError.transport(

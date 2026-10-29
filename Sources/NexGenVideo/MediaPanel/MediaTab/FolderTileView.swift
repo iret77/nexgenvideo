@@ -75,6 +75,7 @@ struct FolderTileView: View {
             }
             .padding(.horizontal, AppTheme.Spacing.xs)
             .padding(.vertical, AppTheme.Spacing.xxs)
+            .reviewAcceptanceProbe("media.folder-rename." + folder.id, text: isRenaming ? renameDraft : folder.name)
             .background(
                 RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
                     .fill(isRenaming ? AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.faint) : AppTheme.Background.clearColor)
@@ -82,12 +83,7 @@ struct FolderTileView: View {
         }
         .frame(maxWidth: .infinity)
         .contentShape(Rectangle())
-        .background {
-            if WorkspaceUIAcceptance.isRequested {
-                AppRelaunchClickProbe(identifier: "media.folder-tile.\(folder.id)")
-                    .allowsHitTesting(false)
-            }
-        }
+        .reviewAcceptanceProbe("media.folder-tile." + folder.id, text: folder.name)
         .onTapGesture(count: 2, perform: onOpen)
         .onTapGesture(count: 1, perform: onTap)
         .background { ContextClickActivation { editor.activateFolderContext(folder.id) } }

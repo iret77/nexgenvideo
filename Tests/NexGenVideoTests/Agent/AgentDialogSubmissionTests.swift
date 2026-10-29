@@ -6,7 +6,8 @@ import Testing
 @Suite("Agent dialog submission")
 @MainActor
 struct AgentDialogSubmissionTests {
-    @Test func failedIntakeCompletionRetainsDecisionInputsUntilAbandoned() throws {
+    @Test(arguments: [0, 1, 2, 3])
+    func failedIntakeCompletionRetainsDecisionInputsUntilAbandoned(input: Int) throws {
         let service = AgentService()
         let dialog = AgentDialog(
             id: "identity-intake", title: "Character 1", symbol: "person",
@@ -23,17 +24,23 @@ struct AgentDialogSubmissionTests {
             customValues: ["style": "Hand drawn"],
             fileURLs: [URL(fileURLWithPath: "/tmp/lead-singer.png")]
         )
-        service.dialogDraft = draft
+        let candidate: AgentDialogDraft = switch input {
+        case 0: AgentDialogDraft(direction: "Unfinished location")
+        case 1: AgentDialogDraft(fileURLs: draft.fileURLs)
+        case 2: draft
+        default: AgentDialogDraft(toggles: draft.toggles, customValues: draft.customValues)
+        }
+        service.dialogDraft = candidate
         service.dialogChoiceSelections = ["style": ["custom"]]
-
+        #expect(service.dialogSubmissionError == nil && service.submittingDialogID == nil)
         service.completeDialog(dialog)
-
         #expect(service.pendingDialog?.id == dialog.id)
-        #expect(service.dialogSubmissionError != nil)
-        #expect(service.dialogDraft == draft)
+        #expect(service.dialogSubmissionError == (input == 3
+            ? "The project is unavailable. Reopen it and try again."
+            : "Attach or clear the current item before continuing."))
+        #expect(service.dialogDraft == candidate)
         #expect(service.dialogChoiceSelections == ["style": ["custom"]])
-        #expect(service.submittingDialogID == nil)
-        #expect(service.messages.isEmpty)
+        #expect(service.submittingDialogID == nil && service.messages.isEmpty)
         service.abandonDialog()
         #expect(service.dialogDraft == AgentDialogDraft())
         #expect(service.dialogChoiceSelections.isEmpty)
@@ -583,7 +590,7 @@ struct AgentDialogSubmissionTests {
             purpose: .generationIntent
         )
         var received: [String] = []
-        service.onGenerationDialogIntent = { received.append($0) }
+        service.onGenerationDialogIntent = .init(dialogID: dialog.id) { received.append($0) }
         let result = AgentDialogResult(
             selectedLabels: [:],
             toggles: [:],
@@ -595,6 +602,10 @@ struct AgentDialogSubmissionTests {
         #expect(received == ["Warm analogue synth"])
         #expect(service.submittingDialogID == nil)
         #expect(service.pendingDialog == nil)
+
+        service.onGenerationDialogIntent = .init(dialogID: "another-dialog") { received.append($0) }
+        service.submitDialog(dialog, result: result)
+        #expect(received == ["Warm analogue synth"])
 
         service.onGenerationDialogIntent = nil
         service.submitDialog(dialog, result: result)
@@ -626,13 +637,28 @@ struct AgentDialogSubmissionTests {
             result: AgentDialogResult(selectedLabels: [:], toggles: [:], direction: "")
         )
         #expect(service.dialogSubmissionError == "Choose at least one reference image.")
-        service.onGenerationDialogIntent = { received.append($0) }
+        service.onGenerationDialogIntent = .init(dialogID: dialog.id) { received.append($0) }
         service.submitDialog(dialog, result: result)
 
         #expect(received.count == 2)
         #expect(service.pendingDialog?.id == workflowDialog.id)
         #expect(service.submittingDialogID == nil)
         #expect(service.dialogSubmissionError == "Choose at least one reference image.")
+    }
+
+    @Test func generationIntentUsesDeclaredSectionAndOptionOrderWithoutDuplicates() {
+        let service = AgentService(refreshBackendStatusOnInit: false)
+        let dialog = AgentDialog(id: "ordered-music", title: "Shape music", symbol: "music.note", intro: nil,
+            costHint: nil, confirmLabel: "Prepare", textField: nil, sections: [
+                .init(id: "mood", label: "Mood", kind: .choices(options: [.init(id: "ambient", label: "Ambient")], multiSelect: false)),
+                .init(id: "character", label: "Character", kind: .choices(options: [
+                    .init(id: "sparse", label: "Sparse"), .init(id: "warm", label: "Warm")], multiSelect: true))],
+            purpose: .generationIntent)
+        var received: [String] = []
+        service.onGenerationDialogIntent = .init(dialogID: dialog.id) { received.append($0) }
+        service.submitDialog(dialog, result: .init(selectedLabels: ["character": ["Warm", "Sparse", "Sparse"], "mood": ["Ambient"]],
+            toggles: [:], direction: "Solo piano", selectedOptionIDs: ["character": ["warm", "sparse"], "mood": ["ambient"]]))
+        #expect(received == ["Ambient, Sparse, Warm, Solo piano"])
     }
 
     @Test func loadingAnotherProjectAbandonsThePreviousDialog() throws {

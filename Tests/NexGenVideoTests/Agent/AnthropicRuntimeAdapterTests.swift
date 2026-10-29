@@ -380,6 +380,33 @@ struct AnthropicRuntimeAdapterTests {
         #expect(adapter.state == .ready(sessionID: sessionID))
     }
 
+    @Test("cancel invalidates actual tool response evidence before late work")
+    func cancellationDiscardsModelResponseEvidence() async throws {
+        let client = ControlledAnthropicClient()
+        let adapter = AnthropicRuntimeAdapter(client: client)
+        let sessionID = UUID(), turnID = UUID()
+        try adapter.start(testSessionRequest(sessionID: sessionID))
+        let current = AgentRuntimeMessage(role: .user, content: [.text("Review")])
+        var started = client.started.makeAsyncIterator()
+        let stream = try adapter.send(.init(sessionID: sessionID, turnID: turnID, messages: [current], currentMessage: current))
+        _ = await started.next()
+        client.yield(.responseMetadata(messageID: "response", modelID: "actual-model"))
+        client.yield(.toolUseComplete(id: "review", name: "write_render_review", inputJSON: "{}"))
+        var iterator = stream.makeAsyncIterator()
+        while let envelope = await iterator.next() {
+            if case .toolCall = envelope.event { break }
+        }
+        #expect(adapter.modelResponseEvidence(toolUseID: "review") != nil)
+        #expect(await adapter.awaitModelResponseEvidence(toolUseID: "review", sessionID: sessionID, turnID: turnID) != nil)
+        adapter.cancel(sessionID: sessionID)
+        #expect(adapter.modelResponseEvidence(toolUseID: "review") == nil)
+        #expect(await adapter.awaitModelResponseEvidence(toolUseID: "review", sessionID: sessionID, turnID: turnID) == nil)
+        client.yield(.toolUseComplete(id: "late", name: "write_render_review", inputJSON: "{}"))
+        client.finish()
+        while await iterator.next() != nil {}
+        #expect(adapter.modelResponseEvidence(toolUseID: "late") == nil)
+    }
+
     @Test("contract rejects missing, foreign, concurrent, and non-user turns")
     func validatesSessionAndTurnOwnership() async throws {
         let client = ControlledAnthropicClient()

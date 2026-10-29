@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import NexGenEngine
 
@@ -173,15 +174,15 @@ struct GenerationExecutionAuthorityStore: Sendable {
 
     func update(expected: Record, journal: GenerationBatchJournal,
                 adding spendEvents: [GenerationSpendEvent] = []) throws -> Record {
+        let lock = try lockRecord(projectKey: expected.projectKey, batchID: expected.batch.id)
+        defer { Darwin.close(lock) }
         let current = try load(projectKey: expected.projectKey, batchID: expected.batch.id)
         guard current == expected else {
             throw GenerationRequestError.gate("The approved generation execution advanced in another operation.")
         }
         var updated = current
         updated.journal = journal
-        for event in spendEvents where !updated.spendEvents.contains(where: { $0.id == event.id }) {
-            updated.spendEvents.append(event)
-        }
+        for event in spendEvents { try appendSpendEvent(event, to: &updated) }
         try validate(updated)
         guard updated.journal.approvedAt == current.journal.approvedAt,
               updated.journal.pricingOverrideItemIDs == current.journal.pricingOverrideItemIDs,
@@ -194,7 +195,10 @@ struct GenerationExecutionAuthorityStore: Sendable {
     }
 
     func recordSpendEvent(_ event: GenerationSpendEvent, authorization: GenerationBatchAuthorization) throws {
-        var current = try recordForAuthority(authorization)
+        let identity = try recordForAuthority(authorization)
+        let lock = try lockRecord(projectKey: identity.projectKey, batchID: identity.batch.id)
+        defer { Darwin.close(lock) }
+        var current = try load(projectKey: identity.projectKey, batchID: identity.batch.id)
         guard let execution = current.journal.executions.first(where: { $0.itemID == authorization.itemID }) else {
             throw GenerationRequestError.gate("The spend event does not belong to this approved batch item.")
         }
@@ -213,13 +217,38 @@ struct GenerationExecutionAuthorityStore: Sendable {
            [.reserved, .submitted].contains(event.kind), money.eurAmount > ceiling.eurAmount {
             throw GenerationRequestError.gate("The provider spend exceeds the approved batch ceiling.")
         }
-        if let existing = current.spendEvents.first(where: { $0.id == event.id }) {
-            guard existing == event else { throw GenerationRequestError.storage("A generation spend event changed after recording.") }
-            return
-        }
-        current.spendEvents.append(event)
+        try appendSpendEvent(event, to: &current)
         try validate(current)
         try write(current)
+    }
+
+    @discardableResult
+    func recordAcceptedRequest(authorization: GenerationAuthorization, requestID: String, resumable: Bool) throws -> Record {
+        guard let batchItem = authorization.batchItem, let package = authorization.generationPackage,
+              let transactionID = authorization.transactionId, !requestID.isEmpty,
+              authorization.target == package.payload.target else {
+            throw GenerationRequestError.gate("The accepted request has no exact approved batch authorization.")
+        }
+        let current = try recordForAuthority(batchItem)
+        guard current.batch.payload.items.first(where: { $0.id == batchItem.itemID })?.package == package,
+              current.journal.executions.first(where: { $0.itemID == batchItem.itemID })?.transactionID == transactionID else {
+            throw GenerationRequestError.gate("The accepted request does not belong to this host's consumed batch item.")
+        }
+        let submitted = current.spendEvents.filter { $0.transactionId == transactionID && $0.kind == .submitted }
+        guard submitted.count <= 1,
+              submitted.allSatisfy({ $0.providerRequestId == requestID && $0.providerRequestResumable == resumable }) else {
+            throw GenerationRequestError.storage("The accepted request conflicts with its recorded provider receipt.")
+        }
+        var journal = current.journal
+        try journal.recordProviderRequest(itemID: batchItem.itemID, transactionID: transactionID,
+            requestID: requestID, resumable: resumable)
+        let events: [GenerationSpendEvent] = submitted.isEmpty ? [GenerationSpendEvent(
+            transactionId: transactionID, kind: .submitted, model: authorization.target.modelId,
+            provider: authorization.target.provider, transport: authorization.target.transport,
+            endpoint: authorization.target.endpoint, providerRequestId: requestID,
+            providerRequestResumable: resumable, money: authorization.estimate)] : []
+        if journal == current.journal && events.isEmpty { return current }
+        return try update(expected: current, journal: journal, adding: events)
     }
 
     func archiveOutput(_ receipt: GenerationBatchOutput, home: URL) throws {
@@ -349,6 +378,37 @@ struct GenerationExecutionAuthorityStore: Sendable {
     private func write(_ record: Record) throws {
         let file = try batchFolder(projectKey: record.projectKey, batchID: record.batch.id).appendingPathComponent("record.json")
         try GenerationPackageV1.canonicalData(record).write(to: file, options: .atomic)
+    }
+
+    private func appendSpendEvent(_ event: GenerationSpendEvent, to record: inout Record) throws {
+        if let existing = record.spendEvents.first(where: { $0.id == event.id }) {
+            guard existing == event else { throw GenerationRequestError.storage("A generation spend event changed after recording.") }
+            return
+        }
+        if [.charged, .settled, .released].contains(event.kind), record.spendEvents.contains(where: {
+            $0.transactionId == event.transactionId && ($0.kind == .charged || $0.kind == .released
+                || ($0.kind == .settled && $0.money != nil))
+        }) {
+            throw GenerationRequestError.gate("This generation transaction already has a final billing event. Reload its recorded spend history.")
+        }
+        record.spendEvents.append(event)
+    }
+
+    private func lockRecord(projectKey: String, batchID: String) throws -> Int32 {
+        let file = try batchFolder(projectKey: projectKey, batchID: batchID).appendingPathComponent(".record.lock")
+        let descriptor = open(file.path, O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        guard descriptor >= 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+        var metadata = stat()
+        guard fstat(descriptor, &metadata) == 0, metadata.st_mode & S_IFMT == S_IFREG,
+              metadata.st_uid == getuid(), metadata.st_nlink == 1, metadata.st_mode & 0o077 == 0 else {
+            Darwin.close(descriptor)
+            throw GenerationRequestError.storage("The generation execution record lock is invalid.")
+        }
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+            Darwin.close(descriptor)
+            throw GenerationRequestError.gate("The generation execution is being updated by another operation. Read its current state before continuing.")
+        }
+        return descriptor
     }
 
     private func retain(_ bytes: Data, path: String, staging: URL, files: inout [RetainedFile]) throws {

@@ -8,9 +8,11 @@ final class ModelPreferences {
     private static let defaultsKey = "disabledModelIds"
 
     private(set) var disabledIds: Set<String>
+    private let defaults: UserDefaults
 
-    private init() {
-        let stored = UserDefaults.standard.stringArray(forKey: Self.defaultsKey) ?? []
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        let stored = defaults.stringArray(forKey: Self.defaultsKey) ?? []
         disabledIds = Set(stored)
     }
 
@@ -26,6 +28,6 @@ final class ModelPreferences {
     }
 
     private func persist() {
-        UserDefaults.standard.set(Array(disabledIds), forKey: Self.defaultsKey)
+        defaults.set(Array(disabledIds), forKey: Self.defaultsKey)
     }
 }

@@ -100,6 +100,38 @@ struct ProjectWorkingCopyTests {
         #expect(second.recoveredUnsaved == true)
     }
 
+    @Test("a Core binding cannot silently opt an existing Recovery copy into production")
+    func refusesUnconfirmedCoreRecovery() throws {
+        let pkg = try tempPackage()
+        try ProjectPluginSettings.setActivePlugin(Optional<ProjectPackBinding>.none, projectURL: pkg)
+        let key = uniqueKey()
+        defer { ProjectWorkingCopy.discard(key: key); try? FileManager.default.removeItem(at: pkg) }
+        let opened = try ProjectWorkingCopy.open(key: key, packageURL: pkg)
+        try ProjectPluginSettings.setProductionContract(.current, projectURL: opened.home)
+        try ProjectWorkingCopy.markDirty(key: key)
+        #expect(throws: ProjectWorkingCopy.PersistError.self) {
+            try ProjectWorkingCopy.open(key: key, packageURL: pkg)
+        }
+        #expect(ProjectPluginSettings.productionContractResolution(projectURL: pkg) == .absent)
+        #expect(ProjectPluginSettings.productionContractResolution(projectURL: opened.home) == .bound(.current))
+    }
+
+    @Test("matching Core contracts recover later unsaved production work")
+    func recoversMatchingCoreContract() throws {
+        let pkg = try tempPackage()
+        try ProjectPluginSettings.setActivePlugin(Optional<ProjectPackBinding>.none, projectURL: pkg)
+        try ProjectPluginSettings.setProductionContract(.current, projectURL: pkg)
+        let key = uniqueKey()
+        defer { ProjectWorkingCopy.discard(key: key); try? FileManager.default.removeItem(at: pkg) }
+        let opened = try ProjectWorkingCopy.open(key: key, packageURL: pkg)
+        let pending = opened.home.appendingPathComponent("pipeline/unapproved-draft.txt")
+        try Data("Unsaved work".utf8).write(to: pending)
+        try ProjectWorkingCopy.markDirty(key: key)
+        let recovered = try ProjectWorkingCopy.open(key: key, packageURL: pkg)
+        #expect(recovered.recoveredUnsaved)
+        #expect(try Data(contentsOf: pending) == Data("Unsaved work".utf8))
+    }
+
     @Test("markers survive recovery, save, and package reopen")
     func markerRecoveryAndSaveRoundTrip() throws {
         let pkg = try tempPackage()
@@ -197,7 +229,7 @@ struct ProjectWorkingCopyTests {
 
     @Test("materialize mirrors ngv.json so the pack + its analysis gate load in-session")
     func materializeMirrorsActivePackForRuntime() throws {
-        PackCatalog.register(MusicvideoPack())
+        try CurrentMusicvideoFixture.load()
         let pkg = try tempPackage()
         // The active pack lives in the PACKAGE's ngv.json (app metadata, sibling of pipeline/).
         try ProjectPluginSettings.setActivePlugin("musicvideo", projectURL: pkg)
@@ -324,7 +356,7 @@ struct ProjectWorkingCopyTests {
 
     @Test("project transaction rejects a live binding change before publish")
     func projectTransactionRechecksCurrentBinding() throws {
-        PackCatalog.register(MusicvideoPack())
+        try CurrentMusicvideoFixture.load()
         let pkg = try tempPackage()
         defer { try? FileManager.default.removeItem(at: pkg) }
         let trusted = try musicvideoBinding()
@@ -417,7 +449,7 @@ struct ProjectWorkingCopyTests {
 
     @Test("working-copy transaction rejects a live binding change before publish")
     func workingCopyTransactionRechecksCurrentBinding() throws {
-        PackCatalog.register(MusicvideoPack())
+        try CurrentMusicvideoFixture.load()
         let pkg = try tempPackage()
         let key = uniqueKey()
         defer {
@@ -459,7 +491,7 @@ struct ProjectWorkingCopyTests {
 
     @Test("package persist rechecks the source binding at the commit boundary")
     func persistRechecksSourceBinding() throws {
-        PackCatalog.register(MusicvideoPack())
+        try CurrentMusicvideoFixture.load()
         let pkg = try tempPackage()
         let key = uniqueKey()
         defer {
@@ -497,7 +529,7 @@ struct ProjectWorkingCopyTests {
 
     @Test("a recovered working copy with a different exact binding is not opened")
     func recoveredBindingRemainsUntrusted() throws {
-        PackCatalog.register(MusicvideoPack())
+        try CurrentMusicvideoFixture.load()
         let pkg = try tempPackage()
         let trusted = try musicvideoBinding()
         let sibling = try musicvideoBinding(version: "0.4.5")
@@ -627,7 +659,7 @@ struct ProjectWorkingCopyTests {
 
     @Test("an upgraded editor trusts the authorized target without trusting later recovery edits")
     func upgradedEditorUsesAuthorizedTarget() throws {
-        PackCatalog.register(MusicvideoPack())
+        try CurrentMusicvideoFixture.load()
         let pkg = try tempPackage(pipelineName: nil)
         let source = try musicvideoBinding(version: "0.5.0")
         let target = try musicvideoBinding()
@@ -674,7 +706,7 @@ struct ProjectWorkingCopyTests {
 
     @Test("a rejected Continue action reports failure in the agent instead of only the media tab")
     func starterFailureIsVisibleInAgent() throws {
-        PackCatalog.register(MusicvideoPack())
+        try CurrentMusicvideoFixture.load()
         let pkg = try tempPackage()
         let binding = try musicvideoBinding()
         try ProjectPluginSettings.setActivePlugin(binding, projectURL: pkg)
@@ -696,7 +728,7 @@ struct ProjectWorkingCopyTests {
 
     @Test("the package declaration stays independent from live working-copy verification")
     func packagePluginDeclarationIsIndependent() throws {
-        PackCatalog.register(MusicvideoPack())
+        try CurrentMusicvideoFixture.load()
         let pkg = try tempPackage()
         let editor = EditorViewModel()
         editor.projectURL = pkg
@@ -717,7 +749,8 @@ struct ProjectWorkingCopyTests {
         )
 
         #expect(editor.declaredPluginName == "musicvideo")
-        #expect(throws: ToolError.self) {
+        #expect(throws: PhaseContractError.registryMismatch(
+            "the project workflow differs from the trusted session declaration")) {
             try editor.pipelineAgentHarness.guardPhaseWork(
                 phase: "project_init",
                 dataRoot: dataRoot,

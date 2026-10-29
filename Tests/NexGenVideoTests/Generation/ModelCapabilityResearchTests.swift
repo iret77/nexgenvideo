@@ -5,6 +5,14 @@ import Testing
 
 @Suite("Model capability research")
 struct ModelCapabilityResearchTests {
+    @Test("research has no monetary execution ceiling")
+    func researchBudgetIsNotAnExecutionLimit() throws {
+        let (request, _) = try decodedFixture("image-gemini-2.5")
+        let arguments = try ClaudeModelCapabilityResearchLaunch.arguments(request: request)
+        #expect(!arguments.contains("--max-budget-usd"))
+        #expect(!ClaudeCapabilityResearchProbe.requiredFlags.contains("--max-budget-usd"))
+    }
+
     @Test("recorded image, video, and music research candidates validate")
     func modalityFixturesValidate() throws {
         for fixture in ["image-gemini-2.5", "video-seedance-2.5", "music-eleven-v1"] {

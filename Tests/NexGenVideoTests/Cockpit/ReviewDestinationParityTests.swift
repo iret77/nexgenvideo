@@ -10,7 +10,7 @@ struct ReviewDestinationParityTests {
 
     @Test("Every routed phase names exactly the destination it opens")
     func everyPhaseNamesItsDestination() throws {
-        PackCatalog.register(MusicvideoPack())
+        _ = try CurrentMusicvideoFixture.load()
         for activePack in [nil, "musicvideo"] as [String?] {
             let contract = try JSONDecoder().decode(
                 ContractData.self,
@@ -23,16 +23,16 @@ struct ReviewDestinationParityTests {
                         for: phase, contract: contract, availablePackSurfaces: surfaces)
                     guard let route = PipelineSurfaceRouting.route(
                         for: phase, contract: contract, availablePackSurfaces: surfaces) else {
-                        #expect(label == CockpitTab.pipeline.rawValue)
+                        #expect(label == CockpitTab.pipeline.displayName)
                         continue
                     }
                     #expect(route.destinationLabel == label, "\(phase)")
                     switch route.destination {
                     case .tab(let tab):
                         #expect(CockpitTab.allCases.contains(tab), "\(phase)")
-                        #expect(label == tab.rawValue, "\(phase)")
+                        #expect(label == tab.displayName, "\(phase)")
                     case .pack(let id, let title):
-                        #expect(surfaces.contains { $0.id == id && $0.title == title && $0.phase == phase })
+                        #expect(surfaces.contains { $0.id == id && $0.displayName == title && $0.phase == phase })
                         #expect(label == title, "\(phase)")
                     }
                 }
@@ -65,7 +65,7 @@ struct ReviewDestinationParityTests {
         let row = try #require(PipelineSurfaceRouting.route(
             for: "storyboard", contract: contract,
             availablePackSurfaces: editor.availableCockpitPackSurfaces))
-        #expect(label == CockpitTab.storyboard.rawValue)
+        #expect(label == CockpitTab.storyboard.displayName)
         #expect(row.destinationLabel == label)
 
         _ = try editor.agentService.requestGateApproval(GateApproval(phase: "storyboard", dataRoot: dataRoot))

@@ -291,6 +291,7 @@ actor FalClient {
                 }
             }
         } catch is DeadlineExceeded {
+            if GenerationBatchExecutionLifetime.current?.isAbandoned == true { throw CancellationError() }
             let message =
                 "fal.ai generation timed out for \(route.application), request \(Self.safeRequestID(requestId))"
             guard !providerReachedTerminalState else {
@@ -302,6 +303,7 @@ actor FalClient {
             )
             throw error
         } catch is CancellationError {
+            if GenerationBatchExecutionLifetime.current?.isAbandoned == true { throw CancellationError() }
             guard !providerReachedTerminalState else {
                 throw ProviderRunEndedError(message: "Generation cancelled.")
             }
@@ -312,6 +314,7 @@ actor FalClient {
             }
             throw CancellationError()
         } catch {
+            if GenerationBatchExecutionLifetime.current?.isAbandoned == true { throw CancellationError() }
             guard !providerReachedTerminalState else {
                 if error is ProviderRunEndedError { throw error }
                 throw ProviderRunEndedError(message: error.localizedDescription)
@@ -522,6 +525,7 @@ actor FalClient {
     }
 
     private func cancelIndependently(url: URL) async -> CancellationFailure? {
+        guard GenerationBatchExecutionLifetime.current?.isAbandoned != true else { return nil }
         let cancellation = Task.detached { [self] in
             await cancel(url: url)
         }

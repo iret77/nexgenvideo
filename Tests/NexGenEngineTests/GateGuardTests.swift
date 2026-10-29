@@ -1314,7 +1314,7 @@ struct GateGuardTests {
         #expect(PackCatalog.registry(activePack: nil).gateRequirements["analysis"] == nil)
     }
 
-    @Test("registered gates reject missing, changed, and stale phase lineage")
+    @Test("registered phase lineage rejects missing, changed, and stale artifacts")
     func lineageRequirement() throws {
         let root = try tempRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -1335,18 +1335,25 @@ struct GateGuardTests {
         let analysisRequirement = try #require(
             registry.gateRequirements["analysis"]
         )
-        #expect(throws: GateBlocked.self) {
-            try analysisRequirement(root)
-        }
         let analysisProvider = try #require(
             registry.phaseLineageProviders["analysis"]
         )
+        try analysisRequirement(root)
+        #expect(throws: GateBlocked("Can't approve \"analysis\": its artifact has no verified input lineage. "
+            + "Rebuild it through the phase's schema-validated tools.")) {
+            try PipelineLineageStore.requireCurrent(
+                phase: "analysis", snapshot: try analysisProvider(root), dataRoot: root
+            )
+        }
         try PipelineLineageStore.record(
             phase: "analysis",
             snapshot: try analysisProvider(root),
             dataRoot: root
         )
         try analysisRequirement(root)
+        try PipelineLineageStore.requireCurrent(
+            phase: "analysis", snapshot: try analysisProvider(root), dataRoot: root
+        )
 
         let analysisURL = root.appendingPathComponent("analysis/song.json")
         try Data(#"{"phase":"brief"}"#.utf8).write(
@@ -1354,6 +1361,9 @@ struct GateGuardTests {
             options: .atomic
         )
         try analysisRequirement(root)
+        try PipelineLineageStore.requireCurrent(
+            phase: "analysis", snapshot: try analysisProvider(root), dataRoot: root
+        )
 
         var object = try #require(
             try JSONSerialization.jsonObject(
@@ -1369,8 +1379,11 @@ struct GateGuardTests {
             withJSONObject: object,
             options: [.prettyPrinted, .sortedKeys]
         ).write(to: analysisURL, options: .atomic)
-        #expect(throws: GateBlocked.self) {
-            try analysisRequirement(root)
+        #expect(throws: GateBlocked("Can't approve \"analysis\": its persisted artifact changed outside the "
+            + "schema-validated phase writer. Rebuild the phase.")) {
+            try PipelineLineageStore.requireCurrent(
+                phase: "analysis", snapshot: try analysisProvider(root), dataRoot: root
+            )
         }
 
         try YAMLArtifactStore(dataRoot: root).save(
@@ -1381,6 +1394,28 @@ struct GateGuardTests {
             ProjectMeta(project: "demo", mode: .section, budgetEur: 50),
             to: PipelineLayout.projectFile
         )
+        let declinePath = "brief/greenfield-confirmation.json"
+        let declineBytes = Data(#"{"decision":"greenfield"}"#.utf8)
+        let declineURL = root.appendingPathComponent(declinePath)
+        try FileManager.default.createDirectory(at: declineURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try declineBytes.write(to: declineURL, options: .atomic)
+        let decline = CanonicalArtifactReferenceV1(id: "greenfield", role: "core.intake",
+            path: declinePath, sha256: FileDigest.sha256(of: declineBytes))
+        let source = StorySourceV1(header: .init(projectID: "demo", revision: 1,
+            origin: .userSupplied, inputs: [decline]), declineReceipt: decline)
+        try source.requireCurrentBytes(dataRoot: root)
+        try JSONArtifactStore(dataRoot: root).save(source, to: StorySourceV1.currentPath)
+        let analysis = CanonicalArtifactReferenceV1(id: "analysis", role: "musicvideo.analysis",
+            path: "analysis/song.json", sha256: try FileDigest.sha256(of: analysisURL))
+        let track = CanonicalArtifactReferenceV1(id: "track", role: "musicvideo.track",
+            path: "audio/song.wav", sha256: try FileDigest.sha256(of: root.appendingPathComponent("audio/song.wav")))
+        let range = PlaybackRangeV1(header: .init(projectID: "demo", revision: 1,
+            origin: .userSupplied, inputs: [analysis, track]), kind: .fullSong, analysis: analysis,
+            timebase: .init(ticksPerSecond: 24, fpsNumerator: 24), audioDurationTicks: 288,
+            startTicks: 0, durationTicks: 288)
+        try range.validate()
+        try range.header.requireCurrentInputs(dataRoot: root)
+        try JSONArtifactStore(dataRoot: root).save(range, to: PlaybackRangeV1.currentPath)
         let briefProvider = try #require(
             registry.phaseLineageProviders["brief"]
         )
@@ -1393,6 +1428,9 @@ struct GateGuardTests {
             registry.gateRequirements["brief"]
         )
         try briefRequirement(root)
+        try PipelineLineageStore.requireCurrent(
+            phase: "brief", snapshot: try briefProvider(root), dataRoot: root
+        )
 
         interpretation["overall_character"] = "Changed again upstream."
         object["interpretation"] = interpretation
@@ -1400,8 +1438,11 @@ struct GateGuardTests {
             withJSONObject: object,
             options: [.prettyPrinted, .sortedKeys]
         ).write(to: analysisURL, options: .atomic)
-        #expect(throws: GateBlocked.self) {
-            try briefRequirement(root)
+        #expect(throws: GateBlocked("Can't approve \"brief\": an upstream input changed after this artifact "
+            + "was written. Rebuild the phase from the current pipeline state.")) {
+            try PipelineLineageStore.requireCurrent(
+                phase: "brief", snapshot: try briefProvider(root), dataRoot: root
+            )
         }
     }
 
@@ -1415,6 +1456,9 @@ struct GateGuardTests {
             ProjectMeta(project: "demo", mode: .beat),
             to: PipelineLayout.projectFile
         )
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("shotlist", isDirectory: true), withIntermediateDirectories: true
+        )
         PackCatalog.register(MusicvideoPack())
         let registry = PackCatalog.registry(activePack: "musicvideo")
         for phase in [
@@ -1423,8 +1467,16 @@ struct GateGuardTests {
             "frames", "render",
         ] {
             let requirement = try #require(registry.gateRequirements[phase])
-            if phase == "bible" {
-                #expect(throws: PhaseArtifactFailure.self, "Bible must fail closed with its typed requirement") {
+            if ["treatment", "storyboard"].contains(phase) {
+                #expect(throws: ProjectLocalFileError.missingOrNonRegularFile(TreatmentCausalityV2.currentPath)) {
+                    try requirement(root)
+                }
+            } else if ["shotlist", "sanity", "frames", "render"].contains(phase) {
+                #expect(throws: ProductionPlanningError.invalid("productionPlan.missing")) {
+                    try requirement(root)
+                }
+            } else if phase == "bible" {
+                #expect(throws: GateBlocked("The current production Bible is missing.")) {
                     try requirement(root)
                 }
             } else {

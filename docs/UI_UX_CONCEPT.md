@@ -1,8 +1,12 @@
-# NexGenVideo — UI/UX Concept (North Star)
+# NexGenVideo — UI/UX Concept
 
-> The single reference for how the interface is organized and how the user works with the AI.
-> Derived from a design review with two independent models (Claude + Codex/gpt-5.5). Layout first,
-> interaction substance on top. This document defines intent; individual PRs implement against it.
+This document records the product's interaction principles. The later approved
+[native workbench](https://github.com/iret77/nexgenvideo/blob/e3ea08de33ca7cf0b0d7fbe27dc96fb88561e84b/docs/ui/implementation/README.md)
+defines the desktop layout and direct-selection behavior. Its five workspaces
+replace the earlier Edit/Produce toggle and Media/Project/Agent sidebar proposal.
+[RC acceptance](RC_ACCEPTANCE.md) maps the complete function inventory to required
+user-visible evidence; documentation and implemented controls alone establish no
+release acceptance.
 
 ## 1. Positioning
 
@@ -11,8 +15,9 @@ tool (Runway / OpenArt / Photoshop's generative fill). "Final Cut meets OpenArt.
 
 It supports two genuinely different kinds of work:
 
-- **Produce** — let AI *create* the video through a structured pipeline (brief → treatment → storyboard
-  → bible → shotlist → sanity → frames → render). The production cockpit is the work surface.
+- **Production** — develop and review the film through the project's pinned workflow. The current
+  planning contract includes Script, visual Storyboard/Animatic and Shot Planning before References,
+  Frames and rendered Takes. Existing projects retain their exact pack contract until an explicit upgrade.
 - **Edit** — refine the resulting video on a multi-track timeline. Classic NLE.
 
 ## 2. First principles (everything derives from these)
@@ -42,8 +47,7 @@ It supports two genuinely different kinds of work:
    resolves to the *same* entities: `Character/Ensemble/Prop/Location/Look`, a `Shot`, a Shot's **use**
    of an entity, and a **clip instance** on a track — each with a stable ID. Selection, the Inspector,
    Bible usage-maps, sanity→timeline links, and the Intent Ledger are all *views* over this one graph.
-   This is not a UI detail; it is the foundation the layout (Phase A) and the ledger (Phase C) both
-   stand on. Build it first (Phase 0).
+   The object graph is the shared foundation of the layout and the ledger.
 
 Action columns reserve their content's intrinsic width before flexible descriptive columns consume
 remaining row space. Column tokens are minimums, not caps on action labels. Compact rows reuse
@@ -52,38 +56,45 @@ than the entire pane may wrap its own label within that pane.
 
 ## 3. Information architecture (layout)
 
-**Focus toggle: `Edit` ↔ `Produce`.** A workspace *focus*, not a page — "the same room rearranged,"
-never a different app. Same panels, same edges, same shortcuts, same selection behavior in both. It
-only shows/hides/resizes canonical panels. **No panel is ever locked away by the focus:** every
-canonical panel has a persistent reveal path (a `Project` control opens the cockpit in either focus).
-Default: new/empty project → Produce; a project with a full timeline → Edit.
+**Five fixed workspaces: Media, Production, Edit, Postproduction and Export.**
+Each arranges the canonical project services for its task. Changing workspace
+does not approve a phase, mutate project data or create a second timeline.
+Returning to a workspace restores its saved working state. The generic workflow
+must work fully without a pack, AI generation or external import; imported
+material also remains editable and exportable without a production pipeline.
 
-- **Left: a single tabbed sidebar — `Media / Project / Agent`.** Fixes the "too many columns / too
-  narrow" problem. The **Agent is summonable, not a permanent full-height column** in Edit; it can be a
-  persistent panel in Produce. When summoned it knows the current selection/timeline context.
-  **What the Agent owns:** open-ended, cross-cutting requests that fit no field or button ("organize my
-  media", "make the whole thing more melancholic"). It is a **controller over the cockpit, not the
-  cockpit itself** — every decision it makes lands in a structured artifact (ledger entry, gate state,
-  bible edit), never only in the transcript. It does **not** own per-artifact prose (that's contextual
-  fields) or structured decisions (those are buttons/boards).
-- **Center: Preview over Timeline.** One canonical Timeline — in Produce it *collapses* (shows
-  accumulating rendered shot blocks/status, **no** trim handles/waveforms) and expands into the *same*
-  timeline; it is never a second "produce timeline."
-- **Right: Inspector = the current selection, only.** It inspects **objects** (clip, asset, generated
-  shot, Bible entity, reference) — never phases/pipeline-rows/budget/sanity-reports (those are panels).
-  A **breadcrumb** disambiguates a strict object model: `Character: Mara` ≠ `Shot 014 use of Mara` ≠
-  `Clip on V2`. **Selection semantics (one rule, no ambiguity):** there is exactly *one* app-global
-  **inspected object** at a time, and it alone drives the Inspector; each panel keeps its own **local
-  selection** (highlight/multi-select for its own actions) but only *promotes* to the global inspected
-  object on an explicit focus (click into the Inspector / single-click a card). Clicking a Bible
-  character *used* in a shot that produced a clip inspects the **entity**, not the clip — to inspect the
-  clip you select it on the timeline. The breadcrumb always shows which of the three it is.
-- **Cockpit panels — canonical, reachable in both focuses:** `Bible`, `Pipeline`, `Shotlist`, `Sanity`,
-  `Cost`. **Bible is a mood-board** of entity cards (Characters/Ensembles/Props/Locations/Look) with
-  reference sheets — it needs surface area; it must never collapse into a list (that would be a variant).
-- **Status strip = the collapsed Pipeline** (phase · gate state · budget · one blocking issue). It is
-  the *same* component in a compact density; clicking expands into the full Pipeline — not a second
-  dashboard. Budget must be **actionable** ("can I afford the next action?"), never decorative.
+- **Title bar:** sidebar control and project name on the left, workspaces in the
+  center, noninteractive format status and Inspector control on the right. The
+  panel controls act independently. Project commands, Undo/Redo and Settings use
+  the native menus and shortcuts.
+- **Workspace sidebars:** Media organizes the shared library; the other workspaces
+  expose their corresponding workflow or source navigation. The agent performs
+  bounded tasks and presents structured proposals and decisions in their current
+  context. Activity history is supplementary, not an alternate decision surface.
+- **Main work area:** Production gives Briefing, Design/Treatment, Script,
+  Storyboard/Animatic, Shot Planning, optional Blocking, References, Render-Review
+  and Take review the space their artifacts require. Edit and
+  Postproduction share the canonical viewer and multitrack timeline. Export
+  exposes output settings, jobs, history and file verification.
+- **Direct selection and Inspector:** choosing a source shows that source and its
+  In/Out controls; choosing a timeline clip shows the film and that clip's instance
+  controls. There are no source tabs or Timeline/Source switch. Filtering the
+  library does not replace the inspected object. Remembered source position and
+  range survive timeline selection. Entity, shot use and clip instance remain
+  distinct identities, with explicit navigation between them.
+- **References:** entity cards retain reference sheets, image roles, provenance,
+  usage and locks. Bible remains the artifact's technical identity; the visible
+  References surface does not merge its approval with the separate Frames phase.
+- **Status strip:** persistent cost information with details, plus separate AI
+  activity and Export indicators. Job details do not obscure required decisions
+  or primary actions. Proven costs, provider credits and unknown-price runs stay
+  distinct; the budget display is not a spending limit.
+
+Native panes use compact headers, precise dividers and ample image space.
+AppTheme supplies consistent typography, spacing, color and control states.
+Text size is not reduced to conceal layout problems. Primary actions, disabled
+states, keyboard focus and the next workflow step remain clear at supported
+window and text sizes.
 
 ## 4. Interaction model — a ladder chosen per task
 
@@ -133,7 +144,7 @@ destination up front; the workflow must actively support that, not treat it as a
   the prompt generator *must* honor and the compliance linter *checks* — not something buried in chat
   memory. Feedback resolves to either **a rule** (a locked attribute, forever) or **a one-off**
   (a throwaway regenerate reason); the user/distiller chooses.
-- **The Prompt Generator already exists in the Core** (`Sources/NexGenEngine/Prompt/`: builder +
+- **The Prompt Generator already exists in the Core** (`Engine/Sources/NexGenEngine/Prompt/`: builder +
   linter + compliance linter + content-block linter; native Swift; format-neutral). Its evolution:
   it moves from reading ad-hoc Bible fields to **composing from the Intent Ledger and enforcing its
   locks.** Distiller (prose → ledger) and Prompt Generator (ledger → model prompt) are two halves of one
@@ -187,40 +198,24 @@ open-ended intent.
 - **Canva 2.0** — the warning: a unified conversational orchestration layer as the center of gravity.
   Copy object-specific intelligence; never turn the editor into a chatbot command line.
 
-## 9. Implementation sequencing
+## 9. Complete RC scope and evidence
 
-The **object model is the hidden foundation** — the layout, Inspector, breadcrumb, ledger, sanity
-links, and prompt generation all sit on it. It comes *first*, not in Phase C.
+The earlier phased rollout and first-version deferrals do not describe this RC's
+scope. The complete [121-group trace](RC_ACCEPTANCE.md#function-trace) preserves
+the approved desktop functions, including object use and provenance, Ledger
+reconciliation, review/revision, reference editing and remix, structured contextual
+tasks, executable model selection, costs and export recovery.
 
-- **Phase 0 — Foundations (before any UI is "real"):**
-  - **The object graph:** entities (Character/Ensemble/Prop/Location/Look), `Shot`, a Shot's **use** of
-    an entity, and a **clip instance** on the timeline — each with a stable ID and explicit
-    relationships. Migrate the current Bible fields into it.
-  - **Selection semantics:** exactly one app-global *inspected object* drives the Inspector; panels keep
-    their own local selection/actions. A panel row (a sanity finding, a pipeline phase) acts/navigates
-    locally — it becomes the inspected object only if it *is* an object.
-  - A **minimal model-router contract** and a **minimal plugin UI contract** (what artifacts exist; is a
-    surface choice/prose/review; the task class) — because Phase A/B would otherwise hardcode the first
-    format pack into supposedly generic UI.
-- **Phase A — Layout on the model (fixes the current screenshots, testable):** Inspector = the inspected
-  object only + breadcrumb; remove the stop-gap Selection/Project toggle; left tabbed sidebar
-  `Media / Project / Agent` with a summonable Agent; cockpit panels reachable in both focuses;
-  **Bible = entity cards + references + selection** (not full sheet editing yet); status strip =
-  collapsed Pipeline; `Edit ↔ Produce` focus presets, with the Produce timeline explicitly disabling
-  trim/edit commands.
-- **Phase B — Interaction substance (trimmed to V1):** review = accept / regenerate-with-note (+ a reason
-  chip); **contextual one-shot prose commands** (Photoshop-style); assisted-prose drafts; sanity
-  findings that navigate to the affected shots.
-- **Phase C — The differentiator:** the Intent Ledger (object attributes tag/directive/source/locked,
-  with reconcile + undo); the Distiller; the Prompt Generator composes from the ledger; **prompt-
-  compliance linting AND a separate frame audit** (visual verification that a locked fact actually
-  held — prompt text alone cannot prove the red jacket stayed red); artifact → timeline links.
-- **Phase D — Dynamic infra:** the dynamic latest-model manifest + full escalation policy; the richer
-  plugin capability contract.
+These surfaces share stable object identities, canonical writers, exact source
+bindings, the pinned pack contract and the native Undo/Redo and persistence paths.
+Text prompt checks and visual frame review remain separate evidence. A visual
+Storyboard requires actual images: sketches, uploads or suitable Clay snapshots.
+Planned timing comes from the same shot
+durations in Storyboard and Animatic, not an independent technical-plan duration.
 
-**Deferred past the first useful version** (to ship faster): combine/remix, scoped multi-turn threads,
-the multi-state gate machine, actionable global Cost (V1 shows estimated next-action cost only where the
-data is real), Bible usage-maps + reference-sheet editing, automatic ledger reconciliation from every
-rejection, dynamic per-pack capability rendering, and the dynamic latest-model manifest.
-
-Builds run on CI only, on the user's explicit request — one signed DMG per deliberate batch.
+The candidate is assessed across the complete production journey and independent
+generic editing, including failure, cancellation, reopen and recovery. The
+[user-understanding criteria](RC_ACCEPTANCE.md#user-understanding-and-visual-acceptance)
+cover understandable purpose, professional guidance, consistent state and visual
+quality. A source review, screenshot or successful build alone cannot establish
+the complete release result. Current runtime evidence is recorded in the trace.

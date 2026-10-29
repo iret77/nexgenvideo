@@ -16,14 +16,14 @@ permissions:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   source_gate:
     # Same name as the pull-request check, so a dispatched run also satisfies the required check.
     name: Light Checks
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
     outputs:
       build_required: ${{ steps.classify.outputs.build_required }}
       bundle_required: ${{ steps.classify.outputs.bundle_required }}
@@ -59,6 +59,10 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           METADATA_VERIFIED: ${{ steps.metadata.outputs.verified || 'false' }}
         run: python3 scripts/ci_changes.py --base "$BASE_SHA" --head "$HEAD_SHA" --metadata-verified "$METADATA_VERIFIED"
+
+      - name: Require distributable bpy before app transfer
+        if: steps.classify.outputs.bundle_required == 'true'
+        run: python3 scripts/verify_bpy_runtime.py --distribution
 
       - name: Enforce AppTheme
         if: steps.classify.outputs.build_required == 'true'
@@ -99,13 +103,18 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  bpy-source:
+    needs: source_gate
+    if: needs.source_gate.outputs.bundle_required == 'true'
+    uses: ./.github/workflows/bpy-qualified-source.yml
+
   build_test:
     name: Build & Test
-    needs: source_gate
-    if: needs.source_gate.outputs.build_required == 'true'
+    needs: [source_gate, bpy-source]
+    if: ${{ !cancelled() && needs.source_gate.result == 'success' && needs.source_gate.outputs.build_required == 'true' && (needs.bpy-source.result == 'success' || needs.bpy-source.result == 'skipped') }}
     # Xcode 27 compiles the macOS 26 product and its availability-gated macOS 27 adapter.
     runs-on: macrunner
-    timeout-minutes: 30
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
@@ -115,57 +124,68 @@ jobs:
       - uses: ./.github/actions/setup-xcode-27
 
       - uses: ./.github/actions/cache-swiftpm-dependencies
+        id: swiftpm_dependencies
+        with:
+          restore-only: 'true'
 
       - name: Build
+        id: build
+        timeout-minutes: 40
         run: swift build --cache-path "$NGV_SWIFTPM_CACHE_PATH" --build-tests
 
       - name: Verify build did not mutate tracked source
         run: scripts/verify_tracked_source_state.sh
 
+      - name: Save resolved dependencies after successful build
+        if: ${{ success() && steps.build.outcome == 'success' && steps.swiftpm_dependencies.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ steps.swiftpm_dependencies.outputs.cache-path }}
+          key: ${{ steps.swiftpm_dependencies.outputs.cache-primary-key }}
+
       - name: Stage test runtime inputs
         run: scripts/stage_test_runtime.sh debug
 
       - name: Test
+        timeout-minutes: 30
+        env:
+          NGV_BLOCKOUT_ORIENTATION_EVIDENCE_DIR: ${{ runner.temp }}/blockout-orientation-evidence
         shell: bash
         run: |
-          set +e  # GitHub's default `-e` would abort on the first failing attempt; we handle codes below.
-          # macOS-runner SIGSEGV/SIGTRAP crashes here were traced (via SWIFT_BACKTRACE) to CODE traps, not the
-          # environment: an integer-overflow trap in BICStructure (t - Int.min) and a slow lazy-global init
-          # (PackKnowledge.packRoot) that starved the pool under concurrent first-touch — both fixed in the
-          # sources. The "CoreData: Failed to create NSXPCConnection" line the retry keys on is benign noise
-          # (present in passing runs too), NOT the cause. Retry + backtrace stay as a cheap backstop (exits
-          # on first success, costs nothing when green) for the runner's rarer genuine XPC flake and to pin
-          # any future trap. Full coverage is kept — nothing is skipped.
+          set -euo pipefail
           export SWIFT_BACKTRACE=enable=yes,interactive=no,demangle=yes,cache=no
-          attempts=3
-          for i in $(seq 1 "$attempts"); do
-            echo "::group::swift test (attempt $i/$attempts)"
-            swift test --cache-path "$NGV_SWIFTPM_CACHE_PATH" --skip-build 2>&1 | tee "test-attempt-$i.log"
-            code=${PIPESTATUS[0]}
-            echo "::endgroup::"
-            if [ "$code" -eq 0 ]; then
-              echo "swift test passed on attempt $i"
-              exit 0
-            fi
-            if grep -qE "✘ Test|recorded an issue|Time limit was exceeded|Library not loaded|couldn.t be loaded|Failed to open test bundle" "test-attempt-$i.log"; then
-              echo "::error::Real test failure on attempt $i — not retrying"
-              exit "$code"
-            fi
-            if grep -q "unexpected signal code" "test-attempt-$i.log"; then
-              echo "::warning::Environmental test-process crash on attempt $i — retrying"
-              continue
-            fi
-            echo "::error::Real test failure on attempt $i (exit $code); not an environmental crash — not retrying"
-            exit "$code"
-          done
-          echo "::error::swift test hit the environmental crash on all $attempts attempts"
-          exit 1
+          python3 scripts/capture_render_review_test_diagnostic.py \
+            --evidence "$RUNNER_TEMP/render-review-test-diagnostic" --log test.log \
+            --swift-testing-runs 2 --xctest-runs 2 --without-runloop-probe -- \
+            python3 scripts/run_macos_tests.py --cache-path "$NGV_SWIFTPM_CACHE_PATH" \
+              --evidence "$RUNNER_TEMP/render-review-test-diagnostic/hosted-suite"
+
+      - name: Upload render review test diagnosis
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: render-review-test-diagnostic-${{ github.run_id }}
+          path: ${{ runner.temp }}/render-review-test-diagnostic
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload blockout orientation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: blockout-orientation-evidence
+          path: ${{ runner.temp }}/blockout-orientation-evidence
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: HDR export QC
         env:
           NGV_HDR_RUNTIME_QC: '1'
           NGV_HDR_QC_OUTPUT_DIR: ${{ runner.temp }}/hdr-export-qc
-        run: swift test --cache-path "$NGV_SWIFTPM_CACHE_PATH" --skip-build --filter HDRExportTests
+        run: |
+          python3 scripts/run_macos_tests.py --cache-path "$NGV_SWIFTPM_CACHE_PATH" \
+            --scope app-swift-testing --filter HDRExportTests \
+            --evidence "$RUNNER_TEMP/hdr-export-qc/hosted-suite"
 
       - name: Upload HDR export QC evidence
         if: always()
@@ -187,6 +207,26 @@ jobs:
 
       - name: Verify tests did not mutate tracked source
         run: scripts/verify_tracked_source_state.sh
+
+      - uses: actions/download-artifact@v4
+        if: needs.source_gate.outputs.bundle_required == 'true'
+        with:
+          name: managed-bpy-source-receipt-${{ github.sha }}
+          path: .build/bpy-source
+      - uses: ./.github/actions/prepare-bpy-source
+        if: needs.source_gate.outputs.bundle_required == 'true'
+        with:
+          directory: .build/bpy-source
+          receipt: .build/bpy-source/bpy-source-receipt.json
+
+      - name: Stage the verified bpy runtime
+        if: needs.source_gate.outputs.bundle_required == 'true'
+        run: |
+          set -euo pipefail
+          python3 scripts/verify_bpy_distributable_source.py \
+            .build/bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.tar \
+            .build/bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json
+          scripts/stage_bpy_runtime.sh .build/bpy-runtime
 
       - name: Bundle (debug, ad-hoc signed)
         if: needs.source_gate.outputs.bundle_required == 'true'
@@ -227,8 +267,8 @@ jobs:
           assert "0.0.1" in versions, f"append-only violated — older version dropped: {versions}"
           assert len(versions) > 1, f"the freshly built version was not appended: {versions}"
           fresh = next(p for p in plugins if p["id"] == "musicvideo" and p["version"] != "0.0.1")
-          assert fresh["projectSchema"] == "musicvideo/2.0.0", fresh
-          assert fresh["migratesFrom"] == ["musicvideo/legacy", "musicvideo/1.0.0"], fresh
+          assert fresh["projectSchema"] == "musicvideo/3.0.0", fresh
+          assert fresh["migratesFrom"] == ["musicvideo/legacy", "musicvideo/1.0.0", "musicvideo/2.0.0"], fresh
           for p in plugins:
               assert p["url"].endswith(f"{p['id']}-{p['version']}.ngvpack.zip"), f"unversioned asset URL: {p['url']}"
           print(f"catalog carries {len(versions)} musicvideo version(s): {versions}")
@@ -319,7 +359,37 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: NexGenVideo-app
-          path: .build/NexGenVideo.zip
+          path: |
+            .build/NexGenVideo.zip
+            .build/bpy-source/bpy-source-receipt.json
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+      - name: Transfer the same app and pack for workspace acceptance
+        if: needs.source_gate.outputs.bundle_required == 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/workspace-transfer"
+          tar -czf "$RUNNER_TEMP/workspace-transfer/workspace-ui.tar.gz" -C .build NexGenVideo.app plugins/musicvideo.ngvpack
+          NGV_WORKSPACE_APP_TREE_SHA256="$(python3 scripts/external-gui/acceptance.py tree-sha256 --app .build/NexGenVideo.app)"
+          export NGV_WORKSPACE_APP_TREE_SHA256
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'workspace-transfer'
+          digest = hashlib.sha256()
+          with (root / 'workspace-ui.tar.gz').open('rb') as archive:
+              for chunk in iter(lambda: archive.read(1024 * 1024), b''):
+                  digest.update(chunk)
+          receipt = {'schema': 'nexgenvideo/workspace-ui-input/1', 'sourceSHA': os.environ['GITHUB_SHA'],
+                     'archiveSHA256': digest.hexdigest(), 'appTreeSHA256': os.environ['NGV_WORKSPACE_APP_TREE_SHA256']}
+          (root / 'workspace-ui-input.json').write_text(json.dumps(receipt, sort_keys=True) + '\n')
+          PY
+          cp .build/bpy-source/bpy-source-receipt.json "$RUNNER_TEMP/workspace-transfer/"
+      - uses: actions/upload-artifact@v4
+        if: needs.source_gate.outputs.bundle_required == 'true'
+        with:
+          name: workspace-ui-app
+          path: ${{ runner.temp }}/workspace-transfer/*
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
@@ -356,7 +426,9 @@ jobs:
       - name: Exercise native Export Cancel, Retry and Reveal actions
         run: python3 scripts/export_actions_acceptance.py candidate/NexGenVideo.app --output evidence/export-actions.json
       - name: Verify generation batch pricing recovery on macOS 26
+        shell: bash
         run: |
+          set -euo pipefail
           NGV_SELFTEST_GENERATION_BATCH_RECOVERY=1 \
             candidate/NexGenVideo.app/Contents/MacOS/NexGenVideo \
             | grep -qx 'SELFTEST_GENERATION_BATCH_RECOVERY_OK'
@@ -371,9 +443,18 @@ jobs:
             evidence/*.log
             evidence/*.png
 
+  bpy-runtime:
+    needs: [source_gate, build_test]
+    if: needs.source_gate.outputs.bundle_required == 'true'
+    uses: ./.github/workflows/bpy-runtime-acceptance.yml
+    with:
+      artifact: NexGenVideo-app
+      app_zip: NexGenVideo.zip
+      distribution: false
+
   merge_gate:
     name: Merge Gate
-    needs: [source_gate, build_test, ui_render, diagnostic-startup]
+    needs: [source_gate, build_test, ui_render, diagnostic-startup, bpy-source, bpy-runtime]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 2
@@ -388,7 +469,7 @@ jobs:
           if needs["source_gate"]["result"] != "success":
               raise SystemExit("Light Checks did not succeed")
           plan = needs["source_gate"]["outputs"]
-          for job, key in (("build_test", "build_required"), ("ui_render", "ui_required"), ("diagnostic-startup", "bundle_required")):
+          for job, key in (("build_test", "build_required"), ("ui_render", "ui_required"), ("diagnostic-startup", "bundle_required"), ("bpy-source", "bundle_required"), ("bpy-runtime", "bundle_required")):
               if plan.get(key) not in ("true", "false"):
                   raise SystemExit(f"Invalid CI plan: {key}")
               expected = "success" if plan[key] == "true" else "skipped"

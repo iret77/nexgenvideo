@@ -1,5 +1,7 @@
 # Phase A2 — Analysis
 
+After this phase’s required work and independent checks pass, request phase approval directly through approve_gate. The native gate card alone records approval; a show_dialog answer never approves this phase.
+
 > **Orchestrator instruction (main-session context).** Never spawn this
 > phase as a sub-agent — presenting a structured dialog (`show_dialog`) is a
 > main-session UI capability.
@@ -114,9 +116,11 @@ Is there an audio file in `audio/`?
 This decodes the song and runs the complete on-device analysis stack,
 writing `analysis/<song>.json` and returning the measured `bpm`,
 `downbeats`, and `sections` table. If it
-returns `{"error": "phase_failed", ...}`, the song couldn't be decoded — tell
-the user what the detail says (e.g. the file isn't a valid audio file) and ask
-for a clean track. **Do not proceed to A2 or approve the gate on a failed run.**
+reports a tool error, surface its actual message (`analysis failed: …` for a
+runner failure). Name a failed stage only when the error or the current native
+phase status identifies it. A decode failure can require a replacement track; an unavailable
+model or failed analysis stage does not establish a bad audio file. Follow the
+matching recovery path below. **Do not proceed to A2 or approve the gate on a failed run.**
 
 **Step 3 — Use the lyrics if they arrived (optional, improves labeling):**
 
@@ -154,16 +158,23 @@ review decision; never summarize this state as fully resolved consensus.
 
 You are spawned fresh on every `/continue`. Before doing any work:
 
-- Does `analysis/<song>.json` already contain a top-level key
-  `interpretation` with `section_labels`, `anomalies`,
+- Does `analysis/<song>.json` already contain a completed top-level
+  `interpretation` with `section_labels` covering every measured section, `anomalies`,
   `overall_character`? → show_dialog with
   `workflowDecision="analysis_interpretation_review"`: "An interpretation already
-  exists. Continue to its gate review, change it (which field), or
-  regenerate?" On `continue_to_gate` → call `approve_gate` directly. On `change` → re-ask
-  / rewrite only the affected field by calling
-  `write_analysis_interpretation` with the complete revised interpretation.
-  On `regenerate` → call the same tool with the replacement interpretation.
-- If `interpretation` is missing → normal flow, generate it fresh.
+  exists. Continue to its gate review, change its labels, or
+  run the audio analysis again?" On `continue_to_gate` → if the current
+  `structure_resolution.status` is `review_required`, first show its `detail`
+  and the exact single-detector boundary times, keeping those labels explicitly
+  provisional; then call `approve_gate` directly.
+  On `change_label` → re-ask only the affected field and call
+  `write_analysis_interpretation` with the complete revised interpretation and
+  the existing persisted `tempo_multiplier` unchanged. Do not reset or re-ask
+  the multiplier unless the user explicitly requests a tempo change.
+  On `re_analyze` → return to A1, run the analysis, then interpret its new
+  measured result. Never silently replace measured evidence while editing labels.
+- If the complete interpretation is missing → normal flow, generate it fresh;
+  a fresh A1 anomaly block with empty `section_labels` is not completed A2.
 
 ### A2 — Tempo multiplier (MANDATORY decision, early)
 
@@ -189,7 +200,8 @@ Workflow:
 
 ### A2 — Write the interpretation
 
-Call `write_analysis_interpretation` exactly once with:
+Publish each completed interpretation or explicit revision with one
+`write_analysis_interpretation` call containing:
 
 - `section_labels`: list of `{index, label, confidence, note}`, one per
   entry in the measured `sections`.
@@ -207,8 +219,9 @@ Call `write_analysis_interpretation` exactly once with:
   the structure.
 
 The tool owns the JSON mutation. It preserves detector anomalies, validates
-one unique label for every measured section, mirrors those labels onto the
+exactly one entry for every unique measured section index, mirrors those labels onto the
 measured section rows, and rejects any tempo multiplier except 0.5, 1, or 2.
+Different sections may share a label, including repeated lyric markers.
 Never hand-edit or rewrite the measured analysis artifact.
 
 ### Orientation on the v3 fields
@@ -237,7 +250,8 @@ Never hand-edit or rewrite the measured analysis artifact.
 
 ## Mandatory rules
 
-- In A2, do not re-run the DSP — interpretation works on the JSON only.
+- In A2, interpretation works on the JSON only. An explicit `re_analyze`
+  decision returns to A1 before running the DSP again.
 - **Invent nothing.** Timing comes from the measured `downbeats`/`sections`
   only. If you didn't run analysis, you have no structure — run it. The
   analysis gate will reject approval without a real artifact.
@@ -251,13 +265,18 @@ Never hand-edit or rewrite the measured analysis artifact.
 
 - Preflight: no audio → hard stop and report the incomplete host handoff.
   Never open an upload dialog or approve the gate.
-- `run_phase` returns `{"error": "phase_failed"}` → the song couldn't be
-  decoded. Surface the detail, then use one recovery path: `show_dialog` with
+- `run_phase` reports a tool error → surface its actual message, without assuming
+  a structured `phase_failed` payload or inventing a failed stage.
+  For an unreadable or invalid track, offer `show_dialog` with
   `workflowDecision="analysis_track_replacement"`
   with a required audio `fileIntake` and no `attachAs`; after the user
-  chooses the replacement, call `attach_song(media, replace=true)` with
+  chooses the replacement, call `attach_song(project_dir, media, replace=true)` with
   the returned media reference and re-run analysis. Do not proceed on a
-  failed run and never ask for a file path.
+  failed run and never ask for a file path. This replaces an existing track;
+  it never duplicates the host-owned startup Track card. For other failures,
+  explain the reported stage and recovery action; do not ask for a new track
+  unless the evidence identifies the track as the cause. Retry after the failed
+  stage or its input has changed, using the native retry action or `run_phase`.
 - Instrumental track / no lyrics → label sections conservatively from the
   measured boundaries and flag low confidence; never invent labels as fact.
 - `needs_review` structure → stop before interpretation; labels and prose cannot

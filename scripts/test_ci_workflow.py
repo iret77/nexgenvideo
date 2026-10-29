@@ -2,6 +2,8 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -44,6 +46,52 @@ def run_commands(text):
 
 
 class CIWorkflowTests(unittest.TestCase):
+    def test_bpy_host_crash_cleanup_rejects_an_orphan_in_the_first_mode(self):
+        workflow = (WORKFLOWS / "bpy-runtime-acceptance.yml").read_text()
+        step = workflow.split("      - name: Prove pre-lease and post-exec host-crash cleanup\n", 1)[1]
+        step = step.split("      - name:", 1)[0]
+        run = textwrap.dedent(step.split("        run: |\n", 1)[1])
+        for orphan in (True, False):
+            with self.subTest(first_mode_orphan=orphan), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                app = root / "relocated/NexGenVideo.app/Contents/MacOS/NexGenVideo"
+                app.parent.mkdir(parents=True)
+                app.write_text(textwrap.dedent("""\
+                    #!/bin/bash
+                    set -euo pipefail
+                    printf '%s\\n' "$NGV_SELFTEST_BPY_HOST_CRASH" >> "$FAKE_APP_CALLS"
+                    printf '%s\\n' "$NGV_SELFTEST_BPY_HOST_CRASH" > "$FAKE_MODE"
+                    exit 1
+                    """))
+                app.chmod(0o755)
+                binary = root / "bin"
+                binary.mkdir()
+                pgrep = binary / "pgrep"
+                pgrep.write_text(textwrap.dedent("""\
+                    #!/bin/bash
+                    set -euo pipefail
+                    if [ "$FAKE_FIRST_ORPHAN" = 1 ] && [ "$(cat "$FAKE_MODE")" = before-authorization ]; then
+                      exit 0
+                    fi
+                    exit 1
+                    """))
+                pgrep.chmod(0o755)
+                sleep = binary / "sleep"
+                sleep.write_text("#!/bin/sh\nexit 0\n")
+                sleep.chmod(0o755)
+                env = dict(os.environ, RUNNER_TEMP=str(root), PATH=str(binary) + os.pathsep + os.environ["PATH"],
+                           FAKE_APP_CALLS=str(root / "calls"), FAKE_MODE=str(root / "mode"),
+                           FAKE_FIRST_ORPHAN="1" if orphan else "0")
+                result = subprocess.run(
+                    ["bash", "--noprofile", "--norc", "-c", run], cwd=root, env=env,
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=10,
+                )
+                self.assertEqual(result.returncode, 1 if orphan else 0, result.stdout)
+                expected = ["before-authorization"] if orphan else ["before-authorization", "after-authorization"]
+                self.assertEqual((root / "calls").read_text().splitlines(), expected)
+                if orphan:
+                    self.assertIn("orphan bpy process after before-authorization", result.stdout)
+
     def test_merge_gate_requires_every_selected_job(self):
         text = CI.read_text().split("  merge_gate:\n", 1)[1]
         code = text.split("          python3 - <<'PYTHON'\n", 1)[1].split("          PYTHON", 1)[0]
@@ -54,7 +102,7 @@ class CIWorkflowTests(unittest.TestCase):
                     key: str(required).lower() for key in ("build_required", "bundle_required", "ui_required")
                 }},
                 **{job: {"result": "success" if required else "skipped"}
-                   for job in ("build_test", "ui_render", "diagnostic-startup")},
+                   for job in ("build_test", "ui_render", "diagnostic-startup", "bpy-source", "bpy-runtime")},
             }
             def check():
                 return subprocess.run([sys.executable, "-c", code], env={**os.environ, "NEEDS_JSON": json.dumps(needs)}, capture_output=True)
@@ -96,28 +144,22 @@ class CIWorkflowTests(unittest.TestCase):
         self.assertIn("scripts/export_actions_acceptance.py NexGenVideo.app", release)
         self.assertIn("evidence/export-actions.json", release)
 
-    def test_generation_review_reuses_workspace_runtime_and_survives_ui_failure(self):
-        step = "      - name: Verify generation batch pointer and keyboard review on macOS 26\n"
-        self.assertNotIn(step, CI.read_text())
+    def test_generation_review_is_independent_and_uses_the_same_immutable_runtime(self):
         workspace = (WORKFLOWS / "workspace-ui-acceptance.yml").read_text()
-        acceptance = workspace.split("  acceptance:\n", 1)[1]
-        self.assertIn("runs-on: macos-26", acceptance)
-        self.assertIn("artifact-ids: ${{ needs.build.outputs.app_artifact_id }}", acceptance)
-        self.assertLess(acceptance.index("tar -xzf"), acceptance.index("scripts/workspace_ui_acceptance.py"))
-        self.assertLess(acceptance.index("scripts/workspace_ui_acceptance.py"), acceptance.index(step))
-        review, upload = acceptance.split(step, 1)[1].split("      - uses: actions/upload-artifact@v4", 1)
-        self.assertIn("if: ${{ !cancelled() }}", review)
-        self.assertNotIn("continue-on-error", review)
-        self.assertIn('"$RUNNER_TEMP/workspace-ui/NexGenVideo.app/Contents/MacOS/NexGenVideo"', review)
-        self.assertIn('NGV_SELFTEST_GENERATION_BATCH_EVIDENCE="$RUNNER_TEMP/evidence"', review)
-        self.assertIn("NGV_SELFTEST_GENERATION_BATCH_REVIEW=1", review)
-        self.assertIn("-ApplePersistenceIgnoreState YES", review)
-        self.assertIn('test "$status" -eq 0', review)
-        self.assertIn("grep -qx 'SELFTEST_GENERATION_BATCH_REVIEW_OK'", review)
-        self.assertIn("if: always()", upload)
-        for suffix in ("json", "log", "png"):
-            self.assertIn("${{ runner.temp }}/evidence/generation-*." + suffix, upload)
-        self.assertIn("${{ runner.temp }}/evidence/scale-*-fullflow-sanity.json", upload)
+        batch = workspace.split("  batch-review:\n", 1)[1].split("  qualification:\n", 1)[0]
+        self.assertIn("needs: [source, runtime]", batch)
+        self.assertNotIn("needs: acceptance", batch)
+        self.assertIn("runs-on: macos-26", batch)
+        self.assertIn("uses: ./.github/actions/prepare-native-runtime", batch)
+        self.assertIn("artifact-id: ${{ needs.runtime.outputs.artifact_id }}", batch)
+        self.assertIn("scripts/workspace_native_case.py", batch)
+        self.assertIn("scripts/workspace_native_ci.py archive", batch)
+        self.assertIn("always() && steps.runtime.outcome == 'success'", batch)
+        self.assertNotIn("continue-on-error", batch)
+        driver = (ROOT / "scripts/workspace_native_case.py").read_text()
+        self.assertIn("NGV_SELFTEST_GENERATION_BATCH_REVIEW", driver)
+        self.assertIn("SELFTEST_GENERATION_BATCH_REVIEW_OK", driver)
+        self.assertIn("process.wait(timeout=300)", driver)
 
     def test_workspace_unit_regressions_are_optional_filtered_and_staged(self):
         workspace = (WORKFLOWS / "workspace-ui-acceptance.yml").read_text()
@@ -126,56 +168,54 @@ class CIWorkflowTests(unittest.TestCase):
             self.assertIn("unit_test_filter:", inputs)
             self.assertIn("type: string", inputs)
             self.assertIn("default: ''", inputs)
-        build = workspace.split("  build:\n", 1)[1].split("  acceptance:\n", 1)[0]
+        build = workspace.split("  build:\n", 1)[1].split("  runtime:\n", 1)[0]
         self.assertLess(build.index("name: Build acceptance app"), build.index("name: Run selected unit regressions"))
         selected = build.split("      - name: Run selected unit regressions\n", 1)[1]
         self.assertIn("if: inputs.unit_test_filter != ''", selected)
         self.assertIn("NGV_UNIT_TEST_FILTER: ${{ inputs.unit_test_filter }}", selected)
-        run = selected.split("        run: |\n", 1)[1]
+        run = selected.split("        run: |\n", 1)[1].split("      - name:", 1)[0]
         self.assertNotIn("${{", run)
         self.assertLess(run.index("--build-tests"), run.index("scripts/stage_test_runtime.sh debug"))
-        self.assertLess(run.index("scripts/stage_test_runtime.sh debug"), run.index("swift test"))
-        self.assertIn('swift test --cache-path "$NGV_SWIFTPM_CACHE_PATH" --skip-build --filter "$NGV_UNIT_TEST_FILTER"', run)
+        self.assertLess(run.index("scripts/stage_test_runtime.sh debug"), run.index("scripts/run_macos_tests.py"))
+        self.assertIn('python3 scripts/run_macos_tests.py --cache-path "$NGV_SWIFTPM_CACHE_PATH"', run)
+        self.assertIn('--filter "$NGV_UNIT_TEST_FILTER" --evidence "$RUNNER_TEMP/workspace-unit-tests"', run)
+        self.assertIn('name: workspace-unit-tests-${{ github.run_id }}', selected)
         self.assertNotIn("scripts/bundle.sh", run)
 
     def test_workspace_native_acceptance_keeps_the_uploaded_app_after_unit_failure(self):
         workspace = (WORKFLOWS / "workspace-ui-acceptance.yml").read_text()
-        build, acceptance = workspace.split("  build:\n", 1)[1].split("  acceptance:\n", 1)
+        build = workspace.split("  build:\n", 1)[1].split("  runtime:\n", 1)[0]
+        runtime = workspace.split("  runtime:\n", 1)[1].split("  acceptance:\n", 1)[0]
         self.assertLess(build.index("name: Build acceptance app"), build.index("name: Upload acceptance app"))
         self.assertLess(build.index("name: Upload acceptance app"), build.index("name: Run selected unit regressions"))
-        upload = build.split("      - name: Upload acceptance app\n", 1)[1].split("      - name:", 1)[0]
-        self.assertIn("id: upload_app", upload)
-        self.assertIn("uses: actions/upload-artifact@v4", upload)
-        self.assertIn("name: workspace-ui-app", upload)
-        self.assertIn("path: ${{ runner.temp }}/workspace-ui.tar.gz", upload)
-        self.assertIn("if-no-files-found: error", upload)
-        self.assertIn("app_ready: ${{ steps.upload_app.outcome == 'success' && steps.upload_app.outputs.artifact-id != '' }}", build)
         self.assertIn("app_artifact_id: ${{ steps.upload_app.outputs.artifact-id }}", build)
-        self.assertIn("needs: build", acceptance)
-        self.assertIn("if: ${{ !cancelled() && needs.build.outputs.app_ready == 'true' }}", acceptance)
-        download = acceptance.split("      - uses: actions/download-artifact@v4\n", 1)[1].split("      - name:", 1)[0]
-        self.assertIn("artifact-ids: ${{ needs.build.outputs.app_artifact_id }}", download)
-        self.assertIn("merge-multiple: true", download)
-        self.assertNotIn("name:", download)
-        self.assertNotIn("run-id:", download)
-        self.assertNotIn("repository:", download)
+        self.assertIn("needs.build.outputs.app_ready == 'true'", runtime)
+        self.assertIn("NGV_RUNTIME_ARTIFACT_ID: ${{ needs.build.outputs.app_artifact_id }}", runtime)
+        self.assertIn("scripts/workspace_native_ci.py download-runtime", runtime)
+        self.assertIn("identity_sha: ${{ steps.prepare.outputs.identity_sha256 }}", runtime)
         self.assertNotIn("continue-on-error", build)
 
-    def test_workspace_scope_is_validated_before_build_and_passed_as_quoted_argument(self):
+    def test_workspace_case_and_scale_are_validated_before_any_native_launch(self):
         workspace = (WORKFLOWS / "workspace-ui-acceptance.yml").read_text()
-        for trigger in ("workflow_dispatch", "workflow_call"):
-            inputs = workspace.split(f"  {trigger}:\n", 1)[1].split("\n\n", 1)[0].split("  workflow_call:", 1)[0]
-            self.assertIn("acceptance_scope:", inputs)
-            self.assertIn("default: all", inputs)
         source = workspace.split("  source:\n", 1)[1].split("  build:\n", 1)[0]
-        self.assertIn("NGV_ACCEPTANCE_SCOPE: ${{ inputs.acceptance_scope }}", source)
-        self.assertIn('case "$NGV_ACCEPTANCE_SCOPE" in', source)
-        self.assertIn("all|filmreview)", source)
-        self.assertIn("exit 1", source)
-        runtime = workspace.split("      - name: Exercise native workspace and panel controls\n", 1)[1].split("      - name:", 1)[0]
-        self.assertIn("NGV_ACCEPTANCE_SCOPE: ${{ inputs.acceptance_scope }}", runtime)
-        self.assertIn('--scope "$NGV_ACCEPTANCE_SCOPE"', runtime)
-        self.assertNotIn("${{", runtime.split("        run: |\n", 1)[1])
+        self.assertIn("scripts/workspace_native_ci.py plan", source)
+        self.assertIn("test_workspace_native_ci.py", source)
+        self.assertIn("test_generation_batch_busy_evidence.py", source)
+        self.assertIn("NGV_ACCEPTANCE_CASE: ${{ inputs.acceptance_case }}", source)
+        native = workspace.split("  acceptance:\n", 1)[1].split("  batch-review:\n", 1)[0]
+        self.assertIn("needs: [source, runtime]", native)
+        self.assertIn("max-parallel: 3", native)
+        self.assertIn("matrix: ${{ fromJSON(needs.source.outputs.matrix) }}", native)
+        self.assertIn('--case "$NGV_NATIVE_CASE" --scale "$NGV_NATIVE_SCALE"', native)
+        self.assertIn("native-evidence-${{ matrix.id }}-a${{ github.run_attempt }}", native)
+        self.assertNotIn("/evidence/scale-*", native)
+        gate = workspace.split("  qualification:\n", 1)[1]
+        self.assertIn("needs: [source, runtime, acceptance, batch-review]", gate)
+        self.assertIn("scripts/workspace_native_ci.py summary", gate)
+        self.assertIn('"$NGV_NATIVE_IDENTITY_SHA" --remote', gate)
+        self.assertIn("GH_TOKEN: ${{ github.token }}", gate)
+        self.assertNotIn("pattern: native-evidence-*", gate)
+        self.assertIn("cancel-in-progress: false", workspace)
 
     def test_only_the_light_pull_request_check_starts_automatically(self):
         for path in sorted(WORKFLOWS.glob("*.yml")):
@@ -227,28 +267,127 @@ class CIWorkflowTests(unittest.TestCase):
     def test_ci_batch_is_the_manual_heavy_entry_point(self):
         text = CI_BATCH.read_text()
         self.assertEqual(triggers(CI_BATCH), ["workflow_dispatch"])
-        self.assertIn("cancel-in-progress: true", text)
+        self.assertIn("cancel-in-progress: false", text)
         called = [line.split("./.github/workflows/", 1)[1].strip()
                   for line in text.splitlines() if "uses: ./.github/workflows/" in line]
         self.assertEqual(
             set(called),
             {"ci.yml", "chat-hang-replay.yml", "recorded-hang-replay.yml",
-             "signing-preflight.yml", "workspace-ui-acceptance.yml", "private-example-analysis.yml"},
+             "signing-preflight.yml", "workspace-ui-acceptance.yml", "private-example-analysis.yml",
+             "external-gui-acceptance.yml", "settings-owner-acceptance.yml", "smart-search-owner-acceptance.yml",
+             "bpy-source-closure.yml"},
         )
         for name in called:
             with self.subTest(workflow=name):
                 self.assertIn("workflow_call", triggers(WORKFLOWS / name))
         analysis = text.split("  musicvideo-analysis-acceptance:\n", 1)[1]
-        self.assertIn("needs: workspace-ui-acceptance", analysis)
+        self.assertIn("needs: [validate, ci]", analysis)
         self.assertIn(
-            "if: ${{ !cancelled() && inputs.musicvideo_analysis_acceptance }}",
+            "if: ${{ !cancelled() && needs.validate.result == 'success' && needs.ci.result == 'success' && needs.validate.outputs.mode == 'initial' && inputs.musicvideo_analysis_acceptance }}",
             analysis,
         )
         self.assertIn(
-            "runtime_artifact: ${{ inputs.workspace_ui_acceptance && 'workspace-ui-app' || '' }}",
+            "runtime_artifact: workspace-ui-app",
             analysis,
         )
         self.assertIn("NGV_GHCR_TOKEN: ${{ secrets.NGV_GHCR_TOKEN }}", analysis)
+        validation = text.split("  validate:\n", 1)[1].split("  ci:\n", 1)[0]
+        code = validation.split("          python3 - <<'PYTHON'\n", 1)[1].split("          PYTHON", 1)[0]
+        code = "\n".join(line[10:] for line in code.splitlines())
+        defaults = {"NGV_MODE": "initial", "NGV_FOLLOWUP": "none", "NGV_RUNTIME_RUN": "",
+                    "NGV_SETTINGS_SCOPE": "all", "NGV_INTERFACE_SCALE": "all", "NGV_QUALIFICATION_RUN": "",
+                    "NGV_SOURCE_RUN": ""}
+        valid = [({}, "initial"),
+                 ({"NGV_MODE": "followup", "NGV_FOLLOWUP": "externalgui",
+                   "NGV_RUNTIME_RUN": "123", "NGV_INTERFACE_SCALE": "1.25"}, "followup"),
+                 ({"NGV_MODE": "followup", "NGV_FOLLOWUP": "settings",
+                   "NGV_RUNTIME_RUN": "123", "NGV_SETTINGS_SCOPE": "packrecovery100"}, "followup"),
+                 ({"NGV_MODE": "followup", "NGV_FOLLOWUP": "smartsearch",
+                   "NGV_RUNTIME_RUN": "123"}, "followup"),
+                 ({"NGV_MODE": "qualification"}, "qualification"),
+                 ({"NGV_MODE": "qualification", "NGV_QUALIFICATION_RUN": "123"}, "qualification"),
+                 ({"NGV_MODE": "qualification", "NGV_SOURCE_RUN": "456"}, "qualification"),
+                 ({"NGV_MODE": "qualification", "NGV_SOURCE_RUN": "456",
+                   "NGV_QUALIFICATION_RUN": "123"}, "qualification")]
+        followup = {"NGV_MODE": "followup", "NGV_FOLLOWUP": "externalgui", "NGV_RUNTIME_RUN": "123"}
+        valid += [({"NGV_MODE": "followup", "NGV_FOLLOWUP": "settings", "NGV_RUNTIME_RUN": "123",
+                    "NGV_SETTINGS_SCOPE": scope}, "followup")
+                  for scope in ("packresume172", "packresume172100", "packresume172125", "packresume172150")]
+        invalid = [{"NGV_MODE": ""}, {"NGV_MODE": "unknown"}, {"NGV_MODE": "followup"},
+                   {"NGV_RUNTIME_RUN": "123"}, {"NGV_FOLLOWUP": "settings"},
+                   {"NGV_SETTINGS_SCOPE": "settings125"}, {"NGV_INTERFACE_SCALE": "1"},
+                   *[{**followup, "NGV_RUNTIME_RUN": value} for value in ("", "0", "-1", " 123", "abc", "1.5")],
+                   {**followup, "NGV_FOLLOWUP": "unknown"},
+                   {**followup, "NGV_SETTINGS_SCOPE": "settings100"},
+                   {**followup, "NGV_INTERFACE_SCALE": "2"},
+                   {**followup, "NGV_FOLLOWUP": "settings", "NGV_INTERFACE_SCALE": "1"},
+                   {**followup, "NGV_FOLLOWUP": "smartsearch", "NGV_SETTINGS_SCOPE": "settings"},
+                   {**followup, "NGV_FOLLOWUP": "settings", "NGV_SETTINGS_SCOPE": "unknown"},
+                   {**followup, "NGV_FOLLOWUP": "settings", "NGV_SETTINGS_SCOPE": "packrecovery172100"},
+                   {"NGV_QUALIFICATION_RUN": "123"}, {**followup, "NGV_QUALIFICATION_RUN": "123"},
+                   {"NGV_SOURCE_RUN": "456"}, {**followup, "NGV_SOURCE_RUN": "456"},
+                   *[{"NGV_MODE": "qualification", "NGV_QUALIFICATION_RUN": value}
+                     for value in ("0", "-1", " 123", "abc", "1.5")],
+                   *[{"NGV_MODE": "qualification", "NGV_SOURCE_RUN": value}
+                     for value in ("0", "-1", " 123", "abc", "1.5")],
+                   {"NGV_MODE": "qualification", "NGV_FOLLOWUP": "externalgui"},
+                   {"NGV_MODE": "qualification", "NGV_RUNTIME_RUN": "123"},
+                   {"NGV_MODE": "qualification", "NGV_SETTINGS_SCOPE": "settings100"},
+                   {"NGV_MODE": "qualification", "NGV_INTERFACE_SCALE": "1"}]
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "outputs"
+            for values, mode in valid:
+                with self.subTest(valid=values):
+                    output.write_text("")
+                    result = subprocess.run([sys.executable, "-c", code], capture_output=True,
+                        env={**os.environ, **defaults, **values, "GITHUB_OUTPUT": str(output)})
+                    self.assertEqual(result.returncode, 0, result.stderr.decode())
+                    self.assertEqual(output.read_text(), "mode=" + mode + "\n")
+            for values in invalid:
+                with self.subTest(invalid=values):
+                    output.write_text("")
+                    result = subprocess.run([sys.executable, "-c", code], capture_output=True,
+                        env={**os.environ, **defaults, **values, "GITHUB_OUTPUT": str(output)})
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertTrue(result.stderr.strip())
+                    self.assertEqual(output.read_text(), "")
+
+    def test_settings_recovery_families_keep_stable_cases_and_add_exact_preview_resume_cases(self):
+        text = (WORKFLOWS / "settings-owner-acceptance.yml").read_text()
+        code = text.split("          python3 - <<'PY'\n", 1)[1].split("          PY", 1)[0]
+        code = "\n".join(line[10:] for line in code.splitlines())
+        groups = {
+            "settings": {"settings100", "settings125", "settings150"},
+            "packrecovery": {"packrecovery100", "packrecovery125", "packrecovery150"},
+            "packresume172": {"packresume172100", "packresume172125", "packresume172150"},
+        }
+        selections = {**groups, "all": set().union(*groups.values()),
+                      **{case: {case} for cases in groups.values() for case in cases}}
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "outputs"
+            for scope, expected in selections.items():
+                with self.subTest(scope=scope):
+                    output.write_text("")
+                    result = subprocess.run([sys.executable, "-c", code], capture_output=True,
+                        env={**os.environ, "NGV_ACCEPTANCE_SCOPE": scope, "GITHUB_OUTPUT": str(output)})
+                    self.assertEqual(result.returncode, 0, result.stderr.decode())
+                    selected = json.loads(output.read_text().removeprefix("matrix="))["include"]
+                    self.assertEqual({case["id"] for case in selected}, expected)
+                    self.assertEqual(len(selected), len(expected))
+                    for case in selected:
+                        family = next(name for name, cases in groups.items() if case["id"] in cases)
+                        self.assertEqual(case["family"], family)
+                        self.assertEqual(case["scale"], {"100": 1, "125": 1.25, "150": 1.5}[case["id"][-3:]])
+                        self.assertEqual(case["baseline_version"], "0.5.16" if family == "packresume172" else "0.5.8")
+                        self.assertEqual(case["baseline_profile"], "known-preview172-approved-resume"
+                                         if family == "packresume172" else "stable-compatible")
+            for scope in ("packresume", "packrecovery172100", "packresume172200", "unknown"):
+                output.write_text("")
+                result = subprocess.run([sys.executable, "-c", code], capture_output=True,
+                    env={**os.environ, "NGV_ACCEPTANCE_SCOPE": scope, "GITHUB_OUTPUT": str(output)})
+                with self.subTest(invalid=scope):
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(output.read_text(), "")
 
 
 if __name__ == "__main__":

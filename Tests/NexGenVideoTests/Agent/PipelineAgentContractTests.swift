@@ -9,15 +9,11 @@ import Testing
 struct PipelineAgentContractTests {
     private var binding: ProjectPackBinding {
         get throws {
-            try #require(ProjectPackBinding(
-                id: "musicvideo",
-                version: MusicvideoPack().version,
-                projectSchema: "musicvideo/2.0.0"
-            ))
+            try CurrentMusicvideoFixture.binding
         }
     }
 
-    private func scaffold() throws -> (URL, URL) {
+    private func scaffold(activateCurrent: Bool = true) throws -> (URL, URL) {
         let cleanup = FileManager.default.temporaryDirectory
             .appendingPathComponent(
                 "pipeline-contract-\(UUID().uuidString)",
@@ -30,33 +26,35 @@ struct PipelineAgentContractTests {
             mode: .beat,
             extraDirs: ["audio", "lyrics", "analysis"]
         )
-        try ProjectPluginSettings.setActivePlugin(
-            binding,
-            projectURL: home
-        )
+        if activateCurrent { try CurrentMusicvideoFixture.activate(at: home) }
         return (dataRoot, cleanup)
+    }
+
+    private func phaseInstructions(_ phase: String) throws -> String {
+        try CurrentMusicvideoFixture.load().instructions(for: phase)
     }
 
     @Test("every musicvideo phase has one order, gate, instructions, and executable path")
     func completeContract() throws {
-        let pack = MusicvideoPack()
-        PackCatalog.register(pack)
-        let manifest = try #require(HardStepManifest.load(pack: pack))
-        let failures = PipelineAgentContract.failures(
-            registry: PackCatalog.registry(activePack: pack.name),
-            manifest: manifest,
-            phaseDocument: {
-                try? PackKnowledge.phaseDoc(name: $0)
-            }
-        )
-
-        #expect(failures.isEmpty, "Pipeline contract failures: \(failures)")
+        let contract = try CurrentMusicvideoFixture.load()
+        #expect(contract.order == CurrentMusicvideoFixture.phases)
+        for phase in CurrentMusicvideoFixture.phases {
+            let resolved = try #require(contract.phase(phase))
+            #expect(resolved.declaration.roles.contains(.reviewGate))
+            #expect(!resolved.declaration.selectors.writer.isEmpty)
+            #expect(!resolved.declaration.selectors.gate.isEmpty)
+            #expect(!resolved.declaration.selectors.artifact.isEmpty)
+            #expect(resolved.phaseBoundCapabilities == CurrentMusicvideoFixture.phaseBound(phase))
+            #expect(resolved.supportingCapabilities == CurrentMusicvideoFixture.supporting(phase))
+            #expect(!(try contract.instructions(for: phase)).isEmpty)
+        }
     }
 
     @Test("pack instructions are checked against the pack's declared capabilities")
     func declaredCapabilitiesOwnInstructionRequirements() throws {
         let pack = MusicvideoPack()
-        PackCatalog.register(pack)
+        let registry = EngineRegistry()
+        pack.register(registry)
         let manifest = try #require(HardStepManifest.load(pack: pack))
         let documents = Dictionary(uniqueKeysWithValues:
             PipelineAgentContract.musicvideoPhases.map { phase in
@@ -73,7 +71,7 @@ struct PipelineAgentContractTests {
         }
 
         let legacyFailures = PipelineAgentContract.failures(
-            registry: PackCatalog.registry(activePack: pack.name),
+            registry: registry,
             manifest: manifest,
             phaseBoundCapabilities: PipelineAgentContract.executableTools,
             supportingCapabilities: legacySupporting,
@@ -86,7 +84,7 @@ struct PipelineAgentContractTests {
         )
 
         let currentFailures = PipelineAgentContract.failures(
-            registry: PackCatalog.registry(activePack: pack.name),
+            registry: registry,
             manifest: manifest,
             phaseDocument: { documents[$0] }
         )
@@ -95,6 +93,23 @@ struct PipelineAgentContractTests {
                 $0.contains("required tool prepare_generation_batch")
             }
         )
+    }
+
+    @Test("declared capabilities cannot bypass phase guards")
+    func declaredCapabilitiesMustUseTheActualGuards() throws {
+        let pack = MusicvideoPack()
+        let registry = EngineRegistry()
+        pack.register(registry)
+        let manifest = try #require(HardStepManifest.load(pack: pack))
+        let failures = PipelineAgentContract.failures(
+            registry: registry, manifest: manifest,
+            phaseBoundCapabilities: ["brief": [.writeStoryboard]],
+            supportingCapabilities: ["bible": [.writeBrief]],
+            phaseDocument: { _ in ToolName.allCases.map(\.rawValue).joined(separator: " ") }
+        )
+        #expect(failures.contains("write_storyboard is not hard-gated to brief"))
+        #expect(failures.contains("bible grants write_brief, which isn't guarded as a current-phase tool"))
+        #expect(failures.contains { $0.contains("phase-bound tool coverage differs") && $0.contains("write_brief") })
     }
 
     @Test("pipeline phase coverage is exact")
@@ -127,13 +142,14 @@ struct PipelineAgentContractTests {
 
     @Test("aggregate phase approval is owned only by the gate card")
     func aggregateApprovalHasOneOwner() throws {
-        for name in [
-            "analysis", "brief", "production-design", "treatment",
-            "storyboard", "bible", "shotlist", "sanity", "frame", "render",
-        ] {
-            let document = try PackKnowledge.phaseDoc(name: name)
-            #expect(document.contains("approve_gate"), "\(name) must request its gate")
-            #expect(document.contains("directly"), "\(name) must route directly to the gate card")
+        let contract = try CurrentMusicvideoFixture.load()
+        #expect(contract.order == CurrentMusicvideoFixture.phases)
+        for phase in contract.order {
+            let document = try contract.instructions(for: phase)
+            #expect(document.contains("approve_gate"), "\(phase) must request its gate")
+            #expect(document.contains("directly"), "\(phase) must route directly to the gate card")
+            #expect(document.contains("The native gate card alone records approval"))
+            #expect(document.contains("a show_dialog answer never approves this phase"))
             #expect(!document.contains("`approve` → set the gate"))
             #expect(!document.contains("On `approve`: set the gate"))
             #expect(!document.contains("- `approve_gate`"))
@@ -142,7 +158,7 @@ struct PipelineAgentContractTests {
 
     @Test("approved Sanity rewinds before re-audit")
     func sanityResumeRewindsBeforeRunner() throws {
-        let document = try PackKnowledge.phaseDoc(name: "sanity")
+        let document = try phaseInstructions("sanity")
         let resume = try #require(document.range(
             of: "On `re-audit` → first call"
         ))
@@ -159,7 +175,7 @@ struct PipelineAgentContractTests {
 
     @Test("Sanity accepts the gate-approved macOS 26 rhythm path")
     func sanityUsesAnalysisProvenanceContract() throws {
-        let document = try PackKnowledge.phaseDoc(name: "sanity")
+        let document = try phaseInstructions("sanity")
         #expect(document.contains("`beat-transformer` is the"))
         #expect(document.contains("canonical macOS 26 path"))
         #expect(document.contains("`native_dsp` and `neural_beat_grid` both"))
@@ -169,7 +185,7 @@ struct PipelineAgentContractTests {
 
     @Test("Brief-owned production decisions are settled before approval")
     func briefOwnsDeferredDecisions() throws {
-        let document = try PackKnowledge.phaseDoc(name: "brief")
+        let document = try phaseInstructions("brief")
         #expect(document.contains("finish before Brief approval"))
         #expect(document.contains("A later change requires an explicit Brief rewind"))
         #expect(!document.contains("budget_stop_eur"))
@@ -183,8 +199,8 @@ struct PipelineAgentContractTests {
 
     @Test("Frames and Render never stop for spend")
     func spendNeverStopsFramesOrRender() throws {
-        let frame = try PackKnowledge.phaseDoc(name: "frame")
-        let render = try PackKnowledge.phaseDoc(name: "render")
+        let frame = try phaseInstructions("frames")
+        let render = try phaseInstructions("render")
         for document in [frame, render] {
             #expect(document.contains("is a display, never a limit"))
             #expect(!document.contains("over_budget"))
@@ -196,7 +212,7 @@ struct PipelineAgentContractTests {
 
     @Test("Bible instructions keep approved images as identity truth")
     func bibleDoesNotRequestRecognitionTrait() throws {
-        let document = try PackKnowledge.phaseDoc(name: "bible")
+        let document = try phaseInstructions("bible")
         #expect(document.contains("Do not ask for a single “recognition trait”"))
         #expect(document.contains("Canonical approved character"))
         #expect(!document.contains("frame builder appends it"))
@@ -214,14 +230,14 @@ struct PipelineAgentContractTests {
             "fal:fal-ai/gpt-image-2.5/sunburst/text-to-image",
             "fal:fal-ai/gpt-image-2.5/sunburst/edit",
         ]))
-        for phase in ["brief", "bible", "frame"] {
-            let document = try PackKnowledge.phaseDoc(name: phase)
+        for phase in ["brief", "bible", "frames"] {
+            let document = try phaseInstructions(phase)
             #expect(document.contains("Flare"), "\(phase) must name the default route")
             #expect(document.contains("Sunburst"), "\(phase) must name the precision route")
             #expect(document.contains("list_models"), "\(phase) must use the live catalog")
         }
-        let bible = try PackKnowledge.phaseDoc(name: "bible")
-        let frame = try PackKnowledge.phaseDoc(name: "frame")
+        let bible = try phaseInstructions("bible")
+        let frame = try phaseInstructions("frames")
         #expect(bible.contains("does not approve a sheet"))
         #expect(frame.contains("vision audit still decide acceptance"))
     }
@@ -246,12 +262,12 @@ struct PipelineAgentContractTests {
 
     @Test("completed pipelines allow only the post-pipeline utility capability set")
     func completedPipelineCapabilitiesAreEnforced() throws {
-        PackCatalog.register(MusicvideoPack())
+        try CurrentMusicvideoFixture.load()
         let (dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
         let store = YAMLArtifactStore(dataRoot: dataRoot)
         var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
-        for phase in PipelineAgentContract.musicvideoPhases {
+        for phase in CurrentMusicvideoFixture.phases {
             gates.set(phase, Gate(approved: true, state: .approved))
         }
         try store.save(gates, to: PipelineLayout.gatesFile)
@@ -272,188 +288,98 @@ struct PipelineAgentContractTests {
             )
             Issue.record("generate_video unexpectedly passed the post-pipeline utility boundary")
         } catch let error as ToolError {
-            #expect(error.message.contains("Every pipeline phase is approved"))
+            #expect(error.message.contains("Explicitly rewind"))
         }
     }
 
     @Test("current-phase tools are restricted to the phase that owns them")
     func currentPhaseCapabilitiesAreEnforced() throws {
-        PackCatalog.register(MusicvideoPack())
         let (dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
-        try Data("track".utf8).write(
-            to: dataRoot.appendingPathComponent("audio/song.wav")
-        )
-        let manifest = try #require(
-            HardStepManifest.load(pack: MusicvideoPack())
-        )
-        let lyrics = try #require(
-            manifest.steps(for: "project_init").first {
-                $0.kind == .lyrics
-            }
-        )
-        try IntakeLedger.recordDecline(lyrics, dataRoot: dataRoot)
+        _ = try CurrentMusicvideoFixture.seedAnalysis(dataRoot: dataRoot, readableTrack: true)
         let harness = PipelineAgentHarness()
-
-        do {
-            try harness.guardCurrentPhaseWork(
-                tool: .generateImage,
-                dataRoot: dataRoot,
-                declaredPack: "musicvideo",
-                declaredBinding: try binding
-            )
-            Issue.record("generate_image unexpectedly passed Project Init")
-        } catch let error as ToolError {
-            #expect(
-                error.message.contains(
-                    "is not part of the Project Init phase contract"
-                )
-            )
+        try harness.guardPhaseWork(phase: "project_init", dataRoot: dataRoot,
+            declaredPack: "musicvideo", declaredBinding: binding)
+        #expect(throws: ToolError.self) {
+            _ = try harness.guardCurrentPhaseWork(tool: .generateImage, dataRoot: dataRoot,
+                declaredPack: "musicvideo", declaredBinding: binding)
         }
     }
 
     @Test("future phase work is rejected even when its tool names a phase")
     func futurePhaseIsRejected() throws {
-        PackCatalog.register(MusicvideoPack())
         let (dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
-        try Data("track".utf8).write(
-            to: dataRoot.appendingPathComponent("audio/song.wav")
-        )
-        let manifest = try #require(
-            HardStepManifest.load(pack: MusicvideoPack())
-        )
-        let lyrics = try #require(
-            manifest.steps(for: "project_init").first {
-                $0.kind == .lyrics
-            }
-        )
-        try IntakeLedger.recordDecline(lyrics, dataRoot: dataRoot)
-
-        do {
-            try PipelineAgentHarness().guardPhaseWork(
-                phase: "analysis",
-                dataRoot: dataRoot,
-                declaredPack: "musicvideo",
-                declaredBinding: try binding
-            )
-            Issue.record("analysis unexpectedly ran before Project Init approval")
-        } catch let error as ToolError {
-            #expect(
-                error.message.contains(
-                    "while \"project_init\" is the current phase"
-                )
-            )
+        _ = try CurrentMusicvideoFixture.seedAnalysis(dataRoot: dataRoot, readableTrack: true)
+        let harness = PipelineAgentHarness()
+        try harness.guardPhaseWork(phase: "project_init", dataRoot: dataRoot,
+            declaredPack: "musicvideo", declaredBinding: binding)
+        #expect(throws: GateBlocked.self) {
+            try harness.guardPhaseWork(phase: "analysis", dataRoot: dataRoot,
+                declaredPack: "musicvideo", declaredBinding: binding)
         }
     }
 
     @Test("a phase-bound tool must belong to the current phase contract")
     func phaseBoundToolCapabilitiesAreEnforced() throws {
-        PackCatalog.register(MusicvideoPack())
         let (dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
-        try Data("track".utf8).write(
-            to: dataRoot.appendingPathComponent("audio/song.wav")
-        )
-        let manifest = try #require(
-            HardStepManifest.load(pack: MusicvideoPack())
-        )
-        let lyrics = try #require(
-            manifest.steps(for: "project_init").first {
-                $0.kind == .lyrics
-            }
-        )
-        try IntakeLedger.recordDecline(lyrics, dataRoot: dataRoot)
-
-        do {
-            try PipelineAgentHarness().guardPhaseWork(
-                tool: .runPhase,
-                phase: "project_init",
-                dataRoot: dataRoot,
-                declaredPack: "musicvideo",
-                declaredBinding: try binding
-            )
-            Issue.record("run_phase unexpectedly passed Project Init")
-        } catch let error as ToolError {
-            #expect(
-                error.message.contains(
-                    "is not part of the Project Init phase contract"
-                )
-            )
+        _ = try CurrentMusicvideoFixture.seedAnalysis(dataRoot: dataRoot, readableTrack: true)
+        let harness = PipelineAgentHarness()
+        try harness.guardPhaseWork(phase: "project_init", dataRoot: dataRoot,
+            declaredPack: "musicvideo", declaredBinding: binding)
+        #expect(throws: ToolError.self) {
+            try harness.guardPhaseWork(tool: .runPhase, phase: "project_init", dataRoot: dataRoot,
+                declaredPack: "musicvideo", declaredBinding: binding)
         }
     }
 
     @Test("an active workflow rejects unknown phases")
     func unknownPhaseIsRejected() throws {
-        PackCatalog.register(MusicvideoPack())
         let (dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
-
-        do {
-            try PipelineAgentHarness().guardPhaseWork(
-                phase: "invented_phase",
-                dataRoot: dataRoot,
-                declaredPack: "musicvideo",
-                declaredBinding: try binding
-            )
-            Issue.record("unknown phase unexpectedly passed")
-        } catch let error as ToolError {
-            #expect(error.message.contains("no registered phase"))
+        _ = try CurrentMusicvideoFixture.seedAnalysis(dataRoot: dataRoot, readableTrack: true)
+        let harness = PipelineAgentHarness()
+        try harness.guardPhaseWork(phase: "project_init", dataRoot: dataRoot,
+            declaredPack: "musicvideo", declaredBinding: binding)
+        #expect(throws: GateBlocked.self) {
+            try harness.guardPhaseWork(phase: "invented_phase", dataRoot: dataRoot,
+                declaredPack: "musicvideo", declaredBinding: binding)
         }
     }
 
     @Test("unreadable project format settings block every harness entry")
     func unreadableFormatSettingsFailClosed() throws {
-        PackCatalog.register(MusicvideoPack())
         let (dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
-        let settings = FrameInventory.projectHome(of: dataRoot)
-            .appendingPathComponent("ngv.json")
-        try Data("{broken".utf8).write(to: settings, options: .atomic)
+        _ = try CurrentMusicvideoFixture.seedAnalysis(dataRoot: dataRoot, readableTrack: true)
+        let settings = FrameInventory.projectHome(of: dataRoot).appendingPathComponent("ngv.json")
+        let original = try Data(contentsOf: settings)
         let harness = PipelineAgentHarness()
-
-        do {
-            try harness.guardPhaseWork(
-                phase: "project_init",
-                dataRoot: dataRoot,
-                declaredPack: "musicvideo",
-                declaredBinding: try binding
-            )
-            Issue.record("phase work unexpectedly ignored unreadable format settings")
-        } catch let error as ToolError {
-            #expect(error.message.contains("unreadable"))
+        try harness.guardPhaseWork(phase: "project_init", dataRoot: dataRoot,
+            declaredPack: "musicvideo", declaredBinding: binding)
+        try Data("{broken".utf8).write(to: settings, options: .atomic)
+        #expect(throws: PhaseContractError.self) {
+            try harness.guardPhaseWork(phase: "project_init", dataRoot: dataRoot,
+                declaredPack: "musicvideo", declaredBinding: binding)
         }
-
-        do {
-            _ = try harness.guardCurrentPhaseWork(
-                tool: .generateImage,
-                dataRoot: dataRoot,
-                declaredPack: "musicvideo",
-                declaredBinding: try binding
-            )
-            Issue.record("current-phase work unexpectedly ignored unreadable format settings")
-        } catch let error as ToolError {
-            #expect(error.message.contains("unreadable"))
+        #expect(throws: PhaseContractError.self) {
+            _ = try harness.guardCurrentPhaseWork(tool: .generateImage, dataRoot: dataRoot,
+                declaredPack: "musicvideo", declaredBinding: binding)
         }
-
         try FileManager.default.removeItem(at: settings)
-        do {
-            try harness.guardPhaseWork(
-                phase: "project_init",
-                dataRoot: dataRoot,
-                declaredPack: "musicvideo",
-                declaredBinding: try binding
-            )
-            Issue.record("phase work unexpectedly ignored missing format settings")
-        } catch let error as ToolError {
-            #expect(error.message.contains("no format settings"))
+        #expect(throws: PhaseContractError.self) {
+            try harness.guardPhaseWork(phase: "project_init", dataRoot: dataRoot,
+                declaredPack: "musicvideo", declaredBinding: binding)
         }
+        try original.write(to: settings, options: .atomic)
+        try harness.guardPhaseWork(phase: "project_init", dataRoot: dataRoot,
+            declaredPack: "musicvideo", declaredBinding: binding)
     }
 
     @Test("the canonical shot-list writer rejects contradictory chain state before versioning")
     func shotlistWriterEnforcesChainContract() throws {
-        PackCatalog.register(MusicvideoPack())
-        let (dataRoot, cleanup) = try scaffold()
+        let (dataRoot, cleanup) = try scaffold(activateCurrent: false)
         defer { try? FileManager.default.removeItem(at: cleanup) }
         let first = try Shot(
             id: "s001",
@@ -501,8 +427,7 @@ struct PipelineAgentContractTests {
         _ = try PipelineShotlistWriter.write(
             shotlist,
             dataRoot: dataRoot,
-            declaredPack: "musicvideo",
-            declaredBinding: try binding
+            declaredPack: nil
         )
         #expect(latestShotlistVersion(dataRoot: dataRoot) == 1)
 
@@ -511,8 +436,7 @@ struct PipelineAgentContractTests {
             _ = try PipelineShotlistWriter.write(
                 shotlist,
                 dataRoot: dataRoot,
-                declaredPack: "musicvideo",
-                declaredBinding: try binding
+                declaredPack: nil
             )
         }
         #expect(latestShotlistVersion(dataRoot: dataRoot) == 1)
@@ -520,13 +444,11 @@ struct PipelineAgentContractTests {
 
     @Test("current-phase tools require an explicit rewind after completion")
     func completedPipelineRejectsCurrentPhaseTools() throws {
-        PackCatalog.register(MusicvideoPack())
+        let contract = try CurrentMusicvideoFixture.load()
+        #expect(contract.order == CurrentMusicvideoFixture.phases)
         let (dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
-        let registry = PackCatalog.registry(activePack: "musicvideo")
-        let order = PhaseOrder.merged(
-            packPlacements: registry.phasePlacements
-        )
+        let order = contract.order
         let store = YAMLArtifactStore(dataRoot: dataRoot)
         var gates = try store.load(
             Gates.self,
@@ -536,6 +458,7 @@ struct PipelineAgentContractTests {
             GatesOperations.approve(&gates, phase: phase)
         }
         try store.save(gates, to: PipelineLayout.gatesFile)
+        #expect(try ProjectStateBuilder.buildSnapshot(dataRoot: dataRoot, order: order).nextPhase == nil)
 
         do {
             _ = try PipelineAgentHarness().guardCurrentPhaseWork(
@@ -552,154 +475,70 @@ struct PipelineAgentContractTests {
 
     @Test("a phase artifact mutation rewinds that phase and every downstream gate")
     func mutationInvalidatesDownstreamGates() async throws {
-        PackCatalog.register(MusicvideoPack())
-        let (dataRoot, cleanup) = try scaffold()
-        defer { try? FileManager.default.removeItem(at: cleanup) }
-        let registry = PackCatalog.registry(activePack: "musicvideo")
-        let order = PhaseOrder.merged(packPlacements: registry.phasePlacements)
-        let store = YAMLArtifactStore(dataRoot: dataRoot)
-        var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
-        for phase in order {
-            GatesOperations.approve(&gates, phase: phase)
+        let context = try await CurrentMusicvideoFixture.makeStoryboard()
+        defer {
+            context.document.close()
+            context.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: context.packageURL)
         }
+        let order = CurrentMusicvideoFixture.phases
+        let store = YAMLArtifactStore(dataRoot: context.dataRoot)
+        var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
+        for phase in order { GatesOperations.approve(&gates, phase: phase) }
         try store.save(gates, to: PipelineLayout.gatesFile)
-
-        let harness = PipelineAgentHarness()
-        try await harness.recordPhaseMutation(
-            phase: "storyboard",
-            dataRoot: dataRoot,
-            declaredPack: "musicvideo",
-            declaredBinding: try binding
-        )
-
+        try await PipelineAgentHarness().recordPhaseMutation(phase: "storyboard", dataRoot: context.dataRoot,
+            declaredPack: "musicvideo", declaredBinding: binding)
         let updated = try store.load(Gates.self, at: PipelineLayout.gatesFile)
         let boundary = try #require(order.firstIndex(of: "storyboard"))
-        for phase in order[..<boundary] {
-            #expect(updated.get(phase).approved, "\(phase) must stay approved")
-        }
+        for phase in order[..<boundary] { #expect(updated.get(phase).approved, "\(phase) must stay approved") }
         for phase in order[boundary...] {
             #expect(!updated.get(phase).approved, "\(phase) must be invalidated")
             #expect(updated.get(phase).state == .pending)
         }
-        let lineage = try #require(
-            try PipelineLineageStore.loadIfPresent(dataRoot: dataRoot)
-        )
+        let lineage = try #require(try PipelineLineageStore.loadIfPresent(dataRoot: context.dataRoot))
         #expect(lineage.phases["storyboard"] != nil)
     }
 
     @Test("a lineage capture failure still invalidates the changed phase")
     func lineageFailureStillInvalidatesGates() async throws {
-        PackCatalog.register(MusicvideoPack())
-        let (dataRoot, cleanup) = try scaffold()
-        defer { try? FileManager.default.removeItem(at: cleanup) }
-        let registry = PackCatalog.registry(activePack: "musicvideo")
-        let order = PhaseOrder.merged(packPlacements: registry.phasePlacements)
-        let store = YAMLArtifactStore(dataRoot: dataRoot)
+        let context = try await CurrentMusicvideoFixture.makeStoryboard()
+        defer {
+            context.document.close()
+            context.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: context.packageURL)
+        }
+        let order = CurrentMusicvideoFixture.phases
+        let store = YAMLArtifactStore(dataRoot: context.dataRoot)
         var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
-        for phase in order {
-            GatesOperations.approve(&gates, phase: phase)
-        }
+        for phase in order { GatesOperations.approve(&gates, phase: phase) }
         try store.save(gates, to: PipelineLayout.gatesFile)
-        let storyboard = dataRoot.appendingPathComponent(
-            PipelineLayout.storyboardCurrentFile
-        )
-        try FileManager.default.createDirectory(
-            at: storyboard.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        try Data("unreadable".utf8).write(to: storyboard)
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0],
-            ofItemAtPath: storyboard.path
-        )
-
+        try Data("unreadable".utf8).write(to: context.dataRoot.appendingPathComponent(StoryboardV2.currentPath))
         await #expect(throws: ToolError.self) {
-            try await PipelineAgentHarness().recordPhaseMutation(
-                phase: "storyboard",
-                dataRoot: dataRoot,
-                declaredPack: "musicvideo",
-                declaredBinding: try binding
-            )
+            try await PipelineAgentHarness().recordPhaseMutation(phase: "storyboard", dataRoot: context.dataRoot,
+                declaredPack: "musicvideo", declaredBinding: binding)
         }
-
         let updated = try store.load(Gates.self, at: PipelineLayout.gatesFile)
         let boundary = try #require(order.firstIndex(of: "storyboard"))
-        for phase in order[boundary...] {
-            #expect(!updated.get(phase).approved)
-        }
+        for phase in order[boundary...] { #expect(!updated.get(phase).approved) }
     }
 
     @Test("phase work revalidates the immediate approved predecessor")
-    func phaseWorkRejectsStalePredecessor() throws {
-        PackCatalog.register(MusicvideoPack())
-        let (dataRoot, cleanup) = try scaffold()
-        defer { try? FileManager.default.removeItem(at: cleanup) }
-        let song = dataRoot.appendingPathComponent("audio/song.wav")
-        try Data("song-v1".utf8).write(to: song)
-        let analysisDirectory = dataRoot.appendingPathComponent("analysis")
-        try FileManager.default.createDirectory(
-            at: analysisDirectory,
-            withIntermediateDirectories: true
-        )
-        let analysis: [String: Any] = [
-            "schema": analysisSchemaVersion,
-            "project": "pipeline-contract",
-            "song_path": "audio/song.wav",
-            "song_sha256": try FileDigest.sha256(of: song),
-            "beats": [0.0, 0.5, 1.0],
-            "downbeats": [0.0, 2.0],
-            "bpm": 120.0,
-            "duration_s": 4.0,
-            "sections": [[
-                "index": 0,
-                "start": 0.0,
-                "end": 4.0,
-                "cluster": 0,
-            ]],
-            "tempo_multiplier": 1.0,
-            "interpretation": [
-                "section_labels": [[
-                    "index": "0",
-                    "label": "intro",
-                    "confidence": "1.000",
-                ]],
-                "anomalies": [],
-                "overall_character": "Measured opening.",
-            ],
-        ]
-        try JSONSerialization.data(
-            withJSONObject: analysis,
-            options: [.prettyPrinted, .sortedKeys]
-        ).write(
-            to: analysisDirectory.appendingPathComponent("song.json")
-        )
-        let registry = PackCatalog.registry(activePack: "musicvideo")
-        let provider = try #require(
-            registry.phaseLineageProviders["analysis"]
-        )
-        try PipelineLineageStore.record(
-            phase: "analysis",
-            snapshot: try provider(dataRoot),
-            dataRoot: dataRoot
-        )
-        let store = YAMLArtifactStore(dataRoot: dataRoot)
-        var gates = try store.load(
-            Gates.self,
-            at: PipelineLayout.gatesFile
-        )
-        GatesOperations.approve(&gates, phase: "project_init")
-        GatesOperations.approve(&gates, phase: "analysis")
-        try store.save(gates, to: PipelineLayout.gatesFile)
-
+    func phaseWorkRejectsStalePredecessor() async throws {
+        let context = try await CurrentMusicvideoFixture.makeScript(stopBeforeBrief: true)
+        defer {
+            context.document.close()
+            context.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: context.packageURL)
+        }
+        let harness = PipelineAgentHarness()
+        try harness.guardPhaseWork(phase: "brief", dataRoot: context.dataRoot,
+            declaredPack: "musicvideo", declaredBinding: binding)
+        let song = try #require(AudioProjectLayout.songFiles(dataRoot: context.dataRoot).first)
         try Data("song-v2".utf8).write(to: song)
-
-        #expect(throws: ToolError.self) {
-            try PipelineAgentHarness().guardPhaseWork(
-                phase: "brief",
-                dataRoot: dataRoot,
-                declaredPack: "musicvideo",
-                declaredBinding: try binding
-            )
+        #expect(throws: GateBlocked.self) {
+            try harness.guardPhaseWork(phase: "brief", dataRoot: context.dataRoot,
+                declaredPack: "musicvideo", declaredBinding: binding)
         }
     }
+
 }

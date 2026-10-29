@@ -12,8 +12,8 @@ final class TimelineInputController {
     private var snapState = SnapEngine.SnapState()
     private var razorSnapState = SnapEngine.SnapState()
     private var scrubWasPlaying = false
-    private var playheadAutoScrollTimer: Timer?
-    private var playheadAutoScrollWindowPoint: NSPoint?
+    private var dragAutoScrollTimer: Timer?
+    private var dragAutoScrollWindowPoint: NSPoint?
 
     private enum TimelineRangeEdge {
         case start
@@ -56,6 +56,7 @@ final class TimelineInputController {
     // MARK: - Mouse down
 
     func mouseDown(with event: NSEvent, geometry: TimelineGeometry) {
+        stopDragAutoScroll()
         let point = view.convert(event.locationInWindow, from: nil)
         let scrollOffsetY = view.enclosingScrollView?.contentView.bounds.origin.y ?? 0
 
@@ -300,9 +301,16 @@ final class TimelineInputController {
             continuePlayheadScrub(windowPoint: event.locationInWindow)
             return
         }
-        stopPlayheadAutoScroll()
+        if supportsDragAutoScroll {
+            continueEditingDrag(windowPoint: event.locationInWindow, modifiers: event.modifierFlags)
+        } else {
+            stopDragAutoScroll()
+            updateEditingDrag(windowPoint: event.locationInWindow, modifiers: event.modifierFlags, geometry: geometry)
+        }
+    }
 
-        let point = view.convert(event.locationInWindow, from: nil)
+    private func updateEditingDrag(windowPoint: NSPoint, modifiers: NSEvent.ModifierFlags, geometry: TimelineGeometry) {
+        let point = view.convert(windowPoint, from: nil)
         let frame = geometry.frameAt(x: point.x)
 
         switch dragState {
@@ -533,7 +541,7 @@ final class TimelineInputController {
                     }
                 }
             }
-            if !event.modifierFlags.contains(.option) {
+            if !modifiers.contains(.option) {
                 selected = editor.expandToLinkGroup(selected)
             }
             dragState = .marquee(marq)
@@ -560,7 +568,7 @@ final class TimelineInputController {
     // MARK: - Mouse up
 
     func mouseUp(with event: NSEvent, geometry: TimelineGeometry) {
-        stopPlayheadAutoScroll()
+        stopDragAutoScroll()
 
         switch dragState {
         case .moveClip(let drag):
@@ -697,7 +705,7 @@ final class TimelineInputController {
     }
 
     func cancelActiveDrag() {
-        stopPlayheadAutoScroll()
+        stopDragAutoScroll()
         switch dragState {
         case .scrubPlayhead:
             finishPlayheadScrub()
@@ -709,6 +717,8 @@ final class TimelineInputController {
             editor.isMarqueeSelecting = false
         case .timelineMarker:
             editor.timelineMarkerPreview = nil
+        case .timelineRange:
+            editor.keepValidTimelineRangeOrClear()
         default:
             break
         }
@@ -895,7 +905,7 @@ final class TimelineInputController {
     func audioVolumeKfHit(at point: NSPoint, clip: Clip, clipRect: NSRect) -> Int? {
         guard let track = clip.volumeTrack, track.isActive else { return nil }
         let geo = view.geometry
-        for kf in track.keyframes {
+        for kf in track.keyframes where kf.frame >= 0 && kf.frame < clip.durationFrames {
             if geo.audioVolumeKfRect(clip: clip, kfOffset: kf.frame, kfDb: kf.value, in: clipRect).contains(point) {
                 return clip.startFrame + kf.frame
             }
@@ -927,8 +937,9 @@ final class TimelineInputController {
 
         let curOffset = drag.currentFrame - clip.startFrame
         var leftBound = 0
-        var rightBound = clip.durationFrames
-        for kf in clip.volumeTrack?.keyframes ?? [] where kf.frame != curOffset {
+        var rightBound = clip.durationFrames - 1
+        for kf in clip.volumeTrack?.keyframes ?? []
+            where kf.frame != curOffset && kf.frame >= 0 && kf.frame < clip.durationFrames {
             if kf.frame < curOffset {
                 leftBound = max(leftBound, kf.frame + 1)
             } else {
@@ -1093,7 +1104,7 @@ final class TimelineInputController {
     // MARK: - Helpers
 
     private func beginPlayheadScrub(at frame: Int) {
-        stopPlayheadAutoScroll()
+        stopDragAutoScroll()
         dragState = .scrubPlayhead
         scrubWasPlaying = editor.isPlaying
         if scrubWasPlaying { editor.pause() }
@@ -1103,7 +1114,7 @@ final class TimelineInputController {
     }
 
     private func finishPlayheadScrub() {
-        stopPlayheadAutoScroll()
+        stopDragAutoScroll()
         let shouldResume = scrubWasPlaying
         let frame = editor.activeFrame
         scrubWasPlaying = false
@@ -1113,7 +1124,7 @@ final class TimelineInputController {
     }
 
     private func continuePlayheadScrub(windowPoint: NSPoint) {
-        playheadAutoScrollWindowPoint = windowPoint
+        dragAutoScrollWindowPoint = windowPoint
         snapIndicatorX = nil
 
         let didScroll = view.autoScrollHorizontallyForTimelineDrag(windowPoint: windowPoint)
@@ -1126,41 +1137,65 @@ final class TimelineInputController {
         view.needsDisplay = true
 
         if didScroll {
-            startPlayheadAutoScroll()
+            startDragAutoScroll()
         } else {
-            stopPlayheadAutoScroll()
+            stopDragAutoScroll()
         }
     }
 
-    private func startPlayheadAutoScroll() {
-        guard playheadAutoScrollTimer == nil else { return }
+    private func startDragAutoScroll() {
+        guard dragAutoScrollTimer == nil else { return }
         let timer = Timer(timeInterval: TimelineAutoScroll.interval, repeats: true) { [weak self] timer in
             guard let self else {
                 timer.invalidate()
                 return
             }
             MainActor.assumeIsolated {
-                self.tickPlayheadAutoScroll()
+                self.tickDragAutoScroll()
             }
         }
-        playheadAutoScrollTimer = timer
+        dragAutoScrollTimer = timer
         RunLoop.main.add(timer, forMode: .default)
         RunLoop.main.add(timer, forMode: .eventTracking)
     }
 
-    private func stopPlayheadAutoScroll() {
-        playheadAutoScrollTimer?.invalidate()
-        playheadAutoScrollTimer = nil
-        playheadAutoScrollWindowPoint = nil
+    private func stopDragAutoScroll() {
+        dragAutoScrollTimer?.invalidate()
+        dragAutoScrollTimer = nil
+        dragAutoScrollWindowPoint = nil
     }
 
-    private func tickPlayheadAutoScroll() {
-        guard case .scrubPlayhead = dragState,
-              let windowPoint = playheadAutoScrollWindowPoint else {
-            stopPlayheadAutoScroll()
+    private var supportsDragAutoScroll: Bool {
+        switch dragState {
+        case .moveClip, .trimLeft, .trimRight, .marquee, .timelineRange, .timelineMarker: true
+        default: false
+        }
+    }
+
+    private func continueEditingDrag(windowPoint: NSPoint, modifiers: NSEvent.ModifierFlags) {
+        dragAutoScrollWindowPoint = windowPoint
+        dragAutoScrollModifiers = modifiers
+        let didScroll = view.autoScrollHorizontallyForTimelineDrag(windowPoint: windowPoint)
+        updateEditingDrag(windowPoint: windowPoint, modifiers: modifiers, geometry: view.geometry)
+        if didScroll { startDragAutoScroll() } else { stopDragAutoScroll() }
+    }
+
+    private func tickDragAutoScroll() {
+        guard let window = view.window, window.isVisible, window.isKeyWindow else {
+            cancelActiveDrag()
             return
         }
-        continuePlayheadScrub(windowPoint: windowPoint)
+        guard let windowPoint = dragAutoScrollWindowPoint else {
+            stopDragAutoScroll()
+            return
+        }
+        if case .scrubPlayhead = dragState {
+            continuePlayheadScrub(windowPoint: windowPoint)
+        } else if supportsDragAutoScroll {
+            continueEditingDrag(windowPoint: windowPoint, modifiers: dragAutoScrollModifiers)
+        } else {
+            stopDragAutoScroll()
+        }
     }
 
     private func beginTimelineRangeEdgeDrag(_ edge: TimelineRangeEdge) {
@@ -1265,4 +1300,6 @@ final class TimelineInputController {
         }
         return 0
     }
+
+    private var dragAutoScrollModifiers: NSEvent.ModifierFlags = []
 }

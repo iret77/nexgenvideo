@@ -32,6 +32,8 @@ final class SnapIndicatorOverlay {
         update()
     }
 
+    func updateViewport() { update() }
+
     private func update() {
         guard let view else { return }
         CATransaction.begin()

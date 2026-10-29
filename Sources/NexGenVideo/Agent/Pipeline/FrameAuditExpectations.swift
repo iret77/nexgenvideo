@@ -2,6 +2,55 @@ import Foundation
 import NexGenEngine
 
 enum FrameAuditExpectations {
+    static func productionExpected(shotID: String, role: String, dataRoot: URL) throws -> [String: String]? {
+        let declaration = try ProjectPackGate.captureMutationDeclaration(projectURL: FrameInventory.projectHome(of: dataRoot))
+        guard try PhaseContractRuntime.resolveWorkflow(dataRoot: dataRoot, expectedPack: declaration.binding,
+            expectedProductionContract: declaration.productionContract)?.isProductionV2 == true else { return nil }
+        let projection = try ProductionPlanningLineageV2.projection(dataRoot: dataRoot)
+        guard let shot = projection.shots.first(where: { $0.id == shotID }), projection.requiredFrameRoles(for: shotID).contains(role) else {
+            throw ToolError("This production shot has no audited image at the requested boundary.")
+        }
+        let board = try PlanningWriterIO.storyboard(dataRoot: dataRoot)
+        let draft = try ProductionPlanningStoreV1.readShotPlanning(dataRoot: dataRoot, storyboard: board)
+        guard let intent = draft.shots.first(where: { $0.shotID == shotID }) else {
+            throw ToolError("The current production shot intent is missing.")
+        }
+        let brief = try YAMLArtifactStore(dataRoot: dataRoot).load(Brief.self, at: PipelineLayout.briefFile)
+        return try makeProduction(shot: shot, intent: intent, role: role, allowTextOverlays: brief.allowTextOverlays,
+            endBoundary: projection.endFrameBoundaries[shotID])
+    }
+
+    static func makeProduction(shot: ExecutionShotV1, intent: ShotPlanningDraftV1.ShotIntent, role: String,
+                               allowTextOverlays: Bool, endBoundary: ProductionFrameBoundaryV1?) throws -> [String: String] {
+        guard ["start", "end"].contains(role), intent.shotID == shot.id else { throw ToolError("The production frame boundary changed.") }
+        let state = role == "end" ? shot.endState : shot.startState
+        let endCamera = shot.camera.endpoint
+            ?? (shot.camera.movementID == CameraMovement.static.rawValue ? shot.camera.placement : nil)
+        let camera = role == "end" ? endCamera : shot.camera.placement
+        let entities = shot.blocking.map(\.entityID).joined(separator: ", ")
+        var expected = ["character_count": shot.generationRequirement.map { String($0.visibleEntityCount) } ?? "No extra visible subjects beyond the approved blocking: " + entities,
+            "framing": intent.camera.framing.scale, "camera_angle": camera ?? intent.camera.framing.cameraView,
+            "camera_height": "Use the approved camera placement: " + (camera ?? intent.camera.framing.cameraView),
+            "character_position": shot.blocking.map { $0.entityID + ": " + $0.relation }.joined(separator: "; ") + "; boundary: " + state.summary,
+            "gaze": "Match the declared boundary state and blocking: " + state.summary,
+            "forbidden_elements": (allowTextOverlays ? "" : "No text overlays or title cards. ") + "No undeclared visible subjects beyond: " + entities,
+            "visible_zones": intent.camera.framing.composition,
+            "anchor_at_t0": "Exact " + role + " state: " + PipelineProductionFramesWriter.boundaryIntent(shot: shot, role: role, endBoundary: endBoundary),
+            "proportion_anchor_match": "Match the exact approved planning references and scene geometry; no invented scale."]
+        if role == "end" {
+            guard let endBoundary else { throw ToolError("Declare the exact end frame before auditing it.") }
+            try endBoundary.validate(movingCamera: shot.camera.movementID != CameraMovement.static.rawValue)
+            expected["character_count"] = String(endBoundary.characterCount)
+            expected["character_position"] = endBoundary.characterPositions
+            expected["gaze"] = endBoundary.gaze
+            expected["visible_zones"] = endBoundary.visibleZones.joined(separator: ", ")
+            expected["framing"] = endBoundary.framing ?? intent.camera.framing.scale
+            expected["camera_angle"] = endBoundary.cameraAngle ?? intent.camera.framing.cameraView
+            expected["camera_height"] = endBoundary.cameraHeight ?? "Keep the approved static camera placement: " + (camera ?? "unchanged")
+        }
+        return expected
+    }
+
     static func executionShot(shotID: String, role: String, dataRoot: URL) throws -> ExecutionShotV1? {
         let url = PipelineLayout.url(PipelineLayout.executionPlanFile, in: dataRoot)
         let tracePaths = [PipelineLayout.executionShotInputsFile, ExecutionPlanV1.publicationArtifactPath]
@@ -22,6 +71,12 @@ enum FrameAuditExpectations {
     }
 
     static func requireCurrent(_ audit: FrameAudit, dataRoot: URL) throws {
+        if let expected = try productionExpected(shotID: audit.shotId, role: audit.role, dataRoot: dataRoot) {
+            guard expected.allSatisfy({ audit.checks[$0.key]?.expected == $0.value }) else {
+                throw ToolError("The frame audit uses an earlier production boundary. Inspect and audit the current frame.")
+            }
+            return
+        }
         guard let shot = try loadShotlist(dataRoot: dataRoot)?.shots.first(where: { $0.id == audit.shotId }) else {
             throw ToolError("The audited shot is missing from the current Shot List.")
         }

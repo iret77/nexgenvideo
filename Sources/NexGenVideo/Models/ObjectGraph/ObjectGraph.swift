@@ -69,7 +69,7 @@ extension ObjectGraph {
             for (index, shot) in shotlist.shots.enumerated() {
                 shotLabels[shot.id] = "Shot \(index + 1)"
                 orderedShotIDs.append(shot.id)
-                var refs: [BibleEntityRef] = []
+                var refs = shot.entityRefs.filter { entityNames[$0] != nil }
                 for id in shot.characterRefs {
                     // A character_ref may name a character or an ensemble; resolve against both.
                     let character = BibleEntityRef(kind: .character, id: id)
@@ -85,7 +85,10 @@ extension ObjectGraph {
                     let ref = BibleEntityRef(kind: .prop, id: id)
                     if entityNames[ref] != nil { refs.append(ref) }
                 }
-                if !refs.isEmpty { shotEntities[shot.id] = refs }
+                if !refs.isEmpty {
+                    var seen = Set<BibleEntityRef>()
+                    shotEntities[shot.id] = refs.filter { seen.insert($0).inserted }
+                }
             }
         }
 

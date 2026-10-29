@@ -120,8 +120,9 @@ struct ProviderManifestTests {
                     offer.resolvedVideoCapabilities?.inputPolicy
                         == offer.productionInputPolicy
                 )
-                let supportsNativeAudio = offer.provider == .fal
-                    && FalModelRegistry.model(for: entry.id)?.videoGeneratesAudio == true
+                let supportsNativeAudio = (offer.provider == .fal
+                    && FalModelRegistry.model(for: entry.id)?.videoGeneratesAudio == true)
+                    || (offer.provider == .runway && entry.id == "runway/seedance2_5")
                 #expect(offer.resolvedVideoCapabilities == offer.productionInputPolicy.map {
                     ResolvedVideoOfferingCapabilitiesV1(
                         videoCapabilities: videoCapabilities,

@@ -16,6 +16,7 @@ enum PromptComposer {
         let text: String
         let notes: [String]
         let sourceIRSHA256: String?
+        let sourceIRData: Data?
     }
 
     struct VideoContext: Sendable {
@@ -69,6 +70,7 @@ enum PromptComposer {
     /// `lint_prompt_against_shot` call.
     struct ShotProjection: Sendable {
         let sourceMode: SourceMode
+        let frameRole: String?
         let camera: String
         let cameraMovement: String
         let cameraMovementKind: CameraMovement?
@@ -86,6 +88,7 @@ enum PromptComposer {
         init(_ shot: Shot, forceHandles: Bool = false) {
             let productionPlan = shot.productionPlan
             sourceMode = shot.sourceMode
+            frameRole = nil
             camera = shot.cameraSetup?.promptProse() ?? ""
             cameraMovement = productionPlan?.cameraMovement.promptProse(
                 detail: productionPlan?.cameraMovementDetail
@@ -111,6 +114,44 @@ enum PromptComposer {
                 notes: shot.notes ?? "")
             temporalStructure = CutHandles.temporalStructure(for: shot, forceAll: forceHandles) ?? ""
         }
+        init(execution: ExecutionShotV1, intent: ShotPlanningDraftV1.ShotIntent, bible: Bible,
+             entityIDs: [String] = [], boundaryRole: String? = nil, visualDirectives: [String] = [],
+             endBoundary: ProductionFrameBoundaryV1? = nil) {
+            switch execution.sourceMode {
+            case .generated: sourceMode = .generated
+            case .imported: sourceMode = .imported
+            case .aiEnhanced: sourceMode = .aiEnhanced
+            }
+            frameRole = boundaryRole
+            let boundary = boundaryRole == "end" ? endBoundary : nil
+            let endCamera = execution.camera.endpoint
+                ?? (execution.camera.movementID == CameraMovement.static.rawValue ? execution.camera.placement : nil)
+            let boundaryCamera = boundaryRole == "end" ? endCamera : execution.camera.placement
+            camera = [boundaryCamera, boundary?.cameraAngle ?? intent.camera.framing.cameraView, boundary?.cameraHeight]
+                .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "; ")
+            cameraMovement = intent.camera.movement.promptProse(detail: intent.camera.movementDetail)
+            cameraMovementKind = intent.camera.movement
+            cameraMovementDetail = intent.camera.movementDetail
+            composition = boundary.map { $0.visibleZones.joined(separator: ", ") } ?? intent.camera.framing.composition
+            videoSubject = execution.primaryAction
+            videoDirectives = intent.camera.blocking + visualDirectives
+            imageDirectives = intent.camera.blocking + visualDirectives + (boundary?.promptConstraints ?? [])
+            var characters: [String] = []
+            var locations: [String] = []
+            var props: [String] = []
+            for id in Set(entityIDs + execution.blocking.map(\.entityID)).sorted() {
+                switch bible.lookupId(id) {
+                case .character, .ensemble: characters.append(id)
+                case .location: locations.append(id)
+                case .prop: props.append(id)
+                case nil: break
+                }
+            }
+            ledgerReferences = .init(id: execution.id, characterRefs: characters, locationRef: locations.first, propRefs: props)
+            spec = .init(framing: boundary?.framing ?? intent.camera.framing.scale, cameraHeight: boundary?.cameraHeight,
+                blockingGazes: boundary.map { $0.gaze.isEmpty ? [] : [$0.gaze] } ?? [], notes: boundary?.cameraAngle ?? intent.camera.framing.cameraView)
+            temporalStructure = ""
+        }
     }
 
     /// Compose one model-ready prompt from free intent + the project ledger, running the engine
@@ -132,7 +173,8 @@ enum PromptComposer {
         shot: ShotProjection? = nil,
         preserveComposition: Bool = false,
         videoContext: VideoContext? = nil,
-        imageContext: ImageContext? = nil
+        imageContext: ImageContext? = nil,
+        capturesImageIR: Bool = false
     ) async throws -> Composition {
         let trimmed = normalize(intent)
         guard !trimmed.isEmpty else { throw ComposeError.emptyIntent }
@@ -159,6 +201,7 @@ enum PromptComposer {
 
         let composed: String
         var sourceIRSHA256: String?
+        var sourceIRData: Data?
         var notes: [String] = []
         let productionStyle = try projectDir.flatMap { project -> ResolvedProductionStyleV1? in
             guard modality.usesVisualStyle else { return nil }
@@ -209,9 +252,9 @@ enum PromptComposer {
                 continuityLocks: videoContext.continuityLocks,
                 transitionIntent: videoContext.transitionIntent
             )
-            sourceIRSHA256 = FileDigest.sha256(
-                of: try VideoPromptCanonicalCodecV1.encode(ir)
-            )
+            let irBytes = try VideoPromptCanonicalCodecV1.encode(ir)
+            sourceIRData = irBytes
+            sourceIRSHA256 = FileDigest.sha256(of: irBytes)
             composed = try PromptGenerator.buildVideoPrompt(
                 ir: ir,
                 dialect: videoContext.dialect
@@ -226,7 +269,6 @@ enum PromptComposer {
             }
             notes.append(contentsOf: try lint(composed, lockedDirectives: directives.locked))
         case .image:
-            sourceIRSHA256 = nil
             let acceptsFreeContext = shot == nil
             var payload = PromptPayload(
                 subject: trimmed,
@@ -239,9 +281,17 @@ enum PromptComposer {
                 } ?? [],
                 directives: directives.all + (shot?.imageDirectives ?? [])
             )
-            if let shot { payload.camera = shot.camera; payload.composition = shot.composition }
+            if let shot {
+                payload.camera = shot.camera
+                payload.composition = shot.composition
+                if let role = shot.frameRole { payload.isStartFrame = role == "start" }
+            }
             try apply(productionStyle, to: &payload, plannedCamera: shot != nil, still: true)
             try rejectDirectiveContradictions(payload)
+            if capturesImageIR {
+                sourceIRData = try ProductionCompiledPromptStore.imageIR(payload: payload)
+                sourceIRSHA256 = sourceIRData.map { FileDigest.sha256(of: $0) }
+            } else { sourceIRSHA256 = nil }
             composed = try PromptGenerator.buildImagePrompt(modelID: engineModelID(modelId), payload: payload)
             if shot != nil,
                let violation = ProductionPromptPolicy.stillPromptViolations(composed).first {
@@ -274,7 +324,8 @@ enum PromptComposer {
         return Composition(
             text: composed,
             notes: notes,
-            sourceIRSHA256: sourceIRSHA256
+            sourceIRSHA256: sourceIRSHA256,
+            sourceIRData: sourceIRData
         )
     }
 
@@ -463,7 +514,7 @@ enum PromptComposer {
     /// The engine builders split the model id on the first `:` to pick a provider. App model ids use
     /// `provider/model` (e.g. `runway/gen4.5`, `fal-ai/veo3`); normalize the first `/` to `:` so the
     /// builder's provider dispatch matches.
-    private static func engineModelID(_ modelId: String) -> String {
+    static func engineModelID(_ modelId: String) -> String {
         guard let slash = modelId.firstIndex(of: "/") else { return modelId }
         return modelId.replacingCharacters(in: slash...slash, with: ":")
     }

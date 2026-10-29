@@ -2,6 +2,25 @@ import AppKit
 import AuthenticationServices
 import SwiftUI
 
+@MainActor
+struct ProviderSettingsConnections {
+    let loadKey: (GenerationProvider) -> String?
+    let saveKey: (String, GenerationProvider) -> Bool
+    let deleteKey: (GenerationProvider) -> Bool
+    let oauthConnected: (GenerationProvider) -> Bool
+    let signOut: (GenerationProvider) -> Bool
+    let localEndpoint: (GenerationProvider) -> URL?
+    let setLocalEndpoint: (String?, GenerationProvider) -> Void
+    var signInOverride: ((GenerationProvider) async throws -> Void)? = nil
+    var oauthFailure: (GenerationProvider) -> String? = { _ in nil }
+
+    static var live: Self {
+        .init(loadKey: ProviderKeychain.load, saveKey: ProviderKeychain.save, deleteKey: ProviderKeychain.delete,
+            oauthConnected: { ProviderOAuthStore.isConnected($0) }, signOut: ProviderOAuthStore.disconnect, localEndpoint: ProviderMCP.configuredEndpoint, setLocalEndpoint: ProviderMCP.setEndpoint,
+            oauthFailure: ProviderOAuthStore.failureMessage)
+    }
+}
+
 struct ProvidersPane: View {
     @Environment(\.webAuthenticationSession) private var webAuthenticationSession
     @State private var connection: [String: ProviderConnectionSnapshot] = [:]
@@ -10,12 +29,22 @@ struct ProvidersPane: View {
     @State private var signInTask: Task<Void, Never>?
     @State private var errorText: [String: String] = [:]
     @FocusState private var focusedProvider: String?
-    private var catalog = ModelCatalog.shared
+    private let catalog: ModelCatalog
+    private let connections: ProviderSettingsConnections
+    private let discovery: ModelDiscoveryActions
+
+    init(catalog: ModelCatalog = .shared, connections: ProviderSettingsConnections = .live,
+         discovery: ModelDiscoveryActions = .live) {
+        self.catalog = catalog; self.connections = connections; self.discovery = discovery
+    }
 
     @AppStorage(PromptCompiler.rawPromptsDefaultsKey) private var allowRawPrompts = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
+            ModelCatalogRefreshControl(hasConnection: connection.values.contains {
+                $0.hasKey || $0.oauthConnected || $0.localEnabled
+            }, actions: discovery)
             SettingsSection(
                 "Connections",
                 subtitle: "API keys and sign-ins are stored in the macOS Keychain."
@@ -33,6 +62,7 @@ struct ProvidersPane: View {
                         subtitle: "Send text directly to generation models without NexGenVideo's translation, context, or consistency passes.",
                         isOn: $allowRawPrompts
                     )
+                    .reviewAcceptanceProbe("settings.providers.raw", text: String(allowRawPrompts))
                     if allowRawPrompts {
                         SettingsDivider()
                         SettingsNotice(
@@ -46,6 +76,9 @@ struct ProvidersPane: View {
         }
         .onAppear(perform: refresh)
         .onReceive(NotificationCenter.default.publisher(for: .providerKeysChanged)) { _ in
+            refresh()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .providerOAuthStateChanged)) { _ in
             refresh()
         }
         .onDisappear {
@@ -65,9 +98,10 @@ struct ProvidersPane: View {
             case .localApp: localAppControl(provider)
             case .apiKey: keyField(provider)
             }
-            if let err = errorText[provider.id] {
+            if let err = errorText[provider.id] ?? connections.oauthFailure(provider) {
                 SettingsDivider()
                 SettingsNotice(text: err, systemImage: "exclamationmark.triangle", tone: .error)
+                    .reviewAcceptanceProbe("settings.provider.error." + provider.id, text: err)
             }
         }
     }
@@ -128,7 +162,7 @@ struct ProvidersPane: View {
             case .checking: (label, tone) = ("Checking…", .neutral)
             case .actionRequired: (label, tone) = ("Sign in again", .warning)
             case .unavailable: (label, tone) = ("Connection failed", .error)
-            case .stale: (label, tone) = ("Refresh pending", .warning)
+            case .stale: (label, tone) = ("Refresh needed", .warning)
             case .ready: (label, tone) = ("Signed in", .success)
             case .inactive, .none:
                 (label, tone) = ready ? ("Signed in", .success) : ("Not configured", .neutral)
@@ -144,12 +178,13 @@ struct ProvidersPane: View {
             case .actionRequired where connectionState(provider).hasKey:
                 (label, tone) = ("Key rejected", .error)
             case .stale where connectionState(provider).hasKey:
-                (label, tone) = ("Refresh pending", .warning)
+                (label, tone) = ("Refresh needed", .warning)
             default:
                 (label, tone) = ready ? ("Key saved", .success) : ("Not configured", .neutral)
             }
         }
         return SettingsStatusBadge(text: label, tone: tone)
+            .reviewAcceptanceProbe("settings.provider.status." + provider.id, text: label)
     }
 
     @ViewBuilder
@@ -163,13 +198,18 @@ struct ProvidersPane: View {
                     .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
             } else if connected {
-                if case .unavailable = discovery {
+                if discoveryNeedsSignIn(discovery) {
                     Button("Sign in again") { signIn(provider) }
                         .buttonStyle(.capsule(.prominent, size: .regular))
                 }
-                Button("Sign out") { ProviderOAuthStore.disconnect(provider); refresh() }
+                Button("Sign out") {
+                    if connections.signOut(provider) { errorText[provider.id] = nil; refresh() }
+                    else { errorText[provider.id] = "The sign-in could not be removed from Keychain. Try again." }
+                }
+                .reviewAcceptanceProbe("settings.provider.signout." + provider.id)
             } else {
                 Button("Sign in") { signIn(provider) }
+                    .reviewAcceptanceProbe("settings.provider.signin." + provider.id)
                     .buttonStyle(.capsule(.prominent, size: .regular))
                     .disabled(signingIn != nil)
             }
@@ -187,15 +227,23 @@ struct ProvidersPane: View {
         }
     }
 
+    private func discoveryNeedsSignIn(_ state: ProviderDiscoveryState?) -> Bool {
+        switch state {
+        case .unavailable, .actionRequired: true
+        default: false
+        }
+    }
+
     private func localAppControl(_ provider: GenerationProvider) -> some View {
         SettingsRow(title: "Enable connection", subtitle: provider.mcpCapability?.note) {
             Toggle("Enable \(provider.displayName)", isOn: Binding(
                 get: { connectionState(provider).localEnabled },
                 set: { on in
-                    ProviderMCP.setEndpoint(on ? provider.mcpCapability?.defaultURL.absoluteString : nil, for: provider)
+                    connections.setLocalEndpoint(on ? provider.mcpCapability?.defaultURL.absoluteString : nil, provider)
                     refresh()
                 }))
                 .labelsHidden().toggleStyle(.switch).controlSize(.regular)
+                .reviewAcceptanceProbe("settings.provider.local." + provider.id, text: String(connectionState(provider).localEnabled))
         }
     }
 
@@ -204,6 +252,7 @@ struct ProvidersPane: View {
             HStack(spacing: AppTheme.Spacing.sm) {
                 SecureField(placeholder(provider), text: draftBinding(provider))
                     .accessibilityLabel("\(provider.displayName) API key")
+                    .reviewAcceptanceProbe("settings.provider.key." + provider.id)
                     .textFieldStyle(.plain)
                     .focused($focusedProvider, equals: provider.id)
                     .interfaceFont(size: AppTheme.Typography.ui, design: .monospaced)
@@ -229,12 +278,14 @@ struct ProvidersPane: View {
 
     @ViewBuilder
     private func trailingControl(_ provider: GenerationProvider) -> some View {
-        let trimmed = (draft[provider.id] ?? "").trimmingCharacters(in: .whitespaces)
+        let trimmed = (draft[provider.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
             Button("Save") { save(provider) }.buttonStyle(.capsule(.prominent, size: .regular))
+                .reviewAcceptanceProbe("settings.provider.save." + provider.id)
         } else if connectionState(provider).hasKey {
             Button("Remove", systemImage: "trash") { remove(provider) }
                 .buttonStyle(.capsule(.secondary, size: .regular))
+                .reviewAcceptanceProbe("settings.provider.remove." + provider.id)
         }
     }
 
@@ -244,14 +295,15 @@ struct ProvidersPane: View {
         errorText[provider.id] = nil
         signInTask = Task { @MainActor in
             do {
-                try await ProviderOAuth.signIn(provider) { authorizationURL in
+                if let override = connections.signInOverride { try await override(provider) }
+                else { try await ProviderOAuth.signIn(provider) { authorizationURL in
                     try await webAuthenticationSession.authenticate(
                         using: authorizationURL,
                         callback: .customScheme("nexgenvideo"),
                         preferredBrowserSession: .shared,
                         additionalHeaderFields: [:]
                     )
-                }
+                } }
                 try Task.checkCancellation()
                 refresh()
             } catch {
@@ -275,30 +327,38 @@ struct ProvidersPane: View {
 
     private func refresh() {
         connection = Dictionary(uniqueKeysWithValues: GenerationProvider.allCases.map { provider in
-            let key = ProviderKeychain.load(provider) ?? ""
+            let key = connections.loadKey(provider) ?? ""
             return (
                 provider.id,
                 ProviderConnectionSnapshot(
                     hasKey: !key.isEmpty,
                     maskedKey: mask(key),
-                    oauthConnected: ProviderOAuthStore.isConnected(provider),
-                    localEnabled: ProviderMCP.configuredEndpoint(provider) != nil
+                    oauthConnected: connections.oauthConnected(provider),
+                    localEnabled: connections.localEndpoint(provider) != nil
                 )
             )
         })
     }
 
     private func save(_ provider: GenerationProvider) {
-        let key = (draft[provider.id] ?? "").trimmingCharacters(in: .whitespaces)
+        let key = (draft[provider.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else { return }
-        ProviderKeychain.save(key, for: provider)
+        guard connections.saveKey(key, provider) else {
+            errorText[provider.id] = "The key could not be saved in Keychain. Try again."
+            return
+        }
+        errorText[provider.id] = nil
         draft[provider.id] = ""
         focusedProvider = nil
         refresh()
     }
 
     private func remove(_ provider: GenerationProvider) {
-        ProviderKeychain.delete(provider)
+        guard connections.deleteKey(provider) else {
+            errorText[provider.id] = "The key could not be removed from Keychain. Try again."
+            return
+        }
+        errorText[provider.id] = nil
         draft[provider.id] = ""
         refresh()
     }

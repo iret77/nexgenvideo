@@ -8,6 +8,7 @@ enum ProjectWorkingCopy {
     private static let completeSentinel = ".ngv-materialized"
     private static let dirtyMarker = ".ngv-dirty"
     private static let generationMarker = ".ngv-open-generation"
+    private static let generationLock = NSRecursiveLock()
     private static let internalNames = Set([
         completeSentinel,
         dirtyMarker,
@@ -33,6 +34,7 @@ enum ProjectWorkingCopy {
         let generationLog: Data?
         let thumbnail: Data?
         let chatSessionFiles: [(name: String, data: Data)]
+        var editorState: Data? = nil
     }
 
     @discardableResult
@@ -41,16 +43,8 @@ enum ProjectWorkingCopy {
         let existing = home(key)
         if isComplete(existing, fm: fm),
            fm.fileExists(atPath: existing.appendingPathComponent(dirtyMarker).path) {
-            guard let packageURL,
-                  ProjectPluginSettings.bindingResolution(projectURL: packageURL)
-                    == ProjectPluginSettings.bindingResolution(projectURL: existing)
-                    || ProjectPackMigration.authorizesRecoveredUpgrade(
-                        projectURL: packageURL,
-                        recoveryURL: existing,
-                        workingCopyKey: key
-                    ) else {
-                throw PersistError.recoveredFormatMismatch
-            }
+            guard let packageURL else { throw PersistError.recoveredFormatMismatch }
+            try requireCompatibleRecovery(existing, packageURL: packageURL, key: key)
             migrateSchemas(in: home(key))
             return OpenResult(
                 home: home(key),
@@ -65,6 +59,26 @@ enum ProjectWorkingCopy {
             recoveredUnsaved: false,
             generation: try claim(key: key)
         )
+    }
+
+    static func recoverableDirtyHome(for packageURL: URL) throws -> URL? {
+        guard let key = ProjectIdentity.existingKey(for: packageURL) else { return nil }
+        let existing = home(key), fm = FileManager.default
+        guard isComplete(existing, fm: fm), fm.fileExists(atPath: existing.appendingPathComponent(dirtyMarker).path) else { return nil }
+        try requireCompatibleRecovery(existing, packageURL: packageURL, key: key)
+        return existing
+    }
+
+    private static func requireCompatibleRecovery(_ existing: URL, packageURL: URL, key: String) throws {
+        try ProjectPluginSettings.validateProductionContractForOpen(projectURL: packageURL)
+        try ProjectPluginSettings.validateProductionContractForOpen(projectURL: existing)
+        let matchingPack = ProjectPluginSettings.bindingResolution(projectURL: packageURL)
+            == ProjectPluginSettings.bindingResolution(projectURL: existing)
+            || ProjectPackMigration.authorizesRecoveredUpgrade(projectURL: packageURL, recoveryURL: existing, workingCopyKey: key)
+        let matchingProduction = ProjectPluginSettings.productionContractResolution(projectURL: packageURL)
+            == ProjectPluginSettings.productionContractResolution(projectURL: existing)
+            || ProductionWorkflowRecoveryMigration.authorizesCoreRecovery(projectURL: packageURL, recoveryURL: existing)
+        guard matchingPack && matchingProduction else { throw PersistError.recoveredFormatMismatch }
     }
 
     private static func migrateSchemas(in home: URL) {
@@ -91,11 +105,74 @@ enum ProjectWorkingCopy {
         return result
     }
 
+    struct PreparedMaterialization: Sendable {
+        fileprivate let key: String
+        fileprivate let expectedGeneration: UUID
+        fileprivate let staging: URL
+        fileprivate let generation: UUID
+        fileprivate let state: PreparedPipelineState
+
+        func commit(validateCurrent: () throws -> Void) throws -> OpenResult {
+            try state.lock.withLock {
+                guard state.available else { throw PersistError.transactionFinished }
+                return try generationLock.withLock {
+                    try validateCurrent()
+                    guard currentGeneration(key: key) == expectedGeneration else { throw PersistError.workingCopyChanged }
+                    let destination = home(key)
+                    guard renameatx_np(AT_FDCWD, destination.path, AT_FDCWD, staging.path, UInt32(RENAME_SWAP)) == 0 else {
+                        throw POSIXError(.init(rawValue: errno) ?? .EIO)
+                    }
+                    state.available = false
+                    return OpenResult(home: destination, recoveredUnsaved: false, generation: generation)
+                }
+            }
+        }
+
+        func discard() {
+            state.lock.withLock {
+                state.available = false
+                try? FileManager.default.removeItem(at: staging)
+            }
+        }
+    }
+
+    static func prepareRematerialization(key: String, packageURL: URL, expectedGeneration: UUID,
+        validate: (URL) throws -> Void) throws -> PreparedMaterialization {
+        try Task.checkCancellation()
+        guard generationLock.withLock({ currentGeneration(key: key) == expectedGeneration }) else {
+            throw PersistError.workingCopyChanged
+        }
+        let staging = try stageMaterialization(key: key, packageURL: packageURL)
+        do {
+            try validate(staging)
+            try Task.checkCancellation()
+            let generation = UUID()
+            try Data(generation.uuidString.utf8).write(to: staging.appendingPathComponent(generationMarker), options: .atomic)
+            return PreparedMaterialization(key: key, expectedGeneration: expectedGeneration, staging: staging,
+                generation: generation, state: PreparedPipelineState())
+        } catch {
+            try? FileManager.default.removeItem(at: staging)
+            throw error
+        }
+    }
+
     @discardableResult
     static func materialize(key: String, packageURL: URL?) throws -> URL {
         let fm = FileManager.default
+        let staging = try stageMaterialization(key: key, packageURL: packageURL)
+        do {
+            let destination = home(key)
+            try installWorkingCopy(staging, at: destination, key: key, fm: fm)
+            return destination
+        } catch {
+            try? fm.removeItem(at: staging)
+            throw error
+        }
+    }
+
+    private static func stageMaterialization(key: String, packageURL: URL?) throws -> URL {
+        let fm = FileManager.default
         let recovery = AppPaths.ensure(AppPaths.recovery)
-        let destination = home(key)
         let staging = recovery.appendingPathComponent(
             ".materialize-\(key)-\(UUID().uuidString)", isDirectory: true)
         do {
@@ -109,8 +186,7 @@ enum ProjectWorkingCopy {
                 to: staging.appendingPathComponent(completeSentinel),
                 options: .atomic
             )
-            try installWorkingCopy(staging, at: destination, key: key, fm: fm)
-            return destination
+            return staging
         } catch {
             try? fm.removeItem(at: staging)
             throw error
@@ -140,6 +216,9 @@ enum ProjectWorkingCopy {
                 to: root.appendingPathComponent(Project.thumbnailFilename),
                 options: .atomic
             )
+        }
+        if let editorState = snapshot.editorState {
+            try editorState.write(to: root.appendingPathComponent(ProjectEditorState.filename), options: .atomic)
         }
         try replaceChatDirectory(snapshot.chatSessionFiles, in: root, fm: fm)
     }
@@ -297,6 +376,65 @@ enum ProjectWorkingCopy {
             _ = try fm.replaceItemAt(root, withItemAt: stagingRoot)
             try? fm.removeItem(at: stagingHome)
             return result
+        } catch {
+            try? fm.removeItem(at: stagingHome)
+            throw error
+        }
+    }
+
+    fileprivate final class PreparedPipelineState: @unchecked Sendable {
+        let lock = NSLock()
+        var available = true
+    }
+
+    struct PreparedPipelineTransaction<Output: Sendable>: Sendable {
+        fileprivate let projectHome: URL
+        fileprivate let root: URL
+        fileprivate let stagingHome: URL
+        fileprivate let stagingRoot: URL
+        fileprivate let state: PreparedPipelineState
+        let output: Output
+
+        func commit(validateCurrent: (URL) throws -> Void) throws -> Output {
+            try state.lock.withLock {
+                guard state.available else { throw PersistError.transactionFinished }
+                try validateCurrent(projectHome)
+                guard renameatx_np(AT_FDCWD, root.path, AT_FDCWD, stagingRoot.path, UInt32(RENAME_SWAP)) == 0 else {
+                    throw POSIXError(.init(rawValue: errno) ?? .EIO)
+                }
+                state.available = false
+                return output
+            }
+        }
+
+        func discard() {
+            state.lock.withLock {
+                state.available = false
+                try? FileManager.default.removeItem(at: stagingHome)
+            }
+        }
+    }
+
+    static func preparePipelineTransaction<Output: Sendable>(
+        at dataRoot: URL, mutate: (URL) throws -> Output
+    ) throws -> PreparedPipelineTransaction<Output> {
+        let fm = FileManager.default
+        let root = dataRoot.standardizedFileURL
+        let values = try root.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+        guard values.isDirectory == true, values.isSymbolicLink != true,
+              root.lastPathComponent == pipelineDir else {
+            throw PersistError.incompletePackage(package: root.lastPathComponent)
+        }
+        let home = root.deletingLastPathComponent()
+        let stagingHome = home.deletingLastPathComponent().appendingPathComponent(
+            ".pipeline-transaction-\(home.lastPathComponent)-\(UUID().uuidString)", isDirectory: true)
+        let stagingRoot = stagingHome.appendingPathComponent(pipelineDir, isDirectory: true)
+        do {
+            try cloneProjectReadView(from: home, to: stagingHome, fm: fm)
+            try Task.checkCancellation()
+            let output = try mutate(stagingRoot)
+            return .init(projectHome: home, root: root, stagingHome: stagingHome,
+                         stagingRoot: stagingRoot, state: PreparedPipelineState(), output: output)
         } catch {
             try? fm.removeItem(at: stagingHome)
             throw error
@@ -472,6 +610,8 @@ enum ProjectWorkingCopy {
     }
 
     enum PersistError: LocalizedError {
+        case transactionFinished
+        case workingCopyChanged
         case noWorkingCopy(key: String)
         case incompletePackage(package: String)
         case identityNotRegenerated
@@ -481,6 +621,10 @@ enum ProjectWorkingCopy {
 
         var errorDescription: String? {
             switch self {
+            case .transactionFinished:
+                return "This prepared change has already been applied or discarded. Prepare it again before applying."
+            case .workingCopyChanged:
+                return "The open project changed while preparing recovery. Reopen the project before discarding unsaved work."
             case .noWorkingCopy(let key):
                 return "Couldn't save the project: no complete working copy for \(key). "
                     + "Your work is still on disk — quit without saving and report this."
@@ -491,7 +635,7 @@ enum ProjectWorkingCopy {
                 return "Couldn't create an independent identity for the project copy. "
                     + "The original project was left untouched."
             case .recoveredFormatMismatch:
-                return "Couldn't recover unsaved work because its exact format-pack binding "
+                return "Couldn't recover unsaved work because its production workflow or format pack "
                     + "doesn't match the saved project. The saved project and recovery copy were left untouched."
             case .readViewCloneUnavailable(let package, let detail):
                 return "Couldn't prepare \(package) for the pipeline phase. \(detail) "
@@ -504,11 +648,15 @@ enum ProjectWorkingCopy {
     }
 
     static func discard(key: String) {
+        generationLock.lock()
+        defer { generationLock.unlock() }
         try? FileManager.default.removeItem(at: home(key))
     }
 
     @discardableResult
     static func discard(key: String, ifGeneration generation: UUID) -> Bool {
+        generationLock.lock()
+        defer { generationLock.unlock() }
         guard currentGeneration(key: key) == generation else { return false }
         do {
             try FileManager.default.removeItem(at: home(key))
@@ -525,6 +673,8 @@ enum ProjectWorkingCopy {
     }
 
     private static func writeClaim(_ generation: UUID, key: String) throws {
+        generationLock.lock()
+        defer { generationLock.unlock() }
         try Data(generation.uuidString.utf8).write(
             to: home(key).appendingPathComponent(generationMarker),
             options: .atomic
@@ -656,6 +806,8 @@ enum ProjectWorkingCopy {
         key: String,
         fm: FileManager
     ) throws {
+        generationLock.lock()
+        defer { generationLock.unlock() }
         guard fm.fileExists(atPath: destination.path) else {
             try fm.moveItem(at: staging, to: destination)
             return

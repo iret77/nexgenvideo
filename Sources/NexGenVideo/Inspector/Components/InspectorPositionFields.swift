@@ -53,8 +53,8 @@ struct InspectorPositionFields: View {
     private func commit(setX: Double?, setY: Double?) {
         editor.undoManager?.beginUndoGrouping()
         for c in clips { editor.commitPosition(clipId: c.id, setX: setX, setY: setY) }
-        editor.undoManager?.endUndoGrouping()
         editor.undoManager?.setActionName("Change Position")
+        editor.undoManager?.endUndoGrouping()
     }
 }
 

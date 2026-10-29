@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import Testing
 @testable import NexGenVideo
@@ -48,6 +49,37 @@ struct BudgetStopTests {
             ProjectWorkingCopy.discard(key: key)
         }
         try? FileManager.default.removeItem(at: project)
+    }
+
+    private func rerunServices(defaults: UserDefaults,
+                               quoteLoader: @escaping GenerationBudgetGuard.QuoteLoader) -> GenerationPanelServices {
+        let catalog = ModelCatalog()
+        catalog.load(entries: ModelCatalog.launchEntries)
+        return GenerationPanelServices(catalog: catalog, preferences: ModelPreferences(defaults: defaults),
+            activation: { .init(active: [.init(provider: .fal, transport: .api)]) }, quoteLoader: quoteLoader)
+    }
+
+    private func rerunSource(editor: EditorViewModel, video: Bool) async throws -> MediaAsset {
+        let original: URL
+        let duration: Double
+        if video {
+            original = try await CompositorFixtures.patternVideoURL()
+            duration = try await AVURLAsset(url: original).load(.duration).seconds
+        } else {
+            original = try CompositorFixtures.patternPNG(size: CompositorFixtures.renderSize)
+            duration = 1
+        }
+        let home = try #require(editor.workingRoot)
+        let directory = home.appendingPathComponent(Project.mediaDirectoryName)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let destination = directory.appendingPathComponent("rerun-source." + original.pathExtension)
+        try FileManager.default.copyItem(at: original, to: destination)
+        let source = MediaAsset(id: "rerun-source", url: destination,
+            type: video ? .video : .image, name: "Source", duration: duration)
+        source.sourceWidth = Int(CompositorFixtures.renderSize.width)
+        source.sourceHeight = Int(CompositorFixtures.renderSize.height)
+        editor.mediaAssets.append(source)
+        return source
     }
 
     private func money(_ eur: Double) -> GenerationMoney {
@@ -399,104 +431,130 @@ struct BudgetStopTests {
         #expect(Set(editor.generationLog.spendEvents.map(\.transactionId)).count == 2)
     }
 
-    @Test("reruns use the same pre-dispatch ledger guard")
+    @Test("reviewed upscale reruns use the same pre-dispatch ledger guard")
     func rerunStopsOnCorruptLedgerBeforeDispatch() async throws {
         let package = try project(stop: nil)
         defer { cleanup(package) }
         let editor = editor(for: package)
+        let source = try await rerunSource(editor: editor, video: false)
+        let suite = "budget-rerun-ledger." + UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var quoted = 0
+        let services = rerunServices(defaults: defaults, quoteLoader: { _, _ in
+            quoted += 1
+            return GenerationPackageFixture.money()
+        })
+        var input = GenerationInput(prompt: "", model: "fal-ai/clarity-upscaler",
+            duration: 1, aspectRatio: "", resolution: nil)
+        input.imageURLAssetIds = [source.id]
+        let generated = MediaAsset(url: package.appendingPathComponent("upscaled.png"), type: .image,
+            name: "Upscaled", duration: 1, generationInput: input)
+        let beforeAssets = editor.mediaAssets.count
+        do {
+            _ = try await EditSubmitter.rerun(asset: generated, editor: editor, services: services)
+            Issue.record("A rerun without a project window must not bypass generation review")
+        } catch GenerationRequestError.gate(let message) {
+            #expect(message == "Open the project window and close its current sheet before reviewing generation.")
+        }
+        #expect(quoted == 1)
+        #expect(editor.mediaAssets.count == beforeAssets)
+        #expect(editor.generationLog.spendEvents.isEmpty)
+
+        let model = try #require(services.catalog.upscale.first { $0.id == input.model })
+        let request = try EditSubmitter.upscaleRequest(asset: source, model: model, origin: .rerun,
+            target: services.target(model.id))
+        let generation = try await GenerationController.prepare(request, editor: editor).get()
+        let reviewed = try await GenerationController.prepareReviewPackage(generation, editor: editor,
+            quoteLoader: services.quoteLoader)
+        #expect(reviewed.payload.references.first?.assetID == source.id)
         let workingRoot = try #require(editor.workingRoot)
         let logURL = workingRoot.appendingPathComponent(Project.generationLogFilename)
         let corrupt = Data("{\"version\":2,\"spendEvents\":[".utf8)
         try corrupt.write(to: logURL, options: .atomic)
-        let asset = MediaAsset(
-            url: package.appendingPathComponent("source.png"),
-            type: .image,
-            name: "Source",
-            duration: 1,
-            generationInput: GenerationInput(
-                prompt: "",
-                model: "fal-ai/clarity-upscaler",
-                duration: 1,
-                aspectRatio: "",
-                resolution: nil,
-                imageURLs: ["https://example.test/source.png"]
-            )
-        )
-        let beforeAssets = editor.mediaAssets.count
-
         do {
-            _ = try await EditSubmitter.rerun(
-                asset: asset,
-                editor: editor,
-                quoteLoader: { _, _ in money(6) }
-            )
-            Issue.record("expected the rerun ledger guard to block")
-        } catch let error as EditSubmitter.RerunError {
-            guard case .budget(let message) = error else {
-                Issue.record("expected a ledger failure, got \(error)")
-                return
-            }
-            #expect(message.contains("generation-log.json"))
+            _ = try await GenerationBudgetGuard.authorize(input: reviewed.pricingInput(), target: generation.target,
+                editor: editor, approvedPackage: reviewed, quoteLoader: services.quoteLoader)
+            Issue.record("The reviewed request must not authorize against a corrupt ledger")
+        } catch {
+            #expect(error.localizedDescription.contains("generation-log.json"))
         }
-
+        #expect(quoted == 3)
         #expect(editor.mediaAssets.count == beforeAssets)
+        #expect(editor.generationLog.spendEvents.isEmpty)
         #expect(try Data(contentsOf: logURL) == corrupt)
     }
 
-    @Test("a trimmed upscale rerun prices and replays the recorded source range")
+    @Test("a trimmed upscale rerun prices and reviews the recorded source range before dispatch")
     func trimmedUpscaleRerunUsesRecordedRange() async throws {
         let package = try project(stop: nil)
         defer { cleanup(package) }
         let editor = editor(for: package)
-        let source = MediaAsset(
-            id: "project-video",
-            url: package.appendingPathComponent("source.mp4"),
-            type: .video,
-            name: "Source",
-            duration: 60
-        )
-        editor.mediaAssets.append(source)
-        var input = GenerationInput(
-            prompt: "",
-            model: "fal-ai/topaz/upscale/video",
-            duration: 10,
-            aspectRatio: "",
-            resolution: nil
-        )
+        let source = try await rerunSource(editor: editor, video: true)
+        let suite = "budget-rerun-trim." + UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var pricedDurations: [Double?] = []
+        let services = rerunServices(defaults: defaults, quoteLoader: { _, pricing in
+            pricedDurations.append(pricing.durationSeconds)
+            return GenerationPackageFixture.money()
+        })
+        let range = GenerationSourceTrim(trimStartFrame: 240,
+            trimEndFrame: Int((source.duration * 24).rounded()) - 480,
+            sourceFramesConsumed: 240, fps: 24)
+        var input = GenerationInput(prompt: "", model: "fal-ai/topaz/upscale/video",
+            duration: 10, aspectRatio: "", resolution: nil)
         input.sourceVideoAssetId = source.id
-        input.sourceRange = GenerationSourceRange(trim: GenerationSourceTrim(
-            trimStartFrame: 240,
-            trimEndFrame: 960,
-            sourceFramesConsumed: 240,
-            fps: 24
-        ))
-        let upscaled = MediaAsset(
-            url: package.appendingPathComponent("upscaled.mp4"),
-            type: .video,
-            name: "Upscaled",
-            duration: 10,
-            generationInput: input
-        )
-        var pricedDuration: Double?
-
-        do {
-            _ = try await EditSubmitter.rerun(
-                asset: upscaled,
-                editor: editor,
-                quoteLoader: { _, pricing in
-                    pricedDuration = pricing.durationSeconds
-                    throw CancellationError()
-                }
-            )
-            Issue.record("expected the cancelled pricing to stop the rerun before dispatch")
-        } catch let error as EditSubmitter.RerunError {
-            guard case .budget = error else {
-                Issue.record("expected a pre-dispatch failure, got \(error)")
-                return
-            }
+        input.sourceRange = GenerationSourceRange(trim: range)
+        let upscaled = MediaAsset(url: package.appendingPathComponent("upscaled.mp4"), type: .video,
+            name: "Upscaled", duration: 10, generationInput: input)
+        let model = try #require(services.catalog.upscale.first { $0.id == input.model })
+        let restored = try GenerationPanelSeed.restore(input, assets: editor.mediaAssets)
+        let request = try EditSubmitter.upscaleRequest(asset: source, model: model,
+            trimmedSource: restored.sourceTrim, origin: .rerun, target: services.target(model.id))
+        let generation = try await GenerationController.prepare(request, editor: editor).get()
+        guard case .preparedUpscale(let submission, let parameters) = generation.submission else {
+            Issue.record("Expected the actual prepared upscale submission")
+            return
         }
-
-        #expect(pricedDuration == 10)
+        #expect(submission.genInput.sourceVideoAssetId == source.id)
+        #expect(submission.genInput.sourceRange?.trim == range)
+        #expect(submission.trimmedSource?.record == range)
+        #expect(submission.genInput.duration == 10)
+        guard case .upscale(let providerParameters) = parameters.parameters else {
+            Issue.record("Expected exact upscale provider parameters")
+            return
+        }
+        #expect(providerParameters.durationSeconds == 10)
+        let reviewed = try await GenerationController.prepareReviewPackage(generation, editor: editor,
+            quoteLoader: services.quoteLoader)
+        let reference = try #require(reviewed.payload.references.first)
+        #expect(reference.assetID == source.id)
+        let originalSHA256 = try FileDigest.sha256(of: source.url)
+        #expect(reference.sourceSHA256 == originalSHA256)
+        #expect(reference.sourceSHA256 != reference.submittedSHA256)
+        let trimmedURL = try #require(generation.references?.urls.first)
+        let trimmedDuration = try await AVURLAsset(url: trimmedURL).load(.duration).seconds
+        #expect(abs(trimmedDuration - 10) < 0.1)
+        #expect(reviewed.payload.operation == "upscale")
+        let reviewedPricing = try reviewed.pricingInput()
+        #expect(reviewedPricing.durationSeconds == 10)
+        let beforeAssets = editor.mediaAssets.count
+        do {
+            _ = try await GenerationReviewSheet.confirm(generation: generation, title: "Review Upscale",
+                editor: editor, services: services)
+            Issue.record("Review without its project window must not approve the prepared request")
+        } catch GenerationRequestError.gate(let message) {
+            #expect(message == "Open the project window and close its current sheet before reviewing generation.")
+        }
+        do {
+            _ = try await EditSubmitter.rerun(asset: upscaled, editor: editor, services: services)
+            Issue.record("A prepared rerun must stop at the required review before provider dispatch")
+        } catch GenerationRequestError.gate(let message) {
+            #expect(message == "Open the project window and close its current sheet before reviewing generation.")
+        }
+        #expect(pricedDurations == [10, 10])
+        #expect(editor.mediaAssets.count == beforeAssets)
         #expect(editor.generationLog.spendEvents.isEmpty)
     }
 
@@ -505,49 +563,34 @@ struct BudgetStopTests {
         let package = try project(stop: nil)
         defer { cleanup(package) }
         let editor = editor(for: package)
-        let source = MediaAsset(
-            id: "project-video",
-            url: package.appendingPathComponent("source.mp4"),
-            type: .video,
-            name: "Source",
-            duration: 60
-        )
-        editor.mediaAssets.append(source)
-        var input = GenerationInput(
-            prompt: "",
-            model: "fal-ai/topaz/upscale/video",
-            duration: 10,
-            aspectRatio: "",
-            resolution: nil
-        )
-        input.sourceVideoAssetId = source.id
-        let upscaled = MediaAsset(
-            url: package.appendingPathComponent("upscaled.mp4"),
-            type: .video,
-            name: "Upscaled",
-            duration: 10,
-            generationInput: input
-        )
+        let source = try await rerunSource(editor: editor, video: true)
+        let suite = "budget-rerun-missing-trim." + UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
         var quoted = false
-
+        let services = rerunServices(defaults: defaults, quoteLoader: { _, _ in
+            quoted = true
+            return GenerationPackageFixture.money()
+        })
+        var input = GenerationInput(prompt: "", model: "fal-ai/topaz/upscale/video",
+            duration: 10, aspectRatio: "", resolution: nil)
+        input.sourceVideoAssetId = source.id
+        let upscaled = MediaAsset(url: package.appendingPathComponent("upscaled.mp4"), type: .video,
+            name: "Upscaled", duration: 10, generationInput: input)
+        let model = try #require(services.catalog.upscale.first { $0.id == input.model })
+        #expect(model.selection(sourceType: source.type, sourceWidth: source.sourceWidth,
+            sourceHeight: source.sourceHeight, durationSeconds: source.duration, targetResolution: nil) != nil)
         do {
-            _ = try await EditSubmitter.rerun(
-                asset: upscaled,
-                editor: editor,
-                quoteLoader: { _, _ in
-                    quoted = true
-                    return money(1)
-                }
-            )
-            Issue.record("expected the rerun without a recorded range or upload to be refused")
+            _ = try await EditSubmitter.rerun(asset: upscaled, editor: editor, services: services)
+            Issue.record("The absent original trim must be refused before preparation or review")
         } catch let error as EditSubmitter.RerunError {
-            guard case .missingSource = error else {
-                Issue.record("expected a missing source, got \(error)")
+            guard case .unverifiedSourceRange = error else {
+                Issue.record("Expected an unverified original range, got \(error)")
                 return
             }
         }
-
-        #expect(quoted == false)
+        #expect(!quoted)
+        #expect(editor.mediaAssets.count == 1)
         #expect(editor.generationLog.spendEvents.isEmpty)
     }
 

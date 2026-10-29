@@ -1,0 +1,268 @@
+"""Independent checks for native production navigation, task scopes and old chat history."""
+import hashlib
+import json
+from pathlib import Path
+
+
+def require(condition, message):
+    if not condition:
+        raise ValueError(message)
+
+
+def read(path):
+    return json.loads(path.read_text())
+
+
+def digest(path):
+    require(path.is_file() and not path.is_symlink(), "missing regular evidence: " + path.name)
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def local(directory, relative):
+    path = Path(relative)
+    require(relative and not path.is_absolute() and all(part not in (".", "..") for part in path.parts), "unsafe evidence path")
+    target = directory / path
+    require(target.resolve().is_relative_to(directory.resolve()), "evidence escape")
+    return target
+
+
+def observation(entry, name):
+    rows = [action for action in entry.get("interactions", []) if action.get("kind") == "verified-state" and action.get("label") == name]
+    require(len(rows) == 1, "missing unique native observation: " + name)
+    return rows[0].get("evidence", {})
+
+
+def pointer(entry, identifier):
+    return [index for index, action in enumerate(entry.get("interactions", []))
+            if action.get("kind") == "pointer" and action.get("id") == identifier]
+
+
+def selection(raw):
+    require(isinstance(raw, str) and raw.startswith("<app-context>") and raw.endswith("</app-context>"), "not an actual app-context request block")
+    body = raw[len("<app-context>"):-len("</app-context>")]
+    marker = " Captured selection (editing-grid frames, end exclusive; not a native-media clock): "
+    prefix, separator, payload = body.partition(marker)
+    require(separator, "missing serialized selection")
+    value, end = json.JSONDecoder().raw_decode(payload)
+    require(isinstance(value, dict), "selection is not an object")
+    format_name = value.get("format")
+    require(format_name is None or isinstance(format_name, str) and bool(format_name.strip()), "invalid captured format")
+    expected_prefix = ("Active format plugin for this project: " + format_name + "." if format_name is not None
+                       else "No format plugin is active — this project uses the generic production workflow.")
+    require(prefix == expected_prefix, "app-context prefix differs from captured format")
+    require(payload[end:].strip() == "Later workspace selections and get_timeline playheads do not replace this task's target, range or frame.",
+            "unexpected content after the frozen selection")
+    return value
+
+
+def validate_case(directory, entry, scale):
+    require(entry.get("scale") == scale and entry.get("viewport") == [960, 640] and entry.get("backingScale", 0) > 0,
+            "actual native presentation differs")
+    require(entry.get("liveAgent") is False, "isolated runtime must not claim a live agent")
+    log = read(local(directory, entry.get("progress", "")))
+    require(log.get("failure") is None and log.get("interactions") == entry.get("interactions")
+            and log.get("screenshots") == entry.get("screenshots"), "driver log differs")
+    require(entry.get("screenshots"), "native screenshots missing")
+    for screenshot in entry["screenshots"]:
+        require(local(directory, screenshot).read_bytes().startswith(b"\x89PNG\r\n\x1a\n"), "not an actual PNG artifact")
+    nav = observation(entry, "verified object navigation")
+    history = observation(entry, "older conversation continued and deleted")
+    output_sha = digest(directory / "actual-assembled-source.mov")
+    reference_sha = digest(directory / "actual-input-reference")
+    require(nav.get("outputSHA256") == output_sha and nav.get("referenceSHA256") == reference_sha, "actual media bytes differ")
+    isolated_reference = Path(nav.get("isolatedReferencePath", ""))
+    require(str(isolated_reference) not in ("", ".") and not isolated_reference.is_absolute()
+            and all(part not in (".", "..") for part in isolated_reference.parts), "changed-reference probe did not retain its isolated home-relative path")
+    require(nav.get("changedOriginalRefused") is True and "original input revision changed" in nav.get("changedOriginalError", ""), "no precise changed-reference refusal")
+    require(nav.get("visibleGenerationReceipt") == "Verified" and nav.get("visibleModelID") == nav.get("modelID"), "actual visible source provenance differs")
+    proof = read(directory / "actual-assembly.json")
+    host = read(directory / "actual-assembly-host.json")
+    takes = [item for item in proof.get("placements", []) if item.get("clipID") == nav.get("clipID") and item.get("shotID") == nav.get("shotID")]
+    require(len(takes) == 1 and takes[0].get("output", {}).get("sha256") == output_sha, "no actual assembly placement")
+    take = read(directory / "actual-take.json")
+    receipt = read(directory / "actual-output-receipt.json")
+    package = read(directory / "actual-generation-package.json")
+    generation = read(directory / "actual-generation-input.json")
+    anchors = [("navigation." + key, nav.get(key)) for key in
+               ("shotID", "clipID", "mediaID", "referenceAssetID", "generationPackageID", "modelID", "visibleModelID")]
+    anchors += [("package.id", package.get("id")), ("generation.package", generation.get("generationPackageID")),
+                ("receipt.package", receipt.get("package", {}).get("id")),
+                ("package.model", package.get("payload", {}).get("generationInput", {}).get("model")),
+                ("generation.model", generation.get("model")), ("receipt.model", receipt.get("input", {}).get("model")),
+                ("take.id", take.get("takeID")), ("placement.take", takes[0].get("takeID")),
+                ("receipt.asset", receipt.get("assetID")), ("take.generation", take.get("generation", {}).get("id"))]
+    anchors += [(name + ".project", document.get("projectKey")) for name, document in (("host", host), ("take", take), ("receipt", receipt))]
+    for name, value in anchors:
+        require(isinstance(value, str) and bool(value.strip()), "missing actual identity anchor: " + name)
+    require(take.get("schema") == "production-render-record/v1" and take.get("takeID") == takes[0].get("takeID")
+            and take.get("shotID") == nav["shotID"] and take.get("output", {}).get("sha256") == output_sha,
+            "foreign take record")
+    require(host.get("schema") == "production-assembly-host/v1" and host.get("projectKey") == take.get("projectKey")
+            and receipt.get("projectKey") == take.get("projectKey"), "foreign assembly project")
+    media = [item for item in host.get("media", []) if item.get("mediaID") == nav.get("mediaID")]
+    require(len(media) == 1 and media[0].get("source", {}).get("sha256") == output_sha, "assembly binds other media")
+    clips = [clip for track in host.get("tracks", []) for clip in track.get("clips", []) if clip.get("id") == nav.get("clipID")]
+    require(len(clips) == 1 and clips[0].get("mediaRef") == nav["mediaID"], "actual assembly clip points elsewhere")
+    require(receipt.get("assetID") == take.get("generation", {}).get("id") and receipt.get("output", {}).get("sha256") == output_sha,
+            "generation event/output does not bind the actual clip")
+    require(package.get("schema") == "generation-package/v1" and package.get("id") == nav.get("generationPackageID")
+            == generation.get("generationPackageID") == receipt.get("package", {}).get("id")
+            and receipt.get("input", {}).get("generationPackageID") in (None, package["id"]), "foreign generation package")
+    require(package.get("payload", {}).get("generationInput", {}).get("model") == nav["modelID"]
+            == generation.get("model") == receipt.get("input", {}).get("model"), "source model invented")
+    require(package.get("payload", {}).get("prompt") == nav.get("visibleSubmittedPrompt") and nav.get("visibleSubmittedPrompt"), "visible prompt is not the submitted package prompt")
+    refs = [ref for ref in package["payload"].get("references", []) if ref.get("assetID") == nav.get("referenceAssetID") and ref.get("sourceSHA256") == reference_sha]
+    require(refs, "actual reference is not a submitted input revision")
+    for identifier in ["production.plan.select." + nav["shotID"], "production.object.clip." + nav["clipID"],
+                       "asset." + nav["mediaID"] + ".original." + nav["referenceAssetID"], "production.object.shot." + nav["shotID"]]:
+        require(pointer(entry, identifier), "missing native object navigation: " + identifier)
+    require(len(pointer(entry, "asset." + nav["mediaID"] + ".original." + nav["referenceAssetID"])) >= 2,
+            "negative and successful original navigation not both exercised")
+    plan = read(directory / "actual-production-plan.json")
+    shots = plan.get("executionPlan", {}).get("shots", [])
+    ids = [shot.get("id") for shot in shots]
+    require(nav["shotID"] in ids, "shot not in actual projection")
+    expected_label = "Shot " + str(ids.index(nav["shotID"]) + 1)
+    usage = observation(entry, "canonical character usage navigation")
+    bible = read(directory / "actual-bible.json")
+    require(usage.get("entityKind") == "character" and isinstance(usage.get("entityID"), str) and usage["entityID"].strip()
+            and any(character.get("id") == usage["entityID"] for character in bible.get("characters", [])), "usage does not name an actual canonical character")
+    shot = shots[ids.index(nav["shotID"])]
+    require(usage.get("shotID") == usage.get("inspectedShotID") == nav["shotID"]
+            and any(block.get("entity_id") == usage["entityID"] and block.get("relation") for block in shot.get("blocking", []))
+            and usage.get("bibleSHA256") == digest(directory / "actual-bible.json")
+            and usage.get("planSHA256") == digest(directory / "actual-production-plan.json"), "usage is not bound to the canonical shot and References bytes")
+    entity_click = pointer(entry, "bible.entity.select.character." + usage["entityID"])
+    usage_click = pointer(entry, "inspector.usage.shot." + nav["shotID"])
+    require(len(entity_click) == len(usage_click) == 1 and entity_click[0] < usage_click[0]
+            and usage.get("visibleShotLabel") == expected_label, "missing actual character to Used in shots navigation")
+    require(all(any(name.endswith(suffix + ".png") for name in entry["screenshots"])
+                for suffix in ("character-used-in-shots", "character-usage-shot-inspector")), "missing actual character and Shot Inspector captures")
+    require(nav.get("visiblePlacedRelation") == expected_label + " · Placed clip"
+            and nav.get("visibleReferenceRelation") == expected_label + " · Reference input", "actual placed/reference relationship labels differ")
+    first, end = host.get("fps", 0) // 2, host.get("fps", 0) * 3 // 2
+    require(first > 0 and end > first, "missing actual editing clock")
+    turns = set()
+    for kind in ("shot", "timeline", "source"):
+        request = read(directory / ("request-" + kind + ".json"))
+        require(request == observation(entry, "actual captured task " + kind), "actual runtime request differs from recorded native action")
+        captured = selection(request.get("rawAppContext"))
+        require(captured == request.get("selection") and captured.get("editingFPS") == host["fps"], "task selection changed in transit")
+        require(request.get("kind") == kind and request.get("sessionID") == history.get("sessionID") and request.get("turnID"), "task left the selected old thread")
+        turns.add(request["turnID"])
+        require(isinstance(captured.get("label"), str) and bool(captured["label"].strip())
+                and request.get("stagedTitle") == "Revise: " + captured["label"], "visible title and frozen scope differ")
+        actions = entry.get("interactions", [])
+        finish = next(index for index, action in enumerate(actions) if action.get("label") == "actual captured task " + kind)
+        start = max([index for index, action in enumerate(actions[:finish]) if action.get("label", "").startswith("actual captured task ")] or [-1])
+        run = [index for index in pointer(entry, "agent.task.run") if start < index < finish]
+        if kind == "shot":
+            require(captured.get("planningShotID") == nav["shotID"] and captured.get("planningRevision") == plan.get("header", {}).get("revision")
+                    and captured.get("label") == expected_label and captured.get("workspace") == "production"
+                    and captured.get("timelineRange") is None and captured.get("source") is None, "production shot borrowed a hidden range")
+            menus = [index for index, action in enumerate(actions) if start < index < finish and action.get("kind") == "menu"
+                     and action.get("id") == "agent.task.choose" and action.get("item") == "Revise Selected Object"]
+            require(request.get("workspaceChangedAfterStage") is False and len(menus) == len(run) == 1
+                    and menus[0] < run[0], "shot task was not natively chosen then run in its actual workspace")
+        else:
+            require(request.get("workspaceChangedAfterStage") is True and captured.get("workspace") == "edit", "actual edit origin was lost")
+            stage = [index for index in pointer(entry, "inspector.task.stage") if start < index < finish]
+            run = [index for index in pointer(entry, "agent.task.run") if start < index < finish]
+            switch = [index for index in pointer(entry, "production.plan.select." + nav["shotID"]) if start < index < finish]
+            require(len(stage) == 1 and len(run) == 1 and any(stage[0] < index < run[0] for index in switch), "no actual workspace switch between stage and send")
+            if kind == "timeline":
+                require(captured.get("timelineRange") == {"start": first, "end": end} and captured.get("source") is None
+                        and captured.get("timelineFrame") == end, "wrong actual timeline range")
+                bindings = [binding for binding in captured.get("clips", []) if binding.get("clipID") == nav["clipID"]]
+                require(len(bindings) == 1 and bindings[0].get("mediaRef") == nav["mediaID"], "range lost its actual clip binding")
+                for code in (34, 31):
+                    require(any(action.get("kind") == "keyboard" and action.get("code") == code for action in actions[start:finish]), "native IN/OUT key missing")
+            else:
+                source = captured.get("source", {})
+                require(captured.get("timelineRange") is None and source.get("assetID") == nav["mediaID"]
+                        and source.get("range") == {"start": first, "end": end} and source.get("playheadFrame") == end
+                        and source.get("inSeconds") == first / host["fps"] and source.get("outSeconds") == end / host["fps"], "wrong actual source range/clock")
+                for mark in ("in", "out"):
+                    require(pointer(entry, "source." + mark + "." + nav["mediaID"]), "native source mark missing")
+    require(len(turns) == 3 and history.get("continuedTurns") == 3, "old conversation was not continued with three actual tasks")
+    legacy = read(directory / "initial-legacy-conversation.json")
+    require(legacy.get("id") == history.get("sessionID") and "isOpen" not in legacy and "draft" not in legacy, "not the actual old-format fixture")
+    require(pointer(entry, "agent.history.select." + history["sessionID"]) and len(pointer(entry, "agent.history.delete." + history["sessionID"])) == 2,
+            "old history selection/cancel/retry not native")
+    actions = entry["interactions"]
+    selected = pointer(entry, "agent.history.select." + history["sessionID"])
+    deletes = pointer(entry, "agent.history.delete." + history["sessionID"])
+    confirms = [index for index, action in enumerate(actions) if action.get("kind") == "verified-state" and action.get("label") == "native-pointer"
+                and action.get("evidence", {}).get("target") == "button.Delete “" + legacy["title"] + "”"]
+    escape = [index for index, action in enumerate(actions) if action.get("kind") == "keyboard" and action.get("code") == 53]
+    require(len(confirms) == 1 and selected[-1] < deletes[0]
+            and any(deletes[0] < index < deletes[1] for index in escape) and deletes[1] < confirms[0], "native delete cancel/retry/confirm order differs")
+    searches = [index for index, action in enumerate(actions) if action.get("kind") == "text"
+                and action.get("field", {}).get("id") == "agent.history.search"
+                and action["field"].get("expected") == action["field"].get("actual") == legacy["title"]]
+    require(any(index < selected[0] for index in searches)
+            and any(selected[-1] < index < deletes[0] for index in searches), "actual history search before select and delete missing")
+    dirty = [index for index, action in enumerate(actions) if action.get("label") == "before native history Save"
+             and action.get("evidence") == {"documentDirty": True}]
+    saves = [index for index, action in enumerate(actions) if action.get("kind") == "keyboard" and action.get("code") == 1
+             and action.get("characters") == "s" and action.get("modifiers") == 1 << 20]
+    completed = next(index for index, action in enumerate(actions) if action.get("label") == "older conversation continued and deleted")
+    require(len(dirty) == len(saves) == 1 and confirms[0] < dirty[0] < saves[0] < completed, "native dirty document Save order differs")
+    before = read(directory / "history-prefix-before.json")
+    require(before == legacy.get("messages") == read(directory / "history-prefix-after.json") and len(before) == history.get("oldMessageCount")
+            and {message.get("role") for message in before} >= {"user", "assistant"}, "old conversation prefix changed")
+    require(history.get("prefixSHA256") == digest(directory / "history-prefix-before.json"), "old message prefix digest differs")
+    retained = read(directory / "other-conversations-before.json")
+    reopened = read(directory / "conversations-after-reopen.json")
+    require(retained and all(item in reopened for item in retained) and not any(item.get("id") == history["sessionID"] for item in reopened), "reopen lost other history or restored deletion")
+    source_messages = read(directory / "legacy-source-conversation.json")
+    require(any(item.get("id") == history.get("sourceSessionID")
+                and item.get("messagesSHA256") == digest(directory / "legacy-source-conversation.json") for item in retained), "legacy messages have no bound actual source conversation")
+    cursor = 0
+    for old_message in legacy["messages"]:
+        key = tuple(old_message.get(field) for field in ("id", "role", "blocks"))
+        while cursor < len(source_messages) and tuple(source_messages[cursor].get(field) for field in ("id", "role", "blocks")) != key:
+            cursor += 1
+        require(cursor < len(source_messages), "legacy prefix did not preserve actual source IDs, roles and blocks in order")
+        cursor += 1
+    for flag in ("legacyFormatFixture", "deleteCancelled", "nativeDeleteConfirmed", "nativeSaveReopen", "otherConversationsPreserved"):
+        require(history.get(flag) is True, "missing actual old-history observation: " + flag)
+    require(history.get("liveAgent") is False and history.get("originalPackageSHA256")
+            == history.get("originalPackageAfterSHA256") and history.get("originalPackageSHA256"), "original production changed")
+    require(read(directory / "canonical-before.json") == read(directory / "canonical-after.json") and read(directory / "canonical-before.json"), "canonical production changed")
+    fields = [action.get("field", {}) for action in entry["interactions"] if action.get("kind") == "text" and action.get("field", {}).get("id") == "agent.composer.input"]
+    require(fields and history.get("renderedFontPointSize") == fields[-1].get("fontPointSize")
+            and abs(fields[-1].get("fontPointSize", 0) - 13 * scale) < 0.5, "rendered composer font differs")
+    return entry
+
+
+def validate(directory, expected_scale=None):
+    directory = Path(directory)
+    entries = read(directory / "object-context-result.json")
+    scales = [1.0, 1.25, 1.5] if expected_scale is None else [expected_scale]
+    require(all(scale in (1.0, 1.25, 1.5) for scale in scales) and len(entries) == len(scales), "exact native object/context scales required")
+    for entry, scale in zip(entries, scales):
+        case = directory / f"object-context-{int(scale * 100)}"
+        require(read(case / "object-context-result.json") == entry, "runtime aggregate differs from actual case result")
+        validate_case(case, entry, scale)
+    return entries
+
+
+def validate_owner(directory, owner, expected_scale=None):
+    actual_scale = owner.get("viewport", {}).get("textScale")
+    require(actual_scale in (1.0, 1.25, 1.5) and (expected_scale is None or actual_scale == expected_scale), "owner scale differs from actual object/context case")
+    entries = validate(directory, actual_scale)
+    require(owner.get("objectContext") == entries, "actual owner report differs from object/context evidence")
+    return entries
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("evidence", type=Path)
+    parser.add_argument("--owner", type=Path)
+    args = parser.parse_args()
+    if args.owner:
+        entries = validate_owner(args.evidence, read(args.owner))
+    else:
+        entries = validate(args.evidence)

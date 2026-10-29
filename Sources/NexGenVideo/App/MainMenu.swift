@@ -51,6 +51,7 @@ enum MainMenuBuilder {
         let importItem = NSMenuItem(title: "Import Media…", action: #selector(EditorActions.importMedia(_:)), keyEquivalent: "i")
         importItem.keyEquivalentModifierMask = [.command]
         menu.addItem(importItem)
+        menu.addItem(withTitle: "Import from FilmFlow…", action: #selector(EditorActions.importFilmFlow(_:)), keyEquivalent: "")
 
         menu.addItem(.separator())
 
@@ -259,6 +260,7 @@ enum MainMenuBuilder {
     func showTimelineMarkers(_ sender: Any?)
     func deleteSelectedClips(_ sender: Any?)
     func importMedia(_ sender: Any?)
+    func importFilmFlow(_ sender: Any?)
     func playPause(_ sender: Any?)
     func stepFrameForward(_ sender: Any?)
     func stepFrameBackward(_ sender: Any?)

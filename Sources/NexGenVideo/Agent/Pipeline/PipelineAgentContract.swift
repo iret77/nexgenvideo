@@ -96,6 +96,9 @@ enum PipelineAgentContract {
     ]
 
     static let currentPhaseTools: Set<ToolName> = [
+        .compileStoryboardSketch,
+        .getRenderReviewInputs,
+        .prepareProductionAssets,
         .compilePrompt,
         .generateVideo,
         .generateImage,
@@ -178,12 +181,15 @@ enum PipelineAgentContract {
         }
 
         let knownTools = Set(ToolDefinitions.all.map(\.name))
+        let effectivePhaseBound = executableTools.merging(phaseBoundCapabilities ?? [:]) { _, declared in declared }
+        let effectiveSupporting = currentPhaseCapabilities.merging(supportingCapabilities ?? [:]) { _, declared in declared }
         let phaseBoundTools = Set(
             ToolName.allCases.filter {
                 $0.advancingPhase(args: [:]) != nil
+                    && !ProductionWorkflowV2.newWriterNames.contains($0.rawValue)
             }
         ).union([.runPhase])
-        let declaredPhaseBoundTools = executableTools.values.reduce(
+        let declaredPhaseBoundTools = effectivePhaseBound.values.reduce(
             into: Set<ToolName>()
         ) {
             $0.formUnion($1)
@@ -215,12 +221,8 @@ enum PipelineAgentContract {
                 failures.append("\(phase) has no packaged phase document")
                 continue
             }
-            let phaseBound = phaseBoundCapabilities?[phase]
-                ?? executableTools[phase]
-                ?? []
-            let supporting = supportingCapabilities?[phase]
-                ?? currentPhaseCapabilities[phase]
-                ?? []
+            let phaseBound = effectivePhaseBound[phase] ?? []
+            let supporting = effectiveSupporting[phase] ?? []
             let requiredSupportingMentions = (requiredPhaseToolMentions[phase] ?? [])
                 .filter {
                     !currentPhaseTools.contains($0) || supporting.contains($0)
@@ -238,7 +240,7 @@ enum PipelineAgentContract {
                     "\(phase) instructions contain forbidden stale operation \(forbidden)"
                 )
             }
-            for tool in executableTools[phase] ?? [] {
+            for tool in phaseBound {
                 if !knownTools.contains(tool) {
                     failures.append("\(phase) is missing tool \(tool.rawValue)")
                     continue
@@ -259,12 +261,15 @@ enum PipelineAgentContract {
                 }
             }
         }
-        if Set(currentPhaseCapabilities.keys) != Set(musicvideoPhases) {
+        if !Set(effectivePhaseBound.keys).isSubset(of: Set(musicvideoPhases)) {
+            failures.append("phase-bound capabilities contain an unknown phase")
+        }
+        if Set(effectiveSupporting.keys) != Set(musicvideoPhases) {
             failures.append(
                 "current-phase capability map doesn't cover the canonical phase set"
             )
         }
-        for (phase, tools) in currentPhaseCapabilities {
+        for (phase, tools) in effectiveSupporting {
             for tool in tools where !currentPhaseTools.contains(tool) {
                 failures.append(
                     "\(phase) grants \(tool.rawValue), which isn't guarded as a current-phase tool"

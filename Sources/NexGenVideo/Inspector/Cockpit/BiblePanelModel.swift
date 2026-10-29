@@ -87,7 +87,7 @@ struct BibleLook: Decodable, Sendable, Equatable {
 }
 
 /// Common shape shared by every Bible entity kind, so one card view renders all of them.
-protocol BibleEntity: Sendable {
+protocol BiblePanelEntity: Sendable {
     var id: String { get }
     var name: String { get }
     var visualPrompt: String { get }
@@ -120,7 +120,7 @@ private func decodeSheets(_ raw: [String: String]?) -> [BibleSheet] {
     (raw ?? [:]).sorted { $0.key < $1.key }.map { BibleSheet(key: $0.key, path: $0.value) }
 }
 
-struct BibleCharacter: Decodable, Sendable, Equatable, Identifiable, BibleEntity {
+struct BibleCharacter: Decodable, Sendable, Equatable, Identifiable, BiblePanelEntity {
     var id: String
     var name: String
     var visualPrompt: String
@@ -152,7 +152,7 @@ struct BibleCharacter: Decodable, Sendable, Equatable, Identifiable, BibleEntity
     }
 }
 
-struct BibleEnsemble: Decodable, Sendable, Equatable, Identifiable, BibleEntity {
+struct BibleEnsemble: Decodable, Sendable, Equatable, Identifiable, BiblePanelEntity {
     var id: String
     var name: String
     var visualPrompt: String
@@ -190,7 +190,7 @@ struct BibleEnsemble: Decodable, Sendable, Equatable, Identifiable, BibleEntity 
     }
 }
 
-struct BibleProp: Decodable, Sendable, Equatable, Identifiable, BibleEntity {
+struct BibleProp: Decodable, Sendable, Equatable, Identifiable, BiblePanelEntity {
     var id: String
     var name: String
     var visualPrompt: String
@@ -222,7 +222,7 @@ struct BibleProp: Decodable, Sendable, Equatable, Identifiable, BibleEntity {
     }
 }
 
-struct BibleLocation: Decodable, Sendable, Equatable, Identifiable, BibleEntity {
+struct BibleLocation: Decodable, Sendable, Equatable, Identifiable, BiblePanelEntity {
     var id: String
     var name: String
     var visualPrompt: String
@@ -256,7 +256,7 @@ struct BibleLocation: Decodable, Sendable, Equatable, Identifiable, BibleEntity 
 
 extension BibleData {
     /// Resolve an object-graph entity reference to the concrete Bible entity.
-    func entity(_ ref: BibleEntityRef) -> (any BibleEntity)? {
+    func entity(_ ref: BibleEntityRef) -> (any BiblePanelEntity)? {
         switch ref.kind {
         case .character: characters.first { $0.id == ref.id }
         case .ensemble: ensembles.first { $0.id == ref.id }

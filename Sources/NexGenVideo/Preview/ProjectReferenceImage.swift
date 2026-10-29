@@ -66,6 +66,7 @@ struct ProjectReferenceImageView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(AppTheme.Background.previewCanvasColor)
+        .reviewAcceptanceProbe("preview.reference.image", state: loadedIdentity == identity && image != nil, text: path)
         .task(id: identity) { await load(identity) }
     }
 

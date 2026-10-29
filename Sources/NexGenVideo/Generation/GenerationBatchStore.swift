@@ -81,6 +81,7 @@ enum GenerationBatchStore {
         }
         let authority = try supplied ?? .live()
         let scope = try GenerationProjectMutationScope(projectHome: home, editor: editor)
+        let workingCopyGeneration = editor.openWorkingCopyGeneration
         let authorityID = try authority.authorityID(projectKey: batch.payload.projectKey, batchID: batch.id)
         let snapshot = Snapshot(batch: batch,
             journal: try GenerationBatchJournal(approving: batch, authorityID: authorityID, approval: approval), authorityAvailable: true)
@@ -90,11 +91,21 @@ enum GenerationBatchStore {
             try await GenerationPackageInputs.validate(package: item.package, editor: editor)
         }
         try scope.requireCurrent(editor: editor)
+        var approvedSnapshot: Snapshot?
+        defer {
+            if let approvedSnapshot, approvedSnapshot.authorityAvailable,
+               editor.openWorkingCopyGeneration == workingCopyGeneration,
+               editor.projectId == approvedSnapshot.batch.payload.projectKey,
+               (try? scope.requireCurrent(editor: editor)) != nil {
+                editor.generationBatchCoordinator.record(approvedSnapshot)
+            }
+        }
         if try authority.loadIfPresent(projectKey: batch.payload.projectKey, batchID: batch.id) != nil {
             let existing = try load(id: batch.id, home: home, authority: authority)
             guard existing.batch == batch else {
                 throw GenerationRequestError.gate("This batch identity already belongs to another manifest.")
             }
+            approvedSnapshot = existing
             return existing
         }
         try confirm?()
@@ -102,11 +113,11 @@ enum GenerationBatchStore {
         try markDirty(editor: editor)
         let record = try authority.create(batch: batch, journal: snapshot.journal, home: home)
         let stored = Snapshot(record: record)
+        approvedSnapshot = stored
         // The durable authority is the approval; a missing projection is rewritten by the next journal update.
         do {
             try scope.requireCurrent(editor: editor)
             try writeProjectProjection(record: record, home: home)
-            editor.generationBatchCoordinator.record(stored)
         } catch {
             Log.generation.error("approved batch \(batch.id) has no project projection yet: \(error.localizedDescription)")
         }
@@ -126,6 +137,7 @@ enum GenerationBatchStore {
         }
         let authority = try supplied ?? .live()
         let scope = try GenerationProjectMutationScope(projectHome: home, editor: editor)
+        let workingCopyGeneration = editor.openWorkingCopyGeneration
         let current = try load(id: expected.batch.id, home: home, authority: authority)
         guard current == expected else {
             throw GenerationRequestError.gate("The generation batch advanced in another operation. Read its current state before continuing.")
@@ -155,9 +167,13 @@ enum GenerationBatchStore {
         do {
             try scope.requireCurrent(editor: editor)
             try writeProjectProjection(record: updatedRecord, home: home)
-            editor.generationBatchCoordinator.record(updated)
         } catch {
             Log.generation.error("batch \(updatedRecord.batch.id) changed without a project projection: \(error.localizedDescription)")
+        }
+        if editor.openWorkingCopyGeneration == workingCopyGeneration,
+           editor.projectId == updated.batch.payload.projectKey,
+           (try? scope.requireCurrent(editor: editor)) != nil {
+            editor.generationBatchCoordinator.record(updated)
         }
         return updated
     }
@@ -275,23 +291,73 @@ enum GenerationBatchStore {
     }
 
     /// Every transaction a validated project-local batch journal tracks; batch resume owns those runs.
-    nonisolated static func batchTransactionIDs(home: URL) -> Set<String> {
-        Set(batchItemsByTransaction(home: home).keys)
+    nonisolated static func batchTransactionIDs(home: URL) throws -> Set<String> {
+        Set(try batchItemsByTransaction(home: home).keys)
     }
 
     /// The batch item each tracked transaction belongs to.
-    nonisolated static func batchItemsByTransaction(home: URL) -> [String: GenerationBatchAuthorization] {
+    nonisolated static func batchItemsByTransaction(home: URL) throws -> [String: GenerationBatchAuthorization] {
         let folder = home.appendingPathComponent("generation-batches", isDirectory: true)
-        guard let ids = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else { return [:] }
+        guard (try? FileManager.default.destinationOfSymbolicLink(atPath: folder.path)) == nil else {
+            throw GenerationRequestError.storage("The project generation batch history cannot be verified.")
+        }
+        guard FileManager.default.fileExists(atPath: folder.path) else { return [:] }
+        guard home.resolvingSymlinksInPath().appendingPathComponent("generation-batches").standardizedFileURL
+                == folder.resolvingSymlinksInPath().standardizedFileURL else {
+            throw GenerationRequestError.storage("The project generation batch history cannot be verified.")
+        }
+        let ids = try FileManager.default.contentsOfDirectory(atPath: folder.path)
         var items: [String: GenerationBatchAuthorization] = [:]
         for id in ids where !id.hasPrefix(".") {
-            guard let snapshot = try? loadProjectIfPresent(id: id, home: home) else { continue }
+            guard let snapshot = try loadProjectIfPresent(id: id, home: home),
+                  snapshot.batch.payload.projectKey == projectIdentity(home: home) else {
+                throw GenerationRequestError.storage("The project generation batch history is incomplete or belongs to another project.")
+            }
             for execution in snapshot.journal.executions {
                 guard let transaction = execution.transactionID else { continue }
+                guard items[transaction] == nil else {
+                    throw GenerationRequestError.storage("A generation transaction belongs to more than one recorded batch item.")
+                }
                 items[transaction] = GenerationBatchAuthorization(batchID: snapshot.batch.id, itemID: execution.itemID)
             }
         }
         return items
+    }
+
+    struct ReconciliationOwnership: Sendable {
+        let projectKey: String
+        let items: [String: GenerationBatchAuthorization]
+        let projectedItems: [String: GenerationBatchAuthorization]
+
+        nonisolated subscript(_ transaction: String) -> GenerationBatchAuthorization? { items[transaction] }
+
+        nonisolated func permitsLateBill(_ transaction: String) -> Bool {
+            items[transaction] == nil || projectedItems[transaction] == items[transaction]
+        }
+    }
+
+    nonisolated static func reconciliationOwnership(home: URL,
+        authority supplied: GenerationExecutionAuthorityStore? = nil) throws -> ReconciliationOwnership {
+        let projected = try batchItemsByTransaction(home: home)
+        guard let projectKey = projectIdentity(home: home) else {
+            throw GenerationRequestError.storage("The generation history has no verified project identity.")
+        }
+        let authority = try supplied ?? .live()
+        var items = projected
+        for record in try authority.all(projectKey: projectKey) {
+            for execution in record.journal.executions {
+                guard let transaction = execution.transactionID else { continue }
+                let item = GenerationBatchAuthorization(batchID: record.batch.id, itemID: execution.itemID)
+                guard items[transaction] == nil || items[transaction] == item else {
+                    throw GenerationRequestError.storage("The project and host disagree about a generation transaction's batch.")
+                }
+                items[transaction] = item
+            }
+            guard record.spendEvents.allSatisfy({ items[$0.transactionId]?.batchID == record.batch.id }) else {
+                throw GenerationRequestError.storage("The host generation history has an unassigned batch transaction.")
+            }
+        }
+        return ReconciliationOwnership(projectKey: projectKey, items: items, projectedItems: projected)
     }
 
     nonisolated private static func loadProjectIfPresent(id: String, home: URL) throws -> Snapshot? {

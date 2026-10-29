@@ -14,6 +14,8 @@ struct AgentTask: Codable, Equatable {
     var originContext: String? = nil
     var replyToMessageID: UUID? = nil
     var phase: String? = nil
+    var mediaOrganizationScope: MediaOrganizationScope? = nil
+    var captionRevisionScope: CaptionRevisionScope? = nil
 }
 
 struct ChatSessionDraft: Codable, Equatable {
@@ -46,7 +48,7 @@ struct ChatSessionDecision: Codable, Equatable {
         if dialog.purpose == .workflowIntake {
             return intakeKey != nil && origin == .direct
         }
-        guard dialog.purpose == .chatClarification, intakeKey == nil else { return false }
+        guard [.chatClarification, .mediaOrganization, .captionRevision].contains(dialog.purpose), intakeKey == nil else { return false }
         switch origin {
         case .direct: return true
         case .inAppChat(let id), .embeddedRuntime(let id, _): return id == sessionID

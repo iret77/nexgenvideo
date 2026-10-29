@@ -6,11 +6,22 @@ enum CockpitTab: String, Hashable, CaseIterable {
     case story = "Project Brief"
     case productionDesign = "Production Design"
     case treatment = "Treatment"
+    case script = "Script"
     case storyboard = "Storyboard"
+    case shotPlanning = "Shot Planning"
+    case renderReview = "Render Review"
     case bible = "Bible"
     case shotlist = "Shotlist"
     case review = "Review"
     case project = "Project"
+
+    var displayName: String {
+        switch self {
+        case .bible: PhaseDisplay.label("bible")
+        case .shotlist: PhaseDisplay.label("shotlist")
+        default: rawValue
+        }
+    }
 
     static let visibleTabs: [CockpitTab] = [.pipeline, .story, .treatment, .storyboard, .bible, .shotlist, .review]
 }
@@ -35,21 +46,28 @@ struct ProjectCockpitView: View {
     var body: some View {
         @Bindable var editor = editor
         let packSurfaces = editor.availableCockpitPackSurfaces
-        var titles = CockpitTab.visibleTabs.map(\.rawValue)
-        titles.insert(contentsOf: packSurfaces.map(\.title), at: min(1, titles.count))
+        var visibleTabs = CockpitTab.visibleTabs
+        if editor.usesProductionPlanningV2, let index = visibleTabs.firstIndex(of: .storyboard) {
+            visibleTabs.insert(.shotPlanning, at: index + 1)
+            visibleTabs.insert(.script, at: index)
+            if let reviewIndex = visibleTabs.firstIndex(of: .review) { visibleTabs.insert(.renderReview, at: reviewIndex) }
+        }
+        var titles = visibleTabs.map(\.displayName)
+        titles.insert(contentsOf: packSurfaces.map(\.displayName), at: min(1, titles.count))
         let selectedSurface = packSurfaces.first { $0.id == editor.cockpitPackSurfaceID }
-        let selectedTitle = selectedSurface?.title ?? editor.cockpitTab.rawValue
+        let selectedTitle = selectedSurface?.displayName ?? editor.cockpitTab.displayName
 
         return GeometryReader { geometry in
-        let dockMaximumHeight = max(AppTheme.Spacing.none, geometry.size.height
-            - AppTheme.Layout.workspaceHeaderHeight * interfaceScale
-            - AppTheme.ComponentSize.productionArtifactMinHeight - AppTheme.BorderWidth.thin)
+        let contentHeight = max(AppTheme.Spacing.none, geometry.size.height
+            - AppTheme.Layout.workspaceHeaderHeight * interfaceScale - AppTheme.BorderWidth.thin)
+        let dockMaximumHeight = contentHeight * AppTheme.Layout.productionDockMaximumFraction
         VStack(spacing: AppTheme.Spacing.none) {
             if production {
                 HStack {
                     Text(editor.productionSelectedPhase.map(PhaseDisplay.label) ?? selectedTitle)
                         .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                     Spacer()
+                    settingsButton
                 }
                 .padding(.horizontal, AppTheme.Spacing.md)
                 .panelHeaderBar()
@@ -62,9 +80,9 @@ struct ProjectCockpitView: View {
                         acceptanceProbePrefix: WorkspaceUIAcceptance.isRequested ? "cockpit.tab" : nil
                     ) { title in
                         acknowledgeReview(title: title)
-                        if let surface = packSurfaces.first(where: { $0.title == title }) {
+                        if let surface = packSurfaces.first(where: { $0.displayName == title }) {
                             editor.cockpitPackSurfaceID = surface.id
-                        } else if let tab = CockpitTab(rawValue: title) {
+                        } else if let tab = visibleTabs.first(where: { $0.displayName == title }) {
                             editor.cockpitTab = tab
                             editor.cockpitPackSurfaceID = nil
                         }
@@ -79,8 +97,12 @@ struct ProjectCockpitView: View {
                 } else {
                     switch editor.cockpitTab {
                     case .story, .treatment: StoryPanelView(document: editor.cockpitTab, drafts: editor.storyPanelDrafts)
-                    case .productionDesign: ProductionStyleReviewView(standalone: true)
-                    case .storyboard: StoryboardPanelView()
+                    case .productionDesign: ProductionDesignWorkspaceView()
+                    case .script: ScriptPanelView()
+                    case .storyboard:
+                        if editor.usesProductionPlanningV2 { StoryboardPlanningView() } else { StoryboardPanelView() }
+                    case .shotPlanning: ShotPlanningView()
+                    case .renderReview: ProductionRenderReviewView(draft: editor.renderReviewDraft)
                     case .bible: BiblePanelView()
                     case .pipeline:
                         if production {
@@ -91,7 +113,8 @@ struct ProjectCockpitView: View {
                         } else {
                             PipelinePanelView()
                         }
-                    case .shotlist: ShotlistPanelView()
+                    case .shotlist:
+                        if editor.usesProductionPlanningV2 { ProductionPlanView() } else { ShotlistPanelView() }
                     case .review: ReviewPanelView()
                     case .project: ProjectSettingsView()
                     }
@@ -108,9 +131,10 @@ struct ProjectCockpitView: View {
                 AppDivider()
                 ScrollView {
                     PipelinePanelView(presentation: .dock)
+                        .environment(\.productionDecisionCompact, true)
                         .environment(\.generationDecisionMaximumHeight,
-                            max(AppTheme.Spacing.none, dockMaximumHeight - AppTheme.Layout.workspaceHeaderHeight * interfaceScale
-                                - AppTheme.Spacing.md - AppTheme.Spacing.md))
+                            max(AppTheme.Spacing.none, dockMaximumHeight - AppTheme.Layout.productionDockStatusLineHeight * interfaceScale
+                                - AppTheme.Spacing.md - AppTheme.Spacing.md - AppTheme.Spacing.sm - AppTheme.Spacing.xs))
                         .fixedSize(horizontal: false, vertical: true)
                         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { dockContentHeight = $0 }
                 }
@@ -193,6 +217,7 @@ struct ProjectCockpitView: View {
         }
         .buttonStyle(.plain)
         .padding(.trailing, AppTheme.Spacing.sm)
+        .reviewAcceptanceProbe("project.settings.open")
         .accessibilityLabel("Project settings")
         .help("Project settings")
     }
@@ -429,6 +454,7 @@ struct ProjectSettingsView: View {
             .buttonStyle(.plain)
             .menuIndicator(.hidden)
             .fixedSize()
+            .reviewAcceptanceProbe("project.settings." + label, text: value)
         }
     }
 

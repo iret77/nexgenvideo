@@ -30,11 +30,13 @@ private struct NativeGateApprovalCheckContext: Sendable {
     let order: [String]
     let phaseAccess: PipelinePhaseAccess.Prepared
     let requirement: EngineRegistry.GateRequirement?
+    let workflow: HostWorkflowKey?
 }
 
 private struct NativeGateResolvedRegistry: Sendable {
     let name: String?
     let registry: EngineRegistry
+    let workflow: HostWorkflowKey?
 }
 
 private enum NativeGateApprovalPreparation: Sendable {
@@ -73,6 +75,8 @@ enum NativeGateWriter {
         phase: String,
         declaredPack: String?,
         declaredBinding: ProjectPackBinding? = nil,
+        declaredProductionContract: HostProductionContractBinding? = nil,
+        editor: EditorViewModel? = nil,
         executionCoordinator: PipelinePhaseRunCoordinator,
         notes: String? = nil
     ) async throws {
@@ -92,13 +96,16 @@ enum NativeGateWriter {
             phase: phase,
             declaredPack: declaredPack,
             declaredBinding: declaredBinding,
+            declaredProductionContract: declaredProductionContract,
+            editor: editor,
             executionCoordinator: executionCoordinator,
             mutationID: lease.id
         )
         try mutate(
             projectDir: projectDir,
             declaredPack: declaredPack,
-            declaredBinding: declaredBinding
+            declaredBinding: declaredBinding,
+            declaredProductionContract: declaredProductionContract
         ) { gates in
             GatesOperations.approve(&gates, phase: phase, notes: notes)
         }
@@ -109,6 +116,8 @@ enum NativeGateWriter {
         phase: String?,
         declaredPack: String?,
         declaredBinding: ProjectPackBinding? = nil,
+        declaredProductionContract: HostProductionContractBinding? = nil,
+        editor: EditorViewModel? = nil,
         executionCoordinator: PipelinePhaseRunCoordinator
     ) async -> NativeGateControlReadiness {
         let root: URL
@@ -135,7 +144,8 @@ enum NativeGateWriter {
             resolved = try resolvedRegistryContext(
                 projectDir: projectDir,
                 declaredPack: declaredPack,
-                declaredBinding: declaredBinding
+                declaredBinding: declaredBinding,
+                declaredProductionContract: declaredProductionContract
             )
         } catch {
             let blocked = NativeGateApprovalReadiness.blocked(
@@ -204,6 +214,15 @@ enum NativeGateWriter {
                 dataRoot: root,
                 executionCoordinator: executionCoordinator
             )
+            if readiness.approval.isReady, let phase {
+                do {
+                    try await requireLiveAssembly(projectDir: projectDir, phase: phase, workflow: resolved.workflow, editor: editor, readiness: true)
+                } catch {
+                    return NativeGateControlReadiness(mutations: readiness.mutations,
+                        approval: .blocked(error.localizedDescription, userMessage: error.localizedDescription))
+                }
+            }
+            try requireIdle(dataRoot: root, executionCoordinator: executionCoordinator)
             return readiness
         } catch {
             let blocked = NativeGateApprovalReadiness.blocked(
@@ -224,6 +243,8 @@ enum NativeGateWriter {
         state: GateState,
         declaredPack: String?,
         declaredBinding: ProjectPackBinding? = nil,
+        declaredProductionContract: HostProductionContractBinding? = nil,
+        editor: EditorViewModel? = nil,
         executionCoordinator: PipelinePhaseRunCoordinator,
         notes: String? = nil
     ) async throws {
@@ -244,6 +265,8 @@ enum NativeGateWriter {
                 phase: phase,
                 declaredPack: declaredPack,
                 declaredBinding: declaredBinding,
+                declaredProductionContract: declaredProductionContract,
+                editor: editor,
                 executionCoordinator: executionCoordinator,
                 mutationID: lease.id
             )
@@ -251,13 +274,16 @@ enum NativeGateWriter {
         let resolved = try resolvedRegistryContext(
             projectDir: projectDir,
             declaredPack: declaredPack,
-            declaredBinding: declaredBinding
+            declaredBinding: declaredBinding,
+            declaredProductionContract: declaredProductionContract
         )
-        let order = try PhaseContractRuntime.order(activePack: resolved.name)
+        let order = try resolved.workflow.map { try PhaseContractRuntime.order(workflow: $0) }
+            ?? PhaseContractRuntime.order(activePack: resolved.name)
         try mutate(
             projectDir: projectDir,
             declaredPack: declaredPack,
-            declaredBinding: declaredBinding
+            declaredBinding: declaredBinding,
+            declaredProductionContract: declaredProductionContract
         ) { gates in
             let current = order.first {
                 !gates.get($0).approved
@@ -284,7 +310,8 @@ enum NativeGateWriter {
         projectDir: URL,
         phase: String,
         declaredPack: String?,
-        declaredBinding: ProjectPackBinding?
+        declaredBinding: ProjectPackBinding?,
+        declaredProductionContract: HostProductionContractBinding? = nil
     ) throws -> NativeGateApprovalCheckContext {
         guard let root = DataRootResolver.dataRoot(of: projectDir) else {
             throw WriteError.notInitialized
@@ -292,7 +319,8 @@ enum NativeGateWriter {
         let resolved = try resolvedRegistryContext(
             projectDir: projectDir,
             declaredPack: declaredPack,
-            declaredBinding: declaredBinding
+            declaredBinding: declaredBinding,
+            declaredProductionContract: declaredProductionContract
         )
         return try approvalCheckContext(
             dataRoot: root,
@@ -306,17 +334,22 @@ enum NativeGateWriter {
         phase: String,
         resolved: NativeGateResolvedRegistry
     ) throws -> NativeGateApprovalCheckContext {
-        let phaseAccess = try PipelinePhaseAccess.prepare(packName: resolved.name)
+        let phaseAccess: PipelinePhaseAccess.Prepared
+        let requirement: EngineRegistry.GateRequirement?
+        if let workflow = resolved.workflow {
+            phaseAccess = try PipelinePhaseAccess.prepare(workflow: workflow)
+            requirement = try PhaseContractRuntime.gateRequirement(workflow: workflow, phase: phase, registry: resolved.registry)
+        } else {
+            phaseAccess = try PipelinePhaseAccess.prepare(packName: resolved.name)
+            requirement = try PhaseContractRuntime.gateRequirement(activePack: resolved.name, phase: phase, registry: resolved.registry)
+        }
         return NativeGateApprovalCheckContext(
             dataRoot: dataRoot,
             phase: phase,
             order: phaseAccess.order,
             phaseAccess: phaseAccess,
-            requirement: try PhaseContractRuntime.gateRequirement(
-                activePack: resolved.name,
-                phase: phase,
-                registry: resolved.registry
-            )
+            requirement: requirement,
+            workflow: resolved.workflow
         )
     }
 
@@ -342,8 +375,10 @@ enum NativeGateWriter {
 
             phase: context.phase,
             dataRoot: context.dataRoot,
-            requirement: context.requirement
+            requirement: context.requirement,
+            workflow: context.workflow
         )
+        if context.workflow?.isProductionV2 == true { return }
         if context.phase == "production_design" {
             onStage?(.productionStyle)
             _ = try ProductionStyleStoreV1.load(dataRoot: context.dataRoot)
@@ -388,6 +423,7 @@ enum NativeGateWriter {
         targetPhase: String,
         declaredPack: String?,
         declaredBinding: ProjectPackBinding? = nil,
+        declaredProductionContract: HostProductionContractBinding? = nil,
         executionCoordinator: PipelinePhaseRunCoordinator
     ) throws {
         let lease = try beginGateMutation(
@@ -404,13 +440,16 @@ enum NativeGateWriter {
         let resolved = try resolvedRegistryContext(
             projectDir: projectDir,
             declaredPack: declaredPack,
-            declaredBinding: declaredBinding
+            declaredBinding: declaredBinding,
+            declaredProductionContract: declaredProductionContract
         )
-        let order = try PhaseContractRuntime.order(activePack: resolved.name)
+        let order = try resolved.workflow.map { try PhaseContractRuntime.order(workflow: $0) }
+            ?? PhaseContractRuntime.order(activePack: resolved.name)
         try mutate(
             projectDir: projectDir,
             declaredPack: declaredPack,
-            declaredBinding: declaredBinding
+            declaredBinding: declaredBinding,
+            declaredProductionContract: declaredProductionContract
         ) { gates in
             _ = try GatesOperations.rewindTo(&gates, target: targetPhase, order: order)
         }
@@ -421,8 +460,9 @@ enum NativeGateWriter {
         let lease = try beginGateMutation(projectDir: home, label: "Accept frame deviations", executionCoordinator: editor.pipelinePhaseRunCoordinator)
         var ownsLease = true
         defer { if ownsLease { editor.pipelinePhaseRunCoordinator.endMutation(projectRoot: lease.root, id: lease.id) } }
-        let resolved = try resolvedRegistryContext(projectDir: home, declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding)
-        let order = try PhaseContractRuntime.order(activePack: resolved.name)
+        let resolved = try resolvedRegistryContext(projectDir: home, declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding, declaredProductionContract: editor.declaredProductionContract)
+        let order = try resolved.workflow.map { try PhaseContractRuntime.order(workflow: $0) }
+            ?? PhaseContractRuntime.order(activePack: resolved.name)
         try validateFrameFindings(audit, dataRoot: lease.root, order: order)
         try ProjectWorkingCopy.markDirty(key: key)
         let path = try FrameAuditAcceptanceStoreV1.location(audit: audit, dataRoot: lease.root)
@@ -431,7 +471,7 @@ enum NativeGateWriter {
         try ArtifactTransaction.perform(paths: paths, dataRoot: lease.root) {
             try FrameAuditAcceptanceStoreV1.accept(audit: audit, expectedSnapshot: snapshot, reason: reason, dataRoot: lease.root)
             try PipelinePhaseMutationRecorder.record(phase: "frames", dataRoot: lease.root, captureLineage: true,
-                declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding)
+                declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding, declaredProductionContract: editor.declaredProductionContract)
         }
         editor.pipelinePhaseRunCoordinator.endMutation(projectRoot: lease.root, id: lease.id)
         ownsLease = false
@@ -462,8 +502,9 @@ enum NativeGateWriter {
             guard let home = project, editor.workingRoot == home,
                   let root = DataRootResolver.dataRoot(of: home) else { throw WriteError.notInitialized }
             try requireIdle(dataRoot: root, executionCoordinator: editor.pipelinePhaseRunCoordinator)
-            let resolved = try resolvedRegistryContext(projectDir: home, declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding)
-            let order = try PhaseContractRuntime.order(activePack: resolved.name)
+            let resolved = try resolvedRegistryContext(projectDir: home, declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding, declaredProductionContract: editor.declaredProductionContract)
+            let order = try resolved.workflow.map { try PhaseContractRuntime.order(workflow: $0) }
+            ?? PhaseContractRuntime.order(activePack: resolved.name)
             try await Task.detached(priority: .utility) {
                 try validateFrameFindings(audit, dataRoot: root, order: order)
                 guard try FrameAuditAcceptanceStoreV1.snapshot(audit: audit, dataRoot: root) == snapshot else {
@@ -529,6 +570,8 @@ enum NativeGateWriter {
         phase: String,
         declaredPack: String?,
         declaredBinding: ProjectPackBinding? = nil,
+        declaredProductionContract: HostProductionContractBinding? = nil,
+        editor: EditorViewModel? = nil,
         executionCoordinator: PipelinePhaseRunCoordinator,
         mutationID: UUID? = nil
     ) async throws {
@@ -548,7 +591,8 @@ enum NativeGateWriter {
             projectDir: projectDir,
             phase: phase,
             declaredPack: declaredPack,
-            declaredBinding: declaredBinding
+            declaredBinding: declaredBinding,
+            declaredProductionContract: declaredProductionContract
         )
         do {
             try await Task.detached(priority: .utility) {
@@ -563,12 +607,16 @@ enum NativeGateWriter {
                 }
             }.value
         } catch let blocked as GateBlocked {
+            ProductionPlanningAcceptanceFixture.diagnosticStage("approval-check." + phase + ".failed", error: blocked)
             throw WriteError.failed(blocked.message)
         } catch let error as WriteError {
+            ProductionPlanningAcceptanceFixture.diagnosticStage("approval-check." + phase + ".failed", error: error)
             throw error
         } catch {
+            ProductionPlanningAcceptanceFixture.diagnosticStage("approval-check." + phase + ".failed", error: error)
             throw WriteError.failed(error.localizedDescription)
         }
+        try await requireLiveAssembly(projectDir: projectDir, phase: phase, workflow: context.workflow, editor: editor)
         if let mutationID {
             try requireMutation(
                 dataRoot: context.dataRoot,
@@ -581,6 +629,37 @@ enum NativeGateWriter {
                 executionCoordinator: executionCoordinator
             )
         }
+    }
+
+    private static func requireLiveAssembly(projectDir: URL, phase: String, workflow: HostWorkflowKey?,
+                                            editor: EditorViewModel?, readiness: Bool = false) async throws {
+        guard phase == "render", workflow?.isProductionV2 == true else { return }
+        let home = projectDir.resolvingSymlinksInPath().standardizedFileURL
+        guard let editor, editor.workingRoot?.resolvingSymlinksInPath().standardizedFileURL == home,
+              let root = DataRootResolver.dataRoot(of: home) else {
+            throw WriteError.failed("Open the assembled production before approving Render.")
+        }
+        let timeline = editor.timeline
+        let media = try liveMediaURLs(editor)
+        try await Task.detached(priority: .utility) {
+            try FileDigest.$readinessCache.withValue(readiness ? readinessDigests : nil) {
+                try PipelineProductionAssemblyWriter.requireCurrentTimeline(dataRoot: root, timeline: timeline, mediaURLs: media)
+            }
+        }.value
+        guard editor.workingRoot?.resolvingSymlinksInPath().standardizedFileURL == home, editor.timeline == timeline,
+              try liveMediaURLs(editor) == media else {
+            throw WriteError.failed("The cut changed during approval. Review the assembled production again.")
+        }
+    }
+
+    private static func liveMediaURLs(_ editor: EditorViewModel) throws -> [String: URL] {
+        var result: [String: URL] = [:]
+        for asset in editor.mediaAssets {
+            guard result.updateValue(asset.url, forKey: asset.id) == nil else {
+                throw WriteError.failed("Two media files share an identity. Repair the media library before approving Render.")
+            }
+        }
+        return result
     }
 
     private static func requireMutation(
@@ -634,7 +713,7 @@ enum NativeGateWriter {
                         ?? "All phases are approved. Rewind explicitly before changing an approved artifact."
                 } else if let manifest = context.phaseAccess.manifest,
                           let step = IntakePlanner.next(manifest.steps(for: context.phase), dataRoot: context.dataRoot,
-                              ledger: IntakeLedger.load(dataRoot: context.dataRoot)) {
+                              ledger: IntakeLedger.load(dataRoot: context.dataRoot), workflowID: context.phaseAccess.contract?.manifest.contractID) {
                     message = "Complete the \(step.title) card before continuing."
                 }
             }
@@ -646,14 +725,16 @@ enum NativeGateWriter {
     private static func resolvedRegistryContext(
         projectDir: URL,
         declaredPack: String?,
-        declaredBinding: ProjectPackBinding?
+        declaredBinding: ProjectPackBinding?,
+        declaredProductionContract: HostProductionContractBinding? = nil
     ) throws -> NativeGateResolvedRegistry {
         let resolved: String?
         do {
             resolved = try ProjectPackGate.requireLiveMutation(
                 projectURL: projectDir,
                 declaredPack: declaredPack,
-                declaredBinding: declaredBinding
+                declaredBinding: declaredBinding,
+                declaredProductionContract: declaredProductionContract
             )
         } catch {
             throw WriteError.failed(error.localizedDescription)
@@ -668,10 +749,10 @@ enum NativeGateWriter {
         } catch let blocked as GateBlocked {
             throw WriteError.failed(blocked.message)
         }
-        return NativeGateResolvedRegistry(
-            name: resolved,
-            registry: registry
-        )
+        guard let dataRoot = DataRootResolver.dataRoot(of: projectDir) else { throw WriteError.notInitialized }
+        let workflow = try PhaseContractRuntime.resolveWorkflow(dataRoot: dataRoot, expectedPack: declaredBinding,
+            expectedProductionContract: declaredProductionContract)
+        return NativeGateResolvedRegistry(name: resolved, registry: registry, workflow: workflow)
     }
 
     /// Load → mutate → save gates.yaml at the project's data root.
@@ -679,6 +760,7 @@ enum NativeGateWriter {
         projectDir: URL,
         declaredPack: String?,
         declaredBinding: ProjectPackBinding?,
+        declaredProductionContract: HostProductionContractBinding? = nil,
         _ body: (inout Gates) throws -> Void
     ) throws {
         guard let root = DataRootResolver.dataRoot(of: projectDir) else {
@@ -689,14 +771,16 @@ enum NativeGateWriter {
             _ = try ProjectPackGate.requireLiveMutation(
                 projectURL: projectDir,
                 declaredPack: declaredPack,
-                declaredBinding: declaredBinding
+                declaredBinding: declaredBinding,
+                declaredProductionContract: declaredProductionContract
             )
             var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
             try body(&gates)
             _ = try ProjectPackGate.requireLiveMutation(
                 projectURL: projectDir,
                 declaredPack: declaredPack,
-                declaredBinding: declaredBinding
+                declaredBinding: declaredBinding,
+                declaredProductionContract: declaredProductionContract
             )
             try store.save(gates, to: PipelineLayout.gatesFile)
         } catch let error as WriteError {

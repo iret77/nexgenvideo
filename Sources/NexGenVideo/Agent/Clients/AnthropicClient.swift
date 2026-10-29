@@ -7,9 +7,11 @@ extension Notification.Name {
 enum AnthropicKeychain {
     private static let account = "anthropic-api-key"
 
-    static func save(_ key: String) {
-        KeychainStore.save(key, account: account)
+    @discardableResult
+    static func save(_ key: String) -> Bool {
+        guard KeychainStore.save(key, account: account) else { return false }
         NotificationCenter.default.post(name: .anthropicAPIKeyChanged, object: nil)
+        return true
     }
 
     static func load() -> String? {
@@ -23,9 +25,11 @@ enum AnthropicKeychain {
         return KeychainStore.load(account: account)
     }
 
-    static func delete() {
-        KeychainStore.delete(account: account)
+    @discardableResult
+    static func delete() -> Bool {
+        guard KeychainStore.delete(account: account) else { return false }
         NotificationCenter.default.post(name: .anthropicAPIKeyChanged, object: nil)
+        return true
     }
 }
 
@@ -33,6 +37,8 @@ struct AnthropicClient: AgentClient {
     let apiKey: String
     let model: AnthropicModelInfo
     var maxTokens: Int? = nil
+    var reviewStreamControl: AgentReviewChildStreamControl? = nil
+    var urlSession: URLSession = .shared
 
     var supportsToolSearch: Bool { model.supportsToolSearch }
 
@@ -52,6 +58,7 @@ struct AnthropicClient: AgentClient {
                     continuation.finish(throwing: error)
                 }
             }
+            reviewStreamControl?.register(task)
             continuation.onTermination = { _ in task.cancel() }
         }
     }
@@ -78,7 +85,11 @@ struct AnthropicClient: AgentClient {
             options: [.sortedKeys]
         )
 
-        let (bytes, response) = try await URLSession.shared.bytes(for: request)
+        if let reviewStreamControl, let body = request.httpBody {
+            try await reviewStreamControl.requireRequest(body)
+        }
+        try Task.checkCancellation()
+        let (bytes, response) = try await urlSession.bytes(for: request)
         if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
             var body = ""
             for try await line in bytes.lines { body += line + "\n" }

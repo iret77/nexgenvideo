@@ -11,9 +11,14 @@ protocol ClaudeCodeRuntimeDriving: AnyObject {
         presentation: AgentUserPresentation?
     ) -> Bool
     func stop()
+    func waitUntilStopped() async -> Bool
 }
 
 extension ClaudeCodeRuntime: ClaudeCodeRuntimeDriving {}
+
+extension ClaudeCodeRuntimeDriving {
+    func waitUntilStopped() async -> Bool { false }
+}
 
 @MainActor
 final class ClaudeCodeRuntimeAdapter: AgentRuntimeAdapter {
@@ -34,6 +39,18 @@ final class ClaudeCodeRuntimeAdapter: AgentRuntimeAdapter {
     private var runtime: (any ClaudeCodeRuntimeDriving)?
     private var activeRelay: AgentRuntimeEventRelay?
     private var activeTurnID: UUID?
+    private var modelByMessageID: [String: String] = [:]
+    private var responseByToolID: [String: AgentModelResponseEvidence] = [:]
+
+    func modelResponseEvidence(toolUseID: String) -> AgentModelResponseEvidence? { responseByToolID[toolUseID] }
+    var pendingModelEvidenceCount: Int { evidenceRendezvous.pendingCount }
+
+    func awaitModelResponseEvidence(toolUseID: String, sessionID: UUID, turnID: UUID) async -> AgentModelResponseEvidence? {
+        guard state == .running(sessionID: sessionID, turnID: turnID) else { return nil }
+        let evidence = await evidenceRendezvous.wait(for: .init(sessionID: sessionID, turnID: turnID, toolUseID: toolUseID))
+        guard !Task.isCancelled, state == .running(sessionID: sessionID, turnID: turnID) else { return nil }
+        return evidence
+    }
 
     private(set) var descriptor: AgentRuntimeDescriptor
     private(set) var state: AgentRuntimeState = .idle
@@ -58,7 +75,10 @@ final class ClaudeCodeRuntimeAdapter: AgentRuntimeAdapter {
         let relay = AgentRuntimeEventRelay(sessionID: request.sessionID, turnID: request.turnID)
         activeRelay = relay
         activeTurnID = request.turnID
+        modelByMessageID = [:]
+        responseByToolID = [:]
         state = .running(sessionID: request.sessionID, turnID: request.turnID)
+        evidenceRendezvous.begin(sessionID: request.sessionID, turnID: request.turnID)
         let runtime = runtime ?? makeRuntime(session)
         self.runtime = runtime
 
@@ -83,12 +103,15 @@ final class ClaudeCodeRuntimeAdapter: AgentRuntimeAdapter {
 
     func cancel(sessionID: UUID) {
         guard session?.sessionID == sessionID else { return }
+        runtimeCallbackID = UUID()
+        evidenceRendezvous.invalidate()
+        responseByToolID = [:]
+        modelByMessageID = [:]
         if let relay = activeRelay, let activeTurnID {
             state = .cancelling(sessionID: sessionID, turnID: activeTurnID)
             relay.finish(.cancelled)
         }
-        runtime?.stop()
-        runtime = nil
+        stopRuntime()
         activeRelay = nil
         activeTurnID = nil
         state = .ready(sessionID: sessionID)
@@ -101,12 +124,33 @@ final class ClaudeCodeRuntimeAdapter: AgentRuntimeAdapter {
         state = .ended(sessionID: sessionID)
     }
 
+    func endAndWait(sessionID: UUID) async -> Bool {
+        guard session?.sessionID == sessionID else { return false }
+        end(sessionID: sessionID)
+        return await runtimeShutdown?.value ?? true
+    }
+
+    private func stopRuntime() {
+        guard let stopping = runtime else { return }
+        stopping.stop()
+        runtime = nil
+        let previous = runtimeShutdown
+        runtimeShutdown = Task { @MainActor in
+            let priorStopped = await previous?.value ?? true
+            let stopped = await stopping.waitUntilStopped()
+            return priorStopped && stopped
+        }
+    }
+
     private func configure(_ request: AgentRuntimeSessionRequest) throws {
         if let activeRelay, activeRelay.terminal == nil {
             throw AgentRuntimeContractError.turnAlreadyRunning
         }
-        runtime?.stop()
-        runtime = nil
+        runtimeCallbackID = UUID()
+        stopRuntime()
+        responseByToolID = [:]
+        modelByMessageID = [:]
+        evidenceRendezvous.invalidate()
         session = request
         descriptor = AgentBackend.claudeCode.runtimeDescriptor(
             toolNames: Set(request.hostContext.toolSchemas.map(\.name)),
@@ -116,15 +160,26 @@ final class ClaudeCodeRuntimeAdapter: AgentRuntimeAdapter {
     }
 
     private func makeRuntime(_ request: AgentRuntimeSessionRequest) -> any ClaudeCodeRuntimeDriving {
-        runtimeFactory(
+        let callbackID = runtimeCallbackID
+        return runtimeFactory(
             request,
             .init(
-                events: { [weak self] in self?.receive($0) },
-                failure: { [weak self] in self?.receive($0) },
+                events: { [weak self] events in
+                    guard self?.runtimeCallbackID == callbackID else { return }
+                    self?.receive(events)
+                },
+                failure: { [weak self] failure in
+                    guard self?.runtimeCallbackID == callbackID else { return }
+                    self?.receive(failure)
+                },
                 resumeFailed: { [weak self] in
+                    guard self?.runtimeCallbackID == callbackID else { return }
                     self?.activeRelay?.yield(.providerSessionInvalidated)
                 },
-                streamingChanged: { [weak self] in self?.streamingChanged($0) }
+                streamingChanged: { [weak self] streaming in
+                    guard self?.runtimeCallbackID == callbackID else { return }
+                    self?.streamingChanged(streaming)
+                }
             )
         )
     }
@@ -133,6 +188,8 @@ final class ClaudeCodeRuntimeAdapter: AgentRuntimeAdapter {
         guard let relay = activeRelay, relay.terminal == nil else { return }
         for event in events where relay.terminal == nil {
             switch event {
+            case .responseMetadata(let messageID, let modelID):
+                modelByMessageID[messageID] = modelID
             case .sessionStarted(let sessionID):
                 relay.yield(.providerSessionStarted(sessionID))
             case .assistantBlock(let messageID, let block):
@@ -140,6 +197,11 @@ final class ClaudeCodeRuntimeAdapter: AgentRuntimeAdapter {
                 case .text(let value):
                     relay.yield(.text(messageID: messageID, value: value, isDelta: false))
                 case .toolUse(let id, let name, let inputJSON):
+                    if let session, let turn = activeTurnID, let modelID = modelByMessageID[messageID] {
+                        responseByToolID[id] = try? AgentModelResponseEvidence(sessionID: session.sessionID,
+                            turnID: turn, messageID: messageID, modelID: modelID, toolUseID: id, toolName: name, inputJSON: inputJSON)
+                        if let evidence = responseByToolID[id] { evidenceRendezvous.receive(evidence) }
+                    }
                     relay.yield(.toolCall(
                         messageID: messageID,
                         id: id,
@@ -195,6 +257,7 @@ final class ClaudeCodeRuntimeAdapter: AgentRuntimeAdapter {
 
     private func finishActiveRelay(_ relay: AgentRuntimeEventRelay, failed message: String?) {
         guard activeRelay === relay, let sessionID = session?.sessionID else { return }
+        evidenceRendezvous.invalidate()
         activeRelay = nil
         activeTurnID = nil
         state = message.map { .failed(sessionID: sessionID, message: $0) }
@@ -243,4 +306,8 @@ final class ClaudeCodeRuntimeAdapter: AgentRuntimeAdapter {
             onUpdate: { _, isStreaming in callbacks.streamingChanged(isStreaming) }
         )
     }
+
+    private let evidenceRendezvous = AgentModelEvidenceRendezvous()
+    private var runtimeCallbackID = UUID()
+    private var runtimeShutdown: Task<Bool, Never>?
 }

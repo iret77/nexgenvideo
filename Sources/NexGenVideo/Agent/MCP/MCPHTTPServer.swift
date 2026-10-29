@@ -71,7 +71,9 @@ actor MCPHTTPServer {
     private static let maxHeaderBytes = 65_536
     private static let maxRequestBytes = 20 * 1_024 * 1_024
 
-    private let port: UInt16
+    private let requestedPort: UInt16
+    private var port: UInt16 { listener?.port?.rawValue ?? requestedPort }
+    var boundPort: UInt16? { listener?.port?.rawValue }
     private let makeServer: @Sendable (SessionOrigin) async -> Server
     private let modernHandler: @Sendable (
         MCP20260728.Request,
@@ -103,7 +105,7 @@ actor MCPHTTPServer {
         },
         onFailure: @escaping @Sendable (String) async -> Void = { _ in }
     ) {
-        self.port = port
+        self.requestedPort = port
         self.makeServer = makeServer
         self.modernHandler = modernHandler
         self.onFailure = onFailure
@@ -115,7 +117,7 @@ actor MCPHTTPServer {
         lifecycleGeneration &+= 1
         let generation = lifecycleGeneration
         isStarting = true
-        guard let endpointPort = NWEndpoint.Port(rawValue: port) else {
+        guard let endpointPort = requestedPort == 0 ? NWEndpoint.Port.any : NWEndpoint.Port(rawValue: requestedPort) else {
             isStarting = false
             Log.mcp.fault("invalid port \(self.port)")
             throw NSError(
@@ -130,9 +132,9 @@ actor MCPHTTPServer {
             host: "127.0.0.1",
             port: endpointPort
         )
-        let initialSession: SDKSession
+        let initialSession: SDKSession?
         do {
-            initialSession = try await makeSession()
+            initialSession = requestedPort == 0 ? nil : try await makeSession()
         } catch {
             if lifecycleGeneration == generation {
                 isStarting = false
@@ -140,7 +142,7 @@ actor MCPHTTPServer {
             throw error
         }
         guard isStarting, lifecycleGeneration == generation else {
-            await initialSession.transport.disconnect()
+            await initialSession?.transport.disconnect()
             throw CancellationError()
         }
 
@@ -149,11 +151,13 @@ actor MCPHTTPServer {
             listener = try NWListener(using: parameters)
         } catch {
             isStarting = false
-            await initialSession.transport.disconnect()
+            await initialSession?.transport.disconnect()
             throw error
         }
-        sessions[initialSession.id] = initialSession
-        currentSessionID = initialSession.id
+        if let initialSession {
+            sessions[initialSession.id] = initialSession
+            currentSessionID = initialSession.id
+        }
         self.listener = listener
         listener.stateUpdateHandler = { [weak self] state in
             guard let self else { return }
@@ -178,6 +182,15 @@ actor MCPHTTPServer {
             (continuation: CheckedContinuation<Void, Error>) in
             startupContinuation = continuation
             listener.start(queue: .global(qos: .userInitiated))
+        }
+        if requestedPort == 0 {
+            let session = try await makeSession()
+            guard lifecycleGeneration == generation, self.listener != nil else {
+                await session.transport.disconnect()
+                throw CancellationError()
+            }
+            sessions[session.id] = session
+            currentSessionID = session.id
         }
     }
 

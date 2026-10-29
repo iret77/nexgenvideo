@@ -61,6 +61,7 @@ count and which can render integrated typography when a text variant is wanted.
 
 Add the format constraint to the intent:
 
+- `square`: square composition, one clear focal point, readable at thumbnail size.
 - `landscape`: YouTube thumbnail, subject slightly off-center, negative space,
   readable at 320 px width.
 - `portrait`: vertical social composition, motif in the upper or middle third,
@@ -72,7 +73,10 @@ Compose the intent from the subject, format constraint, and Bible look. Import
 only the chosen Bible sheets, then call
 `compile_prompt(..., shotId="none")` and `generate_image` with the returned
 compiled prompt/token, the selected aspect ratio, optional reference media, and
-a descriptive media name.
+a descriptive media name. To group multiple compiled requests under one native
+usage review, use prepare_generation_batch instead of submitting those items
+separately. The host executes approved batch items; do not call generate_image
+again for the same requests.
 
 The host owns spend approval. Never imply that a model is free or submit a paid
 generation without its spend card.
@@ -83,7 +87,9 @@ When ready, show the generated media and use a granular review dialog:
 - Revise the subject or model
 - Skip this format
 
-This review decides only the current image; it is not a phase approval.
+Keep proceeds to C4. Revise returns to C2 for this format. Skip proceeds to the
+next selected format, or C6 if none remains. This review decides only the current
+image; it is not a phase approval.
 
 ### C4 — Offer a typography variant
 
@@ -97,12 +103,15 @@ Use `show_dialog`: "Create a second variant with artist and title?"
 Ask explicitly for Artist and Title. Never infer either from the project name,
 Brief, Treatment, or imported filenames.
 
-Select a runnable text-capable image model. Import the approved clean cover as a
-reference, compile a new `shotId="none"` intent that asks the model to integrate
+Select a runnable text-capable image model. Reuse the approved clean cover's
+existing media ID as a reference; do not import it again. Compile a new `shotId="none"` intent that asks the model to integrate
 the exact artist/title wording into the design, and call `generate_image` with a
 descriptive media name.
 
-Show the result and offer a granular Keep / Revise / Skip review. If text is
+Show the generated variant and offer a granular Keep / Revise / Skip review.
+Keep or Skip proceeds to the next format
+(or C6); Skip retains the clean cover. Revise repeats C5 with the requested
+changes and a new spend review. If text is
 garbled, offer another text-capable model or omit the typography variant. Do not
 claim a deterministic local overlay exists; the host exposes no such renderer.
 
@@ -115,8 +124,10 @@ there is no aggregate approval or pipeline mutation.
 ## Mandatory rules
 
 - Run only after the canonical pipeline is fully approved.
-- Use only post-pipeline utility capabilities: `list_models`, `get_bible`,
-  `import_media`, `compile_prompt`, `generate_image`, and `show_dialog`.
+- Use the guarded post-pipeline utility capabilities `import_media`,
+  `compile_prompt`, `prepare_generation_batch`, and `generate_image`.
+- Use the globally available read tools `get_project_state`, `list_models`, and
+  `get_bible`, plus the main-session `show_dialog`, for inspection and choices.
 - Never call phase runners, gate writers, canonical artifact writers,
   `record_render`, or timeline assembly from this utility.
 - Never derive artist/title text. Ask explicitly.

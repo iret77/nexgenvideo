@@ -30,7 +30,7 @@ enum CockpitStateView {
             icon = hasProduction ? "exclamationmark.triangle" : "wand.and.stars"
             headline = hasProduction ? title : (isStarting ? "Setting up production…" : "No production pipeline")
             detail = hasProduction ? "Production could not be loaded. Try again." : isStarting
-                ? "Complete the required setup in the Tasks panel."
+                ? "The workflow will appear when setup is complete."
                 : "This project isn't set up for AI production yet."
         default:
             icon = "exclamationmark.triangle"

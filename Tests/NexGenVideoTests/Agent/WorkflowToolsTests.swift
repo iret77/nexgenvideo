@@ -47,6 +47,24 @@ struct WorkflowToolsTests {
         )
     }
 
+    // This unit fixture isolates Ledger transactions in the unversioned core Bible phase.
+    private func openLedgerFixture(_ h: ToolHarness, savedRoot: URL) throws -> (root: URL, manager: UndoManager) {
+        let store = YAMLArtifactStore(dataRoot: savedRoot)
+        var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
+        for phase in coreGatePhases.prefix(while: { $0 != "bible" }) {
+            GatesOperations.approve(&gates, phase: phase)
+        }
+        try store.save(gates, to: PipelineLayout.gatesFile)
+        let home = FrameInventory.projectHome(of: savedRoot)
+        try Fixtures.prepareProjectPackage(at: home)
+        h.editor.projectURL = home
+        let manager = UndoManager()
+        h.editor.undoManager = manager
+        let root = try #require(h.editor.workingRoot.flatMap { DataRootResolver.dataRoot(of: $0) })
+        #expect(try ProjectStateBuilder.buildSnapshot(dataRoot: root).nextPhase == "bible")
+        return (root, manager)
+    }
+
     private func falRoutingDependencies() -> (
         activation: ProviderActivation,
         candidates: ProductionRouteCandidateProvider
@@ -241,22 +259,13 @@ struct WorkflowToolsTests {
         _ pack: String,
         dataRoot: URL
     ) throws -> ProjectPackBinding {
-        // Packs load at runtime — register the loadable musicvideo pack (idempotent)
-        // the way the host's PluginLoader does, so the workflow tools resolve it.
-        PackCatalog.register(MusicvideoPack())
+        try #require(pack == "musicvideo")
         let home = FrameInventory.projectHome(of: dataRoot)
-        let loaded = try #require(PackCatalog.pack(named: pack))
-        let binding = try #require(ProjectPackBinding(
-            id: pack,
-            version: loaded.version,
-            projectSchema: "\(pack)/2.0.0"
-        ))
-        try ProjectPluginSettings.setActivePlugin(binding, projectURL: home)
-        return binding
+        return try CurrentMusicvideoFixture.activate(at: home)
     }
 
     private func recordLineage(_ phase: String, dataRoot: URL) throws {
-        PackCatalog.register(MusicvideoPack())
+        try CurrentMusicvideoFixture.load()
         let registry = PackCatalog.registry(activePack: "musicvideo")
         let provider = try #require(registry.phaseLineageProviders[phase])
         try PipelineLineageStore.record(
@@ -270,19 +279,25 @@ struct WorkflowToolsTests {
         try recordLineage("analysis", dataRoot: dataRoot)
     }
 
+    private func recordLegacyLineage(_ phase: String, dataRoot: URL) throws {
+        try PipelineLineageStore.record(phase: phase,
+            snapshot: MusicvideoPipelineLineage.snapshot(phase: phase, dataRoot: dataRoot), dataRoot: dataRoot)
+    }
+
     private func minimalShotlist(
         project: String = "demo",
         keyframeStrategy: KeyframeStrategy = .start,
         productionPlan: ShotProductionPlan? = nil,
-        generator: String = "test"
+        generator: String = "test",
+        duration: Double = 4
     ) throws -> Shotlist {
         let shot = try Shot(
-            id: "s001", section: "verse", timeStart: 0.0, timeEnd: 4.0, durationS: 4.0,
+            id: "s001", section: "verse", timeStart: 0.0, timeEnd: duration, durationS: duration,
             type: .performance, description: "d", visualPrompt: "p", mood: "m",
             keyframeStrategy: keyframeStrategy,
             productionPlan: productionPlan
         )
-        let song = try Song(title: "t", audioPath: "a.wav", analysisPath: "an.json", bpm: 120.0, durationS: 4.0)
+        let song = try Song(title: "t", audioPath: "a.wav", analysisPath: "an.json", bpm: 120.0, durationS: duration)
         return try Shotlist(
             schema_: shotlistSchemaVersion, mode: .section, project: project, song: song,
             generated: "2026-01-01", generator: generator, shots: [shot]
@@ -794,157 +809,8 @@ struct WorkflowToolsTests {
         )
     }
 
-    private func writeMeasuredAnalysis(dataRoot: URL) throws -> URL {
-        let audio = dataRoot.appendingPathComponent("audio/song.wav")
-        try FileManager.default.createDirectory(
-            at: audio.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        try Data("stub".utf8).write(to: audio)
-        let songHash = SHA256.hash(data: try Data(contentsOf: audio))
-            .map { String(format: "%02x", $0) }
-            .joined()
-        let lyrics = "[Intro]\nopening line\n[Verse]\nverse line"
-        let lyricsURL = dataRoot.appendingPathComponent("lyrics/lyrics.txt")
-        try FileManager.default.createDirectory(
-            at: lyricsURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        try Data(lyrics.utf8).write(to: lyricsURL)
-        let analysis = dataRoot.appendingPathComponent("analysis/song.json")
-        try FileManager.default.createDirectory(
-            at: analysis.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        let alignmentSource = dataRoot.appendingPathComponent("analysis/stems/vocals.wav")
-        try FileManager.default.createDirectory(
-            at: alignmentSource.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        try Data("measured-vocals".utf8).write(to: alignmentSource)
-        let object: [String: Any] = [
-            "schema": "analysis/v3",
-            "project": "demo",
-            "song_path": "audio/song.wav",
-            "song_sha256": songHash,
-            "sample_rate": 44_100,
-            "duration_s": 12,
-            "bpm": 120,
-            "beats": [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0],
-            "downbeats": [0.0, 2.0, 4.0],
-            "sections": [
-                [
-                    "index": 0, "start": 0.0, "end": 4.0, "cluster": 0,
-                    "label": "intro", "source": "measured_system_hierarchy", "confidence": 0.95,
-                ],
-                [
-                    "index": 1, "start": 4.0, "end": 12.0, "cluster": 1,
-                    "label": "verse", "source": "measured_system_hierarchy", "confidence": 0.95,
-                ],
-            ],
-            "structure_candidates": [
-                ["source": "librosa", "sections": [
-                    ["index": 0, "start": 0.0, "end": 4.0, "cluster": 0],
-                    ["index": 1, "start": 4.0, "end": 12.0, "cluster": 1],
-                ]],
-                ["source": "essentia", "sections": [
-                    ["index": 0, "start": 0.0, "end": 4.0, "cluster": 0],
-                    ["index": 1, "start": 4.0, "end": 12.0, "cluster": 1],
-                ]],
-            ],
-            "structure_resolution": [
-                "version": "adaptive-structure/v5",
-                "status": "resolved",
-                "method": "music_understanding_hierarchy",
-                "detector_sources": ["apple_music_understanding"],
-                "minimum_section_bars": 0,
-                "candidate_boundary_count": 2,
-                "consensus_boundary_count": 0,
-                "alignment_marker_count": 2,
-                "resolved_alignment_marker_count": 2,
-                "alignment_timing_evidence": "recognized_speech",
-                "accepted_boundary_count": 1,
-                "discarded_boundary_count": 2,
-                "boundary_evidence": [
-                    [
-                        "time": 0.0,
-                        "kind": "system_hierarchy",
-                        "detector_sources": ["apple_music_understanding"],
-                        "lyric_marker": "intro",
-                    ],
-                    [
-                        "time": 4.0,
-                        "kind": "system_hierarchy",
-                        "detector_sources": ["apple_music_understanding"],
-                        "lyric_marker": "verse",
-                    ],
-                ],
-                "hierarchy": [
-                    "source": "apple_music_understanding",
-                    "sections": [["start": 0.0, "end": 4.0], ["start": 4.0, "end": 12.0]],
-                    "segments": [["start": 0.0, "end": 4.0], ["start": 4.0, "end": 12.0]],
-                    "phrases": [["start": 0.0, "end": 4.0], ["start": 4.0, "end": 12.0]],
-                ],
-                "detail": "Measured system hierarchy.",
-            ],
-            "downbeat_source": "music-understanding",
-            "pipeline_stages": ["structure", "music_understanding"],
-            "stage_diagnostics": [[
-                "stage": "music_understanding",
-                "status": "succeeded",
-                "detail": "Measured system hierarchy.",
-            ], [
-                "stage": "lyrics_alignment",
-                "status": "succeeded",
-                "detail": "Measured recognized-speech alignment.",
-                "timing_evidence": "recognized_speech",
-            ]],
-            "alignment": [
-                ["start": 0.0, "end": 1.0, "text": "opening line", "section_marker": "intro", "words": [
-                    ["text": "opening", "start": 0.0, "end": 0.4, "score": 1.0],
-                    ["text": "line", "start": 0.4, "end": 1.0, "score": 1.0],
-                ]],
-                ["start": 4.0, "end": 5.0, "text": "verse line", "section_marker": "verse", "words": [
-                    ["text": "verse", "start": 4.0, "end": 4.4, "score": 1.0],
-                    ["text": "line", "start": 4.4, "end": 5.0, "score": 1.0],
-                ]],
-            ],
-            "interpretation": [
-                "section_labels": [],
-                "anomalies": [[
-                    "kind": "boundary_divergence",
-                    "time": "4.000",
-                    "detail": "librosa vs essentia",
-                ]],
-                "overall_character": "",
-            ],
-        ]
-        try JSONSerialization.data(
-            withJSONObject: object,
-            options: [.prettyPrinted, .sortedKeys]
-        ).write(to: analysis)
-        try AnalysisMeasurementProofStore.save(
-            AnalysisMeasurementProof(
-                project: "demo",
-                songSHA256: songHash,
-                lyricsAlignment: AnalysisMeasurementProof.LyricsAlignmentProof(
-                    sourcePath: "analysis/stems/vocals.wav",
-                    sourceSHA256: try FileDigest.sha256(of: alignmentSource),
-                    lyricsSHA256: AnalysisMeasurementProofStore.lyricsFingerprint(lyrics),
-                    alignmentSHA256: try AnalysisMeasurementProofStore.alignmentFingerprint(
-                        object
-                    ),
-                    timingEvidence: .recognizedSpeech,
-                    timingMethod: nil,
-                    markerCount: 2,
-                    lyricTokenCount: 4,
-                    matchedTokenCount: 4
-                )
-            ),
-            dataRoot: dataRoot
-        )
-        try recordAnalysisLineage(dataRoot: dataRoot)
-        return analysis
+    private func writeMeasuredAnalysis(dataRoot: URL, readableTrack: Bool = false) throws -> URL {
+        try CurrentMusicvideoFixture.seedAnalysis(dataRoot: dataRoot, readableTrack: readableTrack)
     }
 
     private func writeUnresolvedAnalysis(dataRoot: URL) throws -> URL {
@@ -1199,7 +1065,7 @@ struct WorkflowToolsTests {
         // musicvideo declares `analysis` right after project_init (it gates before brief).
         #expect(phases?[1] == "analysis")
         #expect(phases?.dropFirst(2).first == "brief")  // analysis precedes brief
-        #expect(phases?.count == coreGatePhases.count + 1)
+        #expect(phases == CurrentMusicvideoFixture.phases)
     }
 
     @Test("get_project_state places the active pack's analysis gate before brief")
@@ -1234,8 +1100,12 @@ struct WorkflowToolsTests {
 
     @Test("approve_gate, set_gate_state, and rewind round-trip through gates.yaml")
     func gateRoundTrip() async throws {
-        let (h, dataRoot, cleanup) = try scaffold()
-        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let (h, savedRoot, cleanup) = try scaffold()
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        let dataRoot = try h.openProject(dataRoot: savedRoot)
         let dir = dataRoot.path
 
         // Gates approve in order — project_init before brief. approve_gate now surfaces a user
@@ -1256,7 +1126,7 @@ struct WorkflowToolsTests {
         #expect(pending.turnDisposition == .suspendTurn)
         #expect(try Data(contentsOf: gatesURL) == before)
         #expect(h.editor.agentService.pendingGateApproval?.isRewind == true)
-        _ = await h.editor.agentService.resolveGate(.approved)
+        _ = await h.editor.agentService.resolveGate(.approved, approvalID: h.editor.agentService.pendingGateApproval?.id ?? "missing")
         let revised = try await h.runOK("set_gate_state", args: ["project_dir": dir, "phase": "brief", "state": "needs_revision", "notes": "redo"]) as? [String: Any]
         #expect(revised?["approved"] as? Bool == false)
 
@@ -1279,9 +1149,13 @@ struct WorkflowToolsTests {
 
     @Test("approve_gate is hard-blocked for analysis until a real artifact exists")
     func analysisGateHardBlocked() async throws {
-        let (h, dataRoot, cleanup) = try scaffold(enforceHardGates: true)
-        defer { try? FileManager.default.removeItem(at: cleanup) }
-        let binding = try activatePack("musicvideo", dataRoot: dataRoot)
+        let (h, savedRoot, cleanup) = try scaffold(enforceHardGates: true)
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        let binding = try activatePack("musicvideo", dataRoot: savedRoot)
+        let dataRoot = try h.openProject(dataRoot: savedRoot)
         try FileManager.default.createDirectory(
             at: dataRoot.appendingPathComponent("audio"),
             withIntermediateDirectories: true
@@ -1536,7 +1410,7 @@ struct WorkflowToolsTests {
             .appendingPathComponent("brief-intake-\(UUID().uuidString)", isDirectory: true)
         let package = cleanup.appendingPathComponent("Project.ngv", isDirectory: true)
         try Fixtures.prepareProjectPackage(at: package)
-        PackCatalog.register(MusicvideoPack())
+        try CurrentMusicvideoFixture.load()
         let packageDataRoot = try ProjectScaffold.initProject(
             home: package,
             name: "demo",
@@ -1600,62 +1474,77 @@ struct WorkflowToolsTests {
 
     @Test("list_project_files + copy_project_file stage files and refuse to escape the project")
     func projectFileTools() async throws {
-        let (h, dataRoot, cleanup) = try scaffold()
+        let context = try await CurrentMusicvideoFixture.makeScript(beforeDesignWrite: { context in
+            let h = ToolHarness(editor: context.editor, executor: context.executor)
+            let dataRoot = context.dataRoot
+            let importDir = dataRoot.appendingPathComponent("import/characters/mouse", isDirectory: true)
+            try FileManager.default.createDirectory(at: importDir, withIntermediateDirectories: true)
+            try FullflowAcceptanceFixture.writeReference(to: importDir.appendingPathComponent("face.png"))
+            try ConfirmedIdentityAssetStoreV1.recordIntake(
+                role: .character,
+                identityName: "Mouse",
+                identitySlug: "mouse",
+                paths: ["import/characters/mouse/face.png"],
+                dataRoot: dataRoot,
+                confirmedAt: "2026-09-09T00:00:00Z"
+            )
+
+            let list = try #require(try await h.runOK("list_project_files", args: [
+                "project_dir": dataRoot.path, "subdir": "import",
+            ]) as? [String: Any])
+            #expect((list["files"] as? [String])?.contains("import/characters/mouse/face.png") == true)
+
+            let forbiddenStylePath = try ProductionWorkflowRecoveryMigration.outputPath(area: "production_design/refs", leaf: "mouse.png", dataRoot: dataRoot)
+            let identityAsStyle = await h.runRaw("copy_project_file", args: [
+                "project_dir": dataRoot.path,
+                "from": "import/characters/mouse/face.png",
+                "to": forbiddenStylePath,
+            ])
+            #expect(identityAsStyle.isError)
+            #expect(ToolHarness.textOf(identityAsStyle).contains("reserved for Bible identity"))
+
+            let styleURL = dataRoot.appendingPathComponent("import/western.png")
+            try FullflowAcceptanceFixture.writeReference(to: styleURL)
+            let styleBytes = try Data(contentsOf: styleURL)
+            let stylePath = try ProductionWorkflowRecoveryMigration.outputPath(area: "production_design/refs", leaf: "western.png", dataRoot: dataRoot)
+            _ = try await h.runOK("copy_project_file", args: [
+                "project_dir": dataRoot.path,
+                "from": "import/western.png",
+                "to": stylePath,
+            ])
+            #expect(try Data(contentsOf: dataRoot.appendingPathComponent(stylePath)) == styleBytes)
+
+        })
+        defer { context.document.close() }
+        try await ProductionPlanningAcceptanceFixture.approve("script", in: context)
+        _ = try await ProductionPlanningAcceptanceFixture.writeStoryboard(in: context)
+        _ = try await ProductionPlanningAcceptanceFixture.attachSketches(in: context)
+        try await ProductionPlanningAcceptanceFixture.approve("storyboard", in: context)
+        _ = try await ProductionPlanningAcceptanceFixture.writeShotPlanning(in: context)
+        try await ProductionPlanningAcceptanceFixture.approve("shot_planning", in: context)
+        let h = ToolHarness(editor: context.editor, executor: context.executor)
+        let dataRoot = context.dataRoot
+        let cleanup = context.packageURL.deletingLastPathComponent().appendingPathComponent("copy-escape-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: cleanup) }
-        _ = try activatePack("musicvideo", dataRoot: dataRoot)
         let importDir = dataRoot.appendingPathComponent("import/characters/mouse", isDirectory: true)
-        try FileManager.default.createDirectory(at: importDir, withIntermediateDirectories: true)
-        try Data("x".utf8).write(to: importDir.appendingPathComponent("face.png"))
-        try ConfirmedIdentityAssetStoreV1.recordIntake(
-            role: .character,
-            identityName: "Mouse",
-            identitySlug: "mouse",
-            paths: ["import/characters/mouse/face.png"],
-            dataRoot: dataRoot,
-            confirmedAt: "2026-09-09T00:00:00Z"
-        )
-
-        let list = try #require(try await h.runOK("list_project_files", args: [
-            "project_dir": dataRoot.path, "subdir": "import",
-        ]) as? [String: Any])
-        #expect((list["files"] as? [String])?.contains("import/characters/mouse/face.png") == true)
-
-        let identityAsStyle = await h.runRaw("copy_project_file", args: [
-            "project_dir": dataRoot.path,
-            "from": "import/characters/mouse/face.png",
-            "to": "production_design/refs/mouse.png",
-        ])
-        #expect(identityAsStyle.isError)
-        #expect(ToolHarness.textOf(identityAsStyle).contains("reserved for Bible identity"))
-
-        let styleURL = dataRoot.appendingPathComponent("import/western.png")
-        try Data("style".utf8).write(to: styleURL)
-        _ = try await h.runOK("copy_project_file", args: [
-            "project_dir": dataRoot.path,
-            "from": "import/western.png",
-            "to": "production_design/refs/western.png",
-        ])
-        #expect(try String(
-            contentsOf: dataRoot.appendingPathComponent(
-                "production_design/refs/western.png"
-            ),
-            encoding: .utf8
-        ) == "style")
+        let mousePath = try ProductionWorkflowRecoveryMigration.outputPath(area: "bible", leaf: "mouse/front.png", dataRoot: dataRoot)
+        let variantPath = try ProductionWorkflowRecoveryMigration.outputPath(area: "bible", leaf: "mouse-red/front.png", dataRoot: dataRoot)
 
         let confirmationURL = dataRoot.appendingPathComponent(
             PipelineLayout.confirmedIdentityAssetsFile
         )
         let confirmationBeforeCopy = try Data(contentsOf: confirmationURL)
+        let identityBytes = try Data(contentsOf: importDir.appendingPathComponent("face.png"))
         let copy = try #require(try await h.runOK("copy_project_file", args: [
             "project_dir": dataRoot.path,
-            "from": "import/characters/mouse/face.png", "to": "bible/refs/mouse/face.png",
+            "from": "import/characters/mouse/face.png", "to": mousePath,
         ]) as? [String: Any])
         #expect(copy["confirmed_identity_provenance"] as? Bool == true)
-        let copiedURL = dataRoot.appendingPathComponent("bible/refs/mouse/face.png")
-        #expect(try String(contentsOf: copiedURL, encoding: .utf8) == "x")                 // bytes copied
-        #expect(try String(contentsOf: importDir.appendingPathComponent("face.png"), encoding: .utf8) == "x")  // source intact (copy)
+        let copiedURL = dataRoot.appendingPathComponent(mousePath)
+        #expect(try Data(contentsOf: copiedURL) == identityBytes)
+        #expect(try Data(contentsOf: importDir.appendingPathComponent("face.png")) == identityBytes)
         #expect(try ConfirmedIdentityAssetStoreV1.isCurrent(
-            "bible/refs/mouse/face.png",
+            mousePath,
             dataRoot: dataRoot
         ))
         #expect(try Data(contentsOf: confirmationURL) == confirmationBeforeCopy)
@@ -1666,7 +1555,7 @@ struct WorkflowToolsTests {
             at: variantImport.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        try Data("red-outfit".utf8).write(to: variantImport)
+        try FullflowAcceptanceFixture.writeReference(to: variantImport)
         try ConfirmedIdentityAssetStoreV1.recordIntake(
             role: .character,
             identityName: "Mouse — red outfit",
@@ -1678,7 +1567,7 @@ struct WorkflowToolsTests {
         _ = try await h.runOK("copy_project_file", args: [
             "project_dir": dataRoot.path,
             "from": "import/characters/mouse-red/front.png",
-            "to": "bible/mouse-red/front.png",
+            "to": variantPath,
         ])
         _ = try await h.runOK("write_bible", args: [
             "project_dir": dataRoot.path,
@@ -1694,7 +1583,7 @@ struct WorkflowToolsTests {
                 "reference_images": [],
                 "sheets": [[
                     "view": "front",
-                    "path": "bible/refs/mouse/face.png",
+                    "path": mousePath,
                 ]],
             ], [
                 "id": "mouse_red",
@@ -1707,7 +1596,7 @@ struct WorkflowToolsTests {
                 "reference_images": [],
                 "sheets": [[
                     "view": "front",
-                    "path": "bible/mouse-red/front.png",
+                    "path": variantPath,
                 ]],
             ]],
             "ensembles": [],
@@ -1721,12 +1610,12 @@ struct WorkflowToolsTests {
                     "value": "red waistcoat",
                 ]],
                 "inherited_identity_paths": [
-                    "bible/refs/mouse/face.png",
+                    mousePath,
                 ],
             ]],
         ])
         #expect(try loadBible(dataRoot: dataRoot)?.characters.first?
-            .sheets["front"] == "bible/refs/mouse/face.png")
+            .sheets["front"] == mousePath)
         let variants = try #require(
             try BibleIdentityVariantStoreV1.loadIfPresent(dataRoot: dataRoot)
         )
@@ -1746,24 +1635,30 @@ struct WorkflowToolsTests {
         ])
         #expect(canonicalArtifact.isError == true)
 
+        let canonicalSourceDestination = try ProductionWorkflowRecoveryMigration.outputPath(area: "bible", leaf: "mouse/gates.png", dataRoot: dataRoot)
+        let gatesBeforeCanonicalSource = try Data(contentsOf: dataRoot.appendingPathComponent(PipelineLayout.gatesFile))
         let canonicalSource = await h.runRaw("copy_project_file", args: [
             "project_dir": dataRoot.path,
             "from": PipelineLayout.gatesFile,
-            "to": "bible/refs/mouse/gates.png",
+            "to": canonicalSourceDestination,
         ])
         #expect(canonicalSource.isError == true)
+        #expect(ToolHarness.textOf(canonicalSource).contains("can stage uploaded files only from import/"))
+        #expect(!FileManager.default.fileExists(atPath: dataRoot.appendingPathComponent(canonicalSourceDestination).path))
+        #expect(try Data(contentsOf: dataRoot.appendingPathComponent(PipelineLayout.gatesFile)) == gatesBeforeCanonicalSource)
 
         // A symlink escaping the project is refused too.
         let outside = cleanup.appendingPathComponent("outside", isDirectory: true)
         try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        let symlinkDestination = try ProductionWorkflowRecoveryMigration.outputPath(area: "bible", leaf: "link/stolen.png", dataRoot: dataRoot)
         try FileManager.default.createSymbolicLink(
-            at: dataRoot.appendingPathComponent("bible/link"),
+            at: dataRoot.appendingPathComponent(symlinkDestination).deletingLastPathComponent(),
             withDestinationURL: outside
         )
         let symlinkEscape = await h.runRaw("copy_project_file", args: [
             "project_dir": dataRoot.path,
             "from": "import/characters/mouse/face.png",
-            "to": "bible/link/stolen.png",
+            "to": symlinkDestination,
         ])
         #expect(symlinkEscape.isError == true)
         #expect(!FileManager.default.fileExists(atPath: outside.appendingPathComponent("stolen.png").path))
@@ -1877,18 +1772,70 @@ struct WorkflowToolsTests {
         #expect(!FileManager.default.fileExists(atPath: productionDesignAsset.path))
     }
 
-    @Test("copy_project_file stages generated media with exact pipeline provenance")
-    func projectMediaCopyRecordsProvenance() async throws {
+    @Test("copy_project_file copies ordinary sources and refuses native sources through aliases or media")
+    func projectFileCopyPreservesNativeSourceOwnership() async throws {
         let (h, dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
-        _ = try activatePack("musicvideo", dataRoot: dataRoot)
+
+        let imports = dataRoot.appendingPathComponent("import")
+        try FileManager.default.createDirectory(at: imports, withIntermediateDirectories: true)
+        let upload = imports.appendingPathComponent("ordinary.png")
+        let uploadBytes = Data("ordinary uploaded image".utf8)
+        try uploadBytes.write(to: upload)
+        _ = try await h.runOK("copy_project_file", args: [
+            "project_dir": dataRoot.path, "from": "import/ordinary.png", "to": "bible/refs/upload.png",
+        ])
+        #expect(try Data(contentsOf: dataRoot.appendingPathComponent("bible/refs/upload.png")) == uploadBytes)
+        let generated = FrameInventory.projectHome(of: dataRoot).appendingPathComponent("ordinary-generated.png")
+        try addGeneratedImage("ordinary-generated", at: generated, to: h)
+        _ = try await h.runOK("copy_project_file", args: [
+            "project_dir": dataRoot.path, "media": "ordinary-generated", "to": "production_design/refs/generated.png",
+        ])
+        #expect(try Data(contentsOf: dataRoot.appendingPathComponent("production_design/refs/generated.png")) == Data(contentsOf: generated))
+        let nativeDirectory = imports.appendingPathComponent("filmflow/snapshot/images")
+        try FileManager.default.createDirectory(at: nativeDirectory, withIntermediateDirectories: true)
+        let nativeSource = nativeDirectory.appendingPathComponent("host.png")
+        let nativeBytes = Data("host-owned image".utf8)
+        try nativeBytes.write(to: nativeSource)
+        let alias = imports.appendingPathComponent("native-alias")
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: nativeDirectory)
+        for (id, url) in [("native-direct", nativeSource), ("native-alias", alias.appendingPathComponent("host.png"))] {
+            h.editor.mediaAssets.append(MediaAsset(id: id, url: url, type: .image, name: id))
+        }
+        let requests: [[String: Any]] = [
+            ["from": "import/native-alias/host.png", "to": "bible/refs/alias.png"],
+            ["media": "native-direct", "to": "bible/refs/native-media.png"],
+            ["media": "native-alias", "to": "production_design/refs/native-alias.png"],
+        ]
+        for var args in requests {
+            args["project_dir"] = dataRoot.path
+            let refused = await h.runRaw("copy_project_file", args: args)
+            #expect(refused.isError)
+            #expect(ToolHarness.textOf(refused).contains("Native production receipts"))
+            let destination = try #require(args["to"] as? String)
+            #expect(!FileManager.default.fileExists(atPath: dataRoot.appendingPathComponent(destination).path))
+        }
+        #expect(try Data(contentsOf: nativeSource) == nativeBytes)
+    }
+
+    @Test("copy_project_file stages generated media with exact pipeline provenance")
+    func projectMediaCopyRecordsProvenance() async throws {
+        let context = try await CurrentMusicvideoFixture.makeStoryboard()
+        defer { context.document.close() }
+        try await ProductionPlanningAcceptanceFixture.approve("storyboard", in: context)
+        _ = try await ProductionPlanningAcceptanceFixture.writeShotPlanning(in: context)
+        try await ProductionPlanningAcceptanceFixture.approve("shot_planning", in: context)
+        let h = ToolHarness(editor: context.editor, executor: context.executor)
+        let dataRoot = context.dataRoot
+        let confirmedDestination = try ProductionWorkflowRecoveryMigration.outputPath(area: "bible", leaf: "mouse/confirmed.png", dataRoot: dataRoot)
+        let generatedDestination = try ProductionWorkflowRecoveryMigration.outputPath(area: "bible", leaf: "mouse/generated.png", dataRoot: dataRoot)
         let confirmedPath = "import/characters/mouse/front.png"
         let confirmedURL = dataRoot.appendingPathComponent(confirmedPath)
         try FileManager.default.createDirectory(
             at: confirmedURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        try Data("confirmed".utf8).write(to: confirmedURL)
+        try FullflowAcceptanceFixture.writeReference(to: confirmedURL)
         try ConfirmedIdentityAssetStoreV1.recordIntake(
             role: .character,
             identityName: "Mouse",
@@ -1900,38 +1847,47 @@ struct WorkflowToolsTests {
         _ = try await h.runOK("copy_project_file", args: [
             "project_dir": dataRoot.path,
             "from": confirmedPath,
-            "to": "bible/mouse/front.png",
+            "to": confirmedDestination,
         ])
         #expect(try ConfirmedIdentityAssetStoreV1.currentEntry(
-            "bible/mouse/front.png",
+            confirmedDestination,
             dataRoot: dataRoot
         ) != nil)
         let source = FrameInventory.projectHome(of: dataRoot)
             .appendingPathComponent("sheet.png")
         try addGeneratedImage("sheet-media", at: source, to: h)
+        try FullflowAcceptanceFixture.writeReference(to: source)
+
+        let confirmedBytes = try Data(contentsOf: dataRoot.appendingPathComponent(confirmedDestination))
+        let overwrite = await h.runRaw("copy_project_file", args: [
+            "project_dir": dataRoot.path, "media": "sheet-media", "to": confirmedDestination,
+        ])
+        #expect(overwrite.isError)
+        #expect(try Data(contentsOf: dataRoot.appendingPathComponent(confirmedDestination)) == confirmedBytes)
+        #expect(try ConfirmedIdentityAssetStoreV1.currentEntry(confirmedDestination, dataRoot: dataRoot) != nil)
 
         let result = try #require(try await h.runOK(
             "copy_project_file",
             args: [
                 "project_dir": dataRoot.path,
                 "media": "sheet-media",
-                "to": "bible/mouse/front.png",
+                "to": generatedDestination,
             ]
         ) as? [String: Any])
         #expect(result["generated_provenance"] as? Bool == true)
         #expect(try ConfirmedIdentityAssetStoreV1.loadAdoptions(
             dataRoot: dataRoot
-        ).entries["bible/mouse/front.png"] == nil)
+        ).entries[generatedDestination] == nil)
 
         let proof = try loadPipelineAssetProof(
             dataRoot: dataRoot,
             scope: "bible"
         )
         let entry = try #require(
-            proof.entries["bible/mouse/front.png"]
+            proof.entries[generatedDestination]
         )
         let staged = dataRoot.appendingPathComponent(
-            "bible/mouse/front.png"
+            generatedDestination
         )
         #expect(entry.sha256 == (try FileDigest.sha256(of: staged)))
         #expect(entry.generationModel == "image-model")
@@ -2120,7 +2076,7 @@ struct WorkflowToolsTests {
             projectURL: workingHome
         )
         let result = try #require(
-            await h.editor.agentService.resolveGate(.approved)
+            await h.editor.agentService.resolveGate(.approved, approvalID: h.editor.agentService.pendingGateApproval?.id ?? "missing")
         )
         #expect(result.isError)
         #expect(try Data(contentsOf: gatesURL) == gatesBefore)
@@ -2195,16 +2151,13 @@ struct WorkflowToolsTests {
     @Test("an explicit saved-package path is redirected to the open working copy")
     func savedProjectDirCannotBypassWorkingCopy() async throws {
         let (h, savedDataRoot, cleanup) = try scaffold()
-        let home = FrameInventory.projectHome(of: savedDataRoot)
-        try Fixtures.prepareProjectPackage(at: home)
-        h.editor.projectURL = home
         defer {
             h.editor.releaseWorkingCopy()
             try? FileManager.default.removeItem(at: cleanup)
         }
-        let liveDataRoot = try #require(
-            h.editor.workingRoot.flatMap { DataRootResolver.dataRoot(of: $0) }
-        )
+        let ledgerFixture = try openLedgerFixture(h, savedRoot: savedDataRoot)
+        defer { withExtendedLifetime(ledgerFixture.manager) {} }
+        let liveDataRoot = ledgerFixture.root
 
         _ = try await h.runOK("set_ledger_attribute", args: [
             "project_dir": savedDataRoot.path,
@@ -2223,13 +2176,20 @@ struct WorkflowToolsTests {
 
     @Test("ledger set, lock, and remove round-trip; a locked attribute refuses removal")
     func ledgerRoundTrip() async throws {
-        let (h, dataRoot, cleanup) = try scaffold()
-        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let (h, savedRoot, cleanup) = try scaffold()
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        let ledgerFixture = try openLedgerFixture(h, savedRoot: savedRoot)
+        defer { withExtendedLifetime(ledgerFixture.manager) {} }
+        let dataRoot = ledgerFixture.root
         let dir = dataRoot.path
 
         let set = try await h.runOK("set_ledger_attribute", args: [
             "project_dir": dir, "kind": "look", "key": "palette", "tag": "warm amber",
         ]) as? [String: Any]
+        #expect(ledgerFixture.manager.canUndo)
         #expect(set?["tag"] as? String == "warm amber")
         #expect(set?["directive"] as? String == "warm amber")  // directive defaults to tag
         #expect(set?["locked"] as? Bool == false)
@@ -2257,18 +2217,43 @@ struct WorkflowToolsTests {
 
     @Test("set_ledger_attribute for an entity kind without object_id errors")
     func ledgerEntityNeedsObjectId() async throws {
-        let (h, dataRoot, cleanup) = try scaffold()
-        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let (h, savedRoot, cleanup) = try scaffold()
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        let ledgerFixture = try openLedgerFixture(h, savedRoot: savedRoot)
+        defer { withExtendedLifetime(ledgerFixture.manager) {} }
+        let dataRoot = ledgerFixture.root
+        try YAMLArtifactStore(dataRoot: dataRoot).save(Ledger(), to: PipelineLayout.ledgerFile)
+        let ledgerURL = PipelineLayout.url(PipelineLayout.ledgerFile, in: dataRoot)
+        let gatesURL = PipelineLayout.url(PipelineLayout.gatesFile, in: dataRoot)
+        let ledgerBefore = try Data(contentsOf: ledgerURL)
+        let gatesBefore = try Data(contentsOf: gatesURL)
+        #expect(!ledgerFixture.manager.canUndo)
         let result = await h.runRaw("set_ledger_attribute", args: [
             "project_dir": dataRoot.path, "kind": "character", "key": "wardrobe", "tag": "red jacket",
         ])
         #expect(result.isError)
+        let message = ToolHarness.textOf(result)
+        #expect(message.contains("Ledger update rejected:"))
+        #expect(message.contains("missingObjectId"))
+        #expect(message.contains("character"))
+        #expect(try Data(contentsOf: ledgerURL) == ledgerBefore)
+        #expect(try Data(contentsOf: gatesURL) == gatesBefore)
+        #expect(!ledgerFixture.manager.canUndo)
     }
 
     @Test("ledger mutation refuses and preserves a corrupt ledger")
     func corruptLedgerIsNotOverwritten() async throws {
-        let (h, dataRoot, cleanup) = try scaffold()
-        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let (h, savedRoot, cleanup) = try scaffold()
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        let ledgerFixture = try openLedgerFixture(h, savedRoot: savedRoot)
+        defer { withExtendedLifetime(ledgerFixture.manager) {} }
+        let dataRoot = ledgerFixture.root
         let ledgerURL = PipelineLayout.url(PipelineLayout.ledgerFile, in: dataRoot)
         let corrupt = Data("objects: [broken".utf8)
         try corrupt.write(to: ledgerURL)
@@ -2281,7 +2266,7 @@ struct WorkflowToolsTests {
         ])
 
         #expect(result.isError)
-        #expect(ToolHarness.textOf(result).contains("Nothing was written"))
+        #expect(h.editor.undoManager?.canUndo == false)
         #expect(try Data(contentsOf: ledgerURL) == corrupt)
     }
 
@@ -2354,11 +2339,11 @@ struct WorkflowToolsTests {
         }
     }
 
-    @Test("run_sanity activates reusable profiles from the pack and brief")
-    func sanityActivatesProductionProfiles() async throws {
-        let (h, dataRoot, cleanup) = try scaffold()
+    @Test("legacy sanity reader activates reusable profiles from the registered pack and brief")
+    func legacySanityActivatesProductionProfiles() throws {
+        let (_, dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
-        try activatePack("musicvideo", dataRoot: dataRoot)
+        try CurrentMusicvideoFixture.load()
         try YAMLArtifactStore(dataRoot: dataRoot).save(
             try Brief(
                 project: "demo",
@@ -2378,12 +2363,8 @@ struct WorkflowToolsTests {
         )
         _ = try saveShotlist(try minimalShotlist(), to: dataRoot)
 
-        let report = try await h.runOK(
-            "run_sanity",
-            args: ["project_dir": dataRoot.path]
-        ) as? [String: Any]
-        let findings = try #require(report?["findings"] as? [[String: Any]])
-        let codes = Set(findings.compactMap { $0["code"] as? String })
+        let report = try #require(NativeCockpitReader.sanityReport(dataRoot: dataRoot, activePack: "musicvideo"))
+        let codes = Set(report.findings.map(\.code))
         #expect(codes.contains("PRODUCTION_PLAN_MISSING"))
         #expect(!codes.contains("NARRATIVE_BEAT_MISSING"))
         #expect(!codes.contains("NARRATIVE_ACTION_MISSING"))
@@ -2395,14 +2376,14 @@ struct WorkflowToolsTests {
     func agentPromptUsesActiveProductionProfiles() throws {
         let (_, dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
-        try activatePack("musicvideo", dataRoot: dataRoot)
+        let binding = try activatePack("musicvideo", dataRoot: dataRoot)
         let store = YAMLArtifactStore(dataRoot: dataRoot)
         var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
-        let order = PhaseOrder.merged(
-            packPlacements: PackCatalog.registry(activePack: "musicvideo")
-                .phasePlacements
-        )
-        for phase in order.prefix(while: { $0 != "shotlist" }) {
+        let workflow = try #require(try PhaseContractRuntime.resolveWorkflow(
+            dataRoot: dataRoot, expectedPack: binding, expectedProductionContract: nil))
+        let order = try PhaseContractRuntime.order(workflow: workflow)
+        let planningIndex = try #require(order.firstIndex(of: "shot_planning"))
+        for phase in order[..<planningIndex] {
             GatesOperations.approve(&gates, phase: phase)
         }
         try store.save(gates, to: PipelineLayout.gatesFile)
@@ -2428,18 +2409,20 @@ struct WorkflowToolsTests {
         }
 
         try saveBrief(conceptType: .performance)
-        let performancePrompt = try #require(
-            try PipelineAgentHarness().agentPrompt(dataRoot: dataRoot)
-        )
+        let performanceContext = try PipelineAgentHarness().runtimeContext(
+            dataRoot: dataRoot, declaredPack: "musicvideo", declaredBinding: binding)
+        #expect(performanceContext.currentPhase == "shot_planning")
+        let performancePrompt = try #require(performanceContext.instructions)
         #expect(performancePrompt.contains("Core production profile: generative_film"))
         #expect(!performancePrompt.contains("Core production profile: narrative_storytelling"))
         #expect(performancePrompt.contains("Production library: film-craft-baseline/"))
         #expect(!performancePrompt.contains("execution_plan.has_start_end_states"))
 
         try saveBrief(conceptType: .narrative)
-        let narrativePrompt = try #require(
-            try PipelineAgentHarness().agentPrompt(dataRoot: dataRoot)
-        )
+        let narrativeContext = try PipelineAgentHarness().runtimeContext(
+            dataRoot: dataRoot, declaredPack: "musicvideo", declaredBinding: binding)
+        #expect(narrativeContext.currentPhase == "shot_planning")
+        let narrativePrompt = try #require(narrativeContext.instructions)
         #expect(narrativePrompt.contains("Core production profile: generative_film"))
         #expect(narrativePrompt.contains("Core production profile: narrative_storytelling"))
         #expect(narrativePrompt.contains("Production library: continuity-and-coverage/"))
@@ -2449,7 +2432,7 @@ struct WorkflowToolsTests {
             to: PipelineLayout.url(PipelineLayout.briefFile, in: dataRoot)
         )
         #expect(throws: ToolError.self) {
-            _ = try PipelineAgentHarness().agentPrompt(dataRoot: dataRoot)
+            _ = try PipelineAgentHarness().runtimeContext(dataRoot: dataRoot, declaredPack: "musicvideo", declaredBinding: binding).instructions
         }
     }
 
@@ -2691,7 +2674,6 @@ struct WorkflowToolsTests {
     func storyboardWriterRejectsDirectionOnlySetAnchors() async throws {
         let (h, dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
-        try activatePack("musicvideo", dataRoot: dataRoot)
         let steps: [[String: Any]] = (1...4).map { index in
             var blocking: [[String: Any]] = []
             if index == 1 {
@@ -2746,13 +2728,48 @@ struct WorkflowToolsTests {
         #expect(try StoryboardStore.load(dataRoot: dataRoot, version: .current) == nil)
     }
 
-    @Test("typed planning writers persist engine-valid artifacts")
+    @Test("typed planning writers persist current canonical artifacts")
     func typedPlanningWritersPersistArtifacts() async throws {
+        let project = try await prepareReferenceShotlistProject()
+        let context = project.context
+        defer {
+            context.document.close()
+            context.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: context.packageURL)
+        }
+        let board = try PlanningWriterIO.storyboard(dataRoot: context.dataRoot)
+        let script = try PlanningWriterIO.script(dataRoot: context.dataRoot)
+        #expect(script.scenes.count == 2)
+        #expect(board.timing.shots.allSatisfy { $0.framing.scale == "wide" })
+        let draft = try ProductionPlanningStoreV1.readShotPlanning(dataRoot: context.dataRoot, storyboard: board)
+        #expect(draft.shots.map(\.shotID) == board.timing.shots.map(\.id))
+        let bible = try #require(try loadBible(dataRoot: context.dataRoot))
+        #expect(!bible.look.style.isEmpty)
+        let result = try await project.harness.runOK("write_shotlist", args: [
+            "origin": "agentProposal", "proposal": ProductionPlanningAcceptanceFixture.object(project.proposal),
+        ]) as? [String: Any]
+        #expect(result?["written"] as? Bool == true)
+        let plan = try ProductionPlanningLineageV2.projection(dataRoot: context.dataRoot)
+        #expect(plan.header.projectID == "demo")
+        #expect(plan.mode == .section)
+        #expect(plan.shots.map(\.id) == board.timing.shots.map(\.id))
+        #expect(plan.timings.map(\.durationTicks) == board.timing.shots.map(\.durationTicks))
+        #expect(plan.shots.allSatisfy { $0.sourceMode == .generated && $0.primaryAction.isEmpty == false })
+        let analysis = try JSONSerialization.jsonObject(with: Data(contentsOf: try #require(
+            AudioProjectLayout.expectedAnalysisArtifactURL(dataRoot: context.dataRoot)))) as? [String: Any]
+        #expect((analysis?["bpm"] as? NSNumber)?.doubleValue == 120)
+        try await ProductionPlanningAcceptanceFixture.approve("shotlist", in: context)
+        let sanity = try await project.harness.runOK("run_sanity") as? [String: Any]
+        #expect(sanity?["project"] as? String == "demo")
+        #expect(sanity?["findings"] is [[String: Any]])
+    }
+
+    @Test("legacy typed planning writers preserve DTO validation and artifact contents")
+    func legacyTypedPlanningWritersPersistArtifacts() async throws {
         let (h, dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
-        try activatePack("musicvideo", dataRoot: dataRoot)
 
-        _ = try writeMeasuredAnalysis(dataRoot: dataRoot)
+        _ = try writeMeasuredAnalysis(dataRoot: dataRoot, readableTrack: true)
         try YAMLArtifactStore(dataRoot: dataRoot).save(
             try Brief(
                 project: "demo",
@@ -2771,7 +2788,7 @@ struct WorkflowToolsTests {
             to: PipelineLayout.briefFile
         )
         try recordAnalysisLineage(dataRoot: dataRoot)
-        try recordLineage("brief", dataRoot: dataRoot)
+        try recordLegacyLineage("brief", dataRoot: dataRoot)
 
         _ = try await h.runOK("write_production_design", args: [
             "project_dir": dataRoot.path,
@@ -2788,7 +2805,7 @@ struct WorkflowToolsTests {
         )
         #expect(design.project == "demo")
         #expect(design.colorScript["intro"] == "Muted blue dawn.")
-        try recordLineage("production_design", dataRoot: dataRoot)
+        try recordLegacyLineage("production_design", dataRoot: dataRoot)
 
         _ = try await h.runOK("write_treatment", args: [
             "project_dir": dataRoot.path,
@@ -2811,7 +2828,7 @@ struct WorkflowToolsTests {
         let treatment = try TreatmentStore.load(dataRoot: dataRoot)
         #expect(treatment.meta.project == "demo")
         #expect(treatment.meta.version == 1)
-        try recordLineage("treatment", dataRoot: dataRoot)
+        try recordLegacyLineage("treatment", dataRoot: dataRoot)
 
         let storyboardSteps: [[String: Any]] = (1...4).map { index in
             [
@@ -2857,14 +2874,14 @@ struct WorkflowToolsTests {
             )
         )
         #expect(storyboard.sections.first?.steps.first?.framing == "wide")
-        try recordLineage("storyboard", dataRoot: dataRoot)
+        try recordLegacyLineage("storyboard", dataRoot: dataRoot)
 
         let anchor = dataRoot.appendingPathComponent("bible/yard-wide.png")
         try FileManager.default.createDirectory(
             at: anchor.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        try Data("anchor".utf8).write(to: anchor)
+        try FullflowAcceptanceFixture.writeReference(to: anchor)
         try savePipelineAssetProof(
             PipelineAssetProof(
                 project: "demo",
@@ -2912,7 +2929,7 @@ struct WorkflowToolsTests {
         ])
         let bible = try #require(try loadBible(dataRoot: dataRoot))
         #expect(bible.locations.first?.sheets["wide"] == "bible/yard-wide.png")
-        try recordLineage("bible", dataRoot: dataRoot)
+        try recordLegacyLineage("bible", dataRoot: dataRoot)
 
         let shot: [String: Any] = [
             "id": "s001",
@@ -3182,6 +3199,7 @@ struct WorkflowToolsTests {
     }
 
     private struct PublishedReferenceRoute {
+        let offeringID: String
         let semanticJobID: String
         let inputSlotID: String
         let modality: String
@@ -3193,7 +3211,7 @@ struct WorkflowToolsTests {
         let harness: ToolHarness
         let dataRoot: URL
         let cleanup: URL
-        let binding: ProjectPackBinding
+        let binding: ProjectPackBinding?
         let activation: ProviderActivation
         let candidates: ProductionRouteCandidateProvider
         let route: PublishedReferenceRoute
@@ -3215,7 +3233,8 @@ struct WorkflowToolsTests {
     /// Contract anchor plus a published route that takes three anchors in a 4 s 16:9 shot.
     private func publishedReferenceRoute(
         _ harness: ToolHarness,
-        dataRoot: URL
+        dataRoot: URL,
+        durationSeconds: Double = 6
     ) async throws -> PublishedReferenceRoute {
         let stateObject = try await harness.runOK(
             "get_project_state",
@@ -3258,9 +3277,9 @@ struct WorkflowToolsTests {
             let durations = (value("integer_lists", CapabilityFieldIDV1.durationValues) as? [NSNumber])?
                 .map(\.doubleValue) ?? []
             let fitsDuration = durations.isEmpty
-                ? (decimal(CapabilityFieldIDV1.durationMinimum) ?? .infinity) <= 4
-                    && (decimal(CapabilityFieldIDV1.durationMaximum) ?? 0) >= 4
-                : durations.contains(4)
+                ? (decimal(CapabilityFieldIDV1.durationMinimum) ?? .infinity) <= durationSeconds
+                    && (decimal(CapabilityFieldIDV1.durationMaximum) ?? 0) >= durationSeconds
+                : durations.contains(durationSeconds)
             let kinds = strings(CapabilityFieldIDV1.inputKinds)
             guard kinds.isEmpty || kinds.contains(modality),
                   strings(CapabilityFieldIDV1.aspectRatios).contains("16:9"),
@@ -3277,9 +3296,10 @@ struct WorkflowToolsTests {
         }
         let choice = try #require(
             choices.sorted { $0.offeringID < $1.offeringID }.first,
-            "No published route takes \(anchorsPerShot) image anchors in a 4 s 16:9 shot."
+            "No published route takes \(anchorsPerShot) image anchors in a \(durationSeconds) s 16:9 shot."
         )
         return PublishedReferenceRoute(
+            offeringID: choice.offeringID,
             semanticJobID: semanticJobID,
             inputSlotID: slotID,
             modality: modality,
@@ -3288,16 +3308,85 @@ struct WorkflowToolsTests {
         )
     }
 
-    /// Hard-gated Musicvideo project approved through a Bible with a character, a location and a prop.
-    private func prepareReferenceShotlistProject() async throws -> ReferenceShotlistProject {
+    private struct CurrentReferenceShotlistProject {
+        let context: ProductionPlanningAcceptanceFixture.Context
+        let harness: ToolHarness
+        let proposal: PipelineProductionPlanWriter.Proposal
+        let candidates: ProductionRouteCandidateProvider
+        let activation: ProviderActivation
+        let assetID: String
+    }
+
+    private func prepareReferenceShotlistProject() async throws -> CurrentReferenceShotlistProject {
         let routing = falRoutingDependencies()
-        let (setup, dataRoot, cleanup) = try scaffold(
+        let (probe, probeRoot, cleanup) = try scaffold(providerActivation: { routing.activation },
+            productionRouteCandidates: routing.candidates, catalogReadiness: { true }, isModelEnabled: { _ in true })
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let route = try await publishedReferenceRoute(probe, dataRoot: probeRoot, durationSeconds: 6)
+        let candidate = try #require(routing.candidates(routing.activation).first {
+            $0.candidate.capabilities.offering.offeringID == route.offeringID
+        })
+        let context = try await CurrentMusicvideoFixture.makeScript(seedAnalysis: { root in
+            _ = try writeMeasuredAnalysis(dataRoot: root, readableTrack: true)
+        }, finalResolution: route.resolution, makeExecutor: { editor in
+            ToolExecutor(editor: editor, providerActivation: { routing.activation },
+                productionRouteCandidates: routing.candidates, catalogReadiness: { true }, isModelEnabled: { _ in true })
+        })
+        var ready = false
+        defer { if !ready { context.document.close() } }
+        try await ProductionPlanningAcceptanceFixture.approve("script", in: context)
+        _ = try await ProductionPlanningAcceptanceFixture.writeStoryboard(in: context)
+        let board = try await ProductionPlanningAcceptanceFixture.attachSketches(in: context)
+        try await ProductionPlanningAcceptanceFixture.approve("storyboard", in: context)
+        _ = try await ProductionPlanningAcceptanceFixture.writeShotPlanning(in: context)
+        try await ProductionPlanningAcceptanceFixture.approve("shot_planning", in: context)
+        try await ProductionPlanningAcceptanceFixture.writeBible(in: context)
+        let assetPath = "production_design/refs/lighting.png"
+        try await ProductionPlanningAcceptanceFixture.run("prepare_production_assets", args: ["assets": [[
+            "path": assetPath, "modality": route.modality, "allowed_use_ids": [route.semanticJobID],
+        ]]], in: context)
+        let asset = try #require(PipelineShotPlanningPromotionStore.availableAssets(dataRoot: context.dataRoot).first {
+            $0.path == assetPath
+        })
+        try await ProductionPlanningAcceptanceFixture.approve("bible", in: context)
+        let steps = Dictionary(uniqueKeysWithValues: board.storyboard.steps.map { ($0.id, $0) })
+        let shots = try board.timing.shots.map { planned -> PipelineProductionPlanWriter.ShotProposal in
+            let action = try planned.stepIDs.map { try #require(steps[$0]).action }.joined(separator: "\n")
+            let demand = ReferenceDemandV1(id: "\(planned.id)-look", assetID: asset.id, modality: .image,
+                semanticJobID: route.semanticJobID, isRequired: true, priority: 0,
+                inputSlotID: route.inputSlotID, modeID: route.modeID)
+            let execution = ExecutionShotV1(id: planned.id, sourceMode: .generated,
+                startState: .init(summary: "The pale background is unobstructed."),
+                endState: .init(summary: "The approved coloured shape fills its planned composition."),
+                primaryAction: action, camera: .init(movementID: "static", framingID: planned.framing.scale),
+                renderability: .green,
+                acceptance: [.init(id: "composition", requirement: "Preserve the approved composition and reference.", severity: "error")],
+                generationRequirement: .init(modalityID: "video", modeIDs: [route.modeID], visibleEntityCount: 0,
+                    referenceDemandIDs: [demand.id], duration: .init(minimumSeconds: 6, maximumSeconds: 6),
+                    resolution: route.resolution.rawValue, aspectRatio: "16:9"))
+            return .init(execution: execution, nativeDurationTicks: 6 * board.timing.timebase.ticksPerSecond,
+                sourceInTicks: 0, coreInputs: .init(), referenceDemands: [demand],
+                selectedModelID: candidate.modelID, selectedOffering: candidate.candidate.capabilities.offering)
+        }
+        let music = try await ProductionPlanningAcceptanceFixture.musicvideoPlan(in: context)
+        let proposal = try ProductionPlanningAcceptanceFixture.productionProposal(in: context,
+            generatedShots: shots, musicvideoPlan: music)
+        ready = true
+        return CurrentReferenceShotlistProject(context: context,
+            harness: ToolHarness(editor: context.editor, executor: context.executor), proposal: proposal,
+            candidates: routing.candidates, activation: routing.activation, assetID: asset.id)
+    }
+
+    /// Generic legacy writers retain their independent DTO and reference-routing coverage.
+    private func prepareLegacyReferenceShotlistProject() async throws -> ReferenceShotlistProject {
+        let routing = falRoutingDependencies()
+        let (setup, savedRoot, cleanup) = try scaffold(
             providerActivation: { routing.activation },
             productionRouteCandidates: routing.candidates,
             catalogReadiness: { true },
             isModelEnabled: { _ in true }
         )
-        let binding = try activatePack("musicvideo", dataRoot: dataRoot)
+        let binding: ProjectPackBinding? = nil
         let harness = ToolHarness(
             enforceHardGates: true,
             providerActivation: { routing.activation },
@@ -3305,9 +3394,17 @@ struct WorkflowToolsTests {
             catalogReadiness: { true },
             isModelEnabled: { _ in true }
         )
+        var ready = false
+        defer {
+            if !ready {
+                harness.editor.releaseWorkingCopy()
+                try? FileManager.default.removeItem(at: cleanup)
+            }
+        }
+        let dataRoot = try harness.openProject(dataRoot: savedRoot)
         let route = try await publishedReferenceRoute(harness, dataRoot: dataRoot)
 
-        _ = try writeMeasuredAnalysis(dataRoot: dataRoot)
+        _ = try writeMeasuredAnalysis(dataRoot: dataRoot, readableTrack: true)
         _ = try await setup.runOK("write_analysis_interpretation", args: [
             "project_dir": dataRoot.path,
             "tempo_multiplier": 1.0,
@@ -3339,7 +3436,7 @@ struct WorkflowToolsTests {
             ),
             to: PipelineLayout.briefFile
         )
-        try recordLineage("brief", dataRoot: dataRoot)
+        try recordLegacyLineage("brief", dataRoot: dataRoot)
 
         _ = try await setup.runOK("write_production_design", args: [
             "project_dir": dataRoot.path,
@@ -3348,7 +3445,7 @@ struct WorkflowToolsTests {
             "refs": [],
             "color_script": [["section": "intro", "description": "Muted blue dawn."]],
         ])
-        try recordLineage("production_design", dataRoot: dataRoot)
+        try recordLegacyLineage("production_design", dataRoot: dataRoot)
 
         _ = try await setup.runOK("write_treatment", args: [
             "project_dir": dataRoot.path,
@@ -3368,7 +3465,7 @@ struct WorkflowToolsTests {
                 ],
             ],
         ])
-        try recordLineage("treatment", dataRoot: dataRoot)
+        try recordLegacyLineage("treatment", dataRoot: dataRoot)
 
         let steps: [[String: Any]] = (1...4).map { index in
             [
@@ -3400,7 +3497,7 @@ struct WorkflowToolsTests {
                 "energy": "low", "function": "aufbau", "steps": steps,
             ]],
         ])
-        try recordLineage("storyboard", dataRoot: dataRoot)
+        try recordLegacyLineage("storyboard", dataRoot: dataRoot)
 
         var proofEntries: [String: PipelineAssetProofEntry] = [:]
         for (entity, sheet) in Self.referenceSheets {
@@ -3409,7 +3506,7 @@ struct WorkflowToolsTests {
                 at: url.deletingLastPathComponent(),
                 withIntermediateDirectories: true
             )
-            try Data("\(entity)-\(sheet.view)".utf8).write(to: url)
+            try FullflowAcceptanceFixture.writeReference(to: url)
             proofEntries[sheet.path] = PipelineAssetProofEntry(
                 path: sheet.path,
                 sha256: try FileDigest.sha256(of: url),
@@ -3451,7 +3548,7 @@ struct WorkflowToolsTests {
             "props": [entity("cheese", name: "Cheese", prompt: "A yellow wedge of cheese.")],
             "locations": [location],
         ])
-        try recordLineage("bible", dataRoot: dataRoot)
+        try recordLegacyLineage("bible", dataRoot: dataRoot)
 
         let store = YAMLArtifactStore(dataRoot: dataRoot)
         var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
@@ -3462,6 +3559,7 @@ struct WorkflowToolsTests {
         _ = try await harness.runGateOK("approve_gate", args: [
             "project_dir": dataRoot.path, "phase": "bible",
         ])
+        ready = true
         return ReferenceShotlistProject(
             harness: harness,
             dataRoot: dataRoot,
@@ -3649,10 +3747,55 @@ struct WorkflowToolsTests {
         })
     }
 
-    @Test("Autonomous Bible to Shot List run binds published references without a dialog or re-approval")
+    @Test("Autonomous current Bible to Shot List run preserves approvals and exact published references")
     func autonomousBibleToShotlistRun() async throws {
         let project = try await prepareReferenceShotlistProject()
-        defer { try? FileManager.default.removeItem(at: project.cleanup) }
+        let context = project.context
+        defer {
+            context.document.close()
+            context.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: context.packageURL)
+        }
+        let store = YAMLArtifactStore(dataRoot: context.dataRoot)
+        let earlier = Array(CurrentMusicvideoFixture.phases.prefix { $0 != "shotlist" })
+        let before = try store.load(Gates.self, at: PipelineLayout.gatesFile)
+        #expect(earlier.allSatisfy { before.get($0).approved })
+        #expect(context.editor.projectState?.nextPhaseName == "shotlist")
+        _ = try await project.harness.runOK("write_shotlist", args: [
+            "origin": "agentProposal", "proposal": ProductionPlanningAcceptanceFixture.object(project.proposal),
+        ])
+        #expect(context.editor.agentService.pendingDialog == nil)
+        let after = try store.load(Gates.self, at: PipelineLayout.gatesFile)
+        for phase in earlier {
+            #expect(after.get(phase) == before.get(phase), "gate \(phase) changed")
+        }
+        let projection = try ProductionPlanningLineageV2.projection(dataRoot: context.dataRoot)
+        let promotion = try PipelineShotPlanningPromotionStore.requireCurrent(projection: projection, dataRoot: context.dataRoot)
+        for shot in projection.shots {
+            let demands = try PipelineShotPlanningPromotionStore.plannedDemands(for: shot.id, promotion: promotion, dataRoot: context.dataRoot)
+            #expect(demands.demands.map(\.assetID) == [project.assetID])
+            let allDemandsAreRequired = demands.demands.allSatisfy(\.isRequired)
+            #expect(allDemandsAreRequired)
+            let route = try PipelineShotPlanningPromotionStore.route(for: shot.id, promotion: promotion, dataRoot: context.dataRoot)
+            #expect(project.candidates(project.activation).contains {
+                $0.candidate.capabilities.offering == route.offering && $0.target != nil
+            })
+        }
+        let home = try #require(context.editor.workingRoot)
+        let binding = try CurrentMusicvideoFixture.binding
+        let readiness = await NativeGateWriter.controlReadiness(projectDir: home,
+            phase: "shotlist", declaredPack: "musicvideo", declaredBinding: binding,
+            editor: context.editor, executionCoordinator: context.editor.pipelinePhaseRunCoordinator).approval
+        #expect(readiness.isReady, "\(readiness.blocker ?? "")")
+    }
+
+    @Test("Legacy generic Bible to Shot List run retains DTO reference routing and recording")
+    func legacyAutonomousBibleToShotlistRun() async throws {
+        let project = try await prepareLegacyReferenceShotlistProject()
+        defer {
+            project.harness.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: project.cleanup)
+        }
         let h = project.harness
         let dataRoot = project.dataRoot
         let store = YAMLArtifactStore(dataRoot: dataRoot)
@@ -3677,7 +3820,7 @@ struct WorkflowToolsTests {
         let readiness = await NativeGateWriter.controlReadiness(
             projectDir: FrameInventory.projectHome(of: dataRoot),
             phase: "shotlist",
-            declaredPack: "musicvideo",
+            declaredPack: project.binding?.id,
             declaredBinding: project.binding,
             executionCoordinator: h.editor.pipelinePhaseRunCoordinator
         ).approval
@@ -3738,8 +3881,11 @@ struct WorkflowToolsTests {
 
     @Test("write_shotlist schema rejects invented roles; the writer rejects retired and unroutable slots")
     func writeShotlistRejectsGuessedReferenceIdentifiers() async throws {
-        let project = try await prepareReferenceShotlistProject()
-        defer { try? FileManager.default.removeItem(at: project.cleanup) }
+        let project = try await prepareLegacyReferenceShotlistProject()
+        defer {
+            project.harness.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: project.cleanup)
+        }
         let h = project.harness
         let dataRoot = project.dataRoot
         let valid = referenceShotlistArguments(project.route).merging(
@@ -4019,17 +4165,23 @@ struct WorkflowToolsTests {
     func shotlistWriteRejectsUnreadablePackState() throws {
         let (_, dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
-        try activatePack("musicvideo", dataRoot: dataRoot)
-        let binding = FrameInventory.projectHome(of: dataRoot)
-            .appendingPathComponent(ProjectPluginSettings.filename)
-        try Data("{broken".utf8).write(to: binding)
+        let binding = try activatePack("musicvideo", dataRoot: dataRoot)
+        let home = FrameInventory.projectHome(of: dataRoot)
+        #expect(try ProjectPackGate.requireMutation(projectURL: home,
+            declaredPack: "musicvideo", declaredBinding: binding) == "musicvideo")
+        try Data("{broken".utf8).write(to: home.appendingPathComponent(ProjectPluginSettings.filename))
+        #expect(ProjectPluginSettings.bindingResolution(projectURL: home) == .unreadable)
 
-        #expect(throws: ToolError.self) {
+        do {
             _ = try PipelineShotlistWriter.write(
                 try minimalShotlist(),
                 dataRoot: dataRoot,
-                declaredPack: "musicvideo"
+                declaredPack: "musicvideo",
+                declaredBinding: binding
             )
+            Issue.record("The writer accepted unreadable live format settings.")
+        } catch let error as ToolError {
+            #expect(error.message == "This project's format settings are unreadable, so it can't be saved.")
         }
         #expect(latestShotlistVersion(dataRoot: dataRoot) == nil)
     }
@@ -5171,9 +5323,13 @@ struct WorkflowToolsTests {
 
     @Test("analysis interpretation rejects wrong lyric labels without changing bytes, then accepts correction")
     func analysisInterpretationRejectsWrongLabelsThenRecovers() async throws {
-        let (h, dataRoot, cleanup) = try scaffold(enforceHardGates: true)
-        defer { try? FileManager.default.removeItem(at: cleanup) }
-        try activatePack("musicvideo", dataRoot: dataRoot)
+        let (h, savedRoot, cleanup) = try scaffold(enforceHardGates: true)
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        try activatePack("musicvideo", dataRoot: savedRoot)
+        let dataRoot = try h.openProject(dataRoot: savedRoot)
         let analysisURL = try writeMeasuredAnalysis(dataRoot: dataRoot)
         _ = try await h.runGateOK("approve_gate", args: [
             "project_dir": dataRoot.path, "phase": "project_init",
@@ -5208,9 +5364,13 @@ struct WorkflowToolsTests {
 
     @Test("analysis interpretation repairs a previously persisted wrong label without reanalysis")
     func analysisInterpretationRepairsPersistedWrongLabel() async throws {
-        let (h, dataRoot, cleanup) = try scaffold(enforceHardGates: true)
-        defer { try? FileManager.default.removeItem(at: cleanup) }
-        try activatePack("musicvideo", dataRoot: dataRoot)
+        let (h, savedRoot, cleanup) = try scaffold(enforceHardGates: true)
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        try activatePack("musicvideo", dataRoot: savedRoot)
+        let dataRoot = try h.openProject(dataRoot: savedRoot)
         let analysisURL = try writeMeasuredAnalysis(dataRoot: dataRoot)
         _ = try await h.runGateOK("approve_gate", args: [
             "project_dir": dataRoot.path, "phase": "project_init",
@@ -5313,8 +5473,8 @@ struct WorkflowToolsTests {
         #expect(result.isError)
     }
 
-    @Test("write_analysis_interpretation cannot hide unresolved section timing")
-    func writeAnalysisInterpretationRejectsUnresolvedStructure() async throws {
+    @Test("write_analysis_interpretation rejects a forged unresolved structure without changing bytes")
+    func writeAnalysisInterpretationRejectsForgedUnresolvedStructure() async throws {
         let (h, dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
         try activatePack("musicvideo", dataRoot: dataRoot)
@@ -5345,7 +5505,7 @@ struct WorkflowToolsTests {
         )
 
         #expect(result.isError)
-        #expect(ToolHarness.textOf(result).contains("native structure remains unresolved"))
+        #expect(ToolHarness.textOf(result) == "The unresolved analysis does not match its canonical measured candidates, grid and DSP evidence. Re-run analysis.")
         #expect(try Data(contentsOf: analysisURL) == before)
     }
 
@@ -5801,5 +5961,135 @@ struct WorkflowToolsTests {
         // An unknown gate never raises — it returns the "no display artifact" note.
         let unknown = try await h.runOK("show_artifact", args: ["project_dir": dataRoot.path, "gate": "nope"]) as? [String: Any]
         #expect((unknown?["markdown"] as? String)?.contains("no display artifact") == true)
+    }
+}
+
+extension WorkflowToolsTests {
+    private func legacyRouteChangeCatalog(defaults: UserDefaults) throws -> ModelCatalog {
+        let evidence = CapabilityEvidenceV1(
+            sourceTitle: "WorkflowToolsTests synthetic two-model route-change fixture",
+            observedAt: "2026-10-21T00:00:00Z", kind: .providerSchema, confidence: 1
+        )
+        let entries = try [
+            "bytedance/seedance-2.0/text-to-video",
+            "bytedance/seedance-2.5/text-to-video",
+        ].map { modelID -> CatalogEntry in
+            var entry = try #require(FalModelRegistry.model(for: modelID)?.entry)
+            let offer = try #require(entry.offers?.first { $0.provider == .fal && $0.transport == .api })
+            let policy = try #require(offer.productionInputPolicy)
+            let offering = CatalogOfferingIdentity.make(offer: offer, modelID: modelID, modality: .video)
+            func fields(origin: ResolvedCapabilityOriginV1) -> ResolvedCapabilityFieldsV1 {
+                func value<Value>(_ value: Value, semantics: CapabilityValueSemanticsV1 = .hardAPILimit)
+                    -> ResolvedCapabilityValueV1<Value> where Value: Codable & Sendable & Equatable {
+                    .init(value: value, semantics: semantics, origin: origin, evidence: [evidence])
+                }
+                return ResolvedCapabilityFieldsV1(
+                    integers: [
+                        CapabilityFieldIDV1.visibleCharacters: value(0),
+                        CapabilityFieldIDV1.referenceImages: value(0),
+                        CapabilityFieldIDV1.referenceVideos: value(0),
+                        CapabilityFieldIDV1.referenceAudios: value(0),
+                        CapabilityFieldIDV1.totalReferences: value(0),
+                    ],
+                    decimals: [
+                        CapabilityFieldIDV1.durationMinimum: value(5.0),
+                        CapabilityFieldIDV1.durationMaximum: value(5.0),
+                    ],
+                    booleans: [
+                        CapabilityFieldIDV1.firstFrame: value(false),
+                        CapabilityFieldIDV1.lastFrame: value(false),
+                        CapabilityFieldIDV1.sourceVideo: value(false),
+                        CapabilityFieldIDV1.sourceVideoRequired: value(policy.requiresSourceVideo),
+                        CapabilityFieldIDV1.framesCountTowardImageReferenceLimit: value(policy.framesCountTowardImageReferenceLimit),
+                        CapabilityFieldIDV1.framesCountTowardTotalReferenceLimit: value(policy.framesCountTowardTotalReferenceLimit),
+                        CapabilityFieldIDV1.nativeAudio: value(false),
+                    ],
+                    strings: [
+                        CapabilityFieldIDV1.modes: value(["text-to-video"], semantics: .supportedSet),
+                        CapabilityFieldIDV1.inputKinds: value(["text"], semantics: .supportedSet),
+                        CapabilityFieldIDV1.outputKinds: value(["video"], semantics: .supportedSet),
+                        CapabilityFieldIDV1.aspectRatios: value(["16:9"], semantics: .supportedSet),
+                        CapabilityFieldIDV1.resolutions: value(["720p"], semantics: .supportedSet),
+                    ],
+                    integerLists: [CapabilityFieldIDV1.durationValues: value([5], semantics: .supportedSet)]
+                )
+            }
+            entry.offers = [offer]
+            entry.resolvedOfferingCapabilities = [ResolvedOfferingCapabilityProfileV1(
+                offering: offering,
+                intrinsic: ResolvedCapabilityProfileV1(
+                    requestedIdentity: nil, resolvedIdentity: nil, defensiveProfileID: nil,
+                    researchNeeded: false,
+                    fields: fields(origin: .init(kind: .exact, profileID: "fixture-route-change/\(modelID)"))
+                ),
+                effective: ResolvedCapabilityProfileV1(
+                    requestedIdentity: nil, resolvedIdentity: nil, defensiveProfileID: nil,
+                    researchNeeded: false,
+                    fields: fields(origin: .init(kind: .endpointOverlay,
+                        profileID: "fixture-route-change-endpoint/\(modelID)", endpointID: offering.endpointID))
+                )
+            )]
+            return entry
+        }
+        let catalog = ModelCatalog(preferences: ModelPreferences(defaults: defaults))
+        catalog.load(entries: entries)
+        #expect(catalog.lastError == nil)
+        return catalog
+    }
+
+    @Test("approved legacy route changes recompile against the newly selected model")
+    func approvedLegacyRouteChangeRecompilesForCurrentModel() async throws {
+        let defaultsDomain = "WorkflowRouteChange-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: defaultsDomain))
+        defer { defaults.removePersistentDomain(forName: defaultsDomain) }
+        let catalog = try legacyRouteChangeCatalog(defaults: defaults)
+        let activation = ProviderActivation(active: [ProviderActivation.Key(provider: .fal, transport: .api)])
+        let candidates: ProductionRouteCandidateProvider = { catalog.productionRouteCandidates(activation: $0) }
+        let (h, originalRoot, cleanup) = try scaffold(providerActivation: { activation }, productionRouteCandidates: candidates)
+        let home = FrameInventory.projectHome(of: originalRoot)
+        defer {
+            h.editor.releaseWorkingCopy()
+            if let key = ProjectIdentity.existingKey(for: home) { ProjectWorkingCopy.discard(key: key) }
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        let plan = try ShotProductionPlan(primaryAction: "Hold the empty stage.", cameraMovement: .static, renderability: .green)
+        let shotlist = try minimalShotlist(keyframeStrategy: .none, productionPlan: plan, duration: 3)
+        let shot = try #require(shotlist.shots.first)
+        #expect(CutHandles.orderableGrossDuration(for: shot, forceAll: true) == 5)
+        _ = try publishExecutionShotlist(shotlist,
+            dataRoot: originalRoot, finalResolution: .res720p)
+        try Fixtures.prepareProjectPackage(at: home)
+        h.editor.projectURL = home
+        h.editor.generationBatchCoordinator.modelCatalog = catalog
+        h.editor.generationBatchCoordinator.providerActivation = { activation }
+        let working = try #require(h.editor.workingRoot)
+        let root = try #require(DataRootResolver.dataRoot(of: working))
+        let options = try PipelineProductionRouting.resolveOptions(shotID: "s001", dataRoot: root,
+            activation: activation, candidateProvider: candidates)
+        #expect(Set(options.map(\.modelID)) == Set([
+            "bytedance/seedance-2.0/text-to-video",
+            "bytedance/seedance-2.5/text-to-video",
+        ]))
+        let first = try #require(options.first)
+        let second = try #require(options.first(where: { $0.modelID != first.modelID }))
+        _ = try PipelineProductionRouting.resolveAndWrite(shotID: "s001", dataRoot: root,
+            target: first.target, activation: activation, candidateProvider: candidates)
+        let compiled = try await PromptCompiler.compile(intent: "A quiet empty stage remains still.",
+            modelId: first.modelID, modality: .video, editor: h.editor, shotId: "s001",
+            shot: try PromptCompiler.currentShotProjection(editor: h.editor, shotId: "s001"), modelCatalog: catalog)
+        let selected = try PipelineProductionRouting.resolveAndWrite(shotID: "s001", dataRoot: root,
+            target: second.target, activation: activation, candidateProvider: candidates)
+        await #expect(throws: (any Error).self) {
+            _ = try await PromptCompiler.recompile(token: compiled.token, text: compiled.text,
+                for: second.modelID, editor: h.editor, modelCatalog: catalog)
+        }
+        let adapted = try await PromptCompiler.recompile(token: compiled.token, text: compiled.text,
+            for: second.modelID, editor: h.editor, allowCurrentRoutingChange: true, modelCatalog: catalog)
+        #expect(adapted.binding.routeArtifactSHA256 == selected.routeArtifactSHA256)
+        #expect(adapted.binding.shotFingerprint == compiled.binding.shotFingerprint)
+        #expect(PromptCompiler.validate(token: adapted.token, text: adapted.text,
+            modelId: second.modelID, binding: adapted.binding))
+        #expect(!PromptCompiler.validate(token: compiled.token, text: compiled.text,
+            modelId: second.modelID, binding: compiled.binding))
     }
 }

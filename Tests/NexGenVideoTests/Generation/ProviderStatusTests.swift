@@ -474,6 +474,44 @@ struct ProviderStatusTests {
         #expect(closing("fal-shared", in: editor) == nil)
     }
 
+    @MainActor
+    @Test func lateBillRefusesARekeyedProjectAtTheSameWorkingPath() async throws {
+        Fixture.reset()
+        let (root, editor) = try projectEditor()
+        defer { cleanup(root) }
+        let home = try #require(editor.workingRoot)
+        let identityURL = home.appendingPathComponent("ngv.json")
+        let originalIdentity = try Data(contentsOf: identityURL)
+        defer { try? originalIdentity.write(to: identityURL, options: .atomic) }
+        let originalKey = try #require(ProjectIdentity.existingUUID(for: home))
+        let session = Fixture.session()
+        defer { session.invalidateAndCancel() }
+        let gate = GatedCharge()
+        let bill = GenerationMoney(nativeAmount: 0.4, nativeCurrency: "EUR", eurAmount: 0.4, eurPerNativeUnit: 1,
+            exchangeRateDate: "2026-10-19", pricingSource: "fixture://late-bill", exchangeRateSource: "fixture://exchange")
+        editor.generationService.reconciliation = reconciliation(session, falCharge: { _, _, _ in
+            await gate.wait()
+            return bill
+        })
+        let transaction = "same-path-late-bill"
+        let events = openRun(transaction, .fal, endpoint: "fal-ai/veo3", request: "same-path-job", resumable: true)
+            + [GenerationSpendEvent(transactionId: transaction, kind: .settled, model: "fal-ai/veo3",
+                provider: .fal, transport: .api, endpoint: "fal-ai/veo3")]
+        editor.generationLog.spendEvents = events
+        #expect(GenerationService.unbilledFalRuns(in: editor.generationLog, settledAfter: .distantPast).count == 1)
+        let reconciling = Task { await editor.generationService.reconcileOpenRuns(editor: editor) }
+        for _ in 0..<400 where !gate.isWaiting { try await Task.sleep(for: .milliseconds(5)) }
+        guard gate.isWaiting else { reconciling.cancel(); gate.release(); Issue.record("Expected the actual late-bill lookup"); return }
+        defer { gate.release(); reconciling.cancel() }
+        let newKey = try ProjectIdentity.regenerate(at: home)
+        #expect(newKey != originalKey)
+        #expect(editor.workingRoot == home)
+        gate.release()
+        #expect(await reconciling.value == 0)
+        #expect(editor.generationLog.spendEvents == events)
+        #expect(Fixture.requests().isEmpty)
+    }
+
     @Test func confirmedProviderFailuresCarryTheCostTheirResponseReports() async throws {
         Fixture.reset()
         let session = Fixture.session()
@@ -605,6 +643,40 @@ struct ProviderStatusTests {
         #expect(await editor.generationService.reconcileOpenRuns(editor: editor, now: start.addingTimeInterval(61)) == 0)
         #expect(lookups.recorded == ["fal-late", "fal-unbilled", "fal-unbilled"])
         #expect(Fixture.requests().isEmpty)
+    }
+
+    @MainActor
+    @Test(arguments: [false, true])
+    func incompleteBatchHistoryNeverFallsBackToUnscopedProviderQueries(malformedFiles: Bool) async throws {
+        Fixture.reset()
+        let (root, editor) = try projectEditor()
+        defer { cleanup(root) }
+        let session = Fixture.session()
+        defer { session.invalidateAndCancel() }
+        let lookups = BillLookups()
+        editor.generationService.reconciliation = reconciliation(session, falCharge: { requestID, _, _ in
+            lookups.record(requestID)
+            return nil
+        })
+        let home = try #require(editor.workingRoot)
+        let folder = home.appendingPathComponent("generation-batches/" + String(repeating: "a", count: 64))
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        if malformedFiles {
+            try Data("{}".utf8).write(to: folder.appendingPathComponent("manifest.json"))
+            try Data("{}".utf8).write(to: folder.appendingPathComponent("journal.json"))
+        }
+        let start = Date()
+        editor.generationLog.spendEvents = openRun("open", .fal, endpoint: "fal-ai/veo3", request: "fal-open", resumable: true)
+            + openRun("late", .fal, endpoint: "fal-ai/veo3", request: "fal-late", resumable: true)
+            + [GenerationSpendEvent(transactionId: "late", kind: .settled, model: "fal-ai/veo3", provider: .fal,
+                transport: .api, endpoint: "fal-ai/veo3", createdAt: start)]
+        let before = editor.generationLog.spendEvents
+        #expect(throws: (any Error).self) { try GenerationBatchStore.batchItemsByTransaction(home: home) }
+        #expect(await editor.generationService.reconcileOpenRuns(editor: editor, now: start) == 0)
+        #expect(editor.generationService.lastReconciliation[home] == start)
+        #expect(editor.generationLog.spendEvents == before)
+        #expect(Fixture.requests().isEmpty)
+        #expect(lookups.recorded.isEmpty)
     }
 
     @MainActor

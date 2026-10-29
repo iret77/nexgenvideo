@@ -74,7 +74,7 @@ struct GenerationBatchAuthorization: Sendable, Equatable {
         let scope = try GenerationProjectMutationScope(projectHome: home, editor: editor)
         let snapshot = try GenerationBatchStore.load(id: batchID, home: home)
         guard let execution = snapshot.journal.executions.first(where: { $0.itemID == itemID }),
-              [.queued, .submitting, .running, .blocked].contains(execution.state) else { return }
+              [.submitting, .running, .blocked].contains(execution.state) else { return }
         let item = snapshot.batch.payload.items.first { $0.id == itemID }!
         let assets = editor.mediaAssets.filter {
             execution.transactionID != nil && $0.generationInput?.spendTransactionId == execution.transactionID
@@ -107,7 +107,7 @@ struct GenerationBatchAuthorization: Sendable, Equatable {
                     if case .failed(let message) = asset.generationStatus { return message }
                     return nil
                 }.first
-                try journal.stop(itemID: itemID, state: execution.state == .queued ? .failed : .blocked,
+                try journal.stop(itemID: itemID, state: .blocked,
                     detail: failure ?? "The provider job has not produced every requested output. Reconcile the recorded request before retrying.")
             }
         }
@@ -135,9 +135,18 @@ struct GenerationBatchAuthorization: Sendable, Equatable {
             throw GenerationRequestError.gate("The approved provider and model are unavailable. This item cannot switch routes automatically.")
         }
         if let root = DataRootResolver.dataRoot(of: home) {
+            let tool: ToolName
+            switch package.payload.operation == "upscale" ? "upscale" : package.payload.modality {
+            case "upscale": tool = .upscaleMedia
+            case "image": tool = .generateImage
+            case "video": tool = .generateVideo
+            case "audio": tool = .generateAudio
+            default: throw GenerationRequestError.gate("The approved batch operation is not supported by this phase.")
+            }
             let phase = try editor.pipelineAgentHarness.guardCurrentPhaseWork(
-                tool: package.payload.modality == "image" ? .generateImage : .generateVideo,
-                dataRoot: root, declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding)
+                tool: tool, dataRoot: root, declaredPack: editor.declaredPluginName,
+                declaredBinding: editor.declaredPluginBinding,
+                declaredProductionContract: editor.declaredProductionContract)
             guard phase == snapshot.batch.payload.phase else {
                 throw GenerationRequestError.gate("The pipeline phase changed after batch approval.")
             }

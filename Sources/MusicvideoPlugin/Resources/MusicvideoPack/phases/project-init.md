@@ -1,5 +1,7 @@
 # Phase K0 — Project Init
 
+After this phase’s required work and independent checks pass, request phase approval directly through approve_gate. The native gate card alone records approval; a show_dialog answer never approves this phase.
+
 > **Orchestrator instruction (main-session context).** Never spawn this
 > phase as a sub-agent. Use the **interface language supplied by the host**
 > unless the user explicitly requests another language;
@@ -56,13 +58,12 @@ startup intake is still incomplete.
 
 ### 2. Establish the song identity
 
-Use the attached track filename as the initial song title. If that filename
-is only a technical export name or the title is genuinely ambiguous, ask
-one short free-text question for the actual title. Do not ask for a project
-slug: the open NexGenVideo project already owns its location and identity.
-
-The final title is written later into the brief and shot list. Do not rename
-the project or audio file merely to match it.
+Identify the attached track by the original filename supplied by the host.
+Do not infer a song title from a storage hash or technical export name, and
+do not ask for a title or project slug in this phase. Project Init has no
+canonical title writer; a chat answer would not establish durable project
+identity. The open project already owns its location and identity. Do not
+rename the project or audio file merely to match a guessed song title.
 
 ### 3. Complete Project Init
 

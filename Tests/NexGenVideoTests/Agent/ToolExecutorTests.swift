@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import NexGenEngine
 @testable import NexGenVideo
 
 /// Holds both editor and executor strongly so the executor's weak ref to the editor
@@ -42,6 +43,18 @@ final class ToolHarness {
         )
     }
 
+    func openProject(dataRoot: URL) throws -> URL {
+        let home = FrameInventory.projectHome(of: dataRoot)
+        try Fixtures.prepareProjectPackage(at: home, timeline: editor.timeline)
+        editor.projectURL = home
+        do {
+            return try #require(editor.workingRoot.flatMap { DataRootResolver.dataRoot(of: $0) })
+        } catch {
+            editor.releaseWorkingCopy()
+            throw error
+        }
+    }
+
     /// Run a tool by name and decode the .ok text payload as JSON.
     func runOK(_ name: String, args: [String: Any] = [:]) async throws -> Any {
         let result = await executor.execute(name: name, args: args)
@@ -61,7 +74,7 @@ final class ToolHarness {
     func runGate(_ name: String, args: [String: Any] = [:], decision: GateDecision = .approved) async -> ToolResult {
         let pending = await executor.execute(name: name, args: args)
         guard !pending.isError, editor.agentService.pendingGateApproval != nil else { return pending }
-        return await editor.agentService.resolveGate(decision) ?? pending
+        return await editor.agentService.resolveGate(decision, approvalID: editor.agentService.pendingGateApproval?.id ?? "missing") ?? pending
     }
 
     /// `runGate` (default: approve) + decode the .ok JSON payload — the approval must have been granted.
@@ -100,6 +113,11 @@ final class ToolHarness {
         asset.hasAudio = hasAudio
         editor.mediaAssets.append(asset)
         return asset
+    }
+
+    init(editor: EditorViewModel, executor: ToolExecutor) {
+        self.editor = editor
+        self.executor = executor
     }
 }
 

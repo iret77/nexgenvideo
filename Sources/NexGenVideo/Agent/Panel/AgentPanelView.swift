@@ -5,6 +5,7 @@ struct AgentPanelView: View {
     @Environment(EditorViewModel.self) var editor
     var presentation: AgentPanelPresentation = .tasks
     var replayTranscriptOnly = false
+    var onClose: (() -> Void)?
 
     private static let starterPrompts: [AgentStarterPrompt] = [
         AgentStarterPrompt(
@@ -53,7 +54,8 @@ struct AgentPanelView: View {
         AgentStarterPrompt(
             title: "Organize my media into structured folders",
             systemImage: "folder",
-            prompt: "Organize my media into structured folders. Review all assets, create clearly named folders by role, scene, or type, move assets into them, and rename generic files when useful. Don't delete anything or change the timeline."
+            prompt: "Inspect my media and use propose_media_organization to prepare a selectable plan for folder paths and display names. Wait for native approval before any change.",
+            mediaOrganization: true
         ),
     ]
 
@@ -100,8 +102,8 @@ struct AgentPanelView: View {
                         editor.generationBatchCoordinator.cancelRemaining(batchID: batchID, editor: editor)
                     } else { service.cancel() }
                 },
-                    onOpenPipeline: presentation == .tasks && editor.hasProductionPipeline
-                        ? { editor.revealCockpit(.pipeline) } : nil
+                    onOpenPipeline: editor.hasProductionPipeline || presentation == .activity
+                        ? { openProduction() } : nil
                 )
                 activityProgress
             }
@@ -236,7 +238,7 @@ struct AgentPanelView: View {
         case .approvalOutdated:
             return AgentLiveStatus(state: .waiting,
                 title: "Approval outdated: " + outdatedApprovalPhases.joined(separator: ", "),
-                detail: "An approved artifact no longer matches its approval. Check Pipeline for the next step.")
+                detail: "An approved artifact no longer matches its approval. Check Production for the next step.")
         case .spendRun:
             guard let run = service.currentSpendRun else {
                 return AgentLiveStatus(state: .working, title: "Generation in progress")
@@ -252,12 +254,17 @@ struct AgentPanelView: View {
                 stopLabel: String(localized: "Stop generation")
             )
         case .batchRun:
-            return AgentLiveStatus(state: .working, title: "Generation batch in progress",
-                detail: "View progress and results in Generation batches.", canCancel: true,
-                stopLabel: String(localized: "Stop generation"))
+            let coordinator = editor.generationBatchCoordinator
+            let hasQueued = coordinator.snapshots.first { $0.batch.id == coordinator.activeBatchID }?
+                .journal.executions.contains { $0.state == .queued } == true
+            return AgentLiveStatus(state: .working, title: String(localized: "Generation batch in progress"),
+                detail: hasQueued ? String(localized: "Stop requests that have not been submitted. Accepted provider jobs continue.")
+                    : String(localized: "No queued requests remain. Accepted provider jobs continue; results appear in Generation batches."),
+                canCancel: hasQueued, stopLabel: String(localized: "Stop remaining requests"))
         case .decisionWorking:
             return AgentLiveStatus(state: .working,
-                title: surfaceState.dockOwner == .gateApproval ? "Recording approval" : "Preparing generation options")
+                title: surfaceState.dockOwner == .gateApproval
+                    ? String(localized: "Recording approval") : String(localized: "Preparing generation options"))
         case .phaseRun:
             guard let snapshot = editor.pipelinePhaseExecution.snapshot, snapshot.isRunning else {
                 return AgentLiveStatus(state: .working, title: "Finishing the current phase",
@@ -310,7 +317,7 @@ struct AgentPanelView: View {
             return AgentLiveStatus(state: .unavailable, title: "Agent unavailable")
         case .ready:
             return AgentLiveStatus(state: .ready, title: service.stoppedAgent ? "Agent stopped; submitted provider jobs may continue" : "No task running",
-                detail: editor.hasProductionPipeline ? "No approval request is open. Check Pipeline for the next step." : nil)
+                detail: editor.hasProductionPipeline ? "No approval request is open. Check Production for the next step." : nil)
         }
     }
 
@@ -323,8 +330,28 @@ struct AgentPanelView: View {
 
     private var decisionLocation: String {
         presentation == .activity
-            ? String(localized: "Respond in the phase dock.")
+            ? String(localized: "Respond in Production, below the current phase.")
             : String(localized: "Respond in the decision area.")
+    }
+
+    private func openProduction() {
+        let phase: String?
+        switch surfaceState.dockOwner {
+        case .gateApproval:
+            phase = service.pendingGateApproval?.phase
+        case .spendApproval:
+            phase = editor.generationBatchCoordinator.pending?.payload.phase ?? service.pendingSpendPhase
+        default:
+            phase = editor.projectState?.nextPhaseName
+        }
+        if let phase {
+            editor.revealReviewSurface(for: phase)
+        } else {
+            editor.revealCockpit(.pipeline)
+        }
+        editor.showsAgentActivity = false
+        editor.theaterActive = false
+        editor.maximizedPanel = nil
     }
 
     @ViewBuilder private var pipelineRepairRecovery: some View {
@@ -467,7 +494,17 @@ struct AgentPanelView: View {
                 Text(presentation == .activity ? "AI activity" : "Tasks")
                     .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                 Spacer(minLength: AppTheme.Spacing.sm)
-                utilityButton(iconOnly: false)
+                utilityButton(iconOnly: onClose != nil)
+                if let onClose {
+                    Button(action: onClose) {
+                        Image(systemName: "xmark")
+                            .interfaceFont(size: AppTheme.Typography.ui)
+                    }
+                    .buttonStyle(.capsule(.secondary, size: .regular))
+                    .accessibilityLabel("Close AI activity")
+                    .help("Close AI activity and return to Inspector")
+                    .reviewAcceptanceProbe("production.activity.close")
+                }
             }
             .padding(.horizontal, AppTheme.Spacing.md)
             .panelHeaderBar()
@@ -849,7 +886,8 @@ struct AgentPanelView: View {
                     .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Status.errorColor)
                     .multilineTextAlignment(.leading)
-                if let cta = errorCTA(for: service.streamError) {
+                    .reviewAcceptanceProbe("agent.failure.message", text: message)
+                if !showsAuthenticationError, let cta = errorCTA(for: service.streamError) {
                     Button(action: cta.action) {
                         Text(cta.title)
                             .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
@@ -1003,25 +1041,38 @@ struct AgentPanelView: View {
                     error: service.gateApprovalError,
                     isWorking: service.gateApprovalIsWriting,
                     isBlocked: pendingGateIsBlockedByPhaseRun,
-                    onApprove: {
-                        Task { await service.resolveGate(.approved) }
+                    onApprove: { approvalID in
+                        Task { await service.resolveGate(.approved, approvalID: approvalID) }
                     },
-                    onDecline: {
-                        Task { await service.resolveGate(.declined) }
+                    onDecline: { approvalID in
+                        Task { await service.resolveGate(.declined, approvalID: approvalID) }
                     }
                 )
+                .id(gate.id)
                 .padding(.bottom, AppTheme.Spacing.xs)
             }
         case .dialog:
             if let dialog = service.pendingDialog {
                 @Bindable var service = service
+                let previousScope = service.previousWorkflowMaterialScope(for: dialog)
                 AgentDialogCard(
                     dialog: dialog,
                     externalSelections: $service.dialogChoiceSelections,
                     externalDraft: Binding(
-                        get: { service.pendingDialog?.id == dialog.id ? service.dialogDraft : AgentDialogDraft() },
-                        set: { if service.pendingDialog?.id == dialog.id { service.dialogDraft = $0 } }
+                        get: {
+                            service.pendingDialog?.id == dialog.id && service.previousWorkflowMaterialScope(for: dialog) == previousScope
+                                ? service.dialogDraft : AgentDialogDraft()
+                        },
+                        set: {
+                            if service.pendingDialog?.id == dialog.id,
+                               service.previousWorkflowMaterialScope(for: dialog) == previousScope { service.dialogDraft = $0 }
+                        }
                     ),
+                    previousWorkflowScope: previousScope,
+                    loadPreviousWorkflowMaterials: { try await service.previousWorkflowMaterials(scope: $0) },
+                    isPreviousWorkflowScopeCurrent: {
+                        service.pendingDialog?.id == dialog.id && service.previousWorkflowMaterialScope(for: dialog) == $0
+                    },
                     accent: editor.activePackAccentColor ?? AppTheme.Accent.primary,
                     libraryAssets: editor.agentPickableMediaAssets,
                     libraryAssetRoles: editor.mediaManifest.intakeRoleByAssetID,
@@ -1056,7 +1107,7 @@ struct AgentPanelView: View {
                 HStack(spacing: AppTheme.Spacing.xs) {
                     FunctionPill(title: fn.title, systemImage: fn.systemImage) {
                         service.pendingFunction = nil
-                    }
+                    }.reviewAcceptanceProbe("agent.task.staged", text: fn.title)
                     Spacer(minLength: AppTheme.Spacing.none)
                 }
             }
@@ -1110,6 +1161,7 @@ struct AgentPanelView: View {
         .menuIndicator(.hidden)
         .buttonStyle(.capsule(.secondary, size: .regular))
         .disabled(service.isStreaming || service.isComposerBlocked)
+        .reviewAcceptanceProbe("agent.task.choose", state: !service.isStreaming && !service.isComposerBlocked)
     }
 
     private func submit() {
@@ -1122,7 +1174,8 @@ struct AgentPanelView: View {
 
     private func runStarter(_ starter: AgentStarterPrompt) {
         service.stageTask(.init(title: starter.title, systemImage: starter.systemImage,
-            prompt: starter.prompt, requiresDirection: starter.requiresDirection))
+            prompt: starter.prompt, requiresDirection: starter.requiresDirection,
+            mediaOrganizationScope: starter.mediaOrganization ? .init(folderID: nil) : nil))
     }
 
 }
@@ -1133,6 +1186,7 @@ private struct AgentStarterPrompt: Identifiable {
     let systemImage: String
     let prompt: String
     var requiresDirection: Bool = false
+    var mediaOrganization = false
 }
 
 private struct AgentStarterPromptButton: View {

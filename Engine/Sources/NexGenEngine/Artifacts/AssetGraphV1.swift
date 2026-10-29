@@ -464,7 +464,20 @@ public enum AssetGraphValidatorV1 {
                 asset.provenance.sourceProofPath,
                 asset.provenance.sourceProofSHA256,
             ]
-            if asset.provenance.kindID == CoreAssetProvenanceKindIDV1.approvedFrame
+            if asset.provenance.kindID == PlanningSpatialAssetV1.provenanceKindID {
+                guard (asset.modality == .video ? asset.provenance.sourceShotID != nil : asset.provenance.sourceShotID == nil),
+                      asset.provenance.sourceAssetID == nil,
+                      asset.provenance.modelID == nil, asset.provenance.promptSHA256 == nil,
+                      asset.provenance.sourceRoleID == PlanningSpatialAssetV1.sourceRoleID,
+                      let proofPath = asset.provenance.sourceProofPath,
+                      let proofHash = asset.provenance.sourceProofSHA256,
+                      [AssetPhysicalModalityV1.geometry, .image, .video].contains(asset.modality) else {
+                    throw AssetGraphValidationError.invalidProvenance(asset.id)
+                }
+                try validatePath(proofPath)
+                try validateHash(proofHash)
+                if let shotID = asset.provenance.sourceShotID { try PlanningValidation.shotID(shotID) }
+            } else if asset.provenance.kindID == CoreAssetProvenanceKindIDV1.approvedFrame
                 || asset.provenance.kindID == CoreAssetProvenanceKindIDV1.renderFrame
                 || renderProofFields.contains(where: { $0 != nil }) {
                 guard renderProofFields.allSatisfy({ $0 != nil }) else {
@@ -494,6 +507,15 @@ public enum AssetGraphValidatorV1 {
         _ demandSet: ReferenceDemandSetV1,
         against graph: AssetGraphV1
     ) throws {
+        try validate(demandSet, against: graph, assetGraphPath: PipelineLayout.assetGraphFile)
+    }
+
+    public static func validate(
+        _ demandSet: ReferenceDemandSetV1,
+        against graph: AssetGraphV1,
+        assetGraphPath: String
+    ) throws {
+        try validatePath(assetGraphPath)
         guard demandSet.schema == referenceDemandSetV1Schema else {
             throw AssetGraphValidationError.unsupportedSchema(demandSet.schema)
         }
@@ -507,7 +529,7 @@ public enum AssetGraphValidatorV1 {
         let graphData = try AssetGraphCanonicalCodecV1.encode(graph)
         guard demandSet.assetGraph.id == graph.id,
               demandSet.assetGraph.role == AssetGraphV1.artifactRole,
-              demandSet.assetGraph.path == PipelineLayout.assetGraphFile,
+              demandSet.assetGraph.path == assetGraphPath,
               demandSet.assetGraph.sha256 == FileDigest.sha256(of: graphData) else {
             throw AssetGraphValidationError.assetGraphMismatch
         }
@@ -545,6 +567,7 @@ public enum AssetGraphValidatorV1 {
             guard asset.modality == demand.modality else {
                 throw AssetGraphValidationError.modalityMismatch(demand.id)
             }
+            try PlanningSpatialAssetV1.requireDemandPurpose(demand, asset: asset, targetShotID: demandSet.shotID)
             if let declaredDuration = demand.durationSeconds,
                asset.durationSeconds != declaredDuration {
                 throw AssetGraphValidationError.invalidDuration(demand.id)

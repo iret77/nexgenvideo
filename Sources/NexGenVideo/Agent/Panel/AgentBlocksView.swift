@@ -4,11 +4,13 @@ import SwiftUI
 /// headlines, badge rows, key-value boxes, callouts, and prose, in AppTheme language.
 struct AgentBlocksView: View {
     let blocks: [AgentBlock]
+    let messageID: UUID
 
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+            ForEach(Array(blocks.enumerated()), id: \.offset) { index, block in
                 blockView(block)
+                    .reviewAcceptanceProbe("agent.structured.\(messageID.uuidString.lowercased()).\(index)", text: probeText(block))
             }
         }
         .padding(AppTheme.Spacing.mdLg)
@@ -26,6 +28,30 @@ struct AgentBlocksView: View {
         )
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Structured result")
+    }
+
+    private func probeText(_ block: AgentBlock) -> String {
+        let object: [String: Any]
+        switch block {
+        case .headline(let text, let symbol):
+            var value: [String: Any] = ["type": "headline", "text": text]
+            if let symbol { value["symbol"] = symbol }
+            object = value
+        case .text(let body): object = ["type": "text", "body": body]
+        case .status(let badges):
+            object = ["type": "status", "badges": badges.map { badge -> [String: Any] in
+                var value: [String: Any] = ["label": badge.label, "value": badge.value]
+                if let symbol = badge.symbol { value["symbol"] = symbol }
+                return value
+            }]
+        case .keyValue(let title, let rows):
+            var value: [String: Any] = ["type": "keyvalue", "rows": rows.map { [$0.0, $0.1] }]
+            if let title { value["title"] = title }
+            object = value
+        case .callout(let tone, let text): object = ["type": "callout", "tone": tone.rawValue, "text": text]
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes]) else { return "invalid" }
+        return String(decoding: data, as: UTF8.self)
     }
 
     @ViewBuilder

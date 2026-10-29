@@ -296,6 +296,28 @@ struct RunwayClientTests {
         #expect(!FixtureURLProtocol.requests().contains { $0.method == "DELETE" })
     }
 
+    @Test func projectCloseStopsLocalPollingWithoutDeletingTheProviderTask() async throws {
+        FixtureURLProtocol.reset()
+        let testSession = session()
+        defer { testSession.invalidateAndCancel() }
+        let client = RunwayClient(apiKey: "unit-no-key", session: testSession)
+        let lifetime = GenerationBatchExecutionLifetime()
+        let task = Task {
+            try await GenerationBatchExecutionLifetime.$current.withValue(lifetime) {
+                try await client.output(taskId: "close-job")
+            }
+        }
+        defer { lifetime.abandon(); task.cancel() }
+        for _ in 0..<400 {
+            if FixtureURLProtocol.requests().contains(where: { $0.method == "GET" }) { break }
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        try #require(FixtureURLProtocol.requests().contains { $0.method == "GET" })
+        lifetime.abandon(); task.cancel()
+        await #expect(throws: CancellationError.self) { _ = try await task.value }
+        #expect(FixtureURLProtocol.requests().map(\.method) == ["GET"])
+    }
+
     @Test func taskCancellationDeletesProviderTaskExactlyOnce() async throws {
         FixtureURLProtocol.reset()
         let testSession = session()

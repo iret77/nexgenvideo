@@ -71,8 +71,9 @@ struct AgentLiveStatusView: View {
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         if let onOpenPipeline {
-                            Button("Open Pipeline", action: onOpenPipeline)
+                            Button("Open Production", action: onOpenPipeline)
                                 .buttonStyle(.capsule(.secondary, size: .small))
+                                .reviewAcceptanceProbe("agent.open-production")
                         }
                     }
                 }

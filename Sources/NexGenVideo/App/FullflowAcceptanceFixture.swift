@@ -43,9 +43,9 @@ enum FullflowAcceptanceFixture {
             initialGateApprovals: flow.gateApprovals, generatedShot: generatedShot))
     }
 
-    static func finishPlanning(editor: EditorViewModel, evidenceURL: URL,
+    static func finishLegacyReferences(editor: EditorViewModel, evidenceURL: URL,
                                initialGateApprovals: [MusicvideoNativeAcceptance.GateEvidence],
-                               generatedShot: GeneratedShotScenario? = nil) async throws -> Receipt {
+                               generatedShot: GeneratedShotScenario? = nil) async throws -> LegacyReferences {
         let root = try dataRoot(editor)
         var nativeGateApprovals = initialGateApprovals
         func approve(_ phase: String, editor: EditorViewModel) async throws {
@@ -62,9 +62,6 @@ enum FullflowAcceptanceFixture {
         func run(_ name: String, _ args: [String: Any], editor: EditorViewModel) async throws {
             try await Self.run(name, args, editor: editor, executor: executor)
         }
-        let fps = editor.timeline.fps
-        let totalFrames = BeatAssembly.frame(seconds: grid.durationS, fps: fps)
-        let projectHome = FrameInventory.projectHome(of: root)
         let sections = try rawSections.enumerated().map { index, raw -> Section in
             guard let start = raw["start"] as? Double, let end = raw["end"] as? Double,
                   let label = raw["label"] as? String, end > start else {
@@ -129,6 +126,37 @@ enum FullflowAcceptanceFixture {
                 "scene3d": ["panorama": "", "provider": "", "povs": []],
             ]]], editor: editor)
         try await approve("bible", editor: editor)
+        return LegacyReferences(root: root, brief: brief, grid: grid, sections: sections,
+            executor: executor, nativeGateApprovals: nativeGateApprovals, nativeBibleBlocker: nativeBibleBlocker)
+    }
+
+    struct LegacyReferences {
+        let root: URL
+        let brief: Brief
+        let grid: BeatAssembly.BeatGrid
+        let sections: [Section]
+        let executor: ToolExecutor
+        let nativeGateApprovals: [MusicvideoNativeAcceptance.GateEvidence]
+        let nativeBibleBlocker: [String: Any]
+    }
+
+    static func finishPlanning(editor: EditorViewModel, evidenceURL: URL,
+                               initialGateApprovals: [MusicvideoNativeAcceptance.GateEvidence],
+                               generatedShot: GeneratedShotScenario? = nil) async throws -> Receipt {
+        let prepared = try await finishLegacyReferences(editor: editor, evidenceURL: evidenceURL,
+            initialGateApprovals: initialGateApprovals, generatedShot: generatedShot)
+        let root = prepared.root, brief = prepared.brief, grid = prepared.grid, sections = prepared.sections
+        let executor = prepared.executor, nativeBibleBlocker = prepared.nativeBibleBlocker
+        var nativeGateApprovals = prepared.nativeGateApprovals
+        func approve(_ phase: String, editor: EditorViewModel) async throws {
+            nativeGateApprovals.append(try await MusicvideoNativeAcceptance.approve(phase, editor: editor, evidenceURL: evidenceURL))
+        }
+        func run(_ name: String, _ args: [String: Any], editor: EditorViewModel) async throws {
+            try await Self.run(name, args, editor: editor, executor: executor)
+        }
+        let fps = editor.timeline.fps
+        let totalFrames = BeatAssembly.frame(seconds: grid.durationS, fps: fps)
+        let projectHome = FrameInventory.projectHome(of: root)
         var shots: [[String: Any]] = []
         var execution: [[String: Any]] = []
         var arcs: [[String: Any]] = []
@@ -242,7 +270,7 @@ enum FullflowAcceptanceFixture {
             nativeGateApprovals: nativeGateApprovals, nativeBibleBlocker: nativeBibleBlocker)
     }
 
-    private struct Section { let id: String; let label: String; let start: Double; let end: Double }
+    struct Section { let id: String; let label: String; let start: Double; let end: Double }
 
     private static func dataRoot(_ editor: EditorViewModel) throws -> URL {
         guard let home = editor.workingRoot, let root = DataRootResolver.dataRoot(of: home) else {
@@ -310,7 +338,7 @@ enum FullflowAcceptanceFixture {
         }
     }
 
-    private static func writeTone(to url: URL, duration: Double) throws {
+    static func writeTone(to url: URL, duration: Double) throws {
         guard let format = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 1),
               let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(duration * 48000)),
               let samples = buffer.floatChannelData?[0] else { throw Failure("Audio fixture allocation failed.") }
@@ -347,7 +375,7 @@ enum FullflowAcceptanceFixture {
         try data.write(to: url)
     }
 
-    private static func writeVideo(to url: URL, duration: Double, fps: Int, warm: Bool) async throws {
+    static func writeVideo(to url: URL, duration: Double, fps: Int, warm: Bool) async throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264,

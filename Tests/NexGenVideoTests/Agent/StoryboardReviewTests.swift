@@ -136,11 +136,17 @@ struct StoryboardReviewTests {
         #expect(panel.contains("CockpitDataService.storyboard("))
         #expect(panel.contains("state = .failed(.noProject)"))
         #expect(document.contains(".padding(.horizontal, AppTheme.Spacing.lg)"))
-        #expect(cockpit.contains("case .storyboard: StoryboardPanelView()"))
+        #expect(cockpit.contains("case .storyboard:"))
+        #expect(cockpit.contains("if editor.usesProductionPlanningV2 { StoryboardPlanningView() } else { StoryboardPanelView() }"))
         #expect(!cockpit.contains("StoryboardReviewSheet"))
-        for source in [panel, document, card, pipeline] {
+        for source in [panel, document, pipeline] {
             #expect(!source.contains(".sheet("))
         }
+        #expect(card.contains("editor.revealReviewSurface(for: approval.phase)"))
+        #expect(!card.contains("StoryboardReviewSheet"))
+        #expect(!card.contains("PipelineStoryboardReviewSheet"))
+        #expect(card.contains(".sheet(isPresented: $showsReviewDetails)"))
+        #expect(card.contains("ProductionDecisionReview(title: approval.decisionTitle"))
         #expect(throws: (any Error).self) {
             try sourceFile("Sources/NexGenVideo/Agent/Panel/StoryboardReviewSheet.swift")
         }

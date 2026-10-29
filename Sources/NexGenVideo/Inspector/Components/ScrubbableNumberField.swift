@@ -9,6 +9,7 @@ struct ScrubbableNumberField: View {
     var format: String = "%.0f"
     var valueSuffix: String = ""
     var accessibilityName: String? = nil
+    var acceptanceIdentifier: String? = nil
     /// Display units changed per pixel of horizontal drag.
     var dragSensitivity: Double = 1
     var fieldWidth: CGFloat = AppTheme.ComponentSize.scrubFieldStandard
@@ -80,6 +81,12 @@ struct ScrubbableNumberField: View {
             .padding(.vertical, AppTheme.Spacing.xxs)
             .inspectorControlChrome(focused: isEditing, mixed: isMixed, error: hasError)
             .overlay(scrubOverlay)
+            .background {
+                if WorkspaceUIAcceptance.isRequested, let accessibilityName {
+                    AppRelaunchClickProbe(identifier: acceptanceIdentifier ?? "inspector.value." + accessibilityName,
+                        acceptanceState: isEnabled, acceptanceText: isEditing ? editText : editingText)
+                }
+            }
 
             if let trailingLabel {
                 Text(trailingLabel)

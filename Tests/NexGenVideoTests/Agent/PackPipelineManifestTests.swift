@@ -717,26 +717,27 @@ struct PackPipelineManifestTests {
             engineContract: EngineContract.current,
             resourceRoot: prepared.resourceRoot,
             hardSteps: prepared.hardSteps,
-            registry: registry
+            registry: registry,
+            projectSchema: "musicvideo/3.0.0"
         )
         try PhaseContractRuntime.validateLockedMusicvideoIfNeeded(
             resolved,
             registry: registry
         )
 
-        #expect(resolved.order == PipelineAgentContract.musicvideoPhases)
+        #expect(resolved.order == CurrentMusicvideoFixture.phases)
         #expect(!resolved.order.contains("finish"))
         #expect(resolved.hardSteps.steps(for: "project_init").map(\.kind) == [.song, .lyrics])
         #expect(resolved.hardSteps.steps(for: "analysis").isEmpty)
-        for phase in PipelineAgentContract.musicvideoPhases {
+        for phase in CurrentMusicvideoFixture.phases {
             let declaration = try #require(resolved.phase(phase))
             #expect(
                 declaration.phaseBoundCapabilities
-                    == (PipelineAgentContract.executableTools[phase] ?? [])
+                    == CurrentMusicvideoFixture.phaseBound(phase)
             )
             #expect(
                 declaration.supportingCapabilities
-                    == (PipelineAgentContract.currentPhaseCapabilities[phase] ?? [])
+                    == CurrentMusicvideoFixture.supporting(phase)
             )
         }
         #expect(

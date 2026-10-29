@@ -26,14 +26,28 @@ struct InspectorView: View {
     @State private var transformExpanded = true
     @State private var shotSourceModeMutationID: String?
     @State private var shotSourceModeAvailableID: String?
+    @State var lutMutationID: UUID?
+    @State var lutLoadError: String?
     @State var collapsedAdjustSections: Set<String> = ["Curves", "Color Wheels", "Hue Curves", "LUTs", "Effects"]
     @State var collapsedAdjustSubgroups: Set<String> = [
         "Detail", "Blur", "Motion Blur", "Vignette", "Film Grain", "Glow", "Chroma Key",
     ]
 
     var body: some View {
+        let selectionContext = AgentTaskSelectionContext.capture(editor: editor)
         VStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
             breadcrumbHeader
+            if [.edit, .postproduction, .media].contains(editor.workspaceFocus),
+               let context = editor.selectedObjectRevisionTask,
+               selectionContext.timelineRange != nil || selectionContext.source != nil
+                || !editor.selectedClipIds.isEmpty {
+                Button("Revise Selection…") { _ = editor.agentService.stageTask(context) }
+                    .buttonStyle(.capsule(.secondary))
+                    .disabled(editor.agentService.isStreaming || editor.agentService.isComposerBlocked)
+                    .reviewAcceptanceProbe("inspector.task.stage", state: !editor.agentService.isStreaming && !editor.agentService.isComposerBlocked,
+                        text: context.title)
+                    .padding(.horizontal, AppTheme.Spacing.lg).padding(.vertical, AppTheme.Spacing.sm)
+            }
             Group {
                 inspectorContent
             }
@@ -53,6 +67,13 @@ struct InspectorView: View {
         .onChange(of: editor.isMarqueeSelecting) { _, selecting in
             if !selecting { resolvePreferredTab() }
             promoteSelection()
+        }
+        .onChange(of: editor.workingRoot) { _, _ in lutMutationID = nil; lutLoadError = nil }
+        .onChange(of: editor.requestedLUTClipID, initial: true) { _, id in
+            guard let id, editor.selectedClipIds == [id] else { return }
+            preferredTab = .effects
+            collapsedAdjustSections.remove("LUTs")
+            editor.requestedLUTClipID = nil
         }
         .onChange(of: preferredTab) { _, newTab in
             if newTab != .video { editor.cropEditingActive = false }
@@ -120,7 +141,7 @@ struct InspectorView: View {
 
     // MARK: - Entity / Look / Shot inspectors (read-only; editing lives in Phase C)
 
-    private func entityInspectorContent(_ entity: any BibleEntity) -> some View {
+    private func entityInspectorContent(_ entity: any BiblePanelEntity) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
                 BibleEntityCard(entity: entity, projectDir: editor.workingRoot)
@@ -153,7 +174,7 @@ struct InspectorView: View {
     private func lookInspectorContent(_ look: BibleLook) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
-                Text("Review the look guide in Bible. Saved decisions appear below.")
+                Text("Review the look guide in References. Saved decisions appear below.")
                     .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.secondaryColor)
                 ledgerSection(for: .look)
@@ -211,6 +232,7 @@ struct InspectorView: View {
             .padding(.vertical, AppTheme.Spacing.md)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .reviewAcceptanceProbe("inspector.shot." + shot.id, text: shot.id)
     }
 
     private func shotSourceModeRow(_ shot: ShotSummary) -> some View {
@@ -291,13 +313,13 @@ struct InspectorView: View {
 
     /// Shot↔entity provenance: which shots use this entity (click → inspect the shot).
     @ViewBuilder
-    private func usageSection(of entity: any BibleEntity) -> some View {
+    private func usageSection(of entity: any BiblePanelEntity) -> some View {
         let graph = objectGraph
-        let refs = BibleEntityKind.allCases.map { BibleEntityRef(kind: $0, id: entity.id) }
-        let shots = refs.flatMap { graph.usage(of: $0) }
+        let ref = BibleEntityRef(kind: entityKind(of: entity), id: entity.id)
+        let shots = graph.usage(of: ref)
         if !shots.isEmpty {
             metadataSection(title: "Used in shots") {
-                chipRow(shots.map { (graph.shotLabel($0) ?? $0, InspectedObject.shot($0)) })
+                chipRow(shots.map { (graph.shotLabel($0) ?? $0, InspectedObject.shot($0)) }, usage: true)
             }
         }
     }
@@ -325,7 +347,7 @@ struct InspectorView: View {
     }
 
     /// A wrapping row of navigable object chips (label → inspect target).
-    private func chipRow(_ items: [(String, InspectedObject)]) -> some View {
+    private func chipRow(_ items: [(String, InspectedObject)], usage: Bool = false) -> some View {
         WrapLayout(spacing: AppTheme.Spacing.xs) {
             ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                 Button {
@@ -337,6 +359,11 @@ struct InspectorView: View {
                         .multilineTextAlignment(.leading)
                 }
                 .buttonStyle(.capsule(.secondary))
+                .background {
+                    if usage, case .shot(let id) = item.1 {
+                        AppTheme.Background.clearColor.reviewAcceptanceProbe("inspector.usage.shot." + id, text: item.0)
+                    }
+                }
             }
         }
     }
@@ -350,36 +377,14 @@ struct InspectorView: View {
             metadataSection(title: "Intent") {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
                     ForEach(attributes, id: \.key) { entry in
-                        HStack(spacing: AppTheme.Spacing.xs) {
-                            if entry.attribute.locked {
-                                Image(systemName: "lock.fill")
-                                    .interfaceFont(size: AppTheme.Typography.metadata)
-                                    .foregroundStyle(AppTheme.Text.secondaryColor)
-                            }
-                            Text(entry.attribute.tag)
-                                .interfaceFont(size: AppTheme.Typography.ui, weight: entry.attribute.locked ? .semibold : .medium)
-                                .foregroundStyle(entry.attribute.locked ? AppTheme.Text.primaryColor : AppTheme.Text.secondaryColor)
-                                .lineLimit(2)
-                        }
-                        .padding(.horizontal, AppTheme.Spacing.sm)
-                        .padding(.vertical, AppTheme.Spacing.xxs)
-                        .background { Capsule().fill(AppTheme.Background.raisedColor) }
-                        .overlay(Capsule().strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline))
-                        .help(ledgerHelp(entry.key, entry.attribute))
+                        IntentLedgerAttributeView(object: object, key: entry.key, attribute: entry.attribute)
                     }
                 }
             }
         }
     }
 
-    private func ledgerHelp(_ key: String, _ attribute: LedgerAttribute) -> String {
-        var parts = ["\(key): \(attribute.directive)"]
-        if !attribute.source.isEmpty { parts.append("Source: \u{201C}\(attribute.source)\u{201D}") }
-        if attribute.locked { parts.append("Locked — generation must honor this.") }
-        return parts.joined(separator: "\n")
-    }
-
-    private func entityKind(of entity: any BibleEntity) -> BibleEntityKind {
+    private func entityKind(of entity: any BiblePanelEntity) -> BibleEntityKind {
         switch entity {
         case is BibleEnsemble: .ensemble
         case is BibleProp: .prop
@@ -390,22 +395,18 @@ struct InspectorView: View {
 
     private var scopedThreadButton: some View {
         Button("Revise Object…") {
-            guard let scope = editor.inspectedObject?.taskTarget else { return }
-            _ = editor.agentService.stageTask(AgentTask(
-                title: "Revise \(currentBreadcrumb.flatText)", systemImage: "pencil",
-                prompt: "Revise only this object: \(scope). Apply the supplied instructions through the existing tools. Preserve approved artifacts and request explicit rewind when needed. Clarify ambiguous changes with a structured dialog.",
-                requiresDirection: true
-            ))
+            guard let task = editor.selectedObjectRevisionTask else { return }
+            _ = editor.agentService.stageTask(task)
         }
         .buttonStyle(.capsule(.secondary))
-        .disabled(editor.inspectedObject == nil || editor.agentService.isStreaming
+        .disabled(editor.selectedObjectRevisionTask == nil || editor.agentService.isStreaming
             || editor.agentService.isComposerBlocked)
         .help("Prepare an object-specific revision task")
     }
 
     /// Structured Bible editing: the form composes ONE precise agent command — the bible phase
     /// tooling stays the single writer, so schema/sheet invariants hold.
-    private func entityEditForm(_ entity: any BibleEntity) -> some View {
+    private func entityEditForm(_ entity: any BiblePanelEntity) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
             Text("Edit \(entity.name)")
                 .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
@@ -429,7 +430,7 @@ struct InspectorView: View {
         .frame(width: AppTheme.ComponentSize.inspectorPopoverWidth)
     }
 
-    private func applyEntityEdit(_ entity: any BibleEntity) {
+    private func applyEntityEdit(_ entity: any BiblePanelEntity) {
         var changes: [String] = []
         func diff(_ field: String, new: String, old: String, clearable: Bool) {
             let trimmed = new.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -466,8 +467,8 @@ struct InspectorView: View {
 
     private func contextualPromptField(placeholder: String) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
-            if let hint = editor.selectionContextHint {
-                ScopeChip(text: hint)
+            if let hint = AgentTaskSelectionContext.capture(editor: editor).label {
+                ScopeChip(text: hint).reviewAcceptanceProbe("inspector.task.scope", text: hint)
             }
             HStack(spacing: AppTheme.Spacing.sm) {
                 TextField(placeholder, text: $contextualPromptDraft)
@@ -483,7 +484,7 @@ struct InspectorView: View {
                 .buttonStyle(.inlineAction())
                 .disabled(contextualPromptDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     || editor.agentService.isStreaming || editor.agentService.isComposerBlocked
-                    || editor.selectionContextHint == nil)
+                    || editor.selectedObjectRevisionTask == nil)
             }
         }
     }
@@ -491,12 +492,8 @@ struct InspectorView: View {
     private func sendContextualPrompt() {
         let text = contextualPromptDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        guard let target = editor.selectionContextHint else { return }
-        let accepted = editor.agentService.sendWorkOrder(
-            .init(title: "Revise: " + target, systemImage: "pencil",
-                prompt: "Revise only this selected object: " + target + ". Respect phase gates and use the existing project tools.",
-                requiresDirection: true),
-            direction: text, mentions: [])
+        guard let task = editor.selectedObjectRevisionTask else { return }
+        let accepted = editor.agentService.sendWorkOrder(task, direction: text, mentions: [])
         if accepted { contextualPromptDraft = "" }
         editor.agentPanelVisible = true
     }
@@ -750,14 +747,19 @@ struct InspectorView: View {
                                     }
                                 }
                             }
+                            if editor.selectedClipIds.count == 1,
+                               let clip = editor.selectedClipIds.first.flatMap({ editor.clipFor(id: $0) }),
+                               let source = editor.mediaAssets.first(where: { $0.id == clip.mediaRef }) {
+                                AssetProvenanceSection(asset: source)
+                            }
                         }
                         .padding(AppTheme.Spacing.lg)
                     }
                 }
             }
-            if activeTab == .video || activeTab == .audio {
+            if activeTab == .video || activeTab == .audio || activeTab == .effects {
                 keyframesToggleBar(
-                    enabled: activeTab == .video
+                    enabled: activeTab != .audio
                         ? nonTextVisualClips.count == 1
                         : selectedAudioClips.count == 1
                 )
@@ -875,8 +877,8 @@ struct InspectorView: View {
     func commitToClips(_ clips: [Clip], actionName: String, _ commit: (Clip) -> Void) {
         editor.undoManager?.beginUndoGrouping()
         for c in clips { commit(c) }
-        editor.undoManager?.endUndoGrouping()
         editor.undoManager?.setActionName(actionName)
+        editor.undoManager?.endUndoGrouping()
     }
 
     // MARK: - Transform Section
@@ -936,6 +938,7 @@ struct InspectorView: View {
             keyframeNavButton(systemName: "chevron.left", help: "Go to previous keyframe", enabled: prev != nil) {
                 if let f = prev { editor.seekToFrame(f) }
             }
+            .reviewAcceptanceProbe("editing.keyframe." + property.rawValue + ".previous", state: prev != nil)
             Button {
                 if onKeyframe {
                     editor.removeKeyframe(clipId: clipId, property: property, at: frame)
@@ -948,6 +951,7 @@ struct InspectorView: View {
             }
             .buttonStyle(ToolbarIconButtonStyle(isSelected: onKeyframe))
             .disabled(!inRange)
+            .reviewAcceptanceProbe("editing.keyframe." + property.rawValue + ".stamp", state: inRange)
             .accessibilityLabel(onKeyframe ? "Remove keyframe" : "Add keyframe")
             .help(!inRange ? "Move playhead inside the clip"
                   : onKeyframe ? "Remove keyframe at playhead"
@@ -955,10 +959,11 @@ struct InspectorView: View {
             keyframeNavButton(systemName: "chevron.right", help: "Go to next keyframe", enabled: next != nil) {
                 if let f = next { editor.seekToFrame(f) }
             }
+            .reviewAcceptanceProbe("editing.keyframe." + property.rawValue + ".next", state: next != nil)
         }
     }
 
-    private func keyframeNavButton(
+    func keyframeNavButton(
         systemName: String,
         help: String,
         enabled: Bool,
@@ -992,10 +997,7 @@ struct InspectorView: View {
                         $0.positionTrack = nil
                         $0.scaleTrack = nil
                         $0.rotationTrack = nil
-                        $0.fadeInFrames = 0
-                        $0.fadeOutFrames = 0
-                        $0.fadeInInterpolation = .linear
-                        $0.fadeOutInterpolation = .linear
+                        $0.resetFades()
                     }
                 }
             } : nil
@@ -1018,8 +1020,8 @@ struct InspectorView: View {
         ) { newVal in
             editor.undoManager?.beginUndoGrouping()
             for c in clips { editor.commitScale(clipId: c.id, newScale: newVal) }
-            editor.undoManager?.endUndoGrouping()
             editor.undoManager?.setActionName("Change Scale")
+            editor.undoManager?.endUndoGrouping()
         }
     }
 
@@ -1039,8 +1041,8 @@ struct InspectorView: View {
         ) { newVal in
             editor.undoManager?.beginUndoGrouping()
             for c in clips { editor.commitRotation(clipId: c.id, valueDeg: newVal) }
-            editor.undoManager?.endUndoGrouping()
             editor.undoManager?.setActionName("Change Rotation")
+            editor.undoManager?.endUndoGrouping()
         }
     }
 
@@ -1060,8 +1062,8 @@ struct InspectorView: View {
         ) { newVal in
             editor.undoManager?.beginUndoGrouping()
             for c in clips { editor.commitOpacity(clipId: c.id, value: newVal) }
-            editor.undoManager?.endUndoGrouping()
             editor.undoManager?.setActionName("Change Opacity")
+            editor.undoManager?.endUndoGrouping()
         }
     }
 
@@ -1096,6 +1098,7 @@ struct InspectorView: View {
         .buttonStyle(.plain)
         .help(help ?? "Reset")
         .accessibilityLabel(help ?? "Reset")
+        .reviewAcceptanceProbe("inspector.reset." + (help ?? "Reset"))
     }
 
     func propertyRow<Trailing: View>(
@@ -1151,6 +1154,7 @@ struct InspectorView: View {
         .buttonStyle(ToolbarIconButtonStyle(isSelected: isOn))
         .accessibilityLabel(help)
         .help(help)
+        .reviewAcceptanceProbe("inspector.transform." + systemName, text: isOn ? "on" : "off")
     }
 
     // MARK: - Crop
@@ -1171,6 +1175,7 @@ struct InspectorView: View {
                     editor.cropEditingActive.toggle()
                 }
                 .disabled(disabled)
+                .reviewAcceptanceProbe("inspector.crop.edit", state: !disabled, text: editing ? "editing" : "idle")
             } second: {
                 cropMenu(single: single)
             }

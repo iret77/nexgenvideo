@@ -50,10 +50,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         )
         stage = 'scripts/stage_test_runtime.sh release "$RUNNER_TEMP/release-tests"'
         test = (
-            'swift test --cache-path "$NGV_SWIFTPM_CACHE_PATH" -c release '
-            '--scratch-path "$RUNNER_TEMP/release-tests" '
-            '--skip-build -Xswiftc -enable-testing 2>&1 | tee '
-            '"release-test-attempt-$i.log"'
+            'python3 scripts/run_macos_tests.py --cache-path "$NGV_SWIFTPM_CACHE_PATH" \\'
         )
         bundle = "scripts/bundle.sh release --sign"
         pack = 'scripts/assemble_ngvpack.sh plugins/musicvideo.json release .build/plugins "${SIGN_IDENTITY:-}"'
@@ -64,8 +61,21 @@ class ReleaseWorkflowTests(unittest.TestCase):
             self.assertNotRegex(by_name[name], r"(?m)^        continue-on-error:")
         self.assertEqual(single_line_run(by_name[build_name]), build)
         self.assertEqual(single_line_run(by_name[stage_name]), stage)
-        self.assertEqual(matching_shell_lines(by_name[test_name], "swift test "), [test])
-        self.assertEqual(single_line_run(by_name[bundle_name]), bundle)
+        self.assertEqual(matching_shell_lines(by_name[test_name], "python3 scripts/run_macos_tests.py "), [test])
+        self.assertIn('-c release --scratch-path "$RUNNER_TEMP/release-tests" --swiftc-flag=-enable-testing',
+                      by_name[test_name])
+        self.assertIn('--evidence "$RUNNER_TEMP/release-test-evidence" 2>&1 | tee release-test.log',
+                      by_name[test_name])
+        self.assertIn('scripts/verify_swift_test_output.py --log release-test.log --swift-testing-runs 2 --xctest-runs 2',
+                      by_name[test_name])
+        self.assertIn('name: release-test-evidence', by_name['Upload release test evidence'])
+        self.assertEqual(matching_shell_lines(by_name[bundle_name], "scripts/bundle.sh "), [bundle])
+        bundle_verification = "scripts/verify_bpy_bundle.sh .build/NexGenVideo.app --distribution"
+        self.assertEqual(
+            matching_shell_lines(by_name[bundle_name], "scripts/verify_bpy_bundle.sh "),
+            [bundle_verification],
+        )
+        self.assertLess(by_name[bundle_name].index(bundle), by_name[bundle_name].index(bundle_verification))
         self.assertEqual(
             matching_shell_lines(by_name[pack_name], "scripts/assemble_ngvpack.sh "),
             [pack],

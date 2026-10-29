@@ -39,8 +39,8 @@ struct PackStarterProgressTests {
         // The prompt must not restart the pipeline or re-request the song.
         #expect(!prompt.lowercased().contains("ask me for the track"))
         #expect(prompt.contains("Brief"))
-        #expect(prompt.contains("# Phase K1 — Brief"))
-        #expect(prompt.contains("If it is absent, this is greenfield"))
+        #expect(prompt.contains("# Brief"))
+        #expect(prompt.contains("Explicit Greenfield means develop from the approved song analysis and optional lyrics."))
     }
 
     @Test("the phase in the chip is the pack's own wording, not the raw key")
@@ -78,7 +78,7 @@ struct PackStarterProgressTests {
         // fall back to the start chip again — the exact regression this fixes.
         // The catalog is empty until a pack registers (packs ship as loadable bundles), and
         // registration is idempotent by name — safe alongside the other suites that do the same.
-        PackCatalog.register(MusicvideoPack())
+        try CurrentMusicvideoFixture.load()
         let progress = PackProgress(nextPhase: "brief", approvedPhases: 2, totalPhases: 11)
         let musicvideo = try #require(
             PluginCommandCatalog.discover(progress: progress).first { $0.name == "musicvideo" })

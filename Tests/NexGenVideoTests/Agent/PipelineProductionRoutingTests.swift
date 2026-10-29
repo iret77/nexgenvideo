@@ -272,19 +272,120 @@ struct PipelineProductionRoutingTests {
         ))
     }
 
+    @MainActor
+    @Test("duration selection rejects overflow and windows without an executable whole second")
+    func exactWholeSecondDuration() throws {
+        let capabilities = Self.videoCapabilities(durations: [], durationRange: .init(min: 1, max: 10))
+        let rangeFields: (inout ResolvedCapabilityFieldsV1) -> Void = { fields in _ = fields.integerLists.removeValue(forKey: CapabilityFieldIDV1.durationValues) }
+        let overflow = Self.requirement(requiresFirstFrame: true, duration: .init(preferredSeconds: Double(Int.max)))
+        #expect(!Self.adapterSupports(overflow, capabilities: capabilities, transformFields: rangeFields))
+        let fractional = Self.requirement(requiresFirstFrame: true, duration: .init(minimumSeconds: 5.2, maximumSeconds: 5.8))
+        #expect(!Self.adapterSupports(fractional, capabilities: capabilities, transformFields: rangeFields))
+        #expect(!Self.adapterSupports(fractional, capabilities: Self.videoCapabilities(durations: [])))
+        let nextWhole = Self.requirement(requiresFirstFrame: true, duration: .init(minimumSeconds: 5.2, maximumSeconds: 6.2))
+        #expect(Self.adapterSupports(nextWhole, capabilities: capabilities, transformFields: rangeFields))
+        let boundary = Self.requirement(requiresFirstFrame: true, duration: .init(minimumSeconds: 5, maximumSeconds: 5))
+        #expect(Self.adapterSupports(boundary, capabilities: capabilities, transformFields: rangeFields))
+        let preferred = Self.requirement(requiresFirstFrame: true)
+        #expect(Self.adapterSupports(preferred, capabilities: capabilities, transformFields: rangeFields))
+        #expect(!Self.adapterSupports(preferred, capabilities: Self.videoCapabilities(durations: [], durationRange: .init(min: 10, max: 1)), transformFields: rangeFields))
+    }
+
+    @MainActor
+    @Test("MCP duration schema and endpoint origin must belong to the actually used field")
+    func durationEvidenceCannotBePooledAcrossFields() throws {
+        let requirement = Self.requirement(requiresFirstFrame: true)
+        #expect(Self.adapterSupports(requirement, capabilities: Self.videoCapabilities()))
+        #expect(!Self.adapterSupports(requirement, capabilities: Self.videoCapabilities()) { fields in
+            let list = fields.integerLists[CapabilityFieldIDV1.durationValues]!
+            fields.integerLists[CapabilityFieldIDV1.durationValues] = .init(value: list.value, semantics: list.semantics,
+                origin: .init(kind: .exact, profileID: "catalog-only"), evidence: list.evidence)
+        })
+        #expect(!Self.adapterSupports(requirement, capabilities: Self.videoCapabilities(durations: [], durationRange: .init(min: 5, max: 5))) { fields in
+            fields.integerLists.removeValue(forKey: CapabilityFieldIDV1.durationValues)
+            let minimum = fields.decimals[CapabilityFieldIDV1.durationMinimum]!
+            let maximum = fields.decimals[CapabilityFieldIDV1.durationMaximum]!
+            fields.decimals[CapabilityFieldIDV1.durationMinimum] = .init(value: minimum.value, semantics: minimum.semantics,
+                origin: .init(kind: .exact, profileID: "non-endpoint-schema"), evidence: minimum.evidence)
+            fields.decimals[CapabilityFieldIDV1.durationMaximum] = .init(value: maximum.value, semantics: maximum.semantics,
+                origin: maximum.origin, evidence: [])
+        })
+        #expect(Self.adapterSupports(requirement, capabilities: Self.videoCapabilities(durations: [], durationRange: .init(min: 5, max: 5))) { fields in
+            fields.integerLists.removeValue(forKey: CapabilityFieldIDV1.durationValues)
+        })
+    }
+
+    @MainActor
+    @Test("MCP schema duration strategy matches the actual executable offering")
+    func actualDurationStrategyMustMatchSnapshot() {
+        let automatic = Self.requirement(requiresFirstFrame: true, duration: .init(allowsAutomatic: true))
+        let automaticCapabilities = Self.videoCapabilities(supportsAutomaticDuration: true)
+        #expect(!Self.adapterSupports(automatic, capabilities: automaticCapabilities))
+        #expect(Self.adapterSupports(automatic, capabilities: automaticCapabilities) { fields in
+            fields.booleans[CapabilityFieldIDV1.durationAutomatic] = fields.booleans[CapabilityFieldIDV1.nativeAudio]!
+        })
+        #expect(!Self.adapterSupports(automatic, capabilities: Self.videoCapabilities()) { fields in
+            fields.booleans[CapabilityFieldIDV1.durationAutomatic] = fields.booleans[CapabilityFieldIDV1.nativeAudio]!
+        })
+        let fixed = Self.requirement(requiresFirstFrame: true)
+        #expect(!Self.adapterSupports(fixed, capabilities: Self.videoCapabilities(durations: [], durationRange: .init(min: 5, max: 5))))
+        #expect(Self.adapterSupports(fixed, capabilities: Self.videoCapabilities(durations: [], durationRange: .init(min: 5, max: 5))) { fields in
+            fields.integerLists.removeValue(forKey: CapabilityFieldIDV1.durationValues)
+        })
+        #expect(!Self.adapterSupports(fixed, capabilities: Self.videoCapabilities(durations: [])) { fields in
+            fields.integerLists.removeValue(forKey: CapabilityFieldIDV1.durationValues)
+        })
+        let between = Self.requirement(requiresFirstFrame: true, duration: .init(minimumSeconds: 7, maximumSeconds: 8))
+        let mixed = Self.videoCapabilities(durations: [5], durationRange: .init(min: 1, max: 10))
+        #expect(!Self.adapterSupports(between, capabilities: mixed) { fields in
+            let values = fields.integerLists[CapabilityFieldIDV1.durationValues]!
+            fields.integerLists[CapabilityFieldIDV1.durationValues] = .init(value: [5], semantics: values.semantics,
+                origin: values.origin, evidence: values.evidence)
+        })
+        #expect(Self.adapterSupports(between, capabilities: mixed) { fields in
+            fields.integerLists.removeValue(forKey: CapabilityFieldIDV1.durationValues)
+        })
+    }
+
+    @MainActor
+    @Test("routing proof already pins the actual executable offering capabilities")
+    func proofCapabilitiesMustMatchTheActualTarget() throws {
+        let input = Self.generationInput(requirement: Self.requirement())
+        let proof = try #require(input.productionRouting)
+        let original = Self.target(modelID: input.model, provider: .fal, endpoint: input.model)
+        #expect(proof.matches(original))
+        let different = ResolvedGenerationTarget(modelId: input.model, provider: .fal, endpoint: input.model,
+            binding: ProviderBinding(provider: .fal, transport: .api, kind: .generation, providerRef: input.model,
+                billing: .perCall, productionInputPolicy: Self.inputPolicy(),
+                resolvedVideoCapabilities: Self.videoCapabilities(durations: [6])))
+        #expect(!proof.matches(different))
+    }
+
+    @MainActor
+    private static func adapterSupports(_ requirement: ProductionRequirementV1,
+        capabilities: ResolvedVideoOfferingCapabilitiesV1,
+        transformFields: ((inout ResolvedCapabilityFieldsV1) -> Void)? = nil) -> Bool {
+        let route = route(requirement: requirement, endpoint: "generate_video", endpointBackedFields: true, transformFields: transformFields)
+        let bindings = requirement.requiresFirstFrame ? [binding(semanticJobID: CoreReferenceSemanticJobIDV1.firstFrame,
+            inputSlotID: CoreReferenceInputSlotIDV1.firstFrame)] : []
+        let target = ResolvedGenerationTarget(modelId: "fixture-model", provider: .higgsfield, endpoint: "generate_video",
+            binding: ProviderBinding(provider: .higgsfield, transport: .mcp, kind: .generation, providerRef: "generate_video",
+                billing: .subscription, modelParam: "fixture-model", mcpMediaRoles: ["start_image"],
+                productionInputPolicy: inputPolicy(), resolvedVideoCapabilities: capabilities))
+        return PipelineProductionRouting.providerAdapterSupports(referencePlan: plan(route: route, bindings: bindings),
+            route: route, target: target, modelID: target.modelId, requirement: requirement)
+    }
+
     static func requirement(
-        requiresFirstFrame: Bool = false
+        requiresFirstFrame: Bool = false,
+        duration: RequestedDurationV1 = .init(preferredSeconds: 5, minimumSeconds: 5, maximumSeconds: 5)
     ) -> ProductionRequirementV1 {
         ProductionRequirementV1(
             modalityID: CapabilityModalityV1.video.rawValue,
             modeIDs: ["image-to-video"],
             visibleEntityCount: 1,
             requiresFirstFrame: requiresFirstFrame,
-            duration: RequestedDurationV1(
-                preferredSeconds: 5,
-                minimumSeconds: 5,
-                maximumSeconds: 5
-            ),
+            duration: duration,
             resolution: "720p",
             aspectRatio: "16:9",
             requiresOutputAudio: true
@@ -377,7 +478,8 @@ struct PipelineProductionRoutingTests {
         endpointBackedFields: Bool = false,
         inputSlotModeID: String = "image-to-video",
         projectID: String = "project-001",
-        shotID: String = "shot-001"
+        shotID: String = "shot-001",
+        transformFields: ((inout ResolvedCapabilityFieldsV1) -> Void)? = nil
     ) -> ProductionRouteV1 {
         let evidence = CapabilityEvidenceV1(
             sourceTitle: "Fixture provider schema",
@@ -422,66 +524,68 @@ struct PipelineProductionRoutingTests {
             requirement.duration?.minimumSeconds,
             requirement.duration?.maximumSeconds,
         ].compactMap { seconds -> Int? in
-            guard let seconds, seconds.rounded() == seconds else { return nil }
-            return Int(seconds)
+            guard let seconds else { return nil }
+            return Int(exactly: seconds)
         }).sorted()
+        var fields = ResolvedCapabilityFieldsV1(
+            integers: [
+                CapabilityFieldIDV1.visibleCharacters:
+                    value(requirement.visibleEntityCount),
+                CapabilityFieldIDV1.referenceImages: value(1),
+                CapabilityFieldIDV1.referenceVideos: value(0),
+                CapabilityFieldIDV1.referenceAudios: value(0),
+                CapabilityFieldIDV1.totalReferences: value(1),
+            ],
+            decimals: [
+                CapabilityFieldIDV1.durationMinimum: value(durationMinimum),
+                CapabilityFieldIDV1.durationMaximum: value(durationMaximum),
+            ],
+            booleans: [
+                CapabilityFieldIDV1.nativeAudio: value(true),
+                CapabilityFieldIDV1.firstFrame: value(true),
+                CapabilityFieldIDV1.lastFrame: value(false),
+                CapabilityFieldIDV1.sourceVideo:
+                    value(requirement.sourceVideoAssetID != nil),
+                CapabilityFieldIDV1.sourceVideoRequired:
+                    ResolvedCapabilityValueV1(
+                        value: false,
+                        semantics: .hardAPILimit,
+                        origin: policyOrigin,
+                        evidence: [evidence]
+                    ),
+                CapabilityFieldIDV1.framesCountTowardImageReferenceLimit:
+                    ResolvedCapabilityValueV1(
+                        value: false,
+                        semantics: .hardAPILimit,
+                        origin: policyOrigin,
+                        evidence: [evidence]
+                    ),
+                CapabilityFieldIDV1.framesCountTowardTotalReferenceLimit:
+                    ResolvedCapabilityValueV1(
+                        value: false,
+                        semantics: .hardAPILimit,
+                        origin: policyOrigin,
+                        evidence: [evidence]
+                    ),
+            ],
+            strings: [
+                CapabilityFieldIDV1.modes: value(requirement.modeIDs),
+                CapabilityFieldIDV1.aspectRatios:
+                    value(requirement.aspectRatio.map { [$0] } ?? []),
+                CapabilityFieldIDV1.resolutions:
+                    value(requirement.resolution.map { [$0] } ?? []),
+            ],
+            integerLists: [
+                CapabilityFieldIDV1.durationValues: value(durationValues),
+            ]
+            )
+        transformFields?(&fields)
         let profile = ResolvedCapabilityProfileV1(
             requestedIdentity: nil,
             resolvedIdentity: nil,
             defensiveProfileID: nil,
             researchNeeded: false,
-            fields: ResolvedCapabilityFieldsV1(
-                integers: [
-                    CapabilityFieldIDV1.visibleCharacters:
-                        value(requirement.visibleEntityCount),
-                    CapabilityFieldIDV1.referenceImages: value(1),
-                    CapabilityFieldIDV1.referenceVideos: value(0),
-                    CapabilityFieldIDV1.referenceAudios: value(0),
-                    CapabilityFieldIDV1.totalReferences: value(1),
-                ],
-                decimals: [
-                    CapabilityFieldIDV1.durationMinimum: value(durationMinimum),
-                    CapabilityFieldIDV1.durationMaximum: value(durationMaximum),
-                ],
-                booleans: [
-                    CapabilityFieldIDV1.nativeAudio: value(true),
-                    CapabilityFieldIDV1.firstFrame: value(true),
-                    CapabilityFieldIDV1.lastFrame: value(false),
-                    CapabilityFieldIDV1.sourceVideo:
-                        value(requirement.sourceVideoAssetID != nil),
-                    CapabilityFieldIDV1.sourceVideoRequired:
-                        ResolvedCapabilityValueV1(
-                            value: false,
-                            semantics: .hardAPILimit,
-                            origin: policyOrigin,
-                            evidence: [evidence]
-                        ),
-                    CapabilityFieldIDV1.framesCountTowardImageReferenceLimit:
-                        ResolvedCapabilityValueV1(
-                            value: false,
-                            semantics: .hardAPILimit,
-                            origin: policyOrigin,
-                            evidence: [evidence]
-                        ),
-                    CapabilityFieldIDV1.framesCountTowardTotalReferenceLimit:
-                        ResolvedCapabilityValueV1(
-                            value: false,
-                            semantics: .hardAPILimit,
-                            origin: policyOrigin,
-                            evidence: [evidence]
-                        ),
-                ],
-                strings: [
-                    CapabilityFieldIDV1.modes: value(requirement.modeIDs),
-                    CapabilityFieldIDV1.aspectRatios:
-                        value(requirement.aspectRatio.map { [$0] } ?? []),
-                    CapabilityFieldIDV1.resolutions:
-                        value(requirement.resolution.map { [$0] } ?? []),
-                ],
-                integerLists: [
-                    CapabilityFieldIDV1.durationValues: value(durationValues),
-                ]
-            )
+            fields: fields
         )
         let providerID = endpoint == "generate_video"
             ? GenerationProvider.higgsfield.rawValue
@@ -639,11 +743,15 @@ struct PipelineProductionRoutingTests {
         durations: [Int] = [5],
         supportsNativeAudio: Bool = true,
         resolutions: [String]? = ["720p"],
-        aspectRatios: [String] = ["16:9"]
+        aspectRatios: [String] = ["16:9"],
+        durationRange: VideoDurationCapabilities.Range? = nil,
+        supportsAutomaticDuration: Bool = false
     ) -> ResolvedVideoOfferingCapabilitiesV1 {
         ResolvedVideoOfferingCapabilitiesV1(
             videoCapabilities: VideoCaps(
                 durations: durations,
+                durationRange: durationRange,
+                supportsAutomaticDuration: supportsAutomaticDuration,
                 resolutions: resolutions,
                 aspectRatios: aspectRatios,
                 supportsFirstFrame: true,

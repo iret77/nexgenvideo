@@ -8,11 +8,11 @@ import Testing
 struct AgentActivityStatusTests {
     @Test("An exact phase continuation avoids duplication without trimming a more specific task")
     func phaseContinuationTitle() {
-        let continuation = AgentTaskActivityPresentation(task: .init(title: "Continue Bible", phase: "bible"))
-        #expect(continuation.title == "Continue Bible")
-        #expect(continuation.expectedResult == "Result: Bible for approval")
+        let continuation = AgentTaskActivityPresentation(task: .init(title: "Continue References", phase: "bible"))
+        #expect(continuation.title == "Continue References")
+        #expect(continuation.expectedResult == "Result: References for approval")
         let specific = AgentTaskActivityPresentation(task: .init(title: "Continue Bible images", phase: "bible"))
-        #expect(specific.title == "Continue Bible images · Bible")
+        #expect(specific.title == "Continue Bible images · References")
         let otherPhase = AgentTaskActivityPresentation(task: .init(title: "Continue Bible", phase: "shotlist"))
         #expect(otherPhase.title == "Continue Bible · Shot List")
     }
@@ -28,8 +28,8 @@ struct AgentActivityStatusTests {
             .toolUse(id: "read", name: "Read", inputJSON: #"{"file_path":"/project/treatment.md"}"#),
         ])
         let presentation = AgentTaskActivityPresentation(messages: [request, tool], phase: "render")
-        #expect(presentation.title == "Complete missing Bible images · Bible")
-        #expect(presentation.expectedResult == "Result: Bible for approval")
+        #expect(presentation.title == "Complete missing Bible images · References")
+        #expect(presentation.expectedResult == "Result: References for approval")
         let activity = AgentTranscriptProjection.turns(messages: [request, tool], isStreaming: true)
             .flatMap(\.items).compactMap { item -> AgentActivity? in
                 guard case .activity(let value) = item else { return nil }

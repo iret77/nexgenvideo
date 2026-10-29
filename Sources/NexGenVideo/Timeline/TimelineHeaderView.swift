@@ -306,7 +306,7 @@ final class TimelineHeaderView: NSView {
         override func accessibilityPerformPress() -> Bool { press?() ?? false }
     }
 
-    private var resizeDrag: (trackIndex: Int, originalHeight: CGFloat)?
+    private var resizeDrag: (trackID: String, originalHeight: CGFloat)?
     private var reorderDrag: (id: String, before: Timeline)?
 
     private func hitTestResizeHandle(at point: NSPoint) -> Int? {
@@ -452,7 +452,7 @@ final class TimelineHeaderView: NSView {
         }
 
         if let ti = hitTestResizeHandle(at: point) {
-            resizeDrag = (ti, editor.timeline.tracks[ti].displayHeight)
+            resizeDrag = (editor.timeline.tracks[ti].id, editor.timeline.tracks[ti].displayHeight)
         }
     }
 
@@ -469,11 +469,15 @@ final class TimelineHeaderView: NSView {
         }
 
         guard let drag = resizeDrag else { return }
+        guard let trackIndex = editor.timeline.tracks.firstIndex(where: { $0.id == drag.trackID }) else {
+            resizeDrag = nil
+            return
+        }
         let geo = TimelineGeometry(editor: editor, bounds: bounds)
-        let trackTop = geo.trackY(at: drag.trackIndex)
+        let trackTop = geo.trackY(at: trackIndex)
         let newHeight = max(AppTheme.Timeline.trackMinHeight, min(AppTheme.Timeline.trackMaxHeight, point.y - trackTop))
-        if editor.timeline.tracks[drag.trackIndex].displayHeight != newHeight {
-            editor.timeline.tracks[drag.trackIndex].displayHeight = newHeight
+        if editor.timeline.tracks[trackIndex].displayHeight != newHeight {
+            editor.timeline.tracks[trackIndex].displayHeight = newHeight
             needsDisplay = true
         }
     }
@@ -489,12 +493,13 @@ final class TimelineHeaderView: NSView {
         }
 
         guard let drag = resizeDrag else { return }
-        let finalHeight = editor.timeline.tracks[drag.trackIndex].displayHeight
-        if finalHeight != drag.originalHeight {
-            editor.timeline.tracks[drag.trackIndex].displayHeight = drag.originalHeight
-            editor.setTrackHeight(trackIndex: drag.trackIndex, height: finalHeight)
-        }
         resizeDrag = nil
+        guard let trackIndex = editor.timeline.tracks.firstIndex(where: { $0.id == drag.trackID }) else { return }
+        let finalHeight = editor.timeline.tracks[trackIndex].displayHeight
+        if finalHeight != drag.originalHeight {
+            editor.timeline.tracks[trackIndex].displayHeight = drag.originalHeight
+            editor.setTrackHeight(trackIndex: trackIndex, height: finalHeight)
+        }
         needsDisplay = true
     }
 

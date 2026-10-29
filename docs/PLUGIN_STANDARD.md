@@ -78,6 +78,9 @@ refused. Appending a stored property to a public value type that crosses this bo
 is ABI-incompatible without library evolution and raises the floor. Only verified
 additive changes may retain the previous floor.
 
+Contract 12 adds the production-planning engine symbols used by Musicvideo 0.6.0.
+The compatibility floor remains 2; existing exact pinned packs remain supported.
+
 The bundle is assembled and signed by `scripts/assemble_ngvpack.sh` from
 `plugins/<id>.json` (the pack's shipping metadata) and the SwiftPM build products
 (`lib<Target>.dylib` + `NexGenVideo_<Target>.bundle`).

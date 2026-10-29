@@ -209,6 +209,14 @@ enum ExternalMcpServers {
         return result
     }
 
+    static func httpEndpointURLs(dependencies: Dependencies = .live) -> [String: URL] {
+        runtimeEntries(dependencies: dependencies).reduce(into: [:]) { result, entry in
+            guard let object = decodedDictionary(entry.value), object["command"] == nil,
+                  let raw = object["url"] as? String, let url = URL(string: raw) else { return }
+            result[entry.key] = url
+        }
+    }
+
     static func settingsEntries(dependencies: Dependencies = .live) -> [SettingsEntry] {
         _ = migrateLegacyEntries(dependencies: dependencies)
         return storedEntries(dependencies: dependencies).map { name, value in

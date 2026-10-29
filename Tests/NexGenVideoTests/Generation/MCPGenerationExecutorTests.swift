@@ -830,6 +830,32 @@ struct MCPGenerationExecutorTests {
         #expect(await client.calledTools() == ["generate_image"])
     }
 
+    @Test func projectCloseStopsLocalMCPPollingWithoutCallingProviderCancel() async throws {
+        let generate = tool("generate_image", properties: ["prompt": .object(["type": .string("string")])])
+        let status = tool("job_status", properties: ["job_id": .object(["type": .string("string")])], outputSchema: mediaOutputSchema)
+        let cancel = tool("job_cancel", properties: ["job_id": .object(["type": .string("string")])])
+        let client = StubClient(responses: ["generate_image": [[#"{"job_id":"close-job","status":"queued"}"#]]],
+                                suspendedTools: ["job_status"])
+        let lifetime = GenerationBatchExecutionLifetime()
+        let task = Task {
+            try await GenerationBatchExecutionLifetime.$current.withValue(lifetime) {
+                try await MCPGenerationExecutor.run(generationTool: generate, arguments: ["prompt": .string("compiled unit prompt")],
+                    tools: [generate, status, cancel], provider: .higgsfield, client: client, pollIntervalNanoseconds: 0)
+            }
+        }
+        defer { lifetime.abandon(); task.cancel() }
+        try #require(await waitForCall("job_status", client: client))
+        lifetime.abandon(); task.cancel()
+        do {
+            _ = try await task.value
+            Issue.record("Project close must stop the local status wait.")
+        } catch let failure as MCPGenerationExecutor.JobFailure {
+            #expect(failure.jobID == "close-job")
+            #expect(failure.message.contains("remains available"))
+        }
+        #expect(await client.calledTools() == ["generate_image", "job_status"])
+    }
+
     @Test func taskCancellationCancelsAcceptedJobExactlyOnce() async {
         let generate = tool("generate_image", properties: [
             "prompt": .object(["type": .string("string")]),

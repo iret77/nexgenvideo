@@ -158,6 +158,7 @@ final class GenerationService {
                 self.generationTasks.removeValue(forKey: primaryId)
             }
             do {
+                try GenerationBatchExecutionLifetime.requireActive()
                 try authorization.projectMutationScope?.requireCurrent(editor: editor)
                 try authorization.referenceSnapshot?.requireIdentity(references)
                 try await authorization.referenceSnapshot?.requireUnchanged()
@@ -192,6 +193,13 @@ final class GenerationService {
                     )
                 }
                 let uploaded: [String]
+                if target.provider == .runway, target.transport == .api,
+                   target.binding?.resolvedVideoCapabilities?.inputPolicy.sourceOperation == .extendForward {
+                    guard preUploadedURLs?.isEmpty != false, refURLs.count == 1,
+                          references.count == 1, references.first?.type == .video else {
+                        throw GenerationBackendError.transport("A native extension requires only its exact predecessor video.")
+                    }
+                }
                 if let preUploadedURLs, !preUploadedURLs.isEmpty {
                     uploaded = authorization.referenceSnapshot?.urls.map(\.path) ?? preUploadedURLs
                 } else {
@@ -199,7 +207,13 @@ final class GenerationService {
                     let refTypes = references.map(\.type)
                     if authorization.referenceSnapshot == nil, let trim = trimmedSourceOverride, trim.hasTrim, !urlsToUpload.isEmpty {
                         Log.generation.notice("using trimmed source: frames \(trim.trimStartFrame)+\(trim.sourceFramesConsumed) of \(urlsToUpload[0].lastPathComponent)")
-                        let extracted = try await VideoTrimExtractor.extract(trim)
+                        let extracted: URL
+                        if target.provider == .runway, target.transport == .api,
+                           target.binding?.resolvedVideoCapabilities?.inputPolicy.sourceOperation == .extendForward {
+                            extracted = try await RunwayVideoExtensionContract.trimmedSource(trim, aspectRatio: genInput.aspectRatio)
+                        } else {
+                            extracted = try await VideoTrimExtractor.extract(trim)
+                        }
                         urlsToUpload[0] = extracted
                         tempToCleanup.append(extracted)
                     }
@@ -236,6 +250,12 @@ final class GenerationService {
                         // Local paths, purely so the direct client can read the bytes off disk.
                         uploaded = urlsToUpload.map(\.path)
                     case .runway:
+                        if target.binding?.resolvedVideoCapabilities?.inputPolicy.sourceOperation == .extendForward {
+                            guard let source = urlsToUpload.first, refTypes.first == .video, urlsToUpload.count == 1 else {
+                                throw GenerationBackendError.transport("A native extension requires only its exact predecessor video.")
+                            }
+                            try await RunwayVideoExtensionContract.requireSource(source, aspectRatio: genInput.aspectRatio)
+                        }
                         uploaded = try await uploadReferencesToRunway(at: urlsToUpload, types: refTypes)
                     case .fal:
                         uploaded = try await uploadReferences(
@@ -279,13 +299,16 @@ final class GenerationService {
                 }
                 try await authorization.referenceSnapshot?.requireUnchanged()
                 try authorization.referenceSnapshot?.requireIdentity(references)
-                if let package = authorization.generationPackage, let preparedParameters {
+                if let package = authorization.generationPackage {
+                    guard let preparedParameters else {
+                        throw GenerationRequestError.storage("The approved generation package has no bound request parameters. Review the request again.")
+                    }
                     try package.requireRequest(input: finalGenInput, target: target, parameters: preparedParameters,
                         references: authorization.referenceSnapshot?.receipts ?? [])
                 }
                 try await authorization.generationPackage?.requireCurrentContext(editor: editor)
                 if let package = authorization.generationPackage,
-                   package.payload.modality == "image" || package.payload.modality == "video" {
+                   ["image", "video", "audio"].contains(package.payload.modality) {
                     try await GenerationPackageInputs.requireCurrentReferences(package: package, editor: editor)
                 }
                 try authorization.projectMutationScope?.requireCurrent(editor: editor)
@@ -304,6 +327,7 @@ final class GenerationService {
                     onFailure: onFailure
                 )
             } catch is CancellationError {
+                guard GenerationBatchExecutionLifetime.current?.isAbandoned != true else { return }
                 let message = "Generation cancelled."
                 for placeholder in placeholders {
                     placeholder.generationStatus = .failed(message)
@@ -315,6 +339,7 @@ final class GenerationService {
                 )
                 onFailure?()
             } catch {
+                guard GenerationBatchExecutionLifetime.current?.isAbandoned != true else { return }
                 let message = error.localizedDescription
                 Log.generation.error("upload failed model=\(authorizedGenInput.model) error=\(message)")
                 for placeholder in placeholders {
@@ -327,6 +352,7 @@ final class GenerationService {
                 )
                 onFailure?()
             }
+            guard GenerationBatchExecutionLifetime.current?.isAbandoned != true else { return }
             do { try await authorization.batchItem?.settle(editor: editor) }
             catch { Log.generation.error("could not settle generation batch: \(error.localizedDescription)") }
         }
@@ -346,18 +372,27 @@ final class GenerationService {
         await generationTasks[placeholderId]?.value
     }
 
+    func waitForBatchGeneration(placeholderId: String) async {
+        guard let task = generationTasks[placeholderId] else { return }
+        await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
+    }
+
     func resumeBatchJob(_ item: GenerationBatchAuthorization, editor: EditorViewModel) async throws {
         let identity = item.batchID + "/" + item.itemID
-        if let task = batchResumeTasks[identity] { return try await task.value }
+        if let task = batchResumeTasks[identity] {
+            return try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+        }
         let task = Task { @MainActor in
             defer { self.batchResumeTasks.removeValue(forKey: identity) }
             try await self.performResumeBatchJob(item, editor: editor)
         }
         batchResumeTasks[identity] = task
-        try await task.value
+        try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
     }
 
     private func performResumeBatchJob(_ item: GenerationBatchAuthorization, editor: EditorViewModel) async throws {
+        try Task.checkCancellation()
+        try GenerationBatchExecutionLifetime.requireActive()
         guard let home = editor.workingRoot else { throw GenerationRequestError.storage("The batch project is closed.") }
         let scope = try GenerationProjectMutationScope(projectHome: home, editor: editor)
         let saved = try GenerationBatchStore.load(id: item.batchID, home: home)
@@ -367,12 +402,17 @@ final class GenerationService {
               let primaryID = execution.placeholders.first?.id else {
             throw GenerationRequestError.gate("This interrupted request has no resumable provider receipt. It will not be submitted again.")
         }
-        if let existing = generationTasks[primaryID] { await existing.value; return }
+        if generationTasks[primaryID] != nil {
+            await waitForBatchGeneration(placeholderId: primaryID)
+            return
+        }
         let receipts = try await Task.detached(priority: .utility) {
             try execution.placeholders.compactMap {
                 try GenerationBatchOutput.load(authorization: item, assetID: $0.id, home: home)
             }
         }.value
+        try Task.checkCancellation()
+        try GenerationBatchExecutionLifetime.requireActive()
         try scope.requireCurrent(editor: editor)
         let completedIDs = Set(receipts.map(\.asset.id))
         let target = specification.package.payload.target
@@ -421,7 +461,7 @@ final class GenerationService {
         if target.transport == .mcp {
             key = ""
         } else {
-            guard let stored = ProviderKeychain.load(target.provider) else {
+            guard let stored = reconciliation.providerKey(target.provider) else {
                 throw GenerationRequestError.gate("Restore the approved provider's key before resuming its job.")
             }
             key = stored
@@ -439,6 +479,9 @@ final class GenerationService {
             var recoveredCost: GenerationProviderCost?
             var providerFinished = false
             do {
+                try Task.checkCancellation()
+                try GenerationBatchExecutionLifetime.requireActive()
+                try scope.requireCurrent(editor: editor)
                 if completedIDs.count < execution.placeholders.count {
                     let urls: [String]
                     var inlineOutput: [MCPGenerationLifecycle.OutputMedia] = []
@@ -449,11 +492,10 @@ final class GenerationService {
                     } else {
                         switch target.provider {
                         case .fal:
-                            let data = try await FalClient(apiKey: key).result(endpoint: target.endpoint, requestId: requestID)
-                            let shape: CatalogEntry.ResponseShape = specification.package.payload.modality == "image" ? .images : .video
-                            urls = FalOutput.urls(from: data, shape: shape)
+                            let data = try await FalClient(apiKey: key, session: self.reconciliation.session).result(endpoint: target.endpoint, requestId: requestID)
+                            urls = FalOutput.urls(from: data, shape: try Self.resumedFalOutputShape(package: specification.package))
                         case .runway:
-                            let result = try await RunwayClient(apiKey: key).result(taskId: requestID)
+                            let result = try await RunwayClient(apiKey: key, session: self.reconciliation.session).result(taskId: requestID)
                             urls = result.urls
                             recoveredCost = result.cost
                         case .marble:
@@ -463,6 +505,7 @@ final class GenerationService {
                         default: throw GenerationRequestError.gate("The saved provider route has no status adapter.")
                         }
                     }
+                    try GenerationBatchExecutionLifetime.requireActive()
                     providerFinished = true
                     try scope.requireCurrent(editor: editor)
                     if inlineOutput.isEmpty {
@@ -482,7 +525,7 @@ final class GenerationService {
                     let settled = editor.generationLog.spendEvents.contains { $0.transactionId == transaction && $0.kind == .settled }
                     switch target.provider {
                     case .fal where target.transport == .api:
-                        let billed = await self.reconciliation.falCharge(requestID, target.endpoint, key)
+                        let billed = await self.currentBatchFalCharge(requestID, target.endpoint, key)
                         if billed != nil || !settled {
                             self.markFinished(authorization: recoveredAuthorization, billed: billed, editor: editor)
                         }
@@ -497,22 +540,35 @@ final class GenerationService {
                     }
                 }
             } catch {
+                guard GenerationBatchExecutionLifetime.current?.isAbandoned != true else { return }
                 if let transaction = execution.transactionID {
                     var billed: GenerationMoney?
                     if target.provider == .fal, target.transport == .api,
                        providerFinished || Self.providerRunEnded(after: error) {
-                        billed = await self.reconciliation.falCharge(requestID, target.endpoint, key)
+                        billed = await self.currentBatchFalCharge(requestID, target.endpoint, key)
                     }
                     self.recordResumedRunFailure(error, providerFinished: providerFinished, cost: recoveredCost,
                         billed: billed, authorization: resumedAuthorization(transaction), editor: editor)
                 }
                 self.failJob(placeholders, error.localizedDescription, nil)
             }
+            guard GenerationBatchExecutionLifetime.current?.isAbandoned != true else { return }
             do { try await item.settle(editor: editor) }
             catch { Log.generation.error("could not settle resumed batch: \(error.localizedDescription)") }
         }
         generationTasks[primaryID] = task
-        await task.value
+        await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
+    }
+
+    nonisolated static func resumedFalOutputShape(package: GenerationPackageV1) throws -> CatalogEntry.ResponseShape {
+        switch (package.payload.operation, package.payload.modality) {
+        case ("upscale", "image"): return .upscaledImage
+        case ("upscale", "video"), ("video", "video"), ("generate_video", "video"): return .video
+        case (let operation, "video") where VideoSourceOperationV1(rawValue: operation) != nil: return .video
+        case ("image", "image"), ("generate_image", "image"): return .images
+        case ("audio", "audio"), ("music", "audio"), ("generate_audio", "audio"): return .audio
+        default: throw GenerationRequestError.gate("The saved operation has no verified Fal output format.")
+        }
     }
 
     private static func cleanupTempFiles(_ urls: [URL]) {
@@ -620,6 +676,7 @@ final class GenerationService {
             editor.importMediaAsset(asset, skipAppend: true)
             editor.appendGenerationLog(for: asset)
             await editor.finalizeImportedAsset(asset)
+            try await GenerationOutputReceipt.record(asset: asset, editor: editor)
             if let batchItem { try await GenerationBatchOutput.record(asset: asset, authorization: batchItem, editor: editor) }
             return true
         } catch {
@@ -682,10 +739,10 @@ final class GenerationService {
     /// is the honest trade.
     private func uploadReferencesToRunway(at urls: [URL], types: [ClipType]) async throws -> [String] {
         guard !urls.isEmpty else { return [] }
-        guard let apiKey = ProviderKeychain.load(.runway) else {
+        guard let apiKey = reconciliation.providerKey(.runway) else {
             throw GenerationBackendError.transport("Add a Runway API key in Settings to use references.")
         }
-        let client = RunwayClient(apiKey: apiKey)
+        let client = RunwayClient(apiKey: apiKey, session: reconciliation.session)
         let uploaded = try await withThrowingTaskGroup(of: (Int, String).self) { group in
             for (i, url) in urls.enumerated() {
                 let type = types.indices.contains(i) ? types[i] : .image
@@ -940,6 +997,7 @@ final class GenerationService {
         onFailure: (@MainActor () -> Void)?
     ) async {
         let runId = String(UUID().uuidString.prefix(8))
+        guard GenerationBatchExecutionLifetime.current?.isAbandoned != true else { return }
         do { try authorization.batchItem?.consume(authorization: authorization, editor: editor) }
         catch {
             return failBeforeSubmission(placeholders, error.localizedDescription,
@@ -1109,6 +1167,7 @@ final class GenerationService {
         editor: EditorViewModel,
         onFailure: (@MainActor () -> Void)?
     ) {
+        guard GenerationBatchExecutionLifetime.current?.isAbandoned != true else { return }
         try? editor.recordSpendEvent(
             authorization: authorization,
             kind: .released,
@@ -1145,6 +1204,16 @@ final class GenerationService {
             }
             return true
         } catch {
+            if authorization.batchItem != nil {
+                do {
+                    try GenerationExecutionAuthorityStore.live().recordAcceptedRequest(authorization: authorization,
+                        requestID: providerRequestId, resumable: resumable)
+                    if let transactionID = authorization.transactionId { pendingReceipts.removeValue(forKey: transactionID) }
+                    return true
+                } catch {
+                    Log.generation.error("could not retain accepted batch request: \(error.localizedDescription)")
+                }
+            }
             Log.generation.error(
                 "could not record provider request \(providerRequestId): \(error.localizedDescription)"
             )
@@ -1188,6 +1257,7 @@ final class GenerationService {
         editor: EditorViewModel,
         onFailure: (@MainActor () -> Void)?
     ) {
+        guard GenerationBatchExecutionLifetime.current?.isAbandoned != true else { return }
         recordSubmittedRunFailure(error, message: message, authorization: authorization, editor: editor)
         failJob(placeholders, message, onFailure)
     }
@@ -1197,6 +1267,12 @@ final class GenerationService {
         (error as? any ProviderRunEndReporting)?.providerRunEnded ?? false
     }
 
+    private func currentBatchFalCharge(_ requestID: String, _ endpoint: String, _ key: String) async -> GenerationMoney? {
+        guard GenerationBatchExecutionLifetime.current?.isAbandoned != true else { return nil }
+        let value = await reconciliation.falCharge(requestID, endpoint, key)
+        return GenerationBatchExecutionLifetime.current?.isAbandoned == true ? nil : value
+    }
+
     /// The cost a finished task reports, read once when its outputs arrived before its cost was booked.
     func terminalCost(
         provider: GenerationProvider,
@@ -1204,6 +1280,7 @@ final class GenerationService {
         requestID: String,
         apiKey: String
     ) async -> GenerationProviderCost? {
+        guard GenerationBatchExecutionLifetime.current?.isAbandoned != true else { return nil }
         guard transport == .api else { return nil }
         let session = reconciliation.session
         let status: ProviderRunStatus?
@@ -1244,6 +1321,7 @@ final class GenerationService {
         authorization: GenerationAuthorization,
         editor: EditorViewModel
     ) {
+        guard GenerationBatchExecutionLifetime.current?.isAbandoned != true else { return }
         guard let transaction = authorization.transactionId,
               !editor.generationLog.spendEvents.contains(where: {
                   $0.transactionId == transaction && ($0.kind == .charged || $0.kind == .settled)
@@ -1305,6 +1383,7 @@ final class GenerationService {
         note: String? = nil,
         editor: EditorViewModel
     ) {
+        guard GenerationBatchExecutionLifetime.current?.isAbandoned != true else { return }
         retryPendingReceipt(for: authorization.transactionId, editor: editor)
         do {
             if let billed {
@@ -1381,7 +1460,7 @@ final class GenerationService {
                 onComplete: onComplete,
                 onFailure: onFailure
             )
-            let billed = await reconciliation.falCharge(submittedId, endpoint, apiKey)
+            let billed = await currentBatchFalCharge(submittedId, endpoint, apiKey)
             markFinished(authorization: authorization, billed: billed, editor: editor)
         } catch let error as FalClient.SubmissionOutcomeUnknownError {
             markSubmitted(
@@ -1409,7 +1488,7 @@ final class GenerationService {
             if let requestId {
                 // fal reports money only through its billing record, never in a status response.
                 if Self.providerRunEnded(after: error),
-                   let billed = await reconciliation.falCharge(requestId, endpoint, apiKey) {
+                   let billed = await currentBatchFalCharge(requestId, endpoint, apiKey) {
                     markFinished(authorization: authorization, billed: billed,
                         note: "The provider job ended without a result: \(error.localizedDescription)", editor: editor)
                     failJob(placeholders, error.localizedDescription, onFailure)
@@ -1442,7 +1521,7 @@ final class GenerationService {
         onComplete: (@MainActor (MediaAsset) -> Void)?,
         onFailure: (@MainActor () -> Void)?
     ) async {
-        guard let client = await ProviderMCP.client(for: provider) else {
+        guard let client = await reconciliation.mcpClient(provider) else {
             return failBeforeSubmission(
                 placeholders, "No MCP endpoint configured for \(provider.displayName).",
                 authorization: authorization, editor: editor, onFailure: onFailure)
@@ -1488,7 +1567,8 @@ final class GenerationService {
             let preparedParams = try await MCPMediaUpload.prepare(
                 params,
                 tools: tools,
-                client: client
+                client: client,
+                referenceUploader: reconciliation.mcpReferenceUploader
             )
             let arguments = try MCPGenerationArguments.make(
                 for: preparedParams,
@@ -1499,7 +1579,7 @@ final class GenerationService {
                 requiredCandidateNames: requiredCandidateNames
             )
             if let package = authorization.generationPackage,
-               package.payload.modality == "image" || package.payload.modality == "video" {
+               ["image", "video", "audio"].contains(package.payload.modality) {
                 try await GenerationPackageInputs.requireCurrentReferences(package: package, editor: editor)
                 try authorization.projectMutationScope?.requireCurrent(editor: editor)
             }
@@ -1648,7 +1728,7 @@ final class GenerationService {
         onComplete: (@MainActor (MediaAsset) -> Void)?,
         onFailure: (@MainActor () -> Void)?
     ) async {
-        guard let apiKey = ProviderKeychain.load(.runway) else {
+        guard let apiKey = reconciliation.providerKey(.runway) else {
             return failBeforeSubmission(
                 placeholders, "Add a Runway API key in Settings to generate.",
                 authorization: authorization, editor: editor, onFailure: onFailure)
@@ -1660,8 +1740,10 @@ final class GenerationService {
         }
         var taskId: String?
         do {
-            let client = RunwayClient(apiKey: apiKey)
+            let client = RunwayClient(apiKey: apiKey, session: reconciliation.session)
             switch params {
+            case .video(let p) where inputPolicy?.sourceOperation == .extendForward:
+                taskId = try await client.createVideoExtension(params: p)
             case .video(let p) where inputPolicy?.requiresSourceVideo == true:
                 // #223 — the restyle pass: re-render an existing clip. No duration (the output follows
                 // the source) and no reference image; the source clip IS the input.
@@ -1973,6 +2055,7 @@ final class GenerationService {
             editor.appendGenerationLog(for: placeholder)
             await editor.finalizeImportedAsset(placeholder)
             do {
+                try await GenerationOutputReceipt.record(asset: placeholder, editor: editor)
                 if let batchItem { try await GenerationBatchOutput.record(asset: placeholder, authorization: batchItem, editor: editor) }
             } catch {
                 placeholder.generationStatus = .failed(error.localizedDescription)
@@ -1997,6 +2080,7 @@ final class GenerationService {
         onComplete: (@MainActor (MediaAsset) -> Void)?,
         onFailure: (@MainActor () -> Void)?
     ) async {
+        guard GenerationBatchExecutionLifetime.current?.isAbandoned != true else { return }
         var finalized: [MediaAsset] = []
         for (index, placeholder) in placeholders.enumerated() {
             if completedAssetIDs.contains(placeholder.id) { continue }
@@ -2073,6 +2157,7 @@ final class GenerationService {
                 editor.appendGenerationLog(for: placeholder)
                 await editor.finalizeImportedAsset(placeholder)
                 do {
+                    try await GenerationOutputReceipt.record(asset: placeholder, editor: editor)
                     if let batchItem { try await GenerationBatchOutput.record(asset: placeholder, authorization: batchItem, editor: editor) }
                 } catch {
                     placeholder.generationStatus = .failed(error.localizedDescription)
@@ -2267,18 +2352,20 @@ final class GenerationService {
                 throw ProviderRunEndedError(message: "Unsupported ElevenLabs model: \(endpoint)")
             }
             delivered = audio
-            // Bytes arrive directly (no result URL) — write to the placeholder's destination and
-            // run the same finalize steps downloadAndFinalize performs after its move.
             try authorization.projectMutationScope?.requireCurrent(editor: editor)
-            try? FileManager.default.removeItem(at: placeholder.url)
-            try audio.data.write(to: placeholder.url, options: .atomic)
+            try Self.writeInlineAudioOutput(audio.data, to: placeholder.url, preservingExisting: authorization.batchItem != nil)
             placeholder.generationStatus = .none
             editor.importMediaAsset(placeholder, skipAppend: true)
             editor.appendGenerationLog(for: placeholder)
             await editor.finalizeImportedAsset(placeholder)
+            try GenerationBatchExecutionLifetime.requireActive()
+            try authorization.projectMutationScope?.requireCurrent(editor: editor)
+            try await GenerationOutputReceipt.record(asset: placeholder, editor: editor)
             if let batchItem = authorization.batchItem {
                 try await GenerationBatchOutput.record(asset: placeholder, authorization: batchItem, editor: editor)
             }
+            try GenerationBatchExecutionLifetime.requireActive()
+            try authorization.projectMutationScope?.requireCurrent(editor: editor)
             onComplete?(placeholder)
             AppNotifications.generationComplete(
                 assetId: placeholder.id,
@@ -2295,6 +2382,16 @@ final class GenerationService {
             }
             failSubmittedJob(placeholders, error.localizedDescription, after: outcome, authorization: authorization, editor: editor, onFailure: onFailure)
         }
+    }
+
+    static func writeInlineAudioOutput(_ bytes: Data, to destination: URL, preservingExisting: Bool) throws {
+        try Task.checkCancellation()
+        try GenerationBatchExecutionLifetime.requireActive()
+        if preservingExisting, FileManager.default.fileExists(atPath: destination.path)
+            || (try? FileManager.default.destinationOfSymbolicLink(atPath: destination.path)) != nil {
+            throw GenerationRequestError.storage("An unverified batch output already occupies this destination. Preserve it for reconciliation.")
+        }
+        try bytes.write(to: destination, options: preservingExisting ? .withoutOverwriting : .atomic)
     }
 
     private func runMarbleJob(
@@ -2390,6 +2487,7 @@ final class GenerationService {
         onComplete: (@MainActor (MediaAsset) -> Void)?,
         onFailure: (@MainActor () -> Void)?
     ) async {
+        guard GenerationBatchExecutionLifetime.current?.isAbandoned != true else { return }
         let urlStrings = job.resultUrls ?? []
         guard !urlStrings.isEmpty else {
             Log.generation.error("backend job succeeded with no resultUrls")

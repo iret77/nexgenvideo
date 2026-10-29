@@ -1,0 +1,2623 @@
+{
+  "schema": "nexgenvideo/bpy-runtime-lock/1",
+  "platform": "macos-arm64",
+  "pythonABI": "cp313",
+  "bpyWheelLayout": {
+    "entryPoint": "bpy/__init__.so",
+    "recordPath": "bpy-5.2.2.dist-info/RECORD",
+    "nativeLibraries": [
+      "bpy/lib/libIex.dylib",
+      "bpy/lib/libIlmThread.dylib",
+      "bpy/lib/libImath.dylib",
+      "bpy/lib/libMaterialXCore.dylib",
+      "bpy/lib/libMaterialXFormat.dylib",
+      "bpy/lib/libMaterialXGenGlsl.dylib",
+      "bpy/lib/libMaterialXGenMdl.dylib",
+      "bpy/lib/libMaterialXGenMsl.dylib",
+      "bpy/lib/libMaterialXGenOsl.dylib",
+      "bpy/lib/libMaterialXGenShader.dylib",
+      "bpy/lib/libMaterialXRender.dylib",
+      "bpy/lib/libMaterialXRenderGlsl.dylib",
+      "bpy/lib/libMaterialXRenderHw.dylib",
+      "bpy/lib/libMaterialXRenderMsl.dylib",
+      "bpy/lib/libMaterialXRenderOsl.dylib",
+      "bpy/lib/libOpenColorIO.dylib",
+      "bpy/lib/libOpenEXR.dylib",
+      "bpy/lib/libOpenEXRCore.dylib",
+      "bpy/lib/libOpenEXRUtil.dylib",
+      "bpy/lib/libOpenImageDenoise.dylib",
+      "bpy/lib/libOpenImageDenoise_core.dylib",
+      "bpy/lib/libOpenImageDenoise_device_cpu.dylib",
+      "bpy/lib/libOpenImageDenoise_device_metal.dylib",
+      "bpy/lib/libOpenImageIO.dylib",
+      "bpy/lib/libOpenImageIO_Util.dylib",
+      "bpy/lib/libSDL3.dylib",
+      "bpy/lib/libceres.dylib",
+      "bpy/lib/libdraco.dylib",
+      "bpy/lib/libembree4.dylib",
+      "bpy/lib/libmeshoptimizer.dylib",
+      "bpy/lib/libopenjph.dylib",
+      "bpy/lib/libopenvdb.dylib",
+      "bpy/lib/libopenxr_loader.dylib",
+      "bpy/lib/libosdCPU.dylib",
+      "bpy/lib/libosdGPU.dylib",
+      "bpy/lib/liboslcomp.dylib",
+      "bpy/lib/liboslexec.dylib",
+      "bpy/lib/liboslnoise.dylib",
+      "bpy/lib/liboslquery.dylib",
+      "bpy/lib/libtbb.dylib",
+      "bpy/lib/libtbbmalloc.dylib",
+      "bpy/lib/libtbbmalloc_proxy.dylib",
+      "bpy/lib/libusd_ms.dylib"
+    ],
+    "inventoryEvidence": "Pinned-wheel ZIP central directory and RECORD, verified 2026-09-24",
+    "officialBuildManifest": "https://raw.githubusercontent.com/blender/blender/v5.2.2/build_files/build_environment/cmake/versions.cmake",
+    "officialBuildManifestSHA256": "df53e363d5b1af1a5b085b66d9465d0349145168233b4cd15a5658fa4f7b7fb1",
+    "officialReleaseCommit": "d13f752e3b9c4f8c261cda552b1021f8bcc0382c",
+    "officialReleaseCommitURL": "https://github.com/blender/blender/commit/d13f752e3b9c4f8c261cda552b1021f8bcc0382c",
+    "expectedRuntimeBinaryEvidence": {
+      "buildHash": "d13f752e3b9c",
+      "libraryVersions": {
+        "alembic": [
+          1,
+          8,
+          3
+        ],
+        "ocio": [
+          2,
+          5,
+          0
+        ],
+        "oiio": [
+          3,
+          1,
+          13
+        ],
+        "opensubdiv": [
+          3,
+          7,
+          0
+        ],
+        "openvdb": [
+          13,
+          0,
+          0
+        ],
+        "usd": [
+          0,
+          26,
+          3
+        ]
+      },
+      "scope": "bpy.app build identity and Blender-exposed LibraryVersion subset; not proof of every wheel build input"
+    },
+    "sourceMappingStatus": "All 43 native libraries match the official v5.2.2 library submodule byte-for-byte. Its dependency manifest identifies exact source versions; release source supplies recipes/patches. Runtime build identity and the distributable source/notice closure still require Actions evidence.",
+    "candidateSourceFamilies": [
+      {
+        "name": "OpenEXR",
+        "version": "3.4.10",
+        "license": "BSD-3-Clause",
+        "url": "https://github.com/AcademySoftwareFoundation/openexr/archive/v3.4.10.tar.gz",
+        "manifestHash": "8926ba09c4e4cd21c7a0fa2d2b39fa82",
+        "manifestHashType": "MD5",
+        "libraries": [
+          "bpy/lib/libIex.dylib",
+          "bpy/lib/libIlmThread.dylib",
+          "bpy/lib/libOpenEXR.dylib",
+          "bpy/lib/libOpenEXRCore.dylib",
+          "bpy/lib/libOpenEXRUtil.dylib"
+        ]
+      },
+      {
+        "name": "Imath",
+        "version": "3.2.2",
+        "license": "BSD-3-Clause",
+        "url": "https://github.com/AcademySoftwareFoundation/Imath/archive/v3.2.2.tar.gz",
+        "manifestHash": "e29f25ce926ac53d8e0a52197299f61b",
+        "manifestHashType": "MD5",
+        "libraries": [
+          "bpy/lib/libImath.dylib"
+        ]
+      },
+      {
+        "name": "MaterialX",
+        "version": "1.39.4",
+        "license": "Apache-2.0",
+        "url": "https://github.com/AcademySoftwareFoundation/MaterialX/archive/refs/tags/v1.39.4.tar.gz",
+        "manifestHash": "4704716b93e4c2d6b3693aa56a13b71b",
+        "manifestHashType": "MD5",
+        "libraries": [
+          "bpy/lib/libMaterialXCore.dylib",
+          "bpy/lib/libMaterialXFormat.dylib",
+          "bpy/lib/libMaterialXGenGlsl.dylib",
+          "bpy/lib/libMaterialXGenMdl.dylib",
+          "bpy/lib/libMaterialXGenMsl.dylib",
+          "bpy/lib/libMaterialXGenOsl.dylib",
+          "bpy/lib/libMaterialXGenShader.dylib",
+          "bpy/lib/libMaterialXRender.dylib",
+          "bpy/lib/libMaterialXRenderGlsl.dylib",
+          "bpy/lib/libMaterialXRenderHw.dylib",
+          "bpy/lib/libMaterialXRenderMsl.dylib",
+          "bpy/lib/libMaterialXRenderOsl.dylib"
+        ]
+      },
+      {
+        "name": "OpenColorIO",
+        "version": "2.5.0",
+        "license": "BSD-3-Clause",
+        "url": "https://github.com/AcademySoftwareFoundation/OpenColorIO/archive/v2.5.0.tar.gz",
+        "manifestHash": "41d6b62ac672ed333ebfdcc1108407e0",
+        "manifestHashType": "MD5",
+        "libraries": [
+          "bpy/lib/libOpenColorIO.dylib"
+        ]
+      },
+      {
+        "name": "OpenImageDenoise",
+        "version": "2.5.0",
+        "license": "Apache-2.0",
+        "url": "https://github.com/RenderKit/oidn/releases/download/v2.5.0/oidn-2.5.0.src.tar.gz",
+        "manifestHash": "ae984ce4cc4c81ec152ab81b241a8738",
+        "manifestHashType": "MD5",
+        "libraries": [
+          "bpy/lib/libOpenImageDenoise.dylib",
+          "bpy/lib/libOpenImageDenoise_core.dylib",
+          "bpy/lib/libOpenImageDenoise_device_cpu.dylib",
+          "bpy/lib/libOpenImageDenoise_device_metal.dylib"
+        ]
+      },
+      {
+        "name": "OpenImageIO",
+        "version": "3.1.13.1",
+        "license": "Apache-2.0",
+        "url": "https://github.com/AcademySoftwareFoundation/OpenImageIO/archive/refs/tags/v3.1.13.1.tar.gz",
+        "manifestHash": "9f6f083900680b79ca4a136270103844",
+        "manifestHashType": "MD5",
+        "libraries": [
+          "bpy/lib/libOpenImageIO.dylib",
+          "bpy/lib/libOpenImageIO_Util.dylib"
+        ]
+      },
+      {
+        "name": "SDL",
+        "version": "3.4.2",
+        "license": "Zlib",
+        "url": "https://github.com/libsdl-org/SDL/releases/download/release-3.4.2/SDL3-3.4.2.tar.gz",
+        "manifestHash": "b488ea1ede947c06855588314effe905",
+        "manifestHashType": "MD5",
+        "libraries": [
+          "bpy/lib/libSDL3.dylib"
+        ]
+      },
+      {
+        "name": "Ceres Solver",
+        "version": "0c70ed3a1a2d6ba47c06c7e8b3b040880bc474db",
+        "license": "BSD-3-Clause",
+        "url": "https://github.com/ceres-solver/ceres-solver/archive/0c70ed3a1a2d6ba47c06c7e8b3b040880bc474db.tar.gz",
+        "manifestHash": "bf0bcc78fae884e59dd893693e52510da7cc6866a7444fdae9ba8f19eae266cd",
+        "manifestHashType": "SHA256",
+        "libraries": [
+          "bpy/lib/libceres.dylib"
+        ]
+      },
+      {
+        "name": "Draco",
+        "version": "1.5.7",
+        "license": "Apache-2.0",
+        "url": "https://github.com/google/draco/archive/refs/tags/1.5.7.zip",
+        "manifestHash": "27b72ba2d5ff3d0a9814ad40d4cb88f8dc89a35491c0866d952473f8f9416b77",
+        "manifestHashType": "SHA256",
+        "libraries": [
+          "bpy/lib/libdraco.dylib"
+        ]
+      },
+      {
+        "name": "Embree",
+        "version": "4.4.1",
+        "license": "Apache-2.0",
+        "url": "https://github.com/RenderKit/embree/archive/v4.4.1.zip",
+        "manifestHash": "6e2eecafb312d8cf1f1ff555702637cf",
+        "manifestHashType": "MD5",
+        "libraries": [
+          "bpy/lib/libembree4.dylib"
+        ]
+      },
+      {
+        "name": "meshoptimizer",
+        "version": "1.1",
+        "license": "MIT",
+        "url": "https://github.com/zeux/meshoptimizer/archive/refs/tags/v1.1.zip",
+        "manifestHash": "6aecc2d3b4328f1f5f4127fb16a144de80cc9eb35c32387807c8c04b0b6dbbf3",
+        "manifestHashType": "SHA256",
+        "libraries": [
+          "bpy/lib/libmeshoptimizer.dylib"
+        ]
+      },
+      {
+        "name": "OpenJPH",
+        "version": "0.25.2",
+        "license": "BSD-2-Clause",
+        "url": "https://github.com/aous72/OpenJPH/archive/refs/tags/0.25.2.tar.gz",
+        "manifestHash": "ae5f09562cb811cb2fb881c5eb74583e18db941848cfa3c35787e2580f3defc6",
+        "manifestHashType": "SHA256",
+        "libraries": [
+          "bpy/lib/libopenjph.dylib"
+        ]
+      },
+      {
+        "name": "OpenVDB",
+        "version": "13.0.0",
+        "license": "MPL-2.0",
+        "url": "https://github.com/AcademySoftwareFoundation/openvdb/archive/v13.0.0.tar.gz",
+        "manifestHash": "7a10f529ed12d9e3ed6d3fd50f157378",
+        "manifestHashType": "MD5",
+        "libraries": [
+          "bpy/lib/libopenvdb.dylib"
+        ]
+      },
+      {
+        "name": "OpenXR SDK",
+        "version": "1.1.53",
+        "license": "Apache-2.0",
+        "url": "https://github.com/KhronosGroup/OpenXR-SDK/archive/release-1.1.53.tar.gz",
+        "manifestHash": "e2e1b25fd480947ddc2f2c68423d47e5",
+        "manifestHashType": "MD5",
+        "libraries": [
+          "bpy/lib/libopenxr_loader.dylib"
+        ]
+      },
+      {
+        "name": "OpenSubdiv",
+        "version": "v3_7_0",
+        "license": "TOST-1.0",
+        "url": "https://github.com/PixarAnimationStudios/OpenSubdiv/archive/v3_7_0.tar.gz",
+        "manifestHash": "470d53c4d4335a601c33a052ce7c33b4",
+        "manifestHashType": "MD5",
+        "libraries": [
+          "bpy/lib/libosdCPU.dylib",
+          "bpy/lib/libosdGPU.dylib"
+        ]
+      },
+      {
+        "name": "Open Shading Language",
+        "version": "1.15.3.0",
+        "license": "BSD-3-Clause",
+        "url": "https://github.com/AcademySoftwareFoundation/OpenShadingLanguage/releases/download/v1.15.3.0/OSL-1.15.3.0.tar.gz",
+        "manifestHash": "560232b3298e33f3bf45c6f21f20b484f5acc260f6d4035db0f76f22994d679a",
+        "manifestHashType": "SHA256",
+        "libraries": [
+          "bpy/lib/liboslcomp.dylib",
+          "bpy/lib/liboslexec.dylib",
+          "bpy/lib/liboslnoise.dylib",
+          "bpy/lib/liboslquery.dylib"
+        ]
+      },
+      {
+        "name": "oneTBB",
+        "version": "v2022.3.0",
+        "license": "Apache-2.0",
+        "url": "https://github.com/uxlfoundation/oneTBB/archive/refs/tags/v2022.3.0.tar.gz",
+        "manifestHash": "2b242c465b194ac8e1451ea1354873ae",
+        "manifestHashType": "MD5",
+        "libraries": [
+          "bpy/lib/libtbb.dylib",
+          "bpy/lib/libtbbmalloc.dylib",
+          "bpy/lib/libtbbmalloc_proxy.dylib"
+        ]
+      },
+      {
+        "name": "OpenUSD",
+        "version": "26.03",
+        "license": "TOST-1.0",
+        "url": "https://github.com/PixarAnimationStudios/OpenUSD/archive/v26.03.tar.gz",
+        "manifestHash": "cc6d6bffdcdd038f60e2fe4726b08673",
+        "manifestHashType": "MD5",
+        "libraries": [
+          "bpy/lib/libusd_ms.dylib"
+        ]
+      }
+    ],
+    "officialLibraryEvidence": {
+      "correspondence": {
+        "path": "Runtime/bpy/compliance/official-library-correspondence.json",
+        "sha256": "03635dba655d5d56d0b876fa7dcc0eb0f4063accff9ecabdbdc095185ef78e90"
+      },
+      "dependencies": {
+        "path": "Runtime/bpy/compliance/blender-library-dependencies.md",
+        "sha256": "d73c19d962ec21cd5db79c84962e4d6ae3b3373d9c7383f96b05d168b753bcbe"
+      },
+      "releaseSubmodule": {
+        "path": "Runtime/bpy/compliance/blender-release-library-submodule.json",
+        "sha256": "ea1635a27e9358c8858e0ef2c3d226a8d97d6439d44bb8717a9ee6ff9d5bbbc3"
+      }
+    }
+  },
+  "distributionStatus": "ready",
+  "verifiedAt": "2026-09-24",
+  "runtime": {
+    "name": "python-build-standalone",
+    "version": "3.13.15+20260901",
+    "sourceCommit": "4bb01f09aaf362c71e891be4a41cb6d6ddf830b3",
+    "artifact": {
+      "filename": "cpython-3.13.15+20260901-aarch64-apple-darwin-pgo+lto-full.tar.zst",
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260901/cpython-3.13.15%2B20260901-aarch64-apple-darwin-pgo%2Blto-full.tar.zst",
+      "sha256": "46685a8e6dbad3e94534e0d73f483d08149867707200aa39e99690b76002053f",
+      "size": 58451885
+    },
+    "source": {
+      "url": "https://codeload.github.com/astral-sh/python-build-standalone/tar.gz/refs/tags/20260901",
+      "sha256": "bf4776e7bdb751a58fa6879d280b678f60b955b62b19ec98a32903fd82cee1c6",
+      "license": "MPL-2.0"
+    }
+  },
+  "pythonBuildInputs": [
+    {
+      "name": "CPython",
+      "version": "3.13.15",
+      "license": "Python-2.0 AND CNRI-Python",
+      "url": "https://www.python.org/ftp/python/3.13.15/Python-3.13.15.tar.xz",
+      "sha256": "1e66a7945a48390ee4c2a4268a0e4185884059a13c4aab6d148aa208deea4a76"
+    },
+    {
+      "name": "bzip2",
+      "version": "1.0.8",
+      "license": "bzip2-1.0.6",
+      "url": "https://astral-sh.github.io/mirror/files/bzip2-1.0.8.tar.gz",
+      "sha256": "ab5a03176ee106d3f0fa90e381da478ddae405918153cca248e682cd0c4a2269"
+    },
+    {
+      "name": "expat",
+      "version": "2.8.4",
+      "license": "MIT",
+      "url": "https://github.com/libexpat/libexpat/releases/download/R_2_8_4/expat-2.8.4.tar.xz",
+      "sha256": "656ae1cc8da3b4ea513bb4e254f33e6243938084c0ec6239da873376b09985a7"
+    },
+    {
+      "name": "libedit",
+      "version": "20240808-3.1",
+      "license": "BSD-3-Clause",
+      "url": "https://thrysoee.dk/editline/libedit-20240808-3.1.tar.gz",
+      "sha256": "5f0573349d77c4a48967191cdd6634dd7aa5f6398c6a57fe037cc02696d6099f"
+    },
+    {
+      "name": "libffi",
+      "version": "3.4.8",
+      "license": "MIT",
+      "url": "https://github.com/libffi/libffi/releases/download/v3.4.8/libffi-3.4.8.tar.gz",
+      "sha256": "bc9842a18898bfacb0ed1252c4febcc7e78fa139fd27fdc7a3e30d9d9356119b"
+    },
+    {
+      "name": "mpdecimal",
+      "version": "4.0.0",
+      "license": "BSD-2-Clause",
+      "url": "https://astral-sh.github.io/mirror/files/mpdecimal-4.0.0.tar.gz",
+      "sha256": "942445c3245b22730fd41a67a7c5c231d11cb1b9936b9c0f76334fb7d0b4468c"
+    },
+    {
+      "name": "ncurses",
+      "version": "6.5",
+      "license": "X11",
+      "url": "https://astral-sh.github.io/mirror/files/ncurses-6.5.tar.gz",
+      "sha256": "136d91bc269a9a5785e5f9e980bc76ab57428f604ce3e5a5a90cebc767971cc6"
+    },
+    {
+      "name": "OpenSSL",
+      "version": "3.5.8",
+      "license": "Apache-2.0",
+      "url": "https://github.com/openssl/openssl/releases/download/openssl-3.5.8/openssl-3.5.8.tar.gz",
+      "sha256": "a8f84a39918ec6415ce765d9b429d313ba97b8143169c172e734b9514464f5b2"
+    },
+    {
+      "name": "SQLite",
+      "version": "3.53.1.0",
+      "license": "public-domain",
+      "url": "https://www.sqlite.org/2026/sqlite-autoconf-3530100.tar.gz",
+      "sha256": "83e6b2020a034e9a7ad4a72feea59e1ad52f162e09cbd26735a3ffb98359fc4f"
+    },
+    {
+      "name": "Tcl",
+      "version": "9.0.4",
+      "license": "TCL",
+      "url": "https://prdownloads.sourceforge.net/tcl/tcl9.0.4-src.tar.gz",
+      "sha256": "d0aed49230bc02a65c1e0229e65f34590a4b037ec40d546f32573b467f7551ea"
+    },
+    {
+      "name": "Tk",
+      "version": "9.0.4",
+      "license": "TCL",
+      "url": "https://prdownloads.sourceforge.net/tcl/tk9.0.4-src.tar.gz",
+      "sha256": "d7a146d2917eb8b5cc95276dbf0e3d03c7464d2b19c1675357857c989301dbb4"
+    },
+    {
+      "name": "XZ liblzma",
+      "version": "5.8.3",
+      "license": "0BSD",
+      "url": "https://github.com/tukaani-project/xz/releases/download/v5.8.3/xz-5.8.3.tar.gz",
+      "sha256": "3d3a1b973af218114f4f889bbaa2f4c037deaae0c8e815eec381c3d546b974a0"
+    },
+    {
+      "name": "zlib",
+      "version": "1.3.2",
+      "license": "Zlib",
+      "url": "https://github.com/madler/zlib/releases/download/v1.3.2/zlib-1.3.2.tar.gz",
+      "sha256": "bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16"
+    }
+  ],
+  "wheels": [
+    {
+      "name": "bpy",
+      "version": "5.2.2",
+      "license": "GPL-3.0-or-later",
+      "filename": "bpy-5.2.2-cp313-cp313-macosx_11_0_arm64.whl",
+      "url": "https://files.pythonhosted.org/packages/a7/a9/12e3c22933ab3320767cf1bdc48bab61d6fc106492fd1872cdea7c9f02ab/bpy-5.2.2-cp313-cp313-macosx_11_0_arm64.whl",
+      "sha256": "e447dba63ea14ac6a3f10ea23fa7828c6af2a3d5b2ba206ad2262a54d5aa7cf7",
+      "size": 245172189,
+      "metadata": {
+        "url": "https://files.pythonhosted.org/packages/a7/a9/12e3c22933ab3320767cf1bdc48bab61d6fc106492fd1872cdea7c9f02ab/bpy-5.2.2-cp313-cp313-macosx_11_0_arm64.whl.metadata",
+        "sha256": "05dd2ee5cd404396aec5d1888c64aabed7cb42ecd5c6c7c881a079ee91f0b084",
+        "license": "GPL-3.0",
+        "requiresPython": "==3.13.*",
+        "requiresDist": [
+          "cattrs",
+          "cython",
+          "numpy<3.0,>=2.2",
+          "requests",
+          "zstandard"
+        ],
+        "sourceCodeURLs": [
+          "https://download.blender.org/source/",
+          "https://projects.blender.org/blender/blender"
+        ]
+      },
+      "source": {
+        "url": "https://download.blender.org/source/blender-5.2.2.tar.xz",
+        "sha256": "56a3b1ec97479ff24dce65d2f09f8a1895005cece279b701fe4fcf74bce3f77e"
+      }
+    },
+    {
+      "name": "numpy",
+      "version": "2.5.3",
+      "license": "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0",
+      "filename": "numpy-2.5.3-cp313-cp313-macosx_14_0_arm64.whl",
+      "url": "https://files.pythonhosted.org/packages/ab/2a/98282aa5b8f58b1157d440bb6282eed47e3632a5de53a714fbab17e659fe/numpy-2.5.3-cp313-cp313-macosx_14_0_arm64.whl",
+      "sha256": "f9a2353b37a1a9e78fd82b27ad7e2a32a2d036604d18f02b05e3136c62ca3b09",
+      "size": 5439695,
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/13/01/11703282db468b85f6f7b8c7f22d058de5970d5c7e60a3a8aaa313c3de36/numpy-2.5.3.tar.gz",
+        "sha256": "df2d5874ff183595a4ba404edd04f6bd9b5505c1d7708573f6a6c17489a67563"
+      }
+    },
+    {
+      "name": "cattrs",
+      "version": "26.2.0",
+      "license": "MIT",
+      "filename": "cattrs-26.2.0-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/f5/4d/6b8460462012a52075ba97932197f8c141be71b8e5f7e918af08ee73424b/cattrs-26.2.0-py3-none-any.whl",
+      "sha256": "c680f17cd1df3a1c038ad1db8d90a9c595568cc54c4e8098e7ceb8d7b9bd826b",
+      "size": 74830,
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/d6/b2/42f4524e5479b090040b5fd8bb316dd8c65a079bb6492494ce2079dc91be/cattrs-26.2.0.tar.gz",
+        "sha256": "3cf49f69df8326bcf17a3cb3d3d3ec4a856858fe3a7473746c9044c317d3ba55"
+      }
+    },
+    {
+      "name": "Cython",
+      "version": "3.3.0",
+      "license": "Apache-2.0",
+      "filename": "cython-3.3.0-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/bf/77/67b0b24e45073a699610e50f00c18474ff9b09ea29ecc95083bdf5e60acd/cython-3.3.0-py3-none-any.whl",
+      "sha256": "9b24b5c8cd536946b62086fcafee6d5509d3f549f72d553d2336af87ffbe0da1",
+      "size": 1349151,
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/a9/d8/4981ef716ad0e3ff0d3ef383aefc6b03c4a88dee33b272bf8e0d833001ca/cython-3.3.0.tar.gz",
+        "sha256": "eed0d93fbca7087f143b42c34b05a825849bdf17f101572c2105acfa49aa88b8"
+      }
+    },
+    {
+      "name": "requests",
+      "version": "2.34.2",
+      "license": "Apache-2.0",
+      "filename": "requests-2.34.2-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/a0/f4/c67b0b3f1b9245e8d266f0f112c500d50e5b4e83cb6f3b71b6528104182a/requests-2.34.2-py3-none-any.whl",
+      "sha256": "2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0",
+      "size": 73075,
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/ac/c3/e2a2b89f2d3e2179abd6d00ebd70bff6273f37fb3e0cc209f48b39d00cbf/requests-2.34.2.tar.gz",
+        "sha256": "f288924cae4e29463698d6d60bc6a4da69c89185ad1e0bcc4104f584e960b9ed"
+      }
+    },
+    {
+      "name": "zstandard",
+      "version": "0.25.0",
+      "license": "BSD-3-Clause",
+      "filename": "zstandard-0.25.0-cp313-cp313-macosx_11_0_arm64.whl",
+      "url": "https://files.pythonhosted.org/packages/3f/06/9ae96a3e5dcfd119377ba33d4c42a7d89da1efabd5cb3e366b156c45ff4d/zstandard-0.25.0-cp313-cp313-macosx_11_0_arm64.whl",
+      "sha256": "a1a4ae2dec3993a32247995bdfe367fc3266da832d82f8438c8570f989753de1",
+      "size": 640440,
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/fd/aa/3e0508d5a5dd96529cdc5a97011299056e14c6505b678fd58938792794b1/zstandard-0.25.0.tar.gz",
+        "sha256": "7713e1179d162cf5c7906da876ec2ccb9c3a9dcbdffef0cc7f70c3667a205f0b"
+      }
+    },
+    {
+      "name": "attrs",
+      "version": "26.1.0",
+      "license": "MIT",
+      "filename": "attrs-26.1.0-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/64/b4/17d4b0b2a2dc85a6df63d1157e028ed19f90d4cd97c36717afef2bc2f395/attrs-26.1.0-py3-none-any.whl",
+      "sha256": "c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309",
+      "size": 67548,
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/9a/8e/82a0fe20a541c03148528be8cac2408564a6c9a0cc7e9171802bc1d26985/attrs-26.1.0.tar.gz",
+        "sha256": "d03ceb89cb322a8fd706d4fb91940737b6642aa36998fe130a9bc96c985eff32"
+      }
+    },
+    {
+      "name": "typing-extensions",
+      "version": "4.16.0",
+      "license": "PSF-2.0",
+      "filename": "typing_extensions-4.16.0-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/49/d3/b8441a820a491ddfc024b0b0cf0393375b75ea13866d9c66727e54c2fc80/typing_extensions-4.16.0-py3-none-any.whl",
+      "sha256": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8",
+      "size": 45571,
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/f6/cc/6253133b5bb138fc3306cebfbda2c520f545d36b5be2c7255cc528bb45d6/typing_extensions-4.16.0.tar.gz",
+        "sha256": "dc983d19a509c94dba722ee6abd33940f7c05a89e243c47e907eb4db6f1a43e5"
+      }
+    },
+    {
+      "name": "charset-normalizer",
+      "version": "3.5.1",
+      "license": "MIT",
+      "filename": "charset_normalizer-3.5.1-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/cc/61/d01fc49b8dea277640b55a9e15960dbca9fdc8c9fde18e572d39c59f4019/charset_normalizer-3.5.1-py3-none-any.whl",
+      "sha256": "6df0ec430f9a831772c23ca5a224cba36517a58a84bb32c32bb59a9fa67c47f6",
+      "size": 68658,
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/e5/3f/143b048436775b0f76ac3eec145c019e8173ccc2885c8f20319b996d5e83/charset_normalizer-3.5.1.tar.gz",
+        "sha256": "6117b84ea48435e5356dc737f5121485c30920ba43375fa7b434fd753df0eac3"
+      }
+    },
+    {
+      "name": "idna",
+      "version": "3.20",
+      "license": "BSD-3-Clause",
+      "filename": "idna-3.20-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/58/a2/bb081bab032533a855d44de1d56f8e8426114ff1ba5d1f07a438a0a654f8/idna-3.20-py3-none-any.whl",
+      "sha256": "ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c",
+      "size": 69583,
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/f5/08/8eea9d4b8302028f3abb2c0813953f7aec26d33b7a8960ed760e65ff29fa/idna-3.20.tar.gz",
+        "sha256": "a7db850025b95ded1eae8a46181a1a6c56c92c96f0e2b005d9ff8dc0210cab44"
+      }
+    },
+    {
+      "name": "urllib3",
+      "version": "2.8.0",
+      "license": "MIT",
+      "filename": "urllib3-2.8.0-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/92/9d/c4e665119135114480843e7ab388fa94d8480650450e6f8e26b70d323a4c/urllib3-2.8.0-py3-none-any.whl",
+      "sha256": "0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3",
+      "size": 135717,
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/e3/05/b17359e1cefb4f909b5e40b1b90a496d987258916dbbf88e842c729f510e/urllib3-2.8.0.tar.gz",
+        "sha256": "63bf2ead4c879426ebf22ef2a781eeb4aa3b4ae798a0435506f8687fd5bb9b63"
+      }
+    },
+    {
+      "name": "certifi",
+      "version": "2026.7.22",
+      "license": "MPL-2.0",
+      "filename": "certifi-2026.7.22-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/0b/a7/71ac2cff56fec219ed242bb11b8efb69fcc4bec75db06fb7bfe35de520e6/certifi-2026.7.22-py3-none-any.whl",
+      "sha256": "62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775",
+      "size": 136983,
+      "source": {
+        "url": "https://files.pythonhosted.org/packages/a3/c2/24167ea9858356b47a87a50d39908bfdb72ceeefe0041586e704e5376b3a/certifi-2026.7.22.tar.gz",
+        "sha256": "741e2c3b351ddf169a738da9f2c048608ff7f2c5cc02f1ebc6b118bb090d5d55"
+      }
+    }
+  ],
+  "sourceClosurePlan": {
+    "schema": "nexgenvideo/bpy-source-closure-plan/1",
+    "builder": "scripts/assemble_bpy_source_closure.py",
+    "validator": "scripts/verify_bpy_source_closure.py",
+    "binaryCorrespondence": {
+      "wheel": "bpy-5.2.2-cp313-cp313-macosx_11_0_arm64.whl",
+      "wheelSHA256": "e447dba63ea14ac6a3f10ea23fa7828c6af2a3d5b2ba206ad2262a54d5aa7cf7",
+      "wheelMetadataSHA256": "05dd2ee5cd404396aec5d1888c64aabed7cb42ecd5c6c7c881a079ee91f0b084",
+      "officialReleaseCommit": "d13f752e3b9c4f8c261cda552b1021f8bcc0382c",
+      "expectedBuildHash": "d13f752e3b9c",
+      "expectedLibraryVersions": {
+        "alembic": [
+          1,
+          8,
+          3
+        ],
+        "ocio": [
+          2,
+          5,
+          0
+        ],
+        "oiio": [
+          3,
+          1,
+          13
+        ],
+        "opensubdiv": [
+          3,
+          7,
+          0
+        ],
+        "openvdb": [
+          13,
+          0,
+          0
+        ],
+        "usd": [
+          0,
+          26,
+          3
+        ]
+      },
+      "releaseSourceSHA256": "56a3b1ec97479ff24dce65d2f09f8a1895005cece279b701fe4fcf74bce3f77e",
+      "releaseBuildManifestSHA256": "df53e363d5b1af1a5b085b66d9465d0349145168233b4cd15a5658fa4f7b7fb1"
+    },
+    "contents": [
+      "NexGenVideo source and build scripts at the exact release-tag commit",
+      "Blender 5.2.2 release source including build recipes and patches",
+      "every release dependency declared by the exact Blender 5.2.2 versions manifest, including static and transitive candidates",
+      "python-build-standalone source and declared CPython build inputs",
+      "every installed wheel source archive and wheel license/notice file",
+      "the exact pinned bpy wheel RECORD/native inventory and PyPI metadata linkage evidence"
+    ],
+    "publication": "Publish the validated source archive and manifest beside every public binary artifact and retain matching version/hash instructions. Bit-identical rebuild output is not required."
+  },
+  "distributionBlockers": [],
+  "sourceCompanions": {
+    "path": "Runtime/bpy/compliance/source-companions.json",
+    "sha256": "1f150fde8c448f38600807fd4443eef221c461cdd23e6a4415392036a766774e"
+  },
+  "distributionClosure": {
+    "noticeCoverage": {
+      "path": "Runtime/bpy/compliance/notice-coverage.json",
+      "sha256": "eeb36344962de936234cdb94fb7f31a33635aee9d4b20db051acd8eacfd98b2c"
+    },
+    "noticeFiles": [
+      {
+        "path": "Runtime/bpy/compliance/flexbison-Autoconf-Exception-3.0.txt",
+        "sha256": "23ed0b84fa023bfa33433b498192cd08a3bfb1f4864a8ed791a84f3eb48b2dd2"
+      },
+      {
+        "path": "Runtime/bpy/compliance/flexbison-Bison-skeleton-exception.txt",
+        "sha256": "53b62f6660e9974bac83771ac901b15438a602fe696b4a51f04d82edb45de05a"
+      },
+      {
+        "path": "Runtime/bpy/compliance/flexbison-FlexLexer-NOTICE.txt",
+        "sha256": "d3a08376bb2b0ede5c17e455b838f8b1aa4ea7a8538cc6ef44711a18d164e48b"
+      },
+      {
+        "path": "Runtime/bpy/compliance/flexbison-bison-COPYING.txt",
+        "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
+      },
+      {
+        "path": "Runtime/bpy/compliance/flexbison-flex-COPYING.txt",
+        "sha256": "97fd685958d93be7f8dab939bb8161dbd6afb0718c63bfc337c24321aea44273"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-ABSEIL-001-LICENSE-c79a7fea0e3c.txt",
+        "sha256": "c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-ALEMBIC-001-LICENSE.txt-00a7b288ee40.txt",
+        "sha256": "00a7b288ee40635e15adf85703b0fb3be3ef2f3000beb74d21c1f19b19147906"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-AOM-001-LICENSE-4764a286d8b2.txt",
+        "sha256": "4764a286d8b2faeaf42f4418e7d7a28d58fc8fd4d00a3d0a7f44b0a4099de7f2"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-AOM-002-LICENSE.md-0acc2fcb2747.txt",
+        "sha256": "0acc2fcb27472bdc9aaf8b71f37055bbdac4f54671b7d922f241bd7fcd0dd3e6"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-AOM-003-LICENSE-043dcfd05938.txt",
+        "sha256": "043dcfd059386f9facd376351b2bd79325778744aa442177390cdfcca54babed"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-AOM-004-LICENSE-9702de7e4117.txt",
+        "sha256": "9702de7e4117a8e2b20dafab11ffda58c198aede066406496bef670d40a22138"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-AOM-005-LICENSE-BSD3-d25e82e26acd.txt",
+        "sha256": "d25e82e26acd42ca3ccc9993622631163425b869b9e16284226d534cff6470f2"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-AOM-006-LICENSE.TXT-5aec868f669e.txt",
+        "sha256": "5aec868f669e384a22372a4e8a1a6cd7d44c64cd451f960ca69cc170d1e13acf"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-AOM-007-LICENSE-2b2cc1180c7e.txt",
+        "sha256": "2b2cc1180c7e6988328ad2033b04b80117419db9c4c584918bbb3cfec7e9364f"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-AOM-008-LICENSE-ff6c857ce270.txt",
+        "sha256": "ff6c857ce2708e87701323078aef115c1872a1f80a9649f86dc899b48083bc60"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-AOM-009-LICENSE-719d8fa235f2.txt",
+        "sha256": "719d8fa235f2068e0ae6d6a7dceb0a7720d7840f0f0ebed29957989e6ded3cd8"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-BLOSC-001-LICENSE_1_0.txt-36266a8fd073.txt",
+        "sha256": "36266a8fd073568394cb81cdb2b124f7fdae2c64c1a7ed09db34b4d22efa2951"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-BLOSC-BITSHUFFLE.txt-ef357c2061cf.txt",
+        "sha256": "ef357c2061cf67db298f9f1565572ee229ad9263582a9f9d0ebff5094f5d10ac"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-BLOSC-BLOSC.txt-05cc09a42b9e.txt",
+        "sha256": "05cc09a42b9ec8ba3e8b33b605f940a302d171df103753d5809791ce3cef3271"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-BLOSC-FASTLZ.txt-a453a7a272fb.txt",
+        "sha256": "a453a7a272fbd24105b39959f76996d50dad80b22d1c310f6c67f74f62ae4054"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-BLOSC-LZ4.txt-0dcd2b0db9e9.txt",
+        "sha256": "0dcd2b0db9e9e8371436f3cf9147c767e83777d0290958286902b31549ef0946"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-BLOSC-SNAPPY.txt-5221a36a801b.txt",
+        "sha256": "5221a36a801b981fbdfda7b87db64cff231a3b88223a066c325411b539df796f"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-BLOSC-STDINT.txt-f2af03db562e.txt",
+        "sha256": "f2af03db562e88539f019b1ab0881878ee82d0c80f3bce68c650064652e25d7b"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-BLOSC-ZLIB.txt-fe9e40f351c2.txt",
+        "sha256": "fe9e40f351c2347e9550eed6839d88e565fffb3f09559af5546c7c3b4ee2e4bd"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-BROTLI-001-LICENSE-3d180008e369.txt",
+        "sha256": "3d180008e36922a4e8daec11c34c7af264fed5962d07924aea928c38e8663c94"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-BZIP2-001-LICENSE-c6dbbf828498.txt",
+        "sha256": "c6dbbf828498be844a89eaa3b84adbab3199e342eb5cb2ed2f0d4ba7ec0f38a3"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-CERES-001-LICENSE-765fd9eac4cb.txt",
+        "sha256": "765fd9eac4cb827fa5de4304d1f81f4f2c5c332a3f1d6f0f3f7a69a33156729b"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-CERES-002-license.rst-298272413616.txt",
+        "sha256": "298272413616f53c3bd952600ecb13ae4005dce7772c02b425c431bbb244f66f"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-CYTHON-001-COPYING.txt-e1eb1c49a850.txt",
+        "sha256": "e1eb1c49a8508e8173dac30157e4a6439a44ad8846194746c424fbc3fc2b95d7"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-CYTHON-002-LICENSE.txt-9568a2b155e6.txt",
+        "sha256": "9568a2b155e66ac3e0ba1fd80b52b827b9460e6cf6f233125e7cbca8e206ddc3"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-DEFLATE-001-COPYING-5d246dd25373.txt",
+        "sha256": "5d246dd2537307b80fed9ba5fdddf5d0fe7a8f023393a071182b9daed56b40fe"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-DPCPP-001-LICENSE.TXT-8d85c1057d74.txt",
+        "sha256": "8d85c1057d742e597985c7d4e6320b015a9139385cff4cbae06ffc0ebe89afee"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-DPCPP-003-LICENSE.TXT-ebcd9bbf783a.txt",
+        "sha256": "ebcd9bbf783a73d05c53ba4d586b8d5813dcdf3bbec50265860ccc885e606f47"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-DPCPP-004-LICENSE.TXT-d8e09a372026.txt",
+        "sha256": "d8e09a37202601346ed9f3962c843cf60d985570111602399a9b845c44a654ba"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-DPCPP-005-LICENSE.TXT-271b9c47cbf0.txt",
+        "sha256": "271b9c47cbf07475b8012f708fe08a348821261d66795daefed400e9238db379"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-DPCPP-007-LICENSE.TXT-1a8f1058753f.txt",
+        "sha256": "1a8f1058753f1ba890de984e48f0242a3a5c29a6a8f2ed9fd813f36985387e8d"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-DPCPP-009-LICENSE.TXT-94b301bb652a.txt",
+        "sha256": "94b301bb652ae351f5941655bf533f1a136300ad1396be7452c8a04ff2c91374"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-DPCPP-011-copying.f90-976ff27305a4.txt",
+        "sha256": "976ff27305a486bec99de9aa0e1756ffeaa726618fc4ba7752b42d165f876dee"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-DPCPP-013-LICENSE.TXT-3c536c052db9.txt",
+        "sha256": "3c536c052db9afd997809e38785c9f2a9e54e2892330fa7c5b438e18a7413479"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-DPCPP-014-LICENSE.TXT-539dd7aed86e.txt",
+        "sha256": "539dd7aed86e8a4f12cbdd0e6c50c189c7d74847e4fecc64ce2c6ee3a01da38b"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-DPCPP-015-LICENSE.TXT-e2b35be49f72.txt",
+        "sha256": "e2b35be49f7284a45b7baca8fc7b3ab7440e7902392b2528a457816b5bb2a15c"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-DPCPP-016-LICENSE.TXT-b5efebcaca80.txt",
+        "sha256": "b5efebcaca80879234098e52d1725e6d9eb8fb96a19fce625d39184b705f7b6d"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-DPCPP-017-LICENSE.TXT-f7891568956e.txt",
+        "sha256": "f7891568956e34643eb6a0db1462db30820d40d7266e2a78063f2fe233ece5a0"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-DPCPP-018-LICENSE.TXT-76be4deddeef.txt",
+        "sha256": "76be4deddeef87f6fa9940f4992a9506c7bb222af60eb3b2a47cf65719528bbe"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-DPCPP-020-LICENSE.TXT-e3bc36440fc9.txt",
+        "sha256": "e3bc36440fc927c62d5cc24efeefe225a14d4e34ffeb0c92e430625cce9ee444"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-DPCPP-022-LICENSE.TXT-54cbc326a78b.txt",
+        "sha256": "54cbc326a78b9400065bfc5830a57fdcdaf808286d4ac35d8a9e324aa77b7241"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-DPCPP-023-LICENSE-6a94bedb8b70.txt",
+        "sha256": "6a94bedb8b707ed97f6e310d0d015ab14e0683ffa0a612b02958581b9cc9fc0e"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-DPCPP-024-COPYRIGHT.regex-0424e57d4303.txt",
+        "sha256": "0424e57d4303164dc59a8509c20dae0518b853692e5c2b0e98b11816fdbc97c7"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-DPCPP-025-LICENSE.txt-d0d8b09800a4.txt",
+        "sha256": "d0d8b09800a45cd982e9568fc7669d9c1a4c330e275a821bbe24d54366d16fe9"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-DPCPP-028-LICENSE.TXT-fdad1758a9e1.txt",
+        "sha256": "fdad1758a9e1f9d5a81e18879b3406772115edc92c24bfa36b70c654f325e8e4"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-DPCPP-029-LICENSE.txt-cf48cdd9ed87.txt",
+        "sha256": "cf48cdd9ed87c2031b68fb1b9f4cfb55d00dcf815b21a30bf8304aa1e5e6f76a"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-DPCPP-030-LICENSE.TXT-eef85b40250d.txt",
+        "sha256": "eef85b40250d830eb76577fb44933cc5d81a8650f3848e5f3d89229e6995ffd3"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-DPCPP-031-LICENSE-3a2c398103f6.txt",
+        "sha256": "3a2c398103f6bca0f50a9a9465deca9230b370b0212af5fdf31ed88a36215c30"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-DPCPP-032-LICENSE-4556b2d9e539.txt",
+        "sha256": "4556b2d9e53920d10c972b2a4a78fbbb3aedb510686f2a1cd8d41e6a8adf24e5"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-DPCPP-033-LICENSE.TXT-0ca8cbe9219a.txt",
+        "sha256": "0ca8cbe9219a841f9bc8fbb1f8ecdf5e39b1b0e23ee10fb6b0c090d8987dd1eb"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-DPCPP-034-LICENSE.TXT-410f3a23b4bb.txt",
+        "sha256": "410f3a23b4bbacbd246310d8c014a20af18cfc8c0d740ddf0f673ea20894da9c"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-DPCPP-035-LICENSE-cfc7749b96f6.txt",
+        "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-DPCPP-038-LICENSE.TXT-2241695d3d8d.txt",
+        "sha256": "2241695d3d8deda2fb15d6ed6f7fede38c027f9e1bde1e9490c229be4f13bc51"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-DPCPP-039-LICENSE.txt-8c7efc9fe0ee.txt",
+        "sha256": "8c7efc9fe0ee86f30fdbc8dd437d5a1f73b58ff8a6ff6ab566f6b830af44b21e"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-DPCPP_SPIRV_HEADERS-001-LICENSE-ff04ae7e6a46.txt",
+        "sha256": "ff04ae7e6a468587fe59434fee2e67c0e2a749b592c794b764ff80f30b94a084"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-DRACO-001-LICENSE-d3709b0fb4b8.txt",
+        "sha256": "d3709b0fb4b8a94bbb1d02b8a2e484f258b0d9c5c5a01f940391f3fe662cd1a4"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-EIGEN-001-COPYING.APACHE-03379001a7b1.txt",
+        "sha256": "03379001a7b12a2ec997a25554247d985270b353c10d5bafee9ac8d6519820b7"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-EIGEN-002-COPYING.BSD-51928dce3621.txt",
+        "sha256": "51928dce36213c5333ba3172e847d735d4c6e9b7ff2722a326c49067155b82eb"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-EIGEN-003-COPYING.MINPACK-c87b7f8ee88f.txt",
+        "sha256": "c87b7f8ee88f6195e91743820c00354833583aef091b72e2d4a49c8e28e798a0"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-EIGEN-004-COPYING.MPL2-66a3107d5ad6.txt",
+        "sha256": "66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-EIGEN-005-COPYING.README-db640ff2bd90.txt",
+        "sha256": "db640ff2bd90c6abd6a4d3fbb351e0ee4d555417cf840492054d1cbb2ea85644"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-EIGEN-006-LICENSE-1f256ecad192.txt",
+        "sha256": "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-EIGEN-007-COPYING-b8d0e2bcbf36.txt",
+        "sha256": "b8d0e2bcbf36f6af3cdbf94055ad2ea675d5a19fc623eb0ec82febb2b08e719b"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-EMBREE-002-LICENSE.txt-1b64b23b817e.txt",
+        "sha256": "1b64b23b817e547982a86984685f5e9337695caa542753fb6f08d502d5208e38"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-EMHASH-001-LICENSE-e939a628c457.txt",
+        "sha256": "e939a628c45752baa014eb71d504d1bea7d17621231192a9d1700c8f9c29f621"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-EMHASH-002-LICENSE-42fe6020e695.txt",
+        "sha256": "42fe6020e69514d753b8656fe22f95e37f222812e264c6c863275b78eaf815ed"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-EPOXY-001-COPYING-8d5144666f9c.txt",
+        "sha256": "8d5144666f9c4df9bbd69b8900086d5979259152a1060421cdcc0fb9061a1c12"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-EXPAT-001-COPYING-31b15de82aa1.txt",
+        "sha256": "31b15de82aa19a845156169a17a5488bf597e561b2c318d159ed583139b25e87"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-FFI-001-LICENSE-d5699fa51696.txt",
+        "sha256": "d5699fa516968e3a1550e6c902b7441c78856f2603d61bedd0b0662a26655366"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-FFI-002-LICENSE-BUILDTOOLS-e67978cd1881.txt",
+        "sha256": "e67978cd18816c0cb7d29aaaacde7b7447402c2fb321a051698890a8eaedda94"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-FFMPEG-001-COPYING.GPLv2-8177f9751321.txt",
+        "sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-FFMPEG-003-COPYING.LGPLv2.1-246041b6ecf9.txt",
+        "sha256": "246041b6ecf9bc32d718a62c57877c78b5eb397b6467e74ed7ae2626ab189c30"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-FFMPEG-004-COPYING.LGPLv3-da7eabb7bafd.txt",
+        "sha256": "da7eabb7bafdf7d3ae5e9f223aa5bdc1eece45ac569dc21b3b037520b4464768"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-FFMPEG-005-LICENSE.md-2e1d16c72fd7.txt",
+        "sha256": "2e1d16c72fd74e12063776371da757322f8b77589386532f4fd8634bde7de1af"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-FFTW-001-COPYING-231f7edcc735.txt",
+        "sha256": "231f7edcc7352d7734a96eef0b8030f77982678c516876fcb81e25b32d68564c"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-FFTW-002-COPYRIGHT-8a74b35d541d.txt",
+        "sha256": "8a74b35d541d93fdf58a22a3d3baa48ae3edbf6d715edfeb6457c21968ae43ac"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-FFTW-003-License-and-Copyright.html-661a682f438f.txt",
+        "sha256": "661a682f438fffc64a6d6bdcf4dc120d5c7461c4f7c4672a59c1228593f97603"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-FFTW-004-license.texi-68f733830a3b.txt",
+        "sha256": "68f733830a3b4dbf66815ca54b5637015517848c5f32f38f1ea2057782161a77"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-FLAC-001-COPYING.FDL-f45cc81b400a.txt",
+        "sha256": "f45cc81b400a048b56c9edbd4c3317f7a8958463dfd55aa96f268ecfd6baa12c"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-FLAC-003-COPYING.LGPL-5df070071989.txt",
+        "sha256": "5df07007198989c622f5d41de8d703e7bef3d0e79d62e24332ee739a452af62a"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-FLAC-004-COPYING.Xiph-6e58d3036f05.txt",
+        "sha256": "6e58d3036f05e2a0d58af854c12a505ddbe75011d71a598a2170987f3b15408d"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-FMT-001-LICENSE-07580f2a3b35.txt",
+        "sha256": "07580f2a3b35709ce703d523f447b242f6dfec7582a8c0df102c7fa2849375f8"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-FREETYPE-001-LICENSE.TXT-2e3bbb7d7c5c.txt",
+        "sha256": "2e3bbb7d7c5c396368dd0853a790ec29ce5b8647163dde42a0493fb0d6556b2b"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-FREETYPE-FTL.TXT-08c135755dd5.txt",
+        "sha256": "08c135755dd589039470f1fdbb400daaabaaa50d0b366d19cebff4d22986baa1"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-FREETYPE-GPLv2.TXT-c4120c6752c9.txt",
+        "sha256": "c4120c6752c910c299e3bd9cb3a46ff262c268303ca2069b61f92f10a5656c18"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-FREETYPE-README-18d9782898d9.txt",
+        "sha256": "18d9782898d9eac04476e2f744678137b2a889689ed3e923e052fc396a86f86b"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-FREETYPE-README-7984455e7e5a.txt",
+        "sha256": "7984455e7e5a9faba3797c8bf095fbe10cc846316b7320aff8c58402e22b82fe"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-FREETYPE-ft-hb.c-65c23597427a.txt",
+        "sha256": "65c23597427a2954bed2145191d2f129fe26b6f290d371b900628ac0c6b5af37"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-FREETYPE-ft-hb.h-6f21bd19ea7d.txt",
+        "sha256": "6f21bd19ea7d53accc407a3dbd18648de36940cfabf235e4970f009f7a4def04"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-FREETYPE-zlib.h-611f309346ae.txt",
+        "sha256": "611f309346ae31781d4cf8f795f8c79092eee6c8a0c273c8ba81c6beeb0ecf92"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-FRIBIDI-001-COPYING-32434afcc866.txt",
+        "sha256": "32434afcc8666ba060e111d715bfdb6c2d5dd8a35fa4d3ab8ad67d8f850d2f2b"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-GMMLIB-001-LICENSE.md-8b7446825df3.txt",
+        "sha256": "8b7446825df3f8b0268307e272aa6aaaf78351c83161d860d02c913c22666c48"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-GMMLIB-002-LICENSE-508a77d2e7b5.txt",
+        "sha256": "508a77d2e7b51d98adeed32648ad124b7b30241a8e70b2e72c99f92d8e5874d1"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-GMP-002-COPYING.LESSERv3-a853c2ffec17.txt",
+        "sha256": "a853c2ffec17057872340eee242ae4d96cbf2b520ae27d903e1b2fef1a5f9d1c"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-HARFBUZZ-001-COPYING-ba8f810f2455.txt",
+        "sha256": "ba8f810f2455c2f08e2d56bb49b72f37fcf68f1f4fade38977cfd7372050ad64"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-HARFBUZZ-002-COPYING-c2cfccb812fe.txt",
+        "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-HARFBUZZ-003-COPYING-9b35b8485f69.txt",
+        "sha256": "9b35b8485f69cd298fccbb3c40a827dc06cf1185553bef827903497d2944a8d7"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-HARFBUZZ-004-COPYING-f55f74bf740d.txt",
+        "sha256": "f55f74bf740db07bb032a90aa74af4307adea3d489c1ccba12453cf0c0a764cb"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-HARFBUZZ-005-COPYING-d24039e4d22c.txt",
+        "sha256": "d24039e4d22c9bc72096f6174374539d92a3d6e1163938546ec59179fe095e6f"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-HARU-001-LICENSE-860e4e6f467a.txt",
+        "sha256": "860e4e6f467a9c02298e36382a581a2fa31b2d1e7755da08f8cc0f2036b6857d"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-HARU-002-COPYING-32b1062f7da8.txt",
+        "sha256": "32b1062f7da84967e7019d01ab805935caa7ab7321a7ced0e30ebe75e5df1670"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-HIPRT-001-LICENSE-9f9199599b8f.txt",
+        "sha256": "9f9199599b8f80489cca3d57effe6b498dfb74c6861f3e5624ab6dadfff81447"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-HIPRT-002-LICENSE.md-c52718780b46.txt",
+        "sha256": "c52718780b46e8c7ea48b9ae0406061d4918761e385b6e024571a37c6d02dd95"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-HIPRT-003-LICENSE-6acb210afcf5.txt",
+        "sha256": "6acb210afcf5c6ca7b1f6da82fb0097a10851d405ad607f82cb33cfe57558927"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-HIPRT-004-COPYING-f9c375a1be4a.txt",
+        "sha256": "f9c375a1be4a41f7b70301dd83c91cb89e41567478859b77eef375a52d782505"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-HIPRT-005-LICENSE-705526649763.txt",
+        "sha256": "7055266497633c9025b777c78eb7235af13922117480ed5c674677adc381c9d8"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-HIPRT-006-license.txt-a9dfa9ccfc6a.txt",
+        "sha256": "a9dfa9ccfc6abe58421427d18f6355acae477abac2e29e0bed9a2a8ad40386aa"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-ICDLOADER-001-LICENSE-c71d239df917.txt",
+        "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-ICONV-002-COPYING.LIB-56bdea73b614.txt",
+        "sha256": "56bdea73b6145ef6ac5259b3da390b981d840c24cb03b8e1cbc678de7ecfa18d"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-IGC-001-LICENSE.TXT-7682ee9d13c5.txt",
+        "sha256": "7682ee9d13c5b9c44254fd7f929bf9dc535dcd152236054693d16c2f9ff48315"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-IGC-002-LICENSE.md-8b2cd951f44d.txt",
+        "sha256": "8b2cd951f44d1fbe6adcf112e1f3a0cc989c89c8889a1c48dea5f7ece10ba9c9"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-IGC_LLVM-005-LICENSE.TXT-00d447ad2dc2.txt",
+        "sha256": "00d447ad2dc2fcbbf7c73328417d927703b785e3da3833ce6a444a89b7fa4579"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-IGC_LLVM-007-license.txt-3a39bb490f4e.txt",
+        "sha256": "3a39bb490f4e22550ba351ecfe3357f51a6bcd3d2ad20830b7216152bb0fe45a"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-IGC_LLVM-018-LICENSE-4a483ae1c4dc.txt",
+        "sha256": "4a483ae1c4dc738a6c8b73feb49074e1835da02ab5aa686f2675029906fa364d"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-IGC_LLVM-019-LICENSE-c822d385b1a7.txt",
+        "sha256": "c822d385b1a73329846241799becf18690b5d44764c1bed69300b536a405030a"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-IGC_LLVM-032-LICENSE.TXT-2c877074b9e0.txt",
+        "sha256": "2c877074b9e05780b51908ee078eb2975bd52fdf248256e6c7d1d77b9015a3b7"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-IGC_OPENCL_CLANG-001-LICENSE-d476f6b9b9cf.txt",
+        "sha256": "d476f6b9b9cf324481b1b8bd1a5d84dc42c9ae0870b0e2458eceaa2a57b8d7bf"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-IGC_SPIRV_HEADERS-001-LICENSE-ea43b1de38a6.txt",
+        "sha256": "ea43b1de38a6f90c488800d66dec1ed671e68cda530266bc96951fb5b6307613"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-IGC_VCINTRINSICS-001-LICENSE.md-8c95643f47a2.txt",
+        "sha256": "8c95643f47a244153bef1c2d3a2801dde2b566f0294aae956c8a5226f7acd789"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-IMATH-001-LICENSE.md-c20236d3b39f.txt",
+        "sha256": "c20236d3b39fd20eba8e3d1fb3b892a5483df2e7d8d61bf43f165d3fac22f601"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-IMATH-002-license.rst-21bd6d295193.txt",
+        "sha256": "21bd6d29519338c582dfd570a3ce9120277f24c1eff2ffb97d903b7ea93294d8"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-ISPC-001-copyright-check.yml-b7adea113904.txt",
+        "sha256": "b7adea1139049a0aec3c83f4f445e667c6a0ef292351339fe0137d79a72caa3b"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-ISPC-002-LICENSE.txt-617beba3c882.txt",
+        "sha256": "617beba3c8821b13db6c0038c3188b4001bba560e94b003751deb0bb16465385"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-JPEG-001-LICENSE.md-ee1eaf194d59.txt",
+        "sha256": "ee1eaf194d5924b6360af8a6ba6a4e1554037091f7505943300cdeec65f1aebb"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-JPEG-002-License.rtf-d26120ab237f.txt",
+        "sha256": "d26120ab237f87dea10aa4fa7fd4243cadffd26e54eb2f3903d5fb0f8ed336b2"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-LAME-001-COPYING-bfe4a52dc464.txt",
+        "sha256": "bfe4a52dc4645385f356a8e83cc54216a293e3b6f1cb4f79f5fc0277abf937fd"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-LAME-002-LICENSE-7a40cbd8818c.txt",
+        "sha256": "7a40cbd8818c57e5285e83c772a459a996d1662c824a879836b97b473c07cae4"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-LAME-003-copyright-1f27f9f69818.txt",
+        "sha256": "1f27f9f698183275bd615c1140b7bf6e498750e9280597c6eb39790e54ae809b"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-LEVEL_ZERO-001-LICENSE-d0f94ca60536.txt",
+        "sha256": "d0f94ca605360602ef6c6a6fa14b6c48790e9b99100c129e9ff96e8d6c7ee939"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-LEVEL_ZERO-002-LICENSE-4ccecab18d1f.txt",
+        "sha256": "4ccecab18d1ff0b61174fe3d6c430541625d3ddb865b0d5887db296f883c76e7"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-LEVEL_ZERO-003-LICENSE-43070e2d4e53.txt",
+        "sha256": "43070e2d4e532684de521b885f385d0841030efa2b1a20bafb76133a5e1379c1"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-LIBHEIF-001-COPYING-fa81ce652315.txt",
+        "sha256": "fa81ce652315b013359d6e8e4744335f31a50c7c192907176d3632f78a3b4596"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-LIBHEIF-002-COPYING-278ee9bbb13e.txt",
+        "sha256": "278ee9bbb13ecb080a131c68927bd589a6a56fd5449ce25e8e594c858864830d"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-LZMA-001-COPYING-bcb02973ef6e.txt",
+        "sha256": "bcb02973ef6e87ea73d331b3a80df7748407f17efdb784b61b47e0e610d3bb5c"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-LZMA-004-COPYING.LGPLv2.1-dc626520dcd5.txt",
+        "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-MATERIALX-001-LICENSE-a6cba85bc92e.txt",
+        "sha256": "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-MATERIALX-002-LICENSE-a848f4935f11.txt",
+        "sha256": "a848f4935f110d45ae18cc4149b9613776648c6dc5e596f247b501b3d2503134"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-MATERIALX-003-LICENSE.md-149704059b5d.txt",
+        "sha256": "149704059b5d0bf551637e50042dd4de9c2cae921021f6636298911e3a5f9462"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-MATERIALX-004-LICENSE-f619925f80ef.txt",
+        "sha256": "f619925f80ef862497aaf8e8155ef218fa6a2190055129523ca3df9119a9ba95"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-MATERIALX-005-LICENSE-27f4ba1a95e3.txt",
+        "sha256": "27f4ba1a95e3e6b7f97782798ae738591ad142ef27fc7ee8b5c0ddaf944c5902"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-MATERIALX-006-LICENSE-3d6e8bb9a068.txt",
+        "sha256": "3d6e8bb9a06887b182a1da966937678b69fb8faeacf05dbf058cec8d0e4dc872"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-MATERIALX-007-LICENSE.txt-c9bff7573892.txt",
+        "sha256": "c9bff75738922193e67fa726fa225535870d2aa1059f91452c411736284ad566"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-MATERIALX-008-LICENSE-83965b843b98.txt",
+        "sha256": "83965b843b98f670d3a85bd041ed4b372c8ec50d7b4a5995a83ac697ba675dcb"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-MESHOPTIMIZER-001-LICENSE.md-f03037ca7bad.txt",
+        "sha256": "f03037ca7bad1e3eb7f4a63fa6084a8baabd5ba30d3c239a9a7f35705d873e26"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-MINIZIPNG-001-LICENSE-675181c03fc1.txt",
+        "sha256": "675181c03fc1302a1c8554c00f7be9bb420c5dbc9dcc2013433cec144413de03"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-MINIZIPNG-002-license_zstd.zip-b55bbd300e03.txt",
+        "sha256": "b55bbd300e031bb60717c6481d7c2fa1bd45f334be5b94345997832942f3d7c1"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-NANOBIND-001-LICENSE-f305091a4e57.txt",
+        "sha256": "f305091a4e57805870b217a28ea4b1f16610eece8457d2370f822a9696b75836"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-NASM-001-LICENSE-1563996c52e2.txt",
+        "sha256": "1563996c52e220e15ef2418e67d39488255aa8c28c89e617074d3afe3ee329e0"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-NUMPY-001-LICENSE-990e6a6dbaee.txt",
+        "sha256": "990e6a6dbaee82e655163c3d2a51d1002471e5c0964da4881bc193eaa6a8ee3b"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-NUMPY-002-LICENSE.txt-1be1df33863f.txt",
+        "sha256": "1be1df33863f97a7bc1c4d67980bd6c69c9a6fef0a5ee76e6ad6cb91e56e8491"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-NUMPY-004-license.rst-563953e4bf6a.txt",
+        "sha256": "563953e4bf6aba42f430420da7494dce2747f60d56e82ca165e24dfaf766d256"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-NUMPY-005-LICENSE.txt-743b0f4a0087.txt",
+        "sha256": "743b0f4a0087fe3607167113fffab6f2ca069c8da321763697ab5d0d8411634a"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-NUMPY-006-LICENSE.txt-fbc539f47d0c.txt",
+        "sha256": "fbc539f47d0cf83bc61378080fb873d5c14630126cacbfe754035c3926daa5ec"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-NUMPY-007-COPYING-3f2c1ffa7638.txt",
+        "sha256": "3f2c1ffa76383a55ae0aac01c9737cd70050dff63e1f026694fbe9d662573c98"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-NUMPY-010-copyright-6e4ecf1cae05.txt",
+        "sha256": "6e4ecf1cae052b678ea3178dd4b3652d581ee66a82d58db8800dd7d80dd6de76"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-NUMPY-011-LICENSE.md-211e7d737d61.txt",
+        "sha256": "211e7d737d6179a08f791ebb0a99897ce7cd2457410c542876d125576edfe910"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-NUMPY-012-LICENSE-c17011467b4f.txt",
+        "sha256": "c17011467b4fe6e20fbfbeda4df09e58c2bca5480a063e55735a4000a379aad9"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-NUMPY-013-LICENSE.md-a85ca13fdf90.txt",
+        "sha256": "a85ca13fdf90160b64a0698215868c13b74d835ad0a4e2ba44713b8c5058a056"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-NUMPY-014-LICENSE.txt-a14cc25e10d4.txt",
+        "sha256": "a14cc25e10d40a3aa705b7de2fb764a6535d8ee9b2db4e1724900585457dfd55"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-NUMPY-015-LICENSE-05f3b8835198.txt",
+        "sha256": "05f3b88351988ecfad10abe92c0c50e5875c6452d5009a0084cc291551ffcca6"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-NUMPY-016-LICENSE.md-103166b62b80.txt",
+        "sha256": "103166b62b80443afb9eb3488e052ea06be0cff566b908f199e561fde49af19f"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-NUMPY-017-LICENSE.md-469778be8f33.txt",
+        "sha256": "469778be8f33d54e1bcaab28c281cc472916d2d273f835e55bc487d30503face"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-NUMPY-018-LICENSE.md-0e111337b254.txt",
+        "sha256": "0e111337b25494a773106695f0e799f642b8567aaacca4f116a74a8177179156"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-NUMPY-019-LICENSE.md-e7d4f4fb2035.txt",
+        "sha256": "e7d4f4fb20358f314210a892ae17351e04993813646f697ec387385ca2a36918"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-NUMPY-020-LICENSE.md-6f5828a57223.txt",
+        "sha256": "6f5828a57223d4cc7f8ea505a2623e7b978b242752c1515e355f46ba2cec1800"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-NUMPY-021-LICENSE.md-9d4098846018.txt",
+        "sha256": "9d4098846018319cd68e228ee6220361787f73bccbf00237a85e4fc9621b998f"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-NUMPY-022-LICENSE.md-268b0ca06759.txt",
+        "sha256": "268b0ca06759d31ea3ca68dd35f20e877916e927b1c2a835e4592a3c4354b1f9"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-NUMPY-023-LICENSE_linux.txt-a8683fdcd75a.txt",
+        "sha256": "a8683fdcd75a8dbd2cf7f638e5b77ada6c61a31f4cb1c8a77e7bfa9f40560442"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-NUMPY-024-LICENSE_osx.txt-c91c24ac6ba9.txt",
+        "sha256": "c91c24ac6ba9ef8ba13b1707d14107cd82e3397ddb9b78201a6e6d2777680fda"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-NUMPY-025-LICENSE_win32.txt-d2ddbc988223.txt",
+        "sha256": "d2ddbc988223a00e704574ddf9f0b20ae62bfa38fbabf4f06c0d00ac456e1aac"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-NUMPY-027-license.html-15fcbcade000.txt",
+        "sha256": "15fcbcade0003df4b37350f12bea7dfeb25d4d2ac9e99d12d893773c4d5359fd"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-NUMPY-028-License.rtf-e3e8d7b15b20.txt",
+        "sha256": "e3e8d7b15b2021c994047314ad0ac5e367561f64771a60a85a9c0952d8cd4c3a"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-NUMPY-029-license.html-bca11d525505.txt",
+        "sha256": "bca11d525505d21cdfb021e634b0f1d48ece827f9bedcf8cd41356c48a09be24"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-OCLOC-001-LICENSE.md-987a002c6c9e.txt",
+        "sha256": "987a002c6c9eb75290d9937735641ef4f4b670591ee79e1ac8edebe16a81872e"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-OCLOC-002-copyright-2e808c4ac422.txt",
+        "sha256": "2e808c4ac422ca5d91e8b21e4c9a43be3c49c5952aab03c963a56198b9376f51"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-OCLOC-004-copyright-9615e7d2469e.txt",
+        "sha256": "9615e7d2469edbf881b88eba551bb53f50dfebc05ba4276b7fd2baaa35b714ff"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-OCLOC-005-copyright-6acfd161495b.txt",
+        "sha256": "6acfd161495b32d3f8b495444de89cac5604e2e8c7917c6059faa5cef9b7e583"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-OCLOC-007-copyright-8d4b4c883e2e.txt",
+        "sha256": "8d4b4c883e2e68e2dcf2085a6835867d7d45326e2c7711211e2ef826253f0af6"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-OCLOC-009-LICENSE-fd532481d828.txt",
+        "sha256": "fd532481d828e13a0b13ccb598e02338a3617740675a862ee6bdc1541b68e93d"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-OCLOC-012-LICENSE.md-807d73f22ddb.txt",
+        "sha256": "807d73f22ddbf921a49f7a228a6df74783c9f856cfdf602a0c5882a70d0fc3f6"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-OCLOC-013-LICENSE.md-1544c5095109.txt",
+        "sha256": "1544c5095109b6579904dcf62ef9ce613d583e581cd0b2df8e6606b0c54f9e4e"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-OGG-001-COPYING-d2ab57583364.txt",
+        "sha256": "d2ab5758336489da61c12cc5bb757da5339c4ae9001f9bb0562b4370249af814"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-OIDN-002-LICENSE-20f3b83dfda0.txt",
+        "sha256": "20f3b83dfda01bd18d285e0edbb9d044be6dde04cdf76a1ec18d9fc7127936bf"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-OIDN-003-license.rst-527eec8a9670.txt",
+        "sha256": "527eec8a9670f793119a685a3510369e5fd64b45515a885c7226641777ecff8b"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-OIDN-004-LICENSE.txt-80a7a18b73d4.txt",
+        "sha256": "80a7a18b73d41f64dd9ca881af35938f8de88b18c728703251f4c94d1299884d"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-OIDN-005-LICENSE.txt-42fec630f410.txt",
+        "sha256": "42fec630f410aa308f70a51a89fadcd19586fa620f9831a32bee528a9a10000e"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-OPENAL-001-COPYING-d808ce217e5b.txt",
+        "sha256": "d808ce217e5b611854da622b57ec29fe545584c48bc5352fae72a4b6e5074a15"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-OPENCOLORIO-001-LICENSE-82a40c52065e.txt",
+        "sha256": "82a40c52065ee968aa62015735e84378ac11425db7a233e6a2dcd2c83fc24276"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-OPENCOLORIO-002-license.rst-a5b30db79a9f.txt",
+        "sha256": "a5b30db79a9f518916fd74e0faeda39fbaa93e2829c066786ebaa351b2bdae66"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-OPENCOLORIO-003-LICENSE-bfdfe12481e7.txt",
+        "sha256": "bfdfe12481e744f740b08d2df89d9229963c3f1b9d6d96b3cea87dcb27c5199d"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-OPENCOLORIO-004-LICENSE.md-2d9b807f962f.txt",
+        "sha256": "2d9b807f962facff42bc33f108ccbea6bedf0b56cd67345cf4fbc97d838c709c"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-OPENCOLORIO-005-LICENSE-1e52150d77eb.txt",
+        "sha256": "1e52150d77eb6c335db92ea82cbd7dc8a837a1fd2f08f192b108d89251a8f147"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-OPENEXR-001-LICENSE.md-84853c91d4c2.txt",
+        "sha256": "84853c91d4c2e0310741d4773469d98bb93e61029608e0ba0882a3fffdf330bd"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-OPENEXR-002-LICENSE-5ddf5177863d.txt",
+        "sha256": "5ddf5177863dfc9ab65fa129d587db651241f00e21ed2427b218bea997591f98"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-OPENEXR-003-COPYING-4ad69099cb43.txt",
+        "sha256": "4ad69099cb4374836fd27583d9991e2838cd86b6e4666ab26b2d32582c91e73a"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-OPENEXR-004-license.rst-07f2605f2d44.txt",
+        "sha256": "07f2605f2d4406af7b91ce23ad11529ad8fb8e0140ea9a2d05c940d8d4309b22"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-OPENJPEG-001-LICENSE-a6af136f3e15.txt",
+        "sha256": "a6af136f3e15038a666b61f376612a07d9a4e48cb7c01adbf3e33b3f14ab49b6"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-OPENJPEG-002-license.txt-8081c33f6953.txt",
+        "sha256": "8081c33f6953950dcf424aa844714658b73ada0fcaea16e4487f5fa07ef0960d"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-OPENJPEG-003-LICENSE.md-2e8480e753b7.txt",
+        "sha256": "2e8480e753b7a1d100c80920f4250b1bc9f93a18c6a5953c42b11445218cd0fb"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-OPENJPEG-004-COPYING-c725daac91a9.txt",
+        "sha256": "c725daac91a9259ce5e195683c0eeb797d345035c36ac5ba114c9fa80e11639a"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-OPENJPEG-005-LICENSE-7317e078e2d3.txt",
+        "sha256": "7317e078e2d3b5d7ba5a6159e650945153262b44b76f6700f8e9edb261c5143e"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-OPENSUBDIV-001-LICENSE.txt-9211071ceaea.txt",
+        "sha256": "9211071ceaea05cec948f44a025ede3030f41506960d68b50e7ddb6edc2abe5b"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-OPENSUBDIV-002-NOTICE.txt-c9a283f0d375.txt",
+        "sha256": "c9a283f0d3752b74d348a57e1d45e71cf69651ce6cbdce866983e459f6422c7c"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-OPENSUBDIV-003-license.rst-d0d65ebdc57a.txt",
+        "sha256": "d0d65ebdc57aa223ade28059e9a39c3761ac34552df76ae349897fb147aa986c"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-OPENVDB-002-COPYRIGHT-58917c359299.txt",
+        "sha256": "58917c3592999d2274199d5e1ef6a6013bf722ad8e6895720f9b7d60cfd54370"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-OPENVDB-008-LICENSE.txt-e78e5ec7aa08.txt",
+        "sha256": "e78e5ec7aa08533812ed5ae26d8a252da592416370f350a65c59468c39cc2772"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-OPUS-001-COPYING-8338ce8d922b.txt",
+        "sha256": "8338ce8d922bb4416ce3dd1e5680173332435e3f0755007ac7801ccd674fe682"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-OSL-001-LICENSE.md-e71783cf069a.txt",
+        "sha256": "e71783cf069a74ccd462ced30e3b0220c0da3b6524b2acc6af2439150ad32b60"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-PARALLEL_HASHMAP-001-LICENSE-aac73b3148f6.txt",
+        "sha256": "aac73b3148f6d1d7111dbca32099f68d26c644c6813ae1e4f05f6579aa2663fe"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-PNG-001-LICENSE-bdb0a645ea18.txt",
+        "sha256": "bdb0a645ea18c60507d0368379b1ac5474b92255fcc2d115e07486a7672ba526"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-PNG-003-COPYING-d6cb0e9e560f.txt",
+        "sha256": "d6cb0e9e560f51085556949a84af12b79a00f10ab8b66c752537faf7cd665572"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-PNG-004-LICENSE-b6a03c1803eb.txt",
+        "sha256": "b6a03c1803eb58ffb1f1278d5c7d4096c4c116e66dce8a7553e8c77d163c3438"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-PNG-006-LICENSE.txt-1806f1f10d39.txt",
+        "sha256": "1806f1f10d393e9e377b3a8d1b968452b54f1a90378f14eeef45426946ace330"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-POTRACE-001-COPYING-88294d8a473e.txt",
+        "sha256": "88294d8a473e4e6efc9e2a0d15f834045a9e386bd6b7495ca67c4c3045e76aee"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-PTHREADS-001-LICENSE-58d1e17ffe51.txt",
+        "sha256": "58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-PTHREADS-002-NOTICE-ab620b4fe865.txt",
+        "sha256": "ab620b4fe865583cca883b258f728f7f2234802f7c1b8d74fdb6a4dd2642ae2c"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-PUGIXML-001-LICENSE.md-9ddc2f8e3003.txt",
+        "sha256": "9ddc2f8e3003601aff5a4d37f3caf3b6b60a729ebbc466bafd965cdf0883b12c"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-PYSTRING-001-LICENSE-7b565d49be50.txt",
+        "sha256": "7b565d49be50a0490b38ae69d22f1e93ce9449546a99a8a1efcaf0ae922b7442"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-PYTHON-001-copyright.rst-2f455e3bd119.txt",
+        "sha256": "2f455e3bd119869bf01369ab852d87d11c9e67e5351a7ebc64ab2c0af344aff6"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-PYTHON-002-license.rst-62f2c9c2c75d.txt",
+        "sha256": "62f2c9c2c75d511170eb464ad5f83b78cc1f37eb2eb49c2846c9aa6c4557ee99"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-PYTHON-003-LICENSE-78b12c3a8136.txt",
+        "sha256": "78b12c3a81360b357002334f0e70ea0e92eebf7a9b358805c03c48484945f3bb"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-PYTHON-004-License.rtf-ab6df6040a4e.txt",
+        "sha256": "ab6df6040a4e24babad38f98454eb3263722fa6a1c441bfaa271798efbe55f27"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-PYTHON-006-LICENSE.txt-cb95daf98edd.txt",
+        "sha256": "cb95daf98edda8e08a242e1060691b6941f0911692bf468a3f9c5e4b58c09b8f"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-ROBINMAP-001-LICENSE-11f2c685ba56.txt",
+        "sha256": "11f2c685ba565a31aef1219f63a7a8845602c97bff70016b9e3278dfe51a2ec5"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-RUBBERBAND-001-COPYING-cedd4c1885d7.txt",
+        "sha256": "cedd4c1885d75991bf1077cc6e33359103cf04fbc996f20d30ab043d5fc5fcc5"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-RUBBERBAND-002-COPYING-a2840585f841.txt",
+        "sha256": "a2840585f8411be8e6826a31ef15ae65c950bd74a2437a73b013398a934ad0c6"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-RUBBERBAND-003-COPYING-b3da65c2cff5.txt",
+        "sha256": "b3da65c2cff5522b5a22438afb1fa99873e6567a2aebb17b198c58b15b09d5f3"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-SDL-001-LICENSE.txt-1c040b8271b3.txt",
+        "sha256": "1c040b8271b37e5076359f8fd54240e371114112924d2df81ef87c7d6a1dfdfd"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-SDL-002-LICENSE-bsd.txt-30eb1bef29b4.txt",
+        "sha256": "30eb1bef29b46f8ba7ab8b416035dbd93cb034a45481dd97815b944284582cd2"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-SDL-004-LICENSE-orig.txt-fb5436aa63d1.txt",
+        "sha256": "fb5436aa63d1b71a8dfbf74ecaf1a5b4e1ec4df7f80074d11fec99284f69ca5f"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-SDL-005-LICENSE.txt-7d3b087c34f3.txt",
+        "sha256": "7d3b087c34f35d4d538e3bcddd1ff8f66e92f9ef336881999482800ddf840913"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-SDL-006-LICENSE-f7d74004cc75.txt",
+        "sha256": "f7d74004cc75778cae46c5f0139f244d67c07ef64cf51937e8272352197dcb18"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-SDL-007-COPYING-d5a549e4a7b8.txt",
+        "sha256": "d5a549e4a7b88cb696d0db15b21830061131ed361257ab399a33ca08ce0b33d5"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-SDL-008-LICENSE.txt-129fbd972915.txt",
+        "sha256": "129fbd972915047e54d88f6f1884a13bf6d79c18eeb40646193d7241c9270ae5"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-SHADERC-002-license_check.sh-8b88ba8d4d0c.txt",
+        "sha256": "8b88ba8d4d0c8f912ef139f06d2b091b58e633eb7bfbe7e28ad6f53b56489e7c"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-SHADERC-003-license-checker.cfg-ff39f110e4b1.txt",
+        "sha256": "ff39f110e4b17c6a2e24eacc14a32674c2c1f2385828bdc23a0399d3475fffc8"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-SHADERC-004-LICENSE.glslang-b5a00e94f058.txt",
+        "sha256": "b5a00e94f058edc87e05978329b55730d8689abe61205d9018443d03de4f07da"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-SHADERC-005-LICENSE.spirv-tools-47e20ce182bc.txt",
+        "sha256": "47e20ce182bc68fab1a0cfb129b03c326aaf4f2b6b7905aa9d376d31018bd29f"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-SHADERC_GLSLANG-001-LICENSE.txt-adb783e734e9.txt",
+        "sha256": "adb783e734e906d1f46db5df29991dbde84bdb0ceab502ac2febb44fe3c2b5f4"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-SHADERC_GLSLANG-002-license-checker.cfg-9bc9f672f477.txt",
+        "sha256": "9bc9f672f477b34b7d1023a416616c00432c1e42db07f4a7143210144a87ef83"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-SNDFILE-001-COPYING-ad01ea5cd275.txt",
+        "sha256": "ad01ea5cd2755f6048383c8d54c88459cd6fcb17757c5c8892f8c5ea060f6140"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-SNDFILE-002-COPYRIGHT-1bbe7119b1bc.txt",
+        "sha256": "1bbe7119b1bcd1489e0f36cb95b8902f7f0ceec9a2f3a67394bc9f4709a4e0a7"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-SPNAV-001-LICENSE-f21924666e14.txt",
+        "sha256": "f21924666e146480d6be6caafde54ff6afd617c1afe034db82966ef420599272"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-SQLITE-001-LICENSE-679b9208e67d.txt",
+        "sha256": "679b9208e67df09977456d1d2ae4d885b9badf02c47b45a28cf95ee27c14cb18"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-SQLITE-002-license.terms-66e056b6e868.txt",
+        "sha256": "66e056b6e8687f32af30d5187611b98b12a8f46f07aaf62f43585f276e8f0ac9"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-SSE2NEON-001-LICENSE-5c347d431a55.txt",
+        "sha256": "5c347d431a555ec6e5bc9720ceba2119570357dab5203372d469be9bcce374cc"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-SSL-001-LICENSE.txt-7d5450cb2d14.txt",
+        "sha256": "7d5450cb2d142651b8afa315b5f238efc805dad827d91ba367d8516bc9d49e7a"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-SSL-002-LICENSE-9837f05336ef.txt",
+        "sha256": "9837f05336ef3cbacb6a96e1672a0426d81ad01191f214b8d48e22ca62338181"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-SSL-003-copyright.pm-04213b69dbeb.txt",
+        "sha256": "04213b69dbebc8ba0dd8a6216af1d9422f9b63619c1cf2f1d8aa107b83bbb608"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-THEORA-001-COPYING-8417fad7da77.txt",
+        "sha256": "8417fad7da775735564e209484a2e011e0fa201e94f01fdbee6e4977e478e6fc"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-THEORA-002-LICENSE-654a0238f789.txt",
+        "sha256": "654a0238f789f4435c4818f50005b141d013c5a09a31d861efc1d0d67ba975a4"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-THORVG-001-LICENSE-74242cdc4cca.txt",
+        "sha256": "74242cdc4ccaebc73fa04fbd52a538429eae2be7a231f9eaf1dbf59d2bedc16b"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-THORVG-002-LICENSE-d0e3ce252a38.txt",
+        "sha256": "d0e3ce252a3863ebae8cb1d486464bdddeec8187d2ba67dd732980b08a5f5c46"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-THORVG-003-LICENSE-01b0d15338bb.txt",
+        "sha256": "01b0d15338bb72e2ced401051b4037a5bd4d464d2d8a25728f25ce6b99eb86af"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-THORVG-004-LICENSE-af5fa202c3ee.txt",
+        "sha256": "af5fa202c3ee5483a32fe6d3b060233f77cc6711a7ed7a52d6013ff4e73db5e1"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-TIFF-001-LICENSE.md-0e27c2382d7b.txt",
+        "sha256": "0e27c2382d7b8147972bbb746e04059a1152c8d0fda9d03ef1399d1a433c4ade"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-TIFF-002-license.rst.txt-02e86af3b805.txt",
+        "sha256": "02e86af3b805e0f2075ebb5ac512831f6ab2a97ddeb186de076c418956418ba1"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-TIFF-003-license.html-c5bc827b485b.txt",
+        "sha256": "c5bc827b485b77932fd610bbedf8ec7fe9fbbc6fa6e9cf944e9c5a7446e885a6"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-TRACY-001-LICENSE-27ab6b51e57f.txt",
+        "sha256": "27ab6b51e57f7e263a6e953d9c8984cd26e69d2f7606bde81e4b3048acf30732"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-TRACY-002-license.md-88d9b4eb6057.txt",
+        "sha256": "88d9b4eb60579c191ec391ca04c16130572d7eedc4a86daa58bf28c6e14c9bcd"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-TRACY-003-LICENSE-ef8a9b324748.txt",
+        "sha256": "ef8a9b3247488f8901ca60de9b17b745d7bd67e5ec1e622f80d62364572200d8"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-UNIFIED_MEMORY_FRAMEWORK-001-LICENSE.TXT-8e10a337d86f.txt",
+        "sha256": "8e10a337d86f516fb49730c26995cf0215ebb39340b82c65e0246441a82da64b"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-USD-001-LICENSE.txt-4d6e8e3a9bd0.txt",
+        "sha256": "4d6e8e3a9bd0104e10c48e3bc6af2f0976448a70a377d20cef674740f96f4452"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-USD-002-NOTICE.txt-f6ad9d41f77b.txt",
+        "sha256": "f6ad9d41f77b1bd8edaecd64bd1e13f4224876b010e2415e308267a84862bc14"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-USD-003-LICENSE-e3da754c3f65.txt",
+        "sha256": "e3da754c3f657cc78594fa2e8a3283665f78c743df2485fa9e498a8973051191"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-USD-004-notice.cpp-b4dfca4ab811.txt",
+        "sha256": "b4dfca4ab81125b0a43c6773c38d59f0209212f9ade624661bdf90d90dc6b3a9"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-USD-005-notice.h-46d1a3ee808f.txt",
+        "sha256": "46d1a3ee808f111459f51b02d0174782e0cefc7de3c160d72ca7e634e68a8d5f"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-USD-006-notice.cpp-b9e0395eb758.txt",
+        "sha256": "b9e0395eb7581a0bd8bde695f1e57eeb86b2f5fffe59ff9034c0801e07e62e99"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-USD-007-notice.h-595d515208db.txt",
+        "sha256": "595d515208db4c283d7cb4d056b52d8b7f3c2618950ad041e25440ccbf208213"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-USD-008-notice.out-5cf753065770.txt",
+        "sha256": "5cf75306577026b1cc7eaa7a6801b4c3e30f68cc0a7c8f4e476d5061bd0e48a9"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-USD-009-notice.cpp-8829bc2ddc2f.txt",
+        "sha256": "8829bc2ddc2fd437be2a3cc4ed08a38cd05960ad157eca793612c450667bc941"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-USD-011-notice.cpp-d1c164e87372.txt",
+        "sha256": "d1c164e87372882634d94a8ffc33ece6e6c49e59400ea20e74650b9137b2bb13"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-USD-012-notice.h-7e00f7b711b5.txt",
+        "sha256": "7e00f7b711b51a57dac6accfeef9e3690f6333e672d08bbc8e9bd9c30a87d5d3"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-USD-013-notice.cpp-328414fc78bb.txt",
+        "sha256": "328414fc78bbd78d3892b45e28a6f0127a6299c89e2999c7b4def86a9440c77a"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-USD-014-notice.h-435f650945a8.txt",
+        "sha256": "435f650945a8ca23ec6a4270c7945e70544173ba7da91c4dec701dfd603d2723"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-USD-015-notice.cpp-27d2e3d31cb2.txt",
+        "sha256": "27d2e3d31cb2d997327dabce924e00010eca7a708899183953dba930e40daa25"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-USD-016-notice.h-61839847513d.txt",
+        "sha256": "61839847513dd1216b307fdcb7ff92e9e4ea094e178b8ad8c05ff05f05080376"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-USD-017-LICENSE.txt-3ddf9be5c28f.txt",
+        "sha256": "3ddf9be5c28fe27dad143a5dc76eea25222ad1dd68934a047064e56ed2fa40c5"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-VORBIS-001-COPYING-ec1815db59fc.txt",
+        "sha256": "ec1815db59fcd302846df949d7424876cb2e2dc5ed1606c5fb0b36787b1cf43a"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-VPX-001-LICENSE-8267348d5af1.txt",
+        "sha256": "8267348d5af1262c11d1a08de2f5afc77457755f1ac658627dd9acf71011d615"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-VULKAN_HEADERS-001-LICENSE.md-ac24e5ea920e.txt",
+        "sha256": "ac24e5ea920e4318e4d02c4086ae51f53cfb03feed06c18df1019e7ada1ec7bc"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-VULKAN_HEADERS-MIT.txt-1ca3502222d9.txt",
+        "sha256": "1ca3502222d967f3be5751c55f6b7ee735b5383909c3b501495f54b216dbf227"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-VULKAN_LOADER-001-LICENSE.txt-43c0a37e6a0f.txt",
+        "sha256": "43c0a37e6a0fa7ff3c843b3ec5a4fac84b712558ddac103fbd4c1649662a9ece"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-VULKAN_MEMORY_ALLOCATOR-001-LICENSE.txt-8d70e4cf2a99.txt",
+        "sha256": "8d70e4cf2a9941f6454da71cd60e38484dd3e34810c824760d550e982af6d97a"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-VULKAN_UTILITY_LIBRARIES-001-LICENSE.md-69760673abf9.txt",
+        "sha256": "69760673abf91cfd0280ae73739a29c078f493804d9016a122b3b189b48ad6e6"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-WAYLAND-001-COPYING-6eefcb023622.txt",
+        "sha256": "6eefcb023622a463168a5c20add95fd24a38c7482622a9254a23b99b7c153061"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-WAYLAND_WESTON-001-COPYING-fdb65868f65d.txt",
+        "sha256": "fdb65868f65d0fbdb05c2d3b779e10ce9969fa0c4b9262ba4f260e87086ab860"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-WAYLAND_WESTON-002-COPYING-a34730970264.txt",
+        "sha256": "a34730970264d619f352598bf30295ad505a60fc3a493add8aa851645ce3ea47"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-WL_PROTOCOLS-001-COPYING-f1a2b233e8a9.txt",
+        "sha256": "f1a2b233e8a9a71c40f4aa885be08a0842ac85bb8588703c1dd7e6e6502e3124"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-X265-001-COPYING-d8afb1bcc7a2.txt",
+        "sha256": "d8afb1bcc7a2cfc603683b168d6987ef0a48e59e0da3693bf55c5d33b67e2b49"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-X265-002-LICENSE.txt-47f15d63e82e.txt",
+        "sha256": "47f15d63e82eb8a4de6e46471d5f96cf6d052fd5355944a002c3157880248b69"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-X265-003-LICENSE.txt-950e288a2548.txt",
+        "sha256": "950e288a2548cb33f6a90d23958806b0803f510ab17c600d661619a73ae3a6c8"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-XML2-001-Copyright-5d4873884a89.txt",
+        "sha256": "5d4873884a890122a4b9b20ad56ac6f7da1d796a5bfcf04a427970ac96217626"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-XML2-002-NOTICE-d6a2cb265a0a.txt",
+        "sha256": "d6a2cb265a0a249a234b89eeffa7f316ebe5bff546672a0a2b1a861dd2238460"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-XR_OPENXR_SDK-001-COPYING.adoc-b7a6297e6013.txt",
+        "sha256": "b7a6297e6013f7b1664a68829e83868d1bf2cf29efa384dd0cc74f2aedd35df5"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-XR_OPENXR_SDK-003-LICENSE-3f46b895fbd8.txt",
+        "sha256": "3f46b895fbd843c7abe5b49fa0b699a5093fc8b345940a7c587948c57cc8f270"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-XR_OPENXR_SDK-004-LICENSE-cec0db5f6d7e.txt",
+        "sha256": "cec0db5f6d7ed6b3a72647bd50aed02e13c3377fd44382b96dc2915534c042ad"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-YAMLCPP-001-LICENSE-aa6fcc27be03.txt",
+        "sha256": "aa6fcc27be034e41e21dd832f9175bfe694a48491d9e14ff0fa278e19ad14f1b"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-YAMLCPP-003-LICENSE-5e0df8c845c7.txt",
+        "sha256": "5e0df8c845c742e76f2f64d2d9ce1b7e74a2422fddbc577ae6a56319083de0bf"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-ZLIB-001-LICENSE-845efc77857d.txt",
+        "sha256": "845efc77857d485d91fb3e0b884aaa929368c717ae8186b66fe1ed2495753243"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/blender-release-dependency-ZSTANDARD-001-LICENSE-788fe85e5372.txt",
+        "sha256": "788fe85e53724a40b299051c4abc9cf74d42b27e7968325b80891c25f79adb4b"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-input-CPython-002-license.rst-952ac05720d7.txt",
+        "sha256": "952ac05720d7f1dcb63589b35eb0931b1442eb250230a4ad31198eddf0ad6abc"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-input-Tcl-001-license.terms-c0a69a2bfd75.txt",
+        "sha256": "c0a69a2bfd757361ec7e6143973b103c90409316b49e9c88db26ad6388e79f16"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-input-Tcl-002-LICENSE-e32ff4e00d9d.txt",
+        "sha256": "e32ff4e00d9d94930537635291da39e7e612703334bf6fde8c7f1686fe8a45a2"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-input-Tcl-004-LICENSE.Info-Zip-fc686023047c.txt",
+        "sha256": "fc686023047ce5ce3a18a9b8a777156f0e475929d3de06bac279f3c025d2b2ca"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-input-Tcl-007-LICENSE-2fa64b163659.txt",
+        "sha256": "2fa64b163659f41965c9815882a8296d3d03ff546b76153e11445f9bdecf955a"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-input-Tcl-010-license.terms-ad02cfa25db9.txt",
+        "sha256": "ad02cfa25db921ee30a1ab68d30e2ad8bf2e174c394237eb55ddd6968ded8032"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-input-Tcl-011-license.terms-b61edfaeead9.txt",
+        "sha256": "b61edfaeead97546bc62b1f205b046f2e440b83bfc517bc0932b93bc3d505865"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-input-Tcl-013-license.terms-fafd6456aa4b.txt",
+        "sha256": "fafd6456aa4b7c80c190df86de5bdfab82c8c227a0c348662432c75ceeb2238d"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-input-Tcl-016-license.terms-d3aa1cf53b96.txt",
+        "sha256": "d3aa1cf53b96e69469d46c62bceeebadaa3ecb9699b73962bb207246f4288a08"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-input-Tcl-017-license.terms-37186e29fd02.txt",
+        "sha256": "37186e29fd02702179f7c5e9fc630840429319281fcf5a282caaf7fcb0a1c7f4"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-input-Tcl-018-license.terms-0a03981c40f7.txt",
+        "sha256": "0a03981c40f7813ce6ddbdfce9882020bcfd696ea044b21ef07619ed9b86abae"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-input-Tcl-020-LICENSE-libzip-01c022eca6d5.txt",
+        "sha256": "01c022eca6d566e2e8792fd0f091a28653b2a608319922bcd4de91c49d1438e1"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-input-Tk-001-license.terms-2cde822b93ca.txt",
+        "sha256": "2cde822b93ca16ae535c954b7dfe658b4ad10df2a193628d1b358f1765e8b198"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-input-XZ-liblzma-001-COPYING-616a3ad264ce.txt",
+        "sha256": "616a3ad264ce29b8f1cb97e53037b139d406899ca8d1f799651e17bfa09830b8"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-input-XZ-liblzma-002-COPYING.0BSD-0b01625d8539.txt",
+        "sha256": "0b01625d853911cd0e2e088dcfb743261034a091bb379246cb25a14cc4c74bf1"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-input-XZ-liblzma-003-COPYING.GPLv2-edaef632cbb6.txt",
+        "sha256": "edaef632cbb643e4e7a221717a6c441a4c1a7c918e6e4d56debc3d8739b233f6"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-input-XZ-liblzma-004-COPYING.GPLv3-3972dc9744f6.txt",
+        "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-input-XZ-liblzma-005-COPYING.LGPLv2.1-20e50fe7aae3.txt",
+        "sha256": "20e50fe7aae3e56378ebf0417d9de904f55a0e61e4df315333e632a4d3555d95"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-input-XZ-liblzma-006-license-check.sh-2b3fa1d23cb2.txt",
+        "sha256": "2b3fa1d23cb2ab084f3d919908159473cc0e1eed059d106e2a2857c0ec8af98a"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-input-libedit-001-COPYING-9da6c9c74987.txt",
+        "sha256": "9da6c9c74987a36c84302982799d17d2f748ba1c1c0c471425716173c1d07649"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-input-libffi-001-LICENSE-67894089811f.txt",
+        "sha256": "67894089811f93fca47a76f85e017da6f8582d4ba0905963c6e0f1ad6df7a195"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-input-mpdecimal-001-COPYRIGHT.txt-271332421165.txt",
+        "sha256": "2713324211652ce4a60e6e21e54f9dc3004299e591b0933a352f1a89c5fb53c2"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-input-mpdecimal-002-COPYRIGHT.txt-25329ef0e2a8.txt",
+        "sha256": "25329ef0e2a8823b88786a39f168304a65a3138f720ab39ffc1e9fbee67b74a9"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-input-ncurses-001-copyright-c33234f4eae3.txt",
+        "sha256": "c33234f4eae3525aad6c2b67c61fbe875eb37044bba2ddc12d3db4851c449c85"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-input-ncurses-002-COPYING-b2feb54f3952.txt",
+        "sha256": "b2feb54f39529abe226f709a292584fde48a2e5721559fee417d2cdd51cb7cc1"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-input-ncurses-003-copyright-6e480cd0c4dc.txt",
+        "sha256": "6e480cd0c4dc42e7ffec9b3f5b65ccfa5d3f856158bc9f4be84e38e898e98070"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-input-ncurses-006-copyright-1e577eff7741.txt",
+        "sha256": "1e577eff7741bf21db00c6c34fec1b790f36a7b400fed2e36c11a55aa1e641c0"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-standalone-002-LICENSE.bdb.txt-3bdff06e6999.txt",
+        "sha256": "3bdff06e69991c94664f2ef5c5f8096f60b7dbec071756ea6cc26b445e06ec5b"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-standalone-003-LICENSE.bzip2.txt-1f38bbc7caac.txt",
+        "sha256": "1f38bbc7caacafd65169276d759c0d88c991b753b643ce35d0e45ea1971dd441"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-standalone-004-LICENSE.cpython.txt-86e61415828a.txt",
+        "sha256": "86e61415828a8b5b06ec8d024e6f086ce155a8b85fd0c419c0ba4dc004e74fdd"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-standalone-005-LICENSE.expat.txt-122f2c270004.txt",
+        "sha256": "122f2c27000472a201d337b9b31f7eb2b52d091b02857061a8880371612d9534"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-standalone-006-LICENSE.libX11.txt-2daec087a88e.txt",
+        "sha256": "2daec087a88e7c9b8082557cdeebad5bbb8155a4137472f0b22e269cd99d0c1e"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-standalone-007-LICENSE.libXau.txt-56abe29bb1d9.txt",
+        "sha256": "56abe29bb1d9806a9e04fa9f80fed2c0f18027594df3f098148d814aef6bddfa"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-standalone-008-LICENSE.libedit.txt-29cea33c32bb.txt",
+        "sha256": "29cea33c32bbc9785142386377915612a2fa786482c46843383384aded2e09b1"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-standalone-009-LICENSE.libffi.txt-deaf3a42effb.txt",
+        "sha256": "deaf3a42effb551a5b140fa9afefed183a27f1341c6d1bf430d106a5e6931fc0"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-standalone-010-LICENSE.liblzma.txt-9a4062de0a2c.txt",
+        "sha256": "9a4062de0a2c388a98cf35a35d348b62fa97c838a71c3c28ee1a2d7d0a565b02"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-standalone-011-LICENSE.libuuid.txt-122ee1f7e258.txt",
+        "sha256": "122ee1f7e258f2c3c0e538a75c037684f420454bf3850ddc74ce750bbf5fe86b"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-standalone-012-LICENSE.libxcb.txt-c5ffbfeaa501.txt",
+        "sha256": "c5ffbfeaa501071ceeb97b7de2c0d703fdaa35de01c0fb6cbac1c28453a3e9fd"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-standalone-013-LICENSE.mpdecimal.txt-669512af7219.txt",
+        "sha256": "669512af7219f58be03a398766d7c9da11a3b3df9d3f05cb74c5ceca25c8da3b"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-standalone-014-LICENSE.ncurses.txt-87a4c4442337.txt",
+        "sha256": "87a4c4442337b8968ef956031c406b74f9cb7149b7ba87311bdaba534816201c"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-standalone-015-LICENSE.openssl-1.1.txt-9c04cce50c49.txt",
+        "sha256": "9c04cce50c4989d5601dd8b07f6ab922c40388b66ac736c9007cb1ed9d9dd560"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-standalone-017-LICENSE.sqlite.txt-38bef3d28b24.txt",
+        "sha256": "38bef3d28b24f145ea293bd3b6eb4b20396982abc8303128fb493986ea5bc719"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-standalone-019-LICENSE.tix.txt-3ac5cdd0bef6.txt",
+        "sha256": "3ac5cdd0bef6c43ce34c6a7ced452081d9e5a0bf94082b9f9147d23ec9e214f5"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/python-build-standalone-020-LICENSE.zlib.txt-818922b2620f.txt",
+        "sha256": "818922b2620f12801a12bf78e399644a30990e66824abd8ca8ec24d451d6f92c"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/wheel-attrs-001-LICENSE-882115c95dfc.txt",
+        "sha256": "882115c95dfc2af1eeb6714f8ec6d5cbcabf667caff8729f42420da63f714e9f"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/wheel-attrs-002-license.md-b26415d5042a.txt",
+        "sha256": "b26415d5042a70fcc29edc17112f68311aa09935290a208218d4930d9b571a7a"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/wheel-bpy-001-COPYING-19e6f4b54177.txt",
+        "sha256": "19e6f4b541772f9d7b98a52bdbca3ebd5ef9e404956a9a6de68bfc3c1a178387"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/wheel-bpy-003-license.cmd-02e3834154a0.txt",
+        "sha256": "02e3834154a0c9b8ce5a19e5ae95361b2b992152e618bbed4766d8903a3f6f3f"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/wheel-bpy-006-LICENSE-MIT-e562f3f974ce.txt",
+        "sha256": "e562f3f974ced7e69dd1db77b820b36bcf8f30377f1aa105723fba449c53c4e6"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/wheel-bpy-007-COPYING.txt-90d1f3701813.txt",
+        "sha256": "90d1f3701813c3cd65eee2dc736746fe46b465918f3f7d6d31463a2018b33fa5"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/wheel-bpy-008-COPYING-0fc497129c5c.txt",
+        "sha256": "0fc497129c5c69ff6f22da6933c7e4aaef082fde8437fd57680c2780100772a4"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/wheel-bpy-011-LICENSE-cfd846c95a3d.txt",
+        "sha256": "cfd846c95a3d8be5837b3547c4c40477141980745b564c494339912ab493b914"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/wheel-bpy-012-LICENSE-0057760df959.txt",
+        "sha256": "0057760df95992e06a0bc78f5632a389a03744f6725e497cedd85bc21e39b28a"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/wheel-bpy-013-LICENSE.txt-14737a477999.txt",
+        "sha256": "14737a4779999eda6fcedaaa1f0d8180369dc9cbe2bdf300171a6fa8b6c44ee8"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/wheel-bpy-014-LICENSE-0dd48ebadf52.txt",
+        "sha256": "0dd48ebadf52273c736256325c8f078c03c8bb4facee22a4122de0ad3f615391"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/wheel-bpy-015-LICENSE.txt-1e9529132593.txt",
+        "sha256": "1e952913259356d43ee89fcb7d1105bd7f77ab90b6a87086a1e2e144db5d1d5c"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/wheel-bpy-016-LICENSE-6ffedbc0f787.txt",
+        "sha256": "6ffedbc0f7878612d2b23589f1ff2ab15633e1df7963a5d9fc750ec5500c7e7a"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/wheel-bpy-019-license.md-cdac130f0372.txt",
+        "sha256": "cdac130f03722dff2953d7da27035289bff8533d0bb3029d23e22ffe95a0bf7e"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/wheel-bpy-020-copyright.txt-770e6530a763.txt",
+        "sha256": "770e6530a763692598a4d52431be0c4bda4499550b7c38cceda2053241453d73"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/wheel-bpy-binary-001-LICENSE-a2010f343487.txt",
+        "sha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/wheel-bpy-binary-002-license.txt-b611907587d1.txt",
+        "sha256": "b611907587d18b7d2a2f7b81e6c0fe5048a5592f2086ec8678f25d682e4cc877"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/wheel-bpy-binary-003-license.txt-adb4229abf87.txt",
+        "sha256": "adb4229abf8701b512dc75bab8e08610ecefb08e2b07e9ff5cdaf1e558195ee5"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/wheel-cattrs-001-LICENSE-f5fb9d1ede37.txt",
+        "sha256": "f5fb9d1ede37a88ca47f420c499dca0f4a05bc993e12c77d23520aad291c01bf"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/wheel-certifi-001-LICENSE-e93716da6b9c.txt",
+        "sha256": "e93716da6b9c0d5a4a1df60fe695b370f0695603d21f6f83f053e42cfc10caf7"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/wheel-charset-normalizer-001-LICENSE-6d0d41bfe170.txt",
+        "sha256": "6d0d41bfe170ac6c7dc248c9a63e254d0fb45a60d50a8257d0af92c6e249b887"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/wheel-charset-normalizer-002-NOTICE.md-0cb3efcfd8f7.txt",
+        "sha256": "0cb3efcfd8f7a02a337e98dc3de4b0b57424d7208a332b26e7deb8cb94c13922"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/wheel-idna-001-LICENSE.md-1a9a4f0e3d47.txt",
+        "sha256": "1a9a4f0e3d479a27240ddd59a9137a66ab4a0f9dfdc8ca6188cc0bfd85187f04"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/wheel-numpy-008-LICENSE-e340270d4f64.txt",
+        "sha256": "e340270d4f64384569a91d546acb5b094d69ce47f0c015db77abb74dc6f815af"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/wheel-requests-001-LICENSE-09e8a9bcec80.txt",
+        "sha256": "09e8a9bcec8067104652c168685ab0931e7868f9c8284b66f5ae6edae5f1130b"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/wheel-requests-002-NOTICE-f5110972deda.txt",
+        "sha256": "f5110972dedad2b4e9d314518daf3b7d72d6e02e499acd802181de6f74571dcc"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/wheel-typing-extensions-001-LICENSE-3b2f81fe21d1.txt",
+        "sha256": "3b2f81fe21d181c499c59a256c8e1968455d6689d269aa85373bfb6af41da3bf"
+      },
+      {
+        "path": "Runtime/bpy/compliance/notices/wheel-urllib3-001-LICENSE.txt-130e3a64d5fd.txt",
+        "sha256": "130e3a64d5fdd5d096a752694634a7d9df284469de86e5732100268041e3d686"
+      }
+    ],
+    "sourceArchives": [
+      {
+        "components": [
+          "python-build-standalone"
+        ],
+        "filename": "python-build-standalone-20260901.tar.gz",
+        "sha256": "bf4776e7bdb751a58fa6879d280b678f60b955b62b19ec98a32903fd82cee1c6",
+        "size": 441917,
+        "url": "https://codeload.github.com/astral-sh/python-build-standalone/tar.gz/refs/tags/20260901"
+      },
+      {
+        "components": [
+          "wheel:bpy"
+        ],
+        "filename": "blender-5.2.2.tar.xz",
+        "sha256": "56a3b1ec97479ff24dce65d2f09f8a1895005cece279b701fe4fcf74bce3f77e",
+        "size": 93671672,
+        "url": "https://download.blender.org/source/blender-5.2.2.tar.xz"
+      },
+      {
+        "components": [
+          "wheel:numpy"
+        ],
+        "filename": "numpy-2.5.3.tar.gz",
+        "sha256": "df2d5874ff183595a4ba404edd04f6bd9b5505c1d7708573f6a6c17489a67563",
+        "size": 20791231,
+        "url": "https://files.pythonhosted.org/packages/13/01/11703282db468b85f6f7b8c7f22d058de5970d5c7e60a3a8aaa313c3de36/numpy-2.5.3.tar.gz"
+      },
+      {
+        "components": [
+          "wheel:cattrs"
+        ],
+        "filename": "cattrs-26.2.0.tar.gz",
+        "sha256": "3cf49f69df8326bcf17a3cb3d3d3ec4a856858fe3a7473746c9044c317d3ba55",
+        "size": 524993,
+        "url": "https://files.pythonhosted.org/packages/d6/b2/42f4524e5479b090040b5fd8bb316dd8c65a079bb6492494ce2079dc91be/cattrs-26.2.0.tar.gz"
+      },
+      {
+        "components": [
+          "wheel:Cython"
+        ],
+        "filename": "cython-3.3.0.tar.gz",
+        "sha256": "eed0d93fbca7087f143b42c34b05a825849bdf17f101572c2105acfa49aa88b8",
+        "size": 3727515,
+        "url": "https://files.pythonhosted.org/packages/a9/d8/4981ef716ad0e3ff0d3ef383aefc6b03c4a88dee33b272bf8e0d833001ca/cython-3.3.0.tar.gz"
+      },
+      {
+        "components": [
+          "wheel:requests"
+        ],
+        "filename": "requests-2.34.2.tar.gz",
+        "sha256": "f288924cae4e29463698d6d60bc6a4da69c89185ad1e0bcc4104f584e960b9ed",
+        "size": 142856,
+        "url": "https://files.pythonhosted.org/packages/ac/c3/e2a2b89f2d3e2179abd6d00ebd70bff6273f37fb3e0cc209f48b39d00cbf/requests-2.34.2.tar.gz"
+      },
+      {
+        "components": [
+          "wheel:zstandard"
+        ],
+        "filename": "zstandard-0.25.0.tar.gz",
+        "sha256": "7713e1179d162cf5c7906da876ec2ccb9c3a9dcbdffef0cc7f70c3667a205f0b",
+        "size": 711513,
+        "url": "https://files.pythonhosted.org/packages/fd/aa/3e0508d5a5dd96529cdc5a97011299056e14c6505b678fd58938792794b1/zstandard-0.25.0.tar.gz"
+      },
+      {
+        "components": [
+          "wheel:attrs"
+        ],
+        "filename": "attrs-26.1.0.tar.gz",
+        "sha256": "d03ceb89cb322a8fd706d4fb91940737b6642aa36998fe130a9bc96c985eff32",
+        "size": 952055,
+        "url": "https://files.pythonhosted.org/packages/9a/8e/82a0fe20a541c03148528be8cac2408564a6c9a0cc7e9171802bc1d26985/attrs-26.1.0.tar.gz"
+      },
+      {
+        "components": [
+          "wheel:typing-extensions"
+        ],
+        "filename": "typing_extensions-4.16.0.tar.gz",
+        "sha256": "dc983d19a509c94dba722ee6abd33940f7c05a89e243c47e907eb4db6f1a43e5",
+        "size": 113555,
+        "url": "https://files.pythonhosted.org/packages/f6/cc/6253133b5bb138fc3306cebfbda2c520f545d36b5be2c7255cc528bb45d6/typing_extensions-4.16.0.tar.gz"
+      },
+      {
+        "components": [
+          "wheel:charset-normalizer"
+        ],
+        "filename": "charset_normalizer-3.5.1.tar.gz",
+        "sha256": "6117b84ea48435e5356dc737f5121485c30920ba43375fa7b434fd753df0eac3",
+        "size": 171764,
+        "url": "https://files.pythonhosted.org/packages/e5/3f/143b048436775b0f76ac3eec145c019e8173ccc2885c8f20319b996d5e83/charset_normalizer-3.5.1.tar.gz"
+      },
+      {
+        "components": [
+          "wheel:idna"
+        ],
+        "filename": "idna-3.20.tar.gz",
+        "sha256": "a7db850025b95ded1eae8a46181a1a6c56c92c96f0e2b005d9ff8dc0210cab44",
+        "size": 216463,
+        "url": "https://files.pythonhosted.org/packages/f5/08/8eea9d4b8302028f3abb2c0813953f7aec26d33b7a8960ed760e65ff29fa/idna-3.20.tar.gz"
+      },
+      {
+        "components": [
+          "wheel:urllib3"
+        ],
+        "filename": "urllib3-2.8.0.tar.gz",
+        "sha256": "63bf2ead4c879426ebf22ef2a781eeb4aa3b4ae798a0435506f8687fd5bb9b63",
+        "size": 458972,
+        "url": "https://files.pythonhosted.org/packages/e3/05/b17359e1cefb4f909b5e40b1b90a496d987258916dbbf88e842c729f510e/urllib3-2.8.0.tar.gz"
+      },
+      {
+        "components": [
+          "wheel:certifi"
+        ],
+        "filename": "certifi-2026.7.22.tar.gz",
+        "sha256": "741e2c3b351ddf169a738da9f2c048608ff7f2c5cc02f1ebc6b118bb090d5d55",
+        "size": 138112,
+        "url": "https://files.pythonhosted.org/packages/a3/c2/24167ea9858356b47a87a50d39908bfdb72ceeefe0041586e704e5376b3a/certifi-2026.7.22.tar.gz"
+      },
+      {
+        "components": [
+          "python-build-input:CPython"
+        ],
+        "filename": "Python-3.13.15.tar.xz",
+        "sha256": "1e66a7945a48390ee4c2a4268a0e4185884059a13c4aab6d148aa208deea4a76",
+        "size": 23160540,
+        "url": "https://www.python.org/ftp/python/3.13.15/Python-3.13.15.tar.xz"
+      },
+      {
+        "components": [
+          "python-build-input:bzip2"
+        ],
+        "filename": "bzip2-1.0.8.tar.gz",
+        "sha256": "ab5a03176ee106d3f0fa90e381da478ddae405918153cca248e682cd0c4a2269",
+        "size": 810029,
+        "url": "https://astral-sh.github.io/mirror/files/bzip2-1.0.8.tar.gz"
+      },
+      {
+        "components": [
+          "python-build-input:expat"
+        ],
+        "filename": "expat-2.8.4.tar.xz",
+        "sha256": "656ae1cc8da3b4ea513bb4e254f33e6243938084c0ec6239da873376b09985a7",
+        "size": 519688,
+        "url": "https://github.com/libexpat/libexpat/releases/download/R_2_8_4/expat-2.8.4.tar.xz"
+      },
+      {
+        "components": [
+          "python-build-input:libedit"
+        ],
+        "filename": "libedit-20240808-3.1.tar.gz",
+        "sha256": "5f0573349d77c4a48967191cdd6634dd7aa5f6398c6a57fe037cc02696d6099f",
+        "size": 538611,
+        "url": "https://thrysoee.dk/editline/libedit-20240808-3.1.tar.gz"
+      },
+      {
+        "components": [
+          "python-build-input:libffi"
+        ],
+        "filename": "libffi-3.4.8.tar.gz",
+        "sha256": "bc9842a18898bfacb0ed1252c4febcc7e78fa139fd27fdc7a3e30d9d9356119b",
+        "size": 1397992,
+        "url": "https://github.com/libffi/libffi/releases/download/v3.4.8/libffi-3.4.8.tar.gz"
+      },
+      {
+        "components": [
+          "python-build-input:mpdecimal"
+        ],
+        "filename": "mpdecimal-4.0.0.tar.gz",
+        "sha256": "942445c3245b22730fd41a67a7c5c231d11cb1b9936b9c0f76334fb7d0b4468c",
+        "size": 315325,
+        "url": "https://astral-sh.github.io/mirror/files/mpdecimal-4.0.0.tar.gz"
+      },
+      {
+        "components": [
+          "python-build-input:ncurses"
+        ],
+        "filename": "ncurses-6.5.tar.gz",
+        "sha256": "136d91bc269a9a5785e5f9e980bc76ab57428f604ce3e5a5a90cebc767971cc6",
+        "size": 3688489,
+        "url": "https://astral-sh.github.io/mirror/files/ncurses-6.5.tar.gz"
+      },
+      {
+        "components": [
+          "python-build-input:OpenSSL"
+        ],
+        "filename": "openssl-3.5.8.tar.gz",
+        "sha256": "a8f84a39918ec6415ce765d9b429d313ba97b8143169c172e734b9514464f5b2",
+        "size": 53213818,
+        "url": "https://github.com/openssl/openssl/releases/download/openssl-3.5.8/openssl-3.5.8.tar.gz"
+      },
+      {
+        "components": [
+          "python-build-input:SQLite"
+        ],
+        "filename": "sqlite-autoconf-3530100.tar.gz",
+        "sha256": "83e6b2020a034e9a7ad4a72feea59e1ad52f162e09cbd26735a3ffb98359fc4f",
+        "size": 3275272,
+        "url": "https://www.sqlite.org/2026/sqlite-autoconf-3530100.tar.gz"
+      },
+      {
+        "components": [
+          "python-build-input:Tcl"
+        ],
+        "filename": "tcl9.0.4-src.tar.gz",
+        "sha256": "d0aed49230bc02a65c1e0229e65f34590a4b037ec40d546f32573b467f7551ea",
+        "size": 11866337,
+        "url": "https://prdownloads.sourceforge.net/tcl/tcl9.0.4-src.tar.gz"
+      },
+      {
+        "components": [
+          "python-build-input:Tk"
+        ],
+        "filename": "tk9.0.4-src.tar.gz",
+        "sha256": "d7a146d2917eb8b5cc95276dbf0e3d03c7464d2b19c1675357857c989301dbb4",
+        "size": 4613019,
+        "url": "https://prdownloads.sourceforge.net/tcl/tk9.0.4-src.tar.gz"
+      },
+      {
+        "components": [
+          "python-build-input:XZ liblzma"
+        ],
+        "filename": "xz-5.8.3.tar.gz",
+        "sha256": "3d3a1b973af218114f4f889bbaa2f4c037deaae0c8e815eec381c3d546b974a0",
+        "size": 2771455,
+        "url": "https://github.com/tukaani-project/xz/releases/download/v5.8.3/xz-5.8.3.tar.gz"
+      },
+      {
+        "components": [
+          "python-build-input:zlib"
+        ],
+        "filename": "zlib-1.3.2.tar.gz",
+        "sha256": "bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16",
+        "size": 1502830,
+        "url": "https://github.com/madler/zlib/releases/download/v1.3.2/zlib-1.3.2.tar.gz"
+      },
+      {
+        "components": [
+          "bpy-native:OpenEXR"
+        ],
+        "filename": "openexr-3.4.10.tar.gz",
+        "sha256": "b61ae2d0fa4872c5f5fc45618f107945df37c0eba4853263091b949c513d3319",
+        "size": 25747896,
+        "url": "https://github.com/AcademySoftwareFoundation/openexr/archive/v3.4.10.tar.gz"
+      },
+      {
+        "components": [
+          "bpy-native:Imath"
+        ],
+        "filename": "imath-3.2.2.tar.gz",
+        "sha256": "b4275d83fb95521510e389b8d13af10298ed5bed1c8e13efd961d91b1105e462",
+        "size": 689217,
+        "url": "https://github.com/AcademySoftwareFoundation/Imath/archive/v3.2.2.tar.gz"
+      },
+      {
+        "components": [
+          "bpy-native:MaterialX"
+        ],
+        "filename": "materialx-v1.39.4.tar.gz",
+        "sha256": "ce9c1a3b84a060d6280d355a72bf42b53837ee7bcc5a566cab1e927c64078fd9",
+        "size": 114786830,
+        "url": "https://github.com/AcademySoftwareFoundation/MaterialX/archive/refs/tags/v1.39.4.tar.gz"
+      },
+      {
+        "components": [
+          "bpy-native:OpenColorIO"
+        ],
+        "filename": "OpenColorIO-2.5.0.tar.gz",
+        "sha256": "124e2bfa8a9071959d6ddbb64ffbf78d3f6fe3c923ae23e96a6bbadde1af55b6",
+        "size": 14122936,
+        "url": "https://github.com/AcademySoftwareFoundation/OpenColorIO/archive/v2.5.0.tar.gz"
+      },
+      {
+        "components": [
+          "bpy-native:OpenImageDenoise"
+        ],
+        "filename": "oidn-2.5.0.src.tar.gz",
+        "sha256": "96c3a46122759803d5f6701ffba4bef6eac0981dced5279e66f2815e3ed3c2cc",
+        "size": 89051069,
+        "url": "https://github.com/RenderKit/oidn/releases/download/v2.5.0/oidn-2.5.0.src.tar.gz"
+      },
+      {
+        "components": [
+          "bpy-native:OpenImageIO"
+        ],
+        "filename": "OpenImageIO-v3.1.13.1.tar.gz",
+        "sha256": "0fc59b8e2708ded02d3793b8f3331f037ed49bfcde38158f05ac0e876ebb85b7",
+        "size": 55338242,
+        "url": "https://github.com/AcademySoftwareFoundation/OpenImageIO/archive/refs/tags/v3.1.13.1.tar.gz"
+      },
+      {
+        "components": [
+          "bpy-native:SDL"
+        ],
+        "filename": "SDL3-3.4.2.tar.gz",
+        "sha256": "ef39a2e3f9a8a78296c40da701967dd1b0d0d6e267e483863ce70f8a03b4050c",
+        "size": 15575883,
+        "url": "https://github.com/libsdl-org/SDL/releases/download/release-3.4.2/SDL3-3.4.2.tar.gz"
+      },
+      {
+        "components": [
+          "bpy-native:Ceres Solver"
+        ],
+        "filename": "ceres-0c70ed3a1a2d6ba47c06c7e8b3b040880bc474db.tar.gz",
+        "sha256": "bf0bcc78fae884e59dd893693e52510da7cc6866a7444fdae9ba8f19eae266cd",
+        "size": 3476732,
+        "url": "https://github.com/ceres-solver/ceres-solver/archive/0c70ed3a1a2d6ba47c06c7e8b3b040880bc474db.tar.gz"
+      },
+      {
+        "components": [
+          "bpy-native:Draco"
+        ],
+        "filename": "draco-v1.5.7.zip",
+        "sha256": "27b72ba2d5ff3d0a9814ad40d4cb88f8dc89a35491c0866d952473f8f9416b77",
+        "size": 61004707,
+        "url": "https://github.com/google/draco/archive/refs/tags/1.5.7.zip"
+      },
+      {
+        "components": [
+          "bpy-native:Embree"
+        ],
+        "filename": "embree-v4.4.1.zip",
+        "sha256": "643b87490b207475872b0721019ebe3947feb9104f36c25795455516e4e85b82",
+        "size": 71461018,
+        "url": "https://github.com/RenderKit/embree/archive/v4.4.1.zip"
+      },
+      {
+        "components": [
+          "bpy-native:meshoptimizer"
+        ],
+        "filename": "meshoptimizer-v1.1.zip",
+        "sha256": "6aecc2d3b4328f1f5f4127fb16a144de80cc9eb35c32387807c8c04b0b6dbbf3",
+        "size": 579571,
+        "url": "https://github.com/zeux/meshoptimizer/archive/refs/tags/v1.1.zip"
+      },
+      {
+        "components": [
+          "bpy-native:OpenJPH"
+        ],
+        "filename": "openjph-v0.25.2.tar.gz",
+        "sha256": "ae5f09562cb811cb2fb881c5eb74583e18db941848cfa3c35787e2580f3defc6",
+        "size": 477255,
+        "url": "https://github.com/aous72/OpenJPH/archive/refs/tags/0.25.2.tar.gz"
+      },
+      {
+        "components": [
+          "bpy-native:OpenVDB"
+        ],
+        "filename": "openvdb-13.0.0.tar.gz",
+        "sha256": "4d6a91df5f347017496fe8d22c3dbb7c4b5d7289499d4eb4d53dd2c75bb454e1",
+        "size": 4891966,
+        "url": "https://github.com/AcademySoftwareFoundation/openvdb/archive/v13.0.0.tar.gz"
+      },
+      {
+        "components": [
+          "bpy-native:OpenXR SDK"
+        ],
+        "filename": "OpenXR-SDK-1.1.53.tar.gz",
+        "sha256": "3ccd6835e213e3226e828660b80b8e2178f1571ba743f16088c942ebce84f6ef",
+        "size": 721366,
+        "url": "https://github.com/KhronosGroup/OpenXR-SDK/archive/release-1.1.53.tar.gz"
+      },
+      {
+        "components": [
+          "bpy-native:OpenSubdiv"
+        ],
+        "filename": "opensubdiv-v3_7_0.tar.gz",
+        "sha256": "f843eb49daf20264007d807cbc64516a1fed9cdb1149aaf84ff47691d97491f9",
+        "size": 40736075,
+        "url": "https://github.com/PixarAnimationStudios/OpenSubdiv/archive/v3_7_0.tar.gz"
+      },
+      {
+        "components": [
+          "bpy-native:Open Shading Language"
+        ],
+        "filename": "OpenShadingLanguage-1.15.3.0.tar.gz",
+        "sha256": "560232b3298e33f3bf45c6f21f20b484f5acc260f6d4035db0f76f22994d679a",
+        "size": 44252166,
+        "url": "https://github.com/AcademySoftwareFoundation/OpenShadingLanguage/releases/download/v1.15.3.0/OSL-1.15.3.0.tar.gz"
+      },
+      {
+        "components": [
+          "bpy-native:oneTBB"
+        ],
+        "filename": "oneTBB-v2022.3.0.tar.gz",
+        "sha256": "01598a46c1162c27253a0de0236f520fd8ee8166e9ebb84a4243574f88e6e50a",
+        "size": 6836514,
+        "url": "https://github.com/uxlfoundation/oneTBB/archive/refs/tags/v2022.3.0.tar.gz"
+      },
+      {
+        "components": [
+          "bpy-native:OpenUSD"
+        ],
+        "filename": "usd-v26.03.tar.gz",
+        "sha256": "590ea75ffa3ac0c35fdd080df04d61a696733b8f3d6a79bdc3f13f8077162d36",
+        "size": 150289136,
+        "url": "https://github.com/PixarAnimationStudios/OpenUSD/archive/v26.03.tar.gz"
+      }
+    ],
+    "wheelBinaryCorrespondence": {
+      "path": "Runtime/bpy/compliance/wheel-binary-correspondence.json",
+      "sha256": "28499c9297bab98f4b60c00723e715a1bf187ed23784c2a88b634f8d6bf9b936"
+    },
+    "publicSourceAsset": {
+      "filename": "NexGenVideo-bpy-5.2.2-corresponding-source.tar",
+      "manifestFilename": "NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json",
+      "sha256": "e5133501ee8d7b08ab67aa57e3948c12843ce2c68745adb2f5657604b42e2c63",
+      "size": 1940725760,
+      "manifestSHA256": "654c0a863598303a35fc21efba3111a1c82007808afd728e4d9731d27c2d5cc7",
+      "releaseTag": "v1.8.0",
+      "producer": {
+        "repository": "iret77/nexgenvideo",
+        "workflowPath": ".github/workflows/ci-batch.yml",
+        "runID": 39295082436,
+        "sourceSHA": "26ad91ad98eb8d38f4e92d8f5670ff7bcc639552",
+        "jobID": 118205421335,
+        "jobAttempt": 1,
+        "artifactID": 12209205072,
+        "artifactName": "managed-bpy-source-26ad91ad98eb8d38f4e92d8f5670ff7bcc639552",
+        "artifactDigest": "sha256:8fd90c6cdcd274d4c28d8b1c389eaa3f067a0b8983e21c0b0ee11aee7e516a81",
+        "artifactSize": 1941299819
+      }
+    }
+  }
+}

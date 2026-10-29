@@ -1,7 +1,8 @@
 # Production profiles
 
 Production profiles are reusable filmmaking doctrine owned by `NexGenEngine`. Format packs activate
-and compose them; they do not copy their prompts, schemas, or checks.
+and compose them; they do not copy their prompts, schemas, or checks. Native Core V2 production
+uses the same engine profiles under its explicit host-owned workflow declaration.
 
 ## Boundary
 
@@ -22,15 +23,19 @@ project metadata so the engine does not learn pack-specific concepts.
 
 Always active for the musicvideo pack and reusable by any pack that generates moving images.
 
-- Build named style, character, location, prop, geometry, and reverse-view anchors before shots.
+- Build named style, character, location, prop, geometry, and reverse-view anchors before shot
+  execution. Rough V2 Storyboard sketches precede that production-asset stage.
 - Plan one primary action and one coherent camera plan per generated shot. Resolve visible-character
   and reference capacity from the selected route's effective capability profile; an ensemble
   contributes its declared `member_count`, not one reference.
 - Anchor generated character blocking through a non-empty `production_plan.blocking_anchors` entry
   exactly naming one of the shot's `prop_refs` or `visible_zones`; keep its spatial relationship in `character_blocking.relation_to_set`.
   Screen direction alone is not an anchor.
-- Resolve duration from the selected route's effective capability profile. A shot outside that
-  route's reliable range declares the material risk and a rescue or selects another route.
+- Legacy shot planning resolves duration from the selected route's effective capability profile.
+  A shot outside that route's reliable range declares the material risk and a rescue or selects
+  another route. In V2, approved Storyboard/Animatic timing owns editorial duration. The route and
+  execution plan must satisfy it or the user explicitly revises the plan; native generation duration
+  and source-in remain separate execution fields and never silently rewrite editorial timing.
 - Rate renderability `green`, `yellow`, or `red`; every yellow/red shot declares risks and a rescue cut.
 - Persist continuity locks and match-action cues instead of relying on prompt prose.
 
@@ -44,7 +49,7 @@ Active when project metadata declares `concept_type` as `narrative` or `hybrid`.
   action beat rather than explaining them in prose. Performance/atmosphere-only sequences are exempt.
 - Ellipsis is preferred when a continuous action is materially harder to render than its story beat.
 
-## Shot-list contract
+## Legacy shot-list contract
 
 `shotlist/v4` adds `production_plan` to every newly agent-written generated or AI-enhanced shot;
 imported shots omit it because their existing footage is the production truth:
@@ -63,6 +68,12 @@ characters and rejects coordination, sequencing, list punctuation, and multiple 
 Older shot lists migrate losslessly with no invented plan. They remain readable and receive only a
 non-blocking missing-plan warning until revised. New writes require the structure through the tool
 schema; once a plan exists, active profiles enforce all of its conditional fields.
+
+V2 instead uses the `shotlist/v5` production projection with stable shot IDs, exact Storyboard
+editorial ticks, source ownership and a current Shot Planning promotion receipt. Its canonical
+`PipelineProductionPlanWriter` binds those inputs together. This does not silently migrate old
+projects, inherit approvals, or invent missing plans; changing workflow requires the explicit
+Recovery-copy transaction. The shared profile constraints below still apply to the approved plan.
 
 `compile_prompt(shotId:)` ignores caller-supplied action, setting, lighting, and style for a planned
 video and projects the approved action as a deterministic single-action directive, plus camera movement, blocking anchors,

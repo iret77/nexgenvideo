@@ -1431,6 +1431,34 @@ struct FalClientTests {
         #expect(FixtureURLProtocol.requests().map(\.url) == [submit, status, result])
     }
 
+    @Test func projectCloseStopsLocalPollingWithoutCancelingTheProviderJob() async throws {
+        let endpoint = "fal-ai/gemini-25-flash-image/edit"
+        let submit = URL(string: "https://queue.fal.run/\(endpoint)")!
+        let status = URL(string: "https://queue.fal.run/fal-ai/gemini-25-flash-image/requests/close-job/status")!
+        FixtureURLProtocol.install([submit: fixture(#"{"request_id":"close-job"}"#), status: fixture(#"{"status":"IN_PROGRESS"}"#)])
+        let testSession = session()
+        defer { testSession.invalidateAndCancel() }
+        let client = FalClient(apiKey: "unit-no-key", session: testSession, pollIntervalNanoseconds: 60_000_000_000,
+                               retryBaseDelayNanoseconds: 0)
+        let requestID = try await client.submit(endpoint: endpoint, inputBody: Data("{}".utf8))
+        let lifetime = GenerationBatchExecutionLifetime()
+        let task = Task {
+            try await GenerationBatchExecutionLifetime.$current.withValue(lifetime) {
+                try await client.result(endpoint: endpoint, requestId: requestID)
+            }
+        }
+        defer { lifetime.abandon(); task.cancel() }
+        for _ in 0..<400 {
+            if FixtureURLProtocol.requests().contains(where: { $0.url == status }) { break }
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        try #require(FixtureURLProtocol.requests().contains { $0.url == status })
+        lifetime.abandon(); task.cancel()
+        await #expect(throws: CancellationError.self) { _ = try await task.value }
+        #expect(FixtureURLProtocol.requests().map(\.url) == [submit, status])
+        #expect(FixtureURLProtocol.requests().map(\.method) == ["POST", "GET"])
+    }
+
     @Test("task cancellation cancels the provider job")
     func taskCancellationCancelsProviderJob() async throws {
         let endpoint = "fal-ai/gemini-25-flash-image/edit"

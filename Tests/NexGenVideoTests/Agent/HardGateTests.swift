@@ -100,14 +100,11 @@ struct HardGateTests {
             .appendingPathComponent("hard-gate-\(UUID().uuidString)", isDirectory: true)
         let home = tmp.appendingPathComponent("proj", isDirectory: true)
         let dataRoot = try ProjectScaffold.initProject(home: home, name: "demo", mode: .beat)
-        return (
-            ToolHarness(
-                enforceHardGates: true,
-                phaseMutationRecorder: phaseMutationRecorder
-            ),
-            dataRoot.path,
-            tmp
+        let harness = ToolHarness(
+            enforceHardGates: true,
+            phaseMutationRecorder: phaseMutationRecorder
         )
+        return (harness, try harness.openProject(dataRoot: dataRoot).path, tmp)
     }
 
     private func briefArgs(projectDir: String) -> [String: Any] {
@@ -127,7 +124,10 @@ struct HardGateTests {
     @Test("a work tool is refused until the earlier gate is approved, then clears it")
     func workToolBlockedUntilPriorApproved() async throws {
         let (h, dir, cleanup) = try scaffold()
-        defer { try? FileManager.default.removeItem(at: cleanup) }
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
 
         // Fresh project, nothing approved: drafting the brief is refused, naming the first missing gate.
         let blocked = await h.runRaw("write_brief", args: briefArgs(projectDir: dir))
@@ -149,7 +149,10 @@ struct HardGateTests {
         let (h, dir, cleanup) = try scaffold { _, _, _, _, _, _ in
             throw ToolError("injected phase record failure")
         }
-        defer { try? FileManager.default.removeItem(at: cleanup) }
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
         _ = try await h.runGateOK(
             "approve_gate",
             args: ["project_dir": dir, "phase": "project_init"]

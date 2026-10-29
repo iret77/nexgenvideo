@@ -29,7 +29,7 @@ public enum ProjectProfileAssembler {
     static let audioConfidence = 0.9
 
     /// Confidence for an agent-detected affect (audio analysis + lyrics), and for a user override.
-    static let agentAffectConfidence = 0.85
+    static let agentAffectConfidence = 0.7
     static let overrideConfidence = 1.0
 
     public static func assemble(
@@ -43,7 +43,9 @@ public enum ProjectProfileAssembler {
         // deliberately contrary mood (a happy song cut dark), which the map could never express.
         var affects: FitInput<[WeightedAffect]>? = affectInput(from: affectProfile)
         if affects == nil {
-            let mappedAffects = brief.tone.compactMap { toneToAffect[$0] }
+            let mappedAffects = brief.tone.compactMap { toneToAffect[$0] }.reduce(into: [AffectTag]()) {
+                if !$0.contains($1) { $0.append($1) }
+            }
             if !mappedAffects.isEmpty {
                 let weight = 1.0 / Double(mappedAffects.count)
                 let weighted = mappedAffects.map { WeightedAffect(value: $0, weight: weight) }
@@ -65,7 +67,7 @@ public enum ProjectProfileAssembler {
         // beat salience) require a separately versioned DSP→unit mapping that the
         // frozen policy does not define, so they stay missing.
         var audio = ProjectAudioFit()
-        if let bpm = perceivedBpm, bpm > 0 {
+        if let bpm = perceivedBpm, bpm.isFinite, bpm > 0 {
             audio.perceivedBpm = FitInput(value: bpm, source: .audioAnalysis, confidence: audioConfidence)
         }
 

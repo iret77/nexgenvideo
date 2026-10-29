@@ -249,6 +249,25 @@ struct ClaudeCodeEventMapperTests {
         #expect(combined.count == 2)
     }
 
+    @Test("Authentication-like prose cannot withhold a real tool call", arguments: [false, true])
+    func authenticationLikeProseReleasesActualToolEvidence(separateLine: Bool) {
+        let text: [ClaudeStreamEvent] = [.assistantBlock(messageId: "explanation", block: .text("A previous provider failed to authenticate; review the retained frames."))]
+        let tool: [ClaudeStreamEvent] = [.responseMetadata(messageID: "response", modelID: "actual-model"),
+            .assistantBlock(messageId: "response", block: .toolUse(id: "toolu_review", name: "mcp__nexgen__get_render_review_inputs", inputJSON: "{}"))]
+        var buffer = ClaudeCodeAuthenticationEventBuffer()
+        if separateLine {
+            guard case .waiting = buffer.receive(text) else { Issue.record("Expected deferred prose."); return }
+        }
+        guard case .events(let released) = buffer.receive(separateLine ? tool : text + tool) else {
+            Issue.record("Real tool evidence must reach the host before its pending MCP call can finish.")
+            return
+        }
+        #expect(released.count == 3)
+        #expect(released.contains { if case .responseMetadata("response", "actual-model") = $0 { return true }; return false })
+        #expect(released.contains { if case .assistantBlock("response", .toolUse("toolu_review", "mcp__nexgen__get_render_review_inputs", "{}")) = $0 { return true }; return false })
+        #expect(buffer.flush().isEmpty)
+    }
+
     @Test func endToEndImportTurn() {
         var mapper = ClaudeCodeEventMapper()
         mapper.ingest(line: #"{"type":"system","subtype":"init","session_id":"s1"}"#)

@@ -8,7 +8,8 @@ struct GenerationPackageInputs: Codable, Sendable, Equatable {
 
     @MainActor
     static func persist(package: GenerationPackageV1, snapshot: GenerationReferenceSnapshot,
-                        editor: EditorViewModel) async throws {
+                        editor: EditorViewModel,
+                        beforePublication: (@MainActor () async throws -> Void)? = nil) async throws {
         try package.validate()
         guard let home = editor.workingRoot, snapshot.receipts == package.payload.references else {
             throw GenerationRequestError.storage("The prepared input archive does not match its generation package.")
@@ -16,6 +17,8 @@ struct GenerationPackageInputs: Codable, Sendable, Equatable {
         let scope = try GenerationProjectMutationScope(projectHome: home, editor: editor)
         try await requireCurrentReferences(package: package, editor: editor)
         try await snapshot.requireUnchanged()
+        try Task.checkCancellation()
+        try scope.requireCurrent(editor: editor)
         guard let key = editor.openWorkingCopyKey else { throw GenerationRequestError.storage("Generation inputs need a recoverable project.") }
         try ProjectWorkingCopy.markDirty(key: key)
         let directoryPath = Project.mediaDirectoryName + "/generation-inputs/" + package.id
@@ -23,7 +26,10 @@ struct GenerationPackageInputs: Codable, Sendable, Equatable {
             directoryPath + "/" + String(index) + (url.pathExtension.isEmpty ? ".bin" : "." + url.pathExtension)
         }
         let record = Self(packageID: package.id, paths: paths)
-        try await Task.detached(priority: .utility) {
+        let lifetime = GenerationBatchExecutionLifetime.current
+        let archive = Task.detached(priority: .utility) {
+            try Task.checkCancellation()
+            guard lifetime?.isAbandoned != true else { throw CancellationError() }
             do {
                 _ = try ProjectLocalFile.ensureDirectory(directoryPath, dataRoot: home)
             } catch {
@@ -32,17 +38,33 @@ struct GenerationPackageInputs: Codable, Sendable, Equatable {
                 )
             }
             for (index, path) in paths.enumerated() {
+                try Task.checkCancellation()
+                guard lifetime?.isAbandoned != true else { throw CancellationError() }
                 let destination = home.appendingPathComponent(path)
                 if !FileManager.default.fileExists(atPath: destination.path) {
-                    try FileManager.default.copyItem(at: snapshot.urls[index], to: destination)
+                    let temporary = destination.deletingLastPathComponent().appendingPathComponent(".\(UUID().uuidString).partial")
+                    defer { try? FileManager.default.removeItem(at: temporary) }
+                    try FileManager.default.copyItem(at: snapshot.urls[index], to: temporary)
+                    guard try FileDigest.sha256(of: temporary) == package.payload.references[index].submittedSHA256 else {
+                        throw GenerationRequestError.storage("A generation input changed while it was archived.")
+                    }
+                    try Task.checkCancellation()
+                    guard lifetime?.isAbandoned != true else { throw CancellationError() }
+                    do { try FileManager.default.moveItem(at: temporary, to: destination) }
+                    catch {
+                        _ = try ProjectLocalFile.requireHash(package.payload.references[index].submittedSHA256, at: path, dataRoot: home)
+                    }
                 }
                 _ = try ProjectLocalFile.requireHash(package.payload.references[index].submittedSHA256, at: path, dataRoot: home)
             }
-        }.value
+        }
+        try await withTaskCancellationHandler { try await archive.value } onCancel: { archive.cancel() }
         try Task.checkCancellation()
         try scope.requireCurrent(editor: editor)
         try await snapshot.requireUnchanged()
         try await requireCurrentReferences(package: package, editor: editor)
+        try await beforePublication?()
+        try Task.checkCancellation()
         try scope.requireCurrent(editor: editor)
         try package.persist(editor: editor)
         let path = manifestPath(package.id)

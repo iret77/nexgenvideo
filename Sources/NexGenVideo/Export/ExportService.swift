@@ -1,5 +1,6 @@
 import AVFoundation
 import AppKit
+import NexGenEngine
 
 enum ExportError: LocalizedError {
     case unsupportedPreset
@@ -102,7 +103,8 @@ final class ExportService {
         stagedMediaDirectoryURL: URL? = nil,
         preserveOutputIdentity: Bool = false,
         acquireSlot: Bool = true,
-        event: (@MainActor @Sendable (Event) -> Void)? = nil
+        event: (@MainActor @Sendable (Event) -> Void)? = nil,
+        nativeReviewAuthorization: PipelineProductionSequenceReviewStore.ReelAuthorization? = nil
     ) async {
         error = nil
         lastReport = nil
@@ -114,16 +116,31 @@ final class ExportService {
         event?(.preparing)
         defer { isExporting = false }
         let resolver = liveResolver.snapshot()
+        let effectResources: [ProjectEffectResources.Binding]
+        do {
+            effectResources = try await Task.detached(priority: .userInitiated) {
+                try ProjectEffectResources.capture(timeline: timeline, resolver: resolver)
+            }.value
+        } catch { self.error = error.localizedDescription; return }
         if acquireSlot {
             await ExportCoordinator.acquireExport()
         }
         defer { if acquireSlot { ExportCoordinator.endExport() } }
+        if let nativeReviewAuthorization {
+            do {
+                guard format == .h264 else { throw ExportError.invalidFormat }
+                try await nativeReviewAuthorization.requireCurrent(timeline: timeline, resolver: resolver, outputURL: outputURL)
+            } catch { self.error = error.localizedDescription; return }
+        }
         var styleReview: TimelineStyleReview.Snapshot?
+        var production: ProductionExportBinding.Snapshot?
         if format != .xml && format != .fcpxml {
             do {
-                styleReview = try await TimelineStyleReview.capture(timeline: timeline, resolver: resolver)
-                if let review = styleReview {
-                    try TimelineStyleReview.requireCurrent(review)
+                production = try await ProductionExportBinding.capture(timeline: timeline, resolver: resolver)
+                if nativeReviewAuthorization == nil {
+                    styleReview = try await TimelineStyleReview.capture(timeline: timeline, resolver: resolver)
+                    if let review = styleReview { try TimelineStyleReview.requireCurrent(review) }
+                    try await requireFilmReview(production: production, timeline: timeline, resolver: resolver)
                 }
             } catch { self.error = error.localizedDescription; return }
         }
@@ -143,16 +160,15 @@ final class ExportService {
                 event?(.exporting)
                 if format == .xml {
                     let cancellationFlag = cancellationFlag
-                    try await Task.detached(priority: .userInitiated) {
-                        try XMLExporter.export(
-                            timeline: timeline,
-                            resolver: resolver,
-                            outputURL: outputURL,
-                            reportedTarget: referenceOutputURL,
-                            preserveOutputIdentity: preserveOutputIdentity,
-                            isCancelled: { cancellationFlag.isCancelled }
-                        )
-                    }.value
+                    try await XMLExporter.exportWithProjectMedia(
+                        timeline: timeline, resolver: resolver, outputURL: outputURL,
+                        publishedOutputURL: referenceOutputURL, stagedMediaDirectoryURL: stagedMediaDirectoryURL,
+                        preserveOutputIdentity: preserveOutputIdentity,
+                        isCancelled: { cancellationFlag.isCancelled },
+                        progress: { [weak self] value in
+                            self?.progress = value
+                            event?(.progress(value))
+                        })
                 } else {
                     lastFCPXMLReport = try await FCPXMLExporter.export(
                         timeline: timeline,
@@ -171,6 +187,7 @@ final class ExportService {
                         }
                     )
                 }
+                try await Task.detached(priority: .userInitiated) { try ProjectEffectResources.requireCurrent(effectResources) }.value
                 progress = 1.0
                 event?(.progress(1.0))
                 var evidence: [String: Any] = ["format": formatName]
@@ -222,21 +239,27 @@ final class ExportService {
                 resolver: resolver,
                 resolution: resolution,
                 outputURL: outputURL,
-                styleReview: styleReview
+                styleReview: styleReview,
+                production: production,
+                event: event,
+                effectResources: effectResources
             )
             return
         }
 
         do {
             if cancelRequested { throw CancellationError() }
-            try await TimelineStyleReview.revalidate(styleReview, timeline: timeline, resolver: resolver)
+            try await revalidateReview(styleReview, authorization: nativeReviewAuthorization, production: production,
+                timeline: timeline, resolver: resolver, outputURL: outputURL)
+            try await ProductionExportBinding.revalidate(production, timeline: timeline, resolver: resolver)
             if cancelRequested { throw CancellationError() }
+            try await Task.detached(priority: .userInitiated) { try ProjectEffectResources.requireCurrent(effectResources) }.value
             let prepared = try await makeExportSession(
                 timeline: timeline, resolver: resolver,
-                format: format, resolution: resolution
+                format: format, resolution: resolution, timeRange: production?.range, effectResources: effectResources
             )
             if cancelRequested { throw CancellationError() }
-            if styleReview != nil {
+            if styleReview != nil || production != nil {
                 guard prepared.result.offlineMediaRefs.isEmpty, prepared.result.unprocessableMediaRefs.isEmpty else {
                     throw ToolError("The export cannot reproduce the reviewed cut because media is offline or unprocessable. Repair the media and review the resulting cut again.")
                 }
@@ -265,7 +288,10 @@ final class ExportService {
 
             do {
                 try await session.export(to: outputURL, as: fileType)
-                try await TimelineStyleReview.revalidate(styleReview, timeline: timeline, resolver: resolver)
+                try await Task.detached(priority: .userInitiated) { try ProjectEffectResources.requireCurrent(effectResources) }.value
+                try await revalidateReview(styleReview, authorization: nativeReviewAuthorization, production: production,
+                    timeline: timeline, resolver: resolver, outputURL: outputURL)
+                try await ProductionExportBinding.revalidate(production, timeline: timeline, resolver: resolver)
                 let outputSize = await Self.encodedVideoSize(of: outputURL) ?? prepared.renderSize
                 lastReport = ExportRunReport(
                     outputSize: outputSize,
@@ -320,14 +346,41 @@ final class ExportService {
 
     }
 
+    private func revalidateReview(_ style: TimelineStyleReview.Snapshot?,
+        authorization: PipelineProductionSequenceReviewStore.ReelAuthorization?, production: ProductionExportBinding.Snapshot?, timeline: Timeline,
+        resolver: MediaResolver, outputURL: URL) async throws {
+        if let authorization {
+            try await authorization.requireCurrent(timeline: timeline, resolver: resolver, outputURL: outputURL)
+        } else {
+            try await TimelineStyleReview.revalidate(style, timeline: timeline, resolver: resolver)
+            try await requireFilmReview(production: production, timeline: timeline, resolver: resolver)
+        }
+    }
+
+    private func requireFilmReview(production: ProductionExportBinding.Snapshot?, timeline: Timeline,
+                                   resolver: MediaResolver) async throws {
+        guard let production else { return }
+        let frozen = resolver.snapshot()
+        try await Task.detached(priority: .utility) {
+            guard let root = DataRootResolver.dataRoot(of: production.home) else {
+                throw ToolError("The reviewed production is no longer available.")
+            }
+            _ = try PipelineProductionSequenceReviewStore.requireCurrent(dataRoot: root, timeline: timeline, resolver: frozen)
+        }.value
+    }
+
     private func exportHDR(
         timeline: Timeline,
         resolver: MediaResolver,
         resolution: ExportResolution,
         outputURL: URL,
-        styleReview: TimelineStyleReview.Snapshot?
+        styleReview: TimelineStyleReview.Snapshot?,
+        production: ProductionExportBinding.Snapshot?,
+        event: (@MainActor @Sendable (Event) -> Void)?,
+        effectResources: [ProjectEffectResources.Binding]
     ) async {
         do {
+            try await Task.detached(priority: .userInitiated) { try ProjectEffectResources.requireCurrent(effectResources) }.value
             let renderSize = resolution.renderSize(for: CGSize(
                 width: timeline.width,
                 height: timeline.height
@@ -341,12 +394,17 @@ final class ExportService {
                 timeline: timeline,
                 resolver: resolver
             )
+            try await ProductionExportBinding.revalidate(production, timeline: timeline, resolver: resolver)
+            try await requireFilmReview(production: production, timeline: timeline, resolver: resolver)
+            let renderTimeline = try await Task.detached(priority: .userInitiated) {
+                try ProjectEffectResources.renderTimeline(timeline, bindings: effectResources)
+            }.value
             let result = try await CompositionBuilder.build(
-                timeline: timeline,
+                timeline: renderTimeline,
                 resolveURL: { resolver.resolveURL(for: $0) },
                 renderSize: renderSize
             )
-            if styleReview != nil {
+            if styleReview != nil || production != nil {
                 guard result.offlineMediaRefs.isEmpty,
                       result.unprocessableMediaRefs.isEmpty else {
                     throw ToolError("The export cannot reproduce the reviewed cut because media is offline or unprocessable. Repair the media and review the resulting cut again.")
@@ -356,6 +414,7 @@ final class ExportService {
             activeHDRCancellation = cancellation
             defer { activeHDRCancellation = nil }
             if cancelRequested { cancellation.cancel() }
+            event?(.exporting)
             try await HDRVideoExporter.export(
                 .init(
                     composition: result.composition,
@@ -366,9 +425,10 @@ final class ExportService {
                 ),
                 renderSize: renderSize,
                 to: outputURL,
+                timeRange: production?.range,
                 cancellation: cancellation,
                 onProgress: { [weak self] value in
-                    Task { @MainActor in self?.progress = value }
+                    Task { @MainActor in self?.progress = value; event?(.progress(value)) }
                 }
             )
             try await TimelineStyleReview.revalidate(
@@ -376,12 +436,16 @@ final class ExportService {
                 timeline: timeline,
                 resolver: resolver
             )
+            try await ProductionExportBinding.revalidate(production, timeline: timeline, resolver: resolver)
+            try await requireFilmReview(production: production, timeline: timeline, resolver: resolver)
+            try await Task.detached(priority: .userInitiated) { try ProjectEffectResources.requireCurrent(effectResources) }.value
             lastReport = .init(
                 outputSize: await Self.encodedVideoSize(of: outputURL) ?? renderSize,
                 offlineMediaRefs: result.offlineMediaRefs,
                 unprocessableMediaRefs: result.unprocessableMediaRefs
             )
             progress = 1
+            event?(.progress(1))
             Log.export.notice(
                 "hdr export ok",
                 telemetry: "Export finished",
@@ -497,13 +561,18 @@ final class ExportService {
         timeline: Timeline,
         resolver: MediaResolver,
         format: ExportFormat,
-        resolution: ExportResolution
+        resolution: ExportResolution,
+        timeRange: CMTimeRange?,
+        effectResources: [ProjectEffectResources.Binding]
     ) async throws -> (session: AVAssetExportSession, result: CompositionResult, renderSize: CGSize) {
         let timelineCanvas = CGSize(width: timeline.width, height: timeline.height)
         let renderSize = resolution.renderSize(for: timelineCanvas)
 
+        let renderTimeline = try await Task.detached(priority: .userInitiated) {
+            try ProjectEffectResources.renderTimeline(timeline, bindings: effectResources)
+        }.value
         let result = try await CompositionBuilder.build(
-            timeline: timeline,
+            timeline: renderTimeline,
             resolveURL: { resolver.resolveURL(for: $0) },
             renderSize: renderSize
         )
@@ -513,6 +582,7 @@ final class ExportService {
             throw ExportError.unsupportedPreset
         }
         session.audioMix = result.audioMix
+        if let timeRange { session.timeRange = timeRange }
 
         session.videoComposition = result.videoComposition
         return (session, result, renderSize)

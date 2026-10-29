@@ -41,7 +41,7 @@ ENGINE_REGISTRY_STORED_PROPERTIES = [
     "frameReferencePlanProvider",
     "artifactCandidateRequirements",
 ]
-ENGINE_BOUNDARY_LAYOUT_CONTRACT = 11
+ENGINE_BOUNDARY_LAYOUT_CONTRACT = 12
 ENGINE_BOUNDARY_COMPATIBILITY_FLOOR = 2
 ENGINE_AUDIO_BOUNDARY_FILES = [
     "Engine/Sources/NexGenEngine/Audio/PCM.swift",

@@ -1,0 +1,108 @@
+name: Existing Claude Backends Live Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact independently reviewed source commit
+        type: string
+        required: true
+      backend:
+        description: Real backend cases; each dispatch needs fresh approval
+        type: choice
+        options: [both, claudeCode, anthropicAPI]
+        default: both
+      claude_version:
+        description: Exact approved Claude Code version for the CLI case
+        type: string
+        required: false
+        default: ''
+      api_model_id:
+        description: Exact API model; must exist in actual discovery
+        type: string
+        required: false
+        default: ''
+      approval:
+        description: Enter APPROVE-CLAUDE-BACKEND-SMOKE for paid agent requests, without media generation
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-backend-live-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    if: github.actor == github.repository_owner && github.triggering_actor == github.repository_owner && github.run_attempt == 1
+    # Unit transport acceptance; macOS 26 native UI compatibility is a separate acceptance surface.
+    runs-on: macrunner
+    timeout-minutes: 30
+    steps:
+      - name: Require exact source, separate spend approval, and dedicated CI authentication
+        env:
+          EXPECTED_SOURCE: ${{ inputs.source_sha }}
+          APPROVAL: ${{ inputs.approval }}
+          BACKEND: ${{ inputs.backend }}
+          CLI_VERSION: ${{ inputs.claude_version }}
+          API_MODEL: ${{ inputs.api_model_id }}
+          NGV_CI_ANTHROPIC_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          NGV_CI_CLAUDE_OAUTH: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          test "$APPROVAL" = APPROVE-CLAUDE-BACKEND-SMOKE
+          [[ "$EXPECTED_SOURCE" =~ ^[0-9a-f]{40}$ ]]
+          test "$EXPECTED_SOURCE" = "$GITHUB_SHA"
+          test "$EXPECTED_SOURCE" = "${{ github.workflow_sha }}"
+          if test "$BACKEND" != anthropicAPI; then
+            [[ "$CLI_VERSION" =~ ^[0-9]+[.][0-9]+[.][0-9]+$ ]]
+            test -n "$NGV_CI_CLAUDE_OAUTH" || { echo '::error::Missing CI secret CLAUDE_CODE_OAUTH_TOKEN'; exit 1; }
+          fi
+          if test "$BACKEND" != claudeCode; then
+            test -n "$API_MODEL"
+            test -n "$NGV_CI_ANTHROPIC_KEY" || { echo '::error::Missing CI secret ANTHROPIC_API_KEY'; exit 1; }
+          fi
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-xcode-27
+      - uses: ./.github/actions/cache-swiftpm-dependencies
+      - name: Build and stage the actual test consumer
+        run: |
+          swift build --cache-path "$NGV_SWIFTPM_CACHE_PATH" --build-tests
+          scripts/verify_tracked_source_state.sh
+          scripts/stage_test_runtime.sh debug
+      - name: Install the exact CLI for its real process case
+        if: inputs.backend != 'anthropicAPI'
+        env:
+          CLI_VERSION: ${{ inputs.claude_version }}
+        run: npm install --global "@anthropic-ai/claude-code@$CLI_VERSION"
+      - name: Exercise real schema roundtrips, language, cancel and owned shutdown
+        env:
+          BACKEND: ${{ inputs.backend }}
+          NGV_EXPECTED_CLAUDE_VERSION: ${{ inputs.claude_version }}
+          NGV_BACKEND_MODEL_ID: ${{ inputs.api_model_id }}
+          NGV_CI_ANTHROPIC_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          NGV_CI_CLAUDE_OAUTH: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          NGV_AGENT_BACKEND_SPEND_APPROVED: '1'
+        run: |
+          set -euo pipefail
+          if test "$BACKEND" = both || test "$BACKEND" = claudeCode; then
+            python3 scripts/agent_backend_live_acceptance.py --backend claudeCode --source "$GITHUB_SHA" --output "$RUNNER_TEMP/agent-backend-live/claudeCode"
+          fi
+          if test "$BACKEND" = both || test "$BACKEND" = anthropicAPI; then
+            python3 scripts/agent_backend_live_acceptance.py --backend anthropicAPI --source "$GITHUB_SHA" --output "$RUNNER_TEMP/agent-backend-live/anthropicAPI"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: existing-claude-backends-live-evidence
+          path: |
+            ${{ runner.temp }}/agent-backend-live/*/live-backend.json
+            ${{ runner.temp }}/agent-backend-live/*/live-backend-failure.json
+            ${{ runner.temp }}/agent-backend-live/*/test-output.redacted.log
+          if-no-files-found: warn
+          retention-days: 14

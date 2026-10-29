@@ -4,6 +4,12 @@ import SwiftUI
 enum AppTheme {
 
     enum Acceptance {
+        static let fixtureCircleColor = NSColor.systemRed
+        static let fixtureSquareColor = NSColor.systemBlue
+        static let fixtureShapeBackgroundColor = NSColor.white
+        static let fixtureRedColor = NSColor.red
+        static let fixtureBlueColor = NSColor.blue
+        static let fixtureGeneratedImageColor = NSColor(red: 0.8, green: 0.1, blue: 0.1, alpha: 1)
         static let inspectorViewport = CGSize(width: 440, height: 650)
         static let musicvideoViewport = CGSize(width: 1380, height: 950)
         static let workbenchViewport = CGSize(width: 1470, height: 950)
@@ -56,6 +62,7 @@ enum AppTheme {
         static let medium: CGFloat = 1.5
         static let thick: CGFloat = 2
         static let heavy: CGFloat = 3
+        static let blockoutTravel: CGFloat = 6
     }
 
     // MARK: - Accent
@@ -171,6 +178,11 @@ enum AppTheme {
         static let tertiary = NSColor.white.withAlphaComponent(0.62)
         static let muted = NSColor.white.withAlphaComponent(0.50)
         static let systemSecondary = NSColor.secondaryLabelColor
+        static let blockoutCameraColors = (0..<5).map { index in
+            let hue = CGFloat(index) / 5
+            return CGColor(red: 0.45 + hue * 0.3, green: 0.72 - hue * 0.18,
+                blue: 0.85 - hue * 0.08, alpha: 1)
+        }
 
         static var primaryColor: Color { Color(primary) }
         static var secondaryColor: Color { Color(secondary) }
@@ -319,6 +331,7 @@ enum AppTheme {
     }
 
     enum ComponentSize {
+        static let blockoutMarkerRearHalfWidthRatio: CGFloat = 0.625
         static let scrubFieldStandard: CGFloat = 50
         static let scrubFieldWide: CGFloat = 56
         static let sheetTileMinWidth: CGFloat = 88
@@ -437,6 +450,7 @@ enum AppTheme {
         static let agentComposerGrabHeight: CGFloat = 10
         static let agentDecisionMaxHeight: CGFloat = 318
         static let productionArtifactMinHeight: CGFloat = 120
+        static let productionDecisionSummaryMinHeight: CGFloat = 48
         static let choicePickerIdealWidth: CGFloat = 180
         static let choicePickerHeight: CGFloat = 32
         static let agentBlockLabelWidth: CGFloat = 96
@@ -467,6 +481,11 @@ enum AppTheme {
         static let storyboardCardMinHeight: CGFloat = 130
         static let activityFlyoutWidth: CGFloat = 480
         static let activityFlyoutHeight: CGFloat = 560
+        static let productionDockMaximumFraction: CGFloat = 0.5
+        static let productionDockStatusLineHeight: CGFloat = 20
+        static let productionDecisionReviewWidth: CGFloat = 720
+        static let productionDecisionReviewHeight: CGFloat = 500
+        static let productionAssetPreviewHeight: CGFloat = 220
 
         static let mediaFolderTreeMin: CGFloat = 180
         static let mediaFolderTreeDefault: CGFloat = 220

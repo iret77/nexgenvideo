@@ -25,11 +25,12 @@ struct DenoiseKernelTests {
                 px[i + 3] = 255
             }
         }
-        let cg = px.withUnsafeMutableBytes {
-            CGContext(data: $0.baseAddress, width: n, height: n, bitsPerComponent: 8, bytesPerRow: n * 4,
-                      space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        let cg = CGContext(data: nil, width: n, height: n, bitsPerComponent: 8, bytesPerRow: n * 4,
+                            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        px.withUnsafeBytes {
+            cg.data!.copyMemory(from: $0.baseAddress!, byteCount: $0.count)
         }
-        return CIImage(cgImage: cg!.makeImage()!, options: [.colorSpace: NSNull()])
+        return CIImage(cgImage: cg.makeImage()!, options: [.colorSpace: NSNull()])
     }
 
     private func rgba(_ img: CIImage) -> [Float] {

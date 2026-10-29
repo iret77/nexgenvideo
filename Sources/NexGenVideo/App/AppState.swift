@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import NexGenEngine
 
 struct ProjectOpenOptions {
     var startTutorial = false
@@ -189,6 +190,7 @@ final class AppState {
         guard let project = activeProject,
               let projectURL = project.fileURL,
               let workingRoot = project.editorViewModel.workingRoot else { return }
+        guard productionUpgradeIsIdle(project) else { return }
         guard case .bound(let source) = ProjectPluginSettings.bindingResolution(
             projectURL: workingRoot
         ) else {
@@ -250,17 +252,28 @@ final class AppState {
             )
             return
         }
+        let lease: ProductionUpgradeLease?
+        do { lease = try acquireProductionUpgradeLease(projectURL: projectURL) }
+        catch { NSAlert(error: error).runModal(); return }
+        defer { releaseProductionUpgradeLease(lease) }
+        let reset: ProductionWorkflowRecoveryMigration.Intent?
+        do { reset = try productionResetPreview(projectURL: projectURL, source: .pack(source), target: target) }
+        catch is CancellationError { return }
+        catch { NSAlert(error: error).runModal(); return }
         guard confirm(
             message: "Upgrade this project to \(source.id) \(target.version)",
             informative: "NexGenVideo will restart, upgrade a Recovery copy, and keep "
-                + "the saved project untouched until you save.",
+                + "the saved project untouched until you save." + (reset.map { "\n\n" + $0.explanation } ?? ""),
             action: "Upgrade and Restart"
         ) else { return }
         do {
+            try requireProductionUpgradeLease(lease)
             let request = try ProjectPackMigration.prepareSchedule(
                 projectURL: projectURL,
                 source: source,
-                target: target
+                target: target,
+                productionReset: reset,
+                sourceRoot: productionUpgradeSourceRoot(projectURL)
             )
             AppRelaunch.now {
                 ProjectPackMigration.commit(request)
@@ -269,6 +282,110 @@ final class AppState {
         } catch {
             NSAlert(error: error).runModal()
         }
+    }
+
+    func enrollActiveProjectInProduction(expectedEditor: EditorViewModel? = nil) {
+        guard let project = activeProject,
+              expectedEditor == nil || expectedEditor === project.editorViewModel else { return }
+        Task { @MainActor in
+            guard let projectURL = project.fileURL, let root = project.editorViewModel.workingRoot,
+                  let key = project.editorViewModel.openWorkingCopyKey, productionUpgradeIsIdle(project) else { return }
+            let editor = project.editorViewModel
+            let phaseRoot = DataRootResolver.dataRoot(of: root) ?? root
+            guard let lease = editor.pipelinePhaseRunCoordinator.beginMutation(projectRoot: phaseRoot,
+                label: "Production workflow upgrade") else { return }
+            var holdsLease = true
+            defer { if holdsLease { editor.pipelinePhaseRunCoordinator.endMutation(projectRoot: phaseRoot, id: lease) } }
+            do {
+                try project.checkpointForProductionUpgrade()
+                let intent = try ProductionWorkflowRecoveryMigration.preview(projectURL: projectURL, sourceRoot: root,
+                                                                             source: .core, target: .core)
+                guard confirm(message: "Start a new production workflow", informative: intent.explanation,
+                              action: "Start Production") else { return }
+                guard editor.workingRoot == root, editor.openWorkingCopyKey == key,
+                      project.fileURL == projectURL, productionUpgradeIsIdle(project, ownedMutation: lease, notifyUser: false),
+                      editor.pipelinePhaseRunCoordinator.holdsMutation(projectRoot: phaseRoot, id: lease) else {
+                    throw GateBlocked("The project changed while the production upgrade review was open. Review it again.")
+                }
+                try ProductionWorkflowRecoveryMigration.requireSourceCurrent(intent, root: root)
+                try ProjectPackMigration.migrateCoreWorkingCopy(projectURL: projectURL, workingCopyKey: key, intent: intent)
+                try editor.reloadProductionWorkflowDeclaration(ownedMutation: lease)
+                editor.pipelinePhaseRunCoordinator.endMutation(projectRoot: phaseRoot, id: lease)
+                holdsLease = false
+                await editor.refreshEngineState()
+            } catch is CancellationError {
+            } catch { NSAlert(error: error).runModal() }
+        }
+    }
+
+    private func productionUpgradeIsIdle(_ project: VideoProject, ownedMutation: UUID? = nil, notifyUser: Bool = true) -> Bool {
+        let editor = project.editorViewModel
+        guard !editor.agentService.isStreaming, !editor.agentService.isComposerBlocked,
+              editor.agentService.pendingFunction == nil, editor.generationBatchCoordinator.pending == nil else {
+            if notifyUser { notify(message: "Finish the current agent action first", informative: "Resolve the pending dialog or approval before changing the production workflow.") }
+            return false
+        }
+        let root = editor.workingRoot.flatMap { DataRootResolver.dataRoot(of: $0) } ?? editor.workingRoot
+        if let root, editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: root) != nil,
+           ownedMutation.map({ editor.pipelinePhaseRunCoordinator.holdsMutation(projectRoot: root, id: $0) }) != true {
+            if notifyUser { notify(message: "Finish the current production job first", informative: "The workflow cannot change while its phase is running.") }
+            return false
+        }
+        if let key = editor.openWorkingCopyKey, ExportQueue.shared.jobs(ownerKey: key).contains(where: { !$0.status.isTerminal }) {
+            if notifyUser { notify(message: "Finish the current export first", informative: "The workflow cannot change while delivery is running.") }
+            return false
+        }
+        return true
+    }
+
+    private func productionUpgradeSourceRoot(_ projectURL: URL) throws -> URL {
+        if let project = productionUpgradeProject(projectURL),
+           let root = project.editorViewModel.workingRoot { return root }
+        return try ProjectWorkingCopy.recoverableDirtyHome(for: projectURL) ?? projectURL
+    }
+
+    private func productionUpgradeProject(_ projectURL: URL) -> VideoProject? {
+        let documents = NSDocumentController.shared.documents.compactMap { $0 as? VideoProject }
+        return documents.first { $0.fileURL?.standardizedFileURL == projectURL.standardizedFileURL }
+            ?? activeProject.flatMap { $0.fileURL?.standardizedFileURL == projectURL.standardizedFileURL ? $0 : nil }
+    }
+
+    private struct ProductionUpgradeLease {
+        let project: VideoProject
+        let editor: EditorViewModel
+        let root: URL
+        let id: UUID
+    }
+
+    private func acquireProductionUpgradeLease(projectURL: URL) throws -> ProductionUpgradeLease? {
+        guard let project = productionUpgradeProject(projectURL), let home = project.editorViewModel.workingRoot else { return nil }
+        guard productionUpgradeIsIdle(project, notifyUser: false) else { throw GateBlocked("Finish the current project action before upgrading its workflow.") }
+        let root = DataRootResolver.dataRoot(of: home) ?? home
+        guard let id = project.editorViewModel.pipelinePhaseRunCoordinator.beginMutation(projectRoot: root, label: "Production workflow upgrade") else {
+            throw GateBlocked("The project is already changing. Wait for that operation to finish.")
+        }
+        return ProductionUpgradeLease(project: project, editor: project.editorViewModel, root: root, id: id)
+    }
+
+    private func requireProductionUpgradeLease(_ lease: ProductionUpgradeLease?) throws {
+        guard let lease else { return }
+        guard lease.editor.pipelinePhaseRunCoordinator.holdsMutation(projectRoot: lease.root, id: lease.id),
+              productionUpgradeIsIdle(lease.project, ownedMutation: lease.id, notifyUser: false) else {
+            throw GateBlocked("The project action changed while the upgrade review was open. Review it again.")
+        }
+    }
+
+    private func releaseProductionUpgradeLease(_ lease: ProductionUpgradeLease?) {
+        if let lease { lease.editor.pipelinePhaseRunCoordinator.endMutation(projectRoot: lease.root, id: lease.id) }
+    }
+
+    private func productionResetPreview(projectURL: URL, source: ProductionWorkflowRecoveryMigration.Source,
+                                        target: ProjectPackBinding) throws -> ProductionWorkflowRecoveryMigration.Intent? {
+        guard ProductionWorkflowRecoveryMigration.isProductionTarget(target) else { return nil }
+        _ = try ProjectIdentity.key(for: projectURL)
+        try productionUpgradeProject(projectURL)?.checkpointForProductionUpgrade()
+        return try ProductionWorkflowRecoveryMigration.preview(projectURL: projectURL,
+            sourceRoot: productionUpgradeSourceRoot(projectURL), source: source, target: .pack(target))
     }
 
     func revealGeneratedAssetFromNotification(assetId: String?, projectURL: URL?) {
@@ -328,51 +445,59 @@ final class AppState {
     /// saved and `ngv.json` written BEFORE the windows are made — otherwise the project would open
     /// generic regardless of the choice. Hence: save → set format → show windows.
     func createNewProject(format: String? = nil) {
+        guard projectOpenAdmission.canOpen else { return }
         guard let format, !format.isEmpty else {
             presentNewProjectPanel(binding: nil)
             return
         }
         Task {
-            let progress = PackInstallProgress(packID: format)
-            progress.show()
-            defer { progress.close() }
-            switch await PluginUpdateCenter.shared.prepareNewProject(packID: format) {
-            case .ready(let binding):
-                progress.close()
-                presentNewProjectPanel(binding: binding)
-            case .restartRequired(let binding):
-                progress.close()
-                offerNewProjectRestart(
-                    binding: binding,
-                    format: format
-                )
-            case .unavailable(let reason):
-                progress.close()
-                notify(
-                    message: "Couldn't prepare the “\(format)” format",
-                    informative: reason
-                )
-            }
+            do {
+                _ = try await projectOpenAdmission.perform { [self] in
+                    let progress = PackInstallProgress(packID: format)
+                    progress.show()
+                    defer { progress.close() }
+                    let preparation = await PluginUpdateCenter.shared.prepareNewProject(packID: format)
+                    try projectOpenAdmission.requireOpen()
+                    switch preparation {
+                    case .ready(let binding):
+                        progress.close()
+                        presentNewProjectPanel(binding: binding)
+                    case .restartRequired(let binding):
+                        progress.close()
+                        offerNewProjectRestart(binding: binding, format: format)
+                    case .unavailable(let reason):
+                        progress.close()
+                        notify(message: "Couldn't prepare the “\(format)” format", informative: reason)
+                    }
+                    return nil
+                }
+            } catch is CancellationError { }
+            catch { self.notify(message: "Couldn't prepare the project", informative: error.localizedDescription) }
         }
     }
 
     private func presentNewProjectPanel(binding: ProjectPackBinding?) {
+        guard projectOpenAdmission.canOpen else { return }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [Self.projectContentType]
         panel.nameFieldStringValue = Project.defaultProjectName
         panel.directoryURL = Project.storageDirectory
         panel.title = "New Project"
         panel.begin { response in
-            guard response == .OK, let url = panel.url else { return }
-            let doc = VideoProject()
+            guard response == .OK, let url = panel.url, self.projectOpenAdmission.canOpen else { return }
+            let publication: UUID
+            do { publication = try self.projectOpenAdmission.beginPublication() }
+            catch { return }
+            let doc = self.newProjectDocumentFactory?() ?? VideoProject()
             doc.fileURL = url
             doc.fileType = VideoProject.typeIdentifier
             NSDocumentController.shared.addDocument(doc)
             doc.save(to: url, ofType: VideoProject.typeIdentifier, for: .saveOperation) { error in
+                defer { self.projectOpenAdmission.finishPublication(publication) }
                 if let error {
                     // Don't leave a hidden, window-less document registered — drop it and surface why.
                     NSDocumentController.shared.removeDocument(doc)
-                    NSAlert(error: error).runModal()
+                    if self.projectOpenAdmission.canOpen { NSAlert(error: error).runModal() }
                     return
                 }
                 do {
@@ -387,9 +512,10 @@ final class AppState {
                     try doc.recordKnownPackageState(at: url)
                 } catch {
                     NSDocumentController.shared.removeDocument(doc)
-                    NSAlert(error: error).runModal()
+                    if self.projectOpenAdmission.canOpen { NSAlert(error: error).runModal() }
                     return
                 }
+                guard self.projectOpenAdmission.canOpen else { doc.close(); return }
                 ProjectRegistry.shared.register(url)
                 doc.makeWindowControllers()
                 self.showEditor(for: doc)
@@ -401,6 +527,7 @@ final class AppState {
         Task {
             do {
                 try await openProjectAsync(at: url, register: register, options: options)
+            } catch is CancellationError {
             } catch {
                 NSAlert(error: error).runModal()
             }
@@ -414,6 +541,8 @@ final class AppState {
                 if try await openProjectAsync(at: url) == nil {
                     reply = .cancel
                 }
+            } catch is CancellationError {
+                reply = .cancel
             } catch {
                 NSAlert(error: error).runModal()
                 reply = .failure
@@ -426,6 +555,13 @@ final class AppState {
     /// the open is abandoned deliberately, so the caller must not treat it as an error.
     @discardableResult
     private func openProjectAsync(at url: URL, register: Bool = true, options: ProjectOpenOptions = .init()) async throws -> VideoProject? {
+        try await projectOpenAdmission.perform {
+            try await self.loadAndPresentProject(at: url, register: register, options: options)
+        }
+    }
+
+    private func loadAndPresentProject(at url: URL, register: Bool, options: ProjectOpenOptions) async throws -> VideoProject? {
+        try projectOpenAdmission.requireOpen()
         let resolved = url.standardizedFileURL
         if let existing = showExistingProject(at: resolved, register: register, options: options) {
             return existing
@@ -433,10 +569,12 @@ final class AppState {
         // Before the document exists: a pack project opened without its pack would come up generic
         // and could be SAVED that way, normalizing it to the wrong shape.
         guard await ensurePackAvailable(for: resolved) else { return nil }
+        try projectOpenAdmission.requireOpen()
         let doc: VideoProject
         do {
             doc = try await VideoProject.load(from: resolved)
         } catch {
+            try projectOpenAdmission.requireOpen()
             if ProjectPackMigration.request(for: resolved) != nil {
                 if offerPendingUpgradeCancellation(
                     projectURL: resolved,
@@ -459,6 +597,8 @@ final class AppState {
             }
             throw error
         }
+        do { try projectOpenAdmission.requireOpen() }
+        catch { doc.close(); throw error }
         if let existing = showExistingProject(at: resolved, register: register, options: options) {
             return existing
         }
@@ -529,16 +669,28 @@ final class AppState {
             )
 
         case .legacyMigration(let target):
+            let lease: ProductionUpgradeLease?
+            do { lease = try acquireProductionUpgradeLease(projectURL: projectURL) }
+            catch { NSAlert(error: error).runModal(); return false }
+            defer { releaseProductionUpgradeLease(lease) }
+            let reset: ProductionWorkflowRecoveryMigration.Intent?
+            do { reset = try productionResetPreview(projectURL: projectURL, source: .legacyPack(target.id), target: target) }
+            catch is CancellationError { return false }
+            catch { NSAlert(error: error).runModal(); return false }
             guard confirm(
                 message: "Upgrade this legacy \(target.id) project",
                 informative: "NexGenVideo will migrate a Recovery copy to "
-                    + "\(target.projectSchema). The saved project stays untouched until Save.",
+                    + "\(target.projectSchema). The saved project stays untouched until Save."
+                    + (reset.map { "\n\n" + $0.explanation } ?? ""),
                 action: "Upgrade"
             ) else { return false }
             do {
+                try requireProductionUpgradeLease(lease)
                 try ProjectPackMigration.scheduleLegacy(
                     projectURL: projectURL,
-                    target: target
+                    target: target,
+                    productionReset: reset,
+                    sourceRoot: productionUpgradeSourceRoot(projectURL)
                 )
                 return true
             } catch {
@@ -549,7 +701,8 @@ final class AppState {
         case .missing(let id):
             guard confirm(
                 message: "Install the “\(id)” format pack",
-                informative: "Opening this project without it falls back to the generic workflow — and saving would keep it there.",
+                informative: "Install the format pack to open this project with its saved workflow. "
+                    + "If you cancel, the project stays closed and unchanged.",
                 action: "Install") else { return false }
             return await installPack(id: id, version: nil, for: projectURL)
 
@@ -586,10 +739,10 @@ final class AppState {
                 return false
             }
             guard confirm(
-                message: "Upgrade this project to the current “\(id)” format pack",
-                informative: "\(reason) NexGenVideo will install the compatible pack and upgrade "
-                    + "a Recovery copy. The saved project stays untouched until Save.",
-                action: "Upgrade Project") else { return false }
+                message: "Install a compatible “\(id)” format pack",
+                informative: "\(reason) NexGenVideo will install the compatible pack. "
+                    + "A production workflow change requires a separate review of its approval reset.",
+                action: "Install") else { return false }
             return await installPack(
                 id: id,
                 version: nil,
@@ -616,6 +769,14 @@ final class AppState {
         let active = PluginLoader.liveBinding(id: source.id)
         if ProjectIdentity.existingKey(for: projectURL) != nil,
            let offer = ProjectPackMigration.liveUpgradeOffer(source: source) {
+            let lease: ProductionUpgradeLease?
+            do { lease = try acquireProductionUpgradeLease(projectURL: projectURL) }
+            catch { NSAlert(error: error).runModal(); return false }
+            defer { releaseProductionUpgradeLease(lease) }
+            let reset: ProductionWorkflowRecoveryMigration.Intent?
+            do { reset = try productionResetPreview(projectURL: projectURL, source: .pack(source), target: offer.target) }
+            catch is CancellationError { return false }
+            catch { NSAlert(error: error).runModal(); return false }
             let projectName = Self.projectName(projectURL)
             let packName = Self.packDisplayName(offer.target)
             let alert = NSAlert()
@@ -625,6 +786,7 @@ final class AppState {
                 "“\(projectName)” uses \(packName) \(source.version). "
                     + "NexGenVideo can update a protected copy and open it with "
                     + "\(offer.target.version). The saved project remains unchanged until you save."
+                    + (reset.map { "\n\n" + $0.explanation } ?? "")
             )
             alert.addButton(withTitle: "Update and Open")
             alert.addButton(withTitle: "Open with \(source.version)")
@@ -632,11 +794,14 @@ final class AppState {
             switch alert.runModal() {
             case .alertFirstButtonReturn:
                 do {
+                    try requireProductionUpgradeLease(lease)
                     ProjectPackMigration.commit(
                         try ProjectPackMigration.prepareSchedule(
                             projectURL: projectURL,
                             source: source,
-                            target: offer.target
+                            target: offer.target,
+                            productionReset: reset,
+                            sourceRoot: productionUpgradeSourceRoot(projectURL)
                         )
                     )
                     return true
@@ -902,11 +1067,24 @@ final class AppState {
                 )
                 return false
             }
+            let lease: ProductionUpgradeLease?
+            do { lease = try acquireProductionUpgradeLease(projectURL: projectURL) }
+            catch { NSAlert(error: error).runModal(); return false }
+            defer { releaseProductionUpgradeLease(lease) }
+            let reset: ProductionWorkflowRecoveryMigration.Intent?
+            do { reset = try productionResetPreview(projectURL: projectURL, source: .pack(source), target: target) }
+            catch is CancellationError { return false }
+            catch { NSAlert(error: error).runModal(); return false }
+            if let reset, !confirm(message: "Upgrade this production workflow", informative: reset.explanation,
+                                   action: "Upgrade Project") { return false }
             do {
+                try requireProductionUpgradeLease(lease)
                 ProjectPackMigration.commit(try ProjectPackMigration.prepareSchedule(
                     projectURL: projectURL,
                     source: source,
-                    target: target
+                    target: target,
+                    productionReset: reset,
+                    sourceRoot: productionUpgradeSourceRoot(projectURL)
                 ))
             } catch {
                 NSAlert(error: error).runModal()
@@ -1110,6 +1288,7 @@ final class AppState {
     }
 
     func openProjectFromPanel() {
+        guard projectOpenAdmission.canOpen else { return }
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [Self.projectContentType]
         panel.canChooseDirectories = false
@@ -1127,5 +1306,15 @@ final class AppState {
             ?? UTType(filenameExtension: Project.fileExtension, conformingTo: .package)
             ?? .package
     }()
+
+    @ObservationIgnored var newProjectDocumentFactory: (@MainActor () -> VideoProject)?
+
+    private let projectOpenAdmission = ProjectOpenAdmission()
+
+    var permitsNewProjectWork: Bool { projectOpenAdmission.canOpen }
+
+    func confirmProjectTerminationAndDrain() async {
+        await projectOpenAdmission.confirmTerminationAndDrain()
+    }
 
 }
