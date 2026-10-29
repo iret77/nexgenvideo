@@ -295,11 +295,17 @@ enum GenerationBatchReviewSelfTest {
             }
         )
         try present(fifty, editor: editor)
+        guard let lastItem = GenerationBatchReviewProjection(batch: fifty).sections.last?.items.last else {
+            throw Failure(message: "50-item review has no final request")
+        }
         for width in [CGFloat(400), AppTheme.Layout.agentPanelMax] {
+            writeBatchLayoutEvidence(in: window, context: "before resize to \(Int(width))")
             place(window, contentSize: NSSize(
                 width: width,
                 height: minimumPanelHeight
             ))
+            window.contentView?.layoutSubtreeIfNeeded()
+            writeBatchLayoutEvidence(in: window, context: "after resize to \(Int(width))")
             try await reveal(
                 identifier: "generation-batch.remove.\(fifty.payload.items[0].id)",
                 in: window,
@@ -311,6 +317,17 @@ enum GenerationBatchReviewSelfTest {
                 "generation-batch.approve",
             ], in: window, context: "50-item \(Int(width))-point large-text review")
             try await verifyLastRequest(fifty, in: window, context: "50-item \(Int(width))-point large-text review")
+            if width == AppTheme.Layout.agentPanelMax {
+                for expanded in [true, false] {
+                    let identifier = "generation-batch.details.\(lastItem.id)"
+                    try await reveal(identifier: identifier, in: window, context: "last request Details at \(Int(width)) points")
+                    try await verifyDetailsToggle(identifier: identifier, itemID: lastItem.id,
+                        expectExpanded: expanded, in: window, runtimeEvidence: runtimeEvidence)
+                }
+            }
+            try await requireVisible(["generation-batch.approve"], in: window,
+                context: "50-item approval after Details at \(Int(width)) points")
+            try captureWindow(window, name: "generation-batch-50-\(Int(width))-last-request.png")
         }
         editor.generationBatchCoordinator.decline(editor: editor)
         try await verifySingleApproval(package: pricedPackage, editor: editor, window: window)
@@ -769,9 +786,12 @@ enum GenerationBatchReviewSelfTest {
 
     private static func verifyLastRequest(_ batch: GenerationBatch, in window: NSWindow, context: String) async throws {
         let projection = GenerationBatchReviewProjection(batch: batch)
-        guard let lastID = projection.sections.last?.items.last?.id else {
+        guard let lastItem = projection.sections.last?.items.last else {
             throw Failure(message: "\(context) has no last request")
         }
+        let lastID = lastItem.id
+        writeEvidence("last-request-target context=\(context) itemCount=\(projection.itemCount) "
+            + "itemID=\(lastID) manifestIndex=\(lastItem.manifestIndex) purpose=\(lastItem.purpose)")
         let identifier = "generation-batch.details.\(lastID)"
         try await reveal(identifier: identifier, in: window, context: context, searchTowardEnd: true)
         try await requireVisible([
@@ -887,26 +907,18 @@ enum GenerationBatchReviewSelfTest {
                     + "elapsedSeconds=\(durationSeconds(started.duration(to: clock.now)))")
                 return
             } else {
-                guard let scrollView = probe.enclosingScrollView else {
-                    throw Failure(message: "\(context) cannot reveal \(identifier): native probe has no enclosing NSScrollView")
-                }
+                let scrollView = try scrollContainerClipping(probe, context: context)
                 let target = probe.convert(probe.bounds, to: scrollView.contentView)
-                guard target.height <= scrollView.contentView.bounds.height else {
-                    throw Failure(
-                        message: "\(context) cannot show \(identifier) completely: the control is taller than "
-                            + "its list viewport; " + scrollGeometry(probe: probe, scrollView: scrollView)
-                    )
-                }
+                let visible = scrollView.contentView.bounds
+                let movement = target.minY < visible.minY ? target.minY - visible.minY : target.maxY - visible.maxY
+                let distance = Int32(min(CGFloat(Int32.max), max(1, min(ceil(abs(movement)), floor(visible.height * 0.75)))))
+                let delta = (movement > 0) == scrollView.contentView.isFlipped ? -distance : distance
                 let before = scrollView.contentView.bounds.origin
-                if let failure = AppRelaunchSelfTest.scrollProbeToVisible(probe, in: window) {
-                    lastBoundary = failure
-                    try? await Task.sleep(for: .milliseconds(100))
-                    continue
-                }
+                try await scrollList(scrollView, delta: delta, in: window)
                 root.layoutSubtreeIfNeeded()
                 let after = scrollView.contentView.bounds.origin
                 if before != after { lastProgress = clock.now }
-                let progress = "moved=\(before != after) before=\(pointDescription(before)) "
+                let progress = "wheelDelta=\(delta) moved=\(before != after) before=\(pointDescription(before)) "
                     + "after=\(pointDescription(after)) " + scrollGeometry(probe: probe, scrollView: scrollView)
                 if progress != lastBoundary {
                     writeEvidence("scroll-progress identifier=\(identifier) \(progress)")
@@ -920,6 +932,35 @@ enum GenerationBatchReviewSelfTest {
                 + "elapsedSeconds=\(durationSeconds(started.duration(to: clock.now))) "
                 + "idleSeconds=\(durationSeconds(lastProgress.duration(to: clock.now))); last boundary: \(lastBoundary)"
         )
+    }
+
+    private static func scrollContainerClipping(_ probe: NSView, context: String) throws -> NSScrollView {
+        var ancestor = probe.superview
+        while let current = ancestor {
+            defer { ancestor = current.superview }
+            guard let clip = current as? NSClipView, let scroll = clip.enclosingScrollView else { continue }
+            let target = probe.convert(probe.bounds, to: clip)
+            let visible = clip.bounds
+            guard !visible.contains(target) else { continue }
+            guard [target.minX, target.minY, target.maxX, target.maxY, visible.minX, visible.minY,
+                   visible.maxX, visible.maxY].allSatisfy(\.isFinite), visible.height > 0,
+                  target.height <= visible.height, target.minX >= visible.minX, target.maxX <= visible.maxX else {
+                throw Failure(message: "\(context) cannot reveal the full control with vertical wheel input; "
+                    + scrollGeometry(probe: probe, scrollView: scroll))
+            }
+            return scroll
+        }
+        throw Failure(message: "\(context) control is not ready and has no vertically clipping scroll container")
+    }
+
+    private static func writeBatchLayoutEvidence(in window: NSWindow, context: String) {
+        guard let root = window.contentView else { return }
+        let list = findClickProbes(in: root, identifier: "generation-batch.list").first
+        let geometry = list.flatMap { probe in
+            probe.enclosingScrollView.map { scrollGeometry(probe: probe, scrollView: $0) }
+        } ?? "list=absent"
+        writeEvidence("resize context=\(context) window=\(rectDescription(window.frame)) "
+            + "root=\(rectDescription(root.bounds)) \(geometry)")
     }
 
     private static func durationSeconds(_ duration: Duration) -> Double {
