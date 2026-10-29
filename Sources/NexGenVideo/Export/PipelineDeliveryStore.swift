@@ -10,6 +10,7 @@ enum PipelineDeliveryStore {
         let planData: Data
         let manifest: FinishedTimelineManifestV1
         let manifestData: Data
+        var productionReview: CanonicalArtifactReferenceV1? = nil
     }
 
     struct OutputEvidence {
@@ -33,6 +34,7 @@ enum PipelineDeliveryStore {
         let planData: Data
         let media: [RenderPublishedArtifactV1]
         let assemblyIsCurrent: Bool
+        let productionReview: CanonicalArtifactReferenceV1?
     }
 
     static let selectionPath = "delivery/selection.v1.json"
@@ -54,9 +56,12 @@ enum PipelineDeliveryStore {
               let workingCopyKey = editor.openWorkingCopyKey else {
             throw ToolError("Open a project before preparing delivery.")
         }
+        _ = try ProjectPackGate.requireLiveMutation(projectURL: home, declaredPack: editor.declaredPluginName,
+            declaredBinding: editor.declaredPluginBinding, declaredProductionContract: editor.declaredProductionContract)
         let boundTimeline = editor.timeline
         let boundManifest = editor.mediaManifest
         let boundResolver = editor.mediaResolver.snapshot()
+        let production = try await ProductionExportBinding.capture(timeline: boundTimeline, resolver: boundResolver)
         let cancellationFlag = ExportCancellationFlag()
         let prepared = try await withTaskCancellationHandler {
             try await Task.detached(priority: .userInitiated) {
@@ -64,7 +69,7 @@ enum PipelineDeliveryStore {
                     dataRoot: dataRoot,
                     timeline: boundTimeline,
                     resolver: boundResolver,
-                    requireSequenceReview: requireSequenceReview,
+                    requireSequenceReview: requireSequenceReview, production: production,
                     isCancelled: { cancellationFlag.isCancelled }
                 )
             }.value
@@ -83,6 +88,15 @@ enum PipelineDeliveryStore {
               ) == prepared.metadata else {
             throw CancellationError()
         }
+        try await ProductionExportBinding.revalidate(production, timeline: boundTimeline, resolver: boundResolver)
+        guard editor.openWorkingCopyKey == workingCopyKey,
+              editor.workingRoot?.standardizedFileURL == home.standardizedFileURL,
+              editor.mediaManifest == boundManifest,
+              FileDigest.sha256(of: try PipelineAssemblyStore.canonical(editor.timeline)) == prepared.timelineSHA256 else {
+            throw CancellationError()
+        }
+        _ = try ProjectPackGate.requireLiveMutation(projectURL: home, declaredPack: editor.declaredPluginName,
+            declaredBinding: editor.declaredPluginBinding, declaredProductionContract: editor.declaredProductionContract)
         let manifest = FinishedTimelineManifestV1(
             projectID: prepared.metadata.project,
             finishPlanSHA256: FileDigest.sha256(of: prepared.planData),
@@ -102,9 +116,17 @@ enum PipelineDeliveryStore {
         let timelineURL = dataRoot.appendingPathComponent(prepared.timelinePath)
         let planURL = dataRoot.appendingPathComponent(FinishPlanV1.relativePath)
         let manifestURL = dataRoot.appendingPathComponent(FinishedTimelineManifestV1.relativePath)
+        let productionFiles: [(String, Data)]
+        if let production, let review = prepared.productionReview {
+            let evidence = ProductionFinishedEvidence(schema: "production-finished-evidence/v1", projectID: prepared.metadata.project,
+                timelineSHA256: prepared.timelineSHA256, finishPlanSHA256: FileDigest.sha256(of: prepared.planData),
+                finishedManifestSHA256: FileDigest.sha256(of: manifestData), productionFingerprint: production.fingerprint, review: review)
+            let bytes = try PipelineAssemblyStore.canonical(evidence)
+            productionFiles = [(ProductionFinishedEvidence.currentPath, bytes), (ProductionFinishedEvidence.archivePath(bytes: bytes), bytes)]
+        } else { productionFiles = [] }
         try ProjectWorkingCopy.markDirty(key: workingCopyKey)
         try ArtifactTransaction.perform(
-            paths: [timelineURL, planURL, manifestURL],
+            paths: [timelineURL, planURL, manifestURL] + productionFiles.map { dataRoot.appendingPathComponent($0.0) },
             dataRoot: dataRoot
         ) {
             try FileManager.default.createDirectory(
@@ -120,19 +142,24 @@ enum PipelineDeliveryStore {
             }
             try prepared.planData.write(to: planURL, options: .atomic)
             try manifestData.write(to: manifestURL, options: .atomic)
+            for (path, bytes) in productionFiles {
+                _ = try ProjectLocalFile.ensureDirectory((path as NSString).deletingLastPathComponent, dataRoot: dataRoot)
+                try bytes.write(to: dataRoot.appendingPathComponent(path), options: .atomic)
+            }
         }
         editor.onPipelineChanged?()
         return .init(
             plan: prepared.plan,
             planData: prepared.planData,
             manifest: manifest,
-            manifestData: manifestData
+            manifestData: manifestData, productionReview: prepared.productionReview
         )
     }
 
     static func requireCurrentFinished(
         dataRoot: URL,
         timeline: Timeline,
+        resolver: MediaResolver? = nil,
         isCancelled: @Sendable () -> Bool = { false }
     ) throws -> FinishedState {
         if isCancelled() { throw CancellationError() }
@@ -216,12 +243,9 @@ enum PipelineDeliveryStore {
             )
             if isCancelled() { throw CancellationError() }
         }
-        return .init(
-            plan: plan,
-            planData: planData,
-            manifest: manifest,
-            manifestData: manifestData
-        )
+        let productionReview = try requireProductionFinished(dataRoot: dataRoot, timeline: timeline,
+            resolver: resolver, plan: plan, planData: planData, manifest: manifest, manifestData: manifestData)
+        return .init(plan: plan, planData: planData, manifest: manifest, manifestData: manifestData, productionReview: productionReview)
     }
 
     @MainActor
@@ -347,6 +371,9 @@ enum PipelineDeliveryStore {
                 isCancelled: isCancelled
             )
         }
+        let productionReview = try requireProductionFinished(dataRoot: dataRoot, timeline: timeline, resolver: resolver,
+            plan: finished.plan, planData: finished.planData, manifest: finished.manifest, manifestData: finished.manifestData)
+        guard productionReview == finished.productionReview else { throw ToolError("The finished production review changed.") }
         if let assemblySHA256 = finished.plan.assemblyManifestSHA256 {
             if isCancelled() { throw CancellationError() }
             _ = try requireCancellableHash(
@@ -392,7 +419,8 @@ enum PipelineDeliveryStore {
         outputURL: URL,
         timeline: Timeline,
         resolver: MediaResolver,
-        bindingAlreadyValidated: Bool = false
+        bindingAlreadyValidated: Bool = false,
+        productionExport: ProductionExportBinding.Snapshot? = nil
     ) throws -> DeliveryAttemptV1 {
         try safeID(id)
         let currentURL = dataRoot.appendingPathComponent(
@@ -433,10 +461,13 @@ enum PipelineDeliveryStore {
         let requiresReview = spec.requirements.contains {
             $0.id == "core.sequence-review" && $0.required
         }
-        guard !requiresReview || finished.plan.sequenceReviewSHA256 != nil else {
+        guard !requiresReview || finished.plan.sequenceReviewSHA256 != nil || finished.productionReview != nil else {
             throw ToolError("This delivery spec requires a current sequence review.")
         }
-        let attempt = DeliveryAttemptV1(
+        guard productionExport != nil || !spec.requirements.contains(where: { $0.id == "core.production-output-range" }) else {
+            throw ToolError("A production output interval can only be bound by the native exporter.")
+        }
+        var attempt = DeliveryAttemptV1(
             id: id,
             spec: spec,
             finishedTimelineSHA256: finished.manifest.timelineSHA256,
@@ -445,7 +476,34 @@ enum PipelineDeliveryStore {
             outputPath: outputURL.path,
             createdAt: currentTimestamp()
         )
-        try record(attempt, dataRoot: dataRoot, terminal: false)
+        if let productionExport {
+            guard productionExport.home.standardizedFileURL == FrameInventory.projectHome(of: dataRoot).standardizedFileURL,
+                  finished.productionReview != nil else { throw ToolError("The production delivery lost its native film review.") }
+            let expected = try ProductionDeliveryRangeExpectation(snapshot: productionExport, attempt: attempt)
+            let bytes = try PipelineAssemblyStore.canonical(expected)
+            let boundSpec = DeliverySpecV1(id: spec.id, targetKind: spec.targetKind, container: spec.container,
+                videoCodec: spec.videoCodec, width: spec.width, height: spec.height, fpsNumerator: spec.fpsNumerator,
+                fpsDenominator: spec.fpsDenominator, colorSpace: spec.colorSpace, hdr: spec.hdr,
+                audioLayout: spec.audioLayout, loudnessTarget: spec.loudnessTarget, captionMode: spec.captionMode,
+                disclosureMode: spec.disclosureMode,
+                requirements: spec.requirements.filter { !["core.production-output-range", "core.sequence-review"].contains($0.id) }
+                    + [.init(id: "core.sequence-review", state: .enforced, required: true, value: "current"),
+                       .init(id: "core.production-output-range", state: .enforced, required: true, value: FileDigest.sha256(of: bytes))],
+                extensionRefs: spec.extensionRefs)
+            attempt = DeliveryAttemptV1(id: attempt.id, spec: boundSpec,
+                finishedTimelineSHA256: attempt.finishedTimelineSHA256, sequenceReviewSHA256: attempt.sequenceReviewSHA256,
+                status: attempt.status, outputPath: attempt.outputPath, createdAt: attempt.createdAt)
+            let path = ProductionDeliveryRangeExpectation.path(attemptID: id)
+            let target = dataRoot.appendingPathComponent(path)
+            let eventPath = "\(jobsDirectory)/\(id)/events/queued-\(FileDigest.sha256(of: try PipelineAssemblyStore.canonical(attempt))).v1.json"
+            try ArtifactTransaction.perform(paths: [target, currentURL, dataRoot.appendingPathComponent(eventPath)], dataRoot: dataRoot) {
+                _ = try ProjectLocalFile.ensureDirectory((path as NSString).deletingLastPathComponent, dataRoot: dataRoot)
+                if FileManager.default.fileExists(atPath: target.path) {
+                    guard try Data(contentsOf: ProjectLocalFile.resolve(path, dataRoot: dataRoot)) == bytes else { throw ToolError("The delivery output interval is immutable.") }
+                } else { try bytes.write(to: target, options: .withoutOverwriting) }
+                try record(attempt, dataRoot: dataRoot, terminal: false)
+            }
+        } else { try record(attempt, dataRoot: dataRoot, terminal: false) }
         return attempt
     }
 
@@ -525,12 +583,13 @@ enum PipelineDeliveryStore {
         outputURL: URL,
         spec: DeliverySpecV1,
         expectedDurationFrames: Int,
+        exactExpectedDuration: CMTime? = nil,
         isCancelled: @Sendable () -> Bool = { false }
     ) async throws -> OutputEvidence {
         let qc = try await probeOutput(
             outputURL: outputURL,
             spec: spec,
-            expectedDurationFrames: expectedDurationFrames,
+            expectedDurationFrames: expectedDurationFrames, exactExpectedDuration: exactExpectedDuration,
             isCancelled: isCancelled
         )
         if isCancelled() { throw CancellationError() }
@@ -688,12 +747,21 @@ enum PipelineDeliveryStore {
             throw ToolError("Delivery attempt history is malformed.")
         }
         if value.status == .succeeded {
+            if let expected = try productionRange(attempt: value, dataRoot: dataRoot), let qc = value.probeQC {
+                guard exactDurationMatches(actual: CMTime(value: qc.durationValue, timescale: qc.durationTimescale), expected: expected.duration) else {
+                    throw ToolError("The completed delivery does not match its bound output interval.")
+                }
+            }
             let output = try boundURL(value.outputPath ?? "", dataRoot: dataRoot)
             guard try cancellableSHA256(
                 of: output,
                 isCancelled: isCancelled
             ) == value.outputSHA256 else {
                 throw ToolError("The selected delivery output bytes changed.")
+            }
+            if let artwork = try ExportArtwork.load(spec: value.spec, dataRoot: dataRoot,
+                timelineSHA256: value.finishedTimelineSHA256) {
+                try ExportArtwork.verifyPNG(at: ExportArtwork.outputURL(for: output), snapshot: artwork)
             }
             if value.spec.hdr {
                 let hdrQC = try JSONDecoder().decode(
@@ -717,6 +785,7 @@ enum PipelineDeliveryStore {
         timeline: Timeline,
         resolver: MediaResolver,
         requireSequenceReview: Bool,
+        production: ProductionExportBinding.Snapshot?,
         isCancelled: @Sendable () -> Bool
     ) throws -> AdoptionPreparation {
         if isCancelled() { throw CancellationError() }
@@ -734,11 +803,17 @@ enum PipelineDeliveryStore {
         let timelineSHA256 = FileDigest.sha256(of: timelineData)
         let timelinePath = "\(timelinesDirectory)/\(timelineSHA256).json"
 
-        let assembly = try PipelineAssemblyStore.load(dataRoot: dataRoot)
-        let assemblyIsCurrent = assembly.map {
-            $0.manifest.timelineFingerprint == timelineSHA256
-        } ?? false
-        let assemblyManifestSHA256: String? = if assemblyIsCurrent {
+        let assemblyIsCurrent: Bool
+        if production != nil {
+            try PipelineProductionAssemblyWriter.requireExportTimeline(dataRoot: dataRoot, timeline: timeline,
+                mediaURLs: resolver.expectedURLMap(for: Set(timeline.tracks.flatMap(\.clips).map(\.mediaRef))))
+            assemblyIsCurrent = (try? PipelineProductionAssemblyWriter.requireCurrentTimeline(dataRoot: dataRoot, timeline: timeline,
+                mediaURLs: resolver.expectedURLMap(for: Set(timeline.tracks.flatMap(\.clips).map(\.mediaRef))))) != nil
+        } else {
+            let assembly = try PipelineAssemblyStore.load(dataRoot: dataRoot)
+            assemblyIsCurrent = assembly.map { $0.manifest.timelineFingerprint == timelineSHA256 } ?? false
+        }
+        let assemblyManifestSHA256: String? = if production == nil && assemblyIsCurrent {
             try cancellableSHA256(
                 of: ProjectLocalFile.resolve(
                     AssemblyManifestV1.relativePath,
@@ -751,27 +826,35 @@ enum PipelineDeliveryStore {
         }
 
         let sequenceReviewSHA256: String?
-        do {
-            if isCancelled() { throw CancellationError() }
-            _ = try PipelineSequenceReviewStore.requireCurrent(
-                dataRoot: dataRoot,
-                timeline: timeline,
-                resolver: resolver
-            )
-            if isCancelled() { throw CancellationError() }
-            sequenceReviewSHA256 = try cancellableSHA256(
-                of: ProjectLocalFile.resolve(
-                    SequenceReviewV1.relativePath,
-                    dataRoot: dataRoot
-                ),
-                isCancelled: isCancelled
-            )
-        } catch {
-            if isCancelled() { throw CancellationError() }
-            if requireSequenceReview {
-                throw ToolError("Record a current sequence review without blocking findings before preparing this delivery.")
-            }
+        let productionReview: CanonicalArtifactReferenceV1?
+        if production != nil {
+            _ = try PipelineProductionSequenceReviewStore.requireCurrent(dataRoot: dataRoot, timeline: timeline, resolver: resolver)
+            productionReview = try PipelineProductionSequenceReviewStore.artifactReference(dataRoot: dataRoot)
             sequenceReviewSHA256 = nil
+        } else {
+            productionReview = nil
+            do {
+                if isCancelled() { throw CancellationError() }
+                _ = try PipelineSequenceReviewStore.requireCurrent(
+                    dataRoot: dataRoot,
+                    timeline: timeline,
+                    resolver: resolver
+                )
+                if isCancelled() { throw CancellationError() }
+                sequenceReviewSHA256 = try cancellableSHA256(
+                    of: ProjectLocalFile.resolve(
+                        SequenceReviewV1.relativePath,
+                        dataRoot: dataRoot
+                    ),
+                    isCancelled: isCancelled
+                )
+            } catch {
+                if isCancelled() { throw CancellationError() }
+                if requireSequenceReview {
+                    throw ToolError("Record a current sequence review without blocking findings before preparing this delivery.")
+                }
+                sequenceReviewSHA256 = nil
+            }
         }
 
         let plan = FinishPlanV1(
@@ -796,7 +879,7 @@ enum PipelineDeliveryStore {
             plan: plan,
             planData: planData,
             media: media,
-            assemblyIsCurrent: assemblyIsCurrent
+            assemblyIsCurrent: assemblyIsCurrent, productionReview: productionReview
         )
     }
 
@@ -872,6 +955,7 @@ enum PipelineDeliveryStore {
         outputURL: URL,
         spec: DeliverySpecV1,
         expectedDurationFrames: Int,
+        exactExpectedDuration: CMTime? = nil,
         isCancelled: @Sendable () -> Bool = { false }
     ) async throws -> DeliveryProbeQCV1 {
         if isCancelled() { throw CancellationError() }
@@ -904,10 +988,22 @@ enum PipelineDeliveryStore {
         let expectedDuration = Double(expectedDurationFrames)
             / Double(spec.fpsNumerator) * Double(spec.fpsDenominator)
         let frameTolerance = Double(spec.fpsDenominator) / Double(spec.fpsNumerator)
-        let audioMatches = spec.audioLayout == "none"
+        var audioMatches = spec.audioLayout == "none"
             ? audioTracks.isEmpty
             : !audioTracks.isEmpty && audioChannels > 0
-        let passed = abs(duration.seconds - expectedDuration) <= frameTolerance
+        if let exactExpectedDuration {
+            for track in audioTracks {
+                let range = try await track.load(.timeRange)
+                let tolerance = CMTime(value: 1, timescale: max(range.end.timescale, exactExpectedDuration.timescale))
+                if !range.end.isNumeric || range.end.timescale <= 0
+                    || CMTimeCompare(CMTimeSubtract(range.end, exactExpectedDuration), tolerance) > 0 {
+                    audioMatches = false
+                }
+            }
+        }
+        let durationMatches = exactExpectedDuration.map { exactDurationMatches(actual: duration, expected: $0) }
+            ?? (abs(duration.seconds - expectedDuration) <= frameTolerance)
+        let passed = durationMatches
             && Int(abs(encodedSize.width).rounded()) == spec.width
             && Int(abs(encodedSize.height).rounded()) == spec.height
             && abs(Double(nominalFPS) - Double(spec.fpsNumerator) / Double(spec.fpsDenominator)) < 0.05
@@ -925,6 +1021,63 @@ enum PipelineDeliveryStore {
             audioChannels: audioChannels,
             passed: passed
         )
+    }
+
+    static func exactDurationMatches(actual: CMTime, expected: CMTime) -> Bool {
+        guard actual.isNumeric, expected.isNumeric, actual.timescale > 0, expected.timescale > 0,
+              CMTimeCompare(actual, .zero) > 0, CMTimeCompare(expected, .zero) > 0 else { return false }
+        let tolerance = CMTime(value: 1, timescale: max(actual.timescale, expected.timescale))
+        return CMTimeCompare(CMTimeAbsoluteValue(CMTimeSubtract(actual, expected)), tolerance) <= 0
+    }
+
+    static func productionRange(attempt: DeliveryAttemptV1, dataRoot: URL) throws -> CMTimeRange? {
+        try safeID(attempt.id)
+        let path = ProductionDeliveryRangeExpectation.path(attemptID: attempt.id)
+        let url = dataRoot.appendingPathComponent(path)
+        let marker = attempt.spec.requirements.first(where: { $0.id == "core.production-output-range" })
+        guard FileManager.default.fileExists(atPath: url.path)
+            || (try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) != nil else {
+            guard marker == nil else { throw ToolError("The delivery's bound output interval is missing.") }
+            return nil
+        }
+        let bytes = try Data(contentsOf: ProjectLocalFile.resolve(path, dataRoot: dataRoot))
+        guard let marker, marker.state == .enforced, marker.required, marker.value == FileDigest.sha256(of: bytes) else {
+            throw ToolError("The delivery's bound output interval changed.")
+        }
+        let expected = try JSONDecoder().decode(ProductionDeliveryRangeExpectation.self, from: bytes)
+        try expected.validate(attempt: attempt)
+        return expected.range
+    }
+
+    private static func requireProductionFinished(dataRoot: URL, timeline: Timeline, resolver: MediaResolver?,
+        plan: FinishPlanV1, planData: Data, manifest: FinishedTimelineManifestV1, manifestData: Data) throws -> CanonicalArtifactReferenceV1? {
+        let path = ProductionFinishedEvidence.currentPath
+        let url = dataRoot.appendingPathComponent(path)
+        let exists = FileManager.default.fileExists(atPath: url.path)
+            || (try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) != nil
+        if !exists {
+            guard try !PipelineProductionRouting.isProductionV2(dataRoot: dataRoot) else {
+                throw ToolError("Review the actual production film before preparing delivery.")
+            }
+            return nil
+        }
+        guard let resolver else { throw ToolError("The production delivery needs its bound source resolver.") }
+        let bytes = try Data(contentsOf: ProjectLocalFile.resolve(path, dataRoot: dataRoot))
+        let evidence = try JSONDecoder().decode(ProductionFinishedEvidence.self, from: bytes)
+        guard evidence.schema == "production-finished-evidence/v1", evidence.projectID == plan.projectID,
+              evidence.timelineSHA256 == manifest.timelineSHA256, evidence.finishPlanSHA256 == FileDigest.sha256(of: planData),
+              evidence.finishedManifestSHA256 == FileDigest.sha256(of: manifestData),
+              try Data(contentsOf: ProjectLocalFile.resolve(ProductionFinishedEvidence.archivePath(bytes: bytes), dataRoot: dataRoot)) == bytes else {
+            throw ToolError("The finished production evidence changed.")
+        }
+        try PipelineProductionAssemblyWriter.requireExportTimeline(dataRoot: dataRoot, timeline: timeline,
+            mediaURLs: resolver.expectedURLMap(for: Set(timeline.tracks.flatMap(\.clips).map(\.mediaRef))))
+        let refs = try PipelineProductionAssemblyWriter.artifactReferences(dataRoot: dataRoot)
+        guard evidence.productionFingerprint == FileDigest.sha256(of: try PlanningWriterIO.json(refs)) else { throw ToolError("The finished production inputs changed.") }
+        _ = try PipelineProductionSequenceReviewStore.requireCurrent(dataRoot: dataRoot, timeline: timeline, resolver: resolver)
+        guard try PipelineProductionSequenceReviewStore.artifactReference(dataRoot: dataRoot) == evidence.review else { throw ToolError("The production film review changed.") }
+        _ = try ProjectLocalFile.requireHash(evidence.review.sha256, at: evidence.review.path, dataRoot: dataRoot)
+        return evidence.review
     }
 
     private static func record(

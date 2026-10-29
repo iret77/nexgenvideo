@@ -726,8 +726,8 @@ final class AgentService {
             }
             content = text
         } else {
-            let pasted = result.direction.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !pasted.isEmpty else {
+            let pasted = result.direction
+            guard !pasted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 sendDialogResponse(
                     dialog,
                     result: result,
@@ -744,11 +744,19 @@ final class AgentService {
         }
         let dir = dataRoot.appendingPathComponent(relDir, isDirectory: true)
         do {
-            if let key = editor.openWorkingCopyKey {
-                try ProjectWorkingCopy.markDirty(key: key)
+            if kind == "script", editor.usesProductionPlanningV2, dialog.purpose == .workflowIntake {
+                if let source = result.fileURLs.first {
+                    try PipelineStorySourceWriter.confirmImportedSource(from: source, editor: editor)
+                } else {
+                    try PipelineStorySourceWriter.confirmPastedSource(text: content, editor: editor)
+                }
+            } else {
+                if let key = editor.openWorkingCopyKey {
+                    try ProjectWorkingCopy.markDirty(key: key)
+                }
+                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                try content.write(to: dir.appendingPathComponent(filename), atomically: true, encoding: .utf8)
             }
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            try content.write(to: dir.appendingPathComponent(filename), atomically: true, encoding: .utf8)
         } catch {
             sendDialogFailure(
                 dialog,
@@ -1382,6 +1390,19 @@ final class AgentService {
         let phase = editor.pipelineAgentHarness.workflowIntakePhase(
             dialogID: dialog.id
         )
+        if editor.usesProductionPlanningV2, phase == "brief", dialog.fileIntake?.attachAs == "script", !didProvideMaterial {
+            do {
+                try editor.pipelineAgentHarness.validateWorkflowIntake(dialogID: dialog.id, editor: editor)
+                try PipelineStorySourceWriter.confirmGreenfield(editor: editor)
+            } catch {
+                activeIntakeDraftKey = preservedIntakeKey
+                pendingDialog = dialog
+                dialogDraft = preservedDraft
+                dialogChoiceSelections = preservedSelections
+                dialogSubmissionError = error.localizedDescription
+                return
+            }
+        }
         let reconciliation = editor.pipelineAgentHarness.resolveWorkflowIntake(
             dialogID: dialog.id,
             didProvideMaterial: didProvideMaterial,
@@ -1521,6 +1542,24 @@ final class AgentService {
                 sessionID: chatSessionID
             ) else { return nil }
         return reference
+    }
+
+    func reviewModelEvidence(origin: ToolCallOrigin, toolUseID: String, arguments: [String: Any]) throws -> HostAgentReviewEvidence {
+        guard let turn = captureHostTurnReference(origin: origin),
+              let response = runtimeAdapter?.modelResponseEvidence(toolUseID: toolUseID),
+              response.sessionID == turn.chatSessionID, response.turnID == turn.logicalTurnID,
+              response.toolUseID == toolUseID,
+              !response.modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !response.messageID.isEmpty else {
+            throw ToolError("The review response has no verified model and originating host turn. Wait for its response metadata or run the review again.")
+        }
+        let input = try JSONSerialization.data(withJSONObject: arguments, options: [.sortedKeys, .withoutEscapingSlashes])
+        guard response.toolInputSHA256 == (try AgentModelResponseEvidence.inputHash(String(decoding: input, as: UTF8.self))) else {
+            throw ToolError("The review arguments differ from the model's recorded tool response.")
+        }
+        return HostAgentReviewEvidence(projectGenerationID: turn.projectGenerationID,
+            chatSessionID: turn.chatSessionID, runtimeGenerationID: turn.runtimeGenerationID,
+            logicalTurnID: turn.logicalTurnID, inputMessageID: turn.inputMessageID, response: response)
     }
 
     private func verifiedHostTurnReference(
@@ -2639,6 +2678,15 @@ final class AgentService {
         _ approval: GateApproval,
         origin: ToolCallOrigin = .direct
     ) throws -> GateApprovalRequest {
+        if let root = approval.dataRoot, let editor {
+            guard let home = editor.workingRoot, DataRootResolver.dataRoot(of: home) == root,
+                  editor.declaredPluginName == approval.declaredPack,
+                  editor.declaredPluginBinding == approval.declaredBinding,
+                  editor.declaredProductionContract == approval.declaredProductionContract else {
+                throw ToolError("The approval belongs to a different project or production workflow. Request it again from the current project.",
+                                kind: .reviewChangedSource)
+            }
+        }
         var scoped = approval.scoped(to: origin.chatSessionID)
         scoped.priorApproval = GateApproval.priorApproval(
             phase: approval.phase,
@@ -3638,30 +3686,58 @@ final class AgentService {
         )
     }
 
-    private func runtimeHostContext() throws -> AgentRuntimeHostContext {
+    private func runtimeHostContext() async throws -> AgentRuntimeHostContext {
         if let runtimeHostContextOverride {
             return try runtimeHostContextOverride()
         }
         let language = AgentInterfaceLanguage.current
         guard let editor,
               let workingRoot = editor.workingRoot else {
-            if editor?.declaredPluginName != nil {
+            if editor?.declaredPluginName != nil || editor?.declaredProductionContract != nil {
                 throw ToolError("The format-pack project context is unavailable. Reopen the project.")
             }
             return .hostOwned(interfaceLanguage: language, tools: toolExecutor == nil ? [] : ToolDefinitions.all)
         }
         let resolved: PipelineAgentHarness.RuntimeContext
         if let dataRoot = DataRootResolver.dataRoot(of: workingRoot) {
+            let timeline = editor.timeline
+            let resolver = editor.mediaResolver.snapshot()
+            let prepared: PipelineProductionRuntimeContext.Prepared?
+            if editor.declaredProductionContract != nil
+                || editor.declaredPluginBinding?.projectSchema == HostWorkflowKey.musicvideoV2Schema {
+                let sessionID = currentSessionId
+                let context: PipelineProductionAssemblyWriter.Context
+                do { context = try PipelineProductionAssemblyWriter.Context(editor: editor) }
+                catch { throw ToolError("The production project context is unavailable. Reopen the project before continuing.") }
+                let preparation = Task.detached(priority: .userInitiated) {
+                    try PipelineProductionRuntimeContext.prepare(dataRoot: dataRoot,
+                        declaration: context.declaration, timeline: timeline, resolver: resolver)
+                }
+                prepared = try await withTaskCancellationHandler {
+                    try await preparation.value
+                } onCancel: { preparation.cancel() }
+                try Task.checkCancellation()
+                guard currentSessionId == sessionID, self.editor === editor else {
+                    throw ToolError("The agent session changed while its production context was being prepared.")
+                }
+                do { try context.requireCurrent(editor: editor) }
+                catch { throw ToolError("The project or timeline changed while its production context was being prepared. Continue from the current phase.") }
+            } else { prepared = nil }
             resolved = try editor.pipelineAgentHarness.runtimeContext(
                 dataRoot: dataRoot,
                 declaredPack: editor.declaredPluginName,
-                declaredBinding: editor.declaredPluginBinding
+                declaredBinding: editor.declaredPluginBinding,
+                declaredProductionContract: editor.declaredProductionContract,
+                timeline: timeline,
+                resolver: resolver,
+                preparedProduction: prepared
             )
         } else {
             let packID = try ProjectPackGate.requireLiveMutation(
                 projectURL: workingRoot,
                 declaredPack: editor.declaredPluginName,
-                declaredBinding: editor.declaredPluginBinding
+                declaredBinding: editor.declaredPluginBinding,
+                declaredProductionContract: editor.declaredProductionContract
             )
             resolved = .init(packID: packID, currentPhase: nil, instructions: nil)
         }
@@ -3976,8 +4052,9 @@ final class AgentService {
         guard let sessionID, currentSessionId == sessionID else { return }
         let hostContext: AgentRuntimeHostContext
         do {
-            hostContext = try runtimeHostContext()
+            hostContext = try await runtimeHostContext()
         } catch {
+            guard !Task.isCancelled, currentSessionId == sessionID else { return }
             streamError = .upstream(error.localizedDescription)
             return
         }
