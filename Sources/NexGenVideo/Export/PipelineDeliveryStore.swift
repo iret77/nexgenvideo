@@ -695,6 +695,10 @@ enum PipelineDeliveryStore {
             ) == value.outputSHA256 else {
                 throw ToolError("The selected delivery output bytes changed.")
             }
+            if let artwork = try ExportArtwork.load(spec: value.spec, dataRoot: dataRoot,
+                timelineSHA256: value.finishedTimelineSHA256) {
+                try ExportArtwork.verifyPNG(at: ExportArtwork.outputURL(for: output), snapshot: artwork)
+            }
             if value.spec.hdr {
                 let hdrQC = try JSONDecoder().decode(
                     DeliveryHDRQCV1.self,

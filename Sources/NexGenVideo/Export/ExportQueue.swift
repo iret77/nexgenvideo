@@ -209,7 +209,8 @@ final class ExportQueue {
         }
         let id = try jobID(requestID)
         let fingerprint = fingerprint(
-            ownerKey, spec.id, String(describing: format), resolution.rawValue,
+            ownerKey, spec.extensionRefs.isEmpty ? spec.id : spec.id + FileDigest.sha256(of: try PipelineAssemblyStore.canonical(spec)),
+            String(describing: format), resolution.rawValue,
             outputURL.standardizedFileURL.path
         )
         if let existing = try joinedJob(id: id, fingerprint: fingerprint) {
@@ -235,19 +236,30 @@ final class ExportQueue {
             do {
                 let recoveryRoot = self.publishRecoveryRoot
                 let prepared = try await Task.detached(priority: .userInitiated) {
+                    let posterURL = ExportArtwork.outputURL(for: outputURL)
                     try ExportPublishRecoveryStore.recoverAll(
                         root: recoveryRoot,
-                        overlapping: [outputURL]
+                        overlapping: spec.extensionRefs.contains(where: { $0.hasPrefix(ExportArtwork.directory + "/") })
+                            ? [outputURL, posterURL] : [outputURL]
                     )
                     let finished = try PipelineDeliveryStore.requireCurrentFinished(
                         dataRoot: dataRoot,
                         timeline: timeline,
                         isCancelled: { cancellationFlag.isCancelled }
                     )
-                    let extensionFiles = try PipelineDeliveryStore.extensionFiles(
+                    let artwork = try ExportArtwork.load(spec: spec, dataRoot: dataRoot,
+                        timelineSHA256: finished.manifest.timelineSHA256)
+                    var extensionFiles = try PipelineDeliveryStore.extensionFiles(
                         for: spec,
                         dataRoot: dataRoot
                     )
+                    if let artwork, artwork.selection.source == .projectImage {
+                        guard let assetID = artwork.selection.assetID, let url = resolver.resolveURL(for: assetID),
+                              try FileDigest.sha256(of: url) == artwork.selection.sourceSHA256 else {
+                            throw ToolError("The selected export image changed or is offline.")
+                        }
+                        extensionFiles.append((path: "artwork-source/\(assetID)", url: url))
+                    }
                     let source = try SourceBinding.video(
                         timeline: timeline,
                         resolver: resolver,
@@ -261,6 +273,11 @@ final class ExportQueue {
                         isCancelled: { cancellationFlag.isCancelled }
                     )
                     try source.rejectDestination(destination.url)
+                    let companion = try artwork.map { _ in
+                        try DestinationBinding(url: posterURL, jobID: id, expectsDirectory: false,
+                            isCancelled: { cancellationFlag.isCancelled })
+                    }
+                    if let companion { try source.rejectDestination(companion.url) }
                     let frozen = try source.freeze(
                         jobID: id,
                         isCancelled: { cancellationFlag.isCancelled }
@@ -283,6 +300,8 @@ final class ExportQueue {
                         source: source,
                         frozen: frozen,
                         destination: destination,
+                        companionDestination: companion,
+                        artwork: artwork,
                         finished: finished
                     )
                 }.value
@@ -317,7 +336,8 @@ final class ExportQueue {
                     spec: spec,
                     format: format,
                     resolution: resolution,
-                    attempt: attempt
+                    attempt: attempt,
+                    artwork: prepared.artwork
                 )
                 self.install(Request(
                     id: id,
@@ -333,7 +353,7 @@ final class ExportQueue {
                     source: prepared.source,
                     frozenSources: prepared.frozen,
                     destination: prepared.destination,
-                    companionDestination: nil,
+                    companionDestination: prepared.companionDestination,
                     payload: .delivery(payload),
                     changeHandler: self.projectChangeHandler(
                         editor: editor,
@@ -827,7 +847,7 @@ final class ExportQueue {
                     outputURL: destination?.standardizedFileURL
                 )
                 if attempt.status == .interrupted {
-                    cleanupTemporaryState(for: attempt)
+                    cleanupTemporaryState(for: attempt, dataRoot: dataRoot)
                 }
             }
             return recovered
@@ -1086,6 +1106,17 @@ final class ExportQueue {
                     throw ToolError("Delivery export did not consume every required media source.")
                 }
             }
+            if case .delivery(let payload) = request.payload, let artwork = payload.artwork {
+                guard let companionTemporaryURL,
+                      let png = frozen.files.first(where: { $0.ref == "delivery extension \(artwork.pngPath)" }) else {
+                    throw ToolError("The export lost its bound poster image.")
+                }
+                try await Task.detached(priority: .userInitiated) {
+                    try ExportArtwork.verifyPNG(at: png.url, snapshot: artwork)
+                    try Data(contentsOf: png.url).write(to: companionTemporaryURL, options: .atomic)
+                    try ExportArtwork.verifyPNG(at: companionTemporaryURL, snapshot: artwork)
+                }.value
+            }
             if fcpxmlReport?.stagedProjectMediaCount == 0,
                request.companionDestination != nil {
                 let runtimeRoot = runtimeRecoveryRoot
@@ -1159,7 +1190,12 @@ final class ExportQueue {
                 binding: request.destination,
                 temporaryURL: temporaryURL
             )]
-            if let companionDestination = request.companionDestination,
+            if case .delivery(let payload) = request.payload, let artwork = payload.artwork {
+                guard let companionDestination = request.companionDestination,
+                      let companionTemporaryURL else { throw ToolError("The export poster destination is missing.") }
+                try ExportArtwork.verifyPNG(at: companionTemporaryURL, snapshot: artwork)
+                publications.append(.init(binding: companionDestination, temporaryURL: companionTemporaryURL))
+            } else if let companionDestination = request.companionDestination,
                let companionTemporaryURL,
                FileManager.default.fileExists(atPath: companionTemporaryURL.path) {
                 publications.append(.init(
@@ -1195,6 +1231,13 @@ final class ExportQueue {
 
             switch request.payload {
             case .delivery(let payload):
+                if let artwork = payload.artwork {
+                    guard let companion = request.companionDestination,
+                          case .file(let hash, let size) = publicationResult.state(for: companion.url),
+                          hash == artwork.pngSHA256, size > 0 else {
+                        throw ToolError("The published poster does not match this delivery.")
+                    }
+                }
                 guard let running = deliveryAttempt, let deliveryEvidence else {
                     throw ToolError("The delivery job lost its bound receipt state.")
                 }
@@ -1395,7 +1438,7 @@ final class ExportQueue {
             dataRoot: dataRoot,
             excludingIDs: activeDeliveryIDs(dataRoot: dataRoot),
             willMutate: { try ProjectWorkingCopy.markDirty(key: ownerKey) },
-            didRecover: { self.cleanupTemporaryState(for: $0) }
+            didRecover: { self.cleanupTemporaryState(for: $0, dataRoot: dataRoot) }
         )
     }
 
@@ -1530,7 +1573,7 @@ final class ExportQueue {
         continuation.resume()
     }
 
-    private func cleanupTemporaryState(for attempt: DeliveryAttemptV1) {
+    private func cleanupTemporaryState(for attempt: DeliveryAttemptV1, dataRoot: URL) {
         if let outputPath = attempt.outputPath {
             let outputURL = URL(fileURLWithPath: outputPath)
             let temporaryURL = DestinationBinding.makeTemporaryURL(
@@ -1538,6 +1581,13 @@ final class ExportQueue {
                 jobID: attempt.id
             )
             try? FileManager.default.removeItem(at: temporaryURL)
+            if let artwork = try? ExportArtwork.load(spec: attempt.spec, dataRoot: dataRoot,
+                timelineSHA256: attempt.finishedTimelineSHA256) {
+                let poster = DestinationBinding.makeTemporaryURL(url: ExportArtwork.outputURL(for: outputURL), jobID: attempt.id)
+                if (try? ExportArtwork.verifyPNG(at: poster, snapshot: artwork)) != nil {
+                    try? FileManager.default.removeItem(at: poster)
+                }
+            }
         }
         try? FileManager.default.removeItem(
             at: SourceBinding.snapshotRoot(jobID: attempt.id)
@@ -1614,6 +1664,8 @@ extension ExportQueue {
         let source: SourceBinding
         let frozen: FrozenSources
         let destination: DestinationBinding
+        let companionDestination: DestinationBinding?
+        let artwork: ExportArtworkSnapshot?
         let finished: PipelineDeliveryStore.FinishedState
     }
 
@@ -1674,6 +1726,7 @@ extension ExportQueue {
         let format: ExportFormat
         let resolution: ExportResolution
         let attempt: DeliveryAttemptV1
+        var artwork: ExportArtworkSnapshot? = nil
 
         func withAttempt(_ attempt: DeliveryAttemptV1) -> DeliveryPayload {
             .init(
@@ -1684,7 +1737,8 @@ extension ExportQueue {
                 spec: spec,
                 format: format,
                 resolution: resolution,
-                attempt: attempt
+                attempt: attempt,
+                artwork: artwork
             )
         }
     }
