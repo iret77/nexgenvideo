@@ -2,11 +2,6 @@ import AppKit
 import NexGenEngine
 import SwiftUI
 
-// Read-only Bible cockpit panel: shows the production Bible (characters, ensembles, props, locations,
-// look) with reference-sheet thumbnails, loaded via the engine read CLI (CockpitDataService.bible).
-// Segmented picker across the entity kinds; per-entity cards; explicit loading / empty / error /
-// engine-not-ready states. No mutations.
-
 struct BiblePanelView: View {
     @Environment(\.projectPalette) private var palette
     @Environment(EditorViewModel.self) private var editor
@@ -17,6 +12,7 @@ struct BiblePanelView: View {
         case props = "Props"
         case locations = "Locations"
         case look = "Look"
+        case references = "Shot references"
     }
 
     private enum LoadState: Equatable {
@@ -30,6 +26,8 @@ struct BiblePanelView: View {
     @State private var section: Section = .characters
     /// Guards against a stale reload result overwriting a newer one when the project changes mid-flight.
     @State private var loadToken = 0
+    @State private var spatialLocation: BibleEntityRef?
+    @State private var panoramaLocation: BibleEntityRef?
 
     var body: some View {
         VStack(spacing: AppTheme.Spacing.none) {
@@ -38,6 +36,19 @@ struct BiblePanelView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .task(id: editor.projectURL) { await load() }
         .onChange(of: editor.engineStateRevision) { _, _ in Task { await load() } }
+        .onChange(of: editor.usesProductionPlanningV2) { _, enabled in
+            if !enabled, section == .references { section = .characters }
+        }
+        .sheet(isPresented: Binding(get: { spatialLocation != nil }, set: { if !$0 { spatialLocation = nil } })) {
+            if let spatialLocation, let home = editor.workingRoot {
+                BibleSpatialViewSheet(home: home, locationID: spatialLocation.id).environment(editor)
+            }
+        }
+        .sheet(isPresented: Binding(get: { panoramaLocation != nil }, set: { if !$0 { panoramaLocation = nil } })) {
+            if let panoramaLocation, let home = editor.workingRoot {
+                LocationPanoramaView(home: home, locationID: panoramaLocation.id).environment(editor)
+            }
+        }
     }
 
     @ViewBuilder
@@ -65,27 +76,33 @@ struct BiblePanelView: View {
     @ViewBuilder
     private func loadedBody(_ bible: BibleData) -> some View {
         sectionPicker
-        ScrollView {
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
-                switch section {
-                case .characters: entityList(bible.characters, kind: .character)
-                case .ensembles: entityList(bible.ensembles, kind: .ensemble)
-                case .props: entityList(bible.props, kind: .prop)
-                case .locations: entityList(bible.locations, kind: .location)
-                case .look: lookContent(bible.look)
+        if section == .references {
+            ProductionObligationView()
+        } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
+                    switch section {
+                    case .characters: entityList(bible.characters, kind: .character)
+                    case .ensembles: entityList(bible.ensembles, kind: .ensemble)
+                    case .props: entityList(bible.props, kind: .prop)
+                    case .locations: entityList(bible.locations, kind: .location)
+                    case .look: lookContent(bible.look)
+                    case .references: EmptyView()
+                    }
                 }
+                .padding(.horizontal, AppTheme.Spacing.lg)
+                .padding(.vertical, AppTheme.Spacing.md)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.horizontal, AppTheme.Spacing.lg)
-            .padding(.vertical, AppTheme.Spacing.md)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
     private var sectionPicker: some View {
         Picker("", selection: $section) {
-            ForEach(Section.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            ForEach(Section.allCases.filter { $0 != .references || editor.usesProductionPlanningV2 }, id: \.self) { Text($0.rawValue).tag($0) }
         }
         .pickerStyle(.segmented)
+        .reviewAcceptanceProbe("bible.section", text: section.rawValue)
         .labelsHidden()
         .padding(.horizontal, AppTheme.Spacing.lg)
         .padding(.top, AppTheme.Spacing.md)
@@ -117,6 +134,17 @@ struct BiblePanelView: View {
                     .contentShape(RoundedRectangle(cornerRadius: AppTheme.Radius.md))
                     .onTapGesture { inspect(ref) }
                     .accessibilityAction(named: "Inspect \(entity.name)") { inspect(ref) }
+                if kind == .location, editor.usesProductionPlanningV2 {
+                    Button("Panorama and camera views…") { panoramaLocation = ref }
+                        .buttonStyle(InlineActionButtonStyle())
+                        .disabled(editor.agentService.isStreaming || editor.agentService.isComposerBlocked)
+                        .reviewAcceptanceProbe("bible.panorama.open.\(entity.id)")
+                    Button("Create camera view…") { spatialLocation = ref }
+                        .buttonStyle(InlineActionButtonStyle())
+                        .disabled(editor.projectState?.nextPhaseName != "bible" || editor.agentService.isStreaming || editor.agentService.isComposerBlocked)
+                        .help("Render a saved location camera, inspect its geometry view and assign it to this Bible location.")
+                        .reviewAcceptanceProbe("bible.spatial.open.\(entity.id)")
+                }
             }
         }
     }
