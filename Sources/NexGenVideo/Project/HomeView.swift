@@ -497,11 +497,13 @@ private struct HomeSidebar: View {
                     systemImage: "plus",
                     action: onNewProject
                 )
+                .reviewAcceptanceProbe("home.new")
                 SidebarRowButton(
                     label: "Open Project",
                     systemImage: "folder",
                     action: { AppState.shared.openProjectFromPanel() }
                 )
+                .reviewAcceptanceProbe("home.open")
             }
             .padding(.horizontal, AppTheme.Spacing.smMd)
             .padding(.vertical, AppTheme.Spacing.md)

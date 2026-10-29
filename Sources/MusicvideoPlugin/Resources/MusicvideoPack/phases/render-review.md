@@ -1,0 +1,10 @@
+# Render Review
+
+Call get_render_review_inputs after current Frames approval. It delivers actual inspection images, selected source input ranges, final compiled prompt text/IR, exact route snapshots and honest deferred predecessor recipes. Inspect these returned inputs in this host turn, then call write_render_review with its exact expected_fingerprint and structured findings. The host binds the actual response message/model/tool arguments and exact delivered bytes. Do not invent a reviewer, model run or media observation.
+
+compile_prompt is deterministic preflight only; media generation is unavailable here. Still images cannot establish unseen motion or sound. Mark genuinely missing facts unresolved rather than claiming a video was watched. The native review separately records the user's actual inspection, never a fabricated AI result. Existing unresolved model findings on unchanged inputs remain recorded even if a later native review submits no new findings. Structural errors and unresolved facts cannot be accepted away; semantic concerns and creative advice need the explicit permitted native action with its reason. Actual input changes require a new review.
+
+For Music Video, inspect the immutable musicvideo.production.v2 extension bound by the current ExecutionPlan. Review actual phrase-audio segments, measured lyric/mouth ownership, the section visual arc and coverage requirements together with the current shot inputs. Native Clay can establish geometry/pose/camera intent; it cannot establish final appearance or musical performance. Keep unobserved motion and lip synchronization unresolved until actual video inspection can prove them.
+
+
+Display current inputs per shot with readable shot number, source interval, actual images/media, final prompt and exact model/offering. Keep the distinction between deterministic structural checks, model observations and explicit human review visible. A short preview or still is not proof that an entire future performance was watched. Request approve_gate for render_review only after required current receipts and permitted finding decisions exist.

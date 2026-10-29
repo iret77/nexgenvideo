@@ -90,7 +90,7 @@ enum CompositionBuilder {
                             preferredTrackID: kCMPersistentTrackID_Invalid
                         ) else { continue }
                         var cursor = CMTime.zero
-                        if await insertClip(
+                        if try await insertClip(
                             clip,
                             sourceAsset: source.asset,
                             sourceTrack: source.track,
@@ -116,7 +116,7 @@ enum CompositionBuilder {
                             )
                         }
                         guard let compTrack = normalTrack else { continue }
-                        if await insertClip(
+                        if try await insertClip(
                             clip,
                             sourceAsset: source.asset,
                             sourceTrack: source.track,
@@ -172,7 +172,7 @@ enum CompositionBuilder {
                     clipTransforms[clip.id] = pt.concatenating(CGAffineTransform(translationX: -box.minX, y: -box.minY))
                 }
 
-                if await insertClip(
+                if try await insertClip(
                     clip,
                     sourceAsset: source.asset,
                     sourceTrack: source.track,
@@ -433,6 +433,21 @@ enum CompositionBuilder {
         }
     }
 
+    static func availableSourceRange(start: CMTime, requestedDuration: CMTime, available: CMTimeRange,
+                                     coverage: CMTime) throws -> CMTimeRange {
+        guard start.isNumeric, requestedDuration.isNumeric, coverage.isNumeric,
+              available.start.isNumeric, available.duration.isNumeric,
+              CMTimeCompare(requestedDuration, .zero) > 0, CMTimeCompare(coverage, .zero) > 0,
+              CMTimeCompare(start, available.start) >= 0, CMTimeCompare(start, available.end) < 0 else {
+            throw InvalidTimelineError(reason: "The selected source range is outside its actual media track.")
+        }
+        let end = CMTimeAdd(start, requestedDuration)
+        guard end.isNumeric, CMTimeCompare(CMTimeSubtract(end, available.end), coverage) <= 0 else {
+            throw InvalidTimelineError(reason: "The selected source range extends beyond its actual media track.")
+        }
+        return CMTimeRange(start: start, end: CMTimeCompare(end, available.end) < 0 ? end : available.end)
+    }
+
     private static func insertClip(
         _ clip: Clip,
         sourceAsset: AVURLAsset,
@@ -440,7 +455,7 @@ enum CompositionBuilder {
         into compTrack: AVMutableCompositionTrack,
         cursor: inout CMTime,
         timescale: CMTimeScale
-    ) async -> Bool {
+    ) async throws -> Bool {
         let clipStart = CMTime(value: CMTimeValue(clip.startFrame), timescale: timescale)
         let trimStartFrame = clip.mediaType == .image ? max(0, clip.trimStartFrame) : clip.trimStartFrame
         let sourceTimescale = (try? await sourceTrack.load(.naturalTimeScale)) ?? timescale
@@ -457,8 +472,11 @@ enum CompositionBuilder {
             ? clip.durationFrames
             : max(1, Int(Double(clip.durationFrames) * clip.speed))
         let durationSeconds = Double(sourceFrames) / Double(timescale)
-        let sourceDuration = CMTime(seconds: durationSeconds, preferredTimescale: sourceTimescale)
-        let sourceRange = CMTimeRange(start: trimStart, duration: sourceDuration)
+        let requestedDuration = CMTime(seconds: durationSeconds, preferredTimescale: sourceTimescale)
+        let available = try await sourceTrack.load(.timeRange)
+        let sourceRange = try availableSourceRange(start: trimStart, requestedDuration: requestedDuration,
+            available: available, coverage: CMTime(value: 1, timescale: timescale))
+        let sourceDuration = sourceRange.duration
 
         do {
             try compTrack.insertTimeRange(sourceRange, of: sourceTrack, at: clipStart)
@@ -471,7 +489,7 @@ enum CompositionBuilder {
                 speed=\(clip.speed) sourceSeconds=\(String(format: "%.3f", srcSeconds)) \
                 error=\(error.localizedDescription)
                 """)
-            return false
+            throw InvalidTimelineError(reason: "Clip \(clip.id) cannot read its selected media range: \(error.localizedDescription)")
         }
         if clip.speed != 1.0 {
             compTrack.scaleTimeRange(CMTimeRange(start: clipStart, duration: sourceDuration), toDuration: clipDuration)
@@ -653,95 +671,71 @@ enum CompositionBuilder {
         return Array(Set(raw)).sorted()
     }
 
-    /// Linear-ramp envelope for the clip's volume curve. `volumeAt` already folds in static × kf × fade.
+    struct AudioEnvelopeRamp: Sendable, Equatable {
+        let startOffset: Int
+        let endOffset: Int
+        let startGain: Float
+        let endGain: Float
+    }
+
+    static func audioEnvelopeRamps(for clip: Clip) -> [AudioEnvelopeRamp] {
+        guard clip.durationFrames > 0 else { return [] }
+        let envelope = clip.animationEnvelope
+        var keyed: [Int: Keyframe<Double>] = [:]
+        for keyframe in clip.volumeTrack?.keyframes ?? [] { keyed[keyframe.frame] = keyframe }
+        let keys = keyed.values.sorted { $0.frame < $1.frame }
+        var originalOffsets: Set<Int> = [envelope.start, envelope.end]
+        for key in keys { originalOffsets.insert(key.frame) }
+        for index in keys.indices.dropLast() {
+            let a = keys[index], b = keys[index + 1]
+            switch a.interpolationOut {
+            case .smooth: originalOffsets.formUnion(smoothSubdivisions(from: a.frame, to: b.frame))
+            case .hold: if b.frame - a.frame > 1 { originalOffsets.insert(b.frame - 1) }
+            case .linear: break
+            }
+        }
+        for (ramp, incoming) in [(envelope.head, true), (envelope.tail, false)] where ramp.length > 0 {
+            let start = incoming ? ramp.anchor : ramp.anchor - ramp.length
+            let end = incoming ? ramp.anchor + ramp.length : ramp.anchor
+            originalOffsets.formUnion([start, end])
+            if ramp.interpolation == .smooth {
+                originalOffsets.formUnion(smoothSubdivisions(from: start, to: end))
+            }
+        }
+        let original = originalOffsets.sorted()
+        let gains = original.map { offset in
+            Float(clip.rawVolumeAt(frame: clip.startFrame + offset) * envelope.gain(at: offset))
+        }
+        func gain(at offset: Int) -> Float {
+            guard let next = original.firstIndex(where: { $0 > offset }) else { return gains.last ?? 0 }
+            guard next > 0 else { return gains[0] }
+            let a = original[next - 1], b = original[next]
+            let t = Float(Double(offset - a) / Double(b - a))
+            return gains[next - 1] + (gains[next] - gains[next - 1]) * t
+        }
+        let visible = Array(Set(original.filter { $0 > 0 && $0 < clip.durationFrames } + [0, clip.durationFrames])).sorted()
+        return visible.indices.dropLast().compactMap { index in
+            let a = visible[index], b = visible[index + 1]
+            let startGain = gain(at: a), endGain = gain(at: b)
+            guard b > a, startGain.isFinite, endGain.isFinite else { return nil }
+            return AudioEnvelopeRamp(startOffset: a, endOffset: b, startGain: startGain, endGain: endGain)
+        }
+    }
+
     private static func emitVolumeEnvelope(
         params: AVMutableAudioMixInputParameters,
         clip: Clip,
         timescale: CMTimeScale
     ) {
-        let kfs = normalizedKeyframes(clip.volumeTrack?.keyframes ?? [], duration: clip.durationFrames)
-        let hasFade = clip.fadeInFrames > 0 || clip.fadeOutFrames > 0
-        if kfs.isEmpty && !hasFade {
-            let volume = Float(clip.volumeAt(frame: clip.startFrame))
-            let start = CMTime(value: CMTimeValue(clip.startFrame), timescale: timescale)
-            let end = CMTime(value: CMTimeValue(clip.endFrame), timescale: timescale)
-            guard volume.isFinite, end > start else { return }
+        for ramp in audioEnvelopeRamps(for: clip) {
+            let start = CMTime(value: CMTimeValue(clip.startFrame + ramp.startOffset), timescale: timescale)
+            let end = CMTime(value: CMTimeValue(clip.startFrame + ramp.endOffset), timescale: timescale)
             params.setVolumeRamp(
-                fromStartVolume: volume,
-                toEndVolume: volume,
+                fromStartVolume: ramp.startGain,
+                toEndVolume: ramp.endGain,
                 timeRange: CMTimeRange(start: start, end: end)
             )
-            return
         }
-
-        emitEnvelopeRamps(
-            clip: clip,
-            kfs: kfs,
-            timescale: timescale,
-            sampleAt: { Float(clip.volumeAt(frame: clip.startFrame + $0)) },
-            emit: { start, end, range in
-                params.setVolumeRamp(fromStartVolume: start, toEndVolume: end, timeRange: range)
-            }
-        )
-    }
-
-    /// Piecewise-linear envelope for the audio volume curve.
-    private static func emitEnvelopeRamps(
-        clip: Clip,
-        kfs: [Keyframe<Double>],
-        timescale: CMTimeScale,
-        sampleAt: (Int) -> Float,
-        emit: (Float, Float, CMTimeRange) -> Void
-    ) {
-        let dur = clip.durationFrames
-        guard dur > 0 else { return }
-        let kfs = normalizedKeyframes(kfs, duration: dur)
-
-        var offsetSet: Set<Int> = [0, dur]
-        for kf in kfs { offsetSet.insert(kf.frame) }
-        for i in kfs.indices.dropLast() {
-            let a = kfs[i], b = kfs[i + 1]
-            switch a.interpolationOut {
-            case .smooth: offsetSet.formUnion(smoothSubdivisions(from: a.frame, to: b.frame))
-            case .hold:   if b.frame - a.frame > 1 { offsetSet.insert(b.frame - 1) }
-            case .linear: break
-            }
-        }
-        if clip.fadeInFrames > 0 {
-            let endOffset = min(dur, clip.fadeInFrames)
-            offsetSet.insert(endOffset)
-            if clip.fadeInInterpolation == .smooth {
-                offsetSet.formUnion(smoothSubdivisions(from: 0, to: endOffset))
-            }
-        }
-        if clip.fadeOutFrames > 0 {
-            let startOffset = max(0, dur - clip.fadeOutFrames)
-            offsetSet.insert(startOffset)
-            if clip.fadeOutInterpolation == .smooth {
-                offsetSet.formUnion(smoothSubdivisions(from: startOffset, to: dur))
-            }
-        }
-
-        let offsets = offsetSet.sorted()
-        for i in offsets.indices.dropLast() {
-            let aOff = offsets[i], bOff = offsets[i + 1]
-            guard bOff > aOff else { continue }
-            let aT = CMTime(value: CMTimeValue(clip.startFrame + aOff), timescale: timescale)
-            let bT = CMTime(value: CMTimeValue(clip.startFrame + bOff), timescale: timescale)
-            guard bT > aT else { continue }
-            emit(sampleAt(aOff), sampleAt(bOff), CMTimeRange(start: aT, end: bT))
-        }
-    }
-
-    private static func normalizedKeyframes<V: Codable & Sendable & Equatable>(
-        _ keyframes: [Keyframe<V>],
-        duration: Int
-    ) -> [Keyframe<V>] {
-        var keyed: [Int: Keyframe<V>] = [:]
-        for kf in keyframes where kf.frame >= 0 && kf.frame <= duration {
-            keyed[kf.frame] = kf
-        }
-        return keyed.values.sorted { $0.frame < $1.frame }
     }
 
     /// Maps a clip's Transform (in normalized 0–1 canvas coordinates) to the

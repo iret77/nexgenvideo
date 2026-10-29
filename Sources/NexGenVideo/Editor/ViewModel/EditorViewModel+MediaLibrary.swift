@@ -563,21 +563,26 @@ extension EditorViewModel {
 
     /// Resolve a drag pasteboard payload (one `nexgen-asset://<id>` per line).
     func assetsFromDragPayload(_ payload: String) -> [MediaAsset] {
-        payload.split(separator: "\n").compactMap { line in
-            guard let id = MediaTab.assetId(fromDragString: String(line)) else { return nil }
-            // A document has no duration and nothing to draw — dropping one would make a clip no
-            // player can render. Filtered here so the timeline never even offers the drop.
-            return mediaAssets.first {
-                $0.id == id && ($0.type.isPlaceable || $0.type == .subtitle)
+        var seen: Set<String> = []
+        return payload.split(separator: "\n").compactMap { line in
+            let text = String(line)
+            guard let id = MediaTab.assetId(fromDragString: text), seen.insert(id).inserted,
+                  let asset = mediaAssets.first(where: { $0.id == id && ($0.type.isPlaceable || $0.type == .subtitle) }) else { return nil }
+            if text.contains("#") {
+                guard let segment = MediaTab.assetSegment(fromDragString: text),
+                      asset.type == .audio || asset.type == .video, asset.duration.isFinite,
+                      segment.upperBound <= asset.duration else { return nil }
             }
+            return asset
         }
     }
 
     /// Source-second ranges carried by search-moment drags, keyed by asset id.
     func segmentsFromDragPayload(_ payload: String) -> [String: ClosedRange<Double>] {
         var segments: [String: ClosedRange<Double>] = [:]
+        let allowed = Set(assetsFromDragPayload(payload).map(\.id))
         for line in payload.split(separator: "\n") {
-            guard let id = MediaTab.assetId(fromDragString: String(line)),
+            guard let id = MediaTab.assetId(fromDragString: String(line)), allowed.contains(id), segments[id] == nil,
                   let segment = MediaTab.assetSegment(fromDragString: String(line)) else { continue }
             segments[id] = segment
         }
@@ -1280,18 +1285,6 @@ extension EditorViewModel {
         return keys
     }
 
-    func selectMediaPanelItem(_ key: String) {
-        if let folderId = MediaPanelItemKey.folderId(from: key) {
-            guard folder(id: folderId) != nil else { return }
-            mediaPanelScrollTarget = key
-            selectedFolderIds = [folderId]
-            selectedMediaAssetIds.removeAll()
-            return
-        }
-        guard let asset = mediaAssets.first(where: { $0.id == key }) else { return }
-        mediaPanelScrollTarget = key
-        selectMediaAsset(asset)
-    }
 
     func renameMediaAsset(id: String, name: String) {
         guard let asset = mediaAssets.first(where: { $0.id == id }) else { return }
@@ -1546,9 +1539,6 @@ extension EditorViewModel {
     func addTextClip(content: String = "Text", style: TextStyle = TextStyle()) -> String? {
         let durationFrames = max(1, secondsToFrame(seconds: Defaults.textDurationSeconds, fps: timeline.fps))
 
-        // Index 0 is the topmost slot in the timeline UI.
-        let trackIdx = insertTrack(at: 0, type: .video)
-
         let canvasW = Double(timeline.width)
         let canvasH = Double(timeline.height)
         let natural = TextLayout.naturalSize(content: content, style: style, maxWidth: CGFloat(canvasW) * 0.9, canvasHeight: CGFloat(canvasH))
@@ -1568,16 +1558,11 @@ extension EditorViewModel {
         clip.textStyle = style
         let clipId = clip.id
 
-        timeline.tracks[trackIdx].clips.append(clip)
-        sortClips(trackIndex: trackIdx)
-
-        undoManager?.registerUndo(withTarget: self) { vm in
-            if let loc = vm.findClip(id: clipId) {
-                vm.timeline.tracks[loc.trackIndex].clips.remove(at: loc.clipIndex)
-                vm.videoEngine?.refreshTextCompositing()
-            }
+        withTimelineSwap(actionName: "Add Text") {
+            let trackIdx = insertTrack(at: 0, type: .video)
+            timeline.tracks[trackIdx].clips.append(clip)
+            sortClips(trackIndex: trackIdx)
         }
-        undoManager?.setActionName("Add Text")
 
         selectedClipIds = [clipId]
         videoEngine?.refreshTextCompositing()

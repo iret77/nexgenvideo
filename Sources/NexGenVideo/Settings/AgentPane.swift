@@ -94,14 +94,41 @@ struct ExternalMcpServerEditorState: Equatable {
     }
 }
 
+@MainActor
+struct AgentSettingsServices {
+    let backend: () -> AgentBackend
+    let setBackend: (AgentBackend) -> Void
+    let loadKey: () -> String?
+    let saveKey: (String) -> Bool
+    let deleteKey: () -> Bool
+    let checkClaude: () async -> ClaudeCodeLocator.Status
+    let mcpRequired: () -> Bool
+    let mcpEnabled: () -> Bool
+    let mcpRunning: () -> Bool
+    let mcpError: () -> String?
+    let setMCPEnabled: (Bool) -> Void
+    let retryMCP: () -> Void
+
+    static var live: Self {
+        .init(backend: { AgentBackendPreference.selected }, setBackend: { AppState.shared.setAgentBackend($0) },
+            loadKey: { AnthropicKeychain.load() }, saveKey: { AnthropicKeychain.save($0) }, deleteKey: { AnthropicKeychain.delete() },
+            checkClaude: { await Task.detached(priority: .utility) { ClaudeCodeLocator.status() }.value },
+            mcpRequired: { AppState.shared.isMCPRequiredByAgent }, mcpEnabled: { AppState.shared.isMCPEnabled },
+            mcpRunning: { AppState.shared.mcpService?.isRunning == true }, mcpError: { AppState.shared.mcpService?.lastError },
+            setMCPEnabled: { AppState.shared.setMCPEnabled($0) }, retryMCP: { AppState.shared.restartMCPService() })
+    }
+}
+
 struct AgentPane: View {
-    @Bindable private var appState = AppState.shared
-    @State private var backend = AgentBackendPreference.selected
+    private let services: AgentSettingsServices
+    private let mcpDependencies: ExternalMcpServers.Dependencies
+    @State private var backend: AgentBackend
     @State private var claudeStatus: ClaudeCodeLocator.Status?
     @State private var isCheckingClaude = false
     @State private var hasKey = false
     @State private var maskedKey = ""
     @State private var draft = ""
+    @State private var keyError: String?
     @State private var externalMcpServers: [ExternalMcpServers.SettingsEntry] = []
     @State private var externalMcpEditor = ExternalMcpServerEditorState()
     @State private var pendingExternalMcpRemoval: String?
@@ -111,6 +138,13 @@ struct AgentPane: View {
     @FocusState private var externalMcpField: ExternalMcpField?
 
     @AppStorage(CostGuard.autoApproveKey) private var autoApproveCredits = 0
+
+    init(services: AgentSettingsServices = .live, mcpDependencies: ExternalMcpServers.Dependencies = .live,
+         defaults: UserDefaults = .standard) {
+        self.services = services; self.mcpDependencies = mcpDependencies
+        _backend = State(initialValue: services.backend())
+        _autoApproveCredits = AppStorage(wrappedValue: 0, CostGuard.autoApproveKey, store: defaults)
+    }
 
     private let consoleURL = URL(string: "https://platform.claude.com/settings/keys")!
     private let installationURL = URL(string: "https://code.claude.com/docs/en/setup")!
@@ -134,7 +168,7 @@ struct AgentPane: View {
             externalMcpSection
         }
         .onAppear {
-            backend = AgentBackendPreference.selected
+            backend = services.backend()
             refreshKey()
             refreshExternalMcpServers()
         }
@@ -196,9 +230,10 @@ struct AgentPane: View {
                     }
                     .labelsHidden()
                     .pickerStyle(.segmented)
+                    .reviewAcceptanceProbe("settings.agent.backend", text: backend.displayName)
                     .fixedSize()
                     .onChange(of: backend) { _, newValue in
-                        appState.setAgentBackend(newValue)
+                        services.setBackend(newValue)
                         if newValue == .claudeCode {
                             Task { await checkClaude() }
                         }
@@ -255,6 +290,7 @@ struct AgentPane: View {
 
             HStack(spacing: AppTheme.Spacing.sm) {
                 SecureField(keyPlaceholder, text: $draft)
+                    .reviewAcceptanceProbe("settings.agent.key")
                     .accessibilityLabel("Anthropic API key")
                     .textFieldStyle(.plain)
                     .focused($isFocused)
@@ -279,6 +315,10 @@ struct AgentPane: View {
             }
             .padding(.horizontal, AppTheme.Spacing.lgXl)
             .padding(.vertical, AppTheme.Spacing.md)
+            if let keyError {
+                SettingsNotice(text: keyError, systemImage: "exclamationmark.triangle", tone: .error)
+                    .reviewAcceptanceProbe("settings.agent.key.error", text: keyError)
+            }
         }
     }
 
@@ -287,6 +327,7 @@ struct AgentPane: View {
             SettingsRow(title: claudeCodeTitle, subtitle: claudeCodeDetail) {
                 SettingsStatusBadge(text: claudeStatusLabel, tone: claudeStatusTone)
                 Button("Check again") { Task { await checkClaude() } }
+                    .reviewAcceptanceProbe("settings.agent.check")
                     .disabled(isCheckingClaude)
             }
 
@@ -353,6 +394,7 @@ struct AgentPane: View {
                             .foregroundStyle(AppTheme.Text.secondaryColor)
                     }
                     .controlSize(.small)
+                    .reviewAcceptanceProbe("settings.agent.approvals", text: String(autoApproveCredits))
                     .fixedSize()
                 }
             }
@@ -367,27 +409,28 @@ struct AgentPane: View {
             SettingsCard {
                 SettingsRow(
                     title: "NexGenVideo MCP server",
-                    subtitle: appState.isMCPRequiredByAgent
+                    subtitle: services.mcpRequired()
                         ? "Required while Claude Code is the selected agent runtime."
                         : "Listens only on this Mac at 127.0.0.1:\(String(MCPService.port))."
                 ) {
                     HStack(spacing: AppTheme.Spacing.sm) {
                         SettingsStatusBadge(text: mcpStatusLabel, tone: mcpStatusTone)
-                        if appState.mcpService?.lastError != nil {
-                            Button("Retry") { appState.restartMCPService() }
+                        if services.mcpError() != nil {
+                            Button("Retry") { services.retryMCP() }
                                 .controlSize(.small)
                         }
                         Toggle(
                             "Enable NexGenVideo MCP server",
                             isOn: Binding(
-                                get: { appState.isMCPEnabled },
-                                set: { appState.setMCPEnabled($0) }
+                                get: { services.mcpEnabled() },
+                                set: { services.setMCPEnabled($0) }
                             )
                         )
                         .labelsHidden()
                         .toggleStyle(.switch)
                         .controlSize(.small)
-                        .disabled(appState.isMCPRequiredByAgent)
+                        .disabled(services.mcpRequired())
+                        .reviewAcceptanceProbe("settings.agent.mcp", text: String(services.mcpEnabled()))
                     }
                 }
                 SettingsDivider()
@@ -399,14 +442,14 @@ struct AgentPane: View {
     }
 
     private var mcpStatusLabel: String {
-        if appState.mcpService?.isRunning == true { return "Running" }
-        if appState.mcpService?.lastError != nil { return "Unavailable" }
-        return appState.isMCPEnabled ? "Starting" : "Off"
+        if services.mcpRunning() { return "Running" }
+        if services.mcpError() != nil { return "Unavailable" }
+        return services.mcpEnabled() ? "Starting" : "Off"
     }
 
     private var mcpStatusTone: SettingsTone {
-        if appState.mcpService?.isRunning == true { return .success }
-        if appState.mcpService?.lastError != nil { return .error }
+        if services.mcpRunning() { return .success }
+        if services.mcpError() != nil { return .error }
         return .neutral
     }
 
@@ -430,6 +473,7 @@ struct AgentPane: View {
                         subtitle: "Add a server URL, command, or MCP configuration."
                     ) {
                         Button("Add Server") { beginAddingExternalMcpServer() }
+                            .reviewAcceptanceProbe("settings.mcp.add")
                             .buttonStyle(.capsule(.prominent, size: .regular))
                     }
                 } else {
@@ -447,6 +491,7 @@ struct AgentPane: View {
                     } else {
                         HStack {
                             Button("Add Server") { beginAddingExternalMcpServer() }
+                                .reviewAcceptanceProbe("settings.mcp.add")
                                 .buttonStyle(.capsule(.secondary, size: .regular))
                             Spacer(minLength: AppTheme.Spacing.lg)
                         }
@@ -473,11 +518,13 @@ struct AgentPane: View {
                     SettingsStatusBadge(text: "Needs repair", tone: .warning)
                 }
                 Button(externalMcpEditLabel(entry)) { beginEditingExternalMcpServer(entry) }
+                    .reviewAcceptanceProbe("settings.mcp.edit." + entry.name)
                     .buttonStyle(.capsule(.secondary, size: .regular))
                     .disabled(externalMcpEditor.isPresented)
                 Button("Remove", role: .destructive) {
                     pendingExternalMcpRemoval = entry.name
                 }
+                .reviewAcceptanceProbe("settings.mcp.remove." + entry.name)
                 .buttonStyle(.capsule(.secondary, size: .regular))
                 .disabled(externalMcpEditor.isPresented)
                 .help("Remove \(entry.name)")
@@ -511,6 +558,7 @@ struct AgentPane: View {
                         .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Text.secondaryColor)
                     TextField("server-name", text: $externalMcpEditor.name)
+                        .reviewAcceptanceProbe("settings.mcp.name", text: externalMcpEditor.name)
                         .textFieldStyle(.plain)
                         .focused($externalMcpField, equals: .name)
                         .interfaceFont(size: AppTheme.Typography.ui, design: .monospaced)
@@ -533,6 +581,7 @@ struct AgentPane: View {
                     axis: .vertical
                 )
                 .lineLimit(2...6)
+                .reviewAcceptanceProbe("settings.mcp.connection")
                 .textFieldStyle(.plain)
                 .focused($externalMcpField, equals: .connection)
                 .interfaceFont(size: AppTheme.Typography.ui, design: .monospaced)
@@ -568,10 +617,12 @@ struct AgentPane: View {
             HStack(spacing: AppTheme.Spacing.sm) {
                 Spacer(minLength: AppTheme.Spacing.lg)
                 Button("Cancel") { cancelExternalMcpEditor() }
+                    .reviewAcceptanceProbe("settings.mcp.cancel")
                     .buttonStyle(.capsule(.secondary, size: .regular))
                 Button(externalMcpEditor.importsMultipleServers ? "Import" : "Save") {
                     saveExternalMcpServer()
                 }
+                .reviewAcceptanceProbe("settings.mcp.save")
                 .buttonStyle(.capsule(.prominent, size: .regular))
                 .disabled(
                     externalMcpValidationMessage != nil
@@ -624,7 +675,7 @@ struct AgentPane: View {
     }
 
     private func refreshExternalMcpServers() {
-        externalMcpServers = ExternalMcpServers.settingsEntries()
+        externalMcpServers = ExternalMcpServers.settingsEntries(dependencies: mcpDependencies)
     }
 
     private func beginAddingExternalMcpServer() {
@@ -646,7 +697,7 @@ struct AgentPane: View {
 
     private func saveExternalMcpServer() {
         guard let operation = externalMcpOperation else { return }
-        if let request = ExternalMcpServers.trustRequest(for: operation) {
+        if let request = ExternalMcpServers.trustRequest(for: operation, dependencies: mcpDependencies) {
             pendingExternalMcpTrust = PendingExternalMcpTrust(operation: operation, request: request)
         } else {
             applyExternalMcpOperation(operation, trustingStdio: false)
@@ -658,7 +709,7 @@ struct AgentPane: View {
         trustingStdio: Bool
     ) {
         do {
-            try ExternalMcpServers.apply(operation, trustingStdio: trustingStdio)
+            try ExternalMcpServers.apply(operation, trustingStdio: trustingStdio, dependencies: mcpDependencies)
             pendingExternalMcpTrust = nil
             externalMcpError = nil
             cancelExternalMcpEditor()
@@ -670,7 +721,7 @@ struct AgentPane: View {
     }
 
     private func removeExternalMcpServer(_ name: String) {
-        ExternalMcpServers.remove(name: name)
+        ExternalMcpServers.remove(name: name, dependencies: mcpDependencies)
         pendingExternalMcpRemoval = nil
         externalMcpError = nil
         refreshExternalMcpServers()
@@ -682,12 +733,14 @@ struct AgentPane: View {
 
     @ViewBuilder
     private var keyTrailingControl: some View {
-        let trimmed = draft.trimmingCharacters(in: .whitespaces)
+        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
             Button("Save", action: saveKey)
+                .reviewAcceptanceProbe("settings.agent.key.save")
                 .buttonStyle(.capsule(.prominent, size: .regular))
         } else if hasKey {
             Button("Remove", role: .destructive, action: removeKey)
+            .reviewAcceptanceProbe("settings.agent.key.remove")
             .buttonStyle(.capsule(.secondary, size: .regular))
             .help("Remove Anthropic API key")
         }
@@ -695,31 +748,31 @@ struct AgentPane: View {
 
     private func checkClaude() async {
         isCheckingClaude = true
-        let status = await Task.detached(priority: .utility) {
-            ClaudeCodeLocator.status()
-        }.value
+        let status = await services.checkClaude()
         claudeStatus = status
         isCheckingClaude = false
         NotificationCenter.default.post(name: .claudeCodeStatusChanged, object: status)
     }
 
     private func refreshKey() {
-        let key = AnthropicKeychain.load() ?? ""
+        let key = services.loadKey() ?? ""
         hasKey = !key.isEmpty
         maskedKey = mask(key)
     }
 
     private func saveKey() {
-        let key = draft.trimmingCharacters(in: .whitespaces)
+        let key = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else { return }
-        AnthropicKeychain.save(key)
+        guard services.saveKey(key) else { keyError = "The key could not be saved in Keychain. Try again."; return }
+        keyError = nil
         draft = ""
         isFocused = false
         refreshKey()
     }
 
     private func removeKey() {
-        AnthropicKeychain.delete()
+        guard services.deleteKey() else { keyError = "The key could not be removed from Keychain. Try again."; return }
+        keyError = nil
         draft = ""
         refreshKey()
     }

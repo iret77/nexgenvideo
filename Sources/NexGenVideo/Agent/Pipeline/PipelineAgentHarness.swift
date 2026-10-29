@@ -5,24 +5,29 @@ enum IntakePlanner {
     static func pending(
         _ steps: [HardStep],
         dataRoot: URL,
-        ledger: IntakeLedger
+        ledger: IntakeLedger,
+        workflowID: String? = nil
     ) -> [HardStep] {
-        steps.filter {
-            !ledger.isDeclined($0.id)
-                && !IntakeSatisfaction.isSatisfied($0.kind, dataRoot: dataRoot)
+        steps.filter { step in
+            if step.kind == .script, step.phase == "brief", let workflowID,
+               workflowID == HostWorkflowKey.musicvideoV2Contract || workflowID == "core.production.v2" {
+                return (try? PipelineStorySourceWriter.confirmedSelection(dataRoot: dataRoot, workflowID: workflowID)) == nil
+            }
+            return !ledger.isDeclined(step.id)
+                && !IntakeSatisfaction.isSatisfied(step.kind, dataRoot: dataRoot)
         }
     }
 
     static func restoredRepeat(
         _ saved: ChatSessionDecision?, steps: [HardStep], phase: String?,
-        binding: ProjectPackBinding?, dataRoot: URL, ledger: IntakeLedger
+        binding: ProjectPackBinding?, dataRoot: URL, ledger: IntakeLedger, workflowID: String? = nil
     ) -> HardStep? {
         guard let saved, saved.origin == .direct, saved.dialog.purpose == .workflowIntake,
               let key = saved.intakeKey, key.isRepeat,
               key.packBinding == binding, key.phase == phase,
               let index = steps.firstIndex(where: { $0.id == key.stepID }),
               steps[index].repeatable, !ledger.isDeclined(key.stepID),
-              next(Array(steps.prefix(index)), dataRoot: dataRoot, ledger: ledger) == nil else { return nil }
+              next(Array(steps.prefix(index)), dataRoot: dataRoot, ledger: ledger, workflowID: workflowID) == nil else { return nil }
         let step = steps[index]
         let count = IntakeSatisfaction.fingerprint(step.kind, dataRoot: dataRoot)
         guard count > 0, count == key.fingerprint, key.itemNumber == count + 1,
@@ -35,9 +40,10 @@ enum IntakePlanner {
     static func next(
         _ steps: [HardStep],
         dataRoot: URL,
-        ledger: IntakeLedger
+        ledger: IntakeLedger,
+        workflowID: String? = nil
     ) -> HardStep? {
-        pending(steps, dataRoot: dataRoot, ledger: ledger).first
+        pending(steps, dataRoot: dataRoot, ledger: ledger, workflowID: workflowID).first
     }
 }
 
@@ -53,8 +59,13 @@ enum PipelinePhaseAccess {
     static func prepare(
         dataRoot: URL,
         declaredPack: String? = nil,
-        declaredBinding: ProjectPackBinding? = nil
+        declaredBinding: ProjectPackBinding? = nil,
+        declaredProductionContract: HostProductionContractBinding? = nil
     ) throws -> Prepared {
+        if let workflow = try PhaseContractRuntime.resolveWorkflow(dataRoot: dataRoot, expectedPack: declaredBinding,
+            expectedProductionContract: declaredProductionContract), workflow.isProductionV2 {
+            return try prepare(workflow: workflow)
+        }
         let projectURL = FrameInventory.projectHome(of: dataRoot)
         let packName: String?
         do {
@@ -75,6 +86,11 @@ enum PipelinePhaseAccess {
             )
         }
         return try prepare(packName: packName)
+    }
+
+    static func prepare(workflow: HostWorkflowKey) throws -> Prepared {
+        let contract = try PhaseContractRuntime.contract(workflow: workflow)
+        return Prepared(packName: workflow.packID, contract: contract, order: contract.order, manifest: contract.hardSteps)
     }
 
     static func prepare(packName: String?) throws -> Prepared {
@@ -112,7 +128,8 @@ enum PipelinePhaseAccess {
         _ phase: String,
         dataRoot: URL,
         declaredPack: String? = nil,
-        declaredBinding: ProjectPackBinding? = nil
+        declaredBinding: ProjectPackBinding? = nil,
+        declaredProductionContract: HostProductionContractBinding? = nil
     ) throws {
         try requireCurrentPhaseAndIntake(
             phase,
@@ -120,7 +137,8 @@ enum PipelinePhaseAccess {
             prepared: prepare(
                 dataRoot: dataRoot,
                 declaredPack: declaredPack,
-                declaredBinding: declaredBinding
+                declaredBinding: declaredBinding,
+                declaredProductionContract: declaredProductionContract
             )
         )
     }
@@ -130,7 +148,8 @@ enum PipelinePhaseAccess {
         dataRoot: URL,
         prepared: Prepared
     ) throws {
-        guard let packName = prepared.packName else { return }
+        guard prepared.contract != nil || prepared.packName != nil else { return }
+        let packName = prepared.packName ?? "Core production"
         guard prepared.order.contains(phase) else {
             throw GateBlocked(
                 "The \(packName) workflow has no registered phase named \"\(phase)\"."
@@ -167,7 +186,8 @@ enum PipelinePhaseAccess {
         guard let step = IntakePlanner.next(
             manifest.steps(for: phase),
             dataRoot: dataRoot,
-            ledger: IntakeLedger.load(dataRoot: dataRoot)
+            ledger: IntakeLedger.load(dataRoot: dataRoot),
+            workflowID: prepared.contract?.manifest.contractID
         ) else { return }
         throw GateBlocked(
             "Complete the host-owned \(step.title) card before working on \(PhaseDisplay.label(phase))."
@@ -242,94 +262,8 @@ final class PipelineAgentHarness {
             if let style = try ProductionStyleContext.prompt(dataRoot: dataRoot, phase: phase) {
                 prompt += "\n\n" + style
             }
-            let registry = PackCatalog.registry(activePack: packName)
-            let consumers = try ProductionKnowledgeConsumerRegistryV1(
-                registrations: registry.productionKnowledgeConsumers
-            )
-            guard let registration = consumers.registration(for: packName) else {
-                return prompt
-            }
-            let productionKnowledgeCatalog: ProductionKnowledgeCatalogV1
-            do {
-                productionKnowledgeCatalog = try EngineProductionKnowledgeResourcesV1.loadCatalog()
-                try consumers.validateResources(in: productionKnowledgeCatalog)
-            } catch {
-                Log.agent.error(
-                    "production knowledge unavailable error=\(error.localizedDescription)"
-                )
-                throw ToolError(
-                    "NexGenVideo's production knowledge is damaged. Reinstall the app."
-                )
-            }
-            let descriptor = registration.descriptor
-            let metadata: ProductionKnowledgeActivationMetadataV1
-            do {
-                metadata = try registration.metadataProvider(dataRoot, phase)
-            } catch let blocked as GateBlocked {
-                throw ToolError(blocked.message)
-            } catch {
-                throw ToolError(
-                    "The \(packName) production-knowledge activation metadata is unavailable: "
-                        + error.localizedDescription
-                )
-            }
-            let activeProfiles = Set(
-                registry.activeProductionProfileIDs(metadata: metadata.values).map {
-                    ProductionProfileDescriptorIDV1(rawValue: $0.rawValue)
-                }
-            )
-            let undeclaredProfiles = activeProfiles.subtracting(descriptor.profileResourceIDs)
-            guard undeclaredProfiles.isEmpty else {
-                throw ToolError(
-                    "The \(packName) production-knowledge descriptor does not declare active profiles: "
-                        + undeclaredProfiles.map(\.rawValue).sorted().joined(separator: ", ")
-                )
-            }
-            let selection = descriptor.selection(for: phase)
-            let declaredLibraries = Set(selection?.libraryIDs ?? [])
-            let activeLibraries: Set<CreativeKnowledgeLibraryIDV1>
-            if let requested = metadata.activeLibraryIDs {
-                let undeclaredLibraries = requested.subtracting(declaredLibraries)
-                guard undeclaredLibraries.isEmpty else {
-                    throw ToolError(
-                        "The \(packName) activation metadata requested undeclared production libraries: "
-                            + undeclaredLibraries.map(\.rawValue).sorted().joined(separator: ", ")
-                    )
-                }
-                activeLibraries = requested
-            } else {
-                activeLibraries = declaredLibraries
-            }
-            let preferredLibraryOrder = (selection?.libraryIDs ?? []).filter {
-                activeLibraries.contains($0)
-            }
-            let assembly = try ProductionKnowledgeContextAssemblerV1(
-                catalog: productionKnowledgeCatalog,
-                predicates: ProductionMachinePredicateRegistryV1.standard()
-            ).assemble(
-                ProductionKnowledgeAssemblyQueryV1(
-                    packID: packName,
-                    phase: selection?.knowledgePhase ?? phase,
-                    intentTags: metadata.intentTags.union(selection?.intentTags ?? []),
-                    activeProfileIDs: activeProfiles,
-                    activeLibraryIDs: activeLibraries,
-                    budget: descriptor.budget
-                ),
-                preferredLibraryOrder: preferredLibraryOrder
-            )
-            if !assembly.prompt.isEmpty {
-                prompt += "\n\nFollow this selected core production knowledge:\n\n\(assembly.prompt)"
-            }
-            if !assembly.omittedLibraryEntryIDs.isEmpty {
-                prompt += "\n\nAdditional selected guidance is available through get_production_knowledge(operation: read, entryID: ...). Retrieve complete applicable entries before using them: "
-                    + assembly.omittedLibraryEntryIDs.joined(separator: ", ")
-                Log.agent.warning(
-                    "production knowledge budget omitted="
-                        + assembly.omittedLibraryEntryIDs.joined(separator: ",")
-                        + " bytes=\(assembly.utf8Bytes) tokens=\(assembly.estimatedTokens)"
-                )
-            }
-            return prompt
+            return try PipelineProductionKnowledgeContext.append(to: prompt,
+                dataRoot: dataRoot, phase: phase, packName: packName)
         }
     }
 
@@ -430,7 +364,7 @@ final class PipelineAgentHarness {
         ) else {
             throw ToolError("The workflow contract is unavailable. Reopen the project and try again.")
         }
-        let context = try loadContext(dataRoot: dataRoot, packName: packName)
+        let context = try loadContext(dataRoot: dataRoot, packName: packName, expectedBinding: editor.declaredPluginBinding)
         guard let phase = context.phase, phase == offered.step.phase else {
             let current = context.phase.map { PhaseDisplay.label($0) }
                 ?? "the completed workflow"
@@ -455,11 +389,8 @@ final class PipelineAgentHarness {
                 try GateGuard.checkApprovable(
                     phase: prior,
                     dataRoot: dataRoot,
-                    requirement: try PhaseContractRuntime.gateRequirement(
-                        activePack: packName,
-                        phase: prior,
-                        registry: registry
-                    )
+                    requirement: try intakeGateRequirement(phase: prior, dataRoot: dataRoot,
+                        binding: editor.declaredPluginBinding, registry: registry)
                 )
             }
         } catch let blocked as GateBlocked {
@@ -469,7 +400,8 @@ final class PipelineAgentHarness {
             let current = IntakePlanner.next(
                 context.manifest.steps(for: phase),
                 dataRoot: dataRoot,
-                ledger: IntakeLedger.load(dataRoot: dataRoot)
+                ledger: IntakeLedger.load(dataRoot: dataRoot),
+                workflowID: context.contract.manifest.contractID
             )
             guard current?.id == offered.step.id else {
                 throw ToolError(
@@ -500,6 +432,17 @@ final class PipelineAgentHarness {
         }
         let context: Context
         do {
+            if let workflow = try PhaseContractRuntime.resolveWorkflow(dataRoot: dataRoot,
+                expectedPack: editor.declaredPluginBinding, expectedProductionContract: editor.declaredProductionContract),
+               workflow.packID == nil {
+                let runtime = try runtimeContext(dataRoot: dataRoot, declaredPack: nil, declaredBinding: nil,
+                    declaredProductionContract: editor.declaredProductionContract)
+                if runtime.currentPhase == "brief",
+                   try PipelineStorySourceWriter.confirmedSelection(dataRoot: dataRoot, workflowID: workflow.contractID) == nil {
+                    return .blocked
+                }
+                return Reconciliation(isReady: true, agentPrompt: runtime.instructions, failure: nil)
+            }
             guard let packName = try resolvedPack(
                 dataRoot: dataRoot,
                 declaredPack: editor.declaredPluginName,
@@ -511,7 +454,7 @@ final class PipelineAgentHarness {
                     failure: nil
                 )
             }
-            context = try loadContext(dataRoot: dataRoot, packName: packName)
+            context = try loadContext(dataRoot: dataRoot, packName: packName, expectedBinding: editor.declaredPluginBinding)
         } catch {
             return Reconciliation(
                 isReady: false,
@@ -533,7 +476,8 @@ final class PipelineAgentHarness {
            let step = IntakePlanner.restoredRepeat(
             service.sessions.first(where: { $0.id == service.currentSessionId })?.decision,
             steps: context.manifest.steps(for: phase), phase: phase,
-            binding: editor.declaredPluginBinding, dataRoot: dataRoot, ledger: ledger
+            binding: editor.declaredPluginBinding, dataRoot: dataRoot, ledger: ledger,
+            workflowID: context.contract.manifest.contractID
            ) {
             if let failure = present(step, isRepeat: true, dataRoot: dataRoot, editor: editor) {
                 return Reconciliation(isReady: false, agentPrompt: nil, failure: failure)
@@ -605,11 +549,20 @@ final class PipelineAgentHarness {
               let step = IntakePlanner.next(
                   context.manifest.steps(for: phase),
                   dataRoot: dataRoot,
-                  ledger: ledger
+                  ledger: ledger,
+                  workflowID: context.contract.manifest.contractID
         ) else {
             let prompt: String?
             do {
-                prompt = try context.agentPrompt()
+                if let workflow = try PhaseContractRuntime.resolveWorkflow(dataRoot: dataRoot,
+                    expectedPack: editor.declaredPluginBinding, expectedProductionContract: editor.declaredProductionContract),
+                   workflow.isProductionV2 {
+                    prompt = try runtimeContext(dataRoot: dataRoot, declaredPack: editor.declaredPluginName,
+                        declaredBinding: editor.declaredPluginBinding,
+                        declaredProductionContract: editor.declaredProductionContract).instructions
+                } else {
+                    prompt = try context.agentPrompt()
+                }
             } catch {
                 return Reconciliation(
                     isReady: false,
@@ -639,8 +592,14 @@ final class PipelineAgentHarness {
         phase: String,
         dataRoot: URL,
         declaredPack: String? = nil,
-        declaredBinding: ProjectPackBinding? = nil
+        declaredBinding: ProjectPackBinding? = nil,
+        declaredProductionContract: HostProductionContractBinding? = nil
     ) throws {
+        if let workflow = try PhaseContractRuntime.resolveWorkflow(dataRoot: dataRoot, expectedPack: declaredBinding,
+            expectedProductionContract: declaredProductionContract), workflow.isProductionV2 {
+            try guardProductionPhaseWork(tool: tool, phase: phase, dataRoot: dataRoot, workflow: workflow)
+            return
+        }
         let packName = try resolvedPack(
             dataRoot: dataRoot,
             declaredPack: declaredPack,
@@ -702,8 +661,23 @@ final class PipelineAgentHarness {
         tool: ToolName,
         dataRoot: URL,
         declaredPack: String? = nil,
-        declaredBinding: ProjectPackBinding? = nil
+        declaredBinding: ProjectPackBinding? = nil,
+        declaredProductionContract: HostProductionContractBinding? = nil
     ) throws -> String? {
+        if let workflow = try PhaseContractRuntime.resolveWorkflow(dataRoot: dataRoot, expectedPack: declaredBinding,
+            expectedProductionContract: declaredProductionContract), workflow.isProductionV2 {
+            let contract = try PhaseContractRuntime.contract(workflow: workflow)
+            let state = try ProjectStateBuilder.buildSnapshot(dataRoot: dataRoot, order: contract.order)
+            guard let phase = state.nextPhase else {
+                guard contract.allowsPostPipeline(tool) else { throw ToolError("Explicitly rewind the phase that owns this work first.") }
+                return nil
+            }
+            try guardProductionPhaseWork(tool: nil, phase: phase, dataRoot: dataRoot, workflow: workflow)
+            guard contract.allowsSupporting(tool, phase: phase) else {
+                throw ToolError("\(tool.rawValue) is unavailable in the current production phase.")
+            }
+            return phase
+        }
         guard let packName = try resolvedPack(
             dataRoot: dataRoot,
             declaredPack: declaredPack,
@@ -734,6 +708,24 @@ final class PipelineAgentHarness {
         return phase
     }
 
+    private func guardProductionPhaseWork(tool: ToolName?, phase: String, dataRoot: URL,
+                                           workflow: HostWorkflowKey) throws {
+        let prepared = try PipelinePhaseAccess.prepare(workflow: workflow)
+        try PipelinePhaseAccess.requireCurrentPhaseAndIntake(phase, dataRoot: dataRoot, prepared: prepared)
+        guard let contract = prepared.contract else { throw PhaseContractError.unavailable(workflow.contractID) }
+        if let tool, !contract.allowsPhaseBound(tool, phase: phase) {
+            throw ToolError("\(tool.rawValue) is outside the exact current production contract.")
+        }
+        let gates = try loadGates(dataRoot: dataRoot)
+        try GateGuard.requirePriorApproved(gates, order: contract.order, phase: phase)
+        if let index = contract.order.firstIndex(of: phase), index > 0 {
+            let prior = contract.order[index - 1]
+            let registry = PackCatalog.registry(activePack: workflow.packID)
+            try GateGuard.checkApprovable(phase: prior, dataRoot: dataRoot,
+                requirement: PhaseContractRuntime.gateRequirement(workflow: workflow, phase: prior, registry: registry))
+        }
+    }
+
     func agentPrompt(dataRoot: URL) throws -> String? {
         guard let packName = try resolvedPack(
             dataRoot: dataRoot,
@@ -750,8 +742,28 @@ final class PipelineAgentHarness {
     func runtimeContext(
         dataRoot: URL,
         declaredPack: String?,
-        declaredBinding: ProjectPackBinding?
+        declaredBinding: ProjectPackBinding?,
+        declaredProductionContract: HostProductionContractBinding? = nil,
+        timeline: Timeline? = nil,
+        resolver: MediaResolver? = nil,
+        preparedProduction: PipelineProductionRuntimeContext.Prepared? = nil
     ) throws -> RuntimeContext {
+        if let workflow = try PhaseContractRuntime.resolveWorkflow(dataRoot: dataRoot, expectedPack: declaredBinding,
+            expectedProductionContract: declaredProductionContract), workflow.isProductionV2 {
+            let contract = try PhaseContractRuntime.contract(workflow: workflow)
+            let snapshot = try ProjectStateBuilder.buildSnapshot(dataRoot: dataRoot, order: contract.order)
+            let instructions: String?
+            if let preparedProduction {
+                try preparedProduction.requireCurrent(dataRoot: dataRoot, workflow: workflow, phase: snapshot.nextPhase)
+                instructions = preparedProduction.instructions
+            } else {
+                instructions = try snapshot.nextPhase.map {
+                    try PipelineProductionRuntimeContext.instructions(dataRoot: dataRoot, workflow: workflow,
+                        phase: $0, timeline: timeline, resolver: resolver)
+                }
+            }
+            return RuntimeContext(packID: workflow.packID, currentPhase: snapshot.nextPhase, instructions: instructions)
+        }
         guard let packName = try resolvedPack(
             dataRoot: dataRoot,
             declaredPack: declaredPack,
@@ -793,7 +805,7 @@ final class PipelineAgentHarness {
             declaredPack: editor.declaredPluginName,
             declaredBinding: editor.declaredPluginBinding
         ) else { return }
-        let context = try loadContext(dataRoot: dataRoot, packName: packName)
+        let context = try loadContext(dataRoot: dataRoot, packName: packName, expectedBinding: editor.declaredPluginBinding)
         guard let phase = context.phase else {
             if dialog.workflowDecision != nil {
                 throw ToolError(
@@ -805,7 +817,8 @@ final class PipelineAgentHarness {
         if let step = IntakePlanner.next(
             context.manifest.steps(for: phase),
             dataRoot: dataRoot,
-            ledger: IntakeLedger.load(dataRoot: dataRoot)
+            ledger: IntakeLedger.load(dataRoot: dataRoot),
+            workflowID: context.contract.manifest.contractID
         ) {
             throw ToolError(
                 "Complete the host-owned \(step.title) card before presenting another decision."
@@ -1086,7 +1099,8 @@ final class PipelineAgentHarness {
         dataRoot: URL,
         captureLineage: Bool = true,
         declaredPack: String? = nil,
-        declaredBinding: ProjectPackBinding? = nil
+        declaredBinding: ProjectPackBinding? = nil,
+        declaredProductionContract: HostProductionContractBinding? = nil
     ) async throws {
         try await Task.detached(priority: .utility) {
             try PipelinePhaseMutationRecorder.record(
@@ -1094,12 +1108,22 @@ final class PipelineAgentHarness {
                 dataRoot: dataRoot,
                 captureLineage: captureLineage,
                 declaredPack: declaredPack,
-                declaredBinding: declaredBinding
+                declaredBinding: declaredBinding,
+                declaredProductionContract: declaredProductionContract
             )
         }.value
     }
 
-    private func loadContext(dataRoot: URL, packName: String) throws -> Context {
+    private func intakeGateRequirement(phase: String, dataRoot: URL, binding: ProjectPackBinding?,
+                                       registry: EngineRegistry) throws -> EngineRegistry.GateRequirement? {
+        if let workflow = try PhaseContractRuntime.resolveWorkflow(dataRoot: dataRoot,
+            expectedPack: binding, expectedProductionContract: nil), workflow.isProductionV2 {
+            return try PhaseContractRuntime.gateRequirement(workflow: workflow, phase: phase, registry: registry)
+        }
+        return try PhaseContractRuntime.gateRequirement(activePack: binding?.id, phase: phase, registry: registry)
+    }
+
+    private func loadContext(dataRoot: URL, packName: String, expectedBinding: ProjectPackBinding? = nil) throws -> Context {
         guard let pack = PackCatalog.pack(named: packName) else {
             throw ToolError(
                 "The \(packName) workflow is not loaded. Reopen the project before continuing."
@@ -1107,7 +1131,13 @@ final class PipelineAgentHarness {
         }
         let prepared: PipelinePhaseAccess.Prepared
         do {
-            prepared = try PipelinePhaseAccess.prepare(packName: packName)
+            if let expectedBinding,
+               let workflow = try PhaseContractRuntime.resolveWorkflow(dataRoot: dataRoot, expectedPack: expectedBinding,
+                    expectedProductionContract: nil), workflow.isProductionV2 {
+                prepared = try PipelinePhaseAccess.prepare(workflow: workflow)
+            } else {
+                prepared = try PipelinePhaseAccess.prepare(packName: packName)
+            }
         } catch {
             throw ToolError(error.localizedDescription)
         }
