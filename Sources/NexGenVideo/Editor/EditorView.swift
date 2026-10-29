@@ -29,9 +29,8 @@ struct EditorView: NSViewControllerRepresentable {
         let workspaceFocus = editor.workspaceFocus
         let focusedPanel = editor.focusedPanel
         let mediaPanelVisible = editor.mediaPanelVisible
-        let inspectorPanelVisible = editor.inspectorPanelVisible
-        let theaterActive = editor.theaterActive
-        let maximizedPanel = editor.maximizedPanel
+        let inspectorPanelVisible = editor.presentedInspectorVisible
+        let maximizedPanel = editor.presentedMaximizedPanel
         let tourStepIndex = editor.tour.stepIndex
         let tourAnchorRevision = editor.tour.anchorRevision
         let layoutIsCurrent = controller.applyLayoutIfNeeded(
@@ -40,11 +39,11 @@ struct EditorView: NSViewControllerRepresentable {
         )
         controller.applyPanelFocus(focusedPanel)
         guard layoutIsCurrent else { return }
-        controller.applyMediaVisibility(mediaPanelVisible)
-        controller.applyInspectorVisibility(inspectorPanelVisible)
         // Theater collapses everything to the single player, in any stage — reusing the maximize
         // path so the one video engine stays put. Exiting restores the user's real maximize state.
-        controller.applyMaximize(theaterActive ? .preview : maximizedPanel)
+        controller.applyMaximize(maximizedPanel)
+        controller.applyMediaVisibility(mediaPanelVisible)
+        controller.applyInspectorVisibility(inspectorPanelVisible)
         controller.updateTourFrame(stepIndex: tourStepIndex, anchorRevision: tourAnchorRevision)
     }
 }
@@ -119,6 +118,7 @@ private enum SplitAutosave {
     static let postRoot      = "editor.workspace.postproduction.root.v1"
     static let postCenter    = "editor.workspace.postproduction.center.v1"
     static let exportRoot    = "editor.workspace.export.root.v1"
+    static let exportCenter  = "editor.workspace.export.center.v1"
     static func preset(_ p: LayoutPreset) -> String { "editor.\(p.rawValue).preset" }
 
     /// AppKit persists divider frames under this key; no public API queries it.
@@ -143,6 +143,7 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
     private weak var inspectorSplitItem: NSSplitViewItem?
     private weak var timelineSplitItem: NSSplitViewItem?
     private weak var cockpitSplitItem: NSSplitViewItem?
+    private weak var exportJobsSplitItem: NSSplitViewItem?
     private var panelHosts: [any PanelFocusUpdating] = []
 
     private lazy var mediaFoldersHC: NSViewController = makeHosting(MediaFolderTreeView(), panel: .mediaFolders)
@@ -162,6 +163,7 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
     private lazy var timelineHC: NSViewController  = makeHosting(TimelinePanel(), panel: .timeline)
     private lazy var reviewHC: NSViewController     = makeHosting(FinishReviewPane(), panel: .project)
     private lazy var exportHC: NSViewController     = makeHosting(ExportWorkspaceSidebar(), panel: .project)
+    private lazy var exportJobsHC: NSViewController = makeHosting(ExportWorkspaceView(), panel: .exports)
 
     init(editor: EditorViewModel) {
         self.editor = editor
@@ -234,6 +236,7 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
         case .inspector: return inspectorSplitItem
         case .timeline:  return timelineSplitItem
         case .project:   return cockpitSplitItem
+        case .exports:   return exportJobsSplitItem
         }
     }
 
@@ -265,7 +268,7 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
     /// On unmaximize, leaves restore their visibility-flag state
     private func restoredCollapseState(for item: NSSplitViewItem) -> Bool {
         if item === mediaSplitItem     { return !editor.mediaPanelVisible }
-        if item === inspectorSplitItem { return !editor.inspectorPanelVisible }
+        if item === inspectorSplitItem { return !editor.presentedInspectorVisible }
         return false
     }
 
@@ -301,6 +304,7 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
         inspectorSplitItem = nil
         timelineSplitItem = nil
         cockpitSplitItem = nil
+        exportJobsSplitItem = nil
 
         currentPreset = preset
         currentWorkspace = workspace
@@ -470,15 +474,29 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
             minimumThickness: AppTheme.Layout.mediaPanelMin,
             projectSurface: true
         ))
-        target.addSplitViewItem(makePreviewItem())
+        let centerSplit = makeChildSplit(isVertical: false, autosave: SplitAutosave.exportCenter)
+        let preview = makePreviewItem()
+        preview.minimumThickness = AppTheme.Layout.finishPreviewMinHeight
+        centerSplit.addSplitViewItem(preview)
+        let jobs = NSSplitViewItem(viewController: exportJobsHC)
+        jobs.minimumThickness = AppTheme.Layout.inspectorMinHeight
+        exportJobsSplitItem = jobs
+        centerSplit.addSplitViewItem(jobs)
+        let center = NSSplitViewItem(viewController: centerSplit)
+        center.minimumThickness = AppTheme.Layout.previewMinWidth
+        target.addSplitViewItem(center)
         target.addSplitViewItem(makeInspectorItem())
 
-        applyAfterLayout { [weak self, weak target] in
-            guard let self, let target else { return }
+        applyAfterLayout { [weak self, weak target, weak centerSplit] in
+            guard let self, let target, let centerSplit else { return }
             let width = target.view.bounds.width
             self.positionIfUnsaved(target) {
                 $0.setPosition(AppTheme.Layout.mediaPanelDefault, ofDividerAt: 0)
                 $0.setPosition(width - AppTheme.Layout.inspectorDefault, ofDividerAt: 1)
+            }
+            target.view.layoutSubtreeIfNeeded()
+            self.positionIfUnsaved(centerSplit) {
+                $0.setPosition(round(centerSplit.view.bounds.height * AppTheme.Layout.finishPreviewFraction), ofDividerAt: 0)
             }
         }
     }
@@ -692,9 +710,9 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
 
     private func applyCurrentPresentationState() {
         mediaSplitItem?.isCollapsed = !editor.mediaPanelVisible
-        inspectorSplitItem?.isCollapsed = !editor.inspectorPanelVisible
+        inspectorSplitItem?.isCollapsed = !editor.presentedInspectorVisible
         currentMaximized = nil
-        applyMaximize(editor.theaterActive ? .preview : editor.maximizedPanel)
+        applyMaximize(editor.presentedMaximizedPanel)
     }
 
     private weak var mediaLibrarySplitItem: NSSplitViewItem?

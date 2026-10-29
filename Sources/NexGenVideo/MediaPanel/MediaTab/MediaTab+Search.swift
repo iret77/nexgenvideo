@@ -14,6 +14,11 @@ extension MediaTab {
         let spokenHits = self.spokenHits.filter { eligibleIDs.contains($0.assetID) }
         let documentHits = documentSearch.hits.filter { eligibleIDs.contains($0.id) }
         let unavailableDocuments = documentSearch.unavailableIDs.intersection(eligibleIDs).count
+        var seen: Set<String> = []
+        let visibleVisualIDs = collapsedSearchSections.contains("Moments") ? [] : visualHits.map(\.assetID)
+        let visibleSpokenIDs = collapsedSearchSections.contains("Spoken") ? [] : spokenHits.map(\.assetID)
+        let visibleIDs = (visibleVisualIDs + visibleSpokenIDs + documentHits.map(\.id) + nameMatches.map(\.id))
+            .filter { seen.insert($0).inserted }
         return ScrollView {
             LazyVStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
                 if isSearchingContents {
@@ -21,6 +26,10 @@ extension MediaTab {
                         .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Text.secondaryColor)
                         .padding(AppTheme.Spacing.md)
+                }
+                if eligible.contains(where: { $0.type == .video || $0.type == .image }),
+                   let status = visualSearchResult?.status, status != .ready {
+                    visualSearchNotice(status)
                 }
                 if !visualHits.isEmpty {
                     momentHeader("Moments", icon: "sparkle.magnifyingglass", count: visualHits.count, collapsible: true)
@@ -36,6 +45,13 @@ extension MediaTab {
                         }
                         .padding(.bottom, AppTheme.Spacing.sm)
                     }
+                }
+                if !unavailableSpokenIDs.intersection(eligibleIDs).isEmpty {
+                    Text("Some media has no searchable transcript. Spoken results include indexed speech only.")
+                        .interfaceFont(size: AppTheme.Typography.ui)
+                        .foregroundStyle(AppTheme.Text.secondaryColor)
+                        .padding(AppTheme.Spacing.md)
+                        .reviewAcceptanceProbe("media.search.spoken-status", text: "incomplete")
                 }
                 if !documentHits.isEmpty {
                     momentHeader("Document Contents", icon: "doc.text.magnifyingglass", count: documentHits.count)
@@ -69,7 +85,8 @@ extension MediaTab {
                     resultsGrid { ForEach(nameMatches) { fileCard($0) } }
                 }
                 if !isSearchingContents, visualHits.isEmpty, spokenHits.isEmpty, documentHits.isEmpty, nameMatches.isEmpty {
-                    Text("No matches for “\(trimmedSearchQuery)”")
+                    Text(visualSearchResult?.status == .ready && unavailableSpokenIDs.isEmpty && unavailableDocuments == 0
+                         ? "No matches for “\(trimmedSearchQuery)”" : "No matches in the available search results.")
                         .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                         .frame(maxWidth: .infinity)
@@ -79,6 +96,24 @@ extension MediaTab {
             .padding(.top, AppTheme.Spacing.sm)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .onAppear { publishOrderedIds(visibleIDs) }
+        .onChange(of: visibleIDs) { _, ids in publishOrderedIds(ids) }
+        .reviewAcceptanceProbe("media.search.results", text: isSearchingContents ? "searching" : "settled")
+    }
+
+    private func visualSearchNotice(_ status: SearchIndexCoordinator.QueryStatus) -> some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+            Text(VisualSearchPresentation.message(for: status))
+                .interfaceFont(size: AppTheme.Typography.ui)
+                .foregroundStyle(AppTheme.Text.secondaryColor)
+            if VisualSearchPresentation.canRepeat(status) {
+                Button("Retry Search", action: scheduleMomentSearch)
+                    .buttonStyle(.capsule(.secondary))
+                    .reviewAcceptanceProbe("media.search.retry-query")
+            }
+        }
+        .padding(AppTheme.Spacing.md)
+        .reviewAcceptanceProbe("media.search.visual-status", text: VisualSearchPresentation.code(for: status))
     }
 
     private func resultsGrid<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
@@ -156,6 +191,8 @@ extension MediaTab {
                 .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
         }
         .onTapGesture { previewMoment(assetID: hit.assetID, atSeconds: range.lowerBound) }
+        .reviewAcceptanceProbe("media.moment." + hit.assetID + "." + String(hit.shotStart),
+            text: "\(hit.shotStart)...\(hit.shotEnd)")
     }
 
     @ViewBuilder
@@ -203,6 +240,7 @@ extension MediaTab {
                 .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
         }
         .onTapGesture { previewMoment(assetID: hit.assetID, atSeconds: range.lowerBound) }
+        .reviewAcceptanceProbe("media.spoken." + hit.assetID + "." + String(hit.start), text: hit.text)
     }
 
     private func fileCard(_ asset: MediaAsset) -> some View {
@@ -225,7 +263,7 @@ extension MediaTab {
                 .lineLimit(1)
         }
         .draggable(dragPayload(for: asset)) { dragPreview(for: asset) }
-        .onTapGesture { editor.selectMediaPanelItem(asset.id) }
+        .onTapGesture { editor.selectMediaPanelItem(asset.id, modifiers: NSApp.currentEvent?.modifierFlags ?? NSEvent.modifierFlags) }
         .background {
             if WorkspaceUIAcceptance.isRequested {
                 AppRelaunchClickProbe(identifier: "media.search-result.\(asset.id)")
@@ -252,29 +290,36 @@ extension MediaTab {
         momentSearchTask?.cancel()
         let query = trimmedSearchQuery
         visualHits = []
+        visualSearchResult = nil
         spokenHits = []
+        unavailableSpokenIDs = []
         documentSearch = DocumentContentSearch.Result()
         isSearchingContents = !query.isEmpty
         guard !query.isEmpty else { return }
         let eligible = MediaLibraryQuery(types: filterTypes, generatedOnly: filterAI).apply(to: editor.mediaAssets)
         let eligibleIDs = Set(eligible.map(\.id))
         let assets = eligible
-            .filter { $0.type == .video || $0.type == .audio }
+            .filter { SearchIndexCoordinator.wantsTranscript($0) }
             .map { (id: $0.id, url: $0.url) }
         let documents = eligible.filter { $0.type == .document }
             .map { DocumentContentSearch.Source(id: $0.id, url: $0.url) }
         let coordinator = editor.searchIndex
+        let projectRoot = editor.workingRoot
+        let projectGeneration = editor.openWorkingCopyGeneration
         momentSearchTask = Task {
             try? await Task.sleep(for: .milliseconds(250))
             guard !Task.isCancelled else { return }
             async let documentMatches = DocumentContentSearch.search(query: query, sources: documents)
-            async let spokenMatches = TranscriptSearch.searchAsync(query: query, assets: assets)
-            let visual = await coordinator.search(query: query, within: eligibleIDs)
+            async let spokenMatches = TranscriptSearch.resultAsync(query: query, assets: assets)
+            let visual = await coordinator.searchResult(query: query, within: eligibleIDs)
             let spoken = await spokenMatches
             let foundDocuments = await documentMatches
-            guard !Task.isCancelled else { return }
-            visualHits = visual
-            spokenHits = spoken
+            guard !Task.isCancelled, editor.workingRoot == projectRoot,
+                  editor.openWorkingCopyGeneration == projectGeneration else { return }
+            visualHits = visual.hits
+            visualSearchResult = visual
+            spokenHits = spoken.hits
+            unavailableSpokenIDs = spoken.unavailableAssetIDs
             documentSearch = foundDocuments
             isSearchingContents = false
         }

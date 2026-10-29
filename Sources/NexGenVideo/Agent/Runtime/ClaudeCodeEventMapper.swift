@@ -84,6 +84,7 @@ struct ClaudeCodeEventMapper {
 
     mutating func ingest(_ event: ClaudeStreamEvent) {
         switch event {
+        case .responseMetadata: break
         case .sessionStarted(let sid):
             sessionId = sid
 

@@ -2,6 +2,7 @@ import NexGenEngine
 import SwiftUI
 
 struct ProductionWorkspaceSidebar: View {
+    @Environment(EditorViewModel.self) private var editor
     @State private var showsSources = false
 
     var body: some View {
@@ -13,6 +14,20 @@ struct ProductionWorkspaceSidebar: View {
             if showsSources {
                 MediaTab(workspace: .production)
             } else {
+                if editor.hasProductionPipeline, editor.declaredPluginName == nil, editor.declaredProductionContract == nil {
+                    VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+                        Text("Legacy production workflow").fontWeight(AppTheme.FontWeight.semibold)
+                        Text("Review the update to add Script, visual Storyboard and pre-render review to this project.")
+                            .foregroundStyle(AppTheme.Text.secondaryColor)
+                        Button("Review workflow update…") {
+                            AppState.shared.enrollActiveProjectInProduction(expectedEditor: editor)
+                        }.buttonStyle(InlineActionButtonStyle())
+                            .reviewAcceptanceProbe("production.core.enroll")
+                    }
+                    .interfaceFont(size: AppTheme.Typography.ui)
+                    .padding(AppTheme.Spacing.md)
+                    AppDivider()
+                }
                 PipelinePanelView(presentation: .sidebar)
             }
         }
@@ -38,14 +53,30 @@ struct ProductionInspectorView: View {
     }
 
     var body: some View {
+        if editor.showsAgentActivity {
+            AgentPanelView(presentation: .activity, onClose: { editor.showsAgentActivity = false })
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .reviewAcceptanceProbe("production.activity")
+        } else {
+            inspectorContents
+        }
+    }
+
+    private var inspectorContents: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
             Text("Inspector")
                 .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                 .padding(.horizontal, AppTheme.Spacing.md)
                 .panelHeaderBar()
-            if editor.cockpitTab == .storyboard, let selection = editor.storyboardSelection {
+            if editor.cockpitTab == .storyboard, editor.usesProductionPlanningV2,
+               let selection = editor.storyboardPlanningSelection, selection.home == editor.workingRoot {
+                StoryboardPlanningInspector(selection: selection)
+            } else if editor.cockpitTab == .shotlist, editor.usesProductionPlanningV2,
+                      let selection = editor.productionPlanSelection, selection.home == editor.workingRoot {
+                ProductionPlanInspector(selection: selection)
+            } else if editor.cockpitTab == .storyboard, !editor.usesProductionPlanningV2, let selection = editor.storyboardSelection {
                 StoryboardShotInspector(selection: selection)
-            } else if editor.cockpitTab != .storyboard, hasProductionObject {
+            } else if editor.cockpitTab != .storyboard, !(editor.cockpitTab == .shotlist && editor.usesProductionPlanningV2), hasProductionObject {
                 InspectorView()
             } else {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
@@ -109,7 +140,10 @@ struct WorkbenchStatusBar: View {
                         .allowsHitTesting(false)
                 }
             }
-            .popover(isPresented: $editor.showsAgentActivity, arrowEdge: .top) {
+            .popover(isPresented: Binding(
+                get: { editor.showsAgentActivity && editor.workspaceFocus != .production },
+                set: { if editor.workspaceFocus != .production { editor.showsAgentActivity = $0 } }
+            ), arrowEdge: .top) {
                 AgentPanelView(presentation: .activity)
                     .environment(editor)
                     .interfaceStyle(palette: editor.projectPalette)
@@ -129,7 +163,7 @@ struct WorkbenchStatusBar: View {
                     } else {
                         Text("No export running").foregroundStyle(AppTheme.Text.secondaryColor)
                     }
-                    Button("Open Export…") { showsExports = false; editor.showExportDialog = true }
+                    Button("Open Export…") { showsExports = false; editor.setWorkspaceFocus(.export) }
                         .buttonStyle(.capsule(.secondary, size: .regular))
                         .reviewAcceptanceProbe("production.export.open")
                 }

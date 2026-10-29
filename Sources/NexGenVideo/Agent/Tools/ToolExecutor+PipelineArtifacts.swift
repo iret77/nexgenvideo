@@ -308,8 +308,18 @@ extension ToolExecutor {
             guard let payload = args["causality_plan"] as? [String: Any] else {
                 throw ToolError("write_treatment requires causality_plan with exact treatment excerpts and a change review.")
             }
-            let draft = try JSONDecoder().decode(StoryCausalityDraftV1.self, from: JSONSerialization.data(withJSONObject: payload))
-            url = try StoryCausalityStoreV1.write(treatment: treatment, draft: draft, dataRoot: root)
+            let declaration = try mutationPackDeclaration(editor, dataRoot: root)
+            if let workflow = try PhaseContractRuntime.resolveWorkflow(dataRoot: root, expectedPack: declaration.binding,
+                expectedProductionContract: declaration.productionContract), workflow.isProductionV2 {
+                let access = try PipelinePlanningWriteAccess(dataRoot: root, declaration: declaration, phase: "treatment")
+                let draft = try JSONDecoder().decode(PipelineTreatmentWriterV2.CausalityProposal.self,
+                    from: JSONSerialization.data(withJSONObject: payload))
+                _ = try PipelineTreatmentWriterV2.write(treatment: treatment, proposal: draft, access: access)
+                url = root.appendingPathComponent(PipelineLayout.treatmentVersionFile(version))
+            } else {
+                let draft = try JSONDecoder().decode(StoryCausalityDraftV1.self, from: JSONSerialization.data(withJSONObject: payload))
+                url = try StoryCausalityStoreV1.write(treatment: treatment, draft: draft, dataRoot: root)
+            }
         } catch {
             throw ToolError("Couldn't write treatment: \(error)")
         }
@@ -399,7 +409,7 @@ extension ToolExecutor {
     func writeBibleTool(
         _ editor: EditorViewModel,
         _ args: [String: Any]
-    ) throws -> ToolResult {
+    ) async throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         var payload = args
         payload.removeValue(forKey: "project_dir")
@@ -434,17 +444,6 @@ extension ToolExecutor {
             payload,
             as: Bible.self,
             label: "bible"
-        )
-        for path in bibleReferencePaths(bible) {
-            try requireProjectImage(
-                path,
-                dataRoot: root,
-                field: "bible anchor"
-            )
-        }
-        try requireBibleAssetProvenance(
-            BibleViewProvenanceRequirementsV1.make(bible: bible),
-            dataRoot: root
         )
         let existingVariants = try BibleIdentityVariantStoreV1.loadIfPresent(
             dataRoot: root
@@ -486,37 +485,33 @@ extension ToolExecutor {
                 variants: []
             )
         }
-        try BibleIdentityVariantStoreV1.validate(
-            variants,
-            bible: bible,
-            dataRoot: root
-        )
-        let bibleURL = PipelineLayout.url(PipelineLayout.bibleFile, in: root)
-        let variantsURL = PipelineLayout.url(
-            PipelineLayout.bibleIdentityVariantsFile,
-            in: root
-        )
-        let previousBible = try? Data(contentsOf: bibleURL)
-        let previousVariants = try? Data(contentsOf: variantsURL)
-        try archiveExisting(PipelineLayout.bibleFile, dataRoot: root)
-        try archiveExisting(
-            PipelineLayout.bibleIdentityVariantsFile,
-            dataRoot: root
-        )
-        do {
-            try YAMLArtifactStore(dataRoot: root).save(
-                bible,
-                to: PipelineLayout.bibleFile
-            )
-            try BibleIdentityVariantStoreV1.save(
-                variants,
-                bible: bible,
-                dataRoot: root
-            )
-        } catch {
-            try? restoreArtifact(previousBible, at: bibleURL)
-            try? restoreArtifact(previousVariants, at: variantsURL)
-            throw ToolError("Couldn't write bible: \(error)")
+        let declaration = try mutationPackDeclaration(editor, dataRoot: root)
+        let workflow = try PhaseContractRuntime.resolveWorkflow(dataRoot: root, expectedPack: declaration.binding,
+            expectedProductionContract: declaration.productionContract)
+        if workflow?.isProductionV2 == true {
+            let home = editor.workingRoot, key = editor.openWorkingCopyKey
+            let publication = try await Task.detached(priority: .userInitiated) {
+                _ = try PipelinePlanningWriteAccess(dataRoot: root, declaration: declaration, phase: "bible")
+                let fence = try PipelineSpatialSceneAuthority.SourceFence.capture(dataRoot: root,
+                    additionalCanonicalPaths: [PipelineLayout.bibleFile, PipelineLayout.bibleIdentityVariantsFile])
+                let transaction = try ProjectWorkingCopy.preparePipelineTransaction(at: root) { staging in
+                    _ = try PipelinePlanningWriteAccess(dataRoot: staging, declaration: declaration, phase: "bible")
+                    try PipelineBibleWriter.write(bible, variants: variants, dataRoot: staging)
+                }
+                do { try fence.requireUnchanged(); return (transaction, fence) }
+                catch { transaction.discard(); throw error }
+            }.value
+            defer { Task.detached { publication.0.discard() } }
+            try Task.checkCancellation()
+            try publication.0.commit { _ in
+                guard editor.workingRoot == home, editor.openWorkingCopyKey == key,
+                      try mutationPackDeclaration(editor, dataRoot: root) == declaration else {
+                    throw GateBlocked("The project changed before the Bible could be saved. Reopen it before continuing.")
+                }
+                try publication.1.requireCanonicalRootsUnchanged()
+            }
+        } else {
+            try PipelineBibleWriter.write(bible, variants: variants, dataRoot: root)
         }
         return try jsonResult([
             "written": true,
@@ -535,6 +530,12 @@ extension ToolExecutor {
         _ args: [String: Any]
     ) async throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
+        let declaration = try mutationPackDeclaration(editor, dataRoot: root)
+        if let workflow = try PhaseContractRuntime.resolveWorkflow(dataRoot: root, expectedPack: declaration.binding,
+            expectedProductionContract: declaration.productionContract), workflow.isProductionV2 {
+            return try await writeProductionPlanTool(editor, args)
+        }
+        guard args["proposal"] == nil else { throw ToolError("This project uses its legacy Shot List contract.") }
         let brief: Brief
         do {
             brief = try YAMLArtifactStore(dataRoot: root).load(
@@ -778,7 +779,7 @@ extension ToolExecutor {
         }
     }
 
-    private func currentMeasuredAnalysis(
+    func currentMeasuredAnalysis(
         dataRoot: URL
     ) throws -> (url: URL, object: [String: Any], song: URL) {
         let songFiles = AudioProjectLayout.songFiles(dataRoot: dataRoot)
@@ -945,92 +946,6 @@ extension ToolExecutor {
                     + "\(invalid.prefix(3).joined(separator: ", ")))."
             )
         }
-    }
-
-    private func requireBibleAssetProvenance(
-        _ requirements: [BibleViewProvenanceRequirementV1],
-        dataRoot: URL
-    ) throws {
-        let proof: PipelineAssetProof
-        do {
-            proof = try loadPipelineAssetProof(
-                dataRoot: dataRoot,
-                scope: "bible"
-            )
-        } catch {
-            throw ToolError("bible generation provenance is invalid: \(error)")
-        }
-        guard proof.schema == pipelineAssetProofSchemaVersion,
-              proof.scope == "bible",
-              proof.project == projectName(dataRoot: dataRoot) else {
-            throw ToolError(
-                "bible generation provenance has the wrong project, scope, or schema."
-            )
-        }
-        let invalid = try requirements.filter { requirement in
-            let path = requirement.path
-            if let entry = proof.entries[path],
-               entry.path == path,
-               !entry.providerPrompt.trimmingCharacters(
-                in: .whitespacesAndNewlines
-               ).isEmpty,
-               !entry.generationModel.trimmingCharacters(
-                in: .whitespacesAndNewlines
-               ).isEmpty,
-               !entry.sourceMediaId.trimmingCharacters(
-                in: .whitespacesAndNewlines
-               ).isEmpty,
-               let url = projectFileURL(path, dataRoot: dataRoot),
-               (try? FileDigest.sha256(of: url)) == entry.sha256 {
-                return false
-            }
-            guard let confirmedRole = requirement.confirmedRole,
-                  let identityID = requirement.identityID,
-                  let identityName = requirement.identityName else {
-                return true
-            }
-            return try !ConfirmedIdentityAssetStoreV1.matchesCurrent(
-                path,
-                role: confirmedRole,
-                identityID: identityID,
-                identityName: identityName,
-                dataRoot: dataRoot
-            )
-        }
-        guard invalid.isEmpty else {
-            throw ToolError(
-                "\(invalid.count) Bible view asset(s) lack current generated provenance "
-                    + "or explicit host-recorded identity confirmation (e.g. "
-                    + "\(invalid.prefix(3).map { $0.path }.joined(separator: ", ")))."
-            )
-        }
-    }
-
-    private func bibleReferencePaths(_ bible: Bible) -> [String] {
-        var paths: [String] = []
-        for entity in bible.characters {
-            paths += entity.referenceImages + Array(entity.sheets.values)
-        }
-        for entity in bible.ensembles {
-            paths += entity.referenceImages + Array(entity.sheets.values)
-        }
-        for entity in bible.props {
-            paths += entity.referenceImages + Array(entity.sheets.values)
-        }
-        for entity in bible.locations {
-            paths += entity.referenceImages + Array(entity.sheets.values)
-            paths += entity.zones.flatMap(\.bibleAssets)
-            if !entity.floorplan.isEmpty {
-                paths.append(entity.floorplan)
-            }
-            if !entity.scene3d.panorama.isEmpty {
-                paths.append(entity.scene3d.panorama)
-            }
-        }
-        if !bible.look.lightingAnchor.isEmpty {
-            paths.append(bible.look.lightingAnchor)
-        }
-        return paths
     }
 
     private func activatedProductionRoutes(

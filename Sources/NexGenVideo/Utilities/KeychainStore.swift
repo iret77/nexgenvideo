@@ -4,7 +4,8 @@ import Security
 enum KeychainStore {
     private static let service: String = Bundle.main.bundleIdentifier ?? "de.h5ventures.nexgenvideo"
 
-    static func save(_ value: String, account: String) {
+    @discardableResult
+    static func save(_ value: String, account: String) -> Bool {
         let data = Data(value.utf8)
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -19,8 +20,9 @@ enum KeychainStore {
         if status == errSecItemNotFound {
             var insert = query
             insert.merge(attrs) { _, new in new }
-            SecItemAdd(insert as CFDictionary, nil)
+            return SecItemAdd(insert as CFDictionary, nil) == errSecSuccess
         }
+        return status == errSecSuccess
     }
 
     static func load(account: String) -> String? {
@@ -41,12 +43,14 @@ enum KeychainStore {
         return value
     }
 
-    static func delete(account: String) {
+    @discardableResult
+    static func delete(account: String) -> Bool {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
         ]
-        SecItemDelete(query as CFDictionary)
+        let status = SecItemDelete(query as CFDictionary)
+        return status == errSecSuccess || status == errSecItemNotFound
     }
 }

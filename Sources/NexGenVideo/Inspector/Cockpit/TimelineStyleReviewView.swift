@@ -67,7 +67,7 @@ struct TimelineStyleReviewView: View {
                 }
             }
             .buttonStyle(InlineActionButtonStyle(variant: .approval))
-            .reviewAcceptanceProbe("style.begin")
+            .reviewAcceptanceProbe("style.begin", state: !busy)
             .disabled(busy)
             if let snapshot, snapshot.home == editor.workingRoot {
                 ForEach(snapshot.style.criteria, id: \.auditKey) { criterion in
@@ -91,6 +91,9 @@ struct TimelineStyleReviewView: View {
                             .reviewAcceptanceProbe("style.observation.\(criterion.auditKey)", text: observations[criterion.auditKey] ?? "")
                             .disabled(busy)
                     }
+                }
+                let incomplete = snapshot.style.criteria.contains {
+                    choices[$0.auditKey] == nil || (observations[$0.auditKey] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 }
                 Button("Record this timeline review") {
                     let findings = snapshot.style.criteria.compactMap { criterion -> TimelineStyleFinding? in
@@ -120,10 +123,8 @@ struct TimelineStyleReviewView: View {
                     }
                 }
                 .buttonStyle(InlineActionButtonStyle(variant: .approval))
-                .reviewAcceptanceProbe("style.record")
-                .disabled(busy || snapshot.style.criteria.contains {
-                    choices[$0.auditKey] == nil || (observations[$0.auditKey] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                })
+                .reviewAcceptanceProbe("style.record", state: !busy && !incomplete)
+                .disabled(busy || incomplete)
             }
             if let message {
                 Text(message).foregroundStyle(AppTheme.Text.secondaryColor)

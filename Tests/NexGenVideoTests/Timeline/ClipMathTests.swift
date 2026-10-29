@@ -207,7 +207,7 @@ struct ClipMathTests {
         #expect(clip.fadeOutFrames == 30)
     }
 
-    @Test func setDurationClampsAllKeyframeTracks() {
+    @Test func setDurationRetainsEveryTrackAsInvisibleInterpolationSupport() {
         var clip = Fixtures.clip(start: 0, duration: 100)
         clip.opacityTrack = KeyframeTrack(keyframes: [Keyframe(frame: 90, value: 0.5)])
         clip.positionTrack = KeyframeTrack(keyframes: [Keyframe(frame: 90, value: AnimPair(a: 0.1, b: 0.2))])
@@ -218,12 +218,14 @@ struct ClipMathTests {
 
         clip.setDuration(30)
 
-        #expect(clip.opacityTrack == nil)
-        #expect(clip.positionTrack == nil)
-        #expect(clip.scaleTrack == nil)
-        #expect(clip.rotationTrack == nil)
-        #expect(clip.cropTrack == nil)
-        #expect(clip.volumeTrack == nil)
+        #expect(clip.opacityTrack?.keyframes.map(\.frame) == [90])
+        #expect(clip.positionTrack?.keyframes.map(\.frame) == [90])
+        #expect(clip.scaleTrack?.keyframes.map(\.frame) == [90])
+        #expect(clip.rotationTrack?.keyframes.map(\.frame) == [90])
+        #expect(clip.cropTrack?.keyframes.map(\.frame) == [90])
+        #expect(clip.volumeTrack?.keyframes.map(\.frame) == [90])
+        #expect(clip.allKeyframeFrames.isEmpty)
+        #expect(clip.rawOpacityAt(frame: 15) == 0.5)
     }
 }
 

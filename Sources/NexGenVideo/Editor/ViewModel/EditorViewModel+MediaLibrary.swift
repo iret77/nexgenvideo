@@ -212,6 +212,7 @@ private enum MediaImportScanner {
 enum MediaImportError: LocalizedError, Equatable, Sendable {
     case projectMustBeSaved
     case projectChanged
+    case destinationChanged
     case unsupportedFile(String)
     case invalidLottie(String)
     case invalidSubtitle(String, String)
@@ -228,6 +229,8 @@ enum MediaImportError: LocalizedError, Equatable, Sendable {
             "Save the project before importing media."
         case .projectChanged:
             "The project changed during media import. Import again."
+        case .destinationChanged:
+            "The destination folder was removed. Choose a folder and import again."
         case .unsupportedFile(let name):
             "Can't import \"\(name)\" — unsupported file type."
         case .invalidLottie(let name):
@@ -563,21 +566,26 @@ extension EditorViewModel {
 
     /// Resolve a drag pasteboard payload (one `nexgen-asset://<id>` per line).
     func assetsFromDragPayload(_ payload: String) -> [MediaAsset] {
-        payload.split(separator: "\n").compactMap { line in
-            guard let id = MediaTab.assetId(fromDragString: String(line)) else { return nil }
-            // A document has no duration and nothing to draw — dropping one would make a clip no
-            // player can render. Filtered here so the timeline never even offers the drop.
-            return mediaAssets.first {
-                $0.id == id && ($0.type.isPlaceable || $0.type == .subtitle)
+        var seen: Set<String> = []
+        return payload.split(separator: "\n").compactMap { line in
+            let text = String(line)
+            guard let id = MediaTab.assetId(fromDragString: text), seen.insert(id).inserted,
+                  let asset = mediaAssets.first(where: { $0.id == id && ($0.type.isPlaceable || $0.type == .subtitle) }) else { return nil }
+            if text.contains("#") {
+                guard let segment = MediaTab.assetSegment(fromDragString: text),
+                      asset.type == .audio || asset.type == .video, asset.duration.isFinite,
+                      segment.upperBound <= asset.duration else { return nil }
             }
+            return asset
         }
     }
 
     /// Source-second ranges carried by search-moment drags, keyed by asset id.
     func segmentsFromDragPayload(_ payload: String) -> [String: ClosedRange<Double>] {
         var segments: [String: ClosedRange<Double>] = [:]
+        let allowed = Set(assetsFromDragPayload(payload).map(\.id))
         for line in payload.split(separator: "\n") {
-            guard let id = MediaTab.assetId(fromDragString: String(line)),
+            guard let id = MediaTab.assetId(fromDragString: String(line)), allowed.contains(id), segments[id] == nil,
                   let segment = MediaTab.assetSegment(fromDragString: String(line)) else { continue }
             segments[id] = segment
         }
@@ -692,6 +700,7 @@ extension EditorViewModel {
         mediaImportSequence &+= 1
         let sequence = mediaImportSequence
         let cancellationGeneration = mediaImportCancellationGeneration
+        let destination = MediaLibraryDestination(self, folderID: mode.folderId)
         let task = Task { @MainActor in
             _ = await previous?.value
             guard cancellationGeneration == mediaImportCancellationGeneration,
@@ -705,6 +714,7 @@ extension EditorViewModel {
             return await performMediaImport(
                 urls,
                 mode: mode,
+                destination: destination,
                 cancellationGeneration: cancellationGeneration
             )
         }
@@ -721,10 +731,16 @@ extension EditorViewModel {
     private func performMediaImport(
         _ urls: [URL],
         mode: MediaImportMode,
+        destination: MediaLibraryDestination,
         cancellationGeneration: Int
     ) async -> MediaImportSummary {
-        let operationRoot = workingRoot?.standardizedFileURL
-        let operationKey = openWorkingCopyKey
+        do { try destination.validate(self) }
+        catch {
+            let failure = (error as? MediaImportError) ?? .projectChanged
+            reportMediaImportFailure(failure)
+            return MediaImportSummary(assetCount: 0, folderCount: 0, importError: failure)
+        }
+        let operationRoot = destination.root
         let before = mediaLibraryUndoSnapshot()
         let roots = urls.map {
             MediaImportScanner.Root(
@@ -758,6 +774,12 @@ extension EditorViewModel {
             )
         }
         mediaImportProgress = nil
+        do { try destination.validate(self) }
+        catch {
+            let failure = (error as? MediaImportError) ?? .projectChanged
+            reportMediaImportFailure(failure)
+            return MediaImportSummary(assetCount: 0, folderCount: 0, importError: failure)
+        }
         if let error = plan.scanFailure {
             reportMediaImportFailure(error)
             return MediaImportSummary(
@@ -816,8 +838,8 @@ extension EditorViewModel {
                 }
                 throw MediaImportError.cancelled
             }
-            guard workingRoot?.standardizedFileURL == operationRoot,
-                  openWorkingCopyKey == operationKey else {
+            do { try destination.validate(self) }
+            catch {
                 if let operationRoot {
                     let createdURLs = prepared.createdURLs
                     let mediaDirectory = operationRoot.appendingPathComponent(
@@ -831,7 +853,7 @@ extension EditorViewModel {
                         )
                     }.value
                 }
-                throw MediaImportError.projectChanged
+                throw error
             }
             switch mode {
             case .register:
@@ -1115,7 +1137,8 @@ extension EditorViewModel {
     }
 
     @discardableResult
-    func importPastedImageData(_ data: Data, fileExtension: String = "png") async -> MediaAsset? {
+    func importPastedImageData(_ data: Data, fileExtension: String = "png", folderID: String? = nil) async -> MediaAsset? {
+        let destination = MediaLibraryDestination(self, folderID: folderID)
         guard workingRoot != nil else {
             reportMediaImportFailure(MediaImportError.projectMustBeSaved)
             return nil
@@ -1127,7 +1150,10 @@ extension EditorViewModel {
             try await Task.detached(priority: .userInitiated) {
                 try data.write(to: destURL, options: .atomic)
             }.value
-            let asset = try await addMediaAssetThrowing(from: destURL)
+            try destination.validate(self)
+            let summary = await importFinderItems([destURL], into: folderID)
+            if let error = summary.importError { throw error }
+            let asset = summary.assetIDs.first.flatMap { id in mediaAssets.first { $0.id == id } }
             await Self.removeTemporaryImportFile(destURL)
             return asset
         } catch {
@@ -1280,18 +1306,6 @@ extension EditorViewModel {
         return keys
     }
 
-    func selectMediaPanelItem(_ key: String) {
-        if let folderId = MediaPanelItemKey.folderId(from: key) {
-            guard folder(id: folderId) != nil else { return }
-            mediaPanelScrollTarget = key
-            selectedFolderIds = [folderId]
-            selectedMediaAssetIds.removeAll()
-            return
-        }
-        guard let asset = mediaAssets.first(where: { $0.id == key }) else { return }
-        mediaPanelScrollTarget = key
-        selectMediaAsset(asset)
-    }
 
     func renameMediaAsset(id: String, name: String) {
         guard let asset = mediaAssets.first(where: { $0.id == id }) else { return }
@@ -1348,6 +1362,7 @@ extension EditorViewModel {
         let time = CMTime(value: CMTimeValue(frame), timescale: CMTimeScale(fps))
 
         let videoComposition = isTimelineTab ? currentItem.videoComposition : nil
+        let destination = MediaLibraryDestination(self, folderID: mediaPanelCurrentFolderId)
 
         Task.detached {
             guard (try? await asset.loadTracks(withMediaType: .video).first) != nil else {
@@ -1381,18 +1396,16 @@ extension EditorViewModel {
                 }
                 return data
             }
-            guard let data,
-                  let mediaAsset = await self.importPastedImageData(
-                    data,
-                    fileExtension: "png"
-                  ) else { return }
-            await MainActor.run {
+            guard let data else { return }
+            await Task { @MainActor in
+                guard destination.isCurrent(self),
+                      let mediaAsset = await self.importPastedImageData(data, folderID: destination.folderID),
+                      destination.isCurrent(self) else { return }
                 mediaAsset.name = "\(nameBase) \(frame)"
                 if let idx = self.mediaManifest.entries.firstIndex(where: { $0.id == mediaAsset.id }) {
                     self.mediaManifest.entries[idx].name = mediaAsset.name
                 }
-                self.moveAssetsToFolder(assetIds: [mediaAsset.id], folderId: self.mediaPanelCurrentFolderId)
-            }
+            }.value
         }
     }
 
@@ -1546,9 +1559,6 @@ extension EditorViewModel {
     func addTextClip(content: String = "Text", style: TextStyle = TextStyle()) -> String? {
         let durationFrames = max(1, secondsToFrame(seconds: Defaults.textDurationSeconds, fps: timeline.fps))
 
-        // Index 0 is the topmost slot in the timeline UI.
-        let trackIdx = insertTrack(at: 0, type: .video)
-
         let canvasW = Double(timeline.width)
         let canvasH = Double(timeline.height)
         let natural = TextLayout.naturalSize(content: content, style: style, maxWidth: CGFloat(canvasW) * 0.9, canvasHeight: CGFloat(canvasH))
@@ -1568,16 +1578,11 @@ extension EditorViewModel {
         clip.textStyle = style
         let clipId = clip.id
 
-        timeline.tracks[trackIdx].clips.append(clip)
-        sortClips(trackIndex: trackIdx)
-
-        undoManager?.registerUndo(withTarget: self) { vm in
-            if let loc = vm.findClip(id: clipId) {
-                vm.timeline.tracks[loc.trackIndex].clips.remove(at: loc.clipIndex)
-                vm.videoEngine?.refreshTextCompositing()
-            }
+        withTimelineSwap(actionName: "Add Text") {
+            let trackIdx = insertTrack(at: 0, type: .video)
+            timeline.tracks[trackIdx].clips.append(clip)
+            sortClips(trackIndex: trackIdx)
         }
-        undoManager?.setActionName("Add Text")
 
         selectedClipIds = [clipId]
         videoEngine?.refreshTextCompositing()

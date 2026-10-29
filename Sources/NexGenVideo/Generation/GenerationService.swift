@@ -285,7 +285,7 @@ final class GenerationService {
                 }
                 try await authorization.generationPackage?.requireCurrentContext(editor: editor)
                 if let package = authorization.generationPackage,
-                   package.payload.modality == "image" || package.payload.modality == "video" {
+                   ["image", "video", "audio"].contains(package.payload.modality) {
                     try await GenerationPackageInputs.requireCurrentReferences(package: package, editor: editor)
                 }
                 try authorization.projectMutationScope?.requireCurrent(editor: editor)
@@ -421,7 +421,7 @@ final class GenerationService {
         if target.transport == .mcp {
             key = ""
         } else {
-            guard let stored = ProviderKeychain.load(target.provider) else {
+            guard let stored = reconciliation.providerKey(target.provider) else {
                 throw GenerationRequestError.gate("Restore the approved provider's key before resuming its job.")
             }
             key = stored
@@ -449,9 +449,8 @@ final class GenerationService {
                     } else {
                         switch target.provider {
                         case .fal:
-                            let data = try await FalClient(apiKey: key).result(endpoint: target.endpoint, requestId: requestID)
-                            let shape: CatalogEntry.ResponseShape = specification.package.payload.modality == "image" ? .images : .video
-                            urls = FalOutput.urls(from: data, shape: shape)
+                            let data = try await FalClient(apiKey: key, session: self.reconciliation.session).result(endpoint: target.endpoint, requestId: requestID)
+                            urls = FalOutput.urls(from: data, shape: try Self.resumedFalOutputShape(package: specification.package))
                         case .runway:
                             let result = try await RunwayClient(apiKey: key).result(taskId: requestID)
                             urls = result.urls
@@ -513,6 +512,16 @@ final class GenerationService {
         }
         generationTasks[primaryID] = task
         await task.value
+    }
+
+    nonisolated static func resumedFalOutputShape(package: GenerationPackageV1) throws -> CatalogEntry.ResponseShape {
+        switch (package.payload.operation, package.payload.modality) {
+        case ("upscale", "image"): return .upscaledImage
+        case ("upscale", "video"), ("video", "video"): return .video
+        case ("image", "image"): return .images
+        case ("audio", "audio"), ("music", "audio"): return .audio
+        default: throw GenerationRequestError.gate("The saved operation has no verified Fal output format.")
+        }
     }
 
     private static func cleanupTempFiles(_ urls: [URL]) {
@@ -620,6 +629,7 @@ final class GenerationService {
             editor.importMediaAsset(asset, skipAppend: true)
             editor.appendGenerationLog(for: asset)
             await editor.finalizeImportedAsset(asset)
+            try await GenerationOutputReceipt.record(asset: asset, editor: editor)
             if let batchItem { try await GenerationBatchOutput.record(asset: asset, authorization: batchItem, editor: editor) }
             return true
         } catch {
@@ -1442,7 +1452,7 @@ final class GenerationService {
         onComplete: (@MainActor (MediaAsset) -> Void)?,
         onFailure: (@MainActor () -> Void)?
     ) async {
-        guard let client = await ProviderMCP.client(for: provider) else {
+        guard let client = await reconciliation.mcpClient(provider) else {
             return failBeforeSubmission(
                 placeholders, "No MCP endpoint configured for \(provider.displayName).",
                 authorization: authorization, editor: editor, onFailure: onFailure)
@@ -1488,7 +1498,8 @@ final class GenerationService {
             let preparedParams = try await MCPMediaUpload.prepare(
                 params,
                 tools: tools,
-                client: client
+                client: client,
+                referenceUploader: reconciliation.mcpReferenceUploader
             )
             let arguments = try MCPGenerationArguments.make(
                 for: preparedParams,
@@ -1499,7 +1510,7 @@ final class GenerationService {
                 requiredCandidateNames: requiredCandidateNames
             )
             if let package = authorization.generationPackage,
-               package.payload.modality == "image" || package.payload.modality == "video" {
+               ["image", "video", "audio"].contains(package.payload.modality) {
                 try await GenerationPackageInputs.requireCurrentReferences(package: package, editor: editor)
                 try authorization.projectMutationScope?.requireCurrent(editor: editor)
             }
@@ -1973,6 +1984,7 @@ final class GenerationService {
             editor.appendGenerationLog(for: placeholder)
             await editor.finalizeImportedAsset(placeholder)
             do {
+                try await GenerationOutputReceipt.record(asset: placeholder, editor: editor)
                 if let batchItem { try await GenerationBatchOutput.record(asset: placeholder, authorization: batchItem, editor: editor) }
             } catch {
                 placeholder.generationStatus = .failed(error.localizedDescription)
@@ -2073,6 +2085,7 @@ final class GenerationService {
                 editor.appendGenerationLog(for: placeholder)
                 await editor.finalizeImportedAsset(placeholder)
                 do {
+                    try await GenerationOutputReceipt.record(asset: placeholder, editor: editor)
                     if let batchItem { try await GenerationBatchOutput.record(asset: placeholder, authorization: batchItem, editor: editor) }
                 } catch {
                     placeholder.generationStatus = .failed(error.localizedDescription)
@@ -2276,6 +2289,7 @@ final class GenerationService {
             editor.importMediaAsset(placeholder, skipAppend: true)
             editor.appendGenerationLog(for: placeholder)
             await editor.finalizeImportedAsset(placeholder)
+            try await GenerationOutputReceipt.record(asset: placeholder, editor: editor)
             if let batchItem = authorization.batchItem {
                 try await GenerationBatchOutput.record(asset: placeholder, authorization: batchItem, editor: editor)
             }

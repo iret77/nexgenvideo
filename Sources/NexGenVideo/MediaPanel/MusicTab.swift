@@ -2,12 +2,19 @@ import SwiftUI
 
 struct MusicTab: View {
     @Environment(EditorViewModel.self) var editor
+    private let suppliedServices: GenerationPanelServices?
+    private var services: GenerationPanelServices {
+        suppliedServices ?? (WorkspaceUIAcceptance.isRequested ? editor.generationPanelServicesOverride : nil) ?? .live
+    }
+
+    init(services: GenerationPanelServices? = nil) { self.suppliedServices = services }
 
     @State private var selectedModelId: String?
     @State private var mode: MusicGenerationSubmission.Mode = .videoToMusic
     @State private var prompt: String = ""
     @State private var textDuration: Double = 90
     @State private var isGenerating = false
+    @State private var preparationTask: Task<Void, Never>?
     @State private var generatingLabel = "Generating..."
     /// Runtime feedback distinct from the calm validation guidance below the field: a failed render
     /// (error) or a finished one (success). Auto-clears; never shown in alarm-red for a mere "not
@@ -27,10 +34,8 @@ struct MusicTab: View {
     // Usable-only (#159): an activated provider must service the model AND the user hasn't disabled it
     // in Settings → Models — never offer a music model that would fail at request time.
     private var models: [AudioModelConfig] {
-        AudioModelConfig.allModels.filter {
-            $0.category == .music
-                && ModelPreferences.shared.isEnabled($0.id)
-                && GenerationProvider.canRun(modelId: $0.id)
+        services.catalog.audio.filter {
+            $0.category == .music && services.canRun($0.id)
         }
     }
 
@@ -84,7 +89,7 @@ struct MusicTab: View {
     private var validationNote: String? {
         guard let model else { return "No music models available." }
         if isTextMode {
-            if trimmedPrompt.isEmpty { return "Describe the music — or tap Generate to shape it." }
+            if trimmedPrompt.isEmpty { return "Describe the music — or prepare it to choose a direction." }
         } else {
             guard source != nil else {
                 return "Add video to the timeline, then mark a range to score only part of it."
@@ -103,8 +108,8 @@ struct MusicTab: View {
     }
 
     private var generateLabel: String {
-        if let cost = estimatedCost, cost > 0 { return "Generate · \(CostEstimator.format(cost))" }
-        return "Generate"
+        if let cost = estimatedCost, cost > 0 { return "Prepare Music · \(CostEstimator.format(cost))" }
+        return "Prepare Music"
     }
 
     private var sourceSummary: String {
@@ -153,7 +158,9 @@ struct MusicTab: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(AppTheme.Background.surfaceColor)
-        .onDisappear { dismissGenerationDialog() }
+        .onAppear { synchronizeDuration() }
+        .onChange(of: model?.id) { _, _ in synchronizeDuration() }
+        .onDisappear { preparationTask?.cancel(); dismissGenerationDialog() }
     }
 
     private var sourceSection: some View {
@@ -165,6 +172,7 @@ struct MusicTab: View {
                         Button("Text to Music") { mode = .textToMusic }
                     } label: { menuValueLabel(modeLabel(effectiveMode)) }
                     .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize().focusable(false)
+                    .reviewAcceptanceProbe("music.input", text: modeLabel(effectiveMode))
                 }
             }
             if isTextMode {
@@ -173,20 +181,30 @@ struct MusicTab: View {
                     label: "Duration",
                     labelHelp: "Length of the generated music. It's placed at the playhead, or at the marked range start."
                 ) {
-                    ScrubbableNumberField(
-                        value: textDuration,
-                        range: Double(model?.minSeconds ?? 1)...Double(model?.maxSeconds ?? 600),
-                        format: "%.0f",
-                        valueSuffix: " s",
-                        onChanged: { textDuration = $0 }
-                    ) { textDuration = $0 }
+                    if let durations = model?.durations, !durations.isEmpty {
+                        Menu {
+                            ForEach(durations, id: \.self) { duration in
+                                Button("\(duration) s") { textDuration = Double(duration) }
+                            }
+                        } label: { menuValueLabel("\(Int(textDuration)) s") }
+                            .menuStyle(.button).buttonStyle(.capsule(.secondary)).menuIndicator(.hidden)
+                            .reviewAcceptanceProbe("music.duration", text: String(Int(textDuration)))
+                    } else {
+                        ScrubbableNumberField(value: textDuration,
+                            range: Double(model?.minSeconds ?? 1)...Double(model?.maxSeconds ?? 600),
+                            format: "%.0f", valueSuffix: " s", onChanged: { textDuration = $0 }) { textDuration = $0 }
+                            .reviewAcceptanceProbe("music.duration", text: String(Int(textDuration)))
+                    }
                 }
             } else {
                 InspectorRow(
                     icon: "film",
                     label: "Video",
                     labelHelp: "Uses the whole timeline by default. Mark a range on the timeline to score only that span."
-                ) { valueText(sourceSummary) }
+                ) { valueText(sourceSummary).reviewAcceptanceProbe("music.source", text: sourceSummary) }
+                Text("Preparation adds a frozen video preview to Media. Generation starts only after approval.")
+                    .interfaceFont(size: AppTheme.Typography.metadata)
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
             }
         }
     }
@@ -224,7 +242,9 @@ struct MusicTab: View {
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
                     .lineLimit(1)
                 }
-                .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize().focusable(false)
+                .menuStyle(.button).buttonStyle(.capsule(.secondary)).menuIndicator(.hidden).fixedSize().focusable(false)
+                .disabled(models.isEmpty || isGenerating)
+                .reviewAcceptanceProbe("music.model", state: !models.isEmpty && !isGenerating, text: model?.id)
             }
         }
     }
@@ -233,6 +253,7 @@ struct MusicTab: View {
         InspectorSection("Direction") {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
                 TextField("Mood, genre, energy, instruments…", text: $prompt, axis: .vertical)
+                    .reviewAcceptanceProbe("music.intent", text: prompt)
                     .textFieldStyle(.plain)
                     .lineLimit(2...5)
                     .interfaceFont(size: AppTheme.Typography.ui)
@@ -259,6 +280,7 @@ struct MusicTab: View {
         VStack(spacing: AppTheme.Spacing.sm) {
             if let banner {
                 Text(banner.text)
+                    .reviewAcceptanceProbe("music.result", text: banner.text)
                     .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                     .foregroundStyle(banner.kind == .error ? AppTheme.Status.errorColor : AppTheme.Status.successColor)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -279,6 +301,7 @@ struct MusicTab: View {
                 }
                 .buttonStyle(.capsule(.prominent, size: .regular))
                 .disabled(!canGenerate)
+                .reviewAcceptanceProbe("music.prepare", state: canGenerate)
 
                 agentMenu
             }
@@ -295,6 +318,13 @@ struct MusicTab: View {
             .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
             .foregroundStyle(AppTheme.Text.tertiaryColor)
             .lineLimit(1)
+    }
+
+    private func synchronizeDuration() {
+        guard let model else { return }
+        if let durations = model.durations, !durations.isEmpty {
+            if !durations.contains(Int(textDuration.rounded())), let duration = durations.first { textDuration = Double(duration) }
+        } else { textDuration = min(max(textDuration, Double(model.minSeconds)), Double(model.maxSeconds)) }
     }
 
     private func clock(_ frame: Int) -> String {
@@ -386,7 +416,7 @@ struct MusicTab: View {
             symbol: "music.note",
             intro: "Pick a direction, or type your own — NexGenVideo writes the model prompt.",
             costHint: nil,
-            confirmLabel: "Generate",
+            confirmLabel: "Prepare Music",
             textField: AgentDialog.DialogTextField(placeholder: "Anything specific (instruments, reference, mood)…", multiline: false),
             sections: [
                 AgentDialog.Section(id: "mood", label: "Mood", kind: .choices(options: [
@@ -435,7 +465,7 @@ struct MusicTab: View {
             modality: .music, modelId: model.id, intent: intent ?? "",
             durationSeconds: span,
             placement: .timelineAt(startFrame: source.startFrame, spanSeconds: span, actionName: "Add Music"),
-            origin: .panel,
+            origin: .panel, target: services.target(model.id),
             submission: .music(make: { compiled in
                 MusicGenerationSubmission(
                     mode: mode, model: model, prompt: compiled.isEmpty ? nil : compiled,
@@ -443,20 +473,31 @@ struct MusicTab: View {
             }))
         // Composition reads the ledger off the main thread (async); await the outcome and surface a
         // compile/preflight failure (nothing was submitted) as the error Banner.
-        Task { @MainActor in
-            let outcome = await GenerationController.submit(
-                request, editor: editor,
-                musicProgress: .init(
-                    onPhase: { generatingLabel = $0.label },
-                    onFinished: { isGenerating = false }),
-                onSuccess: { _ in
-                    // Audio lands on an audio track below the fold — say so, and it's already selected
-                    // on the timeline so the eye can find it.
-                    banner = .init(text: "Music added on an audio track — selected on the timeline.", kind: .success)
-                })
-            if case .failure(let error) = outcome {
+        let direction = prompt
+        let duration = textDuration
+        preparationTask = Task { @MainActor in
+            do {
+                let generation = try await GenerationController.prepare(request, editor: editor, preflight: {
+                    guard self.model?.id == model.id, self.effectiveMode == mode,
+                          self.prompt == direction, self.textDuration == duration else {
+                        return "The music direction, model or duration changed. Prepare the request again."
+                    }
+                    return nil
+                }).get()
+                _ = try await GenerationController.prepareReviewPackage(generation, editor: editor, quoteLoader: services.quoteLoader)
+                guard try await GenerationReviewSheet.confirm(generation: generation, title: "Review Music", editor: editor, services: services) else {
+                    isGenerating = false
+                    return
+                }
+                let outcome = await GenerationController.submitPrepared(generation, editor: editor,
+                    musicProgress: .init(onPhase: { generatingLabel = $0.label }, onFinished: { isGenerating = false }),
+                    onSuccess: { _ in
+                        banner = .init(text: "Music added on an audio track — selected on the timeline.", kind: .success)
+                    }, onFailure: { isGenerating = false }, quoteLoader: services.quoteLoader)
+                if case .failure(let error) = outcome { throw error }
+            } catch {
                 isGenerating = false
-                banner = .init(text: error.errorDescription ?? "Generation failed.", kind: .error)
+                banner = .init(text: error.localizedDescription, kind: .error)
             }
         }
     }

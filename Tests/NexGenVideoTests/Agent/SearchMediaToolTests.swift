@@ -33,4 +33,17 @@ struct SearchMediaToolTests {
         // No transcripts cached for stub URLs → empty, but the call resolves the ref.
         #expect((obj?["spoken"] as? [Any])?.isEmpty == true)
     }
+
+    @Test func missingSpeechIndexIsNotReportedAsAnEmptySuccessfulSearch() async throws {
+        let h = ToolHarness()
+        let audio = h.addAsset(type: .audio)
+        let silent = h.addAsset(type: .video); silent.hasAudio = false
+        let obj = try await h.runOK("search_media", args: ["query": "budget", "scope": "spoken"]) as? [String: Any]
+        #expect(obj?["spokenStatus"] as? String == "notIndexed")
+        #expect(obj?["spokenUnavailableMediaRefs"] as? [String] == [audio.id])
+        #expect((obj?["spoken"] as? [Any])?.isEmpty == true)
+        let onlySilent = try await h.runOK("search_media", args: ["query": "budget", "scope": "spoken", "mediaRef": silent.id]) as? [String: Any]
+        #expect(onlySilent?["spokenStatus"] as? String == "ready")
+        #expect((onlySilent?["spokenUnavailableMediaRefs"] as? [String])?.isEmpty == true)
+    }
 }

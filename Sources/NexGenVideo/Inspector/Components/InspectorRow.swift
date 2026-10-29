@@ -19,6 +19,7 @@ extension View {
 
 private struct InspectorKeyframesLayout: Layout {
     let scale: CGFloat
+    let keyframesFirstWhenStacked: Bool
 
     private var gap: CGFloat { AppTheme.Spacing.sm }
     private var separatorWidth: CGFloat { AppTheme.BorderWidth.thin }
@@ -64,16 +65,18 @@ private struct InspectorKeyframesLayout: Layout {
         } else {
             let controls = subviews[0].sizeThatFits(ProposedViewSize(width: bounds.width, height: nil))
             let keyframes = subviews[2].sizeThatFits(ProposedViewSize(width: bounds.width, height: nil))
+            let firstHeight = keyframesFirstWhenStacked ? keyframes.height : controls.height
+            let secondY = bounds.minY + firstHeight + gap * 2 + separatorWidth
             subviews[0].place(
-                at: bounds.origin,
+                at: CGPoint(x: bounds.minX, y: keyframesFirstWhenStacked ? secondY : bounds.minY),
                 proposal: ProposedViewSize(width: bounds.width, height: controls.height)
             )
             subviews[1].place(
-                at: CGPoint(x: bounds.minX, y: bounds.minY + controls.height + gap),
+                at: CGPoint(x: bounds.minX, y: bounds.minY + firstHeight + gap),
                 proposal: ProposedViewSize(width: bounds.width, height: separatorWidth)
             )
             subviews[2].place(
-                at: CGPoint(x: bounds.minX, y: bounds.minY + controls.height + gap * 2 + separatorWidth),
+                at: CGPoint(x: bounds.minX, y: keyframesFirstWhenStacked ? bounds.minY : secondY),
                 proposal: ProposedViewSize(width: bounds.width, height: keyframes.height)
             )
         }
@@ -86,16 +89,19 @@ private struct InspectorKeyframesLayout: Layout {
 
 struct InspectorKeyframesContent<Controls: View, Keyframes: View>: View {
     let isPresented: Bool
+    let keyframesFirstWhenStacked: Bool
     @ViewBuilder let controls: () -> Controls
     @ViewBuilder let keyframes: () -> Keyframes
     @Environment(\.interfaceScale) private var interfaceScale
 
     init(
         isPresented: Bool,
+        keyframesFirstWhenStacked: Bool = false,
         @ViewBuilder controls: @escaping () -> Controls,
         @ViewBuilder keyframes: @escaping () -> Keyframes
     ) {
         self.isPresented = isPresented
+        self.keyframesFirstWhenStacked = keyframesFirstWhenStacked
         self.controls = controls
         self.keyframes = keyframes
     }
@@ -103,7 +109,7 @@ struct InspectorKeyframesContent<Controls: View, Keyframes: View>: View {
     @ViewBuilder
     var body: some View {
         if isPresented {
-            InspectorKeyframesLayout(scale: CGFloat(interfaceScale)) {
+            InspectorKeyframesLayout(scale: CGFloat(interfaceScale), keyframesFirstWhenStacked: keyframesFirstWhenStacked) {
                 InspectorFormSlot { controls() }
                 Rectangle().fill(AppTheme.Border.subtleColor)
                 InspectorFormSlot { keyframes() }
