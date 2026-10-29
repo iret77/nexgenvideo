@@ -95,7 +95,30 @@ struct InstalledPluginVersion: Identifiable, Equatable, Sendable {
 @MainActor
 @Observable
 final class PluginManager {
-    private(set) var installed: [InstalledPluginRecord] = PluginLoader.installed
+    struct Services {
+        let installed: () -> [InstalledPluginRecord]
+        let reload: () -> [InstalledPluginRecord]
+        let versions: () -> [InstalledPluginVersion]
+        let fetch: () async -> Result<PluginCatalog, Error>
+        let install: (PluginCatalog.Entry) async throws -> Void
+        let uninstall: (InstalledPluginVersion) throws -> Void
+        let refreshAttention: () -> Void
+        let badge: (String) -> URL?
+
+        static var live: Self {
+            .init(installed: { PluginLoader.installed }, reload: { PluginLoader.loadInstalled() },
+                versions: { PluginManager.scanInstalledVersions() }, fetch: { await PluginCatalogService.fetch() },
+                install: { _ = try await PluginInstaller.install($0, appVersion: AppVersion.marketing) },
+                uninstall: { value in
+                    try PluginInstaller.uninstall(id: value.packID, version: value.version, bundleURL: value.bundleURL)
+                    PluginLoader.recordRemoval(id: value.packID, version: value.version)
+                }, refreshAttention: { PluginUpdateCenter.shared.refreshInstalledAttention() },
+                badge: { InstalledPack.named($0)?.badgeURL })
+        }
+    }
+
+    private let services: Services
+    private(set) var installed: [InstalledPluginRecord]
     private(set) var catalog: [PluginCatalog.Entry] = []
     private(set) var catalogState: CatalogState = .idle
     private(set) var busyIDs: Set<String> = []
@@ -106,13 +129,18 @@ final class PluginManager {
     private let appVersion = AppVersion.marketing
     private(set) var installedVersions: [InstalledPluginVersion] = []
 
+    init(services: Services = .live) {
+        self.services = services
+        installed = services.installed()
+    }
+
     /// Reload installed packs and (re)fetch the catalog.
     func refresh() async {
-        installed = PluginLoader.loadInstalled()
-        installedVersions = Self.scanInstalledVersions()
-        PluginUpdateCenter.shared.refreshInstalledAttention()
+        installed = services.reload()
+        installedVersions = services.versions()
+        services.refreshAttention()
         if catalogState != .loaded { catalogState = .loading }
-        switch await PluginCatalogService.fetch() {
+        switch await services.fetch() {
         case .success(let catalog):
             self.catalog = catalog.plugins
             catalogState = .loaded
@@ -122,9 +150,9 @@ final class PluginManager {
     }
 
     func reloadInstalled() {
-        installed = PluginLoader.loadInstalled()
-        installedVersions = Self.scanInstalledVersions()
-        PluginUpdateCenter.shared.refreshInstalledAttention()
+        installed = services.reload()
+        installedVersions = services.versions()
+        services.refreshAttention()
     }
 
     func versions(for id: String) -> [InstalledPluginVersion] {
@@ -141,18 +169,10 @@ final class PluginManager {
         guard installedVersion.isPresentOnDisk else { return true }
         lastError = nil
         do {
-            try PluginInstaller.uninstall(
-                id: installedVersion.packID,
-                version: installedVersion.version,
-                bundleURL: installedVersion.bundleURL
-            )
-            PluginLoader.recordRemoval(
-                id: installedVersion.packID,
-                version: installedVersion.version
-            )
-            installed = PluginLoader.installed
-            installedVersions = Self.scanInstalledVersions()
-            PluginUpdateCenter.shared.refreshInstalledAttention()
+            try services.uninstall(installedVersion)
+            installed = services.installed()
+            installedVersions = services.versions()
+            services.refreshAttention()
             NotificationCenter.default.post(
                 name: .pluginInstallationChanged,
                 object: installedVersion.packID
@@ -177,10 +197,10 @@ final class PluginManager {
         lastError = nil
         defer { busyIDs.remove(entry.id) }
         do {
-            _ = try await PluginInstaller.install(entry, appVersion: appVersion)
-            installed = PluginLoader.installed
-            installedVersions = Self.scanInstalledVersions()
-            PluginUpdateCenter.shared.refreshInstalledAttention()
+            try await services.install(entry)
+            installed = services.installed()
+            installedVersions = services.versions()
+            services.refreshAttention()
             NotificationCenter.default.post(name: .pluginInstallationChanged, object: entry.id)
             return true
         } catch {
@@ -207,7 +227,7 @@ final class PluginManager {
             activePluginName: activePluginName, appVersion: appVersion,
             // Loaded packs carry their local badge; fall back to the catalog badge (https-only)
             // so a not-yet-loaded (incompatible) row still shows real art.
-            localBadge: { InstalledPack.named($0)?.badgeURL })
+            localBadge: services.badge)
     }
 
     /// Pure merge of installed records + catalog entries into sorted rows — the

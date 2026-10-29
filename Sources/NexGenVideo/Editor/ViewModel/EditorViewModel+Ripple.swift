@@ -25,12 +25,11 @@ extension EditorViewModel {
     /// push to other tracks.
     func trimClips(_ edits: [(clipId: String, trimStartFrame: Int, trimEndFrame: Int)]) {
         guard !edits.isEmpty else { return }
-        undoManager?.beginUndoGrouping()
-        for e in edits {
-            trimClipInternal(clipId: e.clipId, trimStartFrame: e.trimStartFrame, trimEndFrame: e.trimEndFrame)
+        withTimelineSwap(actionName: edits.count == 1 ? "Trim Clip" : "Trim Clips") {
+            for edit in edits {
+                trimClipInternal(clipId: edit.clipId, trimStartFrame: edit.trimStartFrame, trimEndFrame: edit.trimEndFrame)
+            }
         }
-        undoManager?.endUndoGrouping()
-        undoManager?.setActionName(edits.count == 1 ? "Trim Clip" : "Trim Clips")
     }
 
     struct RippleTrimPlan {
@@ -143,9 +142,13 @@ extension EditorViewModel {
         withTimelineSwap(actionName: "Ripple Trim") {
             for resize in plan.resizes {
                 guard let location = findClip(id: resize.clipId) else { continue }
-                timeline.tracks[location.trackIndex].clips[location.clipIndex].trimStartFrame = resize.trimStart
-                timeline.tracks[location.trackIndex].clips[location.clipIndex].trimEndFrame = resize.trimEnd
-                timeline.tracks[location.trackIndex].clips[location.clipIndex].setDuration(resize.duration)
+                let basis = timeline.tracks[location.trackIndex].clips[location.clipIndex]
+                let origin = edge == .left ? basis.durationFrames - resize.duration : 0
+                let extended: [FadeEdge] = resize.duration > basis.durationFrames ? [edge == .left ? .left : .right] : []
+                var resized = basis.animationWindow(originOffset: origin, duration: resize.duration, extendedEdges: extended)
+                resized.trimStartFrame = resize.trimStart
+                resized.trimEndFrame = resize.trimEnd
+                timeline.tracks[location.trackIndex].clips[location.clipIndex] = resized
             }
             applyShifts(plan.shifts)
             timeline.markers = RippleEngine.rippleMarkers(
@@ -495,6 +498,8 @@ extension EditorViewModel {
         guard let loc = findClip(id: clipId) else { return }
         let ti = loc.trackIndex
         let clip = timeline.tracks[ti].clips[loc.clipIndex]
+        guard clip.speed.isFinite, clip.speed > 0,
+              clip.sourceClipType == .image || clip.sourceClipType == .text || (trimStartFrame >= 0 && trimEndFrame >= 0) else { return }
         let prevStart = clip.trimStartFrame
         let prevEnd = clip.trimEndFrame
         let prevDuration = clip.durationFrames
@@ -507,21 +512,19 @@ extension EditorViewModel {
         let newDuration = prevDuration - deltaStartTimeline - deltaEndTimeline
         let newStartFrame = clip.startFrame + deltaStartTimeline
 
-        undoManager?.beginUndoGrouping()
-
-        timeline.tracks[ti].clips[loc.clipIndex].trimStartFrame = trimStartFrame
-        timeline.tracks[ti].clips[loc.clipIndex].trimEndFrame = trimEndFrame
-        timeline.tracks[ti].clips[loc.clipIndex].startFrame = newStartFrame
-        timeline.tracks[ti].clips[loc.clipIndex].setDuration(newDuration)
+        guard newDuration > 0, newStartFrame >= 0 else { return }
+        var extended: [FadeEdge] = []
+        if deltaStartTimeline < 0 { extended.append(.left) }
+        if deltaEndTimeline < 0 { extended.append(.right) }
+        var resized = clip.animationWindow(originOffset: deltaStartTimeline, duration: newDuration, extendedEdges: extended)
+        resized.trimStartFrame = trimStartFrame
+        resized.trimEndFrame = trimEndFrame
+        resized.startFrame = newStartFrame
+        timeline.tracks[ti].clips[loc.clipIndex] = resized
 
         sortClips(trackIndex: ti)
 
-        undoManager?.registerUndo(withTarget: self) { vm in
-            vm.trimClipInternal(clipId: clipId, trimStartFrame: prevStart, trimEndFrame: prevEnd)
-        }
-        undoManager?.endUndoGrouping()
-        undoManager?.setActionName("Trim Clip")
-        notifyTimelineChanged()
+
     }
 
     // MARK: - Validation

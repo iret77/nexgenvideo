@@ -1,0 +1,118 @@
+name: Managed bpy source closure
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      distribution:
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bpy-source-${{ github.workflow }}-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bind source and publication mode
+        env:
+          DISTRIBUTION: ${{ inputs.distribution || false }}
+        run: |
+          set -euo pipefail
+          [ "$(git rev-parse HEAD)" = "$GITHUB_SHA" ]
+          python3 scripts/verify_bpy_runtime.py
+          if [ "$DISTRIBUTION" = true ]; then
+            python3 scripts/verify_bpy_runtime.py --distribution
+          fi
+      - name: Verify source and signing validator regressions
+        run: python3 -m unittest discover -s scripts -p 'test_verify_bpy_*.py'
+      - name: Assemble and independently verify exact source and notices
+        env:
+          DISTRIBUTION: ${{ inputs.distribution || false }}
+        run: |
+          set -euo pipefail
+          OUTPUT="$RUNNER_TEMP/bpy-source-closure"
+          python3 scripts/assemble_bpy_source_closure.py --output-directory "$OUTPUT"
+          ARCHIVE="$OUTPUT/NexGenVideo-bpy-5.2.2-corresponding-source.tar"
+          MANIFEST="$OUTPUT/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json"
+          python3 scripts/verify_bpy_source_closure.py "$ARCHIVE" "$MANIFEST" > "$OUTPUT/validation.json"
+          if [ "$DISTRIBUTION" = true ]; then
+            python3 scripts/verify_bpy_distributable_source.py "$ARCHIVE" "$MANIFEST" > "$OUTPUT/distribution-validation.json"
+          fi
+          python3 - "$OUTPUT" <<'PYTHON'
+          import hashlib, json, os, pathlib, sys
+          root = pathlib.Path(sys.argv[1])
+          def digest(path):
+              h = hashlib.sha256()
+              with path.open('rb') as source:
+                  for block in iter(lambda: source.read(1024 * 1024), b''):
+                      h.update(block)
+              return h.hexdigest()
+          records = [{'filename': p.name, 'sha256': digest(p), 'size': p.stat().st_size}
+                     for p in sorted(root.iterdir()) if p.is_file()]
+          (root / 'evidence.json').write_text(json.dumps({
+              'schema': 'nexgenvideo/bpy-source-evidence/1', 'sourceSHA': os.environ['GITHUB_SHA'],
+              'distributionValidated': os.environ['DISTRIBUTION'] == 'true', 'artifacts': records,
+          }, indent=2, sort_keys=True) + '\n')
+          PYTHON
+      - uses: actions/upload-artifact@v4
+        with:
+          name: managed-bpy-source-${{ github.sha }}
+          overwrite: true
+          path: ${{ runner.temp }}/bpy-source-closure/*
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: managed-bpy-source-progress-${{ github.sha }}
+          overwrite: true
+          path: ${{ runner.temp }}/bpy-source-closure/assembly-progress.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  binary-evidence:
+    if: ${{ !inputs.distribution }}
+    # ci-lint: allow-CI005 Runtime evidence requires the released macOS 26 floor.
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect pinned bpy on the production OS
+        run: |
+          set -euo pipefail
+          [ "$(git rev-parse HEAD)" = "$GITHUB_SHA" ]
+          [ "$(sw_vers -productVersion | cut -d. -f1)" = 26 ]
+          [ "$(uname -m)" = arm64 ]
+          RUNTIME="$RUNNER_TEMP/bpy-evidence-runtime"
+          OUTPUT="$RUNNER_TEMP/bpy-binary-evidence"
+          mkdir -p "$OUTPUT"
+          scripts/stage_bpy_runtime.sh "$RUNTIME"
+          "$RUNTIME/python/bin/python3.13" -I -S scripts/collect_bpy_binary_evidence.py \
+            --site-packages "$RUNTIME/site-packages" --lock Runtime/bpy/runtime-lock.json \
+            --source-sha "$GITHUB_SHA" --output "$OUTPUT/binary-evidence.json"
+          python3 scripts/verify_bpy_binary_evidence.py "$OUTPUT/binary-evidence.json" \
+            --source-sha "$GITHUB_SHA" > "$OUTPUT/validation.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: managed-bpy-binary-evidence-${{ github.sha }}
+          overwrite: true
+          path: ${{ runner.temp }}/bpy-binary-evidence/*.json
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: managed-bpy-binary-evidence-failed-${{ github.sha }}
+          overwrite: true
+          path: ${{ runner.temp }}/bpy-binary-evidence/*.json
+          if-no-files-found: warn
+          retention-days: 30

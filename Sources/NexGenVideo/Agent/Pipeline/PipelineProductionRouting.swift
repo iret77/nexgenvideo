@@ -68,6 +68,12 @@ enum PipelineProductionRouting {
         }
     }
 
+    nonisolated static func isProductionV2(dataRoot: URL) throws -> Bool {
+        let declaration = try ProjectPackGate.captureMutationDeclaration(projectURL: FrameInventory.projectHome(of: dataRoot))
+        return try PhaseContractRuntime.resolveWorkflow(dataRoot: dataRoot, expectedPack: declaration.binding,
+            expectedProductionContract: declaration.productionContract)?.isProductionV2 == true
+    }
+
     static func resolveAndWrite(
         shotID: String,
         dataRoot: URL,
@@ -86,6 +92,7 @@ enum PipelineProductionRouting {
         ).first else {
             throw PipelineProductionRoutingError.selectedCatalogModelMissing
         }
+        if try isProductionV2(dataRoot: dataRoot) { return selection }
         try publish(
             route: selection.route,
             referencePlan: selection.referencePlan,
@@ -115,6 +122,7 @@ enum PipelineProductionRouting {
         ).first(where: { $0.target == target }) else {
             throw PipelineProductionRoutingError.selectedCatalogModelMissing
         }
+        if try isProductionV2(dataRoot: dataRoot) { return selection }
         try publish(
             route: selection.route,
             referencePlan: selection.referencePlan,
@@ -133,6 +141,9 @@ enum PipelineProductionRouting {
             ModelCatalog.shared.productionRouteCandidates(activation: $0)
         }
     ) throws -> [PipelineProductionRouteSelection] {
+        if try isProductionV2(dataRoot: dataRoot) {
+            return [try requireCurrent(shotID: shotID, dataRoot: dataRoot, activation: activation, candidateProvider: candidateProvider)]
+        }
         let dependencies = try loadDependencies(shotID: shotID, dataRoot: dataRoot)
         let records = candidateProvider(activation)
         let matches = try ProductionRequirementResolverV1.matchingRoutes(
@@ -225,6 +236,28 @@ enum PipelineProductionRouting {
             ModelCatalog.shared.productionRouteCandidates(activation: $0)
         }
     ) throws -> PipelineProductionRouteSelection {
+        if try isProductionV2(dataRoot: dataRoot) {
+            let bundle = try PipelineProductionInputMaterializer.requireCurrent(shotID: shotID, dataRoot: dataRoot)
+            guard let record = candidateProvider(activation).first(where: {
+                $0.candidate.providerActivated && $0.candidate.liveAvailable && $0.target != nil
+                    && $0.candidate.capabilities.offering == bundle.route.offering
+                    && ProductionRouteCapabilitySnapshotV1(candidate: $0.candidate) == bundle.route.capabilitySnapshot
+            }), let target = record.target,
+                try ProductionRequirementResolverV1.revalidate(bundle.route, requirement: bundle.receipt.requirement,
+                    demandSet: bundle.demands, assetGraph: bundle.graph, dataRoot: dataRoot, candidate: record.candidate,
+                    assetGraphPath: bundle.receipt.graph.path),
+                providerAdapterSupports(referencePlan: bundle.plan, route: bundle.route, target: target,
+                    modelID: record.modelID, requirement: bundle.receipt.requirement) else {
+                throw PipelineProductionRoutingError.publicationInvalid("The reviewed production route is no longer executable with these exact inputs.")
+            }
+            let selection = try makeSelection(modelID: record.modelID, target: target, requirement: bundle.receipt.requirement,
+                route: bundle.route, referencePlan: bundle.plan)
+            guard selection.routeArtifactSHA256 == bundle.receipt.route.sha256,
+                  selection.referencePlanSHA256 == bundle.receipt.referencePlan.sha256 else {
+                throw PipelineProductionRoutingError.publicationInvalid("The production route differs from its immutable materialization.")
+            }
+            return selection
+        }
         let dependencies = try loadDependencies(shotID: shotID, dataRoot: dataRoot)
         let directory = routingDirectory(shotID: shotID, dataRoot: dataRoot)
         let routeURL = directory.appendingPathComponent("route.v1.json")
@@ -444,6 +477,9 @@ enum PipelineProductionRouting {
             throw PipelineProductionRoutingError.publicationInvalid(
                 "The generation-routing proof does not match the submitted job."
             )
+        }
+        if try isProductionV2(dataRoot: dataRoot) {
+            try PipelineProductionSubmissionAuthority.requireReviewed(input: genInput, proof: proof, editor: editor, dataRoot: dataRoot)
         }
         let selection = try requireCurrent(
             shotID: proof.shotID,
@@ -836,6 +872,9 @@ enum PipelineProductionRouting {
         }
         let route = proof.route
         let referencePlan = proof.referencePlan
+        let materialization = try historicalMaterialization(proof, dataRoot: dataRoot)
+        let graphPath = materialization?.graph.path ?? PipelineLayout.assetGraphFile
+        let demandPath = materialization?.demands.path ?? PipelineLayout.referenceDemandSetFile(shotID: proof.shotID)
         let routeData = try ReferencePlanCanonicalCodecV2.encode(route)
         let planData = try ReferencePlanCanonicalCodecV2.encode(referencePlan)
         let requirementData = try ReferencePlanCanonicalCodecV2.encode(
@@ -902,9 +941,7 @@ enum PipelineProductionRouting {
                   in: .whitespacesAndNewlines
               ).isEmpty,
               referencePlan.demandSet.role == ReferenceDemandSetV1.artifactRole,
-              referencePlan.demandSet.path == PipelineLayout.referenceDemandSetFile(
-                  shotID: proof.shotID
-              ),
+              referencePlan.demandSet.path == demandPath,
               validSHA256(referencePlan.demandSet.sha256),
               referencePlan.bindings.count == proof.orderedBindings.count else {
             throw PipelineProductionRoutingError.publicationInvalid(
@@ -930,7 +967,7 @@ enum PipelineProductionRouting {
         }
         switch (proof.historicalAssetGraph, proof.historicalDemandSet) {
         case (let graph?, let demandSet?):
-            try AssetGraphValidatorV1.validate(demandSet, against: graph)
+            try AssetGraphValidatorV1.validate(demandSet, against: graph, assetGraphPath: graphPath)
             try AssetGraphValidatorV1.validateProjectFiles(
                 graph,
                 dataRoot: dataRoot
@@ -957,7 +994,9 @@ enum PipelineProductionRouting {
                 requirement: proof.requirement,
                 demandSet: demandSet,
                 graph: graph,
-                candidate: historicalCandidate
+                candidate: historicalCandidate,
+                assetGraphPath: graphPath,
+                demandSetPath: demandPath
             )
             guard case .plan(let expectedPlan) = rebuilt,
                   expectedPlan == referencePlan else {
@@ -1247,6 +1286,35 @@ enum PipelineProductionRouting {
             })
     }
 
+    nonisolated private static func historicalMaterialization(_ proof: ProductionGenerationRoutingProofV1,
+                                                             dataRoot: URL) throws -> PipelineProductionInputMaterializer.Receipt? {
+        guard let reference = proof.productionMaterialization else { return nil }
+        let parts = reference.path.split(separator: "/", omittingEmptySubsequences: false)
+        guard parts.count == 5, parts[0] == "execution", parts[1] == "materialized", parts[2] == Substring(proof.shotID),
+              parts[3].count == 64, parts[3].allSatisfy(\.isHexDigit), parts[4] == "receipt.v1.json",
+              reference.id == String(parts[3]), reference.role == "host.production-input-materialization" else {
+            throw PipelineProductionRoutingError.publicationInvalid("The historical production materialization has an invalid path.")
+        }
+        let bytes = try Data(contentsOf: ProjectLocalFile.requireHash(reference.sha256, at: reference.path, dataRoot: dataRoot))
+        let receipt = try JSONDecoder().decode(PipelineProductionInputMaterializer.Receipt.self, from: bytes)
+        let directory = (reference.path as NSString).deletingLastPathComponent
+        guard receipt.schema == "production-input-materialization/v1", receipt.shotID == proof.shotID,
+              receipt.projectKey == ProjectIdentity.existingUUID(for: FrameInventory.projectHome(of: dataRoot)),
+              receipt.requirement == proof.requirement, receipt.graph.path == directory + "/asset-graph.v1.json",
+              receipt.demands.path == directory + "/demands.v1.json", receipt.route.path == directory + "/route.v1.json",
+              receipt.referencePlan.path == directory + "/reference-plan.v1.json",
+              receipt.route.sha256 == proof.routeArtifactSHA256, receipt.referencePlan.sha256 == proof.referencePlanSHA256,
+              proof.historicalAssetGraph != nil, proof.historicalDemandSet != nil,
+              receipt.demands.sha256 == proof.referencePlan.demandSet.sha256 else {
+            throw PipelineProductionRoutingError.publicationInvalid("The historical production materialization differs from the actual submitted route and input plan.")
+        }
+        for input in [receipt.projection, receipt.promotion, receipt.plannedRoute, receipt.graph, receipt.demands,
+            receipt.route, receipt.referencePlan] + receipt.inputs + receipt.sourceMedia {
+            _ = try ProjectLocalFile.requireHash(input.sha256, at: input.path, dataRoot: dataRoot)
+        }
+        return receipt
+    }
+
     private static func loadDependencies(
         shotID: String,
         dataRoot: URL
@@ -1449,19 +1517,73 @@ enum PipelineProductionRouting {
               route.offering.catalogModelID == modelID,
               target.provider.rawValue == route.offering.providerID,
               target.endpoint == route.offering.endpointID,
-              inputPolicyMatchesRoute(target: target, route: route),
-              let capabilities = target.binding?.resolvedVideoCapabilities else {
+              inputPolicyMatchesRoute(target: target, route: route) else {
             return false
         }
+        return providerAdapterSupports(inputs: referencePlan.bindings.map(AdapterInput.init),
+            combinedVideoSeconds: referencePlan.budget.combinedVideoSeconds,
+            combinedAudioSeconds: referencePlan.budget.combinedAudioSeconds,
+            route: route, target: target, modelID: modelID, requirement: requirement)
+    }
+
+    private struct AdapterInput: Sendable {
+        let modality: AssetPhysicalModalityV1
+        let semanticJobID: String
+        let inputSlotID: String
+        let modeID: String
+        let durationSeconds: Double?
+
+        init(_ binding: ReferenceBindingV2) {
+            modality = binding.modality; semanticJobID = binding.semanticJobID
+            inputSlotID = binding.inputSlotID; modeID = binding.modeID; durationSeconds = binding.durationSeconds
+        }
+
+        init(_ demand: ReferenceDemandV1) {
+            modality = demand.modality; semanticJobID = demand.semanticJobID
+            inputSlotID = demand.inputSlotID; modeID = demand.modeID; durationSeconds = demand.durationSeconds
+        }
+    }
+
+    nonisolated static func plannedProviderAdapterSupports(demands: [ReferenceDemandV1], route: ProductionRouteV1,
+        target: ResolvedGenerationTarget, modelID: String, requirement: ProductionRequirementV1) -> Bool {
+        guard target.modelId == modelID, route.offering.catalogModelID == modelID,
+              target.provider.rawValue == route.offering.providerID, target.endpoint == route.offering.endpointID,
+              inputPolicyMatchesRoute(target: target, route: route) else { return false }
+        let declaredSlots = route.capabilitySnapshot.inputSlots
+        guard Set(declaredSlots.map(\.id)).count == declaredSlots.count else { return false }
+        let slots = Dictionary(uniqueKeysWithValues: declaredSlots.map { ($0.id, $0) })
+        let inputs = demands.enumerated().sorted {
+            let lhs = ProductionInputSlotAliasV1.slot($0.element.inputSlotID, in: slots)?.requestOrder ?? Int.max
+            let rhs = ProductionInputSlotAliasV1.slot($1.element.inputSlotID, in: slots)?.requestOrder ?? Int.max
+            return lhs == rhs ? $0.offset < $1.offset : lhs < rhs
+        }.map { AdapterInput($0.element) }
+        func combined(_ modality: AssetPhysicalModalityV1) -> Double? {
+            var total = 0.0
+            for input in inputs where input.modality == modality {
+                guard let slot = ProductionInputSlotAliasV1.slot(input.inputSlotID, in: slots) else { return nil }
+                guard slot.countsTowardCombinedDuration else { continue }
+                guard let duration = input.durationSeconds, duration.isFinite, duration > 0 else { return nil }
+                total += duration
+            }
+            return total.isFinite ? total : nil
+        }
+        return providerAdapterSupports(inputs: inputs, combinedVideoSeconds: combined(.video), combinedAudioSeconds: combined(.audio),
+            route: route, target: target, modelID: modelID, requirement: requirement)
+    }
+
+    nonisolated private static func providerAdapterSupports(inputs: [AdapterInput], combinedVideoSeconds: Double?,
+        combinedAudioSeconds: Double?, route: ProductionRouteV1, target: ResolvedGenerationTarget,
+        modelID: String, requirement: ProductionRequirementV1) -> Bool {
+        guard let capabilities = target.binding?.resolvedVideoCapabilities else { return false }
         let inputPolicy = capabilities.inputPolicy
         guard route.offering.modality == .video else { return true }
-        let sourceCount = referencePlan.bindings.filter {
+        let sourceCount = inputs.filter {
             ProductionIdentifierNormalizerV1.matches(
                 $0.semanticJobID,
                 CoreReferenceSemanticJobIDV1.sourceVideo
             )
         }.count
-        let startCount = referencePlan.bindings.filter {
+        let startCount = inputs.filter {
             ProductionIdentifierNormalizerV1.matches(
                 $0.semanticJobID,
                 CoreReferenceSemanticJobIDV1.firstFrame
@@ -1470,13 +1592,13 @@ enum PipelineProductionRouting {
                 CoreReferenceSemanticJobIDV1.predecessorLastFrame
             )
         }.count
-        let endCount = referencePlan.bindings.filter {
+        let endCount = inputs.filter {
             ProductionIdentifierNormalizerV1.matches(
                 $0.semanticJobID,
                 CoreReferenceSemanticJobIDV1.lastFrame
             )
         }.count
-        let ordinary = referencePlan.bindings.filter {
+        let ordinary = inputs.filter {
             ![
                 CoreReferenceSemanticJobIDV1.sourceVideo,
                 CoreReferenceSemanticJobIDV1.firstFrame,
@@ -1489,7 +1611,7 @@ enum PipelineProductionRouting {
         let audioCount = ordinary.filter { $0.modality == .audio }.count
         let geometryCount = ordinary.filter { $0.modality == .geometry }.count
         guard exactOfferingSupports(
-            referencePlan: referencePlan,
+            combinedVideoSeconds: combinedVideoSeconds, combinedAudioSeconds: combinedAudioSeconds,
             requirement: requirement,
             capabilities: capabilities,
             sourceCount: sourceCount,
@@ -1504,7 +1626,7 @@ enum PipelineProductionRouting {
         }
         if target.transport == .mcp {
             return mcpAdapterSupports(
-                referencePlan: referencePlan,
+                inputs: inputs,
                 route: route,
                 target: target,
                 requirement: requirement,
@@ -1523,8 +1645,13 @@ enum PipelineProductionRouting {
                 return false
             }
             guard requirement.resolution == nil,
-                  !requirement.requiresOutputAudio else {
+                  !requirement.requiresOutputAudio || inputPolicy.sourceOperation == .extendForward else {
                 return false
+            }
+            if inputPolicy.sourceOperation == .extendForward {
+                guard model.apiModel == "seedance2_5" else { return false }
+                return sourceCount == 1 && startCount == 0 && endCount == 0
+                    && imageCount == 0 && videoCount == 0 && audioCount == 0 && geometryCount == 0
             }
             if inputPolicy.requiresSourceVideo {
                 return sourceCount == 1
@@ -1597,6 +1724,25 @@ enum PipelineProductionRouting {
         audioCount: Int,
         geometryCount: Int
     ) -> Bool {
+        exactOfferingSupports(combinedVideoSeconds: referencePlan.budget.combinedVideoSeconds,
+            combinedAudioSeconds: referencePlan.budget.combinedAudioSeconds, requirement: requirement,
+            capabilities: capabilities, sourceCount: sourceCount, startCount: startCount, endCount: endCount,
+            imageCount: imageCount, videoCount: videoCount, audioCount: audioCount, geometryCount: geometryCount)
+    }
+
+    nonisolated private static func exactOfferingSupports(
+        combinedVideoSeconds: Double?,
+        combinedAudioSeconds: Double?,
+        requirement: ProductionRequirementV1,
+        capabilities: ResolvedVideoOfferingCapabilitiesV1,
+        sourceCount: Int,
+        startCount: Int,
+        endCount: Int,
+        imageCount: Int,
+        videoCount: Int,
+        audioCount: Int,
+        geometryCount: Int
+    ) -> Bool {
         let supportsAspectRatio = requirement.aspectRatio.map {
             capabilities.aspectRatios.isEmpty
                 || capabilities.aspectRatios.contains($0)
@@ -1658,12 +1804,12 @@ enum PipelineProductionRouting {
         }
         if let maximum = capabilities.maxCombinedVideoReferenceSeconds {
             guard videoCount == 0
-                    || referencePlan.budget.combinedVideoSeconds.map({ $0 <= maximum }) == true
+                    || combinedVideoSeconds.map({ $0 <= maximum }) == true
             else { return false }
         }
         if let maximum = capabilities.maxCombinedAudioReferenceSeconds {
             guard audioCount == 0
-                    || referencePlan.budget.combinedAudioSeconds.map({ $0 <= maximum }) == true
+                    || combinedAudioSeconds.map({ $0 <= maximum }) == true
             else { return false }
         }
         return true
@@ -1699,8 +1845,8 @@ enum PipelineProductionRouting {
         return capabilities.discrete.isEmpty && capabilities.range == nil
     }
 
-    private static func mcpAdapterSupports(
-        referencePlan: ReferencePlanV2,
+    nonisolated private static func mcpAdapterSupports(
+        inputs: [AdapterInput],
         route: ProductionRouteV1,
         target: ResolvedGenerationTarget,
         requirement: ProductionRequirementV1,
@@ -1753,7 +1899,7 @@ enum PipelineProductionRouting {
             uniqueKeysWithValues: declaredSlots.map { ($0.id, $0) }
         )
         var requestOrder: [Int] = []
-        for planned in referencePlan.bindings {
+        for planned in inputs {
             guard let slot = ProductionInputSlotAliasV1.slot(planned.inputSlotID, in: slots),
                   slot.modality == planned.modality,
                   Set(slot.modeIDs.map(
@@ -1797,7 +1943,7 @@ enum PipelineProductionRouting {
         return true
     }
 
-    private static func inputPolicyMatchesRoute(
+    nonisolated private static func inputPolicyMatchesRoute(
         target: ResolvedGenerationTarget,
         route: ProductionRouteV1
     ) -> Bool {
@@ -1826,7 +1972,7 @@ enum PipelineProductionRouting {
         )
     }
 
-    private static func mcpOutputFieldsAreSchemaBacked(
+    nonisolated private static func mcpOutputFieldsAreSchemaBacked(
         _ requirement: ProductionRequirementV1,
         route: ProductionRouteV1,
         endpointID: String

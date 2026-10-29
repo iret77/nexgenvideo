@@ -142,8 +142,11 @@ extension EditorViewModel {
         mode: SyncMode = .auto,
         searchWindowSeconds: Double = SyncDefaults.searchWindowSeconds,
         minConfidence: Double = SyncDefaults.minConfidence,
-        evidence: SyncEvidence? = nil
+        evidence: SyncEvidence? = nil,
+        beforePublication: (@MainActor @Sendable () async -> Void)? = nil
     ) async -> SyncBatchReport {
+        let originalTimeline = timeline
+        let destination = MediaLibraryDestination(self, folderID: nil)
         let fps = Double(timeline.fps)
         var uniqueTargets: [String] = []
         var seenTargetIds = Set<String>()
@@ -185,6 +188,15 @@ extension EditorViewModel {
         let urlMap = mediaRefs.reduce(into: [String: URL]()) { result, mediaRef in
             result[mediaRef] = mediaResolver.resolveURL(for: mediaRef)
         }
+        func staleSourceReport() -> SyncBatchReport {
+            SyncBatchReport(failures: uniqueTargets.map {
+                SyncFailure(clipId: $0, method: nil, confidence: nil,
+                    reason: "The project, timeline or source changed. Synchronize the clips again.")
+            })
+        }
+        guard let sourceStates = try? await Task.detached(priority: .utility, operation: {
+            try urlMap.mapValues { try ExportQueue.PathState.capture($0, isCancelled: { Task.isCancelled }) }
+        }).value else { return staleSourceReport() }
         let timingCache: [String: SourceTiming]
         if let evidence {
             timingCache = evidence.timings
@@ -204,7 +216,7 @@ extension EditorViewModel {
             if let evidence {
                 loadedEnvelope = evidence.envelopes[bearer.mediaRef]
             } else {
-                loadedEnvelope = await envelope(of: bearer, fps: fps)
+                loadedEnvelope = await envelope(of: bearer, fps: fps, url: urlMap[bearer.mediaRef])
             }
             guard let loadedEnvelope, !loadedEnvelope.samples.isEmpty else {
                 return nil
@@ -525,6 +537,16 @@ extension EditorViewModel {
             }
         }
 
+        await beforePublication?()
+        let finalSourceStates = try? await Task.detached(priority: .utility) {
+            try urlMap.mapValues { try ExportQueue.PathState.capture($0, isCancelled: { Task.isCancelled }) }
+        }.value
+        guard !Task.isCancelled, (try? destination.validate(self)) != nil,
+              timeline == originalTimeline,
+              finalSourceStates == sourceStates,
+              urlMap.allSatisfy({ mediaResolver.resolveURL(for: $0.key) == $0.value }) else {
+            return staleSourceReport()
+        }
         applySyncPlacements(referenceClipId: referenceClipId, placements: placements, report: &report)
         return report
     }
@@ -901,8 +923,8 @@ extension EditorViewModel {
         return nil
     }
 
-    private func envelope(of clip: Clip, fps: Double) async -> AudioEnvelope? {
-        guard let url = mediaResolver.resolveURL(for: clip.mediaRef) else { return nil }
+    private func envelope(of clip: Clip, fps: Double, url: URL?) async -> AudioEnvelope? {
+        guard let url else { return nil }
         let start = Double(clip.trimStartFrame) / fps
         let speed = clip.speed.isFinite && clip.speed > 0
             ? max(clip.speed, SyncDefaults.minSpeed)

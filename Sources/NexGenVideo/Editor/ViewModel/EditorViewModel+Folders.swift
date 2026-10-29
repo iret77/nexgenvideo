@@ -48,6 +48,10 @@ extension EditorViewModel {
         MediaFolderIndex(mediaManifest.folders).path(for: folderId)
     }
 
+    func folderIDsIncludingDescendants(_ ids: Set<String>) -> Set<String> {
+        MediaFolderIndex(mediaManifest.folders).idsIncludingDescendants(ids)
+    }
+
     private func assetIds(inFolderIds folderIds: Set<String>) -> Set<String> {
         Set(mediaAssets
             .filter { asset in asset.folderId.map { folderIds.contains($0) } ?? false }
@@ -124,6 +128,7 @@ extension EditorViewModel {
 
     func moveAssetsToFolder(assetIds: Set<String>, folderId: String?) {
         guard !assetIds.isEmpty else { return }
+        if let folderId, folder(id: folderId) == nil { return }
         var changes: [ParentChange] = []
         for id in assetIds {
             guard let asset = mediaAssets.first(where: { $0.id == id }) else { continue }
@@ -140,6 +145,7 @@ extension EditorViewModel {
 
     func moveFoldersToFolder(folderIds: Set<String>, parentFolderId: String?) {
         guard !folderIds.isEmpty else { return }
+        if let parentFolderId, folder(id: parentFolderId) == nil { return }
         let folderIndex = MediaFolderIndex(mediaManifest.folders)
         var changes: [ParentChange] = []
         for id in folderIds {
@@ -192,6 +198,43 @@ extension EditorViewModel {
         undoManager?.setActionName(actionName)
     }
 
+    struct OrganizedAssetState {
+        let id: String
+        let name: String
+        let folderID: String?
+    }
+
+    func registerMediaOrganizationUndo(_ states: [OrganizedAssetState], removing folders: [MediaFolder], restoring: [MediaFolder] = []) {
+        undoManager?.registerUndo(withTarget: self) { editor in
+            editor.restoreMediaOrganization(states, removing: folders, restoring: restoring)
+        }
+        undoManager?.setActionName("Organize Media")
+    }
+
+    private func restoreMediaOrganization(_ states: [OrganizedAssetState], removing: [MediaFolder], restoring: [MediaFolder]) {
+        let previous = states.compactMap { state -> OrganizedAssetState? in
+            guard let asset = mediaAssets.first(where: { $0.id == state.id }) else { return nil }
+            return .init(id: asset.id, name: asset.name, folderID: asset.folderId)
+        }
+        let created = restoring.filter { folder(id: $0.id) == nil }
+        undoManager?.disableUndoRegistration()
+        mediaManifest.folders += created
+        for state in states where mediaAssets.contains(where: { $0.id == state.id }) {
+            renameMediaAsset(id: state.id, name: state.name)
+            moveAssetsToFolder(assetIds: [state.id], folderId: state.folderID)
+        }
+        var removed: [MediaFolder] = []
+        for candidate in removing.reversed() {
+            guard let folder = folder(id: candidate.id), assetsIn(folderId: candidate.id).isEmpty,
+                  subfolders(of: candidate.id).isEmpty else { continue }
+            mediaManifest.folders.removeAll { $0.id == candidate.id }
+            selectedFolderIds.remove(candidate.id)
+            removed.insert(folder, at: 0)
+        }
+        undoManager?.enableUndoRegistration()
+        registerMediaOrganizationUndo(previous, removing: created, restoring: removed)
+    }
+
     func mediaLibraryUndoSnapshot() -> MediaLibraryUndoSnapshot {
         MediaLibraryUndoSnapshot(
             timeline: timeline,
@@ -223,6 +266,7 @@ extension EditorViewModel {
     }
 
     func applyMediaLibrarySnapshot(_ snapshot: MediaLibraryUndoSnapshot) {
+        let previousIDs = Set(mediaAssets.map(\.id))
         timeline = snapshot.timeline
         mediaManifest = snapshot.mediaManifest
         mediaAssets = snapshot.mediaAssets
@@ -239,6 +283,9 @@ extension EditorViewModel {
         videoEngine?.activateTab(activePreviewTab)
         refreshMissingMediaCache()
         notifyTimelineChanged()
+        for asset in mediaAssets where !previousIDs.contains(asset.id) && asset.generationStatus == .none {
+            Task { await finalizeImportedAsset(asset) }
+        }
     }
 }
 

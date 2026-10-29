@@ -44,7 +44,7 @@ struct VisualIndexerTests {
         guard CGImageDestinationFinalize(dest) else { throw NSError(domain: "VisualIndexerTests", code: 3) }
     }
 
-    @Test(.enabled(if: VisualEmbedderParityTests.artifactsExist)) func undecodableFileGetsEmptyIndex() async throws {
+    @Test(.enabled(if: VisualEmbedderParityTests.artifactsExist)) func undecodableFileReportsFailureWithoutPublishingCurrentIndex() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("bogus-\(UUID().uuidString).mp4")
         try Data("not a video".utf8).write(to: url)
         let key = try #require(EmbeddingStore.key(for: url))
@@ -54,9 +54,11 @@ struct VisualIndexerTests {
         }
 
         let model = try await VisualEmbedderParityTests.loadModel()
-        try await VisualIndexer.index(url: url, duration: 5, model: model)
-        #expect(!VisualIndexer.needsIndex(url: url, spec: model.spec))
-        #expect(try EmbeddingStore.load(key: key).rows.isEmpty)
+        await #expect(throws: VisualIndexer.IndexError.self) {
+            try await VisualIndexer.index(url: url, duration: 5, model: model)
+        }
+        #expect(VisualIndexer.needsIndex(url: url, spec: model.spec))
+        #expect(EmbeddingStore.header(key: key) == nil)
     }
 
     @Test(.enabled(if: VisualEmbedderParityTests.artifactsExist)) func indexAndSearchFixture() async throws {

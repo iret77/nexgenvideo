@@ -362,18 +362,7 @@ struct Clip: Codable, Sendable, Equatable, Identifiable {
     func fadeMultiplier(at frame: Int) -> Double {
         let rel = frame - startFrame
         guard rel >= 0, rel <= durationFrames else { return 0 }
-        let inMul: Double = {
-            guard fadeInFrames > 0 else { return 1.0 }
-            let t = min(1.0, Double(rel) / Double(fadeInFrames))
-            return fadeInInterpolation == .smooth ? smoothstep(t) : t
-        }()
-        let outRem = durationFrames - rel
-        let outMul: Double = {
-            guard fadeOutFrames > 0 else { return 1.0 }
-            let t = min(1.0, Double(outRem) / Double(fadeOutFrames))
-            return fadeOutInterpolation == .smooth ? smoothstep(t) : t
-        }()
-        return min(inMul, outMul)
+        return animationEnvelope.gain(at: rel)
     }
 
     /// Source-seconds → project-timeline-frame through this clip's placement, trim, and speed.
@@ -390,52 +379,77 @@ struct Clip: Codable, Sendable, Equatable, Identifiable {
 enum FadeEdge { case left, right }
 
 extension Clip {
-    /// Drops volume keyframes outside `durationFrames`. Kept for callers that only touch volume.
     mutating func clampVolumeKfsToDuration() {
-        volumeTrack = clampedKeyframeTrack(volumeTrack)
+        volumeTrack = mappedKeyframeTrack(volumeTrack) { $0 }
     }
 
-    /// Drops kfs past `durationFrames`. Call after any mutation that shrinks the clip.
+    // Offscreen keys remain interpolation support when the visible interval changes.
     mutating func clampKeyframesToDuration() {
-        opacityTrack = clampedKeyframeTrack(opacityTrack)
-        positionTrack = clampedKeyframeTrack(positionTrack)
-        scaleTrack = clampedKeyframeTrack(scaleTrack)
-        rotationTrack = clampedKeyframeTrack(rotationTrack)
-        cropTrack = clampedKeyframeTrack(cropTrack)
-        volumeTrack = clampedKeyframeTrack(volumeTrack)
+        mapAnimationFrames { $0 }
+    }
+
+    mutating func rebaseKeyframes(by offset: Int) {
+        guard offset != 0 else { return }
+        var envelope = animationEnvelope
+        envelope.translate(by: offset)
+        mapAnimationFrames { $0 + offset }
+        storeAnimationEnvelope(envelope)
     }
 
     mutating func rescaleKeyframes(by scale: Double) {
-        opacityTrack = rescaledKeyframeTrack(opacityTrack, by: scale)
-        positionTrack = rescaledKeyframeTrack(positionTrack, by: scale)
-        scaleTrack = rescaledKeyframeTrack(scaleTrack, by: scale)
-        rotationTrack = rescaledKeyframeTrack(rotationTrack, by: scale)
-        cropTrack = rescaledKeyframeTrack(cropTrack, by: scale)
-        volumeTrack = rescaledKeyframeTrack(volumeTrack, by: scale)
+        guard scale.isFinite, scale > 0 else { return }
+        var envelope = ClipAnimationEnvelope.read(from: self)
+        envelope?.rescale(by: scale)
+        mapAnimationFrames { Int((Double($0) * scale).rounded()) }
+        if let envelope { storeAnimationEnvelope(envelope) }
     }
 
-    private func clampedKeyframeTrack<V: Codable & Sendable & Equatable>(
-        _ track: KeyframeTrack<V>?
-    ) -> KeyframeTrack<V>? {
-        guard var track else { return nil }
-        var normalized = KeyframeTrack<V>()
-        for kf in track.keyframes where kf.frame >= 0 && kf.frame <= durationFrames {
-            normalized.upsert(kf)
+    mutating func restoreAnimation(from basis: Clip, scale: Double) {
+        opacityTrack = basis.opacityTrack
+        positionTrack = basis.positionTrack
+        scaleTrack = basis.scaleTrack
+        rotationTrack = basis.rotationTrack
+        cropTrack = basis.cropTrack
+        volumeTrack = basis.volumeTrack
+        effects = basis.effects
+        rescaleKeyframes(by: scale)
+        if let envelope = ClipAnimationEnvelope.read(from: self) {
+            synchronizeVisibleFades(envelope)
+            return
         }
-        track.keyframes = normalized.keyframes
-        return track.keyframes.isEmpty ? nil : track
+        fadeInFrames = Int((Double(basis.fadeInFrames) * scale).rounded())
+        fadeOutFrames = Int((Double(basis.fadeOutFrames) * scale).rounded())
+        fadeInInterpolation = basis.fadeInInterpolation
+        fadeOutInterpolation = basis.fadeOutInterpolation
+        clampFadesToDuration()
     }
 
-    private func rescaledKeyframeTrack<V: Codable & Sendable & Equatable>(
-        _ track: KeyframeTrack<V>?,
-        by scale: Double
+    private mutating func mapAnimationFrames(_ map: (Int) -> Int) {
+        opacityTrack = mappedKeyframeTrack(opacityTrack, map)
+        positionTrack = mappedKeyframeTrack(positionTrack, map)
+        scaleTrack = mappedKeyframeTrack(scaleTrack, map)
+        rotationTrack = mappedKeyframeTrack(rotationTrack, map)
+        cropTrack = mappedKeyframeTrack(cropTrack, map)
+        volumeTrack = mappedKeyframeTrack(volumeTrack, map)
+        guard var updated = effects else { return }
+        for index in updated.indices {
+            for key in Array(updated[index].params.keys) {
+                guard var parameter = updated[index].params[key] else { continue }
+                parameter.track = mappedKeyframeTrack(parameter.track, map)
+                updated[index].params[key] = parameter
+            }
+        }
+        effects = updated
+    }
+
+    private func mappedKeyframeTrack<V: Codable & Sendable & Equatable>(
+        _ track: KeyframeTrack<V>?, _ map: (Int) -> Int
     ) -> KeyframeTrack<V>? {
-        guard let existing = track else { return nil }
-        guard scale.isFinite, scale > 0 else { return existing }
+        guard let track else { return nil }
         var normalized = KeyframeTrack<V>()
-        for kf in existing.keyframes {
-            var next = kf
-            next.frame = Int((Double(kf.frame) * scale).rounded())
+        for keyframe in track.keyframes {
+            var next = keyframe
+            next.frame = map(keyframe.frame)
             normalized.upsert(next)
         }
         return normalized.keyframes.isEmpty ? nil : normalized
@@ -443,24 +457,45 @@ extension Clip {
 
     /// Clamp fade ramps so head + tail can't exceed the clip's duration.
     mutating func clampFadesToDuration() {
+        if let envelope = ClipAnimationEnvelope.read(from: self) {
+            synchronizeVisibleFades(envelope)
+            return
+        }
         fadeInFrames = max(0, min(fadeInFrames, durationFrames))
         fadeOutFrames = max(0, min(fadeOutFrames, durationFrames - fadeInFrames))
     }
 
     /// Set the fade length for one edge and clamp to fit.
     mutating func setFade(_ edge: FadeEdge, frames: Int) {
-        let v = max(0, frames)
-        switch edge {
-        case .left:  fadeInFrames  = v
-        case .right: fadeOutFrames = v
+        let counter = fadeFrames(edge == .left ? .right : .left)
+        let value = max(0, min(frames, durationFrames - counter))
+        if var envelope = ClipAnimationEnvelope.read(from: self) {
+            switch edge {
+            case .left: envelope.head = .init(anchor: 0, length: value, interpolation: fadeInInterpolation)
+            case .right: envelope.tail = .init(anchor: durationFrames, length: value, interpolation: fadeOutInterpolation)
+            }
+            storeAnimationEnvelope(envelope)
+        } else {
+            switch edge {
+            case .left: fadeInFrames = value
+            case .right: fadeOutFrames = value
+            }
+            clampFadesToDuration()
         }
-        clampFadesToDuration()
     }
 
     mutating func setFadeInterpolation(_ edge: FadeEdge, _ interpolation: Interpolation) {
-        switch edge {
-        case .left:  fadeInInterpolation  = interpolation
-        case .right: fadeOutInterpolation = interpolation
+        if var envelope = ClipAnimationEnvelope.read(from: self) {
+            switch edge {
+            case .left: envelope.head.interpolation = interpolation
+            case .right: envelope.tail.interpolation = interpolation
+            }
+            storeAnimationEnvelope(envelope)
+        } else {
+            switch edge {
+            case .left: fadeInInterpolation = interpolation
+            case .right: fadeOutInterpolation = interpolation
+            }
         }
     }
 
@@ -473,9 +508,11 @@ extension Clip {
     }
 
     mutating func setDuration(_ newDuration: Int) {
+        guard newDuration > 0, newDuration != durationFrames else { return }
+        let envelope = animationEnvelope
         durationFrames = newDuration
         clampKeyframesToDuration()
-        clampFadesToDuration()
+        storeAnimationEnvelope(envelope)
     }
 
     init(from decoder: Decoder) throws {
@@ -512,6 +549,7 @@ extension Clip {
             effects: try? c.decode([Effect].self, forKey: .effects),
             compositing: try c.decodeIfPresent(ClipCompositingV1.self, forKey: .compositing)
         )
+        try requireValidAnimationEnvelope()
     }
 }
 

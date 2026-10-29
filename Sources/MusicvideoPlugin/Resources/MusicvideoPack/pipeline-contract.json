@@ -1,6 +1,6 @@
 {
   "schema": "pipeline-contract/v1",
-  "contractID": "musicvideo.pipeline.v1",
+  "contractID": "musicvideo.pipeline.v2",
   "packID": "musicvideo",
   "resourceRoot": "MusicvideoPack",
   "hardStepsManifestID": "hardsteps/1.0",
@@ -18,7 +18,11 @@
       "id": "project_init",
       "executionIndex": 0,
       "dependencies": [],
-      "roles": ["intake", "canonical_writer", "review_gate"],
+      "roles": [
+        "intake",
+        "canonical_writer",
+        "review_gate"
+      ],
       "selectors": {
         "artifact": "host.project_track",
         "writer": "host.project_init_intake",
@@ -29,33 +33,55 @@
         "supporting": []
       },
       "instructions": "phases/project-init.md",
-      "display": { "label": "Project Init" }
+      "display": {
+        "label": "Project Init"
+      }
     },
     {
       "id": "analysis",
       "executionIndex": 1,
-      "dependencies": ["project_init"],
-      "roles": ["deterministic_runner", "canonical_writer", "review_gate"],
+      "dependencies": [
+        "project_init"
+      ],
+      "roles": [
+        "deterministic_runner",
+        "canonical_writer",
+        "review_gate"
+      ],
       "selectors": {
         "artifact": "host.analysis",
         "writer": "host.analysis_writer",
         "runner": "registry.analysis",
         "gate": "registry.analysis",
         "lineage": "registry.analysis",
-        "deterministicSteps": ["one_song_contract"]
+        "deterministicSteps": [
+          "one_song_contract"
+        ]
       },
       "capabilities": {
-        "phaseBound": ["run_phase", "attach_song", "write_analysis_interpretation"],
+        "phaseBound": [
+          "run_phase",
+          "attach_song",
+          "write_analysis_interpretation"
+        ],
         "supporting": []
       },
       "instructions": "phases/analysis.md",
-      "display": { "label": "Audio Analysis" }
+      "display": {
+        "label": "Audio Analysis"
+      }
     },
     {
       "id": "brief",
       "executionIndex": 2,
-      "dependencies": ["analysis"],
-      "roles": ["intake", "canonical_writer", "review_gate"],
+      "dependencies": [
+        "analysis"
+      ],
+      "roles": [
+        "intake",
+        "canonical_writer",
+        "review_gate"
+      ],
       "selectors": {
         "artifact": "host.brief",
         "writer": "host.brief_writer",
@@ -63,17 +89,27 @@
         "lineage": "registry.brief"
       },
       "capabilities": {
-        "phaseBound": ["record_affect", "write_brief"],
+        "phaseBound": [
+          "record_affect",
+          "write_brief"
+        ],
         "supporting": []
       },
       "instructions": "phases/brief.md",
-      "display": { "label": "Brief" }
+      "display": {
+        "label": "Brief"
+      }
     },
     {
       "id": "production_design",
       "executionIndex": 3,
-      "dependencies": ["brief"],
-      "roles": ["canonical_writer", "review_gate"],
+      "dependencies": [
+        "brief"
+      ],
+      "roles": [
+        "canonical_writer",
+        "review_gate"
+      ],
       "selectors": {
         "artifact": "host.production_design",
         "writer": "host.production_design_writer",
@@ -81,7 +117,9 @@
         "lineage": "registry.production_design"
       },
       "capabilities": {
-        "phaseBound": ["write_production_design"],
+        "phaseBound": [
+          "write_production_design"
+        ],
         "supporting": [
           "compile_prompt",
           "generate_image",
@@ -93,13 +131,20 @@
         ]
       },
       "instructions": "phases/production-design.md",
-      "display": { "label": "Production Design" }
+      "display": {
+        "label": "Production Design"
+      }
     },
     {
       "id": "treatment",
       "executionIndex": 4,
-      "dependencies": ["production_design"],
-      "roles": ["canonical_writer", "review_gate"],
+      "dependencies": [
+        "production_design"
+      ],
+      "roles": [
+        "canonical_writer",
+        "review_gate"
+      ],
       "selectors": {
         "artifact": "host.treatment",
         "writer": "host.treatment_writer",
@@ -107,35 +152,114 @@
         "lineage": "registry.treatment"
       },
       "capabilities": {
-        "phaseBound": ["write_treatment"],
+        "phaseBound": [
+          "write_treatment"
+        ],
         "supporting": []
       },
       "instructions": "phases/treatment.md",
-      "display": { "label": "Treatment" }
+      "display": {
+        "label": "Treatment"
+      }
+    },
+    {
+      "id": "script",
+      "roles": [
+        "canonical_writer",
+        "review_gate"
+      ],
+      "selectors": {
+        "artifact": "host.script",
+        "writer": "host.script_writer",
+        "gate": "registry.script",
+        "lineage": "registry.script"
+      },
+      "capabilities": {
+        "phaseBound": [
+          "write_script"
+        ],
+        "supporting": []
+      },
+      "instructions": "phases/script.md",
+      "display": {
+        "label": "Script"
+      },
+      "executionIndex": 5,
+      "dependencies": [
+        "treatment"
+      ]
     },
     {
       "id": "storyboard",
-      "executionIndex": 5,
-      "dependencies": ["treatment"],
-      "roles": ["canonical_writer", "review_gate"],
+      "executionIndex": 6,
+      "dependencies": [
+        "script"
+      ],
+      "roles": [
+        "canonical_writer",
+        "review_gate"
+      ],
       "selectors": {
-        "artifact": "host.storyboard",
-        "writer": "host.storyboard_writer",
+        "artifact": "host.storyboard_bundle",
+        "writer": "host.storyboard_bundle_writer",
         "gate": "registry.storyboard",
         "lineage": "registry.storyboard"
       },
       "capabilities": {
-        "phaseBound": ["write_storyboard"],
-        "supporting": []
+        "phaseBound": [
+          "write_storyboard_bundle",
+          "assign_storyboard_sketch"
+        ],
+        "supporting": [
+          "compile_storyboard_sketch",
+          "compile_prompt",
+          "generate_image",
+          "prepare_generation_batch",
+          "import_media"
+        ]
       },
       "instructions": "phases/storyboard.md",
-      "display": { "label": "Storyboard" }
+      "display": {
+        "label": "Storyboard"
+      }
+    },
+    {
+      "id": "shot_planning",
+      "roles": [
+        "canonical_writer",
+        "review_gate"
+      ],
+      "selectors": {
+        "artifact": "host.shot_planning_draft",
+        "writer": "host.shot_planning_writer",
+        "gate": "registry.shot_planning",
+        "lineage": "registry.shot_planning"
+      },
+      "capabilities": {
+        "phaseBound": [
+          "write_shot_planning_draft"
+        ],
+        "supporting": []
+      },
+      "instructions": "phases/shot-planning.md",
+      "display": {
+        "label": "Shot Planning"
+      },
+      "executionIndex": 7,
+      "dependencies": [
+        "storyboard"
+      ]
     },
     {
       "id": "bible",
-      "executionIndex": 6,
-      "dependencies": ["storyboard"],
-      "roles": ["canonical_writer", "review_gate"],
+      "executionIndex": 8,
+      "dependencies": [
+        "shot_planning"
+      ],
+      "roles": [
+        "canonical_writer",
+        "review_gate"
+      ],
       "selectors": {
         "artifact": "host.bible",
         "writer": "host.bible_writer",
@@ -143,7 +267,10 @@
         "lineage": "registry.bible"
       },
       "capabilities": {
-        "phaseBound": ["extract_scene3d_povs", "write_bible"],
+        "phaseBound": [
+          "extract_scene3d_povs",
+          "write_bible"
+        ],
         "supporting": [
           "compile_prompt",
           "generate_image",
@@ -154,17 +281,25 @@
           "run_provider_tool",
           "set_ledger_attribute",
           "lock_ledger_attribute",
-          "remove_ledger_attribute"
+          "remove_ledger_attribute",
+          "prepare_production_assets"
         ]
       },
       "instructions": "phases/bible.md",
-      "display": { "label": "Bible" }
+      "display": {
+        "label": "Bible"
+      }
     },
     {
       "id": "shotlist",
-      "executionIndex": 7,
-      "dependencies": ["bible"],
-      "roles": ["canonical_writer", "review_gate"],
+      "executionIndex": 9,
+      "dependencies": [
+        "bible"
+      ],
+      "roles": [
+        "canonical_writer",
+        "review_gate"
+      ],
       "selectors": {
         "artifact": "host.shotlist",
         "writer": "host.shotlist_writer",
@@ -172,17 +307,28 @@
         "lineage": "registry.shotlist"
       },
       "capabilities": {
-        "phaseBound": ["write_shotlist"],
-        "supporting": []
+        "phaseBound": [
+          "write_shotlist"
+        ],
+        "supporting": [
+          "prepare_production_assets"
+        ]
       },
       "instructions": "phases/shotlist.md",
-      "display": { "label": "Shot List" }
+      "display": {
+        "label": "Shot List"
+      }
     },
     {
       "id": "sanity",
-      "executionIndex": 8,
-      "dependencies": ["shotlist"],
-      "roles": ["canonical_writer", "review_gate"],
+      "executionIndex": 10,
+      "dependencies": [
+        "shotlist"
+      ],
+      "roles": [
+        "canonical_writer",
+        "review_gate"
+      ],
       "selectors": {
         "artifact": "host.sanity_report",
         "writer": "host.sanity_runner",
@@ -190,27 +336,44 @@
         "lineage": "registry.sanity"
       },
       "capabilities": {
-        "phaseBound": ["run_sanity"],
+        "phaseBound": [
+          "run_sanity"
+        ],
         "supporting": []
       },
       "instructions": "phases/sanity.md",
-      "display": { "label": "Sanity Check" }
+      "display": {
+        "label": "Sanity Check"
+      }
     },
     {
       "id": "frames",
-      "executionIndex": 9,
-      "dependencies": ["sanity"],
-      "roles": ["deterministic_runner", "canonical_writer", "review_gate"],
+      "executionIndex": 11,
+      "dependencies": [
+        "sanity"
+      ],
+      "roles": [
+        "deterministic_runner",
+        "canonical_writer",
+        "review_gate"
+      ],
       "selectors": {
         "artifact": "host.frames_manifest",
         "writer": "host.frames_writer",
         "runner": "host.frames_runner",
         "gate": "registry.frames",
         "lineage": "registry.frames",
-        "deterministicSteps": ["prepare_frames_manifest"]
+        "deterministicSteps": [
+          "prepare_frames_manifest"
+        ]
       },
       "capabilities": {
-        "phaseBound": ["run_phase", "next_render_shot", "record_render", "save_frame_audit"],
+        "phaseBound": [
+          "run_phase",
+          "next_render_shot",
+          "record_render",
+          "save_frame_audit"
+        ],
         "supporting": [
           "compile_prompt",
           "generate_image",
@@ -224,23 +387,68 @@
         ]
       },
       "instructions": "phases/frame.md",
-      "display": { "label": "Frames" }
+      "display": {
+        "label": "Frames"
+      }
+    },
+    {
+      "id": "render_review",
+      "roles": [
+        "canonical_writer",
+        "review_gate"
+      ],
+      "selectors": {
+        "artifact": "host.render_review",
+        "writer": "host.render_review_writer",
+        "gate": "registry.render_review",
+        "lineage": "registry.render_review"
+      },
+      "capabilities": {
+        "phaseBound": [
+          "write_render_review"
+        ],
+        "supporting": [
+          "compile_prompt",
+          "get_render_review_inputs"
+        ]
+      },
+      "instructions": "phases/render-review.md",
+      "display": {
+        "label": "Render Review"
+      },
+      "executionIndex": 12,
+      "dependencies": [
+        "frames"
+      ]
     },
     {
       "id": "render",
-      "executionIndex": 10,
-      "dependencies": ["frames"],
-      "roles": ["deterministic_runner", "canonical_writer", "review_gate"],
+      "executionIndex": 13,
+      "dependencies": [
+        "render_review"
+      ],
+      "roles": [
+        "deterministic_runner",
+        "canonical_writer",
+        "review_gate"
+      ],
       "selectors": {
         "artifact": "host.render_manifest",
         "writer": "host.render_writer",
         "runner": "host.render_runner",
         "gate": "registry.render",
         "lineage": "registry.render",
-        "deterministicSteps": ["prepare_final_render_manifest"]
+        "deterministicSteps": [
+          "prepare_final_render_manifest"
+        ]
       },
       "capabilities": {
-        "phaseBound": ["run_phase", "next_render_shot", "record_render", "assemble_timeline"],
+        "phaseBound": [
+          "run_phase",
+          "next_render_shot",
+          "record_render",
+          "assemble_timeline"
+        ],
         "supporting": [
           "compile_prompt",
           "generate_video",
@@ -253,7 +461,9 @@
         ]
       },
       "instructions": "phases/render.md",
-      "display": { "label": "Render" }
+      "display": {
+        "label": "Render"
+      }
     }
   ]
 }

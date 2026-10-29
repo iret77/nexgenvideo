@@ -103,20 +103,21 @@ extension EditorViewModel {
             ? Set([clipId] + linkedPartnerIds(of: clipId))
             : [clipId]
 
-        undoManager?.beginUndoGrouping()
         var rightIds: [String] = []
-        for id in groupIds {
-            if let rightId = splitSingleClip(clipId: id, atFrame: atFrame) {
-                rightIds.append(rightId)
+        withTimelineSwap(actionName: groupIds.count > 1 ? "Split Clips" : "Split Clip") {
+            for id in groupIds.sorted() {
+                if let rightID = splitSingleClip(clipId: id, atFrame: atFrame) {
+                    rightIds.append(rightID)
+                }
+            }
+            if groupIds.count > 1 && !rightIds.isEmpty {
+                let newGroup = UUID().uuidString
+                for id in rightIds {
+                    guard let location = findClip(id: id) else { continue }
+                    timeline.tracks[location.trackIndex].clips[location.clipIndex].linkGroupId = newGroup
+                }
             }
         }
-        // Regroup the right halves so each side is its own linked pair.
-        if groupIds.count > 1 && !rightIds.isEmpty {
-            let newGroup = UUID().uuidString
-            mutateClips(ids: Set(rightIds), actionName: "Split Clip") { $0.linkGroupId = newGroup }
-        }
-        undoManager?.endUndoGrouping()
-        undoManager?.setActionName(groupIds.count > 1 ? "Split Clips" : "Split Clip")
         return rightIds
     }
 
@@ -130,65 +131,19 @@ extension EditorViewModel {
         let leftSource = Int((Double(splitOffset) * clip.speed).rounded())
         let rightSource = Int((Double(clip.durationFrames - splitOffset) * clip.speed).rounded())
 
-        var left = clip
-        left.durationFrames = splitOffset
+        var left = clip.animationWindow(originOffset: 0, duration: splitOffset)
         left.trimEndFrame = clip.trimEndFrame + rightSource
-        left.fadeOutFrames = 0
-        left.clampFadesToDuration()
 
-        var right = clip
+        var right = clip.animationWindow(originOffset: splitOffset, duration: clip.durationFrames - splitOffset)
         right.id = UUID().uuidString
         right.startFrame = atFrame
-        right.durationFrames = clip.durationFrames - splitOffset
         right.trimStartFrame = clip.trimStartFrame + leftSource
-        right.fadeInFrames = 0
-        right.clampFadesToDuration()
-
-        // Split every animatable track at the cut, inserting a boundary keyframe so each
-        // curve stays continuous across the split (rather than copying the whole track to
-        // both halves, which leaves out-of-range/unrebased keyframes on each side).
-        (left.opacityTrack,  right.opacityTrack)  = splitKeyframeTrack(clip.opacityTrack,  at: splitOffset, fallback: clip.opacity)
-        (left.volumeTrack,   right.volumeTrack)   = splitKeyframeTrack(clip.volumeTrack,   at: splitOffset, fallback: clip.volume)
-        (left.positionTrack, right.positionTrack) = splitKeyframeTrack(clip.positionTrack, at: splitOffset, fallback: AnimPair(a: 0, b: 0))
-        (left.scaleTrack,    right.scaleTrack)    = splitKeyframeTrack(clip.scaleTrack,    at: splitOffset, fallback: AnimPair(a: 1, b: 1))
-        (left.rotationTrack, right.rotationTrack) = splitKeyframeTrack(clip.rotationTrack, at: splitOffset, fallback: 0)
-        (left.cropTrack,     right.cropTrack)     = splitKeyframeTrack(clip.cropTrack,     at: splitOffset, fallback: clip.crop)
 
         timeline.tracks[loc.trackIndex].clips[loc.clipIndex] = left
         timeline.tracks[loc.trackIndex].clips.append(right)
         sortClips(trackIndex: loc.trackIndex)
 
-        undoManager?.registerUndo(withTarget: self) { vm in
-            vm.removeClipInternal(id: right.id)
-            if let newLoc = vm.findClip(id: left.id) {
-                vm.timeline.tracks[newLoc.trackIndex].clips[newLoc.clipIndex] = clip
-            }
-        }
-        notifyTimelineChanged()
         return right.id
-    }
-
-    /// Splits a keyframe track at splitOffset, keeping both sides continuous. Returns (track, track) if empty.
-    private func splitKeyframeTrack<Value: KeyframeInterpolatable & Codable & Sendable & Equatable>(
-        _ track: KeyframeTrack<Value>?, at splitOffset: Int, fallback: Value
-    ) -> (left: KeyframeTrack<Value>?, right: KeyframeTrack<Value>?) {
-        guard let track, track.isActive else { return (track, track) }
-        let boundary = track.sample(at: splitOffset, fallback: fallback)
-
-        var leftKfs = track.keyframes.filter { $0.frame <= splitOffset }
-        if leftKfs.last?.frame != splitOffset {
-            leftKfs.append(Keyframe(frame: splitOffset, value: boundary))
-        }
-        var rightKfs = track.keyframes
-            .filter { $0.frame >= splitOffset }
-            .map { Keyframe(frame: $0.frame - splitOffset, value: $0.value, interpolationOut: $0.interpolationOut) }
-        if rightKfs.first?.frame != 0 {
-            rightKfs.insert(Keyframe(frame: 0, value: boundary), at: 0)
-        }
-        return (
-            leftKfs.isEmpty ? nil : KeyframeTrack(keyframes: leftKfs),
-            rightKfs.isEmpty ? nil : KeyframeTrack(keyframes: rightKfs)
-        )
     }
 
     func removeClips(ids: Set<String>, prune: Bool = true) {
@@ -207,17 +162,15 @@ extension EditorViewModel {
     // MARK: - Speed
 
     func applyClipSpeed(clipId: String, newSpeed: Double) {
-        guard let loc = findClip(id: clipId) else { return }
+        guard newSpeed.isFinite, newSpeed > 0, let loc = findClip(id: clipId) else { return }
         if preDragTimeline == nil {
             preDragTimeline = timeline
-        }
-        if dragBefore[clipId] == nil {
-            dragBefore[clipId] = timeline.tracks[loc.trackIndex].clips[loc.clipIndex]
         }
         setClipSpeed(at: loc, newSpeed: newSpeed)
     }
 
     func commitClipSpeed(ids: [String], newSpeed: Double) {
+        guard newSpeed.isFinite, newSpeed > 0 else { return }
         let before: Timeline = preDragTimeline ?? timeline
         for id in ids {
             guard let loc = findClip(id: id) else { continue }
@@ -227,7 +180,6 @@ extension EditorViewModel {
         }
         let after = timeline
         preDragTimeline = nil
-        for id in ids { dragBefore.removeValue(forKey: id) }
         guard before != after else { return }
         registerTimelineSwap(undoState: before, redoState: after, actionName: "Change Speed")
     }
@@ -274,18 +226,17 @@ extension EditorViewModel {
     fileprivate func setClipSpeed(at loc: ClipLocation, newSpeed: Double) {
         let ti = loc.trackIndex
         let clip = timeline.tracks[ti].clips[loc.clipIndex]
-        let basis = dragBefore[clip.id] ?? clip
+        let basis = preDragTimeline?.tracks.lazy.flatMap(\.clips).first { $0.id == clip.id } ?? clip
+        guard basis.durationFrames > 0, basis.speed.isFinite, basis.speed > 0 else { return }
         let sourceFrames = Double(basis.durationFrames) * basis.speed
-        let newDuration = max(1, Int((sourceFrames / newSpeed).rounded()))
-        let oldDuration = clip.durationFrames
+        guard let scaledDuration = Int(exactly: (sourceFrames / newSpeed).rounded()) else { return }
+        let newDuration = max(1, scaledDuration)
         let oldEnd = clip.endFrame
-
-        timeline.tracks[ti].clips[loc.clipIndex].speed = newSpeed
-        timeline.tracks[ti].clips[loc.clipIndex].durationFrames = newDuration
-        // Keyframe offsets are clip-relative, so retime them before the clamp drops them.
-        timeline.tracks[ti].clips[loc.clipIndex].rescaleKeyframes(by: Double(newDuration) / Double(oldDuration))
-        timeline.tracks[ti].clips[loc.clipIndex].clampKeyframesToDuration()
-        timeline.tracks[ti].clips[loc.clipIndex].clampFadesToDuration()
+        var updated = clip
+        updated.speed = newSpeed
+        updated.durationFrames = newDuration
+        updated.restoreAnimation(from: basis, scale: Double(newDuration) / Double(basis.durationFrames))
+        timeline.tracks[ti].clips[loc.clipIndex] = updated
 
         let rippleDelta = (clip.startFrame + newDuration) - oldEnd
         if rippleDelta != 0 {
@@ -483,6 +434,7 @@ extension EditorViewModel {
 
     /// Bidirectional undo/redo for a single clip's property change.
     fileprivate func registerClipPropertySwap(clipId: String, undoTarget: Clip, redoTarget: Clip) {
+        guard undoTarget != redoTarget else { return }
         undoManager?.registerUndo(withTarget: self) { vm in
             if let loc = vm.findClip(id: clipId) {
                 vm.timeline.tracks[loc.trackIndex].clips[loc.clipIndex] = undoTarget
@@ -527,7 +479,7 @@ extension EditorViewModel {
         return ids
     }
 
-    /// Replace the source asset a clip points at, preserving states. 
+    /// Replace the source asset a clip points at, preserving states.
     /// Registered as a single undo step.
     func replaceClipMediaRef(clipId: String, newAssetId: String, resetTrim: Bool = false) {
         guard let loc = findClip(id: clipId) else { return }
@@ -536,33 +488,16 @@ extension EditorViewModel {
 
         let targetIds = linkedClipIdsSharingMedia(anchor: clipId)
 
-        var oldTrims: [String: (start: Int, end: Int)] = [:]
-        for id in targetIds {
-            if let l = findClip(id: id) {
-                if resetTrim {
-                    let c = timeline.tracks[l.trackIndex].clips[l.clipIndex]
-                    oldTrims[id] = (c.trimStartFrame, c.trimEndFrame)
-                    timeline.tracks[l.trackIndex].clips[l.clipIndex].trimStartFrame = 0
-                    timeline.tracks[l.trackIndex].clips[l.clipIndex].trimEndFrame = 0
-                }
-                timeline.tracks[l.trackIndex].clips[l.clipIndex].mediaRef = newAssetId
-            }
-        }
-
-        undoManager?.registerUndo(withTarget: self) { vm in
+        withTimelineSwap(actionName: "Replace Clip Source") {
             for id in targetIds {
-                if let l = vm.findClip(id: id) {
-                    vm.timeline.tracks[l.trackIndex].clips[l.clipIndex].mediaRef = oldMediaRef
-                    if let old = oldTrims[id] {
-                        vm.timeline.tracks[l.trackIndex].clips[l.clipIndex].trimStartFrame = old.start
-                        vm.timeline.tracks[l.trackIndex].clips[l.clipIndex].trimEndFrame = old.end
-                    }
+                guard let location = findClip(id: id) else { continue }
+                if resetTrim {
+                    timeline.tracks[location.trackIndex].clips[location.clipIndex].trimStartFrame = 0
+                    timeline.tracks[location.trackIndex].clips[location.clipIndex].trimEndFrame = 0
                 }
+                timeline.tracks[location.trackIndex].clips[location.clipIndex].mediaRef = newAssetId
             }
-            vm.notifyTimelineChanged()
         }
-        undoManager?.setActionName("Replace Clip Source")
-        notifyTimelineChanged()
     }
 
     // MARK: - Playhead-relative operations
@@ -650,41 +585,43 @@ extension EditorViewModel {
             regionEnd: end
         )
 
-        for action in actions {
-            switch action {
-            case .remove(let clipId):
-                removeClips(ids: [clipId], prune: prune)
+        withTimelineSwap(actionName: "Overwrite Clips") {
+            for action in actions {
+                switch action {
+                case .remove(let clipId):
+                    removeClips(ids: [clipId], prune: prune)
 
-            case .trimEnd(let clipId, let newDuration):
-                if let loc = findClip(id: clipId) {
-                    let clip = timeline.tracks[loc.trackIndex].clips[loc.clipIndex]
-                    let sourceDelta = Int((Double(clip.durationFrames - newDuration) * clip.speed).rounded())
-                    let newTrimEnd = clip.trimEndFrame + sourceDelta
+                case .trimEnd(let clipId, let newDuration):
+                    if let loc = findClip(id: clipId) {
+                        let clip = timeline.tracks[loc.trackIndex].clips[loc.clipIndex]
+                        let sourceDelta = Int((Double(clip.durationFrames - newDuration) * clip.speed).rounded())
+                        let newTrimEnd = clip.trimEndFrame + sourceDelta
+                        mutateClips(ids: [clipId], actionName: "Trim Clip") {
+                            $0 = $0.animationWindow(originOffset: 0, duration: newDuration)
+                            $0.trimEndFrame = newTrimEnd
+                        }
+                    }
+
+                case .trimStart(let clipId, let newStartFrame, let newTrimStart, let newDuration):
                     mutateClips(ids: [clipId], actionName: "Trim Clip") {
-                        $0.trimEndFrame = newTrimEnd
-                        $0.setDuration(newDuration)
+                        $0 = $0.animationWindow(originOffset: newStartFrame - $0.startFrame, duration: newDuration)
+                        $0.startFrame = newStartFrame
+                        $0.trimStartFrame = newTrimStart
                     }
-                }
 
-            case .trimStart(let clipId, let newStartFrame, let newTrimStart, let newDuration):
-                mutateClips(ids: [clipId], actionName: "Trim Clip") {
-                    $0.startFrame = newStartFrame
-                    $0.trimStartFrame = newTrimStart
-                    $0.setDuration(newDuration)
-                }
-
-            case .split(let clipId, _, _, _, _, _):
-                if let loc = findClip(id: clipId) {
-                    splitClip(clipId: clipId, atFrame: start)
-                    let rightClips = timeline.tracks[loc.trackIndex].clips.filter {
-                        $0.startFrame == start && $0.id != clipId
-                    }
-                    if let rightClip = rightClips.first {
-                        if rightClip.endFrame > end {
-                            splitClip(clipId: rightClip.id, atFrame: end)
-                            removeClips(ids: [rightClip.id], prune: prune)
-                        } else {
-                            removeClips(ids: [rightClip.id], prune: prune)
+                case .split(let clipId, _, _, _, _, _):
+                    if let loc = findClip(id: clipId) {
+                        splitClip(clipId: clipId, atFrame: start)
+                        let rightClips = timeline.tracks[loc.trackIndex].clips.filter {
+                            $0.startFrame == start && $0.id != clipId
+                        }
+                        if let rightClip = rightClips.first {
+                            if rightClip.endFrame > end {
+                                splitClip(clipId: rightClip.id, atFrame: end)
+                                removeClips(ids: [rightClip.id], prune: prune)
+                            } else {
+                                removeClips(ids: [rightClip.id], prune: prune)
+                            }
                         }
                     }
                 }

@@ -126,6 +126,7 @@ struct LibraryAssetPicker: View {
                         .contentShape(Rectangle())
                 }
                 .id(asset.id)
+                .reviewAcceptanceProbe("library.pick." + asset.id, text: asset.mentionDisplayName)
                 .contextMenu {
                     if let onReveal {
                         Button("Show in Media") { onReveal(asset) }
@@ -155,6 +156,7 @@ struct LibraryAssetPicker: View {
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
             TextField("Search your library\u{2026}", text: Binding(get: { query }, set: { query = $0 }))
                 .textFieldStyle(.plain)
+                .reviewAcceptanceProbe("library.search", text: query)
                 .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.primaryColor)
         }

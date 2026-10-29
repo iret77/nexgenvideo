@@ -5,27 +5,46 @@ extension MediaTab {
     var searchIndexStatus: some View {
         let search = editor.searchIndex
         let model = VisualModelLoader.shared
-        switch model.state {
-        case .notInstalled where model.enabled && hasIndexableAssets:
-            statusButton(icon: "sparkle.magnifyingglass", label: "Smart search") {
-                model.download()
-            }
-            .help("Downloads a \(modelSizeLabel) on-device model so you can search media visually.")
+        switch search.visualAvailability {
+        case .notInstalled where hasIndexableAssets:
+            statusButton(icon: "sparkle.magnifyingglass", label: "Smart Search") { model.download() }
+                .help("Downloads a \(modelSizeLabel) on-device model so you can search media visually.")
+                .reviewAcceptanceProbe("media.index.download")
         case .downloading(let fraction):
             statusIndicator("Downloading \(Int(fraction * 100))%",
-                            help: "Downloading the on-device model that powers visual search.",
-                            progress: fraction)
+                            help: "Downloading the on-device model that powers visual search.", progress: fraction)
         case .preparing:
             statusIndicator("Preparing…", help: "Getting the search model ready.")
+        case .ready where search.checkingIndex && search.batchTotal == 0:
+            statusIndicator("Checking media…", help: "Checking which media needs indexing.")
         case .ready where search.indexingActive:
             statusIndicator("Indexing \(min(search.batchCompleted + 1, search.batchTotal))/\(search.batchTotal)",
-                            help: "Analyzing media so you can search it.",
-                            progress: search.indexingProgress)
-        case .failed where model.enabled:
-            statusButton(icon: "exclamationmark.triangle", label: "Retry") { model.download() }
-                .help("Visual search model download failed. Check your connection and try again.")
+                            help: "Analyzing media so you can search it.", progress: search.indexingProgress)
+        case .failed(let message):
+            statusButton(icon: "exclamationmark.triangle", label: "Retry Smart Search") { model.download() }
+                .help(message)
+                .reviewAcceptanceProbe("media.index.retry-model")
         default:
             EmptyView()
+        }
+        if !search.failedAssetIDs.isEmpty {
+            Menu {
+                ForEach(editor.mediaAssets.filter { search.failedAssetIDs.contains($0.id) }) { asset in
+                    Button(asset.libraryDisplayName) {
+                        editor.selectMediaAsset(asset)
+                        editor.mediaPanelRevealAssetId = asset.id
+                    }
+                        .help(search.failures[asset.id] ?? "Indexing failed.")
+                }
+                Divider()
+                Button("Retry Failed Items") { search.retryFailed() }
+                    .disabled(!search.canRetryFailed)
+            } label: {
+                Label("\(search.failedAssetIDs.count) indexing failed", systemImage: "exclamationmark.triangle")
+            }
+            .menuStyle(.borderlessButton)
+            .interfaceFont(size: AppTheme.Typography.ui)
+            .reviewAcceptanceProbe("media.index.failures", text: String(search.failedAssetIDs.count))
         }
     }
 

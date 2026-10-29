@@ -25,6 +25,23 @@ struct SyncTimelineMutationTests {
         )
     }
 
+    @Test func timelineEditedDuringAlignmentRejectsStaleMove() async throws {
+        let reference = Fixtures.clip(id: "reference", mediaRef: "ref", start: 100, duration: 200)
+        let target = Fixtures.clip(id: "target", mediaRef: "target", start: 800, duration: 200)
+        let editor = EditorViewModel()
+        editor.timeline = Fixtures.timeline(fps: 25, tracks: [Fixtures.videoTrack(clips: [reference]), Fixtures.videoTrack(clips: [target])])
+        var expected = editor.timeline
+        expected.tracks[1].clips[0].startFrame = 900
+        let report = await editor.syncClips(referenceClipId: reference.id, targetClipIds: [target.id],
+            evidence: evidence(timings: [
+                "ref": SourceTiming(timecode: SourceTimecode(frame: 1_000, quanta: 25, dropFrame: false)),
+                "target": SourceTiming(timecode: SourceTimecode(frame: 1_250, quanta: 25, dropFrame: false))]),
+            beforePublication: { editor.timeline.tracks[1].clips[0].startFrame = 900 })
+        #expect(editor.timeline == expected)
+        #expect(report.synced.isEmpty && report.failures.count == 1)
+        #expect(report.failures.first?.reason.contains("changed") == true)
+    }
+
     @Test func compatibleSourceTimecodeTakesPriority() async throws {
         let reference = Fixtures.clip(id: "reference", mediaRef: "ref", start: 100, duration: 200)
         let target = Fixtures.clip(id: "target", mediaRef: "target", start: 800, duration: 200)
@@ -49,6 +66,32 @@ struct SyncTimelineMutationTests {
         #expect(editor.findClip(id: target.id).map {
             editor.timeline.tracks[$0.trackIndex].clips[$0.clipIndex].startFrame
         } == 350)
+    }
+
+    @Test func sourceBytesChangedAtSameURLRejectStaleAlignment() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("SyncBytes-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let editor = EditorViewModel()
+        for id in ["ref", "target"] {
+            let url = directory.appendingPathComponent(id + ".mp4")
+            try Data("original source".utf8).write(to: url)
+            let asset = MediaAsset(id: id, url: url, type: .video, name: id, duration: 8)
+            editor.mediaAssets.append(asset)
+            editor.mediaManifest.entries.append(asset.toManifestEntry(projectURL: nil))
+        }
+        editor.timeline = Fixtures.timeline(fps: 25, tracks: [
+            Fixtures.videoTrack(clips: [Fixtures.clip(id: "reference", mediaRef: "ref", start: 100, duration: 200)]),
+            Fixtures.videoTrack(clips: [Fixtures.clip(id: "target", mediaRef: "target", start: 800, duration: 200)])])
+        let before = editor.timeline
+        let target = directory.appendingPathComponent("target.mp4")
+        let report = await editor.syncClips(referenceClipId: "reference", targetClipIds: ["target"],
+            evidence: evidence(timings: [
+                "ref": SourceTiming(timecode: SourceTimecode(frame: 1_000, quanta: 25, dropFrame: false)),
+                "target": SourceTiming(timecode: SourceTimecode(frame: 1_250, quanta: 25, dropFrame: false))]),
+            beforePublication: { try? Data("replacement source".utf8).write(to: target) })
+        #expect(editor.timeline == before && report.synced.isEmpty)
+        #expect(report.failures.count == 1 && report.failures.first?.reason.contains("source changed") == true)
     }
 
     @Test func incompatibleTimecodeFallsBackToAudioWithReason() async throws {

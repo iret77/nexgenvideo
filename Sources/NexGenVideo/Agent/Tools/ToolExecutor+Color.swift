@@ -43,6 +43,30 @@ extension ToolExecutor {
             "masterCurve", "redCurve", "greenCurve", "blueCurve",
             "hueCurves", "lut",
         ]
+        var changedParameters: [String: Set<String>] {
+            var result: [String: Set<String>] = [:]
+            func add(_ type: String, _ key: String, when present: Bool) {
+                if present { result[type, default: []].insert(key) }
+            }
+            for (type, key, value) in [
+                ("color.exposure", "ev", exposure), ("color.contrast", "amount", contrast),
+                ("color.temperature", "temperature", temperature), ("color.temperature", "tint", tint),
+                ("color.highlightsShadows", "highlights", highlights), ("color.highlightsShadows", "shadows", shadows),
+                ("color.blacksWhites", "blacks", blacks), ("color.blacksWhites", "whites", whites),
+                ("color.vibrance", "amount", vibrance), ("color.saturation", "amount", saturation),
+                ("color.wheels", "lift_m", shadowsLum), ("color.wheels", "gamma_m", midsGamma),
+                ("color.wheels", "gain_m", highsGain),
+            ] { add(type, key, when: value != nil) }
+            for (prefix, hue, amount) in [("lift", shadowsHue, shadowsAmount), ("gamma", midsHue, midsAmount), ("gain", highsHue, highsAmount)] {
+                for key in [prefix + "_x", prefix + "_y"] { add("color.wheels", key, when: hue != nil || amount != nil) }
+            }
+            add("color.curves", "curve", when: [masterCurve, redCurve, greenCurve, blueCurve].contains { $0 != nil })
+            add("color.hueCurves", "curves", when: hueCurves?.targets?.isEmpty == false)
+            let newLUT = lut?.path?.isEmpty == false
+            for key in ["path", "name"] { add("color.lut", key, when: newLUT) }
+            add("color.lut", "intensity", when: lut?.strength != nil)
+            return result
+        }
         var hasAnyParam: Bool {
             [exposure, contrast, saturation, vibrance, temperature, tint, highlights, shadows, blacks, whites,
              shadowsHue, shadowsAmount, shadowsLum, midsHue, midsAmount, midsGamma, highsHue, highsAmount, highsGain]
@@ -53,7 +77,7 @@ extension ToolExecutor {
         }
     }
 
-    func applyColor(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
+    func applyColor(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
         let input: ApplyColorInput = try decodeToolArgs(args, path: "apply_color")
         guard !input.clipIds.isEmpty else { throw ToolError("clipIds is empty.") }
         guard input.hasAnyParam || (input.reset ?? false) else { throw ToolError("No grade parameters provided.") }
@@ -62,25 +86,37 @@ extension ToolExecutor {
             guard clip.mediaType == .video || clip.mediaType == .image else {
                 throw ToolError("Clip \(id) is a \(clip.mediaType.rawValue) clip; apply_color needs a video or image clip.")
             }
+            if input.reset != true {
+                for effect in clip.effects ?? [] {
+                    for key in input.changedParameters[effect.type] ?? [] where effect.params[key]?.track?.isActive == true {
+                        throw ToolError("Clip \(id) has animated \(effect.type).\(key). Edit its keyframes in Adjust, or use reset:true only when the entire grade and its animation should be cleared.")
+                    }
+                }
+            }
         }
         // LUT file I/O up front so it can throw before mutating.
         var lutDestPath: String?
         if let path = input.lut?.path, !path.isEmpty {
-            do { lutDestPath = try LUTLoader.store(path: path, projectId: editor.projectId) }
-            catch let e as LUTStoreError { throw ToolError(e.errorDescription ?? "Invalid LUT.") }
+            guard let root = editor.workingRoot else { throw ToolError("Save the project before choosing a LUT.") }
+            let key = editor.openWorkingCopyKey
+            let timeline = editor.timeline
+            let preparation = Task.detached(priority: .userInitiated) { try LUTLoader.store(path: path, projectRoot: root) }
+            do {
+                lutDestPath = try await withTaskCancellationHandler { try await preparation.value } onCancel: { preparation.cancel() }
+                try Task.checkCancellation()
+                guard editor.workingRoot == root, editor.openWorkingCopyKey == key, editor.timeline == timeline else {
+                    throw ToolError("The project or selected clips changed while the LUT was being imported. Choose it again.")
+                }
+            } catch let error as LUTStoreError { throw ToolError(error.errorDescription ?? "Invalid LUT.") }
         }
         let reset = input.reset ?? false
         let actionName = input.clipIds.count == 1 ? "Color Grade (Agent)" : "Color Grade ×\(input.clipIds.count) (Agent)"
         withUndoGroup(editor, actionName: actionName) {
             editor.mutateClips(ids: Set(input.clipIds), actionName: actionName) { clip in
-                let disabledColor = reset ? []
-                    : Set((clip.effects ?? []).filter { $0.type.hasPrefix("color.") && !$0.enabled }.map(\.type))
                 var state = GradeState(effects: reset ? nil : clip.effects)
                 state.apply(input, lutDestPath: lutDestPath)
-                let nonColor = (clip.effects ?? []).filter { !$0.type.hasPrefix("color.") }
-                var color = state.buildStack()
-                for i in color.indices where disabledColor.contains(color[i].type) { color[i].enabled = false }
-                clip.effects = nonColor + color
+                let previous = (clip.effects ?? []).filter { !reset || !$0.type.hasPrefix("color.") }
+                clip.effects = state.merging(into: previous, changes: input.changedParameters)
             }
         }
         return .ok("Graded \(input.clipIds.count) clip\(input.clipIds.count == 1 ? "" : "s") (\(reset ? "reset" : "merged")). Verify with inspect_timeline.")
@@ -277,6 +313,7 @@ private struct GradeState {
     var curve: GradeCurve?
     var hueCurves: HueCurves?
     var lutPath: String?
+    var lutName: String?
     var lutIntensity: Double?
 
     init(effects: [Effect]?) {
@@ -293,7 +330,7 @@ private struct GradeState {
             case "color.saturation": saturation = p["amount"]?.value
             case "color.curves": curve = (p["curve"]?.string).flatMap { GradeCurve(json: $0) }
             case "color.hueCurves": hueCurves = (p["curves"]?.string).flatMap { HueCurves(json: $0) }
-            case "color.lut": lutPath = p["path"]?.string; lutIntensity = p["intensity"]?.value
+            case "color.lut": lutPath = p["path"]?.string; lutName = p["name"]?.string; lutIntensity = p["intensity"]?.value
             case "color.wheels":
                 (shadowsHue, shadowsAmount) = Self.hueAmount(p["lift_x"]?.value ?? 0, p["lift_y"]?.value ?? 0)
                 shadowsLum = p["lift_m"]?.value
@@ -339,11 +376,28 @@ private struct GradeState {
         }
         if let targets = i.hueCurves?.targets, !targets.isEmpty { hueCurves = Self.compileHueCurves(targets) }
         if let dest = lutDestPath {
+            if dest != lutPath { lutName = nil }
             lutPath = dest
-            lutIntensity = (i.lut?.strength).map { clamp3(min(1, max(0, $0))) } ?? 1
+            if let original = i.lut?.path, !ProjectEffectResources.isPortable(original) { lutName = URL(fileURLWithPath: original).lastPathComponent }
+            lutIntensity = (i.lut?.strength).map { clamp3(min(1, max(0, $0))) } ?? lutIntensity ?? 1
         } else if let st = i.lut?.strength {
             lutIntensity = clamp3(min(1, max(0, st)))   // re-blend the existing LUT
         }
+    }
+
+    func merging(into previous: [Effect], changes: [String: Set<String>]) -> [Effect] {
+        let generated = buildStack()
+        var effects = previous.compactMap { original -> Effect? in
+            guard let keys = changes[original.type] else { return original }
+            guard let replacement = generated.first(where: { $0.type == original.type }) else { return nil }
+            var updated = original
+            for key in keys { updated.params[key] = replacement.params[key] }
+            return updated
+        }
+        for effect in generated where changes[effect.type] != nil && !previous.contains(where: { $0.type == effect.type }) {
+            effects.insert(effect, at: EffectRegistry.insertIndex(effects, for: effect.type))
+        }
+        return effects
     }
 
     /// Emits effects in EffectRegistry.canonicalOrder so an agent grade renders identically to the UI's.
@@ -384,10 +438,9 @@ private struct GradeState {
             stack.append(e)
         }
         if let lutPath {
-            stack.append(Effect(type: "color.lut", params: [
-                "path": EffectParam(string: lutPath),
-                "intensity": EffectParam(value: clamp3(lutIntensity ?? 1)),
-            ]))
+            var parameters = ["path": EffectParam(string: lutPath), "intensity": EffectParam(value: clamp3(lutIntensity ?? 1))]
+            if let lutName { parameters["name"] = EffectParam(string: lutName) }
+            stack.append(Effect(type: "color.lut", params: parameters))
         }
         return stack
     }

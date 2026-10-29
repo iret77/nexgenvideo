@@ -218,9 +218,9 @@ struct TakeRepairPlan: Codable, Sendable, Equatable {
             throw ToolError("Wait for the current pipeline operation before changing the iteration decision.")
         }
         defer { editor.pipelinePhaseRunCoordinator.endMutation(projectRoot: root, id: lease) }
-        _ = try ProjectPackGate.requireLiveMutation(projectURL: snapshot.home, declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding)
+        _ = try ProjectPackGate.requireLiveMutation(projectURL: snapshot.home, declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding, declaredProductionContract: editor.declaredProductionContract)
         try PipelinePhaseAccess.requireCurrentPhaseAndIntake("render", dataRoot: root,
-            declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding)
+            declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding, declaredProductionContract: editor.declaredProductionContract)
         let reviewBytes = try Data(contentsOf: ProjectLocalFile.resolve(TakeReview.path(takeID: snapshot.take.id), dataRoot: root))
         guard try JSONDecoder().decode(TakeReview.self, from: reviewBytes) == review else { throw ToolError("The take review changed before the decision was saved.") }
         let plan = Self(schema: "take-repair-plan/v1", takeID: snapshot.take.id, reviewSHA256: FileDigest.sha256(of: reviewBytes),

@@ -11,7 +11,9 @@ enum LUTTetraKernel {
         let lut = Cache.image(for: key, cube: cube)
         return kernel.apply(extent: image.extent,
                             roiCallback: { index, rect in index == 0 ? rect : lut.extent },
-                            arguments: [image, lut, Float(cube.dimension), Float(intensity)]) ?? image
+                            arguments: [image, lut, Float(cube.dimension), Float(intensity),
+                                CIVector(x: CGFloat(cube.domainMin.x), y: CGFloat(cube.domainMin.y), z: CGFloat(cube.domainMin.z)),
+                                CIVector(x: CGFloat(cube.domainMax.x), y: CGFloat(cube.domainMax.y), z: CGFloat(cube.domainMax.z))]) ?? image
     }
 
     private enum Cache {

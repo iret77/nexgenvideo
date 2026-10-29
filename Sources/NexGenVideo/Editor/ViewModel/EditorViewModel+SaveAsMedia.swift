@@ -2,107 +2,135 @@ import AppKit
 import AVFoundation
 
 extension EditorViewModel {
-
-    /// Save a clip's visible source range (trim + speed baked in) as a new MediaAsset
-    /// in the panel. Video and audio only
-    func saveClipAsMedia(clipId: String) {
-        guard let clip = clipFor(id: clipId) else { return }
-        guard clip.mediaType == .video || clip.mediaType == .audio else { return }
-        guard let sourceURL = mediaResolver.resolveURL(for: clip.mediaRef) else {
-            Log.project.error("saveClipAsMedia: source missing for clip=\(clipId)")
-            return
+    @discardableResult
+    func saveClipAsMedia(clipId: String) -> Task<Void, Never>? {
+        guard let clip = clipFor(id: clipId), clip.mediaType == .video || clip.mediaType == .audio else { return nil }
+        let consumed = (Double(clip.durationFrames) * clip.speed).rounded()
+        guard timeline.fps > 0, timeline.fps <= Int(Int32.max), clip.trimStartFrame >= 0,
+              clip.durationFrames > 0, clip.speed.isFinite, clip.speed > 0,
+              consumed.isFinite, consumed > 0, consumed < Double(Int.max),
+              !clip.trimStartFrame.addingReportingOverflow(Int(consumed)).overflow else {
+            mediaPanelToast = "The clip has an invalid source range. Adjust its trim or speed before saving it as media."
+            return nil
         }
         let sourceName = mediaResolver.displayName(for: clip.mediaRef)
-
-        let mediaDir: URL
-        do {
-            mediaDir = try prepareWorkingMediaDirectory()
-        } catch {
-            mediaPanelToast = MediaPanelToast(message: error.localizedDescription)
-            return
+        var source = timeline
+        source.tracks = source.tracks.compactMap { track in
+            guard track.clips.contains(where: { $0.id == clipId }) else { return nil }
+            var track = track
+            var raw = clip
+            raw.effects = nil
+            track.clips = [raw]
+            track.hidden = false
+            track.muted = false
+            return track
         }
-        let destURL = mediaDir.appendingPathComponent(Self.uniqueClipFilename(for: clip.mediaType))
-
-        let placeholder = MediaAsset(url: destURL, type: clip.mediaType, name: "\(sourceName) (clip)")
-        placeholder.generationStatus = .generating
-        importMediaAsset(placeholder)
-
-        let fps = timeline.fps
-        let trimStartFrame = clip.trimStartFrame
-        let sourceFramesConsumed = clip.sourceFramesConsumed
-        let durationFrames = clip.durationFrames
-        let speed = clip.speed
-        let mediaType = clip.mediaType
-
-        Task { @MainActor [weak self] in
+        return saveAsMedia(source: source, name: "\(sourceName) (clip)", type: clip.mediaType) { timeline, resolver in
+            guard let url = resolver.resolveURL(for: clip.mediaRef) else {
+                throw ToolError("The clip source is offline. Relink it before saving the clip as media.")
+            }
+            let output = FileManager.default.temporaryDirectory.appendingPathComponent(Self.uniqueClipFilename(for: clip.mediaType))
             do {
-                try await Self.exportClipRange(
-                    sourceURL: sourceURL,
-                    destURL: destURL,
-                    fps: fps,
-                    trimStartFrame: trimStartFrame,
-                    sourceFramesConsumed: sourceFramesConsumed,
-                    durationFrames: durationFrames,
-                    speed: speed,
-                    mediaType: mediaType
-                )
-                placeholder.generationStatus = .none
-                await self?.finalizeImportedAsset(placeholder)
-                Log.project.notice("saveClipAsMedia ok clip=\(clipId) out=\(destURL.lastPathComponent)")
+                try await Self.exportClipRange(sourceURL: url, destURL: output, fps: timeline.fps,
+                    trimStartFrame: clip.trimStartFrame, sourceFramesConsumed: clip.sourceFramesConsumed,
+                    durationFrames: clip.durationFrames, speed: clip.speed, mediaType: clip.mediaType)
+                return output
             } catch {
-                placeholder.generationStatus = .failed(error.localizedDescription)
-                Log.project.error("saveClipAsMedia failed clip=\(clipId): \(error.localizedDescription)")
+                try? FileManager.default.removeItem(at: output)
+                throw error
             }
         }
     }
 
-    /// Save the selected timeline range (all tracks composited) as a new video
-    func saveTimelineRangeAsMedia() {
-        guard let range = validSelectedTimelineRange else { return }
-        let startFrame = range.startFrame
-        let frameCount = range.endFrame - range.startFrame
-        guard frameCount > 0 else { return }
-
-        let mediaDir: URL
-        do {
-            mediaDir = try prepareWorkingMediaDirectory()
-        } catch {
-            mediaPanelToast = MediaPanelToast(message: error.localizedDescription)
-            return
+    @discardableResult
+    func saveTimelineRangeAsMedia() -> Task<Void, Never>? {
+        guard let range = validSelectedTimelineRange else { return nil }
+        return saveAsMedia(source: timeline, name: "Timeline range", type: .video) { timeline, resolver in
+            try await TimelineRenderer.render(timeline: timeline, resolver: resolver,
+                startFrame: range.startFrame, frameCount: range.endFrame - range.startFrame,
+                preset: AVAssetExportPresetHighestQuality)
         }
-        let destURL = mediaDir.appendingPathComponent(Self.uniqueClipFilename(for: .video))
+    }
 
-        let placeholder = MediaAsset(url: destURL, type: .video, name: "Timeline range")
-        placeholder.generationStatus = .rendering
-        importMediaAsset(placeholder)
-
-        let timeline = self.timeline
-        let resolver = mediaResolver
-
-        Task { @MainActor [weak self] in
+    @discardableResult
+    func saveAsMedia(source: Timeline, name: String, type: ClipType,
+                     render: @escaping @MainActor (Timeline, MediaResolver) async throws -> URL) -> Task<Void, Never>? {
+        let output: URL
+        do { output = try prepareWorkingMediaDirectory().appendingPathComponent(Self.uniqueClipFilename(for: type)) }
+        catch { mediaPanelToast = MediaPanelToast(message: error.localizedDescription); return nil }
+        let destination = MediaLibraryDestination(self, folderID: nil)
+        let resolver = mediaResolver.snapshot()
+        let asset = MediaAsset(url: output, type: type, name: name,
+            originalFilename: name + "." + output.pathExtension)
+        asset.generationStatus = .rendering
+        importMediaAsset(asset)
+        return Task { @MainActor [weak self] in
             do {
-                let tempURL = try await TimelineRenderer.render(
-                    timeline: timeline,
-                    resolver: resolver,
-                    startFrame: startFrame,
-                    frameCount: frameCount,
-                    preset: AVAssetExportPresetHighestQuality
-                )
-                try? FileManager.default.removeItem(at: destURL)
-                try FileManager.default.moveItem(at: tempURL, to: destURL)
-                placeholder.generationStatus = .none
-                await self?.finalizeImportedAsset(placeholder)
-                Log.project.notice("saveTimelineRangeAsMedia ok frames=\(startFrame)..<\(startFrame + frameCount) out=\(destURL.lastPathComponent)")
+                let captured = try await Task.detached(priority: .userInitiated) {
+                    let binding = try ExportQueue.SourceBinding.video(timeline: source, resolver: resolver,
+                        additionalFiles: [], isCancelled: { Task.isCancelled })
+                    let frozen = try binding.freeze(jobID: "saved-media-" + UUID().uuidString, isCancelled: { Task.isCancelled })
+                    return (binding, frozen)
+                }.value
+                defer { captured.1.remove() }
+                try Task.checkCancellation()
+                guard let self else { throw CancellationError() }
+                try self.requireMediaSaveDestination(destination, asset: asset)
+                let rendered = try await render(Self.savedMediaTimeline(source, sources: captured.1), captured.1.resolver(basedOn: resolver))
+                defer { try? FileManager.default.removeItem(at: rendered) }
+                try Task.checkCancellation()
+                try await Task.detached(priority: .userInitiated) {
+                    try captured.0.verify(isCancelled: { Task.isCancelled })
+                    try captured.1.verify(isCancelled: { Task.isCancelled })
+                }.value
+                try self.requireMediaSaveDestination(destination, asset: asset)
+                try FileManager.default.moveItem(at: rendered, to: output)
+                guard await self.finalizeImportedAsset(asset) else { throw MediaImportError.projectChanged }
+                try self.requireMediaSaveDestination(destination, asset: asset)
+                asset.generationStatus = .none
+                self.onPipelineChanged?()
             } catch {
-                placeholder.generationStatus = .failed(error.localizedDescription)
-                Log.project.error("saveTimelineRangeAsMedia failed: \(error.localizedDescription)")
+                try? FileManager.default.removeItem(at: output)
+                guard let self, (try? destination.validate(self)) != nil,
+                      self.mediaAssets.contains(where: { $0 === asset }) else { return }
+                let message = error is CancellationError ? "Saving media was cancelled." : error.localizedDescription
+                asset.generationStatus = .failed(message)
+                self.mediaPanelToast = MediaPanelToast(message: message)
             }
         }
+    }
+
+    private func requireMediaSaveDestination(_ destination: MediaLibraryDestination, asset: MediaAsset) throws {
+        try destination.validate(self)
+        guard mediaAssets.contains(where: { $0 === asset }),
+              mediaResolver.expectedURL(for: asset.id)?.standardizedFileURL == asset.url.standardizedFileURL else {
+            throw ToolError("The media destination changed. Save the clip or range again.")
+        }
+    }
+
+    private static func savedMediaTimeline(_ timeline: Timeline, sources: ExportQueue.FrozenSources) -> Timeline {
+        let resources = Dictionary(uniqueKeysWithValues: sources.files.compactMap { file -> (String, String)? in
+            guard file.ref.hasPrefix("effect resource ") else { return nil }
+            return (String(file.ref.dropFirst("effect resource ".count)), file.url.path)
+        })
+        var result = timeline
+        for ti in result.tracks.indices {
+            for ci in result.tracks[ti].clips.indices {
+                guard var effects = result.tracks[ti].clips[ci].effects else { continue }
+                for ei in effects.indices {
+                    guard let key = EffectRegistry.descriptor(id: effects[ei].type)?.resourceKey,
+                          let path = effects[ei].params[key]?.string, let frozen = resources[path] else { continue }
+                    effects[ei].params[key] = EffectParam(string: frozen)
+                }
+                result.tracks[ti].clips[ci].effects = effects
+            }
+        }
+        return result
     }
 
     private static func uniqueClipFilename(for type: ClipType) -> String {
         let ext = type == .video ? "mp4" : "m4a"
-        return "clip-\(UUID().uuidString.prefix(8)).\(ext)"
+        return "clip-\(UUID().uuidString).\(ext)"
     }
 
     private static func exportClipRange(
