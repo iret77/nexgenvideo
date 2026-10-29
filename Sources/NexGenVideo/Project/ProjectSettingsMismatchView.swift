@@ -61,6 +61,7 @@ struct ProjectSettingsMismatchView: View {
                 }
                 .buttonStyle(.capsule(.secondary, size: .regular))
                 .controlSize(.regular)
+                .reviewAcceptanceProbe("project.mismatch.keep")
 
                 Button("Change to Match") {
                     editor.applyTimelineSettings(
@@ -72,6 +73,7 @@ struct ProjectSettingsMismatchView: View {
                 }
                 .buttonStyle(.capsule(.prominent, size: .regular))
                 .controlSize(.regular)
+                .reviewAcceptanceProbe("project.mismatch.match")
             }
         }
         .padding(AppTheme.Spacing.xl + AppTheme.Spacing.md)

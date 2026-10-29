@@ -133,6 +133,7 @@ enum HDRVideoExporter {
         _ inputs: Inputs,
         renderSize: CGSize,
         to outputURL: URL,
+        timeRange requestedRange: CMTimeRange? = nil,
         cancellation: Cancellation,
         onProgress: (@Sendable (Double) -> Void)? = nil
     ) async throws {
@@ -142,8 +143,20 @@ enum HDRVideoExporter {
         let tracks = try await inputs.composition.loadTracks(withMediaType: .video)
         guard !tracks.isEmpty else { throw HDRExportError(reason: "the timeline has no video") }
         let duration = try await inputs.composition.load(.duration)
+        let range = requestedRange ?? CMTimeRange(start: .zero, duration: duration)
+        guard range.isValid, range.start.isNumeric, range.duration.isNumeric, range.end.isNumeric,
+              CMTimeCompare(range.start, .zero) >= 0, CMTimeCompare(range.duration, .zero) > 0,
+              CMTimeCompare(range.end, duration) <= 0 else {
+            throw HDRExportError(reason: "the output range is outside the composed film")
+        }
 
+        guard inputs.fps > 0, inputs.fps <= Int(Int32.max) else {
+            throw HDRExportError(reason: "the timeline frame rate cannot be represented")
+        }
+        let frameDuration = CMTime(value: 1, timescale: Int32(inputs.fps))
+        let readStart = CMTimeConvertScale(range.start, timescale: Int32(inputs.fps), method: .roundTowardNegativeInfinity)
         let reader = try AVAssetReader(asset: inputs.composition)
+        reader.timeRange = CMTimeRange(start: readStart, end: range.end)
         let videoOutput = AVAssetReaderVideoCompositionOutput(
             videoTracks: tracks,
             videoSettings: [
@@ -167,12 +180,21 @@ enum HDRVideoExporter {
             try FileManager.default.removeItem(at: outputURL)
         }
         let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mov)
+        let videoClock = CMTimeAdd(range.end, frameDuration).timescale
+        if requestedRange != nil {
+            guard videoClock > 0, videoClock % Int32(inputs.fps) == 0,
+                  videoClock % range.end.timescale == 0 else {
+                throw HDRExportError(reason: "the exact output range and video clock cannot share a time scale")
+            }
+            writer.movieTimeScale = videoClock
+        }
         let settings = videoWriterSettings(size: renderSize, fps: inputs.fps)
         guard writer.canApply(outputSettings: settings, forMediaType: .video) else {
             throw HDRExportError(reason: "the movie writer rejected the Main10 HLG settings")
         }
         let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
         videoInput.expectsMediaDataInRealTime = false
+        if requestedRange != nil { videoInput.mediaTimeScale = videoClock }
         guard writer.canAdd(videoInput) else {
             throw HDRExportError(reason: "the movie writer rejected the HDR video track")
         }
@@ -200,7 +222,7 @@ enum HDRVideoExporter {
         guard writer.startWriting() else {
             throw HDRExportError(reason: writer.error?.localizedDescription ?? "the writer could not start")
         }
-        writer.startSession(atSourceTime: .zero)
+        writer.startSession(atSourceTime: range.start)
         guard reader.startReading() else {
             writer.cancelWriting()
             throw HDRExportError(reason: reader.error?.localizedDescription ?? "the timeline reader could not start")
@@ -224,7 +246,8 @@ enum HDRVideoExporter {
             renderSize: renderSize,
             overlays: inputs.textOverlays,
             fps: inputs.fps,
-            duration: duration,
+            duration: range.duration,
+            rangeStart: range.start,
             cancellation: cancellation,
             state: videoState,
             coordinator: coordinator
@@ -261,6 +284,7 @@ enum HDRVideoExporter {
             writer.cancelWriting()
             throw HDRExportError(reason: reader.error?.localizedDescription ?? "the timeline reader failed")
         }
+        if requestedRange != nil { writer.endSession(atSourceTime: range.end) }
         await writer.finishWriting()
         guard writer.status == .completed else {
             throw HDRExportError(reason: writer.error?.localizedDescription ?? "the writer did not complete")
@@ -409,6 +433,7 @@ enum HDRVideoExporter {
         private var finished = false
         private var continuation: CheckedContinuation<Void, Never>?
         var lastProgress = -1.0
+        var videoStarted = false
 
         func install(_ continuation: CheckedContinuation<Void, Never>) -> Bool {
             lock.lock()
@@ -525,6 +550,7 @@ enum HDRVideoExporter {
         let overlays: [TextOverlay]
         let fps: Int
         let duration: CMTime
+        let rangeStart: CMTime
         let cancellation: Cancellation
         let state: PumpState
         let coordinator: PumpCoordinator
@@ -614,6 +640,16 @@ enum HDRVideoExporter {
                     }
 
                     let pts = CMSampleBufferGetPresentationTimeStamp(sample)
+                    guard pts.isNumeric else {
+                        pump.coordinator.fail("the compositor returned an invalid frame timestamp")
+                        return
+                    }
+                    if CMTimeCompare(CMTimeAdd(pts, CMTime(value: 1, timescale: Int32(pump.fps))), pump.rangeStart) <= 0 { continue }
+                    if !pump.state.videoStarted, CMTimeCompare(pts, pump.rangeStart) > 0 {
+                        pump.coordinator.fail("the compositor did not provide the frame at the beginning of the output range")
+                        return
+                    }
+                    let outputPTS = CMTimeMaximum(pts, pump.rangeStart)
                     let frame = Int((pts.seconds * Double(max(1, pump.fps))).rounded())
                     // Reader alpha isn't delivery truth; the rendered timeline canvas is opaque.
                     var image = CIImage(cvPixelBuffer: source, options: [.colorSpace: inputSpace])
@@ -664,15 +700,16 @@ enum HDRVideoExporter {
                         }.joined(separator: ",")
                         print("[hdr-qc] encoder-input frame=0 \(summary) overlays=[\(overlays)]")
                     }
-                    guard pump.adaptor.append(destination, withPresentationTime: pts) else {
+                    guard pump.adaptor.append(destination, withPresentationTime: outputPTS) else {
                         pump.coordinator.fail("a converted HDR frame could not be encoded")
                         return
                     }
+                    pump.state.videoStarted = true
                     pump.coordinator.activity()
                     if let onProgress, pump.duration.seconds > 0,
                        pts.seconds - pump.state.lastProgress >= 0.25 {
                         pump.state.lastProgress = pts.seconds
-                        onProgress(min(1, max(0, pts.seconds / pump.duration.seconds)))
+                        onProgress(min(1, max(0, CMTimeSubtract(pts, pump.rangeStart).seconds / pump.duration.seconds)))
                     }
                 }
             }

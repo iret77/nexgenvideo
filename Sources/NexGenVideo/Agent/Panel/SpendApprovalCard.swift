@@ -6,6 +6,7 @@ private enum SpendApprovalFocusTarget: Hashable {
 }
 
 struct SpendApprovalCard: View {
+    @Environment(\.productionDecisionCompact) private var compact
     let approval: SpendApproval
     let error: String?
     let isWorking: Bool
@@ -266,26 +267,43 @@ struct SpendApprovalCard: View {
     }
 
     private var footerRow: some View {
-        GenerationApprovalActions(
-            actionLabel: isWorking ? String(localized: "Preparing generation…") : actionLabel,
-            phase: approvalPhase,
-            canApprove: !approveDisabled,
-            canEdit: !isWorking,
-            onApprove: {
-                guard let selectedOption else { return }
-                approvalError = nil
-                onApprove(selectedOption)
-            },
-            onDecline: onDecline,
-            onApprovePhase: onApproveAll.map { approvePhase in
-                {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+            if compact {
+                Text(compactPriceLabel)
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .modifier(GenerationBatchRuntimeProbe(identifier: "generation-approval.cost", enabled: WorkspaceUIAcceptance.isRequested
+                        || GenerationBatchReviewSelfTest.isRequested || MusicvideoHostFlowAcceptance.isRequested))
+            }
+            GenerationApprovalActions(
+                actionLabel: isWorking ? String(localized: "Preparing generation…") : actionLabel,
+                phase: approvalPhase,
+                canApprove: !approveDisabled,
+                canEdit: !isWorking,
+                onApprove: {
                     guard let selectedOption else { return }
                     approvalError = nil
-                    approvePhase(selectedOption)
-                }
-            },
-            runtimeEvidenceEnabled: GenerationBatchReviewSelfTest.isRequested || WorkspaceUIAcceptance.isRequested
-        )
+                    onApprove(selectedOption)
+                },
+                onDecline: onDecline,
+                onApprovePhase: onApproveAll.map { approvePhase in
+                    {
+                        guard let selectedOption else { return }
+                        approvalError = nil
+                        approvePhase(selectedOption)
+                    }
+                },
+                runtimeEvidenceEnabled: GenerationBatchReviewSelfTest.isRequested || WorkspaceUIAcceptance.isRequested
+            )
+        }
+    }
+
+    private var compactPriceLabel: String {
+        guard let estimate = selectedOption?.generationPackage?.payload.estimate else {
+            return String(localized: "Cost unknown · Provider charges apply")
+        }
+        return String(localized: "Estimated cost: \(GenerationPackageReviewView.euro(estimate.eurAmount))")
     }
 
     private var approveDisabled: Bool {

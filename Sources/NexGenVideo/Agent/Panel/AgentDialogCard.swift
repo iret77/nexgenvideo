@@ -121,6 +121,7 @@ struct AgentDialogCard: View {
                     .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Status.errorColor)
                     .fixedSize(horizontal: false, vertical: true)
+                    .background(ReviewAcceptanceProbe(id: "agent.dialog.error", text: submissionError))
             }
             ForEach(dialog.sections) { section in
                 sectionView(section)
@@ -180,6 +181,7 @@ struct AgentDialogCard: View {
                 .buttonStyle(.plain)
                 .keyboardShortcut(.cancelAction)
                 .help("Dismiss (Esc)")
+                .background { acceptanceAction("cancel", enabled: true) }
             }
         }
     }
@@ -192,7 +194,69 @@ struct AgentDialogCard: View {
                 Text(section.label)
                     .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                     .foregroundStyle(AppTheme.Text.secondaryColor)
-                if options.allSatisfy({ $0.mediaRef != nil }) {
+                if let plan = dialog.mediaOrganization, section.id == "organization" {
+                    HStack(spacing: AppTheme.Spacing.sm) {
+                        Button("Select All") { choiceSelections[section.id] = Set(plan.rows.map(\.id)) }
+                            .disabled(choiceSelections[section.id]?.count == plan.rows.count)
+                            .reviewAcceptanceProbe("media.organization.select-all")
+                        Button("Select None") { choiceSelections[section.id] = [] }
+                            .disabled(choiceSelections[section.id, default: []].isEmpty)
+                            .reviewAcceptanceProbe("media.organization.select-none")
+                    }
+                    .buttonStyle(.capsule(.secondary, size: .small))
+                    ForEach(plan.rows) { row in
+                        Toggle(isOn: Binding(
+                            get: { choiceSelections[section.id]?.contains(row.id) == true },
+                            set: { selected in
+                                if selected { choiceSelections[section.id, default: []].insert(row.id) }
+                                else { choiceSelections[section.id, default: []].remove(row.id) }
+                            }
+                        )) {
+                            VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+                                Text(row.before).foregroundStyle(AppTheme.Text.secondaryColor)
+                                Text("→ " + row.after).foregroundStyle(AppTheme.Text.primaryColor)
+                                Text(row.filename).foregroundStyle(AppTheme.Text.tertiaryColor)
+                            }
+                            .interfaceFont(size: AppTheme.Typography.ui)
+                            .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .toggleStyle(.checkbox)
+                        .focused($focusedControl, equals: .choice(section.id + ":" + row.id))
+                        .reviewAcceptanceProbe("media.organization.choice." + row.id,
+                            text: row.before + " → " + row.after)
+                    }
+                } else if let plan = dialog.captionRevision, section.id == "caption-revision" {
+                    HStack(spacing: AppTheme.Spacing.sm) {
+                        Button("Select All") { choiceSelections[section.id] = Set(plan.rows.map(\.id)) }
+                            .disabled(choiceSelections[section.id]?.count == plan.rows.count)
+                            .reviewAcceptanceProbe("captions.revision.select-all")
+                        Button("Select None") { choiceSelections[section.id] = [] }
+                            .disabled(choiceSelections[section.id, default: []].isEmpty)
+                            .reviewAcceptanceProbe("captions.revision.select-none")
+                    }
+                    .buttonStyle(.capsule(.secondary, size: .small))
+                    ForEach(plan.rows) { row in
+                        Toggle(isOn: Binding(
+                            get: { choiceSelections[section.id]?.contains(row.id) == true },
+                            set: { selected in
+                                if selected { choiceSelections[section.id, default: []].insert(row.id) }
+                                else { choiceSelections[section.id, default: []].remove(row.id) }
+                            }
+                        )) {
+                            VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+                                Text(row.timeRange).foregroundStyle(AppTheme.Text.tertiaryColor)
+                                Text("Before: " + row.before).foregroundStyle(AppTheme.Text.secondaryColor)
+                                Text("After: " + (row.after.isEmpty ? "Empty caption" : row.after)).foregroundStyle(AppTheme.Text.primaryColor)
+                            }
+                            .interfaceFont(size: AppTheme.Typography.ui)
+                            .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .toggleStyle(.checkbox)
+                        .focused($focusedControl, equals: .choice(section.id + ":" + row.id))
+                        .reviewAcceptanceProbe("captions.revision.choice." + row.id,
+                            text: row.timeRange + " · " + row.before + " → " + row.after)
+                    }
+                } else if options.allSatisfy({ $0.mediaRef != nil }) {
                     MediaChoiceGrid(
                         options: options,
                         assets: libraryAssets,
@@ -262,6 +326,15 @@ struct AgentDialogCard: View {
                     .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
             )
             .focused($focusedControl, equals: focus)
+            .background {
+                switch focus {
+                case .direction:
+                    Color.clear.reviewAcceptanceProbe("agent.dialog.direction", text: text.wrappedValue)
+                case .custom(let sectionID):
+                    Color.clear.reviewAcceptanceProbe("agent.dialog.custom." + sectionID, text: text.wrappedValue)
+                default: EmptyView()
+                }
+            }
     }
 
     // MARK: - File intake
@@ -343,6 +416,7 @@ struct AgentDialogCard: View {
             }
             .buttonStyle(.capsule(.prominent, size: .regular))
             .focused($focusedControl, equals: .filePicker)
+            .reviewAcceptanceProbe("agent.dialog.choose-file")
         }
         .padding(AppTheme.Spacing.mdLg)
         .frame(maxWidth: .infinity)
@@ -457,6 +531,7 @@ struct AgentDialogCard: View {
                 if hasRepeatableDraft {
                     Button("Clear item", action: clearRepeatableDraft)
                         .buttonStyle(.capsule(.secondary, size: .regular))
+                        .reviewAcceptanceProbe("agent.dialog.clear-item")
                 }
                 Button(completionLabel, action: onComplete)
                     .buttonStyle(.capsule(.secondary, size: .regular))
@@ -490,7 +565,11 @@ struct AgentDialogCard: View {
     /// if it also has a textField (paste-OR-upload, e.g. lyrics) a file OR non-empty text suffices;
     /// otherwise a file is required, plus the identity name when the intake asks for one.
     private var canSubmit: Bool {
-        dialog.permitsSubmission(
+        if dialog.purpose == .mediaOrganization,
+           choiceSelections["organization"]?.isEmpty != false { return false }
+        if dialog.purpose == .captionRevision,
+           choiceSelections["caption-revision"]?.isEmpty != false { return false }
+        return dialog.permitsSubmission(
             hasFiles: !pickedFiles.isEmpty,
             direction: direction,
             isSubmitting: isSubmitting
@@ -683,6 +762,7 @@ private struct MediaChoiceGrid: View {
                 .help("\(option.label) — \(filename)")
                 .accessibilityLabel("\(option.shortLabel), \(filename)")
                 .accessibilityValue(isOn ? "Selected" : "Not selected")
+                .reviewAcceptanceProbe("agent.dialog.choice.\(focusNamespace).\(option.id)", text: isOn ? "selected" : "unselected")
             }
         }
     }
@@ -736,6 +816,7 @@ private struct FlowChips: View {
                 .focused(focus, equals: .choice("\(focusNamespace):\(option.id)"))
                 .help(option.label)
                 .accessibilityLabel(option.shortLabel)
+                .reviewAcceptanceProbe("agent.dialog.choice.\(focusNamespace).\(option.id)", text: isOn ? "selected" : "unselected")
             }
         }
     }

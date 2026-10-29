@@ -1,0 +1,141 @@
+name: Smart Search Owner Acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      runtime_run_id:
+        description: Run containing the actual already built same-source app
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      runtime_run_id:
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: smart-search-owner-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cold:
+    # ci-lint: allow-CI005 Native model download/CoreML and real UI on the shipped macOS 26 floor.
+    runs-on: macos-26
+    timeout-minutes: 15
+    outputs:
+      cache_key: ${{ steps.key.outputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: workspace-ui-app
+          run-id: ${{ inputs.runtime_run_id || github.run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/search-runtime
+      - name: Require the actual same-source app distribution
+        run: |
+          set -euo pipefail
+          test "$(sw_vers -productVersion | cut -d. -f1)" = 26
+          python3 scripts/verify_bpy_distributable_source.py \
+            "$RUNNER_TEMP/search-runtime/NexGenVideo-bpy-5.2.2-corresponding-source.tar" \
+            "$RUNNER_TEMP/search-runtime/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json"
+          tar -xzf "$RUNNER_TEMP/search-runtime/workspace-ui.tar.gz" -C "$RUNNER_TEMP/search-runtime"
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :NGVSourceCommit' "$RUNNER_TEMP/search-runtime/NexGenVideo.app/Contents/Info.plist")" = "$GITHUB_SHA" ]
+      - name: Exercise actual HTTP failure, Retry, checksum, CoreML, indexing and Storage
+        run: |
+          python3 scripts/smart_search_owner_acceptance.py \
+            --executable "$RUNNER_TEMP/search-runtime/NexGenVideo.app/Contents/MacOS/NexGenVideo" \
+            --output "$RUNNER_TEMP/search-evidence" --scales 1 \
+            --cache-export "$RUNNER_TEMP/search-model-cache"
+      - name: Identify only this completed cold producer cache
+        id: key
+        run: echo "value=smart-search-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/search-model-cache
+          key: ${{ steps.key.outputs.value }}
+      - name: Preserve actual evidence without model or archive bytes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smart-search-cold-evidence
+          path: |
+            ${{ runner.temp }}/search-evidence/**/*.json
+            ${{ runner.temp }}/search-evidence/**/*.png
+            ${{ runner.temp }}/search-evidence/**/*.log
+            ${{ runner.temp }}/search-evidence/**/*failure.txt
+            !${{ runner.temp }}/search-evidence/**/isolated-user/**
+            !${{ runner.temp }}/search-evidence/**/installed-model-cache/**
+            !${{ runner.temp }}/search-evidence/**/verified-archives/**
+
+  layout:
+    needs: cold
+    strategy:
+      fail-fast: false
+      matrix:
+        scale: ['1.25', '1.5']
+    # ci-lint: allow-CI005 Native warm-model layout on the shipped macOS 26 floor.
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: workspace-ui-app
+          run-id: ${{ inputs.runtime_run_id || github.run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/search-runtime
+      - uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/search-model-cache
+          key: ${{ needs.cold.outputs.cache_key }}
+          fail-on-cache-miss: true
+      - name: Require the actual same-source app distribution
+        run: |
+          set -euo pipefail
+          test "$(sw_vers -productVersion | cut -d. -f1)" = 26
+          python3 scripts/verify_bpy_distributable_source.py \
+            "$RUNNER_TEMP/search-runtime/NexGenVideo-bpy-5.2.2-corresponding-source.tar" \
+            "$RUNNER_TEMP/search-runtime/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json"
+          tar -xzf "$RUNNER_TEMP/search-runtime/workspace-ui.tar.gz" -C "$RUNNER_TEMP/search-runtime"
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :NGVSourceCommit' "$RUNNER_TEMP/search-runtime/NexGenVideo.app/Contents/Info.plist")" = "$GITHUB_SHA" ]
+      - name: Verify real installed bytes and load them through the actual native layout
+        env:
+          NGV_SCALE: ${{ matrix.scale }}
+        run: |
+          python3 scripts/smart_search_owner_acceptance.py \
+            --executable "$RUNNER_TEMP/search-runtime/NexGenVideo.app/Contents/MacOS/NexGenVideo" \
+            --output "$RUNNER_TEMP/search-evidence" --scales "$NGV_SCALE" \
+            --cache-import "$RUNNER_TEMP/search-model-cache"
+      - name: Preserve actual layout evidence without model bytes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smart-search-warm-${{ matrix.scale }}-evidence
+          path: |
+            ${{ runner.temp }}/search-evidence/**/*.json
+            ${{ runner.temp }}/search-evidence/**/*.png
+            ${{ runner.temp }}/search-evidence/**/*.log
+            ${{ runner.temp }}/search-evidence/**/*failure.txt
+            !${{ runner.temp }}/search-evidence/**/isolated-user/**
+            !${{ runner.temp }}/search-evidence/**/installed-model-cache/**
+            !${{ runner.temp }}/search-evidence/**/verified-archives/**
+
+  cleanup-cache:
+    needs: [cold, layout]
+    if: ${{ always() && needs.layout.result == 'success' && needs.cold.outputs.cache_key != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Delete only this verified cold producer after all warm layouts pass
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CACHE_KEY: ${{ needs.cold.outputs.cache_key }}
+        run: gh cache delete "$CACHE_KEY" --repo iret77/nexgenvideo

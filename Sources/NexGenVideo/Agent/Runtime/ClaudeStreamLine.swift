@@ -20,6 +20,7 @@ enum ClaudeStreamEvent: Sendable {
     case sessionStarted(sessionId: String)
     /// One completed block of the assistant message identified by `messageId`.
     case assistantBlock(messageId: String, block: ClaudeBlock)
+    case responseMetadata(messageID: String, modelID: String)
     /// A tool result returned to the model (arrives on a `user` line).
     case toolResult(toolUseId: String, blocks: [ToolResult.Block], isError: Bool)
     /// `result` — the turn finished, with optional cost and error.
@@ -142,7 +143,11 @@ enum ClaudeStreamDecoder {
               let content = message["content"] as? [[String: Any]]
         else { return [] }
 
-        return content.compactMap { block in
+        var events: [ClaudeStreamEvent] = []
+        if let modelID = message["model"] as? String, !modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            events.append(.responseMetadata(messageID: messageId, modelID: modelID))
+        }
+        events += content.compactMap { block in
             switch block["type"] as? String {
             case "text":
                 guard let text = block["text"] as? String, !text.isEmpty else { return nil }
@@ -155,6 +160,7 @@ enum ClaudeStreamDecoder {
                 return nil
             }
         }
+        return events
     }
 
     private static func toolResults(_ obj: [String: Any]) -> [ClaudeStreamEvent] {

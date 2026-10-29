@@ -155,6 +155,9 @@ public enum VideoPromptDialectCompilerV1 {
         var lines = references.map { reference in
             let label = referenceLabel(reference, syntax: syntax)
             let identity = reference.identityLabel
+            if reference.preservationScopeIDs.contains(PlanningSpatialAssetV1.geometryScopeID) {
+                return "\(label) defines geometry, pose, camera and blocking only. Ignore its neutral materials and shading; use the approved appearance, identity and style references for the final look."
+            }
             switch reference.role {
             case .character:
                 return "\(label) defines <\(identity)> identity, wardrobe state, and visible design."

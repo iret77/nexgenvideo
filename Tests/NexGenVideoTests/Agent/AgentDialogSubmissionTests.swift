@@ -26,14 +26,31 @@ struct AgentDialogSubmissionTests {
         service.dialogDraft = draft
         service.dialogChoiceSelections = ["style": ["custom"]]
 
+        for partial in [AgentDialogDraft(direction: "Unfinished location"),
+                        AgentDialogDraft(fileURLs: draft.fileURLs)] {
+            service.dialogDraft = partial
+            service.completeDialog(dialog)
+            #expect(service.pendingDialog?.id == dialog.id)
+            #expect(service.dialogDraft == partial)
+            #expect(service.dialogSubmissionError == "Attach or clear the current item before continuing.")
+        }
+        service.dialogDraft = draft
         service.completeDialog(dialog)
 
         #expect(service.pendingDialog?.id == dialog.id)
-        #expect(service.dialogSubmissionError != nil)
+        #expect(service.dialogSubmissionError == "Attach or clear the current item before continuing.")
         #expect(service.dialogDraft == draft)
         #expect(service.dialogChoiceSelections == ["style": ["custom"]])
         #expect(service.submittingDialogID == nil)
         #expect(service.messages.isEmpty)
+        let emptyItem = AgentDialogDraft(toggles: draft.toggles, customValues: draft.customValues)
+        service.dialogDraft = emptyItem
+        service.completeDialog(dialog)
+        #expect(service.pendingDialog?.id == dialog.id)
+        #expect(service.dialogSubmissionError == "The project is unavailable. Reopen it and try again.")
+        #expect(service.dialogDraft == emptyItem)
+        #expect(service.dialogChoiceSelections == ["style": ["custom"]])
+        #expect(service.submittingDialogID == nil && service.messages.isEmpty)
         service.abandonDialog()
         #expect(service.dialogDraft == AgentDialogDraft())
         #expect(service.dialogChoiceSelections.isEmpty)

@@ -255,6 +255,8 @@ struct AgentDialog: Identifiable, Equatable, Sendable, Codable {
         case chatClarification
         case generationIntent
         case workflowIntake
+        case mediaOrganization
+        case captionRevision
     }
 
     enum WorkflowDecision: String, Equatable, Hashable, Sendable, Codable {
@@ -431,12 +433,15 @@ struct AgentDialog: Identifiable, Equatable, Sendable, Codable {
     let purpose: Purpose
     /// Bounded reason for an agent-authored decision while a locked workflow phase is active.
     let workflowDecision: WorkflowDecision?
+    let mediaOrganization: MediaOrganizationPlan?
+    let captionRevision: CaptionRevisionPlan?
 
     init(id: String, title: String, symbol: String, intro: String?, costHint: String?,
          confirmLabel: String, textField: DialogTextField?, sections: [Section],
          fileIntake: FileIntake? = nil,
          projection: Projection = Projection(), purpose: Purpose = .chatClarification,
-         workflowDecision: WorkflowDecision? = nil) {
+         workflowDecision: WorkflowDecision? = nil, mediaOrganization: MediaOrganizationPlan? = nil,
+         captionRevision: CaptionRevisionPlan? = nil) {
         self.id = id
         self.title = title
         self.symbol = symbol
@@ -449,13 +454,15 @@ struct AgentDialog: Identifiable, Equatable, Sendable, Codable {
         self.projection = projection
         self.purpose = purpose
         self.workflowDecision = workflowDecision
+        self.mediaOrganization = mediaOrganization
+        self.captionRevision = captionRevision
     }
 
     func hasSameControls(as other: AgentDialog) -> Bool {
         AgentDialog(id: other.id, title: title, symbol: symbol, intro: intro,
             costHint: costHint, confirmLabel: confirmLabel, textField: textField,
             sections: sections, fileIntake: fileIntake, projection: projection,
-            purpose: purpose, workflowDecision: workflowDecision) == other
+            purpose: purpose, workflowDecision: workflowDecision, mediaOrganization: mediaOrganization, captionRevision: captionRevision) == other
     }
 
     /// Derives a compact label when the dialog omits `shortLabel`.

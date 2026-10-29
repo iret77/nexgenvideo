@@ -73,14 +73,15 @@ final class ModelCatalog {
     private(set) var providerDiscovery: [GenerationProvider: ProviderDiscoveryState] = [:]
     private(set) var offeringCapabilitiesByModelID:
         [String: [ResolvedOfferingCapabilityProfileV1]] = [:]
-    var curatedOfferingCapabilitiesByModelID:
-        [String: [ResolvedOfferingCapabilityProfileV1]] {
-        offeringCapabilitiesByModelID
-    }
+    private(set) var curatedOfferingCapabilitiesByModelID:
+        [String: [ResolvedOfferingCapabilityProfileV1]] = [:]
     private(set) var isLoaded: Bool = false
     private(set) var lastError: String?
 
     @ObservationIgnored private var didConfigure = false
+    @ObservationIgnored private var researchRecords: [ModelCapabilityResearchOverlayRecordV1] = []
+    @ObservationIgnored private var researchEpoch = UUID()
+    @ObservationIgnored private let preferences: ModelPreferences
     /// The curated base: launch-seed registries, then the hosted remote catalog. Replaced wholesale by
     /// `load(entries:)`.
     @ObservationIgnored private var baseEntries: [CatalogEntry] = []
@@ -95,12 +96,20 @@ final class ModelCatalog {
         routeChecks.append(contentsOf: checks.filter { $0.provider == provider })
     }
 
-    init() {}
+    init(preferences: ModelPreferences = .shared) { self.preferences = preferences }
 
     func configure() {
         guard !didConfigure else { return }
         didConfigure = true
-        // App startup loads the provider registry seed, then refreshes remote and discovered entries.
+        let epoch = researchEpoch
+        Task {
+            do {
+                let records = try await ModelCapabilityResearchStore().snapshot().records
+                guard researchEpoch == epoch else { return }
+                applyResearchRecords(records)
+            }
+            catch { lastError = "Local capability knowledge could not be loaded." }
+        }
     }
 
     func load(entries: [CatalogEntry]) {
@@ -153,6 +162,30 @@ final class ModelCatalog {
 
     func refreshCapabilityResolution() {
         rebuild()
+    }
+
+    func applyResearchRecords(_ records: [ModelCapabilityResearchOverlayRecordV1]) {
+        researchEpoch = UUID()
+        researchRecords = records
+        rebuild()
+    }
+
+    func settingsBindings(forModelID id: String, activation: ProviderActivation) -> [ProviderBinding] {
+        guard let model = byId[id] else { return [] }
+        let modality: CapabilityModalityV1?
+        switch model {
+        case .image: modality = .image
+        case .video: modality = .video
+        case .audio: modality = .audio
+        case .upscale: modality = nil
+        }
+        return ProviderManifest.bindings(forModelId: id, catalog: self).filter { binding in
+            guard activation.isActive(binding.provider, binding.transport) else { return false }
+            guard let modality else { return true }
+            return Self.productionOfferingIsLive(modelID: id, modality: modality, binding: binding,
+                modelExists: true, modelEnabled: true, discoveredByProvider: discoveredByProvider,
+                providerDiscovery: providerDiscovery)
+        }
     }
 
     /// Base ∪ discovered, base first and its curated fields winning; a model offered by both merges the
@@ -296,6 +329,8 @@ final class ModelCatalog {
         var newInternalByLogical: [String: String] = [:]
         var newOfferingCapabilitiesByModelID:
             [String: [ResolvedOfferingCapabilityProfileV1]] = [:]
+        var newCuratedCapabilitiesByModelID:
+            [String: [ResolvedOfferingCapabilityProfileV1]] = [:]
         var capabilityErrors: [String] = []
         newVideo.reserveCapacity(entries.count)
         newImage.reserveCapacity(entries.count)
@@ -310,7 +345,15 @@ final class ModelCatalog {
                     resolver: capabilityResolver
                 )
                 if !curatedCapabilities.isEmpty {
-                    newOfferingCapabilitiesByModelID[entry.id] = curatedCapabilities
+                    newCuratedCapabilitiesByModelID[entry.id] = curatedCapabilities
+                    do {
+                        newOfferingCapabilitiesByModelID[entry.id] = try curatedCapabilities.map {
+                            try Self.applyingResearchRecords(to: $0, records: researchRecords, corpus: CatalogCapabilityRuntime.corpus)
+                        }
+                    } catch {
+                        newOfferingCapabilitiesByModelID[entry.id] = curatedCapabilities
+                        capabilityErrors.append("\(entry.id): Local capability evidence could not be applied.")
+                    }
                 }
             } catch {
                 capabilityErrors.append("\(entry.id): \(error.localizedDescription)")
@@ -348,6 +391,7 @@ final class ModelCatalog {
         self.offersById = newOffersById
         self.internalByLogical = newInternalByLogical
         self.offeringCapabilitiesByModelID = newOfferingCapabilitiesByModelID
+        self.curatedOfferingCapabilitiesByModelID = newCuratedCapabilitiesByModelID
         self.lastError = capabilityErrors.first
     }
 
@@ -364,7 +408,7 @@ final class ModelCatalog {
             corpus: corpus
         )
         let identity = resolvedBinding.value.identity
-        let matching = records.filter { $0.binding.identity == identity }
+        let matching = records.filter { $0.status == .active && $0.binding.identity == identity }
         guard !matching.isEmpty else { return capability }
         let curatedIntrinsic = ModelCapabilityResearchIdentityPolicy.bindingProfile(
             capability.intrinsic,
@@ -614,6 +658,7 @@ final class ModelCatalog {
         offersById = [:]
         internalByLogical = [:]
         offeringCapabilitiesByModelID = [:]
+        curatedOfferingCapabilitiesByModelID = [:]
         lastError = error
     }
 
@@ -653,7 +698,9 @@ final class ModelCatalog {
         background: String? = nil,
         outputFormat: String? = nil,
         outputCompression: Int? = nil,
-        hasMask: Bool = false
+        hasMask: Bool = false,
+        activation: ProviderActivation? = nil,
+        isEnabled: ((String) -> Bool)? = nil
     ) -> CatalogImageOfferingEvaluation {
         let discovered = discoveredByProvider
         let discoveryStates = providerDiscovery
@@ -670,8 +717,8 @@ final class ModelCatalog {
             outputFormat: outputFormat,
             outputCompression: outputCompression,
             hasMask: hasMask,
-            activation: .current(),
-            isEnabled: ModelPreferences.shared.isEnabled,
+            activation: activation ?? .current(),
+            isEnabled: isEnabled ?? preferences.isEnabled,
             offeringIsVerified: { modelID, binding in
                 Self.imageOfferingIsVerified(
                     modelID: modelID,
@@ -689,7 +736,7 @@ final class ModelCatalog {
         discoveredByProvider: [GenerationProvider: [CatalogEntry]],
         providerDiscovery: [GenerationProvider: ProviderDiscoveryState]
     ) -> Bool {
-        if binding.transport == .mcp {
+        if binding.transport == .mcp || (binding.provider == .runway && binding.transport == .api) {
             switch providerDiscovery[binding.provider] {
             case .ready?, .stale?:
                 break
@@ -1008,7 +1055,7 @@ final class ModelCatalog {
                         modality: capability.offering.modality,
                         binding: binding,
                         modelExists: byId[modelID] != nil,
-                        modelEnabled: ModelPreferences.shared.isEnabled(modelID),
+                        modelEnabled: preferences.isEnabled(modelID),
                         discoveredByProvider: discovered,
                         providerDiscovery: discoveryStates
                     ),
@@ -1042,6 +1089,7 @@ final class ModelCatalog {
             return false
         }
         let requiresDiscovery = binding.transport == .mcp
+            || binding.provider == .runway
             || (modality == .image
                 && binding.provider.requiresLiveImageCatalogDiscovery)
         return !requiresDiscovery || imageOfferingIsVerified(
@@ -1247,7 +1295,7 @@ final class ModelCatalog {
                 requestOrder: 0,
                 modalityBudget: false,
                 totalBudget: false,
-                durationBudget: false
+                durationBudget: policy.sourceOperation == .extendForward
             )
         } else {
             if capabilities.supportsFirstFrame {

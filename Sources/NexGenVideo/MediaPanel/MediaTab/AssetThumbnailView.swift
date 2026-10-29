@@ -31,6 +31,7 @@ struct AssetThumbnailView: View {
         .contextMenu { contextMenuItems }
         .opacity(isSwapDimmed ? AppTheme.Opacity.muted : AppTheme.Opacity.opaque)
         .allowsHitTesting(!isSwapDimmed)
+        .reviewAcceptanceProbe("media.asset.\(asset.id)", text: asset.libraryDisplayName)
     }
 
     private var gridContent: some View {
@@ -86,6 +87,7 @@ struct AssetThumbnailView: View {
         }
         .padding(.horizontal, AppTheme.Spacing.xs)
         .padding(.vertical, AppTheme.Spacing.xxs)
+        .reviewAcceptanceProbe("media.rename." + asset.id, text: isRenaming ? renameDraft : asset.libraryDisplayName)
         .background(
             RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
                 .fill(isRenaming ? AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.faint) : AppTheme.Background.clearColor)
@@ -402,17 +404,6 @@ struct AssetThumbnailView: View {
             return
         }
 
-        let shiftHeld = NSEvent.modifierFlags.contains(.shift)
-
-        if shiftHeld {
-            if editor.selectedMediaAssetIds.contains(asset.id) {
-                editor.selectedMediaAssetIds.remove(asset.id)
-            } else {
-                editor.selectedMediaAssetIds.insert(asset.id)
-            }
-            editor.openPreviewTab(for: asset)   // tab follows, but keep multi-selection intact
-        } else {
-            editor.selectMediaAsset(asset)
-        }
+        editor.selectMediaPanelItem(asset.id, modifiers: NSApp.currentEvent?.modifierFlags ?? NSEvent.modifierFlags)
     }
 }

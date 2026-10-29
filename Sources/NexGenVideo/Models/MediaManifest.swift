@@ -210,6 +210,7 @@ struct ProductionGenerationRoutingProofV1: Codable, Sendable, Equatable {
     let historicalDemandSet: ReferenceDemandSetV1?
     let offeringCapabilities: ResolvedVideoOfferingCapabilitiesV1
     let offeringCapabilitiesSHA256: String
+    let productionMaterialization: CanonicalArtifactReferenceV1?
 
     private enum CodingKeys: String, CodingKey {
         case schema
@@ -235,6 +236,7 @@ struct ProductionGenerationRoutingProofV1: Codable, Sendable, Equatable {
         case historicalDemandSet = "historical_demand_set"
         case offeringCapabilities = "offering_capabilities"
         case offeringCapabilitiesSHA256 = "offering_capabilities_sha256"
+        case productionMaterialization = "production_materialization"
     }
 
     init(
@@ -259,7 +261,8 @@ struct ProductionGenerationRoutingProofV1: Codable, Sendable, Equatable {
         offeringCapabilities: ResolvedVideoOfferingCapabilitiesV1,
         offeringCapabilitiesSHA256: String,
         historicalAssetGraph: AssetGraphV1? = nil,
-        historicalDemandSet: ReferenceDemandSetV1? = nil
+        historicalDemandSet: ReferenceDemandSetV1? = nil,
+        productionMaterialization: CanonicalArtifactReferenceV1? = nil
     ) {
         schema = Self.schemaVersion
         self.projectID = projectID
@@ -284,6 +287,7 @@ struct ProductionGenerationRoutingProofV1: Codable, Sendable, Equatable {
         self.historicalDemandSet = historicalDemandSet
         self.offeringCapabilities = offeringCapabilities
         self.offeringCapabilitiesSHA256 = offeringCapabilitiesSHA256
+        self.productionMaterialization = productionMaterialization
     }
 
     func matches(_ target: ResolvedGenerationTarget) -> Bool {
