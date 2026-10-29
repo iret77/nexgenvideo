@@ -15,6 +15,7 @@ final class StoryPanelDrafts {
     var editedMode = ""
     var seededBrief: BriefData?
     var isSeeded = false
+    var playbackRange = PlaybackRangeDraft()
 }
 
 struct StoryPanelView: View {
@@ -37,8 +38,9 @@ struct StoryPanelView: View {
     private static let aspectRatioOptions = [
         "16:9", "9:16", "1:1", "4:5", "5:4", "4:3", "3:4", "21:9", "9:21", "other",
     ]
-    // Matches engine/nexgen_engine/brief/schema.py Brief.project_mode (shotlist.Mode).
-    private static let projectModeOptions = ["beat", "phrase", "section", "multicam"]
+    private var projectModeOptions: [String] {
+        editor.declaredProductionContract == .current ? ["generic"] : BriefWriteContract.briefProjectModes
+    }
 
     var body: some View {
         Group {
@@ -76,6 +78,10 @@ struct StoryPanelView: View {
     @ViewBuilder
     private var briefSection: some View {
         sectionHeader("Brief")
+        if editor.declaredProductionContract == .current { StorySourceChoiceView() }
+        if editor.usesProductionPlanningV2 && editor.declaredPluginBinding?.id == "musicvideo" {
+            PlaybackRangeView(draft: drafts.playbackRange)
+        }
         if editor.briefUnreadable {
             // A brief EXISTS but can't be read (e.g. legacy schema). Never show the bootstrap
             // prompt here — it would invite drafting over the user's existing brief.
@@ -90,6 +96,7 @@ struct StoryPanelView: View {
                 command: { "The project's brief.yaml fails to load. \($0)" }
             )
         } else if let brief = editor.brief {
+            if editor.declaredPluginBinding != nil { PatternRecommendationsView() }
             VStack(alignment: .leading, spacing: AppTheme.Spacing.mdLg) {
                 ForEach(briefGroups(brief)) { group in
                     VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
@@ -204,7 +211,7 @@ struct StoryPanelView: View {
     }
 
     private func productionRows(_ brief: BriefData) -> [BriefRow] {
-        var rows: [BriefRow] = [.editableMenu("Mode", $drafts.editedMode, Self.projectModeOptions)]
+        var rows: [BriefRow] = [.editableMenu("Mode", $drafts.editedMode, projectModeOptions)]
         Self.add(&rows, "Video model", brief.modelPreference)
         Self.add(&rows, "Model detail", brief.modelPreferenceOther)
         Self.add(&rows, "Frame images", brief.frameImageModel)
@@ -426,6 +433,7 @@ struct StoryPanelView: View {
     ) -> some View {
         HStack(spacing: AppTheme.Spacing.sm) {
             TextField(placeholder, text: draft)
+                .reviewAcceptanceProbe("story.prose.input." + action, text: draft.wrappedValue)
                 .textFieldStyle(.roundedBorder)
                 .interfaceFont(size: AppTheme.Typography.ui)
                 .onSubmit {
@@ -449,6 +457,7 @@ struct StoryPanelView: View {
             }
             .buttonStyle(ToolbarIconButtonStyle())
             .accessibilityLabel(action)
+            .reviewAcceptanceProbe("story.prose.action." + action, state: allowEmpty || !draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             .disabled(!allowEmpty && draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
     }

@@ -19,6 +19,7 @@ struct ColorWheelControl: View {
                 .tracking(AppTheme.Tracking.wide)
                 .foregroundStyle(AppTheme.Text.mutedColor)
             ColorWheelPad(x: x, y: y, onChanged: onColorChanged, onCommit: onColorCommit)
+                .reviewAcceptanceProbe("inspector.wheel." + title, text: "\(x),\(y)")
             AdjustSlider(
                 value: master,
                 range: masterRange,
@@ -29,6 +30,7 @@ struct ColorWheelControl: View {
                 onCommit: onMasterCommit
             )
             .frame(width: AppTheme.Wheels.padSize)
+            .reviewAcceptanceProbe("inspector.wheel.level." + title, text: String(master))
         }
     }
 }

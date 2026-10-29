@@ -51,4 +51,15 @@ struct LUTLoaderTests {
         #expect(LUTLoader.parse("LUT_3D_SIZE 2\n0 0 0\n1 0 0\n0 nan 0\n1 1 1\n0 0 1\n1 0 1\n0 1 1\n1 1 1") == nil)
         #expect(LUTLoader.parse("LUT_3D_SIZE 2\nDOMAIN_MIN 1 0 0\nDOMAIN_MAX 0 1 1\n0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1") == nil)
     }
+    @Test("Cube domains locate inputs without rescaling or clipping output samples")
+    func preservesDomainAndExtendedOutputSamples() throws {
+        let text = "DOMAIN_MIN -1 0.2 0.3\nDOMAIN_MAX 2 0.8 0.7\nLUT_3D_SIZE 2\n"
+            + Array(repeating: "-0.25 1.5 2", count: 8).joined(separator: "\n")
+        let lut = try #require(LUTLoader.parse(text))
+        #expect(lut.domainMin == SIMD3<Float>(-1, 0.2, 0.3))
+        #expect(lut.domainMax == SIMD3<Float>(2, 0.8, 0.7))
+        let samples = lut.data.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
+        #expect(samples == Array(repeating: [Float(-0.25), 1.5, 2, 1], count: 8).flatMap { $0 })
+    }
+
 }

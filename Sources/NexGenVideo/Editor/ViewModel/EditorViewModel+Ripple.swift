@@ -25,12 +25,11 @@ extension EditorViewModel {
     /// push to other tracks.
     func trimClips(_ edits: [(clipId: String, trimStartFrame: Int, trimEndFrame: Int)]) {
         guard !edits.isEmpty else { return }
-        undoManager?.beginUndoGrouping()
-        for e in edits {
-            trimClipInternal(clipId: e.clipId, trimStartFrame: e.trimStartFrame, trimEndFrame: e.trimEndFrame)
+        withTimelineSwap(actionName: edits.count == 1 ? "Trim Clip" : "Trim Clips") {
+            for edit in edits {
+                trimClipInternal(clipId: edit.clipId, trimStartFrame: edit.trimStartFrame, trimEndFrame: edit.trimEndFrame)
+            }
         }
-        undoManager?.endUndoGrouping()
-        undoManager?.setActionName(edits.count == 1 ? "Trim Clip" : "Trim Clips")
     }
 
     struct RippleTrimPlan {
@@ -143,9 +142,13 @@ extension EditorViewModel {
         withTimelineSwap(actionName: "Ripple Trim") {
             for resize in plan.resizes {
                 guard let location = findClip(id: resize.clipId) else { continue }
-                timeline.tracks[location.trackIndex].clips[location.clipIndex].trimStartFrame = resize.trimStart
-                timeline.tracks[location.trackIndex].clips[location.clipIndex].trimEndFrame = resize.trimEnd
-                timeline.tracks[location.trackIndex].clips[location.clipIndex].setDuration(resize.duration)
+                let basis = timeline.tracks[location.trackIndex].clips[location.clipIndex]
+                let origin = edge == .left ? basis.durationFrames - resize.duration : 0
+                let extended: [FadeEdge] = resize.duration > basis.durationFrames ? [edge == .left ? .left : .right] : []
+                var resized = basis.animationWindow(originOffset: origin, duration: resize.duration, extendedEdges: extended)
+                resized.trimStartFrame = resize.trimStart
+                resized.trimEndFrame = resize.trimEnd
+                timeline.tracks[location.trackIndex].clips[location.clipIndex] = resized
             }
             applyShifts(plan.shifts)
             timeline.markers = RippleEngine.rippleMarkers(
@@ -307,40 +310,21 @@ extension EditorViewModel {
     }
 
     /// Deletes project-frame ranges from one track (spanning any clips) and closes the gaps; cuts linked A/V partners, shifts sync-locked tracks, refuses if any can't absorb.
-    func rippleDeleteRangesOnTrack(trackIndex: Int, ranges: [FrameRange]) -> RippleRangesOutcome {
-        guard timeline.tracks.indices.contains(trackIndex) else {
-            return .refused("Track index out of range: \(trackIndex)")
-        }
-        let merged = RippleEngine.mergeRanges(ranges.filter { $0.length > 0 })
-        guard !merged.isEmpty else { return .refused("No non-empty ranges to delete") }
+    func rippleDeleteRangesOnTrack(trackIndex: Int, ranges: [FrameRange], captionEdits: CaptionSpeechEdits.Plan? = nil) -> RippleRangesOutcome {
+        let prepared: SpeechRipplePreflight
+        do { prepared = try prepareSpeechRipple(trackIndex: trackIndex, ranges: ranges, captionEdits: captionEdits) }
+        catch { return .refused(error.localizedDescription) }
+        let merged = prepared.ranges, clearTrackIds = prepared.clearTrackIDs
         let totalRemoved = merged.reduce(0) { $0 + $1.length }
-
         let anchorTrackId = timeline.tracks[trackIndex].id
-        var clearTrackIds: Set<String> = [anchorTrackId]
-        // Linked partners of every touched clip, so A/V stays in sync across multi-clip ranges.
-        for clip in timeline.tracks[trackIndex].clips
-        where clip.linkGroupId != nil && merged.contains(where: { $0.start < clip.endFrame && $0.end > clip.startFrame }) {
-            for pid in linkedPartnerIds(of: clip.id) {
-                if let l = findClip(id: pid) { clearTrackIds.insert(timeline.tracks[l.trackIndex].id) }
-            }
-        }
-
-        // Refuse up front if a sync-locked follower can't absorb the shift. These tracks
-        // aren't cleared, so their clips are unchanged when the shift is applied below.
-        for ti in timeline.tracks.indices {
-            let track = timeline.tracks[ti]
-            guard !clearTrackIds.contains(track.id), track.syncLocked else { continue }
-            let shifts = RippleEngine.computeRippleShiftsForRanges(clips: track.clips, removedRanges: merged)
-            if let reason = validateShifts(trackIndex: ti, shifts: shifts) {
-                return .refused(reason)
-            }
-        }
 
         let anchorBeforeIds = Set(timeline.tracks[trackIndex].clips.map(\.id))
 
         var shiftedClips = 0
         withTimelineSwap(actionName: "Ripple Delete") {
-            for tid in clearTrackIds {
+            let captionIDs = Set(captionEdits?.changes.map { $0.before.id } ?? [])
+            for index in timeline.tracks.indices { timeline.tracks[index].clips.removeAll { captionIDs.contains($0.id) } }
+            for tid in clearTrackIds.sorted() {
                 guard let ti = timeline.tracks.firstIndex(where: { $0.id == tid }) else { continue }
                 for r in merged {
                     clearRegion(trackIndex: ti, start: r.start, end: r.end, prune: false)
@@ -352,6 +336,12 @@ extension EditorViewModel {
                 let shifts = RippleEngine.computeRippleShiftsForRanges(clips: track.clips, removedRanges: merged)
                 shiftedClips += applyShifts(shifts)
                 sortClips(trackIndex: ti)
+            }
+            for change in captionEdits?.changes ?? [] {
+                guard let after = change.after, let index = timeline.tracks.firstIndex(where: { $0.id == change.trackID }) else { continue }
+                timeline.tracks[index].clips.append(after)
+                if after.startFrame != change.before.startFrame { shiftedClips += 1 }
+                sortClips(trackIndex: index)
             }
             timeline.markers = RippleEngine.rippleMarkers(timeline.markers, closing: [merged])
         }
@@ -372,6 +362,61 @@ extension EditorViewModel {
             resultingFragments: fragments,
             removedClipIds: Array(anchorBeforeIds.subtracting(afterIds))
         ))
+    }
+
+    func preflightRippleDeleteRangesOnTrack(trackIndex: Int, ranges: [FrameRange], captionEdits: CaptionSpeechEdits.Plan? = nil) throws {
+        _ = try prepareSpeechRipple(trackIndex: trackIndex, ranges: ranges, captionEdits: captionEdits)
+    }
+
+    private struct SpeechRipplePreflight {
+        let ranges: [FrameRange]
+        let clearTrackIDs: Set<String>
+    }
+
+    private func prepareSpeechRipple(trackIndex: Int, ranges: [FrameRange], captionEdits: CaptionSpeechEdits.Plan?) throws -> SpeechRipplePreflight {
+        guard timeline.tracks.indices.contains(trackIndex) else { throw ToolError("Track index out of range: \(trackIndex)") }
+        let merged = RippleEngine.mergeRanges(ranges.filter { $0.length > 0 })
+        guard !merged.isEmpty else { throw ToolError("No non-empty ranges to delete") }
+        let primary = timeline.tracks[trackIndex].id
+        let typed = merged.map { CaptionSpeechEdits.Range(start: $0.start, end: $0.end) }
+        let clear = try CaptionSpeechEdits.clearedTrackIDs(timeline: timeline, primaryTrackID: primary, ranges: typed)
+        if let captionEdits {
+            try CaptionSpeechEdits.requireCurrent(captionEdits, timeline: timeline, primaryTrackID: primary, ranges: typed)
+        }
+        let changes = Dictionary(uniqueKeysWithValues: (captionEdits?.changes ?? []).map { ($0.before.id, $0) })
+        for index in timeline.tracks.indices {
+            let track = timeline.tracks[index]
+            guard clear.contains(track.id) || track.syncLocked else { continue }
+            var intervals: [FrameRange] = []
+            for clip in track.clips {
+                if let change = changes[clip.id] {
+                    if let after = change.after { intervals.append(FrameRange(start: after.startFrame, end: after.endFrame)) }
+                } else if clear.contains(track.id) {
+                    var pieces = [FrameRange(start: clip.startFrame, end: clip.endFrame)]
+                    for removed in merged {
+                        pieces = pieces.flatMap { piece -> [FrameRange] in
+                            guard removed.start < piece.end && removed.end > piece.start else { return [piece] }
+                            return [FrameRange(start: piece.start, end: min(piece.end, removed.start)),
+                                FrameRange(start: max(piece.start, removed.end), end: piece.end)].filter { $0.length > 0 }
+                        }
+                    }
+                    for piece in pieces {
+                        let shift = merged.filter { $0.end <= piece.start }.reduce(0) { $0 + $1.length }
+                        intervals.append(FrameRange(start: piece.start - shift, end: piece.end - shift))
+                    }
+                } else {
+                    let shifts = RippleEngine.computeRippleShiftsForRanges(clips: [clip], removedRanges: merged)
+                    let start = shifts.first?.newStartFrame ?? clip.startFrame
+                    intervals.append(FrameRange(start: start, end: start + clip.durationFrames))
+                }
+            }
+            intervals.sort { ($0.start, $0.end) < ($1.start, $1.end) }
+            guard intervals.allSatisfy({ $0.start >= 0 && $0.end > $0.start }),
+                  zip(intervals, intervals.dropFirst()).allSatisfy({ $0.0.end <= $0.1.start }) else {
+                throw ToolError("Sync-locked track \"\(timelineTrackDisplayLabel(at: index))\" doesn't have room to ripple.")
+            }
+        }
+        return .init(ranges: merged, clearTrackIDs: clear)
     }
 
     func rippleDeleteSelectedGap() {
@@ -495,6 +540,8 @@ extension EditorViewModel {
         guard let loc = findClip(id: clipId) else { return }
         let ti = loc.trackIndex
         let clip = timeline.tracks[ti].clips[loc.clipIndex]
+        guard clip.speed.isFinite, clip.speed > 0,
+              clip.sourceClipType == .image || clip.sourceClipType == .text || (trimStartFrame >= 0 && trimEndFrame >= 0) else { return }
         let prevStart = clip.trimStartFrame
         let prevEnd = clip.trimEndFrame
         let prevDuration = clip.durationFrames
@@ -507,21 +554,19 @@ extension EditorViewModel {
         let newDuration = prevDuration - deltaStartTimeline - deltaEndTimeline
         let newStartFrame = clip.startFrame + deltaStartTimeline
 
-        undoManager?.beginUndoGrouping()
-
-        timeline.tracks[ti].clips[loc.clipIndex].trimStartFrame = trimStartFrame
-        timeline.tracks[ti].clips[loc.clipIndex].trimEndFrame = trimEndFrame
-        timeline.tracks[ti].clips[loc.clipIndex].startFrame = newStartFrame
-        timeline.tracks[ti].clips[loc.clipIndex].setDuration(newDuration)
+        guard newDuration > 0, newStartFrame >= 0 else { return }
+        var extended: [FadeEdge] = []
+        if deltaStartTimeline < 0 { extended.append(.left) }
+        if deltaEndTimeline < 0 { extended.append(.right) }
+        var resized = clip.animationWindow(originOffset: deltaStartTimeline, duration: newDuration, extendedEdges: extended)
+        resized.trimStartFrame = trimStartFrame
+        resized.trimEndFrame = trimEndFrame
+        resized.startFrame = newStartFrame
+        timeline.tracks[ti].clips[loc.clipIndex] = resized
 
         sortClips(trackIndex: ti)
 
-        undoManager?.registerUndo(withTarget: self) { vm in
-            vm.trimClipInternal(clipId: clipId, trimStartFrame: prevStart, trimEndFrame: prevEnd)
-        }
-        undoManager?.endUndoGrouping()
-        undoManager?.setActionName("Trim Clip")
-        notifyTimelineChanged()
+
     }
 
     // MARK: - Validation

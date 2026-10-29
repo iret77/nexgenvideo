@@ -62,7 +62,8 @@ enum PipelineSurfaceRouting {
         if contract?.cockpitSurfaces.contains(where: { $0.phase == phase }) == true { return nil }
         return switch entry.surface {
         case "review": reviewRoute(for: phase, taskClass: entry.taskClass)
-        case "prose": Route(icon: "text.cursor", taskClass: entry.taskClass, destination: .tab(phase == "treatment" ? .treatment : .story))
+        case "prose": Route(icon: "text.cursor", taskClass: entry.taskClass,
+            destination: .tab(phase == "script" ? .script : phase == "treatment" ? .treatment : .story))
         case "choice": choiceRoute(for: phase, taskClass: entry.taskClass)
         default: nil
         }
@@ -72,6 +73,7 @@ enum PipelineSurfaceRouting {
         switch phase {
         case "project_init": Route(icon: "doc", taskClass: taskClass, destination: .tab(.project))
         case "production_design": Route(icon: "paintpalette", taskClass: taskClass, destination: .tab(.productionDesign))
+        case "shot_planning": Route(icon: "list.bullet.rectangle", taskClass: taskClass, destination: .tab(.shotPlanning))
         case "render": Route(icon: "film", taskClass: taskClass, destination: .tab(.review))
         default: nil
         }
@@ -79,12 +81,18 @@ enum PipelineSurfaceRouting {
 
     private static func reviewRoute(for phase: String, taskClass: String) -> Route? {
         switch phase {
+        case "script":
+            Route(icon: "doc.text", taskClass: taskClass, destination: .tab(.script))
         case "storyboard":
             Route(icon: "eye", taskClass: taskClass, destination: .tab(.storyboard))
+        case "shot_planning":
+            Route(icon: "list.bullet.rectangle", taskClass: taskClass, destination: .tab(.shotPlanning))
         case "bible":
             Route(icon: "eye", taskClass: taskClass, destination: .tab(.bible))
         case "shotlist":
             Route(icon: "eye", taskClass: taskClass, destination: .tab(.shotlist))
+        case "render_review":
+            Route(icon: "checklist", taskClass: taskClass, destination: .tab(.renderReview))
         case "sanity", "frames", "render":
             Route(icon: "eye", taskClass: taskClass, destination: .tab(.review))
         default:
@@ -177,6 +185,8 @@ struct PipelinePanelView: View {
             pendingRewind = nil
             gateError = nil
         }
+        .onChange(of: approvalPhase == "render" ? editor.timeline : nil) { _, _ in refreshApprovalReadiness() }
+        .onChange(of: approvalPhase == "render" ? editor.mediaAssets.map(\.url) : nil) { _, _ in refreshApprovalReadiness() }
         .onChange(of: runningPhase) { _, _ in refreshApprovalReadiness() }
         .onChange(of: editor.agentService.isStreaming) { _, _ in refreshApprovalReadiness() }
         .confirmationDialog("Rewind pipeline?", isPresented: Binding(
@@ -191,6 +201,7 @@ struct PipelinePanelView: View {
                     guard home == request.home else { throw NativeGateWriter.WriteError.notInitialized }
                     try NativeGateWriter.rewind(projectDir: home, targetPhase: request.phase,
                         declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding,
+                        declaredProductionContract: editor.declaredProductionContract,
                         executionCoordinator: editor.pipelinePhaseRunCoordinator)
                 }
             }
@@ -752,7 +763,8 @@ struct PipelinePanelView: View {
                     phase: phase.phase,
                     declaredPack: editor.declaredPluginName,
                     declaredBinding: editor.declaredPluginBinding,
-                    executionCoordinator: editor.pipelinePhaseRunCoordinator
+                        declaredProductionContract: editor.declaredProductionContract,
+                    editor: editor, executionCoordinator: editor.pipelinePhaseRunCoordinator
                 )
             }
         } label: {
@@ -798,7 +810,8 @@ struct PipelinePanelView: View {
                         phase: phase.phase,
                         declaredPack: editor.declaredPluginName,
                         declaredBinding: editor.declaredPluginBinding,
-                        executionCoordinator: editor.pipelinePhaseRunCoordinator
+                        declaredProductionContract: editor.declaredProductionContract,
+                        editor: editor, executionCoordinator: editor.pipelinePhaseRunCoordinator
                     )
                 }
             }
@@ -814,7 +827,8 @@ struct PipelinePanelView: View {
                         state: .needsRevision,
                         declaredPack: editor.declaredPluginName,
                         declaredBinding: editor.declaredPluginBinding,
-                        executionCoordinator: editor.pipelinePhaseRunCoordinator
+                        declaredProductionContract: editor.declaredProductionContract,
+                        editor: editor, executionCoordinator: editor.pipelinePhaseRunCoordinator
                     )
                 }
             }
@@ -834,6 +848,7 @@ struct PipelinePanelView: View {
                 .foregroundStyle(AppTheme.Text.mutedColor)
         }
         .accessibilityLabel("Actions for \(PhaseDisplay.label(phase.phase))")
+        .background { acceptanceProbe("actions.\(phase.phase)", enabled: !gateWriting && !isFuture && !pipelineIsRunning && controlsAvailable) }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         // A borderless Menu overrides its label's foreground style with the control tint.
@@ -1023,7 +1038,8 @@ struct PipelinePanelView: View {
                     phase: currentPhase,
                     declaredPack: editor.declaredPluginName,
                     declaredBinding: editor.declaredPluginBinding,
-                    executionCoordinator: editor.pipelinePhaseRunCoordinator
+                        declaredProductionContract: editor.declaredProductionContract,
+                    editor: editor, executionCoordinator: editor.pipelinePhaseRunCoordinator
                 )
                 guard token == readinessToken,
                       approvalPhase == currentPhase,
@@ -1053,7 +1069,9 @@ struct PipelinePanelView: View {
         if showProgress {
             state = .loading
         }
-        let result = await CockpitDataService.projectState(projectDir: dir)
+        let declaration = ProjectPackGate.MutationDeclaration(packName: editor.declaredPluginName,
+            binding: editor.declaredPluginBinding, productionContract: editor.declaredProductionContract)
+        let result = await CockpitDataService.projectState(projectDir: dir, declaration: declaration)
         guard token == loadToken else { return }
         switch result {
         case .success(let data):

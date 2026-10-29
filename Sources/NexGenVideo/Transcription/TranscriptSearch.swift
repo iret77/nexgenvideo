@@ -9,29 +9,42 @@ enum TranscriptSearch {
         let text: String
     }
 
+    struct Result: Sendable {
+        let hits: [Hit]
+        let unavailableAssetIDs: Set<String>
+    }
+
     static func searchAsync(query: String, assets: [(id: String, url: URL)]) async -> [Hit] {
-        let task = Task.detached(priority: .utility) { search(query: query, assets: assets) }
-        return await withTaskCancellationHandler {
-            await task.value
-        } onCancel: {
-            task.cancel()
-        }
+        await resultAsync(query: query, assets: assets).hits
+    }
+
+    static func resultAsync(query: String, assets: [(id: String, url: URL)], limit: Int = 20) async -> Result {
+        let task = Task.detached(priority: .utility) { result(query: query, assets: assets, limit: limit) }
+        return await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
     }
 
     static func search(query: String, assets: [(id: String, url: URL)], limit: Int = 20) -> [Hit] {
-        let terms = terms(in: query)
-        guard !terms.isEmpty else { return [] }
+        result(query: query, assets: assets, limit: limit).hits
+    }
 
+    static func result(query: String, assets: [(id: String, url: URL)], limit: Int = 20) -> Result {
+        let terms = terms(in: query)
+        guard !terms.isEmpty, limit > 0 else { return Result(hits: [], unavailableAssetIDs: []) }
         var hits: [Hit] = []
+        var unavailable = Set<String>()
         for asset in assets {
-            guard !Task.isCancelled else { return [] }
-            guard let transcript = TranscriptCache.cachedOnDisk(for: asset.url) else { continue }
+            guard !Task.isCancelled else { return Result(hits: [], unavailableAssetIDs: Set(assets.map(\.id))) }
+            guard let transcript = TranscriptCache.cachedOnDisk(for: asset.url) else {
+                unavailable.insert(asset.id)
+                continue
+            }
+            guard hits.count < limit else { continue }
             for segment in transcript.segments where matches(segment.text, terms: terms) {
                 hits.append(Hit(assetID: asset.id, start: segment.start, end: segment.end, text: segment.text))
-                if hits.count >= limit { return hits }
+                if hits.count >= limit { break }
             }
         }
-        return hits
+        return Result(hits: hits, unavailableAssetIDs: unavailable)
     }
 
     /// Query split into words, edge punctuation stripped (so "budget," → "budget").

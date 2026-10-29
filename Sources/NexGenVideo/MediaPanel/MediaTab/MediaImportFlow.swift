@@ -15,6 +15,7 @@ enum MediaImportFlow {
     }
 
     static func present(editor: EditorViewModel, destinationFolderId: String?) {
+        let destination = MediaLibraryDestination(editor, folderID: destinationFolderId)
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = true
@@ -24,6 +25,7 @@ enum MediaImportFlow {
             guard response == .OK else { return }
             let urls = panel.urls
             Task { @MainActor in
+                guard destination.isCurrent(editor) else { return }
                 await importItems(urls, into: destinationFolderId, editor: editor)
             }
         }

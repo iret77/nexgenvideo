@@ -526,20 +526,23 @@ enum ExampleAudioAnalysisSelfTest {
                 let suppliedLabels = expectations.audio.sectionLabels.enumerated().map {
                     $0.element ?? "Section \($0.offset + 1)"
                 }
-                try await flow.finishPlanningIntake(sectionLabels: suppliedLabels)
+                try await flow.finishPlanningIntake(sectionLabels: suppliedLabels, finalResolution: .res720p, conceptType: .abstract)
                 let encoder = JSONEncoder()
                 encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
                 try encoder.encode(flow.report()).write(to: configuration.reportDirectory.appendingPathComponent("hostflow.json"))
-                let planning = try await FullflowAcceptanceFixture.finishPlanning(editor: flow.editor,
-                    evidenceURL: configuration.reportDirectory, initialGateApprovals: flow.gateApprovals)
+                let originalSongSHA256 = audioFiles[0].entry.sha256
+                let owner = try await ProductionV2OwnerAcceptance.run(kind: .musicvideo,
+                    output: configuration.reportDirectory, continuing: flow, privateSongSHA256: originalSongSHA256)
                 try encoder.encode(flow.report()).write(to: configuration.reportDirectory.appendingPathComponent("hostflow.json"))
-                let delivery = try await WorkspaceUIAcceptance.finishMusicvideoDelivery(document: flow.document,
-                    receipt: planning, evidenceURL: configuration.reportDirectory, scale: AppTheme.Typography.standardScale)
-                let fullflow: [String: Any] = ["complete": true, "source": "private exact-file analysis through host intake",
-                    "canonicalArtifacts": planning.canonicalArtifacts, "suppliedInputs": planning.suppliedInputs,
-                    "nativeGateApprovals": try JSONSerialization.jsonObject(with: encoder.encode(planning.nativeGateApprovals)),
-                    "nativeBibleBlocker": planning.nativeBibleBlocker,
-                    "delivery": delivery]
+                guard owner["executionFixture"] as? String == "private_song_imported",
+                      owner["allPhasesApproved"] as? Bool == true, owner["savedAndReopened"] as? Bool == true,
+                      let binding = owner["privateSongBinding"] as? [String: String], binding["songSHA256"] == originalSongSHA256,
+                      binding["analysisSHA256"] == summary.sha256 else {
+                    throw Failure("The V2 film did not preserve the actual private song and approved analysis.")
+                }
+                let fullflow: [String: Any] = ["complete": true,
+                    "source": "private exact-file analysis through the same native V2 document",
+                    "owner": owner]
                 try JSONSerialization.data(withJSONObject: fullflow, options: [.prettyPrinted, .sortedKeys])
                     .write(to: configuration.reportDirectory.appendingPathComponent("fullflow.json"), options: .atomic)
             } catch {

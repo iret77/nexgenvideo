@@ -59,6 +59,7 @@ private struct FrameFindingsCard: View {
     let project: URL?
     @State private var reason = ""
     @State private var busy = false
+    @State private var expanded = false
     @State private var failure: String?
     @State private var readiness = NativeGateApprovalReadiness.blocked("Checking review readiness.")
 
@@ -69,8 +70,12 @@ private struct FrameFindingsCard: View {
         return "\(editor.workingRoot?.path ?? ""):\(editor.engineStateRevision):\(phase):\(snapshot)"
     }
 
+    private var canAccept: Bool {
+        !busy && readiness.isReady && !reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     var body: some View {
-        DisclosureGroup("Review deviations: \(audit.shotId) · \(audit.role)") {
+        DisclosureGroup(isExpanded: $expanded) {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
                 SheetThumbnailView(label: "Reviewed frame", path: audit.renderPath, projectDir: editor.workingRoot,
                     tileHeight: AppTheme.ComponentSize.productionStyleReviewMaxHeight)
@@ -84,6 +89,7 @@ private struct FrameFindingsCard: View {
                     }
                 }
                 TextField("Reason for accepting these deviations", text: $reason)
+                    .reviewAcceptanceProbe("frames.audit.reason.\(audit.shotId).\(audit.role)", text: reason)
                 Button("Accept these deviations") {
                     busy = true
                     Task {
@@ -94,11 +100,15 @@ private struct FrameFindingsCard: View {
                     }
                 }
                 .buttonStyle(InlineActionButtonStyle(variant: .approval))
-                .disabled(busy || !readiness.isReady || reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(!canAccept)
+                .reviewAcceptanceProbe("frames.audit.accept.\(audit.shotId).\(audit.role)", state: canAccept)
                 if let blocker = readiness.blocker { Text(blocker).foregroundStyle(AppTheme.Text.secondaryColor) }
                 if let failure { Text(failure).foregroundStyle(AppTheme.Text.secondaryColor) }
             }
             .padding(.top, AppTheme.Spacing.sm)
+        } label: {
+            Text("Review deviations: \(audit.shotId) · \(audit.role)")
+                .reviewAcceptanceProbe("frames.audit.open.\(audit.shotId).\(audit.role)", text: expanded ? "expanded" : "collapsed")
         }
         .padding(AppTheme.Spacing.md)
         .task(id: refreshID) {

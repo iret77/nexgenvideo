@@ -5,27 +5,53 @@ extension ToolExecutor {
     private static let removeWordsAllowedKeys: Set<String> = ["words", "cutAggressiveness"]
 
     func removeWords(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
-        try validateUnknownKeys(args, allowed: Self.removeWordsAllowedKeys, path: "remove_words")
+        let options = try Self.wordRemovalOptions(args)
+        let (words, _) = try await timelineWords(editor)
+        let edits = try planWordRemoval(editor, options: options, words: words)
+        guard let json = Self.jsonString(try edits.apply(editor)) else { throw ToolError("Failed to encode result") }
+        return .ok(json)
+    }
+
+    func prepareWordRemoval(_ editor: EditorViewModel, _ args: [String: Any], scope: CaptionRevisionScope? = nil,
+                            captionChanges: [String: String] = [:]) async throws -> WordRemovalPlan {
+        let options = try Self.wordRemovalOptions(args)
+        let captured: CaptionRevisionScope
+        if let scope { try scope.validateIdentity(editor); captured = scope }
+        else { captured = try await CaptionRevisionScope.capture(editor, kind: .speechCuts) }
+        guard captured.kind == .speechCuts else { throw ToolError("This task only proposes caption text changes.") }
+        let (words, _) = try await timelineWords(editor, scope: captured)
+        try await captured.validate(editor)
+        let edits = try planWordRemoval(editor, options: options, words: words, strictIndices: true, captionChanges: captionChanges)
+        return .init(scope: captured, edits: edits)
+    }
+
+    private static func wordRemovalOptions(_ args: [String: Any]) throws -> (spans: [(Int, Int)], aggressiveness: CutAggressiveness) {
+        try validateUnknownKeys(args, allowed: removeWordsAllowedKeys, path: "remove_words")
         guard let rawWords = args["words"] as? [Any], !rawWords.isEmpty else {
             throw ToolError("Missing or empty 'words'. Pass word indices from get_transcript, e.g. [5, [12, 18]].")
         }
         let aggressiveness: CutAggressiveness
         if let raw = args.string("cutAggressiveness") {
-            guard let a = CutAggressiveness(rawValue: raw) else {
+            guard let value = CutAggressiveness(rawValue: raw) else {
                 throw ToolError("cutAggressiveness must be one of: \(CutAggressiveness.allCases.map(\.rawValue).joined(separator: ", ")).")
             }
-            aggressiveness = a
+            aggressiveness = value
         } else { aggressiveness = .balanced }
+        return (try parseWordSpans(rawWords), aggressiveness)
+    }
 
-        let spans = try Self.parseWordSpans(rawWords)
-
-        let (allWords, _) = try await timelineWords(editor)
+    private func planWordRemoval(_ editor: EditorViewModel,
+                                 options: (spans: [(Int, Int)], aggressiveness: CutAggressiveness),
+                                 words allWords: [TimelineWord], strictIndices: Bool = false,
+                                 captionChanges: [String: String] = [:]) throws -> WordRemovalEdits {
+        let (spans, aggressiveness) = options
         guard !allWords.isEmpty else { throw ToolError("No transcribable speech on the timeline.") }
 
         let maxIndex = allWords.count - 1
         let selection = Self.boundedWordSelection(spans, maxIndex: maxIndex)
         let selected = selection.selected
         let ignored = selection.ignored
+        guard !strictIndices || ignored.isEmpty else { throw ToolError("Some word indices are no longer available. Read the complete current transcript before proposing cuts.") }
         guard !selected.isEmpty else {
             throw ToolError("None of the requested word indices are in range 0...\(maxIndex). Re-read get_transcript.")
         }
@@ -68,27 +94,25 @@ extension ToolExecutor {
         }
         // Use only the primary track's own ranges; the ripple removes the same span from linked
         // partners, so flattening foreign-track frames here would over-cut the primary track.
-        let primaryRanges = rangesByTrack[primaryTrack]!
-
-        editor.undoManager?.beginUndoGrouping()
-        let outcome = editor.rippleDeleteRangesOnTrack(trackIndex: primaryTrack, ranges: primaryRanges)
-        editor.undoManager?.endUndoGrouping()
-        editor.undoManager?.setActionName("Remove Words (Agent)")
-        guard case .ok(let report) = outcome else {
-            if case .refused(let reason) = outcome { throw ToolError("Ripple delete refused: \(reason)") }
-            throw ToolError("Ripple delete refused.")
+        let primaryRanges = RippleEngine.mergeRanges(rangesByTrack[primaryTrack]!)
+        let trackID = editor.timeline.tracks[primaryTrack].id
+        let captionEdits = try CaptionSpeechEdits.prepare(timeline: editor.timeline, primaryTrackID: trackID,
+            ranges: primaryRanges.map { .init(start: $0.start, end: $0.end) },
+            words: allWords.map { .init(clipID: $0.clipId, trackID: editor.timeline.tracks[$0.trackIndex].id,
+                text: $0.text, startFrame: $0.startFrame, endFrame: $0.endFrame) }, replacements: captionChanges)
+        try editor.preflightRippleDeleteRangesOnTrack(trackIndex: primaryTrack, ranges: primaryRanges, captionEdits: captionEdits)
+        let affected = allWords.filter { $0.trackIndex == primaryTrack }
+        let contexts = primaryRanges.map { range -> WordRemovalEdits.Context in
+            let matching = affected.indices.filter { affected[$0].startFrame < range.end && affected[$0].endFrame > range.start }
+            let lower = max(0, (matching.first ?? 0) - 5)
+            let upper = min(affected.count, (matching.last ?? lower) + 6)
+            let nearby = affected[lower..<upper]
+            return .init(start: range.start, end: range.end, before: nearby.map(\.text).joined(separator: " "),
+                after: nearby.filter { !selected.contains($0.index) }.map(\.text).joined(separator: " "))
         }
-
-        var payload: [String: Any] = [
-            "removedWords": removedTexts.count, "removedFrames": report.removedFrames,
-            "tracksEdited": report.clearedTracks, "cutAggressiveness": aggressiveness.rawValue,
-            "note": "Removed and closed the gaps. Re-read get_transcript before another remove_words.",
-        ]
-        let preview = removedTexts.prefix(24).joined(separator: " ")
-        if !preview.isEmpty { payload["removedText"] = removedTexts.count > 24 ? preview + " …" : preview }
-        if !ignored.isEmpty { payload["indicesIgnored"] = ignored.sorted() }
-        guard let json = Self.jsonString(payload) else { throw ToolError("Failed to encode result") }
-        return .ok(json)
+        return .init(fps: editor.timeline.fps, trackID: trackID, ranges: primaryRanges.map { .init(start: $0.start, end: $0.end) },
+            removedTexts: removedTexts, ignored: ignored, aggressiveness: aggressiveness.rawValue,
+            contexts: contexts, captionEdits: captionEdits)
     }
 
     static func parseWordSpans(_ raw: [Any]) throws -> [(Int, Int)] {

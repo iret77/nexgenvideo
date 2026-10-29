@@ -5,37 +5,58 @@ final class MediaResolver: @unchecked Sendable {
     private let manifest: () -> MediaManifest
     private let projectURL: () -> URL?
     private let urlOverrides: [String: URL]
+    private let effectResourceOverrides: [String: URL]
+    private let productionDeclaration: () -> ProjectPackGate.MutationDeclaration?
 
     init(
         manifest: @escaping () -> MediaManifest,
         projectURL: @escaping () -> URL?,
-        urlOverrides: [String: URL] = [:]
+        urlOverrides: [String: URL] = [:],
+        productionDeclaration: @escaping () -> ProjectPackGate.MutationDeclaration? = { nil },
+        effectResourceOverrides: [String: URL] = [:]
     ) {
         self.manifest = manifest
         self.projectURL = projectURL
         self.urlOverrides = urlOverrides
+        self.productionDeclaration = productionDeclaration
+        self.effectResourceOverrides = effectResourceOverrides
     }
 
     var projectHome: URL? { projectURL() }
+    var trustedProductionDeclaration: ProjectPackGate.MutationDeclaration? { productionDeclaration() }
 
     func snapshot() -> MediaResolver {
         let entries = manifest()
         let home = projectURL()
+        let declaration = productionDeclaration()
         return MediaResolver(
             manifest: { entries },
             projectURL: { home },
-            urlOverrides: urlOverrides
+            urlOverrides: urlOverrides,
+            productionDeclaration: { declaration },
+            effectResourceOverrides: effectResourceOverrides
         )
     }
 
-    func snapshot(overriding urls: [String: URL]) -> MediaResolver {
+    func snapshot(overriding urls: [String: URL], effectResources: [String: URL] = [:]) -> MediaResolver {
         let entries = manifest()
         let home = projectURL()
+        let declaration = productionDeclaration()
         return MediaResolver(
             manifest: { entries },
             projectURL: { home },
-            urlOverrides: urls
+            urlOverrides: urls,
+            productionDeclaration: { declaration },
+            effectResourceOverrides: effectResourceOverrides.merging(effectResources) { _, frozen in frozen }
         )
+    }
+
+    func effectResourceURL(for path: String) -> URL? {
+        if let frozen = effectResourceOverrides[path] { return frozen }
+        if ProjectEffectResources.isPortable(path), let root = projectHome {
+            return try? ProjectEffectResources.url(for: path, projectRoot: root)
+        }
+        return (path as NSString).isAbsolutePath ? URL(fileURLWithPath: path) : nil
     }
 
     func resolveURL(for assetId: String) -> URL? {

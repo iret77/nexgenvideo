@@ -488,7 +488,7 @@ enum AppRelaunchSelfTest {
         }
         let location = probe.convert(NSPoint(x: frame.midX, y: frame.midY), to: nil)
         let rootPoint = root.convert(location, from: nil)
-        let hitTestPoint = root.superview?.convert(location, from: nil) ?? rootPoint
+        let hitTestPoint = root.convert(rootPoint, to: root.superview)
         guard root.bounds.contains(rootPoint) else { return .blocked("probe center outside root") }
         guard let hitTarget = root.hitTest(hitTestPoint) else { return .blocked("no native hit target") }
         guard hitTarget.window === window, !hitTarget.isHiddenOrHasHiddenAncestor else {

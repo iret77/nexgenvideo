@@ -57,4 +57,28 @@ struct LUTTetraKernelTests {
         let half = sample(LUTTetraKernel.apply(img, cube: inv, key: "inv2", intensity: 0.5))
         #expect(d(half, (0.5, 0.5, 0.5)) < 1e-2, "0.5 = halfway to inverted, got \(half)")
     }
+    @Test func nonDefaultDomainsLocateInputSamplesBeforeInterpolation() throws {
+        var rows = ["LUT_3D_SIZE 2", "DOMAIN_MIN 0.1 0.2 0.3", "DOMAIN_MAX 0.9 0.8 0.7"]
+        for b in 0..<2 {
+            for g in 0..<2 {
+                for r in 0..<2 { rows.append("\(0.25 + 0.5 * Double(r)) \(0.25 + 0.5 * Double(g)) \(0.25 + 0.5 * Double(b))") }
+            }
+        }
+        let lut = try #require(LUTLoader.parse(rows.joined(separator: "\n")))
+        let input = solid(0.5, 0.35, 0.6)
+        let result = sample(LUTTetraKernel.apply(input, cube: lut, key: "non-default-input-domains", intensity: 1))
+        #expect(d(result, (0.5, 0.375, 0.625)) < 1e-3)
+        let half = sample(LUTTetraKernel.apply(input, cube: lut, key: "non-default-input-domains", intensity: 0.5))
+        #expect(d(half, (0.5, 0.3625, 0.6125)) < 1e-3)
+        let outside = sample(LUTTetraKernel.apply(solid(0, 1, 0.5), cube: lut, key: "non-default-input-domains", intensity: 1))
+        #expect(d(outside, (0.25, 0.75, 0.5)) < 1e-3)
+    }
+
+    @Test func nonDefaultDomainDoesNotClampHDRTableOutputs() throws {
+        let rows = "LUT_3D_SIZE 2\nDOMAIN_MAX 2 2 2\n" + Array(repeating: "0.8 1.5 2", count: 8).joined(separator: "\n")
+        let lut = try #require(LUTLoader.parse(rows))
+        let result = sample(LUTTetraKernel.apply(solid(0.5, 0.5, 0.5), cube: lut, key: "extended-domain-outputs", intensity: 1))
+        #expect(d(result, (0.8, 1.5, 2)) < 1e-3)
+    }
+
 }

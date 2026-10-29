@@ -96,6 +96,9 @@ enum PipelineAgentContract {
     ]
 
     static let currentPhaseTools: Set<ToolName> = [
+        .compileStoryboardSketch,
+        .getRenderReviewInputs,
+        .prepareProductionAssets,
         .compilePrompt,
         .generateVideo,
         .generateImage,
@@ -181,6 +184,7 @@ enum PipelineAgentContract {
         let phaseBoundTools = Set(
             ToolName.allCases.filter {
                 $0.advancingPhase(args: [:]) != nil
+                    && !ProductionWorkflowV2.newWriterNames.contains($0.rawValue)
             }
         ).union([.runPhase])
         let declaredPhaseBoundTools = executableTools.values.reduce(

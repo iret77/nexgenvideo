@@ -9,6 +9,9 @@ final class AnthropicRuntimeAdapter: AgentRuntimeAdapter {
     private var activeRelay: AgentRuntimeEventRelay?
     private var activeTask: Task<Void, Never>?
     private var activeTurnID: UUID?
+    private var responseByToolID: [String: AgentModelResponseEvidence] = [:]
+
+    func modelResponseEvidence(toolUseID: String) -> AgentModelResponseEvidence? { responseByToolID[toolUseID] }
 
     private(set) var descriptor: AgentRuntimeDescriptor
     private(set) var state: AgentRuntimeState = .idle
@@ -33,6 +36,7 @@ final class AnthropicRuntimeAdapter: AgentRuntimeAdapter {
         let relay = AgentRuntimeEventRelay(sessionID: request.sessionID, turnID: request.turnID)
         activeRelay = relay
         activeTurnID = request.turnID
+        responseByToolID = [:]
         state = .running(sessionID: request.sessionID, turnID: request.turnID)
         activeTask = Task { [weak self] in
             await self?.consume(request: request, session: session, relay: relay)
@@ -94,6 +98,7 @@ final class AnthropicRuntimeAdapter: AgentRuntimeAdapter {
                 var assistantContent: [AgentRuntimeContent] = []
                 var toolCalls: [(id: String, name: String, inputJSON: String)] = []
                 var stopReason: AgentRuntimeStopReason?
+                var responseMetadata: (messageID: String, modelID: String)?
                 let wire = AnthropicReplay.wireMessages(messages, keepingServerTools: searchActive)
                 relay.yield(.providerRequest(prefixDigest: AnthropicPrefixDigest.of(
                     system: session.hostContext.systemInstructions,
@@ -110,6 +115,8 @@ final class AnthropicRuntimeAdapter: AgentRuntimeAdapter {
                 for try await event in stream {
                     try Task.checkCancellation()
                     switch event {
+                    case .responseMetadata(let messageID, let modelID):
+                        responseMetadata = (messageID, modelID)
                     case .thinkingComplete(let block):
                         assistantContent.append(.thinking(block))
                         relay.yield(.thinking(messageID: nil, block: block))
@@ -124,6 +131,11 @@ final class AnthropicRuntimeAdapter: AgentRuntimeAdapter {
                         }
                         relay.yield(.text(messageID: nil, value: value, isDelta: true))
                     case .toolUseComplete(let id, let name, let inputJSON):
+                        if let metadata = responseMetadata {
+                            responseByToolID[id] = try? AgentModelResponseEvidence(sessionID: request.sessionID,
+                                turnID: request.turnID, messageID: metadata.messageID, modelID: metadata.modelID,
+                                toolUseID: id, toolName: name, inputJSON: inputJSON)
+                        }
                         toolCalls.append((id, name, inputJSON))
                         assistantContent.append(.toolUse(id: id, name: name, inputJSON: inputJSON))
                         relay.yield(.toolCall(messageID: nil, id: id, name: name, inputJSON: inputJSON))

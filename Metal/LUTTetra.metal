@@ -11,9 +11,9 @@ static float3 fetch(coreimage::sampler lut, float n, float3 idx) {
     return lut.sample(lut.transform(float2(idx.x + 0.5, n * n - 1.0 - row + 0.5))).rgb;
 }
 
-extern "C" float4 lutTetra(coreimage::sampler img, coreimage::sampler lut, float n, float intensity) {
+extern "C" float4 lutTetra(coreimage::sampler img, coreimage::sampler lut, float n, float intensity, float3 domainMin, float3 domainMax) {
     float4 s = img.sample(img.coord());
-    float3 rgb = saturate(s.rgb);
+    float3 rgb = saturate((s.rgb - domainMin) / (domainMax - domainMin));
     float3 p = rgb * (n - 1.0);
     float3 b0 = clamp(floor(p), 0.0, n - 2.0);
     float3 f = p - b0;

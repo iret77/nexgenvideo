@@ -112,6 +112,22 @@ actor RunwayClient {
         ])
     }
 
+    func createVideoExtension(params: VideoGenerationParams) async throws -> String {
+        try await createTask(path: "video_to_video", body: Self.videoExtensionBody(params))
+    }
+
+    static func videoExtensionBody(_ params: VideoGenerationParams) throws -> [String: Any] {
+        guard let source = params.sourceVideoURL, !source.isEmpty,
+              !params.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, params.prompt.unicodeScalars.count <= 15_000,
+              case .seconds(let duration) = params.duration, (4...30).contains(duration),
+              params.resolution == nil, params.startFrameURL == nil, params.endFrameURL == nil,
+              params.referenceImageURLs.isEmpty, params.referenceVideoURLs.isEmpty, params.referenceAudioURLs.isEmpty else {
+            throw GenerationBackendError.transport("Runway extension requires its source video, compiled direction and 4–30 seconds; separate frames, references and output resolution are unavailable on this route.")
+        }
+        return ["model": "seedance2_5", "mode": "extend", "promptVideo": source,
+                "promptText": params.prompt, "duration": duration, "audio": params.generateAudio]
+    }
+
     /// POST /v1/text_to_image.
     func createTextToImage(model: RunwayModel, params: ImageGenerationParams) async throws -> String {
         try await createTask(
@@ -258,7 +274,7 @@ actor RunwayClient {
         request.httpMethod = "POST"
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         request.httpBody = body
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
             let detail = String(data: data.prefix(400), encoding: .utf8) ?? ""

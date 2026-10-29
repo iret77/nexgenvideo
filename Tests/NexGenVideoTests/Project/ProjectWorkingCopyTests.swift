@@ -100,6 +100,38 @@ struct ProjectWorkingCopyTests {
         #expect(second.recoveredUnsaved == true)
     }
 
+    @Test("a Core binding cannot silently opt an existing Recovery copy into production")
+    func refusesUnconfirmedCoreRecovery() throws {
+        let pkg = try tempPackage()
+        try ProjectPluginSettings.setActivePlugin(nil, projectURL: pkg)
+        let key = uniqueKey()
+        defer { ProjectWorkingCopy.discard(key: key); try? FileManager.default.removeItem(at: pkg) }
+        let opened = try ProjectWorkingCopy.open(key: key, packageURL: pkg)
+        try ProjectPluginSettings.setProductionContract(.current, projectURL: opened.home)
+        try ProjectWorkingCopy.markDirty(key: key)
+        #expect(throws: ProjectWorkingCopy.PersistError.self) {
+            try ProjectWorkingCopy.open(key: key, packageURL: pkg)
+        }
+        #expect(ProjectPluginSettings.productionContractResolution(projectURL: pkg) == .absent)
+        #expect(ProjectPluginSettings.productionContractResolution(projectURL: opened.home) == .bound(.current))
+    }
+
+    @Test("matching Core contracts recover later unsaved production work")
+    func recoversMatchingCoreContract() throws {
+        let pkg = try tempPackage()
+        try ProjectPluginSettings.setActivePlugin(nil, projectURL: pkg)
+        try ProjectPluginSettings.setProductionContract(.current, projectURL: pkg)
+        let key = uniqueKey()
+        defer { ProjectWorkingCopy.discard(key: key); try? FileManager.default.removeItem(at: pkg) }
+        let opened = try ProjectWorkingCopy.open(key: key, packageURL: pkg)
+        let pending = opened.home.appendingPathComponent("pipeline/unapproved-draft.txt")
+        try Data("Unsaved work".utf8).write(to: pending)
+        try ProjectWorkingCopy.markDirty(key: key)
+        let recovered = try ProjectWorkingCopy.open(key: key, packageURL: pkg)
+        #expect(recovered.recoveredUnsaved)
+        #expect(try Data(contentsOf: pending) == Data("Unsaved work".utf8))
+    }
+
     @Test("markers survive recovery, save, and package reopen")
     func markerRecoveryAndSaveRoundTrip() throws {
         let pkg = try tempPackage()
