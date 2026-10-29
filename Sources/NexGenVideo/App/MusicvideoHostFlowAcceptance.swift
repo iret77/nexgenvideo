@@ -13,6 +13,7 @@ final class MusicvideoHostFlowAcceptance {
         let savedAndReopened: Bool
         let screenshots: [String]
         let nativeGateApprovals: [MusicvideoNativeAcceptance.GateEvidence]
+        let nativeIntakeEvidence: [String]
         let interpretationSource = "supplied deterministic acceptance labels; no live LLM"
     }
 
@@ -24,6 +25,7 @@ final class MusicvideoHostFlowAcceptance {
     private var backendPhases: [String: [String]] = [:]
     private var savedAndReopened = false
     private var screenshots: [String] = []
+    private var nativeIntakeEvidence: [String] = []
     private(set) var gateApprovals: [MusicvideoNativeAcceptance.GateEvidence] = []
     var editor: EditorViewModel { document.editorViewModel }
     var dataRoot: URL { DataRootResolver.dataRoot(of: editor.workingRoot!)! }
@@ -50,6 +52,7 @@ final class MusicvideoHostFlowAcceptance {
             extraDirs: PackCatalog.projectDirs(activePack: "musicvideo"))
         let runtime = RecordingRuntime(backend: .claudeCode)
         let document = try await VideoProject.load(from: home, agentService: makeService(runtime))
+        NSDocumentController.shared.addDocument(document)
         MusicvideoNativeAcceptance.register(editor: document.editorViewModel, runtime: runtime)
         let flow = MusicvideoHostFlowAcceptance(document: document, projectURL: home, runtime: runtime, evidenceURL: evidenceURL)
         do {
@@ -63,17 +66,22 @@ final class MusicvideoHostFlowAcceptance {
             try flow.require(flow.editor.projectState?.nextPhaseName == "project_init", "Track did not precede Project Init")
             try flow.require(WorkspaceUIAcceptance.probeState(identifier: "agent.dialog.confirm", in: flow.window) == false,
                 "Empty Track intake was actionable")
-            flow.service.dialogDraft.fileURLs = [track]
+            let intakeDriver = ProductionVisualSourcesDriver(window: flow.window, output: evidenceURL, name: "hostflow-track-lyrics")
+            try await intakeDriver.chooseFile(track, in: flow.window, trigger: "agent.dialog.choose-file")
             try await flow.click("agent.dialog.confirm")
             try await flow.waitForDialog("Lyrics", attachAs: "lyrics")
             let song = AudioProjectLayout.songFiles(dataRoot: flow.dataRoot)
             try flow.require(song.count == 1 && song[0].lastPathComponent == track.lastPathComponent
                 && (try FileDigest.sha256(of: song[0])) == (try FileDigest.sha256(of: track)),
                 "Track intake changed the source identity or its readable filename")
-            if let lyrics { flow.service.dialogDraft.fileURLs = [lyrics] }
+            if let lyrics { try await intakeDriver.chooseFile(lyrics, in: flow.window, trigger: "agent.dialog.choose-file") }
             try await flow.click("agent.dialog.confirm")
             try await flow.waitForHandoff("project_init")
             try flow.require(flow.service.pendingDialog == nil, "A creative intake appeared before analysis")
+            try intakeDriver.record("native Track and optional Lyrics intake", fields: ["trackName": track.lastPathComponent,
+                "trackSHA256": try FileDigest.sha256(of: track), "lyricsSupplied": lyrics != nil,
+                "nextPhase": "project_init", "creativeIntakeAbsent": true])
+            try flow.recordIntake(intakeDriver)
             try await flow.approve("project_init")
             try await flow.waitForHandoff("analysis")
             try flow.require(flow.editor.productionSelectedPhase == "analysis", "Init approval left the old phase selected")
@@ -103,7 +111,9 @@ final class MusicvideoHostFlowAcceptance {
         try capture("analysis-measured")
     }
 
-    func finishPlanningIntake(sectionLabels: [String], finalResolution: VideoResolution = .res1080p) async throws {
+    func finishPlanningIntake(sectionLabels: [String], finalResolution: VideoResolution = .res1080p,
+                              conceptType: ConceptType = .narrative,
+                              beforeBriefApproval: (@MainActor (EditorViewModel) async throws -> Void)? = nil) async throws {
         guard let url = AudioProjectLayout.expectedAnalysisArtifactURL(dataRoot: dataRoot),
               let object = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any],
               let sections = object["sections"] as? [[String: Any]], sections.count == sectionLabels.count else {
@@ -131,8 +141,17 @@ final class MusicvideoHostFlowAcceptance {
         try FullflowAcceptanceFixture.writeReference(to: reference)
         try require(WorkspaceUIAcceptance.probeState(identifier: "agent.dialog.confirm", in: window) == false,
             "An empty prepared location was actionable")
-        service.dialogDraft.fileURLs = [reference]
-        service.dialogDraft.direction = "Stage"
+        let intakeDriver = ProductionVisualSourcesDriver(window: window, output: evidenceURL, name: "hostflow-repeatable-intake")
+        try await intakeDriver.chooseFile(nil, in: window, trigger: "agent.dialog.choose-file")
+        try require(service.dialogDraft.fileURLs.isEmpty && service.dialogDraft.direction.isEmpty,
+            "Canceling the picker changed the prepared location")
+        try await intakeDriver.chooseFile(reference, in: window, trigger: "agent.dialog.choose-file")
+        try require(WorkspaceUIAcceptance.probeState(identifier: "agent.dialog.confirm", in: window) == false
+            && WorkspaceUIAcceptance.probeState(identifier: "agent.dialog.complete", in: window) == false,
+            "A reference without an identity name can bypass the repeatable intake")
+        try intakeDriver.capture("location-without-name", target: window)
+        try await intakeDriver.fill("agent.dialog.direction", value: "Stage", in: window)
+        try require(service.dialogDraft.direction == "Stage", "Native identity input did not reach the actual draft")
         try await click("agent.dialog.confirm")
         try await waitForDialog("Prepared location 2", attachAs: "location")
         try require(service.pendingDialog?.fileIntake?.completionLabel == "Done", "The completed location has no Done action")
@@ -141,8 +160,33 @@ final class MusicvideoHostFlowAcceptance {
         }
         try require(confirmed.count == 1 && confirmed[0].sha256 == (try FileDigest.sha256(of: reference)),
             "Native location intake did not confirm the exact supplied image")
-        try await click("agent.dialog.complete")
+        let completeManifest = try ConfirmedIdentityAssetStoreV1.load(dataRoot: dataRoot)
+        try JSONEncoder().encode(completeManifest).write(to: evidenceURL.appendingPathComponent("intake-before-partial.json"))
+        try await intakeDriver.fill("agent.dialog.direction", value: "Unfinished location", in: window)
+        try require(WorkspaceUIAcceptance.probeState(identifier: "agent.dialog.confirm", in: window) == false
+            && WorkspaceUIAcceptance.probeState(identifier: "agent.dialog.complete", in: window) == false,
+            "An unfinished repeated location can be attached or discarded with Done")
+        try intakeDriver.visible(["agent.dialog.confirm", "agent.dialog.complete", "agent.dialog.clear-item"], in: window)
+        try intakeDriver.capture("second-location-incomplete", target: window)
+        try await intakeDriver.click("agent.dialog.clear-item", in: window)
+        try await intakeDriver.wait("clear incomplete repeated location") {
+            self.service.dialogDraft.direction.isEmpty && self.service.dialogDraft.fileURLs.isEmpty
+                && WorkspaceUIAcceptance.probeState(identifier: "agent.dialog.complete", in: self.window) == true
+                && WorkspaceUIAcceptance.probeState(identifier: "agent.dialog.confirm", in: self.window) == false
+        }
+        try await intakeDriver.click("agent.dialog.complete", in: window)
         try await waitForDialog("Style references", attachAs: "style")
+        let afterManifest = try ConfirmedIdentityAssetStoreV1.load(dataRoot: dataRoot)
+        try require(afterManifest == completeManifest, "Clearing the second item lost or invented a confirmed identity")
+        try JSONEncoder().encode(afterManifest).write(to: evidenceURL.appendingPathComponent("intake-after-partial.json"))
+        try Data(contentsOf: reference).write(to: evidenceURL.appendingPathComponent("intake-location.png"))
+        try Data(contentsOf: ProjectLocalFile.requireHash(confirmed[0].sha256, at: confirmed[0].path, dataRoot: dataRoot))
+            .write(to: evidenceURL.appendingPathComponent("intake-confirmed-location.png"))
+        try intakeDriver.record("native incomplete repeated location", fields: ["firstName": "Stage", "nextTitle": "Prepared location 2",
+            "partialName": "Unfinished location", "sourceSHA256": confirmed[0].sha256, "confirmedID": confirmed[0].id,
+            "fileWithoutNameBlocked": true, "partialAttachBlocked": true, "partialDoneBlocked": true,
+            "clearPreservedConfirmedIdentity": true, "doneAdvancedToStyle": true])
+        try recordIntake(intakeDriver)
         try await click("agent.dialog.confirm")
         try await waitForHandoff("brief")
         if let index = gateApprovals.firstIndex(where: { $0.phase == "analysis" }), let handoff = runtime.handoffs.last {
@@ -157,9 +201,10 @@ final class MusicvideoHostFlowAcceptance {
         try await tool("record_affect", ["detected": [["tag": "meditative", "weight": 1.0]],
             "basis": "inferred", "rationale": "Supplied acceptance interpretation; no live LLM inference."])
         try await tool("write_brief", ["mission": "single_release", "target_platform": "YouTube",
-            "aspect_ratio": "16:9", "project_mode": "section", "concept_type": "narrative",
+            "aspect_ratio": "16:9", "project_mode": "section", "concept_type": conceptType.rawValue,
             "visual_medium": "live_action_realistic", "figures": "none", "lyrics_integration": "metaphorical",
             "final_resolution": finalResolution.rawValue])
+        try await beforeBriefApproval?(editor)
         try await approve("brief")
         try await waitForHandoff("production_design")
         try require(editor.productionSelectedPhase == "production_design", "Brief approval left the old phase selected")
@@ -180,6 +225,7 @@ final class MusicvideoHostFlowAcceptance {
         document.close()
         runtime = RecordingRuntime(backend: backend)
         document = try await VideoProject.load(from: projectURL, agentService: Self.makeService(runtime))
+        NSDocumentController.shared.addDocument(document)
         MusicvideoNativeAcceptance.register(editor: document.editorViewModel, runtime: runtime)
         document.makeWindowControllers()
         document.showWindows()
@@ -201,7 +247,7 @@ final class MusicvideoHostFlowAcceptance {
     func report() -> Report {
         recordBackendPhases()
         return Report(transitions: transitions, backendPhases: backendPhases, savedAndReopened: savedAndReopened,
-            screenshots: screenshots, nativeGateApprovals: gateApprovals)
+            screenshots: screenshots, nativeGateApprovals: gateApprovals, nativeIntakeEvidence: nativeIntakeEvidence)
     }
 
     func close() {
@@ -250,6 +296,14 @@ final class MusicvideoHostFlowAcceptance {
         if hidden { try require(message.hidden && message.userPresentation == nil, "An automatic handoff became a user turn") }
         transitions.append("handoff \(phase)")
         try capture(phase)
+    }
+
+    private func recordIntake(_ driver: ProductionVisualSourcesDriver) throws {
+        let name = driver.name + "-result.json"
+        try JSONSerialization.data(withJSONObject: driver.result(), options: [.prettyPrinted, .sortedKeys])
+            .write(to: evidenceURL.appendingPathComponent(name), options: .atomic)
+        nativeIntakeEvidence.append(name)
+        screenshots.append(contentsOf: driver.screenshots)
     }
 
     private func capture(_ name: String) throws {
@@ -326,14 +380,42 @@ final class MusicvideoHostFlowAcceptance {
                   let working = request.workingDirectory, let root = DataRootResolver.dataRoot(of: working) else {
                 throw Failure("The actual backend request omitted the current pack phase instructions")
             }
+            guard let binding = ProjectPackBinding(id: pack.id, version: pack.version, projectSchema: pack.projectSchema),
+                  let workflow = try PhaseContractRuntime.resolveWorkflow(dataRoot: root, expectedPack: binding, expectedProductionContract: nil) else {
+                throw Failure("The recording runtime has no exact loaded workflow identity")
+            }
             let projectState = try JSONDecoder().decode(ProjectStateData.self,
-                from: NativeCockpitReader.stateJSON(dataRoot: root, activePack: pack.id))
+                from: NativeCockpitReader.stateJSON(dataRoot: root, activePack: pack.id, workflow: workflow))
             if projectState.isComplete {
                 guard request.hostContext.pack?.currentPhase == nil, request.hostContext.phaseInstructions == nil else {
                     throw Failure("The completed workflow invented another phase or phase instructions")
                 }
                 phase = "complete"
                 instructionsSHA256 = nil
+                state = .ready(sessionID: request.sessionID)
+                return
+            }
+            if workflow.isProductionV2 {
+                guard let phase = pack.currentPhase, projectState.nextPhaseName == phase,
+                      let instructions = request.hostContext.phaseInstructions else {
+                    throw Failure("The V2 runtime request omitted its actual current phase")
+                }
+                let exact = try PhaseContractRuntime.contract(workflow: workflow).instructions(for: phase)
+                guard !exact.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, instructions.contains(exact) else {
+                    throw Failure("The V2 runtime request omitted the exact packaged phase document")
+                }
+                if ["treatment", "script", "storyboard", "shot_planning", "shotlist", "render_review", "render"].contains(phase) {
+                    let requiredKnowledge = [
+                        "Keep the original song once at timeline zero; mute provider song audio so generated clips cannot double or replace it.",
+                        "A voice has one visible mouth owner within the phrase",
+                        "Dance roles requiring the full body also preserve floor contact",
+                    ]
+                    guard requiredKnowledge.allSatisfy(instructions.contains) else {
+                        throw Failure("The V2 runtime request omitted the actual selected music-performance guidance for " + phase)
+                    }
+                }
+                self.phase = phase
+                instructionsSHA256 = FileDigest.sha256(of: Data(instructions.utf8))
                 state = .ready(sessionID: request.sessionID)
                 return
             }

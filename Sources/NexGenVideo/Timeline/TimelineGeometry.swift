@@ -163,8 +163,8 @@ struct TimelineGeometry {
         let body = ClipRenderer.clipBodyRect(in: clipRect)
         let pxPerFrame = clip.durationFrames > 0 ? clipRect.width / CGFloat(clip.durationFrames) : 0
         let kfOffset = edge == .left
-            ? min(clip.fadeInFrames, clip.durationFrames)
-            : max(0, clip.durationFrames - clip.fadeOutFrames)
+            ? clip.fadeFrames(.left)
+            : clip.durationFrames - clip.fadeFrames(.right)
         let x = ClipRenderer.fadeHandleRenderX(in: clipRect, kfOffset: kfOffset, isLeft: edge == .left, pxPerFrame: pxPerFrame)
         let y = ClipRenderer.fadeKneeY(in: body)
         let half = AppTheme.Timeline.clipVolumeKeyframeHitSize / 2

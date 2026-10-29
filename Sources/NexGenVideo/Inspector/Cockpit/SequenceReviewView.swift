@@ -311,7 +311,8 @@ private struct ReviewAcceptanceProbe: View {
     let text: String?
 
     var body: some View {
-        if WorkspaceUIAcceptance.isRequested || MusicvideoHostFlowAcceptance.isRequested {
+        if WorkspaceUIAcceptance.isRequested || MusicvideoHostFlowAcceptance.isRequested
+            || ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"] != nil {
             AppRelaunchClickProbe(identifier: identifier, acceptanceState: state ?? isEnabled, acceptanceText: text)
                 .allowsHitTesting(false)
         }

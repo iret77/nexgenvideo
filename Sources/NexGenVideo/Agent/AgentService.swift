@@ -487,6 +487,7 @@ final class AgentService {
         }
         let saved = sessions.first { $0.id == currentSessionId }?.decision
         activeIntakeDraftKey = intakeKey
+        dialogSubmissionError = nil
         dialogOrigins[dialog.id] = origin
         dialogActivities[dialog.id] = taskActivity(from: origin)
         suspendToolCalls(from: origin)
@@ -595,6 +596,17 @@ final class AgentService {
             return
         }
         guard submittingDialogID == nil, pendingDialog?.id == dialog.id else { return }
+        if dialog.purpose == .mediaOrganization {
+            guard let plan = dialog.mediaOrganization, let editor else { return }
+            do {
+                let count = try plan.apply(selected: result.selectedOptionIDs["organization"] ?? [], editor: editor)
+                dialogSubmissionError = nil
+                pendingDialog = nil
+                sendDialogResponse(dialog, result: result,
+                    agentContext: "The host applied exactly \(count) selected media changes in one undoable operation. The organization task is complete; do not apply further changes.")
+            } catch { dialogSubmissionError = error.localizedDescription }
+            return
+        }
         if dialog.purpose == .workflowIntake,
            let role = dialog.fileIntake?.attachAs,
            let conflict = intakeRoleConflict(role, urls: result.fileURLs) {
@@ -672,7 +684,7 @@ final class AgentService {
                     agentContext: imported.failureContext
                 )
             }
-        case .generationIntent:
+        case .generationIntent, .mediaOrganization:
             break
         case .workflowIntake:
             completeWorkflowIntake(
@@ -694,6 +706,11 @@ final class AgentService {
               dialog.purpose == .workflowIntake,
               dialog.fileIntake?.required != true,
               dialog.fileIntake?.completionLabel != nil else { return }
+        guard dialog.permitsCompletion(hasFiles: !dialogDraft.fileURLs.isEmpty,
+                                       direction: dialogDraft.direction, isSubmitting: false) else {
+            dialogSubmissionError = "Attach or clear the current item before continuing."
+            return
+        }
         dialogSubmissionError = nil
         completeWorkflowIntake(dialog, result: nil, didProvideMaterial: false)
     }
@@ -726,8 +743,8 @@ final class AgentService {
             }
             content = text
         } else {
-            let pasted = result.direction.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !pasted.isEmpty else {
+            let pasted = result.direction
+            guard !pasted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 sendDialogResponse(
                     dialog,
                     result: result,
@@ -744,11 +761,19 @@ final class AgentService {
         }
         let dir = dataRoot.appendingPathComponent(relDir, isDirectory: true)
         do {
-            if let key = editor.openWorkingCopyKey {
-                try ProjectWorkingCopy.markDirty(key: key)
+            if kind == "script", editor.usesProductionPlanningV2, dialog.purpose == .workflowIntake {
+                if let source = result.fileURLs.first {
+                    try PipelineStorySourceWriter.confirmImportedSource(from: source, editor: editor)
+                } else {
+                    try PipelineStorySourceWriter.confirmPastedSource(text: content, editor: editor)
+                }
+            } else {
+                if let key = editor.openWorkingCopyKey {
+                    try ProjectWorkingCopy.markDirty(key: key)
+                }
+                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                try content.write(to: dir.appendingPathComponent(filename), atomically: true, encoding: .utf8)
             }
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            try content.write(to: dir.appendingPathComponent(filename), atomically: true, encoding: .utf8)
         } catch {
             sendDialogFailure(
                 dialog,
@@ -1293,12 +1318,14 @@ final class AgentService {
             return value
         }.joined(separator: "\n\nHost result: ")
         let origin = dialogOrigins.removeValue(forKey: dialog.id) ?? .direct
+        var activity = dialogActivities.removeValue(forKey: dialog.id)
+        if dialog.purpose == .mediaOrganization { activity?.mediaOrganizationFinished = true }
         sendDialogTurn(
             text: text,
             mentions: attached,
             presentation: response.presentation,
             origin: origin,
-            taskActivity: dialogActivities.removeValue(forKey: dialog.id)
+            taskActivity: activity
         )
     }
 
@@ -1382,6 +1409,19 @@ final class AgentService {
         let phase = editor.pipelineAgentHarness.workflowIntakePhase(
             dialogID: dialog.id
         )
+        if editor.usesProductionPlanningV2, phase == "brief", dialog.fileIntake?.attachAs == "script", !didProvideMaterial {
+            do {
+                try editor.pipelineAgentHarness.validateWorkflowIntake(dialogID: dialog.id, editor: editor)
+                try PipelineStorySourceWriter.confirmGreenfield(editor: editor)
+            } catch {
+                activeIntakeDraftKey = preservedIntakeKey
+                pendingDialog = dialog
+                dialogDraft = preservedDraft
+                dialogChoiceSelections = preservedSelections
+                dialogSubmissionError = error.localizedDescription
+                return
+            }
+        }
         let reconciliation = editor.pipelineAgentHarness.resolveWorkflowIntake(
             dialogID: dialog.id,
             didProvideMaterial: didProvideMaterial,
@@ -1523,6 +1563,24 @@ final class AgentService {
         return reference
     }
 
+    func reviewModelEvidence(origin: ToolCallOrigin, toolUseID: String, arguments: [String: Any]) throws -> HostAgentReviewEvidence {
+        guard let turn = captureHostTurnReference(origin: origin),
+              let response = runtimeAdapter?.modelResponseEvidence(toolUseID: toolUseID),
+              response.sessionID == turn.chatSessionID, response.turnID == turn.logicalTurnID,
+              response.toolUseID == toolUseID,
+              !response.modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !response.messageID.isEmpty else {
+            throw ToolError("The review response has no verified model and originating host turn. Wait for its response metadata or run the review again.")
+        }
+        let input = try JSONSerialization.data(withJSONObject: arguments, options: [.sortedKeys, .withoutEscapingSlashes])
+        guard response.toolInputSHA256 == (try AgentModelResponseEvidence.inputHash(String(decoding: input, as: UTF8.self))) else {
+            throw ToolError("The review arguments differ from the model's recorded tool response.")
+        }
+        return HostAgentReviewEvidence(projectGenerationID: turn.projectGenerationID,
+            chatSessionID: turn.chatSessionID, runtimeGenerationID: turn.runtimeGenerationID,
+            logicalTurnID: turn.logicalTurnID, inputMessageID: turn.inputMessageID, response: response)
+    }
+
     private func verifiedHostTurnReference(
         _ reference: AgentHostTurnReference?,
         origin: ToolCallOrigin
@@ -1646,11 +1704,15 @@ final class AgentService {
             return
         }
         let origin = dialog.flatMap { dialogOrigins.removeValue(forKey: $0.id) } ?? .direct
-        let activity = dialog.flatMap { dialogActivities.removeValue(forKey: $0.id) }
+        var activity = dialog.flatMap { dialogActivities.removeValue(forKey: $0.id) }
+        if dialog?.purpose == .mediaOrganization { activity?.mediaOrganizationFinished = true }
+        dialogSubmissionError = nil
         pendingDialog = nil
-        if let dialog, dialog.purpose == .chatClarification {
+        if let dialog, [.chatClarification, .mediaOrganization].contains(dialog.purpose) {
             sendDialogTurn(
-                text: "The user dismissed the \u{201C}\(dialog.title)\u{201D} dialog without answering. Ask in prose or move on.",
+                text: dialog.purpose == .mediaOrganization
+                    ? "The user dismissed the media organization proposal. Do not propose it again unless the user asks."
+                    : "The user dismissed the \u{201C}\(dialog.title)\u{201D} dialog without answering. Ask in prose or move on.",
                 mentions: [],
                 hidden: true,
                 origin: origin,
@@ -2590,6 +2652,17 @@ final class AgentService {
             + "Do not run more tools from it; wait for the host follow-up or start a fresh MCP session."
     }
 
+    func mediaOrganizationRefusal(tool: ToolName, origin: ToolCallOrigin) -> String? {
+        guard let activity = taskActivity(from: origin), activity.mediaOrganizationScope != nil else { return nil }
+        let readOnly: Set<ToolName> = [.getMedia, .listFolders, .inspectMedia, .getTranscript, .searchMedia, .getTimeline, .inspectTimeline]
+        if readOnly.contains(tool) || (tool == .proposeMediaOrganization && !activity.mediaOrganizationFinished) { return nil }
+        return "This organization task may inspect media and, before its decision, propose_media_organization only. Native approval applies selected changes; direct mutation is unavailable. Do not repeat a completed or dismissed proposal."
+    }
+
+    func mediaOrganizationScope(from origin: ToolCallOrigin) -> MediaOrganizationScope? {
+        taskActivity(from: origin)?.mediaOrganizationScope
+    }
+
     private func taskActivity(from origin: ToolCallOrigin) -> AgentTurnActivity? {
         guard origin.chatSessionID == currentSessionId, origin.chatSessionID != nil else { return nil }
         return currentTaskActivity
@@ -2639,6 +2712,15 @@ final class AgentService {
         _ approval: GateApproval,
         origin: ToolCallOrigin = .direct
     ) throws -> GateApprovalRequest {
+        if let root = approval.dataRoot, let editor {
+            guard let home = editor.workingRoot, DataRootResolver.dataRoot(of: home) == root,
+                  editor.declaredPluginName == approval.declaredPack,
+                  editor.declaredPluginBinding == approval.declaredBinding,
+                  editor.declaredProductionContract == approval.declaredProductionContract else {
+                throw ToolError("The approval belongs to a different project or production workflow. Request it again from the current project.",
+                                kind: .reviewChangedSource)
+            }
+        }
         var scoped = approval.scoped(to: origin.chatSessionID)
         scoped.priorApproval = GateApproval.priorApproval(
             phase: approval.phase,
@@ -3490,7 +3572,8 @@ final class AgentService {
             prompt = function.prompt
         }
         return send(text: Self.composedFunctionMessage(prompt: prompt, note: note),
-            mentions: mentions, hidden: true, presentation: presentation, taskContext: function.originContext)
+            mentions: mentions, hidden: true, presentation: presentation, taskContext: function.originContext,
+            taskActivity: function.mediaOrganizationScope.map { .init(title: function.title, phase: function.phase, mediaOrganizationScope: $0) })
     }
 
     var currentTaskPhase: String? {
@@ -3638,30 +3721,58 @@ final class AgentService {
         )
     }
 
-    private func runtimeHostContext() throws -> AgentRuntimeHostContext {
+    private func runtimeHostContext() async throws -> AgentRuntimeHostContext {
         if let runtimeHostContextOverride {
             return try runtimeHostContextOverride()
         }
         let language = AgentInterfaceLanguage.current
         guard let editor,
               let workingRoot = editor.workingRoot else {
-            if editor?.declaredPluginName != nil {
+            if editor?.declaredPluginName != nil || editor?.declaredProductionContract != nil {
                 throw ToolError("The format-pack project context is unavailable. Reopen the project.")
             }
             return .hostOwned(interfaceLanguage: language, tools: toolExecutor == nil ? [] : ToolDefinitions.all)
         }
         let resolved: PipelineAgentHarness.RuntimeContext
         if let dataRoot = DataRootResolver.dataRoot(of: workingRoot) {
+            let timeline = editor.timeline
+            let resolver = editor.mediaResolver.snapshot()
+            let prepared: PipelineProductionRuntimeContext.Prepared?
+            if editor.declaredProductionContract != nil
+                || editor.declaredPluginBinding?.projectSchema == HostWorkflowKey.musicvideoV2Schema {
+                let sessionID = currentSessionId
+                let context: PipelineProductionAssemblyWriter.Context
+                do { context = try PipelineProductionAssemblyWriter.Context(editor: editor) }
+                catch { throw ToolError("The production project context is unavailable. Reopen the project before continuing.") }
+                let preparation = Task.detached(priority: .userInitiated) {
+                    try PipelineProductionRuntimeContext.prepare(dataRoot: dataRoot,
+                        declaration: context.declaration, timeline: timeline, resolver: resolver)
+                }
+                prepared = try await withTaskCancellationHandler {
+                    try await preparation.value
+                } onCancel: { preparation.cancel() }
+                try Task.checkCancellation()
+                guard currentSessionId == sessionID, self.editor === editor else {
+                    throw ToolError("The agent session changed while its production context was being prepared.")
+                }
+                do { try context.requireCurrent(editor: editor) }
+                catch { throw ToolError("The project or timeline changed while its production context was being prepared. Continue from the current phase.") }
+            } else { prepared = nil }
             resolved = try editor.pipelineAgentHarness.runtimeContext(
                 dataRoot: dataRoot,
                 declaredPack: editor.declaredPluginName,
-                declaredBinding: editor.declaredPluginBinding
+                declaredBinding: editor.declaredPluginBinding,
+                declaredProductionContract: editor.declaredProductionContract,
+                timeline: timeline,
+                resolver: resolver,
+                preparedProduction: prepared
             )
         } else {
             let packID = try ProjectPackGate.requireLiveMutation(
                 projectURL: workingRoot,
                 declaredPack: editor.declaredPluginName,
-                declaredBinding: editor.declaredPluginBinding
+                declaredBinding: editor.declaredPluginBinding,
+                declaredProductionContract: editor.declaredProductionContract
             )
             resolved = .init(packID: packID, currentPhase: nil, instructions: nil)
         }
@@ -3976,8 +4087,9 @@ final class AgentService {
         guard let sessionID, currentSessionId == sessionID else { return }
         let hostContext: AgentRuntimeHostContext
         do {
-            hostContext = try runtimeHostContext()
+            hostContext = try await runtimeHostContext()
         } catch {
+            guard !Task.isCancelled, currentSessionId == sessionID else { return }
             streamError = .upstream(error.localizedDescription)
             return
         }
@@ -4264,11 +4376,15 @@ final class AgentService {
     private func restoreDecision(for id: UUID) {
         guard pendingDialog == nil,
               let saved = sessions.first(where: { $0.id == id })?.decision,
-              saved.belongs(to: id), saved.dialog.purpose == .chatClarification else { return }
+              saved.belongs(to: id), [.chatClarification, .mediaOrganization].contains(saved.dialog.purpose) else { return }
         let wasRestoring = isRestoringComposer
         isRestoringComposer = true
         defer { isRestoringComposer = wasRestoring }
         dialogOrigins[saved.dialog.id] = saved.origin
+        if let plan = saved.dialog.mediaOrganization {
+            dialogActivities[saved.dialog.id] = .init(title: "Organize media", phase: nil, mediaOrganizationScope: plan.scope)
+        }
+        dialogSubmissionError = nil
         suspendToolCalls(from: saved.origin)
         pendingDialog = saved.dialog
         dialogDraft = saved.draft

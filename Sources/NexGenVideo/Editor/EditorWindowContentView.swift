@@ -16,6 +16,22 @@ struct EditorWindowContentView: View {
             if let broken = editor.packWiringBroken {
                 PackWiringBanner(result: broken)
             }
+            if let problem = editor.unresolvedEffectResourceProblems.first {
+                HStack(spacing: AppTheme.Spacing.md) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(AppTheme.Status.warningColor)
+                    Text("LUT unavailable: \(problem.name). Relink or remove it before saving or exporting.")
+                        .interfaceFont(size: AppTheme.Typography.ui)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .reviewAcceptanceProbe("editor.lut.offline", text: problem.name)
+                    Spacer(minLength: AppTheme.Spacing.sm)
+                    Button("Review LUT") { editor.inspectEffectResourceProblem(problem) }
+                        .buttonStyle(.capsule(.secondary))
+                        .reviewAcceptanceProbe("editor.lut.review")
+                }
+                .padding(AppTheme.Spacing.md)
+                .background(AppTheme.Background.raisedColor)
+            }
             GeometryReader { geometry in
                 EditorView()
                     .frame(width: geometry.size.width, height: geometry.size.height)

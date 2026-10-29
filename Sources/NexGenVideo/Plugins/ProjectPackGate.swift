@@ -10,6 +10,7 @@ enum ProjectPackGate {
     struct MutationDeclaration: Equatable, Sendable {
         let packName: String?
         let binding: ProjectPackBinding?
+        var productionContract: HostProductionContractBinding? = nil
     }
     enum Requirement: Equatable {
         case satisfied
@@ -34,9 +35,17 @@ enum ProjectPackGate {
     nonisolated static func captureMutationDeclaration(
         projectURL: URL
     ) throws -> MutationDeclaration {
+        let production: HostProductionContractBinding?
+        switch ProjectPluginSettings.productionContractResolution(projectURL: projectURL) {
+        case .absent: production = nil
+        case .bound(let binding): production = binding
+        case .unreadable: throw ProjectFormatSettingsUnavailableError()
+        }
+        try ProjectPluginSettings.requireProductionContract(projectURL: projectURL, declared: production,
+            declaredPack: ProjectPluginSettings.activePlugin(projectURL: projectURL))
         switch ProjectPluginSettings.bindingResolution(projectURL: projectURL) {
         case .absent:
-            return MutationDeclaration(packName: nil, binding: nil)
+            return MutationDeclaration(packName: nil, binding: nil, productionContract: production)
         case .bound(let binding):
             return MutationDeclaration(packName: binding.id, binding: binding)
         case .legacy(let id):
@@ -54,8 +63,11 @@ enum ProjectPackGate {
     nonisolated static func requireMutation(
         projectURL: URL,
         declaredPack: String?,
-        declaredBinding: ProjectPackBinding?
+        declaredBinding: ProjectPackBinding?,
+        declaredProductionContract: HostProductionContractBinding? = nil
     ) throws -> String? {
+        try ProjectPluginSettings.requireProductionContract(projectURL: projectURL,
+            declared: declaredProductionContract, declaredPack: declaredPack)
         let expectedResolution: ProjectPluginSettings.BindingResolution
         if let declaredPack {
             guard let declaredBinding, declaredBinding.id == declaredPack else {
@@ -104,9 +116,20 @@ enum ProjectPackGate {
                     + "Reopen the project."
             )
         }
-        let contract = try PhaseContractRuntime.contract(
-            activePack: declaredBinding.id
-        )
+        let contract: ResolvedPhaseContract?
+        if let root = DataRootResolver.dataRoot(of: projectURL),
+           let workflow = try PhaseContractRuntime.resolveWorkflow(dataRoot: root,
+                expectedPack: declaredBinding, expectedProductionContract: declaredProductionContract) {
+            contract = try PhaseContractRuntime.contract(workflow: workflow)
+        } else if declaredBinding.id == "musicvideo", declaredBinding.version == HostWorkflowKey.musicvideoV2Version {
+            guard let loaded = PhaseContractStore.contract(packID: declaredBinding.id) else {
+                throw GateBlocked("The selected production workflow has not loaded. Reopen the project.")
+            }
+            _ = try HostWorkflowKey.resolve(binding: declaredBinding, contract: loaded)
+            contract = loaded
+        } else {
+            contract = try PhaseContractRuntime.contract(activePack: declaredBinding.id)
+        }
         guard contract?.packID == declaredBinding.id,
               contract?.packVersion == declaredBinding.version else {
             throw GateBlocked(
@@ -127,12 +150,14 @@ enum ProjectPackGate {
     static func requireLiveMutation(
         projectURL: URL,
         declaredPack: String?,
-        declaredBinding: ProjectPackBinding?
+        declaredBinding: ProjectPackBinding?,
+        declaredProductionContract: HostProductionContractBinding? = nil
     ) throws -> String? {
         let resolved = try requireMutation(
             projectURL: projectURL,
             declaredPack: declaredPack,
-            declaredBinding: declaredBinding
+            declaredBinding: declaredBinding,
+            declaredProductionContract: declaredProductionContract
         )
         if let declaredBinding,
            (

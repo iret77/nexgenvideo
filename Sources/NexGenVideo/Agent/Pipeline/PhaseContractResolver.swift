@@ -19,6 +19,21 @@ struct ResolvedPhaseContract: Sendable {
     let hardSteps: HardStepManifest
     let resourceRoot: URL
     let phases: [Phase]
+    let projectSchema: String?
+
+    init(packID: String, packVersion: String, engineContract: Int, historicalCompatibility: Bool,
+         manifest: PackPipelineManifest, hardSteps: HardStepManifest, resourceRoot: URL,
+         phases: [Phase], projectSchema: String? = nil) {
+        self.packID = packID
+        self.packVersion = packVersion
+        self.engineContract = engineContract
+        self.historicalCompatibility = historicalCompatibility
+        self.manifest = manifest
+        self.hardSteps = hardSteps
+        self.resourceRoot = resourceRoot
+        self.phases = phases
+        self.projectSchema = projectSchema
+    }
 
     var order: [String] { phases.map(\.declaration.id) }
 
@@ -183,12 +198,16 @@ struct PhaseContractHostRegistry: Sendable {
             "host.brief": "brief",
             "host.production_design": "production_design",
             "host.treatment": "treatment",
+            "host.script": "script",
             "host.storyboard": "storyboard",
+            "host.storyboard_bundle": "storyboard",
+            "host.shot_planning_draft": "shot_planning",
             "host.bible": "bible",
             "host.shotlist": "shotlist",
             "host.sanity_report": "sanity",
             "host.frames_manifest": "frames",
             "host.render_manifest": "render",
+            "host.render_review": "render_review",
         ],
         writerSelectors: [
             "host.project_init_intake": .init(
@@ -215,6 +234,10 @@ struct PhaseContractHostRegistry: Sendable {
                 expectedPhase: "storyboard",
                 requiredTools: [.writeStoryboard]
             ),
+            "host.script_writer": .init(expectedPhase: "script", requiredTools: [.writeScript]),
+            "host.storyboard_bundle_writer": .init(expectedPhase: "storyboard", requiredTools: [.writeStoryboardBundle]),
+            "host.shot_planning_writer": .init(expectedPhase: "shot_planning", requiredTools: [.writeShotPlanningDraft]),
+            "host.render_review_writer": .init(expectedPhase: "render_review", requiredTools: [.writeRenderReview]),
             "host.bible_writer": .init(
                 expectedPhase: "bible",
                 requiredTools: [.writeBible]
@@ -256,6 +279,7 @@ enum PhaseContractResolver {
         hardSteps: HardStepManifest,
         registry: EngineRegistry,
         historicalCompatibility: Bool = false,
+        projectSchema: String? = nil,
         host: PhaseContractHostRegistry = .live
     ) throws -> ResolvedPhaseContract {
         try validateStructure(
@@ -384,7 +408,8 @@ enum PhaseContractResolver {
             manifest: manifest,
             hardSteps: hardSteps,
             resourceRoot: resourceRoot,
-            phases: resolvedPhases
+            phases: resolvedPhases,
+            projectSchema: projectSchema
         )
     }
 
@@ -1261,6 +1286,9 @@ enum PhaseContractRuntime {
             PhaseContractStore.remove(packID: activePack)
             throw PhaseContractError.unavailable(activePack)
         }
+        guard activePack != "musicvideo" || pack.version != HostWorkflowKey.musicvideoV2Version else {
+            throw PhaseContractError.registryMismatch("Music Video production requires its exact trusted project workflow")
+        }
         if let loaded = PhaseContractStore.contract(packID: activePack),
            loaded.packVersion == pack.version,
            FileManager.default.fileExists(atPath: loaded.resourceRoot.path) {
@@ -1344,6 +1372,11 @@ enum PhaseContractRuntime {
         registry: EngineRegistry
     ) throws {
         guard resolved.packID == "musicvideo" else { return }
+        if resolved.manifest.contractID == HostWorkflowKey.musicvideoV2Contract
+            || resolved.packVersion == HostWorkflowKey.musicvideoV2Version {
+            try ProductionWorkflowV2.validate(resolved)
+            return
+        }
         let historicalKey = HistoricalPhaseContractCompatibility.Key(
             id: resolved.packID,
             version: resolved.packVersion,

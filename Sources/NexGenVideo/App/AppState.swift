@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import NexGenEngine
 
 struct ProjectOpenOptions {
     var startTutorial = false
@@ -189,6 +190,7 @@ final class AppState {
         guard let project = activeProject,
               let projectURL = project.fileURL,
               let workingRoot = project.editorViewModel.workingRoot else { return }
+        guard productionUpgradeIsIdle(project) else { return }
         guard case .bound(let source) = ProjectPluginSettings.bindingResolution(
             projectURL: workingRoot
         ) else {
@@ -250,17 +252,28 @@ final class AppState {
             )
             return
         }
+        let lease: ProductionUpgradeLease?
+        do { lease = try acquireProductionUpgradeLease(projectURL: projectURL) }
+        catch { NSAlert(error: error).runModal(); return }
+        defer { releaseProductionUpgradeLease(lease) }
+        let reset: ProductionWorkflowRecoveryMigration.Intent?
+        do { reset = try productionResetPreview(projectURL: projectURL, source: .pack(source), target: target) }
+        catch is CancellationError { return }
+        catch { NSAlert(error: error).runModal(); return }
         guard confirm(
             message: "Upgrade this project to \(source.id) \(target.version)",
             informative: "NexGenVideo will restart, upgrade a Recovery copy, and keep "
-                + "the saved project untouched until you save.",
+                + "the saved project untouched until you save." + (reset.map { "\n\n" + $0.explanation } ?? ""),
             action: "Upgrade and Restart"
         ) else { return }
         do {
+            try requireProductionUpgradeLease(lease)
             let request = try ProjectPackMigration.prepareSchedule(
                 projectURL: projectURL,
                 source: source,
-                target: target
+                target: target,
+                productionReset: reset,
+                sourceRoot: productionUpgradeSourceRoot(projectURL)
             )
             AppRelaunch.now {
                 ProjectPackMigration.commit(request)
@@ -269,6 +282,106 @@ final class AppState {
         } catch {
             NSAlert(error: error).runModal()
         }
+    }
+
+    func enrollActiveProjectInProduction(expectedEditor: EditorViewModel? = nil) {
+        guard let project = activeProject,
+              expectedEditor == nil || expectedEditor === project.editorViewModel else { return }
+        Task { @MainActor in
+            guard let projectURL = project.fileURL, let root = project.editorViewModel.workingRoot,
+                  let key = project.editorViewModel.openWorkingCopyKey, productionUpgradeIsIdle(project) else { return }
+            let editor = project.editorViewModel
+            let phaseRoot = DataRootResolver.dataRoot(of: root) ?? root
+            guard let lease = editor.pipelinePhaseRunCoordinator.beginMutation(projectRoot: phaseRoot,
+                label: "Production workflow upgrade") else { return }
+            defer { editor.pipelinePhaseRunCoordinator.endMutation(projectRoot: phaseRoot, id: lease) }
+            do {
+                try project.checkpointForProductionUpgrade()
+                let intent = try ProductionWorkflowRecoveryMigration.preview(projectURL: projectURL, sourceRoot: root,
+                                                                             source: .core, target: .core)
+                guard confirm(message: "Start a new production workflow", informative: intent.explanation,
+                              action: "Start Production") else { return }
+                guard editor.workingRoot == root, editor.openWorkingCopyKey == key,
+                      project.fileURL == projectURL, productionUpgradeIsIdle(project, ownedMutation: lease),
+                      editor.pipelinePhaseRunCoordinator.holdsMutation(projectRoot: phaseRoot, id: lease) else { return }
+                try ProductionWorkflowRecoveryMigration.requireSourceCurrent(intent, root: root)
+                try ProjectPackMigration.migrateCoreWorkingCopy(projectURL: projectURL, workingCopyKey: key, intent: intent)
+                try ProjectWorkingCopy.markDirty(key: key)
+                editor.onPipelineChanged?()
+                try await editor.reloadProductionWorkflowDeclaration(ownedMutation: lease)
+            } catch is CancellationError {
+            } catch { NSAlert(error: error).runModal() }
+        }
+    }
+
+    private func productionUpgradeIsIdle(_ project: VideoProject, ownedMutation: UUID? = nil) -> Bool {
+        let editor = project.editorViewModel
+        guard !editor.agentService.isStreaming, !editor.agentService.isComposerBlocked,
+              editor.agentService.pendingFunction == nil, editor.generationBatchCoordinator.pending == nil else {
+            notify(message: "Finish the current agent action first", informative: "Resolve the pending dialog or approval before changing the production workflow.")
+            return false
+        }
+        let root = editor.workingRoot.flatMap { DataRootResolver.dataRoot(of: $0) } ?? editor.workingRoot
+        if let root, editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: root) != nil,
+           ownedMutation.map({ editor.pipelinePhaseRunCoordinator.holdsMutation(projectRoot: root, id: $0) }) != true {
+            notify(message: "Finish the current production job first", informative: "The workflow cannot change while its phase is running.")
+            return false
+        }
+        if let key = editor.openWorkingCopyKey, ExportQueue.shared.jobs(ownerKey: key).contains(where: { !$0.status.isTerminal }) {
+            notify(message: "Finish the current export first", informative: "The workflow cannot change while delivery is running.")
+            return false
+        }
+        return true
+    }
+
+    private func productionUpgradeSourceRoot(_ projectURL: URL) throws -> URL {
+        if let project = productionUpgradeProject(projectURL),
+           let root = project.editorViewModel.workingRoot { return root }
+        return try ProjectWorkingCopy.recoverableDirtyHome(for: projectURL) ?? projectURL
+    }
+
+    private func productionUpgradeProject(_ projectURL: URL) -> VideoProject? {
+        let documents = NSDocumentController.shared.documents.compactMap { $0 as? VideoProject }
+        return documents.first { $0.fileURL?.standardizedFileURL == projectURL.standardizedFileURL }
+            ?? activeProject.flatMap { $0.fileURL?.standardizedFileURL == projectURL.standardizedFileURL ? $0 : nil }
+    }
+
+    private struct ProductionUpgradeLease {
+        let project: VideoProject
+        let editor: EditorViewModel
+        let root: URL
+        let id: UUID
+    }
+
+    private func acquireProductionUpgradeLease(projectURL: URL) throws -> ProductionUpgradeLease? {
+        guard let project = productionUpgradeProject(projectURL), let home = project.editorViewModel.workingRoot else { return nil }
+        guard productionUpgradeIsIdle(project) else { throw GateBlocked("Finish the current project action before upgrading its workflow.") }
+        let root = DataRootResolver.dataRoot(of: home) ?? home
+        guard let id = project.editorViewModel.pipelinePhaseRunCoordinator.beginMutation(projectRoot: root, label: "Production workflow upgrade") else {
+            throw GateBlocked("The project is already changing. Wait for that operation to finish.")
+        }
+        return ProductionUpgradeLease(project: project, editor: project.editorViewModel, root: root, id: id)
+    }
+
+    private func requireProductionUpgradeLease(_ lease: ProductionUpgradeLease?) throws {
+        guard let lease else { return }
+        guard lease.editor.pipelinePhaseRunCoordinator.holdsMutation(projectRoot: lease.root, id: lease.id),
+              productionUpgradeIsIdle(lease.project, ownedMutation: lease.id) else {
+            throw GateBlocked("The project action changed while the upgrade review was open. Review it again.")
+        }
+    }
+
+    private func releaseProductionUpgradeLease(_ lease: ProductionUpgradeLease?) {
+        if let lease { lease.editor.pipelinePhaseRunCoordinator.endMutation(projectRoot: lease.root, id: lease.id) }
+    }
+
+    private func productionResetPreview(projectURL: URL, source: ProductionWorkflowRecoveryMigration.Source,
+                                        target: ProjectPackBinding) throws -> ProductionWorkflowRecoveryMigration.Intent? {
+        guard ProductionWorkflowRecoveryMigration.isProductionTarget(target) else { return nil }
+        _ = try ProjectIdentity.key(for: projectURL)
+        try productionUpgradeProject(projectURL)?.checkpointForProductionUpgrade()
+        return try ProductionWorkflowRecoveryMigration.preview(projectURL: projectURL,
+            sourceRoot: productionUpgradeSourceRoot(projectURL), source: source, target: .pack(target))
     }
 
     func revealGeneratedAssetFromNotification(assetId: String?, projectURL: URL?) {
@@ -529,16 +642,28 @@ final class AppState {
             )
 
         case .legacyMigration(let target):
+            let lease: ProductionUpgradeLease?
+            do { lease = try acquireProductionUpgradeLease(projectURL: projectURL) }
+            catch { NSAlert(error: error).runModal(); return false }
+            defer { releaseProductionUpgradeLease(lease) }
+            let reset: ProductionWorkflowRecoveryMigration.Intent?
+            do { reset = try productionResetPreview(projectURL: projectURL, source: .legacyPack(target.id), target: target) }
+            catch is CancellationError { return false }
+            catch { NSAlert(error: error).runModal(); return false }
             guard confirm(
                 message: "Upgrade this legacy \(target.id) project",
                 informative: "NexGenVideo will migrate a Recovery copy to "
-                    + "\(target.projectSchema). The saved project stays untouched until Save.",
+                    + "\(target.projectSchema). The saved project stays untouched until Save."
+                    + (reset.map { "\n\n" + $0.explanation } ?? ""),
                 action: "Upgrade"
             ) else { return false }
             do {
+                try requireProductionUpgradeLease(lease)
                 try ProjectPackMigration.scheduleLegacy(
                     projectURL: projectURL,
-                    target: target
+                    target: target,
+                    productionReset: reset,
+                    sourceRoot: productionUpgradeSourceRoot(projectURL)
                 )
                 return true
             } catch {
@@ -586,10 +711,10 @@ final class AppState {
                 return false
             }
             guard confirm(
-                message: "Upgrade this project to the current “\(id)” format pack",
-                informative: "\(reason) NexGenVideo will install the compatible pack and upgrade "
-                    + "a Recovery copy. The saved project stays untouched until Save.",
-                action: "Upgrade Project") else { return false }
+                message: "Install a compatible “\(id)” format pack",
+                informative: "\(reason) NexGenVideo will install the compatible pack. "
+                    + "A production workflow change requires a separate review of its approval reset.",
+                action: "Install") else { return false }
             return await installPack(
                 id: id,
                 version: nil,
@@ -616,6 +741,14 @@ final class AppState {
         let active = PluginLoader.liveBinding(id: source.id)
         if ProjectIdentity.existingKey(for: projectURL) != nil,
            let offer = ProjectPackMigration.liveUpgradeOffer(source: source) {
+            let lease: ProductionUpgradeLease?
+            do { lease = try acquireProductionUpgradeLease(projectURL: projectURL) }
+            catch { NSAlert(error: error).runModal(); return false }
+            defer { releaseProductionUpgradeLease(lease) }
+            let reset: ProductionWorkflowRecoveryMigration.Intent?
+            do { reset = try productionResetPreview(projectURL: projectURL, source: .pack(source), target: offer.target) }
+            catch is CancellationError { return false }
+            catch { NSAlert(error: error).runModal(); return false }
             let projectName = Self.projectName(projectURL)
             let packName = Self.packDisplayName(offer.target)
             let alert = NSAlert()
@@ -625,6 +758,7 @@ final class AppState {
                 "“\(projectName)” uses \(packName) \(source.version). "
                     + "NexGenVideo can update a protected copy and open it with "
                     + "\(offer.target.version). The saved project remains unchanged until you save."
+                    + (reset.map { "\n\n" + $0.explanation } ?? "")
             )
             alert.addButton(withTitle: "Update and Open")
             alert.addButton(withTitle: "Open with \(source.version)")
@@ -632,11 +766,14 @@ final class AppState {
             switch alert.runModal() {
             case .alertFirstButtonReturn:
                 do {
+                    try requireProductionUpgradeLease(lease)
                     ProjectPackMigration.commit(
                         try ProjectPackMigration.prepareSchedule(
                             projectURL: projectURL,
                             source: source,
-                            target: offer.target
+                            target: offer.target,
+                            productionReset: reset,
+                            sourceRoot: productionUpgradeSourceRoot(projectURL)
                         )
                     )
                     return true
@@ -902,11 +1039,24 @@ final class AppState {
                 )
                 return false
             }
+            let lease: ProductionUpgradeLease?
+            do { lease = try acquireProductionUpgradeLease(projectURL: projectURL) }
+            catch { NSAlert(error: error).runModal(); return false }
+            defer { releaseProductionUpgradeLease(lease) }
+            let reset: ProductionWorkflowRecoveryMigration.Intent?
+            do { reset = try productionResetPreview(projectURL: projectURL, source: .pack(source), target: target) }
+            catch is CancellationError { return false }
+            catch { NSAlert(error: error).runModal(); return false }
+            if let reset, !confirm(message: "Upgrade this production workflow", informative: reset.explanation,
+                                   action: "Upgrade Project") { return false }
             do {
+                try requireProductionUpgradeLease(lease)
                 ProjectPackMigration.commit(try ProjectPackMigration.prepareSchedule(
                     projectURL: projectURL,
                     source: source,
-                    target: target
+                    target: target,
+                    productionReset: reset,
+                    sourceRoot: productionUpgradeSourceRoot(projectURL)
                 ))
             } catch {
                 NSAlert(error: error).runModal()

@@ -6,7 +6,7 @@ import Foundation
 actor TranscriptCache {
     static let shared = TranscriptCache()
 
-    private var memory: [String: TranscriptionResult] = [:]
+    private var memory: [String: (data: Data, result: TranscriptionResult)] = [:]
     private static let memoryMax = 4
 
     func transcript(for url: URL, isVideo: Bool, range: ClosedRange<Double>?) async throws -> TranscriptionResult {
@@ -22,7 +22,13 @@ actor TranscriptCache {
         let full = isVideo
             ? try await Transcription.transcribeVideoAudio(videoURL: url)
             : try await Transcription.transcribe(fileURL: url)
-        if let key { store(full, key: key) }
+        guard Self.valid(full) else { throw TranscriptionError.decodeFailed }
+        if let key {
+            guard Self.key(for: url) == key else {
+                throw TranscriptionError.analysisFailed("The source changed during transcription. Retry the current file.")
+            }
+            try store(full, key: key)
+        }
         return full
     }
 
@@ -39,24 +45,29 @@ actor TranscriptCache {
     }
 
     private func cached(_ key: String) -> TranscriptionResult? {
-        if let r = memory[key] { return r }
-        guard let data = try? Data(contentsOf: Self.diskURL(key)),
-              let r = try? JSONDecoder().decode(TranscriptionResult.self, from: data) else { return nil }
-        remember(r, key: key)
-        return r
-    }
-
-    private func store(_ result: TranscriptionResult, key: String) {
-        remember(result, key: key)
-        try? FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
-        if let data = try? JSONEncoder().encode(result) {
-            try? data.write(to: Self.diskURL(key))
+        guard let data = try? Data(contentsOf: Self.diskURL(key)) else {
+            memory[key] = nil
+            return nil
         }
+        if let entry = memory[key], entry.data == data { return entry.result }
+        guard let result = try? JSONDecoder().decode(TranscriptionResult.self, from: data), Self.valid(result) else {
+            memory[key] = nil
+            return nil
+        }
+        remember(result, data: data, key: key)
+        return result
     }
 
-    private func remember(_ result: TranscriptionResult, key: String) {
+    private func store(_ result: TranscriptionResult, key: String) throws {
+        let data = try JSONEncoder().encode(result)
+        try FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
+        try data.write(to: Self.diskURL(key), options: .atomic)
+        remember(result, data: data, key: key)
+    }
+
+    private func remember(_ result: TranscriptionResult, data: Data, key: String) {
         if memory.count >= Self.memoryMax { memory.removeAll() }
-        memory[key] = result
+        memory[key] = (data, result)
     }
 
     private static let directory = FileManager.default
@@ -67,16 +78,37 @@ actor TranscriptCache {
         directory.appendingPathComponent("\(key).json")
     }
 
-    nonisolated static func hasCachedOnDisk(for url: URL) -> Bool {
-        guard let key = key(for: url) else { return false }
-        return FileManager.default.fileExists(atPath: diskURL(key).path)
+    nonisolated static func diskURL(for sourceURL: URL, cacheRoot: URL? = nil) -> URL? {
+        guard let key = key(for: sourceURL) else { return nil }
+        return (cacheRoot ?? directory).appendingPathComponent("\(key).json")
     }
 
-    /// Disk-only read
-    nonisolated static func cachedOnDisk(for url: URL) -> TranscriptionResult? {
-        guard let key = key(for: url),
-              let data = try? Data(contentsOf: diskURL(key)) else { return nil }
-        return try? JSONDecoder().decode(TranscriptionResult.self, from: data)
+    nonisolated static func hasCachedOnDisk(for url: URL) -> Bool {
+        cachedOnDisk(for: url) != nil
+    }
+
+    nonisolated static func cachedOnDisk(for url: URL, cacheRoot: URL? = nil) -> TranscriptionResult? {
+        guard let cache = diskURL(for: url, cacheRoot: cacheRoot),
+              let data = try? Data(contentsOf: cache),
+              let result = try? JSONDecoder().decode(TranscriptionResult.self, from: data), valid(result) else { return nil }
+        return result
+    }
+
+    nonisolated static func valid(_ result: TranscriptionResult) -> Bool {
+        guard result.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !result.segments.isEmpty else { return false }
+        var previous = -Double.infinity
+        for segment in result.segments {
+            guard segment.start.isFinite, segment.end.isFinite,
+                  Int(exactly: (segment.end * 600).rounded()) != nil, segment.start >= 0,
+                  segment.end > segment.start, segment.start >= previous else { return false }
+            previous = segment.start
+        }
+        for word in result.words {
+            if let start = word.start, !start.isFinite || start < 0 { return false }
+            if let end = word.end, !end.isFinite || end < 0 { return false }
+            if let start = word.start, let end = word.end, end < start { return false }
+        }
+        return true
     }
 
     private static func key(for url: URL) -> String? {

@@ -1,10 +1,5 @@
 import SwiftUI
 
-// The frames review gallery (docs/UI_UX_CONCEPT.md §4, ladder rung 2): per shot, the generated
-// candidates as tiles with two structured decisions — Use (select as keyframe) and Redo with a
-// reason chip + optional note. Both compose a structured agent command; the agent runs the pipeline
-// work and the Agent tab opens to show it. Read-only against `read frames`; no state is invented.
-
 struct ReviewPanelView: View {
     @Environment(\.projectPalette) private var palette
     var offersProductionSetup = true
@@ -34,6 +29,10 @@ struct ReviewPanelView: View {
         var id: String { "\(shotId)/\(frameName)" }
     }
 
+    private enum RenderSurface: Hashable { case takes, film }
+    @State private var renderSurface = RenderSurface.takes
+    private var renderApproved: Bool { editor.usesProductionPlanningV2 && editor.projectState?.phases.first(where: { $0.phase == "render" })?.approved == true }
+
     @State private var state: LoadState = .idle
     @State private var loadToken = 0
     @State private var redoTarget: RedoTarget?
@@ -50,6 +49,7 @@ struct ReviewPanelView: View {
         layout
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .task(id: editor.projectURL) { await load() }
+            .onChange(of: renderApproved, initial: true) { _, approved in renderSurface = approved ? .film : .takes }
             .onChange(of: editor.engineStateRevision) { _, _ in
                 Task { await load() }
             }
@@ -57,7 +57,32 @@ struct ReviewPanelView: View {
 
     @ViewBuilder
     private var layout: some View {
-        if case .failed(.notInitialized) = state {
+        if editor.workspaceFocus == .production, editor.productionSelectedPhase == "render" {
+            VStack(spacing: AppTheme.Spacing.none) {
+                if renderApproved {
+                    Picker("Render review", selection: $renderSurface) {
+                        Text("Takes").tag(RenderSurface.takes)
+                        Text("Film review").tag(RenderSurface.film)
+                    }
+                    .pickerStyle(.segmented).padding(AppTheme.Spacing.md)
+                    .reviewAcceptanceProbe("production.render.review-surface", text: renderSurface == .film ? "film" : "takes")
+                }
+                if renderApproved, renderSurface == .film {
+                    ScrollView { ProductionSequenceReviewView().padding(AppTheme.Spacing.md) }
+                } else { TakeWorkspaceView() }
+            }
+        } else if editor.workspaceFocus == .production, editor.productionSelectedPhase == "sanity" {
+            SanityPanelView()
+        } else if editor.workspaceFocus == .production, editor.productionSelectedPhase == "frames" {
+            ScrollView {
+                VStack(spacing: AppTheme.Spacing.none) {
+                    if editor.usesProductionPlanningV2 { ProductionFrameCandidatesView() } else { content }
+                    FrameFindingsReviewView()
+                    ProductionStyleReviewView()
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+        } else if case .failed(.notInitialized) = state {
             // No pipeline yet: the whole pane is one "Start production" call to action. Stacking the
             // Sanity strip below would render a second, identical "No production pipeline" block —
             // Sanity has nothing to gate before a shotlist exists — a doubled, half-clipped message.
@@ -68,9 +93,12 @@ struct ReviewPanelView: View {
                     ProductionStyleReviewView()
                     FrameFindingsReviewView()
                     TakeReviewView()
-                    SequenceReviewView()
-                        .padding(AppTheme.Spacing.md)
-                    content
+                    if editor.usesProductionPlanningV2 {
+                        ProductionSequenceReviewView().padding(AppTheme.Spacing.md)
+                    } else {
+                        SequenceReviewView().padding(AppTheme.Spacing.md)
+                    }
+                    if editor.usesProductionPlanningV2 { ProductionFrameCandidatesView() } else { content }
                     AppDivider()
                     SanityPanelView()
                         .frame(height: AppTheme.ComponentSize.reviewSanityStripHeight)

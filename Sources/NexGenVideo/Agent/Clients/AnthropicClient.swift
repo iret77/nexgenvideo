@@ -7,9 +7,11 @@ extension Notification.Name {
 enum AnthropicKeychain {
     private static let account = "anthropic-api-key"
 
-    static func save(_ key: String) {
-        KeychainStore.save(key, account: account)
+    @discardableResult
+    static func save(_ key: String) -> Bool {
+        guard KeychainStore.save(key, account: account) else { return false }
         NotificationCenter.default.post(name: .anthropicAPIKeyChanged, object: nil)
+        return true
     }
 
     static func load() -> String? {
@@ -23,9 +25,11 @@ enum AnthropicKeychain {
         return KeychainStore.load(account: account)
     }
 
-    static func delete() {
-        KeychainStore.delete(account: account)
+    @discardableResult
+    static func delete() -> Bool {
+        guard KeychainStore.delete(account: account) else { return false }
         NotificationCenter.default.post(name: .anthropicAPIKeyChanged, object: nil)
+        return true
     }
 }
 

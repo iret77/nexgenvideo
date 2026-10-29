@@ -166,7 +166,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         HangDiagnosticUI.delete()
     }
 
+    private var runtimeTerminationPending = false
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !runtimeTerminationPending else { return .terminateLater }
+        runtimeTerminationPending = true
+        Task { @MainActor in
+            defer { runtimeTerminationPending = false }
+            let completed = await BpyRuntimeHost.shared.shutdown()
+            if completed {
+                sender.reply(toApplicationShouldTerminate: true)
+            } else if BpyRuntimeHost.shared.canQuitWithReservedStorage {
+                let alert = NSAlert()
+                alert.messageText = "Quit with reserved location storage?"
+                alert.informativeText = "The location runtime has stopped, but a storage operation has no confirmed completion. "
+                    + "Quitting keeps its reserved storage intact. Restart the Mac before using locations again so NexGenVideo can safely recover it. Your saved project files are unchanged."
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "Quit and Keep Reserved Storage")
+                alert.addButton(withTitle: "Cancel")
+                let requested = alert.runModal() == .alertFirstButtonReturn
+                let confirmed = requested && BpyRuntimeHost.shared.confirmQuitWithReservedStorage()
+                sender.reply(toApplicationShouldTerminate: confirmed)
+                if requested && !confirmed {
+                    sender.presentError(NSError(domain: "NexGenVideo.SpatialRuntime", code: 2,
+                        userInfo: [NSLocalizedDescriptionKey: "Location runtime activity changed. Finish the current operation, then try quitting again."]))
+                }
+            } else {
+                sender.reply(toApplicationShouldTerminate: false)
+                sender.presentError(NSError(domain: "NexGenVideo.SpatialRuntime", code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: BpyRuntimeHost.shared.cleanupFailure
+                        ?? "The location runtime could not close safely. Try quitting again."]))
+            }
+        }
+        return .terminateLater
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
+        BpyRuntimeSelfTest.applicationWillTerminate()
         HangDiagnosticRecorder.shared.stop()
     }
 }

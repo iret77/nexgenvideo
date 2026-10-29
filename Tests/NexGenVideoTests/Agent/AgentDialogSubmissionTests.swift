@@ -26,10 +26,19 @@ struct AgentDialogSubmissionTests {
         service.dialogDraft = draft
         service.dialogChoiceSelections = ["style": ["custom"]]
 
+        for partial in [AgentDialogDraft(direction: "Unfinished location"),
+                        AgentDialogDraft(fileURLs: draft.fileURLs)] {
+            service.dialogDraft = partial
+            service.completeDialog(dialog)
+            #expect(service.pendingDialog?.id == dialog.id)
+            #expect(service.dialogDraft == partial)
+            #expect(service.dialogSubmissionError == "Attach or clear the current item before continuing.")
+        }
+        service.dialogDraft = draft
         service.completeDialog(dialog)
 
         #expect(service.pendingDialog?.id == dialog.id)
-        #expect(service.dialogSubmissionError != nil)
+        #expect(service.dialogSubmissionError == "Attach or clear the current item before continuing.")
         #expect(service.dialogDraft == draft)
         #expect(service.dialogChoiceSelections == ["style": ["custom"]])
         #expect(service.submittingDialogID == nil)
