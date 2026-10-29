@@ -22,6 +22,7 @@ struct TransformOverlayView: View {
                 Rectangle()
                     .fill(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.interactionTarget))
                     .frame(width: hit.frame.width, height: hit.frame.height)
+                    .reviewAcceptanceProbe("preview.transform.move." + clip.id, state: true)
                     .contentShape(hit.shape)
                     .position(x: clipRect.midX, y: clipRect.midY)
                     .gesture(moveGesture(clip: clip, videoRect: videoRect))

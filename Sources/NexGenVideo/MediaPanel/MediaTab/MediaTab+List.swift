@@ -42,6 +42,7 @@ extension MediaTab {
             .onTapGesture { clearSelections() }
             .overlay { marqueeOverlay }
             .gesture(marqueeGesture)
+            .reviewAcceptanceProbe("media.selection-surface")
         }
     }
 }

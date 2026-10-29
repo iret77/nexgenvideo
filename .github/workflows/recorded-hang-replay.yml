@@ -83,7 +83,7 @@ jobs:
           PYTHON
       - name: Build optimized replay app
         run: |
-          scripts/bundle.sh release
+          scripts/bundle.sh release --without-bpy-runtime-for-ci-transfer
           ditto -c -k --keepParent .build/NexGenVideo.app "$RUNNER_TEMP/replay-app.zip"
       - uses: actions/upload-artifact@v4
         with:

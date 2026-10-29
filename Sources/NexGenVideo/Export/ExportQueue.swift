@@ -1,4 +1,5 @@
 import AppKit
+import CoreMedia
 import CryptoKit
 import Foundation
 import NexGenEngine
@@ -38,7 +39,7 @@ final class ExportJob: Identifiable {
     fileprivate(set) var destinationURL: URL?
     let title: String
     let createdAt: Date
-    let durationFrames: Int?
+    fileprivate(set) var durationFrames: Int?
     let fps: Int?
     let width: Int?
     let height: Int?
@@ -53,6 +54,13 @@ final class ExportJob: Identifiable {
     fileprivate(set) var fcpxmlReport: FCPXMLExportReport?
     fileprivate(set) var projectReport: ProjectPackageExporter.Report?
     fileprivate(set) var acceptsCancellation = true
+    fileprivate(set) var exactDuration: CMTime?
+
+    var durationSeconds: Double? {
+        if let exactDuration { return exactDuration.seconds }
+        guard let durationFrames, let fps, fps > 0 else { return nil }
+        return Double(durationFrames) / Double(fps)
+    }
 
     init(
         id: String,
@@ -180,7 +188,7 @@ final class ExportQueue {
             outputURL.standardizedFileURL.path
         )
         if jobsByID[id] == nil,
-           let dataRoot = editor.workingRoot.flatMap({ DataRootResolver.dataRoot(of: $0) }) {
+           let dataRoot = editor.workingRoot.flatMap({ try? ExportDataRoot.resolve(in: $0) }) {
             _ = loadPersistedDeliveryJobs(ownerKey: ownerKey, dataRoot: dataRoot)
         }
         if let identity = recoveredDeliveryIdentities[id] {
@@ -200,24 +208,29 @@ final class ExportQueue {
         format: ExportFormat,
         resolution: ExportResolution,
         outputURL: URL,
-        requestID: String? = nil
+        requestID: String? = nil,
+        preserveExistingPoster: Bool = false
     ) async throws -> ExportJob {
         guard let root = editor.workingRoot,
-              let dataRoot = DataRootResolver.dataRoot(of: root),
               let ownerKey = editor.openWorkingCopyKey else {
             throw ToolError("Open a project before exporting a delivery.")
         }
+        let dataRoot = try ExportDataRoot.resolve(in: root)
         let id = try jobID(requestID)
         let fingerprint = fingerprint(
-            ownerKey, spec.id, String(describing: format), resolution.rawValue,
-            outputURL.standardizedFileURL.path
+            ownerKey, spec.extensionRefs.isEmpty ? spec.id : spec.id + FileDigest.sha256(of: try PipelineAssemblyStore.canonical(spec)),
+            String(describing: format), resolution.rawValue,
+            outputURL.standardizedFileURL.path + (preserveExistingPoster ? "|preserve-existing-poster" : "")
         )
         if let existing = try joinedJob(id: id, fingerprint: fingerprint) {
             try await waitForPreparation(jobID: id)
             return existing
         }
+        _ = try ProjectPackGate.requireLiveMutation(projectURL: root, declaredPack: editor.declaredPluginName,
+            declaredBinding: editor.declaredPluginBinding, declaredProductionContract: editor.declaredProductionContract)
         let timeline = editor.timeline
         let resolver = editor.mediaResolver.snapshot()
+        let production = try await ProductionExportBinding.capture(timeline: timeline, resolver: resolver)
         let job = registerPreparing(
             id: id,
             ownerKey: ownerKey,
@@ -228,6 +241,10 @@ final class ExportQueue {
             fingerprint: fingerprint,
             deliveryRoot: dataRoot
         )
+        job.exactDuration = production?.range.duration
+        if let duration = job.exactDuration, let fps = Int32(exactly: timeline.fps), fps > 0 {
+            job.durationFrames = Int(exactly: CMTimeConvertScale(duration, timescale: fps, method: .roundAwayFromZero).value)
+        }
         let cancellationFlag = cancellationFlags[id] ?? ExportCancellationFlag()
         preparationTasks[id] = Task { @MainActor [weak self, weak editor] in
             guard let self else { return }
@@ -235,19 +252,33 @@ final class ExportQueue {
             do {
                 let recoveryRoot = self.publishRecoveryRoot
                 let prepared = try await Task.detached(priority: .userInitiated) {
+                    let posterURL = ExportArtwork.outputURL(for: outputURL)
                     try ExportPublishRecoveryStore.recoverAll(
                         root: recoveryRoot,
-                        overlapping: [outputURL]
+                        overlapping: spec.extensionRefs.contains(where: { $0.hasPrefix(ExportArtwork.directory + "/") })
+                            ? [outputURL, posterURL] : [outputURL]
                     )
                     let finished = try PipelineDeliveryStore.requireCurrentFinished(
                         dataRoot: dataRoot,
-                        timeline: timeline,
+                        timeline: timeline, resolver: resolver,
                         isCancelled: { cancellationFlag.isCancelled }
                     )
-                    let extensionFiles = try PipelineDeliveryStore.extensionFiles(
+                    let artwork = try ExportArtwork.load(spec: spec, dataRoot: dataRoot,
+                        timelineSHA256: finished.manifest.timelineSHA256)
+                    if artwork == nil, !preserveExistingPoster, FileManager.default.fileExists(atPath: posterURL.path) {
+                        throw ToolError("An existing poster is beside this destination. Choose a poster or confirm Export Video Only in the export window.")
+                    }
+                    var extensionFiles = try PipelineDeliveryStore.extensionFiles(
                         for: spec,
                         dataRoot: dataRoot
                     )
+                    if let artwork, artwork.selection.source == .projectImage {
+                        guard let assetID = artwork.selection.assetID, let url = resolver.resolveURL(for: assetID),
+                              try FileDigest.sha256(of: url) == artwork.selection.sourceSHA256 else {
+                            throw ToolError("The selected export image changed or is offline.")
+                        }
+                        extensionFiles.append((path: "artwork-source/\(assetID)", url: url))
+                    }
                     let source = try SourceBinding.video(
                         timeline: timeline,
                         resolver: resolver,
@@ -261,6 +292,11 @@ final class ExportQueue {
                         isCancelled: { cancellationFlag.isCancelled }
                     )
                     try source.rejectDestination(destination.url)
+                    let companion = try artwork.map { _ in
+                        try DestinationBinding(url: posterURL, jobID: id, expectsDirectory: false,
+                            isCancelled: { cancellationFlag.isCancelled })
+                    }
+                    if let companion { try source.rejectDestination(companion.url) }
                     let frozen = try source.freeze(
                         jobID: id,
                         isCancelled: { cancellationFlag.isCancelled }
@@ -283,6 +319,8 @@ final class ExportQueue {
                         source: source,
                         frozen: frozen,
                         destination: destination,
+                        companionDestination: companion,
+                        artwork: artwork,
                         finished: finished
                     )
                 }.value
@@ -295,6 +333,7 @@ final class ExportQueue {
                     jobID: id
                 )
                 try self.throwIfCancelled(id)
+                try await ProductionExportBinding.revalidate(production, timeline: timeline, resolver: resolver)
                 try self.recoverInterruptedDeliveries(ownerKey: ownerKey, dataRoot: dataRoot)
                 try ProjectWorkingCopy.markDirty(key: ownerKey)
                 let attempt = try PipelineDeliveryStore.enqueueAttempt(
@@ -307,7 +346,7 @@ final class ExportQueue {
                     outputURL: prepared.destination.url,
                     timeline: timeline,
                     resolver: resolver,
-                    bindingAlreadyValidated: true
+                    bindingAlreadyValidated: true, productionExport: production
                 )
                 let payload = DeliveryPayload(
                     dataRoot: dataRoot,
@@ -317,7 +356,9 @@ final class ExportQueue {
                     spec: spec,
                     format: format,
                     resolution: resolution,
-                    attempt: attempt
+                    attempt: attempt,
+                    artwork: prepared.artwork,
+                    requireNoPoster: prepared.artwork == nil && !preserveExistingPoster, productionExport: production
                 )
                 self.install(Request(
                     id: id,
@@ -333,7 +374,7 @@ final class ExportQueue {
                     source: prepared.source,
                     frozenSources: prepared.frozen,
                     destination: prepared.destination,
-                    companionDestination: nil,
+                    companionDestination: prepared.companionDestination,
                     payload: .delivery(payload),
                     changeHandler: self.projectChangeHandler(
                         editor: editor,
@@ -530,6 +571,10 @@ final class ExportQueue {
         let timeline = editor.timeline
         let manifest = editor.mediaManifest
         let generationLog = editor.generationLog
+        let productionDeclaration = ProjectPackGate.MutationDeclaration(packName: editor.declaredPluginName,
+            binding: editor.declaredPluginBinding, productionContract: editor.declaredProductionContract)
+        _ = try ProjectPackGate.requireLiveMutation(projectURL: root, declaredPack: productionDeclaration.packName,
+            declaredBinding: productionDeclaration.binding, declaredProductionContract: productionDeclaration.productionContract)
         let sourcePath = root.standardizedFileURL.path
         let standardizedOutput = outputURL.standardizedFileURL
         guard standardizedOutput.path != sourcePath,
@@ -566,7 +611,7 @@ final class ExportQueue {
                     let source = try SourceBinding.projectPackage(
                         timeline: timeline,
                         manifest: manifest,
-                        sourceRoot: root,
+                        sourceRoot: root, productionDeclaration: productionDeclaration,
                         isCancelled: { cancellationFlag.isCancelled }
                     )
                     let destination = try DestinationBinding(
@@ -726,7 +771,7 @@ final class ExportQueue {
                 outputURL: retried.destination.url,
                 timeline: payload.timeline,
                 resolver: payload.resolver,
-                bindingAlreadyValidated: true
+                bindingAlreadyValidated: true, productionExport: payload.productionExport
             )
             retried.payload = .delivery(payload.withAttempt(attempt))
         }
@@ -819,6 +864,12 @@ final class ExportQueue {
                     outputSHA256: attempt.outputSHA256,
                     outputByteCount: attempt.outputByteCount
                 )
+                if let expected = try PipelineDeliveryStore.productionRange(attempt: attempt, dataRoot: dataRoot),
+                   let expectedFPS = Int32(exactly: boundTimeline?.fps ?? attempt.spec.fpsNumerator), expectedFPS > 0 {
+                    job.exactDuration = expected.duration
+                    job.durationFrames = Int(exactly: CMTimeConvertScale(expected.duration,
+                        timescale: expectedFPS, method: .roundAwayFromZero).value)
+                }
                 jobs.append(job)
                 jobsByID[job.id] = job
                 recoveredDeliveryIdentities[job.id] = .init(
@@ -827,7 +878,7 @@ final class ExportQueue {
                     outputURL: destination?.standardizedFileURL
                 )
                 if attempt.status == .interrupted {
-                    cleanupTemporaryState(for: attempt)
+                    cleanupTemporaryState(for: attempt, dataRoot: dataRoot)
                 }
             }
             return recovered
@@ -876,6 +927,12 @@ final class ExportQueue {
             return
         }
         requests[job.id] = request
+        if case .delivery(let payload) = request.payload {
+            job.exactDuration = payload.productionExport?.range.duration
+            if let duration = job.exactDuration, let fps = Int32(exactly: request.fps), fps > 0 {
+                job.durationFrames = Int(exactly: CMTimeConvertScale(duration, timescale: fps, method: .roundAwayFromZero).value)
+            }
+        }
         job.destinationURL = request.destination.url
         job.status = .pending
         job.detail = "Waiting"
@@ -942,6 +999,7 @@ final class ExportQueue {
             try requireCurrent(request, job: job)
             try throwIfCancelled(job.id)
             if case .delivery(let payload) = request.payload {
+                try await ProductionExportBinding.revalidate(payload.productionExport, timeline: payload.timeline, resolver: payload.resolver)
                 try ProjectWorkingCopy.markDirty(key: request.ownerKey)
                 deliveryAttempt = try PipelineDeliveryStore.markRunning(
                     payload.attempt,
@@ -1086,6 +1144,17 @@ final class ExportQueue {
                     throw ToolError("Delivery export did not consume every required media source.")
                 }
             }
+            if case .delivery(let payload) = request.payload, let artwork = payload.artwork {
+                guard let companionTemporaryURL,
+                      let png = frozen.files.first(where: { $0.ref == "delivery extension \(artwork.pngPath)" }) else {
+                    throw ToolError("The export lost its bound poster image.")
+                }
+                try await Task.detached(priority: .userInitiated) {
+                    try ExportArtwork.verifyPNG(at: png.url, snapshot: artwork)
+                    try Data(contentsOf: png.url).write(to: companionTemporaryURL, options: .atomic)
+                    try ExportArtwork.verifyPNG(at: companionTemporaryURL, snapshot: artwork)
+                }.value
+            }
             if fcpxmlReport?.stagedProjectMediaCount == 0,
                request.companionDestination != nil {
                 let runtimeRoot = runtimeRecoveryRoot
@@ -1122,10 +1191,12 @@ final class ExportQueue {
 
             let deliveryEvidence: PipelineDeliveryStore.OutputEvidence?
             if case .delivery(let payload) = request.payload {
+                try await ProductionExportBinding.revalidate(payload.productionExport, timeline: payload.timeline, resolver: payload.resolver)
                 deliveryEvidence = try await PipelineDeliveryStore.inspectSuccessfulOutput(
                     outputURL: temporaryURL,
                     spec: payload.spec,
                     expectedDurationFrames: payload.timeline.totalFrames,
+                    exactExpectedDuration: payload.productionExport?.range.duration,
                     isCancelled: { cancellationFlag.isCancelled }
                 )
             } else {
@@ -1155,11 +1226,19 @@ final class ExportQueue {
                 try requireCurrent(request, job: job)
                 try ProjectWorkingCopy.markDirty(key: request.ownerKey)
             }
+            if case .delivery(let payload) = request.payload {
+                try await ProductionExportBinding.revalidate(payload.productionExport, timeline: payload.timeline, resolver: payload.resolver)
+            }
             var publications = [DestinationBinding.Publication(
                 binding: request.destination,
                 temporaryURL: temporaryURL
             )]
-            if let companionDestination = request.companionDestination,
+            if case .delivery(let payload) = request.payload, let artwork = payload.artwork {
+                guard let companionDestination = request.companionDestination,
+                      let companionTemporaryURL else { throw ToolError("The export poster destination is missing.") }
+                try ExportArtwork.verifyPNG(at: companionTemporaryURL, snapshot: artwork)
+                publications.append(.init(binding: companionDestination, temporaryURL: companionTemporaryURL))
+            } else if let companionDestination = request.companionDestination,
                let companionTemporaryURL,
                FileManager.default.fileExists(atPath: companionTemporaryURL.path) {
                 publications.append(.init(
@@ -1173,8 +1252,15 @@ final class ExportQueue {
             let cleanupFailureIndex = committedCleanupFailureIndexForTesting
             let journalFailure = committedJournalFailureForTesting
             let pendingPublications = publications
+            let requireNoPoster: Bool
+            if case .delivery(let payload) = request.payload { requireNoPoster = payload.requireNoPoster }
+            else { requireNoPoster = false }
+            let posterURL = ExportArtwork.outputURL(for: request.destination.url)
             let publicationResult = try await Task.detached(priority: .userInitiated) {
-                try DestinationBinding.publish(
+                if requireNoPoster, FileManager.default.fileExists(atPath: posterURL.path) {
+                    throw ToolError("A poster appeared beside the export destination. Choose another destination or confirm Export Video Only.")
+                }
+                return try DestinationBinding.publish(
                     pendingPublications,
                     root: recoveryRoot,
                     isCancelled: { cancellationFlag.isCancelled },
@@ -1195,6 +1281,13 @@ final class ExportQueue {
 
             switch request.payload {
             case .delivery(let payload):
+                if let artwork = payload.artwork {
+                    guard let companion = request.companionDestination,
+                          case .file(let hash, let size) = publicationResult.state(for: companion.url),
+                          hash == artwork.pngSHA256, size > 0 else {
+                        throw ToolError("The published poster does not match this delivery.")
+                    }
+                }
                 guard let running = deliveryAttempt, let deliveryEvidence else {
                     throw ToolError("The delivery job lost its bound receipt state.")
                 }
@@ -1225,6 +1318,9 @@ final class ExportQueue {
                 job.outputByteCount = Int64(size)
                 job.fcpxmlReport = fcpxmlReport
                 job.warnings = fcpxmlReport?.warnings.map(\.message) ?? []
+                if case .interchange(let payload) = request.payload, payload.format == .xml {
+                    job.warnings.append(contentsOf: XMLExporter.limitationSummary(timeline: payload.timeline))
+                }
                 if let cleanupWarning = publicationResult.cleanupWarning {
                     job.warnings.append(cleanupWarning)
                 }
@@ -1395,7 +1491,7 @@ final class ExportQueue {
             dataRoot: dataRoot,
             excludingIDs: activeDeliveryIDs(dataRoot: dataRoot),
             willMutate: { try ProjectWorkingCopy.markDirty(key: ownerKey) },
-            didRecover: { self.cleanupTemporaryState(for: $0) }
+            didRecover: { self.cleanupTemporaryState(for: $0, dataRoot: dataRoot) }
         )
     }
 
@@ -1530,7 +1626,7 @@ final class ExportQueue {
         continuation.resume()
     }
 
-    private func cleanupTemporaryState(for attempt: DeliveryAttemptV1) {
+    private func cleanupTemporaryState(for attempt: DeliveryAttemptV1, dataRoot: URL) {
         if let outputPath = attempt.outputPath {
             let outputURL = URL(fileURLWithPath: outputPath)
             let temporaryURL = DestinationBinding.makeTemporaryURL(
@@ -1538,6 +1634,13 @@ final class ExportQueue {
                 jobID: attempt.id
             )
             try? FileManager.default.removeItem(at: temporaryURL)
+            if let artwork = try? ExportArtwork.load(spec: attempt.spec, dataRoot: dataRoot,
+                timelineSHA256: attempt.finishedTimelineSHA256) {
+                let poster = DestinationBinding.makeTemporaryURL(url: ExportArtwork.outputURL(for: outputURL), jobID: attempt.id)
+                if (try? ExportArtwork.verifyPNG(at: poster, snapshot: artwork)) != nil {
+                    try? FileManager.default.removeItem(at: poster)
+                }
+            }
         }
         try? FileManager.default.removeItem(
             at: SourceBinding.snapshotRoot(jobID: attempt.id)
@@ -1614,6 +1717,8 @@ extension ExportQueue {
         let source: SourceBinding
         let frozen: FrozenSources
         let destination: DestinationBinding
+        let companionDestination: DestinationBinding?
+        let artwork: ExportArtworkSnapshot?
         let finished: PipelineDeliveryStore.FinishedState
     }
 
@@ -1674,6 +1779,9 @@ extension ExportQueue {
         let format: ExportFormat
         let resolution: ExportResolution
         let attempt: DeliveryAttemptV1
+        var artwork: ExportArtworkSnapshot? = nil
+        var requireNoPoster = false
+        var productionExport: ProductionExportBinding.Snapshot? = nil
 
         func withAttempt(_ attempt: DeliveryAttemptV1) -> DeliveryPayload {
             .init(
@@ -1684,7 +1792,9 @@ extension ExportQueue {
                 spec: spec,
                 format: format,
                 resolution: resolution,
-                attempt: attempt
+                attempt: attempt,
+                artwork: artwork,
+                requireNoPoster: requireNoPoster, productionExport: productionExport
             )
         }
     }
@@ -1760,9 +1870,10 @@ extension ExportQueue {
             timeline: Timeline,
             manifest: MediaManifest,
             sourceRoot: URL,
+            productionDeclaration: ProjectPackGate.MutationDeclaration? = nil,
             isCancelled: @Sendable () -> Bool = { false }
         ) throws -> SourceBinding {
-            let resolver = MediaResolver(manifest: { manifest }, projectURL: { sourceRoot })
+            let resolver = MediaResolver(manifest: { manifest }, projectURL: { sourceRoot }, productionDeclaration: { productionDeclaration })
             let refs = Set(manifest.entries.compactMap { entry in
                 if case .external = entry.source { return entry.id }
                 return nil
@@ -1776,7 +1887,7 @@ extension ExportQueue {
                 isCancelled: isCancelled
             )
             var separatelyCapturedPaths: Set<String> = []
-            if let dataRoot = DataRootResolver.dataRoot(of: sourceRoot) {
+            if let dataRoot = try? ExportDataRoot.resolve(in: sourceRoot) {
                 let source = sourceRoot.standardizedFileURL
                 let data = dataRoot.standardizedFileURL
                 let relative = data == source
@@ -1861,6 +1972,12 @@ extension ExportQueue {
                     entry: resolver.entry(for: ref)
                 )
             }
+            let resources = try ProjectEffectResources.capture(timeline: timeline, resolver: resolver)
+            media += try resources.map { resource in
+                if isCancelled() { throw CancellationError() }
+                return Media(ref: "effect resource " + resource.path, url: resource.url,
+                    state: .file(sha256: resource.sha256, byteCount: resource.byteCount), entry: nil)
+            }
             media += try additionalFiles.map { item -> Media in
                 if isCancelled() { throw CancellationError() }
                 let resolved = item.url.standardizedFileURL.resolvingSymlinksInPath()
@@ -1924,6 +2041,10 @@ extension ExportQueue {
                         isCancelled: isCancelled
                     ) == item.state else {
                         throw ToolError("Export source could not be frozen: \(item.ref)")
+                    }
+                    if item.ref.hasPrefix("effect resource ") {
+                        let path = String(item.ref.dropFirst("effect resource ".count))
+                        if ProjectEffectResources.isPortable(path) { try LUTLoader.register(try Data(contentsOf: destination), path: path) }
                     }
                     frozenFiles.append(.init(
                         ref: item.ref,
@@ -2266,7 +2387,11 @@ extension ExportQueue {
             let urls = Dictionary(uniqueKeysWithValues: files.compactMap { file in
                 file.entry.map { ($0.id, file.url) }
             })
-            return original.snapshot(overriding: urls)
+            let resources = Dictionary(uniqueKeysWithValues: files.compactMap { file -> (String, URL)? in
+                guard file.ref.hasPrefix("effect resource ") else { return nil }
+                return (String(file.ref.dropFirst("effect resource ".count)), file.url)
+            })
+            return original.snapshot(overriding: urls, effectResources: resources)
         }
 
         func manifest(basedOn original: MediaManifest) -> MediaManifest {

@@ -310,7 +310,7 @@ enum FullflowAcceptanceFixture {
         }
     }
 
-    private static func writeTone(to url: URL, duration: Double) throws {
+    static func writeTone(to url: URL, duration: Double) throws {
         guard let format = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 1),
               let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(duration * 48000)),
               let samples = buffer.floatChannelData?[0] else { throw Failure("Audio fixture allocation failed.") }
@@ -347,7 +347,7 @@ enum FullflowAcceptanceFixture {
         try data.write(to: url)
     }
 
-    private static func writeVideo(to url: URL, duration: Double, fps: Int, warm: Bool) async throws {
+    static func writeVideo(to url: URL, duration: Double, fps: Int, warm: Bool) async throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264,

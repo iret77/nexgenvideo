@@ -3,6 +3,8 @@ import AppKit
 Log.bootstrap()
 ChatHangReplay.runIfRequested()
 HangDiagnosticReplay.runIfRequested()
+ProductionPackRecoveryAcceptance.runIfRequested()
+SettingsOwnerAcceptance.runIfRequested()
 WorkspaceUIAcceptance.runIfRequested()
 GenerationBatchReviewSelfTest.runIfRequested()
 AppRelaunchSelfTest.recordBootIfRequested()
