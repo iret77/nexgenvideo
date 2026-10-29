@@ -96,28 +96,22 @@ class CIWorkflowTests(unittest.TestCase):
         self.assertIn("scripts/export_actions_acceptance.py NexGenVideo.app", release)
         self.assertIn("evidence/export-actions.json", release)
 
-    def test_generation_review_reuses_workspace_runtime_and_survives_ui_failure(self):
-        step = "      - name: Verify generation batch pointer and keyboard review on macOS 26\n"
-        self.assertNotIn(step, CI.read_text())
+    def test_generation_review_is_independent_and_uses_the_same_immutable_runtime(self):
         workspace = (WORKFLOWS / "workspace-ui-acceptance.yml").read_text()
-        acceptance = workspace.split("  acceptance:\n", 1)[1]
-        self.assertIn("runs-on: macos-26", acceptance)
-        self.assertIn("artifact-ids: ${{ needs.build.outputs.app_artifact_id }}", acceptance)
-        self.assertLess(acceptance.index("tar -xzf"), acceptance.index("scripts/workspace_ui_acceptance.py"))
-        self.assertLess(acceptance.index("scripts/workspace_ui_acceptance.py"), acceptance.index(step))
-        review, upload = acceptance.split(step, 1)[1].split("      - uses: actions/upload-artifact@v4", 1)
-        self.assertIn("if: ${{ !cancelled() }}", review)
-        self.assertNotIn("continue-on-error", review)
-        self.assertIn('"$RUNNER_TEMP/workspace-ui/NexGenVideo.app/Contents/MacOS/NexGenVideo"', review)
-        self.assertIn('NGV_SELFTEST_GENERATION_BATCH_EVIDENCE="$RUNNER_TEMP/evidence"', review)
-        self.assertIn("NGV_SELFTEST_GENERATION_BATCH_REVIEW=1", review)
-        self.assertIn("-ApplePersistenceIgnoreState YES", review)
-        self.assertIn('test "$status" -eq 0', review)
-        self.assertIn("grep -qx 'SELFTEST_GENERATION_BATCH_REVIEW_OK'", review)
-        self.assertIn("if: always()", upload)
-        for suffix in ("json", "log", "png"):
-            self.assertIn("${{ runner.temp }}/evidence/generation-*." + suffix, upload)
-        self.assertIn("${{ runner.temp }}/evidence/scale-*-fullflow-sanity.json", upload)
+        batch = workspace.split("  batch-review:\n", 1)[1].split("  qualification:\n", 1)[0]
+        self.assertIn("needs: [source, runtime]", batch)
+        self.assertNotIn("needs: acceptance", batch)
+        self.assertIn("runs-on: macos-26", batch)
+        self.assertIn("uses: ./.github/actions/prepare-native-runtime", batch)
+        self.assertIn("artifact-id: ${{ needs.runtime.outputs.artifact_id }}", batch)
+        self.assertIn("scripts/workspace_native_case.py", batch)
+        self.assertIn("scripts/workspace_native_ci.py archive", batch)
+        self.assertIn("always() && steps.runtime.outcome == 'success'", batch)
+        self.assertNotIn("continue-on-error", batch)
+        driver = (ROOT / "scripts/workspace_native_case.py").read_text()
+        self.assertIn("NGV_SELFTEST_GENERATION_BATCH_REVIEW", driver)
+        self.assertIn("SELFTEST_GENERATION_BATCH_REVIEW_OK", driver)
+        self.assertIn("process.wait(timeout=300)", driver)
 
     def test_workspace_unit_regressions_are_optional_filtered_and_staged(self):
         workspace = (WORKFLOWS / "workspace-ui-acceptance.yml").read_text()
@@ -126,7 +120,7 @@ class CIWorkflowTests(unittest.TestCase):
             self.assertIn("unit_test_filter:", inputs)
             self.assertIn("type: string", inputs)
             self.assertIn("default: ''", inputs)
-        build = workspace.split("  build:\n", 1)[1].split("  acceptance:\n", 1)[0]
+        build = workspace.split("  build:\n", 1)[1].split("  runtime:\n", 1)[0]
         self.assertLess(build.index("name: Build acceptance app"), build.index("name: Run selected unit regressions"))
         selected = build.split("      - name: Run selected unit regressions\n", 1)[1]
         self.assertIn("if: inputs.unit_test_filter != ''", selected)
@@ -140,42 +134,38 @@ class CIWorkflowTests(unittest.TestCase):
 
     def test_workspace_native_acceptance_keeps_the_uploaded_app_after_unit_failure(self):
         workspace = (WORKFLOWS / "workspace-ui-acceptance.yml").read_text()
-        build, acceptance = workspace.split("  build:\n", 1)[1].split("  acceptance:\n", 1)
+        build = workspace.split("  build:\n", 1)[1].split("  runtime:\n", 1)[0]
+        runtime = workspace.split("  runtime:\n", 1)[1].split("  acceptance:\n", 1)[0]
         self.assertLess(build.index("name: Build acceptance app"), build.index("name: Upload acceptance app"))
         self.assertLess(build.index("name: Upload acceptance app"), build.index("name: Run selected unit regressions"))
-        upload = build.split("      - name: Upload acceptance app\n", 1)[1].split("      - name:", 1)[0]
-        self.assertIn("id: upload_app", upload)
-        self.assertIn("uses: actions/upload-artifact@v4", upload)
-        self.assertIn("name: workspace-ui-app", upload)
-        self.assertIn("path: ${{ runner.temp }}/workspace-ui.tar.gz", upload)
-        self.assertIn("if-no-files-found: error", upload)
-        self.assertIn("app_ready: ${{ steps.upload_app.outcome == 'success' && steps.upload_app.outputs.artifact-id != '' }}", build)
         self.assertIn("app_artifact_id: ${{ steps.upload_app.outputs.artifact-id }}", build)
-        self.assertIn("needs: build", acceptance)
-        self.assertIn("if: ${{ !cancelled() && needs.build.outputs.app_ready == 'true' }}", acceptance)
-        download = acceptance.split("      - uses: actions/download-artifact@v4\n", 1)[1].split("      - name:", 1)[0]
-        self.assertIn("artifact-ids: ${{ needs.build.outputs.app_artifact_id }}", download)
-        self.assertIn("merge-multiple: true", download)
-        self.assertNotIn("name:", download)
-        self.assertNotIn("run-id:", download)
-        self.assertNotIn("repository:", download)
+        self.assertIn("needs.build.outputs.app_ready == 'true'", runtime)
+        self.assertIn("NGV_RUNTIME_ARTIFACT_ID: ${{ needs.build.outputs.app_artifact_id }}", runtime)
+        self.assertIn("scripts/workspace_native_ci.py download-runtime", runtime)
+        self.assertIn("identity_sha: ${{ steps.prepare.outputs.identity_sha256 }}", runtime)
         self.assertNotIn("continue-on-error", build)
 
-    def test_workspace_scope_is_validated_before_build_and_passed_as_quoted_argument(self):
+    def test_workspace_case_and_scale_are_validated_before_any_native_launch(self):
         workspace = (WORKFLOWS / "workspace-ui-acceptance.yml").read_text()
-        for trigger in ("workflow_dispatch", "workflow_call"):
-            inputs = workspace.split(f"  {trigger}:\n", 1)[1].split("\n\n", 1)[0].split("  workflow_call:", 1)[0]
-            self.assertIn("acceptance_scope:", inputs)
-            self.assertIn("default: all", inputs)
         source = workspace.split("  source:\n", 1)[1].split("  build:\n", 1)[0]
-        self.assertIn("NGV_ACCEPTANCE_SCOPE: ${{ inputs.acceptance_scope }}", source)
-        self.assertIn('case "$NGV_ACCEPTANCE_SCOPE" in', source)
-        self.assertIn("all|filmreview)", source)
-        self.assertIn("exit 1", source)
-        runtime = workspace.split("      - name: Exercise native workspace and panel controls\n", 1)[1].split("      - name:", 1)[0]
-        self.assertIn("NGV_ACCEPTANCE_SCOPE: ${{ inputs.acceptance_scope }}", runtime)
-        self.assertIn('--scope "$NGV_ACCEPTANCE_SCOPE"', runtime)
-        self.assertNotIn("${{", runtime.split("        run: |\n", 1)[1])
+        self.assertIn("scripts/workspace_native_ci.py plan", source)
+        self.assertIn("test_workspace_native_ci.py", source)
+        self.assertIn("test_generation_batch_busy_evidence.py", source)
+        self.assertIn("NGV_ACCEPTANCE_CASE: ${{ inputs.acceptance_case }}", source)
+        native = workspace.split("  acceptance:\n", 1)[1].split("  batch-review:\n", 1)[0]
+        self.assertIn("needs: [source, runtime]", native)
+        self.assertIn("max-parallel: 3", native)
+        self.assertIn("matrix: ${{ fromJSON(needs.source.outputs.matrix) }}", native)
+        self.assertIn('--case "$NGV_NATIVE_CASE" --scale "$NGV_NATIVE_SCALE"', native)
+        self.assertIn("native-evidence-${{ matrix.id }}-a${{ github.run_attempt }}", native)
+        self.assertNotIn("/evidence/scale-*", native)
+        gate = workspace.split("  qualification:\n", 1)[1]
+        self.assertIn("needs: [source, runtime, acceptance, batch-review]", gate)
+        self.assertIn("scripts/workspace_native_ci.py summary", gate)
+        self.assertIn('"$NGV_NATIVE_IDENTITY_SHA" --remote', gate)
+        self.assertIn("GH_TOKEN: ${{ github.token }}", gate)
+        self.assertNotIn("pattern: native-evidence-*", gate)
+        self.assertIn("cancel-in-progress: false", workspace)
 
     def test_only_the_light_pull_request_check_starts_automatically(self):
         for path in sorted(WORKFLOWS.glob("*.yml")):
@@ -227,13 +217,14 @@ class CIWorkflowTests(unittest.TestCase):
     def test_ci_batch_is_the_manual_heavy_entry_point(self):
         text = CI_BATCH.read_text()
         self.assertEqual(triggers(CI_BATCH), ["workflow_dispatch"])
-        self.assertIn("cancel-in-progress: true", text)
+        self.assertIn("cancel-in-progress: false", text)
         called = [line.split("./.github/workflows/", 1)[1].strip()
                   for line in text.splitlines() if "uses: ./.github/workflows/" in line]
         self.assertEqual(
             set(called),
             {"ci.yml", "chat-hang-replay.yml", "recorded-hang-replay.yml",
-             "signing-preflight.yml", "workspace-ui-acceptance.yml", "private-example-analysis.yml"},
+             "signing-preflight.yml", "workspace-ui-acceptance.yml", "private-example-analysis.yml",
+             "settings-owner-acceptance.yml", "smart-search-owner-acceptance.yml"},
         )
         for name in called:
             with self.subTest(workflow=name):

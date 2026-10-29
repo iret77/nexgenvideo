@@ -6,7 +6,24 @@ on:
         description: Native workspace cases to verify
         required: false
         type: choice
-        options: [all, filmreview]
+        options: [all, generationbatch, ledger, captionrevision, exportformats, exportrecovery, layeredtimeline, timelineediting, frames, filmreview, corefilmreview, activity, planning, genericnle, medialibrary, animationaudio, manualgeneration, performance, textcaptions, generationrecovery, appnle, mediabrowser, sourceoperations, manualvideomodes, chronologynegative, sanitynegative, animatedstill, aienhanced, framecontinuation, nativeextension]
+        default: all
+      runtime_artifact:
+        description: Existing same-source runtime artifact; empty builds once
+        type: string
+        default: ''
+      runtime_run_id:
+        description: Origin run of that exact runtime artifact
+        type: string
+        default: ''
+      acceptance_case:
+        description: Optional single case within the selected scope
+        type: string
+        default: ''
+      acceptance_scale:
+        description: Optional single interface scale
+        type: choice
+        options: [all, '1', '1.25', '1.5']
         default: all
       unit_test_filter:
         description: Optional Swift test filter for the affected regression suite
@@ -15,8 +32,21 @@ on:
         default: ''
   workflow_call:
     inputs:
+      runtime_artifact:
+        description: Exact app and pack already built in this CI batch
+        type: string
+        default: ''
+      runtime_run_id:
+        type: string
+        default: ''
+      acceptance_case:
+        type: string
+        default: ''
+      acceptance_scale:
+        type: string
+        default: all
       acceptance_scope:
-        description: Native workspace cases to verify (all or filmreview)
+        description: Native workspace cases to verify (all, ledger, captionrevision, exportformats, exportrecovery, layeredtimeline, timelineediting, frames, filmreview, corefilmreview, activity, planning, genericnle, medialibrary, animationaudio, manualgeneration, performance, textcaptions, generationrecovery, appnle, mediabrowser, sourceoperations, manualvideomodes, chronologynegative, sanitynegative, animatedstill, aienhanced, framecontinuation or nativeextension)
         required: false
         type: string
         default: all
@@ -26,28 +56,82 @@ on:
         type: string
         default: ''
 
+permissions:
+  contents: read
+  actions: read
+
 concurrency:
   group: workspace-ui-acceptance-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   source:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      native: ${{ steps.plan.outputs.native }}
+      batch: ${{ steps.plan.outputs.batch }}
     steps:
       - uses: actions/checkout@v4
-      - name: Validate acceptance scope
+      - name: Validate and select independent case/scale jobs
+        id: plan
         env:
           NGV_ACCEPTANCE_SCOPE: ${{ inputs.acceptance_scope }}
+          NGV_ACCEPTANCE_CASE: ${{ inputs.acceptance_case }}
+          NGV_ACCEPTANCE_SCALE: ${{ inputs.acceptance_scale }}
         run: |
-          case "$NGV_ACCEPTANCE_SCOPE" in
-            all|filmreview) ;;
-            *) echo "::error::Unknown acceptance scope"; exit 1 ;;
-          esac
+          python3 scripts/workspace_native_ci.py plan --scope "$NGV_ACCEPTANCE_SCOPE" \
+            --case "$NGV_ACCEPTANCE_CASE" --scale "$NGV_ACCEPTANCE_SCALE" --output "$RUNNER_TEMP/native-plan.json"
+      - name: Verify case isolation, artifact identity and evidence transfer rejection
+        run: python3 -m unittest discover -s scripts -p 'test_workspace_native_ci.py'
+      - name: Verify native batch busy/Continue evidence rejection
+        run: python3 -m unittest discover -s scripts -p 'test_generation_batch_busy_evidence.py'
+      - name: Verify export formats and restart evidence rejection
+        run: python3 -m unittest discover -s scripts -p 'test_export_owner_evidence.py'
+      - name: Verify native timeline edit evidence rejection
+        run: python3 -m unittest discover -s scripts -p 'test_timeline_editing_evidence.py'
+      - name: Validate layered timeline evidence tests
+        run: python3 -m unittest discover -s scripts -p 'test_layered_timeline_evidence.py'
+      - name: Verify generated sketch and frame evidence rejection
+        run: python3 -m unittest discover -s scripts -p 'test_production_frames_owner_evidence.py'
+      - name: Verify object context and history evidence rejection
+        run: python3 -m unittest discover -s scripts -p 'test_production_object_context_evidence.py'
+      - name: Verify Analysis remeasurement and retry evidence rejection
+        run: python3 -m unittest discover -s scripts -p 'test_analysis_remeasurement_owner_evidence.py'
+      - name: Verify Ledger decision and lock evidence rejection
+        run: python3 -m unittest discover -s scripts -p 'test_ledger_*evidence.py'
+      - name: Verify caption decision and physical cut evidence rejection
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_caption_revision_evidence.py'
+          python3 -m unittest discover -s scripts -p 'test_caption_translation_evidence.py'
+      - name: Validate decoded still evidence rejection cases
+        run: python3 -m unittest discover -s scripts -p 'test_production_animated_still_owner_evidence.py'
+      - name: Verify manual generation evidence rejection
+        run: python3 -m unittest discover -s scripts -p 'test_workspace_ui_manual*.py'
+      - name: Verify native color reference evidence rejection
+        run: python3 -m unittest discover -s scripts -p 'test_color_reference_evidence.py'
+      - name: Verify native video modes evidence rejection
+        run: python3 -m unittest discover -s scripts -p 'test_manual_video_modes_evidence.py'
+      - name: Verify durable generation restart evidence rejection
+        run: python3 -m unittest discover -s scripts -p 'test_generation_recovery_acceptance.py'
       - run: python3 scripts/lint_app_theme.py
+      - name: Require distributable runtime for this full app
+        run: python3 scripts/verify_bpy_runtime.py --distribution
+      - name: Reject a silently skipped unit filter
+        if: (inputs.runtime_artifact != '' || inputs.runtime_run_id != '') && inputs.unit_test_filter != ''
+        run: exit 1
+
+  bpy-source:
+    needs: source
+    if: inputs.runtime_artifact == '' && inputs.runtime_run_id == ''
+    uses: ./.github/workflows/bpy-source-closure.yml
+    with:
+      distribution: true
 
   build:
-    needs: source
+    needs: [source, bpy-source]
+    if: inputs.runtime_artifact == '' && inputs.runtime_run_id == ''
     runs-on: macrunner
     timeout-minutes: 25
     outputs:
@@ -57,17 +141,29 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-xcode-27
       - uses: ./.github/actions/cache-swiftpm-dependencies
+      - uses: actions/download-artifact@v4
+        with:
+          name: managed-bpy-source-${{ github.sha }}
+          path: .build/bpy-source
+      - name: Stage verified runtime
+        run: |
+          python3 scripts/verify_bpy_distributable_source.py \
+            .build/bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.tar \
+            .build/bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json
+          scripts/stage_bpy_runtime.sh .build/bpy-runtime
       - name: Build acceptance app
         run: |
           scripts/bundle.sh debug
           scripts/assemble_ngvpack.sh plugins/musicvideo.json debug .build/plugins
-          tar -czf "$RUNNER_TEMP/workspace-ui.tar.gz" -C .build NexGenVideo.app plugins/musicvideo.ngvpack
+          mkdir -p "$RUNNER_TEMP/workspace-transfer"
+          tar -czf "$RUNNER_TEMP/workspace-transfer/workspace-ui.tar.gz" -C .build NexGenVideo.app plugins/musicvideo.ngvpack
+          cp .build/bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.* "$RUNNER_TEMP/workspace-transfer/"
       - name: Upload acceptance app
         id: upload_app
         uses: actions/upload-artifact@v4
         with:
           name: workspace-ui-app
-          path: ${{ runner.temp }}/workspace-ui.tar.gz
+          path: ${{ runner.temp }}/workspace-transfer/*
           if-no-files-found: error
           retention-days: 3
       - name: Run selected unit regressions
@@ -80,63 +176,174 @@ jobs:
           scripts/stage_test_runtime.sh debug
           swift test --cache-path "$NGV_SWIFTPM_CACHE_PATH" --skip-build --filter "$NGV_UNIT_TEST_FILTER"
 
+  runtime:
+    needs: [source, build]
+    if: ${{ !cancelled() && needs.source.result == 'success' && (needs.build.outputs.app_ready == 'true' || (needs.build.result == 'skipped' && (inputs.runtime_artifact != '' || inputs.runtime_run_id != ''))) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      artifact_id: ${{ steps.runtime_archive.outputs.artifact-id }}
+      runtime_run_id: ${{ github.run_id }}
+      identity_artifact_id: ${{ steps.identity.outputs.artifact-id }}
+      identity_sha: ${{ steps.prepare.outputs.identity_sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve the exact same-source build artifact
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NGV_RUNTIME_RUN: ${{ inputs.runtime_run_id || github.run_id }}
+          NGV_RUNTIME_ARTIFACT: ${{ inputs.runtime_artifact || 'workspace-ui-app' }}
+          NGV_RUNTIME_ARTIFACT_ID: ${{ needs.build.outputs.app_artifact_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/native-identity"
+          args=()
+          if [ -n "$NGV_RUNTIME_ARTIFACT_ID" ]; then args+=(--artifact-id "$NGV_RUNTIME_ARTIFACT_ID"); fi
+          python3 scripts/workspace_native_ci.py resolve --run-id "$NGV_RUNTIME_RUN" \
+            --artifact "$NGV_RUNTIME_ARTIFACT" "${args[@]}" --identity "$RUNNER_TEMP/native-identity/identity.json"
+      - name: Download and require the exact GitHub artifact digest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/workspace_native_ci.py download-runtime "$RUNNER_TEMP/native-runtime" "$RUNNER_TEMP/native-identity/identity.json"
+      - name: Verify source closure once and freeze runtime and plan fingerprints
+        id: prepare
+        env:
+          NGV_ACCEPTANCE_SCOPE: ${{ inputs.acceptance_scope }}
+          NGV_ACCEPTANCE_CASE: ${{ inputs.acceptance_case }}
+          NGV_ACCEPTANCE_SCALE: ${{ inputs.acceptance_scale }}
+        run: |
+          python3 scripts/workspace_native_ci.py plan --scope "$NGV_ACCEPTANCE_SCOPE" \
+            --case "$NGV_ACCEPTANCE_CASE" --scale "$NGV_ACCEPTANCE_SCALE" --output "$RUNNER_TEMP/native-identity/plan.json"
+          python3 scripts/workspace_native_ci.py prepare "$RUNNER_TEMP/native-runtime" "$RUNNER_TEMP/native-identity/identity.json"
+      - name: Publish the unchanged app archive without repeating the source archive transfer
+        uses: actions/upload-artifact@v4
+        id: runtime_archive
+        with:
+          name: native-runtime-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/native-runtime/workspace-ui.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        id: identity
+        with:
+          name: native-input-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/native-identity/*.json
+          if-no-files-found: error
+          retention-days: 14
+
   acceptance:
-    needs: build
-    if: ${{ !cancelled() && needs.build.outputs.app_ready == 'true' }}
+    needs: [source, runtime]
+    if: ${{ needs.source.outputs.native == 'true' }}
+    strategy:
+      # Independent case/scale qualifications survive other failures and never start dependent native groups.
+      fail-fast: false
+      max-parallel: 3
+      matrix: ${{ fromJSON(needs.source.outputs.matrix) }}
+    name: Native ${{ matrix.id }}
     # ci-lint: allow-CI005 Runtime acceptance on the macOS 26 floor; macrunner boots only macOS 27.
     runs-on: macos-26
+    # Per-case process watchdog <=10min; remaining time preserves evidence. Not the full-suite budget.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/prepare-native-runtime
+        id: runtime
+        with:
+          artifact-id: ${{ needs.runtime.outputs.artifact_id }}
+          run-id: ${{ needs.runtime.outputs.runtime_run_id }}
+          identity-artifact-id: ${{ needs.runtime.outputs.identity_artifact_id }}
+          identity-sha: ${{ needs.runtime.outputs.identity_sha }}
+      - name: Exercise one native case and interface scale
+        env:
+          NGV_NATIVE_EXECUTABLE: ${{ steps.runtime.outputs.executable }}
+          NGV_NATIVE_CASE: ${{ matrix.case }}
+          NGV_NATIVE_SCALE: ${{ matrix.scale }}
+        run: |
+          python3 scripts/workspace_ui_acceptance.py "$NGV_NATIVE_EXECUTABLE" "$RUNNER_TEMP/native-evidence" \
+            --case "$NGV_NATIVE_CASE" --scale "$NGV_NATIVE_SCALE"
+      - name: Preserve every synthetic evidence file and partial failure log
+        id: evidence
+        if: ${{ always() && steps.runtime.outcome == 'success' }}
+        env:
+          NGV_NATIVE_CASE: ${{ matrix.case }}
+          NGV_NATIVE_SCALE: ${{ matrix.scale }}
+        run: |
+          python3 scripts/workspace_native_ci.py archive "$RUNNER_TEMP/native-evidence" \
+            "$NGV_NATIVE_IDENTITY_FILE" "$NGV_NATIVE_CASE" "$NGV_NATIVE_SCALE" "$RUNNER_TEMP/native-publication"
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && steps.evidence.outcome == 'success' }}
+        with:
+          name: native-evidence-${{ matrix.id }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/native-publication/*
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  batch-review:
+    name: Native generationbatch
+    needs: [source, runtime]
+    if: ${{ needs.source.outputs.batch == 'true' }}
+    # ci-lint: allow-CI005 Native pointer/keyboard acceptance on the shipped macOS 26 floor.
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/prepare-native-runtime
+        id: runtime
+        with:
+          artifact-id: ${{ needs.runtime.outputs.artifact_id }}
+          run-id: ${{ needs.runtime.outputs.runtime_run_id }}
+          identity-artifact-id: ${{ needs.runtime.outputs.identity_artifact_id }}
+          identity-sha: ${{ needs.runtime.outputs.identity_sha }}
+      - name: Verify generation batch pointer and keyboard review
+        env:
+          NGV_NATIVE_EXECUTABLE: ${{ steps.runtime.outputs.executable }}
+        run: |
+          defaults write -g AppleKeyboardUIMode -int 2
+          python3 scripts/workspace_native_case.py "$NGV_NATIVE_EXECUTABLE" "$RUNNER_TEMP/native-evidence"
+      - name: Preserve batch evidence including failures
+        id: evidence
+        if: ${{ always() && steps.runtime.outcome == 'success' }}
+        run: |
+          python3 scripts/workspace_native_ci.py archive "$RUNNER_TEMP/native-evidence" \
+            "$NGV_NATIVE_IDENTITY_FILE" generationbatch 0 "$RUNNER_TEMP/native-publication"
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && steps.evidence.outcome == 'success' }}
+        with:
+          name: native-evidence-generationbatch-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/native-publication/*
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  qualification:
+    needs: [source, runtime, acceptance, batch-review]
+    if: ${{ always() && needs.source.result == 'success' && needs.runtime.result == 'success' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          artifact-ids: ${{ needs.build.outputs.app_artifact_id }}
           merge-multiple: true
-          path: ${{ runner.temp }}/workspace-ui
-      - name: Prepare acceptance app on macOS 26
-        run: |
-          set -euo pipefail
-          test "$(sw_vers -productVersion | cut -d. -f1)" = 26
-          tar -xzf "$RUNNER_TEMP/workspace-ui/workspace-ui.tar.gz" -C "$RUNNER_TEMP/workspace-ui"
-      - name: Exercise native workspace and panel controls
+          artifact-ids: ${{ needs.runtime.outputs.identity_artifact_id }}
+          run-id: ${{ github.run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/native-identity
+      - name: Independently validate every expected case and scale
         env:
-          NGV_ACCEPTANCE_SCOPE: ${{ inputs.acceptance_scope }}
+          GH_TOKEN: ${{ github.token }}
+          NGV_NATIVE_IDENTITY_SHA: ${{ needs.runtime.outputs.identity_sha }}
         run: |
-          set -euo pipefail
-          export NGV_WORKSPACE_UI_PACK="$RUNNER_TEMP/workspace-ui/plugins/musicvideo.ngvpack"
-          python3 scripts/workspace_ui_acceptance.py \
-            "$RUNNER_TEMP/workspace-ui/NexGenVideo.app/Contents/MacOS/NexGenVideo" \
-            "$RUNNER_TEMP/evidence" --scope "$NGV_ACCEPTANCE_SCOPE"
-      - name: Verify generation batch pointer and keyboard review on macOS 26
-        if: ${{ !cancelled() }}
-        run: |
-          set -euo pipefail
-          test "$(sw_vers -productVersion | cut -d. -f1)" = 26
-          # Keyboard navigation lets Remove take focus during the native review.
-          defaults write -g AppleKeyboardUIMode -int 2
-          mkdir -p "$RUNNER_TEMP/evidence"
-          status=0
-          NGV_SELFTEST_GENERATION_BATCH_EVIDENCE="$RUNNER_TEMP/evidence" \
-          NGV_SELFTEST_GENERATION_BATCH_REVIEW=1 \
-            "$RUNNER_TEMP/workspace-ui/NexGenVideo.app/Contents/MacOS/NexGenVideo" \
-            -ApplePersistenceIgnoreState YES \
-            > "$RUNNER_TEMP/evidence/generation-batch-review.log" 2>&1 || status=$?
-          cat "$RUNNER_TEMP/evidence/generation-batch-review.log"
-          test "$status" -eq 0
-          grep -qx 'SELFTEST_GENERATION_BATCH_REVIEW_OK' "$RUNNER_TEMP/evidence/generation-batch-review.log"
+          mkdir -p "$RUNNER_TEMP/native-artifacts"
+          python3 scripts/workspace_native_ci.py summary "$RUNNER_TEMP/native-artifacts" "$RUNNER_TEMP/native-qualification" \
+            "$RUNNER_TEMP/native-identity/plan.json" "$RUNNER_TEMP/native-identity/identity.json" "$NGV_NATIVE_IDENTITY_SHA" --remote
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: workspace-ui-evidence
-          path: |
-            ${{ runner.temp }}/evidence/result.json
-            ${{ runner.temp }}/evidence/scale-*.log
-            ${{ runner.temp }}/evidence/scale-*.png
-            ${{ runner.temp }}/evidence/scale-*-musicvideo.mp4
-            ${{ runner.temp }}/evidence/scale-*-musicvideo-delivery.json
-            ${{ runner.temp }}/evidence/scale-*-fullflow-analysis.json
-            ${{ runner.temp }}/evidence/scale-*-fullflow-sanity.json
-            ${{ runner.temp }}/evidence/generation-*.json
-            ${{ runner.temp }}/evidence/generation-*.log
-            ${{ runner.temp }}/evidence/generation-*.png
+          name: native-qualification-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/native-qualification/result.json
+          if-no-files-found: error
           retention-days: 14
