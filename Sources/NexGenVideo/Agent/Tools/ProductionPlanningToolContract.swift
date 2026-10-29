@@ -83,6 +83,7 @@ enum ProductionPlanningToolContract {
             "camera": object([
                 "framing": framing, "movement": enumeration(CameraMovement.allCases.map(\.rawValue)),
                 "movementDetail": text, "blocking": array(text), "sceneReference": reference,
+                "spatialState": reference, "spatialCameraID": text, "spatialDerivation": reference,
             ], required: ["framing", "movement", "blocking"]),
             "obligations": array(object([
                 "id": text, "kind": enumeration(["characterIdentity", "locationAppearance", "prop", "look", "geometry", "sourceFootage", "stateVariant"]),

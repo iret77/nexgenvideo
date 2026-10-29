@@ -55,6 +55,93 @@ extension ToolExecutor {
             "reviewer_model": review.reviewer.modelID ?? "", "findings": review.findings.count])
     }
 
+    func compileStoryboardSketchTool(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
+        let root = try resolveDataRoot(args, editor: editor)
+        guard editor.workingRoot.flatMap({ DataRootResolver.dataRoot(of: $0) }) == root else { throw ToolError("Open the Storyboard project first.") }
+        let result = try await PipelineStoryboardSketchGeneration.compile(shotID: args.requireString("shot_id"),
+            momentID: args.requireString("moment_id"),
+            modelID: ModelCatalog.shared.internalId(forLogical: args.requireString("model")),
+            expectedFingerprint: args.requireString("expected_fingerprint"), editor: editor)
+        return try jsonResult(["compiledPrompt": result.compiled.text, "compileToken": result.compiled.token,
+            "shotId": "none", "storyboardCompileReceipt": result.receipt.path, "notes": result.compiled.notes])
+    }
+
+    func assignStoryboardSketchTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
+        let root = try resolveDataRoot(args, editor: editor)
+        guard editor.workingRoot.flatMap({ DataRootResolver.dataRoot(of: $0) }) == root else { throw ToolError("Open the Storyboard project first.") }
+        let media = try asset(args.requireString("media_ref"), editor: editor, label: "Generated Storyboard sketch")
+        let result = try PipelineStoryboardSketchGeneration.assign(media: media,
+            compilationPath: args.requireString("compilation_receipt"), expectedFingerprint: args.requireString("expected_fingerprint"), editor: editor)
+        return try jsonResult(["written": true, "revision": result.storyboard.header.revision, "fingerprint": result.fingerprint,
+            "current": StoryboardTimingV1.currentPath])
+    }
+
+    func writeProductionPlanTool(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
+        let access = try planningAccess(editor, args, phase: "shotlist")
+        guard args["shots"] == nil, args["execution_shots"] == nil, let raw = args["proposal"] else {
+            throw ToolError("This workflow requires the normalized production proposal, not a legacy Shot List.")
+        }
+        let proposal = try JSONDecoder().decode(PipelineProductionPlanWriter.Proposal.self,
+            from: JSONSerialization.data(withJSONObject: raw))
+        let plan = try await PipelineProductionPlanWriter.writePrepared(proposal: proposal, origin: planningOrigin(args), access: access)
+        return try jsonResult(["written": true, "revision": plan.header.revision,
+            "path": ProductionPlanProjectionV1.versionPath(plan.header.revision), "shot_ids": plan.shots.map(\.id)])
+    }
+
+    func prepareProductionAssetsTool(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
+        let root = try resolveDataRoot(args, editor: editor)
+        let declaration = try mutationPackDeclaration(editor, dataRoot: root)
+        guard let workflow = try PhaseContractRuntime.resolveWorkflow(dataRoot: root, expectedPack: declaration.binding,
+            expectedProductionContract: declaration.productionContract), workflow.isProductionV2 else {
+            throw ToolError("Production asset preparation requires the current production contract.")
+        }
+        let state = try ProjectStateBuilder.buildSnapshot(dataRoot: root, order: PhaseContractRuntime.order(workflow: workflow))
+        guard let phase = state.nextPhase, ["bible", "shotlist"].contains(phase), let inputs = args["assets"] as? [[String: Any]] else {
+            throw ToolError("Prepare production assets during Bible or Shot List.")
+        }
+        let access = try PipelinePlanningWriteAccess(dataRoot: root, declaration: declaration, phase: phase)
+        struct AssetInput: Sendable {
+            let path: String
+            let modality: AssetPhysicalModalityV1
+            let entityID: String?
+            let canonIDs: [String]
+            let stateID: String?
+            let viewID: String?
+            let allowedUseIDs: [String]
+            let duration: Double?
+        }
+        let project = try YAMLArtifactStore(dataRoot: root).load(ProjectMeta.self, at: PipelineLayout.projectFile)
+        let requests = try inputs.map { raw -> AssetInput in
+            guard let modality = AssetPhysicalModalityV1(rawValue: try raw.requireString("modality")) else { throw ToolError("Unknown asset modality.") }
+            return AssetInput(path: try raw.requireString("path"), modality: modality, entityID: raw.string("entity_id"),
+                canonIDs: raw["canon_ids"] as? [String] ?? [], stateID: raw.string("state_id"), viewID: raw.string("view_id"),
+                allowedUseIDs: raw["allowed_use_ids"] as? [String] ?? [], duration: raw["duration_seconds"] as? Double)
+        }
+        let recordedAt = currentTimestamp()
+        let preparationTask = Task.detached(priority: .userInitiated) {
+            guard let bible = try loadBible(dataRoot: root) else { throw ToolError("The current Bible is missing.") }
+            return try requests.map { input -> AssetGraphNodeV1 in
+                try Task.checkCancellation()
+                let url = try ProjectLocalFile.resolve(input.path, dataRoot: root)
+                let asset = try AssetGraphContentAddressV1.reidentified(.init(id: "pending", version: 1, path: input.path,
+                    sha256: FileDigest.sha256(of: url), modality: input.modality, entityID: input.entityID,
+                    canonIDs: input.canonIDs, stateID: input.stateID, viewID: input.viewID,
+                    approval: .approved, provenance: .init(kindID: "core.planning-asset", recordedAt: recordedAt),
+                    allowedUseIDs: input.allowedUseIDs, durationSeconds: input.duration))
+                return try PipelineShotPlanningPromotionStore.normalizeAsset(asset, bible: bible, dataRoot: root)
+            }
+        }
+        let assets = try await withTaskCancellationHandler { try await preparationTask.value } onCancel: { preparationTask.cancel() }
+        try Task.checkCancellation()
+        try access.revalidate()
+        let graph = AssetGraphV1(id: try AssetGraphContentAddressV1.graphID(projectID: project.project, assets: assets),
+            projectID: project.project, assets: assets)
+        let prepared = try await PipelineShotPlanningPromotionStore.prepareAssets(graph: graph, access: access)
+        return try jsonResult(["prepared": true, "expectedDraftFingerprint": prepared.draft.sha256,
+            "expectedAssetGraphFingerprint": prepared.graph.sha256,
+            "assets": try JSONSerialization.jsonObject(with: PlanningWriterIO.json(assets))])
+    }
+
     private func planningAccess(_ editor: EditorViewModel, _ args: [String: Any], phase: String) throws -> PipelinePlanningWriteAccess {
         let root = try resolveDataRoot(args, editor: editor)
         return try PipelinePlanningWriteAccess(dataRoot: root,

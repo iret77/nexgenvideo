@@ -40,7 +40,7 @@ final class EditorViewModel {
     // MARK: - Panel focus
 
     enum FocusedPanel: String {
-        case media, preview, inspector, timeline, agent, mediaFolders
+        case media, preview, inspector, timeline, agent, mediaFolders, exports
         /// The Project cockpit when it is the center work surface.
         case project
 
@@ -378,6 +378,14 @@ final class EditorViewModel {
 
     /// The key of the working copy this session actually opened and has been writing into.
     var openWorkingCopyKey: String? { activeWorkingCopyKey }
+    var openWorkingCopyGeneration: UUID? { activeWorkingCopyGeneration }
+
+    private func resetNativePlanningHistory() {
+        PipelineStoryboardEditor.resetHistory(editor: self)
+        PipelineShotPlanningEditor.resetHistory(editor: self)
+        PipelineBibleEditor.resetHistory(editor: self)
+        PipelineProductionPlanWriter.resetNativeHistory(editor: self)
+    }
 
     func adoptWorkingCopy(
         _ result: ProjectWorkingCopy.OpenResult,
@@ -396,6 +404,7 @@ final class EditorViewModel {
     private func prepareWorkingCopy() {
         recoveredUnsavedWork = false
         guard let projectURL else {
+            resetNativePlanningHistory()
             workingCopyHome = nil
             activeWorkingCopyKey = nil
             activeWorkingCopyGeneration = nil
@@ -406,6 +415,7 @@ final class EditorViewModel {
            preopenedWorkingCopy.packageURL.standardizedFileURL
             == projectURL.standardizedFileURL {
             self.preopenedWorkingCopy = nil
+            resetNativePlanningHistory()
             workingCopyHome = preopenedWorkingCopy.result.home
             activeWorkingCopyKey = preopenedWorkingCopy.key
             activeWorkingCopyGeneration = preopenedWorkingCopy.result.generation
@@ -417,6 +427,7 @@ final class EditorViewModel {
             return
         }
         guard let key = workingCopyKey else {
+            resetNativePlanningHistory()
             workingCopyHome = nil
             activeWorkingCopyKey = nil
             activeWorkingCopyGeneration = nil
@@ -437,6 +448,7 @@ final class EditorViewModel {
         do {
             result = try ProjectWorkingCopy.open(key: key, packageURL: projectURL)
         } catch {
+            resetNativePlanningHistory()
             workingCopyHome = nil
             activeWorkingCopyKey = nil
             activeWorkingCopyGeneration = nil
@@ -444,6 +456,7 @@ final class EditorViewModel {
             refreshProductionPipelineMarker()
             return
         }
+        resetNativePlanningHistory()
         workingCopyHome = result.home
         activeWorkingCopyKey = key
         activeWorkingCopyGeneration = result.generation
@@ -513,6 +526,7 @@ final class EditorViewModel {
                 self.recoveredUnsavedWork = true
                 return
             }
+            self.resetNativePlanningHistory()
             self.workingCopyHome = home
             self.capturePluginDeclaration(from: projectURL)
             if let reload = self.onWorkingCopyReset {
@@ -549,6 +563,7 @@ final class EditorViewModel {
         if exportIsRunning {
             ExportQueue.shared.cancelAll(ownerKey: key)
         }
+        resetNativePlanningHistory()
         workingCopyHome = nil
         activeWorkingCopyKey = nil
         activeWorkingCopyGeneration = nil
@@ -588,8 +603,13 @@ final class EditorViewModel {
     private(set) var declaredPluginName: String?
     /// Exact trusted pack identity captured independently from the mutable working copy.
     private(set) var declaredPluginBinding: ProjectPackBinding?
+    private(set) var declaredProductionContract: HostProductionContractBinding?
+    var storyboardAnimaticPlayback: StoryboardAnimaticController?
 
     private func capturePluginDeclaration(from projectURL: URL?) {
+        if case .bound(let contract) = ProjectPluginSettings.productionContractResolution(projectURL: projectURL) {
+            declaredProductionContract = contract
+        } else { declaredProductionContract = nil }
         switch ProjectPluginSettings.bindingResolution(projectURL: projectURL) {
         case .absent:
             activePluginName = nil
@@ -695,9 +715,15 @@ final class EditorViewModel {
     func startProduction() {
         guard let url = projectURL, let key = openWorkingCopyKey,
               !productionStarting, !hasProductionPipeline else { return }
+        if declaredPluginName == nil, declaredProductionContract == nil {
+            guard AppState.shared.activeProject?.editorViewModel === self else { return }
+            AppState.shared.enrollActiveProjectInProduction(expectedEditor: self)
+            return
+        }
         // The pipeline is scaffolded into the WORKING COPY (not the package); ⌘S syncs it back. The
         // cockpit reads the working copy via `workingRoot`, so it finds the freshly-created pipeline.
         let home = ProjectWorkingCopy.home(key)
+        resetNativePlanningHistory()
         workingCopyHome = home
         let name = url.deletingPathExtension().lastPathComponent
         let trustedPack = declaredPluginName
@@ -706,13 +732,15 @@ final class EditorViewModel {
             _ = try ProjectPackGate.requireLiveMutation(
                 projectURL: home,
                 declaredPack: trustedPack,
-                declaredBinding: trustedBinding
+                declaredBinding: trustedBinding,
+                declaredProductionContract: declaredProductionContract
             )
         } catch {
             mediaPanelToast = MediaPanelToast(message: error.localizedDescription)
             return
         }
         let extraDirs = PackCatalog.projectDirs(activePack: activePluginName)
+        let trustedProductionContract = declaredProductionContract
         productionStarting = true
         workflowHandoffPending = true
         do {
@@ -734,9 +762,18 @@ final class EditorViewModel {
                     _ = try ProjectPackGate.requireMutation(
                         projectURL: home,
                         declaredPack: trustedPack,
-                        declaredBinding: trustedBinding
+                        declaredBinding: trustedBinding,
+                        declaredProductionContract: trustedProductionContract
                     )
-                    try ProjectScaffold.initProject(home: home, name: name, extraDirs: extraDirs)
+                    try ProjectScaffold.initProject(home: home, name: name,
+                        mode: trustedProductionContract == .current ? .generic : .beat, extraDirs: extraDirs)
+                    guard let root = DataRootResolver.dataRoot(of: home) else {
+                        throw GateBlocked("The new production project could not be read.")
+                    }
+                    if let workflow = try PhaseContractRuntime.resolveWorkflow(dataRoot: root,
+                        expectedPack: trustedBinding, expectedProductionContract: trustedProductionContract), workflow.isProductionV2 {
+                        try PhaseContractRuntime.initializeWorkflowState(dataRoot: root, workflow: workflow)
+                    }
                     return nil
                 }
                 catch ProjectScaffold.ScaffoldError.alreadyAProject { return nil }
@@ -857,7 +894,7 @@ final class EditorViewModel {
 
     var isSidebarPresented: Bool {
         guard !theaterActive else { return false }
-        if let maximizedPanel {
+        if let maximizedPanel = presentedMaximizedPanel {
             return maximizedPanel == sidebarPanel
         }
         return mediaPanelVisible
@@ -865,10 +902,10 @@ final class EditorViewModel {
 
     var isInspectorPresented: Bool {
         guard !theaterActive else { return false }
-        if let maximizedPanel {
+        if let maximizedPanel = presentedMaximizedPanel {
             return maximizedPanel == .inspector
         }
-        return inspectorPanelVisible
+        return presentedInspectorVisible
     }
 
     func toggleSidebarPresentation() {
@@ -876,7 +913,7 @@ final class EditorViewModel {
             theaterActive = false
             maximizedPanel = nil
             mediaPanelVisible = true
-        } else if let maximizedPanel {
+        } else if let maximizedPanel = presentedMaximizedPanel {
             self.maximizedPanel = nil
             mediaPanelVisible = maximizedPanel != sidebarPanel
         } else {
@@ -885,7 +922,10 @@ final class EditorViewModel {
     }
 
     func toggleInspectorPresentation() {
-        if theaterActive {
+        if productionActivityVisible {
+            showsAgentActivity = false
+            inspectorPanelVisible = false
+        } else if theaterActive {
             theaterActive = false
             maximizedPanel = nil
             inspectorPanelVisible = true
@@ -933,8 +973,18 @@ final class EditorViewModel {
     /// strip can deep-link into a specific panel (e.g. clicking it opens Project → Pipeline).
     var productionSelectedPhase: String?
     var storyboardSelection: StoryboardShotSelection?
-    var showsAgentActivity = false
+    var showsAgentActivity = false {
+        didSet { if showsAgentActivity, workspaceFocus == .production { theaterActive = false } }
+    }
+
+    var productionActivityVisible: Bool { workspaceFocus == .production && showsAgentActivity && !theaterActive }
+    var presentedInspectorVisible: Bool { inspectorPanelVisible || productionActivityVisible }
+    var presentedMaximizedPanel: FocusedPanel? {
+        theaterActive ? .preview : productionActivityVisible ? nil : maximizedPanel
+    }
     var cockpitTab: CockpitTab = .pipeline
+    var storyboardPlanningSelection: StoryboardPlanningSelection?
+    var productionPlanSelection: ProductionPlanSelection?
     var acknowledgedReviewRequests: Set<String> = []
     private var storyDraftsByProject: [URL: StoryPanelDrafts] = [:]
     var storyPanelDrafts: StoryPanelDrafts {
@@ -943,6 +993,14 @@ final class EditorViewModel {
         let drafts = StoryPanelDrafts()
         storyDraftsByProject[key] = drafts
         return drafts
+    }
+    private var renderReviewDraftsByProject: [URL: ProductionRenderReviewDraft] = [:]
+    var renderReviewDraft: ProductionRenderReviewDraft {
+        let key = workingRoot ?? URL(fileURLWithPath: "/")
+        if let draft = renderReviewDraftsByProject[key] { return draft }
+        let draft = ProductionRenderReviewDraft()
+        renderReviewDraftsByProject[key] = draft
+        return draft
     }
 
     /// When non-nil, a pack-contributed cockpit surface (by id) is the active cockpit view, overriding
@@ -955,7 +1013,10 @@ final class EditorViewModel {
         case .story: productionSelectedPhase = "brief"
         case .productionDesign: productionSelectedPhase = "production_design"
         case .treatment: productionSelectedPhase = "treatment"
+        case .script: productionSelectedPhase = "script"
         case .storyboard: productionSelectedPhase = "storyboard"
+        case .shotPlanning: productionSelectedPhase = "shot_planning"
+        case .renderReview: productionSelectedPhase = "render_review"
         case .bible: productionSelectedPhase = "bible"
         case .shotlist: productionSelectedPhase = "shotlist"
         case .project: productionSelectedPhase = "project_init"
@@ -973,6 +1034,7 @@ final class EditorViewModel {
     /// Restore the target workspace's UI context without mutating project, pipeline, or undo state.
     func setWorkspaceFocus(_ focus: WorkspaceFocus) {
         guard focus != workspaceFocus else { return }
+        if workspaceFocus == .production { showsAgentActivity = false }
         rememberSourcePosition()
         mediaBrowserState(for: workspaceFocus).sourceRanges = sourcePreviewStates
         workspacePresentationStates[workspaceFocus] = WorkspacePresentationState(
@@ -1085,8 +1147,10 @@ final class EditorViewModel {
         }
         projectStateLoadToken += 1
         let token = projectStateLoadToken
-        let result = await CockpitDataService.projectState(projectDir: dir)
-        guard token == projectStateLoadToken else { return }
+        let declaration = ProjectPackGate.MutationDeclaration(packName: declaredPluginName,
+            binding: declaredPluginBinding, productionContract: declaredProductionContract)
+        let result = await CockpitDataService.projectState(projectDir: dir, declaration: declaration)
+        guard token == projectStateLoadToken, workingRoot == dir else { return }
         let previousPhase = projectState?.nextPhaseName
         projectState = (try? result.get()) ?? nil
         if let nextPhase = projectState?.nextPhaseName, nextPhase != previousPhase,
@@ -1116,6 +1180,31 @@ final class EditorViewModel {
     func resetWorkflowForSessionReload() {
         pipelineAgentHarness.reset()
         workflowHandoffPending = false
+    }
+
+    func reloadProductionWorkflowDeclaration(ownedMutation: UUID? = nil) async throws {
+        guard declaredPluginName == nil, declaredPluginBinding == nil, declaredProductionContract == nil,
+              let home = workingRoot, let root = DataRootResolver.dataRoot(of: home) else {
+            throw GateBlocked("The project changed before its production upgrade could be activated. Reopen it.")
+        }
+        let ownsMutation = ownedMutation.map { pipelinePhaseRunCoordinator.holdsMutation(projectRoot: root, id: $0) } ?? false
+        guard pipelinePhaseRunCoordinator.runningPhase(projectRoot: root) == nil || ownsMutation else {
+            throw GateBlocked("The project changed before its production upgrade could be activated. Reopen it.")
+        }
+        let declaration = try ProjectPackGate.captureMutationDeclaration(projectURL: home)
+        guard declaration.packName == nil, declaration.binding == nil, declaration.productionContract == .current else {
+            throw GateBlocked("The upgraded project has an unexpected production workflow. Reopen it.")
+        }
+        _ = try ProjectPackGate.requireLiveMutation(projectURL: home, declaredPack: nil, declaredBinding: nil,
+            declaredProductionContract: declaration.productionContract)
+        declaredProductionContract = declaration.productionContract
+        pipelineAgentHarness.reset()
+        storyboardPlanningSelection = nil
+        productionSelectedPhase = nil
+        workflowHandoffPending = true
+        onPipelineChanged?()
+        setWorkspaceFocus(.production)
+        await refreshEngineState()
     }
 
     /// Refresh every engine-read snapshot (pipeline state, Bible, shotlist) in one pass.
@@ -1202,10 +1291,12 @@ final class EditorViewModel {
         async let shotlistResult = CockpitDataService.shotlist(projectDir: dir)
         async let ledgerResult = CockpitDataService.ledger(projectDir: dir)
         async let briefResult = CockpitDataService.brief(projectDir: dir)
-        async let contractResult = CockpitDataService.contract(projectDir: dir)
+        let declaration = ProjectPackGate.MutationDeclaration(packName: declaredPluginName,
+            binding: declaredPluginBinding, productionContract: declaredProductionContract)
+        async let contractResult = CockpitDataService.contract(projectDir: dir, declaration: declaration)
         async let stateRefresh: Void = refreshProjectState()
         let (b, s, l, br, ct, _) = await (bibleResult, shotlistResult, ledgerResult, briefResult, contractResult, stateRefresh)
-        guard token == engineArtifactsLoadToken else { return }
+        guard token == engineArtifactsLoadToken, workingRoot == dir else { return }
         bible = (try? b.get()) ?? nil
         shotlist = (try? s.get()) ?? nil
         ledger = (try? l.get()) ?? nil
@@ -1323,7 +1414,12 @@ final class EditorViewModel {
         self.agentService = agentService
         mediaResolver = MediaResolver(
             manifest: { [weak self] in self?.mediaManifest ?? MediaManifest() },
-            projectURL: { [weak self] in self?.workingCopyHome }
+            projectURL: { [weak self] in self?.workingCopyHome },
+            productionDeclaration: { [weak self] in
+                guard let self else { return nil }
+                return .init(packName: self.declaredPluginName, binding: self.declaredPluginBinding,
+                    productionContract: self.declaredProductionContract)
+            }
         )
         agentService.editor = self
         searchIndex.assetsProvider = { [weak self] in self?.mediaAssets ?? [] }
@@ -1680,5 +1776,11 @@ final class EditorViewModel {
     var mediaFolderNavigationRequest: MediaFolderNavigationRequest?
     @ObservationIgnored var mediaPickerStates: [MediaPickerPurpose: MediaPickerState] = [:]
     @ObservationIgnored var mediaBrowserStates: [WorkspaceFocus: MediaBrowserState] = [:]
+
+    var effectResourceProblems: [ProjectEffectResources.Problem] = []
+    var requestedLUTClipID: String?
+
+    @ObservationIgnored var captionTranscriptionClient = CaptionTranscriptionClient.live
+    var generationPanelServicesOverride: GenerationPanelServices?
 
 }

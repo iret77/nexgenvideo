@@ -40,6 +40,8 @@ enum PipelineTreatmentWriterV2 {
         case .agentRevision: origin = .agentRevision
         case .userSupplied: origin = .userSupplied
         case .userRevision: origin = .userRevision
+        case .brainstormClaude, .brainstormOpenai, .brainstormGemini, .brainstormSynthesis:
+            throw GateBlocked("Brainstorm output must be developed into a canonical Treatment proposal before publication.")
         }
         func artifact(_ review: StoryCausalityDraftV1.ChangeReview) -> TreatmentCausalityV2 {
             TreatmentCausalityV2(header: .init(projectID: treatment.meta.project, revision: revision,

@@ -1,7 +1,7 @@
 import Foundation
 import NexGenEngine
 
-struct PipelinePlanningWriteAccess {
+struct PipelinePlanningWriteAccess: Sendable {
     let dataRoot: URL
     let declaration: ProjectPackGate.MutationDeclaration
     let workflow: HostWorkflowKey
@@ -104,7 +104,8 @@ enum PlanningWriterIO {
 
     static func storyboard(dataRoot: URL, requireVisuals: Bool = true) throws -> StoryboardBundleSnapshot {
         try ProductionPlanningStoreV1.readStoryboard(dataRoot: dataRoot, script: script(dataRoot: dataRoot),
-            requireVisuals: requireVisuals, evidenceVerifier: PipelineStoryboardSketchEvidence.requireCurrent)
+            requireVisuals: requireVisuals, evidenceVerifier: PipelineStoryboardSketchEvidence.requireCurrent,
+            evidenceReferences: PipelineStoryboardSketchEvidence.references)
     }
 }
 

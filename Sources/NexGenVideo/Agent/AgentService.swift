@@ -3686,7 +3686,7 @@ final class AgentService {
         )
     }
 
-    private func runtimeHostContext() throws -> AgentRuntimeHostContext {
+    private func runtimeHostContext() async throws -> AgentRuntimeHostContext {
         if let runtimeHostContextOverride {
             return try runtimeHostContextOverride()
         }
@@ -3700,11 +3700,37 @@ final class AgentService {
         }
         let resolved: PipelineAgentHarness.RuntimeContext
         if let dataRoot = DataRootResolver.dataRoot(of: workingRoot) {
+            let timeline = editor.timeline
+            let resolver = editor.mediaResolver.snapshot()
+            let prepared: PipelineProductionRuntimeContext.Prepared?
+            if editor.declaredProductionContract != nil
+                || editor.declaredPluginBinding?.projectSchema == HostWorkflowKey.musicvideoV2Schema {
+                let sessionID = currentSessionId
+                let context: PipelineProductionAssemblyWriter.Context
+                do { context = try PipelineProductionAssemblyWriter.Context(editor: editor) }
+                catch { throw ToolError("The production project context is unavailable. Reopen the project before continuing.") }
+                let preparation = Task.detached(priority: .userInitiated) {
+                    try PipelineProductionRuntimeContext.prepare(dataRoot: dataRoot,
+                        declaration: context.declaration, timeline: timeline, resolver: resolver)
+                }
+                prepared = try await withTaskCancellationHandler {
+                    try await preparation.value
+                } onCancel: { preparation.cancel() }
+                try Task.checkCancellation()
+                guard currentSessionId == sessionID, self.editor === editor else {
+                    throw ToolError("The agent session changed while its production context was being prepared.")
+                }
+                do { try context.requireCurrent(editor: editor) }
+                catch { throw ToolError("The project or timeline changed while its production context was being prepared. Continue from the current phase.") }
+            } else { prepared = nil }
             resolved = try editor.pipelineAgentHarness.runtimeContext(
                 dataRoot: dataRoot,
                 declaredPack: editor.declaredPluginName,
                 declaredBinding: editor.declaredPluginBinding,
-                declaredProductionContract: editor.declaredProductionContract
+                declaredProductionContract: editor.declaredProductionContract,
+                timeline: timeline,
+                resolver: resolver,
+                preparedProduction: prepared
             )
         } else {
             let packID = try ProjectPackGate.requireLiveMutation(
@@ -4026,8 +4052,9 @@ final class AgentService {
         guard let sessionID, currentSessionId == sessionID else { return }
         let hostContext: AgentRuntimeHostContext
         do {
-            hostContext = try runtimeHostContext()
+            hostContext = try await runtimeHostContext()
         } catch {
+            guard !Task.isCancelled, currentSessionId == sessionID else { return }
             streamError = .upstream(error.localizedDescription)
             return
         }

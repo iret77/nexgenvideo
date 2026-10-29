@@ -5,6 +5,13 @@ struct GenerationPackageReviewView: View {
     @Environment(EditorViewModel.self) private var editor
 
     let package: GenerationPackageV1
+    let probePrefix: String?
+
+    init(package: GenerationPackageV1, probePrefix: String? = nil) {
+        self.package = package; self.probePrefix = probePrefix
+    }
+
+    private func probeID(_ suffix: String) -> String { (probePrefix ?? "generation.package." + package.id) + "." + suffix }
 
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
@@ -21,6 +28,18 @@ struct GenerationPackageReviewView: View {
             Text("\(outputLabel) · Results: \(destinationLabel)")
                 .interfaceFont(size: AppTheme.FontSize.xxs)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
+            if package.payload.destination.kind == "replace_clip" {
+                Text(package.payload.destination.resetTrim == true
+                    ? "Replace this clip and linked sources. Reset their source trims."
+                    : "Replace this clip and linked sources. Keep their current trims.")
+                    .interfaceFont(size: AppTheme.FontSize.xxs)
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+            }
+            if let trim = package.payload.generationInput.sourceRange?.trim {
+                Text("Source range: \(trim.trimStartFrame) + \(trim.sourceFramesConsumed) frames at \(trim.fps) fps")
+                    .interfaceFont(size: AppTheme.FontSize.xxs)
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+            }
             pricing
             if !package.payload.references.isEmpty {
                 Text("Input references")
@@ -34,9 +53,11 @@ struct GenerationPackageReviewView: View {
                         .interfaceFont(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold)
                         .foregroundStyle(AppTheme.Text.secondaryColor)
                     Text(package.payload.prompt)
+                        .reviewAcceptanceProbe(probeID("prompt"), text: package.payload.prompt)
                         .interfaceFont(size: AppTheme.FontSize.xxs)
                         .textSelection(.enabled)
                     Button("Copy provider prompt") { copy(package.payload.prompt) }
+                        .reviewAcceptanceProbe(probeID("copy-prompt"))
                         .buttonStyle(InlineActionButtonStyle())
                     Text("Exact request parameters")
                         .interfaceFont(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold)
@@ -76,9 +97,11 @@ struct GenerationPackageReviewView: View {
                         }
                     }
                     .buttonStyle(InlineActionButtonStyle())
+                    .reviewAcceptanceProbe(probeID("copy-package"))
                 }
                 .padding(.top, AppTheme.Spacing.xs)
             }
+            .reviewAcceptanceProbe(probeID("details"))
         }
     }
 

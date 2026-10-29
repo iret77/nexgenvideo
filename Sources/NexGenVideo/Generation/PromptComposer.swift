@@ -70,6 +70,7 @@ enum PromptComposer {
     /// `lint_prompt_against_shot` call.
     struct ShotProjection: Sendable {
         let sourceMode: SourceMode
+        let frameRole: String?
         let camera: String
         let cameraMovement: String
         let cameraMovementKind: CameraMovement?
@@ -87,6 +88,7 @@ enum PromptComposer {
         init(_ shot: Shot, forceHandles: Bool = false) {
             let productionPlan = shot.productionPlan
             sourceMode = shot.sourceMode
+            frameRole = nil
             camera = shot.cameraSetup?.promptProse() ?? ""
             cameraMovement = productionPlan?.cameraMovement.promptProse(
                 detail: productionPlan?.cameraMovementDetail
@@ -113,20 +115,22 @@ enum PromptComposer {
             temporalStructure = CutHandles.temporalStructure(for: shot, forceAll: forceHandles) ?? ""
         }
         init(execution: ExecutionShotV1, intent: ShotPlanningDraftV1.ShotIntent, bible: Bible,
-             entityIDs: [String] = []) {
+             entityIDs: [String] = [], boundaryRole: String? = nil, visualDirectives: [String] = []) {
             switch execution.sourceMode {
             case .generated: sourceMode = .generated
             case .imported: sourceMode = .imported
             case .aiEnhanced: sourceMode = .aiEnhanced
             }
-            camera = [execution.camera.placement, intent.camera.framing.cameraView].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "; ")
+            frameRole = boundaryRole
+            let boundaryCamera = boundaryRole == "end" ? execution.camera.endpoint : execution.camera.placement
+            camera = [boundaryCamera, intent.camera.framing.cameraView].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "; ")
             cameraMovement = intent.camera.movement.promptProse(detail: intent.camera.movementDetail)
             cameraMovementKind = intent.camera.movement
             cameraMovementDetail = intent.camera.movementDetail
             composition = intent.camera.framing.composition
             videoSubject = execution.primaryAction
-            videoDirectives = intent.camera.blocking
-            imageDirectives = intent.camera.blocking
+            videoDirectives = intent.camera.blocking + visualDirectives
+            imageDirectives = intent.camera.blocking + visualDirectives
             var characters: [String] = []
             var locations: [String] = []
             var props: [String] = []
@@ -272,7 +276,11 @@ enum PromptComposer {
                 } ?? [],
                 directives: directives.all + (shot?.imageDirectives ?? [])
             )
-            if let shot { payload.camera = shot.camera; payload.composition = shot.composition }
+            if let shot {
+                payload.camera = shot.camera
+                payload.composition = shot.composition
+                if let role = shot.frameRole { payload.isStartFrame = role == "start" }
+            }
             try apply(productionStyle, to: &payload, plannedCamera: shot != nil, still: true)
             try rejectDirectiveContradictions(payload)
             if capturesImageIR {

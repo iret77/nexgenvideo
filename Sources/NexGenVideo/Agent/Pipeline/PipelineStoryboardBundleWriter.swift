@@ -36,18 +36,27 @@ enum PipelineStoryboardBundleWriter {
     static func write(_ proposal: Proposal, origin: PlanningArtifactHeaderV1.Origin,
                       access: PipelinePlanningWriteAccess,
                       nativeIdentities: [NativeShotIdentity] = [],
-                      nativeReassignments: [PipelineStoryboardImageReassignment.Prepared] = []) throws -> StoryboardBundleSnapshot {
+                      nativeReassignments: [PipelineStoryboardImageReassignment.Prepared] = [],
+                      generatedSketches: [PipelineStoryboardSketchGeneration.Prepared] = []) throws -> StoryboardBundleSnapshot {
         guard access.phase == "storyboard" else { throw GateBlocked("Storyboard has a different phase owner.") }
         let root = access.dataRoot
         let script = try PlanningWriterIO.script(dataRoot: root)
+        var boundAudio = proposal.audio
         if access.workflow.packID == "musicvideo" {
             let range = try PlanningWriterIO.read(PlaybackRangeV1.self, at: PlaybackRangeV1.currentPath, dataRoot: root)
             try range.validate()
             try range.header.requireCurrentInputs(dataRoot: root)
-            guard proposal.timebase == range.timebase, proposal.rangeStartTicks == range.startTicks,
-                  proposal.rangeDurationTicks == range.durationTicks else {
-                throw GateBlocked("Storyboard timing must preserve the playback range selected in Brief.")
+            let plannedStart: Int64 = proposal.mode == .multicam ? 0 : range.startTicks
+            let plannedDuration = proposal.mode == .multicam ? range.audioDurationTicks : range.durationTicks
+            guard let track = range.header.inputs.first(where: { $0.role == "musicvideo.track" }) else {
+                throw GateBlocked("The playback range has no current original track binding.")
             }
+            let expectedAudio = StoryboardTimingV1.AudioBinding(source: track, offsetTicks: 0, durationTicks: range.audioDurationTicks)
+            guard proposal.timebase == range.timebase, proposal.rangeStartTicks == plannedStart,
+                  proposal.rangeDurationTicks == plannedDuration, proposal.audio == nil || proposal.audio == expectedAudio else {
+                throw GateBlocked("Storyboard timing and original song binding must preserve the selected playback range. Multicam source plans retain the full song; its explicit excerpt applies at output assembly.")
+            }
+            boundAudio = expectedAudio
         }
         let revision = try PlanningWriterIO.nextRevision(directory: "storyboard", suffix: ".v2.yaml", dataRoot: root)
         let prior: StoryboardIdentityV1?
@@ -124,6 +133,11 @@ enum PipelineStoryboardBundleWriter {
                 throw GateBlocked("A native sketch reassignment does not match its target shot and moment.")
             }
         }
+        for sketch in generatedSketches {
+            guard let shot = shots.first(where: { $0.id == sketch.targetShotID }),
+                  let moment = shot.moments.first(where: { $0.id == sketch.targetMomentID }),
+                  moment.asset == sketch.asset else { throw GateBlocked("The generated sketch does not match its exact target moment.") }
+        }
         entries = entries.map { old in
             guard old.retiredRevision == nil, !retained.contains(old.shotID) else { return old }
             return .init(shotID: old.shotID, primaryStepID: old.primaryStepID, actionSHA256: old.actionSHA256,
@@ -137,7 +151,7 @@ enum PipelineStoryboardBundleWriter {
         let timing = StoryboardTimingV1(header: .init(projectID: header.projectID, revision: revision,
             origin: origin, inputs: [scriptReference, boardReference, causalityReference, identityReference]),
             timebase: proposal.timebase, mode: proposal.mode, rangeStartTicks: proposal.rangeStartTicks,
-            rangeDurationTicks: proposal.rangeDurationTicks, audio: proposal.audio, shots: shots)
+            rangeDurationTicks: proposal.rangeDurationTicks, audio: boundAudio, shots: shots)
         try StoryboardBundleValidator.validate(storyboard: board, causality: causality, timing: timing,
             identity: identity, script: script, priorIdentity: prior, requireVisuals: false)
         let timingBytes = try PlanningWriterIO.json(timing)
@@ -147,7 +161,7 @@ enum PipelineStoryboardBundleWriter {
                             StoryboardIdentityV1.currentPath, StoryboardTimingV1.currentPath]
         let bytes = [boardBytes, causalityBytes, identityBytes, timingBytes]
         let bundleFiles = versionPaths.indices.flatMap { [(versionPaths[$0], bytes[$0]), (currentPaths[$0], bytes[$0])] }
-        let reassignmentFiles = nativeReassignments.flatMap(\.files)
+        let reassignmentFiles = nativeReassignments.flatMap(\.files) + generatedSketches.flatMap(\.files)
         for file in reassignmentFiles {
             guard !FileManager.default.fileExists(atPath: root.appendingPathComponent(file.path).path) else {
                 throw GateBlocked("Native sketch reassignment receipts are immutable.")
@@ -215,6 +229,7 @@ enum PipelineStoryboardBundleWriter {
             leaf: "\(UUID().uuidString.lowercased()).\(url.pathExtension.lowercased())", dataRoot: root)
         _ = try ProjectLocalFile.ensureDirectory((path as NSString).deletingLastPathComponent, dataRoot: root)
         let destination = root.appendingPathComponent(path)
+        try ProductionWorkflowRecoveryMigration.requireNewOutput(path, dataRoot: root)
         try sourceBytes.write(to: destination, options: .atomic)
         let image = CanonicalArtifactReferenceV1(id: "sketch.\(hash)", role: "core.storyboard-sketch", path: path, sha256: hash)
         let receiptID = UUID().uuidString.lowercased()
@@ -294,7 +309,9 @@ enum PipelineStoryboardSketchEvidence {
                 throw GateBlocked("The sketch reassignment does not preserve its original image provenance.")
             }
             try requireCurrent(original, dataRoot, visited: visited.union([originalProof.path]))
-        case .generated, .sourceFrame, .externalConfirmed, .spatialDerived:
+        case .generated:
+            try PipelineStoryboardSketchGeneration.requireGenerated(proof, dataRoot: dataRoot)
+        case .sourceFrame, .externalConfirmed, .spatialDerived:
             throw GateBlocked("This sketch needs its original verified host provenance before it can be assigned.")
         }
     }

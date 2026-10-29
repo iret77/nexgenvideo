@@ -114,6 +114,7 @@ enum PipelineRenderRecordWriter {
         dataRoot: URL,
         declaredPack: String? = nil,
         declaredBinding: ProjectPackBinding? = nil,
+        declaredProductionContract: HostProductionContractBinding? = nil,
         failureProbe: ((FailurePoint) throws -> Void)? = nil
     ) throws -> RenderRecordPublicationV1 {
         try validatePhase(manifest.phase)
@@ -125,7 +126,8 @@ enum PipelineRenderRecordWriter {
         try requirePackMutation(
             dataRoot: dataRoot,
             declaredPack: declaredPack,
-            declaredBinding: declaredBinding
+            declaredBinding: declaredBinding,
+            declaredProductionContract: declaredProductionContract
         )
         let transactionID = UUID().uuidString.lowercased()
         let lockPath = transactionPath(phase: manifest.phase)
@@ -386,7 +388,8 @@ enum PipelineRenderRecordWriter {
             try requirePackMutation(
                 dataRoot: dataRoot,
                 declaredPack: declaredPack,
-                declaredBinding: declaredBinding
+                declaredBinding: declaredBinding,
+                declaredProductionContract: declaredProductionContract
             )
             canonicalWritesStarted = true
             if let preparedLastFrame, let lastFrameURL {
@@ -459,7 +462,8 @@ enum PipelineRenderRecordWriter {
         dataRoot: URL,
         phase: String,
         declaredPack: String? = nil,
-        declaredBinding: ProjectPackBinding? = nil
+        declaredBinding: ProjectPackBinding? = nil,
+        declaredProductionContract: HostProductionContractBinding? = nil
     ) throws -> MutationSnapshot {
         try validatePhase(phase)
         try requireSafeLocations(
@@ -470,7 +474,8 @@ enum PipelineRenderRecordWriter {
         try requirePackMutation(
             dataRoot: dataRoot,
             declaredPack: declaredPack,
-            declaredBinding: declaredBinding
+            declaredBinding: declaredBinding,
+            declaredProductionContract: declaredProductionContract
         )
         let lockURL = PipelineLayout.url(
             transactionPath(phase: phase),
@@ -689,12 +694,14 @@ enum PipelineRenderRecordWriter {
     private static func requirePackMutation(
         dataRoot: URL,
         declaredPack: String?,
-        declaredBinding: ProjectPackBinding?
+        declaredBinding: ProjectPackBinding?,
+        declaredProductionContract: HostProductionContractBinding? = nil
     ) throws {
         _ = try ProjectPackGate.requireMutation(
             projectURL: FrameInventory.projectHome(of: dataRoot),
             declaredPack: declaredPack,
-            declaredBinding: declaredBinding
+            declaredBinding: declaredBinding,
+            declaredProductionContract: declaredProductionContract
         )
     }
 
@@ -703,6 +710,13 @@ enum PipelineRenderRecordWriter {
         phase: String
     ) throws -> Set<String> {
         guard phase != "frames" else { return [] }
+        let declaration = try ProjectPackGate.captureMutationDeclaration(projectURL: FrameInventory.projectHome(of: dataRoot))
+        if try PhaseContractRuntime.resolveWorkflow(dataRoot: dataRoot, expectedPack: declaration.binding,
+            expectedProductionContract: declaration.productionContract)?.isProductionV2 == true {
+            let planned = ShotDeliveryModeResolverV1.stillShotIDs(in: ProductionPlanningLineageV2.projection(dataRoot: dataRoot).executionPlan)
+            let rendered = try loadRenderManifest(dataRoot: dataRoot, phase: phase).entries.filter { $0.value.status == .rendered }
+            return planned.intersection(Set(rendered.keys))
+        }
         let planURL = PipelineLayout.url(
             PipelineLayout.executionPlanFile,
             in: dataRoot
@@ -1763,6 +1777,8 @@ enum PipelineRenderRecordWriter {
                 && additionalPaths.allSatisfy({
                     isImmutableShotProvenancePath($0, phase: phase)
                         || PipelineRenderTakeStore.isRecoveryPath($0, phase: phase)
+                        || isFrameEvidencePath($0, phase: phase)
+                        || isProductionEvidencePath($0, phase: phase)
                 })
             guard journal.schema == RecoveryJournal.schemaVersion,
                   journal.phase == phase,
@@ -2078,6 +2094,38 @@ enum PipelineRenderRecordWriter {
                 throw PipelineRenderRecordError.unsafePath(path)
             }
         }
+    }
+
+    private static func isFrameEvidencePath(_ path: String, phase: String) -> Bool {
+        guard phase == "frames", path.hasPrefix("frames/reference-usage/") || path.hasPrefix("frames/production-receipts/") else { return false }
+        let components = path.split(separator: "/", omittingEmptySubsequences: false)
+        return components.count == 3 && !components[2].contains("..")
+            && (components[2].hasSuffix("-start.v1.json") || components[2].hasSuffix("-end.v1.json"))
+    }
+
+    private static func isProductionEvidencePath(_ path: String, phase: String) -> Bool {
+        guard phase == "final" else { return false }
+        let parts = path.split(separator: "/", omittingEmptySubsequences: false)
+        guard parts.first == "renders", parts.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else { return false }
+        if parts.count == 3, parts[1] == "production-records" {
+            let name = String(parts[2])
+            guard name.hasSuffix(".v1.json") else { return false }
+            let id = String(name.dropLast(".v1.json".count))
+            return UUID(uuidString: String(id.dropFirst("current-".count))) != nil && id.hasPrefix("current-")
+                || id.count == 64 && id.allSatisfy(\.isHexDigit)
+        }
+        if parts.count == 4, parts[1] == "submissions" {
+            return parts[2].count == 64 && parts[2].allSatisfy(\.isHexDigit)
+                && ["receipt.v1.json", "binding.v1.json"].contains(String(parts[3]))
+        }
+        if parts.count == 4, ["selections", "still-deliveries"].contains(String(parts[1])), UUID(uuidString: String(parts[2])) != nil {
+            let name = String(parts[3])
+            if name == "current.v1.json" { return true }
+            guard name.hasSuffix(".v1.json") else { return false }
+            let id = name.dropLast(".v1.json".count)
+            return id.count == 64 && id.allSatisfy(\.isHexDigit)
+        }
+        return false
     }
 
     private static func isImmutableShotProvenancePath(

@@ -8,13 +8,13 @@ enum ProductionWorkflowV2 {
     ]
     static let musicvideoPhases = ["project_init", "analysis"] + Array(corePhases.dropFirst())
     static let newWriterNames: Set<String> = [
-        "write_script", "write_storyboard_bundle", "write_shot_planning_draft", "write_render_review",
+        "write_script", "write_storyboard_bundle", "assign_storyboard_sketch", "write_shot_planning_draft", "write_render_review",
     ]
 
     static func phaseBound(_ phase: String) -> Set<String> {
         switch phase {
         case "script": return ["write_script"]
-        case "storyboard": return ["write_storyboard_bundle"]
+        case "storyboard": return ["write_storyboard_bundle", "assign_storyboard_sketch"]
         case "shot_planning": return ["write_shot_planning_draft"]
         case "render_review": return ["write_render_review"]
         default: return Set((PipelineAgentContract.executableTools[phase] ?? []).map(\.rawValue))
@@ -24,8 +24,9 @@ enum ProductionWorkflowV2 {
     static func supporting(_ phase: String) -> Set<String> {
         switch phase {
         case "script", "shot_planning": return []
-        case "storyboard": return ["compile_prompt", "generate_image", "prepare_generation_batch", "import_media"]
+        case "storyboard": return ["compile_storyboard_sketch", "compile_prompt", "generate_image", "prepare_generation_batch", "import_media"]
         case "render_review": return ["compile_prompt", "get_render_review_inputs"]
+        case "bible", "shotlist": return Set((PipelineAgentContract.currentPhaseCapabilities[phase] ?? []).map(\.rawValue)).union(["prepare_production_assets"])
         default: return Set((PipelineAgentContract.currentPhaseCapabilities[phase] ?? []).map(\.rawValue))
         }
     }

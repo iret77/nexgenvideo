@@ -1,3 +1,9 @@
-# Shotlist
+# Shot List
 
-Use write_shotlist to promote the exact approved timing, technical draft and Bible to the normalized production plan in one transaction. Preserve stable UUIDs and source choices; resolve every required obligation. Never construct a legacy sNNN Shot List for this contract.
+Use write_shotlist with the normalized proposal contract. Preserve every approved planned-shot UUID, Storyboard action, framing, timing, source selection and native input range. Do not author legacy sNNN Shot List rows or a second editable timeline.
+
+After write_bible, call prepare_production_assets for actual project-local Bible/Design images, source media or verified scene geometry. It validates decoded files and returns real content IDs plus expectedDraftFingerprint and expectedAssetGraphFingerprint. Native obligation assignment is an explicit user action: wait for every required obligation to have its real selected asset and receipt, or its explicitly permitted skip. Do not invent confirmations or substitute a free-text subject for an asset.
+
+Write one proposal shot per approved draft entry in exact order. Supply ExecutionShotV1 state/action/camera/blocking/acceptance and sourceInTicks; actual source files and source input ranges remain native choices. Every provider video shot declares its generationRequirement, exact selectedModelID/selectedOffering from list_models.production_routes, coreInputs modes and actual noncore referenceDemands using returned asset IDs. Future Frames and predecessor Takes are deferred recipes, never invented graph nodes. Host-generated templates, graph/context/execution plan, routes, immutable projection and promotion are published as one transaction.
+
+An animated still uses the timeline_animated_still delivery marker, no final video provider route and no additional paid Render. Its actual image model and compiled image request belong to Frames. A declared continuation/extension requires its exact provider-video predecessor. Frame continuation uses only that predecessor's future verified last frame; native extension requires a real executable extend-forward route. The host resolves actual future media only at submission. Changed source, motion, chain or delivery decisions require the native technical editor and renewed structural validation.

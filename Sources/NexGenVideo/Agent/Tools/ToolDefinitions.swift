@@ -28,6 +28,8 @@ enum ToolName: String, CaseIterable, Sendable {
     case showDialog = "show_dialog"
     case showBlocks = "show_blocks"
     case compilePrompt = "compile_prompt"
+    case compileStoryboardSketch = "compile_storyboard_sketch"
+    case assignStoryboardSketch = "assign_storyboard_sketch"
     case generateVideo = "generate_video"
     case generateImage = "generate_image"
     case prepareGenerationBatch = "prepare_generation_batch"
@@ -95,6 +97,7 @@ enum ToolName: String, CaseIterable, Sendable {
     case writeScript = "write_script"
     case writeStoryboardBundle = "write_storyboard_bundle"
     case writeShotPlanningDraft = "write_shot_planning_draft"
+    case prepareProductionAssets = "prepare_production_assets"
     case writeRenderReview = "write_render_review"
     case getRenderReviewInputs = "get_render_review_inputs"
     case writeBible = "write_bible"
@@ -105,7 +108,7 @@ enum ToolName: String, CaseIterable, Sendable {
     var isDurableWrite: Bool {
         switch self {
         // Approving gate tools defer their write to the user's later click.
-        case .generateVideo, .generateImage, .prepareGenerationBatch, .generateAudio, .upscaleMedia, .importMedia,
+        case .compileStoryboardSketch, .assignStoryboardSketch, .getRenderReviewInputs, .generateVideo, .generateImage, .prepareGenerationBatch, .prepareProductionAssets, .generateAudio, .upscaleMedia, .importMedia,
              .initProject, .rewind, .runPhase, .recordRender, .recordAffect, .saveFrameAudit,
              .setLedgerAttribute, .lockLedgerAttribute, .removeLedgerAttribute,
              .attachSong, .copyProjectFile, .extractScene3dPovs, .writeBrief,
@@ -136,7 +139,7 @@ enum ToolName: String, CaseIterable, Sendable {
         case .writeTreatment:             return "treatment"
         case .writeStoryboard:            return "storyboard"
         case .writeScript:                return "script"
-        case .writeStoryboardBundle:      return "storyboard"
+        case .writeStoryboardBundle, .assignStoryboardSketch: return "storyboard"
         case .writeShotPlanningDraft:     return "shot_planning"
         case .writeRenderReview:          return "render_review"
         case .writeBible:                 return "bible"
@@ -156,7 +159,7 @@ enum ToolName: String, CaseIterable, Sendable {
 
     var usesCurrentPipelinePhase: Bool {
         switch self {
-        case .compilePrompt, .generateVideo, .generateImage, .prepareGenerationBatch, .generateAudio,
+        case .compileStoryboardSketch, .getRenderReviewInputs, .prepareProductionAssets, .compilePrompt, .generateVideo, .generateImage, .prepareGenerationBatch, .generateAudio,
              .upscaleMedia, .importMedia, .runProviderTool, .copyProjectFile,
              .cropToAspect, .setLedgerAttribute, .lockLedgerAttribute,
              .removeLedgerAttribute:
@@ -168,7 +171,7 @@ enum ToolName: String, CaseIterable, Sendable {
 
     var isCanonicalArtifactWriter: Bool {
         switch self {
-        case .writeAnalysisInterpretation, .writeBrief, .writeProductionDesign,
+        case .assignStoryboardSketch, .writeAnalysisInterpretation, .writeBrief, .writeProductionDesign,
              .writeTreatment, .writeStoryboard, .writeBible, .writeShotlist,
              .writePhaseExtension, .writeScript, .writeStoryboardBundle, .writeShotPlanningDraft, .writeRenderReview:
             true
@@ -192,7 +195,7 @@ enum ToolName: String, CaseIterable, Sendable {
         case .recordRender:
             let phase = args["phase"] as? String
             return phase == "frames" || phase == "final"
-        case .writeAnalysisInterpretation, .writeBrief,
+        case .assignStoryboardSketch, .writeAnalysisInterpretation, .writeBrief,
              .writeProductionDesign, .writeTreatment, .writeStoryboard,
              .writeBible, .writeShotlist, .writePhaseExtension, .writeScript, .writeStoryboardBundle,
              .writeShotPlanningDraft, .writeRenderReview, .runSanity, .saveFrameAudit:
@@ -920,6 +923,7 @@ enum ToolDefinitions {
                     "outputCompression": ["type": "integer", "minimum": 0, "maximum": 100, "description": "JPEG/WebP compression quality when supported. Omit for PNG."],
                     "maskMediaRef": ["type": "string", "description": "Optional image mask asset for an edit model that reports supportsMask=true."],
                     "referenceMediaRefs": ["type": "array", "items": ["type": "string"], "description": "Media asset IDs to use as reference images for free generation. Omit for format-pack Frames shots; the host supplies their semantic plan."],
+                    "storyboardCompileReceipt": ["type": "string", "description": "Required during Storyboard v2: exact host receipt path returned by compile_storyboard_sketch. Generate one image and keep prompt/token/shotId unchanged."],
                     "referenceProjectPaths": ["type": "array", "items": ["type": "string"], "description": "Project-local image paths under pipeline/ for free or design-sheet generation. Production Design and format-pack Frames shots attach their host-owned sets automatically; omit this field there."],
                     "folderId": ["type": "string", "description": "Optional. Folder id (from list_folders or create_folder) to place the result in. Omit for the project root."],
                 ],
@@ -1376,9 +1380,24 @@ enum ToolDefinitions {
         AgentTool(name: .writeStoryboardBundle,
             description: "Atomically write Storyboard v2, adaptation, timing and stable shot identity. Omit shot id to allocate a new UUID; retain an id only for unchanged action. Sketch assets may reference existing verified host evidence; this tool cannot fabricate selection or generation receipts. Image-less plans remain drafts.",
             inputSchema: PipelineArtifactWriteContract.storyboardBundleSchema),
+        AgentTool(name: .compileStoryboardSketch,
+            description: "Compile an actual current Storyboard shot moment and framing into an image request. The host owns the subject, composition and compiler provenance. Pass returned prompt, compileToken, shotId=none and storyboardCompileReceipt unchanged to generate_image with numImages=1. This compiles only; generation still requires the existing phase spend approval.",
+            inputSchema: objectSchema(properties: ["project_dir": projectDirProperty,
+                "shot_id": ["type": "string"], "moment_id": ["type": "string"], "model": ["type": "string"],
+                "expected_fingerprint": ["type": "string", "pattern": "^[a-f0-9]{64}$"]],
+                required: ["shot_id", "moment_id", "model", "expected_fingerprint"])),
+        AgentTool(name: .assignStoryboardSketch,
+            description: "Assign the exact completed generated image to its compiled Storyboard moment. The host verifies actual compiler IR, generation package, provider/spend evidence and decoded output bytes, then publishes the sketch proof and new Storyboard bundle atomically. This cannot adopt an arbitrary uploaded or unrelated generated image.",
+            inputSchema: objectSchema(properties: ["project_dir": projectDirProperty,
+                "media_ref": ["type": "string"], "compilation_receipt": ["type": "string"],
+                "expected_fingerprint": ["type": "string", "pattern": "^[a-f0-9]{64}$"]],
+                required: ["media_ref", "compilation_receipt", "expected_fingerprint"])),
         AgentTool(name: .writeShotPlanningDraft,
             description: "Write a technical draft for every approved planned-shot UUID. Preserve Storyboard framing/timing, declare source modes and explicit unresolved obligations; nonexistent files never count as source evidence.",
             inputSchema: PipelineArtifactWriteContract.shotPlanningDraftSchema),
+        AgentTool(name: .prepareProductionAssets,
+            description: "Prepare actual project-local Bible, Design, source-media and verified scene assets for native obligation assignment. The host hashes and validates the actual files, derives content identities and returns the exact graph/draft fingerprints. This does not confirm user choices or approve obligations. Future generated Frames and Takes are not planning assets.",
+            inputSchema: ProductionPlanToolContract.prepareAssets),
         AgentTool(name: .getRenderReviewInputs,
             description: "Read and deliver the exact current Render Review inputs, final compiled prompts, live planned routes and actual inspection images. Deferred predecessor recipes are identified explicitly. Use the returned fingerprint unchanged in write_render_review; inspect the returned media before reporting findings.",
             inputSchema: objectSchema(properties: ["project_dir": projectDirProperty], required: [])),
@@ -1393,7 +1412,7 @@ enum ToolDefinitions {
         AgentTool(
             name: .writeShotlist,
             description: "Write the next validated Shot List and its complete execution plan as one transaction. Supply `shots`, matching `execution_shots`, and any activated `spatial_plan`; the current Music Video pack also requires `musicvideo_plan`. The host derives project, Song, exact source bindings, hashes and provenance, exports native blockouts and exact performance-audio segments, and rolls back every artifact if validation fails. Generated and AI-enhanced shots carry generation requirements; imported shots keep directorial execution semantics without a generation requirement. Before authoring execution_shots, read get_project_state.execution_input_contract and list_models.production_routes for exact semantic roles, input slots and compatible modes; each generated video shot must bind its required reference_demands, core_inputs and generation_requirement.mode_ids together on one activated route within its reference limits, and every optional demand must use a slot and mode some activated route offers. Entity kinds (location, character, prop) are not semantic_job_id values. Resolve validation errors from these host contracts, never by guessing synonyms or asking the user for internal identifiers.",
-            inputSchema: PipelineArtifactWriteContract.shotlistSchema
+            inputSchema: ["anyOf": [PipelineArtifactWriteContract.shotlistSchema, ProductionPlanToolContract.write]]
         ),
         AgentTool(
             name: .writePhaseExtension,

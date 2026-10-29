@@ -950,7 +950,7 @@ final class ToolExecutor {
         case .getTranscript: return try await getTranscript(editor, args)
         case .inspectTimeline: return try await inspectTimeline(editor, args)
         case .searchMedia:   return try await searchMedia(editor, args)
-        case .applyColor:    return try applyColor(editor, args)
+        case .applyColor:    return try await applyColor(editor, args)
         case .applyEffect:   return try applyEffect(editor, args)
         case .inspectColor:  return try await inspectColor(editor, args)
         case .addClips:         return try addClips(editor, args)
@@ -974,6 +974,8 @@ final class ToolExecutor {
         case .showDialog: return try showDialog(editor, args, origin: origin)
         case .showBlocks: return try showBlocks(args)
         case .compilePrompt: return try await compilePrompt(editor, args)
+        case .compileStoryboardSketch: return try await compileStoryboardSketchTool(editor, args)
+        case .assignStoryboardSketch: return try assignStoryboardSketchTool(editor, args)
         case .generateVideo:
             _ = await catalogReadiness()
             return try await generate(editor, args, type: .video, origin: origin)
@@ -1017,11 +1019,12 @@ final class ToolExecutor {
         case .writeScript: return try writeScriptTool(editor, args)
         case .writeStoryboardBundle: return try writeStoryboardBundleTool(editor, args)
         case .writeShotPlanningDraft: return try writeShotPlanningDraftTool(editor, args)
+        case .prepareProductionAssets: return try await prepareProductionAssetsTool(editor, args)
         case .getRenderReviewInputs:
             return try await renderReviewInputsTool(editor, args, origin: origin, toolUseID: toolUseID)
         case .writeRenderReview:
             return try await writeRenderReviewTool(editor, args, origin: origin, toolUseID: toolUseID)
-        case .writeBible:           return try writeBibleTool(editor, args)
+        case .writeBible:           return try await writeBibleTool(editor, args)
         case .writeShotlist:        return try await writeShotlistTool(editor, args)
         case .writePhaseExtension:  return try writePhaseExtensionTool(editor, args)
         case .getPattern:           return try getPatternTool(editor, args)

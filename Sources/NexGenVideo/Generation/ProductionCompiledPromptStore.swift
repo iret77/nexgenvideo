@@ -100,8 +100,14 @@ enum ProductionCompiledPromptStore {
             if value.shotID != "none" {
                 let promotion = try PlanningWriterIO.read(ShotPlanningPromotionV1.self,
                     at: ShotPlanningPromotionV1.currentPath, dataRoot: dataRoot)
-                guard let reference = promotion.routes.first(where: { $0.shotID == value.shotID })?.route,
-                      reference.sha256 == value.binding.routeArtifactSHA256 else { throw GateBlocked("The compiled prompt route changed.") }
+                let reference: CanonicalArtifactReferenceV1
+                if let planned = promotion.routes.first(where: { $0.shotID == value.shotID })?.route,
+                   planned.sha256 == value.binding.routeArtifactSHA256 { reference = planned }
+                else {
+                    let bundle = try PipelineProductionInputMaterializer.requireCurrent(shotID: value.shotID, dataRoot: dataRoot)
+                    guard bundle.receipt.route.sha256 == value.binding.routeArtifactSHA256 else { throw GateBlocked("The compiled prompt route changed.") }
+                    reference = bundle.receipt.route
+                }
                 let route = try PlanningWriterIO.read(ProductionRouteV1.self, at: reference.path, dataRoot: dataRoot)
                 _ = try ProjectLocalFile.requireHash(reference.sha256, at: reference.path, dataRoot: dataRoot)
                 endpoint = route.offering.endpointID

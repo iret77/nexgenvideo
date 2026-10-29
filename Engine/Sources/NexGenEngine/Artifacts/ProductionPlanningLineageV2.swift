@@ -5,15 +5,25 @@ public enum ProductionPlanningLineageV2 {
                                 "shot_planning", "bible", "shotlist", "sanity", "frames", "render_review", "render"]
 
     public static func snapshot(phase: String, dataRoot: URL) throws -> PhaseLineageSnapshot {
+        try snapshot(phase: phase, dataRoot: dataRoot, evidenceReferences: nil)
+    }
+
+    public static func snapshot(phase: String, dataRoot: URL,
+                                evidenceReferences: StoryboardSketchEvidenceReferences?) throws -> PhaseLineageSnapshot {
         guard let index = phases.firstIndex(of: phase) else { throw ProductionPlanningError.invalid("lineage.phase") }
-        let inputs = try phases.prefix(index).flatMap { try artifactPaths(phase: $0, dataRoot: dataRoot) }
-        let artifacts = try artifactPaths(phase: phase, dataRoot: dataRoot)
+        let inputs = try phases.prefix(index).flatMap { try artifactPaths(phase: $0, dataRoot: dataRoot, evidenceReferences: evidenceReferences) }
+        let artifacts = try artifactPaths(phase: phase, dataRoot: dataRoot, evidenceReferences: evidenceReferences)
         return PhaseLineageSnapshot(inputFingerprint: try fingerprint(inputs, dataRoot: dataRoot),
             artifactFingerprint: try fingerprint(artifacts, dataRoot: dataRoot))
     }
 
     public static func artifactPaths(phase: String, dataRoot: URL) throws -> [String] {
-        let paths: [String]
+        try artifactPaths(phase: phase, dataRoot: dataRoot, evidenceReferences: nil)
+    }
+
+    public static func artifactPaths(phase: String, dataRoot: URL,
+                                     evidenceReferences: StoryboardSketchEvidenceReferences?) throws -> [String] {
+        var paths: [String]
         switch phase {
         case "project_init": paths = [PipelineLayout.projectFile]
         case "brief":
@@ -26,9 +36,11 @@ public enum ProductionPlanningLineageV2 {
         case "production_design":
             let design = try YAMLArtifactStore(dataRoot: dataRoot).load(ProductionDesign.self, at: PipelineLayout.productionDesignFile)
             try design.validate()
+            let spatial = try ProductionSpatialInventoryV1.loadIfPresent(dataRoot: dataRoot)
             paths = [PipelineLayout.productionDesignFile] + design.refs.map(\.path)
                 + (design.lightingAnchor.isEmpty ? [] : [design.lightingAnchor])
                 + optional([PipelineLayout.assetProofFile(scope: "production_design"), ResolvedProductionStyleV1.relativePath], dataRoot: dataRoot)
+                + (spatial.map { [ProductionSpatialInventoryV1.currentPath] + $0.references.map(\.path) } ?? [])
         case "treatment":
             let value = try TreatmentCausalityStoreV2.requireCurrent(dataRoot: dataRoot, approval: false)
             paths = [PipelineLayout.treatmentCurrentFile, PipelineLayout.treatmentVersionFile(value.header.revision),
@@ -37,9 +49,9 @@ public enum ProductionPlanningLineageV2 {
             let value = try script(dataRoot: dataRoot)
             paths = [ScriptV1.currentPath, ScriptV1.versionPath(value.header.revision)] + value.header.inputs.map(\.path)
         case "storyboard":
-            paths = try storyboard(dataRoot: dataRoot).references.map(\.path)
+            paths = try storyboard(dataRoot: dataRoot, evidenceReferences: evidenceReferences).references.map(\.path)
         case "shot_planning":
-            let value = try ProductionPlanningStoreV1.readShotPlanning(dataRoot: dataRoot, storyboard: storyboard(dataRoot: dataRoot))
+            let value = try ProductionPlanningStoreV1.readShotPlanning(dataRoot: dataRoot, storyboard: storyboard(dataRoot: dataRoot, evidenceReferences: evidenceReferences))
             paths = [ShotPlanningDraftV1.currentPath, ShotPlanningDraftV1.versionPath(value.header.revision)] + value.header.inputs.map(\.path)
         case "bible":
             guard let bible = try loadBible(dataRoot: dataRoot) else { throw ProductionPlanningError.invalid("lineage.bibleMissing") }
@@ -49,15 +61,33 @@ public enum ProductionPlanningLineageV2 {
                     PipelineLayout.confirmedIdentityAdoptionsFile], dataRoot: dataRoot)
         case "shotlist":
             let projection = try projection(dataRoot: dataRoot)
-            paths = [ProductionPlanProjectionV1.versionPath(projection.header.revision)] + projection.header.inputs.map(\.path)
+            let promotion = try json(ShotPlanningPromotionV1.self, path: ShotPlanningPromotionV1.currentPath, dataRoot: dataRoot)
+            let archived = try json(ShotPlanningPromotionV1.self, path: ShotPlanningPromotionV1.versionPath(promotion.header.revision), dataRoot: dataRoot)
+            guard promotion == archived, promotion.header.revision == projection.header.revision,
+                  promotion.projection.path == ProductionPlanProjectionV1.versionPath(projection.header.revision) else {
+                throw ProductionPlanningError.invalid("lineage.promotion")
+            }
+            try promotion.header.requireCurrentInputs(dataRoot: dataRoot)
+            paths = [ProductionPlanProjectionV1.versionPath(projection.header.revision), ShotPlanningPromotionV1.currentPath,
+                ShotPlanningPromotionV1.versionPath(promotion.header.revision)] + projection.header.inputs.map(\.path)
                 + projection.sourceBindings.map(\.path) + [projection.executionPlan.creativeContext.path]
-                + projection.executionPlan.extensionReferences.map(\.path)
+                + projection.executionPlan.extensionReferences.map(\.path) + promotion.artifactReferences.map(\.path)
         case "sanity": paths = [PipelineLayout.sanityReportFile] + (try ProductionPlanAuditV1.artifactReferences(projection: projection(dataRoot: dataRoot), dataRoot: dataRoot)).map(\.path)
         case "frames":
             let frames = try loadFramesManifest(dataRoot: dataRoot)
             paths = [PipelineLayout.framesManifestFile] + frames.shots.flatMap(\.frames).map(\.path)
                 + optional([PipelineLayout.renderManifestFile(phase: "frames"), RenderRecordPublicationV1.artifactPath(phase: "frames"),
                     RenderShotProvenancePublicationV1.artifactPath(phase: "frames")], dataRoot: dataRoot)
+            for shot in frames.shots {
+                for frame in shot.frames {
+                    let receiptPath = "frames/production-receipts/\(shot.shotId)-\(frame.role).v1.json"
+                    let receipt = try json(FrameReceiptInputs.self, path: receiptPath, dataRoot: dataRoot)
+                    guard receipt.schema == "production-frame-receipt/v1" else { throw ProductionPlanningError.invalid("lineage.frameReceipt") }
+                    for input in receipt.inputs { _ = try ProjectLocalFile.requireHash(input.sha256, at: input.path, dataRoot: dataRoot) }
+                    paths += [receiptPath, FrameReferenceUsageStoreV1.path(shotID: shot.shotId, role: frame.role)] + receipt.inputs.map(\.path)
+                    paths += optional(["frames/\(shot.shotId)-\(frame.role).audit.yaml", "frames/\(shot.shotId)-\(frame.role).acceptance.json"], dataRoot: dataRoot)
+                }
+            }
         case "render_review":
             let review = try json(RenderReviewV1.self, path: RenderReviewV1.currentPath, dataRoot: dataRoot)
             paths = [RenderReviewV1.currentPath, RenderReviewV1.versionPath(review.header.revision)] + review.references.map(\.path)
@@ -84,7 +114,12 @@ public enum ProductionPlanningLineageV2 {
     }
 
     public static func storyboard(dataRoot: URL) throws -> StoryboardBundleSnapshot {
-        try ProductionPlanningStoreV1.readStoryboard(dataRoot: dataRoot, script: script(dataRoot: dataRoot), requireVisuals: false)
+        try storyboard(dataRoot: dataRoot, evidenceReferences: nil)
+    }
+
+    public static func storyboard(dataRoot: URL, evidenceReferences: StoryboardSketchEvidenceReferences?) throws -> StoryboardBundleSnapshot {
+        try ProductionPlanningStoreV1.readStoryboard(dataRoot: dataRoot, script: script(dataRoot: dataRoot), requireVisuals: false,
+            evidenceReferences: evidenceReferences)
     }
 
     public static func projection(dataRoot: URL) throws -> ProductionPlanProjectionV1 {
@@ -119,4 +154,9 @@ public enum ProductionPlanningLineageV2 {
     private static func json<T: Decodable>(_ type: T.Type, path: String, dataRoot: URL) throws -> T {
         try JSONDecoder().decode(type, from: Data(contentsOf: ProjectLocalFile.resolve(path, dataRoot: dataRoot)))
     }
+    private struct FrameReceiptInputs: Decodable {
+        let schema: String
+        let inputs: [CanonicalArtifactReferenceV1]
+    }
+
 }

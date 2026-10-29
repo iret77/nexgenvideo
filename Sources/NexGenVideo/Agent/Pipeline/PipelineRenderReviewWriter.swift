@@ -71,7 +71,7 @@ enum PipelineRenderReviewWriter {
         let projection = try ProductionPlanningLineageV2.projection(dataRoot: root)
         let board = try PlanningWriterIO.storyboard(dataRoot: root)
         let frames = try ProductionPlanFramesV1.requireCurrent(projection: projection, dataRoot: root)
-        let promotion = try PipelineShotPlanningPromotionStore.requireCurrent(projection: projection, dataRoot: root)
+        _ = try PipelineShotPlanningPromotionStore.requireCurrent(projection: projection, dataRoot: root)
         let projectionRef = try reference(ProductionPlanProjectionV1.versionPath(projection.header.revision), root: root)
         var refs = try ProductionPlanFramesV1.artifactReferences(projection: projection, dataRoot: root)
             + ProductionPlanAuditV1.artifactReferences(projection: projection, dataRoot: root)
@@ -111,19 +111,27 @@ enum PipelineRenderReviewWriter {
                 let compiled = try ProductionCompiledPromptStore.load(promptRef, dataRoot: root)
                 guard compiled.modality == "image", compiled.projectID == projection.header.projectID,
                       compiled.shotID == shot.id else { throw GateBlocked("The animated still's compiler evidence is invalid.") }
-                guard let immutableRoute = promotion.routes.first(where: { $0.shotID == shot.id })?.route else {
-                    throw GateBlocked("The shot has no immutable planned route.")
-                }
-                let routeRef = immutableRoute
                 evidence.append(try reference(FrameReferenceUsageStoreV1.path(shotID: shot.id, role: "start"), root: root))
                 let conditioning = usage.plan.bindings.enumerated().map { index, item in
                     CanonicalArtifactReferenceV1(id: "still-reference-\(index)", role: item.role, path: item.path, sha256: item.sha256)
                 }
                 reviewed = .init(shotID: shot.id, evidence: evidence, compiledPrompt: promptRef,
-                    promptIRSHA256: compiled.binding.promptIRSHA256, route: routeRef, conditioning: conditioning)
+                    promptIRSHA256: compiled.binding.promptIRSHA256, conditioning: conditioning)
                 promptText = compiled.text
                 modelID = compiled.modelID
             } else {
+                if let chain = projection.chains.first(where: { $0.shotID == shot.id }) {
+                    let promotion = try PipelineShotPlanningPromotionStore.requireCurrent(projection: projection, dataRoot: root)
+                    let template = try PipelineShotPlanningPromotionStore.inputTemplate(for: shot.id, promotion: promotion, dataRoot: root)
+                    if let mode = template.coreInputs.audioTimingModeID {
+                        guard chain.kind == .nativeExtension else { throw GateBlocked("Frame continuation accepts only its predecessor's actual last frame, without audio timing inputs.") }
+                        _ = try await PipelineProductionKnownAudio.prepare(shotID: shot.id, projection: projection, modeID: mode, access: access)
+                    }
+                }
+                if projection.chains.allSatisfy({ $0.shotID != shot.id }) {
+                    _ = try await PipelineProductionInputMaterializer.prepare(shotID: shot.id, editor: editor,
+                        catalog: editor.generationBatchCoordinator.modelCatalog)
+                }
                 let inputs = try PipelineProductionPromptCompiler.videoInputs(shotID: shot.id, dataRoot: root,
                     editor: editor, catalog: editor.generationBatchCoordinator.modelCatalog)
                 guard let timing = projection.timing(for: shot.id) else { throw GateBlocked("The production shot has no exact timing.") }
@@ -136,10 +144,8 @@ enum PipelineRenderReviewWriter {
                 try access.revalidate()
                 let promptRef = try ProductionCompiledPromptStore.record(compiled, modelID: inputs.modelID,
                     modality: "video", projectID: projection.header.projectID, dataRoot: root)
-                guard let immutableRoute = promotion.routes.first(where: { $0.shotID == shot.id })?.route else {
-                    throw GateBlocked("The shot has no immutable planned route.")
-                }
-                let routeRef = immutableRoute
+                let routeRef = inputs.routeReference
+                refs += inputs.artifactReferences
                 reviewed = .init(shotID: shot.id, evidence: evidence, compiledPrompt: promptRef,
                     promptIRSHA256: compiled.binding.promptIRSHA256, route: routeRef,
                     conditioning: inputs.conditioning, predecessor: inputs.predecessor)

@@ -96,7 +96,9 @@ enum PipelineAgentContract {
     ]
 
     static let currentPhaseTools: Set<ToolName> = [
+        .compileStoryboardSketch,
         .getRenderReviewInputs,
+        .prepareProductionAssets,
         .compilePrompt,
         .generateVideo,
         .generateImage,

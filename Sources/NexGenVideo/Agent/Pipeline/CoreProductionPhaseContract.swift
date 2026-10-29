@@ -92,13 +92,33 @@ enum HostProductionPhaseGate {
         case "sanity":
             _ = try ProductionPlanAuditV1.requireCurrent(projection: ProductionPlanningLineageV2.projection(dataRoot: dataRoot), dataRoot: dataRoot)
         case "frames":
-            _ = try ProductionPlanFramesV1.requireCurrent(projection: ProductionPlanningLineageV2.projection(dataRoot: dataRoot), dataRoot: dataRoot)
+            let projection = try ProductionPlanningLineageV2.projection(dataRoot: dataRoot)
+            _ = try ProductionPlanFramesV1.requireCurrent(projection: projection, dataRoot: dataRoot)
+            try PipelineProductionFramesWriter.requireCurrent(projection: projection, dataRoot: dataRoot)
+            let frames = try loadFramesManifest(dataRoot: dataRoot)
+            for shot in frames.shots {
+                for frame in shot.frames {
+                    guard let audit = try loadFrameAudit(dataRoot: dataRoot, shotId: shot.shotId, role: frame.role) else {
+                        throw GateBlocked("Inspect and audit each actual current production frame before approval.")
+                    }
+                    try FrameAuditExpectations.requireCurrent(audit, dataRoot: dataRoot)
+                }
+            }
+        case "render":
+            let projection = try ProductionPlanningLineageV2.projection(dataRoot: dataRoot)
+            for shot in projection.shots where shot.sourceMode != .imported {
+                if ShotDeliveryModeResolverV1.resolve(shot) == .timelineAnimatedStill {
+                    _ = try PipelineProductionRenderWriter.requireStill(shotID: shot.id, dataRoot: dataRoot)
+                } else { _ = try PipelineProductionRenderWriter.requireSelected(shotID: shot.id, dataRoot: dataRoot) }
+            }
+            _ = try PipelineProductionAssemblyWriter.requireCurrent(dataRoot: dataRoot)
         case "script": _ = try PlanningWriterIO.script(dataRoot: dataRoot)
         case "storyboard": _ = try PlanningWriterIO.storyboard(dataRoot: dataRoot)
         case "shot_planning":
             let storyboard = try PlanningWriterIO.storyboard(dataRoot: dataRoot)
             let draft = try ProductionPlanningStoreV1.readShotPlanning(dataRoot: dataRoot, storyboard: storyboard)
             try ShotPlanningValidatorV1.validate(draft, timing: storyboard.timing, approval: true)
+            try PipelineShotPlanningWriter.requireSpatialInputs(draft, dataRoot: dataRoot)
         case "treatment": _ = try TreatmentCausalityStoreV2.requireCurrent(dataRoot: dataRoot, approval: true)
         default:
             throw PhaseContractError.registryMismatch("\(phase) has no normalized production artifact validator")
@@ -108,10 +128,25 @@ enum HostProductionPhaseGate {
 
 enum HostProductionPhaseLineage {
     static func artifactPaths(phase: String, dataRoot: URL) throws -> [String] {
-        try ProductionPlanningLineageV2.artifactPaths(phase: phase, dataRoot: dataRoot)
+        let base = try ProductionPlanningLineageV2.artifactPaths(phase: phase, dataRoot: dataRoot,
+            evidenceReferences: PipelineStoryboardSketchEvidence.references,
+            bibleEvidenceReferences: PipelineProductionAssetEvidence.spatialBibleReferences)
+        guard phase == "render" else { return base }
+        return Array(Set(base + (try PipelineProductionAssemblyWriter.artifactReferences(dataRoot: dataRoot)).map(\.path))).sorted()
     }
 
     static func snapshot(phase: String, dataRoot: URL) throws -> PhaseLineageSnapshot {
-        try ProductionPlanningLineageV2.snapshot(phase: phase, dataRoot: dataRoot)
+        let base = try ProductionPlanningLineageV2.snapshot(phase: phase, dataRoot: dataRoot,
+            evidenceReferences: PipelineStoryboardSketchEvidence.references,
+            bibleEvidenceReferences: PipelineProductionAssetEvidence.spatialBibleReferences)
+        guard phase == "render" else { return base }
+        let refs = try PipelineProductionAssemblyWriter.artifactReferences(dataRoot: dataRoot)
+        let own = Set([ProductionPlanAssemblyProofV1.relativePath, PipelineProductionAssemblyWriter.receiptPath])
+        let inputs = refs.filter { !own.contains($0.path) }
+        let artifacts = refs.filter { own.contains($0.path) }
+        return .init(inputFingerprint: FileDigest.sha256(of: try PlanningWriterIO.json([base.inputFingerprint,
+            FileDigest.sha256(of: try PlanningWriterIO.json(inputs))])),
+            artifactFingerprint: FileDigest.sha256(of: try PlanningWriterIO.json([base.artifactFingerprint,
+                FileDigest.sha256(of: try PlanningWriterIO.json(artifacts))])))
     }
 }

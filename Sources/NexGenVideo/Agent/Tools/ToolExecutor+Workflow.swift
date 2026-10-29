@@ -665,7 +665,7 @@ extension ToolExecutor {
         return target
     }
 
-    private static func requirePipelineAssetCopyPath(
+    static func requirePipelineAssetCopyPath(
         _ relativePath: String,
         source: Bool
     ) throws {
@@ -677,6 +677,15 @@ extension ToolExecutor {
               !path.split(separator: "/", omittingEmptySubsequences: false)
                 .contains(where: { $0.isEmpty || $0 == "." || $0 == ".." }) else {
             throw ToolError("Pipeline asset paths must be normalized project-relative file paths.")
+        }
+        let nativeOnly = ["spatial-adoptions/", "pipeline/spatial-adoptions/", "shot-planning/spatial-states/",
+            "pipeline/shot-planning/spatial-states/", "storyboard/sketches/", "pipeline/storyboard/sketches/",
+            "renders/performance-alignment/", "pipeline/renders/performance-alignment/"]
+        let parts = path.split(separator: "/")
+        let scopedParts = parts.first == "pipeline" ? Array(parts.dropFirst()) : parts
+        let nativeBibleView = scopedParts.count >= 3 && scopedParts[0] == "bible" && scopedParts[2].hasPrefix("spatial-")
+        guard !nativeBibleView, !nativeOnly.contains(where: { path.hasPrefix($0) }) else {
+            throw ToolError("Native production receipts, camera states and derived media can only be published by their verified host operation.")
         }
         if source {
             guard path.hasPrefix("import/") else {
@@ -755,6 +764,12 @@ extension ToolExecutor {
         )
         if let fromRel {
             try Self.requirePipelineAssetCopyPath(fromRel, source: true)
+        }
+        let declaration = try mutationPackDeclaration(editor, dataRoot: root)
+        let workflow = try PhaseContractRuntime.resolveWorkflow(dataRoot: root, expectedPack: declaration.binding,
+            expectedProductionContract: declaration.productionContract)
+        if workflow?.isProductionV2 == true {
+            try ProductionWorkflowRecoveryMigration.requireNewOutput(toRel, dataRoot: root)
         }
         let to = try Self.resolveInside(root, toRel)
         let sourceAsset = try mediaID.map {
@@ -845,6 +860,9 @@ extension ToolExecutor {
                 paths: transactionPaths,
                 dataRoot: root
             ) {
+                if workflow?.isProductionV2 == true {
+                    try ProductionWorkflowRecoveryMigration.requireNewOutput(toRel, dataRoot: root)
+                }
                 try FileManager.default.createDirectory(
                     at: to.deletingLastPathComponent(),
                     withIntermediateDirectories: true
@@ -1432,7 +1450,7 @@ extension ToolExecutor {
                 declaredPack: declaredPack,
                 declaredBinding: declaredBinding,
                 declaredProductionContract: declaredProductionContract,
-                executionCoordinator: editor.pipelinePhaseRunCoordinator,
+                editor: editor, executionCoordinator: editor.pipelinePhaseRunCoordinator,
                 mutationID: mutationID
             )
         } catch {
@@ -1629,6 +1647,53 @@ extension ToolExecutor {
         let root = try resolveDataRoot(args, editor: editor)
         let phase = try args.requireString("phase")
         let declaration = try mutationPackDeclaration(editor, dataRoot: root)
+        if phase == "frames", try resolvedWorkflow(dataRoot: root, editor: editor)?.isProductionV2 == true {
+            let access = try PipelinePlanningWriteAccess(dataRoot: root, declaration: declaration, phase: "frames")
+            try PipelineProductionFramesWriter.prepare(access: access)
+            guard let pending = try PipelineProductionFramesWriter.nextPending(dataRoot: root) else {
+                return try jsonResult(["phase": phase, "shot_id": NSNull(), "done": true])
+            }
+            return try jsonResult(["phase": phase, "shot_id": pending.shot.id, "role": pending.role,
+                "done": false, "source_mode": pending.shot.sourceMode.rawValue,
+                "visual_prompt": PipelineProductionFramesWriter.boundaryIntent(shot: pending.shot, role: pending.role),
+                "instruction": "Compile this exact visual_prompt for this shot with compile_prompt (image). Generate one image through phase cost approval, inspect the actual image, record_render its completed media with this role, then save_frame_audit."])
+        }
+        if phase == "final", try resolvedWorkflow(dataRoot: root, editor: editor)?.isProductionV2 == true {
+            let access = try PipelinePlanningWriteAccess(dataRoot: root, declaration: declaration, phase: "render")
+            try PipelineProductionRenderWriter.prepare(access: access)
+            guard let shot = try PipelineProductionRenderWriter.nextPending(dataRoot: root) else {
+                return try jsonResult(["phase": phase, "shot_id": NSNull(), "done": true])
+            }
+            if ShotDeliveryModeResolverV1.resolve(shot) == .timelineAnimatedStill {
+                return try jsonResult(["phase": phase, "shot_id": shot.id, "done": false,
+                    "delivery_mode": "timeline_animated_still", "video_generation_required": false,
+                    "instruction": "Record this shot with record_render; the host reuses its exact approved Frames image without another generation."])
+            }
+            _ = await catalogReadiness()
+            _ = try await PipelineProductionInputMaterializer.prepare(shotID: shot.id, editor: editor,
+                catalog: editor.generationBatchCoordinator.modelCatalog)
+            guard let review = try PipelineRenderReviewWriter.loadIfPresent(dataRoot: root),
+                  let reviewed = review.shots.first(where: { $0.shotID == shot.id }), let ref = reviewed.compiledPrompt else {
+                throw ToolError("The final shot has no approved compiled Render Review.")
+            }
+            try PipelineRenderReviewWriter.requireCurrent(review, root)
+            let approved = try ProductionCompiledPromptStore.load(ref, dataRoot: root)
+            let projection = try ProductionPlanningLineageV2.projection(dataRoot: root)
+            guard let timing = projection.timing(for: shot.id) else { throw ToolError("The final shot has no canonical timing.") }
+            let compiled = try await PromptCompiler.compile(intent: shot.primaryAction, modelId: approved.modelID,
+                modality: .video, aspectRatio: shot.generationRequirement?.aspectRatio ?? "",
+                durationSeconds: projection.timebase.seconds(for: timing.nativeDurationTicks ?? timing.durationTicks),
+                editor: editor, shotId: shot.id, modelCatalog: editor.generationBatchCoordinator.modelCatalog)
+            guard compiled.text == approved.text, compiled.binding == approved.binding else {
+                throw ToolError("The actual final request changed after Render Review. Rewind and review it before generation.")
+            }
+            try access.revalidate()
+            return try jsonResult(["phase": phase, "shot_id": shot.id, "done": false,
+                "source_mode": shot.sourceMode.rawValue, "generation_model": approved.modelID,
+                "compiled_prompt": compiled.text, "compileToken": compiled.token,
+                "visual_prompt": shot.primaryAction, "video_generation_required": true,
+                "instruction": "Submit this exact compiled prompt, compileToken, shot_id and generation_model through generate_video and phase cost approval. Its ordered inputs are supplied by the host. Record the completed media with record_render, review its six native take passes, then select that take before assembly."])
+        }
         guard let shotlist = try readShotlist(dataRoot: root) else {
             throw ToolError("No shotlist yet. Plan and approve the shots before rendering.")
         }
@@ -2329,6 +2394,45 @@ extension ToolExecutor {
         let root = try resolveDataRoot(args, editor: editor)
         let phase = try args.requireString("phase")
         let declaration = try mutationPackDeclaration(editor, dataRoot: root)
+        if phase == "frames", try resolvedWorkflow(dataRoot: root, editor: editor)?.isProductionV2 == true {
+            let access = try PipelinePlanningWriteAccess(dataRoot: root, declaration: declaration, phase: "frames")
+            guard (args.string("status") ?? "rendered") == "rendered" else {
+                throw ToolError("Failed or pending generation remains in its actual generation job. Record only the completed replacement image; the previous frame remains available until then.")
+            }
+            let shotID = try args.requireString("shot_id")
+            let role = args.string("role") ?? "start"
+            let output = try args.requireString("output")
+            guard let media = await resolveRenderedAsset(output, editor: editor, dataRoot: root) else {
+                throw ToolError("The generated frame is not ready in the project media library.")
+            }
+            let frame = try await PipelineProductionFramesWriter.record(shotID: shotID, role: role, media: media,
+                access: access, editor: editor)
+            return try jsonResult(["phase": phase, "shot_id": shotID, "role": role, "status": "rendered", "output": frame.path])
+        }
+        if phase == "final", try resolvedWorkflow(dataRoot: root, editor: editor)?.isProductionV2 == true {
+            guard args.string("expected_take_id") == nil else {
+                throw ToolError("Select a reviewed take through the native take review. Agent recording cannot confirm a native selection.")
+            }
+            guard (args.string("status") ?? "rendered") == "rendered" else {
+                throw ToolError("Keep failed or pending output in its actual generation job. Record only its completed replacement.")
+            }
+            let access = try PipelinePlanningWriteAccess(dataRoot: root, declaration: declaration, phase: "render")
+            try PipelineProductionRenderWriter.prepare(access: access)
+            let shotID = try args.requireString("shot_id")
+            let projection = try ProductionPlanningLineageV2.projection(dataRoot: root)
+            if let shot = projection.shots.first(where: { $0.id == shotID }),
+               ShotDeliveryModeResolverV1.resolve(shot) == .timelineAnimatedStill {
+                let delivery = try PipelineProductionRenderWriter.recordStill(shotID: shotID, access: access)
+                return try jsonResult(["phase": phase, "shot_id": shotID, "status": "rendered",
+                    "delivery_proof": delivery.path, "additional_generation": false])
+            }
+            guard let media = await resolveRenderedAsset(try args.requireString("output"), editor: editor, dataRoot: root) else {
+                throw ToolError("The completed output is not available in this project's media library.")
+            }
+            let value = try await PipelineProductionRenderWriter.record(shotID: shotID, media: media, access: access, editor: editor)
+            return try jsonResult(["phase": phase, "shot_id": shotID, "status": "rendered",
+                "output": value.output.path, "take_id": value.takeID, "selected": false])
+        }
         let mutationSnapshot = try PipelineRenderRecordWriter.loadMutationSnapshot(
             dataRoot: root,
             phase: phase,
@@ -2889,17 +2993,19 @@ extension ToolExecutor {
         let sha = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
 
         // Expected per standard check comes from the shot spec, never the model.
-        let shotlist = try readShotlist(dataRoot: root)
-        guard let shot = shotlist?.shots.first(where: { $0.id == shotId }) else {
-            throw ToolError("No canonical shot exists for this frame audit: " + shotId)
+        var expected: [String: String]
+        if let normalized = try FrameAuditExpectations.productionExpected(shotID: shotId, role: role, dataRoot: root) {
+            expected = normalized
+        } else {
+            let shotlist = try readShotlist(dataRoot: root)
+            guard let shot = shotlist?.shots.first(where: { $0.id == shotId }) else {
+                throw ToolError("No canonical shot exists for this frame audit: " + shotId)
+            }
+            let executionShot = try FrameAuditExpectations.executionShot(shotID: shotId, role: role, dataRoot: root)
+            expected = try FrameAuditExpectations.make(shot: shot, role: role, execution: executionShot,
+                brief: try readBriefIfPresent(dataRoot: root), bible: try loadBible(dataRoot: root),
+                boundary: try FrameAuditExpectations.boundary(shotID: shotId, role: role, dataRoot: root))
         }
-        let executionShot = try FrameAuditExpectations.executionShot(shotID: shotId, role: role, dataRoot: root)
-        var expected = try FrameAuditExpectations.make(
-            shot: shot, role: role, execution: executionShot,
-            brief: try readBriefIfPresent(dataRoot: root),
-            bible: try loadBible(dataRoot: root),
-            boundary: try FrameAuditExpectations.boundary(shotID: shotId, role: role, dataRoot: root)
-        )
         let style = try ProductionStyleStoreV1.load(dataRoot: root)
         let styleCriteria = style?.criteria.filter { $0.scope == .frame && $0.evidenceKind == .image } ?? []
         for criterion in styleCriteria { expected[criterion.auditKey] = criterion.expected }
@@ -3014,13 +3120,18 @@ extension ToolExecutor {
         var body = audit.map { frameAuditJSON($0, exists: true, dataRoot: root) }
             ?? ["exists": false, "shot_id": shotId, "role": role]
         do {
-            guard let shot = try readShotlist(dataRoot: root)?.shots.first(where: { $0.id == shotId }) else {
-                throw ToolError("The canonical shot is missing. The saved audit is historical only.")
+            var expected: [String: String]
+            if let normalized = try FrameAuditExpectations.productionExpected(shotID: shotId, role: role, dataRoot: root) {
+                expected = normalized
+            } else {
+                guard let shot = try readShotlist(dataRoot: root)?.shots.first(where: { $0.id == shotId }) else {
+                    throw ToolError("The canonical shot is missing. The saved audit is historical only.")
+                }
+                expected = try FrameAuditExpectations.make(shot: shot, role: role,
+                    execution: FrameAuditExpectations.executionShot(shotID: shotId, role: role, dataRoot: root),
+                    brief: readBriefIfPresent(dataRoot: root), bible: loadBible(dataRoot: root),
+                    boundary: FrameAuditExpectations.boundary(shotID: shotId, role: role, dataRoot: root))
             }
-            var expected = try FrameAuditExpectations.make(shot: shot, role: role,
-                execution: FrameAuditExpectations.executionShot(shotID: shotId, role: role, dataRoot: root),
-                brief: readBriefIfPresent(dataRoot: root), bible: loadBible(dataRoot: root),
-                boundary: FrameAuditExpectations.boundary(shotID: shotId, role: role, dataRoot: root))
             if let style = try ProductionStyleStoreV1.load(dataRoot: root) {
                 for criterion in style.criteria where criterion.scope == .frame && criterion.evidenceKind == .image {
                     expected[criterion.auditKey] = criterion.expected
@@ -3067,8 +3178,14 @@ extension ToolExecutor {
         guard (64...4096).contains(width), (64...4096).contains(height) else {
             throw ToolError("POV width and height must each be between 64 and 4096 pixels.")
         }
-        let outDir = root
-            .appendingPathComponent("bible/\(locationId)/scene3d/povs_clay", isDirectory: true)
+        let outDir: URL
+        if try resolvedWorkflow(dataRoot: root, editor: editor)?.isProductionV2 == true {
+            let path = try ProductionWorkflowRecoveryMigration.outputPath(area: "bible",
+                leaf: UUID().uuidString.lowercased() + "/" + locationId + "/scene3d/povs", dataRoot: root)
+            outDir = root.appendingPathComponent(path, isDirectory: true)
+        } else {
+            outDir = root.appendingPathComponent("bible/\(locationId)/scene3d/povs_clay", isDirectory: true)
+        }
 
         let written: [String: URL]
         do {
@@ -3405,6 +3522,16 @@ extension ToolExecutor {
         let root = try resolveDataRoot(args, editor: editor)
         let phase = args.string("phase") ?? "final"
         let declaration = try mutationPackDeclaration(editor, dataRoot: root)
+        if try resolvedWorkflow(dataRoot: root, editor: editor)?.isProductionV2 == true {
+            guard phase == "final" else {
+                throw ToolError("Production assembly uses its canonical source ranges and explicit native take selections.")
+            }
+            let access = try PipelinePlanningWriteAccess(dataRoot: root, declaration: declaration, phase: "render")
+            let proof = try await PipelineProductionAssemblyWriter.assemble(editor: editor, access: access, driftAction: args.string("drift_action"), reviewedRanges: try assemblyReviewedRangeIDs(args))
+            return try jsonResult(["phase": phase, "shots_placed": proof.placements.count,
+                "assembly": ProductionPlanAssemblyProofV1.relativePath,
+                "instruction": "Inspect the actual timeline and complete Render approval. Subsequent editorial changes are reviewed in the final export review."])
+        }
         let reviewedRangeIDs = try assemblyReviewedRangeIDs(args)
 
         // Hard gate (terminal backstop): no assembly on an unapproved plan. Every phase up to and
@@ -4906,12 +5033,16 @@ extension ToolExecutor {
         let declaration = try mutationPackDeclaration(editor, dataRoot: root)
         let declaredPack = declaration.packName
         let declaredBinding = declaration.binding
+        let declaredProductionContract = declaration.productionContract
+        let workflow = try resolvedWorkflow(dataRoot: root, editor: editor)
+        let normalized = workflow?.isProductionV2 == true
         let resolvedPack: String?
         do {
             resolvedPack = try ProjectPackGate.requireLiveMutation(
                 projectURL: FrameInventory.projectHome(of: root),
                 declaredPack: declaredPack,
-                declaredBinding: declaredBinding
+                declaredBinding: declaredBinding,
+                declaredProductionContract: declaredProductionContract
             )
         } catch {
             throw ToolError(error.localizedDescription)
@@ -4936,7 +5067,11 @@ extension ToolExecutor {
             preparationArtifactPhase = nil
         }
         let runDeterministicSteps: @Sendable (URL) throws -> Void = { dataRoot in
-            if let preparationArtifactPhase {
+            if normalized && phase == "frames" {
+                try PipelineProductionFramesWriter.prepare(access: PipelinePlanningWriteAccess(dataRoot: dataRoot,
+                    declaration: declaration, phase: "frames"))
+            }
+            if !normalized, let preparationArtifactPhase {
                 guard let shotlist = try loadShotlist(dataRoot: dataRoot) else {
                     throw PipelinePhaseBlocked(
                         "\(phase) blocked by host preparation: the approved Shot List is missing."
@@ -4970,7 +5105,16 @@ extension ToolExecutor {
         }
         let engineSteps: [[String: Any]] = steps.map { ["id": $0.id, "summary": $0.summary] }
 
-        let runner = registry.phases[phase]
+        let runner: EngineRegistry.PhaseRunner?
+        if normalized && phase == "sanity" {
+            runner = { dataRoot in
+                _ = try ProductionPlanAuditV1.save(projection: ProductionPlanningLineageV2.projection(dataRoot: dataRoot), dataRoot: dataRoot)
+            }
+        } else if normalized && phase == "frames" {
+            runner = { _ in }
+        } else {
+            runner = registry.phases[phase]
+        }
         if runner == nil, steps.isEmpty {
             return try jsonResult([
                 "phase": phase,
@@ -4990,20 +5134,23 @@ extension ToolExecutor {
                     _ = try ProjectPackGate.requireMutation(
                         projectURL: projectHome,
                         declaredPack: declaredPack,
-                        declaredBinding: declaredBinding
+                        declaredBinding: declaredBinding,
+                        declaredProductionContract: declaredProductionContract
                     )
                 }
             ) { stagingRoot in
                 _ = try ProjectPackGate.requireMutation(
                     projectURL: FrameInventory.projectHome(of: stagingRoot),
                     declaredPack: declaredPack,
-                    declaredBinding: declaredBinding
+                    declaredBinding: declaredBinding,
+                    declaredProductionContract: declaredProductionContract
                 )
                 try runDeterministicSteps(stagingRoot)
                 _ = try ProjectPackGate.requireMutation(
                     projectURL: FrameInventory.projectHome(of: stagingRoot),
                     declaredPack: declaredPack,
-                    declaredBinding: declaredBinding
+                    declaredBinding: declaredBinding,
+                    declaredProductionContract: declaredProductionContract
                 )
                 try runner?(stagingRoot)
                 try PipelinePhaseMutationRecorder.record(
@@ -5011,12 +5158,13 @@ extension ToolExecutor {
                     dataRoot: stagingRoot,
                     captureLineage: true,
                     declaredPack: declaredPack,
-                    declaredBinding: declaredBinding
+                    declaredBinding: declaredBinding,
+                    declaredProductionContract: declaredProductionContract
                 )
             }
         }
         let coordinatedProgressRunner: EngineRegistry.ProgressPhaseRunner?
-        if runner != nil,
+        if runner != nil, !(normalized && ["sanity", "frames"].contains(phase)),
            let progressRunner = registry.progressPhaseRunners[phase] {
             coordinatedProgressRunner = { dataRoot, progress in
                 try ProjectWorkingCopy.transactPipeline(
@@ -5025,20 +5173,23 @@ extension ToolExecutor {
                         _ = try ProjectPackGate.requireMutation(
                             projectURL: projectHome,
                             declaredPack: declaredPack,
-                            declaredBinding: declaredBinding
+                            declaredBinding: declaredBinding,
+                            declaredProductionContract: declaredProductionContract
                         )
                     }
                 ) { stagingRoot in
                     _ = try ProjectPackGate.requireMutation(
                         projectURL: FrameInventory.projectHome(of: stagingRoot),
                         declaredPack: declaredPack,
-                        declaredBinding: declaredBinding
+                        declaredBinding: declaredBinding,
+                        declaredProductionContract: declaredProductionContract
                     )
                     try runDeterministicSteps(stagingRoot)
                     _ = try ProjectPackGate.requireMutation(
                         projectURL: FrameInventory.projectHome(of: stagingRoot),
                         declaredPack: declaredPack,
-                        declaredBinding: declaredBinding
+                        declaredBinding: declaredBinding,
+                        declaredProductionContract: declaredProductionContract
                     )
                     try progressRunner(stagingRoot, progress)
                     try PipelinePhaseMutationRecorder.record(
@@ -5046,7 +5197,8 @@ extension ToolExecutor {
                         dataRoot: stagingRoot,
                         captureLineage: true,
                         declaredPack: declaredPack,
-                        declaredBinding: declaredBinding
+                        declaredBinding: declaredBinding,
+                        declaredProductionContract: declaredProductionContract
                     )
                 }
             }

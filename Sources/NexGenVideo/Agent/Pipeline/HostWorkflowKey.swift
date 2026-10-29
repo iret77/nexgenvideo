@@ -124,6 +124,21 @@ extension PhaseContractRuntime {
         let resolved = try contract(workflow: workflow)
         guard let declaration = resolved.phase(phase) else { throw PhaseContractError.unknownPhase(phase) }
         if workflow.packID == nil { return declaration.nativeLineageProvider }
+        if workflow.isProductionV2, !["project_init", "analysis"].contains(phase) {
+            guard let packProvider = registry.phaseLineageProviders[phase] else {
+                throw PhaseContractError.registryMismatch("the format production phase has no lineage provider")
+            }
+            return { root in
+                let pack = try packProvider(root)
+                let host = try HostProductionPhaseLineage.snapshot(phase: phase, dataRoot: root)
+                let inputs = try JSONSerialization.data(withJSONObject: ["pack": pack.inputFingerprint,
+                    "host": host.inputFingerprint], options: [.sortedKeys])
+                let artifacts = try JSONSerialization.data(withJSONObject: ["pack": pack.artifactFingerprint,
+                    "host": host.artifactFingerprint], options: [.sortedKeys])
+                return PhaseLineageSnapshot(inputFingerprint: FileDigest.sha256(of: inputs),
+                    artifactFingerprint: FileDigest.sha256(of: artifacts))
+            }
+        }
         return registry.phaseLineageProviders[phase]
     }
 

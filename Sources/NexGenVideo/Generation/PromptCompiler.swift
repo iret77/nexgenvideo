@@ -18,6 +18,7 @@ struct PromptBinding: Codable, Sendable, Equatable {
     let promptDialectVersion: Int
     let frameReferencePlanSHA256: String
     let promptIRSHA256: String
+    let frameRole: String?
 
     private enum CodingKeys: String, CodingKey {
         case projectKey, shotId, shotFingerprint, routeArtifactSHA256
@@ -25,7 +26,7 @@ struct PromptBinding: Codable, Sendable, Equatable {
         case referencePlanSHA256, orderedBindingsSHA256, styleFingerprint
         case compilerInputsSHA256, promptDialectID, promptDialectVersion
         case frameReferencePlanSHA256
-        case promptIRSHA256
+        case promptIRSHA256, frameRole
     }
 
     init(
@@ -43,7 +44,8 @@ struct PromptBinding: Codable, Sendable, Equatable {
         promptDialectID: String = "none",
         promptDialectVersion: Int = 0,
         frameReferencePlanSHA256: String = "none",
-        promptIRSHA256: String = "none"
+        promptIRSHA256: String = "none",
+        frameRole: String? = nil
     ) {
         self.projectKey = projectKey
         self.shotId = shotId
@@ -60,6 +62,7 @@ struct PromptBinding: Codable, Sendable, Equatable {
         self.promptDialectVersion = promptDialectVersion
         self.frameReferencePlanSHA256 = frameReferencePlanSHA256
         self.promptIRSHA256 = promptIRSHA256
+        self.frameRole = frameRole
     }
 
     init(from decoder: Decoder) throws {
@@ -85,7 +88,8 @@ struct PromptBinding: Codable, Sendable, Equatable {
             promptIRSHA256: try values.decodeIfPresent(
                 String.self,
                 forKey: .promptIRSHA256
-            ) ?? "none"
+            ) ?? "none",
+            frameRole: try values.decodeIfPresent(String.self, forKey: .frameRole)
         )
     }
 
@@ -176,10 +180,31 @@ enum PromptCompiler {
         modelCatalog: ModelCatalog = .shared
     ) async throws -> CompiledPrompt {
         let workflowBefore = try PipelineProductionPromptCompiler.workflow(editor: editor)
+        var productionShot = shot
+        var frameRole: String?
+        if workflowBefore?.isProductionV2 == true, shotId != "none", case .image = modality,
+           let root = editor?.workingRoot.flatMap({ DataRootResolver.dataRoot(of: $0) }) {
+            let projection = try ProductionPlanningLineageV2.projection(dataRoot: root)
+            guard let planned = projection.shots.first(where: { $0.id == shotId }),
+                  let role = projection.requiredFrameRoles(for: shotId).first(where: {
+                    PipelineProductionFramesWriter.boundaryIntent(shot: planned, role: $0) == intent.trimmingCharacters(in: .whitespacesAndNewlines)
+                  }) else {
+                throw ToolError("Compile the exact start or end boundary intent returned by next_render_shot for this production image.")
+            }
+            frameRole = role
+            productionShot = try PipelineProductionPromptCompiler.shotProjection(shotID: shotId, dataRoot: root, boundaryRole: role)
+        }
         guard shotId == "none" || shot != nil else {
             throw ToolError(
                 "Shot-bound compilation requires the current shot projection."
             )
+        }
+        if workflowBefore?.isProductionV2 == true, shotId != "none", case .video = modality, let editor,
+           let root = editor.workingRoot.flatMap({ DataRootResolver.dataRoot(of: $0) }) {
+            let plan = try ProductionPlanningLineageV2.projection(dataRoot: root)
+            if plan.chains.allSatisfy({ $0.shotID != shotId }) {
+                _ = try await PipelineProductionInputMaterializer.prepare(shotID: shotId, editor: editor, catalog: modelCatalog)
+            }
         }
         if shotId != "none", case .image = modality, let shot {
             try validateImageShotSourceContract(sourceMode: shot.sourceMode)
@@ -189,7 +214,7 @@ enum PromptCompiler {
             shotId: shotId,
             modality: modality,
             modelId: modelId,
-            modelCatalog: modelCatalog
+            modelCatalog: modelCatalog, frameRole: frameRole
         )
         let videoContext: PromptComposer.VideoContext?
         let imageContext: PromptComposer.ImageContext?
@@ -206,11 +231,11 @@ enum PromptCompiler {
             videoContext = nil
         }
         if case .image = modality,
-           let plan = try currentFrameReferencePlan(
+           let plan = try await currentFrameReferencePlan(
                editor: editor,
                shotId: shotId,
                modelId: modelId,
-               modelCatalog: modelCatalog
+               modelCatalog: modelCatalog, frameRole: frameRole
            ) {
             guard plan.fingerprint == binding.frameReferencePlanSHA256 else {
                 throw ToolError(
@@ -235,7 +260,7 @@ enum PromptCompiler {
             setting: setting,
             lighting: lighting,
             style: style,
-            shot: shot,
+            shot: productionShot,
             preserveComposition: preserveComposition,
             videoContext: videoContext,
             imageContext: imageContext,
@@ -247,7 +272,7 @@ enum PromptCompiler {
             shotId: shotId,
             modality: modality,
             modelId: modelId,
-            modelCatalog: modelCatalog
+            modelCatalog: modelCatalog, frameRole: frameRole
         ) == binding else {
             throw ToolError(
                 "The project direction changed during prompt compilation. Compile the current shot again."
@@ -316,7 +341,7 @@ enum PromptCompiler {
             shotId: recipe.binding.shotId,
             modality: recipe.modality,
             modelId: recipe.modelId,
-            modelCatalog: modelCatalog
+            modelCatalog: modelCatalog, frameRole: recipe.binding.frameRole
         )
         guard current.matchesCurrentState(of: recipe.binding)
                 || (allowCurrentRoutingChange
@@ -431,7 +456,7 @@ enum PromptCompiler {
             + "\(binding.routeSHA256)|\(binding.referencePlanSHA256)|"
             + "\(binding.orderedBindingsSHA256)|\(binding.styleFingerprint)|\(binding.compilerInputsSHA256 ?? "none")|"
             + "\(binding.promptDialectID)|\(binding.promptDialectVersion)|"
-            + "\(binding.frameReferencePlanSHA256)|\(binding.promptIRSHA256)|"
+            + "\(binding.frameReferencePlanSHA256)|\(binding.promptIRSHA256)|\(binding.frameRole ?? "none")|"
             + "\(modelId)|\(text)"
         let digest = SHA256.hash(data: Data(material.utf8))
         return digest.prefix(8).map { String(format: "%02x", $0) }.joined()
@@ -486,7 +511,8 @@ enum PromptCompiler {
         shotId: String,
         modality: PromptComposer.Modality,
         modelId: String? = nil,
-        modelCatalog: ModelCatalog = .shared
+        modelCatalog: ModelCatalog = .shared,
+        frameRole: String? = nil
     ) async throws -> PromptBinding {
         let root = editor?.workingRoot.flatMap {
             DataRootResolver.dataRoot(of: $0)
@@ -525,9 +551,9 @@ enum PromptCompiler {
             )
         }
         if let root, try PipelineProductionPromptCompiler.workflow(editor: editor)?.isProductionV2 == true {
-            return try PipelineProductionPromptCompiler.binding(shotID: shotId, modality: modality, modelID: modelId,
+            return try await PipelineProductionPromptCompiler.binding(shotID: shotId, modality: modality, modelID: modelId,
                 dataRoot: root, editor: editor, catalog: modelCatalog, projectKey: projectKey,
-                styleFingerprint: styleFingerprint, compilerInputsSHA256: compilerInputsSHA256)
+                styleFingerprint: styleFingerprint, compilerInputsSHA256: compilerInputsSHA256, frameRole: frameRole)
         }
         guard let root,
               let shotlist = (try? loadShotlist(dataRoot: root)) ?? nil,
@@ -572,7 +598,7 @@ enum PromptCompiler {
         }
         let framePlan: FrameReferencePlanV1?
         if case .image = modality, let modelId {
-            framePlan = try currentFrameReferencePlan(
+            framePlan = try await currentFrameReferencePlan(
                 editor: editor,
                 shotId: shotId,
                 modelId: modelId,
@@ -596,8 +622,9 @@ enum PromptCompiler {
         editor: EditorViewModel?,
         shotId: String,
         modelId: String,
-        modelCatalog: ModelCatalog = .shared
-    ) throws -> FrameReferencePlanV1? {
+        modelCatalog: ModelCatalog = .shared,
+        frameRole: String? = nil
+    ) async throws -> FrameReferencePlanV1? {
         guard shotId != "none",
               let editor,
               let projectHome = editor.workingRoot,
@@ -605,8 +632,8 @@ enum PromptCompiler {
             return nil
         }
         if try PipelineProductionPromptCompiler.workflow(editor: editor)?.isProductionV2 == true {
-            return try PipelineProductionPromptCompiler.framePlan(shotID: shotId, modelID: modelId,
-                dataRoot: dataRoot, catalog: modelCatalog)
+            return try await PipelineProductionPromptCompiler.framePlan(shotID: shotId, modelID: modelId,
+                dataRoot: dataRoot, catalog: modelCatalog, frameRole: frameRole)
         }
         let activePack: String?
         do {
@@ -936,11 +963,12 @@ enum PromptCompiler {
             }
             return
         }
+        let remembered = args.string("compileToken").flatMap { rememberedBinding(token: $0, text: prompt, modelId: modelId) }
         let binding = try await currentBinding(
             editor: editor,
             shotId: shotId,
             modality: modalityForModel(modelId),
-            modelId: modelId
+            modelId: modelId, frameRole: remembered?.frameRole
         )
         guard let token = args.string("compileToken"),
               let compiledBinding = rememberedBinding(
@@ -975,7 +1003,8 @@ extension PromptBinding {
             promptDialectID: promptDialectID,
             promptDialectVersion: promptDialectVersion,
             frameReferencePlanSHA256: frameReferencePlanSHA256,
-            promptIRSHA256: value
+            promptIRSHA256: value,
+            frameRole: frameRole
         )
     }
 
@@ -987,5 +1016,6 @@ extension PromptBinding {
         projectKey == other.projectKey
             && shotId == other.shotId
             && shotFingerprint == other.shotFingerprint
+            && frameRole == other.frameRole
     }
 }

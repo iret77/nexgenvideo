@@ -1,11 +1,12 @@
 import Foundation
+import NexGenEngine
 
 enum LUTStoreError: LocalizedError {
     case noFile(String), invalid(String)
     var errorDescription: String? {
         switch self {
-        case .noFile(let path): "No file at path: \(path)"
-        case .invalid(let name): "Not a valid .cube 3D LUT: \(name)"
+        case .noFile(let path): "The LUT ‘\((path as NSString).lastPathComponent)’ is offline. Relink or remove it before saving or exporting."
+        case .invalid: "The LUT is unreadable or its stored bytes changed. Choose a valid .cube LUT, or remove the effect."
         }
     }
 }
@@ -27,27 +28,58 @@ enum LUTLoader {
         let data: Data
     }
 
-    /// Validates a .cube file and copies it into the project's LUT storage so it survives
-    /// saves and moves (project packages drop unknown files). Returns the stored path.
-    /// Shared by the agent (apply_color) and the inspector's LUT picker.
-    static func store(path: String, projectId: String?) throws -> String {
-        let sourceURL = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
-        guard FileManager.default.fileExists(atPath: sourceURL.path) else { throw LUTStoreError.noFile(sourceURL.path) }
-        guard load(path: sourceURL.path) != nil else { throw LUTStoreError.invalid(sourceURL.lastPathComponent) }
-        let lutDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("NexGenVideo/luts/\(projectId ?? "default")", isDirectory: true)
-        try FileManager.default.createDirectory(at: lutDir, withIntermediateDirectories: true)
-        let dest = lutDir.appendingPathComponent(sourceURL.lastPathComponent)
-        if sourceURL.standardizedFileURL == dest.standardizedFileURL { return dest.path }   // already stored
-        if FileManager.default.fileExists(atPath: dest.path) { try FileManager.default.removeItem(at: dest) }
-        try FileManager.default.copyItem(at: sourceURL, to: dest)
-        return dest.path
+    static func store(path: String, projectRoot: URL) throws -> String {
+        let source: URL
+        if ProjectEffectResources.isPortable(path) {
+            source = try ProjectEffectResources.url(for: path, projectRoot: projectRoot)
+        } else {
+            source = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+        }
+        let bytes = try validatedBytes(at: source)
+        if ProjectEffectResources.isPortable(path) { try register(bytes, path: path) }
+        let relative = ProjectEffectResources.directory + "/" + FileDigest.sha256(of: bytes) + ".cube"
+        let destination = try ProjectEffectResources.url(for: relative, projectRoot: projectRoot)
+        try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if FileManager.default.fileExists(atPath: destination.path) {
+            guard try Data(contentsOf: destination) == bytes else { throw LUTStoreError.invalid(destination.lastPathComponent) }
+        } else {
+            let temporary = destination.deletingLastPathComponent().appendingPathComponent(".lut-" + UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: temporary) }
+            try bytes.write(to: temporary, options: .atomic)
+            do { try FileManager.default.linkItem(at: temporary, to: destination) }
+            catch {
+                guard FileManager.default.fileExists(atPath: destination.path),
+                      try Data(contentsOf: destination) == bytes else { throw error }
+            }
+        }
+        try register(bytes, path: relative)
+        return relative
+    }
+
+    static func validatedBytes(at url: URL) throws -> Data {
+        guard let bytes = sourceBytes(atPath: url.path) else { throw LUTStoreError.noFile(url.lastPathComponent) }
+        guard let text = String(data: bytes, encoding: .utf8), parse(text) != nil else { throw LUTStoreError.invalid(url.lastPathComponent) }
+        return bytes
+    }
+
+    static func register(_ bytes: Data, path: String) throws {
+        guard ProjectEffectResources.isPortable(path),
+              URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent == FileDigest.sha256(of: bytes),
+              let text = String(data: bytes, encoding: .utf8), let lut = parse(text) else { throw LUTStoreError.invalid(path) }
+        lock.lock()
+        portableCache[path] = lut
+        lock.unlock()
     }
 
     private static let lock = NSLock()
+    nonisolated(unsafe) private static var portableCache: [String: CubeLUT] = [:]
     nonisolated(unsafe) private static var cache: [String: (mtime: Date, lut: CubeLUT)] = [:]
 
     static func load(path: String) -> CubeLUT? {
+        if ProjectEffectResources.isPortable(path) {
+            lock.lock(); defer { lock.unlock() }
+            return portableCache[path]
+        }
         let mtime = (try? FileManager.default.attributesOfItem(atPath: path)[.modificationDate] as? Date)
             .flatMap { $0 } ?? .distantPast
 
@@ -134,12 +166,16 @@ enum LUTLoader {
     }
 
     private static func sourceText(atPath path: String) -> String? {
+        sourceBytes(atPath: path).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    private static func sourceBytes(atPath path: String) -> Data? {
         do {
             let handle = try FileHandle(forReadingFrom: URL(fileURLWithPath: path))
             defer { try? handle.close() }
             guard let data = try handle.read(upToCount: maximumSourceBytes + 1),
                   data.count <= maximumSourceBytes else { return nil }
-            return String(data: data, encoding: .utf8)
+            return data
         } catch {
             return nil
         }
