@@ -72,6 +72,7 @@ enum MusicvideoGenerationAcceptance {
     }
 
     private final class Run {
+        let evidenceURL: URL
         var batchID: String?
         var packageID: String?
         var takeID: String?
@@ -85,6 +86,13 @@ enum MusicvideoGenerationAcceptance {
         var plannedCutSeconds: Double?
         var requestedDurationSeconds: Int?
         var providerDurationFrames: Int?
+        var reviewPass: String?
+        var controlID: String?
+        var latestFieldEdit: [String: Any] = [:]
+        var fieldEdits: [[String: Any]] = []
+        var diagnosticScreenshots: [String] = []
+
+        init(evidenceURL: URL) { self.evidenceURL = evidenceURL }
     }
 
     static func makeDocument(evidenceURL: URL) async throws -> (document: VideoProject, fixture: FullflowAcceptanceFixture.Receipt, generation: Receipt) {
@@ -106,7 +114,7 @@ enum MusicvideoGenerationAcceptance {
         configuration.timeoutIntervalForRequest = 10
         let session = URLSession(configuration: configuration)
         defer { session.invalidateAndCancel(); MusicvideoGenerationHTTP.clear() }
-        let run = Run()
+        let run = Run(evidenceURL: evidenceURL)
         let makeExecutor: @MainActor (EditorViewModel) -> ToolExecutor = { editor in
             ToolExecutor(editor: editor, providerActivation: { activation }, modelCatalog: catalog,
                 productionRouteCandidates: { _ in candidates }, catalogReadiness: { true }, isModelEnabled: { _ in true })
@@ -308,6 +316,26 @@ enum MusicvideoGenerationAcceptance {
 
     private static func reviewTake(_ snapshot: TakeReview.Snapshot, endSeconds: Double, editor: EditorViewModel, window: NSWindow,
                                    run: Run, evidenceURL: URL) async throws -> NativeTakeReview {
+        do {
+            return try await performTakeReview(snapshot, endSeconds: endSeconds, editor: editor, window: window,
+                run: run, evidenceURL: evidenceURL)
+        } catch {
+            var surfaces = [("generation-take-failure-document", window)]
+            if let sheet = window.attachedSheet { surfaces.append(("generation-take-failure-sheet", sheet)) }
+            for (name, surface) in surfaces {
+                if let view = surface.contentView,
+                   WorkspaceUIAcceptance.snapshot(view, at: evidenceURL.appendingPathComponent(screenshotName(name))) {
+                    run.diagnosticScreenshots.append(screenshotName(name))
+                }
+            }
+            do { try persistReviewEvidence(run, failure: error.localizedDescription) }
+            catch { FileHandle.standardError.write(Data("MUSICVIDEO_TAKE_EVIDENCE_WRITE_FAILED \(error.localizedDescription)\n".utf8)) }
+            throw error
+        }
+    }
+
+    private static func performTakeReview(_ snapshot: TakeReview.Snapshot, endSeconds: Double, editor: EditorViewModel, window: NSWindow,
+                                          run: Run, evidenceURL: URL) async throws -> NativeTakeReview {
         guard let root = DataRootResolver.dataRoot(of: snapshot.home) else {
             throw FullflowAcceptanceFixture.Failure("The take's project closed before native review.")
         }
@@ -340,8 +368,11 @@ enum MusicvideoGenerationAcceptance {
               WorkspaceUIAcceptance.probeState(identifier: "take.record-pass", in: sheet) == false else {
             throw FullflowAcceptanceFixture.Failure("An unreviewed take or empty finding can be accepted in the native sheet.")
         }
+        try capture(sheet, name: "generation-take-before-review", evidenceURL: evidenceURL)
+        run.diagnosticScreenshots.append(screenshotName("generation-take-before-review"))
         var expectedFindings: [TakeReview.Finding] = []
         for (index, pass) in TakeReview.Pass.allCases.enumerated() {
+            run.reviewPass = pass.rawValue
             guard WorkspaceUIAcceptance.probeText(identifier: "take.pass", in: sheet) == pass.rawValue else {
                 throw FullflowAcceptanceFixture.Failure("The native take review skipped or reordered its passes.")
             }
@@ -404,7 +435,11 @@ enum MusicvideoGenerationAcceptance {
 
     private static func interact(_ identifier: String, in window: NSWindow, documentWindow: NSWindow,
                                  before: String, run: Run, action: () async throws -> String) async throws {
-        try await MusicvideoNativeAcceptance.waitUntil {
+        run.controlID = identifier
+        try persistReviewEvidence(run)
+        try await MusicvideoNativeAcceptance.waitUntil("\(identifier): enabled", diagnostic: {
+            "pass=\(run.reviewPass ?? "none"), state=\(String(describing: WorkspaceUIAcceptance.probeState(identifier: identifier, in: window))), text=\(WorkspaceUIAcceptance.probeText(identifier: identifier, in: window) ?? "missing")"
+        }) {
             WorkspaceUIAcceptance.probeState(identifier: identifier, in: window) == true
         }
         guard window === documentWindow || window.sheetParent === documentWindow,
@@ -423,27 +458,123 @@ enum MusicvideoGenerationAcceptance {
             frame: [frame.minX, frame.minY, frame.width, frame.height].map(Double.init),
             viewport: [viewport.minX, viewport.minY, viewport.width, viewport.height].map(Double.init),
             before: before, after: after))
+        try persistReviewEvidence(run)
     }
 
     private static func fill(_ identifier: String, value: String, expected: String, in window: NSWindow,
                             documentWindow: NSWindow, run: Run) async throws {
-        guard let before = WorkspaceUIAcceptance.probeText(identifier: identifier, in: window), before != expected else {
-            throw FullflowAcceptanceFixture.Failure("The native take input must change: \(identifier).")
-        }
-        try await interact(identifier, in: window, documentWindow: documentWindow, before: before, run: run) {
-            try await MusicvideoNativeAcceptance.click(identifier, in: window)
-            try await MusicvideoNativeAcceptance.waitUntil { window.firstResponder is NSTextView }
-            guard let field = window.firstResponder as? NSTextView else {
-                throw FullflowAcceptanceFixture.Failure("The native take input did not receive keyboard focus.")
+        let before = WorkspaceUIAcceptance.probeText(identifier: identifier, in: window)
+        var stage = "locate"
+        var target: NSTextField?
+        var editor: NSTextView?
+        var commitRequested = false
+        var typedText: String?
+        func diagnostics() -> String {
+            let fields = textFields(in: window.contentView)
+            let owners = fields.filter { field in
+                guard let editor else { return false }
+                return field.currentEditor() === editor
             }
-            field.setSelectedRange(NSRange(location: 0, length: (field.string as NSString).length))
-            field.insertText(value, replacementRange: NSRange(location: NSNotFound, length: 0))
-            window.makeFirstResponder(nil)
-            try await MusicvideoNativeAcceptance.waitUntil {
-                WorkspaceUIAcceptance.probeText(identifier: identifier, in: window) == expected
-            }
-            return WorkspaceUIAcceptance.probeText(identifier: identifier, in: window) ?? "missing"
+            run.latestFieldEdit = [
+                "fieldID": identifier, "pass": run.reviewPass ?? "none", "stage": stage,
+                "before": before as Any? ?? NSNull(), "input": value, "expected": expected,
+                "actual": WorkspaceUIAcceptance.probeText(identifier: identifier, in: window) as Any? ?? NSNull(),
+                "windowNumber": window.windowNumber, "documentWindowNumber": documentWindow.windowNumber, "keyWindow": window.isKeyWindow,
+                "firstResponderClass": window.firstResponder.map { String(describing: type(of: $0)) } ?? "none",
+                "typedText": typedText as Any? ?? NSNull(),
+                "editorText": editor?.string as Any? ?? NSNull(),
+                "editorSelection": editor.map { [$0.selectedRange().location, $0.selectedRange().length] } ?? [],
+                "editorOwnerCount": owners.count, "editorOwnedByTarget": target.map { target in owners.contains { $0 === target } } ?? false,
+                "commitMethod": "Tab", "commitRequested": commitRequested,
+                "commitEndedTargetEditing": commitRequested && target.map { $0.currentEditor() == nil } == true,
+                "targetCandidates": matchingTextFields(identifier, in: window).count,
+                "fields": fields.map { field -> [String: Any] in
+                    let frame = field.convert(field.bounds, to: window.contentView)
+                    return ["class": String(describing: type(of: field)), "text": field.stringValue,
+                        "frame": [frame.minX, frame.minY, frame.width, frame.height].map { $0.isFinite ? $0 as Any : String(describing: $0) },
+                        "target": field === target,
+                        "currentEditorIsFirstResponder": field.currentEditor().map { $0 === window.firstResponder } ?? false]
+                },
+            ]
+            guard let data = try? JSONSerialization.data(withJSONObject: run.latestFieldEdit, options: [.sortedKeys]),
+                  let text = String(data: data, encoding: .utf8) else { return "Field diagnostics could not be encoded." }
+            return text
         }
+        func waitFor(_ label: String, _ ready: () -> Bool) async throws {
+            stage = label
+            _ = diagnostics()
+            try persistReviewEvidence(run)
+            try await MusicvideoNativeAcceptance.waitUntil("\(identifier)/\(run.reviewPass ?? "none"): \(label)", diagnostic: diagnostics, ready)
+        }
+        func ownsEditor() -> Bool {
+            guard let target, let editor else { return false }
+            return window.isKeyWindow && target.window === window && target.currentEditor() === editor
+                && window.firstResponder === editor && editor.isEditable
+        }
+        do {
+            guard let before, before != expected else {
+                throw FullflowAcceptanceFixture.Failure("The native take input must change: \(identifier).")
+            }
+            try await interact(identifier, in: window, documentWindow: documentWindow, before: before, run: run) {
+                try await MusicvideoNativeAcceptance.click(identifier, in: window)
+                try await waitFor("focused target field") {
+                    let candidates = matchingTextFields(identifier, in: window)
+                    guard candidates.count == 1, let field = candidates.first,
+                          let active = field.currentEditor() as? NSTextView else { return false }
+                    target = field; editor = active
+                    return ownsEditor()
+                }
+                guard let editor else { throw FullflowAcceptanceFixture.Failure("The target field has no native editor.") }
+                try postKey(0, characters: "a", modifiers: .command, in: window)
+                try await waitFor("select all") {
+                    ownsEditor() && editor.selectedRange() == NSRange(location: 0, length: (editor.string as NSString).length)
+                }
+                for character in value { try postKey(0, characters: String(character), in: window) }
+                try await waitFor("typed text") { ownsEditor() && editor.string == value }
+                typedText = editor.string
+                commitRequested = true
+                try postKey(48, characters: "\t", in: window)
+                try await waitFor("Tab commit") {
+                    target.map { $0.currentEditor() == nil } == true
+                        && WorkspaceUIAcceptance.probeText(identifier: identifier, in: window) == expected
+                }
+                stage = "verified"
+                _ = diagnostics()
+                run.fieldEdits.append(run.latestFieldEdit)
+                return WorkspaceUIAcceptance.probeText(identifier: identifier, in: window) ?? "missing"
+            }
+        } catch {
+            let detail = diagnostics()
+            FileHandle.standardError.write(Data("MUSICVIDEO_TAKE_FIELD_FAILED \(detail)\n".utf8))
+            throw error
+        }
+    }
+
+    private static func textFields(in view: NSView?) -> [NSTextField] {
+        guard let view, !view.isHiddenOrHasHiddenAncestor else { return [] }
+        let current = (view as? NSTextField).flatMap { $0.isEditable ? $0 : nil }.map { [$0] } ?? []
+        return current + view.subviews.flatMap { textFields(in: $0) }
+    }
+
+    private static func matchingTextFields(_ identifier: String, in window: NSWindow) -> [NSTextField] {
+        guard let root = window.contentView, let frame = WorkspaceUIAcceptance.probeFrame(identifier: identifier, in: window) else { return [] }
+        return textFields(in: root).filter {
+            let bounds = $0.convert($0.bounds, to: root)
+            return $0.window === window && bounds.width > 0 && bounds.height > 0
+                && frame.insetBy(dx: -1, dy: -1).contains(bounds)
+                && bounds.contains(NSPoint(x: frame.midX, y: frame.midY))
+        }
+    }
+
+    private static func persistReviewEvidence(_ run: Run, failure: String? = nil) throws {
+        let interactions = try JSONSerialization.jsonObject(with: JSONEncoder().encode(run.interactions))
+        let evidence: [String: Any] = ["schema": "native-take-review-progress/v1", "pass": run.reviewPass as Any? ?? NSNull(),
+            "controlID": run.controlID as Any? ?? NSNull(), "interactions": interactions,
+            "latestFieldEdit": run.latestFieldEdit, "fieldEdits": run.fieldEdits,
+            "screenshots": run.diagnosticScreenshots, "failure": failure as Any? ?? NSNull()]
+        let path = "generation-take-progress-" + screenshotName("evidence").replacingOccurrences(of: ".png", with: ".json")
+        try JSONSerialization.data(withJSONObject: evidence, options: [.sortedKeys, .prettyPrinted])
+            .write(to: run.evidenceURL.appendingPathComponent(path), options: .atomic)
     }
 
     private static func choose(_ identifier: String, index: Int, expected: String, in window: NSWindow,
@@ -453,9 +584,9 @@ enum MusicvideoGenerationAcceptance {
         }
         try await interact(identifier, in: window, documentWindow: documentWindow, before: before, run: run) {
             try await MusicvideoNativeAcceptance.click(identifier, in: window)
-            postKey(115, characters: "\u{f729}", in: window)
-            for _ in 0..<index { postKey(125, characters: "\u{f701}", in: window) }
-            postKey(36, characters: "\r", in: window)
+            try postKey(115, characters: "\u{f729}", in: window)
+            for _ in 0..<index { try postKey(125, characters: "\u{f701}", in: window) }
+            try postKey(36, characters: "\r", in: window)
             try await MusicvideoNativeAcceptance.waitUntil {
                 WorkspaceUIAcceptance.probeText(identifier: identifier, in: window) == expected
             }
@@ -463,11 +594,13 @@ enum MusicvideoGenerationAcceptance {
         }
     }
 
-    private static func postKey(_ code: UInt16, characters: String, in window: NSWindow) {
+    private static func postKey(_ code: UInt16, characters: String, modifiers: NSEvent.ModifierFlags = [], in window: NSWindow) throws {
         for type in [NSEvent.EventType.keyDown, .keyUp] {
-            guard let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [],
+            guard let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: modifiers,
                 timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
-                characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code) else { continue }
+                characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code) else {
+                throw FullflowAcceptanceFixture.Failure("AppKit could not create the native key event for key code \(code).")
+            }
             NSApp.postEvent(event, atStart: false)
         }
     }
