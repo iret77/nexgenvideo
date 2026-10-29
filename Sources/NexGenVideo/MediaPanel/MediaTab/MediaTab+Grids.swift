@@ -64,15 +64,12 @@ extension MediaTab {
     }
 
     func clearSelections() {
-        if !editor.selectedMediaAssetIds.isEmpty { editor.selectedMediaAssetIds.removeAll() }
-        if !editor.selectedFolderIds.isEmpty { editor.selectedFolderIds.removeAll() }
+        editor.clearMediaPanelSelection()
     }
 
     func publishOrderedIds(_ ids: [String]) {
         guard workspace == editor.workspaceFocus else { return }
-        if editor.mediaPanelOrderedItemIds != ids {
-            editor.mediaPanelOrderedItemIds = ids
-        }
+        editor.updateMediaPanelItems(ids)
     }
 }
 
@@ -124,6 +121,7 @@ extension MediaTab {
             .onTapGesture { clearSelections() }
             .overlay { marqueeOverlay }
             .gesture(marqueeGesture)
+            .reviewAcceptanceProbe("media.selection-surface")
         }
     }
 }
@@ -233,6 +231,7 @@ extension MediaTab {
                 .onTapGesture { clearSelections() }
                 .overlay { marqueeOverlay }
                 .gesture(marqueeGesture)
+            .reviewAcceptanceProbe("media.selection-surface")
             }
         }
     }
@@ -425,7 +424,7 @@ extension MediaTab {
                 shouldAutoFocus: pendingFolderFocusId == folder.id,
                 onAutoFocusConsumed: { pendingFolderFocusId = nil }
             )
-            .draggable(MediaTab.folderDragString(forFolderId: folder.id)) {
+            .draggable(dragPayload(for: folder)) {
                 FolderDragPreview(name: folder.name)
             }
         }
@@ -436,17 +435,7 @@ extension MediaTab {
     }
 
     fileprivate func handleFolderTap(_ folder: MediaFolder) {
-        let shift = NSEvent.modifierFlags.contains(.shift)
-        if shift {
-            if editor.selectedFolderIds.contains(folder.id) {
-                editor.selectedFolderIds.remove(folder.id)
-            } else {
-                editor.selectedFolderIds.insert(folder.id)
-            }
-        } else {
-            editor.selectedFolderIds = [folder.id]
-            editor.selectedMediaAssetIds.removeAll()
-        }
+        editor.selectMediaPanelItem(MediaPanelItemKey.folder(folder.id), modifiers: NSApp.currentEvent?.modifierFlags ?? NSEvent.modifierFlags)
     }
 
     @ViewBuilder

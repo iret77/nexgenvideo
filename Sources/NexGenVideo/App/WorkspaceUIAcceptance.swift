@@ -52,7 +52,89 @@ enum WorkspaceUIAcceptance {
                 case "musicvideo": await captureMusicvideoStartup(evidenceURL: evidenceURL, scale: scale)
                 case "hoststates": await captureHostStateHistory(evidenceURL: evidenceURL, scale: scale)
                 case "storyboard": await captureStoryboardReview(evidenceURL: evidenceURL, scale: scale)
-                case "filmreview": await captureMusicvideoReview(evidenceURL: evidenceURL, scale: scale)
+                case "planning": await captureProductionPlanning(evidenceURL: evidenceURL, scale: scale)
+                case "aienhanced", "framecontinuation", "nativeextension":
+                    do {
+                        let name = "scale-\(Int((scale * 100).rounded()))-source-" + scenario
+                        let kind: ProductionSourceModesOwnerAcceptance.Kind = scenario == "aienhanced" ? .aiEnhanced
+                            : scenario == "framecontinuation" ? .frameContinuation : .nativeExtension
+                        var result = try await ProductionSourceVideoOwnerAcceptance.run(kind: kind,
+                            output: evidenceURL.appendingPathComponent(name))
+                        result["case"] = scenario; result["evidenceDirectory"] = name
+                        emit("production-source-owner", scale: scale, fields: result)
+                    } catch { fail("Production source owner acceptance: " + error.localizedDescription, scale: scale) }
+                case "chronologynegative", "sanitynegative", "animatedstill":
+                    do {
+                        let name = "scale-\(Int((scale * 100).rounded()))-contract-" + scenario
+                        let destination = evidenceURL.appendingPathComponent(name)
+                        var result: [String: Any]
+                        switch scenario {
+                        case "chronologynegative": result = try await ProductionChronologyOwnerAcceptance.run(output: destination)
+                        case "sanitynegative": result = try await ProductionSanityOwnerAcceptance.run(output: destination)
+                        default: result = try await ProductionAnimatedStillOwnerAcceptance.run(output: destination)
+                        }
+                        result["case"] = scenario
+                        result["evidenceDirectory"] = name
+                        emit("production-contract-owner", scale: scale, fields: result)
+                    } catch { fail("Production contract owner acceptance: " + error.localizedDescription, scale: scale) }
+                case "frames":
+                    do {
+                        let name = "scale-\(Int((scale * 100).rounded()))-frames-owner"
+                        var fields = try await ProductionFramesOwnerAcceptance.run(output: evidenceURL.appendingPathComponent(name))
+                        fields["evidenceDirectory"] = name
+                        emit("production-frames-owner", scale: scale, fields: fields)
+                    } catch { fail("Frames owner acceptance: " + error.localizedDescription, scale: scale) }
+                case "mediabrowser":
+                    do {
+                        emit("media-browser-owner", scale: scale, fields: try await MediaBrowserOwnerAcceptance.run(output: evidenceURL, scale: scale))
+                    } catch { fail("Media browser owner acceptance: " + error.localizedDescription, scale: scale) }
+                case "layeredtimeline":
+                    do {
+                        emit("layered-timeline-owner", scale: scale, fields: try await LayeredTimelineOwnerAcceptance.run(output: evidenceURL, scale: scale))
+                    } catch { fail("Layered timeline acceptance: " + error.localizedDescription, scale: scale) }
+                case "timelineediting":
+                    do {
+                        emit("timeline-editing-owner", scale: scale, fields: try await TimelineEditingOwnerAcceptance.run(output: evidenceURL, scale: scale))
+                    } catch { fail("Timeline editing acceptance: " + error.localizedDescription, scale: scale) }
+                case "sourceoperations":
+                    do {
+                        emit("source-operations", scale: scale, fields: try await NativeSourceOperationsAcceptance.run(output: evidenceURL, scale: scale))
+                    } catch { fail("Source operations acceptance: " + error.localizedDescription, scale: scale) }
+                case "appnle":
+                    do {
+                        emit("app-nle-owner", scale: scale, fields: try await AppWorkspaceOwnerAcceptance.run(output: evidenceURL, scale: scale))
+                    } catch { fail("Application and editing owner acceptance: " + error.localizedDescription, scale: scale) }
+                case "genericnle":
+                    do {
+                        emit("generic-nle", scale: scale, fields: try await GenericNLEAcceptance.run(output: evidenceURL, scale: scale))
+                    } catch { fail("Plain editing acceptance: " + error.localizedDescription, scale: scale) }
+                case "generationrecovery":
+                    do {
+                        emit("generation-recovery", scale: scale, fields: try await GenerationRecoveryOwnerAcceptance.run(output: evidenceURL, scale: scale))
+                    } catch { fail("Generation recovery acceptance: " + error.localizedDescription, scale: scale) }
+                case "manualvideomodes":
+                    do {
+                        emit("manual-video-modes", scale: scale, fields: try await ManualVideoModesAcceptance.run(output: evidenceURL, scale: scale))
+                    } catch { fail("Manual video modes acceptance: " + error.localizedDescription, scale: scale) }
+                case "manualgeneration":
+                    do {
+                        emit("manual-generation", scale: scale, fields: try await ManualGenerationOwnerAcceptance.run(output: evidenceURL, scale: scale))
+                    } catch { fail("Manual generation acceptance: " + error.localizedDescription, scale: scale) }
+                case "animationaudio":
+                    do {
+                        emit("animation-audio", scale: scale, fields: try await AnimationAudioAcceptance.run(output: evidenceURL, scale: scale))
+                    } catch { fail("Animation and audio acceptance: " + error.localizedDescription, scale: scale) }
+                case "textcaptions":
+                    do {
+                        emit("text-captions", scale: scale, fields: try await TextCaptionAcceptance.run(output: evidenceURL, scale: scale))
+                    } catch { fail("Text and captions acceptance: " + error.localizedDescription, scale: scale) }
+                case "medialibrary":
+                    do {
+                        emit("native-media-library", scale: scale, fields: try await MediaLibraryAcceptance.run(output: evidenceURL, scale: scale))
+                    } catch { fail("Media library acceptance: " + error.localizedDescription, scale: scale) }
+                case "filmreview": await captureProductionOwner(kind: .musicvideo, evidenceURL: evidenceURL, scale: scale)
+                case "performance": await captureProductionOwner(kind: .musicvideo, evidenceURL: evidenceURL, scale: scale, performance: true)
+                case "corefilmreview": await captureProductionOwner(kind: .core, evidenceURL: evidenceURL, scale: scale)
                 default: fail("unknown native acceptance case", scale: scale)
                 }
                 emit("completed", scale: scale, fields: ["case": scenario])
@@ -837,8 +919,8 @@ enum WorkspaceUIAcceptance {
         editor.setWorkspaceFocus(.production)
         await editor.refreshEngineState()
         _ = editor.pipelineAgentHarness.reconcile(editor: editor)
-        let expectedPhases = ["project_init", "analysis", "brief", "production_design", "treatment",
-            "storyboard", "bible", "shotlist", "sanity", "frames", "render"]
+        let expectedPhases = ["project_init", "analysis", "brief", "production_design", "treatment", "script",
+            "storyboard", "shot_planning", "bible", "shotlist", "sanity", "frames", "render_review", "render"]
         guard editor.declaredPluginBinding == binding,
               editor.projectState?.phases.map(\.phase) == expectedPhases,
               editor.projectState?.nextPhaseName == "project_init",
@@ -895,7 +977,7 @@ enum WorkspaceUIAcceptance {
         let initial = "scale-\(scaleLabel(scale))-musicvideo-track.png"
         guard snapshot(host, at: evidenceURL.appendingPathComponent(initial)) else { reject("could not capture Track intake") }
         let story = "scale-\(scaleLabel(scale))-musicvideo-story-context.png"
-        for phase in ["brief", "production_design", "treatment", "storyboard", "bible", "shotlist", "sanity", "frames", "render"] {
+        for phase in expectedPhases.dropFirst(2) {
             let identifier = "pipeline.overview.select.\(phase)"
             guard await revealProbe(identifier, in: window), click(identifier: identifier, in: window) == nil else {
                 reject("workflow phase could not open: \(phase)")
@@ -1642,7 +1724,7 @@ enum WorkspaceUIAcceptance {
         case .postproduction:
             ["projectPanel", "previewPanel", "inspectorPanel", "timelinePanel"]
         case .export:
-            ["projectPanel", "previewPanel", "inspectorPanel"]
+            ["projectPanel", "previewPanel", "exportsPanel", "inspectorPanel"]
         }
     }
 
@@ -2717,6 +2799,9 @@ extension WorkspaceUIAcceptance {
         productionWindow.contentViewController = productionContent
         await captureProductionWorkbench(document: document, evidenceURL: evidenceURL, scale: scale)
         do {
+            try await captureProductionActivity(document: document, evidenceURL: evidenceURL, scale: scale)
+        } catch { fail("native production activity: \(error.localizedDescription)", scale: scale) }
+        do {
             let activityImages = try await AgentActivityAcceptance.run(evidenceURL: evidenceURL, scale: scale)
             emit("agent-activity", scale: scale, fields: ["complete": true, "screenshots": activityImages])
         } catch { fail("native agent activity acceptance failed: \(error.localizedDescription)", scale: scale) }
@@ -2727,6 +2812,129 @@ extension WorkspaceUIAcceptance {
             "declinedFromStoryboard": true, "gatesUnchanged": true, "savedProjectUnchanged": true,
             "screenshots": [opened, changed],
         ])
+    }
+
+    private static func captureProductionPlanning(evidenceURL: URL, scale: Double) async {
+        do {
+            let fixture = try await ProductionPlanningAcceptanceFixture.makeScript()
+            let editor = fixture.editor
+            fixture.document.makeWindowControllers()
+            guard let window = fixture.document.windowControllers.compactMap({ $0 as? EditorWindowController }).first?.window,
+                  let host = window.contentView else { throw ToolError("The planning fixture has no native document window.") }
+            window.setContentSize(AppTheme.Acceptance.musicvideoViewport)
+            window.center(); window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            editor.setWorkspaceFocus(.production)
+            editor.revealCockpit(.script)
+            var screenshots: [String] = []
+            func capture(_ name: String) throws {
+                let file = "scale-\(scaleLabel(scale))-planning-\(name).png"
+                guard snapshot(host, at: evidenceURL.appendingPathComponent(file)) else { throw ToolError("Planning screenshot failed: \(name).") }
+                screenshots.append(file)
+            }
+            func activate(_ id: String, in target: NSWindow? = nil) async throws {
+                let target = target ?? window
+                guard await revealProbe(id, in: target), click(identifier: id, in: target) == nil else {
+                    throw ToolError("The planning control cannot be reached: \(id).")
+                }
+            }
+            func require(_ predicate: @escaping () -> Bool, _ message: String) async throws {
+                guard await waitUntil(timeout: .seconds(10), predicate) else { throw ToolError(message) }
+            }
+            func requestApproval(_ phase: String, path: String) throws {
+                let root = fixture.dataRoot
+                _ = try editor.agentService.requestGateApproval(.init(phase: phase, dataRoot: root,
+                    declaredProductionContract: .current,
+                    artifactFingerprint: .init(path: path, sha256: FileDigest.sha256(of: root.appendingPathComponent(path)),
+                        lineageSHA256: FileDigest.sha256(of: root.appendingPathComponent(PipelineLayout.lineageFile)), phase: phase)))
+            }
+            try await require({ probeText(identifier: "script.event.event-red", in: window) == ProductionPlanningAcceptanceFixture.actions[0] },
+                "Script did not show the canonical event text.")
+            try await activate("script.scene.edit.red")
+            try await require({ window.attachedSheet != nil }, "Edit Script did not open a native sheet.")
+            guard let sheet = window.attachedSheet else { throw ToolError("The Script sheet disappeared.") }
+            try await activate("script.scene.title", in: sheet)
+            try await require({ sheet.firstResponder is NSTextView }, "The scene title did not receive keyboard focus.")
+            guard let field = sheet.firstResponder as? NSTextView else { throw ToolError("The scene title has no text editor.") }
+            field.setSelectedRange(NSRange(location: 0, length: (field.string as NSString).length))
+            field.insertText("Red circle in side light", replacementRange: NSRange(location: NSNotFound, length: 0))
+            sheet.makeFirstResponder(nil)
+            try await require({ probeState(identifier: "script.scene.apply", in: sheet) == true }, "The changed scene could not be applied.")
+            try await activate("script.scene.apply", in: sheet)
+            try await require({ window.attachedSheet == nil }, "Applying the scene did not close its sheet.")
+            let edited = try PlanningWriterIO.script(dataRoot: fixture.dataRoot)
+            guard edited.header.revision == 2, edited.scenes.first?.title == "Red circle in side light",
+                  edited.events.map(\.action) == ProductionPlanningAcceptanceFixture.actions else {
+                throw ToolError("The native Script edit did not preserve the actions and publish its new revision.")
+            }
+            try capture("script")
+            try requestApproval("script", path: ScriptV1.currentPath)
+            try await require({ probeState(identifier: "agent.gate.approve", in: window) == true }, "Script approval did not become ready.")
+            try await activate("agent.gate.approve")
+            try await require({ editor.projectState?.nextPhaseName == "storyboard" && editor.agentService.pendingGateApproval == nil },
+                "Approving Script did not advance to Storyboard.")
+            let missing = try await ProductionPlanningAcceptanceFixture.writeStoryboard(in: fixture)
+            editor.revealCockpit(.storyboard)
+            try requestApproval("storyboard", path: StoryboardV2.currentPath)
+            try await require({ probeText(identifier: "storyboard.moment.moment-1", in: window) == "missing"
+                && probeState(identifier: "agent.gate.approve", in: window) == false
+                && probeText(identifier: "agent.gate.approve", in: window) != "Checking the current phase…" },
+                "A Storyboard without sketches must show the missing image and refuse approval.")
+            try capture("missing-sketch")
+            try await activate("agent.gate.decline")
+            try await require({ editor.agentService.pendingGateApproval == nil }, "Not yet did not leave Storyboard editable.")
+            let board = try await ProductionPlanningAcceptanceFixture.attachSketches(in: fixture)
+            guard board.fingerprint != missing.fingerprint, let first = board.timing.shots.first,
+                  let moment = first.moments.first, let image = moment.asset?.image else {
+                throw ToolError("Native sketch attachment did not create an exact image binding.")
+            }
+            try await require({ probeText(identifier: "storyboard.moment.moment-1", in: window) == image.sha256 },
+                "The Storyboard did not show its assigned sketch.")
+            try capture("sketches")
+            try await activate("storyboard.animatic.\(first.id)")
+            try await require({ probeText(identifier: "animatic.image", in: window) == "\(moment.id):\(image.sha256)" },
+                "The Animatic did not show the assigned first sketch.")
+            try await activate("animatic.play")
+            try await require({ editor.storyboardAnimaticPlayback?.isPlaying == true && (editor.storyboardAnimaticPlayback?.tick ?? 0) > 0 },
+                "The Animatic did not advance after native Play.")
+            try await activate("animatic.play")
+            try await require({ editor.storyboardAnimaticPlayback?.isPlaying == false }, "The Animatic did not pause.")
+            try capture("animatic")
+            guard click(identifier: "storyboard.view", in: window, fraction: NSPoint(x: 0.25, y: 0.5)) == nil else {
+                throw ToolError("The Board switch is unreachable.")
+            }
+            try await require({ probeState(identifier: "storyboard.view", in: window) == false }, "The Board switch did not return to sketches.")
+            try requestApproval("storyboard", path: StoryboardV2.currentPath)
+            editor.showsAgentActivity = true
+            try await require({ probeState(identifier: "agent.gate.approve", in: window) == true
+                && findProbe(in: host, identifier: "production.activity") != nil }, "Storyboard approval and AI activity did not appear together.")
+            guard let button = probeFrame(identifier: "agent.gate.approve", in: window),
+                  let activity = probeFrame(identifier: "production.activity", in: window),
+                  host.bounds.contains(button), !activity.intersects(button) else {
+                throw ToolError("AI activity covers or clips the Storyboard approval button.")
+            }
+            try capture("approval-with-activity")
+            try await activate("agent.gate.approve")
+            try await require({ editor.projectState?.nextPhaseName == "shot_planning" && editor.agentService.pendingGateApproval == nil },
+                "The visible Storyboard approval did not advance the actual workflow.")
+            let draft = try await ProductionPlanningAcceptanceFixture.writeShotPlanning(in: fixture)
+            editor.showsAgentActivity = false
+            editor.revealCockpit(.shotPlanning)
+            try await require({ findProbe(in: host, identifier: "shot-planning.workspace") != nil
+                && findProbe(in: host, identifier: "shot-planning.apply.\(draft.shots[0].shotID)") != nil },
+                "Shot Planning did not expose its native editing controls.")
+            try capture("shot-planning")
+            let gates = try YAMLArtifactStore(dataRoot: fixture.dataRoot).load(Gates.self, at: PipelineLayout.gatesFile)
+            guard ["project_init", "brief", "production_design", "treatment", "script", "storyboard"].allSatisfy({ gates.gates[$0]?.approved == true }),
+                  gates.gates["shot_planning"]?.approved == false else { throw ToolError("Planning approval history differs from the performed native actions.") }
+            emit("production-planning", scale: scale, fields: [
+                "workflow": "core.production.v2", "actualToolWriters": true, "nativeScriptEdit": true,
+                "missingSketchBlocked": true, "nativeSketchAssignment": true, "animaticPlayedAndPaused": true,
+                "activityDoesNotCoverApproval": true, "nativeApprovalAdvancedPhase": true,
+                "shotIDsPreserved": board.timing.shots.map(\.id) == draft.shots.map(\.shotID),
+                "generatedSketchesTested": false, "screenshots": screenshots,
+            ])
+        } catch { fail("production planning: \(error.localizedDescription)", scale: scale) }
     }
 
     private static func makeStoryboardFixture() throws -> URL {
@@ -2906,6 +3114,154 @@ extension WorkspaceUIAcceptance {
             "storyboardCards": storyboardCards])
     }
 
+    private static func captureProductionActivity(document: VideoProject, evidenceURL: URL, scale: Double) async throws {
+        let editor = document.editorViewModel
+        let service = editor.agentService
+        guard let window = document.windowControllers.first?.window, let host = window.contentView,
+              let home = editor.workingRoot, let root = DataRootResolver.dataRoot(of: home) else {
+            throw ToolError("The activity fixture has no document window or working copy.")
+        }
+        window.setContentSize(AppTheme.Window.projectMin)
+        window.makeKeyAndOrderFront(nil)
+        let store = YAMLArtifactStore(dataRoot: root)
+        var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
+        GatesOperations.approve(&gates, phase: "project_init")
+        try store.save(gates, to: PipelineLayout.gatesFile)
+        await editor.refreshEngineState()
+        guard let selection = editor.storyboardSelection else {
+            throw ToolError("The activity fixture has no selected Storyboard shot to restore.")
+        }
+        let originalInspector = editor.inspectorPanelVisible
+        let originalMaximized = editor.maximizedPanel
+        defer {
+            editor.showsAgentActivity = false
+            editor.inspectorPanelVisible = originalInspector
+            editor.maximizedPanel = originalMaximized
+            window.orderOut(nil)
+        }
+        var screenshots: [String] = []
+        var decisions: [[String: Any]] = []
+        func uniqueDecision(_ identifier: String) -> NSView? {
+            let matches = probes(in: host, identifier: identifier).filter {
+                !$0.isHiddenOrHasHiddenAncestor && $0.bounds.width > 0 && $0.bounds.height > 0
+            }
+            guard matches.count == 1, let decision = matches.first,
+                  let activity = shownProbe(in: host, identifier: "production.activity"),
+                  !activity.convert(activity.bounds, to: host)
+                    .intersects(decision.convert(decision.bounds, to: host)) else { return nil }
+            return decision
+        }
+        func activate(_ id: String) async throws {
+            if editor.showsAgentActivity, id.hasPrefix("agent.gate."), uniqueDecision(id) == nil {
+                throw ToolError("The phase decision does not have a unique target outside activity: \(id).")
+            }
+            guard await revealProbe(id, in: window), click(identifier: id, in: window) == nil else {
+                throw ToolError("Activity decision control is not reachable: \(id).")
+            }
+        }
+        func activityIsUsable() -> Bool {
+            host.layoutSubtreeIfNeeded()
+            guard let activity = shownProbe(in: host, identifier: "production.activity"),
+                  activity.window === window,
+                  visibleProbe(identifier: "production.activity.close", in: window, containedBy: host.bounds),
+                  visibleProbe(identifier: "agent.gate.approve", in: window, containedBy: host.bounds),
+                  visibleProbe(identifier: "agent.gate.decline", in: window, containedBy: host.bounds),
+                  probeState(identifier: "agent.gate.approve", in: window) == true,
+                  let primary = uniqueDecision("agent.gate.approve"),
+                  let decline = uniqueDecision("agent.gate.decline") else { return false }
+            let area = activity.convert(activity.bounds, to: host)
+            return !area.intersects(primary.convert(primary.bounds, to: host))
+                && !area.intersects(decline.convert(decline.bounds, to: host))
+                && abs(host.bounds.width - AppTheme.Window.projectMin.width) < 1
+                && abs(host.bounds.height - AppTheme.Window.projectMin.height) < 1
+                && window.attachedSheet == nil
+        }
+        for operation in ["decline", "approve", "rewind"] {
+            let phase = operation == "rewind" ? "storyboard" : "brief"
+            if operation == "rewind" {
+                gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
+                GatesOperations.approve(&gates, phase: "storyboard")
+                try store.save(gates, to: PipelineLayout.gatesFile)
+            }
+            let before = try Data(contentsOf: PipelineLayout.url(PipelineLayout.gatesFile, in: root))
+            let action: GateApproval.Action = operation == "rewind"
+                ? .rewind(gatesSHA256: FileDigest.sha256(of: before), phases: ["storyboard"]) : .approve
+            _ = try service.requestGateApproval(GateApproval(phase: phase, dataRoot: root, action: action,
+                declaredPack: editor.declaredPluginName, declaredBinding: editor.declaredPluginBinding))
+            editor.selectProductionPhase(phase)
+            editor.inspectorPanelVisible = false
+            editor.maximizedPanel = .project
+            editor.showsAgentActivity = false
+            let visibleWindows = Set(NSApp.windows.filter(\.isVisible).map(\.windowNumber))
+            try await activate("production.ai")
+            guard await waitUntil(timeout: .seconds(10), activityIsUsable),
+                  !editor.inspectorPanelVisible, editor.maximizedPanel == .project,
+                  Set(NSApp.windows.filter(\.isVisible).map(\.windowNumber)).isSubset(of: visibleWindows),
+                  try Data(contentsOf: PipelineLayout.url(PipelineLayout.gatesFile, in: root)) == before else {
+                throw ToolError("Activity covered the phase decision, changed preferences or mutated gates before a decision.")
+            }
+            let screenshot = "scale-\(scaleLabel(scale))-activity-\(operation).png"
+            guard snapshot(host, at: evidenceURL.appendingPathComponent(screenshot)) else {
+                throw ToolError("Could not capture simultaneous activity and phase decision.")
+            }
+            screenshots.append(screenshot)
+            guard let activity = shownProbe(in: host, identifier: "production.activity"),
+                  let primary = uniqueDecision("agent.gate.approve"),
+                  let decline = uniqueDecision("agent.gate.decline") else {
+                throw ToolError("The simultaneous decision controls disappeared before clicking.")
+            }
+            let activityFrame = frameDescription(activity.convert(activity.bounds, to: host))
+            let primaryFrame = frameDescription(primary.convert(primary.bounds, to: host))
+            let declineFrame = frameDescription(decline.convert(decline.bounds, to: host))
+            let control = operation == "decline" ? "agent.gate.decline" : "agent.gate.approve"
+            try await activate(control)
+            guard await waitUntil(timeout: .seconds(10), { service.pendingGateApproval == nil }),
+                  editor.showsAgentActivity else {
+                throw ToolError("The decision did not finish with activity still open.")
+            }
+            gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
+            let after = try Data(contentsOf: PipelineLayout.url(PipelineLayout.gatesFile, in: root))
+            let expectedState = operation == "decline" ? after == before
+                : operation == "approve" ? gates.get("brief").approved
+                : !gates.get("storyboard").approved && gates.get("brief").approved
+            guard expectedState else {
+                throw ToolError("The native decision did not persist its expected gate state.")
+            }
+            decisions.append(["operation": operation, "phase": phase, "controlID": control,
+                "activityStayedOpen": true, "disjointControls": true, "nativeClick": true,
+                "activityFrame": activityFrame, "primaryFrame": primaryFrame, "declineFrame": declineFrame,
+                "gatesBeforeSHA256": FileDigest.sha256(of: before), "gatesAfterSHA256": FileDigest.sha256(of: after)])
+            try await activate("production.activity.close")
+            guard await waitUntil(timeout: .seconds(5), {
+                !editor.showsAgentActivity && !editor.presentedInspectorVisible
+                    && editor.presentedMaximizedPanel == .project
+            }) else { throw ToolError("Closing activity lost the saved panel visibility or maximize preference.") }
+        }
+        editor.maximizedPanel = nil
+        editor.inspectorPanelVisible = true
+        editor.selectProductionPhase("storyboard")
+        editor.storyboardSelection = selection
+        try await activate("production.ai")
+        try await activate("production.activity.close")
+        guard await waitUntil(timeout: .seconds(5), {
+            probeText(identifier: "storyboard.inspector", in: window) == selection.step.id
+        }) else { throw ToolError("Closing activity lost the selected Storyboard inspector.") }
+        editor.setWorkspaceFocus(.edit)
+        try await activate("production.ai")
+        guard await waitUntil(timeout: .seconds(5), { editor.showsAgentActivity }) else {
+            throw ToolError("Activity could not open outside Production.")
+        }
+        editor.setWorkspaceFocus(.production)
+        guard await waitUntil(timeout: .seconds(5), {
+            editor.showsAgentActivity && shownProbe(in: host, identifier: "production.activity")?.window === window
+        }) else { throw ToolError("Entering Production dismissed activity instead of docking it.") }
+        editor.setWorkspaceFocus(.edit)
+        guard !editor.showsAgentActivity else { throw ToolError("Leaving Production reopened an activity popover.") }
+        emit("production-activity", scale: scale, fields: ["decisions": decisions,
+            "minimumViewport": frameDescription(host.bounds), "inspectorRestored": true,
+            "preferencesPreserved": true, "workspaceTransitions": true, "screenshots": screenshots])
+    }
+
     private static func panelView(in view: NSView, identifier: String) -> NSView? {
         if view.accessibilityIdentifier() == identifier { return view }
         return view.subviews.lazy.compactMap { panelView(in: $0, identifier: identifier) }.first
@@ -3066,26 +3422,24 @@ extension WorkspaceUIAcceptance {
             "screenshots": [blockedImage, diagnosticImage]]
     }
 
-    private static func captureMusicvideoReview(evidenceURL: URL, scale: Double) async {
+    private static func captureProductionOwner(kind: ProductionV2OwnerAcceptance.Kind, evidenceURL: URL, scale: Double, performance: Bool = false) async {
         do {
-            guard let path = ProcessInfo.processInfo.environment["NGV_WORKSPACE_UI_PACK"] else {
-                throw ToolError("Film acceptance requires the external Musicvideo pack.")
+            if kind == .musicvideo {
+                guard let path = ProcessInfo.processInfo.environment["NGV_WORKSPACE_UI_PACK"] else {
+                    throw ToolError("Film acceptance requires the external Music Video pack.")
+                }
+                let pack = PluginLoader.load(at: URL(fileURLWithPath: path))
+                guard pack.isLoaded, pack.id == "musicvideo" else {
+                    throw ToolError("The external Music Video pack did not load.")
+                }
             }
-            let pack = PluginLoader.load(at: URL(fileURLWithPath: path))
-            guard pack.isLoaded, pack.id == "musicvideo" else {
-                throw ToolError("The external Musicvideo pack did not load.")
-            }
-            let (document, fixture, generation) = try await MusicvideoGenerationAcceptance.makeDocument(evidenceURL: evidenceURL)
-            var result = try await finishMusicvideoDelivery(document: document, receipt: fixture,
-                evidenceURL: evidenceURL, scale: scale)
-            guard let generationEvidence = try JSONSerialization.jsonObject(with: JSONEncoder().encode(generation)) as? [String: Any] else {
-                throw ToolError("The mixed-generation evidence could not be encoded.")
-            }
-            result["route"] = "mixed-musicvideo"
-            result["generation"] = generationEvidence
-            emit("musicvideo-film-review", scale: scale, fields: result)
+            let directory = "scale-\(scaleLabel(scale))-owner-v2-" + kind.rawValue + (performance ? "-performance" : "")
+            var result = try await ProductionV2OwnerAcceptance.run(kind: kind,
+                output: evidenceURL.appendingPathComponent(directory, isDirectory: true), performanceAlignment: performance)
+            result["evidenceDirectory"] = directory
+            emit(performance ? "production-v2-performance" : "production-v2-owner", scale: scale, fields: result)
         } catch {
-            fail("native Musicvideo film review: \(error.localizedDescription)", scale: scale)
+            fail("Native V2 \(kind.rawValue) owner flow: \(error.localizedDescription)", scale: scale)
         }
     }
 

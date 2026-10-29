@@ -127,6 +127,7 @@ enum CatalogDiscovery {
     private static var observer: NSObjectProtocol?
     private static var detailCache: [DetailCacheKey: DetailCacheValue] = [:]
     private static var detailCacheGeneration: UInt64 = 0
+    private static var directCredentialGeneration: UInt64 = 0
     /// Bound the enumeration so a misbehaving or huge provider catalog can't loop or balloon memory.
     private static let maxPagesPerModality = 12
     private static let maxModelsPerProvider = 400
@@ -140,6 +141,7 @@ enum CatalogDiscovery {
             ) { _ in
                 Task { @MainActor in
                     invalidateDetailCache()
+                    invalidateCredentialBoundDiscovery()
                     refresh()
                 }
             }
@@ -168,6 +170,14 @@ enum CatalogDiscovery {
     static func invalidateDetailCache() {
         detailCacheGeneration &+= 1
         detailCache.removeAll()
+    }
+
+    static func invalidateCredentialBoundDiscovery(catalog: ModelCatalog = .shared) {
+        directCredentialGeneration &+= 1
+        for provider in DirectImageDiscovery.providers {
+            catalog.applyDiscovered([], for: provider)
+            catalog.setProviderDiscoveryState(.inactive, for: provider)
+        }
     }
 
     /// False when the wait ended before a discovery pass completed, so the catalog may still change.
@@ -202,6 +212,7 @@ enum CatalogDiscovery {
     }
 
     private static func runOnce() async {
+        let credentialGeneration = directCredentialGeneration
         let providers = GenerationProvider.allCases
         let configuredOAuthProviders = Set(providers.filter { provider in
             guard provider.mcpCapability?.auth == .oauth else { return false }
@@ -266,6 +277,8 @@ enum CatalogDiscovery {
             },
             consume: { result in
                 let provider = result.provider
+                guard !DirectImageDiscovery.providers.contains(provider)
+                        || credentialGeneration == directCredentialGeneration else { return }
                 var publishedEntries = result.entries
                 var directState: ProviderDiscoveryState?
                 let retainedCount = ModelCatalog.shared.discoveredModelCount(for: provider)

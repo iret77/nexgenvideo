@@ -2,8 +2,16 @@ import NexGenEngine
 import SwiftUI
 
 struct ModelCapabilityResearchPane: View {
-    private var catalog = ModelCatalog.shared
-    @Bindable private var research = ModelCapabilityResearchController.shared
+    private let catalog: ModelCatalog
+    @Bindable private var research: ModelCapabilityResearchController
+    private let activation: @MainActor () -> ProviderActivation
+
+    init(catalog: ModelCatalog = .shared, research: ModelCapabilityResearchController = .shared,
+         activation: @escaping @MainActor () -> ProviderActivation = { .current() }) {
+        self.catalog = catalog
+        self.research = research
+        self.activation = activation
+    }
 
     @State private var expandedRecordIDs = Set<String>()
     @State private var pendingDeleteRecordID: String?
@@ -13,7 +21,8 @@ struct ModelCapabilityResearchPane: View {
         return ModelCapabilityResearchTargetBuilder.targets(
             catalog: catalog,
             records: research.records,
-            corpus: CatalogCapabilityRuntime.corpus
+            corpus: CatalogCapabilityRuntime.corpus,
+            activation: activation()
         )
     }
 
@@ -114,6 +123,7 @@ struct ModelCapabilityResearchPane: View {
                     }
                     Spacer(minLength: AppTheme.Spacing.lg)
                     Button("Cancel") { research.cancelResearch() }
+                        .reviewAcceptanceProbe("settings.research.cancel")
                         .buttonStyle(.capsule(.secondary, size: .regular))
                 }
                 if research.phase == .researching {
@@ -170,6 +180,7 @@ struct ModelCapabilityResearchPane: View {
             Button("Research specs with Claude") {
                 research.startResearch(target)
             }
+            .reviewAcceptanceProbe("settings.research.start." + target.id)
             .buttonStyle(.capsule(.prominent, size: .regular))
             .disabled(research.phase == .checking
                 || research.phase == .researching
@@ -251,10 +262,12 @@ struct ModelCapabilityResearchPane: View {
                 HStack(spacing: AppTheme.Spacing.sm) {
                     Spacer(minLength: AppTheme.Spacing.none)
                     Button("Decline") { research.declineReview() }
+                        .reviewAcceptanceProbe("settings.research.decline")
                         .buttonStyle(.capsule(.secondary, size: .regular))
                     Button("Accept \(research.selectedFieldIDs.count) proven fields") {
                         research.acceptReview()
                     }
+                    .reviewAcceptanceProbe("settings.research.accept")
                     .buttonStyle(.capsule(.prominent, size: .regular))
                     .disabled(research.selectedFieldIDs.isEmpty || research.phase == .saving)
                 }
@@ -439,27 +452,33 @@ struct ModelCapabilityResearchPane: View {
             switch record.status {
             case .active:
                 Button("Disable") { research.disable(record) }
+                    .reviewAcceptanceProbe("settings.research.disable." + record.id)
                     .buttonStyle(.capsule(.secondary, size: .regular))
             case .disabled, .archived, .superseded:
                 Button("Enable") { research.enable(record) }
+                    .reviewAcceptanceProbe("settings.research.enable." + record.id)
                     .buttonStyle(.capsule(.secondary, size: .regular))
             }
             if record.status != .archived {
                 Button("Archive") { research.archive(record) }
+                    .reviewAcceptanceProbe("settings.research.archive." + record.id)
                     .buttonStyle(.capsule(.secondary, size: .regular))
             }
-            if let target = ModelCapabilityResearchTargetBuilder.target(
+            if !catalog.settingsBindings(forModelID: record.binding.catalogModelID, activation: activation()).isEmpty,
+               let target = ModelCapabilityResearchTargetBuilder.target(
                 for: record,
                 catalog: catalog,
                 corpus: CatalogCapabilityRuntime.corpus
             ) {
                 Button("Update") { research.startResearch(target) }
+                    .reviewAcceptanceProbe("settings.research.update." + record.id)
                     .buttonStyle(.capsule(.secondary, size: .regular))
                     .disabled(research.phase == .checking
                         || research.phase == .researching
                         || research.phase == .saving)
             }
             Button("Delete…") { pendingDeleteRecordID = record.id }
+                .reviewAcceptanceProbe("settings.research.delete." + record.id)
                 .buttonStyle(.capsule(.secondary, size: .regular))
                 .foregroundStyle(AppTheme.Status.errorColor)
         }

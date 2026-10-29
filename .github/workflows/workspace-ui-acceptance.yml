@@ -6,7 +6,7 @@ on:
         description: Native workspace cases to verify
         required: false
         type: choice
-        options: [all, filmreview]
+        options: [all, layeredtimeline, timelineediting, frames, filmreview, corefilmreview, activity, planning, genericnle, medialibrary, animationaudio, manualgeneration, performance, textcaptions, generationrecovery, appnle, mediabrowser, sourceoperations, manualvideomodes, chronologynegative, sanitynegative, animatedstill, aienhanced, framecontinuation, nativeextension]
         default: all
       unit_test_filter:
         description: Optional Swift test filter for the affected regression suite
@@ -15,8 +15,12 @@ on:
         default: ''
   workflow_call:
     inputs:
+      runtime_artifact:
+        description: Exact app and pack already built in this CI batch
+        type: string
+        default: ''
       acceptance_scope:
-        description: Native workspace cases to verify (all or filmreview)
+        description: Native workspace cases to verify (all, layeredtimeline, timelineediting, frames, filmreview, corefilmreview, activity, planning, genericnle, medialibrary, animationaudio, manualgeneration, performance, textcaptions, generationrecovery, appnle, mediabrowser, sourceoperations, manualvideomodes, chronologynegative, sanitynegative, animatedstill, aienhanced, framecontinuation or nativeextension)
         required: false
         type: string
         default: all
@@ -25,6 +29,10 @@ on:
         required: false
         type: string
         default: ''
+
+permissions:
+  contents: read
+  actions: read
 
 concurrency:
   group: workspace-ui-acceptance-${{ github.ref }}
@@ -41,13 +49,42 @@ jobs:
           NGV_ACCEPTANCE_SCOPE: ${{ inputs.acceptance_scope }}
         run: |
           case "$NGV_ACCEPTANCE_SCOPE" in
-            all|filmreview) ;;
+            all|layeredtimeline|timelineediting|frames|filmreview|corefilmreview|activity|planning|genericnle|medialibrary|animationaudio|manualgeneration|performance|textcaptions|generationrecovery|appnle|mediabrowser|sourceoperations|manualvideomodes|chronologynegative|sanitynegative|animatedstill|aienhanced|framecontinuation|nativeextension) ;;
             *) echo "::error::Unknown acceptance scope"; exit 1 ;;
           esac
+      - name: Verify native timeline edit evidence rejection
+        run: python3 -m unittest discover -s scripts -p 'test_timeline_editing_evidence.py'
+      - name: Validate layered timeline evidence tests
+        run: python3 -m unittest discover -s scripts -p 'test_layered_timeline_evidence.py'
+      - name: Verify generated sketch and frame evidence rejection
+        run: python3 -m unittest discover -s scripts -p 'test_production_frames_owner_evidence.py'
+      - name: Validate decoded still evidence rejection cases
+        run: python3 -m unittest discover -s scripts -p 'test_production_animated_still_owner_evidence.py'
+      - name: Verify manual generation evidence rejection
+        run: python3 -m unittest discover -s scripts -p 'test_workspace_ui_manual*.py'
+      - name: Verify native color reference evidence rejection
+        run: python3 -m unittest discover -s scripts -p 'test_color_reference_evidence.py'
+      - name: Verify native video modes evidence rejection
+        run: python3 -m unittest discover -s scripts -p 'test_manual_video_modes_evidence.py'
+      - name: Verify durable generation restart evidence rejection
+        run: python3 -m unittest discover -s scripts -p 'test_generation_recovery_acceptance.py'
       - run: python3 scripts/lint_app_theme.py
+      - name: Require distributable runtime for this full app
+        run: python3 scripts/verify_bpy_runtime.py --distribution
+      - name: Reject a silently skipped unit filter
+        if: inputs.runtime_artifact != '' && inputs.unit_test_filter != ''
+        run: exit 1
+
+  bpy-source:
+    needs: source
+    if: inputs.runtime_artifact == ''
+    uses: ./.github/workflows/bpy-source-closure.yml
+    with:
+      distribution: true
 
   build:
-    needs: source
+    needs: [source, bpy-source]
+    if: inputs.runtime_artifact == ''
     runs-on: macrunner
     timeout-minutes: 25
     outputs:
@@ -57,17 +94,29 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-xcode-27
       - uses: ./.github/actions/cache-swiftpm-dependencies
+      - uses: actions/download-artifact@v4
+        with:
+          name: managed-bpy-source-${{ github.sha }}
+          path: .build/bpy-source
+      - name: Stage verified runtime
+        run: |
+          python3 scripts/verify_bpy_distributable_source.py \
+            .build/bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.tar \
+            .build/bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json
+          scripts/stage_bpy_runtime.sh .build/bpy-runtime
       - name: Build acceptance app
         run: |
           scripts/bundle.sh debug
           scripts/assemble_ngvpack.sh plugins/musicvideo.json debug .build/plugins
-          tar -czf "$RUNNER_TEMP/workspace-ui.tar.gz" -C .build NexGenVideo.app plugins/musicvideo.ngvpack
+          mkdir -p "$RUNNER_TEMP/workspace-transfer"
+          tar -czf "$RUNNER_TEMP/workspace-transfer/workspace-ui.tar.gz" -C .build NexGenVideo.app plugins/musicvideo.ngvpack
+          cp .build/bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.* "$RUNNER_TEMP/workspace-transfer/"
       - name: Upload acceptance app
         id: upload_app
         uses: actions/upload-artifact@v4
         with:
           name: workspace-ui-app
-          path: ${{ runner.temp }}/workspace-ui.tar.gz
+          path: ${{ runner.temp }}/workspace-transfer/*
           if-no-files-found: error
           retention-days: 3
       - name: Run selected unit regressions
@@ -81,8 +130,8 @@ jobs:
           swift test --cache-path "$NGV_SWIFTPM_CACHE_PATH" --skip-build --filter "$NGV_UNIT_TEST_FILTER"
 
   acceptance:
-    needs: build
-    if: ${{ !cancelled() && needs.build.outputs.app_ready == 'true' }}
+    needs: [source, build]
+    if: ${{ !cancelled() && needs.source.result == 'success' && (needs.build.outputs.app_ready == 'true' || (needs.build.result == 'skipped' && inputs.runtime_artifact != '')) }}
     # ci-lint: allow-CI005 Runtime acceptance on the macOS 26 floor; macrunner boots only macOS 27.
     runs-on: macos-26
     timeout-minutes: 15
@@ -90,14 +139,17 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          artifact-ids: ${{ needs.build.outputs.app_artifact_id }}
-          merge-multiple: true
+          name: ${{ inputs.runtime_artifact || 'workspace-ui-app' }}
           path: ${{ runner.temp }}/workspace-ui
       - name: Prepare acceptance app on macOS 26
         run: |
           set -euo pipefail
           test "$(sw_vers -productVersion | cut -d. -f1)" = 26
+          python3 scripts/verify_bpy_distributable_source.py \
+            "$RUNNER_TEMP/workspace-ui/NexGenVideo-bpy-5.2.2-corresponding-source.tar" \
+            "$RUNNER_TEMP/workspace-ui/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json"
           tar -xzf "$RUNNER_TEMP/workspace-ui/workspace-ui.tar.gz" -C "$RUNNER_TEMP/workspace-ui"
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :NGVSourceCommit' "$RUNNER_TEMP/workspace-ui/NexGenVideo.app/Contents/Info.plist")" = "$GITHUB_SHA" ]
       - name: Exercise native workspace and panel controls
         env:
           NGV_ACCEPTANCE_SCOPE: ${{ inputs.acceptance_scope }}
@@ -108,7 +160,7 @@ jobs:
             "$RUNNER_TEMP/workspace-ui/NexGenVideo.app/Contents/MacOS/NexGenVideo" \
             "$RUNNER_TEMP/evidence" --scope "$NGV_ACCEPTANCE_SCOPE"
       - name: Verify generation batch pointer and keyboard review on macOS 26
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && inputs.acceptance_scope != 'activity' }}
         run: |
           set -euo pipefail
           test "$(sw_vers -productVersion | cut -d. -f1)" = 26
@@ -132,6 +184,8 @@ jobs:
             ${{ runner.temp }}/evidence/result.json
             ${{ runner.temp }}/evidence/scale-*.log
             ${{ runner.temp }}/evidence/scale-*.png
+            ${{ runner.temp }}/evidence/scale-*-owner-v2-*/**
+            ${{ runner.temp }}/evidence/scale-*-contract-*/**
             ${{ runner.temp }}/evidence/scale-*-musicvideo.mp4
             ${{ runner.temp }}/evidence/scale-*-musicvideo-delivery.json
             ${{ runner.temp }}/evidence/scale-*-fullflow-analysis.json

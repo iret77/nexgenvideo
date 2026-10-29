@@ -75,13 +75,24 @@ enum MusicvideoNativeAcceptance {
 
     static func approve(_ phase: String, editor: EditorViewModel, evidenceURL: URL,
                         awaitHandoff: Bool = true) async throws -> GateEvidence {
-        let order = ["project_init", "analysis", "brief", "production_design", "treatment", "storyboard",
+        let legacyOrder = ["project_init", "analysis", "brief", "production_design", "treatment", "storyboard",
             "bible", "shotlist", "sanity", "frames", "render"]
-        let titles = ["project_init": "Project", "analysis": "Analysis", "brief": "Project Brief",
+        guard let home = editor.workingRoot, let root = DataRootResolver.dataRoot(of: home),
+              let workflow = try PhaseContractRuntime.resolveWorkflow(dataRoot: root,
+                expectedPack: editor.declaredPluginBinding, expectedProductionContract: editor.declaredProductionContract),
+              workflow.packID == "musicvideo" else {
+            throw FullflowAcceptanceFixture.Failure("Native approval requires its exact Music Video workflow.")
+        }
+        let order = workflow.isProductionV2
+            ? ["project_init", "analysis", "brief", "production_design", "treatment", "script", "storyboard",
+                "shot_planning", "bible", "shotlist", "sanity", "frames", "render_review", "render"] : legacyOrder
+        guard editor.projectState?.phases.map(\.phase) == order else {
+            throw FullflowAcceptanceFixture.Failure("The actual workflow differs from the independent native phase contract.")
+        }
+        let titles = ["script": "Script", "shot_planning": "Shot Planning", "render_review": "Render Review", "project_init": "Project", "analysis": "Analysis", "brief": "Project Brief",
             "production_design": "Production Design", "treatment": "Treatment", "storyboard": "Storyboard",
             "bible": "Bible", "shotlist": "Shotlist", "sanity": "Review", "frames": "Review", "render": "Review"]
         guard let index = order.firstIndex(of: phase), let expectedTitle = titles[phase],
-              let home = editor.workingRoot, let root = DataRootResolver.dataRoot(of: home),
               let runtime = runtimes[ObjectIdentifier(editor)] else {
             throw FullflowAcceptanceFixture.Failure("Native approval requires the hermetic Musicvideo host runtime.")
         }

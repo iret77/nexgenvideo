@@ -5,13 +5,36 @@ import Foundation
 import NexGenEngine
 
 enum NativeBlockoutExporter {
-    static func export(
-        setups: [CameraSetupV1],
-        layouts: [SpatialLayoutV1],
-        shapes: [BlockoutShapeV1],
-        request: BlockoutRequestV1,
-        to url: URL
-    ) throws {
+    struct CameraProjection: Sendable {
+        let id: String
+        let locationID: String
+        let position: SpatialVector3V1
+        let path: [CameraPathKeyframeV1]
+    }
+
+    struct PlanFrame: Sendable {
+        let cameras: [CameraProjection]
+        let layouts: [SpatialLayoutV1]
+        let shapes: [BlockoutShapeV1]
+    }
+
+    static func export(setups: [CameraSetupV1], layouts: [SpatialLayoutV1], shapes: [BlockoutShapeV1],
+                       request: BlockoutRequestV1, to url: URL) throws {
+        let count = max(1, Int((request.durationSeconds * Double(request.fps)).rounded()))
+        try export(width: request.width, height: request.height, frameCount: count,
+            presentation: { CMTime(value: CMTimeValue($0), timescale: CMTimeScale(request.fps)) },
+            duration: CMTime(value: CMTimeValue(count), timescale: CMTimeScale(request.fps)), to: url) { _ in
+                PlanFrame(cameras: setups.map { .init(id: $0.id, locationID: $0.locationID, position: $0.position, path: $0.path) },
+                    layouts: layouts, shapes: shapes)
+            }
+    }
+
+    static func export(width: Int, height: Int, frameCount: Int,
+                       presentation: (Int) -> CMTime, duration: CMTime, to url: URL,
+                       frame: (Int) throws -> PlanFrame) throws {
+        guard width > 0, height > 0, frameCount > 0, duration.isNumeric, duration > .zero else {
+            throw ToolError("The native plan export needs valid dimensions and exact timing.")
+        }
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(),
             withIntermediateDirectories: true
@@ -24,8 +47,8 @@ enum NativeBlockoutExporter {
             mediaType: .video,
             outputSettings: [
                 AVVideoCodecKey: AVVideoCodecType.h264,
-                AVVideoWidthKey: request.width,
-                AVVideoHeightKey: request.height,
+                AVVideoWidthKey: width,
+                AVVideoHeightKey: height,
             ]
         )
         input.expectsMediaDataInRealTime = false
@@ -33,25 +56,28 @@ enum NativeBlockoutExporter {
             assetWriterInput: input,
             sourcePixelBufferAttributes: [
                 kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-                kCVPixelBufferWidthKey as String: request.width,
-                kCVPixelBufferHeightKey as String: request.height,
+                kCVPixelBufferWidthKey as String: width,
+                kCVPixelBufferHeightKey as String: height,
             ]
         )
         guard writer.canAdd(input) else {
             throw ToolError("The native blockout video encoder is unavailable.")
         }
         writer.add(input)
+        writer.movieTimeScale = duration.timescale
         guard writer.startWriting() else {
             throw ToolError(writer.error?.localizedDescription ?? "The native blockout could not start.")
         }
+        defer { if writer.status == .writing { writer.cancelWriting() } }
         writer.startSession(atSourceTime: .zero)
         guard let pool = adaptor.pixelBufferPool else {
             writer.cancelWriting()
             throw ToolError("The native blockout pixel-buffer pool is unavailable.")
         }
-        let frameCount = max(1, Int((request.durationSeconds * Double(request.fps)).rounded()))
         for frameIndex in 0..<frameCount {
+            try Task.checkCancellation()
             while !input.isReadyForMoreMediaData {
+                try Task.checkCancellation()
                 if writer.status == .failed || writer.status == .cancelled {
                     throw ToolError(writer.error?.localizedDescription ?? "The native blockout export failed.")
                 }
@@ -63,20 +89,25 @@ enum NativeBlockoutExporter {
                 writer.cancelWriting()
                 throw ToolError("The native blockout could not allocate a video frame.")
             }
+            let plan = try frame(frameIndex)
             try draw(
-                setups: setups,
-                layouts: layouts,
-                shapes: shapes,
+                setups: plan.cameras,
+                layouts: plan.layouts,
+                shapes: plan.shapes,
                 progress: Double(frameIndex) / Double(max(1, frameCount - 1)),
                 in: buffer
             )
-            let presentationTime = CMTime(value: CMTimeValue(frameIndex), timescale: CMTimeScale(request.fps))
+            let presentationTime = presentation(frameIndex)
+            guard presentationTime.isNumeric, presentationTime >= .zero, presentationTime < duration else {
+                throw ToolError("The native plan frame lies outside its exact output interval.")
+            }
             guard adaptor.append(buffer, withPresentationTime: presentationTime) else {
                 writer.cancelWriting()
                 throw ToolError(writer.error?.localizedDescription ?? "The native blockout frame could not be written.")
             }
         }
         input.markAsFinished()
+        writer.endSession(atSourceTime: duration)
         let finished = DispatchSemaphore(value: 0)
         writer.finishWriting { finished.signal() }
         finished.wait()
@@ -86,7 +117,7 @@ enum NativeBlockoutExporter {
     }
 
     private static func draw(
-        setups: [CameraSetupV1],
+        setups: [CameraProjection],
         layouts: [SpatialLayoutV1],
         shapes: [BlockoutShapeV1],
         progress: Double,

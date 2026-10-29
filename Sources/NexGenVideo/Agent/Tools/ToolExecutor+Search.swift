@@ -4,6 +4,10 @@ extension ToolExecutor {
     private static let searchMediaAllowedKeys: Set<String> = ["query", "scope", "mediaRef", "limit"]
 
     func searchMedia(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
+        let root = editor.workingRoot
+        let key = editor.openWorkingCopyKey
+        let generation = editor.openWorkingCopyGeneration
+        let sources = Dictionary(editor.mediaAssets.map { ($0.id, $0.url) }, uniquingKeysWith: { first, _ in first })
         try validateUnknownKeys(args, allowed: Self.searchMediaAllowedKeys, path: "search_media")
         let query = try args.requireString("query").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { throw ToolError("search_media: query is empty") }
@@ -22,9 +26,13 @@ extension ToolExecutor {
             payload.merge(await visualResults(editor, query: query, limit: limit, restrict: restrict)) { _, new in new }
         }
         if scope != "visual" {
-            payload["spoken"] = await spokenResults(editor, query: query, limit: limit, restrict: restrict)
+            payload.merge(await spokenResults(editor, query: query, limit: limit, restrict: restrict)) { _, new in new }
         }
 
+        guard root == editor.workingRoot, key == editor.openWorkingCopyKey, generation == editor.openWorkingCopyGeneration,
+              sources == Dictionary(editor.mediaAssets.map { ($0.id, $0.url) }, uniquingKeysWith: { first, _ in first }) else {
+            throw ToolError("search_media: the project or media library changed during search. Search again.")
+        }
         guard let json = Self.jsonString(roundJSONFloatingPointNumbers(payload, toPlaces: 3)) else {
             throw ToolError("search_media: failed to encode results")
         }
@@ -39,24 +47,24 @@ extension ToolExecutor {
             await VisualModelLoader.shared.prepare()
         }
 
-        var payload: [String: Any] = ["status": Self.visualStatus(coordinator)]
+        let result = await coordinator.searchResult(query: query, limit: limit, within: restrict)
         let indexable = editor.mediaAssets.filter {
             ($0.type == .video || $0.type == .image) && (restrict?.contains($0.id) ?? true)
         }
-        payload["indexableAssets"] = indexable.count
-        if let spec = VisualModelLoader.shared.embedder?.spec {
-            let urls = indexable.map(\.url)
-            payload["indexedAssets"] = await Task.detached {
-                urls.filter { !VisualIndexer.needsIndex(url: $0, spec: spec) }.count
-            }.value
-        }
-
-        let hits = await coordinator.search(query: query, limit: limit, within: restrict)
+        var payload: [String: Any] = [
+            "status": VisualSearchPresentation.code(for: result.status),
+            "indexableAssets": indexable.count,
+            "indexedAssets": max(0, indexable.count - result.unavailableAssetIDs.count),
+            "unavailableMediaRefs": result.unavailableAssetIDs.sorted(),
+            "failedMediaRefs": result.failedAssetIDs.sorted(),
+        ]
+        if result.status != .ready { payload["statusMessage"] = VisualSearchPresentation.message(for: result.status) }
+        let hits = result.hits
         payload["moments"] = hits.map { hit -> [String: Any] in
             let asset = editor.mediaAssets.first { $0.id == hit.assetID }
             var entry: [String: Any] = [
                 "mediaRef": hit.assetID,
-                "name": asset?.name ?? "",
+                "name": asset?.libraryDisplayName ?? "",
                 "score": Double(hit.score),
             ]
             if asset?.type == .image {
@@ -72,30 +80,22 @@ extension ToolExecutor {
 
     private func spokenResults(
         _ editor: EditorViewModel, query: String, limit: Int, restrict: Set<String>?
-    ) async -> [[String: Any]] {
+    ) async -> [String: Any] {
         let candidates = editor.mediaAssets
-            .filter { ($0.type == .video || $0.type == .audio) && (restrict?.contains($0.id) ?? true) }
+            .filter { SearchIndexCoordinator.wantsTranscript($0) && (restrict?.contains($0.id) ?? true) }
             .map { (id: $0.id, url: $0.url) }
-        let hits = TranscriptSearch.search(query: query, assets: candidates, limit: limit)
-        return hits.map { hit in
+        let result = await TranscriptSearch.resultAsync(query: query, assets: candidates, limit: limit)
+        let hits: [[String: Any]] = result.hits.map { hit in
             [
                 "mediaRef": hit.assetID,
-                "name": editor.mediaAssets.first { $0.id == hit.assetID }?.name ?? "",
+                "name": editor.mediaAssets.first { $0.id == hit.assetID }?.libraryDisplayName ?? "",
                 "startSeconds": hit.start,
                 "endSeconds": hit.end,
                 "text": hit.text,
             ]
         }
+        return ["spoken": hits, "spokenStatus": result.unavailableAssetIDs.isEmpty ? "ready" : "notIndexed",
+                "spokenUnavailableMediaRefs": result.unavailableAssetIDs.sorted()]
     }
 
-    private static func visualStatus(_ coordinator: SearchIndexCoordinator) -> String {
-        guard VisualModelLoader.shared.enabled else { return "disabled" }
-        switch VisualModelLoader.shared.state {
-        case .ready: return coordinator.indexingActive ? "indexing" : "ready"
-        case .notInstalled: return "modelNotInstalled"
-        case .downloading: return "downloadingModel"
-        case .preparing, .unknown: return "preparing"
-        case .failed: return "failed"
-        }
-    }
 }

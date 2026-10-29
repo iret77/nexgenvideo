@@ -1,0 +1,9 @@
+# Frames
+
+Use run_phase to prepare the exact Frames role set from the approved production plan. next_render_shot returns one stable shot UUID, role and canonical visual_prompt. Pass that exact boundary intent to compile_prompt with image modality and the selected live image model; use generate_image for one image through the phase cost approval. prepare_generation_batch may collect these exact requests into one approval. Inspect the actual returned image before recording it.
+
+record_render binds the completed host generation receipt, immutable generation package, actual compiler IR, model and ordered semantic reference plan to this shot and role. It copies the actual image into the new production output namespace; it never replaces retained paid media. A start image uses the declared start state and camera placement; an end image uses the declared end state and camera endpoint. Do not replace either with a prompt inferred from the other boundary.
+
+get_frame_audit supplies the current deterministic expectations. Inspect the actual image, then save_frame_audit with concrete observations for every standard check and applicable style criterion. Describe unresolved findings honestly. Native Review can accept explicit permitted deviations with a reason; generated text cannot supply that consent. Request Frames approval only after all actual images and audits pass the independent gate.
+
+Imported and AI-enhanced shots have no Frames. Explicit predecessor continuation skips Frames; its actual predecessor take is bound later at submission. Animated still delivery requires its actual approved start image and no extra final video generation. A real empty manifest is valid when the required role set is empty. crop_to_aspect is a deterministic composition tool; it does not create a new provider request or an approval.

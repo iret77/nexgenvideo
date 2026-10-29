@@ -192,6 +192,13 @@ final class GenerationService {
                     )
                 }
                 let uploaded: [String]
+                if target.provider == .runway, target.transport == .api,
+                   target.binding?.resolvedVideoCapabilities?.inputPolicy.sourceOperation == .extendForward {
+                    guard preUploadedURLs?.isEmpty != false, refURLs.count == 1,
+                          references.count == 1, references.first?.type == .video else {
+                        throw GenerationBackendError.transport("A native extension requires only its exact predecessor video.")
+                    }
+                }
                 if let preUploadedURLs, !preUploadedURLs.isEmpty {
                     uploaded = authorization.referenceSnapshot?.urls.map(\.path) ?? preUploadedURLs
                 } else {
@@ -199,7 +206,13 @@ final class GenerationService {
                     let refTypes = references.map(\.type)
                     if authorization.referenceSnapshot == nil, let trim = trimmedSourceOverride, trim.hasTrim, !urlsToUpload.isEmpty {
                         Log.generation.notice("using trimmed source: frames \(trim.trimStartFrame)+\(trim.sourceFramesConsumed) of \(urlsToUpload[0].lastPathComponent)")
-                        let extracted = try await VideoTrimExtractor.extract(trim)
+                        let extracted: URL
+                        if target.provider == .runway, target.transport == .api,
+                           target.binding?.resolvedVideoCapabilities?.inputPolicy.sourceOperation == .extendForward {
+                            extracted = try await RunwayVideoExtensionContract.trimmedSource(trim, aspectRatio: genInput.aspectRatio)
+                        } else {
+                            extracted = try await VideoTrimExtractor.extract(trim)
+                        }
                         urlsToUpload[0] = extracted
                         tempToCleanup.append(extracted)
                     }
@@ -236,6 +249,12 @@ final class GenerationService {
                         // Local paths, purely so the direct client can read the bytes off disk.
                         uploaded = urlsToUpload.map(\.path)
                     case .runway:
+                        if target.binding?.resolvedVideoCapabilities?.inputPolicy.sourceOperation == .extendForward {
+                            guard let source = urlsToUpload.first, refTypes.first == .video, urlsToUpload.count == 1 else {
+                                throw GenerationBackendError.transport("A native extension requires only its exact predecessor video.")
+                            }
+                            try await RunwayVideoExtensionContract.requireSource(source, aspectRatio: genInput.aspectRatio)
+                        }
                         uploaded = try await uploadReferencesToRunway(at: urlsToUpload, types: refTypes)
                     case .fal:
                         uploaded = try await uploadReferences(
@@ -285,7 +304,7 @@ final class GenerationService {
                 }
                 try await authorization.generationPackage?.requireCurrentContext(editor: editor)
                 if let package = authorization.generationPackage,
-                   package.payload.modality == "image" || package.payload.modality == "video" {
+                   ["image", "video", "audio"].contains(package.payload.modality) {
                     try await GenerationPackageInputs.requireCurrentReferences(package: package, editor: editor)
                 }
                 try authorization.projectMutationScope?.requireCurrent(editor: editor)
@@ -421,7 +440,7 @@ final class GenerationService {
         if target.transport == .mcp {
             key = ""
         } else {
-            guard let stored = ProviderKeychain.load(target.provider) else {
+            guard let stored = reconciliation.providerKey(target.provider) else {
                 throw GenerationRequestError.gate("Restore the approved provider's key before resuming its job.")
             }
             key = stored
@@ -449,11 +468,10 @@ final class GenerationService {
                     } else {
                         switch target.provider {
                         case .fal:
-                            let data = try await FalClient(apiKey: key).result(endpoint: target.endpoint, requestId: requestID)
-                            let shape: CatalogEntry.ResponseShape = specification.package.payload.modality == "image" ? .images : .video
-                            urls = FalOutput.urls(from: data, shape: shape)
+                            let data = try await FalClient(apiKey: key, session: self.reconciliation.session).result(endpoint: target.endpoint, requestId: requestID)
+                            urls = FalOutput.urls(from: data, shape: try Self.resumedFalOutputShape(package: specification.package))
                         case .runway:
-                            let result = try await RunwayClient(apiKey: key).result(taskId: requestID)
+                            let result = try await RunwayClient(apiKey: key, session: self.reconciliation.session).result(taskId: requestID)
                             urls = result.urls
                             recoveredCost = result.cost
                         case .marble:
@@ -513,6 +531,16 @@ final class GenerationService {
         }
         generationTasks[primaryID] = task
         await task.value
+    }
+
+    nonisolated static func resumedFalOutputShape(package: GenerationPackageV1) throws -> CatalogEntry.ResponseShape {
+        switch (package.payload.operation, package.payload.modality) {
+        case ("upscale", "image"): return .upscaledImage
+        case ("upscale", "video"), ("video", "video"): return .video
+        case ("image", "image"): return .images
+        case ("audio", "audio"), ("music", "audio"): return .audio
+        default: throw GenerationRequestError.gate("The saved operation has no verified Fal output format.")
+        }
     }
 
     private static func cleanupTempFiles(_ urls: [URL]) {
@@ -620,6 +648,7 @@ final class GenerationService {
             editor.importMediaAsset(asset, skipAppend: true)
             editor.appendGenerationLog(for: asset)
             await editor.finalizeImportedAsset(asset)
+            try await GenerationOutputReceipt.record(asset: asset, editor: editor)
             if let batchItem { try await GenerationBatchOutput.record(asset: asset, authorization: batchItem, editor: editor) }
             return true
         } catch {
@@ -682,10 +711,10 @@ final class GenerationService {
     /// is the honest trade.
     private func uploadReferencesToRunway(at urls: [URL], types: [ClipType]) async throws -> [String] {
         guard !urls.isEmpty else { return [] }
-        guard let apiKey = ProviderKeychain.load(.runway) else {
+        guard let apiKey = reconciliation.providerKey(.runway) else {
             throw GenerationBackendError.transport("Add a Runway API key in Settings to use references.")
         }
-        let client = RunwayClient(apiKey: apiKey)
+        let client = RunwayClient(apiKey: apiKey, session: reconciliation.session)
         let uploaded = try await withThrowingTaskGroup(of: (Int, String).self) { group in
             for (i, url) in urls.enumerated() {
                 let type = types.indices.contains(i) ? types[i] : .image
@@ -1442,7 +1471,7 @@ final class GenerationService {
         onComplete: (@MainActor (MediaAsset) -> Void)?,
         onFailure: (@MainActor () -> Void)?
     ) async {
-        guard let client = await ProviderMCP.client(for: provider) else {
+        guard let client = await reconciliation.mcpClient(provider) else {
             return failBeforeSubmission(
                 placeholders, "No MCP endpoint configured for \(provider.displayName).",
                 authorization: authorization, editor: editor, onFailure: onFailure)
@@ -1488,7 +1517,8 @@ final class GenerationService {
             let preparedParams = try await MCPMediaUpload.prepare(
                 params,
                 tools: tools,
-                client: client
+                client: client,
+                referenceUploader: reconciliation.mcpReferenceUploader
             )
             let arguments = try MCPGenerationArguments.make(
                 for: preparedParams,
@@ -1499,7 +1529,7 @@ final class GenerationService {
                 requiredCandidateNames: requiredCandidateNames
             )
             if let package = authorization.generationPackage,
-               package.payload.modality == "image" || package.payload.modality == "video" {
+               ["image", "video", "audio"].contains(package.payload.modality) {
                 try await GenerationPackageInputs.requireCurrentReferences(package: package, editor: editor)
                 try authorization.projectMutationScope?.requireCurrent(editor: editor)
             }
@@ -1648,7 +1678,7 @@ final class GenerationService {
         onComplete: (@MainActor (MediaAsset) -> Void)?,
         onFailure: (@MainActor () -> Void)?
     ) async {
-        guard let apiKey = ProviderKeychain.load(.runway) else {
+        guard let apiKey = reconciliation.providerKey(.runway) else {
             return failBeforeSubmission(
                 placeholders, "Add a Runway API key in Settings to generate.",
                 authorization: authorization, editor: editor, onFailure: onFailure)
@@ -1660,8 +1690,10 @@ final class GenerationService {
         }
         var taskId: String?
         do {
-            let client = RunwayClient(apiKey: apiKey)
+            let client = RunwayClient(apiKey: apiKey, session: reconciliation.session)
             switch params {
+            case .video(let p) where inputPolicy?.sourceOperation == .extendForward:
+                taskId = try await client.createVideoExtension(params: p)
             case .video(let p) where inputPolicy?.requiresSourceVideo == true:
                 // #223 — the restyle pass: re-render an existing clip. No duration (the output follows
                 // the source) and no reference image; the source clip IS the input.
@@ -1973,6 +2005,7 @@ final class GenerationService {
             editor.appendGenerationLog(for: placeholder)
             await editor.finalizeImportedAsset(placeholder)
             do {
+                try await GenerationOutputReceipt.record(asset: placeholder, editor: editor)
                 if let batchItem { try await GenerationBatchOutput.record(asset: placeholder, authorization: batchItem, editor: editor) }
             } catch {
                 placeholder.generationStatus = .failed(error.localizedDescription)
@@ -2073,6 +2106,7 @@ final class GenerationService {
                 editor.appendGenerationLog(for: placeholder)
                 await editor.finalizeImportedAsset(placeholder)
                 do {
+                    try await GenerationOutputReceipt.record(asset: placeholder, editor: editor)
                     if let batchItem { try await GenerationBatchOutput.record(asset: placeholder, authorization: batchItem, editor: editor) }
                 } catch {
                     placeholder.generationStatus = .failed(error.localizedDescription)
@@ -2276,6 +2310,7 @@ final class GenerationService {
             editor.importMediaAsset(placeholder, skipAppend: true)
             editor.appendGenerationLog(for: placeholder)
             await editor.finalizeImportedAsset(placeholder)
+            try await GenerationOutputReceipt.record(asset: placeholder, editor: editor)
             if let batchItem = authorization.batchItem {
                 try await GenerationBatchOutput.record(asset: placeholder, authorization: batchItem, editor: editor)
             }

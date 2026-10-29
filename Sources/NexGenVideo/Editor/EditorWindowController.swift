@@ -16,6 +16,15 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
+    func windowWillReturnUndoManager(_ window: NSWindow) -> UndoManager? {
+        guard window === self.window else { return editorViewModel.undoManager }
+        if editorViewModel.workspaceFocus == .production, editorViewModel.productionSelectedPhase == "storyboard",
+           editorViewModel.focusedPanel == .project {
+            return PipelineStoryboardEditor.undoManager(editor: editorViewModel)
+        }
+        return editorViewModel.undoManager
+    }
+
     func windowDidBecomeKey(_ notification: Notification) {
         guard let window = notification.object as? NSWindow, window === self.window else { return }
         onBecameKey?(window)
@@ -68,6 +77,12 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
 
         switch event.keyCode {
         case 49: // Space
+            if editorViewModel.workspaceFocus == .production,
+               editorViewModel.focusedPanel == .project,
+               let animatic = editorViewModel.storyboardAnimaticPlayback {
+                if animatic.isPlaying { animatic.pause() } else { Task { await animatic.play() } }
+                return true
+            }
             editorViewModel.togglePlayback()
             return true
 
@@ -319,6 +334,15 @@ extension EditorWindowController: EditorActions {
         editorViewModel.showExportDialog = true
     }
 
+    @objc func selectAll(_ sender: Any?) {
+        if canHandleMediaShortcut() {
+            editorViewModel.selectAllMediaPanelItems()
+        } else if canHandleTimelineEditShortcut() {
+            editorViewModel.selectedClipIds = Set(editorViewModel.timeline.tracks.flatMap(\.clips).map(\.id))
+            editorViewModel.inspectedObject = editorViewModel.selectionInspectedObject
+        }
+    }
+
     @objc func copy(_ sender: Any?) {
         guard canHandleClipboardShortcut(),
               !editorViewModel.selectedClipIds.isEmpty else { return }
@@ -498,6 +522,9 @@ extension EditorWindowController: EditorActions {
             }
             return canHandleTimelineEditShortcut() && !editorViewModel.selectedClipIds.isEmpty
 
+        case #selector(selectAll(_:)):
+            return canHandleMediaShortcut() ? !editorViewModel.mediaPanelOrderedItemIds.isEmpty
+                : canHandleTimelineEditShortcut() && !editorViewModel.timeline.tracks.flatMap(\.clips).isEmpty
         case #selector(copy(_:)), #selector(cut(_:)):
             return canHandleClipboardShortcut() && !editorViewModel.selectedClipIds.isEmpty
         case #selector(paste(_:)):

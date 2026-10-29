@@ -162,7 +162,8 @@ struct RippleTrimTests {
         #expect(plan.blockedAtFrame == 90)
         #expect(editor.timeline.tracks[0].clips[0].durationFrames == 70)
         #expect(editor.timeline.tracks[0].clips[0].fadeInFrames == 60)
-        #expect(editor.timeline.tracks[0].clips[0].fadeOutFrames == 10)
+        #expect(editor.timeline.tracks[0].clips[0].fadeOutFrames == 0)
+        #expect(editor.timeline.tracks[0].clips[0].animationEnvelope.tail.anchor == 100)
         #expect(rippleSpans(editor.timeline.tracks[1]) == [[60, 90], [90, 120]])
 
         editor.timeline.tracks[1].syncLocked = false

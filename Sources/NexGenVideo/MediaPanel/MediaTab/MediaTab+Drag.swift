@@ -35,7 +35,7 @@ extension MediaTab {
         let parts = line[line.index(after: hash)...].split(separator: "-", omittingEmptySubsequences: false)
         guard parts.count == 2,
               let start = Double(parts[0]), let end = Double(parts[1]),
-              start >= 0, end > start else { return nil }
+              start.isFinite, end.isFinite, start >= 0, end > start else { return nil }
         return start...end
     }
 }
@@ -45,11 +45,22 @@ extension MediaTab {
 extension MediaTab {
     func dragPayload(for asset: MediaAsset) -> String {
         if editor.selectedMediaAssetIds.contains(asset.id) {
-            return selectedMediaAssetsInOrder
-                .map { Self.assetDragString(forAssetId: $0.id) }
-                .joined(separator: "\n")
+            return selectedLibraryDragPayload
         }
         return Self.assetDragString(forAssetId: asset.id)
+    }
+
+    func dragPayload(for folder: MediaFolder) -> String {
+        editor.selectedFolderIds.contains(folder.id) ? selectedLibraryDragPayload : Self.folderDragString(forFolderId: folder.id)
+    }
+
+    private var selectedLibraryDragPayload: String {
+        editor.mediaPanelOrderedItemIds.compactMap { key -> String? in
+            if let id = MediaPanelItemKey.folderId(from: key), editor.selectedFolderIds.contains(id) {
+                return Self.folderDragString(forFolderId: id)
+            }
+            return editor.selectedMediaAssetIds.contains(key) ? Self.assetDragString(forAssetId: key) : nil
+        }.joined(separator: "\n")
     }
 
     @ViewBuilder
@@ -98,8 +109,10 @@ extension MediaTab {
 extension MediaTab {
     @MainActor
     func handlePanelFinderDrop(urls: [URL]) {
+        let destination = MediaLibraryDestination(editor, folderID: currentFolderId)
         Task { @MainActor in
-            await MediaImportFlow.importItems(urls, into: currentFolderId, editor: editor)
+            guard destination.isCurrent(editor) else { return }
+            await MediaImportFlow.importItems(urls, into: destination.folderID, editor: editor)
         }
     }
 
@@ -108,12 +121,14 @@ extension MediaTab {
     }
 
     static func handleProviderDrop(_ providers: [NSItemProvider], into destFolderId: String?, editor: EditorViewModel) {
+        let destination = MediaLibraryDestination(editor, folderID: destFolderId)
         for provider in providers {
             // Finder drops: file URL.
             if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
                 _ = provider.loadObject(ofClass: URL.self) { url, _ in
                     guard let url else { return }
                     Task { @MainActor in
+                        guard destination.isCurrent(editor) else { return }
                         await MediaImportFlow.importItems([url], into: destFolderId, editor: editor)
                     }
                 }
@@ -124,6 +139,7 @@ extension MediaTab {
                 _ = provider.loadObject(ofClass: NSString.self) { obj, _ in
                     guard let text = obj as? String else { return }
                     Task { @MainActor in
+                        guard destination.isCurrent(editor) else { return }
                         Self.resolveTextDrop(text, into: destFolderId, editor: editor)
                     }
                 }
@@ -138,8 +154,10 @@ extension MediaTab {
 
     @MainActor
     func handleClipboardPaste() {
+        let destination = MediaLibraryDestination(editor, folderID: currentFolderId)
         Task { @MainActor in
-            await Self.handleClipboardPaste(pasteboard: .general, into: currentFolderId, editor: editor)
+            guard destination.isCurrent(editor) else { return }
+            await Self.handleClipboardPaste(pasteboard: .general, into: destination.folderID, editor: editor)
         }
     }
 
@@ -151,10 +169,7 @@ extension MediaTab {
         }
         for (type, ext): (NSPasteboard.PasteboardType, String) in [(.png, "png"), (.tiff, "tiff")] {
             guard let data = pb.data(forType: type),
-                  let asset = await editor.importPastedImageData(data, fileExtension: ext) else { continue }
-            if let folderId = destFolderId {
-                editor.moveAssetsToFolder(assetIds: [asset.id], folderId: folderId)
-            }
+                  await editor.importPastedImageData(data, fileExtension: ext, folderID: destFolderId) != nil else { continue }
             return
         }
     }
@@ -170,6 +185,12 @@ extension MediaTab {
                       editor.mediaAssets.contains(where: { $0.id == id }) {
                 assetIds.insert(id)
             }
+        }
+        guard !assetIds.isEmpty || !folderIds.isEmpty else { return }
+        editor.undoManager?.beginUndoGrouping()
+        defer {
+            editor.undoManager?.endUndoGrouping()
+            editor.undoManager?.setActionName("Move Media")
         }
         if !assetIds.isEmpty {
             editor.moveAssetsToFolder(assetIds: assetIds, folderId: destFolderId)

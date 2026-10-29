@@ -56,6 +56,7 @@ extension InspectorView {
                 format: "%.1f",
                 valueSuffix: " dB",
                 accessibilityName: "Volume",
+                acceptanceIdentifier: "editing.audio.volume",
                 dragSensitivity: 0.3,
                 fieldWidth: AppTheme.ComponentSize.scrubFieldWide,
                 displayTextOverride: { db in db <= VolumeScale.floorDb ? "-∞ dB" : nil },
@@ -85,6 +86,7 @@ extension InspectorView {
                 format: "%.2f",
                 valueSuffix: " s",
                 accessibilityName: label,
+                acceptanceIdentifier: edge == .left ? "editing.audio.fade-in" : "editing.audio.fade-out",
                 dragSensitivity: 0.02,
                 fieldWidth: AppTheme.ComponentSize.scrubFieldWide,
                 onChanged: { seconds in
@@ -99,5 +101,10 @@ extension InspectorView {
             }
         }
         .frame(minHeight: AppTheme.Timeline.keyframeRowHeight)
+        if clips.contains(where: \.hasRetainedFade) {
+            Text("Retained fade segment. Changing its length starts this edge from the current clip boundary.")
+                .interfaceFont(size: AppTheme.Typography.ui)
+                .foregroundStyle(AppTheme.Text.secondaryColor)
+        }
     }
 }

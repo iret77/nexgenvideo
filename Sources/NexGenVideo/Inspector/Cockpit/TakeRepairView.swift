@@ -18,8 +18,14 @@ struct TakeRepairView: View {
             && persisted?.reason == reason && persisted?.policy == policy
     }
 
+    private var canSave: Bool {
+        !busy && canWrite && !reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && (try? policy.validate()) != nil
+    }
+
+    private var canContinue: Bool { !busy && saved && canWrite }
+
     var body: some View {
-        DisclosureGroup("Iteration decision") {
+        DisclosureGroup {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
                 if let assessment {
                     Text(guidance(assessment)).foregroundStyle(AppTheme.Text.secondaryColor)
@@ -30,13 +36,22 @@ struct TakeRepairView: View {
                 Picker("Next action", selection: $operation) {
                     ForEach(TakeRepairPlan.Operation.allCases, id: \.self) { Text($0.label).tag($0) }
                 }.disabled(busy)
+                    .reviewAcceptanceProbe("take.repair.operation", state: !busy, text: operation.rawValue)
                 TextField("Explain the single change, clean rewrite or stop", text: $reason).disabled(busy)
-                DisclosureGroup("Iteration limits") {
+                    .reviewAcceptanceProbe("take.repair.reason", state: !busy, text: reason)
+                DisclosureGroup {
                     TextField("Rolls per prompt revision", value: $policy.rollsPerPrompt, format: .number)
+                        .reviewAcceptanceProbe("take.repair.rolls", text: String(policy.rollsPerPrompt))
                     TextField("Failed iterations before clean rewrite", value: $policy.failuresBeforeRewrite, format: .number)
+                        .reviewAcceptanceProbe("take.repair.failures", text: String(policy.failuresBeforeRewrite))
                     TextField("Clean failures before model-limit review", value: $policy.cleanFailuresBeforeModelLimit, format: .number)
+                        .reviewAcceptanceProbe("take.repair.clean-failures", text: String(policy.cleanFailuresBeforeModelLimit))
                     TextField("Control channels before model-limit review", value: $policy.channelsBeforeModelLimit, format: .number)
+                        .reviewAcceptanceProbe("take.repair.channels", text: String(policy.channelsBeforeModelLimit))
                     TextField("Iterations before simplifying the shot", value: $policy.iterationsBeforeSimplification, format: .number)
+                        .reviewAcceptanceProbe("take.repair.simplify-after", text: String(policy.iterationsBeforeSimplification))
+                } label: {
+                    Text("Iteration limits").reviewAcceptanceProbe("take.repair.limits")
                 }.disabled(busy)
                 Button("Save iteration decision") {
                     let choice = operation, explanation = reason, limits = policy
@@ -50,15 +65,18 @@ struct TakeRepairView: View {
                         busy = false
                     }
                 }.buttonStyle(InlineActionButtonStyle(variant: .approval))
-                    .disabled(busy || !canWrite || reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (try? policy.validate()) == nil)
+                    .disabled(!canSave).reviewAcceptanceProbe("take.repair.save", state: canSave)
                 Button("Continue with agent") {
                     editor.agentService.send(controlTurn: AgentControlTurn(
                         command: "Read get_render_manifest for \(snapshot.take.phase) and the recorded iteration decision for shot \(snapshot.take.shotID). Apply that decision through the canonical workflow. A stop or rescue decision must not start a generation. Changes to approved shot truth require explicit rewind. Any generation still needs the existing spend approval.",
                         selections: [.init(label: "Shot", values: [snapshot.take.shotID]), .init(label: "Decision", values: [operation.label])],
                         typedText: reason))
-                }.buttonStyle(InlineActionButtonStyle()).disabled(busy || !saved || !canWrite)
-                if let message { Text(message).foregroundStyle(AppTheme.Text.secondaryColor) }
+                }.buttonStyle(InlineActionButtonStyle()).disabled(!canContinue)
+                    .reviewAcceptanceProbe("take.repair.continue", state: canContinue)
+                if let message { Text(message).foregroundStyle(AppTheme.Text.secondaryColor).reviewAcceptanceProbe("take.repair.message", text: message) }
             }.padding(.vertical, AppTheme.Spacing.sm)
+        } label: {
+            Text("Iteration decision").reviewAcceptanceProbe("take.repair.open")
         }
         .task(id: snapshot.take.id) { await load() }
     }

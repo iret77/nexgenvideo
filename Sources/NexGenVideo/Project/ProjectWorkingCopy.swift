@@ -33,6 +33,7 @@ enum ProjectWorkingCopy {
         let generationLog: Data?
         let thumbnail: Data?
         let chatSessionFiles: [(name: String, data: Data)]
+        var editorState: Data? = nil
     }
 
     @discardableResult
@@ -41,16 +42,8 @@ enum ProjectWorkingCopy {
         let existing = home(key)
         if isComplete(existing, fm: fm),
            fm.fileExists(atPath: existing.appendingPathComponent(dirtyMarker).path) {
-            guard let packageURL,
-                  ProjectPluginSettings.bindingResolution(projectURL: packageURL)
-                    == ProjectPluginSettings.bindingResolution(projectURL: existing)
-                    || ProjectPackMigration.authorizesRecoveredUpgrade(
-                        projectURL: packageURL,
-                        recoveryURL: existing,
-                        workingCopyKey: key
-                    ) else {
-                throw PersistError.recoveredFormatMismatch
-            }
+            guard let packageURL else { throw PersistError.recoveredFormatMismatch }
+            try requireCompatibleRecovery(existing, packageURL: packageURL, key: key)
             migrateSchemas(in: home(key))
             return OpenResult(
                 home: home(key),
@@ -65,6 +58,26 @@ enum ProjectWorkingCopy {
             recoveredUnsaved: false,
             generation: try claim(key: key)
         )
+    }
+
+    static func recoverableDirtyHome(for packageURL: URL) throws -> URL? {
+        guard let key = ProjectIdentity.existingKey(for: packageURL) else { return nil }
+        let existing = home(key), fm = FileManager.default
+        guard isComplete(existing, fm: fm), fm.fileExists(atPath: existing.appendingPathComponent(dirtyMarker).path) else { return nil }
+        try requireCompatibleRecovery(existing, packageURL: packageURL, key: key)
+        return existing
+    }
+
+    private static func requireCompatibleRecovery(_ existing: URL, packageURL: URL, key: String) throws {
+        try ProjectPluginSettings.validateProductionContractForOpen(projectURL: packageURL)
+        try ProjectPluginSettings.validateProductionContractForOpen(projectURL: existing)
+        let matchingPack = ProjectPluginSettings.bindingResolution(projectURL: packageURL)
+            == ProjectPluginSettings.bindingResolution(projectURL: existing)
+            || ProjectPackMigration.authorizesRecoveredUpgrade(projectURL: packageURL, recoveryURL: existing, workingCopyKey: key)
+        let matchingProduction = ProjectPluginSettings.productionContractResolution(projectURL: packageURL)
+            == ProjectPluginSettings.productionContractResolution(projectURL: existing)
+            || ProductionWorkflowRecoveryMigration.authorizesCoreRecovery(projectURL: packageURL, recoveryURL: existing)
+        guard matchingPack && matchingProduction else { throw PersistError.recoveredFormatMismatch }
     }
 
     private static func migrateSchemas(in home: URL) {
@@ -140,6 +153,9 @@ enum ProjectWorkingCopy {
                 to: root.appendingPathComponent(Project.thumbnailFilename),
                 options: .atomic
             )
+        }
+        if let editorState = snapshot.editorState {
+            try editorState.write(to: root.appendingPathComponent(ProjectEditorState.filename), options: .atomic)
         }
         try replaceChatDirectory(snapshot.chatSessionFiles, in: root, fm: fm)
     }
@@ -297,6 +313,50 @@ enum ProjectWorkingCopy {
             _ = try fm.replaceItemAt(root, withItemAt: stagingRoot)
             try? fm.removeItem(at: stagingHome)
             return result
+        } catch {
+            try? fm.removeItem(at: stagingHome)
+            throw error
+        }
+    }
+
+    struct PreparedPipelineTransaction<Output: Sendable>: Sendable {
+        fileprivate let projectHome: URL
+        fileprivate let root: URL
+        fileprivate let stagingHome: URL
+        fileprivate let stagingRoot: URL
+        let output: Output
+
+        func commit(validateCurrent: (URL) throws -> Void) throws -> Output {
+            try validateCurrent(projectHome)
+            guard renameatx_np(AT_FDCWD, root.path, AT_FDCWD, stagingRoot.path, UInt32(RENAME_SWAP)) == 0 else {
+                throw POSIXError(.init(rawValue: errno) ?? .EIO)
+            }
+            return output
+        }
+
+        func discard() { try? FileManager.default.removeItem(at: stagingHome) }
+    }
+
+    static func preparePipelineTransaction<Output: Sendable>(
+        at dataRoot: URL, mutate: (URL) throws -> Output
+    ) throws -> PreparedPipelineTransaction<Output> {
+        let fm = FileManager.default
+        let root = dataRoot.standardizedFileURL
+        let values = try root.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+        guard values.isDirectory == true, values.isSymbolicLink != true,
+              root.lastPathComponent == pipelineDir else {
+            throw PersistError.incompletePackage(package: root.lastPathComponent)
+        }
+        let home = root.deletingLastPathComponent()
+        let stagingHome = home.deletingLastPathComponent().appendingPathComponent(
+            ".pipeline-transaction-\(home.lastPathComponent)-\(UUID().uuidString)", isDirectory: true)
+        let stagingRoot = stagingHome.appendingPathComponent(pipelineDir, isDirectory: true)
+        do {
+            try cloneProjectReadView(from: home, to: stagingHome, fm: fm)
+            try Task.checkCancellation()
+            let output = try mutate(stagingRoot)
+            return .init(projectHome: home, root: root, stagingHome: stagingHome,
+                         stagingRoot: stagingRoot, output: output)
         } catch {
             try? fm.removeItem(at: stagingHome)
             throw error
@@ -491,7 +551,7 @@ enum ProjectWorkingCopy {
                 return "Couldn't create an independent identity for the project copy. "
                     + "The original project was left untouched."
             case .recoveredFormatMismatch:
-                return "Couldn't recover unsaved work because its exact format-pack binding "
+                return "Couldn't recover unsaved work because its production workflow or format pack "
                     + "doesn't match the saved project. The saved project and recovery copy were left untouched."
             case .readViewCloneUnavailable(let package, let detail):
                 return "Couldn't prepare \(package) for the pipeline phase. \(detail) "

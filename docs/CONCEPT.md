@@ -275,15 +275,15 @@ Verifizierter CLI-Vertrag: `claude` v2.1.191.
 
 Claude arbeitet, **du** behältst die Kontrolle über die NexGen-UI: live mitlesen (Stream im
 Agent-Panel), **previewen, freigeben, kommentieren, Clips schieben/kürzen, korrigieren**.
-Review-Gates (z. B. Frame-Freigaben aus der Pipeline) erscheinen in der UI; headless laufen sie
-als geführter/auto-approve-Modus. Claude = mit dir, nicht statt dir.
+Review-Gates (z. B. Frame-Freigaben aus der Pipeline) erscheinen als hostseitige Entscheidungen in der UI.
+Ein Tool-Aufruf oder Headless-Transport erzeugt keine Nutzerzustimmung. Claude = mit dir, nicht statt dir.
 
 ## 8. Produktions-Disziplin (Substanz der Engine — nicht verwässern)
 
 Aus dem Quality-Motor zu bewahren (Detail in `musicvideo/docs/v1-studio-plan.md`): Bible-Anker
 (Identitäten anchor-first), Reference-Mode/Konsistenz, **Sanity/Linter-Gates** (hart im
-Render-Dispatcher erzwungen, kein „weicher" Bypass), **Cost-Guard** (Provider-Calls nur nach
-Approve/innerhalb Limits, Provider-Limits gegen aktuelle Doku verifiziert), **Frame-Audit**
+Render-Dispatcher erzwungen, kein „weicher" Bypass), **Kostenanzeige und explizite Ausführungsfreigabe** (eine Freigabe kann eine ganze Phase abdecken;
+Budget und unbekannte Preise sind keine Ausführungslimits; technische Provider-Grenzen stammen aus dem aktuellen Katalog), **Frame-Audit**
 zwischen Provider-Call und Freigabe, anchor-getriebene 3D/Pano-Kamera (Splat-Renders als i2v-Anker).
 Provider-Prompts sind Englisch (bindend). Diese Disziplin ist der Grund, warum nicht „irgendein
 Modell-Call" reicht — sie macht die Konsistenz über Shots und Re-Renders reproduzierbar.
@@ -293,10 +293,11 @@ Modell-Call" reicht — sie macht die Konsistenz über Shots und Re-Renders repr
 - ✅ **Entschieden 2026-06-28 — Monorepo:** Generic Core + erste Packs leben in `nexgenvideo`,
   *kein* eigenes Repo, *kein* Submodul. Die alte „eigenes `nexgen-core`-Repo"-Tendenz war
   Über-Strukturierung und ist verworfen (ein autonomes Produkt = ein Repo).
-- ✅ **Umgesetzt (M0–M9) — nativ statt Python:** die Engine + Packs sind Swift (`Sources/NexGenEngine/`,
-  `…/Packs/`) statt Python (`engine/`+`plugins/`). Ein Produkt = eine Sprache; kein Runtime-Bootstrap.
-- Mapping `.palmier`-Projektort ↔ Engine-Projektordner (Layout v2 `_studio/`) — Detaildesign.
-- `io.palmier.project`-UTI behalten oder migrieren.
+- ✅ **Umgesetzt — native Engine und ladbare Packs:** Swift-Engine unter `Engine/Sources/NexGenEngine/`,
+  erstes Pack unter `Sources/MusicvideoPlugin/`, ausgeliefert als signiertes `.ngvpack`-Bundle.
+- ✅ **Umgesetzt — Projektablage:** `.ngv` mit UTI `de.h5ventures.nexgenvideo.project`;
+  kanonische Engine-Daten unter `pipeline/`, Editing in der Recovery-Arbeitskopie und atomisches Save.
+  Das frühere `_studio/` ist ein erkannter Migrationspfad; Details im gesperrten `PROJECT_STORAGE.md`.
 
 ## 10. Bauphasen (Sequenz)
 
@@ -311,17 +312,23 @@ Modell-Call" reicht — sie macht die Konsistenz über Shots und Re-Renders repr
 4. **`musicvideo` als In-App-Workflow-Pack** (Konzept → final geschnittenes Video).
 5. **Bidirektionale Review-UX** (Preview/Approve/Comment/Trim, Frame-Gates).
 
-## 11. Build-/CI-Realität (verbindlich)
+## 11. Verifikation und Distribution
 
-**Kein lokaler Build — niemals.** Verifikation ausschließlich über **GitHub Actions**
-(`ci.yml`, `macrunner`, `swift build` + `swift test`). Signiert + notarisiert über **unsere eigene
+Die vorhandenen GitHub-Actions-Workflows trennen Build/Unit/Bundle auf `macrunner` und native
+Produkt-Minimum-Abnahmen auf `macos-26`. Ein Build ist kein Nachweis des vollständigen Nutzerwegs.
+Signing und Notarisierung verwenden die eigene
 high5 Developer ID** (`release.yml`, App-Store-Connect-API-Key, EdDSA-Sparkle-Key). `dev-latest` =
 rollendes signiertes Prerelease als öffentlicher Direktlink **für die App (DMG)**; die Format-Packs
-laufen über den davon entkoppelten, append-only `plugins`-Kanal. PRs immer `--repo iret77/nexgenvideo`.
+laufen über den davon entkoppelten, append-only `plugins`-Kanal. Ein neuer RC oder Release ist damit nicht freigegeben.
 
-## 12. Status (Stand 2026-06-28)
+## 12. Historischer Implementierungsstand (2026-06-28)
 
-**Auf `main` (erledigt):**
+Die folgende Liste dokumentiert den damaligen Stand; sie ist keine aktuelle RC-, Provider- oder
+native UX-Abnahme. Aktueller vollständiger Funktionsumfang und begrenzte Nachweise stehen in
+[`RC_ACCEPTANCE.md`](RC_ACCEPTANCE.md). Die heutige App lädt echte gepinnte `.ngvpack`-Bundles;
+das frühere Entfernen des Python-Pluginloaders bedeutet keinen Verzicht auf ladbare Swift-Packs.
+
+**Damals auf `main`:**
 - Eigenes Developer-ID-Signing/Notarisierung; Bundle-ID `de.h5ventures.nexgenvideo`; Sparkle-Feed auf unser Repo.
 - Rebrand: Wortmarke **„NexGenVideo"** (ein Wort) überall sichtbar; Icon + Splash; Projekt-Extension `.ngv` + UTI `de.h5ventures.nexgenvideo.project`.
 - Eigenes Hosting des Such-CoreML-Modells (weg von Palmiers HF).
