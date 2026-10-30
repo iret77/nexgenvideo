@@ -65,3 +65,30 @@ class DirectoryScanEvidenceTests(unittest.TestCase):
                 proof[key] = True
                 with self.subTest(boolean=key), self.assertRaises(ValueError):
                     validate(proof, 123)
+
+
+class RuntimeIdentityTests(unittest.TestCase):
+    def test_supported_versions_keep_the_actual_runtime_identity(self):
+        from unittest.mock import patch
+        from bpy_directory_scan_acceptance import runtime_identity
+        for version in ('26.6.2', '27.0', '27.0.1'):
+            with self.subTest(version=version), patch('bpy_directory_scan_acceptance.platform.system', return_value='Darwin'), \
+                patch('bpy_directory_scan_acceptance.platform.machine', return_value='arm64'), \
+                patch('bpy_directory_scan_acceptance.subprocess.check_output', side_effect=lambda args, **kwargs:
+                      version if '-productVersion' in args else 'actual-build'):
+                self.assertEqual(runtime_identity(), {'osVersion': version, 'osBuild': 'actual-build', 'architecture': 'arm64'})
+
+    def test_unsupported_or_unidentified_runtime_is_rejected(self):
+        from unittest.mock import patch
+        from bpy_directory_scan_acceptance import runtime_identity
+        for version, architecture, system, build in (
+                ('25.7.2', 'arm64', 'Darwin', 'build'), ('', 'arm64', 'Darwin', 'build'),
+                ('invalid.0', 'arm64', 'Darwin', 'build'), ('27', 'arm64', 'Darwin', 'build'),
+                ('27.0', 'x86_64', 'Darwin', 'build'), ('27.0', 'arm64', 'Linux', 'build'),
+                ('27.0', 'arm64', 'Darwin', '')):
+            with self.subTest(version=version, architecture=architecture, system=system, build=build), \
+                patch('bpy_directory_scan_acceptance.platform.system', return_value=system), \
+                patch('bpy_directory_scan_acceptance.platform.machine', return_value=architecture), \
+                patch('bpy_directory_scan_acceptance.subprocess.check_output', side_effect=lambda args, **kwargs:
+                      version if '-productVersion' in args else build), self.assertRaises(ValueError):
+                runtime_identity()

@@ -226,7 +226,7 @@ class PreheatTests(unittest.TestCase):
         self.assertIn("needs: source", build)
         self.assertIn("ci_builtin_blur_preheat.py compile", build)
         self.assertIn("needs: ci-builtin-blur-preheat-build", run)
-        self.assertIn("runs-on: macos-26", run)
+        self.assertIn("runs-on: macrunner", run)
         self.assertIn("ci_builtin_blur_preheat.py run", run)
         self.assertNotIn("continue-on-error", build+run)
         self.assertNotIn("setup-xcode", run)

@@ -19,7 +19,7 @@ class PrivateExampleWorkflowTests(unittest.TestCase):
         self.assertIn("scripts/bundle.sh debug", build)
         self.assertIn("scripts/assemble_ngvpack.sh", build)
         self.assertIn("actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02", build)
-        self.assertIn("runs-on: macos-26", analyze)
+        self.assertIn("runs-on: macrunner", analyze)
         self.assertNotIn("NGV_MACOS_27_RUNNER", text)
         self.assertIn("needs: [source-gate, build-runtime-harness]", analyze)
         self.assertIn(
@@ -39,6 +39,17 @@ class PrivateExampleWorkflowTests(unittest.TestCase):
         self.assertIn("run: .build/NexGenVideo.app/Contents/MacOS/NexGenVideo -ApplePersistenceIgnoreState YES", analyze)
         self.assertLess(analyze.index("sw_vers -productVersion"), analyze.index("actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"))
         self.assertLess(analyze.index("actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"), analyze.index("oras pull"))
+
+    def test_actual_runtime_identity_is_retained_independently_of_analysis_completion(self):
+        text = WORKFLOW.read_text()
+        gate = text.split("      - name: Verify supported runtime", 1)[1].split("      - name: Retain actual runtime identity", 1)[0]
+        upload = text.split("      - name: Retain actual runtime identity", 1)[1].split("      - name:", 1)[0]
+        for field in ("productVersion", "osBuild", "architecture", "runnerName", "sourceSHA"):
+            self.assertIn(field, gate)
+        self.assertIn("runtime-environment.json", gate)
+        self.assertIn("if: always()", upload)
+        self.assertIn("path: ${{ runner.temp }}/analysis-runtime/runtime-environment.json", upload)
+        self.assertIn("if-no-files-found: error", upload)
 
     def test_failure_provenance_publishes_without_a_partial_analysis(self):
         text = WORKFLOW.read_text()
@@ -71,12 +82,40 @@ class PrivateExampleWorkflowTests(unittest.TestCase):
         self.assertIn('[ "$(jq -r \'.visibility\' <<<"$REPORT_PACKAGE_JSON")" = "private" ]', source_gate)
         self.assertIn('[ "$(jq -r \'.repository // empty\' <<<"$REPORT_PACKAGE_JSON")" = "" ]', source_gate)
         self.assertNotIn("actions/upload-artifact", source_gate)
-        self.assertNotIn("actions/upload-artifact", analyze)
-        self.assertEqual(text.count("uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"), 1)
+        self.assertEqual(analyze.count("actions/upload-artifact"), 1)
+        upload = analyze.split("      - name: Retain actual runtime identity", 1)[1].split("      - name:", 1)[0]
+        self.assertIn("uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02", upload)
+        self.assertEqual([line.strip() for line in upload.splitlines() if line.strip().startswith("path:")],
+                         ["path: ${{ runner.temp }}/analysis-runtime/runtime-environment.json"])
+        self.assertEqual(text.count("uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"), 2)
+        self.assertLess(analyze.index("RUNTIME_PRODUCT_VERSION="), analyze.index("actions/download-artifact@"))
+        self.assertLess(analyze.index("RUNTIME_PRODUCT_VERSION="), analyze.index("oras pull"))
         self.assertIn("path: ${{ runner.temp }}/runtime-harness.tar.gz", build)
         self.assertIn("REPORT_REFERENCE: ghcr.io/iret77/nexgenvideo-analysis-reports:", analyze)
         self.assertIn('REPORT_DIGEST="$(oras push', analyze)
         self.assertIn('"$REPORT_REFERENCE" \\', analyze)
+
+    def test_public_runtime_writer_contains_only_runtime_identity(self):
+        import json
+        import os
+        import tempfile
+        import textwrap
+        from unittest.mock import patch
+
+        gate = WORKFLOW.read_text().split("      - name: Verify supported runtime", 1)[1].split(
+            "      - name: Retain actual runtime identity", 1)[0]
+        code = textwrap.dedent(gate.split("<<'PYTHON'\n", 1)[1].split("\n          PYTHON", 1)[0])
+        with tempfile.TemporaryDirectory() as temporary:
+            environment = {'RUNNER_TEMP': temporary, 'RUNTIME_PRODUCT_VERSION': '27.0.1',
+                           'RUNNER_NAME': 'runner-test', 'GITHUB_SHA': 'a' * 40,
+                           'PRIVATE_FIXTURE_CONTENT': 'must-stay-private'}
+            with patch.dict(os.environ, environment, clear=True), \
+                patch('platform.machine', return_value='arm64'), \
+                patch('subprocess.check_output', return_value='27B001\n'):
+                exec(compile(code, 'runtime-identity-writer', 'exec'), {})
+            record = json.loads((Path(temporary) / 'analysis-runtime/runtime-environment.json').read_text())
+            self.assertEqual(record, {'productVersion': '27.0.1', 'osBuild': '27B001', 'architecture': 'arm64',
+                                      'runnerName': 'runner-test', 'sourceSHA': 'a' * 40})
 
     def test_public_selftest_log_is_content_free(self):
         text = SELFTEST.read_text()

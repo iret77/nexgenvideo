@@ -32,8 +32,7 @@ jobs:
 
   probe:
     needs: build
-    # ci-lint: allow-CI005 Isolated AppKit runtime diagnosis on the macOS 26 production floor.
-    runs-on: macos-26
+    runs-on: macrunner
     timeout-minutes: 3
     steps:
       - uses: actions/download-artifact@v4
@@ -43,7 +42,7 @@ jobs:
       - name: Require the production runtime and restore the probe
         run: |
           set -euo pipefail
-          test "$(sw_vers -productVersion | cut -d. -f1)" = 26
+          test "$(sw_vers -productVersion | cut -d. -f1)" -ge 26
           tar -xzf "$RUNNER_TEMP/replay-scroll-probe.tar.gz" -C "$RUNNER_TEMP"
           test -x "$RUNNER_TEMP/replay-scroll-probe"
       - name: Measure native scroll event variants

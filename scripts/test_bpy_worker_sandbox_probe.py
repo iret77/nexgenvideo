@@ -389,5 +389,27 @@ class ExecutionAndCopyEvidenceTests(unittest.TestCase):
             self.assertIn("cleanup denied", receipt["cleanupError"])
 
 
+class SupportedSandboxRuntimeTests(unittest.TestCase):
+    def test_actual_runtime_identity_is_recorded_for_supported_macos(self):
+        from unittest.mock import patch
+        from bpy_worker_sandbox_probe import normal_runtime_environment
+        for version in ('26.6.2', '27.0', '27.0.1'):
+            def command(args, **kwargs):
+                return 'arm64' if args[0] == 'uname' else version if '-productVersion' in args else 'actual-build'
+            with self.subTest(version=version), patch('bpy_worker_sandbox_probe.subprocess.check_output', side_effect=command):
+                self.assertEqual(normal_runtime_environment(),
+                    {'osVersion': version, 'osBuild': 'actual-build', 'architecture': 'arm64'})
+
+    def test_older_or_invalid_runtime_and_other_architecture_are_rejected(self):
+        from unittest.mock import patch
+        from bpy_worker_sandbox_probe import normal_runtime_environment
+        for version, architecture in [('25.7.2', 'arm64'), ('', 'arm64'), ('invalid.0', 'arm64'), ('27.0', 'x86_64')]:
+            def command(args, **kwargs):
+                return architecture if args[0] == 'uname' else version if '-productVersion' in args else 'build'
+            with self.subTest(version=version, architecture=architecture), \
+                patch('bpy_worker_sandbox_probe.subprocess.check_output', side_effect=command), self.assertRaises(ValueError):
+                normal_runtime_environment()
+
+
 if __name__ == "__main__":
     unittest.main()

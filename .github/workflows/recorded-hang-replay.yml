@@ -96,8 +96,7 @@ jobs:
 
   baseline:
     needs: build
-    # ci-lint: allow-CI005 Runtime acceptance on the macOS 26 floor; macrunner boots only macOS 27.
-    runs-on: macos-26
+    runs-on: macrunner
     timeout-minutes: 12
     strategy:
       fail-fast: false

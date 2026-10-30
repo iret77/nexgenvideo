@@ -253,8 +253,7 @@ jobs:
   ci-builtin-blur-floor:
     needs: source
     if: inputs.candidate_kind == 'ci-builtin-blur-floor'
-    # ci-lint: allow-CI005 Run the original executable on the macOS 26 floor without rebuilding.
-    runs-on: macos-26
+    runs-on: macrunner
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -324,8 +323,7 @@ jobs:
   ci-builtin-blur-preheat:
     needs: ci-builtin-blur-preheat-build
     if: inputs.candidate_kind == 'ci-builtin-blur-preheat'
-    # ci-lint: allow-CI005 Compare the exact macOS 26 GPU runtime without rebuilding the App.
-    runs-on: macos-26
+    runs-on: macrunner
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -373,8 +371,7 @@ jobs:
   ci-glow-context:
     needs: ci-glow-context-build
     if: inputs.candidate_kind == 'ci-glow-context'
-    # ci-lint: allow-CI005 Compare actual Glow context behavior on the product minimum.
-    runs-on: macos-26
+    runs-on: macrunner
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -566,8 +563,7 @@ jobs:
   acceptance:
     needs: source
     if: inputs.candidate_kind == 'signed-release'
-    # ci-lint: allow-CI005 Runtime acceptance on the macOS 26 floor; macrunner boots only macOS 27.
-    runs-on: macos-26
+    runs-on: macrunner
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -585,7 +581,7 @@ jobs:
           [ "$(/usr/libexec/PlistBuddy -c 'Print :NGVSourceCommit' NexGenVideo.app/Contents/Info.plist)" = "$CANDIDATE_SOURCE" ]
           codesign --verify --strict --verbose=2 NexGenVideo.app
           xcrun stapler validate NexGenVideo.app
-          [ "$(sw_vers -productVersion | cut -d. -f1)" = 26 ]
+          [ "$(sw_vers -productVersion | cut -d. -f1)" -ge 26 ]
       - name: Verify signed capture, replay, startup and retained key bytes
         run: python3 scripts/hang_diagnostic_acceptance.py NexGenVideo.app diagnostic-symbols/NexGenVideo.dSYM --output evidence
       - name: Exercise native Export Cancel, Retry and Reveal actions
@@ -616,8 +612,7 @@ jobs:
   ci-helper:
     needs: source
     if: inputs.candidate_kind == 'ci-runtime'
-    # ci-lint: allow-CI005 Runtime acceptance on the macOS 26 product floor.
-    runs-on: macos-26
+    runs-on: macrunner
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -626,7 +621,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          test "$(sw_vers -productVersion | cut -d. -f1)" = 26
+          test "$(sw_vers -productVersion | cut -d. -f1)" -ge 26
           gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$CANDIDATE_ARTIFACT/zip" > "$RUNNER_TEMP/candidate.zip"
           test "$(shasum -a 256 "$RUNNER_TEMP/candidate.zip" | cut -d' ' -f1)" = "$CANDIDATE_DIGEST"
           ditto -x -k "$RUNNER_TEMP/candidate.zip" "$RUNNER_TEMP/candidate"
@@ -663,8 +658,7 @@ jobs:
   ci-bpy-resource-diagnostic:
     needs: source
     if: inputs.candidate_kind == 'ci-bpy-resource-diagnostic'
-    # ci-lint: allow-CI005 Compare original app resource access on the macOS 26 product floor.
-    runs-on: macos-26
+    runs-on: macrunner
     timeout-minutes: 25
     strategy:
       fail-fast: false
@@ -698,8 +692,7 @@ jobs:
   ci-bpy-open-diagnostic:
     needs: source
     if: inputs.candidate_kind == 'ci-bpy-open-diagnostic'
-    # ci-lint: allow-CI005 Diagnose the original macOS 26 runtime without rebuilding it.
-    runs-on: macos-26
+    runs-on: macrunner
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4

@@ -150,8 +150,7 @@ jobs:
       matrix:
         scale: ${{ fromJSON(needs.cases.outputs.scales) }}
     name: Normal app at ${{ matrix.scale }} text size
-    # ci-lint: allow-CI005 External installed-app journeys on the macOS 26 production floor.
-    runs-on: macos-26
+    runs-on: macrunner
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4

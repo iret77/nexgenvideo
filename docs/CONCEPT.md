@@ -314,8 +314,8 @@ Modell-Call" reicht — sie macht die Konsistenz über Shots und Re-Renders repr
 
 ## 11. Verifikation und Distribution
 
-Die vorhandenen GitHub-Actions-Workflows trennen Build/Unit/Bundle auf `macrunner` und native
-Produkt-Minimum-Abnahmen auf `macos-26`. Ein Build ist kein Nachweis des vollständigen Nutzerwegs.
+Die vorhandenen GitHub-Actions-Workflows führen Build, Unit-Tests, Bundles und native Abnahmen
+auf `macrunner` aus. Das Deployment-Ziel bleibt macOS 26; Nachweise erfassen die tatsächliche VM-Version. Ein Build ist kein Nachweis des vollständigen Nutzerwegs.
 Signing und Notarisierung verwenden die eigene
 **high5 Developer ID** (`release.yml`, App-Store-Connect-API-Key, EdDSA-Sparkle-Key). `dev-latest` =
 rollendes signiertes Prerelease als öffentlicher Direktlink **für die App (DMG)**; die Format-Packs

@@ -94,6 +94,19 @@ class BinaryReuseTests(unittest.TestCase):
         self.run["conclusion"] = "failure"
         self.assertEqual(self.producer(), (self.artifact, self.job))
 
+    def test_macrunner_measurement_is_reusable_and_unknown_runner_is_rejected(self):
+        self.job["labels"] = ["self-hosted", "macrunner"]
+        self.assertEqual(self.producer(), (self.artifact, self.job))
+        for labels in ([], ["ubuntu-24.04"], ["macos-27"], ["self-hosted"]):
+            with self.subTest(labels=labels), self.assertRaisesRegex(ValueError, "measurement runner"):
+                self.job["labels"] = labels
+                self.producer()
+
+    def test_new_hosted_measurement_cannot_be_reused_as_historical_evidence(self):
+        self.job.update(labels=["macos-26"], completed_at="2026-10-31T12:00:00Z")
+        with self.assertRaisesRegex(ValueError, "measurement runner"):
+            self.producer()
+
     def test_named_nested_batch_binary_measurement_is_accepted(self):
         self.run.update(path=reuse.BATCH_WORKFLOW, conclusion="failure")
         self.job["name"] = reuse.BATCH_BINARY_JOB

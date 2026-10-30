@@ -7,7 +7,7 @@ provides `Light Checks` (AppTheme lint, pack pipeline contracts, script tests),
 and `ci-lint.yml` checks workflow policy and YAML syntax. `Light Checks` is the
 required status check for `main`, without an up-to-date requirement. `ci-lint`
 is not yet required; issue #674 tracks its activation after successful CI.
-No push, pull request or schedule starts a macOS runner (`macrunner` or `macos-26`).
+No push, pull request or schedule starts a macOS runner. All macOS jobs use `macrunner`.
 
 Heavy verification starts manually through `ci-batch.yml` or a focused acceptance
 workflow. When approval is required, it covers the build incident rather than
@@ -72,7 +72,7 @@ inputs. Followup success proves only the selected surface and cases.
 
 `CI Batch` with `mode=qualification` runs only the existing bpy source-closure
 workflow with `distribution: false`. Its first run assembles and independently
-validates the source candidate on Linux and records the pinned binary on macOS 26;
+validates the source candidate on Linux and records the pinned binary on macrunner with its actual OS;
 it does not compile the app or run the normal batch jobs. App followup selectors
 must remain unset/default. A later qualification can name that producer through
 `qualification_binary_run_id`: only sources run, and the original passing binary
@@ -120,8 +120,8 @@ receipt, which is retained with the journey evidence. Independent workflow runs
 have separate concurrency groups so a new batch cannot displace a queued release journey.
 The journey covers generic import/edit/save/reopen/export without internal app
 acceptance flags. Screenshots, accessibility trees, input records, project snapshots
-and independently decoded output accompany the result. It supplements the macOS 26
-checks; the current macrunner desktop runs macOS 27.
+and independently decoded output accompany the result. All native acceptance uses
+the macrunner desktop and records its actual macOS version; the deployment target remains macOS 26.
 
 The release workflow uploads the exact notarized DMG for a separate external
 journey at 100%. Publication and publication recovery require that journey's
@@ -136,7 +136,7 @@ once on `macrunner`. When bundle paths change,
 the same job assembles the app from that build directory through SwiftPM's
 incremental build. Real external pack loads, historical compatibility checks and
 relaunch checks still run. Normal-startup acceptance consumes the zipped app on
-`macos-26`. Build directories are never cached or restored across jobs.
+`macrunner`. Build directories are never cached or restored across jobs.
 
 SwiftPM dependency caches use a stable directory inside `RUNNER_TEMP`;
 the key includes the platform, toolchain and package manifests. Run IDs are absent
@@ -247,7 +247,7 @@ verification record.
 The manual Native Acceptance Probes workflow diagnoses audio duration and native
 Storyboard text without compiling the app. It compiles the actual
 decoder with the engine PCM contract on `macrunner`, then measures it alongside
-a standalone hosting/accessibility probe on macOS 26. Bounded JSON and logs retain
+a standalone hosting/accessibility probe on macrunner. Bounded JSON and logs retain
 conversion status, WAV payloads, EOF reads, real final audio and observed text.
 Pixel recognition retains its raw results and visible forbidden-token controls
 at all three supported text scales. These probes

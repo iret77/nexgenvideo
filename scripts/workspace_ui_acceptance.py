@@ -1,4 +1,4 @@
-"""Exercise and verify the native five-workspace editor on a macOS 26 runner."""
+"""Exercise and verify the native five-workspace editor on macrunner."""
 import argparse
 from collections import Counter
 import hashlib

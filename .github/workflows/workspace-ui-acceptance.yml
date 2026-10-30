@@ -286,8 +286,7 @@ jobs:
       max-parallel: 3
       matrix: ${{ fromJSON(needs.source.outputs.matrix) }}
     name: Native ${{ matrix.id }}
-    # ci-lint: allow-CI005 Runtime acceptance on the macOS 26 floor; macrunner boots only macOS 27.
-    runs-on: macos-26
+    runs-on: macrunner
     # Per-case process watchdog <=10min; remaining time preserves evidence. Not the full-suite budget.
     timeout-minutes: 15
     steps:
@@ -337,8 +336,7 @@ jobs:
     name: Native generationbatch
     needs: [source, runtime]
     if: ${{ !cancelled() && needs.source.result == 'success' && needs.runtime.result == 'success' && needs.source.outputs.batch == 'true' }}
-    # ci-lint: allow-CI005 Native pointer/keyboard acceptance on the shipped macOS 26 floor.
-    runs-on: macos-26
+    runs-on: macrunner
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4

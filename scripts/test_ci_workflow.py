@@ -254,14 +254,14 @@ class CIWorkflowTests(unittest.TestCase):
     def test_native_export_actions_run_for_pr_bundle_and_signed_release(self):
         ci = CI.read_text()
         startup = ci.split("  diagnostic-startup:\n", 1)[1].split("  merge_gate:\n", 1)[0]
-        self.assertIn("runs-on: macos-26", startup)
+        self.assertIn("runs-on: macrunner", startup)
         self.assertIn("name: NexGenVideo-app", startup)
         self.assertIn("scripts/export_actions_acceptance.py candidate/NexGenVideo.app", startup)
         self.assertIn("evidence/export-actions.json", startup)
         self.assertIn("if: always()", startup)
 
         release = DIAGNOSTIC_ACCEPTANCE.read_text()
-        self.assertIn("runs-on: macos-26", release)
+        self.assertIn("runs-on: macrunner", release)
         self.assertIn("scripts/export_actions_acceptance.py NexGenVideo.app", release)
         self.assertIn("evidence/export-actions.json", release)
 
@@ -270,7 +270,7 @@ class CIWorkflowTests(unittest.TestCase):
         batch = workspace.split("  batch-review:\n", 1)[1].split("  qualification:\n", 1)[0]
         self.assertIn("needs: [source, runtime]", batch)
         self.assertNotIn("needs: acceptance", batch)
-        self.assertIn("runs-on: macos-26", batch)
+        self.assertIn("runs-on: macrunner", batch)
         self.assertIn("uses: ./.github/actions/prepare-native-runtime", batch)
         self.assertIn("artifact-id: ${{ needs.runtime.outputs.artifact_id }}", batch)
         self.assertIn("scripts/workspace_native_case.py", batch)
@@ -354,7 +354,7 @@ class CIWorkflowTests(unittest.TestCase):
                 self.assertEqual(runners, ["ubuntu-24.04"])
                 self.assertNotIn("uses: ./.github/workflows/", text)
 
-    def test_macos_builds_use_macrunner_and_runtime_acceptance_keeps_the_macos_26_floor(self):
+    def test_every_macos_job_uses_macrunner(self):
         for path in sorted(WORKFLOWS.glob("*.yml")):
             lines = path.read_text().splitlines()
             for index, line in enumerate(lines):
@@ -362,17 +362,7 @@ class CIWorkflowTests(unittest.TestCase):
                     continue
                 runner = line.split(":", 1)[1].strip()
                 with self.subTest(workflow=path.name, line=index + 1):
-                    self.assertIn(runner, {"ubuntu-24.04", "macrunner", "macos-26"})
-                    if runner == "macos-26":
-                        self.assertIn("ci-lint: allow-CI005", lines[index - 1])
-                        job = []
-                        for body in lines[index + 1:]:
-                            if body.startswith("  ") and not body.startswith("   ") and body.strip():
-                                break
-                            job.append(body)
-                        job = "\n".join(job)
-                        for build_step in ("swift build", "swift test", "scripts/bundle.sh", "setup-xcode-27"):
-                            self.assertNotIn(build_step, job)
+                    self.assertIn(runner, {"ubuntu-24.04", "macrunner"})
 
     def test_pull_request_check_mirrors_the_ci_light_job(self):
         light = CI.read_text().split("  source_gate:\n", 1)[1].split("\n  ui_render:\n", 1)[0]

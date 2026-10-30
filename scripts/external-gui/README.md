@@ -42,7 +42,7 @@ and Accessibility evidence; they are never replaced by in-process actions.
 ## CI interface
 
 Build the independent UI test bundle once on `macrunner`, then run its unchanged
-products on GitHub's `macos-26` arm64 image. NexGenVideo is never rebuilt by this
+products on `macrunner`'s arm64 VM. NexGenVideo is never rebuilt by this
 workflow. Python 3.12 and the image's existing Xcode are required; xcodegen is used only
 by the build job. A commit-pinned setup-micromamba action provides the conda-forge GPL
 ffmpeg variant (including libx264) and ffprobe under RUNNER_TEMP. Shell initialization,
@@ -99,7 +99,8 @@ extracts regular files and internal symlinks, preserves modes, and resolves XCTe
 modes are bound; symlinks bind their target, since their mode is platform-dependent. The complete
 test-input archive and original producer records remain in the journey evidence.
 
-Runtime records and checks macOS 26, arm64, the hosted runner, the console user,
+Runtime records and checks macOS 26 or later, arm64, the self-hosted runner and its name,
+the OS build, the console user,
 the Aqua bootstrap session, existing developer authorization and a captured PNG from
 screencapture. Its actual visual content still needs independent assessment. It never
 changes TCC, the host, runner configuration or quarantine.
@@ -127,8 +128,8 @@ and resulting binary identities remain distinguishable.
 ## Scope and limits
 
 This initial external journey covers generic editing and is additional to the
-existing native fixture acceptance. All external journeys execute on the macOS-26
-production floor. `--scale` accepts `1`, `1.25` or `1.5`; one run establishes
+existing native fixture acceptance. All external journeys execute on macrunner and record the actual OS version.
+Their deployment target remains macOS 26. `--scale` accepts `1`, `1.25` or `1.5`; one run establishes
 only its chosen scale. The initial integration may intentionally select `1`.
 
 It does not prove the full production workflow, live generation or provider
@@ -139,11 +140,9 @@ remain unverified until the independently reviewed CI batch runs.
 
 [Apple TN2339](https://developer.apple.com/library/archive/technotes/tn2339/_index.html)
 documents separate build-for-testing and test-without-building, with the bundles at
-the paths declared by the xctestrun. It does not guarantee Xcode-27 products will run
-under the hosted Xcode-26 runtime. That compatibility remains pending until the real
+the paths declared by the xctestrun. Runtime compatibility remains pending until the real
 journey produces exactly one passing test and zero failures or skips. Both Xcode
 versions are retained. [Apple's release notes](https://developer.apple.com/documentation/xcode-release-notes/xcode-11_4-release-notes)
 describe skipping incompatible deployment targets, so exit zero alone never qualifies.
-The [hosted arm64 image](https://github.com/actions/runner-images/blob/main/images/macos/macos-26-arm64-Readme.md)
-and its [GUI preparation](https://github.com/actions/runner-images/blob/main/images/macos/templates/macOS-26.arm64.anka.pkr.hcl)
-are the platform reference; their documented preparation is not runtime evidence.
+The job's recorded macrunner environment is the platform reference; image preparation
+is not runtime evidence.

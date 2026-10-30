@@ -108,7 +108,7 @@ errors, and malformed attribute records remain fatal.
 The runtime workflow also invokes the bundled service's fixed directory-deletion probe directly.
 It first traverses a nested file, then deletes that queued directory before the real scanner resolves
 its inode. Exact event order, retained-file identity/bytes and a healthy three-snapshot followup are
-required. This checks the macOS 26 directory scanner; it does not substitute for XPC or bpy execution.
+required. This checks the native directory scanner on macrunner and records the actual OS; it does not substitute for XPC or bpy execution.
 The retained-runtime preflight rejects changes to this service's source. Earlier app artifacts remain
 bound to their earlier harness; they cannot supply this new probe's evidence.
 The service deliberately does not treat cumulative process write-I/O as disk occupancy: overwrites
@@ -170,7 +170,7 @@ before resolving the bookmark and that the same mount passes all checks afterwar
 capacity and path leases must fail on fresh session IDs at the storage validation stage, with the
 specific Cocoa identity error; missing-path or later session failures cannot satisfy those controls.
 Their evidence stores bookmark hashes only.
-The macOS 26 kernel must reject both ancestor and leaf symlinks while permitting a searchable but
+The runtime kernel must reject both ancestor and leaf symlinks while permitting a searchable but
 unreadable ancestor. The existing host-crash, sandbox-denial and physical-storage probes still apply.
 This path is prepared for native verification; successful cross-process resolution is not yet proven.
 Native acceptance includes a real 64 MiB-volume ENOSPC probe while fileports, Mach memory entries or
@@ -179,7 +179,7 @@ are prepared but unexecuted. Acceptance still must prove bounded image growth, X
 all attach/close/crash transitions,
 and rejection of replaced image/mount/symlink identities. None of these new volume claims is marked
 verified by source inspection. Disk-quota completeness remains a distribution blocker until those
-actual macOS 26 results exist. The controlled virtual-mapping case requires exactly 8 GiB of untouched
+actual macrunner results exist, with the runtime OS recorded. The controlled virtual-mapping case requires exactly 8 GiB of untouched
 `PROT_NONE` address space and its deallocation, with no enforced `RLIMIT_AS` ceiling. It does not
 allocate 8 GiB of physical memory. `RLIMIT_NPROC` supplies the kernel fork/spawn barrier for the non-root app
 identity. Process-tree polling is cleanup and evidence around that barrier, not a replacement for
@@ -386,7 +386,7 @@ omit Python/bpy with `--without-bpy-runtime-for-ci-transfer`; they cannot provid
 `.github/workflows/bpy-source-closure.yml` is a manual/reusable source-evidence workflow bound to
 `github.sha`. Its Linux job assembles the exact source/notice closure and independently validates the
 archive membership, all hashes, official library evidence and source inventory. Candidate mode also
-runs the pinned Python/bpy binary inspector on `macos-26`, uploading JSON evidence only. It does not
+runs the pinned Python/bpy binary inspector on `macrunner`, uploading JSON evidence only. It does not
 upload the wheel or an app. Distribution mode additionally requires committed evidence/notice pins,
 complete source-to-notice mappings and the exact public source-archive pin. Candidate notices or
 self-declared completion flags cannot authorize distribution. Committed correspondence/notice evidence
@@ -398,7 +398,7 @@ hash-pinned before declaring readiness; adding its public pin does not change ar
 successful Actions artifact; afterward they retrieve the same bytes from the fixed original release
 tag. Every consumer rechecks the current hashes and independent distribution gate. The app is compiled and tested once on
 `macrunner`; native bpy and workspace acceptance consume its exact transferred artifact on
-`macos-26`. Standalone workspace acceptance can build its own artifact through the same source gate.
+`macrunner`, recording the runtime OS actually used. Standalone workspace acceptance can build its own artifact through the same source gate.
 The workspace scopes include `all`, `filmreview`, `activity` and `planning`.
 
 `.github/workflows/bpy-runtime-acceptance.yml` is reusable and builds nothing. It verifies the exact

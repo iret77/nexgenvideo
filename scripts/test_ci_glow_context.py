@@ -434,7 +434,7 @@ class GlowContextTests(unittest.TestCase):
         self.assertIn("runs-on: macrunner",build)
         self.assertIn("setup-xcode-27",build)
         self.assertIn("needs: ci-glow-context-build",runtime)
-        self.assertIn("runs-on: macos-26",runtime)
+        self.assertIn("runs-on: macrunner",runtime)
         self.assertNotIn("setup-xcode-27",runtime)
         self.assertNotIn("continue-on-error",build+runtime)
         self.assertIn("ci_glow_context.py bind",text)

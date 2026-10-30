@@ -282,16 +282,27 @@ def verify_movie(evidence, config):
             'frames': {name: sha256(evidence / name) for name in ['source-frame.png', 'export-frame.png']}}
 
 
+def require_runtime_host(runtime):
+    version = runtime.get('osVersion')
+    match = re.fullmatch(r'(\d+)\.\d+(?:\.\d+)?', version) if isinstance(version, str) else None
+    require(runtime.get('githubActions') is True and runtime.get('runnerEnvironment') == 'self-hosted'
+            and runtime.get('platform') == 'darwin' and runtime.get('architecture') == 'arm64'
+            and match is not None and int(match[1]) >= 26
+            and isinstance(runtime.get('osBuild'), str) and bool(runtime['osBuild'].strip())
+            and isinstance(runtime.get('runnerName'), str) and bool(runtime['runnerName'].strip()),
+            'External GUI runtime requires self-hosted macOS 26 or later, arm64')
+
+
 def runtime_environment(evidence):
     runtime = {'schema': 'nexgenvideo/external-gui-runtime/1', 'platform': sys.platform,
                'architecture': platform.machine(), 'osVersion': output(['sw_vers', '-productVersion']).decode().strip(),
+               'osBuild': output(['sw_vers', '-buildVersion']).decode().strip(),
                'githubActions': os.environ.get('GITHUB_ACTIONS') == 'true',
                'runnerEnvironment': os.environ.get('RUNNER_ENVIRONMENT'),
+               'runnerName': os.environ.get('RUNNER_NAME'),
                'imageOS': os.environ.get('ImageOS'), 'imageVersion': os.environ.get('ImageVersion')}
     write_json(evidence / 'runtime.json', runtime)
-    require(runtime['githubActions'] and runtime['runnerEnvironment'] == 'github-hosted'
-            and runtime['platform'] == 'darwin' and runtime['architecture'] == 'arm64'
-            and runtime['osVersion'].split('.')[0] == '26', 'External GUI runtime requires hosted macOS 26 arm64')
+    require_runtime_host(runtime)
     uid = os.getuid()
     runtime['consoleUID'] = int(output(['stat', '-f', '%u', '/dev/console']).decode().strip())
     runtime['jobUID'] = uid
@@ -302,10 +313,10 @@ def runtime_environment(evidence):
     runtime['developerSecurity'] = status
     runtime['xcode'] = output(['xcodebuild', '-version']).decode().strip()
     write_json(evidence / 'runtime.json', runtime)
-    require(status == 'Developer mode is currently enabled.', 'Hosted developer authorization is unavailable')
+    require(status == 'Developer mode is currently enabled.', 'Developer authorization is unavailable')
     command(['screencapture', '-x', evidence / 'desktop.png'], evidence / 'prerequisites.log')
     require((evidence / 'desktop.png').read_bytes().startswith(b'\x89PNG\r\n\x1a\n'),
-            'The hosted desktop did not produce a screenshot')
+            'The desktop did not produce a screenshot')
     runtime.update(aquaSession=True, desktopSHA256=sha256(evidence / 'desktop.png'))
     write_json(evidence / 'runtime.json', runtime)
     return runtime
@@ -313,15 +324,13 @@ def runtime_environment(evidence):
 
 def validate_runtime(evidence):
     runtime = read_json(evidence / 'runtime.json')
+    require_runtime_host(runtime)
     require(runtime.get('schema') == 'nexgenvideo/external-gui-runtime/1'
-            and runtime.get('githubActions') is True and runtime.get('runnerEnvironment') == 'github-hosted'
-            and runtime.get('platform') == 'darwin' and runtime.get('architecture') == 'arm64'
-            and runtime.get('osVersion', '').split('.')[0] == '26'
             and type(runtime.get('jobUID')) is int and runtime['jobUID'] > 0
             and runtime.get('consoleUID') == runtime['jobUID'] and runtime.get('aquaSession') is True
             and runtime.get('developerSecurity') == 'Developer mode is currently enabled.'
             and runtime.get('desktopSHA256') == sha256(evidence / 'desktop.png')
-            and runtime.get('xcode', '').startswith('Xcode '), 'Missing original macOS 26 hosted GUI prerequisites')
+            and runtime.get('xcode', '').startswith('Xcode '), 'Missing original self-hosted GUI prerequisites')
 
 
 def run(args):

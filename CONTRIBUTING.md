@@ -20,9 +20,10 @@ cd nexgenvideo
 
 Keep changes focused and open a pull request. Do not build, test, launch the app,
 or run `scripts/dev.sh` locally. NexGenVideo targets the latest macOS on Apple
-Silicon, and its authoritative verification runs only in GitHub Actions. Builds,
-unit tests, and bundles use the self-hosted `macrunner`; runtime acceptance uses
-GitHub's `macos-26` runner, which boots the current product minimum.
+Silicon, and its authoritative verification runs only in GitHub Actions. All macOS
+jobs, including builds, unit tests, bundles and runtime acceptance, use the self-hosted
+`macrunner`. Its macOS 27 VM can build and test the macOS 26 deployment target;
+runtime evidence records the OS actually used.
 
 ## Verification
 

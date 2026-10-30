@@ -20,7 +20,7 @@ class NativeTestPythonWorkflowTests(unittest.TestCase):
                 if not calls:
                     continue
                 runner = job.get("runs-on")
-                self.assertIn(runner, ("ubuntu-24.04", "macrunner", "macos-26"),
+                self.assertIn(runner, ("ubuntu-24.04", "macrunner"),
                               f"Unreviewed native-driver runner in {path.name}/{name}: {runner}")
                 if runner == "ubuntu-24.04":
                     continue
