@@ -40,7 +40,7 @@ final class PipelineSpatialSceneAuthority: SpatialSceneAuthority {
     func readScene<Value: Sendable>(_ operation: @escaping @Sendable (URL) throws -> Value) async throws -> Value {
         let root = try requireContext()
         let declaration = declaration
-        let (value, fence) = try await Self.background {
+        let (value, fence) = try await PipelineSpatialDerivationWriter.background(cancellation: .init(), dataRoot: root) {
             let fence = try SourceFence.capture(dataRoot: root)
             try Self.requireReadable(dataRoot: root, declaration: declaration)
             let value = try operation(root)
@@ -61,7 +61,10 @@ final class PipelineSpatialSceneAuthority: SpatialSceneAuthority {
         try requireCurrent(dataRoot: dataRoot)
     }
 
-    func commitSceneEdit(_ prepare: @escaping @Sendable () async throws -> SpatialSceneCandidate) async throws -> SpatialSceneCommit {
+    func commitSceneEdit(cancellation: BpyOperationCancellation,
+                         progress: @escaping @MainActor (SpatialSceneCommitProgress) -> Void,
+                         _ prepare: @escaping @Sendable () async throws -> SpatialSceneCandidate) async throws -> SpatialSceneCommit {
+        return try await withTaskCancellationHandler {
         let root = try requireContext()
         guard let editor, !editor.agentService.isStreaming, !editor.agentService.isComposerBlocked,
               let lease = editor.pipelinePhaseRunCoordinator.beginMutation(projectRoot: root, label: "Edit location") else {
@@ -70,7 +73,7 @@ final class PipelineSpatialSceneAuthority: SpatialSceneAuthority {
         defer { editor.pipelinePhaseRunCoordinator.endMutation(projectRoot: root, id: lease) }
         let declaration = declaration
         let runtime = runtime
-        let before = try await Self.background {
+        let before = try await PipelineSpatialDerivationWriter.background(cancellation: cancellation, dataRoot: root) {
             try Self.requireReadable(dataRoot: root, declaration: declaration)
             _ = try PipelinePlanningWriteAccess(dataRoot: root, declaration: declaration, phase: "production_design")
             return try Self.editFingerprint(dataRoot: root)
@@ -79,14 +82,15 @@ final class PipelineSpatialSceneAuthority: SpatialSceneAuthority {
         guard try requireContext() == root,
               editor.pipelinePhaseRunCoordinator.holdsMutation(projectRoot: root, id: lease) else { throw SpatialSceneError.changed }
         let candidate = try await prepare()
+        defer { candidate.revision.scenePayload.releaseRuntimeSource() }
         try Task.checkCancellation()
-        let publication = try await Self.background {
+        let publication = try await PipelineSpatialDerivationWriter.background(cancellation: cancellation, dataRoot: root) {
             let source = try SourceFence.capture(dataRoot: root)
             try Self.requireReadable(dataRoot: root, declaration: declaration)
             _ = try PipelinePlanningWriteAccess(dataRoot: root, declaration: declaration, phase: "production_design")
             guard try Self.editFingerprint(dataRoot: root) == before else { throw SpatialSceneError.changed }
             let restored = try Self.restoredSource(candidate.revision, dataRoot: root)
-            if restored == nil { try runtime.authenticateSpatialReceipt(candidate.revision) }
+            if restored == nil { try runtime.authenticateSpatialReceipt(candidate.revision, cancellation: cancellation) }
             let transaction = try ProjectWorkingCopy.preparePipelineTransaction(at: root) { staging in
                 _ = try PipelinePlanningWriteAccess(dataRoot: staging, declaration: declaration, phase: "production_design")
                 let head = try SpatialSceneStore.publish(candidate, in: staging)
@@ -111,22 +115,34 @@ final class PipelineSpatialSceneAuthority: SpatialSceneAuthority {
         let result: SpatialSceneCommit
         do {
             try Task.checkCancellation()
+            try cancellation.check()
             result = try publication.transaction.commit { _ in
+                try cancellation.check()
                 guard try self.requireContext() == root,
                       !editor.agentService.isStreaming, !editor.agentService.isComposerBlocked,
                       editor.pipelinePhaseRunCoordinator.holdsMutation(projectRoot: root, id: lease),
                       runtime.isAvailable else { throw SpatialSceneError.changed }
                 try publication.source.requireCanonicalRootsUnchanged()
                 try ProjectWorkingCopy.markDirty(key: key)
+                progress(.committing)
             }
         } catch {
             await Task.detached(priority: .utility) { publication.transaction.discard() }.value
             throw error
         }
+        progress(.committed)
         await Task.detached(priority: .utility) { publication.transaction.discard() }.value
         editor.onPipelineChanged?()
         await editor.refreshEngineState()
-        return result
+        let canonical = await Task.detached(priority: .userInitiated) {
+            try? SpatialSceneStore.load(result.head, in: root)
+        }.value ?? SpatialSceneRevision(manifest: result.revision.manifest, snapshot: result.revision.snapshot,
+            manifestData: result.revision.manifestData,
+            scenePayload: SpatialScenePayload(path: SpatialSceneStore.revisionPath(scene: result.head.id, revision: result.head.revision) + "/scene.blend",
+                root: root, sha256: result.revision.manifest.sceneSHA256, byteCount: result.revision.scenePayload.byteCount),
+            snapshotData: result.revision.snapshotData, resources: result.revision.resources)
+        return .init(head: result.head, revision: canonical, index: result.index)
+        } onCancel: { cancellation.cancel() }
     }
 
     nonisolated private static func background<Value: Sendable>(
@@ -282,15 +298,18 @@ final class PipelineSpatialSceneAuthority: SpatialSceneAuthority {
         let original = try reference(path, dataRoot: dataRoot)
         let source = try restoredRevision(original, sceneID: revision.manifest.sceneID, revisionID: originalID, dataRoot: dataRoot)
         _ = try verifiedReferences(source, dataRoot: dataRoot, visited: [])
-        guard source.sceneData == revision.sceneData, source.snapshotData == revision.snapshotData,
-              source.resources == revision.resources, source.manifest.receipt == revision.manifest.receipt else { throw SpatialSceneError.changed }
+        try BpyMediaReadScope.withScope(dataRoot: dataRoot) { scope in
+            guard try source.scenePayload.verify(checking: scope.check) == revision.scenePayload.verify(checking: scope.check),
+                  source.scenePayload.byteCount == revision.scenePayload.byteCount, source.snapshotData == revision.snapshotData,
+                  source.resources == revision.resources, source.manifest.receipt == revision.manifest.receipt else { throw SpatialSceneError.changed }
+        }
         return original
     }
 
     nonisolated private static func restoredRevision(_ reference: CanonicalArtifactReferenceV1, sceneID: UUID,
                                                       revisionID: UUID, dataRoot: URL) throws -> SpatialSceneRevision {
-        let url = try ProjectLocalFile.requireHash(reference.sha256, at: reference.path, dataRoot: dataRoot)
-        let manifest = try JSONDecoder().decode(SpatialSceneManifest.self, from: Data(contentsOf: url))
+        let manifest = try JSONDecoder().decode(SpatialSceneManifest.self,
+            from: PipelineSpatialDerivationWriter.bytes(reference, dataRoot: dataRoot))
         return try SpatialSceneStore.load(.init(id: sceneID, name: manifest.name, revision: revisionID,
             manifestSHA256: reference.sha256), in: dataRoot)
     }
@@ -310,8 +329,10 @@ final class PipelineSpatialSceneAuthority: SpatialSceneAuthority {
     nonisolated private static func adoptionPath(_ revision: UUID) -> String { "\(SpatialSceneStore.basePath)/adoptions/\(revision.uuidString).json" }
 
     nonisolated private static func reference(_ path: String, dataRoot: URL) throws -> CanonicalArtifactReferenceV1 {
-        .init(id: "spatial." + FileDigest.sha256(of: Data(path.utf8)), role: "core.production-spatial", path: path,
-              sha256: try FileDigest.sha256(of: ProjectLocalFile.resolve(path, dataRoot: dataRoot)))
+        try BpyMediaReadScope.withScope(dataRoot: dataRoot) { scope in
+            .init(id: "spatial." + FileDigest.sha256(of: Data(path.utf8)), role: "core.production-spatial", path: path,
+                  sha256: try scope.digest(at: ProjectLocalFile.resolve(path, dataRoot: dataRoot)))
+        }
     }
 
     nonisolated private static func editFingerprint(dataRoot: URL) throws -> String {

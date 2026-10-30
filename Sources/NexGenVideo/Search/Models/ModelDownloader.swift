@@ -172,7 +172,7 @@ final class ModelDownloader: @unchecked Sendable {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
         process.arguments = ["-x", "-k", zipURL.path, out.path]
-        try process.run()
+        try process.runCoordinated()
         process.waitUntilExit()
         guard process.terminationStatus == 0 else { throw DownloadError.unzipFailed }
         // Each zip contains exactly one top-level entry (.mlpackage or tokenizer/).

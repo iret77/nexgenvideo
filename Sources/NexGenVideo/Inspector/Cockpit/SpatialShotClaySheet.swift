@@ -1,3 +1,4 @@
+import BpyRuntimeProtocol
 import NexGenEngine
 import SwiftUI
 
@@ -14,7 +15,9 @@ struct SpatialShotClaySheet: View {
     @State private var duration: String?
     @State private var loading = false
     @State private var operation: Task<Void, Never>?
+    @State private var readLifetime = BpyOperationCancellation()
     @State private var failure: String?
+    @State private var notice: String?
 
     private var active: Bool {
         guard !loading, operation == nil, editor.workingRoot == home, editor.projectState?.nextPhaseName == "shot_planning",
@@ -32,14 +35,22 @@ struct SpatialShotClaySheet: View {
                     Text("Render the confirmed camera and object poses across the whole shot. This local video shows geometry and motion for planning and generation.")
                         .foregroundStyle(AppTheme.Text.secondaryColor)
                     if let duration { Text("Planned duration: \(duration) s").monospacedDigit() }
-                    if loading { ProgressView("Reading shot state…") }
+                    if loading {
+                        ProgressView("Reading shot state…").reviewAcceptanceProbe("shot-planning.clay.loading", state: true)
+                    }
                     if let video, let root = DataRootResolver.dataRoot(of: home) {
                         ProductionInputPreview(reference: video, dataRoot: root, title: "Rendered Clay video")
                             .reviewAcceptanceProbe("shot-planning.clay.video", text: video.sha256)
                             .reviewAcceptanceProbe("shot-planning.clay.proof", text: proof?.sha256)
                     }
                     if state == nil && !loading { Text("Confirm the shot's spatial state before rendering.").foregroundStyle(AppTheme.Status.warningColor) }
-                    if operation != nil { ProgressView("Rendering planned shot…") }
+                    if operation != nil {
+                        ProgressView("Rendering planned shot…").reviewAcceptanceProbe("shot-planning.clay.rendering", state: true)
+                    }
+                    if let notice {
+                        Text(notice).foregroundStyle(AppTheme.Text.secondaryColor)
+                            .reviewAcceptanceProbe("shot-planning.clay.cancelled", text: notice)
+                    }
                     if let failure {
                         Text(failure).foregroundStyle(AppTheme.Status.errorColor).textSelection(.enabled)
                             .reviewAcceptanceProbe("shot-planning.clay.failure", text: failure)
@@ -61,7 +72,7 @@ struct SpatialShotClaySheet: View {
         .padding(AppTheme.Spacing.lg).interfaceFont(size: AppTheme.Typography.ui)
         .frame(width: AppTheme.Layout.productionDecisionReviewWidth, height: AppTheme.Layout.productionDecisionReviewHeight)
         .reviewAcceptanceProbe("shot-planning.clay.sheet", state: !loading && operation == nil, text: shotID)
-        .task { await load() }.onDisappear { operation?.cancel() }
+        .task { await load() }.onDisappear { operation?.cancel(); readLifetime.cancel() }
         .onChange(of: editor.workingRoot) { _, value in if value != home { operation?.cancel(); dismiss() } }
         .interactiveDismissDisabled(operation != nil)
     }
@@ -70,8 +81,10 @@ struct SpatialShotClaySheet: View {
         guard let root = DataRootResolver.dataRoot(of: home) else { return }
         loading = true; failure = nil
         defer { loading = false }
+        let cancellation = BpyOperationCancellation()
+        cancellation.follow(readLifetime)
         do {
-            let value = try await Task.detached(priority: .userInitiated) {
+            let value = try await PipelineSpatialDerivationWriter.background(cancellation: cancellation, dataRoot: root) {
                 let board = try PlanningWriterIO.storyboard(dataRoot: root)
                 let draft = try ProductionPlanningStoreV1.readShotPlanning(dataRoot: root, storyboard: board)
                 guard let shot = draft.shots.first(where: { $0.shotID == shotID }),
@@ -87,7 +100,7 @@ struct SpatialShotClaySheet: View {
                     }
                 }
                 return (shot.camera.spatialState, video, ProductionTimeEntry.seconds(timing.durationTicks, timebase: board.timing.timebase), shot.camera.spatialDerivation)
-            }.value
+            }
             guard !Task.isCancelled, editor.workingRoot == home else { return }
             state = value.0; video = value.1; duration = value.2; proof = value.3
         } catch { if !Task.isCancelled { state = nil; video = nil; proof = nil; failure = error.localizedDescription } }
@@ -95,18 +108,27 @@ struct SpatialShotClaySheet: View {
 
     private func render() {
         guard active, let state else { return }
-        failure = nil
+        failure = nil; notice = nil
         operation = Task {
-            defer { operation = nil }
+            var handedOff = false
+            defer { if !handedOff { operation = nil } }
             do {
                 let written = try await PipelineSpatialDerivationWriter.renderPlanning(shotID: shotID, expectedState: state, editor: editor)
                 guard editor.workingRoot == home else { return }
                 onSaved(written)
+                handedOff = true
+                loading = true; operation = nil
                 await Task { await load() }.value
-            } catch is CancellationError {
-                await Task { await load() }.value
+            } catch {
+                if Task.isCancelled {
+                    failure = nil; notice = "Render cancelled. Clay video unchanged."
+                    handedOff = true
+                    loading = true; operation = nil
+                    await Task { await load() }.value
+                } else if error is CancellationError || (error as? BpyAdmissionFailure) == .cancelled {
+                    failure = "The shot or location changed. Reload the shot state before rendering again."
+                } else { failure = error.localizedDescription }
             }
-            catch { failure = error.localizedDescription }
         }
     }
 }

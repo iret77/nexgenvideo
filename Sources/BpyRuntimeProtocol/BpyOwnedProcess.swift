@@ -6,6 +6,20 @@ public struct BpyProcessTermination: Sendable, Equatable {
     public let exitStatus: Int32
     public let signal: Int32?
     public var exitedNormally: Bool { signal == nil }
+
+    public init(exitStatus: Int32, signal: Int32?) {
+        self.exitStatus = exitStatus
+        self.signal = signal
+    }
+}
+
+public enum BpySpawnGuard {
+    public static func withLock<T>(_ body: () throws -> T) throws -> T {
+        let error = ngv_bpy_spawn_lock()
+        guard error == 0 else { throw POSIXError(.init(rawValue: error) ?? .EIO) }
+        defer { _ = ngv_bpy_spawn_unlock() }
+        return try body()
+    }
 }
 
 public final class BpyOwnedProcess: @unchecked Sendable {
@@ -15,7 +29,8 @@ public final class BpyOwnedProcess: @unchecked Sendable {
 
     public init(executable: URL, arguments: [String], environment: [String: String], directory: URL,
                 input: FileHandle? = nil, output: FileHandle? = .standardOutput,
-                errors: FileHandle? = .standardError, allowsForcedTermination: Bool = true) throws {
+                errors: FileHandle? = .standardError, allowsForcedTermination: Bool = true,
+                directoryDescriptor: Int32 = -1, inheritedDescriptors: [Int32: Int32] = [:]) throws {
         func descriptor(_ handle: FileHandle?) throws -> Int32 {
             guard let handle, handle !== FileHandle.nullDevice else { return -1 }
             var descriptor: Int32 = -1
@@ -37,13 +52,19 @@ public final class BpyOwnedProcess: @unchecked Sendable {
         guard argv.allSatisfy({ $0 != nil }), envp.allSatisfy({ $0 != nil }) else { throw POSIXError(.ENOMEM) }
         var argumentPointers = argv + [nil]
         var environmentPointers = envp + [nil]
+        let mappings = inheritedDescriptors.sorted { $0.key < $1.key }.map {
+            ngv_bpy_fd_map(source: $0.value, target: $0.key)
+        }
         var created: OpaquePointer?
         let error = argumentPointers.withUnsafeMutableBufferPointer { arguments in
             environmentPointers.withUnsafeMutableBufferPointer { environment in
                 executable.path.withCString { path in
                     directory.path.withCString { directory in
-                        ngv_bpy_child_spawn(path, arguments.baseAddress!, environment.baseAddress!, directory,
-                                            inputFD, outputFD, errorFD, &created)
+                        mappings.withUnsafeBufferPointer { descriptors in
+                            ngv_bpy_child_spawn_descriptors(path, arguments.baseAddress!, environment.baseAddress!,
+                                directory, directoryDescriptor, inputFD, outputFD, errorFD,
+                                descriptors.baseAddress, descriptors.count, &created)
+                        }
                     }
                 }
             }
@@ -74,7 +95,7 @@ public final class BpyOwnedProcess: @unchecked Sendable {
 
     public func waitForTermination(timeout: TimeInterval = 3) throws -> BpyProcessTermination {
         guard timeout.isFinite, timeout >= 0 else { throw POSIXError(.EINVAL) }
-        let deadline = ProcessInfo.processInfo.systemUptime + timeout
+        let deadline = try BpyRuntimeClock.awakeSeconds() + timeout
         while true {
             var reaped: Int32 = 0
             var status: Int32 = 0
@@ -82,7 +103,7 @@ public final class BpyOwnedProcess: @unchecked Sendable {
             let error = ngv_bpy_child_reap(child, &reaped, &status, &signal)
             guard error == 0 else { throw POSIXError(.init(rawValue: error) ?? .EIO) }
             if reaped != 0 { return .init(exitStatus: status, signal: signal == 0 ? nil : signal) }
-            guard ProcessInfo.processInfo.systemUptime < deadline else { throw POSIXError(.ETIMEDOUT) }
+            guard try BpyRuntimeClock.awakeSeconds() < deadline else { throw POSIXError(.ETIMEDOUT) }
             Thread.sleep(forTimeInterval: 0.005)
         }
     }

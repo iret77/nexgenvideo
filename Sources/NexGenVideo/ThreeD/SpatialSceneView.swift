@@ -86,9 +86,11 @@ struct SpatialSceneView: View {
                         .reviewAcceptanceProbe("spatial.redo", state: editingEnabled && session.canRedo)
                     if session.busy {
                         ProgressView().controlSize(.small)
-                        Button("Cancel") { session.cancel() }
-                            .accessibilityIdentifier("spatial.cancel")
-                        .reviewAcceptanceProbe("spatial.cancel")
+                        if session.canCancel {
+                            Button("Cancel") { session.cancel() }
+                                .accessibilityIdentifier("spatial.cancel")
+                                .reviewAcceptanceProbe("spatial.cancel")
+                        }
                     }
                 }
                 if session.snapshot != nil {

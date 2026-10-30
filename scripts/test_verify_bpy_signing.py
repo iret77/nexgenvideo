@@ -12,11 +12,16 @@ class BpySigningTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 require_identity(invalid, "TEAM123")
 
-    def test_sandbox_inheritance_cannot_be_absent_or_expand_authority(self):
-        expected = {SANDBOX: True, INHERIT: True}
-        require_entitlements(expected, expected)
-        for invalid in ({}, {SANDBOX: True}, {SANDBOX: True, INHERIT: False},
-                        dict(expected, **{"com.apple.security.network.client": True}),
-                        dict(expected, **{"com.apple.security.files.user-selected.read-write": True})):
+    def test_host_launched_children_have_no_app_sandbox_inheritance_or_extra_entitlements(self):
+        require_entitlements({}, {})
+        for invalid in ({SANDBOX: True}, {SANDBOX: True, INHERIT: True}, {INHERIT: True},
+                        {"com.apple.security.network.client": True},
+                        {"com.apple.security.files.user-selected.read-write": True}):
             with self.assertRaises(ValueError):
-                require_entitlements(invalid, expected)
+                require_entitlements(invalid, {})
+
+    def test_service_remains_app_sandboxed_without_inheritance(self):
+        require_entitlements({SANDBOX: True}, {SANDBOX: True})
+        for invalid in ({}, {SANDBOX: True, INHERIT: True}, {SANDBOX: True, "com.apple.security.network.client": True}):
+            with self.assertRaises(ValueError):
+                require_entitlements(invalid, {SANDBOX: True})

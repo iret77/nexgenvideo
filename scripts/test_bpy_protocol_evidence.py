@@ -21,7 +21,7 @@ def fixture(*, restored=b"restored", completed_by_authorization=False):
     owner, staged, reserved, other, unknown, reclaimed, recovered = [
         "AAAAAAAA-BBBB-CCCC-DDDD-%012d" % n for n in range(2, 9)]
     requests, chunks, responses = {}, {}, {}
-    limits = dict(inputBytes=100, timeoutSeconds=120)
+    limits = dict(inputBytes=100, timeoutSeconds=120, memoryPolicy="system-pressure-v1")
 
     def add(label, fields, ok=True, target=session, **response):
         requests[label] = encoded(dict(sessionID=target, **fields))
@@ -34,17 +34,22 @@ def fixture(*, restored=b"restored", completed_by_authorization=False):
     add("confirm-replay", dict(jobID=owner, revision="revision-a", sceneSHA256=hashlib.sha256(b"ab").hexdigest()), state="confirmed", jobID=owner)
     preparation = dict(id=reclaimed, servicePID=123, serviceStart=100)
     storage = dict(id=session, mountPath="/private/fixture/mount", device=100, capacityBytes=67108864,
-                   bookmarkSHA256="a" * 64)
-    storage_reference = dict(sessionID=session, documentID="parser-fixture", limits=limits, storage=storage)
+                   bookmarkSHA256="a" * 64, role="worker", pairID=session)
+    data_storage = dict(storage, id=unknown, mountPath="/private/fixture/data", device=200, role="data", bookmarkSHA256="b" * 64)
+    pair = dict(schema="nexgenvideo/bpy-storage-pair/1", id=session, worker=storage, data=data_storage)
+    original_admission = "AAAAAAAA-BBBB-CCCC-DDDD-000000000020"
+    storage_reference = dict(sessionID=session, documentID="parser-fixture", limits=limits, storagePair=pair, admission=original_admission, admissionDeadline=1000)
     for number, (label, field, changed) in enumerate((
-        ("storage-wrong-device", "device", 101), ("storage-wrong-capacity", "capacityBytes", 67108865),
+        ("storage-wrong-device", "device", 100 ^ (1 << 31)), ("storage-wrong-capacity", "capacityBytes", 67108863),
         ("storage-wrong-path", "mountPath", storage["mountPath"] + "/other")), 10):
-        add(label, dict(documentID="parser-fixture", limits=limits, storage=dict(storage, **{field: changed})),
+        add(label, dict(documentID="parser-fixture", limits=limits, storagePair=dict(pair, worker=dict(storage, **{field: changed})),
+            admission="AAAAAAAA-BBBB-CCCC-DDDD-%012d" % (number + 20), admissionDeadline=1000 + number),
             False, target="AAAAAAAA-BBBB-CCCC-DDDD-%012d" % number, message="invalid open request")
     for label in ("reservation-first-owner", "reservation-new-owner", "reservation-survived-stale-close"):
         add(label, dict(documentID="parser-fixture", limits=limits), target=reclaimed, storagePreparation=preparation)
     add("reservation-failed-bookmark", dict(documentID="parser-fixture", limits=limits,
-        storage=dict(bookmark=base64.b64encode(bytes([1, 2, 3])).decode())), False, target=reclaimed)
+        storagePair=dict(pair, worker=dict(storage, bookmarkSHA256=hashlib.sha256(bytes([1, 2, 3])).hexdigest())),
+        admission=original_admission, admissionDeadline=1000), False, target=reclaimed)
     add("reservation-stale-close", {}, False, target=reclaimed)
     add("reservation-stale-reopen", dict(documentID="parser-fixture", limits=limits), False,
         target=reclaimed, message="invalid open request")
@@ -65,7 +70,7 @@ def fixture(*, restored=b"restored", completed_by_authorization=False):
     for label, job in (("cancel-reservation", reserved), ("cancel-unrelated-unknown-job", unknown),
                        ("cleanup-staged", staged), ("cleanup-reserved", reserved), ("cleanup-other", other)):
         add(label, dict(jobID=job), label == "cleanup-staged")
-    request = dict(sessionID=session, jobID=staged, expectedRevision="revision-a",
+    request = dict(sessionID=session, jobID=staged, expectedRevision="revision-a", admission=original_admission, admissionDeadline=1000,
         source="assert set(p.name for p in input_dir.iterdir()) == {'foo', 'foo.part', 'probe.json'}; assert all((input_dir / n).read_text() == '{}' for n in ['foo', 'foo.part', 'probe.json'])",
         inputNames=["foo", "foo.part", "probe.json"], diagnosticDeniedPaths=[], diagnosticAutoexecPositiveControl=False,
         diagnosticSupervisorIdentityWriteFailure=False, diagnosticSupervisorIdentityCaptureFailure=False)
@@ -112,7 +117,7 @@ def fixture(*, restored=b"restored", completed_by_authorization=False):
         "submit-with-partial-input", "completed-partial-input", "service-submit", "service-submit-replay"]
     order += ["service-completed"] * (1 if completed_by_authorization else 2)
     order += ["cleanup-staged", "cleanup-reserved", "cleanup-other"]
-    return dict(schema="nexgenvideo/bpy-native-protocol-evidence/3", requests=requests, chunks=chunks,
+    return dict(schema="nexgenvideo/bpy-native-protocol-evidence/4", requests=requests, chunks=chunks,
         storageReference=encoded(storage_reference),
         responses=responses, exchangeOrder=order, completion=completion, restore=restore,
         restoreOpen=dict(method="openSession", request=encoded(dict(sessionID=recovered, confirmedRevision="revision-e")),
@@ -126,12 +131,12 @@ class StorageRefusalTests(unittest.TestCase):
         reference = decoded(evidence["storageReference"])
         owner = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
         common = "owner=" + owner + " pid=123 start=100"
-        digest = reference["storage"]["bookmarkSHA256"]
-        messages = [f'open.check session={reference["sessionID"]} {common} file=true pathMatches=true volumeMatch=equal sha256={digest}']
+        digest = reference["storagePair"]["worker"]["bookmarkSHA256"]
+        messages = [f'open.check session={reference["sessionID"]} {common} role={role} file=true pathMatches=true volumeMatch=equal sha256={reference["storagePair"][role]["bookmarkSHA256"]}' for role in ("worker", "data")]
         for label, code in (("storage-wrong-device", 259), ("storage-wrong-capacity", 259), ("storage-wrong-path", 257)):
             session = decoded(evidence["requests"][label])["sessionID"]
             path = "false" if label == "storage-wrong-path" else "true"
-            messages.extend([f"open.check session={session} {common} file=true pathMatches={path} volumeMatch=equal sha256={digest}",
+            messages.extend([f"open.check session={session} {common} role=worker file=true pathMatches={path} volumeMatch=equal sha256={digest}",
                              f"open.fail session={session} {common} stage=validateMount domain=NSCocoaErrorDomain code={code}"])
         return [dict(eventMessage=message, processID=123, machTimestamp=index + 1,
                      subsystem="de.h5ventures.nexgenvideo.bpy-service", category="open-diagnostic",
@@ -159,7 +164,7 @@ class StorageRefusalTests(unittest.TestCase):
                     self.check(evidence, events)
 
     def test_missing_duplicated_foreign_or_out_of_order_evidence_fails(self):
-        for index in range(7):
+        for index in range(8):
             for mutation in ("missing", "duplicate", "pid", "image", "start", "owner", "time"):
                 with self.subTest(index=index, mutation=mutation):
                     evidence = fixture()
@@ -182,7 +187,7 @@ class StorageRefusalTests(unittest.TestCase):
                         self.check(evidence, events)
 
     def test_different_bookmark_and_unproven_resolution_are_rejected(self):
-        for index in (0, 1, 3, 5):
+        for index in (0, 2, 4, 6):
             for old, new in (("sha256=" + "a" * 64, "sha256=" + "b" * 64),
                              ("file=true", "file=false"), ("volumeMatch=equal", "volumeMatch=absent")):
                 evidence = fixture()
@@ -193,6 +198,16 @@ class StorageRefusalTests(unittest.TestCase):
 
 
 class ProtocolEvidenceTests(unittest.TestCase):
+    def test_storage_roles_cannot_share_a_device_or_lease_identity(self):
+        for field in ("device", "id"):
+            with self.subTest(field=field):
+                evidence = fixture()
+                reference = decoded(evidence["storageReference"])
+                pair = reference["storagePair"]
+                pair["data"][field] = pair["worker"][field]
+                evidence["storageReference"] = encoded(reference)
+                with self.assertRaisesRegex(ValueError, "independent role devices"): self.check(evidence)
+
     def check(self, evidence, restored=b"restored"):
         raw = json.dumps(evidence).encode()
         validate(evidence, dict(nativeProtocolEvidenceFile="native-protocol-evidence.json",
@@ -216,9 +231,9 @@ class ProtocolEvidenceTests(unittest.TestCase):
                     reference = decoded(evidence["storageReference"])
                     request = decoded(evidence["requests"][label])
                     if mutation == "unchanged":
-                        request["storage"] = reference["storage"]
+                        request["storagePair"] = reference["storagePair"]
                     elif mutation == "another-bookmark":
-                        request["storage"]["bookmarkSHA256"] = "b" * 64
+                        request["storagePair"]["worker"]["bookmarkSHA256"] = "b" * 64
                     elif mutation == "existing-session":
                         request["sessionID"] = reference["sessionID"]
                     elif mutation == "reservation-session":
@@ -226,7 +241,7 @@ class ProtocolEvidenceTests(unittest.TestCase):
                     elif mutation == "accepted":
                         self.change(evidence, "responses", label, ok=True)
                     elif mutation == "capability-bytes":
-                        request["storage"]["bookmark"] = "capability"
+                        request["storagePair"]["worker"]["bookmark"] = "capability"
                     evidence["requests"][label] = encoded(request)
                     if mutation == "missing":
                         del evidence["responses"][label]
@@ -405,6 +420,11 @@ class ProtocolEvidenceTests(unittest.TestCase):
 
 
 class DroppedReplyTests(unittest.TestCase):
+    def test_transport_and_job_must_be_distinct_valid_uuids(self):
+        receipt = self.receipt()
+        receipt["transport"] = receipt["jobID"]
+        with self.assertRaisesRegex(ValueError, "distinct job and transport"): self.check(receipt)
+
     app = Path("/fixture/NexGenVideo.app")
 
     def receipt(self):

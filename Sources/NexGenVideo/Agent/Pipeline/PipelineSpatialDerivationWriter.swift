@@ -64,6 +64,8 @@ enum PipelineSpatialDerivationWriter {
     @MainActor
     static func renderStoryboard(shotID: String, momentID: String, scene: SpatialSceneHead, cameraID: String,
                                   expectedFingerprint: String, editor: EditorViewModel) async throws -> StoryboardBundleSnapshot {
+        let cancellation = BpyOperationCancellation()
+        return try await withTaskCancellationHandler {
         try PipelineStoryboardEditor.requireAvailable(editor: editor)
         guard let home = editor.workingRoot, let key = editor.openWorkingCopyKey,
               let root = DataRootResolver.dataRoot(of: home),
@@ -80,7 +82,7 @@ enum PipelineSpatialDerivationWriter {
         let runtime = operation.session
         let declaration = ProjectPackGate.MutationDeclaration(packName: editor.declaredPluginName,
             binding: editor.declaredPluginBinding, productionContract: editor.declaredProductionContract)
-        let input = try await background {
+        let input = try await background(cancellation: cancellation, dataRoot: root) {
             _ = try PipelinePlanningWriteAccess(dataRoot: root, declaration: declaration, phase: "storyboard")
             let before = try PlanningWriterIO.storyboard(dataRoot: root, requireVisuals: false)
             let revision = try currentScene(scene, dataRoot: root)
@@ -107,13 +109,14 @@ enum PipelineSpatialDerivationWriter {
         guard editor.workingRoot == home, editor.openWorkingCopyKey == key,
               BpyRuntimeHost.shared.isOperationActive(operation) else { throw changed() }
         let candidate = try await SpatialClayRenderer.prepare(request: input.5, revision: input.1, runtime: runtime,
-            runtimeRoot: runtime.bundledRuntimeRoot)
-        let transaction = try await background {
+            runtimeRoot: runtime.bundledRuntimeRoot, cancellation: cancellation)
+        defer { candidate.release() }
+        let transaction = try await background(cancellation: cancellation, dataRoot: root) {
             try Task.checkCancellation()
             try input.4.requireUnchanged()
-            try runtime.authenticateSpatialDerivation(candidate, source: input.1)
+            try runtime.authenticateSpatialDerivation(candidate, source: input.1, cancellation: cancellation)
             let prepared = try prepareSketch(candidate, owner: input.3, binding: input.2,
-                projectID: input.0.storyboard.header.projectID, revision: input.1, dataRoot: root)
+                projectID: input.0.storyboard.header.projectID, revision: input.1, dataRoot: root, cancellation: cancellation)
             let transaction = try ProjectWorkingCopy.preparePipelineTransaction(at: root) { staging in
                 let access = try PipelinePlanningWriteAccess(dataRoot: staging, declaration: declaration, phase: "storyboard")
                 guard try PlanningWriterIO.storyboard(dataRoot: staging, requireVisuals: false).fingerprint == expectedFingerprint else { throw changed() }
@@ -128,7 +131,9 @@ enum PipelineSpatialDerivationWriter {
         }
         defer { Task.detached { transaction.discard() } }
         try Task.checkCancellation()
+        try cancellation.check()
         let result = try transaction.commit { _ in
+            try cancellation.check()
             guard editor.workingRoot == home, editor.openWorkingCopyKey == key,
                   editor.declaredPluginName == declaration.packName, editor.declaredPluginBinding == declaration.binding,
                   editor.declaredProductionContract == declaration.productionContract,
@@ -144,12 +149,14 @@ enum PipelineSpatialDerivationWriter {
         editor.onPipelineChanged?()
         await editor.refreshEngineState()
         return result
+        } onCancel: { cancellation.cancel() }
     }
 
     private static func prepareSketch(_ candidate: SpatialClayCandidate, owner: CanonicalArtifactReferenceV1,
                                        binding: StoryboardBinding, projectID: String,
-                                       revision: SpatialSceneRevision, dataRoot: URL) throws -> PreparedSketch {
-        try SpatialClayRenderer.validate(candidate, against: revision)
+                                       revision: SpatialSceneRevision, dataRoot: URL,
+                                       cancellation: BpyOperationCancellation) throws -> PreparedSketch {
+        try SpatialClayRenderer.validate(candidate, against: revision, cancellation: cancellation)
         guard candidate.proof.request.owner == .storyboard, candidate.proof.outputs.count == 1,
               let output = candidate.proof.outputs.first, output.mediaKind == "image/png" else { throw changed() }
         let proofPath = try ProductionWorkflowRecoveryMigration.outputPath(area: "storyboard/sketches",
@@ -168,11 +175,29 @@ enum PipelineSpatialDerivationWriter {
             role: "core.storyboard-sketch-proof", bytes: proofData)
         let adoption = Adoption(id: candidate.proof.id, projectID: projectID, ownerArtifact: owner, storyboardBinding: binding,
             proof: derivation, media: [output.filename: image], sceneManifest: manifestReference(revision))
-        let files: [(path: String, bytes: Data)] = candidate.files.map { (directory + "/" + $0.key, $0.value) }
+        let files: [(path: String, bytes: Data)] = try candidate.lease.withConsumer(cancellation: cancellation) { work, token in
+            try candidate.files.map { (directory + "/" + $0.key,
+                try $0.value.verifiedData(maximum: candidate.lease.limits.outputBytes,
+                    checking: { try token.check(); try work.check() })) }
+        }
             + [(derivation.path, candidate.proofData), (proofReference.path, proofData),
                (adoptionPath(candidate.proof.id), try PlanningWriterIO.json(adoption))]
         return PreparedSketch(targetShotID: binding.shotID, targetMomentID: binding.momentID,
             asset: .init(image: image, proof: proofReference), files: files)
+    }
+
+    static func background<Value: Sendable>(cancellation: BpyOperationCancellation, dataRoot: URL,
+                                            _ operation: @escaping @Sendable () throws -> Value) async throws -> Value {
+        let task = Task.detached(priority: .userInitiated) {
+            try BpyMediaReadScope.withScope(dataRoot: dataRoot, cancellation: cancellation) { scope in
+                try scope.withConsumer { _ in try operation() }
+            }
+        }
+        let registration = cancellation.observe { task.cancel() }
+        defer { withExtendedLifetime(registration) {} }
+        return try await withTaskCancellationHandler { try await task.value } onCancel: {
+            cancellation.cancel(); task.cancel()
+        }
     }
 
     static func background<Value: Sendable>(_ operation: @escaping @Sendable () throws -> Value) async throws -> Value {
@@ -375,6 +400,14 @@ enum PipelineSpatialDerivationWriter {
     }
 
     static func storyboardReferences(_ sketch: StoryboardSketchProofV1, dataRoot: URL) throws -> [CanonicalArtifactReferenceV1] {
+        try BpyMediaReadScope.withScope(dataRoot: dataRoot) { scope in
+            try scope.withConsumer { _ in try storyboardReferences(sketch, dataRoot: dataRoot, scope: scope) }
+        }
+    }
+
+    private static func storyboardReferences(_ sketch: StoryboardSketchProofV1, dataRoot: URL,
+                                             scope: BpyMediaReadScope) throws -> [CanonicalArtifactReferenceV1] {
+        try scope.check()
         guard case .spatialDerived(let reference) = sketch.source else { throw changed() }
         let proof = try JSONDecoder().decode(SpatialDerivationProof.self, from: bytes(reference, dataRoot: dataRoot))
         let recordPath = adoptionPath(proof.id)
@@ -400,13 +433,16 @@ enum PipelineSpatialDerivationWriter {
               try shot.framing.fingerprint() == binding.framingSHA256 else { throw changed() }
         let scene = try currentScene(proof.scene, dataRoot: dataRoot)
         guard adoption.sceneManifest == manifestReference(scene) else { throw changed() }
-        var files: [String: Data] = [:]
+        var files: [String: URL] = [:]
         for (name, media) in adoption.media {
+            try scope.check()
             guard media.path == directory + "/" + name else { throw changed() }
-            files[name] = try bytes(media, dataRoot: dataRoot)
+            let url = try ProjectLocalFile.resolve(media.path, dataRoot: dataRoot)
+            guard try scope.digest(at: url) == media.sha256 else { throw changed() }
+            files[name] = url
         }
         guard reference.path == directory + "/derivation.v1.json" else { throw changed() }
-        try SpatialClayRenderer.validate(.init(proof: proof, proofData: bytes(reference, dataRoot: dataRoot), files: files), against: scene)
+        try SpatialClayRenderer.validate(proof: proof, proofData: bytes(reference, dataRoot: dataRoot), files: files, against: scene, scope: scope)
         return [reference, adoption.ownerArtifact, adoption.sceneManifest,
             try PlanningWriterIO.reference(recordPath, id: "spatial-adoption.\(proof.id)",
                 role: "core.spatial-adoption", dataRoot: dataRoot)] + Array(adoption.media.values) + (try sceneReferences(dataRoot: dataRoot))
@@ -447,7 +483,10 @@ enum PipelineSpatialDerivationWriter {
               (try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) == nil else { throw changed() }
     }
     static func bytes(_ reference: CanonicalArtifactReferenceV1, dataRoot: URL) throws -> Data {
-        try Data(contentsOf: ProjectLocalFile.requireHash(reference.sha256, at: reference.path, dataRoot: dataRoot))
+        try BpyMediaReadScope.withScope(dataRoot: dataRoot) { scope in
+            try scope.verifiedData(at: ProjectLocalFile.resolve(reference.path, dataRoot: dataRoot),
+                expectedSHA256: reference.sha256, maximum: UInt64(Int.max))
+        }
     }
     static func changed() -> GateBlocked {
         GateBlocked("The location, camera or confirmed shot state changed. Review the current planning before creating this view.")

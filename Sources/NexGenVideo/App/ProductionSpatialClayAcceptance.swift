@@ -15,12 +15,81 @@ enum ProductionSpatialClayAcceptance {
             do {
                 try await waitForPresentation(window: window, scale: scale, driver: driver)
                 try await ProductionV2PlanningAcceptance.selectPhase("shot_planning", context: context, driver: driver)
+                let prior = try await derivation(shotID: shotID, root: root)
+                let sceneURL = try await Task.detached {
+                    let draft = try ProductionPlanningStoreV1.readShotPlanning(dataRoot: root, storyboard: PlanningWriterIO.storyboard(dataRoot: root))
+                    guard let reference = draft.shots.first(where: { $0.shotID == shotID })?.camera.sceneReference else {
+                        throw GateBlocked("The cancellation control has no current location source.")
+                    }
+                    return try ProjectLocalFile.resolve(reference.path, dataRoot: root)
+                }.value
+                func inspectReload(_ gate: BpyNativeHashGate, in sheet: NSWindow, label: String, seconds: Double) async throws -> (String, Bool, UUID) {
+                    try await driver.wait(label + " hash started", seconds: seconds) { gate.sample != nil }
+                    try await driver.wait(label + " loading visible") { driver.state("shot-planning.clay.loading", in: sheet) == true }
+                    let close = driver.text("shot-planning.clay.close", in: sheet) ?? "missing"
+                    let rendering = driver.state("shot-planning.clay.rendering", in: sheet) != nil
+                    guard let sample = gate.sample, !gate.timedOut, close == "done", !rendering else {
+                        throw failed("The Clay reload still claims to be a cancellable render.")
+                    }
+                    gate.release()
+                    return (close, rendering, sample.context.id)
+                }
+                do {
+                    let loadingGate = try BpyNativeHashGate(file: sceneURL)
+                    defer { loadingGate.release() }
+                    try await driver.click("shot-planning.clay.open." + shotID, in: window)
+                    let loading = try await driver.sheet("shot-planning.clay.sheet")
+                    try await driver.wait("Clay loading hash started", seconds: 30) { loadingGate.sample != nil }
+                    guard let sample = loadingGate.sample, !sample.context.isCancelled() else { throw failed("The Clay loading hash was not active.") }
+                    try await driver.click("shot-planning.clay.close", in: loading)
+                    try await driver.wait("Clay loading sheet closed") { window.attachedSheet == nil }
+                    try await driver.wait("Clay closed loading token cancelled") { sample.context.isCancelled() }
+                    guard !loadingGate.timedOut else { throw failed("The Clay loading hash gate expired.") }
+                    loadingGate.release()
+                    try driver.record("Clay close during loading", fields: ["operation": sample.context.id.uuidString,
+                        "bytes": sample.progress.bytes, "hashedBytes": sample.progress.hashedBytes, "callerCancelled": sample.context.isCancelled()])
+                }
+                let afterLoading = try await derivation(shotID: shotID, root: root)
+                guard afterLoading?.proof == prior?.proof, afterLoading?.video == prior?.video else { throw failed("Closing Clay preparation changed its output.") }
                 try await driver.click("shot-planning.clay.open." + shotID, in: window)
                 let sheet = try await driver.sheet("shot-planning.clay.sheet")
                 try await driver.wait("confirmed actual state ready to render") { driver.state("shot-planning.clay.render", in: sheet) == true }
                 try driver.visible(["shot-planning.clay.close", "shot-planning.clay.render"], in: sheet)
-                let prior = try await derivation(shotID: shotID, root: root)
+                let gate = try BpyNativeHashGate(file: sceneURL)
+                defer { gate.release() }
                 try await driver.click("shot-planning.clay.render", in: sheet)
+                try await driver.wait("Clay caller hashing started", seconds: 30) { gate.sample != nil }
+                guard let sample = gate.sample, !sample.context.isCancelled() else { throw failed("The Clay hash was not active before Cancel.") }
+                let cancelledReload = try BpyNativeHashGate(file: sceneURL, excludingOperation: sample.context.id)
+                defer { cancelledReload.release() }
+                try await driver.click("shot-planning.clay.close", in: sheet)
+                try await driver.wait("Clay caller token cancelled") { sample.context.isCancelled() }
+                gate.release()
+                let cancelledReloadState = try await inspectReload(cancelledReload, in: sheet, label: "Clay cancelled reload", seconds: 30)
+                try await driver.wait("Clay render enabled after cancellation", seconds: 30) {
+                    driver.state("shot-planning.clay.render", in: sheet) == true || driver.text("shot-planning.clay.failure", in: sheet) != nil
+                }
+                let cancelled = try await derivation(shotID: shotID, root: root)
+                guard !gate.timedOut, driver.text("shot-planning.clay.failure", in: sheet) == nil,
+                      driver.text("shot-planning.clay.cancelled", in: sheet) == "Render cancelled. Clay video unchanged.",
+                      cancelled?.proof == prior?.proof, cancelled?.video == prior?.video else { throw failed("Cancel did not restore the Clay render control without changing its output.") }
+                try driver.capture("cancelled-during-hash", target: sheet)
+                try driver.record("Clay cancel during actual caller hash", fields: ["operation": sample.context.id.uuidString,
+                    "bytes": sample.progress.bytes, "hashedBytes": sample.progress.hashedBytes, "callerCancelled": sample.context.isCancelled(),
+                    "reloadClose": cancelledReloadState.0, "renderingDuringReload": cancelledReloadState.1,
+                    "reloadOperation": cancelledReloadState.2.uuidString, "notice": driver.text("shot-planning.clay.cancelled", in: sheet) ?? ""])
+                let successfulRender = try BpyNativeHashGate(file: sceneURL)
+                defer { successfulRender.release() }
+                try await driver.click("shot-planning.clay.render", in: sheet)
+                try await driver.wait("Clay successful render caller started", seconds: 30) { successfulRender.sample != nil }
+                guard let successfulSample = successfulRender.sample else { throw failed("The Clay render hash was not observed.") }
+                let successfulReload = try BpyNativeHashGate(file: sceneURL, excludingOperation: successfulSample.context.id, followReplacements: true)
+                defer { successfulReload.release() }
+                successfulRender.release()
+                let successfulReloadState = try await inspectReload(successfulReload, in: sheet, label: "Clay committed reload", seconds: 180)
+                try driver.record("Clay reload after render", fields: ["renderOperation": successfulSample.context.id.uuidString,
+                    "reloadOperation": successfulReloadState.2.uuidString, "reloadClose": successfulReloadState.0,
+                    "renderingDuringReload": successfulReloadState.1])
                 try await driver.wait("full native Clay rendering completed", seconds: 180) {
                     driver.text("shot-planning.clay.failure", in: sheet) != nil
                         || (driver.state("shot-planning.clay.sheet", in: sheet) == true
@@ -54,7 +123,9 @@ enum ProductionSpatialClayAcceptance {
                 }
                 try driver.record("native full shot Clay render and inspect", fields: ["shotID": shotID,
                     "videoSHA256": current.video.sha256, "proofSHA256": current.proof.sha256, "durationSeconds": duration.seconds])
-                results.append(driver.result().merging(try presentation(window: window, scale: scale)) { _, new in new })
+                var result = driver.result()
+                result["cancelDuringHash"] = true; result["closeDuringLoading"] = true
+                results.append(result.merging(try presentation(window: window, scale: scale)) { _, new in new })
             } catch { driver.failure(error); throw error }
         }
         return results

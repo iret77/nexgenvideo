@@ -15,12 +15,14 @@ nonisolated enum SpatialSceneRuntimeAcceptance {
             let worker = try Data(contentsOf: root.appendingPathComponent("worker.py"))
             let create = "import json\nngv_command = {'kind': 'create'}\n" + operations
             let exported = try runtime.runJob(id: UUID(), expectedRevision: nil, source: create + "\n" + exportFixture)
+            defer { exported.release() }
             guard let json = exported.stagedOutputs["fixture.json"],
                   let value = try JSONSerialization.jsonObject(with: Data(contentsOf: json)) as? [String: String],
                   let text = value["glb"], let bytes = Data(base64Encoded: text) else {
                 throw SpatialSceneError.invalid("The native GLB fixture could not be exported.")
             }
             if let id = exported.response.jobID { _ = try runtime.cancel(jobID: id) }
+            exported.release()
             let resource = SpatialSceneResource(id: UUID(), filename: "fixture.glb", sha256: SpatialSceneStore.digest(bytes), byteCount: bytes.count)
             let staging = output.appendingPathComponent("spatial-input")
             try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: false)
@@ -29,9 +31,17 @@ nonisolated enum SpatialSceneRuntimeAcceptance {
             let source = create + "\nngv_fixture_filename = '" + filename + "'\n" + authoringFixture
             let result = try runtime.runJob(id: UUID(), expectedRevision: nil, source: source,
                                            inputs: [try .init(approvedDirectory: staging, filename: filename)])
-            let revision = try SpatialSceneStore.prepare(result: result, sceneID: UUID(), name: "Native location",
-                expectedHead: nil, runtimeLock: lock, worker: worker, resources: [(resource, bytes)]).revision
-            try runtime.authenticateSpatialReceipt(revision)
+            defer { result.release() }
+            let prepared = try SpatialSceneStore.prepare(result: result, sceneID: UUID(), name: "Native location",
+                expectedHead: nil, runtimeLock: lock, worker: worker, resources: [(resource, bytes)], cancellation: .init())
+            defer { prepared.revision.scenePayload.releaseRuntimeSource() }
+            try requireCallerCancellation { try runtime.authenticateSpatialReceipt(prepared.revision, cancellation: $0) }
+            try runtime.authenticateSpatialReceipt(prepared.revision, cancellation: .init())
+            let project = output.appendingPathComponent("scene-project")
+            try FileManager.default.createDirectory(at: project, withIntermediateDirectories: false)
+            let head = try SpatialSceneStore.publish(prepared, in: project)
+            let revision = try SpatialSceneStore.load(head, in: project)
+            prepared.revision.scenePayload.releaseRuntimeSource()
             guard let camera = revision.snapshot.cameras.first(where: { $0.name == "Camera A" }),
                   let second = revision.snapshot.cameras.first(where: { $0.name == "Camera B" }),
                   camera.width == 128, camera.height == 128, second.width == 256, second.height == 128,
@@ -41,6 +51,7 @@ nonisolated enum SpatialSceneRuntimeAcceptance {
                 throw SpatialSceneError.invalid("Native camera, frame, or GLB authoring did not persist.")
             }
             if let id = result.response.jobID { _ = try runtime.cancel(jobID: id) }
+            result.release()
             let frames = (1...2).map { frame in
                 SpatialClayStateFrame(frame: frame, objects: revision.snapshot.objects.map { object in
                     var matrix = object.matrixWorld
@@ -53,31 +64,41 @@ nonisolated enum SpatialSceneRuntimeAcceptance {
                 ownerBindingSHA256: String(repeating: "b", count: 64), cameraID: camera.id, startFrame: 1, endFrame: 2,
                 width: 128, height: 128, samples: 8, stateSHA256: SpatialSceneStore.digest(try SpatialSceneStore.encode(state)))
             let candidate = try await SpatialClayRenderer.prepare(request: request, revision: revision, state: state,
-                                                                   runtime: runtime, runtimeRoot: root)
-            try runtime.authenticateSpatialDerivation(candidate, source: revision)
+                runtime: runtime, runtimeRoot: root, cancellation: .init())
+            defer { candidate.release() }
+            try requireCallerCancellation { try runtime.authenticateSpatialDerivation(candidate, source: revision, cancellation: $0) }
+            try runtime.authenticateSpatialDerivation(candidate, source: revision, cancellation: .init())
             guard let first = candidate.files["clay-00000001.png"], let secondFrame = candidate.files["clay-00000002.png"],
                   candidate.files["clay.mov"] != nil else { throw SpatialSceneError.invalid("Native Clay output is incomplete.") }
             let animatedFirst = try await SpatialClayRenderer.preview(revision: revision, cameraID: camera.id, frame: 1,
-                runtime: runtime, runtimeRoot: root, jobID: UUID(), isCancelled: { false })
+                runtime: runtime, runtimeRoot: root, jobID: UUID(), cancellation: .init(), isCancelled: { false })
             let animatedSecond = try await SpatialClayRenderer.preview(revision: revision, cameraID: camera.id, frame: 2,
-                runtime: runtime, runtimeRoot: root, jobID: UUID(), isCancelled: { false })
-            let firstCenter = try centerLuminance(first), secondCenter = try centerLuminance(secondFrame)
+                runtime: runtime, runtimeRoot: root, jobID: UUID(), cancellation: .init(), isCancelled: { false })
+            let firstCenter = try centerLuminance(first.verifiedData(maximum: runtime.limits.outputBytes)),
+                secondCenter = try centerLuminance(secondFrame.verifiedData(maximum: runtime.limits.outputBytes))
             guard abs(firstCenter - (try centerLuminance(animatedFirst))) > 12,
                   abs(secondCenter - (try centerLuminance(animatedSecond))) > 12,
                   abs(firstCenter - secondCenter) > 12 else {
                 throw SpatialSceneError.invalid("Resolved shot state did not change rendered pixels from the animated scene.")
             }
-            for (name, data) in candidate.files { try data.write(to: output.appendingPathComponent(name)) }
+            try runtime.authenticateSpatialDerivation(candidate, source: revision, cancellation: .init())
+            for (name, file) in candidate.files {
+                try file.verify()
+                try FileManager.default.copyItem(at: file.url, to: output.appendingPathComponent(name))
+            }
             try candidate.proofData.write(to: output.appendingPathComponent("spatial-proof.json"))
             try await verifyCompleteShot(revision: revision, cameraID: camera.id, fieldOfView: camera.verticalFieldOfView,
                 cubeID: cube.id, runtime: runtime, runtimeRoot: root, output: output)
             try await SpatialEvaluatedGeometryAcceptance.run(runtime: runtime, runtimeRoot: root, output: output)
+            candidate.release()
             guard runtime.close() else { throw SpatialSceneError.invalid("Native scene cleanup failed.") }
             return ["glbImport": true, "quaternionKeyframes": true, "viewedFrameEdit": true,
                     "cameraDimensions": true, "stableRestFrame": true, "resourceReceipt": true,
                     "resolvedStatePixels": true, "fractionalTimebaseMovie": true, "derivationAuthentication": true,
                     "completeShotSequence": true, "partialLastFrame": true, "sequenceTamperingRejected": true,
-                    "sequenceDiscardRevokes": true, "sequenceExtraChunkRejected": true, "evaluatedDeformationBounds": true]
+                    "sequenceDiscardRevokes": true, "sequenceExtraChunkRejected": true, "evaluatedDeformationBounds": true,
+                    "preCancelledCallerReceiptRejected": true, "preCancelledCallerDerivationRejected": true,
+                    "preCancelledCallerSequenceRejected": true]
         }.value
     }
 
@@ -95,9 +116,10 @@ nonisolated enum SpatialSceneRuntimeAcceptance {
             ownerBindingSHA256: String(repeating: "d", count: 64), cameraID: cameraID, startFrame: 0, endFrame: 240,
             width: 384, height: 384, samples: 1, stateSHA256: SpatialSceneStore.digest(try SpatialSceneStore.encode(state)))
         let candidate = try await SpatialClayRenderer.prepareSequence(request: request, revision: revision, state: state,
-            timing: .init(numerator: 240_741, denominator: 24_000), runtime: runtime, runtimeRoot: runtimeRoot)
+            timing: .init(numerator: 240_741, denominator: 24_000), runtime: runtime, runtimeRoot: runtimeRoot, cancellation: .init())
         defer { candidate.discard() }
-        try runtime.authenticateSpatialSequence(candidate, source: revision)
+        try requireCallerCancellation { try runtime.authenticateSpatialSequence(candidate, source: revision, cancellation: $0) }
+        try runtime.authenticateSpatialSequence(candidate, source: revision, cancellation: .init())
         guard candidate.proof.chunks.count > 1, candidate.proof.chunks.first?.startFrame == 0,
               candidate.proof.chunks.last?.endFrame == 240, let movie = candidate.files["clay.mov"],
               let first = candidate.files["clay-00000000.png"], let second = candidate.files["clay-00000001.png"],
@@ -149,26 +171,35 @@ nonisolated enum SpatialSceneRuntimeAcceptance {
         var extraRejected = false
         do {
             try SpatialClayRenderer.validateSequence(proofData: SpatialSceneStore.encode(malformed),
-                                                      files: malformedFiles, against: revision)
+                files: malformedFiles, against: revision, scope: runtime.mediaReadScope(cancellation: .init()))
         } catch { extraRejected = true }
         guard extraRejected else { throw SpatialSceneError.invalid("An extra out-of-range Clay chunk was accepted.") }
         let original = try Data(contentsOf: first)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: first.path)
         try Data(contentsOf: second).write(to: first)
         var rejected = false
-        do { try runtime.authenticateSpatialSequence(candidate, source: revision) } catch { rejected = true }
+        do { try runtime.authenticateSpatialSequence(candidate, source: revision, cancellation: .init()) } catch { rejected = true }
         try original.write(to: first)
         try FileManager.default.setAttributes([.posixPermissions: 0o400], ofItemAtPath: first.path)
         guard rejected else { throw SpatialSceneError.invalid("A substituted sequence frame retained its host authentication.") }
-        try runtime.authenticateSpatialSequence(candidate, source: revision)
+        try runtime.authenticateSpatialSequence(candidate, source: revision, cancellation: .init())
         let evidence = output.appendingPathComponent("complete-shot")
         try FileManager.default.createDirectory(at: evidence, withIntermediateDirectories: false)
         for (name, file) in candidate.files { try FileManager.default.copyItem(at: file, to: evidence.appendingPathComponent(name)) }
         try candidate.proofData.write(to: evidence.appendingPathComponent("proof.json"))
         candidate.discard()
         rejected = false
-        do { try runtime.authenticateSpatialSequence(candidate, source: revision) } catch { rejected = true }
+        do { try runtime.authenticateSpatialSequence(candidate, source: revision, cancellation: .init()) } catch { rejected = true }
         guard rejected, !candidate.isAvailable else { throw SpatialSceneError.invalid("Discard did not revoke the sequence receipt.") }
+    }
+
+    private static func requireCallerCancellation(_ operation: (BpyOperationCancellation) throws -> Void) throws {
+        guard !Task.isCancelled else { throw SpatialSceneError.changed }
+        let token = BpyOperationCancellation()
+        token.cancel()
+        do { try operation(token); throw SpatialSceneError.changed }
+        catch BpyAdmissionFailure.cancelled { }
+        guard !Task.isCancelled else { throw SpatialSceneError.changed }
     }
 
     private static func centerLuminance(_ data: Data) throws -> Double {

@@ -9,6 +9,7 @@ nonisolated enum SpatialEvaluatedGeometryAcceptance {
         let script = try String(contentsOf: runtimeRoot.appendingPathComponent("scene_operations.py"), encoding: .utf8)
         let source = "import json\nngv_command = {'kind':'create'}\n" + script + "\n" + fixture
         let result = try runtime.runJob(id: UUID(), expectedRevision: nil, source: source)
+        defer { result.release() }
         guard let preflightURL = result.stagedOutputs["simulation-preflight.json"],
               let preflightOutput = result.response.outputs.first(where: { $0.name == "simulation-preflight.json" }) else { throw SpatialSceneError.changed }
         let preflight = try Data(contentsOf: preflightURL)
@@ -18,8 +19,9 @@ nonisolated enum SpatialEvaluatedGeometryAcceptance {
               (preflightValue["reason"] as? String)?.contains("Bake simulation caches") == true else { throw SpatialSceneError.changed }
         let revision = try SpatialSceneStore.prepare(result: result, sceneID: UUID(), name: "Deforming geometry acceptance",
             expectedHead: nil, runtimeLock: Data(contentsOf: runtimeRoot.appendingPathComponent("runtime-lock.json")),
-            worker: Data(contentsOf: runtimeRoot.appendingPathComponent("worker.py")), resources: []).revision
-        try runtime.authenticateSpatialReceipt(revision)
+            worker: Data(contentsOf: runtimeRoot.appendingPathComponent("worker.py")), resources: [], cancellation: .init()).revision
+        defer { revision.scenePayload.releaseRuntimeSource() }
+        try runtime.authenticateSpatialReceipt(revision, cancellation: .init())
         if let job = result.response.jobID { _ = try runtime.cancel(jobID: job) }
         guard let camera = revision.snapshot.cameras.first, let rig = revision.snapshot.objects.first(where: { $0.name == "RiggedMesh" }),
               let shape = revision.snapshot.objects.first(where: { $0.name == "ShapeMesh" }),
@@ -33,7 +35,8 @@ nonisolated enum SpatialEvaluatedGeometryAcceptance {
             runtime: runtime, runtimeRoot: runtimeRoot)
         try candidate.geometry.validate(state: state, scene: revision)
         try candidate.geometry.validateFiles(candidate.files)
-        try candidate.geometry.validateRecordedSources(candidate.files, state: state, scene: revision, runtimeRoot: runtimeRoot)
+        try candidate.geometry.validateRecordedSources(candidate.files, state: state, scene: revision, runtimeRoot: runtimeRoot,
+            scope: runtime.mediaReadScope(cancellation: .init()))
         guard let foreign = revision.snapshot.objects.first(where: { $0.name == "ForeignMesh" }),
               candidate.geometry.frames.allSatisfy({ $0.scene == "Deformation active" && $0.viewLayer == "ViewLayer"
                   && $0.sceneFrame == $0.frame && $0.meshes.allSatisfy { $0.objectID != foreign.id } }) else { throw SpatialSceneError.changed }
@@ -55,15 +58,19 @@ nonisolated enum SpatialEvaluatedGeometryAcceptance {
             ownerBindingSHA256: candidate.geometry.stateSHA256, cameraID: camera.id, startFrame: 0, endFrame: 1,
             width: 128, height: 128, samples: 1, stateSHA256: candidate.geometry.stateSHA256)
         let clay = try await SpatialClayRenderer.prepare(request: request, revision: revision, state: state,
-            runtime: runtime, runtimeRoot: runtimeRoot)
-        try runtime.authenticateSpatialDerivation(clay, source: revision)
-        guard let first = clay.files["clay-00000000.png"], let last = clay.files["clay-00000001.png"], first != last else {
+            runtime: runtime, runtimeRoot: runtimeRoot, cancellation: .init())
+        defer { clay.release() }
+        try runtime.authenticateSpatialDerivation(clay, source: revision, cancellation: .init())
+        guard let first = clay.files["clay-00000000.png"], let last = clay.files["clay-00000001.png"], first.sha256 != last.sha256 else {
             throw SpatialSceneError.invalid("Native deformation did not change the actual Clay pixels.")
         }
         let directory = output.appendingPathComponent("evaluated-deformation")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         for (name, bytes) in candidate.files { try bytes.write(to: directory.appendingPathComponent(name)) }
-        for (name, bytes) in clay.files { try bytes.write(to: directory.appendingPathComponent(name)) }
+        for (name, file) in clay.files {
+            try file.verify()
+            try FileManager.default.copyItem(at: file.url, to: directory.appendingPathComponent(name))
+        }
         try clay.proofData.write(to: directory.appendingPathComponent("clay-proof.v1.json"))
         let claySettings = try SpatialClayRenderer.renderSettings(request, state: state)
         let clayLiteral = try JSONEncoder().encode(String(decoding: claySettings, as: UTF8.self))
@@ -71,7 +78,7 @@ nonisolated enum SpatialEvaluatedGeometryAcceptance {
         try Data(clayCommand.utf8).write(to: directory.appendingPathComponent("clay-command.py"))
         try SpatialSceneStore.encode(state).write(to: directory.appendingPathComponent("state.v1.json"))
         try revision.manifestData.write(to: directory.appendingPathComponent("scene-manifest.v1.json"))
-        try revision.sceneData.write(to: directory.appendingPathComponent("scene.blend"))
+        try revision.scenePayload.export(to: directory.appendingPathComponent("scene.blend"), checking: {})
         try revision.snapshotData.write(to: directory.appendingPathComponent("snapshot.v1.json"))
         try Data(source.utf8).write(to: directory.appendingPathComponent("scene-program.py"))
         try preflight.write(to: directory.appendingPathComponent("simulation-preflight.json"))

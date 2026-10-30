@@ -1,3 +1,4 @@
+import BpyRuntimeProtocol
 import Foundation
 import simd
 
@@ -132,7 +133,9 @@ struct SpatialEvaluatedGeometryV1: Codable, Sendable, Equatable {
         return "import json\nngv_command = json.loads(\(String(decoding: literal, as: UTF8.self)))\n" + String(decoding: script, as: UTF8.self)
     }
 
-    func validateRecordedSources(_ files: [String: Data], state: SpatialClayState, scene: SpatialSceneRevision, runtimeRoot: URL) throws {
+    func validateRecordedSources(_ files: [String: Data], state: SpatialClayState, scene: SpatialSceneRevision,
+                                 runtimeRoot: URL, scope: BpyMediaReadScope) throws {
+        try scope.check()
         guard let script = files["evaluated-scene-operations.py"], SpatialSceneStore.digest(script) == scriptSHA256,
               let worker = files["evaluated-worker.py"], SpatialSceneStore.digest(worker) == workerSHA256,
               let lock = files["evaluated-runtime-lock.json"], SpatialSceneStore.digest(lock) == runtimeLockSHA256,
@@ -145,8 +148,9 @@ struct SpatialEvaluatedGeometryV1: Codable, Sendable, Equatable {
               worker == (try Data(contentsOf: runtimeRoot.appendingPathComponent("worker.py"))),
               lock == (try Data(contentsOf: runtimeRoot.appendingPathComponent("runtime-lock.json"))),
               record == (try Data(contentsOf: runtimeRoot.appendingPathComponent("site-packages/bpy-5.2.2.dist-info/RECORD"))),
-              SpatialSceneStore.digest(try Data(contentsOf: runtimeRoot.appendingPathComponent("site-packages/bpy/__init__.so"), options: .mappedIfSafe)) == runtimeBinarySHA256 else { throw SpatialSceneError.changed }
+              try scope.digest(at: runtimeRoot.appendingPathComponent("site-packages/bpy/__init__.so")) == runtimeBinarySHA256 else { throw SpatialSceneError.changed }
         for chunk in chunks {
+            try scope.check()
             guard state.frames.indices.contains(chunk.startFrame), state.frames.indices.contains(chunk.endFrame),
                   chunk.startFrame <= chunk.endFrame else { throw SpatialSceneError.changed }
             let part = SpatialClayState(sceneManifestSHA256: state.sceneManifestSHA256, cameraID: state.cameraID,

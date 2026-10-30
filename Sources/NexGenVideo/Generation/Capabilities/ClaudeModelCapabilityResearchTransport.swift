@@ -153,7 +153,7 @@ enum ClaudeCapabilityResearchProbe {
         let finished = DispatchSemaphore(value: 0)
         process.terminationHandler = { _ in finished.signal() }
         do {
-            try process.run()
+            try process.runCoordinated()
         } catch {
             throw ClaudeModelCapabilityResearchError.probeFailed(error.localizedDescription)
         }

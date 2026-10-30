@@ -32,7 +32,7 @@ enum NativeNewMusicvideoAcceptance {
             defer { try? handle.close() }
             process.standardOutput = handle
             process.standardError = handle
-            try process.run()
+            try process.runCoordinated()
             defer { if process.isRunning { process.terminate(); process.waitUntilExit() } }
             let deadline = Date().addingTimeInterval(30)
             while process.isRunning {

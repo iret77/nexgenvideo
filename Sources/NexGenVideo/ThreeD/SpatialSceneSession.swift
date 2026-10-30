@@ -5,11 +5,15 @@ import Observation
 import simd
 import UniformTypeIdentifiers
 
+enum SpatialSceneCommitProgress: Equatable, Sendable { case committing, committed }
+
 @MainActor
 protocol SpatialSceneAuthority: AnyObject {
     func requireReadableScene() async throws
     func readScene<Value: Sendable>(_ operation: @escaping @Sendable (URL) throws -> Value) async throws -> Value
     func commitSceneEdit(
+        cancellation: BpyOperationCancellation,
+        progress: @escaping @MainActor (SpatialSceneCommitProgress) -> Void,
         _ prepare: @escaping @Sendable () async throws -> SpatialSceneCandidate
     ) async throws -> SpatialSceneCommit
 }
@@ -21,6 +25,7 @@ final class SpatialSceneSession {
     private(set) var snapshot: BpySpatialSnapshot?
     private(set) var snapshotRevision = UUID()
     private(set) var busy = false
+    private(set) var commitProgress: SpatialSceneCommitProgress?
     private(set) var error: String?
     private(set) var cameraPreview: Data?
     var selectedObjectID: String?
@@ -39,21 +44,39 @@ final class SpatialSceneSession {
     private var activeJob: SpatialEditCancellation?
     private var refreshTask: Task<Void, Never>?
     private var operationTask: Task<Void, Never>?
+    private let commitObserver: (@MainActor (SpatialSceneCommitProgress) -> Void)?
+    private var userCancellationRequested = false
 
-    init(pipelineRoot: URL, runtime: BpyRuntimeSession, authority: any SpatialSceneAuthority) {
+    init(pipelineRoot: URL, runtime: BpyRuntimeSession, authority: any SpatialSceneAuthority,
+         commitObserver: (@MainActor (SpatialSceneCommitProgress) -> Void)? = nil) {
         self.pipelineRoot = pipelineRoot
         self.runtime = runtime
         self.authority = authority
+        self.commitObserver = commitObserver
     }
 
     var selectedObject: BpySpatialObject? { snapshot?.objects.first { $0.id == selectedObjectID } }
     var selectedCamera: BpySpatialCamera? { snapshot?.cameras.first { $0.id == selectedCameraID } }
     var canUndo: Bool { !busy && !undoRevisions.isEmpty }
     var canRedo: Bool { !busy && !redoRevisions.isEmpty }
+    var canCancel: Bool { busy && commitProgress == nil && !userCancellationRequested }
+
+    private func beginOperation() {
+        busy = true; userCancellationRequested = false; error = nil
+    }
+
+    private func operationFailed(_ error: any Error) {
+        self.error = userCancellationRequested ? nil : error.localizedDescription
+    }
+
+    private func reportCommit(_ progress: SpatialSceneCommitProgress) {
+        commitProgress = progress
+        if ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"]?.isEmpty == false { commitObserver?(progress) }
+    }
 
     func reload() {
         guard !busy else { return }
-        busy = true
+        beginOperation()
         refreshTask = Task {
             defer { busy = false; refreshTask = nil }
             do {
@@ -73,13 +96,13 @@ final class SpatialSceneSession {
                     redoRevisions.removeAll()
                 }
                 error = nil
-            } catch { self.error = error.localizedDescription }
+            } catch { operationFailed(error) }
         }
     }
 
     func open(_ head: SpatialSceneHead) {
         guard !busy else { return }
-        busy = true
+        beginOperation()
         refreshTask = Task {
             defer { busy = false; refreshTask = nil }
             do {
@@ -90,7 +113,7 @@ final class SpatialSceneSession {
                 selectedObjectID = nil
                 selectedCameraID = nil
                 error = nil
-            } catch { self.error = error.localizedDescription }
+            } catch { operationFailed(error) }
         }
     }
 
@@ -175,8 +198,15 @@ final class SpatialSceneSession {
 
     func evaluate(frame: Int) async {
         guard !busy, let current else { return }
-        busy = true
-        defer { busy = false; activeJob = nil }
+        beginOperation()
+        let task = Task { await performEvaluation(current, frame: frame) }
+        operationTask = task
+        await task.value
+        operationTask = nil; busy = false
+    }
+
+    private func performEvaluation(_ current: SpatialSceneRevision, frame: Int) async {
+        defer { activeJob = nil }
         do {
             try await requireCurrent(current)
             let source = try commandSource(["kind": "evaluate", "frame": frame])
@@ -186,25 +216,27 @@ final class SpatialSceneSession {
             let root = try runtimeRoot
             let result = try await Task.detached {
                 try job.check()
-                try runtime.loadProjectCheckpoint(scene: current.sceneData,
-                                                  revision: current.manifest.revision.uuidString,
-                                                  sha256: current.manifest.sceneSHA256)
+                try runtime.loadProjectCheckpoint(sceneRevision: current, cancellation: job.token)
                 try job.check()
-                defer { try? runtime.cancel(jobID: job.id) }
-                let result = try runtime.runJob(id: job.id, expectedRevision: current.manifest.revision.uuidString, source: source)
+                let result = try runtime.runJob(id: job.id, expectedRevision: current.manifest.revision.uuidString, source: source, cancellation: job.token)
+                defer { result.release() }
                 try job.check()
-                return try SpatialSceneStore.prepare(
+                let evaluated = try SpatialSceneStore.prepare(
                     result: result, sceneID: current.manifest.sceneID, name: current.manifest.name,
                     expectedHead: nil, runtimeLock: Data(contentsOf: root.appendingPathComponent("runtime-lock.json")),
-                    worker: Data(contentsOf: root.appendingPathComponent("worker.py")), resources: []
-                ).revision.snapshot
+                    worker: Data(contentsOf: root.appendingPathComponent("worker.py")), resources: [], cancellation: job.token
+                ).revision
+                defer { evaluated.scenePayload.releaseRuntimeSource() }
+                return evaluated.snapshot
             }.value
+            try job.check()
             try await requireCurrent(current)
+            try job.check()
             snapshot = result
             snapshotRevision = UUID()
             self.frame = frame
             error = nil
-        } catch { self.error = error.localizedDescription }
+        } catch { operationFailed(error) }
     }
 
     func undo() async { await restore(undo: true) }
@@ -212,30 +244,46 @@ final class SpatialSceneSession {
 
     func renderCamera() async {
         guard !busy, let current, let cameraID = selectedCameraID else { return }
-        busy = true
+        beginOperation()
         cameraPreview = nil
-        defer { busy = false; activeJob = nil }
+        let task = Task { await performCameraRender(current, cameraID: cameraID) }
+        operationTask = task
+        await task.value
+        operationTask = nil; busy = false
+    }
+
+    private func performCameraRender(_ current: SpatialSceneRevision, cameraID: String) async {
+        defer { activeJob = nil }
         do {
             try await requireCurrent(current)
             let job = SpatialEditCancellation(runtime: runtime)
             activeJob = job
             let result = try await SpatialClayRenderer.preview(
                 revision: current, cameraID: cameraID, frame: frame, runtime: runtime, runtimeRoot: runtimeRoot,
-                jobID: job.id, isCancelled: { job.isCancelled }
+                jobID: job.id, cancellation: job.token, isCancelled: { job.isCancelled }
             )
+            try job.check()
             try await requireCurrent(current)
+            try job.check()
             cameraPreview = result
             error = nil
-        } catch { self.error = error.localizedDescription }
+        } catch { operationFailed(error) }
     }
 
     func dismissCameraPreview() { cameraPreview = nil }
 
     func cancel() {
+        guard busy, commitProgress == nil else { return }
+        userCancellationRequested = true
         refreshTask?.cancel()
         operationTask?.cancel()
-        let job = activeJob
-        Task.detached { job?.cancel() }
+        activeJob?.cancel()
+    }
+
+    func nativeInvalidateActiveOperation() throws {
+        guard ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"]?.isEmpty == false,
+              busy, let activeJob else { throw SpatialSceneError.changed }
+        activeJob.token.cancel()
     }
 
     func editPython(_ source: String) async {
@@ -249,7 +297,7 @@ final class SpatialSceneSession {
             error = "Finish the current location action before applying this edit."
             return
         }
-        busy = true
+        beginOperation()
         let task = Task {
             await performEdit(command, newName: newName, importedResource: importedResource, python: python)
         }
@@ -261,7 +309,7 @@ final class SpatialSceneSession {
 
     private func performEdit(_ command: [String: Any], newName: String?,
                              importedResource: (SpatialSceneResource, Data)?, python: String?) async {
-        defer { activeJob = nil }
+        defer { activeJob = nil; commitProgress = nil }
         let previous = newName == nil ? current : nil
         let head = previous.flatMap { value in locations.first { $0.id == value.manifest.sceneID } }
         do {
@@ -277,12 +325,11 @@ final class SpatialSceneSession {
             } ?? []
             if let importedResource { resources.append(importedResource) }
             let frozenResources = resources
-            let committed = try await authority.commitSceneEdit {
+            defer { runtime.releaseResult(jobID: job.id) }
+            let committed = try await authority.commitSceneEdit(cancellation: job.token, progress: reportCommit) {
                 try await Task.detached {
                     try job.check()
-                    try runtime.loadProjectCheckpoint(scene: previous?.sceneData,
-                                                      revision: previous?.manifest.revision.uuidString,
-                                                      sha256: previous?.manifest.sceneSHA256)
+                    try runtime.loadProjectCheckpoint(sceneRevision: previous, cancellation: job.token)
                     try job.check()
                     let staging = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
                     try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: false)
@@ -293,30 +340,27 @@ final class SpatialSceneSession {
                         return try BpyApprovedInputCopy(approvedDirectory: staging, filename: filename)
                     }
                     let result = try runtime.runJob(id: job.id, expectedRevision: previous?.manifest.revision.uuidString,
-                                                    source: source, inputs: inputs)
+                                                    source: source, inputs: inputs, cancellation: job.token)
                     try job.check()
                     return try SpatialSceneStore.prepare(
                         result: result, sceneID: sceneID, name: name, expectedHead: head,
                         runtimeLock: Data(contentsOf: root.appendingPathComponent("runtime-lock.json")),
-                        worker: Data(contentsOf: root.appendingPathComponent("worker.py")), resources: frozenResources
+                        worker: Data(contentsOf: root.appendingPathComponent("worker.py")), resources: frozenResources, cancellation: job.token
                     )
                 }.value
             }
-            await Task.detached {
-                _ = try? runtime.cancel(jobID: job.id)
-            }.value
             if let head { undoRevisions.append(head) } else { undoRevisions.removeAll() }
             redoRevisions.removeAll()
             applyCommitted(committed)
         } catch {
             if let activeJob { await Task.detached { activeJob.cancel() }.value }
-            self.error = error.localizedDescription
+            operationFailed(error)
         }
     }
 
     private func restore(undo: Bool) async {
         guard !busy else { return }
-        busy = true
+        beginOperation()
         let task = Task { await performRestore(undo: undo) }
         operationTask = task
         await task.value
@@ -325,20 +369,22 @@ final class SpatialSceneSession {
     }
 
     private func performRestore(undo: Bool) async {
+        defer { commitProgress = nil }
         guard let current, let prior = undo ? undoRevisions.last : redoRevisions.last,
               let head = locations.first(where: { $0.id == current.manifest.sceneID }) else { return }
         do {
             let root = pipelineRoot
-            let committed = try await authority.commitSceneEdit {
-                try await Task.detached {
+            let cancellation = BpyOperationCancellation()
+            let committed = try await authority.commitSceneEdit(cancellation: cancellation, progress: reportCommit) {
+                try await PipelineSpatialDerivationWriter.background(cancellation: cancellation, dataRoot: root) {
                     let original = try SpatialSceneStore.load(prior, in: root)
                     return try SpatialSceneStore.restoration(original, replacing: head)
-                }.value
+                }
             }
             if undo { undoRevisions.removeLast(); redoRevisions.append(head) }
             else { redoRevisions.removeLast(); undoRevisions.append(head) }
             applyCommitted(committed)
-        } catch { self.error = error.localizedDescription }
+        } catch { operationFailed(error) }
     }
 
     private func load(_ head: SpatialSceneHead) async throws {
@@ -386,6 +432,7 @@ final class SpatialSceneSession {
 
 private final class SpatialEditCancellation: @unchecked Sendable {
     let id = UUID()
+    let token = BpyOperationCancellation()
     private let runtime: BpyRuntimeSession
     private let lock = NSLock()
     private var cancelled = false
@@ -399,6 +446,7 @@ private final class SpatialEditCancellation: @unchecked Sendable {
     }
 
     func check() throws {
+        try token.check()
         lock.lock()
         defer { lock.unlock() }
         if cancelled { throw CancellationError() }
@@ -408,6 +456,7 @@ private final class SpatialEditCancellation: @unchecked Sendable {
         lock.lock()
         cancelled = true
         lock.unlock()
-        _ = try? runtime.cancel(jobID: id)
+        token.cancel()
+        runtime.releaseResult(jobID: id)
     }
 }

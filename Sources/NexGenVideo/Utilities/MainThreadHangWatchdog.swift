@@ -281,7 +281,7 @@ final class MainThreadHangWatchdog: @unchecked Sendable {
         ]
         process.terminationHandler = { _ in completed.signal() }
         do {
-            try process.run()
+            try process.runCoordinated()
             guard completed.wait(
                 timeout: .now() + Self.sampleTimeoutSeconds
             ) == .success else {

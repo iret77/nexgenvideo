@@ -1,19 +1,46 @@
 import Darwin
 import Foundation
 
+public enum BpyStorageRole: String, Codable, Sendable { case worker, data }
+
 public struct BpyStorageLease: Codable, Sendable, Equatable {
     public let id: UUID
     public let mountPath: String
     public let device: UInt64
     public let capacityBytes: UInt64
     public let bookmark: Data
+    public let role: BpyStorageRole?
+    public let pairID: UUID?
 
-    public init(id: UUID, mountPath: String, device: UInt64, capacityBytes: UInt64, bookmark: Data) {
+    public init(id: UUID, mountPath: String, device: UInt64, capacityBytes: UInt64, bookmark: Data,
+                role: BpyStorageRole? = nil, pairID: UUID? = nil) {
         self.id = id
         self.mountPath = mountPath
         self.device = device
         self.capacityBytes = capacityBytes
         self.bookmark = bookmark
+        self.role = role
+        self.pairID = pairID
+    }
+}
+
+public struct BpyStoragePair: Codable, Sendable, Equatable {
+    public let schema: String
+    public let id: UUID
+    public let worker: BpyStorageLease
+    public let data: BpyStorageLease
+
+    public init(id: UUID, worker: BpyStorageLease, data: BpyStorageLease) {
+        schema = "nexgenvideo/bpy-storage-pair/1"
+        self.id = id; self.worker = worker; self.data = data
+    }
+
+    public func isValid(limits: BpyRuntimeLimits) -> Bool {
+        schema == "nexgenvideo/bpy-storage-pair/1" && worker.role == .worker && data.role == .data
+            && worker.pairID == id && data.pairID == id && worker.id != data.id
+            && worker.device != data.device && worker.mountPath != data.mountPath
+            && worker.capacityBytes > 0 && worker.capacityBytes <= limits.physicalStorageBytes
+            && data.capacityBytes > 0 && limits.dataStorageBytes.map { data.capacityBytes <= $0 } == true
     }
 }
 

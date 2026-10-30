@@ -278,7 +278,7 @@ enum PluginInstaller {
             process.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
             process.arguments = ["-x", "-k", zip.path, dir.path]
             do {
-                try process.run()
+                try process.runCoordinated()
             } catch {
                 return (status: Int32?.none, launchError: error.localizedDescription)
             }

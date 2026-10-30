@@ -16,6 +16,7 @@ public let bpyRuntimeServiceNames = [
     func readOutput(_ request: Data, withReply reply: @escaping (Data, Data) -> Void)
     func confirmJob(_ request: Data, withReply reply: @escaping (Data) -> Void)
     func cancelJob(_ request: Data, withReply reply: @escaping (Data) -> Void)
+    func releaseResources(_ request: Data, withReply reply: @escaping (Data) -> Void)
     func closeSession(_ request: Data, withReply reply: @escaping (Data) -> Void)
     func shutdown(_ request: Data, withReply reply: @escaping (Data) -> Void)
 }
@@ -23,10 +24,18 @@ public let bpyRuntimeServiceNames = [
 public struct BpyBoundaryProbeRequest: Codable, Sendable, Equatable {
     public let schema: String
     public let nonce: UUID
+    public let execution: UUID
+    public let mode: BpyBoundaryMode
+    public let storagePair: BpyStoragePair
+    public let admission: UUID
+    public let admissionDeadline: TimeInterval
+    public let limits: BpyRuntimeLimits
 
-    public init(nonce: UUID) {
-        schema = "nexgenvideo/bpy-boundary-probe-request/1"
-        self.nonce = nonce
+    public init(nonce: UUID, execution: UUID, mode: BpyBoundaryMode, storagePair: BpyStoragePair,
+                admission: UUID, admissionDeadline: TimeInterval, limits: BpyRuntimeLimits) {
+        schema = "nexgenvideo/bpy-boundary-probe-request/2"
+        self.nonce = nonce; self.execution = execution; self.mode = mode
+        self.storagePair = storagePair; self.admission = admission; self.admissionDeadline = admissionDeadline; self.limits = limits
     }
 }
 
@@ -83,7 +92,7 @@ public struct BpyBoundaryProbeResult: Codable, Sendable, Equatable {
         fileportLimitReason: String,
         healthyFollowupSucceeded: Bool
     ) {
-        schema = "nexgenvideo/bpy-boundary-probe/4"
+        schema = "nexgenvideo/bpy-boundary-probe/5"
         self.nonce = nonce
         self.serviceProcessIdentifier = serviceProcessIdentifier
         self.serviceStartAbsoluteTime = serviceStartAbsoluteTime
@@ -111,9 +120,15 @@ public struct BpyBoundaryProbeResult: Codable, Sendable, Equatable {
     }
 }
 
+public enum BpyRuntimeMemoryPolicy: String, Codable, Sendable {
+    case systemPressureV1 = "system-pressure-v1"
+}
+
 public struct BpyRuntimeLimits: Codable, Sendable, Equatable {
+    public static let maximumOutputBytes: UInt64 = 512 * 1_024 * 1_024
+    public static let maximumRenderPixels = 67_108_864
     public var timeoutSeconds: Int
-    public var memoryBytes: UInt64
+    public var memoryPolicy: BpyRuntimeMemoryPolicy
     public var inputBytes: UInt64
     public var outputBytes: UInt64
     public var stdoutBytes: Int
@@ -128,7 +143,7 @@ public struct BpyRuntimeLimits: Codable, Sendable, Equatable {
 
     public init(
         timeoutSeconds: Int = 120,
-        memoryBytes: UInt64 = 6 * 1_024 * 1_024 * 1_024,
+        memoryPolicy: BpyRuntimeMemoryPolicy = .systemPressureV1,
         inputBytes: UInt64 = 512 * 1_024 * 1_024,
         outputBytes: UInt64 = 512 * 1_024 * 1_024,
         stdoutBytes: Int = 1_048_576,
@@ -142,7 +157,7 @@ public struct BpyRuntimeLimits: Codable, Sendable, Equatable {
         renderPixels: Int = 33_177_600
     ) {
         self.timeoutSeconds = timeoutSeconds
-        self.memoryBytes = memoryBytes
+        self.memoryPolicy = memoryPolicy
         self.inputBytes = inputBytes
         self.outputBytes = outputBytes
         self.stdoutBytes = stdoutBytes
@@ -158,29 +173,52 @@ public struct BpyRuntimeLimits: Codable, Sendable, Equatable {
 
     public var physicalStorageBytes: UInt64 { max(diskBytes, 64 * 1_024 * 1_024) }
 
+    public var retainedOutputBytes: UInt64? {
+        let fourOutputs = outputBytes.multipliedReportingOverflow(by: 4)
+        return fourOutputs.overflow ? nil : min(diskBytes, fourOutputs.partialValue)
+    }
+
+    public var dataStorageBytes: UInt64? {
+        guard let retainedOutputBytes else { return nil }
+        let checkpoint = max(inputBytes, outputBytes).multipliedReportingOverflow(by: 3)
+        let payload = inputBytes.addingReportingOverflow(checkpoint.partialValue)
+        let retained = payload.partialValue.addingReportingOverflow(retainedOutputBytes)
+        let allowance = retained.partialValue.addingReportingOverflow(64 * 1_024 * 1_024)
+        let gib: UInt64 = 1_024 * 1_024 * 1_024
+        let rounded = allowance.partialValue.addingReportingOverflow(gib - 1)
+        guard !checkpoint.overflow, !payload.overflow, !retained.overflow,
+              !allowance.overflow, !rounded.overflow else { return nil }
+        let bytes = rounded.partialValue / gib * gib
+        return bytes > 0 && bytes <= 8 * gib ? bytes : nil
+    }
+
     public var isValid: Bool {
         (1...3_600).contains(timeoutSeconds)
-            && (256 * 1_024 * 1_024...32 * 1_024 * 1_024 * 1_024).contains(memoryBytes)
+            && memoryPolicy == .systemPressureV1
             && inputBytes > 0 && inputBytes <= 512 * 1_024 * 1_024 && inputBytes <= diskBytes
-            && outputBytes > 0 && outputBytes <= 512 * 1_024 * 1_024
-            && outputBytes <= memoryBytes / 2
+            && outputBytes > 0 && outputBytes <= Self.maximumOutputBytes
+            && dataStorageBytes != nil
             && (1...16 * 1_024 * 1_024).contains(stdoutBytes)
             && objects > 0 && vertices > 0 && polygons > 0
             && diskBytes >= outputBytes && diskBytes <= 8 * 1_024 * 1_024 * 1_024
             && (64...65_536).contains(files)
             && (64...16_384).contains(renderWidth)
             && (64...16_384).contains(renderHeight)
-            && renderPixels > 0 && renderPixels <= 67_108_864
+            && renderPixels > 0 && renderPixels <= Self.maximumRenderPixels
     }
 }
 
 public struct BpyOpenSessionRequest: Codable, Sendable, Equatable {
+    public let schema: String
     public let sessionID: UUID
     public let documentID: String
     public let confirmedRevision: String?
     public let limits: BpyRuntimeLimits
     public let diagnosticOpenFailure: Bool
     public let storage: BpyStorageLease?
+    public let storagePair: BpyStoragePair?
+    public let admission: UUID?
+    public let admissionDeadline: TimeInterval?
 
     public init(
         sessionID: UUID,
@@ -188,14 +226,21 @@ public struct BpyOpenSessionRequest: Codable, Sendable, Equatable {
         confirmedRevision: String? = nil,
         limits: BpyRuntimeLimits = .init(),
         diagnosticOpenFailure: Bool = false,
-        storage: BpyStorageLease? = nil
+        storage: BpyStorageLease? = nil,
+        storagePair: BpyStoragePair? = nil,
+        admission: UUID? = nil,
+        admissionDeadline: TimeInterval? = nil
     ) {
+        schema = "nexgenvideo/bpy-open-session/2"
         self.sessionID = sessionID
         self.documentID = documentID
         self.confirmedRevision = confirmedRevision
         self.limits = limits
         self.diagnosticOpenFailure = diagnosticOpenFailure
         self.storage = storage
+        self.storagePair = storagePair
+        self.admission = admission
+        self.admissionDeadline = admissionDeadline
     }
 }
 
@@ -264,6 +309,8 @@ public struct BpyRunJobRequest: Codable, Sendable, Equatable {
     public let diagnosticAutoexecPositiveControl: Bool
     public let diagnosticSupervisorIdentityWriteFailure: Bool
     public let diagnosticSupervisorIdentityCaptureFailure: Bool
+    public let admission: UUID?
+    public let admissionDeadline: TimeInterval?
 
     public init(
         sessionID: UUID,
@@ -276,7 +323,9 @@ public struct BpyRunJobRequest: Codable, Sendable, Equatable {
         diagnosticDeniedPaths: [String] = [],
         diagnosticAutoexecPositiveControl: Bool = false,
         diagnosticSupervisorIdentityWriteFailure: Bool = false,
-        diagnosticSupervisorIdentityCaptureFailure: Bool = false
+        diagnosticSupervisorIdentityCaptureFailure: Bool = false,
+        admission: UUID? = nil,
+        admissionDeadline: TimeInterval? = nil
     ) {
         self.sessionID = sessionID
         self.jobID = jobID
@@ -289,6 +338,8 @@ public struct BpyRunJobRequest: Codable, Sendable, Equatable {
         self.diagnosticAutoexecPositiveControl = diagnosticAutoexecPositiveControl
         self.diagnosticSupervisorIdentityWriteFailure = diagnosticSupervisorIdentityWriteFailure
         self.diagnosticSupervisorIdentityCaptureFailure = diagnosticSupervisorIdentityCaptureFailure
+        self.admission = admission
+        self.admissionDeadline = admissionDeadline
     }
 }
 
@@ -299,6 +350,21 @@ public struct BpyJobReference: Codable, Sendable, Equatable {
     public init(sessionID: UUID, jobID: UUID) {
         self.sessionID = sessionID
         self.jobID = jobID
+    }
+}
+
+public struct BpyReleaseResourcesRequest: Codable, Sendable {
+    public enum Disposition: String, Codable, Sendable { case stagedInputs, transferredResult, abandonedResult }
+    public let sessionID: UUID
+    public let jobID: UUID
+    public let disposition: Disposition
+    public let fingerprint: String?
+    public let outputs: [BpyOutputDescriptor]
+
+    public init(sessionID: UUID, jobID: UUID, disposition: Disposition,
+                fingerprint: String?, outputs: [BpyOutputDescriptor]) {
+        self.sessionID = sessionID; self.jobID = jobID; self.disposition = disposition
+        self.fingerprint = fingerprint; self.outputs = outputs
     }
 }
 
@@ -462,6 +528,9 @@ public struct BpyServiceResponse: Codable, Sendable, Equatable {
     public var activeProcessAuthorizationID: UUID?
     public var activeWorkerProcessIdentifier: Int32?
     public var storagePreparation: BpyStoragePreparation?
+    public var firstRelease: TimeInterval?
+    public var runningDeadline: TimeInterval?
+    public var terminalCommit: TimeInterval?
 
     public init(
         ok: Bool,
@@ -482,7 +551,8 @@ public struct BpyServiceResponse: Codable, Sendable, Equatable {
         activeProcessExecutable: String? = nil,
         activeProcessAuthorizationID: UUID? = nil,
         activeWorkerProcessIdentifier: Int32? = nil,
-        storagePreparation: BpyStoragePreparation? = nil
+        storagePreparation: BpyStoragePreparation? = nil,
+        firstRelease: TimeInterval? = nil, runningDeadline: TimeInterval? = nil, terminalCommit: TimeInterval? = nil
     ) {
         self.ok = ok
         self.jobID = jobID
@@ -503,5 +573,6 @@ public struct BpyServiceResponse: Codable, Sendable, Equatable {
         self.activeProcessAuthorizationID = activeProcessAuthorizationID
         self.activeWorkerProcessIdentifier = activeWorkerProcessIdentifier
         self.storagePreparation = storagePreparation
+        self.firstRelease = firstRelease; self.runningDeadline = runningDeadline; self.terminalCommit = terminalCommit
     }
 }

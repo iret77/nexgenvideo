@@ -24,6 +24,13 @@ enum BpyStorageRecoveryError: LocalizedError, Equatable {
 }
 
 final class BpyRuntimeVolume: @unchecked Sendable {
+    struct RoleHold: Codable, Sendable {
+        let slot: String
+        let role: BpyStorageRole
+        let acquired: BpyClockReading
+        let heldThrough: BpyClockReading
+    }
+
     private struct Record: Codable {
         let schema: String
         let id: UUID
@@ -40,9 +47,63 @@ final class BpyRuntimeVolume: @unchecked Sendable {
         var imageDevice: UInt64?
         var imageInode: UInt64?
         var lease: BpyStorageLease?
+        var role: BpyStorageRole?
+        var pairID: UUID?
+        var supervisors: [BpyObservedProcess]?
+        var workers: [BpyObservedProcess]?
     }
 
-    private static let coordination = NSLock()
+    private final class RoleLocks: @unchecked Sendable {
+        let lock = NSLock()
+        var values: [String: NSRecursiveLock] = [:]
+        func forRole(_ name: String) -> NSRecursiveLock {
+            lock.withLock {
+                if let value = values[name] { return value }
+                let value = NSRecursiveLock(); values[name] = value
+                return value
+            }
+        }
+    }
+    private static let roleLocks = RoleLocks()
+
+    static func nativeHoldDataRole(slot: String, cancellation: BpyOperationCancellation,
+                                   maximumDuration: TimeInterval, releaseRequested: @escaping @Sendable () -> Bool,
+                                   acquired: @escaping @Sendable (BpyClockReading) -> Void) throws -> RoleHold {
+        guard ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"]?.isEmpty == false,
+              bpyRuntimeServiceNames.contains(slot), maximumDuration.isFinite, maximumDuration >= 5 else { throw BpyAdmissionFailure.closed }
+        let coordination = roleLocks.forRole(slot + "-data")
+        let deadline = try BpyRuntimeClock.awakeSeconds() + 2
+        while !coordination.try() {
+            try cancellation.check()
+            guard try BpyRuntimeClock.awakeSeconds() < deadline else { throw BpyRuntimeError.timedOut }
+            Thread.sleep(forTimeInterval: 0.005)
+        }
+        defer { coordination.unlock() }
+        try cancellation.check()
+        guard let began = BpyRuntimeClock.read() else { throw BpyAdmissionFailure.sensorUnavailable }
+        acquired(began)
+        while true {
+            try cancellation.check()
+            let now = try BpyRuntimeClock.awakeSeconds()
+            if now >= began.awake + 5, releaseRequested() { break }
+            guard now < began.awake + maximumDuration else { throw BpyRuntimeError.timedOut }
+            Thread.sleep(forTimeInterval: 0.005)
+        }
+        guard let ended = BpyRuntimeClock.read() else { throw BpyAdmissionFailure.sensorUnavailable }
+        return .init(slot: slot, role: .data, acquired: began, heldThrough: ended)
+    }
+
+    func nativeRefreshWorkerRole() throws -> BpyClockReading {
+        guard ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"]?.isEmpty == false else { throw BpyAdmissionFailure.closed }
+        let coordination = Self.roleLocks.forRole(directory.lastPathComponent)
+        coordination.lock()
+        defer { coordination.unlock() }
+        guard !released, record.role == .worker, let service = try BpyKernelInspection.process(record.servicePID),
+              service.start == record.serviceStart else { throw BpyStorageRecoveryError.unverifiable }
+        try bindService(service.pid)
+        guard let ended = BpyRuntimeClock.read() else { throw BpyAdmissionFailure.sensorUnavailable }
+        return ended
+    }
     let lease: BpyStorageLease
     private let directory: URL
     private var record: Record
@@ -55,7 +116,10 @@ final class BpyRuntimeVolume: @unchecked Sendable {
     }
 
     static func create(preparation: BpyStoragePreparation, serviceName: String,
-                       maximumBytes: UInt64, onClaim: @Sendable () -> Void = {}) throws -> BpyRuntimeVolume {
+                       maximumBytes: UInt64, role: BpyStorageRole = .worker,
+                       onClaim: @Sendable () -> Void = {}) throws -> BpyRuntimeVolume {
+        guard bpyRuntimeServiceNames.contains(serviceName) else { throw BpyStorageRecoveryError.unverifiable }
+        let coordination = roleLocks.forRole(serviceName + (role == .data ? "-data" : ""))
         coordination.lock()
         defer { coordination.unlock() }
         guard bpyRuntimeServiceNames.contains(serviceName), maximumBytes >= 64 * 1_024 * 1_024,
@@ -69,9 +133,10 @@ final class BpyRuntimeVolume: @unchecked Sendable {
         let baseFD = try BpyStoragePaths.openDirectory(base)
         defer { Darwin.close(baseFD) }
         _ = try BpyStoragePaths.identity(baseFD)
-        let directory = base.appendingPathComponent(serviceName)
+        let directoryName = serviceName + (role == .data ? "-data" : "")
+        let directory = base.appendingPathComponent(directoryName)
         var existing = stat()
-        if fstatat(baseFD, serviceName, &existing, AT_SYMLINK_NOFOLLOW) == 0 {
+        if fstatat(baseFD, directoryName, &existing, AT_SYMLINK_NOFOLLOW) == 0 {
             try recover(directory: directory, current: preparation)
         } else if errno != ENOENT { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
         let pendingName = "pending-" + UUID().uuidString
@@ -82,20 +147,21 @@ final class BpyRuntimeVolume: @unchecked Sendable {
         let directoryFD = try BpyStoragePaths.openDirectory(pendingDirectory)
         defer { Darwin.close(directoryFD) }
         let identity = try BpyStoragePaths.identity(directoryFD)
-        var record = Record(schema: "nexgenvideo/bpy-storage/1", id: preparation.id,
-                            serviceName: serviceName, ownerPID: getpid(), ownerStart: ownerStart,
+        var record = Record(schema: "nexgenvideo/bpy-storage/2", id: role == .worker ? preparation.id : UUID(),
+                            serviceName: directoryName, ownerPID: getpid(), ownerStart: ownerStart,
                             bootSessionID: try BpyStorageJournal.bootSessionID(),
                             servicePID: preparation.servicePID, serviceStart: preparation.serviceStart,
                             directoryDevice: identity.device, directoryInode: identity.inode,
-                            directoryVolumeUUID: try persistentVolumeID(pendingDirectory), maximumBytes: maximumBytes)
+                            directoryVolumeUUID: try persistentVolumeID(pendingDirectory), maximumBytes: maximumBytes,
+                            role: role, pairID: preparation.id)
         guard mkdirat(directoryFD, "mount", 0o700) == 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
         try write(record, directory: pendingDirectory)
-        guard renameatx_np(baseFD, pendingName, baseFD, serviceName, UInt32(RENAME_EXCL)) == 0 else {
+        guard renameatx_np(baseFD, pendingName, baseFD, directoryName, UInt32(RENAME_EXCL)) == 0 else {
             throw BpyRuntimeError.unavailable("Another host already owns this 3D runtime slot.")
         }
         onClaim()
         do {
-            let mount = expectedMount(serviceName: serviceName)
+            let mount = expectedMount(serviceName: directoryName)
             let image = directory.appendingPathComponent("runtime.sparseimage")
             _ = try command(["create", "-type", "SPARSE", "-fs", "APFS", "-sectors", "\(maximumBytes / 512)",
                              "-volname", "NexGenVideo Runtime", image.path], in: directory)
@@ -124,9 +190,9 @@ final class BpyRuntimeVolume: @unchecked Sendable {
                 storageBookmarkDiagnostics.notice("bookmark.fail id=\(preparation.id.uuidString) domain=\(failure.domain) code=\(failure.code)")
                 throw error
             }
-            let lease = BpyStorageLease(id: preparation.id, mountPath: mount.path,
+            let lease = BpyStorageLease(id: record.id, mountPath: mount.path,
                                         device: mountedIdentity.device, capacityBytes: capacity.partialValue,
-                                        bookmark: bookmark)
+                                        bookmark: bookmark, role: role, pairID: preparation.id)
             let checked = try BpyStoragePaths.validateMount(lease, maximumBytes: maximumBytes)
             Darwin.close(checked)
             record.lease = lease
@@ -172,8 +238,9 @@ final class BpyRuntimeVolume: @unchecked Sendable {
     }
 
     func bindService(_ processIdentifier: Int32) throws {
-        Self.coordination.lock()
-        defer { Self.coordination.unlock() }
+        let coordination = Self.roleLocks.forRole(directory.lastPathComponent)
+        coordination.lock()
+        defer { coordination.unlock() }
         guard !released, let started = Self.start(processIdentifier) else {
             throw BpyRuntimeError.unavailable("The 3D storage service owner is unavailable.")
         }
@@ -182,9 +249,34 @@ final class BpyRuntimeVolume: @unchecked Sendable {
         try Self.write(record, directory: directory)
     }
 
+    func bindLaunch(supervisor: BpyObservedProcess, worker: BpyObservedProcess? = nil) throws {
+        let coordination = Self.roleLocks.forRole(directory.lastPathComponent)
+        coordination.lock()
+        defer { coordination.unlock() }
+        guard !released, try BpyKernelInspection.matches(supervisor),
+              supervisor.parent == getpid(), worker.map({ $0.parent == supervisor.pid }) ?? true else {
+            throw BpyStorageRecoveryError.unverifiable
+        }
+        var supervisors = try (record.supervisors ?? []).filter { try BpyKernelInspection.process($0.pid)?.start == $0.start }
+        guard try supervisors.allSatisfy({ try BpyKernelInspection.matches($0) }) else { throw BpyStorageRecoveryError.unverifiable }
+        if !supervisors.contains(where: { $0.pid == supervisor.pid && $0.start == supervisor.start }) {
+            supervisors.append(supervisor)
+        }
+        var workers = try (record.workers ?? []).filter { try BpyKernelInspection.process($0.pid)?.start == $0.start }
+        if let worker {
+            guard try BpyKernelInspection.matches(worker) else { throw BpyStorageRecoveryError.unverifiable }
+            if !workers.contains(where: { $0.pid == worker.pid && $0.start == worker.start }) { workers.append(worker) }
+        }
+        guard supervisors.count <= 1, workers.count <= 1 else { throw BpyStorageRecoveryError.unverifiable }
+        record.supervisors = supervisors
+        record.workers = workers
+        try Self.write(record, directory: directory)
+    }
+
     func release(serviceStopped: Bool, serviceProof: BpyStoragePreparation? = nil) throws {
-        Self.coordination.lock()
-        defer { Self.coordination.unlock() }
+        let coordination = Self.roleLocks.forRole(directory.lastPathComponent)
+        coordination.lock()
+        defer { coordination.unlock() }
         guard !released else { return }
         guard serviceStopped || Self.start(record.servicePID) != record.serviceStart
             || (serviceProof?.servicePID == record.servicePID && serviceProof?.serviceStart == record.serviceStart
@@ -196,22 +288,26 @@ final class BpyRuntimeVolume: @unchecked Sendable {
     }
 
     func serviceReleasedForRecovery(_ proof: BpyStoragePreparation?, workerStopped: Bool) -> Bool {
-        Self.coordination.lock()
-        defer { Self.coordination.unlock() }
+        let coordination = Self.roleLocks.forRole(directory.lastPathComponent)
+        coordination.lock()
+        defer { coordination.unlock() }
         guard let proof, !proof.inUseStorageIDs.contains(record.id) else { return false }
         return (proof.servicePID == record.servicePID && proof.serviceStart == record.serviceStart)
             || (workerStopped && Self.start(record.servicePID) != record.serviceStart)
     }
 
     static func releasePrepared(_ preparation: BpyStoragePreparation, serviceName: String,
-                                serviceStopped: Bool, serviceProof: BpyStoragePreparation? = nil) throws {
+                                serviceStopped: Bool, serviceProof: BpyStoragePreparation? = nil,
+                                role: BpyStorageRole = .worker) throws {
+        guard bpyRuntimeServiceNames.contains(serviceName) else { throw BpyStorageRecoveryError.unverifiable }
+        let coordination = roleLocks.forRole(serviceName + (role == .data ? "-data" : ""))
         coordination.lock()
         defer { coordination.unlock() }
         guard bpyRuntimeServiceNames.contains(serviceName) else {
             throw BpyRuntimeError.unavailable("The 3D storage slot is unknown.")
         }
         let directory = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Caches/NexGenVideo/BpyVolumes/" + serviceName)
+            .appendingPathComponent("Library/Caches/NexGenVideo/BpyVolumes/" + serviceName + (role == .data ? "-data" : ""))
         var status = stat()
         if lstat(directory.path, &status) != 0 {
             guard errno == ENOENT else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
@@ -220,9 +316,10 @@ final class BpyRuntimeVolume: @unchecked Sendable {
         let descriptor = try BpyStoragePaths.openDirectory(directory)
         defer { Darwin.close(descriptor) }
         let record = try readRecord(directoryFD: descriptor)
-        guard record.id == preparation.id, record.ownerPID == getpid(),
+        guard (record.pairID ?? record.id) == preparation.id, record.ownerPID == getpid(),
               record.bootSessionID == (try BpyStorageJournal.bootSessionID()) else { return }
-        guard record.schema == "nexgenvideo/bpy-storage/1", record.serviceName == serviceName,
+        guard ["nexgenvideo/bpy-storage/1", "nexgenvideo/bpy-storage/2"].contains(record.schema),
+              record.serviceName == directory.lastPathComponent,
               start(record.ownerPID) == record.ownerStart,
               record.servicePID == preparation.servicePID, record.serviceStart == preparation.serviceStart,
               (64 * 1_024 * 1_024...8 * 1_024 * 1_024 * 1_024).contains(record.maximumBytes),
@@ -240,7 +337,8 @@ final class BpyRuntimeVolume: @unchecked Sendable {
         let identity = try BpyStoragePaths.identity(descriptor)
         let record = try readRecord(directoryFD: descriptor)
         let previousBoot = record.bootSessionID != (try BpyStorageJournal.bootSessionID())
-        guard record.schema == "nexgenvideo/bpy-storage/1", record.serviceName == directory.lastPathComponent,
+        guard ["nexgenvideo/bpy-storage/1", "nexgenvideo/bpy-storage/2"].contains(record.schema),
+              record.serviceName == directory.lastPathComponent,
               (previousBoot || record.directoryDevice == identity.device), record.directoryInode == identity.inode,
               record.directoryVolumeUUID == (try persistentVolumeID(directory)),
               (64 * 1_024 * 1_024...8 * 1_024 * 1_024 * 1_024).contains(record.maximumBytes),
@@ -261,6 +359,11 @@ final class BpyRuntimeVolume: @unchecked Sendable {
         guard (previousBoot || identity.device == record.directoryDevice), identity.inode == record.directoryInode,
               record.directoryVolumeUUID == (try persistentVolumeID(directory)) else {
             throw BpyRuntimeError.unavailable("The 3D storage directory changed; it was left untouched.")
+        }
+        if !previousBoot {
+            for process in (record.supervisors ?? []) + (record.workers ?? []) {
+                guard try BpyKernelInspection.process(process.pid)?.start != process.start else { throw BpyStorageRecoveryError.pending }
+            }
         }
         try requireOperationStopped(directoryFD: descriptor)
         var imageStatus = stat()
@@ -404,7 +507,7 @@ final class BpyRuntimeVolume: @unchecked Sendable {
         process.standardError = standardError
         let completed = DispatchSemaphore(value: 0)
         process.terminationHandler = { _ in completed.signal() }
-        do { try process.run(); launched = true }
+        do { try process.runCoordinated(); launched = true }
         catch {
             try completeUnstartedIntent(intent, directoryFD: descriptor)
             throw error

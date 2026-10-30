@@ -47,7 +47,7 @@ final class ClaudeCodeProcess: @unchecked Sendable {
             throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
         }
         process.terminationHandler = { [weak self] _ in self?.observeExit() }
-        try process.run()
+        try process.runCoordinated()
         try? stdinPipe.fileHandleForReading.close()
         try? stdoutPipe.fileHandleForWriting.close()
         try? stderrPipe.fileHandleForWriting.close()

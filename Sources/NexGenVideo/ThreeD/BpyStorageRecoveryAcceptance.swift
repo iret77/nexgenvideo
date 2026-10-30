@@ -43,7 +43,7 @@ nonisolated enum BpyStorageRecoveryAcceptance {
                 process.standardError = handle
                 let completed = DispatchSemaphore(value: 0)
                 process.terminationHandler = { _ in completed.signal() }
-                try process.run()
+                try process.runCoordinated()
                 guard completed.wait(timeout: .now() + 30) == .success else {
                     throw SpatialSceneError.invalid("The native storage helper did not complete; its journal remains for recovery.")
                 }

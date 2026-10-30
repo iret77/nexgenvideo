@@ -63,9 +63,22 @@ struct SpatialSceneRevision: Sendable {
     let manifest: SpatialSceneManifest
     let snapshot: BpySpatialSnapshot
     let manifestData: Data
-    let sceneData: Data
+    let scenePayload: SpatialScenePayload
+    var sceneData: Data { get throws { try scenePayload.data() } }
     let snapshotData: Data
     let resources: [UUID: Data]
+    init(manifest: SpatialSceneManifest, snapshot: BpySpatialSnapshot, manifestData: Data,
+         scenePayload: SpatialScenePayload, snapshotData: Data, resources: [UUID: Data]) {
+        self.manifest = manifest; self.snapshot = snapshot; self.manifestData = manifestData
+        self.scenePayload = scenePayload; self.snapshotData = snapshotData; self.resources = resources
+    }
+
+    init(manifest: SpatialSceneManifest, snapshot: BpySpatialSnapshot, manifestData: Data,
+         sceneData: Data, snapshotData: Data, resources: [UUID: Data]) {
+        self.init(manifest: manifest, snapshot: snapshot, manifestData: manifestData,
+            scenePayload: .init(data: sceneData), snapshotData: snapshotData, resources: resources)
+    }
+
 }
 
 struct SpatialSceneCandidate: Sendable {
@@ -110,17 +123,30 @@ enum SpatialSceneStore {
     }
 
     static func load(_ head: SpatialSceneHead, in pipelineRoot: URL) throws -> SpatialSceneRevision {
+        try BpyMediaReadScope.withScope(dataRoot: pipelineRoot) { scope in
+            try scope.withConsumer { work in
+                try load(head, in: pipelineRoot, checking: { try scope.check(); try work.check() })
+            }
+        }
+    }
+
+    private static func load(_ head: SpatialSceneHead, in pipelineRoot: URL,
+                             checking: () throws -> Void) throws -> SpatialSceneRevision {
         let path = revisionPath(scene: head.id, revision: head.revision)
-        let manifestData = try read("\(path)/manifest.v1.json", in: pipelineRoot)
+        let manifestData = try read("\(path)/manifest.v1.json", in: pipelineRoot, checking: checking)
         guard digest(manifestData) == head.manifestSHA256 else { throw SpatialSceneError.changed }
         let manifest = try JSONDecoder().decode(SpatialSceneManifest.self, from: manifestData)
         guard manifest.schema == "spatial-scene-manifest/v1", manifest.sceneID == head.id,
               manifest.revision == head.revision, manifest.name == head.name else {
             throw SpatialSceneError.invalid("The location revision does not match its index.")
         }
-        let scene = try read("\(path)/scene.blend", in: pipelineRoot)
-        let snapshotData = try read("\(path)/snapshot.v1.json", in: pipelineRoot)
-        guard digest(scene) == manifest.sceneSHA256,
+        let sceneFile = try BpyRuntimeFile.borrow("\(path)/scene.blend", in: pipelineRoot,
+            maximum: 512 * 1_024 * 1_024, expectedSHA256: manifest.sceneSHA256, checking: checking)
+        defer { sceneFile.release() }
+        let scene = SpatialScenePayload(path: "\(path)/scene.blend", root: pipelineRoot,
+            sha256: sceneFile.sha256, byteCount: sceneFile.byteCount)
+        let snapshotData = try read("\(path)/snapshot.v1.json", in: pipelineRoot, checking: checking)
+        guard scene.sha256 == manifest.sceneSHA256,
               digest(snapshotData) == manifest.snapshotSHA256,
               manifest.receipt.sceneSHA256 == manifest.sceneSHA256,
               manifest.receipt.snapshotSHA256 == manifest.snapshotSHA256,
@@ -137,14 +163,15 @@ enum SpatialSceneStore {
         var resources: [UUID: Data] = [:]
         for item in manifest.resources {
             try validateFilename(item.filename)
-            let data = try read("\(path)/resources/\(item.id.uuidString)/\(item.filename)", in: pipelineRoot)
-            guard data.count == item.byteCount, digest(data) == item.sha256 else {
+            let data = try read("\(path)/resources/\(item.id.uuidString)/\(item.filename)", in: pipelineRoot, checking: checking)
+            guard data.count == item.byteCount, try digest(data, checking: checking) == item.sha256 else {
                 throw SpatialSceneError.invalid("A location resource changed: \(item.filename)")
             }
             resources[item.id] = data
         }
+        try checking()
         return .init(manifest: manifest, snapshot: snapshot, manifestData: manifestData,
-                     sceneData: scene, snapshotData: snapshotData, resources: resources)
+                     scenePayload: scene, snapshotData: snapshotData, resources: resources)
     }
 
     static func prepare(
@@ -154,60 +181,77 @@ enum SpatialSceneStore {
         expectedHead: SpatialSceneHead?,
         runtimeLock: Data,
         worker: Data,
-        resources: [(SpatialSceneResource, Data)]
+        resources: [(SpatialSceneResource, Data)],
+        cancellation: BpyOperationCancellation
     ) throws -> SpatialSceneCandidate {
-        struct Verification: Decodable {
-            let schema: String
-            let jobID: UUID
-            let fingerprint: String
-            let blenderBuildHash: String
-            let spatial: BpySpatialSnapshot?
-        }
-        guard result.response.ok, result.response.state == .awaitingConfirmation,
-              let jobID = result.response.jobID, let fingerprint = result.response.jobFingerprint,
-              let sceneURL = result.stagedOutputs["scene.blend"],
-              let verificationURL = result.stagedOutputs["verification.json"],
-              expectedHead == nil || expectedHead?.id == sceneID,
-              !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw SpatialSceneError.invalid("The runtime did not return a complete location candidate.")
-        }
-        let scene = try output(sceneURL, named: "scene.blend", result: result)
-        let verificationData = try output(verificationURL, named: "verification.json", result: result)
-        let verification = try JSONDecoder().decode(Verification.self, from: verificationData)
-        guard verification.schema == "nexgenvideo/bpy-verification/1",
-              verification.jobID == jobID, verification.fingerprint == fingerprint,
-              let snapshot = verification.spatial else {
-            throw SpatialSceneError.invalid("The independent location verification is missing.")
-        }
-        try validate(snapshot)
-        let snapshotData = try encode(snapshot)
-        let resourceList = resources.map(\.0).sorted { $0.id.uuidString < $1.id.uuidString }
-        guard Set(resourceList.map(\.id)).count == resources.count else {
-            throw SpatialSceneError.invalid("A location resource ID is duplicated.")
-        }
-        for (item, data) in resources {
-            try validateFilename(item.filename)
-            guard item.byteCount == data.count, item.sha256 == digest(data) else {
-                throw SpatialSceneError.invalid("A location import changed before publication.")
+        guard let lease = result.lease else { throw SpatialSceneError.changed }
+        return try lease.withConsumer(cancellation: cancellation) { work, cancellation in
+            func checking() throws { try cancellation.check(); try work.check() }
+            struct Verification: Decodable {
+                let schema: String
+                let jobID: UUID
+                let fingerprint: String
+                let blenderBuildHash: String
+                let spatial: BpySpatialSnapshot?
             }
+            guard result.response.ok, result.response.state == .awaitingConfirmation,
+                  let jobID = result.response.jobID, let fingerprint = result.response.jobFingerprint,
+                  result.stagedOutputs["scene.blend"] != nil,
+                  let verificationURL = result.stagedOutputs["verification.json"],
+                  expectedHead == nil || expectedHead?.id == sceneID,
+                  !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw SpatialSceneError.invalid("The runtime did not return a complete location candidate.")
+            }
+            guard let sceneDescriptor = result.response.outputs.first(where: { $0.name == "scene.blend" }),
+                  sceneDescriptor.byteCount <= (result.lease?.limits.inputBytes ?? 512 * 1_024 * 1_024) else { throw SpatialSceneError.changed }
+            let file = try lease.file("scene.blend")
+            guard file.byteCount == sceneDescriptor.byteCount, file.sha256 == sceneDescriptor.sha256 else {
+                file.release(); throw SpatialSceneError.changed
+            }
+            let scene = SpatialScenePayload(file: file)
+            var accepted = false
+            defer { if !accepted { scene.releaseRuntimeSource() } }
+            try scene.verify(checking: checking)
+            let verificationData = try output(verificationURL, named: "verification.json", result: result, checking: checking)
+            let verification = try JSONDecoder().decode(Verification.self, from: verificationData)
+            guard verification.schema == "nexgenvideo/bpy-verification/1",
+                  verification.jobID == jobID, verification.fingerprint == fingerprint,
+                  let snapshot = verification.spatial else {
+                throw SpatialSceneError.invalid("The independent location verification is missing.")
+            }
+            try validate(snapshot)
+            let snapshotData = try encode(snapshot)
+            let resourceList = resources.map(\.0).sorted { $0.id.uuidString < $1.id.uuidString }
+            guard Set(resourceList.map(\.id)).count == resources.count else {
+                throw SpatialSceneError.invalid("A location resource ID is duplicated.")
+            }
+            for (item, data) in resources {
+                try validateFilename(item.filename)
+                guard item.byteCount == data.count, item.sha256 == (try digest(data, checking: checking)) else {
+                    throw SpatialSceneError.invalid("A location import changed before publication.")
+                }
+            }
+            let receipt = SpatialSceneReceipt(
+                jobID: jobID, jobFingerprint: fingerprint, runtimeLockSHA256: digest(runtimeLock),
+                workerSHA256: digest(worker), blenderBuildHash: verification.blenderBuildHash,
+                sceneSHA256: scene.sha256, snapshotSHA256: digest(snapshotData),
+                resourceClosureSHA256: digest(try encode(resourceList))
+            )
+            let manifest = SpatialSceneManifest(
+                sceneID: sceneID, revision: UUID(), parentRevision: expectedHead?.revision,
+                restoredFromRevision: nil, name: name, sceneSHA256: scene.sha256,
+                snapshotSHA256: digest(snapshotData), resourceClosureSHA256: digest(try encode(resourceList)),
+                resources: resourceList, receipt: receipt
+            )
+            let manifestData = try encode(manifest)
+            let candidate = SpatialSceneCandidate(revision: .init(
+                manifest: manifest, snapshot: snapshot, manifestData: manifestData,
+                scenePayload: scene, snapshotData: snapshotData,
+                resources: Dictionary(uniqueKeysWithValues: resources.map { ($0.0.id, $0.1) })
+            ), expectedHead: expectedHead)
+            accepted = true
+            return candidate
         }
-        let receipt = SpatialSceneReceipt(
-            jobID: jobID, jobFingerprint: fingerprint, runtimeLockSHA256: digest(runtimeLock),
-            workerSHA256: digest(worker), blenderBuildHash: verification.blenderBuildHash,
-            sceneSHA256: digest(scene), snapshotSHA256: digest(snapshotData),
-            resourceClosureSHA256: digest(try encode(resourceList))
-        )
-        let manifest = SpatialSceneManifest(
-            sceneID: sceneID, revision: UUID(), parentRevision: expectedHead?.revision,
-            restoredFromRevision: nil, name: name, sceneSHA256: digest(scene),
-            snapshotSHA256: digest(snapshotData), resourceClosureSHA256: digest(try encode(resourceList)),
-            resources: resourceList, receipt: receipt
-        )
-        return .init(revision: .init(
-            manifest: manifest, snapshot: snapshot, manifestData: try encode(manifest),
-            sceneData: scene, snapshotData: snapshotData,
-            resources: Dictionary(uniqueKeysWithValues: resources.map { ($0.0.id, $0.1) })
-        ), expectedHead: expectedHead)
     }
 
     static func restoration(_ original: SpatialSceneRevision, replacing head: SpatialSceneHead) throws -> SpatialSceneCandidate {
@@ -221,7 +265,7 @@ enum SpatialSceneStore {
         )
         return .init(revision: .init(
             manifest: manifest, snapshot: original.snapshot, manifestData: try encode(manifest),
-            sceneData: original.sceneData, snapshotData: original.snapshotData, resources: original.resources
+            scenePayload: original.scenePayload, snapshotData: original.snapshotData, resources: original.resources
         ), expectedHead: head)
     }
 
@@ -237,7 +281,12 @@ enum SpatialSceneStore {
         guard !FileManager.default.fileExists(atPath: stagingPipelineRoot.appendingPathComponent(path).path) else {
             throw SpatialSceneError.invalid("An immutable location revision already exists.")
         }
-        try write(revision.sceneData, to: "\(path)/scene.blend", in: stagingPipelineRoot)
+        try BpyMediaReadScope.withScope(dataRoot: stagingPipelineRoot) { scope in
+            try scope.withConsumer { work in
+                try revision.scenePayload.export(to: destination("\(path)/scene.blend", in: stagingPipelineRoot),
+                    checking: { try scope.check(); try work.check() })
+            }
+        }
         try write(revision.snapshotData, to: "\(path)/snapshot.v1.json", in: stagingPipelineRoot)
         for item in manifest.resources {
             guard let data = revision.resources[item.id] else {
@@ -291,7 +340,8 @@ enum SpatialSceneStore {
         "\(basePath)/scenes/\(scene.uuidString)/revisions/\(revision.uuidString)"
     }
 
-    static func read(_ path: String, in root: URL) throws -> Data {
+    static func read(_ path: String, in root: URL, checking: () throws -> Void = {}) throws -> Data {
+        try checking()
         let components = path.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
         guard !components.isEmpty else { throw SpatialSceneError.invalid("A location path is empty.") }
         for component in components { try validateFilename(component) }
@@ -311,14 +361,34 @@ enum SpatialSceneStore {
               status.st_size >= 0, status.st_size <= 512 * 1_024 * 1_024 else {
             throw SpatialSceneError.invalid("The location resource is not a bounded regular file.")
         }
-        let data = try FileHandle(fileDescriptor: descriptor, closeOnDealloc: false)
-            .read(upToCount: Int(status.st_size) + 1) ?? Data()
-        guard data.count == status.st_size else { throw SpatialSceneError.changed }
+        var data = Data(count: Int(status.st_size))
+        try data.withUnsafeMutableBytes { bytes in
+            var offset = 0
+            while offset < bytes.count {
+                try checking()
+                let count = pread(descriptor, bytes.baseAddress!.advanced(by: offset), min(65_536, bytes.count - offset), off_t(offset))
+                if count < 0 && errno == EINTR { continue }
+                guard count > 0 else { throw SpatialSceneError.changed }
+                offset += count
+            }
+        }
+        var after = stat()
+        guard fstat(descriptor, &after) == 0, after.st_size == status.st_size,
+              after.st_dev == status.st_dev, after.st_ino == status.st_ino,
+              after.st_mtimespec.tv_sec == status.st_mtimespec.tv_sec,
+              after.st_mtimespec.tv_nsec == status.st_mtimespec.tv_nsec,
+              after.st_ctimespec.tv_sec == status.st_ctimespec.tv_sec,
+              after.st_ctimespec.tv_nsec == status.st_ctimespec.tv_nsec else { throw SpatialSceneError.changed }
+        try checking()
         return data
     }
 
     private static func write(_ data: Data, to path: String, in root: URL) throws {
-        var directory = root
+        try data.write(to: destination(path, in: root), options: .atomic)
+    }
+
+    private static func destination(_ path: String, in root: URL) throws -> URL {
+        var directory = root.resolvingSymlinksInPath()
         let components = path.split(separator: "/").map(String.init)
         for component in components { try validateFilename(component) }
         for component in components.dropLast() {
@@ -331,18 +401,29 @@ enum SpatialSceneStore {
                 throw SpatialSceneError.invalid("A location path escapes its project.")
             }
         }
-        try data.write(to: directory.appendingPathComponent(components.last!), options: .atomic)
+        return directory.appendingPathComponent(components.last!)
     }
 
-    private static func output(_ url: URL, named name: String, result: BpyRuntimeJobResult) throws -> Data {
+    private static func output(_ url: URL, named name: String, result: BpyRuntimeJobResult,
+                               checking: () throws -> Void) throws -> Data {
         guard let descriptor = result.response.outputs.first(where: { $0.name == name }) else {
             throw SpatialSceneError.invalid("A verified location output is missing.")
         }
-        let data = try read(url.lastPathComponent, in: url.deletingLastPathComponent())
-        guard data.count == descriptor.byteCount, digest(data) == descriptor.sha256 else {
+        let data = try read(url.lastPathComponent, in: url.deletingLastPathComponent(), checking: checking)
+        guard data.count == descriptor.byteCount, try digest(data, checking: checking) == descriptor.sha256 else {
             throw SpatialSceneError.changed
         }
         return data
+    }
+
+    static func digest(_ data: Data, checking: () throws -> Void) throws -> String {
+        var digest = SHA256()
+        for offset in stride(from: 0, to: data.count, by: 65_536) {
+            try checking()
+            digest.update(data: data[offset..<min(offset + 65_536, data.count)])
+        }
+        try checking()
+        return digest.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
     private static func validMatrix(_ values: [Double]) -> Bool {

@@ -120,7 +120,7 @@ enum HangDiagnosticUI {
                 process.arguments = ["-c", "-k", "--keepParent", copy.path, archive.path]
                 process.standardOutput = FileHandle.nullDevice
                 process.standardError = FileHandle.nullDevice
-                try process.run()
+                try process.runCoordinated()
                 process.waitUntilExit()
                 guard process.terminationStatus == 0 else { throw CocoaError(.fileWriteUnknown) }
                 try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: archive.path)

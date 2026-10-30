@@ -6,6 +6,41 @@ import Testing
 
 @Suite("Portable spatial scene revisions")
 struct SpatialSceneStoreTests {
+    @Test func projectResourceReadStopsOnCallerCancellationBetweenBlocks() throws {
+        try withDirectory { root in
+            let bytes = Data(repeating: 0x69, count: 3 * 65_536)
+            try bytes.write(to: root.appendingPathComponent("resource.glb"))
+            let token = BpyOperationCancellation()
+            var checks = 0
+            #expect(!Task.isCancelled)
+            #expect(throws: BpyAdmissionFailure.cancelled) {
+                _ = try SpatialSceneStore.read("resource.glb", in: root, checking: {
+                    checks += 1
+                    if checks == 3 { token.cancel() }
+                    try token.check()
+                })
+            }
+            #expect(checks == 3)
+            #expect(!Task.isCancelled)
+            #expect(try SpatialSceneStore.read("resource.glb", in: root) == bytes)
+        }
+    }
+
+    @Test func resourceDigestStopsOnTheCallerTokenAndKeepsTheExactControlDigest() throws {
+        let bytes = Data(repeating: 0x64, count: 3 * 65_536), token = BpyOperationCancellation()
+        var checks = 0
+        #expect(throws: BpyAdmissionFailure.cancelled) {
+            _ = try SpatialSceneStore.digest(bytes, checking: {
+                checks += 1
+                if checks == 2 { token.cancel() }
+                try token.check()
+            })
+        }
+        #expect(checks == 2)
+        #expect(!Task.isCancelled)
+        #expect(try SpatialSceneStore.digest(bytes, checking: {}) == SpatialSceneStore.digest(bytes))
+    }
+
     @Test func validClayDimensionsStayUnchanged() throws {
         for (width, height) in [(64, 64), (128, 128), (1280, 720), (1920, 1080), (3840, 2160), (4096, 2160), (64, 4096), (4096, 64)] {
             let result = try SpatialClayRenderer.renderDimensions(width: width, height: height)
@@ -73,7 +108,7 @@ struct SpatialSceneStoreTests {
             let reopened = try SpatialSceneStore.load(head, in: copy)
             #expect(reopened.resources == candidate.revision.resources)
             #expect(reopened.snapshot == candidate.revision.snapshot)
-            #expect(reopened.sceneData == candidate.revision.sceneData)
+            #expect(try reopened.sceneData == candidate.revision.sceneData)
         }
     }
 
@@ -208,6 +243,25 @@ struct SpatialSceneStoreTests {
          "objects": [], "cameras": [], "meshes": [], "externalPaths": []]
     }
 
+    @Test func projectPayloadVerificationAndHeaderUseOneHashPassAndRejectReplacement() throws {
+        try withDirectory { root in
+            let bytes = Data(repeating: 0x42, count: 1_048_576), path = root.appendingPathComponent("scene.blend")
+            try bytes.write(to: path)
+            let expected = SpatialSceneStore.digest(bytes)
+            let payload = SpatialScenePayload(path: "scene.blend", root: root, sha256: expected, byteCount: UInt64(bytes.count))
+            var checks = 0
+            #expect(try payload.verify(checking: { checks += 1 }) == expected)
+            #expect(checks >= 16 && checks < 32)
+            checks = 0
+            let verified = try payload.verifiedHeader(checking: { checks += 1 })
+            #expect(verified.sha256 == expected && verified.header == Data(bytes.prefix(64)))
+            #expect(checks >= 16 && checks < 32)
+            try Data(repeating: 0x43, count: bytes.count).write(to: path, options: .atomic)
+            #expect(throws: CocoaError(.fileReadCorruptFile)) { try payload.verify(checking: {}) }
+            #expect(throws: CocoaError(.fileReadCorruptFile)) { try payload.verifiedHeader(checking: {}) }
+        }
+    }
+
     private func fixture() throws -> SpatialSceneCandidate {
         let snapshot = try JSONDecoder().decode(BpySpatialSnapshot.self, from: JSONSerialization.data(withJSONObject: snapshotJSON()))
         let snapshotData = try SpatialSceneStore.encode(snapshot)
@@ -230,7 +284,7 @@ struct SpatialSceneStoreTests {
     }
 
     private func withDirectory(_ body: (URL) throws -> Void) throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let root = URL(fileURLWithPath: try BpyRuntimePath.canonical(FileManager.default.temporaryDirectory)).appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
         defer { try? FileManager.default.removeItem(at: root) }
         try body(root)

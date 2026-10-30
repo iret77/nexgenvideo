@@ -123,6 +123,7 @@ enum ProjectWorkingCopy {
                         throw POSIXError(.init(rawValue: errno) ?? .EIO)
                     }
                     state.available = false
+                    BpyMediaReadScope.register(root: destination.appendingPathComponent(pipelineDir), generation: generation)
                     return OpenResult(home: destination, recoveredUnsaved: false, generation: generation)
                 }
             }
@@ -144,7 +145,8 @@ enum ProjectWorkingCopy {
         }
         let staging = try stageMaterialization(key: key, packageURL: packageURL)
         do {
-            try validate(staging)
+            try BpyMediaReadScope.withTransaction(source: home(key).appendingPathComponent(pipelineDir),
+                staging: staging.appendingPathComponent(pipelineDir)) { try validate(staging) }
             try Task.checkCancellation()
             let generation = UUID()
             try Data(generation.uuidString.utf8).write(to: staging.appendingPathComponent(generationMarker), options: .atomic)
@@ -432,7 +434,7 @@ enum ProjectWorkingCopy {
         do {
             try cloneProjectReadView(from: home, to: stagingHome, fm: fm)
             try Task.checkCancellation()
-            let output = try mutate(stagingRoot)
+            let output = try BpyMediaReadScope.withTransaction(source: root, staging: stagingRoot) { try mutate(stagingRoot) }
             return .init(projectHome: home, root: root, stagingHome: stagingHome,
                          stagingRoot: stagingRoot, state: PreparedPipelineState(), output: output)
         } catch {
@@ -650,6 +652,7 @@ enum ProjectWorkingCopy {
     static func discard(key: String) {
         generationLock.lock()
         defer { generationLock.unlock() }
+        BpyMediaReadScope.close(root: home(key).appendingPathComponent(pipelineDir))
         try? FileManager.default.removeItem(at: home(key))
     }
 
@@ -658,6 +661,7 @@ enum ProjectWorkingCopy {
         generationLock.lock()
         defer { generationLock.unlock() }
         guard currentGeneration(key: key) == generation else { return false }
+        BpyMediaReadScope.close(root: home(key).appendingPathComponent(pipelineDir), generation: generation)
         do {
             try FileManager.default.removeItem(at: home(key))
             return true
@@ -679,6 +683,7 @@ enum ProjectWorkingCopy {
             to: home(key).appendingPathComponent(generationMarker),
             options: .atomic
         )
+        BpyMediaReadScope.register(root: home(key).appendingPathComponent(pipelineDir), generation: generation)
     }
 
     private static func currentGeneration(key: String) -> UUID? {

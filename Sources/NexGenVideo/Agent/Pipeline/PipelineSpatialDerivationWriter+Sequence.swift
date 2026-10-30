@@ -45,6 +45,8 @@ extension PipelineSpatialDerivationWriter {
     @MainActor
     static func renderPlanning(shotID: String, expectedState: CanonicalArtifactReferenceV1,
                                editor: EditorViewModel) async throws -> ShotPlanningDraftV1 {
+        let cancellation = BpyOperationCancellation()
+        return try await withTaskCancellationHandler {
         try PipelineShotPlanningEditor.requireAvailable(editor: editor)
         guard let home = editor.workingRoot, let key = editor.openWorkingCopyKey,
               let root = DataRootResolver.dataRoot(of: home),
@@ -61,7 +63,7 @@ extension PipelineSpatialDerivationWriter {
         let runtime = operation.session
         let declaration = ProjectPackGate.MutationDeclaration(packName: editor.declaredPluginName,
             binding: editor.declaredPluginBinding, productionContract: editor.declaredProductionContract)
-        let input = try await background {
+        let input = try await background(cancellation: cancellation, dataRoot: root) {
             _ = try PipelinePlanningWriteAccess(dataRoot: root, declaration: declaration, phase: "shot_planning")
             let board = try PlanningWriterIO.storyboard(dataRoot: root)
             let draft = try ProductionPlanningStoreV1.readShotPlanning(dataRoot: root, storyboard: board)
@@ -92,12 +94,14 @@ extension PipelineSpatialDerivationWriter {
         try Task.checkCancellation()
         guard editor.workingRoot == home, BpyRuntimeHost.shared.isOperationActive(operation) else { throw changed() }
         let candidate = try await SpatialClayRenderer.prepareSequence(request: input.4, revision: input.0.scene, state: input.1,
-            timing: input.5, runtime: runtime, runtimeRoot: runtime.bundledRuntimeRoot)
+            timing: input.5, runtime: runtime, runtimeRoot: runtime.bundledRuntimeRoot, cancellation: cancellation)
         defer { candidate.discard() }
-        let transaction = try await background {
+        let borrowed = try candidate.borrowFiles()
+        defer { for file in borrowed { file.release() } }
+        let transaction = try await background(cancellation: cancellation, dataRoot: root) {
             try Task.checkCancellation()
             try input.6.requireUnchanged()
-            try runtime.authenticateSpatialSequence(candidate, source: input.0.scene)
+            try runtime.authenticateSpatialSequence(candidate, source: input.0.scene, cancellation: cancellation)
             let path = try ProductionWorkflowRecoveryMigration.outputPath(area: "execution/blockout",
                 leaf: "shot-\(candidate.proof.id.uuidString.lowercased())/sequence.v1.json", dataRoot: root)
             let directory = (path as NSString).deletingLastPathComponent
@@ -142,7 +146,9 @@ extension PipelineSpatialDerivationWriter {
         }
         defer { Task.detached { transaction.discard() } }
         try Task.checkCancellation()
+        try cancellation.check()
         let result = try transaction.commit { _ in
+            try cancellation.check()
             guard editor.workingRoot == home, editor.openWorkingCopyKey == key,
                   editor.declaredPluginName == declaration.packName, editor.declaredPluginBinding == declaration.binding,
                   editor.declaredProductionContract == declaration.productionContract,
@@ -157,11 +163,24 @@ extension PipelineSpatialDerivationWriter {
         PipelineShotPlanningEditor.recordNativeAssignment(before: input.0.draft, after: result, editor: editor, name: "Render Shot Geometry")
         editor.onPipelineChanged?(); await editor.refreshEngineState()
         return result
+        } onCancel: { cancellation.cancel() }
     }
 
     static func planningDerivationReferences(reference: CanonicalArtifactReferenceV1, stateReference: CanonicalArtifactReferenceV1,
                                              cameraID: String, sceneReference: CanonicalArtifactReferenceV1, shotID: String,
                                              dataRoot: URL) throws -> [CanonicalArtifactReferenceV1] {
+        try BpyMediaReadScope.withScope(dataRoot: dataRoot) { scope in
+            try scope.withConsumer { _ in
+                try planningDerivationReferences(reference: reference, stateReference: stateReference, cameraID: cameraID,
+                    sceneReference: sceneReference, shotID: shotID, dataRoot: dataRoot, scope: scope)
+            }
+        }
+    }
+
+    private static func planningDerivationReferences(reference: CanonicalArtifactReferenceV1, stateReference: CanonicalArtifactReferenceV1,
+                                                     cameraID: String, sceneReference: CanonicalArtifactReferenceV1, shotID: String,
+                                                     dataRoot: URL, scope: BpyMediaReadScope) throws -> [CanonicalArtifactReferenceV1] {
+        try scope.check()
         let data = try bytes(reference, dataRoot: dataRoot)
         let proof = try JSONDecoder().decode(SpatialClaySequenceProof.self, from: data)
         let recordPath = adoptionPath(proof.id)
@@ -190,10 +209,13 @@ extension PipelineSpatialDerivationWriter {
               adoption.media["clay.mov"]?.role == "core.shot-clay-video" else { throw changed() }
         var files: [String: URL] = [:]
         for (name, media) in adoption.media {
+            try scope.check()
             guard media.path == directory + "/" + name else { throw changed() }
-            files[name] = try ProjectLocalFile.requireHash(media.sha256, at: media.path, dataRoot: dataRoot)
+            let url = try ProjectLocalFile.resolve(media.path, dataRoot: dataRoot)
+            guard try scope.digest(at: url) == media.sha256 else { throw changed() }
+            files[name] = url
         }
-        try SpatialClayRenderer.validateSequence(proofData: data, files: files, against: scene)
+        try SpatialClayRenderer.validateSequence(proofData: data, files: files, against: scene, scope: scope)
         return [reference, adoption.draft, adoption.sceneManifest,
             try PlanningWriterIO.reference(recordPath, id: "spatial-sequence-adoption.\(proof.id)", role: "core.spatial-adoption", dataRoot: dataRoot)]
             + Array(adoption.media.values) + (try planningStateReferences(reference: stateReference, cameraID: cameraID,

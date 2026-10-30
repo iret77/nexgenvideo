@@ -647,6 +647,7 @@ final class EditorViewModel {
         let dataRoot = workingCopyHome.flatMap {
             DataRootResolver.dataRoot(of: $0)
         }
+        if let dataRoot { BpyMediaReadScope.close(root: dataRoot, generation: generation) }
         let phaseCoordinator = pipelinePhaseRunCoordinator
         let importTail = mediaImportTail
         let extractionTask = cancelAudioExtractionForProjectChange()

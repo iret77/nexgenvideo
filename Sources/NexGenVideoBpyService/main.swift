@@ -71,7 +71,6 @@ private func fileSystemPath(
     _ fileIdentifier: UInt64
 ) -> Int
 
-private let resultRetentionSeconds: TimeInterval = 15 * 60
 
 private extension NSLock {
     func access<T>(_ body: () throws -> T) rethrows -> T {
@@ -139,7 +138,7 @@ private func processUsage(_ processIdentifier: pid_t) -> ProcessUsage? {
     )
 }
 
-private func stopProcess(_ process: BpyOwnedProcess) {
+private func stopProcess(_ process: BpyRemoteProcess) {
     do { try process.signal(SIGTERM) }
     catch { openDiagnostics.error("runtime.stop-fail code=\((error as NSError).code, privacy: .public)") }
 }
@@ -732,12 +731,35 @@ private final class UploadRecord {
     let expectedSHA256: String
     let handle: FileHandle
     var receivedBytes: UInt64 = 0
+    var failed = false
+    private var isOpen = true
 
     init(url: URL, totalBytes: UInt64, expectedSHA256: String, handle: FileHandle) {
         self.url = url
         self.totalBytes = totalBytes
         self.expectedSHA256 = expectedSHA256
         self.handle = handle
+    }
+
+    static func create(url: URL, totalBytes: UInt64, expectedSHA256: String) throws -> UploadRecord {
+        let parent = try BpyStoragePaths.openDirectory(url.deletingLastPathComponent())
+        defer { Darwin.close(parent) }
+        let descriptor = openat(parent, url.lastPathComponent, O_CREAT | O_EXCL | O_RDWR | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        guard descriptor >= 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+        return .init(url: url, totalBytes: totalBytes, expectedSHA256: expectedSHA256,
+            handle: FileHandle(fileDescriptor: descriptor, closeOnDealloc: true))
+    }
+
+    func remove() throws {
+        failed = true
+        try close()
+        try FileManager.default.removeItem(at: url)
+    }
+
+    func close() throws {
+        guard isOpen else { return }
+        try handle.close()
+        isOpen = false
     }
 }
 
@@ -748,13 +770,24 @@ private final class JobRecord: @unchecked Sendable {
     let inputNames: [String]
     let timeoutSeconds: Int
     let fingerprint: String
+    let admission: UUID?
+    let admissionDeadline: TimeInterval?
+    var terminalProcess: BpyRemoteProcess?
+    var processAuthorizations = BpyProcessAuthorizations()
+    var terminalCommit: TimeInterval?
+    var firstRelease: TimeInterval?
+    var runningDeadline: TimeInterval?
     let diagnosticDeniedPaths: [String]
     let diagnosticAutoexecPositiveControl: Bool
     var state: BpyRuntimeJobState = .accepted
     var message: String?
     var progress: [BpyRuntimeProgress] = []
     var outputs: [BpyOutputDescriptor] = []
-    var outputData: [String: Data] = [:]
+    var outputFiles: [String: BpyRuntimeFile] = [:]
+    var outputReservation: UInt64 = 0
+    var candidateScene: BpyRuntimeFile?
+    var releasedOutputs: [BpyOutputDescriptor]?
+    var bootstrap: BpyRuntimeFile?
     var stdout: String?
     var metrics: [String: Double] = [:]
     var terminalAt: Date?
@@ -769,6 +802,8 @@ private final class JobRecord: @unchecked Sendable {
         inputNames = request.inputNames
         self.timeoutSeconds = timeoutSeconds
         fingerprint = request.fingerprint
+        admission = request.admission
+        admissionDeadline = request.admissionDeadline
         diagnosticDeniedPaths = request.diagnosticDeniedPaths
         diagnosticAutoexecPositiveControl = request.diagnosticAutoexecPositiveControl
         diagnosticSupervisorIdentityWriteFailure = request.diagnosticSupervisorIdentityWriteFailure
@@ -776,8 +811,12 @@ private final class JobRecord: @unchecked Sendable {
     }
 
     func expireResult() {
+        if releasedOutputs == nil { releasedOutputs = outputs }
         outputs.removeAll()
-        outputData.removeAll()
+        for file in outputFiles.values { file.release() }
+        outputFiles.removeAll()
+        candidateScene?.release(); candidateScene = nil
+        outputReservation = 0
         progress.removeAll()
         stdout = nil
         metrics.removeAll()
@@ -861,10 +900,7 @@ private struct SupervisorChildPID: Decodable {
     let processIdentifier: Int32
 }
 
-private struct SupervisorWorkerIdentity: Decodable {
-    let processIdentifier: Int32
-    let startAbsoluteTime: UInt64
-}
+private typealias SupervisorWorkerIdentity = BpySupervisorWorkerIdentity
 
 private struct ManagedProcessResult {
     let workerProcessIdentifier: Int32
@@ -877,21 +913,10 @@ private struct ManagedProcessResult {
     let hostMonitorSamples: Int
     let limitReason: String?
     let log: String
+    let terminal: BpyRemoteProcess
 }
 
-private struct BoundaryChildReport: Decodable {
-    let schema: String
-    let mode: String
-    let processIdentifier: Int32
-    let parentProcessIdentifier: Int32
-    let allowedWriteSucceeded: Bool
-    let outsideWriteDeniedErrno: Int32
-    let forkDeniedErrno: Int32
-    let networkDeniedErrno: Int32
-    let signalDeniedErrnos: [Int32]
-    let resourceBytes: UInt64
-    let retentionDeniedErrno: Int32
-}
+private typealias BoundaryChildReport = BpyBoundaryChildReport
 
 private let boundaryResourceModes: Set<String> = [
     "open-unlinked-hold",
@@ -911,94 +936,60 @@ private struct BoundarySupervisorIdentity: Decodable {
     let childProcessIdentifier: Int32
 }
 
-private struct BoundaryRun {
-    let supervisorProcessIdentifier: Int32
-    let supervisorParentProcessIdentifier: Int32
-    let supervisorStartAbsoluteTime: UInt64
-    let child: SupervisorWorkerIdentity
-    let report: BoundaryChildReport
-    let supervisorGone: Bool
-    let childGone: Bool
-    let observedRetainedBytes: UInt64
-    let limitReason: String?
-    let internalLinkedWritableDeduplicated: Bool
-    let retentionDenied: Bool
-}
+private typealias BoundaryRun = BpyBoundaryRun
 
 private func runBoundarySupervisor(
-    supervisorURL: URL,
-    root: URL,
-    mode: String,
+    request: BpyBoundaryProbeRequest, storage: BpyServiceStoragePair,
     monitor: BpyServiceMonitor
 ) throws -> BoundaryRun {
-    let writeRoot = root.appendingPathComponent("write", isDirectory: true)
-    let outsideRoot = root.appendingPathComponent("outside", isDirectory: true)
-    let outsidePath = outsideRoot.appendingPathComponent("denied-write")
-    let identityURL = root.appendingPathComponent("child.json")
-    let reportURL = writeRoot.appendingPathComponent("report.json")
+    let mode = request.mode.rawValue
+    let writeRoot = storage.workerRoot.appendingPathComponent("boundary/" + mode)
+    let configuration = storage.dataRoot.appendingPathComponent("boundary.json")
     try FileManager.default.createDirectory(at: writeRoot, withIntermediateDirectories: true)
-    try FileManager.default.createDirectory(at: outsideRoot, withIntermediateDirectories: true)
-    if mode == "external-readonly-hold" {
-        try Data(repeating: 0x4e, count: 1_024 * 1_024).write(to: outsidePath, options: .atomic)
+    try FileManager.default.createDirectory(at: storage.dataRoot, withIntermediateDirectories: true)
+    try Data("{}".utf8).write(to: configuration, options: .atomic)
+    var readFiles: [String] = []
+    if request.mode == .externalReadonly {
+        let external = storage.dataRoot.appendingPathComponent("external-readonly.bin")
+        try Data(repeating: 0x4e, count: 1_024 * 1_024).write(to: external, options: .atomic)
+        readFiles.append(request.nonce.uuidString + "/external-readonly.bin")
     }
-    guard let service = processUsage(getpid()) else { throw CocoaError(.executableLoad) }
-
-    let authorizationURL = root.appendingPathComponent("authorized")
-    let authorizationToken = (UUID().uuidString + UUID().uuidString).replacingOccurrences(of: "-", with: "")
-    let process = try BpyOwnedProcess(executable: supervisorURL, arguments: [
-        "boundary-supervise", String(getpid()), String(service.startAbsoluteTime), identityURL.path,
-        writeRoot.path, outsidePath.path, reportURL.path, mode, authorizationURL.path, authorizationToken,
-    ], environment: [:], directory: writeRoot, output: .nullDevice, errors: .nullDevice, allowsForcedTermination: false)
+    guard let service = processUsage(getpid()) else { throw POSIXError(.EIO) }
+    let process = try monitor.start(spec: .init(permit: request.admission, job: nil, mode: .boundary,
+        workerLease: request.storagePair.worker.id, dataLease: request.storagePair.data.id,
+        workerRoot: request.nonce.uuidString + "/boundary/" + mode,
+        configuration: request.nonce.uuidString + "/boundary.json", configurationSHA256: try sha256(configuration),
+        readFiles: readFiles, boundary: request.mode),
+        execution: request.execution, serviceStart: service.startAbsoluteTime, maximumOutputBytes: 65_536,
+        deadline: request.admissionDeadline, cancelled: { false })
+    var detached = false
     defer {
-        var reaped = false
-        while !reaped {
-            do { try process.terminateAndReap(grace: 3); reaped = true }
-            catch {
-                openDiagnostics.error("boundary.cleanup-pending code=\((error as NSError).code, privacy: .public)")
-                Thread.sleep(forTimeInterval: 1)
-            }
+        if !detached {
+            do { _ = try process.terminateAndReap(); _ = try process.detach() }
+            catch { openDiagnostics.error("boundary.cleanup-pending code=\((error as NSError).code, privacy: .public)") }
         }
     }
-    let supervisorPID = process.processIdentifier
-    let observation = try monitor.attach(process: process, serviceStart: service.startAbsoluteTime)
-    let supervisorStart = observation.supervisor.start
-    try Data(authorizationToken.utf8).write(to: authorizationURL, options: .atomic)
+    let supervisorPID = process.supervisor.pid
+    let supervisorStart = process.supervisor.start
     var observedChild: SupervisorWorkerIdentity?
-    var boundaryIdentity: BoundarySupervisorIdentity?
     var report: BoundaryChildReport?
-    let readyDeadline = ProcessInfo.processInfo.systemUptime + 5
-    while ProcessInfo.processInfo.systemUptime < readyDeadline {
-        let sample = try observation.sample()
-        if boundaryIdentity == nil,
-           let data = try? Data(contentsOf: identityURL),
-           let value = try? JSONDecoder().decode(BoundarySupervisorIdentity.self, from: data),
-           let child = sample.worker, child.pid == value.childProcessIdentifier,
-           child.parent == supervisorPID, value.supervisorProcessIdentifier == supervisorPID,
-           value.supervisorStartAbsoluteTime == supervisorStart,
-           value.supervisorParentProcessIdentifier == getpid() {
-            boundaryIdentity = value
+    let readyDeadline = try BpyRuntimeClock.awakeSeconds() + 5
+    while try BpyRuntimeClock.awakeSeconds() < readyDeadline {
+        let sample = try process.sample()
+        if let child = sample.worker {
             observedChild = .init(processIdentifier: child.pid, startAbsoluteTime: child.start)
-            try Data(authorizationToken.utf8).write(to: identityURL.appendingPathExtension("observed"), options: .atomic)
         }
-        if report == nil,
-           let data = try? Data(contentsOf: reportURL),
-           let value = try? JSONDecoder().decode(BoundaryChildReport.self, from: data) {
-            report = value
+        if let data = try? Data(contentsOf: writeRoot.appendingPathComponent("child.json")) {
+            report = try JSONDecoder().decode(BoundaryChildReport.self, from: data)
         }
-        if boundaryIdentity != nil, report != nil { break }
-        if try !process.isRunning { break }
+        if observedChild != nil, report != nil { break }
+        if sample.status == .gone { break }
         Thread.sleep(forTimeInterval: 0.01)
     }
-    guard let boundaryIdentity, let report, let child = observedChild,
-          boundaryIdentity.supervisorProcessIdentifier == supervisorPID,
-          boundaryIdentity.supervisorParentProcessIdentifier == getpid(),
-          boundaryIdentity.supervisorStartAbsoluteTime == supervisorStart,
-          report.schema == "nexgenvideo/bpy-boundary-child/2",
-          report.mode == mode,
-          report.processIdentifier == boundaryIdentity.childProcessIdentifier,
-          report.parentProcessIdentifier == supervisorPID else {
-        throw CocoaError(.executableLoad)
-    }
+    guard let report, let child = observedChild,
+          report.schema == "nexgenvideo/bpy-boundary-child/2", report.mode == mode,
+          report.processIdentifier == child.processIdentifier,
+          report.parentProcessIdentifier == supervisorPID else { throw POSIXError(.EPERM) }
     if mode == "denials" {
         try Data("observed".utf8).write(to: writeRoot.appendingPathComponent("service-observed"), options: .atomic)
     }
@@ -1007,7 +998,7 @@ private func runBoundarySupervisor(
     var internalLinkedWritableDeduplicated = false
     var retentionDenied = false
     if boundaryResourceModes.contains(mode) {
-        let sample = try observation.sample()
+        let sample = try process.sample()
         guard let worker = sample.worker, worker.pid == child.processIdentifier,
               worker.start == child.startAbsoluteTime else { throw CocoaError(.executableLoad) }
         let retainedResources = try ownedRetainedVnodes(sample.vnodes, roots: [writeRoot])
@@ -1054,13 +1045,14 @@ private func runBoundarySupervisor(
     } else {
         guard try process.waitUntilExit(timeout: 5) == 0 else { throw CocoaError(.executableLoad) }
     }
-    let detached = try observation.detach()
-    let childGone = detached.ended.contains { $0.pid == child.processIdentifier && $0.start == child.startAbsoluteTime }
-    let supervisorGone = detached.ended.contains { $0.pid == supervisorPID && $0.start == supervisorStart }
+    let final = try process.detach()
+    detached = true
+    let childGone = final.ended.contains { $0.pid == child.processIdentifier && $0.start == child.startAbsoluteTime }
+    let supervisorGone = final.ended.contains { $0.pid == supervisorPID && $0.start == supervisorStart }
     guard childGone, supervisorGone else { throw CocoaError(.executableLoad) }
     return .init(
         supervisorProcessIdentifier: supervisorPID,
-        supervisorParentProcessIdentifier: boundaryIdentity.supervisorParentProcessIdentifier,
+        supervisorParentProcessIdentifier: process.supervisor.parent,
         supervisorStartAbsoluteTime: supervisorStart,
         child: child,
         report: report,
@@ -1085,31 +1077,35 @@ private final class ServiceSession: @unchecked Sendable {
     private var checkpointUpload: UploadRecord?
     private var completedInputs: [UUID: [String: (UInt64, String)]] = [:]
     private var jobs: [UUID: JobRecord] = [:]
+    private var abandonedInputs = Set<UUID>()
+    private var stagingCleanup = Set<UUID>()
+    private var logOrder: [UUID] = []
+    private var executingJob: UUID?
     private var confirmedRevision: String?
-    private var confirmedSceneData: Data?
+    private var confirmedSceneFile: BpyRuntimeFile?
+    private var outputReaders = 0
+    private let outputLedger: BpyServiceOutputLedger
+    private let manifestBudget: BpyManifestReadBudget
     private struct PendingCleanup {
-        let process: BpyOwnedProcess
-        let observation: BpyServiceObservation?
-        let controlRoot: URL
+        let process: BpyRemoteProcess
     }
     private let cleanupLock = NSLock()
     private let closeLock = NSLock()
+    private var storageCleanupDeadline: TimeInterval?
     private var pendingCleanup: PendingCleanup?
-    private var activeProcess: BpyOwnedProcess?
+    private var activeProcess: BpyRemoteProcess?
     private var activeProcessStartAbsoluteTime: UInt64?
     private var activeProcessExecutable: String?
     private var activeProcessJobID: UUID?
     private var activeProcessAuthorizationID: UUID?
-    private var activeProcessAuthorizationURL: URL?
-    private var activeProcessAuthorizationToken: String?
     private var activeProcessAuthorized = false
     private var activeWorkerProcessIdentifier: Int32?
     private var runtimeIdentity: BpyRuntimeIdentity?
     private var coldStartSeconds: Double?
     private var servicePeakMemoryBytes: UInt64 = 0
     private var closed = false
-    private var storageDescriptor: Int32?
-    private let storageScope: URL
+    private let storageAccess: BpyServiceStoragePair
+    private let workerRoot: URL
     private let queueKey = DispatchSpecificKey<UInt8>()
 
     init(
@@ -1118,11 +1114,12 @@ private final class ServiceSession: @unchecked Sendable {
         runtimeRoot: URL,
         monitor: BpyServiceMonitor,
         capacity: DispatchSemaphore,
-        storageDescriptor: Int32,
-        storageScope: URL
+        storageAccess: BpyServiceStoragePair
     ) {
-        self.storageDescriptor = storageDescriptor
-        self.storageScope = storageScope
+        self.storageAccess = storageAccess
+        outputLedger = .init(capacity: request.limits.retainedOutputBytes ?? 0)
+        manifestBudget = .init(capacity: request.limits.outputBytes)
+        self.workerRoot = storageAccess.workerRoot
         self.request = request
         self.root = root
         self.runtimeRoot = runtimeRoot
@@ -1143,6 +1140,7 @@ private final class ServiceSession: @unchecked Sendable {
                     return
                 }
                 try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+                try FileManager.default.createDirectory(at: workerRoot, withIntermediateDirectories: true)
                 guard !request.diagnosticOpenFailure else { throw CocoaError(.executableLoad) }
                 let started = ProcessInfo.processInfo.systemUptime
                 let manifest = try probeRuntime()
@@ -1183,7 +1181,7 @@ private final class ServiceSession: @unchecked Sendable {
     func restore(_ request: BpyRestoreCheckpointRequest, chunk: Data) throws {
         guard isSafeName(request.revision),
               isSHA256(request.sha256),
-              request.totalBytes <= self.request.limits.outputBytes,
+              request.totalBytes <= self.request.limits.inputBytes,
               chunk.count <= 4 * 1_024 * 1_024,
               request.offset <= request.totalBytes,
               UInt64(chunk.count) <= request.totalBytes - request.offset,
@@ -1194,9 +1192,9 @@ private final class ServiceSession: @unchecked Sendable {
         }
         try lock.access {
             guard !closed, confirmedRevision == request.revision else { throw CocoaError(.fileWriteNoPermission) }
-            if let data = confirmedSceneData {
-                guard UInt64(data.count) == request.totalBytes, sha256(data) == request.sha256,
-                      data.subdata(in: Int(request.offset)..<Int(request.offset) + chunk.count) == chunk else {
+            if let file = confirmedSceneFile {
+                guard file.byteCount == request.totalBytes, file.sha256 == request.sha256,
+                      try file.read(offset: request.offset, maximum: chunk.count) == chunk else {
                     throw CocoaError(.fileWriteFileExists)
                 }
                 return
@@ -1211,32 +1209,22 @@ private final class ServiceSession: @unchecked Sendable {
             } else {
                 guard request.offset == 0 else { throw CocoaError(.fileWriteUnknown) }
                 let url = root.appendingPathComponent("host-checkpoint.part")
-                guard FileManager.default.createFile(atPath: url.path, contents: nil) else {
-                    throw CocoaError(.fileWriteUnknown)
-                }
-                upload = UploadRecord(
-                    url: url,
-                    totalBytes: request.totalBytes,
-                    expectedSHA256: request.sha256,
-                    handle: try FileHandle(forWritingTo: url)
-                )
+                upload = try UploadRecord.create(url: url, totalBytes: request.totalBytes, expectedSHA256: request.sha256)
                 checkpointUpload = upload
             }
             do {
                 try append(chunk, offset: request.offset, finalChunk: request.finalChunk, to: upload)
                 if request.finalChunk {
-                    let data = try Data(contentsOf: upload.url)
-                    guard UInt64(data.count) == upload.totalBytes,
-                          sha256(data) == upload.expectedSHA256,
-                          BpyBlendFileFormat.accepts(data) else { throw CocoaError(.fileReadCorruptFile) }
-                    confirmedSceneData = data
+                    let file = try retainFile(from: upload.url, to: root.appendingPathComponent("confirmed/" + UUID().uuidString + ".blend"),
+                        maximum: self.request.limits.inputBytes, expectedSHA256: upload.expectedSHA256)
+                    guard file.byteCount == upload.totalBytes,
+                          BpyBlendFileFormat.accepts(try file.read(maximum: 64)) else { throw CocoaError(.fileReadCorruptFile) }
+                    confirmedSceneFile = file
+                    try upload.remove()
                     checkpointUpload = nil
-                    try? FileManager.default.removeItem(at: upload.url)
                 }
             } catch {
-                try? upload.handle.close()
-                try? FileManager.default.removeItem(at: upload.url)
-                checkpointUpload = nil
+                if (try? upload.remove()) != nil { checkpointUpload = nil }
                 throw error
             }
         }
@@ -1254,7 +1242,9 @@ private final class ServiceSession: @unchecked Sendable {
             throw CocoaError(.fileWriteOutOfSpace)
         }
         try lock.access {
-            guard !closed else { throw CocoaError(.fileWriteNoPermission) }
+            guard !closed, !abandonedInputs.contains(request.jobID), executingJob == nil else { throw CocoaError(.fileWriteNoPermission) }
+            retryStagingCleanup()
+            guard stagingCleanup.isEmpty else { throw CocoaError(.fileWriteUnknown) }
             if let completed = completedInputs[request.jobID]?[request.name] {
                 guard completed.0 == request.totalBytes, completed.1 == request.sha256 else {
                     throw CocoaError(.fileWriteFileExists)
@@ -1291,16 +1281,7 @@ private final class ServiceSession: @unchecked Sendable {
                 let incoming = jobDirectory(request.jobID).appendingPathComponent(".uploads", isDirectory: true)
                 try FileManager.default.createDirectory(at: incoming, withIntermediateDirectories: true)
                 let url = incoming.appendingPathComponent(UUID().uuidString + ".part")
-                guard FileManager.default.createFile(atPath: url.path, contents: nil) else {
-                    throw CocoaError(.fileWriteUnknown)
-                }
-                do {
-                    upload = UploadRecord(url: url, totalBytes: request.totalBytes,
-                        expectedSHA256: request.sha256, handle: try FileHandle(forWritingTo: url))
-                } catch {
-                    try? FileManager.default.removeItem(at: url)
-                    throw error
-                }
+                upload = try UploadRecord.create(url: url, totalBytes: request.totalBytes, expectedSHA256: request.sha256)
                 uploads[key] = upload
             }
             do {
@@ -1312,9 +1293,7 @@ private final class ServiceSession: @unchecked Sendable {
                     completedInputs[request.jobID, default: [:]][request.name] = (request.totalBytes, request.sha256)
                 }
             } catch {
-                try? upload.handle.close()
-                try? FileManager.default.removeItem(at: upload.url)
-                uploads.removeValue(forKey: key)
+                if (try? upload.remove()) != nil { uploads.removeValue(forKey: key) }
                 throw error
             }
         }
@@ -1326,15 +1305,22 @@ private final class ServiceSession: @unchecked Sendable {
         finalChunk: Bool,
         to upload: UploadRecord
     ) throws {
+        guard !upload.failed else { throw CocoaError(.fileWriteNoPermission) }
         if offset < upload.receivedBytes {
             guard offset + UInt64(chunk.count) <= upload.receivedBytes else {
                 throw CocoaError(.fileWriteUnknown)
             }
             var existing = Data(count: chunk.count)
-            let count = existing.withUnsafeMutableBytes {
-                pread(upload.handle.fileDescriptor, $0.baseAddress, chunk.count, off_t(offset))
+            try existing.withUnsafeMutableBytes { bytes in
+                var received = 0
+                while received < chunk.count {
+                    let count = pread(upload.handle.fileDescriptor, bytes.baseAddress!.advanced(by: received), chunk.count - received, off_t(offset) + off_t(received))
+                    if count < 0 && errno == EINTR { continue }
+                    guard count > 0 else { throw CocoaError(.fileReadCorruptFile) }
+                    received += count
+                }
             }
-            guard count == chunk.count, existing == chunk else {
+            guard existing == chunk else {
                 throw CocoaError(.fileWriteFileExists)
             }
             return
@@ -1347,7 +1333,7 @@ private final class ServiceSession: @unchecked Sendable {
         upload.receivedBytes += UInt64(chunk.count)
         if finalChunk {
             try upload.handle.synchronize()
-            try upload.handle.close()
+            try upload.close()
             guard upload.receivedBytes == upload.totalBytes,
                   try sha256(upload.url) == upload.expectedSHA256 else {
                 throw CocoaError(.fileWriteUnknown)
@@ -1357,11 +1343,11 @@ private final class ServiceSession: @unchecked Sendable {
 
     func submit(_ request: BpyRunJobRequest) -> BpyServiceResponse {
         let decision: (JobRecord?, BpyServiceResponse) = lock.access {
-            purgeExpiredResults()
             if closed {
                 return (nil, .init(ok: false, message: "session is closed"))
             }
-            guard isSHA256(request.fingerprint) else {
+            guard request.admission != nil, request.admissionDeadline?.isFinite == true,
+                  isSHA256(request.fingerprint) else {
                 return (nil, .init(ok: false, message: "invalid job fingerprint"))
             }
             if let existing = jobs[request.jobID] {
@@ -1372,7 +1358,9 @@ private final class ServiceSession: @unchecked Sendable {
                 response.joinedExistingJob = true
                 return (nil, response)
             }
-            guard jobs.count < 1_024 else {
+            retryStagingCleanup()
+            guard stagingCleanup.isEmpty else { return (nil, .init(ok: false, message: "3D storage cleanup is pending. Retry after cleanup finishes.")) }
+            guard !abandonedInputs.contains(request.jobID), jobs.count + abandonedInputs.count < 1_024 else {
                 return (nil, .init(ok: false, message: "session job limit reached; rotate the document session"))
             }
             guard !jobs.values.contains(where: {
@@ -1381,7 +1369,7 @@ private final class ServiceSession: @unchecked Sendable {
                 return (nil, .init(ok: false, message: "session already has an active job"))
             }
             guard request.expectedRevision == confirmedRevision,
-                  confirmedRevision == nil || confirmedSceneData != nil else {
+                  confirmedRevision == nil || confirmedSceneFile != nil else {
                 return (nil, .init(ok: false, message: "confirmed checkpoint is unavailable"))
             }
             let names = Set(request.inputNames)
@@ -1409,7 +1397,10 @@ private final class ServiceSession: @unchecked Sendable {
                     == request.fingerprint else {
                 return (nil, .init(ok: false, message: "job fingerprint mismatch"))
             }
+            do { try outputLedger.reserve(request.jobID, maximum: self.request.limits.outputBytes) }
+            catch { return (nil, .init(ok: false, message: "release retained results before another job")) }
             let job = JobRecord(request: request, timeoutSeconds: timeout)
+            job.outputReservation = self.request.limits.outputBytes
             jobs[request.jobID] = job
             return (job, response(for: job))
         }
@@ -1421,7 +1412,6 @@ private final class ServiceSession: @unchecked Sendable {
 
     func status(_ jobID: UUID) -> BpyServiceResponse {
         lock.access {
-            purgeExpiredResults()
             guard let job = jobs[jobID] else {
                 return .init(ok: false, message: "unknown job")
             }
@@ -1432,20 +1422,11 @@ private final class ServiceSession: @unchecked Sendable {
     func authorize(_ request: BpyAuthorizeProcessRequest) throws -> BpyServiceResponse {
         try lock.access {
             guard !closed,
-                  let job = jobs[request.jobID],
-                  job.state == .running,
-                  activeProcessJobID == request.jobID,
-                  activeProcessAuthorizationID == request.authorizationID,
-                  activeProcess?.processIdentifier == request.processIdentifier,
-                  try activeProcess?.isRunning == true,
-                  activeProcessStartAbsoluteTime == request.processStartAbsoluteTime,
-                  activeProcessExecutable == request.processExecutable,
-                  let authorizationURL = activeProcessAuthorizationURL,
-                  let authorizationToken = activeProcessAuthorizationToken else {
+                  let job = jobs[request.jobID] else {
                 throw CocoaError(.fileWriteNoPermission)
             }
-            if !activeProcessAuthorized {
-                try Data(authorizationToken.utf8).write(to: authorizationURL, options: .atomic)
+            let active = activeProcessJobID == request.jobID ? activeProcessAuthorizationID : nil
+            if try job.processAuthorizations.acknowledge(request, active: active) {
                 activeProcessAuthorized = true
             }
             return response(for: job)
@@ -1454,25 +1435,57 @@ private final class ServiceSession: @unchecked Sendable {
 
     func output(_ request: BpyReadOutputRequest) throws -> (BpyServiceResponse, Data) {
         guard isSafeName(request.name), request.maximumBytes > 0,
-              request.maximumBytes <= 4 * 1_024 * 1_024 else {
-            throw CocoaError(.fileReadInvalidFileName)
-        }
-        return try lock.access {
-            purgeExpiredResults()
-            guard let job = jobs[request.jobID], !job.resultExpired,
+              request.maximumBytes <= 4 * 1_024 * 1_024 else { throw CocoaError(.fileReadInvalidFileName) }
+        let read: (BpyRuntimeFile, BpyServiceResponse) = try lock.access {
+            guard !closed, outputReaders < 2, let job = jobs[request.jobID], !job.resultExpired,
                   [.awaitingConfirmation, .confirmed].contains(job.state),
-                  let output = job.outputs.first(where: { $0.name == request.name }),
-                  let data = job.outputData[request.name] else {
-                throw CocoaError(.fileReadNoSuchFile)
+                  let descriptor = job.outputs.first(where: { $0.name == request.name }),
+                  let file = job.outputFiles[request.name], file.byteCount == descriptor.byteCount,
+                  file.sha256 == descriptor.sha256, request.offset <= file.byteCount else { throw CocoaError(.fileReadNoSuchFile) }
+            let owner = try file.retained()
+            outputReaders += 1
+            return (owner, response(for: job))
+        }
+        defer { read.0.release(); lock.access { outputReaders -= 1 } }
+        return (read.1, try read.0.read(offset: request.offset, maximum: request.maximumBytes))
+    }
+
+    func releaseResources(_ request: BpyReleaseResourcesRequest) throws -> BpyServiceResponse {
+        try lock.access {
+            guard !closed else { throw CocoaError(.fileWriteNoPermission) }
+            if request.disposition == .stagedInputs {
+                guard jobs[request.jobID] == nil, abandonedInputs.contains(request.jobID)
+                    || jobs.count + abandonedInputs.count < 1_024 else { throw CocoaError(.fileWriteNoPermission) }
+                abandonedInputs.insert(request.jobID)
+                let prefix = request.jobID.uuidString + "/"
+                for key in uploads.keys where key.hasPrefix(prefix) { try? uploads[key]?.handle.close() }
+                do { try FileManager.default.removeItem(at: jobDirectory(request.jobID)) }
+                catch let error as CocoaError where error.code == .fileNoSuchFile { }
+                uploads = uploads.filter { !$0.key.hasPrefix(prefix) }
+                completedInputs.removeValue(forKey: request.jobID)
+                return .init(ok: true, jobID: request.jobID)
             }
-            guard request.offset <= output.byteCount else {
-                throw CocoaError(.fileReadCorruptFile)
+            guard let job = jobs[request.jobID], request.fingerprint == job.fingerprint,
+                  request.outputs == (job.releasedOutputs ?? job.outputs),
+                  ![.accepted, .running].contains(job.state) else { throw CocoaError(.fileWriteNoPermission) }
+            if job.releasedOutputs == nil { job.releasedOutputs = job.outputs }
+            try outputLedger.updateCheckpoint(job.id, resultScene: job.outputFiles["scene.blend"],
+                confirmedScene: confirmedSceneFile, change: .release)
+            if request.disposition == .transferredResult {
+                if job.state == .awaitingConfirmation, job.candidateScene == nil {
+                    job.candidateScene = try job.outputFiles["scene.blend"]?.retained()
+                }
+                for file in job.outputFiles.values { file.release() }
+                job.outputFiles.removeAll(); job.outputReservation = 0
+            } else {
+                if job.state == .awaitingConfirmation { job.state = .rejected }
+                job.expireResult()
             }
-            let end = min(output.byteCount, request.offset + UInt64(request.maximumBytes))
-            return (
-                response(for: job),
-                data.subdata(in: Int(request.offset)..<Int(end))
-            )
+            let checkpointBytes = job.candidateScene.map { outputLedger.chargedBytes(job.id, file: $0) } ?? 0
+            guard outputLedger.materialized(job.id) <= checkpointBytes else {
+                return .init(ok: false, jobID: job.id, message: "result release pending")
+            }
+            return response(for: job)
         }
     }
 
@@ -1482,21 +1495,29 @@ private final class ServiceSession: @unchecked Sendable {
         }
         return try lock.access {
             guard !closed else { throw CocoaError(.fileWriteNoPermission) }
-            purgeExpiredResults()
             if let job = jobs[request.jobID], job.state == .confirmed,
-               confirmedRevision == request.revision, let data = confirmedSceneData,
-               sha256(data) == request.sceneSHA256 { return response(for: job) }
+               confirmedRevision == request.revision, let file = confirmedSceneFile,
+               file.sha256 == request.sceneSHA256 { return response(for: job) }
             guard let job = jobs[request.jobID], job.state == .awaitingConfirmation,
                   !job.resultExpired else {
                 throw CocoaError(.fileWriteNoPermission)
             }
             guard request.revision != confirmedRevision,
-                  let confirmedData = job.outputData["scene.blend"],
-                  sha256(confirmedData) == request.sceneSHA256 else {
+                  let confirmedFile = job.candidateScene ?? job.outputFiles["scene.blend"],
+                  confirmedFile.byteCount <= self.request.limits.inputBytes,
+                  confirmedFile.sha256 == request.sceneSHA256 else {
                 throw CocoaError(.fileReadCorruptFile)
             }
+            let replacement = try confirmedFile.retained()
+            do {
+                try outputLedger.updateCheckpoint(job.id, resultScene: job.outputFiles["scene.blend"],
+                    confirmedScene: replacement, change: .confirm)
+            }
+            catch { replacement.release(); throw error }
+            confirmedSceneFile?.release()
             confirmedRevision = request.revision
-            confirmedSceneData = confirmedData
+            confirmedSceneFile = replacement
+            job.candidateScene?.release(); job.candidateScene = nil
             job.state = .confirmed
             job.terminalAt = Date()
             return response(for: job)
@@ -1515,8 +1536,13 @@ private final class ServiceSession: @unchecked Sendable {
             }
             guard let job = jobs[jobID] else {
                 if completedInputs[jobID] != nil || uploads.keys.contains(where: { $0.hasPrefix(prefix) }) {
-                    discardStaging()
-                    try? FileManager.default.removeItem(at: jobDirectory(jobID))
+                    abandonedInputs.insert(jobID)
+                    for key in uploads.keys where key.hasPrefix(prefix) { try? uploads[key]?.handle.close() }
+                    do {
+                        try FileManager.default.removeItem(at: jobDirectory(jobID))
+                        discardStaging()
+                    } catch let error as CocoaError where error.code == .fileNoSuchFile { discardStaging() }
+                    catch { closed = true }
                 }
                 return false
             }
@@ -1542,6 +1568,7 @@ private final class ServiceSession: @unchecked Sendable {
         }
         if shouldStop {
             if stopActiveProcess(jobID: jobID) {
+                if DispatchQueue.getSpecific(key: queueKey) == nil { queue.sync {} }
                 lock.access { if !closed { try? FileManager.default.removeItem(at: jobDirectory(jobID)) } }
             }
         }
@@ -1559,33 +1586,50 @@ private final class ServiceSession: @unchecked Sendable {
             try? checkpointUpload?.handle.close()
             uploads.removeAll()
             checkpointUpload = nil
+            for job in jobs.values { job.bootstrap?.release(); job.bootstrap = nil; job.expireResult(); outputLedger.settle(job.id) }
+            confirmedSceneFile?.release(); confirmedSceneFile = nil
+        }
+        if storageCleanupDeadline == nil { storageCleanupDeadline = BpyRuntimeClock.read().map { $0.awake + 3 } }
+        while !storageAccess.beginClose() || lock.access({ outputReaders != 0 }) {
+            guard let deadline = storageCleanupDeadline, let now = BpyRuntimeClock.read()?.awake, now < deadline else { return false }
+            Thread.sleep(forTimeInterval: 0.005)
         }
         try? FileManager.default.removeItem(at: root)
-        let descriptor = lock.access { () -> Int32? in
-            defer { storageDescriptor = nil }
-            return storageDescriptor
-        }
-        if let descriptor {
-            Darwin.close(descriptor)
-            storageScope.stopAccessingSecurityScopedResource()
-        }
+        try? FileManager.default.removeItem(at: workerRoot)
+        storageAccess.release()
         return true
     }
 
     private func execute(_ job: JobRecord) {
         capacity.wait()
         defer {
+            let stopped = stopActiveProcess(jobID: job.id)
             lock.access {
-                completedInputs.removeValue(forKey: job.id)
                 job.source = nil
+                job.terminalProcess = nil
+                logOrder.removeAll { $0 == job.id }; logOrder.append(job.id)
+                while logOrder.count > 16 { jobs[logOrder.removeFirst()]?.stdout = nil }
+                job.bootstrap?.release(); job.bootstrap = nil
+                stagingCleanup.insert(job.id)
+                if stopped { try? disposeJobStaging(job.id) }
+                executingJob = nil
+                if ![.awaitingConfirmation, .confirmed].contains(job.state) { job.outputReservation = 0 }
             }
+            outputLedger.settle(job.id)
             capacity.signal()
         }
-        let began = ProcessInfo.processInfo.systemUptime
-        let deadline = began + Double(job.timeoutSeconds)
+        guard let began = try? BpyRuntimeClock.awakeSeconds() else {
+            lock.access {
+                job.state = .failed
+                job.message = "The 3D runtime clock is unavailable. Restart NexGenVideo before retrying."
+                job.terminalAt = Date()
+            }
+            return
+        }
         guard lock.access({
             guard job.state == .accepted, !closed else { return false }
             job.state = .running
+            executingJob = job.id
             job.progress = [.init(sequence: 1, stage: "worker", fraction: 0.05)]
             return true
         }) else { return }
@@ -1605,6 +1649,7 @@ private final class ServiceSession: @unchecked Sendable {
             ).merging([
                 "jobID": job.id.uuidString,
                 "sessionRoot": root.path,
+                "workerRoot": workerRoot.path,
                 "sourcePath": sourceURL.path,
                 "inputDirectory": inputDirectory(job.id).path,
                 "outputDirectory": outputDirectory(job.id).path,
@@ -1619,7 +1664,6 @@ private final class ServiceSession: @unchecked Sendable {
                 mode: "job",
                 configuration: jobConfig,
                 processRoot: writableRoot,
-                deadline: deadline,
                 job: job,
                 injectSupervisorIdentityWriteFailure: job.diagnosticSupervisorIdentityWriteFailure,
                 injectSupervisorIdentityCaptureFailure: job.diagnosticSupervisorIdentityCaptureFailure
@@ -1631,13 +1675,21 @@ private final class ServiceSession: @unchecked Sendable {
                 guard job.state == .running else { return }
                 job.progress.append(.init(sequence: 2, stage: "verification", fraction: 0.75))
             }
-            let verification = try verify(job: job, deadline: deadline)
+            let planned = try planOutputs(job.id)
+            let plannedBytes = planned.reduce(UInt64(0)) { $0 + $1.1 }
+            guard let manifestMaximum = BpyOutputContract.verificationReadMaximum(workerFileCount: planned.count, workerBytes: plannedBytes,
+                fileLimit: request.limits.files, byteLimit: request.limits.outputBytes) else {
+                throw CocoaError(.fileReadTooLarge)
+            }
+            let verification = try verify(job: job, manifestMaximum: manifestMaximum)
             try enforceStoredResources(job)
+            guard let terminalProcess = lock.access({ job.terminalProcess }) else { throw POSIXError(.EIO) }
+            _ = try terminalProcess.beginCollection()
             let collected = try collectOutputs(job.id)
-            guard collected.data["scene.blend"].map(sha256) == verification.manifest.sceneSHA256 else {
+            guard collected.files["scene.blend"]?.sha256 == verification.manifest.sceneSHA256 else {
                 throw CocoaError(.fileReadCorruptFile)
             }
-            try enforceServiceMemory(job)
+            observeServiceMemory()
             let verificationData = try JSONEncoder().encode(verification.manifest)
             let collectedBytes = collected.descriptors.reduce(UInt64(0)) { $0 + $1.byteCount }
             guard BpyOutputContract.permitsHostManifest(workerFileCount: collected.descriptors.count,
@@ -1646,19 +1698,30 @@ private final class ServiceSession: @unchecked Sendable {
                 throw CocoaError(.fileReadTooLarge)
             }
             var descriptors = collected.descriptors
-            var outputData = collected.data
+            var outputFiles = collected.files
             descriptors.append(.init(
                 name: "verification.json",
                 byteCount: UInt64(verificationData.count),
                 sha256: sha256(verificationData),
                 mediaType: "application/json"
             ))
-            outputData["verification.json"] = verificationData
-            let wallSeconds = ProcessInfo.processInfo.systemUptime - began
+            outputFiles["verification.json"] = try retainFile(data: verificationData,
+                to: root.appendingPathComponent("results/" + job.id.uuidString + "/verification.json"), maximum: request.limits.outputBytes, jobID: job.id)
+            try lock.access {
+                job.bootstrap?.release(); job.bootstrap = nil
+                stagingCleanup.insert(job.id)
+                try disposeJobStaging(job.id)
+            }
+            let commit = try terminalProcess.commit()
+            guard let committedAt = commit.terminalCommit, let runningDeadline = commit.runningDeadline,
+                  committedAt <= runningDeadline + 15, commit.stopReason == nil else { throw POSIXError(.ETIMEDOUT) }
+            let wallSeconds = try BpyRuntimeClock.awakeSeconds() - began
             lock.access {
+                job.terminalCommit = committedAt
                 guard job.state == .running else { return }
                 job.outputs = descriptors
-                job.outputData = outputData
+                job.outputFiles = outputFiles
+                job.outputReservation = descriptors.reduce(0) { $0 + $1.byteCount }
                 job.stdout = boundedLogText(worker.log, bytes: request.limits.stdoutBytes)
                 job.metrics = [
                     "job_wall_seconds": wallSeconds,
@@ -1669,7 +1732,8 @@ private final class ServiceSession: @unchecked Sendable {
                     "worker_host_monitor_samples": Double(worker.hostMonitorSamples),
                     "verifier_host_monitor_samples": Double(verification.process.hostMonitorSamples),
                     "service_peak_memory_bytes": Double(servicePeakMemoryBytes),
-                    "physical_storage_capacity_bytes": Double(request.storage?.capacityBytes ?? 0),
+                    "physical_storage_capacity_bytes": Double(request.storagePair?.worker.capacityBytes ?? 0),
+                    "data_storage_capacity_bytes": Double(request.storagePair?.data.capacityBytes ?? 0),
                     "disk_peak_bytes": Double(max(worker.peakDiskBytes, verification.process.peakDiskBytes)),
                     "file_peak_count": Double(max(worker.peakFileCount, verification.process.peakFileCount)),
                     "descendant_peak_count": Double(
@@ -1680,7 +1744,7 @@ private final class ServiceSession: @unchecked Sendable {
                     "objects": Double(verification.manifest.objects),
                     "vertices": Double(verification.manifest.vertices),
                     "polygons": Double(verification.manifest.polygons),
-                    "rlimit_as_bytes": Double(request.limits.memoryBytes),
+                    "system_pressure_policy_version": 1,
                 ]
                 if verification.autoexecPositive {
                     job.metrics["autoexec_positive_control"] = 1
@@ -1688,11 +1752,9 @@ private final class ServiceSession: @unchecked Sendable {
                 job.progress.append(.init(sequence: 3, stage: "complete", fraction: 1))
                 job.source = nil
                 job.state = .awaitingConfirmation
-                completedInputs.removeValue(forKey: job.id)
+                executingJob = nil
                 job.terminalAt = Date()
-                enforceResultRetentionBudget(retaining: job.id)
-            }
-            try? FileManager.default.removeItem(at: directory)
+                }
         } catch {
             lock.access {
                 if job.state == .running {
@@ -1708,7 +1770,24 @@ private final class ServiceSession: @unchecked Sendable {
                     job.terminalAt = Date()
                 }
             }
-            if stopActiveProcess() { try? FileManager.default.removeItem(at: jobDirectory(job.id)) }
+        }
+    }
+
+    private func disposeJobStaging(_ id: UUID) throws {
+        let prefix = id.uuidString + "/"
+        for (key, upload) in uploads where key.hasPrefix(prefix) { try upload.close() }
+        for directory in [jobDirectory(id), workerRoot.appendingPathComponent("jobs/" + id.uuidString)] {
+            do { try FileManager.default.removeItem(at: directory) }
+            catch let error as CocoaError where error.code == .fileNoSuchFile { }
+        }
+        uploads = uploads.filter { !$0.key.hasPrefix(prefix) }
+        completedInputs.removeValue(forKey: id)
+        stagingCleanup.remove(id)
+    }
+
+    private func retryStagingCleanup() {
+        for id in Array(stagingCleanup) where executingJob != id && activeProcessJobID != id {
+            try? disposeJobStaging(id)
         }
     }
 
@@ -1767,23 +1846,14 @@ private final class ServiceSession: @unchecked Sendable {
         throw CocoaError(.fileWriteOutOfSpace)
     }
 
-    private func enforceServiceMemory(_ job: JobRecord) throws {
-        let footprint = processUsage(getpid())?.physicalFootprint ?? 0
-        lock.access { servicePeakMemoryBytes = max(servicePeakMemoryBytes, footprint) }
-        guard footprint <= request.limits.memoryBytes else {
-            lock.access {
-                guard job.state == .running else { return }
-                job.state = .resourceLimited
-                job.message = "job exceeded the service-memory limit"
-                job.terminalAt = Date()
-            }
-            throw CocoaError(.fileReadTooLarge)
+    private func observeServiceMemory() {
+        if let footprint = processUsage(getpid())?.physicalFootprint {
+            lock.access { servicePeakMemoryBytes = max(servicePeakMemoryBytes, footprint) }
         }
     }
 
     private func verify(
-        job: JobRecord,
-        deadline: Double
+        job: JobRecord, manifestMaximum: UInt64
     ) throws -> (manifest: VerificationManifest, process: ManagedProcessResult, autoexecPositive: Bool) {
         let verificationRoot = verificationDirectory(job.id)
         try? FileManager.default.removeItem(at: verificationRoot)
@@ -1800,13 +1870,12 @@ private final class ServiceSession: @unchecked Sendable {
                     "diagnosticDeniedPaths": job.diagnosticDeniedPaths,
                     "limits": geometryLimits,
                 ]) { _, new in new },
-            at: verificationRoot.appendingPathComponent("verify.json")
+            at: jobDirectory(job.id).appendingPathComponent("verify.json")
         )
         let result = try runManagedProcess(
             mode: "verify",
             configuration: config,
             processRoot: verificationRoot,
-            deadline: deadline,
             job: job
         )
         if let reason = result.limitReason {
@@ -1842,8 +1911,8 @@ private final class ServiceSession: @unchecked Sendable {
             }
             throw CocoaError(.fileReadCorruptFile)
         }
-        let data = try Data(contentsOf: manifestURL)
-        let manifest = try JSONDecoder().decode(VerificationManifest.self, from: data)
+        let manifest = try BpyRuntimeManifest.decode(VerificationManifest.self, name: manifestURL.lastPathComponent,
+            in: verificationRoot, maximum: manifestMaximum, budget: manifestBudget)
         guard manifest.schema == "nexgenvideo/bpy-verification/1",
               manifest.jobID == job.id.uuidString,
               manifest.fingerprint == job.fingerprint,
@@ -1870,12 +1939,12 @@ private final class ServiceSession: @unchecked Sendable {
         }
         var positive = false
         if job.diagnosticAutoexecPositiveControl {
-            positive = try runAutoexecPositiveControl(job: job, deadline: deadline)
+            positive = try runAutoexecPositiveControl(job: job)
         }
         return (manifest, result, positive)
     }
 
-    private func runAutoexecPositiveControl(job: JobRecord, deadline: Double) throws -> Bool {
+    private func runAutoexecPositiveControl(job: JobRecord) throws -> Bool {
         let controlRoot = autoexecDirectory(job.id)
         try FileManager.default.createDirectory(at: controlRoot, withIntermediateDirectories: true)
         let scene = controlRoot.appendingPathComponent("positive-control.blend")
@@ -1888,20 +1957,17 @@ private final class ServiceSession: @unchecked Sendable {
                     "scenePath": scene.path,
                     "manifest": manifestURL.path,
                 ]) { _, new in new },
-            at: controlRoot.appendingPathComponent("autoexec.json")
+            at: jobDirectory(job.id).appendingPathComponent("autoexec.json")
         )
         let result = try runManagedProcess(
             mode: "autoexec-positive",
             configuration: config,
             processRoot: controlRoot,
-            deadline: deadline,
             job: job
         )
         try requireSuccessful(result, job: job)
-        let manifest = try JSONDecoder().decode(
-            AutoexecManifest.self,
-            from: Data(contentsOf: manifestURL)
-        )
+        let manifest = try BpyRuntimeManifest.decode(AutoexecManifest.self, name: manifestURL.lastPathComponent,
+            in: controlRoot, maximum: request.limits.outputBytes, budget: manifestBudget)
         guard manifest.schema == "nexgenvideo/bpy-autoexec-positive/1",
               manifest.jobID == job.id.uuidString,
               manifest.processIdentifier == result.workerProcessIdentifier,
@@ -1912,32 +1978,32 @@ private final class ServiceSession: @unchecked Sendable {
     }
 
     private func probeRuntime() throws -> ProbeManifest {
-        let probeRoot = root.appendingPathComponent("probe-worker", isDirectory: true)
+        let probeRoot = workerRoot.appendingPathComponent("probe", isDirectory: true)
         try? FileManager.default.removeItem(at: probeRoot)
         try FileManager.default.createDirectory(at: probeRoot, withIntermediateDirectories: true)
         let manifestURL = probeRoot.appendingPathComponent("manifest.json")
         let config = try writeConfiguration(
             baseConfiguration(processRoot: probeRoot, cpuSeconds: 120)
                 .merging(["manifest": manifestURL.path]) { _, new in new },
-            at: probeRoot.appendingPathComponent("probe.json")
+            at: root.appendingPathComponent("probe.json")
         )
         let result = try runManagedProcess(
             mode: "probe",
             configuration: config,
             processRoot: probeRoot,
-            deadline: ProcessInfo.processInfo.systemUptime + 120,
             job: nil
         )
         guard result.limitReason == nil, result.exitStatus == 0 else {
             throw CocoaError(.executableLoad)
         }
-        let manifest = try JSONDecoder().decode(
-            ProbeManifest.self,
-            from: Data(contentsOf: manifestURL)
-        )
+        let manifest = try BpyRuntimeManifest.decode(ProbeManifest.self, name: manifestURL.lastPathComponent,
+            in: probeRoot, maximum: request.limits.outputBytes, budget: manifestBudget)
         guard manifest.processIdentifier == result.workerProcessIdentifier else {
             throw CocoaError(.executableLoad)
         }
+        _ = try result.terminal.beginCollection()
+        let commit = try result.terminal.commit()
+        guard commit.stopReason == nil, commit.terminalCommit != nil else { throw POSIXError(.EIO) }
         try? FileManager.default.removeItem(at: probeRoot)
         return manifest
     }
@@ -1946,298 +2012,174 @@ private final class ServiceSession: @unchecked Sendable {
         mode: String,
         configuration: URL,
         processRoot: URL,
-        deadline: Double,
         job: JobRecord?,
         injectSupervisorIdentityWriteFailure: Bool = false,
         injectSupervisorIdentityCaptureFailure: Bool = false
     ) throws -> ManagedProcessResult {
-        if mode == "probe" {
-            let started = processUsage(getpid())?.startAbsoluteTime ?? 0
-            for (role, url) in [
-                ("pythonAlias", runtimeRoot.appendingPathComponent("python/bin/python3")),
-                ("pythonTarget", pythonURL), ("supervisor", supervisorURL),
-                ("worker", workerURL), ("sitePackages", sitePackagesURL),
-            ] {
-                let fields = BpyRuntimePreflight.diagnostics(at: url, pythonAlias: role == "pythonAlias")
-                    .sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " ")
-                openDiagnostics.notice("open.runtime-resource session=\(self.request.sessionID.uuidString, privacy: .public) pid=\(getpid(), privacy: .public) start=\(started, privacy: .public) role=\(role, privacy: .public) \(fields, privacy: .public)")
+        try lock.access {
+            if let job, !job.processAuthorizations.canRecord { throw POSIXError(.EOVERFLOW) }
+        }
+        guard let launchMode = BpyLaunchMode(rawValue: mode),
+              let pair = request.storagePair, let permit = job?.admission ?? request.admission,
+              let launchDeadline = job?.runningDeadline ?? job?.admissionDeadline ?? request.admissionDeadline,
+              let service = processUsage(getpid()) else { throw POSIXError(.EPERM) }
+        try BpyRuntimePreflight(python: pythonURL, supervisor: supervisorURL,
+            worker: workerURL, sitePackages: sitePackagesURL).requireValid()
+        for name in ["tmp", "home", "blender-config", "blender-scripts", "blender-data"] {
+            try FileManager.default.createDirectory(at: processRoot.appendingPathComponent(name),
+                withIntermediateDirectories: true)
+        }
+        func relative(_ url: URL, mount: String) throws -> String {
+            let prefix = mount + "/"
+            guard url.path.hasPrefix(prefix) else { throw POSIXError(.EPERM) }
+            return String(url.path.dropFirst(prefix.count))
+        }
+        var reads: [String] = []
+        var workerReads: [String] = []
+        if let job, launchMode == .job {
+            let directory = jobDirectory(job.id)
+            reads.append(try relative(directory.appendingPathComponent("source.py"), mount: pair.data.mountPath))
+            for name in job.inputNames {
+                reads.append(try relative(inputDirectory(job.id).appendingPathComponent(name), mount: pair.data.mountPath))
+            }
+            if confirmedRevision != nil {
+                reads.append(try relative(directory.appendingPathComponent("bootstrap/confirmed.blend"), mount: pair.data.mountPath))
+            }
+        } else if let job, launchMode == .verify {
+            workerReads.append(try relative(outputDirectory(job.id).appendingPathComponent("scene.blend"), mount: pair.worker.mountPath))
+        }
+        var injections: [BpyLaunchInjection] = []
+        if injectSupervisorIdentityWriteFailure { injections.append(.failAfterChildStart) }
+        if injectSupervisorIdentityCaptureFailure { injections += [.failChildIdentityCapture, .childIgnoreTerm] }
+        let spec = BpyHostLaunchSpec(permit: permit, job: job?.id, mode: launchMode,
+            workerLease: pair.worker.id, dataLease: pair.data.id,
+            workerRoot: try relative(processRoot, mount: pair.worker.mountPath),
+            configuration: try relative(configuration, mount: pair.data.mountPath),
+            configurationSHA256: try sha256(configuration),
+            readFiles: reads, workerReadFiles: workerReads, injections: injections)
+        let execution = UUID()
+        let began = try BpyRuntimeClock.awakeSeconds()
+        let process = try monitor.start(spec: spec, execution: execution,
+            serviceStart: service.startAbsoluteTime, maximumOutputBytes: request.limits.stdoutBytes,
+            deadline: launchDeadline, cancelled: { self.lock.access { self.closed || job.map { $0.state != .running } == true } })
+        var detached = false
+        defer {
+            if !detached {
+                do {
+                    _ = try process.terminateAndReap(cause: lock.access({ closed || job?.state == .cancelled }) ? .cancelled : .failure)
+                    _ = try process.detach()
+                    detached = true
+                } catch { openDiagnostics.error("runtime.cleanup-pending code=\((error as NSError).code, privacy: .public)") }
+            }
+            lock.access {
+                guard activeProcess === process else { return }
+                if detached { clearActiveProcess() }
+                else { closed = true; pendingCleanup = .init(process: process) }
             }
         }
-        let preflight = BpyRuntimePreflight(python: pythonURL, supervisor: supervisorURL,
-                                            worker: workerURL, sitePackages: sitePackagesURL)
-        if mode == "probe" {
-            let started = processUsage(getpid())?.startAbsoluteTime ?? 0
-            openDiagnostics.notice("open.runtime-preflight session=\(self.request.sessionID.uuidString, privacy: .public) pid=\(getpid(), privacy: .public) start=\(started, privacy: .public) python=\(preflight.pythonExecutable, privacy: .public) supervisor=\(preflight.supervisorExecutable, privacy: .public) worker=\(preflight.workerExists, privacy: .public) sitePackages=\(preflight.sitePackagesExist, privacy: .public)")
-        }
-        try preflight.requireValid()
-        for name in ["tmp", "home", "blender-config", "blender-scripts", "blender-data"] {
-            try FileManager.default.createDirectory(
-                at: processRoot.appendingPathComponent(name, isDirectory: true),
-                withIntermediateDirectories: true
-            )
-        }
-        let output = Pipe()
-        let errors = Pipe()
-        let log = BoundedLog(limit: request.limits.stdoutBytes)
-        output.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            if !data.isEmpty { log.append(data) }
-        }
-        errors.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            if !data.isEmpty { log.append(data) }
-        }
-        let controlRoot = root.appendingPathComponent(
-            "process-control/\(UUID().uuidString)",
-            isDirectory: true
-        )
-        try FileManager.default.createDirectory(at: controlRoot, withIntermediateDirectories: true)
-        let authorizationURL = controlRoot.appendingPathComponent("authorized")
-        let identityURL = controlRoot.appendingPathComponent("worker.json")
-        let authorizationID = UUID()
-        let authorizationToken = (UUID().uuidString + UUID().uuidString)
-            .replacingOccurrences(of: "-", with: "")
-        guard let serviceUsage = processUsage(getpid()) else {
-            throw CocoaError(.executableLoad)
-        }
-        let arguments = [
-            "supervise", String(getpid()), String(serviceUsage.startAbsoluteTime),
-            authorizationURL.path, authorizationToken, identityURL.path, processRoot.path,
-            pythonURL.path, workerURL.path, mode, configuration.path,
-        ]
-        var environment = [
-            "HOME": processRoot.appendingPathComponent("home").path,
-            "TMPDIR": processRoot.appendingPathComponent("tmp").path,
-            "LANG": "C.UTF-8",
-            "LC_ALL": "C.UTF-8",
-            "PATH": "",
-            "PYTHONNOUSERSITE": "1",
-            "PYTHONDONTWRITEBYTECODE": "1",
-            "BLENDER_USER_CONFIG": processRoot.appendingPathComponent("blender-config").path,
-            "BLENDER_USER_SCRIPTS": processRoot.appendingPathComponent("blender-scripts").path,
-            "BLENDER_USER_DATAFILES": processRoot.appendingPathComponent("blender-data").path,
-        ]
-        if injectSupervisorIdentityWriteFailure {
-            environment["NGV_BPY_SUPERVISOR_FAIL_AFTER_CHILD_START"] = "1"
-        }
-        if injectSupervisorIdentityCaptureFailure {
-            environment["NGV_BPY_SUPERVISOR_FAIL_CHILD_IDENTITY_CAPTURE"] = "1"
-            environment["NGV_BPY_SUPERVISOR_CHILD_IGNORE_TERM"] = "1"
-        }
-        let began = ProcessInfo.processInfo.systemUptime
-        let process = try lock.access { () -> BpyOwnedProcess in
-            guard !closed, job == nil || job?.state == .running else { throw CocoaError(.userCancelled) }
-            let process: BpyOwnedProcess
-            do {
-                process = try BpyOwnedProcess(executable: supervisorURL, arguments: arguments,
-                    environment: environment, directory: processRoot,
-                    output: output.fileHandleForWriting, errors: errors.fileHandleForWriting, allowsForcedTermination: false)
-            } catch {
-                let failure = error as NSError
-                let underlying = failure.userInfo[NSUnderlyingErrorKey] as? NSError
-                let started = processUsage(getpid())?.startAbsoluteTime ?? 0
-                let knownDomains = [NSCocoaErrorDomain, NSPOSIXErrorDomain, NSOSStatusErrorDomain]
-                let domain = knownDomains.contains(failure.domain) ? failure.domain : "other"
-                let underlyingDomain = underlying.map { knownDomains.contains($0.domain) ? $0.domain : "other" } ?? "none"
-                let underlyingCode = underlying?.code ?? 0
-                let posixCode = domain == NSPOSIXErrorDomain ? failure.code
-                    : underlyingDomain == NSPOSIXErrorDomain ? underlyingCode : 0
-                openDiagnostics.notice("open.runtime-launch-fail session=\(self.request.sessionID.uuidString, privacy: .public) pid=\(getpid(), privacy: .public) start=\(started, privacy: .public) domain=\(domain, privacy: .public) code=\(failure.code, privacy: .public) underlyingDomain=\(underlyingDomain, privacy: .public) underlyingCode=\(underlyingCode, privacy: .public) posixCode=\(posixCode, privacy: .public)")
-                throw error
+        try lock.access {
+            if let job {
+                try job.processAuthorizations.record(.init(sessionID: request.sessionID, jobID: job.id,
+                    authorizationID: execution, processIdentifier: process.supervisor.pid,
+                    processStartAbsoluteTime: process.supervisor.start, processExecutable: process.supervisor.executable))
             }
             activeProcess = process
             activeProcessJobID = job?.id
-            return process
-        }
-        var attachedObservation: BpyServiceObservation?
-        var monitorDetached = false
-        defer {
-            var cleanupComplete = false
-            do {
-                _ = try process.terminateAndReap(grace: 3)
-                let termination = try process.waitForTermination(timeout: 0)
-                if let attachedObservation, !monitorDetached {
-                    do { try attachedObservation.detach() }
-                    catch { if !termination.exitedNormally { throw error } }
-                }
-                cleanupComplete = true
-            } catch { openDiagnostics.error("runtime.cleanup-fail code=\((error as NSError).code, privacy: .public)") }
-            output.fileHandleForReading.readabilityHandler = nil
-            errors.fileHandleForReading.readabilityHandler = nil
-            lock.access {
-                guard activeProcess === process else { return }
-                if cleanupComplete {
-                    activeProcess = nil
-                    activeProcessStartAbsoluteTime = nil
-                    activeProcessExecutable = nil
-                    activeProcessJobID = nil
-                    activeProcessAuthorizationID = nil
-                    activeProcessAuthorizationURL = nil
-                    activeProcessAuthorizationToken = nil
-                    activeProcessAuthorized = false
-                    activeWorkerProcessIdentifier = nil
-                } else {
-                    closed = true
-                    pendingCleanup = .init(process: process, observation: monitorDetached ? nil : attachedObservation,
-                                           controlRoot: controlRoot)
-                }
-            }
-            if cleanupComplete { try? FileManager.default.removeItem(at: controlRoot) }
-        }
-        try output.fileHandleForWriting.close()
-        try errors.fileHandleForWriting.close()
-        let observation = try monitor.attach(process: process, serviceStart: serviceUsage.startAbsoluteTime)
-        attachedObservation = observation
-        let initialUsage = ProcessUsage(physicalFootprint: observation.supervisor.footprint,
-                                        startAbsoluteTime: observation.supervisor.start)
-        if job == nil { try Data(authorizationToken.utf8).write(to: authorizationURL, options: .atomic) }
-        let executable = try BpyRuntimePath.canonical(supervisorURL)
-        lock.access {
-            guard activeProcess === process else { return }
-            activeProcessStartAbsoluteTime = initialUsage.startAbsoluteTime
-            activeProcessExecutable = executable
-            activeProcessJobID = job?.id
-            activeProcessAuthorizationID = job == nil ? nil : authorizationID
-            activeProcessAuthorizationURL = job == nil ? nil : authorizationURL
-            activeProcessAuthorizationToken = job == nil ? nil : authorizationToken
+            activeProcessStartAbsoluteTime = process.supervisor.start
+            activeProcessExecutable = process.supervisor.executable
+            activeProcessAuthorizationID = job == nil ? nil : execution
             activeProcessAuthorized = job == nil
         }
-        var peakMemory = initialUsage.physicalFootprint
-        var peakDisk: UInt64 = 0
-        var peakFiles = 0
-        var peakDescendants = 0
-        var hostMonitorSamples = 0
+        var peakMemory: UInt64 = 0, peakDisk: UInt64 = 0
+        var peakFiles = 0, peakDescendants = 0, samples = 0
+        var workerPID: Int32 = -1
         var limitReason: String?
-        var workerIdentity: SupervisorWorkerIdentity?
-        while try process.isRunning {
-            let now = ProcessInfo.processInfo.systemUptime
-            let sample = try observation.sample()
-            if sample.status == .gone { break }
-            hostMonitorSamples += 1
-            let unexpectedDescendants = max(0, sample.descendants.count - 1)
-            peakDescendants = max(peakDescendants, unexpectedDescendants)
-            guard let sampledSupervisor = sample.supervisor else { throw POSIXError(.EIO) }
-            var processFootprint = sampledSupervisor.footprint
-            for child in sample.descendants {
-                let sum = processFootprint.addingReportingOverflow(child.footprint)
-                guard !sum.overflow else { throw POSIXError(.EOVERFLOW) }
-                processFootprint = sum.partialValue
-            }
-            peakMemory = max(peakMemory, processFootprint)
-            if workerIdentity == nil, let worker = sample.worker,
-               let data = try? Data(contentsOf: identityURL),
-               let decoded = try? JSONDecoder().decode(SupervisorChildPID.self, from: data),
-               decoded.processIdentifier == worker.pid {
-                workerIdentity = .init(processIdentifier: worker.pid, startAbsoluteTime: worker.start)
+        while true {
+            let sample = try process.sample()
+            if let job {
                 lock.access {
-                    if activeProcess === process { activeWorkerProcessIdentifier = worker.pid }
+                    job.firstRelease = sample.firstRelease
+                    job.runningDeadline = sample.runningDeadline
                 }
-                try Data(authorizationToken.utf8).write(to: identityURL.appendingPathExtension("observed"), options: .atomic)
             }
-            guard let currentService = processUsage(getpid()) else { throw POSIXError(.EIO) }
-            let serviceFootprint = currentService.physicalFootprint
-            lock.access { servicePeakMemoryBytes = max(servicePeakMemoryBytes, serviceFootprint) }
-            let resourceRoots = job.map { workerWritableRoots($0.id) } ?? [processRoot]
-            let disk = try resourceUsage(roots: resourceRoots, observedVnodes: sample.vnodes,
-                                         byteLimit: request.limits.diskBytes, fileLimit: request.limits.files)
-            peakDisk = max(peakDisk, disk.bytes)
-            peakFiles = max(peakFiles, disk.files)
-            if lock.access({ closed || activeProcess !== process }) {
-                stopProcess(process)
-            } else if let job, lock.access({ job.state != .running }) {
-                stopProcess(process)
-            } else if now >= deadline {
-                limitReason = "deadline"
-                stopProcess(process)
-            } else if peakMemory > request.limits.memoryBytes {
-                limitReason = "memory"
-                stopProcess(process)
-            } else if serviceFootprint > request.limits.memoryBytes {
-                limitReason = "service-memory"
-                stopProcess(process)
-            } else if let resourceReason = disk.limitReason {
-                limitReason = resourceReason
-                stopProcess(process)
-            } else if unexpectedDescendants > 0 {
-                limitReason = "process-count"
-                stopProcess(process)
+            if sample.status == .gone { break }
+            samples += 1
+            let unexpected = max(0, sample.descendants.count - 1)
+            peakDescendants = max(peakDescendants, unexpected)
+            var footprint = sample.supervisor?.footprint ?? 0
+            for child in sample.descendants {
+                let sum = footprint.addingReportingOverflow(child.footprint)
+                guard !sum.overflow else { throw POSIXError(.EOVERFLOW) }
+                footprint = sum.partialValue
             }
+            peakMemory = max(peakMemory, footprint)
+            if let child = sample.worker {
+                workerPID = child.pid
+                lock.access { activeWorkerProcessIdentifier = child.pid }
+            }
+            if let usage = processUsage(getpid()) {
+                lock.access { servicePeakMemoryBytes = max(servicePeakMemoryBytes, usage.physicalFootprint) }
+            }
+            let usage = try resourceUsage(roots: job.map { workerWritableRoots($0.id) } ?? [processRoot],
+                observedVnodes: sample.vnodes, byteLimit: request.limits.diskBytes, fileLimit: request.limits.files)
+            peakDisk = max(peakDisk, usage.bytes); peakFiles = max(peakFiles, usage.files)
+            if let stop = sample.stopReason { limitReason = stop }
+            else if let reason = usage.limitReason { limitReason = reason }
+            else if unexpected > 0 { limitReason = "process-count" }
             if limitReason != nil || lock.access({ closed || job.map { $0.state != .running } == true }) {
-                _ = try process.waitUntilExit(timeout: 3)
-            } else if try process.isRunning { Thread.sleep(forTimeInterval: 0.05) }
+                try process.stop(limitReason.flatMap(BpyServiceStopCause.init(rawValue:)) ?? .cancelled)
+                _ = try process.waitForTermination(timeout: 3)
+            } else { Thread.sleep(forTimeInterval: 0.05) }
         }
-        let exitStatus = try process.waitUntilExit()
-        try observation.detach()
-        monitorDetached = true
-        do { let finalUsage = try resourceUsage(roots: job.map { workerWritableRoots($0.id) } ?? [processRoot], observedVnodes: [],
-                byteLimit: request.limits.diskBytes, fileLimit: request.limits.files)
-            peakDisk = max(peakDisk, finalUsage.bytes); peakFiles = max(peakFiles, finalUsage.files)
-            if limitReason == nil { limitReason = finalUsage.limitReason }
-        } catch { if limitReason == nil { throw error } }
-        output.fileHandleForReading.readabilityHandler = nil
-        errors.fileHandleForReading.readabilityHandler = nil
-        let remainingOutput = output.fileHandleForReading.readDataToEndOfFile()
-        let remainingErrors = errors.fileHandleForReading.readDataToEndOfFile()
-        log.append(remainingOutput)
-        log.append(remainingErrors)
-        guard exitStatus != 0 || workerIdentity != nil || limitReason != nil else {
-            throw CocoaError(.executableLoad)
-        }
-        return ManagedProcessResult(
-            workerProcessIdentifier: workerIdentity?.processIdentifier ?? -1,
-            exitStatus: exitStatus,
-            duration: ProcessInfo.processInfo.systemUptime - began,
-            peakMemoryBytes: peakMemory,
-            peakDiskBytes: peakDisk,
-            peakFileCount: peakFiles,
-            peakDescendantCount: peakDescendants,
-            hostMonitorSamples: hostMonitorSamples,
-            limitReason: limitReason,
-            log: log.text
-        )
+        let termination = try process.waitForTermination(timeout: 3)
+        limitReason = process.stopReason ?? limitReason
+        let final = try process.detach()
+        detached = true
+        if workerPID < 0 { workerPID = final.ended.first(where: { $0.parent == process.processIdentifier })?.pid ?? -1 }
+        if let job { lock.access { job.terminalProcess = process } }
+        let usage = try resourceUsage(roots: job.map { workerWritableRoots($0.id) } ?? [processRoot],
+            observedVnodes: [], byteLimit: request.limits.diskBytes, fileLimit: request.limits.files)
+        peakDisk = max(peakDisk, usage.bytes); peakFiles = max(peakFiles, usage.files)
+        limitReason = limitReason ?? usage.limitReason
+        guard termination.exitStatus != 0 || workerPID > 0 || limitReason != nil else { throw POSIXError(.EIO) }
+        return .init(workerProcessIdentifier: workerPID, exitStatus: termination.exitStatus,
+            duration: try BpyRuntimeClock.awakeSeconds() - began, peakMemoryBytes: peakMemory,
+            peakDiskBytes: peakDisk, peakFileCount: peakFiles, peakDescendantCount: peakDescendants,
+            hostMonitorSamples: samples, limitReason: limitReason, log: process.log, terminal: process)
+    }
+
+    private func clearActiveProcess() {
+        activeProcess = nil
+        activeProcessStartAbsoluteTime = nil
+        activeProcessExecutable = nil
+        activeProcessJobID = nil
+        activeProcessAuthorizationID = nil
+        activeProcessAuthorized = false
+        activeWorkerProcessIdentifier = nil
+        pendingCleanup = nil
     }
 
     @discardableResult
     private func stopActiveProcess(jobID: UUID? = nil) -> Bool {
-        guard let process = lock.access({
-            jobID == nil || activeProcessJobID == jobID ? activeProcess : nil
-        }) else { return true }
+        guard let process = lock.access({ jobID == nil || activeProcessJobID == jobID ? activeProcess : nil }) else { return true }
         stopProcess(process)
-        let deadline = ProcessInfo.processInfo.systemUptime + 8
+        guard let deadline = try? BpyRuntimeClock.awakeSeconds() + 3 else { return false }
         while lock.access({ activeProcess === process }) {
             if retryPendingCleanup(process) { return true }
             guard DispatchQueue.getSpecific(key: queueKey) == nil,
-                  ProcessInfo.processInfo.systemUptime < deadline else { return false }
+                  let now = try? BpyRuntimeClock.awakeSeconds(), now < deadline else { return false }
             Thread.sleep(forTimeInterval: 0.005)
         }
         return true
     }
 
-    private func retryPendingCleanup(_ process: BpyOwnedProcess) -> Bool {
-        cleanupLock.lock()
-        defer { cleanupLock.unlock() }
-        guard let pending = lock.access({ pendingCleanup }), pending.process === process else { return false }
+    private func retryPendingCleanup(_ process: BpyRemoteProcess) -> Bool {
+        cleanupLock.lock(); defer { cleanupLock.unlock() }
+        guard lock.access({ pendingCleanup?.process === process }) else { return false }
         do {
-            _ = try process.terminateAndReap(grace: 3)
-            let termination = try process.waitForTermination(timeout: 0)
-            if let observation = pending.observation {
-                do { try observation.detach() }
-                catch { if !termination.exitedNormally { throw error } }
-            }
-            lock.access {
-                guard activeProcess === process else { return }
-                activeProcess = nil
-                activeProcessStartAbsoluteTime = nil
-                activeProcessExecutable = nil
-                activeProcessJobID = nil
-                activeProcessAuthorizationID = nil
-                activeProcessAuthorizationURL = nil
-                activeProcessAuthorizationToken = nil
-                activeProcessAuthorized = false
-                activeWorkerProcessIdentifier = nil
-                pendingCleanup = nil
-            }
-            try? FileManager.default.removeItem(at: pending.controlRoot)
+            _ = try process.waitForTermination(timeout: 0)
+            _ = try process.detach()
+            lock.access { if activeProcess === process { clearActiveProcess() } }
             return true
         } catch { return false }
     }
@@ -2251,7 +2193,7 @@ private final class ServiceSession: @unchecked Sendable {
     private func baseConfiguration(processRoot: URL, cpuSeconds: Int) -> [String: Any] {
         [
             "sitePackages": sitePackagesURL.path,
-            "memoryBytes": request.limits.memoryBytes,
+            "memoryPolicy": request.limits.memoryPolicy.rawValue,
             "outputBytes": request.limits.outputBytes,
             "cpuSeconds": max(2, cpuSeconds + 1),
         ]
@@ -2263,13 +2205,80 @@ private final class ServiceSession: @unchecked Sendable {
         return url
     }
 
+    private func retainFile(from source: URL, to destination: URL, maximum: UInt64,
+                            expectedSHA256: String? = nil, result: (UUID, UInt64)? = nil) throws -> BpyRuntimeFile {
+        let pin = try storageAccess.pin()
+        let ticket: UUID?
+        do {
+            ticket = try result.map { try outputLedger.materialize($0.0, bytes: $0.1) }
+        } catch { pin.release(); throw error }
+        let ledger = outputLedger
+        var created: BpyRuntimeFile?
+        do {
+            let file = try BpyRuntimeFile.copy(from: source, to: destination, maximum: maximum,
+                expectedSHA256: expectedSHA256) { removed, _ in
+                    if removed {
+                        if let ticket { ledger.disposed(ticket) }
+                        pin.release()
+                    }
+                }
+            created = file
+            if let ticket { try ledger.bind(ticket, file: file) }
+            return file
+        } catch {
+            if let created { created.release() }
+            else if let failure = error as? BpyRuntimeFile.CreationError {
+                failure.cleanup.whenComplete {
+                    if let ticket { ledger.disposed(ticket) }
+                    pin.release()
+                }
+            } else {
+                if let ticket { ledger.disposed(ticket) }
+                pin.release()
+            }
+            throw error
+        }
+    }
+
+    private func retainFile(data: Data, to destination: URL, maximum: UInt64, jobID: UUID) throws -> BpyRuntimeFile {
+        let pin = try storageAccess.pin()
+        let ledger = outputLedger, bytes = UInt64(data.count)
+        let ticket: UUID
+        do { ticket = try ledger.materialize(jobID, bytes: bytes) }
+        catch { pin.release(); throw error }
+        var created: BpyRuntimeFile?
+        do {
+            let file = try BpyRuntimeFile.copy(data: data, to: destination, maximum: maximum, disposed: { removed, _ in
+                if removed { ledger.disposed(ticket); pin.release() }
+            })
+            created = file
+            try ledger.bind(ticket, file: file)
+            return file
+        } catch {
+            if let created { created.release() }
+            else if let failure = error as? BpyRuntimeFile.CreationError {
+                failure.cleanup.whenComplete { ledger.disposed(ticket); pin.release() }
+            } else { ledger.disposed(ticket); pin.release() }
+            throw error
+        }
+    }
+
     private func writeConfirmedCheckpoint(for job: JobRecord) throws -> URL? {
-        guard let data = lock.access({ confirmedSceneData }) else { return nil }
-        let directory = jobDirectory(job.id).appendingPathComponent("bootstrap", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let url = directory.appendingPathComponent("confirmed.blend")
-        try data.write(to: url, options: .atomic)
-        return url
+        guard let file = try lock.access({ try confirmedSceneFile?.retained() }) else { return nil }
+        defer { file.release() }
+        let destination = jobDirectory(job.id).appendingPathComponent("bootstrap/confirmed.blend")
+        let pin = try storageAccess.pin()
+        do {
+            let bootstrap = try file.copy(to: destination, maximum: request.limits.inputBytes, disposed: { removed, _ in
+                if removed { pin.release() }
+            })
+            lock.access { job.bootstrap = bootstrap }
+            return bootstrap.url
+        } catch {
+            if let failure = error as? BpyRuntimeFile.CreationError { failure.cleanup.whenComplete { pin.release() } }
+            else { pin.release() }
+            throw error
+        }
     }
 
     private func verifyStagedInputs(_ jobID: UUID) throws {
@@ -2287,54 +2296,46 @@ private final class ServiceSession: @unchecked Sendable {
         }
     }
 
-    private func collectOutputs(
-        _ jobID: UUID
-    ) throws -> (descriptors: [BpyOutputDescriptor], data: [String: Data]) {
-        let directory = outputDirectory(jobID)
-        let values = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
-        guard BpyOutputContract.acceptsWorkerNames(values.map(\.lastPathComponent)) else {
-            throw CocoaError(.fileReadInvalidFileName)
-        }
-        guard values.count <= min(256, request.limits.files) else {
-            throw CocoaError(.fileReadTooLarge)
-        }
+    private func planOutputs(_ jobID: UUID) throws -> [(URL, UInt64, String)] {
+        let values = try FileManager.default.contentsOfDirectory(at: outputDirectory(jobID), includingPropertiesForKeys: nil)
+        guard BpyOutputContract.acceptsWorkerNames(values.map(\.lastPathComponent)),
+              values.count <= min(256, request.limits.files) else { throw CocoaError(.fileReadTooLarge) }
         var total: UInt64 = 0
-        var result: [BpyOutputDescriptor] = []
-        var outputData: [String: Data] = [:]
+        var planned: [(URL, UInt64, String)] = []
         for url in values.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
-            guard isSafeName(url.lastPathComponent),
-                  url.lastPathComponent != "verification.json" else {
-                throw CocoaError(.fileReadInvalidFileName)
+            var value = stat()
+            guard isSafeName(url.lastPathComponent), url.lastPathComponent != "verification.json",
+                  lstat(url.path, &value) == 0, value.st_mode & S_IFMT == S_IFREG,
+                  value.st_uid == getuid(), value.st_nlink == 1, value.st_size >= 0,
+                  let type = mediaType(url.pathExtension) else { throw CocoaError(.fileReadCorruptFile) }
+            let bytes = UInt64(value.st_size)
+            guard total <= request.limits.outputBytes, bytes <= request.limits.outputBytes - total else {
+                throw CocoaError(.fileReadTooLarge)
             }
-            var status = stat()
-            guard lstat(url.path, &status) == 0,
-                  (status.st_mode & S_IFMT) == S_IFREG,
-                  status.st_nlink == 1,
-                  status.st_size >= 0 else {
-                throw CocoaError(.fileReadCorruptFile)
-            }
-            total += UInt64(status.st_size)
-            guard total <= request.limits.outputBytes else { throw CocoaError(.fileReadTooLarge) }
-            guard let mediaType = mediaType(url.pathExtension) else { throw CocoaError(.fileReadInvalidFileName) }
-            let data = try Data(contentsOf: url)
-            guard Int64(data.count) == Int64(status.st_size) else {
-                throw CocoaError(.fileReadCorruptFile)
-            }
-            try validateMagic(data, mediaType: mediaType)
-            if mediaType == "image/png" { try validatePNGDimensions(data) }
-            let digest = sha256(data)
-            result.append(.init(
-                name: url.lastPathComponent,
-                byteCount: UInt64(data.count),
-                sha256: digest,
-                mediaType: mediaType
-            ))
-            outputData[url.lastPathComponent] = data
+            total += bytes
+            planned.append((url, bytes, type))
         }
-        guard result.contains(where: { $0.name == "scene.blend" }) else {
-            throw CocoaError(.fileReadCorruptFile)
+        return planned
+    }
+
+    private func collectOutputs(_ jobID: UUID) throws -> (descriptors: [BpyOutputDescriptor], files: [String: BpyRuntimeFile]) {
+        let planned = try planOutputs(jobID)
+        var descriptors: [BpyOutputDescriptor] = []
+        var files: [String: BpyRuntimeFile] = [:]
+        for (url, bytes, type) in planned {
+            let destination = root.appendingPathComponent("results/" + jobID.uuidString + "/" + url.lastPathComponent)
+            let file = try retainFile(from: url, to: destination, maximum: request.limits.outputBytes, result: (jobID, bytes))
+            guard file.byteCount == bytes else { throw CocoaError(.fileReadCorruptFile) }
+            let header = try file.read(maximum: 64)
+            if type == "application/json" {
+                try BpyRuntimeJSONValidation.validate(file)
+            } else { try validateMagic(header, mediaType: type) }
+            if type == "image/png" { try validatePNGDimensions(header) }
+            descriptors.append(.init(name: url.lastPathComponent, byteCount: bytes, sha256: file.sha256, mediaType: type))
+            files[url.lastPathComponent] = file
         }
-        return (result, outputData)
+        guard files["scene.blend"] != nil else { throw CocoaError(.fileReadCorruptFile) }
+        return (descriptors, files)
     }
 
     private func validateMagic(_ data: Data, mediaType: String) throws {
@@ -2366,41 +2367,6 @@ private final class ServiceSession: @unchecked Sendable {
         }
     }
 
-    private func purgeExpiredResults() {
-        let cutoff = Date().addingTimeInterval(-resultRetentionSeconds)
-        for job in jobs.values where job.terminalAt.map({ $0 < cutoff }) == true {
-            if job.state == .awaitingConfirmation {
-                job.state = .rejected
-                job.message = "candidate result expired"
-            }
-            job.expireResult()
-            completedInputs.removeValue(forKey: job.id)
-        }
-    }
-
-    private func enforceResultRetentionBudget(retaining retainedID: UUID) {
-        let budget = min(
-            request.limits.diskBytes,
-            min(request.limits.memoryBytes / 2, request.limits.outputBytes * 4)
-        )
-        var retainedBytes = jobs.values.reduce(UInt64(0)) { partial, job in
-            partial + job.outputs.reduce(UInt64(0)) { $0 + $1.byteCount }
-        }
-        let candidates = jobs.values
-            .filter { $0.id != retainedID && !$0.resultExpired && $0.terminalAt != nil }
-            .sorted { ($0.terminalAt ?? .distantFuture) < ($1.terminalAt ?? .distantFuture) }
-        for candidate in candidates where retainedBytes > budget {
-            let bytes = candidate.outputs.reduce(UInt64(0)) { $0 + $1.byteCount }
-            if candidate.state == .awaitingConfirmation {
-                candidate.state = .rejected
-                candidate.message = "candidate result expired under the session retention budget"
-            }
-            candidate.expireResult()
-            completedInputs.removeValue(forKey: candidate.id)
-            retainedBytes = retainedBytes > bytes ? retainedBytes - bytes : 0
-        }
-    }
-
     private func response(for job: JobRecord) -> BpyServiceResponse {
         let ownsActiveProcess = activeProcessJobID == job.id
         return .init(
@@ -2422,7 +2388,8 @@ private final class ServiceSession: @unchecked Sendable {
             activeProcessAuthorizationID: ownsActiveProcess && !activeProcessAuthorized
                 ? activeProcessAuthorizationID
                 : nil,
-            activeWorkerProcessIdentifier: ownsActiveProcess ? activeWorkerProcessIdentifier : nil
+            activeWorkerProcessIdentifier: ownsActiveProcess ? activeWorkerProcessIdentifier : nil,
+            firstRelease: job.firstRelease, runningDeadline: job.runningDeadline, terminalCommit: job.terminalCommit
         )
     }
 
@@ -2475,15 +2442,15 @@ private final class ServiceSession: @unchecked Sendable {
     }
 
     private func jobWorkerDirectory(_ jobID: UUID) -> URL {
-        jobDirectory(jobID).appendingPathComponent("worker", isDirectory: true)
+        workerRoot.appendingPathComponent("jobs/\(jobID.uuidString)/worker", isDirectory: true)
     }
 
     private func verificationDirectory(_ jobID: UUID) -> URL {
-        jobDirectory(jobID).appendingPathComponent("verification", isDirectory: true)
+        workerRoot.appendingPathComponent("jobs/\(jobID.uuidString)/verification", isDirectory: true)
     }
 
     private func autoexecDirectory(_ jobID: UUID) -> URL {
-        jobDirectory(jobID).appendingPathComponent("autoexec-positive", isDirectory: true)
+        workerRoot.appendingPathComponent("jobs/\(jobID.uuidString)/autoexec-positive", isDirectory: true)
     }
 
     private func workerWritableRoots(_ jobID: UUID) -> [URL] {
@@ -2527,128 +2494,21 @@ private final class BpyRuntimeService: NSObject, @unchecked Sendable {
     func runBoundaryProbe(_ data: Data, monitor: BpyServiceMonitor, withReply reply: @escaping (Data) -> Void) {
         do {
             let request = try JSONDecoder().decode(BpyBoundaryProbeRequest.self, from: data)
-            guard request.schema == "nexgenvideo/bpy-boundary-probe-request/1" else {
-                throw CocoaError(.fileReadCorruptFile)
-            }
-            let app = Bundle.main.bundleURL
-                .deletingLastPathComponent()
-                .deletingLastPathComponent()
-                .deletingLastPathComponent()
-            let marker = app.appendingPathComponent(
-                "Contents/Resources/BPY_BOUNDARY_PROBE_NONPRODUCT_CI"
-            )
-            let supervisor = Bundle.main.bundleURL.appendingPathComponent(
-                "Contents/MacOS/NexGenVideoBpySupervisor"
-            )
-            guard FileManager.default.fileExists(atPath: marker.path),
-                  FileManager.default.isExecutableFile(atPath: supervisor.path),
-                  let service = processUsage(getpid()) else {
+            let app = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            guard request.schema == "nexgenvideo/bpy-boundary-probe-request/2",
+                  request.limits.isValid,
+                  FileManager.default.fileExists(atPath: app.appendingPathComponent("Contents/Resources/BPY_BOUNDARY_PROBE_NONPRODUCT_CI").path) else {
                 throw CocoaError(.fileReadNoPermission)
             }
-            capacity.wait()
-            defer { capacity.signal() }
-            let probeRoot = sessionsRoot.appendingPathComponent(
-                "boundary-\(request.nonce.uuidString)",
-                isDirectory: true
-            )
-            try? FileManager.default.removeItem(at: probeRoot)
-            try FileManager.default.createDirectory(at: probeRoot, withIntermediateDirectories: true)
-            defer { try? FileManager.default.removeItem(at: probeRoot) }
-            let first = try runBoundarySupervisor(
-                supervisorURL: supervisor,
-                root: probeRoot.appendingPathComponent("denials", isDirectory: true),
-                mode: "denials", monitor: monitor
-            )
-            let openUnlinked = try runBoundarySupervisor(
-                supervisorURL: supervisor,
-                root: probeRoot.appendingPathComponent("open-unlinked", isDirectory: true),
-                mode: "open-unlinked-hold", monitor: monitor
-            )
-            let readOnlyUnlinked = try runBoundarySupervisor(
-                supervisorURL: supervisor,
-                root: probeRoot.appendingPathComponent("readonly-unlinked", isDirectory: true),
-                mode: "readonly-unlinked-hold", monitor: monitor
-            )
-            let mappedUnlinked = try runBoundarySupervisor(
-                supervisorURL: supervisor,
-                root: probeRoot.appendingPathComponent("mapped-unlinked", isDirectory: true),
-                mode: "mapped-unlinked-hold", monitor: monitor
-            )
-            let externalReadOnly = try runBoundarySupervisor(
-                supervisorURL: supervisor,
-                root: probeRoot.appendingPathComponent("external-readonly", isDirectory: true),
-                mode: "external-readonly-hold", monitor: monitor
-            )
-            let internalLinkedWritable = try runBoundarySupervisor(
-                supervisorURL: supervisor,
-                root: probeRoot.appendingPathComponent("internal-linked", isDirectory: true),
-                mode: "internal-linked-writable-hold", monitor: monitor
-            )
-            let fileportRetention = try runBoundarySupervisor(
-                supervisorURL: supervisor,
-                root: probeRoot.appendingPathComponent("fileport-retention", isDirectory: true),
-                mode: "fileport-unlinked-hold", monitor: monitor
-            )
-            let followup = try runBoundarySupervisor(
-                supervisorURL: supervisor,
-                root: probeRoot.appendingPathComponent("followup", isDirectory: true),
-                mode: "denials", monitor: monitor
-            )
-            guard first.supervisorGone,
-                  first.childGone,
-                  openUnlinked.supervisorGone,
-                  openUnlinked.childGone,
-                  readOnlyUnlinked.supervisorGone,
-                  readOnlyUnlinked.childGone,
-                  mappedUnlinked.supervisorGone,
-                  mappedUnlinked.childGone,
-                  externalReadOnly.supervisorGone,
-                  externalReadOnly.childGone,
-                  internalLinkedWritable.supervisorGone,
-                  internalLinkedWritable.childGone,
-                  fileportRetention.supervisorGone,
-                  fileportRetention.childGone,
-                  followup.supervisorGone,
-                  followup.childGone else {
-                throw CocoaError(.executableLoad)
+            capacity.wait(); defer { capacity.signal() }
+            let storage = try BpyServiceStoragePair(pair: request.storagePair, limits: request.limits, transport: request.nonce, owner: request.nonce,
+                serviceStart: processUsage(getpid())?.startAbsoluteTime ?? 0)
+            defer {
+                try? FileManager.default.removeItem(at: storage.workerRoot)
+                try? FileManager.default.removeItem(at: storage.dataRoot)
+                storage.release()
             }
-            let retainedRuns = [openUnlinked, readOnlyUnlinked, mappedUnlinked]
-            let result = BpyBoundaryProbeResult(
-                nonce: request.nonce,
-                serviceProcessIdentifier: getpid(),
-                serviceStartAbsoluteTime: service.startAbsoluteTime,
-                supervisorProcessIdentifier: first.supervisorProcessIdentifier,
-                supervisorParentProcessIdentifier: first.supervisorParentProcessIdentifier,
-                supervisorStartAbsoluteTime: first.supervisorStartAbsoluteTime,
-                childProcessIdentifier: first.child.processIdentifier,
-                childStartAbsoluteTime: first.child.startAbsoluteTime,
-                childParentProcessIdentifier: first.report.parentProcessIdentifier,
-                allowedWriteSucceeded: first.report.allowedWriteSucceeded,
-                outsideWriteDeniedErrno: first.report.outsideWriteDeniedErrno,
-                forkDeniedErrno: first.report.forkDeniedErrno,
-                networkDeniedErrno: first.report.networkDeniedErrno,
-                signalDeniedErrnos: first.report.signalDeniedErrnos,
-                unlinkedBytesObserved: retainedRuns
-                    .map(\.observedRetainedBytes)
-                    .min() ?? 0,
-                unlinkedLimitReason: retainedRuns.allSatisfy({ $0.limitReason == "disk" })
-                    ? "disk"
-                    : "",
-                cleanupSupervisorGone: retainedRuns.allSatisfy(\.supervisorGone),
-                cleanupChildGone: retainedRuns.allSatisfy(\.childGone),
-                internalLinkedWritableDeduplicated: internalLinkedWritable
-                    .internalLinkedWritableDeduplicated,
-                fileportRetentionDeniedErrno: fileportRetention.report.retentionDeniedErrno,
-                fileportRetentionDenied: fileportRetention.retentionDenied,
-                fileportBytesObserved: fileportRetention.observedRetainedBytes,
-                fileportLimitReason: fileportRetention.limitReason ?? "",
-                healthyFollowupSucceeded: externalReadOnly.limitReason == nil
-                    && externalReadOnly.observedRetainedBytes < boundaryProbeResourceBytes
-                    && followup.supervisorGone
-                    && followup.childGone
-                    && followup.report.allowedWriteSucceeded
-            )
-            reply(try JSONEncoder().encode(result))
+            reply(try JSONEncoder().encode(runBoundarySupervisor(request: request, storage: storage, monitor: monitor)))
         } catch {
             reply(failure("boundary probe failed: \(error.localizedDescription)"))
         }
@@ -2676,47 +2536,25 @@ private final class BpyRuntimeService: NSObject, @unchecked Sendable {
                 return true
             }
             guard claimed else { throw CocoaError(.fileWriteNoPermission) }
-            guard let storage = request.storage else {
+            guard request.schema == "nexgenvideo/bpy-open-session/2", request.storage == nil else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            guard let pair = request.storagePair else {
                 stage = .preparation
-                guard let identity = processUsage(getpid()) else { throw CocoaError(.executableLoad) }
+                guard request.admission == nil, request.admissionDeadline == nil, let identity = processUsage(getpid()) else { throw CocoaError(.executableLoad) }
                 let inUse = lock.access {
-                    (Array(sessions.values) + Array(retiringSessions.values)).compactMap { $0.request.storage?.id }
+                    (Array(sessions.values) + Array(retiringSessions.values)).flatMap {
+                        $0.request.storagePair.map { [$0.worker.id, $0.data.id] } ?? []
+                    } + BpyServiceStoragePair.inUseIDs
                 }
-                openDiagnostics.notice("open.prepared session=\(request.sessionID.uuidString, privacy: .public) owner=\(owner.uuidString, privacy: .public) pid=\(getpid(), privacy: .public) start=\(identity.startAbsoluteTime, privacy: .public)")
-                reply(encoded(.init(ok: true, storagePreparation: .init(
-                    id: request.sessionID, servicePID: getpid(),
-                    serviceStart: identity.startAbsoluteTime, inUseStorageIDs: inUse
-                ))))
+                reply(encoded(.init(ok: true, storagePreparation: .init(id: request.sessionID,
+                    servicePID: getpid(), serviceStart: identity.startAbsoluteTime, inUseStorageIDs: inUse))))
                 return
             }
-            stage = .bookmark
-            let beforeScope = Darwin.open(storage.mountPath, O_RDONLY | O_DIRECTORY | O_NOFOLLOW_ANY | O_CLOEXEC)
-            let beforeScopeError = beforeScope < 0 ? errno : 0
-            if beforeScope >= 0 { Darwin.close(beforeScope) }
-            openDiagnostics.notice("open.beforeScope session=\(request.sessionID.uuidString, privacy: .public) owner=\(owner.uuidString, privacy: .public) pid=\(getpid(), privacy: .public) errno=\(beforeScopeError, privacy: .public)")
-            var stale = false
-            let scope = try URL(resolvingBookmarkData: storage.bookmark, options: [.withoutUI, .withoutMounting],
-                                relativeTo: nil, bookmarkDataIsStale: &stale)
-            var ownsScope = true
-            defer { if ownsScope { scope.stopAccessingSecurityScopedResource() } }
-            stage = .check
-            let pathMatches = scope.path == storage.mountPath
-            let serviceStart = processUsage(getpid())?.startAbsoluteTime ?? 0
-            let bookmarkDigest = sha256(storage.bookmark)
-            let volumeMatch = BpyStoragePaths.bookmarkVolumeMatch(storage.bookmark, mount: scope)
-            openDiagnostics.notice("open.check session=\(request.sessionID.uuidString, privacy: .public) owner=\(owner.uuidString, privacy: .public) pid=\(getpid(), privacy: .public) start=\(serviceStart, privacy: .public) stale=\(stale, privacy: .public) file=\(scope.isFileURL, privacy: .public) pathMatches=\(pathMatches, privacy: .public) sha256=\(bookmarkDigest, privacy: .public) volumeMatch=\(volumeMatch, privacy: .public)")
+            guard request.admission != nil, request.admissionDeadline?.isFinite == true else { throw CocoaError(.fileReadCorruptFile) }
             stage = .validateMount
-            var descriptor: Int32?
-            do {
-                descriptor = try BpyStoragePaths.validateResolvedMount(storage, resolved: scope,
-                                                                      maximumBytes: request.limits.physicalStorageBytes)
-                openDiagnostics.notice("open.validated session=\(request.sessionID.uuidString, privacy: .public) owner=\(owner.uuidString, privacy: .public) pid=\(getpid(), privacy: .public) start=\(serviceStart, privacy: .public) sha256=\(bookmarkDigest, privacy: .public)")
-            } catch {
-                diagnoseStorageMount(storage, maximumBytes: request.limits.physicalStorageBytes,
-                                     sessionID: request.sessionID, owner: owner, validate: false)
-                throw error
-            }
-            defer { if let descriptor { Darwin.close(descriptor) } }
+            let storageAccess = try BpyServiceStoragePair(pair: pair, limits: request.limits, transport: request.sessionID, owner: owner,
+                serviceStart: processUsage(getpid())?.startAbsoluteTime ?? 0)
             stage = .reserve
             try awaitRetiredConnections(owner: owner, documentID: request.documentID)
             let retired: ServiceSession? = try lock.access {
@@ -2745,14 +2583,12 @@ private final class BpyRuntimeService: NSObject, @unchecked Sendable {
                 guard sessions.isEmpty else { throw CocoaError(.fileWriteNoPermission) }
                 let session = ServiceSession(
                     request: request,
-                    root: URL(fileURLWithPath: storage.mountPath).appendingPathComponent(request.sessionID.uuidString),
+                    root: storageAccess.dataRoot,
                     runtimeRoot: runtimeRoot,
                     monitor: monitor,
                     capacity: capacity,
-                    storageDescriptor: descriptor!, storageScope: scope
+                    storageAccess: storageAccess
                 )
-                descriptor = nil
-                ownsScope = false
                 sessions[request.sessionID] = session
                 return session
             }
@@ -2860,6 +2696,14 @@ private final class BpyRuntimeService: NSObject, @unchecked Sendable {
         }
     }
 
+    func releaseResources(_ data: Data, owner: UUID, withReply reply: @escaping (Data) -> Void) {
+        do {
+            let request = try JSONDecoder().decode(BpyReleaseResourcesRequest.self, from: data)
+            guard let session = session(request.sessionID, owner: owner) else { throw CocoaError(.fileNoSuchFile) }
+            reply(encoded(try session.releaseResources(request)))
+        } catch { reply(failure("resource release rejected")) }
+    }
+
     func confirmJob(_ data: Data, owner: UUID, withReply reply: @escaping (Data) -> Void) {
         do {
             let request = try JSONDecoder().decode(BpyConfirmJobRequest.self, from: data)
@@ -2917,7 +2761,7 @@ private final class BpyRuntimeService: NSObject, @unchecked Sendable {
     }
 
     private func awaitRetiredConnections(owner: UUID, documentID: String) throws {
-        let deadline = ProcessInfo.processInfo.systemUptime + 10
+        let deadline = try BpyRuntimeClock.awakeSeconds() + 10
         while true {
             let pending = lock.access {
                 (Array(sessions.values) + Array(retiringSessions.values)).filter { session in
@@ -2926,7 +2770,7 @@ private final class BpyRuntimeService: NSObject, @unchecked Sendable {
             }
             if pending.isEmpty { return }
             guard pending.allSatisfy({ $0.request.documentID == documentID }) else { throw POSIXError(.EPERM) }
-            guard ProcessInfo.processInfo.systemUptime < deadline else { throw POSIXError(.EBUSY) }
+            guard try BpyRuntimeClock.awakeSeconds() < deadline else { throw POSIXError(.EBUSY) }
             Thread.sleep(forTimeInterval: 0.01)
         }
     }
@@ -3105,6 +2949,13 @@ private final class BpyRuntimeConnection: NSObject, BpyRuntimeServiceProtocol, @
             return
         }
         service.readOutput(request, owner: ownerID, withReply: reply)
+    }
+
+    func releaseResources(_ request: Data, withReply reply: @escaping (Data) -> Void) {
+        guard owns(BpyReleaseResourcesRequest.self, request: request, sessionID: { $0.sessionID }) else {
+            reply(failure("XPC session is unavailable")); return
+        }
+        service.releaseResources(request, owner: ownerID, withReply: reply)
     }
 
     func confirmJob(_ request: Data, withReply reply: @escaping (Data) -> Void) {
