@@ -155,25 +155,45 @@ jobs:
     name: Analyze Private Example
     needs: [source-gate, build-runtime-harness]
     if: ${{ !cancelled() && needs.source-gate.result == 'success' && (needs.build-runtime-harness.result == 'success' || (needs.build-runtime-harness.result == 'skipped' && inputs.runtime_artifact != '')) }}
-    # The production floor is the newest released macOS; pin it so this acceptance run
-    # cannot silently switch to the dormant macOS 27 Music Understanding adapter.
-    # ci-lint: allow-CI005 Runtime acceptance on the macOS 26 floor; macrunner boots only macOS 27.
-    runs-on: macos-26
+    runs-on: macrunner
     # Bootstrap ceiling for the first measured real-file run; replace with p90 × 2 once run data exists.
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - name: Require the macOS 26 production runtime
+      - name: Verify supported runtime
         shell: bash
         run: |
           set -euo pipefail
           runtime_version="$(sw_vers -productVersion)"
           runtime_major="${runtime_version%%.*}"
-          if [ "$runtime_major" -ne 26 ]; then
-            echo "::error::Private audio analysis must exercise macOS 26; this runner boots macOS $runtime_version."
+          RUNTIME_PRODUCT_VERSION="$runtime_version" python3 - <<'PYTHON'
+          import json, os, pathlib, platform, subprocess
+          destination = pathlib.Path(os.environ['RUNNER_TEMP']) / 'analysis-runtime' / 'runtime-environment.json'
+          destination.parent.mkdir(parents=True, exist_ok=True)
+          destination.write_text(json.dumps({
+              'productVersion': os.environ['RUNTIME_PRODUCT_VERSION'],
+              'osBuild': subprocess.check_output(['sw_vers', '-buildVersion'], text=True).strip(),
+              'architecture': platform.machine(),
+              'runnerName': os.environ.get('RUNNER_NAME'),
+              'sourceSHA': os.environ['GITHUB_SHA'],
+          }, indent=2) + '\n')
+          PYTHON
+          if [ "$runtime_major" -lt 26 ]; then
+            echo "::error::Private audio analysis requires macOS 26 or later; this runner boots macOS $runtime_version."
             exit 1
           fi
+          test "$(uname -m)" = arm64
+          sw_vers
+
+      - name: Retain actual runtime identity
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: private-analysis-runtime-environment-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/analysis-runtime/runtime-environment.json
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Download runtime harness
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4

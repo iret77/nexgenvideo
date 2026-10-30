@@ -76,9 +76,9 @@ release blockers:
 8. media import and relink still performed scan, hashing, and copy work on `MainActor`, with incomplete
    cancellation, rollback, content verification, and close/undo lifetime guarantees.
 
-Never build or test locally. GitHub Actions on `macos-26` is the only Swift/build verification
-surface. Merge when the PR's checks are green; publish or build a release DMG only on the owner's
-instruction.
+Build and runtime verification use GitHub Actions with macrunner. The deployment target is
+macOS 26; native evidence records the actual VM OS. Release publication and release-DMG builds
+remain owner-authorized operations.
 
 ## Working state
 

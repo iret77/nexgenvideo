@@ -138,7 +138,7 @@ Debug-/Ad-hoc-Build funktioniert, beweist keine Berechtigung beim Developer-ID-
 signierten Hardened-Runtime-Build. Auch eine gleiche Team-ID ist kein solcher Beweis.
 
 Deshalb zuerst ein Machbarkeits- und Abnahmetest am tatsächlich signierten/notarisierten
-Paket unter macOS 26, als normaler Benutzer, ohne Debugger, sudo oder Entwickler-Setup.
+Paket auf macrunner, als normaler Benutzer, ohne Debugger, sudo oder Entwickler-Setup.
 Der Report muss verwertbare Main-Thread- und weitere Thread-Stacks enthalten.
 Bei Sperre wird der genaue Fehler gespeichert; ein leerer Report zählt nicht als Erfolg.
 Dann ist vor Versand ein geprüfter In-Process-Sampling-Pfad für eigene Threads nötig,
@@ -210,7 +210,7 @@ weil eine Aufzeichnung das Thread-Scheduling nicht vollständig reproduziert.
 | Sleep/Wake, Modal, Live-Resize, langsamer Provider | Keine unbegründeten Hang-Meldungen; echte UI-Blockade bleibt erkennbar |
 | Platte voll, verweigerte Rechte, Helfer-Ausfall, Puffer voll | Sichtbarer Capture-Fehler bzw. Lückenstatus, keine zusätzliche UI-Blockade, begrenzter Ressourcenverbrauch |
 | Datenschutz | Markierte Test-Secrets fehlen in allen Exporten und Telemetriepfaden; Löschung/Fristen und Dateirechte werden geprüft |
-| Release-Parität | Normaler AppDelegate-/Fenster-/Projektstart, Release-Optimierung, signiertes Paket, macOS 26; kein bloßer Harness-Sonderpfad |
+| Release-Parität | Normaler AppDelegate-/Fenster-/Projektstart, Release-Optimierung, signiertes Paket auf macrunner mit erfasster OS-Version; kein bloßer Harness-Sonderpfad |
 | Replay | Aufzeichnung eines bekannten injizierten Fehlers reproduziert diesen offline; reparierte Variante besteht, fehlerhafte Kontrolle schlägt fehl |
 
 Zielbudget im Vergleich zur identischen App ohne Rekorder: weniger als ein Prozentpunkt
@@ -235,7 +235,7 @@ Pack-Pins und Pack-ABI bleiben unverändert; Diagnosezustand gehört nicht in ö
 Pack-Grenztypen oder in Projektdateien.
 
 Builds/Tests/Bundles ausschließlich GitHub Actions (`macrunner`); Laufzeitprüfung auf
-macOS-26-Runnern. Bestehende Signierung/Notarisierung wiederverwenden. Kein Build auf dem
+`macrunner`. Bestehende Signierung/Notarisierung wiederverwenden. Kein Build auf dem
 MacBook. Ein echter, durch CI nicht erfüllbarer Berechtigungsnachweis wäre eine konkret
 zu benennende Abnahmehürde, keine stillschweigende Verlagerung der Tests auf den Nutzer.
 Merge, sobald die PR-Checks grün sind; Release nur auf Anweisung des Owners. Dieses Konzept

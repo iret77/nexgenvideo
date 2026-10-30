@@ -665,8 +665,7 @@ jobs:
   diagnostic-startup:
     needs: [source_gate, build_test]
     if: needs.source_gate.outputs.bundle_required == 'true'
-    # ci-lint: allow-CI005 Runtime acceptance on the macOS 26 floor; macrunner boots only macOS 27.
-    runs-on: macos-26
+    runs-on: macrunner
     timeout-minutes: 15
     permissions:
       contents: read
@@ -693,7 +692,7 @@ jobs:
           python3 scripts/verify_hang_startup.py candidate/NexGenVideo.app --output evidence/candidate.json
       - name: Exercise native Export Cancel, Retry and Reveal actions
         run: python3 scripts/export_actions_acceptance.py candidate/NexGenVideo.app --output evidence/export-actions.json
-      - name: Verify generation batch pricing recovery on macOS 26
+      - name: Verify generation batch pricing recovery
         shell: bash
         run: |
           set -euo pipefail

@@ -78,8 +78,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.cases.outputs.matrix) }}
     name: Native ${{ matrix.id }}
-    # ci-lint: allow-CI005 Native UI and restart acceptance on the shipped macOS 26 floor.
-    runs-on: macos-26
+    runs-on: macrunner
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -96,7 +95,7 @@ jobs:
       - name: Require the actual same-source CI distribution
         run: |
           set -euo pipefail
-          test "$(sw_vers -productVersion | cut -d. -f1)" = 26
+          test "$(sw_vers -productVersion | cut -d. -f1)" -ge 26
           python3 scripts/verify_bpy_distributable_source.py \
             "$RUNNER_TEMP/settings-runtime/qualified-source/NexGenVideo-bpy-5.2.2-corresponding-source.tar" \
             "$RUNNER_TEMP/settings-runtime/qualified-source/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json"

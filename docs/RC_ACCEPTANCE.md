@@ -82,8 +82,9 @@ accessibility trees, input records, saved project snapshots and an independently
 decoded exported movie are required with the XCTest result. The prepared workflow
 is designed to resume a failed journey without rebuilding the app; that behavior
 has not been verified. These paths have not run and establish no acceptance
-yet. The current macrunner GUI image is macOS 27, so the macOS 26 runtime checks
-remain required. This generic journey does not establish Musicvideo or live-provider
+yet. All macOS acceptance uses macrunner, including its macOS 27 GUI image; evidence
+records the actual OS and does not imply execution on macOS 26. The deployment target
+remains macOS 26. This generic journey does not establish Musicvideo or live-provider
 acceptance.
 
 ## Function trace

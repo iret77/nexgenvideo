@@ -124,8 +124,8 @@ private enum StoryboardAccessibilityProbe {
             var report: [String: Any] = ["schema": "storyboard-accessibility-probe/v2", "measurementOnly": true,
                 "os": ProcessInfo.processInfo.operatingSystemVersionString, "finished": false]
             do {
-                guard ProcessInfo.processInfo.operatingSystemVersion.majorVersion == 26 else {
-                    throw Failure(message: "The probe requires macOS 26.")
+                guard ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 26 else {
+                    throw Failure(message: "The probe requires macOS 26 or later.")
                 }
                 let baseline = try await measure(accessibilityEnabled: false, destination: destination)
                 report["defaultEnvironment"] = baseline

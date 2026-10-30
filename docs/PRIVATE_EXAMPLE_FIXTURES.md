@@ -79,7 +79,7 @@ its temporary media and registry credentials before the macOS job can start.
 
 The `macrunner` build job first bundles the app and external pack without access to private fixture
 data, wraps both in a one-day runtime-harness artifact that preserves executable modes and framework
-symlinks, and transfers that artifact to the pinned GitHub-hosted macOS 26 runner. A CI batch that
+symlinks, and transfers that artifact to a fresh macrunner VM. A CI batch that
 already built the workspace acceptance app reuses that exact artifact. The runtime job then:
 
 1. verifies the booted macOS version before downloading any artifact or private data;
@@ -119,7 +119,8 @@ names, lyrics, labels, hashes, or media content.
 No media, lyrics, analysis, or provenance file is uploaded as a public Actions artifact. The macOS
 job removes its fixture, report, and registry-auth directories after publication or failure.
 
-The acceptance run requires macOS 26 exactly and verifies `sw_vers` before downloading private data.
+The acceptance run uses macrunner and verifies macOS 26 or later before downloading private data.
+A public runtime-identity artifact retains only the actual OS version/build, architecture, runner name and source SHA.
 This proves the shipping neural beat, stem, transcription, harmony, and evidence-resolution path.
 The dormant Music Understanding adapter is compiled with the macOS 27 SDK but is intentionally not
-activated by this production-floor test.
+activated while the app deployment target remains macOS 26, including on the macOS 27 VM.

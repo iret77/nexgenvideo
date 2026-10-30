@@ -27,6 +27,7 @@ BATCH_WORKFLOW = ".github/workflows/ci-batch.yml"
 BATCH_BINARY_JOB = "bpy-qualification / binary-evidence"
 COMMIT = re.compile(r"[0-9a-f]{40}")
 LIMIT = 2 * 1024 * 1024
+HOSTED_MEASUREMENT_CUTOFF = datetime.fromisoformat("2026-10-30T12:40:30+00:00")
 SOURCE_LIMIT = 32 * 1024 * 1024 * 1024
 
 
@@ -83,10 +84,14 @@ def require_producer(run_id, run, artifacts, jobs):
     if not candidates:
         raise ValueError("The requested run has no binary measurement")
     latest = max(candidates, key=lambda item: (item["run_attempt"], item["id"]))
+    # Only measurements completed before this migration retain hosted-runner provenance.
+    labels = latest.get("labels", [])
+    accepted_runner = "macrunner" in labels or ("macos-26" in labels
+        and instant(latest["completed_at"]) < HOSTED_MEASUREMENT_CUTOFF)
     if (latest.get("run_id") != run_id or latest.get("head_sha") != original_sha
         or latest.get("status") != "completed" or latest.get("conclusion") != "success"
-        or "macos-26" not in latest.get("labels", [])):
-        raise ValueError("The latest binary measurement did not pass on macOS 26")
+        or not accepted_runner):
+        raise ValueError("The latest binary measurement did not pass on an accepted measurement runner")
     name = "managed-bpy-binary-evidence-" + original_sha
     matches = [item for item in artifacts if item.get("name") == name]
     if len(matches) != 1:

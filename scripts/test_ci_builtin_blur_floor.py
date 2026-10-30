@@ -182,8 +182,7 @@ class FloorRuntimeTests(unittest.TestCase):
         workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/diagnostic-acceptance.yml").read_text()
         job = workflow.split("  ci-builtin-blur-floor:\n", 1)[1].split("  ci-builtin-blur:\n", 1)[0]
         self.assertIn("needs: source", job)
-        self.assertIn("runs-on: macos-26", job)
-        self.assertIn("ci-lint: allow-CI005", job.split("runs-on: macos-26", 1)[0].rstrip().splitlines()[-1])
+        self.assertIn("runs-on: macrunner", job)
         self.assertIn("ci_builtin_blur_floor.py run", job)
         self.assertIn("name: builtin-blur-floor-binding", job)
         for forbidden in ("swiftc", "xcodebuild", "swift build", "setup-xcode", "continue-on-error"):

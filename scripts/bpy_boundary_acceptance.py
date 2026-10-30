@@ -72,6 +72,19 @@ def validate(proofs, fixture):
         raise ValueError("boundary slots shared their service or execution")
 
 
+def runtime_identity():
+    if platform.system() != "Darwin" or platform.machine() != "arm64":
+        raise ValueError("requires macOS 26 or later, arm64")
+    version = subprocess.check_output(["/usr/bin/sw_vers", "-productVersion"], text=True, timeout=10).strip()
+    match = re.fullmatch(r"(\d+)\.\d+(?:\.\d+)?", version)
+    if not match or int(match[1]) < 26:
+        raise ValueError("requires macOS 26 or later, arm64")
+    build = subprocess.check_output(["/usr/bin/sw_vers", "-buildVersion"], text=True, timeout=10).strip()
+    if not build:
+        raise ValueError("requires an OS build identity")
+    return {"osVersion": version, "osBuild": build, "architecture": "arm64"}
+
+
 def run(app, output, source_sha):
     if platform.system() != "Darwin" or not re.fullmatch(r"[0-9a-f]{40}", source_sha):
         raise ValueError("requires macOS and exact source")
@@ -93,9 +106,7 @@ def run(app, output, source_sha):
     before = {name: digest(app / name) for name in paths}
     runtime_before = paired(app)
     try:
-        version = subprocess.check_output(["/usr/bin/sw_vers", "-productVersion"], text=True, timeout=10).strip()
-        if version.split(".")[0] != "26" or platform.machine() != "arm64":
-            raise ValueError("requires released macOS 26 arm64")
+        receipt.update(runtime_identity())
         if plistlib.loads((app / "Contents/Info.plist").read_bytes()).get("NGVSourceCommit") != source_sha:
             raise ValueError("original app source mismatch")
         command(["codesign", "--verify", "--deep", "--strict", app])
@@ -108,7 +119,7 @@ def run(app, output, source_sha):
         (fixture / "Contents/Resources/BPY_BOUNDARY_PROBE_NONPRODUCT_CI").write_bytes(b"")
         command([ROOT / "scripts/sign_app.sh", fixture, "dev", "boundary", "-"], timeout=120)
         command(["codesign", "--verify", "--deep", "--strict", fixture])
-        receipt.update(osVersion=version, originalHashes=before,
+        receipt.update(originalHashes=before,
                        derivedHashes={name: digest(fixture / name) for name in paths})
         with (output / "stdout.log").open("xb") as stdout, (output / "stderr.log").open("xb") as stderr:
             process = subprocess.Popen([str(fixture / "Contents/MacOS/NexGenVideo")],

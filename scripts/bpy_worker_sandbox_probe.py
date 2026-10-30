@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import re
 import shutil
 import signal
 import socket
@@ -450,6 +451,16 @@ def memory_environment_preflight(output, environment):
     return identity
 
 
+def normal_runtime_environment():
+    version = subprocess.check_output(["sw_vers", "-productVersion"], text=True, timeout=10).strip()
+    match = re.fullmatch(r"(\d+)\.\d+(?:\.\d+)?", version)
+    architecture = subprocess.check_output(["uname", "-m"], text=True, timeout=10).strip()
+    require(match is not None and int(match[1]) >= 26 and architecture == "arm64", "macOS 26 or later, arm64")
+    build = subprocess.check_output(["sw_vers", "-buildVersion"], text=True, timeout=10).strip()
+    require(bool(build), "runtime OS build identity")
+    return dict(osVersion=version, osBuild=build, architecture=architecture)
+
+
 def observe(output, identity, binaries):
     output.mkdir(parents=True, exist_ok=False)
     execution = execution_identity(os.environ)
@@ -463,8 +474,7 @@ def observe(output, identity, binaries):
     if memory:
         runtime_environment = memory_environment_preflight(output, os.environ)
     else:
-        require(subprocess.check_output(["sw_vers", "-productVersion"], text=True).startswith("26.")
-                and subprocess.check_output(["uname", "-m"], text=True).strip() == "arm64", "macOS26 arm64")
+        runtime_environment = normal_runtime_environment()
     build = json.loads((binaries / "build.json").read_text())
     probe = binaries / "probe"
     resume = os.environ.get("NGV_SANDBOX_RESUME_PYTHON", "false")
@@ -594,6 +604,7 @@ def observe(output, identity, binaries):
         require(outside.read_text() == "outside-worker-root\n", "outside data retained")
         result = dict(passed=True, runtimeAcceptance=False,
             scope="isolated memory candidate only" if memory else "isolated component only", memory=memory_result,
+            runtimeEnvironment=runtime_environment,
             sourceSHA=os.environ["GITHUB_SHA"], originalSource=SOURCE, artifact=ARTIFACT, execution=execution,
             retained=retained, compositeAcrossRuns=retained is not None,
             limitations=["No host/XPC integration or restart ownership proof", "No full bpy or native UI acceptance",

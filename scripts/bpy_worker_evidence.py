@@ -485,8 +485,10 @@ def validate_stdout_burst(memory, host_pid):
 
 
 def validate_runtime_observation(value):
+    version = value.get("osVersion")
+    match = re.fullmatch(r"(\d+)\.\d+\.\d+", version) if isinstance(version, str) else None
     if value.get("schema") != "nexgenvideo/bpy-runtime-observation/1" or value.get("architecture") != "arm64" \
-            or not re.fullmatch(r"26\.\d+\.\d+", value.get("osVersion", "")) \
+            or not match or int(match[1]) < 26 \
             or not value.get("osBuild") or not value.get("kernel") \
             or value.get("imageVersionStatus") not in ("present", "absent") \
             or (value["imageVersionStatus"] == "present") != bool(value.get("imageVersion")) \

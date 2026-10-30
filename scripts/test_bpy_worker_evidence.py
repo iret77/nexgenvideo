@@ -515,12 +515,22 @@ class WorkerEvidenceTests(unittest.TestCase):
                     validate(self.directory)
                 value.clear(); value.update(json.loads(original))
 
+    def test_runtime_observation_accepts_newer_macos_and_rejects_missing_or_invalid_versions(self):
+        observation = self.result["runtimeObservation"]
+        for version in ("26.6.2", "27.0.1"):
+            observation["osVersion"] = version
+            self.write(); validate(self.directory)
+        for version in ("25.7.2", "", None, "invalid.0.1", "27.0"):
+            with self.subTest(version=version), self.assertRaisesRegex(ValueError, "actual minimum-OS runtime environment"):
+                observation["osVersion"] = version
+                self.write(); validate(self.directory)
+
     def test_runtime_observation_requires_actual_floor_adapter_clocks_swap_and_complete_activity(self):
         observation = self.result["runtimeObservation"]
         environment = "actual minimum-OS runtime environment or activity completion"
         adapter = "actual UInt32 pressure adapter qualification"
         for name, change, error in (
-                ("wrong-floor", lambda: observation.update(osVersion="27.0.1"), environment),
+                ("wrong-floor", lambda: observation.update(osVersion="25.7.2"), environment),
                 ("unexpected-image-version", lambda: observation.update(imageVersion="unlabeled"), environment),
                 ("wrong-adapter-size", lambda: observation["trace"]["pressure"][0]["sample"].update(byteCount=8), adapter),
                 ("synthetic-adapter", lambda: observation["trace"]["pressure"][0]["sample"].update(source="selftest-sensor"), adapter),

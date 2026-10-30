@@ -56,8 +56,7 @@ jobs:
 
   probe:
     needs: build
-    # ci-lint: allow-CI005 Isolated audio and accessibility diagnosis on the macOS 26 production floor.
-    runs-on: macos-26
+    runs-on: macrunner
     timeout-minutes: 3
     steps:
       - uses: actions/download-artifact@v4
@@ -67,7 +66,7 @@ jobs:
       - name: Require the production runtime and restore probes
         run: |
           set -euo pipefail
-          test "$(sw_vers -productVersion | cut -d. -f1)" = 26
+          test "$(sw_vers -productVersion | cut -d. -f1)" -ge 26
           tar -xzf "$RUNNER_TEMP/native-probes.tar.gz" -C "$RUNNER_TEMP"
       - name: Measure exact decoder duration and final audio
         id: audio
@@ -240,8 +239,7 @@ jobs:
       (needs.sandbox-build.result == 'success' ||
       (inputs.worker_sandbox_resume && needs.sandbox-build.result == 'skipped')) }}
     needs: [sandbox-source, sandbox-build]
-    # ci-lint: allow-CI005 Prove the isolated worker policy on the macOS 26 product floor.
-    runs-on: macos-26
+    runs-on: macrunner
     timeout-minutes: 30
     steps:
       - name: Refuse replayed component attempts

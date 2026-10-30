@@ -181,14 +181,17 @@ class ExternalTestBundleTests(unittest.TestCase):
         screenshot = self.root / 'desktop.png'
         screenshot.write_bytes(b'\x89PNG\r\n\x1a\noriginal')
         runtime = {'schema': 'nexgenvideo/external-gui-runtime/1', 'githubActions': True,
-                   'runnerEnvironment': 'github-hosted', 'platform': 'darwin', 'architecture': 'arm64',
-                   'osVersion': '26.6.2', 'jobUID': 501, 'consoleUID': 501, 'aquaSession': True,
-                   'developerSecurity': 'Developer mode is currently enabled.', 'xcode': 'Xcode 26.6',
+                   'runnerEnvironment': 'self-hosted', 'platform': 'darwin', 'architecture': 'arm64',
+                   'osVersion': '27.0.1', 'osBuild': '27A-test', 'runnerName': 'macrunner-test', 'jobUID': 501, 'consoleUID': 501, 'aquaSession': True,
+                   'developerSecurity': 'Developer mode is currently enabled.', 'xcode': 'Xcode 27.0',
                    'desktopSHA256': journey.sha256(screenshot)}
         journey.write_json(self.root / 'runtime.json', runtime)
         journey.validate_runtime(self.root)
-        for key, value in (('osVersion', '27.0'), ('architecture', 'x86_64'), ('consoleUID', 0),
-                           ('aquaSession', False), ('runnerEnvironment', 'self-hosted')):
+        journey.write_json(self.root / 'runtime.json', {**runtime, 'osVersion': '26.6.2'})
+        journey.validate_runtime(self.root)
+        for key, value in (('osVersion', '25.7.2'), ('osVersion', ''), ('osVersion', None),
+                           ('osVersion', 'invalid.0'), ('githubActions', False), ('osBuild', ''), ('runnerName', ''), ('architecture', 'x86_64'), ('consoleUID', 0),
+                           ('aquaSession', False), ('runnerEnvironment', 'github-hosted')):
             with self.subTest(key=key), self.assertRaises(ValueError):
                 journey.write_json(self.root / 'runtime.json', {**runtime, key: value})
                 journey.validate_runtime(self.root)

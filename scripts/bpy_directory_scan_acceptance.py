@@ -43,19 +43,28 @@ def validate(proof, process_id):
         raise ValueError('The retained file bytes changed')
 
 
-def run(app, output, source_sha):
-    if platform.system() != 'Darwin':
-        raise ValueError('The directory scanner must execute on macOS 26')
+def runtime_identity():
+    if platform.system() != 'Darwin' or platform.machine() != 'arm64':
+        raise ValueError('The directory scanner requires macOS 26 or later, arm64')
     version = subprocess.check_output(['/usr/bin/sw_vers', '-productVersion'],
                                      env=dict(os.environ, SYSTEM_VERSION_COMPAT='0'), text=True, timeout=10).strip()
-    if version.split('.')[0] != '26':
-        raise ValueError('The directory scanner must execute on macOS 26')
+    match = re.fullmatch(r'(\d+)\.\d+(?:\.\d+)?', version)
+    if not match or int(match[1]) < 26:
+        raise ValueError('The directory scanner requires macOS 26 or later, arm64')
+    build = subprocess.check_output(['/usr/bin/sw_vers', '-buildVersion'], text=True, timeout=10).strip()
+    if not build:
+        raise ValueError('The directory scanner requires an OS build identity')
+    return {'osVersion': version, 'osBuild': build, 'architecture': 'arm64'}
+
+
+def run(app, output, source_sha):
+    identity = runtime_identity()
     if not re.fullmatch(r'[0-9a-f]{40}', source_sha):
         raise ValueError('An exact source SHA is required')
     binary = app / 'Contents/XPCServices/NexGenVideoBpyService0.xpc/Contents/MacOS/NexGenVideoBpyService'
     before = digest(binary)
     output.mkdir(parents=True, exist_ok=False)
-    receipt = {'sourceSHA': source_sha, 'serviceSHA256': before, 'osVersion': version, 'completed': False,
+    receipt = {'sourceSHA': source_sha, 'serviceSHA256': before, **identity, 'completed': False,
                'scope': 'Direct execution of the bundled native scanner; not XPC sandbox or bpy acceptance'}
     started = time.monotonic()
     process = None

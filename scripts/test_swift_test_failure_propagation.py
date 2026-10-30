@@ -183,7 +183,7 @@ class SwiftTestFailurePropagationTests(unittest.TestCase):
     def test_pricing_selftest_requires_marker_and_successful_app_exit_once(self):
         run = workflow_test_run(
             ROOT / ".github/workflows/ci.yml",
-            "Verify generation batch pricing recovery on macOS 26",
+            "Verify generation batch pricing recovery",
         )
         for code, marker, expected in ((0, True, 0), (1, True, 1), (139, True, 139), (0, False, 1)):
             with self.subTest(code=code, marker=marker), tempfile.TemporaryDirectory() as directory:

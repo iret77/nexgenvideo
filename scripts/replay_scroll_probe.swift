@@ -74,8 +74,8 @@ private enum ReplayScrollProbe {
         Task { @MainActor in
             var results: [[String: Any]] = []
             do {
-                guard ProcessInfo.processInfo.operatingSystemVersion.majorVersion == 26 else {
-                    throw ProbeFailure(message: "The probe requires macOS 26.")
+                guard ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 26 else {
+                    throw ProbeFailure(message: "The probe requires macOS 26 or later.")
                 }
                 for native in [false, true] {
                     for hitTesting in [false, true] {
