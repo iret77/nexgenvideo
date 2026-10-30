@@ -134,21 +134,24 @@ struct BpyMediaReadScopeTests {
         defer { BpyMediaReadScope.close(root: root, generation: generation) }
         let blocker = try pool.reserve(1, cancellation: .init(), timeout: 5, checking: {})
         defer { pool.release(blocker) }
-        Thread {
-            waiting.finish(Result {
-                try BpyMediaReadScope.withScope(dataRoot: root) { scope in
-                    try pool.reserve(1, cancellation: scope.cancellation, timeout: 5,
-                        checking: { try scope.check(); waiting.entered.signal() })
-                }
-            })
-        }.start()
-        let entered = await waitForBpyTestSignal(waiting.entered, until: .now() + 1)
-        #expect(entered == .success)
-        let endedBeforeClose = await waitForBpyTestSignal(waiting.ended, until: .now() + 0.05)
-        #expect(endedBeforeClose == .timedOut)
-        BpyMediaReadScope.close(root: root, generation: generation)
-        let endedAfterClose = await waitForBpyTestSignal(waiting.ended, until: .now() + 1)
-        #expect(endedAfterClose == .success)
+        let observed = await onBpyTestThread {
+            Thread {
+                waiting.finish(Result {
+                    try BpyMediaReadScope.withScope(dataRoot: root) { scope in
+                        try pool.reserve(1, cancellation: scope.cancellation, timeout: 5,
+                            checking: { try scope.check(); waiting.entered.signal() })
+                    }
+                })
+            }.start()
+            let entered = waiting.entered.wait(timeout: .now() + 1)
+            let endedBeforeClose = waiting.ended.wait(timeout: .now() + 0.05)
+            BpyMediaReadScope.close(root: root, generation: generation)
+            let endedAfterClose = waiting.ended.wait(timeout: .now() + 1)
+            return (entered, endedBeforeClose, endedAfterClose)
+        }
+        #expect(observed.0 == .success)
+        #expect(observed.1 == .timedOut)
+        #expect(observed.2 == .success)
         #expect(throws: BpyAdmissionFailure.self) { _ = try waiting.value() }
         pool.release(blocker)
         let replacement = try pool.reserve(1, cancellation: .init(), timeout: 1, checking: {})
