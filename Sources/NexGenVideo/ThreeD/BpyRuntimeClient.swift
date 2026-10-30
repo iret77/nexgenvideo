@@ -1726,6 +1726,7 @@ final class BpyRuntimeSession: @unchecked Sendable {
                   let dataBytes = limits.dataStorageBytes else {
                 throw BpyRuntimeError.invalidOutput("The 3D service changed its storage preparation.")
             }
+            bpyOpenDiagnostics.notice("open.preparation session=\(identifier.uuidString) servicePID=\(preparation.servicePID) serviceStart=\(preparation.serviceStart)")
             lock.withLock { storagePreparation = preparation }
             let createdWorker = try BpyRuntimeVolume.create(preparation: preparation, serviceName: serviceName,
                 maximumBytes: limits.physicalStorageBytes, role: .worker) { [self] in

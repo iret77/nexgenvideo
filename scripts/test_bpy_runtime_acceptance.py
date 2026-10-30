@@ -17,18 +17,26 @@ from bpy_runtime_acceptance import capture_open_logs, collect_hangs, diagnostic_
 class StorageScopeProofTests(unittest.TestCase):
     binary = Path("/fixture/NexGenVideo.app/Contents/MacOS/NexGenVideo")
 
-    def events(self, stale=True):
+    def events(self, stale=True, data_stale=False):
         session, owner = str(uuid.uuid4()), str(uuid.uuid4())
-        digest = "a" * 64
         common = f"session={session} owner={owner}"
         messages = [
             (456, f"open.prepared {common} pid=456 start=42"),
             (123, f"open.preparation session={session} servicePID=456 serviceStart=42"),
-            (123, f"bookmark.resolve id={session} attempt=1 stale=false file=true pathMatches=true sha256={digest} volumeMatch=equal"),
-            (456, f"open.beforeScope {common} pid=456 errno=1"),
-            (456, f"open.check {common} pid=456 start=42 stale={str(stale).lower()} file=true pathMatches=true sha256={digest} volumeMatch=equal"),
-            (456, f"open.validated {common} pid=456 start=42 sha256={digest}"),
         ]
+        scopes = []
+        for role, lease, device, capacity, digest, freshness in (
+                ("worker", session, 100, 2147483648, "a" * 64, stale),
+                ("data", str(uuid.uuid4()), 200, 6442450944, "b" * 64, data_stale)):
+            messages.append((123, f"bookmark.resolve id={lease} pair={session} role={role} device={device} "
+                f"capacity={capacity} attempt=1 stale=false file=true pathMatches=true sha256={digest} volumeMatch=equal"))
+            identity = f"{common} pid=456 start=42 pair={session} storage={lease} role={role}"
+            scopes.extend([
+                (456, f"open.beforeScope {identity} errno=1 closeErrno=0"),
+                (456, f"open.check {identity} stale={str(freshness).lower()} file=true pathMatches=true sha256={digest} volumeMatch=equal"),
+                (456, f"open.validated {identity} sha256={digest} device={device} capacity={capacity}"),
+            ])
+        messages.extend(scopes)
         diagnostics = ("lstatErrno=0 lstatType=32768 lstatMode=493 lstatFlags=0 statErrno=0 statType=32768 "
                        "statMode=493 statFlags=0 existsErrno=0 readErrno=0 executeErrno=0 openErrno=0 "
                        "closeErrno=0 foundationExecutable=1 quarantineErrno=93 quarantinePresent=0 "
@@ -51,11 +59,19 @@ class StorageScopeProofTests(unittest.TestCase):
         return verify_storage_scope("Filtering the log data using predicate\n" +
             "\n".join(json.dumps(event) for event in events), dict(pid=123), self.binary)
 
+    def event(self, events, tag, role=None):
+        return next(item for item in events if item["eventMessage"].startswith(tag + " ")
+                    and (role is None or "role=" + role + " " in item["eventMessage"]))
+
     def test_actual_boundary_evidence_accepts_either_receiver_freshness(self):
         for stale in (False, True):
-            proof = self.check(self.events(stale))
-            self.assertEqual(proof["receiverStale"], stale)
-            self.assertEqual(proof["preScopeErrno"], 1)
+            for data_stale in (False, True):
+                proof = self.check(self.events(stale, data_stale))
+                self.assertEqual(proof["schema"], "nexgenvideo/bpy-storage-scope/2")
+                self.assertEqual(set(proof["storageRoles"]), {"worker", "data"})
+                for role, freshness in (("worker", stale), ("data", data_stale)):
+                    self.assertEqual(proof["storageRoles"][role]["receiverStale"], freshness)
+                    self.assertEqual(proof["storageRoles"][role]["preScopeErrno"], 1)
 
     def test_missing_duplicated_foreign_or_reordered_events_cannot_prove_the_boundary(self):
         for index in range(len(self.events())):
@@ -78,16 +94,23 @@ class StorageScopeProofTests(unittest.TestCase):
                         self.check(events)
 
     def test_preexisting_access_wrong_identity_or_failed_open_is_rejected(self):
-        for index, old, new in ((3, "errno=1", "errno=0"), (3, "errno=1", "errno=2"),
-                               (4, "file=true", "file=false"), (4, "pathMatches=true", "pathMatches=false"),
-                               (4, "volumeMatch=equal", "volumeMatch=different"),
-                               (5, "sha256=" + "a" * 64, "sha256=" + "b" * 64),
-                               (5, "start=42", "start=43"), (-1, "ok=true", "ok=false")):
-            with self.subTest(index=index, new=new):
-                events = self.events()
-                events[index]["eventMessage"] = events[index]["eventMessage"].replace(old, new)
-                with self.assertRaises(AssertionError):
-                    self.check(events)
+        for role, digest in (("worker", "a" * 64), ("data", "b" * 64)):
+            for tag, old, new in (("open.beforeScope", "errno=1", "errno=0"),
+                    ("open.beforeScope", "errno=1", "errno=2"), ("open.beforeScope", "closeErrno=0", "closeErrno=5"),
+                    ("open.check", "file=true", "file=false"), ("open.check", "pathMatches=true", "pathMatches=false"),
+                    ("open.check", "volumeMatch=equal", "volumeMatch=different"),
+                    ("open.validated", "sha256=" + digest, "sha256=" + "c" * 64),
+                    ("open.validated", "start=42", "start=43")):
+                with self.subTest(role=role, tag=tag, new=new):
+                    events = self.events()
+                    event = self.event(events, tag, role)
+                    event["eventMessage"] = event["eventMessage"].replace(old, new)
+                    with self.assertRaises(AssertionError):
+                        self.check(events)
+        events = self.events()
+        self.event(events, "open.result")["eventMessage"] = self.event(events, "open.result")["eventMessage"].replace("ok=true", "ok=false")
+        with self.assertRaises(AssertionError):
+            self.check(events)
 
     def test_missing_denied_or_foreign_runtime_preflight_cannot_prove_startup(self):
         for tag, old, new in (
@@ -101,7 +124,8 @@ class StorageScopeProofTests(unittest.TestCase):
                 ("open.runtime-preflight", "supervisor=true", "supervisor=false")):
             with self.subTest(tag=tag, new=new):
                 events = self.events()
-                event = next(item for item in events if tag in item["eventMessage"])
+                event = next(item for item in events if tag in item["eventMessage"]
+                    and item["eventMessage"].startswith(("open.runtime-resource ", "open.runtime-preflight ")))
                 event["eventMessage"] = event["eventMessage"].replace(old, new)
                 with self.assertRaises(AssertionError):
                     self.check(events)
@@ -117,16 +141,64 @@ class StorageScopeProofTests(unittest.TestCase):
 
     def test_host_refresh_must_finish_fresh_and_malformed_capture_is_not_ignored(self):
         events = self.events()
-        refresh = dict(events[2])
-        events[2]["eventMessage"] = events[2]["eventMessage"].replace("stale=false", "stale=true")
+        original = self.event(events, "bookmark.resolve", "worker")
+        refresh = dict(original)
+        original["eventMessage"] = original["eventMessage"].replace("stale=false", "stale=true")
         refresh["eventMessage"] = refresh["eventMessage"].replace("attempt=1", "attempt=2")
-        events.insert(3, refresh)
+        events.insert(events.index(original) + 1, refresh)
         for index, event in enumerate(events):
             event["machTimestamp"] = index + 1
         self.check(events)
         for text in ("malformed", "{bad json}"):
             with self.assertRaises(ValueError):
                 verify_storage_scope(text, dict(pid=123), self.binary)
+
+    def test_one_volume_or_unknown_role_cannot_prove_the_storage_pair(self):
+        for role in ("worker", "data"):
+            events = [item for item in self.events() if "role=" + role + " " not in item["eventMessage"]
+                      or item["eventMessage"].startswith("open.runtime-resource ")]
+            with self.assertRaises(AssertionError):
+                self.check(events)
+        events = self.events()
+        extra = dict(self.event(events, "open.check", "data"))
+        extra["eventMessage"] = extra["eventMessage"].replace("role=data", "role=other")
+        with self.assertRaises(AssertionError):
+            self.check(events + [extra])
+        extra = dict(self.event(events, "bookmark.resolve", "data"))
+        extra["eventMessage"] = extra["eventMessage"].replace("role=data", "role=other")
+        with self.assertRaises(AssertionError):
+            self.check(events + [extra])
+
+    def test_paired_lease_device_and_capacity_substitutions_are_rejected(self):
+        for tag, old, new in (("open.validated", "device=200", "device=201"),
+                ("open.validated", "capacity=6442450944", "capacity=6442450943"),
+                ("open.check", "storage=", "storage=foreign"),
+                ("bookmark.resolve", "pair=", "pair=foreign")):
+            events = self.events()
+            event = self.event(events, tag, "data")
+            event["eventMessage"] = event["eventMessage"].replace(old, new)
+            with self.assertRaises((AssertionError, ValueError)):
+                self.check(events)
+        events = self.events()
+        for tag in ("bookmark.resolve", "open.validated"):
+            event = self.event(events, tag, "data")
+            event["eventMessage"] = event["eventMessage"].replace("device=200", "device=100")
+        with self.assertRaises(AssertionError):
+            self.check(events)
+
+    def test_a_host_refresh_cannot_change_the_lease_or_skip_the_initial_scope(self):
+        for old, new in (("device=100", "device=101"), ("file=true", "file=false"),
+                         ("volumeMatch=equal", "volumeMatch=different")):
+            events = self.events()
+            original = self.event(events, "bookmark.resolve", "worker")
+            refresh = dict(original)
+            original["eventMessage"] = original["eventMessage"].replace("stale=false", "stale=true").replace(old, new)
+            refresh["eventMessage"] = refresh["eventMessage"].replace("attempt=1", "attempt=2")
+            events.insert(events.index(original) + 1, refresh)
+            for index, event in enumerate(events):
+                event["machTimestamp"] = index + 1
+            with self.assertRaises(AssertionError):
+                self.check(events)
 
 
 class OpenCaptureTests(unittest.TestCase):

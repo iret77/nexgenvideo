@@ -51,6 +51,10 @@ final class BpyServiceStoragePair: @unchecked Sendable {
         dataRoot = URL(fileURLWithPath: pair.data.mountPath).appendingPathComponent(transport.uuidString)
         do {
             for (lease, maximum, role) in [(pair.worker, limits.physicalStorageBytes, "worker"), (pair.data, dataBytes, "data")] {
+                let before = Darwin.open(lease.mountPath, O_RDONLY | O_DIRECTORY | O_NOFOLLOW_ANY | O_CLOEXEC)
+                let beforeError = before < 0 ? errno : 0
+                let closeError = before >= 0 && Darwin.close(before) != 0 ? errno : 0
+                log.notice("open.beforeScope session=\(transport.uuidString, privacy: .public) owner=\(owner.uuidString, privacy: .public) pid=\(getpid(), privacy: .public) start=\(serviceStart, privacy: .public) pair=\(pair.id.uuidString, privacy: .public) storage=\(lease.id.uuidString, privacy: .public) role=\(role, privacy: .public) errno=\(beforeError, privacy: .public) closeErrno=\(closeError, privacy: .public)")
                 var stale = false
                 let resolved = try URL(resolvingBookmarkData: lease.bookmark, options: [.withoutUI, .withoutMounting],
                     relativeTo: nil, bookmarkDataIsStale: &stale)
@@ -58,9 +62,10 @@ final class BpyServiceStoragePair: @unchecked Sendable {
                 let matches = resolved.path == lease.mountPath
                 let volume = BpyStoragePaths.bookmarkVolumeMatch(lease.bookmark, mount: resolved)
                 let digest = SHA256.hash(data: lease.bookmark).map { String(format: "%02x", $0) }.joined()
-                log.notice("open.check session=\(transport.uuidString, privacy: .public) owner=\(owner.uuidString, privacy: .public) pid=\(getpid(), privacy: .public) start=\(serviceStart, privacy: .public) role=\(role, privacy: .public) sha256=\(digest, privacy: .public) stale=\(stale, privacy: .public) file=\(resolved.isFileURL, privacy: .public) pathMatches=\(matches, privacy: .public) volumeMatch=\(volume, privacy: .public)")
-                guard !stale else { throw CocoaError(.fileReadNoPermission) }
+                log.notice("open.check session=\(transport.uuidString, privacy: .public) owner=\(owner.uuidString, privacy: .public) pid=\(getpid(), privacy: .public) start=\(serviceStart, privacy: .public) pair=\(pair.id.uuidString, privacy: .public) storage=\(lease.id.uuidString, privacy: .public) role=\(role, privacy: .public) sha256=\(digest, privacy: .public) stale=\(stale, privacy: .public) file=\(resolved.isFileURL, privacy: .public) pathMatches=\(matches, privacy: .public) volumeMatch=\(volume, privacy: .public)")
+                // Transient bookmark freshness does not replace the leased mount identity.
                 descriptors.append(try BpyStoragePaths.validateResolvedMount(lease, resolved: resolved, maximumBytes: maximum))
+                log.notice("open.validated session=\(transport.uuidString, privacy: .public) owner=\(owner.uuidString, privacy: .public) pid=\(getpid(), privacy: .public) start=\(serviceStart, privacy: .public) pair=\(pair.id.uuidString, privacy: .public) storage=\(lease.id.uuidString, privacy: .public) role=\(role, privacy: .public) sha256=\(digest, privacy: .public) device=\(lease.device, privacy: .public) capacity=\(lease.capacityBytes, privacy: .public)")
             }
             Self.registryLock.withLock { Self.registry[registryID] = [pair.worker.id, pair.data.id] }
         } catch { release(); throw error }

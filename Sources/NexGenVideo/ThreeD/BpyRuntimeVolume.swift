@@ -183,7 +183,7 @@ final class BpyRuntimeVolume: @unchecked Sendable {
                 bookmark = try verifiedBookmark(for: mount, observed: { data, resolved, stale, attempt in
                     let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
                     let volume = BpyStoragePaths.bookmarkVolumeMatch(data, mount: mount)
-                    storageBookmarkDiagnostics.notice("bookmark.resolve id=\(preparation.id.uuidString) attempt=\(attempt) stale=\(stale) file=\(resolved.isFileURL) pathMatches=\(resolved.path == mount.path) sha256=\(digest) volumeMatch=\(volume)")
+                    storageBookmarkDiagnostics.notice("bookmark.resolve id=\(record.id.uuidString) pair=\(preparation.id.uuidString) role=\(role.rawValue) device=\(mountedIdentity.device) capacity=\(capacity.partialValue) attempt=\(attempt) stale=\(stale) file=\(resolved.isFileURL) pathMatches=\(resolved.path == mount.path) sha256=\(digest) volumeMatch=\(volume)")
                 })
             } catch {
                 let failure = error as NSError

@@ -131,14 +131,25 @@ def verify_storage_scope(log_text, process, binary):
     host_path = str(binary)
     service_path = re.escape(str(binary.parent.parent)) + r"/XPCServices/NexGenVideoBpyService[0-9]+\.xpc/Contents/MacOS/NexGenVideoBpyService"
 
+    host_events = []
+
     def selected(tag, host=False, role=None):
         matches = [entry for entry in events if entry[0] == tag
-                   and entry[1].get("id" if tag == "bookmark.resolve" else "session") == session
+                   and entry[1].get("pair" if tag == "bookmark.resolve" else "session") == session
                    and (role is None or entry[1].get("role") == role)]
         if tag == "bookmark.resolve":
             require(1 <= len(matches) <= 2, "bounded host bookmark resolution")
             require([item[1].get("attempt") for item in matches] == [str(n + 1) for n in range(len(matches))],
                     "ordered host bookmark refresh")
+            require([item[1].get("stale") for item in matches] ==
+                    (["true", "false"] if len(matches) == 2 else ["false"]), "fresh host bookmark required")
+            for _, fields, _ in matches:
+                require(all(fields.get(key) == matches[-1][1].get(key)
+                            for key in ("id", "pair", "role", "device", "capacity")), "host refresh changed storage identity")
+                require(all(fields.get(key) == "true" for key in ("file", "pathMatches"))
+                        and fields.get("volumeMatch") == "equal"
+                        and re.fullmatch(r"[0-9a-f]{64}", fields.get("sha256", "")), "host bookmark identity")
+            host_events.extend(matches)
         else:
             require(len(matches) == 1, "one storage event required: " + tag)
         for _, fields, event in matches:
@@ -153,27 +164,53 @@ def verify_storage_scope(log_text, process, binary):
 
     preparation = selected("open.preparation", host=True)
     prepared = selected("open.prepared")
-    host = selected("bookmark.resolve", host=True)
-    before = selected("open.beforeScope")
-    checked = selected("open.check")
-    validated = selected("open.validated")
+    owner = prepared[1]["owner"]
+    uuid.UUID(owner)
+    storage_roles = {}
+    scope_events = []
+    for role in ("worker", "data"):
+        host = selected("bookmark.resolve", host=True, role=role)
+        before = selected("open.beforeScope", role=role)
+        checked = selected("open.check", role=role)
+        validated = selected("open.validated", role=role)
+        lease = host[1]["id"]
+        uuid.UUID(lease)
+        digest = host[1]["sha256"]
+        require(re.fullmatch(r"[0-9a-f]{64}", digest), "bookmark digest")
+        require(int(before[1]["errno"]) in (errno.EPERM, errno.EACCES)
+                and before[1].get("closeErrno") == "0", "mount accessible before bookmark scope")
+        for item in (host, checked):
+            require(item[1].get("file") == "true" and item[1].get("pathMatches") == "true"
+                    and item[1].get("volumeMatch") == "equal", "resolved storage identity")
+        require(checked[1].get("stale") in ("true", "false"), "receiver freshness observation required")
+        require(all(item[1].get("pair") == session and item[1].get("storage") == lease
+                    and item[1].get("owner") == owner and item[1].get("start") == start
+                    for item in (before, checked, validated)), "storage role/connection identity")
+        require(checked[1]["sha256"] == validated[1]["sha256"] == digest, "exact storage bookmark handoff")
+        device, capacity = int(host[1]["device"]), int(host[1]["capacity"])
+        require(device > 0 and 0 < capacity <= 8 * 1024 ** 3
+                and host[1]["device"] == str(device) and host[1]["capacity"] == str(capacity)
+                and validated[1].get("device") == str(device)
+                and validated[1].get("capacity") == str(capacity), "kernel-validated mount identity")
+        storage_roles[role] = dict(leaseID=lease, device=device, capacityBytes=capacity,
+            bookmarkSHA256=digest, receiverStale=checked[1]["stale"] == "true",
+            preScopeErrno=int(before[1]["errno"]))
+        scope_events.extend((before, checked, validated))
+    for tag in ("open.beforeScope", "open.check", "open.validated"):
+        matches = [entry for entry in events if entry[0] == tag and entry[1].get("session") == session]
+        require(len(matches) == 2 and {entry[1].get("role") for entry in matches} == {"worker", "data"},
+                "exactly both storage roles required")
+    require(sum(entry[0] == "bookmark.resolve" and entry[1].get("pair") == session for entry in events)
+            == len(host_events), "unknown host storage role")
+    require(storage_roles["worker"]["leaseID"] == session
+            and storage_roles["worker"]["leaseID"] != storage_roles["data"]["leaseID"]
+            and storage_roles["worker"]["device"] != storage_roles["data"]["device"], "distinct paired storage required")
     roles = ("pythonAlias", "pythonTarget", "supervisor", "worker", "sitePackages")
     resources = [selected("open.runtime-resource", role=role) for role in roles]
     preflight = selected("open.runtime-preflight")
     opened = selected("open.result")
-    require(int(before[1]["errno"]) in (errno.EPERM, errno.EACCES), "mount accessible before bookmark scope")
-    digest = host[1]["sha256"]
-    require(re.fullmatch(r"[0-9a-f]{64}", digest), "bookmark digest")
-    for item in (host, checked):
-        require(item[1].get("file") == "true" and item[1].get("pathMatches") == "true"
-                and item[1].get("volumeMatch") == "equal", "resolved storage identity")
-    require(host[1].get("stale") == "false" and checked[1].get("stale") in ("true", "false"), "bookmark freshness evidence")
-    owner = prepared[1]["owner"]
-    uuid.UUID(owner)
-    require(all(item[1].get("owner") == owner for item in (before, checked, validated, opened)), "storage connection owner")
-    require(all(item[1].get("start") == start for item in (prepared, checked, validated)), "storage process start")
-    require(checked[1]["sha256"] == validated[1]["sha256"] == digest and opened[1].get("ok") == "true",
-            "validated storage handoff")
+    require(opened[1].get("owner") == owner and prepared[1].get("start") == start
+            and opened[1].get("ok") == "true", "validated storage handoff")
     require(all(preflight[1].get(field) == "true" for field in ("python", "supervisor", "worker", "sitePackages")),
             "all runtime executable preflight clauses required")
     require(all(item[1].get("start") == start for item in (*resources, preflight)), "runtime preflight process start")
@@ -192,10 +229,11 @@ def verify_storage_scope(log_text, process, binary):
             and target["statErrno"] == "0" and int(target["statType"]) == 0o100000,
             "pinned Python executable access not proven")
     times = [item[2]["machTimestamp"] for item in
-             (prepared, preparation, host, before, checked, validated, *resources, preflight, opened)]
-    require(all(type(value) is int for value in times) and all(a < b for a, b in zip(times, times[1:])), "storage event order")
-    return dict(hostPID=process["pid"], servicePID=service, serviceStart=start, sessionID=session,
-                bookmarkSHA256=digest, receiverStale=checked[1]["stale"] == "true", preScopeErrno=int(before[1]["errno"]),
+             (prepared, preparation, *host_events, *scope_events, *resources, preflight, opened)]
+    require(all(type(value) is int and value > 0 for value in times)
+            and all(a < b for a, b in zip(times, times[1:])), "storage event order")
+    return dict(schema="nexgenvideo/bpy-storage-scope/2", hostPID=process["pid"], servicePID=service,
+                serviceStart=start, sessionID=session, ownerID=owner, storageRoles=storage_roles,
                 runtimeResources={role: {key: int(value) for key, value in item[1].items() if key in diagnostic_fields
                                         or key in ("readlinkErrno", "targetMatches")}
                                   for role, item in zip(roles, resources)})
