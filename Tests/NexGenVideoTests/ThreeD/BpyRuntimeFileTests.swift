@@ -1,4 +1,4 @@
-import BpyRuntimeProtocol
+@testable import BpyRuntimeProtocol
 import Darwin
 import Foundation
 import Testing
@@ -79,7 +79,7 @@ struct BpyRuntimeFileTests {
         #expect(beforeRelease == .timedOut)
         borrow.release()
         let afterRelease = await waitForBpyTestSignal(disposed, until: .now() + 2)
-        #expect(afterRelease == .success)
+        #expect(afterRelease == .success, Comment(rawValue: borrow.disposalDiagnostics))
         #expect(!FileManager.default.fileExists(atPath: url.path))
     }
 

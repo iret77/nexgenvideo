@@ -17,26 +17,29 @@ struct BpyMediaDecodeTests {
         let first = try pool.reserve(4, cancellation: .init(), timeout: 2, checking: {})
         defer { pool.release(first) }
         let head = Attempt(), follower = Attempt(), cancellation = BpyOperationCancellation()
-        Thread {
-            head.finish(Result { try pool.reserve(4, cancellation: cancellation, timeout: 2,
-                checking: { head.entered.signal() }) })
-        }.start()
-        let headEntered = await waitForBpyTestSignal(head.entered, until: .now() + 1)
-        #expect(headEntered == .success)
-        Thread {
-            follower.finish(Result { try pool.reserve(2, cancellation: .init(), timeout: 2,
-                checking: { follower.entered.signal() }) })
-        }.start()
-        let followerEntered = await waitForBpyTestSignal(follower.entered, until: .now() + 1)
-        #expect(followerEntered == .success)
-        let followerBeforeCancellation = await waitForBpyTestSignal(follower.completed, until: .now() + 0.05)
-        #expect(followerBeforeCancellation == .timedOut)
-        cancellation.cancel()
-        let headCompleted = await waitForBpyTestSignal(head.completed, until: .now() + 1)
-        #expect(headCompleted == .success)
+        let observed = await onBpyTestThread {
+            Thread {
+                head.finish(Result { try pool.reserve(4, cancellation: cancellation, timeout: 2,
+                    checking: { head.entered.signal() }) })
+            }.start()
+            let headEntered = head.entered.wait(timeout: .now() + 1)
+            Thread {
+                follower.finish(Result { try pool.reserve(2, cancellation: .init(), timeout: 2,
+                    checking: { follower.entered.signal() }) })
+            }.start()
+            let followerEntered = follower.entered.wait(timeout: .now() + 1)
+            let followerBeforeCancellation = follower.completed.wait(timeout: .now() + 0.05)
+            cancellation.cancel()
+            let headCompleted = head.completed.wait(timeout: .now() + 1)
+            let followerCompleted = follower.completed.wait(timeout: .now() + 1)
+            return (headEntered, followerEntered, followerBeforeCancellation, headCompleted, followerCompleted)
+        }
+        #expect(observed.0 == .success)
+        #expect(observed.1 == .success)
+        #expect(observed.2 == .timedOut)
+        #expect(observed.3 == .success)
         #expect(throws: BpyAdmissionFailure.self) { _ = try head.value() }
-        let followerCompleted = await waitForBpyTestSignal(follower.completed, until: .now() + 1)
-        #expect(followerCompleted == .success)
+        #expect(observed.4 == .success)
         pool.release(try follower.value())
     }
 
