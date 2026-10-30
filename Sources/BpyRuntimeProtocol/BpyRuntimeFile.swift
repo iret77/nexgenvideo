@@ -147,7 +147,8 @@ public final class BpyRuntimeFile: @unchecked Sendable {
                 return true
             }
             guard dispose else { return }
-            DispatchQueue.global(qos: .utility).async { [self] in
+            // Reclaim capacity before admitting the next foreground operation.
+            DispatchQueue.global(qos: .userInitiated).async { [self] in
                 lock.withLock { disposalEvents.append(("started", DispatchTime.now().uptimeNanoseconds)) }
                 if !removesFile {
                     let closed = Darwin.close(descriptor), parentClosed = Darwin.close(parent)
