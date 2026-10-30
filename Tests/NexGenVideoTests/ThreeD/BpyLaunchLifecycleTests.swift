@@ -57,7 +57,7 @@ struct BpyLaunchLifecycleTests {
         func value() throws -> BpyAdmissionIdentity { try lock.withLock { try #require(result).get() } }
     }
 
-    @Test func aPressureStopBeforeAnyLaunchFinishesWithoutTheClientOrAFalseGlobalCleanupFailure() throws {
+    @Test func aPressureStopBeforeAnyLaunchFinishesWithoutTheClientOrAFalseGlobalCleanupFailure() async throws {
         let fixture = Unstarted(), memory = BpyMemoryCoordinator(sensor: fixture.sample, clock: fixture.clock)
         let owner = UUID(), generation = UUID(), stopped = DispatchSemaphore(value: 0)
         try memory.register(owner: owner, generation: generation)
@@ -70,7 +70,8 @@ struct BpyLaunchLifecycleTests {
             stopped.signal()
         }, cleanup: {}))
         fixture.set(.critical, at: 100.1)
-        #expect(stopped.wait(timeout: .now() + 2) == .success)
+        let stoppedResult = await waitForBpyTestSignal(stopped, until: .now() + 2)
+        #expect(stoppedResult == .success)
         let receipt = try memory.receipt(admission.id)
         #expect(receipt.firstRelease == nil)
         #expect(receipt.stop == .pressure)
@@ -82,12 +83,15 @@ struct BpyLaunchLifecycleTests {
         #expect(try memory.receipt(admission.id).cleanupFinishedAt == 100.1)
         #expect(throws: BpyAdmissionFailure.self) { try memory.prepareLaunch(admission.id) }
         let next = Admission(), cancellation = BpyOperationCancellation()
-        DispatchQueue.global().async {
+        Thread {
             next.finish(Result { try memory.admit(owner: owner, generation: generation, transport: UUID(), job: UUID(),
                 kind: .job, timeout: 30, cancellation: cancellation) })
+        }.start()
+        let completed = await waitForBpyTestSignal(next.completed, until: .now() + 2)
+        if completed != .success {
+            cancellation.cancel()
+            _ = await waitForBpyTestSignal(next.completed, until: .now() + 1)
         }
-        let completed = next.completed.wait(timeout: .now() + 2)
-        if completed != .success { cancellation.cancel(); _ = next.completed.wait(timeout: .now() + 1) }
         #expect(completed == .success)
         let successor = try next.value()
         defer { memory.finish(successor.id); memory.forget(successor.id) }

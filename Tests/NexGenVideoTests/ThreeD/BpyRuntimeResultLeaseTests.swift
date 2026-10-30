@@ -13,8 +13,8 @@ struct BpyRuntimeResultLeaseTests {
         var snapshot: ([Bool], Int) { lock.withLock { (releases, invalidations) } }
     }
 
-    @Test func joinedCallersKeepIndependentOwnershipAndReplayNeverRevivesAReleasedResult() throws {
-        try withFile { file, disposed in
+    @Test func joinedCallersKeepIndependentOwnershipAndReplayNeverRevivesAReleasedResult() async throws {
+        try await withFile { file, disposed in
             let events = Events(), bytes = try file.read(maximum: 8)
             let first = lease(file: file, events: events)
             let second = try first.joinedForReplay()
@@ -26,17 +26,19 @@ struct BpyRuntimeResultLeaseTests {
             let third = try first.joinedForReplay()
             second.release()
             #expect(try third.data("frame.png", maximum: 8) == bytes)
-            #expect(disposed.wait(timeout: .now()) == .timedOut)
+            let beforeRelease = await waitForBpyTestSignal(disposed, until: .now())
+            #expect(beforeRelease == .timedOut)
             third.release()
             third.release()
             #expect(events.snapshot.0 == [false])
             #expect(throws: (any Error).self) { _ = try first.joinedForReplay() }
-            #expect(disposed.wait(timeout: .now() + 2) == .success)
+            let afterRelease = await waitForBpyTestSignal(disposed, until: .now() + 2)
+            #expect(afterRelease == .success)
         }
     }
 
-    @Test func documentCloseInvalidatesEveryCallerOnceAndWaitsForAnActualReader() throws {
-        try withFile { file, disposed in
+    @Test func documentCloseInvalidatesEveryCallerOnceAndWaitsForAnActualReader() async throws {
+        try await withFile { file, disposed in
             let events = Events(), first = lease(file: file, events: events)
             let second = try first.joinedForReplay()
             let reader = try second.file("frame.png")
@@ -50,16 +52,18 @@ struct BpyRuntimeResultLeaseTests {
             #expect(throws: (any Error).self) { _ = try second.data("frame.png", maximum: 8) }
             #expect(throws: (any Error).self) { _ = try second.joinedForReplay() }
             #expect(try reader.read(maximum: 8) == Data("fixture".utf8))
-            #expect(disposed.wait(timeout: .now()) == .timedOut)
+            let beforeRelease = await waitForBpyTestSignal(disposed, until: .now())
+            #expect(beforeRelease == .timedOut)
             first.release(); second.release()
             #expect(events.snapshot.0 == [false])
             reader.release()
-            #expect(disposed.wait(timeout: .now() + 2) == .success)
+            let afterRelease = await waitForBpyTestSignal(disposed, until: .now() + 2)
+            #expect(afterRelease == .success)
         }
     }
 
-    @Test func detachedProofSurvivesAnotherCallersReleaseAndCannotBeReplaced() throws {
-        try withFile { file, disposed in
+    @Test func detachedProofSurvivesAnotherCallersReleaseAndCannotBeReplaced() async throws {
+        try await withFile { file, disposed in
             let events = Events(), first = lease(file: file, events: events)
             let second = try first.joinedForReplay()
             let proof = Data("original-proof".utf8)
@@ -72,7 +76,8 @@ struct BpyRuntimeResultLeaseTests {
             #expect(try second.data("frame.png", maximum: 8) == Data("fixture".utf8))
             second.release()
             #expect(events.snapshot.0 == [true])
-            #expect(disposed.wait(timeout: .now() + 2) == .success)
+            let disposal = await waitForBpyTestSignal(disposed, until: .now() + 2)
+            #expect(disposal == .success)
         }
     }
 
@@ -83,7 +88,7 @@ struct BpyRuntimeResultLeaseTests {
             onRelease: { events.release($0) })
     }
 
-    private func withFile(_ body: (BpyRuntimeFile, DispatchSemaphore) throws -> Void) throws {
+    private func withFile(_ body: (BpyRuntimeFile, DispatchSemaphore) async throws -> Void) async throws {
         let root = URL(fileURLWithPath: try BpyRuntimePath.canonical(FileManager.default.temporaryDirectory)).appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -92,6 +97,6 @@ struct BpyRuntimeResultLeaseTests {
             if removed { disposed.signal() }
         })
         defer { file.release() }
-        try body(file, disposed)
+        try await body(file, disposed)
     }
 }

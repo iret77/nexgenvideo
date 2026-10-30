@@ -26,9 +26,11 @@ struct ClaudeCodeProbeTests {
         exec /bin/sleep 60
         """#)
         defer { fixture.close() }
-        let began = ProcessInfo.processInfo.systemUptime
-        let status = await Task.detached { ClaudeCodeLocator.status(environment: fixture.environment) }.value
-        let elapsed = ProcessInfo.processInfo.systemUptime - began
+        let (status, elapsed) = await Task.detached {
+            let began = ProcessInfo.processInfo.systemUptime
+            let status = ClaudeCodeLocator.status(environment: fixture.environment)
+            return (status, ProcessInfo.processInfo.systemUptime - began)
+        }.value
         #expect(status.found && status.version == nil && !status.isAuthenticated)
         #expect(elapsed < 6)
         let raw = try String(contentsOf: fixture.root.appendingPathComponent("pid"), encoding: .utf8)
@@ -67,9 +69,9 @@ struct ClaudeCodeProbeTests {
         let deadline = ProcessInfo.processInfo.systemUptime + 2
         var invocations = ""
         while true {
-            guard ProcessInfo.processInfo.systemUptime < deadline else { throw CocoaError(.fileReadNoSuchFile) }
             invocations = (try? String(contentsOf: arguments, encoding: .utf8)) ?? ""
             if invocations.contains("--input-format") { break }
+            guard ProcessInfo.processInfo.systemUptime < deadline else { throw CocoaError(.fileReadNoSuchFile) }
             try await Task.sleep(for: .milliseconds(5))
         }
         #expect(!invocations.contains("--version"))

@@ -388,7 +388,7 @@ enum SpatialSceneStore {
     }
 
     private static func destination(_ path: String, in root: URL) throws -> URL {
-        var directory = root.resolvingSymlinksInPath()
+        var directory = URL(fileURLWithPath: try BpyRuntimePath.canonical(root))
         let components = path.split(separator: "/").map(String.init)
         for component in components { try validateFilename(component) }
         for component in components.dropLast() {

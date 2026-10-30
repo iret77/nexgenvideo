@@ -3,8 +3,8 @@ import Foundation
 import Testing
 
 struct BpyRuntimeOutputLedgerTests {
-    @Test func confirmedCheckpointAllowsTheNextFullResultAtTheSmallestLegalRetainedEnvelope() throws {
-        try withDirectory { root in
+    @Test func confirmedCheckpointAllowsTheNextFullResultAtTheSmallestLegalRetainedEnvelope() async throws {
+        try await withDirectory { root in
             let limits = BpyRuntimeLimits(inputBytes: 448 * 1_024 * 1_024, diskBytes: 512 * 1_024 * 1_024)
             #expect(limits.isValid)
             let capacity = try #require(limits.retainedOutputBytes)
@@ -21,16 +21,18 @@ struct BpyRuntimeOutputLedgerTests {
             #expect(ledger.chargedBytes(job, file: checkpoint) == 0)
             #expect(try checkpoint.read(maximum: 4) == Data([1, 2, 3, 4]))
             try ledger.reserve(next, maximum: limits.outputBytes)
-            #expect(completed.wait(timeout: .now()) == .timedOut)
+            let beforeRelease = await waitForBpyTestSignal(completed, until: .now())
+            #expect(beforeRelease == .timedOut)
             checkpoint.release()
-            #expect(completed.wait(timeout: .now() + 2) == .success)
+            let afterRelease = await waitForBpyTestSignal(completed, until: .now() + 2)
+            #expect(afterRelease == .success)
             #expect(!FileManager.default.fileExists(atPath: checkpoint.url.path))
             ledger.settle(next)
         }
     }
 
-    @Test func directlyConfirmedAndSupersededResultsStayChargedUntilTheirOwnRelease() throws {
-        try withDirectory { root in
+    @Test func directlyConfirmedAndSupersededResultsStayChargedUntilTheirOwnRelease() async throws {
+        try await withDirectory { root in
             let ledger = BpyRuntimeOutputLedger(capacity: 12), first = UUID(), second = UUID()
             try ledger.reserve(first, maximum: 8)
             let firstDisposed = DispatchSemaphore(value: 0), siblingDisposed = DispatchSemaphore(value: 0)
@@ -54,7 +56,8 @@ struct BpyRuntimeOutputLedgerTests {
             try ledger.updateCheckpoint(first, resultScene: sceneA, confirmedScene: checkpointB, change: .release)
             #expect(ledger.chargedBytes(first, file: sceneA) == 4)
             sceneA.release()
-            #expect(firstDisposed.wait(timeout: .now() + 2) == .success)
+            let firstDisposal = await waitForBpyTestSignal(firstDisposed, until: .now() + 2)
+            #expect(firstDisposal == .success)
             #expect(ledger.materialized(first) == 4)
             #expect(ledger.chargedBytes(first, file: sibling) == 4)
             let next = UUID()
@@ -62,18 +65,21 @@ struct BpyRuntimeOutputLedgerTests {
             try ledger.updateCheckpoint(second, resultScene: sceneB, confirmedScene: checkpointB, change: .release)
             sceneB.release()
             #expect(ledger.materialized(second) == 0)
-            #expect(secondDisposed.wait(timeout: .now()) == .timedOut)
+            let secondBeforeRelease = await waitForBpyTestSignal(secondDisposed, until: .now())
+            #expect(secondBeforeRelease == .timedOut)
             #expect(try checkpointB.read(maximum: 4) == Data([1, 2, 3, 4]))
             ledger.settle(next)
             try ledger.reserve(UUID(), maximum: 8)
             sibling.release(); checkpointB.release()
-            #expect(siblingDisposed.wait(timeout: .now() + 2) == .success)
-            #expect(secondDisposed.wait(timeout: .now() + 2) == .success)
+            let siblingDisposal = await waitForBpyTestSignal(siblingDisposed, until: .now() + 2)
+            #expect(siblingDisposal == .success)
+            let secondDisposal = await waitForBpyTestSignal(secondDisposed, until: .now() + 2)
+            #expect(secondDisposal == .success)
         }
     }
 
-    @Test func defaultEnvelopeAllowsFourFullResultsWhileTheCheckpointRemainsPinned() throws {
-        try withDirectory { root in
+    @Test func defaultEnvelopeAllowsFourFullResultsWhileTheCheckpointRemainsPinned() async throws {
+        try await withDirectory { root in
             let limits = BpyRuntimeLimits(), capacity = try #require(limits.retainedOutputBytes)
             let ledger = BpyRuntimeOutputLedger(capacity: capacity), job = UUID()
             try ledger.reserve(job, maximum: limits.outputBytes)
@@ -86,13 +92,14 @@ struct BpyRuntimeOutputLedgerTests {
             #expect(throws: CocoaError(.fileWriteOutOfSpace)) { try ledger.reserve(UUID(), maximum: 1) }
             #expect(try checkpoint.read(maximum: 4) == Data([1, 2, 3, 4]))
             checkpoint.release()
-            #expect(completed.wait(timeout: .now() + 2) == .success)
+            let disposal = await waitForBpyTestSignal(completed, until: .now() + 2)
+            #expect(disposal == .success)
             for id in next { ledger.settle(id) }
         }
     }
 
-    @Test func releasedCheckpointAndLaterDisposalPreserveSiblingCharges() throws {
-        try withDirectory { root in
+    @Test func releasedCheckpointAndLaterDisposalPreserveSiblingCharges() async throws {
+        try await withDirectory { root in
             let ledger = BpyRuntimeOutputLedger(capacity: 20), job = UUID()
             try ledger.reserve(job, maximum: 20)
             let oldDisposed = DispatchSemaphore(value: 0), siblingDisposed = DispatchSemaphore(value: 0)
@@ -114,15 +121,18 @@ struct BpyRuntimeOutputLedgerTests {
             defer { replacement.release() }
             try ledger.updateCheckpoint(replacementJob, resultScene: nil, confirmedScene: replacement, change: .confirm)
             old.release()
-            #expect(oldDisposed.wait(timeout: .now() + 2) == .success)
+            let oldDisposal = await waitForBpyTestSignal(oldDisposed, until: .now() + 2)
+            #expect(oldDisposal == .success)
             #expect(ledger.materialized(job) == 4)
             #expect(try sibling.read(maximum: 4) == Data([1, 2, 3, 4]))
             sibling.release()
-            #expect(siblingDisposed.wait(timeout: .now() + 2) == .success)
+            let siblingDisposal = await waitForBpyTestSignal(siblingDisposed, until: .now() + 2)
+            #expect(siblingDisposal == .success)
             #expect(ledger.materialized(job) == 0)
             try ledger.reserve(UUID(), maximum: 20)
             replacement.release()
-            #expect(replacementDisposed.wait(timeout: .now() + 2) == .success)
+            let replacementDisposal = await waitForBpyTestSignal(replacementDisposed, until: .now() + 2)
+            #expect(replacementDisposal == .success)
         }
     }
 
@@ -136,10 +146,10 @@ struct BpyRuntimeOutputLedgerTests {
         return file
     }
 
-    private func withDirectory(_ operation: (URL) throws -> Void) throws {
+    private func withDirectory(_ operation: (URL) async throws -> Void) async throws {
         let root = URL(fileURLWithPath: try BpyRuntimePath.canonical(FileManager.default.temporaryDirectory)).appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         defer { try? FileManager.default.removeItem(at: root) }
-        try operation(root)
+        try await operation(root)
     }
 }
