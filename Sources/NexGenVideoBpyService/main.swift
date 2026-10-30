@@ -122,6 +122,15 @@ private func boundedLogText(_ value: String, bytes: Int) -> String {
     return ""
 }
 
+private func boundedLogTailText(_ value: String, bytes: Int) -> String {
+    var data = Data(value.utf8.suffix(max(0, bytes)))
+    while !data.isEmpty {
+        if let text = String(data: data, encoding: .utf8) { return text }
+        data.removeFirst()
+    }
+    return ""
+}
+
 private struct ProcessUsage {
     let physicalFootprint: UInt64
     let startAbsoluteTime: UInt64
@@ -905,6 +914,7 @@ private typealias SupervisorWorkerIdentity = BpySupervisorWorkerIdentity
 private struct ManagedProcessResult {
     let workerProcessIdentifier: Int32
     let exitStatus: Int32
+    let terminationSignal: Int32?
     let duration: Double
     let peakMemoryBytes: UInt64
     let peakDiskBytes: UInt64
@@ -914,6 +924,48 @@ private struct ManagedProcessResult {
     let limitReason: String?
     let log: String
     let terminal: BpyRemoteProcess
+}
+
+private struct ProbeIdentityFailure: Error {
+    let field: String
+    let observed: String
+    let expected: String
+}
+
+private func requireProbeIdentity<Value: Equatable>(_ observed: Value, _ expected: Value, field: String) throws {
+    guard observed == expected else {
+        throw ProbeIdentityFailure(field: field, observed: String(reflecting: observed),
+            expected: String(reflecting: expected))
+    }
+}
+
+private struct ProbeFailure: Error {
+    let response: BpyServiceResponse
+
+    init(stage: String, result: ManagedProcessResult, cause: Error, maximumLogBytes: Int) {
+        let error = cause as NSError
+        let launchStage = result.terminal.launchStage
+        let identity = cause as? ProbeIdentityFailure
+        let failureStage = identity.map { "identity.\($0.field)" } ?? stage
+        var header = "probe stage=\(failureStage) launchStage=\(launchStage.map { String(describing: $0) } ?? "unknown") exit=\(result.exitStatus) signal=\(result.terminationSignal ?? -1) supervisorPID=\(result.terminal.supervisor.pid) stop=\(result.limitReason ?? result.terminal.stopReason ?? "none") domain=\(error.domain) code=\(error.code)"
+        if let identity { header += " observed=\(identity.observed) expected=\(identity.expected)" }
+        let maximum = min(maximumLogBytes, 65_536)
+        let prefix = boundedLogText(header + "\n", bytes: maximum)
+        let output = prefix + boundedLogTailText(result.log, bytes: maximum - prefix.utf8.count)
+        response = .init(ok: false, message: "The bundled 3D worker could not start (\(failureStage)).",
+            stdout: output, metrics: [
+                "probe.exitStatus": Double(result.exitStatus),
+                "probe.terminationSignal": Double(result.terminationSignal ?? -1),
+                "probe.supervisorPID": Double(result.terminal.supervisor.pid),
+                "probe.workerPID": Double(result.workerProcessIdentifier),
+                "probe.servicePID": Double(getpid()),
+                "probe.launchStage": Double(launchStage?.rawValue ?? -1),
+                "probe.errorCode": Double(error.code),
+                "probe.duration": result.duration,
+                "probe.logBytes": Double(result.terminal.logByteCount),
+                "probe.logTruncated": output.utf8.count < header.utf8.count + 1 + result.log.utf8.count ? 1 : 0,
+            ])
+    }
 }
 
 private typealias BoundaryChildReport = BpyBoundaryChildReport
@@ -1145,15 +1197,6 @@ private final class ServiceSession: @unchecked Sendable {
                 let started = ProcessInfo.processInfo.systemUptime
                 let manifest = try probeRuntime()
                 coldStartSeconds = ProcessInfo.processInfo.systemUptime - started
-                guard manifest.schema == "nexgenvideo/bpy-probe/1",
-                      manifest.pythonVersion == "3.13.15",
-                      manifest.bpyVersion == "5.2.2",
-                      URL(fileURLWithPath: manifest.executable).resolvingSymlinksInPath()
-                        == pythonURL.resolvingSymlinksInPath(),
-                      URL(fileURLWithPath: manifest.bpyModule).resolvingSymlinksInPath()
-                        == bpyEntryPointURL.resolvingSymlinksInPath() else {
-                    throw CocoaError(.executableLoad)
-                }
                 let installed = lock.access { () -> Bool in
                     guard !closed else { return false }
                     runtimeIdentity = .init(
@@ -1169,7 +1212,8 @@ private final class ServiceSession: @unchecked Sendable {
                 callback.body(encoded(readyResponse()))
             } catch {
                 stopActiveProcess()
-                callback.body(failure("worker did not become ready: \(error.localizedDescription)"))
+                callback.body((error as? ProbeFailure).map { encoded($0.response) }
+                    ?? failure("worker did not become ready: \(error.localizedDescription)"))
             }
         }
     }
@@ -2008,19 +2052,32 @@ private final class ServiceSession: @unchecked Sendable {
             processRoot: probeRoot,
             job: nil
         )
-        guard result.limitReason == nil, result.exitStatus == 0 else {
-            throw CocoaError(.executableLoad)
+        var stage = "execution"
+        do {
+            guard result.limitReason == nil, result.exitStatus == 0 else {
+                throw CocoaError(.executableLoad)
+            }
+            stage = "manifest"
+            let manifest = try BpyRuntimeManifest.decode(ProbeManifest.self, name: manifestURL.lastPathComponent,
+                in: probeRoot, maximum: request.limits.outputBytes, budget: manifestBudget)
+            stage = "identity"
+            try requireProbeIdentity(manifest.processIdentifier, result.workerProcessIdentifier, field: "pid")
+            try requireProbeIdentity(manifest.schema, "nexgenvideo/bpy-probe/1", field: "schema")
+            try requireProbeIdentity(manifest.pythonVersion, "3.13.15", field: "python")
+            try requireProbeIdentity(manifest.bpyVersion, "5.2.2", field: "bpy")
+            try requireProbeIdentity(URL(fileURLWithPath: manifest.executable).resolvingSymlinksInPath(),
+                pythonURL.resolvingSymlinksInPath(), field: "executable")
+            try requireProbeIdentity(URL(fileURLWithPath: manifest.bpyModule).resolvingSymlinksInPath(),
+                bpyEntryPointURL.resolvingSymlinksInPath(), field: "module")
+            stage = "collection"
+            _ = try result.terminal.beginCollection()
+            let commit = try result.terminal.commit()
+            guard commit.stopReason == nil, commit.terminalCommit != nil else { throw POSIXError(.EIO) }
+            try? FileManager.default.removeItem(at: probeRoot)
+            return manifest
+        } catch {
+            throw ProbeFailure(stage: stage, result: result, cause: error, maximumLogBytes: request.limits.stdoutBytes)
         }
-        let manifest = try BpyRuntimeManifest.decode(ProbeManifest.self, name: manifestURL.lastPathComponent,
-            in: probeRoot, maximum: request.limits.outputBytes, budget: manifestBudget)
-        guard manifest.processIdentifier == result.workerProcessIdentifier else {
-            throw CocoaError(.executableLoad)
-        }
-        _ = try result.terminal.beginCollection()
-        let commit = try result.terminal.commit()
-        guard commit.stopReason == nil, commit.terminalCommit != nil else { throw POSIXError(.EIO) }
-        try? FileManager.default.removeItem(at: probeRoot)
-        return manifest
     }
 
     private func runManagedProcess(
@@ -2159,7 +2216,7 @@ private final class ServiceSession: @unchecked Sendable {
         peakDisk = max(peakDisk, usage.bytes); peakFiles = max(peakFiles, usage.files)
         limitReason = limitReason ?? usage.limitReason
         guard termination.exitStatus != 0 || workerPID > 0 || limitReason != nil else { throw POSIXError(.EIO) }
-        return .init(workerProcessIdentifier: workerPID, exitStatus: termination.exitStatus,
+        return .init(workerProcessIdentifier: workerPID, exitStatus: termination.exitStatus, terminationSignal: termination.signal,
             duration: try BpyRuntimeClock.awakeSeconds() - began, peakMemoryBytes: peakMemory,
             peakDiskBytes: peakDisk, peakFileCount: peakFiles, peakDescendantCount: peakDescendants,
             hostMonitorSamples: samples, limitReason: limitReason, log: process.log, terminal: process)

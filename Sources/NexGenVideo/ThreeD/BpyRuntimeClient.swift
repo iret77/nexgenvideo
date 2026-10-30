@@ -1763,10 +1763,15 @@ final class BpyRuntimeSession: @unchecked Sendable {
             confirmedRevision: revision, limits: limits, diagnosticOpenFailure: diagnosticOpenFailure,
             storagePair: pair, admission: admission.id, admissionDeadline: admission.admissionDeadline)
         let requestBytes = try Self.encode(request)
+        var openResponseBytes: Data?
         let response = try call(timeout: remaining, observing: { bytes in
+            openResponseBytes = bytes
             restoreProbe?.open = .init(method: "openSession", request: requestBytes.base64EncodedString(),
                 response: bytes.base64EncodedString())
         }) { service, reply in service.openSession(requestBytes, withReply: reply) }
+        if !response.ok, let openResponseBytes {
+            Self.recordOpenFailure(openResponseBytes, sessionID: identifier)
+        }
         try requireExecutionActive(admission.id, cancellation: cancellation)
         guard response.ok, let runtime = response.runtime,
               runtime.pythonVersion == "3.13.15", runtime.bpyVersion == "5.2.2" else {
@@ -1791,6 +1796,27 @@ final class BpyRuntimeSession: @unchecked Sendable {
             openAdmission = admission
         }
         return response
+    }
+
+    private static func recordOpenFailure(_ response: Data, sessionID: UUID) {
+        guard ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] == "true",
+              let path = ProcessInfo.processInfo.environment["NGV_BPY_COMMAND_EVIDENCE"] else { return }
+        let record: [String: Any] = [
+            "schema": "nexgenvideo/bpy-open-failure/1", "sessionID": sessionID.uuidString,
+            "hostPID": getpid(),
+            "sourceSHA": Bundle.main.object(forInfoDictionaryKey: "NGVSourceCommit") as? String ?? "",
+            "responseSHA256": SHA256.hash(data: response).map { String(format: "%02x", $0) }.joined(),
+            "response": response.base64EncodedString(),
+        ]
+        do {
+            let url = URL(fileURLWithPath: path, isDirectory: true)
+                .appendingPathComponent("open-failure-\(UUID().uuidString).json")
+            try JSONSerialization.data(withJSONObject: record, options: [.sortedKeys])
+                .write(to: url, options: .withoutOverwriting)
+        } catch {
+            Log.app.error("3D startup diagnostics could not be saved: \(error.localizedDescription)",
+                telemetry: "bpy-open-diagnostics-write-failed")
+        }
     }
 
     private func restoreCheckpoint(_ file: BpyRuntimeFile, revision: String, sessionID: UUID,

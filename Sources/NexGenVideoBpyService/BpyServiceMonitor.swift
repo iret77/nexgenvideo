@@ -2,8 +2,10 @@ import BpyRuntimeProtocol
 import Darwin
 import Foundation
 
-private struct BpyMonitorRefusal: LocalizedError {
+private struct BpyMonitorRefusal: LocalizedError, CustomNSError {
     let code: Int32
+    static var errorDomain: String { NSPOSIXErrorDomain }
+    var errorCode: Int { Int(code) }
     var errorDescription: String? { POSIXError(.init(rawValue: code) ?? .EIO).localizedDescription }
 }
 
@@ -103,6 +105,8 @@ final class BpyRemoteProcess: @unchecked Sendable {
     var admissionDeadline: TimeInterval? { lock.withLock { response.admissionDeadline } }
     var cleanupDeadline: TimeInterval? { lock.withLock { response.cleanupDeadline } }
     var stopReason: String? { lock.withLock { response.stopReason } }
+    var launchStage: BpyLaunchStage? { lock.withLock { response.stage } }
+    var logByteCount: Int { lock.withLock { output.count } }
     var log: String { lock.withLock { String(decoding: output, as: UTF8.self) } }
 
     fileprivate init(monitor: BpyServiceMonitor, transport: UUID, execution: UUID, epoch: UUID,

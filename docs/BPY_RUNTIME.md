@@ -421,6 +421,10 @@ artifact. Each public binary release carries the exact corresponding-source tar 
 its binaries. The release tag supplies NexGenVideo's own exact source. No local execution substitutes
 for acceptance.
 
+Failed startup probes retain their bounded process output, exit status, launch stage and validation
+stage in the existing service response. Native CI saves the exact failed response with its source,
+session and SHA-256 in the diagnostic artifact; it never records the open request or its bookmarks.
+
 The runtime probe uses real `VideoProject` instances and windows through `BpyRuntimeHost`. It covers
 two slots, a denied third document, failed-open reuse, close/reuse, and AppDelegate shutdown. It also
 covers exact and changed duplicate payloads, forged native stdout plus an infinite loop, a persistent
