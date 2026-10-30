@@ -180,15 +180,23 @@ nonisolated final class BpyRuntimeObservation: @unchecked Sendable {
         } else { result["imageVersionStatus"] = "absent" }
         var maximumGap: TimeInterval = 0, sleepChange: TimeInterval = 0
         for (controller, samples) in Dictionary(grouping: value.pressure, by: \.controller) {
-            let valid = samples.map(\.sample).filter { ["sysctl", "selftest-sensor"].contains($0.source) && $0.error == nil && $0.pressure != nil }
-                .sorted { $0.clock.awake < $1.clock.awake }
+            let measured: [BpyMemoryCoordinator.Sample] = samples.map { $0.sample }
+            let accepted: [BpyMemoryCoordinator.Sample] = measured.filter { sample in
+                (sample.source == "sysctl" || sample.source == "selftest-sensor")
+                    && sample.error == nil && sample.pressure != nil
+            }
+            let valid = accepted.sorted { $0.clock.awake < $1.clock.awake }
             let lifecycle = value.lifecycle.filter { $0.controller == controller }.sorted { ($0.clock?.awake ?? 0) < ($1.clock?.awake ?? 0) }
             var began: BpyClockReading?
             for event in lifecycle {
                 guard let clock = event.clock else { throw SpatialSceneError.changed }
                 if event.event == "dispatch-source-resumed" { began = clock }
                 else if event.event == "sampling-ended", let first = began {
-                    let observations = [first] + valid.filter { $0.clock.awake >= first.awake && $0.clock.awake <= clock.awake }.map(\.clock) + [clock]
+                    var observations: [BpyClockReading] = [first]
+                    for sample in valid where sample.clock.awake >= first.awake && sample.clock.awake <= clock.awake {
+                        observations.append(sample.clock)
+                    }
+                    observations.append(clock)
                     for (left, right) in zip(observations, observations.dropFirst()) {
                         maximumGap = max(maximumGap, right.awake - left.awake)
                         sleepChange = max(sleepChange, abs(right.sleepOffset - left.sleepOffset))

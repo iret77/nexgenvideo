@@ -73,7 +73,11 @@ nonisolated struct BpyMediaReadScope: Sendable {
             memory: memory ?? parent?.storage.memory ?? .shared, ownsOwner: parent == nil && entry == nil && fallbackOwner == nil,
             ownsCancellation: cancellation == nil, lifetime: parent?.storage.lifetime ?? entry?.lifetime, parent: parent?.storage)
         allowedRoots = parent?.allowedRoots ?? [key]
-        additionalCheck = parent?.additionalCheck ?? {}
+        if let parent {
+            additionalCheck = parent.additionalCheck
+        } else {
+            additionalCheck = { @Sendable in }
+        }
     }
 
     private init(storage: Storage, allowedRoots: Set<String>, checking: @escaping @Sendable () throws -> Void) {
