@@ -3,8 +3,10 @@
 
 #include <sys/types.h>
 #include <stddef.h>
+#include <stdint.h>
 
 int ngv_bpy_probe_fork(int *fork_errno);
+uint64_t ngv_bpy_rlim_infinity(void);
 int ngv_bpy_file_handle_descriptor(void *handle, int *descriptor);
 
 typedef struct ngv_bpy_child ngv_bpy_child;

@@ -1,7 +1,12 @@
 #include "BpySupervisorPOSIX.h"
 #include <errno.h>
+#include <sys/resource.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+uint64_t ngv_bpy_rlim_infinity(void) {
+    return RLIM_INFINITY;
+}
 
 int ngv_bpy_probe_fork(int *fork_errno) {
     if (fork_errno == NULL) return EINVAL;
