@@ -307,7 +307,7 @@ private func runMemoryDiagnostic(_ mode: BpyBoundaryMode) throws -> Never {
     if mode == .diagnosticPressureWait { while true { usleep(50_000) } }
     if mode == .diagnosticVirtualMapping {
         var limit = rlimit()
-        guard getrlimit(RLIMIT_AS, &limit) == 0, limit.rlim_cur == RLIM_INFINITY else { throw SupervisorError.invalidArguments }
+        guard getrlimit(RLIMIT_AS, &limit) == 0, limit.rlim_cur == ngv_bpy_rlim_infinity() else { throw SupervisorError.invalidArguments }
         let bytes = 8 * 1_024 * 1_024 * 1_024
         let address = mmap(nil, bytes, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0)
         guard address != MAP_FAILED else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
