@@ -5,6 +5,7 @@ import math
 import os
 import resource
 import socket
+import stat
 import struct
 import sys
 import time
@@ -43,12 +44,12 @@ def write_manifest(path, payload):
 
 
 def apply_limits(config):
+    if config.get("memoryPolicy") != "system-pressure-v1":
+        fail("unsupported host memory policy")
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     resource.setrlimit(resource.RLIMIT_FSIZE, (config["outputBytes"], config["outputBytes"]))
     resource.setrlimit(resource.RLIMIT_NOFILE, (256, 256))
     resource.setrlimit(resource.RLIMIT_CPU, (config["cpuSeconds"], config["cpuSeconds"]))
-    if hasattr(resource, "RLIMIT_AS"):
-        resource.setrlimit(resource.RLIMIT_AS, (config["memoryBytes"], config["memoryBytes"]))
     if not hasattr(resource, "RLIMIT_NPROC"):
         fail("RLIMIT_NPROC is unavailable")
     resource.setrlimit(resource.RLIMIT_NPROC, (0, 0))
@@ -91,14 +92,21 @@ def probe(config):
     })
 
 
-def execute_job(config):
+def execute_job(config, bound_source):
+    source_bytes, identity = bound_source
+    require_source_identity(config["sourcePath"], identity)
     bpy, bmesh, mathutils = load_runtime(config["sitePackages"])
     load_scene(bpy, config.get("confirmedScene"), False)
     input_dir = Path(config["inputDirectory"]).resolve()
     output_dir = Path(config["outputDirectory"]).resolve()
     session_root = Path(config["sessionRoot"]).resolve()
-    if session_root not in input_dir.parents or session_root not in output_dir.parents:
-        fail("job path escaped the session root")
+    worker_root = Path(config["workerRoot"]).resolve()
+    source_path = Path(config["sourcePath"]).resolve()
+    job_id = config["jobID"]
+    if (input_dir != session_root / "jobs" / job_id / "inputs"
+            or source_path != session_root / "jobs" / job_id / "source.py"
+            or output_dir != worker_root / "jobs" / job_id / "worker" / "outputs"):
+        fail("job path escaped its storage role")
     output_dir.mkdir(parents=True, exist_ok=False)
     namespace = {
         "__builtins__": __builtins__,
@@ -111,7 +119,8 @@ def execute_job(config):
         "output_dir": output_dir,
         "ngv_evaluated_bounds": lambda poses, camera: evaluated_bounds(bpy, config["limits"], poses, camera),
     }
-    source = Path(config["sourcePath"]).read_text()
+    require_source_identity(config["sourcePath"], identity)
+    source = source_bytes.decode("utf-8")
     exec(compile(source, f"<ngv-bpy-job:{config['jobID']}>", "exec"), namespace)
     if bpy.context.scene.get("ngv_spatial_schema") == "spatial-scene/v1":
         identities = set()
@@ -570,20 +579,57 @@ def autoexec_positive_control(config):
     })
 
 
+def bootstrap_identity(info):
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+def read_bootstrap_descriptor(descriptor, maximum, immutable=False):
+    before = os.fstat(descriptor)
+    if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.getuid() or before.st_nlink != 1
+            or before.st_size < 0 or before.st_size > maximum or (immutable and before.st_mode & 0o222)):
+        fail("invalid host bootstrap descriptor")
+    data = bytearray()
+    while len(data) < before.st_size:
+        chunk = os.pread(descriptor, min(65536, before.st_size - len(data)), len(data))
+        if not chunk:
+            fail("incomplete host bootstrap descriptor")
+        data.extend(chunk)
+    if bootstrap_identity(os.fstat(descriptor)) != bootstrap_identity(before):
+        fail("host bootstrap bytes changed while reading")
+    return data, bootstrap_identity(before)
+
+
+def require_source_identity(path, identity):
+    current = os.stat(path, follow_symlinks=False)
+    if not stat.S_ISREG(current.st_mode) or bootstrap_identity(current) != identity:
+        fail("source identity changed after host authorization")
+
+
+def read_authorized_source(descriptor, expected):
+    source = read_bootstrap_descriptor(descriptor, 4 * 1024 * 1024)
+    if not isinstance(expected, str) or hashlib.sha256(source[0]).hexdigest() != expected:
+        fail("source differs from host-authorized bytes")
+    return source
+
+
 def main():
-    if len(sys.argv) != 3:
+    if len(sys.argv) != 3 or sys.argv[2] != "203":
         fail("invalid worker bootstrap arguments")
     mode = sys.argv[1]
+    config_bytes, _ = read_bootstrap_descriptor(203, 1024 * 1024, immutable=True)
+    config = json.loads(config_bytes)
+    bound_source = None
+    if mode == "job":
+        bound_source = read_authorized_source(206, config.get("hostSourceSHA256"))
     descriptor_limit = resource.getrlimit(resource.RLIMIT_NOFILE)[0]
     if descriptor_limit == resource.RLIM_INFINITY:
         descriptor_limit = 1_048_576
     os.closerange(3, min(int(descriptor_limit), 1_048_576))
-    config = json.loads(Path(sys.argv[2]).read_text())
     apply_limits(config)
     if mode == "probe":
         probe(config)
     elif mode == "job":
-        execute_job(config)
+        execute_job(config, bound_source)
     elif mode == "verify":
         verify_scene(config)
     elif mode == "autoexec-positive":

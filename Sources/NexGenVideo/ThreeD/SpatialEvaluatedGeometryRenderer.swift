@@ -14,13 +14,28 @@ enum SpatialEvaluatedGeometryRenderer {
     static func requireEvidence(references: [CanonicalArtifactReferenceV1], stateReference: CanonicalArtifactReferenceV1,
                                 cameraID: String, sceneReference: CanonicalArtifactReferenceV1, shotID: String,
                                 directory: String, dataRoot: URL) throws {
+        try BpyMediaReadScope.withScope(dataRoot: dataRoot) { scope in
+            try scope.withConsumer { _ in
+                try requireEvidence(references: references, stateReference: stateReference, cameraID: cameraID,
+                    sceneReference: sceneReference, shotID: shotID, directory: directory, dataRoot: dataRoot, scope: scope)
+            }
+        }
+    }
+
+    private static func requireEvidence(references: [CanonicalArtifactReferenceV1], stateReference: CanonicalArtifactReferenceV1,
+                                        cameraID: String, sceneReference: CanonicalArtifactReferenceV1, shotID: String,
+                                        directory: String, dataRoot: URL, scope: BpyMediaReadScope) throws {
+        try scope.check()
         let refs = references.filter { $0.role == "host.evaluated-geometry" }
         guard Set(refs.map(\.path)).count == refs.count,
               refs.contains(where: { $0.path == directory + "/evaluated-geometry.v1.json" }) else { throw SpatialSceneError.changed }
         var files: [String: Data] = [:]
         for ref in refs {
+            try scope.check()
             guard (ref.path as NSString).deletingLastPathComponent == directory else { throw SpatialSceneError.changed }
-            files[(ref.path as NSString).lastPathComponent] = try Data(contentsOf: ProjectLocalFile.requireHash(ref.sha256, at: ref.path, dataRoot: dataRoot))
+            files[(ref.path as NSString).lastPathComponent] = try scope.verifiedData(
+                at: ProjectLocalFile.resolve(ref.path, dataRoot: dataRoot), expectedSHA256: ref.sha256,
+                maximum: BpyRuntimeLimits.maximumOutputBytes)
         }
         guard let data = files["evaluated-geometry.v1.json"],
               let head = try SpatialSceneStore.index(in: dataRoot).scenes.first(where: {
@@ -34,19 +49,24 @@ enum SpatialEvaluatedGeometryRenderer {
         try geometry.validate(state: state, scene: scene)
         try geometry.validateFiles(files)
         try geometry.validateRecordedSources(files, state: state, scene: scene,
-            runtimeRoot: BpyRuntimeBundleLayout(app: Bundle.main.bundleURL, serviceName: bpyRuntimeServiceNames[0]).runtime)
+            runtimeRoot: BpyRuntimeBundleLayout(app: Bundle.main.bundleURL, serviceName: bpyRuntimeServiceNames[0]).runtime, scope: scope)
     }
 
     static func prepare(state: SpatialClayState, revision: SpatialSceneRevision,
                         runtime: BpyRuntimeSession, runtimeRoot: URL) async throws -> Candidate {
+        let cancellation = BpyOperationCancellation()
         let task = Task.detached(priority: .userInitiated) {
-            try await prepareOffMain(state: state, revision: revision, runtime: runtime, runtimeRoot: runtimeRoot)
+            try await prepareOffMain(state: state, revision: revision, runtime: runtime, runtimeRoot: runtimeRoot,
+                cancellation: cancellation)
         }
-        return try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+        return try await withTaskCancellationHandler { try await task.value } onCancel: {
+            cancellation.cancel(); task.cancel()
+        }
     }
 
     private static func prepareOffMain(state: SpatialClayState, revision: SpatialSceneRevision,
-                                       runtime: BpyRuntimeSession, runtimeRoot: URL) async throws -> Candidate {
+                                       runtime: BpyRuntimeSession, runtimeRoot: URL,
+                                       cancellation: BpyOperationCancellation) async throws -> Candidate {
         guard !state.frames.isEmpty else { throw SpatialSceneError.changed }
         let request = SpatialClayRequest(owner: .shotPlanning, ownerArtifactSHA256: revision.manifest.sceneSHA256,
             ownerBindingSHA256: SpatialSceneStore.digest(try SpatialSceneStore.encode(state)), cameraID: state.cameraID,
@@ -56,7 +76,7 @@ enum SpatialEvaluatedGeometryRenderer {
         let script = try Data(contentsOf: runtimeRoot.appendingPathComponent("scene_operations.py"))
         let worker = try Data(contentsOf: runtimeRoot.appendingPathComponent("worker.py"))
         let runtimeLock = try Data(contentsOf: runtimeRoot.appendingPathComponent("runtime-lock.json"))
-        let binary = try Data(contentsOf: runtimeRoot.appendingPathComponent("site-packages/bpy/__init__.so"), options: .mappedIfSafe)
+        let binarySHA256 = try runtime.digestRuntimeFile(at: runtimeRoot.appendingPathComponent("site-packages/bpy/__init__.so"), cancellation: cancellation)
         var frames: [SpatialEvaluatedGeometryV1.Frame] = []
         var chunks: [SpatialEvaluatedGeometryV1.Chunk] = []
         let record = try Data(contentsOf: runtimeRoot.appendingPathComponent("site-packages/bpy-5.2.2.dist-info/RECORD"))
@@ -71,19 +91,17 @@ enum SpatialEvaluatedGeometryRenderer {
             let job = UUID()
             let operation = Task.detached {
                 try Task.checkCancellation()
-                try runtime.loadProjectCheckpoint(scene: revision.sceneData, revision: revision.manifest.revision.uuidString,
-                                                  sha256: revision.manifest.sceneSHA256)
+                try runtime.loadProjectCheckpoint(sceneRevision: revision, cancellation: cancellation)
                 try Task.checkCancellation()
-                return try runtime.runJob(id: job, expectedRevision: revision.manifest.revision.uuidString, source: source)
+                return try runtime.runJob(id: job, expectedRevision: revision.manifest.revision.uuidString, source: source, cancellation: cancellation)
             }
             let result = try await withTaskCancellationHandler { try await operation.value } onCancel: {
-                operation.cancel()
-                Task.detached { _ = try? runtime.cancel(jobID: job) }
+                cancellation.cancel(); operation.cancel()
             }
-            defer { _ = try? runtime.cancel(jobID: job) }
+            defer { result.release() }
             try Task.checkCancellation()
             let evidence = try runtime.authenticateEvaluatedGeometry(jobID: job, source: source, revision: revision,
-                                                                     result: result)
+                result: result, cancellation: cancellation)
             let values = try JSONDecoder().decode([SpatialEvaluatedGeometryV1.Frame].self, from: evidence.bounds)
             guard values.map(\.frame) == Array(start...end) else { throw SpatialSceneError.changed }
             let filename = "evaluated-bounds-\(start).v1.json"
@@ -99,13 +117,14 @@ enum SpatialEvaluatedGeometryRenderer {
             sceneManifestSHA256: SpatialSceneStore.digest(revision.manifestData), sceneSHA256: revision.manifest.sceneSHA256,
             stateSHA256: SpatialSceneStore.digest(try SpatialSceneStore.encode(state)), workerSHA256: SpatialSceneStore.digest(worker),
             scriptSHA256: SpatialSceneStore.digest(script), runtimeLockSHA256: SpatialSceneStore.digest(runtimeLock),
-            runtimeBinarySHA256: SpatialSceneStore.digest(binary), chunks: chunks, frames: frames,
+            runtimeBinarySHA256: binarySHA256, chunks: chunks, frames: frames,
             snapshotSHA256: revision.manifest.snapshotSHA256, runtimeRecordSHA256: SpatialSceneStore.digest(record),
             sceneRevision: revision.manifest.revision, effectiveTimeoutSeconds: runtime.limits.timeoutSeconds)
         try geometry.validate(state: state, scene: revision)
         files["evaluated-geometry.v1.json"] = try SpatialSceneStore.encode(geometry)
         try geometry.validateFiles(files)
-        try geometry.validateRecordedSources(files, state: state, scene: revision, runtimeRoot: runtimeRoot)
+        try geometry.validateRecordedSources(files, state: state, scene: revision, runtimeRoot: runtimeRoot,
+            scope: runtime.mediaReadScope(cancellation: cancellation))
         try Task.checkCancellation()
         return Candidate(geometry: geometry, files: files)
     }

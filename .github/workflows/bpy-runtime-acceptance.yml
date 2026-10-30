@@ -233,8 +233,8 @@ jobs:
             and .forgedResultState == "timedOut"
             and .cancelState == "cancelled"
             and .transportTimeoutRecovered == true
-            and .rlimitASAllocationDenied == true
-            and (.outOfMemoryState == "failed" or .outOfMemoryState == "resourceLimited")
+            and .memoryPolicyVersion == "system-pressure-v1"
+            and .memoryPolicy.schema == "nexgenvideo/bpy-memory-policy-evidence/3"
             and .structuralLimitState == "resourceLimited"
             and .renderOnlyGeometryState == "resourceLimited"
             and .secondarySceneGeometryState == "resourceLimited"
@@ -248,6 +248,10 @@ jobs:
             and .spatialAuthoring.cameraDimensions == true
             and .spatialAuthoring.stableRestFrame == true
             and .spatialAuthoring.resourceReceipt == true
+            and .spatialAuthoring.preCancelledCallerReceiptRejected == true
+            and .spatialAuthoring.preCancelledCallerDerivationRejected == true
+            and .spatialAuthoring.preCancelledCallerSequenceRejected == true
+            and .reapedRecovery.file == "native-reaped-recovery.json"
             and .spatialAuthoring.resolvedStatePixels == true
             and .spatialAuthoring.fractionalTimebaseMovie == true
             and .spatialAuthoring.derivationAuthentication == true
@@ -292,12 +296,13 @@ jobs:
               and .staleAssignmentUnchanged == true
               and (.screenshots | length) >= 10 and (.interactions | length) > 20)
             and [.productionSpatial.nativeBibleUI[].scale] == [1, 1.25, 1.5]
+            and all(.productionSpatial.nativeClayUI[]; .cancelDuringHash == true and .closeDuringLoading == true)
             and all(.productionSpatial.nativeBibleUI[];
               .viewport == [960, 640] and .nativeSceneAndCameraSelection == true
               and .requiredPurpose == true and .realRenderedPreview == true
               and .nativeImageInspection == true and .exactPreviewAssigned == true
               and .preparedCancelUnchanged == true and .staleAssignmentUnchanged == true
-              and .reloadAndAssign == true
+              and .reloadAndAssign == true and .cancelDuringHash == true and .closeDuringLoading == true
               and (.screenshots | length) >= 10 and (.interactions | length) > 20)
             and ([.physicalStorage[].mode] | sort) == ["fileport", "memory-entry", "scm-rights"]
             and all(.physicalStorage[];

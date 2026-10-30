@@ -270,7 +270,7 @@ enum AppRelaunch {
             guard UserDefaults.standard.synchronize() else {
                 throw RelaunchFailure.restartSettingsUnconfirmed
             }
-            try task.run()
+            try task.runCoordinated()
             AppTerminationSelfTest.record("reopener-started", childPID: task.processIdentifier)
             if ProductionPackRecoveryAcceptance.isRequested {
                 try ProductionPackRecoveryAcceptance.recordOwnedProcess(role: "reopener", pid: task.processIdentifier)

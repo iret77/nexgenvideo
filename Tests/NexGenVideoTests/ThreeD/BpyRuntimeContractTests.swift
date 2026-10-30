@@ -5,6 +5,38 @@ import Testing
 
 @Suite("Managed bpy runtime contract")
 struct BpyRuntimeContractTests {
+    @Test func storagePairsRejectEachIndependentIdentityRoleAndCapacityMismatch() throws {
+        let limits = BpyRuntimeLimits(), id = UUID(), workerID = UUID(), dataID = UUID()
+        let dataCapacity = try #require(limits.dataStorageBytes)
+        let worker = BpyStorageLease(id: workerID, mountPath: "/Fixture/worker", device: 11,
+            capacityBytes: limits.physicalStorageBytes, bookmark: Data(), role: .worker, pairID: id)
+        let data = BpyStorageLease(id: dataID, mountPath: "/Fixture/data", device: 12,
+            capacityBytes: dataCapacity, bookmark: Data(), role: .data, pairID: id)
+        let pair = BpyStoragePair(id: id, worker: worker, data: data)
+        #expect(pair.isValid(limits: limits))
+        let baseline = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(pair)) as? [String: Any])
+        let mutations: [(String, String?, String, Any)] = [
+            ("schema", nil, "schema", "unknown"),
+            ("worker-role", "worker", "role", "data"), ("data-role", "data", "role", "worker"),
+            ("missing-worker-role", "worker", "role", NSNull()), ("missing-data-role", "data", "role", NSNull()),
+            ("foreign-worker-pair", "worker", "pairID", UUID().uuidString), ("foreign-data-pair", "data", "pairID", UUID().uuidString),
+            ("missing-worker-pair", "worker", "pairID", NSNull()), ("missing-data-pair", "data", "pairID", NSNull()),
+            ("same-lease", "data", "id", workerID.uuidString), ("same-device", "data", "device", worker.device),
+            ("same-mount", "data", "mountPath", worker.mountPath),
+            ("zero-worker", "worker", "capacityBytes", 0), ("oversized-worker", "worker", "capacityBytes", limits.physicalStorageBytes + 1),
+            ("zero-data", "data", "capacityBytes", 0), ("oversized-data", "data", "capacityBytes", dataCapacity + 1)
+        ]
+        for (name, role, field, value) in mutations {
+            var changed = baseline
+            if let role {
+                var lease = try #require(changed[role] as? [String: Any])
+                lease[field] = value; changed[role] = lease
+            } else { changed[field] = value }
+            let candidate = try JSONDecoder().decode(BpyStoragePair.self, from: JSONSerialization.data(withJSONObject: changed))
+            #expect(!candidate.isValid(limits: limits), "Accepted \(name)")
+        }
+    }
+
     @Test func crashedStorageRequiresBootChangeDespitePIDReuse() throws {
         let boot = UUID()
         let operation = BpyStorageOperation(id: UUID(), bootSessionID: boot, pid: 22, start: 200,
@@ -64,11 +96,38 @@ struct BpyRuntimeContractTests {
         limits.timeoutSeconds = 0
         #expect(!limits.isValid)
         limits = BpyRuntimeLimits()
-        limits.memoryBytes = 64 * 1_024 * 1_024
-        #expect(!limits.isValid)
-        limits = BpyRuntimeLimits()
         limits.diskBytes = limits.outputBytes - 1
         #expect(!limits.isValid)
+    }
+
+    @Test func missingOrUnknownMemoryPolicyFailsDecoding() throws {
+        let bytes = try JSONEncoder().encode(BpyRuntimeLimits())
+        var value = try #require(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+        value.removeValue(forKey: "memoryPolicy")
+        #expect(throws: DecodingError.self) {
+            _ = try JSONDecoder().decode(BpyRuntimeLimits.self, from: JSONSerialization.data(withJSONObject: value))
+        }
+        value["memoryPolicy"] = "unsupported-policy"
+        #expect(throws: DecodingError.self) {
+            _ = try JSONDecoder().decode(BpyRuntimeLimits.self, from: JSONSerialization.data(withJSONObject: value))
+        }
+    }
+
+    @Test func dataImageDoesNotEnlargeTheWorkerFilesystem() {
+        let defaults = BpyRuntimeLimits()
+        #expect(defaults.physicalStorageBytes == 2 * 1_024 * 1_024 * 1_024)
+        #expect(defaults.dataStorageBytes == 5 * 1_024 * 1_024 * 1_024)
+        var minimumSlack = defaults
+        minimumSlack.inputBytes = 448 * 1_024 * 1_024
+        #expect(minimumSlack.dataStorageBytes == 4 * 1_024 * 1_024 * 1_024)
+        #expect(minimumSlack.physicalStorageBytes == defaults.physicalStorageBytes)
+        minimumSlack.inputBytes = 496 * 1_024 * 1_024
+        #expect(minimumSlack.dataStorageBytes == 5 * 1_024 * 1_024 * 1_024)
+        var largeWorker = defaults
+        largeWorker.diskBytes = 8 * 1_024 * 1_024 * 1_024
+        #expect(largeWorker.isValid)
+        #expect(largeWorker.physicalStorageBytes == 8 * 1_024 * 1_024 * 1_024)
+        #expect(largeWorker.dataStorageBytes == 5 * 1_024 * 1_024 * 1_024)
     }
 
     @Test func inputCopyOnlyAcceptsSingleSafeName() throws {

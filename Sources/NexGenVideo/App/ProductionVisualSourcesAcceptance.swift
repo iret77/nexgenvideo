@@ -183,7 +183,7 @@ enum ProductionVisualSourcesAcceptance {
                     try await driver.click(prefix + "cancel", in: sheet)
                     try await driver.wait("cancel Bible sheet") { window.attachedSheet == nil && window.isKeyWindow }
                 }
-                func prepare(_ sheet: NSWindow, view: String) async throws -> String {
+                func prepare(_ sheet: NSWindow, view: String, cancelWhileHashing: Bool = false) async throws -> String? {
                     try await driver.picker(prefix + "scene", title: scene.name, expected: scene.id.uuidString, in: sheet)
                     try await driver.wait("saved camera loaded") { driver.state(prefix + "camera", in: sheet) == true }
                     try await driver.picker(prefix + "camera", title: camera.name, expected: camera.id, in: sheet)
@@ -195,7 +195,27 @@ enum ProductionVisualSourcesAcceptance {
                     try await driver.reveal(prefix + "render", in: sheet)
                     try driver.visible([prefix + "render", prefix + "cancel", prefix + "assign"], in: sheet)
                     try driver.capture("before-render", target: sheet)
+                    let gate = try cancelWhileHashing ? BpyNativeHashGate(file: ProjectLocalFile.resolve(
+                        SpatialSceneStore.revisionPath(scene: scene.id, revision: scene.revision) + "/scene.blend", dataRoot: root)) : nil
+                    defer { gate?.release() }
                     try await driver.click(prefix + "render", in: sheet)
+                    if let gate {
+                        try await driver.wait("Bible caller hashing started", seconds: 30) { gate.sample != nil }
+                        guard let sample = gate.sample, !sample.context.isCancelled() else { throw failed("The Bible hash was not active before Cancel.") }
+                        try await driver.click(prefix + "cancel", in: sheet)
+                        try await driver.wait("Bible caller token cancelled") { sample.context.isCancelled() }
+                        gate.release()
+                        try await driver.wait("Bible ready after user cancellation", seconds: 30) {
+                            driver.state(prefix + "render", in: sheet) == true || driver.text(prefix + "failure", in: sheet) != nil
+                        }
+                        guard !gate.timedOut, driver.text(prefix + "failure", in: sheet) == nil,
+                              driver.text(prefix + "cancelled", in: sheet) == "The render was cancelled. References were not changed.",
+                              driver.state(prefix + "assign", in: sheet) == false else { throw failed("User cancellation was displayed as a Bible render failure.") }
+                        try driver.capture("cancelled-during-hash", target: sheet)
+                        try driver.record("Bible cancel during actual caller hash", fields: ["operation": sample.context.id.uuidString,
+                            "bytes": sample.progress.bytes, "hashedBytes": sample.progress.hashedBytes, "callerCancelled": sample.context.isCancelled()])
+                        return nil
+                    }
                     try await driver.wait("actual Bible render preview", seconds: 130) { driver.state(prefix + "assign", in: sheet) == true && driver.text(prefix + "image", in: sheet)?.count == 64 }
                     try await driver.reveal(prefix + "image", in: sheet)
                     try driver.visible([prefix + "image", prefix + "cancel", prefix + "assign"], in: sheet)
@@ -204,15 +224,37 @@ enum ProductionVisualSourcesAcceptance {
                     try await driver.inspect(prefix + "inspect", in: sheet)
                     return digest
                 }
-                var sheet = try await open()
                 let beforeCancel = try await bibleDigest(context)
+                do {
+                    let gate = try BpyNativeHashGate(file: ProjectLocalFile.resolve(
+                        SpatialSceneStore.revisionPath(scene: scene.id, revision: scene.revision) + "/scene.blend", dataRoot: root))
+                    defer { gate.release() }
+                    try await driver.click(prefix + "open." + locationID, in: window)
+                    let loading = try await driver.sheet(prefix + "sheet")
+                    try await driver.wait("Bible loading hash started", seconds: 30) { gate.sample != nil }
+                    guard let sample = gate.sample, !sample.context.isCancelled() else { throw failed("The Bible loading hash was not active.") }
+                    try await close(loading)
+                    try await driver.wait("Bible closed loading token cancelled") { sample.context.isCancelled() }
+                    guard !gate.timedOut else { throw failed("The Bible loading hash gate expired.") }
+                    gate.release()
+                    try driver.record("Bible close during loading", fields: ["operation": sample.context.id.uuidString,
+                        "bytes": sample.progress.bytes, "hashedBytes": sample.progress.hashedBytes, "callerCancelled": sample.context.isCancelled()])
+                }
+                guard try await bibleDigest(context) == beforeCancel else { throw failed("Closing Bible preparation changed its assignment.") }
+                var sheet = try await open()
+                guard try await prepare(sheet, view: "interrupted_\(Int(scale * 100))", cancelWhileHashing: true) == nil else {
+                    throw failed("The cancelled Bible render returned a preview.")
+                }
+                guard try await bibleDigest(context) == beforeCancel else { throw failed("Cancel during hashing changed the Bible.") }
+                try await close(sheet)
+                sheet = try await open()
                 _ = try await prepare(sheet, view: "cancel_\(Int(scale * 100))")
                 try await close(sheet)
                 guard try await bibleDigest(context) == beforeCancel else { throw failed("Cancelling the actual rendered Bible preview changed its assignment.") }
 
                 sheet = try await open()
                 let viewID = "native_\(Int(scale * 100))"
-                let preview = try await prepare(sheet, view: viewID)
+                guard let preview = try await prepare(sheet, view: viewID) else { throw failed("The Bible preview was cancelled unexpectedly.") }
                 try await driver.click(prefix + "assign", in: sheet)
                 try await driver.wait("Bible assignment closes sheet") { window.attachedSheet == nil }
                 let assigned = try await Task.detached {
@@ -248,7 +290,7 @@ enum ProductionVisualSourcesAcceptance {
                         && driver.state(prefix + "assign", in: sheet) == false && driver.text(prefix + "failure", in: sheet) == nil
                 }
                 let recoveredID = "recovered_\(Int(scale * 100))"
-                let recoveredSHA = try await prepare(sheet, view: recoveredID)
+                guard let recoveredSHA = try await prepare(sheet, view: recoveredID) else { throw failed("The recovered Bible preview was cancelled unexpectedly.") }
                 try await driver.click(prefix + "assign", in: sheet)
                 try await driver.wait("reloaded Bible assignment closes sheet") { window.attachedSheet == nil }
                 try await Task.detached {
@@ -265,6 +307,7 @@ enum ProductionVisualSourcesAcceptance {
                     "requiredPurpose": true, "realRenderedPreview": true, "nativeImageInspection": true,
                     "exactPreviewAssigned": true, "preparedCancelUnchanged": true, "staleAssignmentUnchanged": true,
                     "reloadAndAssign": true,
+                    "cancelDuringHash": true, "closeDuringLoading": true,
                     "imageSHA256": assigned, "viewID": viewID]) { _, new in new }
                 results.append(result)
             } catch { driver.failure(error); throw error }

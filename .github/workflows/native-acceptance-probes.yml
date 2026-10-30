@@ -6,7 +6,7 @@ on:
       scope:
         description: Native probes or isolated owned-child and worker-sandbox components
         type: choice
-        options: [native, owned-child, worker-sandbox]
+        options: [native, owned-child, worker-sandbox, worker-memory]
         default: native
       owned_child_binary_run_id:
         description: Optional exact retained owned-child diagnostic binary
@@ -173,7 +173,7 @@ jobs:
           retention-days: 7
 
   sandbox-source:
-    if: inputs.scope == 'worker-sandbox'
+    if: inputs.scope == 'worker-sandbox' || inputs.scope == 'worker-memory'
     runs-on: ubuntu-24.04
     timeout-minutes: 3
     steps:
@@ -183,11 +183,12 @@ jobs:
         with:
           fetch-depth: 0
       - name: Verify isolated component provenance checks
-        run: python3 -m unittest discover -s scripts -p test_bpy_worker_sandbox_probe.py -v
+        run: python3 -m unittest discover -s scripts -p 'test_bpy_worker_*probe.py' -v
       - name: Bind the original successful app producer
         env:
           GH_TOKEN: ${{ github.token }}
           NGV_SANDBOX_RESUME_PYTHON: ${{ inputs.worker_sandbox_resume }}
+          NGV_SANDBOX_MEMORY_PROBE: ${{ inputs.scope == 'worker-memory' }}
         run: python3 scripts/bpy_worker_sandbox_probe.py bind --output "$RUNNER_TEMP/sandbox-identity"
       - uses: actions/upload-artifact@v4
         if: always()
@@ -259,6 +260,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           NGV_SANDBOX_RESUME_PYTHON: ${{ inputs.worker_sandbox_resume }}
+          NGV_SANDBOX_MEMORY_PROBE: ${{ inputs.scope == 'worker-memory' }}
         run: |
           set -euo pipefail
           binaries=sandbox-binaries

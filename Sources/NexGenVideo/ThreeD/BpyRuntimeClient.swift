@@ -4,7 +4,6 @@ import CryptoKit
 import Darwin
 import Foundation
 
-private let bpyHostResultRetentionSeconds: TimeInterval = 15 * 60
 private let bpyOpenDiagnostics = CategoryLog("bpy-open")
 
 @_silgen_name("proc_pid_rusage")
@@ -110,6 +109,13 @@ struct BpyApprovedInputCopy: Sendable, Equatable {
 struct BpyRuntimeJobResult: Sendable {
     let response: BpyServiceResponse
     let stagedOutputs: [String: URL]
+    let lease: BpyRuntimeResultLease?
+
+    init(response: BpyServiceResponse, stagedOutputs: [String: URL], lease: BpyRuntimeResultLease? = nil) {
+        self.response = response; self.stagedOutputs = stagedOutputs; self.lease = lease
+    }
+
+    func release() { lease?.release() }
 }
 
 private final class BpyReplyBox: @unchecked Sendable {
@@ -188,13 +194,27 @@ final class BpyRuntimeSession: @unchecked Sendable {
     private var validatedCandidates: [UUID: (sha256: String, url: URL)] = [:]
     private var candidateJobIDs = Set<UUID>()
     private var jobFingerprints: [UUID: String] = [:]
+    private var jobOrigins: [UUID: (revision: String?, sha256: String?)] = [:]
     private var submittedJobIDs = Set<UUID>()
     private var submittedTransportIDs: [UUID: UUID] = [:]
     private var cachedResults: [UUID: BpyRuntimeJobResult] = [:]
-    private var cachedResultOrder: [UUID] = []
-    private var cachedResultDates: [UUID: Date] = [:]
+    private var cachedLogs: [UUID: String] = [:]
+    private var logOrder: [UUID] = []
     private var lastReadyResponse: BpyServiceResponse?
-    private var confirmedSceneData: Data?
+    private var confirmedSceneFile: BpyRuntimeFile?
+    private var outputReservations: [UUID: UUID] = [:]
+    private struct TransferRecord {
+        let reservation: UUID
+        let transport: UUID
+        let pairIDs: [UUID]
+        let request: BpyReleaseResourcesRequest
+        var releaseRequested = false
+        var releaseDeadline: TimeInterval?
+    }
+    private var transfers: [UUID: TransferRecord] = [:]
+    private let transferCleanupLock = NSLock()
+    private var transferDeadlines: [UUID: TimeInterval] = [:]
+    private var openAdmission: BpyAdmissionIdentity?
     private var activeProcessLease: BpyProcessLease?
     private(set) var confirmedRevision: String?
     private var storageVolume: BpyRuntimeVolume?
@@ -208,13 +228,31 @@ final class BpyRuntimeSession: @unchecked Sendable {
     private let spatialSequences = SpatialClaySequenceReceipts()
     private var cleanupRequiresRestart = false
     private var storageServiceReleased = false
+    private let memoryOwner = UUID()
+    private let memoryGeneration = UUID()
+    private var storageDataVolume: BpyRuntimeVolume?
+    private var jobAdmissions: [UUID: BpyAdmissionIdentity] = [:]
+    private var operationTokens: [UUID: BpyOperationCancellation] = [:]
+    private var uploadedJobIDs: Set<UUID> = []
+    private var stagingJobIDs: Set<UUID> = []
+    private var hostDisposalDeadline: TimeInterval?
+    private let memoryCoordinator: BpyMemoryCoordinator
+
+    private final class OpenBudget {
+        var admissionDeadline: TimeInterval?
+        var rpcDeadline: TimeInterval?
+    }
 
     init(
         documentID: String,
         limits: BpyRuntimeLimits = .init(),
         serviceName: String = bpyRuntimeServiceNames[0],
-        diagnosticOpenFailure: Bool = false
+        diagnosticOpenFailure: Bool = false,
+        memoryCoordinator: BpyMemoryCoordinator = .shared
     ) {
+        precondition(memoryCoordinator === BpyMemoryCoordinator.shared
+            || ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"]?.isEmpty == false)
+        self.memoryCoordinator = memoryCoordinator
         let identifier = UUID()
         sessionID = UUID()
         self.documentID = documentID
@@ -222,17 +260,43 @@ final class BpyRuntimeSession: @unchecked Sendable {
         self.limits = limits
         self.serviceName = serviceName
         self.diagnosticOpenFailure = diagnosticOpenFailure
-        stagingRoot = FileManager.default.temporaryDirectory
-            .appendingPathComponent("NexGenVideo/BpyHost/\(identifier.uuidString)", isDirectory: true)
+        stagingRoot = BpyHostStaging.shared.location("session-" + identifier.uuidString)
         installConnection()
     }
 
     deinit {
         close()
+        // A close-racing caller can still register until the session is destroyed.
+        memoryCoordinator.retire(owner: memoryOwner)
     }
 
     var bundledRuntimeRoot: URL {
         get throws { try BpyRuntimeBundleLayout(app: Bundle.main.bundleURL, serviceName: serviceName).runtime }
+    }
+
+    func consumerWork(cancellation: BpyOperationCancellation) throws -> BpyConsumerWork {
+        try requireOperation(cancellation)
+        return try memoryCoordinator.beginConsumer(owner: memoryOwner, cancellation: cancellation, checking: {
+            if Task.isCancelled { cancellation.cancel() }
+            try self.requireOperation(cancellation)
+        })
+    }
+
+    func mediaReadScope(cancellation: BpyOperationCancellation) throws -> BpyMediaReadScope {
+        try requireOperation(cancellation)
+        return BpyMediaReadScope.operation(dataRoot: ProjectWorkingCopy.home(documentID).appendingPathComponent("pipeline"),
+            owner: memoryOwner, cancellation: cancellation, memory: memoryCoordinator).checking { [weak self] in
+                guard let self else { throw BpyAdmissionFailure.closed }
+                try requireOperation(cancellation)
+            }
+    }
+
+    func digestRuntimeFile(at url: URL, cancellation: BpyOperationCancellation) throws -> String {
+        try mediaReadScope(cancellation: cancellation).digest(at: url)
+    }
+
+    func sequenceRetention(root: URL) -> BpySequenceRetention {
+        .init(root: root, workOwner: memoryOwner)
     }
 
     var occupiesHostSlot: Bool {
@@ -265,6 +329,297 @@ final class BpyRuntimeSession: @unchecked Sendable {
         closed && !closing && !cleanupComplete && requiresRestart && serviceReleased
     }
 
+    func nativeMediaContext() throws -> (owner: UUID, slot: String, limits: BpyRuntimeLimits, memory: BpyMemoryCoordinator) {
+        guard ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"]?.isEmpty == false else { throw BpyAdmissionFailure.closed }
+        return (memoryOwner, serviceName, limits, memoryCoordinator)
+    }
+
+    func nativeRecoveryMonitor() throws -> BpyHostMonitor {
+        guard ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"]?.isEmpty == false,
+              let monitor = lock.withLock({ hostMonitor }) else { throw BpyAdmissionFailure.closed }
+        return monitor
+    }
+
+    func nativeCheckpointStamp() throws -> [String: String] {
+        guard ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"]?.isEmpty == false else { throw BpyAdmissionFailure.closed }
+        return lock.withLock { ["transport": sessionID.uuidString, "revision": confirmedRevision ?? "",
+            "sha256": confirmedSceneFile?.sha256 ?? "", "uploadedJobs": String(uploadedJobIDs.count)] }
+    }
+
+    func nativeRefreshWorkerRole() throws -> BpyClockReading {
+        guard ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"]?.isEmpty == false,
+              let worker = lock.withLock({ storageVolume }) else { throw BpyAdmissionFailure.closed }
+        return try worker.nativeRefreshWorkerRole()
+    }
+
+    func nativeSourceBindingDiagnostic(target: String, expectedRevision: String) throws -> BpySourceBindingEvidence {
+        guard ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"]?.isEmpty == false,
+              ["source.py", "job.json"].contains(target) else { throw SpatialSceneError.changed }
+        let source = "print('BOUND_SOURCE_RAN', flush=True)\nbpy.context.scene.render.resolution_x = 64\nbpy.context.scene.render.resolution_y = 64"
+        let replacement = target == "source.py" ? Data("raise RuntimeError('UNAPPROVED_SOURCE_EXECUTED')".utf8) : Data("{\"memoryPolicy\":\"unapproved\"}".utf8)
+        let job = UUID(), token = BpyOperationCancellation(), box = BpyDiagnosticJobResult()
+        defer { token.cancel(); box.abandon(); _ = try? cancel(jobID: job) }
+        _ = try ensureOpen(cancellation: token)
+        let transport = currentSessionID()
+        let statusRequest = try Self.encode(BpyJobReference(sessionID: transport, jobID: job))
+        let deadline = try BpyRuntimeClock.awakeSeconds() + Double(limits.timeoutSeconds)
+        DispatchQueue.global(qos: .userInitiated).async { [self] in
+            box.complete(Result { try runJob(id: job, expectedRevision: expectedRevision, source: source,
+                diagnosticDeferExecutionAuthorization: true, cancellation: token) })
+        }
+        var pending: BpyServiceResponse?
+        while pending == nil {
+            if let early = box.take() { let result = try early.get(); result.release(); throw SpatialSceneError.changed }
+            guard try BpyRuntimeClock.awakeSeconds() < deadline else { throw BpyRuntimeError.timedOut }
+            let value = try call { service, reply in service.jobStatus(statusRequest, withReply: reply) }
+            guard value.jobID == nil || value.jobID == job else { throw SpatialSceneError.changed }
+            if value.activeProcessAuthorizationID != nil { pending = value }
+            else { Thread.sleep(forTimeInterval: 0.02) }
+        }
+        guard let pending, let execution = pending.activeProcessAuthorizationID,
+              let monitor = lock.withLock({ hostMonitor }), let data = lock.withLock({ storageDataVolume }),
+              let admission = lock.withLock({ jobAdmissions[job] }), let dataBytes = limits.dataStorageBytes else {
+            throw SpatialSceneError.changed
+        }
+        let gate = try monitor.diagnosticGate(execution: execution)
+        guard gate.process.pid == pending.activeProcessIdentifier, gate.process.start == pending.activeProcessStartAbsoluteTime,
+              gate.process.executable == pending.activeProcessExecutable, gate.permit == admission.id else { throw SpatialSceneError.changed }
+        let mount = try BpyStoragePaths.validateMount(data.lease, maximumBytes: dataBytes)
+        defer { Darwin.close(mount) }
+        let relative = transport.uuidString + "/jobs/" + job.uuidString
+        let directory = openat(mount, relative, O_RDONLY | O_DIRECTORY | O_NOFOLLOW_ANY | O_CLOEXEC)
+        guard directory >= 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+        defer { Darwin.close(directory) }
+        let original = openat(directory, target, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        guard original >= 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+        defer { Darwin.close(original) }
+        var before = stat()
+        guard fstat(original, &before) == 0, before.st_mode & S_IFMT == S_IFREG, before.st_nlink == 1,
+              before.st_uid == getuid(), before.st_size > 0, before.st_size <= 1_024 * 1_024,
+              UInt64(UInt32(bitPattern: before.st_dev)) == data.lease.device else { throw SpatialSceneError.changed }
+        var originalBytes = Data(count: Int(before.st_size))
+        try originalBytes.withUnsafeMutableBytes { bytes in
+            var offset = 0
+            while offset < bytes.count {
+                let count = pread(original, bytes.baseAddress!.advanced(by: offset), bytes.count - offset, off_t(offset))
+                if count < 0 && errno == EINTR { continue }
+                guard count > 0 else { throw POSIXError(.EIO) }
+                offset += count
+            }
+        }
+        let originalSHA256 = Self.sha256(originalBytes)
+        guard target != "source.py" || originalBytes == Data(source.utf8) else { throw SpatialSceneError.changed }
+        let name = "mutation-" + UUID().uuidString
+        let descriptor = openat(directory, name, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        guard descriptor >= 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+        var installed = false
+        defer { Darwin.close(descriptor); if !installed { _ = unlinkat(directory, name, 0) } }
+        try replacement.withUnsafeBytes { bytes in
+            var offset = 0
+            while offset < bytes.count {
+                let written = Darwin.write(descriptor, bytes.baseAddress!.advanced(by: offset), bytes.count - offset)
+                if written < 0 && errno == EINTR { continue }
+                guard written > 0 else { throw POSIXError(.EIO) }
+                offset += written
+            }
+        }
+        var after = stat()
+        guard fsync(descriptor) == 0, fstat(descriptor, &after) == 0,
+              renameat(directory, name, directory, target) == 0, fsync(directory) == 0 else { throw POSIXError(.EIO) }
+        installed = true
+        guard let mutated = BpyRuntimeClock.read() else { throw BpyAdmissionFailure.sensorUnavailable }
+        let gateAfter = try monitor.diagnosticGate(execution: execution)
+        var authorized = pending
+        while authorized.activeProcessAuthorizationID == execution {
+            if let early = box.take() { let result = try early.get(); result.release(); throw SpatialSceneError.changed }
+            if let stop = try memoryCoordinator.receipt(admission.id).stop { throw BpyExecutionInterruption(reason: stop) }
+            guard try BpyRuntimeClock.awakeSeconds() < admission.admissionDeadline else { throw BpyRuntimeError.timedOut }
+            authorized = try authorizeProcessIfNeeded(authorized, jobID: job)
+            if authorized.activeProcessAuthorizationID == execution { Thread.sleep(forTimeInterval: 0.005) }
+        }
+        guard let authorizedAt = BpyRuntimeClock.read() else { throw BpyAdmissionFailure.sensorUnavailable }
+        var completionDeadline = admission.admissionDeadline + 2 * admission.timeout + 15 + 30
+        while true {
+            if let completed = box.take() {
+                let result = try completed.get()
+                defer { result.release() }
+                guard let receipt = result.lease?.execution, receipt.identity.transport == transport,
+                      receipt.identity.job == job, confirmedRevision == expectedRevision else { throw SpatialSceneError.changed }
+                let ended = try monitor.diagnosticEnded(execution: execution)
+                return .init(target: target, source: source, originalSHA256: originalSHA256, replacementSHA256: Self.sha256(replacement),
+                    originalInode: UInt64(before.st_ino), replacementInode: UInt64(after.st_ino),
+                    mutatedAt: mutated, authorizedAt: authorizedAt, gateBefore: gate, gateAfter: gateAfter,
+                    response: result.response, ended: ended, receipt: receipt)
+            }
+            if let receipt = try? memoryCoordinator.receipt(admission.id) {
+                if let cleanup = receipt.cleanupStarted { completionDeadline = cleanup + BpyMemoryState.cleanupBudget + 30 }
+                else if let first = receipt.firstRelease { completionDeadline = first + 2 * admission.timeout + 15 + 30 }
+            }
+            if let transfer = lock.withLock({ transferDeadlines[job] }) { completionDeadline = transfer }
+            guard try BpyRuntimeClock.awakeSeconds() <= completionDeadline else { throw BpyRuntimeError.timedOut }
+            Thread.sleep(forTimeInterval: 0.005)
+        }
+    }
+
+    func nativeMemoryDiagnostic(_ mode: BpyBoundaryMode,
+        observe: ((BpyMonitorResponse, BpyMemoryCoordinator.PermitReceipt) throws -> Void)? = nil
+    ) throws -> BpyMemoryDiagnosticEvidence {
+        guard ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"]?.isEmpty == false,
+              mode.isHostDiagnostic else { throw BpyRuntimeError.invalidInput("Invalid native host probe.") }
+        submissionLock.lock(); defer { submissionLock.unlock() }
+        let cancellation = BpyOperationCancellation()
+        _ = try ensureOpen(cancellation: cancellation)
+        let context = lock.withLock { (sessionID, hostMonitor, storageVolume, storageDataVolume) }
+        guard let monitor = context.1, let worker = context.2, let data = context.3 else { throw SpatialSceneError.changed }
+        let admission = try admit(kind: .boundary, job: nil, timeout: mode == .diagnosticPythonFootprint ? 120 : 30, cancellation: cancellation)
+        try installAdmission(admission)
+        defer { memoryCoordinator.finish(admission.id); memoryCoordinator.forget(admission.id) }
+        let workerPath = context.0.uuidString + "/boundary/" + mode.rawValue
+        let configPath = context.0.uuidString + "/memory-" + mode.rawValue + ".json"
+        let root = URL(fileURLWithPath: worker.lease.mountPath).appendingPathComponent(workerPath)
+        let config = URL(fileURLWithPath: data.lease.mountPath).appendingPathComponent(configPath)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: config, options: .atomic)
+        let spec = BpyHostLaunchSpec(permit: admission.id, job: nil, mode: .boundary,
+            workerLease: worker.lease.id, dataLease: data.lease.id, workerRoot: workerPath,
+            configuration: configPath, configurationSHA256: Self.sha256(Data("{}".utf8)), readFiles: [], boundary: mode)
+        let execution = UUID()
+        let launch = BpyMonitorRequest(transport: context.0, execution: execution, operation: .launch, launch: spec)
+        var response = try monitor.inspectDiagnostic(launch)
+        while response.status == .deferred {
+            guard try BpyRuntimeClock.awakeSeconds() < admission.admissionDeadline else { throw BpyRuntimeError.timedOut }
+            Thread.sleep(forTimeInterval: 0.05)
+            response = try monitor.inspectDiagnostic(launch)
+        }
+        guard let epoch = response.epoch, let supervisor = response.supervisor,
+              [.launched, .observed].contains(response.status) else { throw SpatialSceneError.changed }
+        var sequence: UInt64 = 0
+        var reaped = false
+        defer {
+            if !reaped {
+                memoryCoordinator.cancel(admission.id)
+                monitor.recover(disposition: .loss) { _ in }
+            }
+        }
+        while response.status != .gone || !response.outputComplete {
+            let receipt = try memoryCoordinator.receipt(admission.id)
+            let now = try BpyRuntimeClock.awakeSeconds()
+            let deadline = receipt.cleanupStarted.map { $0 + 5 }
+                ?? receipt.firstRelease.map { $0 + admission.timeout } ?? admission.admissionDeadline
+            guard now <= deadline else { throw BpyRuntimeError.timedOut }
+            sequence += 1
+            response = try monitor.inspectDiagnostic(.init(transport: context.0, execution: execution, operation: .sample,
+                epoch: epoch, sequence: sequence, supervisorPID: supervisor.pid, outputOffset: response.nextOutputOffset))
+            guard response.status == .observed || response.status == .gone else { throw SpatialSceneError.changed }
+            try observe?(response, memoryCoordinator.receipt(admission.id))
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        reaped = true
+        memoryCoordinator.finish(admission.id)
+        let receipt = try memoryCoordinator.receipt(admission.id)
+        let evidence = BpyMemoryDiagnosticEvidence(mode: mode, response: response, receipt: receipt)
+        sequence += 1
+        let detached = try monitor.inspectDiagnostic(.init(transport: context.0, execution: execution, operation: .detach,
+            epoch: epoch, sequence: sequence, supervisorPID: supervisor.pid, outputOffset: response.nextOutputOffset))
+        guard detached.status == .detached, detached.outputComplete else { throw SpatialSceneError.changed }
+        try FileManager.default.removeItem(at: root)
+        try FileManager.default.removeItem(at: config)
+        return evidence
+    }
+
+    func nativePressureDiagnostic(_ scenario: BpyPressureDiagnosticScenario) throws -> BpyPressureDiagnosticEvidence {
+        let memory = memoryCoordinator
+        try memory.beginSelftest(owner: memoryOwner)
+        defer { memory.endSelftest(owner: memoryOwner) }
+        var injectedAt: BpyClockReading?
+        var warningAt: BpyClockReading?
+        let evidence = try nativeMemoryDiagnostic(.diagnosticPressureWait) { response, receipt in
+            guard response.diagnosticBaseline != nil else { return }
+            let now = try BpyRuntimeClock.awakeSeconds()
+            if injectedAt == nil {
+                injectedAt = BpyRuntimeClock.read()
+                switch scenario {
+                case .criticalEvent: injectedAt = try memory.selftestCriticalEvent(owner: self.memoryOwner)
+                case .criticalSensor: try memory.selftestSensor(owner: self.memoryOwner, mode: .critical)
+                case .missingSensor: try memory.selftestSensor(owner: self.memoryOwner, mode: .missing)
+                case .stalledSensor: try memory.selftestSensor(owner: self.memoryOwner, mode: .stalled)
+                case .sustainedWarning: try memory.selftestSensor(owner: self.memoryOwner, mode: .warning)
+                }
+            }
+            if scenario == .sustainedWarning,
+               let warning = receipt.samples.first(where: { $0.source == "selftest-sensor" && $0.pressure == 2 }) {
+                if warningAt == nil { warningAt = warning.clock }
+                guard receipt.stop == nil || receipt.stop == .diagnosticMemory else { throw SpatialSceneError.changed }
+                if now - warning.clock.awake >= 1 { memory.cancel(receipt.identity.id, reason: .diagnosticMemory) }
+            }
+        }
+        guard let injectedAt else { throw SpatialSceneError.changed }
+        return .init(scenario: scenario, injectedAt: injectedAt, warningAt: warningAt, execution: evidence)
+    }
+
+    func nativeWarningContinuation(expectedRevision: String) throws -> BpyWarningContinuationEvidence {
+        let memory = memoryCoordinator
+        try memory.beginSelftest(owner: memoryOwner, warningOnWorker: true)
+        defer { memory.endSelftest(owner: memoryOwner) }
+        let id = UUID()
+        let result = try runJob(id: id, expectedRevision: expectedRevision,
+            source: "import time\ntime.sleep(1)\nbpy.data.objects.new('WARNING_CONTINUATION', None)")
+        defer { result.release(); _ = try? cancel(jobID: id) }
+        guard let receipt = result.lease?.execution else { throw SpatialSceneError.changed }
+        return .init(response: result.response, receipt: receipt)
+    }
+
+    func nativeCriticalBoth(with other: BpyRuntimeSession) throws -> BpyDualPressureEvidence {
+        guard serviceName != other.serviceName, memoryCoordinator === other.memoryCoordinator else { throw SpatialSceneError.changed }
+        _ = try ready(); _ = try other.ready()
+        let memory = memoryCoordinator
+        try memory.beginSelftest(owners: [memoryOwner, other.memoryOwner])
+        defer { memory.endSelftest(owner: memoryOwner) }
+        final class Evidence: @unchecked Sendable {
+            let lock = NSLock()
+            var ready = Set<Int>()
+            var firing = false
+            var event: BpyClockReading?
+            var results: [Int: Result<BpyMemoryDiagnosticEvidence, any Error>] = [:]
+        }
+        let evidence = Evidence(), group = DispatchGroup()
+        for (index, session) in [self, other].enumerated() {
+            group.enter()
+            DispatchQueue.global(qos: .userInitiated).async {
+                defer { group.leave() }
+                let result = Result {
+                    try session.nativeMemoryDiagnostic(.diagnosticPressureWait) { response, _ in
+                        guard response.diagnosticBaseline != nil else { return }
+                        let fire = evidence.lock.withLock {
+                            evidence.ready.insert(index)
+                            guard evidence.ready.count == 2, !evidence.firing else { return false }
+                            evidence.firing = true
+                            return true
+                        }
+                        if fire {
+                            let event = try memory.selftestCriticalEvent(owner: self.memoryOwner)
+                            evidence.lock.withLock { evidence.event = event }
+                        }
+                    }
+                }
+                evidence.lock.withLock { evidence.results[index] = result }
+            }
+        }
+        let deadline = try BpyRuntimeClock.awakeSeconds() + 45
+        while group.wait(timeout: .now() + .milliseconds(50)) != .success {
+            guard try BpyRuntimeClock.awakeSeconds() < deadline else {
+                memory.close(owner: memoryOwner); memory.close(owner: other.memoryOwner)
+                throw BpyRuntimeError.timedOut
+            }
+        }
+        let stopped: (BpyClockReading, [BpyMemoryDiagnosticEvidence]) = try evidence.lock.withLock {
+            guard let event = evidence.event, let first = evidence.results[0], let second = evidence.results[1] else { throw SpatialSceneError.changed }
+            return (event, [try first.get(), try second.get()])
+        }
+        let resumed = try nativeMemoryDiagnostic(.diagnosticVirtualMapping)
+        return .init(event: stopped.0, executions: stopped.1, resumption: resumed)
+    }
+
     func ready() throws -> BpyServiceResponse {
         try ensureOpen()
     }
@@ -279,10 +634,31 @@ final class BpyRuntimeSession: @unchecked Sendable {
         diagnosticAutoexecPositiveControl: Bool = false,
         diagnosticDeferExecutionAuthorization: Bool = false,
         diagnosticSupervisorIdentityWriteFailure: Bool = false,
-        diagnosticSupervisorIdentityCaptureFailure: Bool = false
+        diagnosticSupervisorIdentityCaptureFailure: Bool = false,
+        cancellation: BpyOperationCancellation = .init()
     ) throws -> BpyRuntimeJobResult {
         submissionLock.lock()
         defer { submissionLock.unlock() }
+        try requireOperation(cancellation)
+        let ownsExecution = lock.withLock { cachedResults[id] == nil && !submittedJobIDs.contains(id) }
+        lock.withLock { operationTokens[id] = cancellation }
+        let cancellationRegistration = cancellation.observe { [weak self] in
+            if ownsExecution { self?.abandon(jobID: id) }
+        }
+        defer { withExtendedLifetime(cancellationRegistration) {} }
+        var returned = false
+        var pendingLease: BpyRuntimeResultLease?
+        defer {
+            if !returned && ownsExecution {
+                pendingLease?.release()
+                abandon(jobID: id)
+                requestTransferRelease(jobID: id)
+                if let reservation = lock.withLock({ outputReservations.removeValue(forKey: id) }) {
+                    BpyRetentionLedger.shared.settle(reservation)
+                }
+            }
+            _ = lock.withLock { operationTokens.removeValue(forKey: id) }
+        }
         try Self.requireDiagnosticPaths(diagnosticDeniedPaths)
         for path in diagnosticDeniedPaths {
             let descriptor = Darwin.open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
@@ -294,8 +670,9 @@ final class BpyRuntimeSession: @unchecked Sendable {
                 throw BpyRuntimeError.invalidInput("A diagnostic positive control requires an actual readable regular file.")
             }
         }
-        _ = try ensureOpen()
-        purgeExpiredHostResults()
+        _ = try ensureOpen(cancellation: cancellation)
+        try drainTransfers()
+        if lock.withLock({ transportInvalidated }) { _ = try ensureOpen(cancellation: cancellation) }
         guard Set(inputs.map(\.filename)).count == inputs.count else {
             throw BpyRuntimeError.invalidInput("Input filenames must be unique.")
         }
@@ -314,8 +691,9 @@ final class BpyRuntimeSession: @unchecked Sendable {
             diagnosticSupervisorIdentityCaptureFailure: diagnosticSupervisorIdentityCaptureFailure
         )
         lock.lock()
-        let knownFingerprint = jobFingerprints[id]
         let cached = cachedResults[id]
+        let knownFingerprint = jobFingerprints[id] ?? cached?.response.jobFingerprint
+        let cachedLog = cachedLogs[id]
         lock.unlock()
         if let knownFingerprint {
             guard knownFingerprint == fingerprint else {
@@ -323,15 +701,18 @@ final class BpyRuntimeSession: @unchecked Sendable {
             }
             if let cached {
                 var response = cached.response
+                response.stdout = cachedLog
                 response.joinedExistingJob = true
-                return .init(response: response, stagedOutputs: cached.stagedOutputs)
+                returned = true
+                let joined = try cached.lease?.joinedForReplay()
+                return .init(response: response, stagedOutputs: cached.stagedOutputs, lease: joined)
             }
             lock.lock()
             let submittedTransportID = submittedTransportIDs[id]
             lock.unlock()
-            guard submittedTransportID == nil || submittedTransportID == transportID else {
+            guard submittedTransportID == nil else {
                 throw BpyRuntimeError.rejected(
-                    "The prior execution outcome is unavailable after 3D transport recovery; the Job ID will not run again."
+                    "The prior result for this Job ID is no longer retained; it will not run again. Start a new job."
                 )
             }
         } else {
@@ -343,16 +724,18 @@ final class BpyRuntimeSession: @unchecked Sendable {
                 )
             }
             jobFingerprints[id] = fingerprint
+            jobOrigins[id] = (expectedRevision, expectedRevision == confirmedRevision ? confirmedSceneFile?.sha256 : nil)
             jobInputDigests[id] = Dictionary(uniqueKeysWithValues: prepared.map { ($0.input.filename, $0.sha256) })
             lock.unlock()
         }
         lock.lock()
-        let needsUpload = !submittedJobIDs.contains(id)
+        let needsUpload = !uploadedJobIDs.contains(id)
         lock.unlock()
         if needsUpload {
+            lock.withLock { _ = stagingJobIDs.insert(id) }
             do {
                 for value in prepared {
-                    try upload(value, jobID: id)
+                    try upload(value, jobID: id, cancellation: cancellation)
                 }
             } catch {
                 let cancellation = BpyJobReference(sessionID: transportID, jobID: id)
@@ -362,9 +745,28 @@ final class BpyRuntimeSession: @unchecked Sendable {
                 throw error
             }
             lock.lock()
+            uploadedJobIDs.insert(id)
+            lock.unlock()
+        }
+        try requireOperation(cancellation)
+        if lock.withLock({ outputReservations[id] == nil }) {
+            try BpyRetentionLedger.shared.configure(slot: serviceName, limits: limits)
+            let reservation = try BpyRetentionLedger.shared.reserve(slot: serviceName, owner: memoryOwner,
+                kind: .retained, bytes: limits.outputBytes)
+            lock.withLock { outputReservations[id] = reservation }
+        }
+        let admission: BpyAdmissionIdentity
+        if let existing = lock.withLock({ jobAdmissions[id] }) { admission = existing }
+        else {
+            admission = try admit(kind: .job, job: id, timeout: Double(timeout),
+                diagnosticAutoexec: diagnosticAutoexecPositiveControl, cancellation: cancellation)
+            try installAdmission(admission, source: source, diagnosticDeniedPaths: diagnosticDeniedPaths)
+            lock.withLock { jobAdmissions[id] = admission }
+        }
+        try requireOperation(cancellation)
+        lock.withLock {
             submittedJobIDs.insert(id)
             submittedTransportIDs[id] = transportID
-            lock.unlock()
         }
         let request = BpyRunJobRequest(
             sessionID: transportID,
@@ -377,7 +779,8 @@ final class BpyRuntimeSession: @unchecked Sendable {
             diagnosticDeniedPaths: diagnosticDeniedPaths,
             diagnosticAutoexecPositiveControl: diagnosticAutoexecPositiveControl,
             diagnosticSupervisorIdentityWriteFailure: diagnosticSupervisorIdentityWriteFailure,
-            diagnosticSupervisorIdentityCaptureFailure: diagnosticSupervisorIdentityCaptureFailure
+            diagnosticSupervisorIdentityCaptureFailure: diagnosticSupervisorIdentityCaptureFailure,
+            admission: admission.id, admissionDeadline: admission.admissionDeadline
         )
         let response = try call { service, reply in
             service.runJob(try Self.encode(request), withReply: reply)
@@ -396,75 +799,168 @@ final class BpyRuntimeSession: @unchecked Sendable {
             fingerprint: fingerprint,
             response: response,
             timeoutSeconds: timeout,
-            diagnosticDeferExecutionAuthorization: diagnosticDeferExecutionAuthorization
+            diagnosticDeferExecutionAuthorization: diagnosticDeferExecutionAuthorization,
+            cancellation: cancellation, admission: admission
         )
-        cache(result, for: id)
+        pendingLease = result.lease
+        try requireOperation(cancellation)
+        try cache(result, for: id, cancellation: cancellation)
+        if ![.awaitingConfirmation, .confirmed].contains(result.response.state) {
+            if let reservation = lock.withLock({ outputReservations[id] }) { BpyRetentionLedger.shared.settle(reservation) }
+        }
+        returned = true
         return result
     }
 
     private func finish(
-        jobID: UUID,
-        fingerprint: String,
-        response initialResponse: BpyServiceResponse,
-        timeoutSeconds: Int,
-        diagnosticDeferExecutionAuthorization: Bool
+        jobID: UUID, fingerprint: String, response initialResponse: BpyServiceResponse,
+        timeoutSeconds: Int, diagnosticDeferExecutionAuthorization: Bool,
+        cancellation: BpyOperationCancellation, admission: BpyAdmissionIdentity
     ) throws -> BpyRuntimeJobResult {
-        var response = initialResponse
-        if diagnosticDeferExecutionAuthorization,
-           response.activeProcessAuthorizationID != nil {
-            while true { Thread.sleep(forTimeInterval: 0.05) }
+        let response = try waitForTerminal(jobID: jobID, fingerprint: fingerprint,
+            response: initialResponse, admission: admission, cancellation: cancellation,
+            diagnosticDeferExecutionAuthorization: diagnosticDeferExecutionAuthorization)
+        guard !response.resultExpired else {
+            throw BpyRuntimeError.rejected("The retained result for this Job ID has expired; it will not run again.")
         }
-        response = try authorizeProcessIfNeeded(response, jobID: jobID)
-        let joinedExistingJob = response.joinedExistingJob
-        let deadline = Date().addingTimeInterval(
-            TimeInterval(timeoutSeconds + 15)
-        )
-        while response.state == .accepted || response.state == .running {
-            guard Date() < deadline else { throw BpyRuntimeError.timedOut }
-            Thread.sleep(forTimeInterval: 0.05)
-            response = try status(jobID: jobID)
-            guard response.ok, response.jobID == jobID,
-                  response.jobFingerprint == fingerprint else {
-                throw BpyRuntimeError.rejected(response.message ?? "The 3D job disappeared.")
+        let memory = memoryCoordinator
+        memory.finish(admission.id)
+        let receipt = try memory.receipt(admission.id)
+        lock.withLock { jobAdmissions.removeValue(forKey: jobID) }
+        memory.forget(admission.id)
+        let succeeded = [.awaitingConfirmation, .confirmed].contains(response.state)
+        if succeeded {
+            if let failure = receipt.failure { throw failure }
+            if let stop = receipt.stop { throw BpyExecutionInterruption(reason: stop) }
+            guard receipt.cleanupComplete else {
+                throw BpyRuntimeError.invalidOutput("The 3D result has no completed process cleanup receipt.")
             }
-            if diagnosticDeferExecutionAuthorization,
-               response.activeProcessAuthorizationID != nil {
-                while true { Thread.sleep(forTimeInterval: 0.05) }
-            }
-            response = try authorizeProcessIfNeeded(response, jobID: jobID)
-        }
-        response.joinedExistingJob = joinedExistingJob
-        if response.state == .awaitingConfirmation {
-            lock.lock()
-            candidateJobIDs.insert(jobID)
-            lock.unlock()
         }
         if response.runtime != nil {
-            lock.lock()
-            lastReadyResponse = response
-            lock.unlock()
+            lock.withLock { var ready = response; ready.stdout = nil; lastReadyResponse = ready }
         }
-        var outputs: [String: URL] = [:]
-        if response.state == .awaitingConfirmation || response.state == .confirmed {
-            guard !response.resultExpired else {
-                throw BpyRuntimeError.rejected("The retained 3D result expired before download.")
+        var files: [String: BpyRuntimeFile] = [:]
+        var returned = false
+        defer { if !returned { for file in files.values { file.release() } } }
+        if succeeded {
+            let work = try consumerWork(cancellation: cancellation)
+            defer { work.release() }
+            files = try downloadOutputs(response.outputs, jobID: jobID, cancellation: cancellation,
+                timeout: admission.timeout, work: work)
+            try work.check()
+        }
+        let origin = lock.withLock { jobOrigins[jobID] }
+        let leaseID = UUID()
+        let lease = BpyRuntimeResultLease(id: leaseID, transport: admission.transport, job: jobID, slot: serviceName,
+            owner: memoryOwner, limits: limits, sourceRevision: origin?.revision,
+            sourceSHA256: origin?.sha256, fingerprint: fingerprint,
+            response: response, files: files) { [weak self] detached in
+                self?.releasedResult(jobID: jobID, leaseID: leaseID, wasDetached: detached)
             }
-            outputs = try downloadOutputs(response.outputs, jobID: jobID)
-            if response.state == .awaitingConfirmation,
-               let scene = response.outputs.first(where: { $0.name == "scene.blend" }),
-               let url = outputs["scene.blend"] {
-                lock.lock()
-                validatedCandidates[jobID] = (scene.sha256, url)
-                lock.unlock()
+        try lease.recordExecution(receipt)
+        if response.state == .awaitingConfirmation, let scene = files["scene.blend"] {
+            lock.withLock {
+                candidateJobIDs.insert(jobID)
+                validatedCandidates[jobID] = (scene.sha256, scene.url)
             }
         }
-        return .init(response: response, stagedOutputs: outputs)
+        returned = true
+        return .init(response: response, stagedOutputs: lease.urls, lease: lease)
     }
 
-    func status(jobID: UUID) throws -> BpyServiceResponse {
-        let request = BpyJobReference(sessionID: currentSessionID(), jobID: jobID)
-        let response = try call { service, reply in
-            service.jobStatus(try Self.encode(request), withReply: reply)
+    private func waitForTerminal(jobID: UUID, fingerprint: String, response initial: BpyServiceResponse,
+                                 admission: BpyAdmissionIdentity, cancellation: BpyOperationCancellation,
+                                 diagnosticDeferExecutionAuthorization: Bool = false, authorizeInitial: Bool = true,
+                                 observing: ((String, Data, Data) -> Void)? = nil) throws -> BpyServiceResponse {
+        var response = initial
+        var polling = BpyTerminalPollState()
+        var canAuthorize = authorizeInitial
+        let memory = memoryCoordinator
+        func deadline(_ receipt: BpyMemoryCoordinator.PermitReceipt) -> TimeInterval {
+            receipt.cleanupStarted.map { $0 + 5 }
+                ?? receipt.firstRelease.map { $0 + admission.timeout + 15 } ?? admission.admissionDeadline
+        }
+        while response.state == .accepted || response.state == .running {
+            try requireOperation(cancellation)
+            if canAuthorize, !diagnosticDeferExecutionAuthorization {
+                response = try authorizeProcessIfNeeded(response, jobID: jobID, observing: { request, response in
+                    observing?("authorizeProcess", request, response)
+                })
+                if ![.accepted, .running].contains(response.state) { break }
+            }
+            let before = try memory.receipt(admission.id)
+            let now = try BpyRuntimeClock.awakeSeconds()
+            if now < deadline(before) { Thread.sleep(forTimeInterval: 0.05) }
+            let started = try BpyRuntimeClock.awakeSeconds()
+            let starting = try memory.receipt(admission.id)
+            try polling.begin(at: started, deadline: deadline(starting))
+            response = try status(jobID: jobID, observing: { request, response in
+                observing?("jobStatus", request, response)
+            })
+            try requireOperation(cancellation)
+            let ended = try BpyRuntimeClock.awakeSeconds()
+            let after = try memory.receipt(admission.id)
+            canAuthorize = true
+            try polling.end(at: ended, deadline: deadline(after), terminal: ![.accepted, .running].contains(response.state))
+            guard response.ok, response.jobID == jobID, response.jobFingerprint == fingerprint else {
+                throw BpyRuntimeError.rejected(response.message ?? "The 3D job disappeared.")
+            }
+        }
+        let receipt = try memory.receipt(admission.id)
+        if let failure = receipt.failure { throw failure }
+        if receipt.firstRelease == nil, let stop = receipt.stop {
+            switch stop {
+            case .pressure: throw BpyAdmissionFailure.pressure
+            case .monitorUnavailable: throw BpyAdmissionFailure.sensorUnavailable
+            case .monitorUnresponsive: throw BpyAdmissionFailure.sensorUnresponsive
+            case .launchFailed: throw BpyAdmissionFailure.launchFailed
+            case .transportLost: throw BpyAdmissionFailure.transportLost
+            case .deadline: throw BpyAdmissionFailure.timedOut
+            case .closed: throw BpyAdmissionFailure.closed
+            case .cancelled: throw BpyAdmissionFailure.cancelled
+            case .cleanupFailed: throw BpyAdmissionFailure.cleanupFailed
+            default: break
+            }
+        }
+        if [.awaitingConfirmation, .confirmed].contains(response.state) {
+            guard receipt.stop == nil, let first = receipt.firstRelease, let commit = receipt.terminalCommit,
+                  response.firstRelease == first, response.runningDeadline == first + admission.timeout,
+                  response.terminalCommit == commit, BpyTerminalPollState.timelyCommit(first: first, timeout: admission.timeout, commit: commit) else {
+                throw BpyRuntimeError.invalidOutput("The 3D result has no timely host completion receipt.")
+            }
+        } else if let reason = receipt.stop {
+            response.outputs = []
+            switch reason {
+            case .deadline:
+                response.state = .timedOut; response.message = "The 3D job exceeded its execution deadline."
+            case .pressure:
+                response.state = .resourceLimited; response.message = "macOS reported critical memory pressure. Retry the 3D job when memory is available."
+            case .disk:
+                response.state = .resourceLimited; response.message = "The 3D job exceeded its temporary storage limit. Reduce its output before retrying."
+            case .fileCount:
+                response.state = .resourceLimited; response.message = "The 3D job created too many temporary files. Reduce its output before retrying."
+            case .processCount:
+                response.state = .resourceLimited; response.message = "The 3D job started an unauthorized process. Remove the process launch before retrying."
+            case .closed, .cancelled:
+                response.state = .cancelled; response.message = "The 3D job was cancelled."
+            case .executionFailed:
+                if ![.crashed, .failed, .rejected].contains(response.state) {
+                    response.state = .failed; response.message = "The 3D job failed. Check its diagnostics before retrying."
+                }
+            case .launchFailed, .ownershipViolation, .orphanedWorker, .observationFailed, .transportLost, .monitorUnavailable, .monitorUnresponsive, .serviceStall:
+                response.state = .failed; response.message = BpyExecutionInterruption(reason: reason).localizedDescription
+            default:
+                response.state = .failed; response.message = "The 3D runtime could not be monitored safely. Retry after cleanup finishes."
+            }
+        }
+        response.joinedExistingJob = initial.joinedExistingJob
+        return response
+    }
+
+    func status(jobID: UUID, observing: ((Data, Data) -> Void)? = nil) throws -> BpyServiceResponse {
+        let request = try Self.encode(BpyJobReference(sessionID: currentSessionID(), jobID: jobID))
+        let response = try call(observing: { observing?(request, $0) }) { service, reply in
+            service.jobStatus(request, withReply: reply)
         }
         if response.ok {
             lock.lock()
@@ -479,18 +975,23 @@ final class BpyRuntimeSession: @unchecked Sendable {
     }
 
     func confirm(jobID: UUID, revision: String) throws -> BpyServiceResponse {
-        purgeExpiredHostResults()
         lock.lock()
         let candidate = validatedCandidates[jobID]
         lock.unlock()
         guard let candidate else {
             throw BpyRuntimeError.invalidOutput("Validate the staged 3D candidate before confirmation.")
         }
-        let data = try Data(contentsOf: candidate.url)
-        guard Self.sha256(data) == candidate.sha256,
-              data.starts(with: Data("BLENDER".utf8)) else {
+        guard let lease = try lock.withLock({ try cachedResults[jobID]?.lease?.joinedForReplay() }) else { throw SpatialSceneError.changed }
+        defer { lease.release() }
+        let file = try lease.file("scene.blend")
+        defer { file.release() }
+        guard file.sha256 == candidate.sha256, file.byteCount <= limits.inputBytes,
+              BpyBlendFileFormat.accepts(try file.read(maximum: 64)) else {
             throw BpyRuntimeError.invalidOutput("The staged 3D candidate changed before confirmation.")
         }
+        let replacementCheckpoint = try file.retained()
+        var installedCheckpoint = false
+        defer { if !installedCheckpoint { replacementCheckpoint.release() } }
         let request = BpyConfirmJobRequest(
             sessionID: currentSessionID(),
             jobID: jobID,
@@ -509,8 +1010,10 @@ final class BpyRuntimeSession: @unchecked Sendable {
             throw BpyRuntimeError.rejected(response.message ?? "The 3D candidate was not confirmed.")
         }
         lock.lock()
+        let previousCheckpoint = confirmedSceneFile
         confirmedRevision = revision
-        confirmedSceneData = data
+        confirmedSceneFile = replacementCheckpoint
+        installedCheckpoint = true
         validatedCandidates.removeValue(forKey: jobID)
         candidateJobIDs.remove(jobID)
         lastReadyResponse?.confirmedRevision = revision
@@ -520,18 +1023,21 @@ final class BpyRuntimeSession: @unchecked Sendable {
             confirmedResponse.confirmedRevision = revision
             cachedResults[jobID] = .init(
                 response: confirmedResponse,
-                stagedOutputs: cached.stagedOutputs
+                stagedOutputs: cached.stagedOutputs, lease: cached.lease
             )
         }
         lock.unlock()
+        previousCheckpoint?.release()
         return response
     }
 
-    func authenticateSpatialReceipt(_ revision: SpatialSceneRevision) throws {
+    func authenticateSpatialReceipt(_ revision: SpatialSceneRevision, cancellation: BpyOperationCancellation) throws {
+        let work = try consumerWork(cancellation: cancellation)
+        defer { work.release() }
         let receipt = revision.manifest.receipt
         guard try SpatialSceneStore.encode(revision.manifest) == revision.manifestData,
               try SpatialSceneStore.encode(revision.snapshot) == revision.snapshotData,
-              Self.sha256(revision.sceneData) == revision.manifest.sceneSHA256,
+              try revision.scenePayload.verify(checking: { try cancellation.check(); try work.check() }) == revision.manifest.sceneSHA256,
               Self.sha256(revision.snapshotData) == revision.manifest.snapshotSHA256,
               receipt.sceneSHA256 == revision.manifest.sceneSHA256,
               receipt.snapshotSHA256 == revision.manifest.snapshotSHA256,
@@ -571,26 +1077,30 @@ final class BpyRuntimeSession: @unchecked Sendable {
               result.response.jobFingerprint == receipt.jobFingerprint else {
             throw BpyRuntimeError.invalidOutput("The location has no authenticated host runtime result.")
         }
+        guard let lease = try result.lease?.joinedForReplay() else { throw SpatialSceneError.changed }
+        defer { lease.release() }
         func output(_ name: String) throws -> Data {
-            guard let url = result.stagedOutputs[name],
-                  let descriptor = result.response.outputs.first(where: { $0.name == name }) else {
+            guard let descriptor = result.response.outputs.first(where: { $0.name == name }) else {
                 throw BpyRuntimeError.invalidOutput("The location's verified runtime output is missing.")
             }
-            let data = try SpatialSceneStore.read(url.lastPathComponent, in: url.deletingLastPathComponent())
+            let data = try lease.data(name, maximum: limits.outputBytes, checking: { try work.check() })
             guard descriptor.byteCount == data.count, descriptor.sha256 == Self.sha256(data) else {
                 throw BpyRuntimeError.invalidOutput("The location's verified runtime output changed.")
             }
             return data
         }
+        let scene = try lease.file("scene.blend")
+        defer { scene.release() }
+        try scene.verify(checking: { try work.check() })
         let verification = try JSONDecoder().decode(Verification.self, from: output("verification.json"))
         let runtime = try bundledRuntimeRoot
         guard verification.schema == "nexgenvideo/bpy-verification/1",
               verification.jobID == receipt.jobID, verification.fingerprint == receipt.jobFingerprint,
               verification.blenderBuildHash == receipt.blenderBuildHash, let snapshot = verification.spatial,
-              Self.sha256(try output("scene.blend")) == receipt.sceneSHA256,
+              scene.sha256 == receipt.sceneSHA256,
               Self.sha256(try SpatialSceneStore.encode(snapshot)) == receipt.snapshotSHA256,
-              Self.sha256(try Data(contentsOf: runtime.appendingPathComponent("runtime-lock.json"))) == receipt.runtimeLockSHA256,
-              Self.sha256(try Data(contentsOf: runtime.appendingPathComponent("worker.py"))) == receipt.workerSHA256 else {
+              try work.digest(at: runtime.appendingPathComponent("runtime-lock.json")) == receipt.runtimeLockSHA256,
+              try work.digest(at: runtime.appendingPathComponent("worker.py")) == receipt.workerSHA256 else {
             throw BpyRuntimeError.invalidOutput("The location receipt differs from its actual host runtime execution.")
         }
     }
@@ -603,7 +1113,10 @@ final class BpyRuntimeSession: @unchecked Sendable {
     }
 
     func authenticateEvaluatedGeometry(jobID: UUID, source: String, revision: SpatialSceneRevision,
-                                       result: BpyRuntimeJobResult) throws -> (bounds: Data, verification: Data, fingerprint: String) {
+                                       result: BpyRuntimeJobResult,
+                                       cancellation: BpyOperationCancellation) throws -> (bounds: Data, verification: Data, fingerprint: String) {
+        let work = try consumerWork(cancellation: cancellation)
+        defer { work.release() }
         struct Verification: Decodable { let jobID: UUID; let fingerprint: String; let blenderBuildHash: String }
         let expected = Self.fingerprint(expectedRevision: revision.manifest.revision.uuidString, source: source,
             requestedTimeoutSeconds: nil, effectiveTimeoutSeconds: limits.timeoutSeconds, inputs: [], diagnosticDeniedPaths: [],
@@ -616,35 +1129,80 @@ final class BpyRuntimeSession: @unchecked Sendable {
         lock.unlock()
         guard current, let cached, cached.response.ok, cached.response.state == .awaitingConfirmation,
               cached.response.jobFingerprint == expected, result.response.jobFingerprint == expected,
-              cached.stagedOutputs == result.stagedOutputs else { throw BpyRuntimeError.invalidOutput("The evaluated bounds have no current native runtime execution.") }
+              cached.stagedOutputs == result.stagedOutputs, let lease = result.lease,
+              lease.id == cached.lease?.id, lease.isAvailable else { throw BpyRuntimeError.invalidOutput("The evaluated bounds have no current native runtime execution.") }
         func output(_ name: String) throws -> Data {
-            guard let url = cached.stagedOutputs[name], let descriptor = cached.response.outputs.first(where: { $0.name == name }) else { throw SpatialSceneError.changed }
-            let data = try SpatialSceneStore.read(url.lastPathComponent, in: url.deletingLastPathComponent())
+            guard let descriptor = cached.response.outputs.first(where: { $0.name == name }) else { throw SpatialSceneError.changed }
+            let data = try lease.data(name, maximum: limits.outputBytes, checking: { try work.check() })
             guard data.count == descriptor.byteCount, Self.sha256(data) == descriptor.sha256 else { throw SpatialSceneError.changed }
             return data
         }
         let verification = try output("verification.json")
         let value = try JSONDecoder().decode(Verification.self, from: verification)
         guard value.jobID == jobID, value.fingerprint == expected, !value.blenderBuildHash.isEmpty else { throw SpatialSceneError.changed }
-        return (try output("evaluated-bounds.v1.json"), verification, expected)
+        let bounds = try output("evaluated-bounds.v1.json")
+        try work.check(); try requireOperation(cancellation)
+        return (bounds, verification, expected)
     }
 
-    func retainSpatialDerivation(_ candidate: SpatialClayCandidate, source: SpatialSceneRevision) throws {
-        try verifySpatialDerivation(candidate, source: source)
-        lock.lock()
-        defer { lock.unlock() }
-        spatialDerivations = spatialDerivations.filter { cachedResults[$0.key] != nil }
-        spatialDerivations[candidate.proof.jobID] = Self.sha256(candidate.proofData)
+    func transferResult(_ result: BpyRuntimeJobResult, source: SpatialSceneRevision,
+                        cancellation: BpyOperationCancellation) throws {
+        guard let lease = result.lease, lease.isAvailable,
+              lease.sourceRevision == source.manifest.revision.uuidString,
+              lease.sourceSHA256 == source.manifest.sceneSHA256 else { throw SpatialSceneError.changed }
+        try requireOperation(cancellation)
+        if lease.isDetached { return }
+        let live = lock.withLock { !closed && !closing && !transportInvalidated && sessionID == lease.transport
+            && cachedResults[lease.job]?.lease?.id == lease.id }
+        guard live else { throw SpatialSceneError.changed }
+        let request = BpyReleaseResourcesRequest(sessionID: lease.transport, jobID: lease.job,
+            disposition: .transferredResult, fingerprint: lease.fingerprint, outputs: lease.response.outputs)
+        guard let deadline = lock.withLock({ transferDeadlines[lease.job] }) else { throw SpatialSceneError.changed }
+        let work = try consumerWork(cancellation: cancellation)
+        defer { work.release() }
+        while true {
+            try requireOperation(cancellation)
+            try work.check()
+            let now = try BpyRuntimeClock.awakeSeconds()
+            guard now < deadline else { throw BpyRuntimeError.timedOut }
+            let response = try call(timeout: min(30, deadline - now)) { service, reply in
+                service.releaseResources(try Self.encode(request), withReply: reply)
+            }
+            try requireOperation(cancellation)
+            try work.check()
+            guard try BpyRuntimeClock.awakeSeconds() <= deadline else { throw BpyRuntimeError.timedOut }
+            if response.ok { break }
+            guard response.message == "result release pending" else { throw SpatialSceneError.changed }
+            Thread.sleep(forTimeInterval: 0.005)
+        }
+        if let reservation = lock.withLock({ transfers[lease.job]?.reservation }) {
+            acknowledgeTransfer(jobID: lease.job, reservation: reservation)
+        }
+        try lease.transferExecution()
+        lock.withLock { validatedCandidates.removeValue(forKey: lease.job); candidateJobIDs.remove(lease.job) }
+        _ = try cancel(jobID: lease.job)
     }
 
-    func authenticateSpatialDerivation(_ candidate: SpatialClayCandidate, source: SpatialSceneRevision) throws {
+    func retainSpatialDerivation(_ candidate: SpatialClayCandidate, source: SpatialSceneRevision,
+                                 cancellation: BpyOperationCancellation) throws {
+        try verifySpatialDerivation(candidate, source: source, cancellation: cancellation)
+        try candidate.lease.detach(proof: candidate.proofData)
+        try lock.withLock {
+            guard !closed, !closing else { throw SpatialSceneError.changed }
+            spatialDerivations[candidate.proof.jobID] = Self.sha256(candidate.proofData)
+        }
+    }
+
+    func authenticateSpatialDerivation(_ candidate: SpatialClayCandidate, source: SpatialSceneRevision,
+                                       cancellation: BpyOperationCancellation) throws {
         lock.lock()
         let issued = spatialDerivations[candidate.proof.jobID]
         lock.unlock()
         guard issued == Self.sha256(candidate.proofData) else {
             throw BpyRuntimeError.invalidOutput("The Clay output has no host-issued derivation receipt.")
         }
-        try verifySpatialDerivation(candidate, source: source)
+        try candidate.lease.authenticate(proof: candidate.proofData)
+        try verifySpatialDerivation(candidate, source: source, cancellation: cancellation)
     }
 
     func beginSpatialSequence(binding: Data) throws -> UUID {
@@ -653,25 +1211,36 @@ final class BpyRuntimeSession: @unchecked Sendable {
     }
 
     func appendSpatialSequence(_ identifier: UUID, candidate: SpatialClayCandidate,
-                               source: SpatialSceneRevision) throws {
-        try authenticateSpatialDerivation(candidate, source: source)
+                               source: SpatialSceneRevision, cancellation: BpyOperationCancellation) throws {
+        try authenticateSpatialDerivation(candidate, source: source, cancellation: cancellation)
         try spatialSequences.append(identifier, proof: candidate.proofData)
     }
 
     func retainSpatialSequence(_ candidate: SpatialClaySequenceCandidate,
-                               source: SpatialSceneRevision) async throws {
+                               source: SpatialSceneRevision, cancellation: BpyOperationCancellation) async throws {
+        let borrowed = try candidate.borrowFiles()
+        defer { for file in borrowed { file.release() } }
         try requireSequenceSession()
-        try SpatialClayRenderer.validateSequence(proofData: candidate.proofData, files: candidate.files, against: source)
-        try await SpatialClayRenderer.verifySequenceMovie(candidate, isCancelled: { !candidate.isAvailable })
-        try SpatialClayRenderer.validateSequence(proofData: candidate.proofData, files: candidate.files, against: source)
+        let scope = try mediaReadScope(cancellation: cancellation).checking {
+            guard candidate.isAvailable else { throw SpatialSceneError.changed }
+        }
+        try SpatialClayRenderer.validateSequence(proofData: candidate.proofData, files: candidate.files, against: source, scope: scope)
+        try await SpatialClayRenderer.verifySequenceMovie(candidate, cancellation: cancellation, isCancelled: { !candidate.isAvailable })
+        try SpatialClayRenderer.validateSequence(proofData: candidate.proofData, files: candidate.files, against: source, scope: scope)
         try requireSequenceSession()
         try spatialSequences.seal(candidate)
     }
 
-    func authenticateSpatialSequence(_ candidate: SpatialClaySequenceCandidate, source: SpatialSceneRevision) throws {
+    func authenticateSpatialSequence(_ candidate: SpatialClaySequenceCandidate, source: SpatialSceneRevision,
+                                    cancellation: BpyOperationCancellation) throws {
+        let borrowed = try candidate.borrowFiles()
+        defer { for file in borrowed { file.release() } }
         try requireSequenceSession()
         try spatialSequences.authenticate(candidate)
-        try SpatialClayRenderer.validateSequence(proofData: candidate.proofData, files: candidate.files, against: source)
+        let scope = try mediaReadScope(cancellation: cancellation).checking {
+            guard candidate.isAvailable else { throw SpatialSceneError.changed }
+        }
+        try SpatialClayRenderer.validateSequence(proofData: candidate.proofData, files: candidate.files, against: source, scope: scope)
         try requireSequenceSession()
         try spatialSequences.authenticate(candidate)
     }
@@ -681,29 +1250,29 @@ final class BpyRuntimeSession: @unchecked Sendable {
     private func requireSequenceSession() throws {
         lock.lock()
         defer { lock.unlock() }
-        guard !closed, !closing, !transportInvalidated else {
+        guard !closed, !closing else {
             throw BpyRuntimeError.unavailable("The 3D sequence session is closed.")
         }
     }
 
-    private func verifySpatialDerivation(_ candidate: SpatialClayCandidate, source: SpatialSceneRevision) throws {
+    private func verifySpatialDerivation(_ candidate: SpatialClayCandidate, source: SpatialSceneRevision,
+                                        cancellation: BpyOperationCancellation) throws {
+        let work = try consumerWork(cancellation: cancellation)
+        defer { work.release() }
         struct Verification: Decodable {
             let jobID: UUID
             let fingerprint: String
             let blenderBuildHash: String
             let spatial: BpySpatialSnapshot?
         }
-        try SpatialClayRenderer.validate(candidate, against: source)
+        try SpatialClayRenderer.validate(candidate, against: source, cancellation: cancellation)
         let proof = candidate.proof
-        lock.lock()
-        let result = cachedResults[proof.jobID]
-        let transportMatches = submittedTransportIDs[proof.jobID] == sessionID
-        let fingerprint = jobFingerprints[proof.jobID]
-        let unavailable = closed || closing || transportInvalidated
-        lock.unlock()
-        guard !unavailable, transportMatches, fingerprint == proof.jobFingerprint,
-              let result, result.response.ok, result.response.jobFingerprint == fingerprint,
-              result.response.state == .awaitingConfirmation else {
+        let lease = candidate.lease
+        let unavailable = lock.withLock { closed || closing }
+        guard !unavailable, lease.isAvailable, lease.isDetached,
+              lease.job == proof.jobID, lease.fingerprint == proof.jobFingerprint,
+              lease.sourceRevision == source.manifest.revision.uuidString,
+              lease.sourceSHA256 == source.manifest.sceneSHA256 else {
             throw BpyRuntimeError.invalidOutput("The Clay output has no authenticated runtime execution.")
         }
         let root = try bundledRuntimeRoot
@@ -723,18 +1292,13 @@ final class BpyRuntimeSession: @unchecked Sendable {
               Self.sha256(script) == proof.rendererScriptSHA256,
               Self.sha256(try Data(contentsOf: root.appendingPathComponent("worker.py"))) == proof.workerSHA256,
               Self.sha256(try Data(contentsOf: root.appendingPathComponent("runtime-lock.json"))) == proof.runtimeLockSHA256,
-              Self.sha256(try Data(contentsOf: root.appendingPathComponent("site-packages/bpy/__init__.so"), options: .mappedIfSafe)) == proof.rendererBinarySHA256 else {
+              try work.digest(at: root.appendingPathComponent("site-packages/bpy/__init__.so")) == proof.rendererBinarySHA256 else {
             throw BpyRuntimeError.invalidOutput("The Clay receipt differs from its actual render command or runtime.")
         }
         func output(_ name: String) throws -> Data {
-            guard let url = result.stagedOutputs[name],
-                  let descriptor = result.response.outputs.first(where: { $0.name == name }) else {
-                throw BpyRuntimeError.invalidOutput("The actual Clay runtime output is missing.")
-            }
-            let data = try SpatialSceneStore.read(url.lastPathComponent, in: url.deletingLastPathComponent())
-            guard data.count == descriptor.byteCount, Self.sha256(data) == descriptor.sha256 else {
-                throw BpyRuntimeError.invalidOutput("The actual Clay runtime output changed.")
-            }
+            guard let descriptor = lease.response.outputs.first(where: { $0.name == name }) else { throw SpatialSceneError.changed }
+            let data = try lease.data(name, maximum: limits.outputBytes, checking: { try cancellation.check(); try work.check() })
+            guard data.count == descriptor.byteCount, Self.sha256(data) == descriptor.sha256 else { throw SpatialSceneError.changed }
             return data
         }
         let verification = try JSONDecoder().decode(Verification.self, from: output("verification.json"))
@@ -745,13 +1309,19 @@ final class BpyRuntimeSession: @unchecked Sendable {
             throw BpyRuntimeError.invalidOutput("The Clay receipt differs from independent runtime verification.")
         }
         for descriptor in proof.outputs where descriptor.mediaKind == "image/png" {
-            guard try output(descriptor.filename) == candidate.files[descriptor.filename] else {
-                throw BpyRuntimeError.invalidOutput("The Clay image differs from its actual render output.")
-            }
+            guard let file = candidate.files[descriptor.filename],
+                  let original = lease.response.outputs.first(where: { $0.name == descriptor.filename }),
+                  file.sha256 == descriptor.sha256, file.byteCount == descriptor.byteCount,
+                  original.sha256 == file.sha256, original.byteCount == file.byteCount else { throw SpatialSceneError.changed }
+            try file.verify(checking: { try cancellation.check(); try work.check() })
         }
     }
 
     func cancel(jobID: UUID) throws -> BpyServiceResponse {
+        let local = lock.withLock { (jobAdmissions[jobID], operationTokens[jobID], submittedJobIDs.contains(jobID)) }
+        local.1?.cancel()
+        if let admission = local.0 { memoryCoordinator.cancel(admission.id) }
+        if !local.2 { return .init(ok: true, jobID: jobID, state: .cancelled) }
         let request = BpyJobReference(sessionID: currentSessionID(), jobID: jobID)
         let response = try call { service, reply in
             service.cancelJob(try Self.encode(request), withReply: reply)
@@ -766,7 +1336,9 @@ final class BpyRuntimeSession: @unchecked Sendable {
         lock.lock()
         validatedCandidates.removeValue(forKey: jobID)
         candidateJobIDs.remove(jobID)
+        let result = cachedResults[jobID]?.lease
         lock.unlock()
+        if result?.isDetached != true { result?.invalidate() }
         return response
     }
 
@@ -775,7 +1347,7 @@ final class BpyRuntimeSession: @unchecked Sendable {
         defer { submissionLock.unlock() }
         _ = try ensureOpen()
         lock.lock()
-        guard confirmedRevision != nil, confirmedSceneData != nil else {
+        guard confirmedRevision != nil, confirmedSceneFile != nil else {
             lock.unlock()
             throw BpyRuntimeError.rejected(
                 "Confirm a 3D scene before rotating the document session."
@@ -787,33 +1359,59 @@ final class BpyRuntimeSession: @unchecked Sendable {
                 "Confirm or reject the current 3D candidate before rotating the session."
             )
         }
-        let staged = Array(cachedResults.keys)
+        let staged = cachedResults.compactMap { $0.value.lease?.isDetached == true ? nil : $0.key }
         lock.unlock()
+        removeStagedResults(staged)
         try rotateTransport()
         let response = try ensureOpen()
         lock.lock()
         jobFingerprints.removeAll()
+        jobOrigins.removeAll()
         jobInputDigests.removeAll()
         submittedJobIDs.removeAll()
         submittedTransportIDs.removeAll()
-        cachedResults.removeAll()
-        cachedResultOrder.removeAll()
-        cachedResultDates.removeAll()
         activeProcessLease = nil
         lock.unlock()
         removeStagedResults(staged)
         return response
     }
 
-    func loadProjectCheckpoint(scene: Data?, revision: String?, sha256: String?) throws {
+    func loadProjectCheckpoint(scene: Data?, revision: String?, sha256: String?,
+                               cancellation: BpyOperationCancellation = .init()) throws {
+        try loadProjectCheckpoint(payload: scene.map(SpatialScenePayload.init(data:)), revision: revision,
+            sha256: sha256, cancellation: cancellation)
+    }
+
+    func loadProjectCheckpoint(sceneRevision: SpatialSceneRevision?, cancellation: BpyOperationCancellation) throws {
+        try loadProjectCheckpoint(payload: sceneRevision?.scenePayload,
+            revision: sceneRevision?.manifest.revision.uuidString, sha256: sceneRevision?.manifest.sceneSHA256,
+            cancellation: cancellation)
+    }
+
+    private func loadProjectCheckpoint(payload: SpatialScenePayload?, revision: String?, sha256: String?,
+                                       cancellation: BpyOperationCancellation) throws {
         submissionLock.lock()
         defer { submissionLock.unlock() }
-        if let scene, let revision, let sha256 {
-            guard !revision.isEmpty, Self.sha256(scene) == sha256,
-                  scene.count <= limits.inputBytes else {
+        try requireOperation(cancellation)
+        let operationID = UUID()
+        lock.withLock { operationTokens[operationID] = cancellation }
+        defer { _ = lock.withLock { operationTokens.removeValue(forKey: operationID) } }
+        if let payload, let revision, let sha256 {
+            guard !revision.isEmpty, payload.byteCount <= limits.inputBytes else {
                 throw BpyRuntimeError.invalidInput("The saved location checkpoint changed.")
             }
-        } else if scene != nil || revision != nil || sha256 != nil {
+            let work = try consumerWork(cancellation: cancellation)
+            defer { work.release() }
+            func checking() throws { try requireOperation(cancellation); try work.check() }
+            let context = BpyRuntimeHashObservation.Context(id: cancellation.id, callerOwned: true,
+                purpose: "checkpoint", isCancelled: { cancellation.isCancelled })
+            try BpyRuntimeHashObservation.$context.withValue(context) {
+                let verified = try payload.verifiedHeader(checking: checking)
+                guard verified.sha256 == sha256, BpyBlendFileFormat.accepts(verified.header) else {
+                    throw BpyRuntimeError.invalidInput("The saved location checkpoint changed.")
+                }
+            }
+        } else if payload != nil || revision != nil || sha256 != nil {
             throw BpyRuntimeError.invalidInput("The saved location checkpoint is incomplete.")
         }
         lock.lock()
@@ -821,31 +1419,51 @@ final class BpyRuntimeSession: @unchecked Sendable {
             lock.unlock()
             throw BpyRuntimeError.rejected("Finish the current location edit before opening another location.")
         }
-        let staged = Array(cachedResults.keys)
-        confirmedSceneData = scene
+        lock.unlock()
+        _ = try BpyHostStaging.shared.directory(stagingRoot.lastPathComponent)
+        let checkpoint = try payload.map { try makeCheckpoint($0, cancellation: cancellation) }
+        lock.lock()
+        guard !closed, !closing, !cancellation.isCancelled else {
+            lock.unlock(); checkpoint?.release()
+            try requireOperation(cancellation)
+            throw BpyAdmissionFailure.closed
+        }
+        let staged = cachedResults.compactMap { $0.value.lease?.isDetached == true ? nil : $0.key }
+        let previousCheckpoint = confirmedSceneFile
+        confirmedSceneFile = checkpoint
         confirmedRevision = revision
         jobFingerprints.removeAll()
+        jobOrigins.removeAll()
         jobInputDigests.removeAll()
         submittedJobIDs.removeAll()
         submittedTransportIDs.removeAll()
-        cachedResults.removeAll()
-        cachedResultOrder.removeAll()
-        cachedResultDates.removeAll()
         lock.unlock()
+        previousCheckpoint?.release()
+        removeStagedResults(staged)
         try rotateTransport()
-        _ = try ensureOpen()
+        _ = try ensureOpen(cancellation: cancellation)
         removeStagedResults(staged)
     }
 
     fileprivate func beginClose() {
         lock.lock()
         if !cleanupComplete { closing = true }
+        let tokens = Array(operationTokens.values)
+        let results = cachedResults.values.compactMap(\.lease)
+        let checkpoint = confirmedSceneFile
+        confirmedSceneFile = nil
+        if hostDisposalDeadline == nil { hostDisposalDeadline = BpyRuntimeClock.read().map { $0.awake + 5 } }
         lock.unlock()
+        memoryCoordinator.close(owner: memoryOwner)
+        for result in results { result.invalidate() }
+        checkpoint?.release()
+        for token in tokens { token.cancel() }
         spatialSequences.close()
     }
 
     @discardableResult
     func close() -> Bool {
+        beginClose()
         closeLock.lock()
         defer { closeLock.unlock() }
         lock.lock()
@@ -867,47 +1485,60 @@ final class BpyRuntimeSession: @unchecked Sendable {
                 service.closeSession(try Self.encode(request), withReply: reply)
             }
         }
-        markTransportInvalid(identifier)
+        markTransportInvalid(identifier, disposition: .close)
         lock.lock()
-        let volume = storageVolume
+        let volumes = [(BpyStorageRole.worker, storageVolume), (BpyStorageRole.data, storageDataVolume)]
         let preparation = claimedStoragePreparation
         closed = true
         connection = nil
         lock.unlock()
         openLock.unlock()
-        var failure: String?
-        var serviceReleased = false
+        var failures: [String] = []
+        var serviceReleased = true
         var restartRequired = false
-        do {
-            let serviceProof = try? queryStorageOwnership()
-            let recovery = lock.withLock { transportRecovery }
-            let workerStopped = recovery?.wait() ?? lock.withLock {
-                activeProcessLease == nil && submittedJobIDs.isEmpty
-            }
-            if let volume {
-                serviceReleased = volume.serviceReleasedForRecovery(serviceProof, workerStopped: workerStopped)
-                try volume.release(serviceStopped: false, serviceProof: serviceProof)
-            } else if let preparation {
-                serviceReleased = serviceProof?.inUseStorageIDs.contains(preparation.id) == false
-                    && ((serviceProof?.servicePID == preparation.servicePID && serviceProof?.serviceStart == preparation.serviceStart)
-                        || (workerStopped && processStartAbsoluteTime(preparation.servicePID) != preparation.serviceStart))
-                try BpyRuntimeVolume.releasePrepared(preparation, serviceName: serviceName,
-                                                     serviceStopped: false, serviceProof: serviceProof)
-            }
-            do {
-                try FileManager.default.removeItem(at: stagingRoot)
-            } catch let error as CocoaError where error.code == .fileNoSuchFile { }
-        } catch {
-            failure = error.localizedDescription
-            restartRequired = (error as? BpyStorageRecoveryError) == .restartRequired
-            NSLog("3D runtime cleanup failed; slot retained: %@", error.localizedDescription)
+        let serviceProof = try? queryStorageOwnership()
+        let recovery = lock.withLock { transportRecovery }
+        let workerStopped = recovery?.wait() ?? lock.withLock {
+            activeProcessLease == nil && submittedJobIDs.isEmpty
         }
+        for (role, volume) in volumes {
+            do {
+                if let volume {
+                    serviceReleased = volume.serviceReleasedForRecovery(serviceProof, workerStopped: workerStopped) && serviceReleased
+                    try volume.release(serviceStopped: false, serviceProof: serviceProof)
+                } else if let preparation {
+                    let released = serviceProof?.inUseStorageIDs.contains(preparation.id) == false
+                        && ((serviceProof?.servicePID == preparation.servicePID && serviceProof?.serviceStart == preparation.serviceStart)
+                            || (workerStopped && processStartAbsoluteTime(preparation.servicePID) != preparation.serviceStart))
+                    serviceReleased = released && serviceReleased
+                    try BpyRuntimeVolume.releasePrepared(preparation, serviceName: serviceName,
+                        serviceStopped: false, serviceProof: serviceProof, role: role)
+                }
+            } catch {
+                failures.append(error.localizedDescription)
+                restartRequired = restartRequired || (error as? BpyStorageRecoveryError) == .restartRequired
+            }
+        }
+        if failures.isEmpty {
+            let retired = lock.withLock { transfers.map { ($0.key, $0.value.reservation) } }
+            for (job, reservation) in retired { acknowledgeTransfer(jobID: job, reservation: reservation) }
+        }
+        if failures.isEmpty, !BpyRetentionLedger.shared.waitForDisposal(owner: memoryOwner,
+            deadline: lock.withLock({ hostDisposalDeadline })) {
+            failures.append("Retained 3D files are still being released.")
+        }
+        if failures.isEmpty {
+            do { try BpyHostStaging.shared.removeEmpty(stagingRoot.lastPathComponent) }
+            catch let error as CocoaError where error.code == .fileNoSuchFile { }
+            catch { failures.append(error.localizedDescription) }
+        }
+        let failure = failures.isEmpty ? nil : failures.joined(separator: " ")
         lock.lock()
         cleanupComplete = failure == nil
         cleanupMessage = failure
         cleanupRequiresRestart = restartRequired
         storageServiceReleased = serviceReleased
-        if cleanupComplete { storageVolume = nil }
+        if cleanupComplete { storageVolume = nil; storageDataVolume = nil }
         closing = false
         lock.unlock()
         return failure == nil
@@ -939,24 +1570,107 @@ final class BpyRuntimeSession: @unchecked Sendable {
         return proof
     }
 
-    private func ensureOpen(restoreProbe: BpyNativeRestoreProbe? = nil) throws -> BpyServiceResponse {
+    private func requireOperation(_ cancellation: BpyOperationCancellation) throws {
+        guard lock.withLock({ !closed && !closing }) else { throw BpyAdmissionFailure.closed }
+        try cancellation.check()
+    }
+
+    private func requireExecutionActive(_ admission: UUID, cancellation: BpyOperationCancellation) throws {
+        try requireOperation(cancellation)
+        let receipt = try memoryCoordinator.receipt(admission)
+        if let failure = receipt.failure { throw failure }
+        if let stop = receipt.stop {
+            switch stop {
+            case .closed: throw BpyAdmissionFailure.closed
+            case .cancelled: throw BpyAdmissionFailure.cancelled
+            case .deadline:
+                if receipt.firstRelease == nil { throw BpyAdmissionFailure.timedOut }
+                throw BpyRuntimeError.timedOut
+            case .cleanupFailed: throw BpyAdmissionFailure.cleanupFailed
+            case .pressure where receipt.firstRelease == nil: throw BpyAdmissionFailure.pressure
+            case .monitorUnavailable, .monitorUnresponsive:
+                if receipt.firstRelease == nil {
+                    throw stop == .monitorUnavailable ? BpyAdmissionFailure.sensorUnavailable : BpyAdmissionFailure.sensorUnresponsive
+                }
+                throw BpyExecutionInterruption(reason: stop)
+            default: throw BpyExecutionInterruption(reason: stop)
+            }
+        }
+    }
+
+    private func admit(kind: BpyAdmissionIdentity.Kind, job: UUID?, timeout: TimeInterval,
+                       admissionDeadline: TimeInterval? = nil, diagnosticAutoexec: Bool = false,
+                       cancellation: BpyOperationCancellation) throws -> BpyAdmissionIdentity {
+        try requireOperation(cancellation)
+        let memory = memoryCoordinator
+        try memory.register(owner: memoryOwner, generation: memoryGeneration)
+        return try memory.admit(owner: memoryOwner, generation: memoryGeneration,
+            transport: currentSessionID(), job: job, kind: kind, timeout: timeout,
+            admissionDeadline: admissionDeadline, diagnosticAutoexec: diagnosticAutoexec, cancellation: cancellation)
+    }
+
+    private func installAdmission(_ identity: BpyAdmissionIdentity, source: String? = nil,
+                                  diagnosticDeniedPaths: [String] = [], fingerprint: String? = nil) throws {
+        let context = lock.withLock { (hostMonitor, storageVolume, storageDataVolume, sessionID, closed || closing || transportInvalidated) }
+        guard !context.4, identity.transport == context.3, let monitor = context.0,
+              let worker = context.1, let data = context.2, let pairID = worker.lease.pairID else {
+            throw BpyAdmissionFailure.closed
+        }
+        let pair = BpyStoragePair(id: pairID, worker: worker.lease, data: data.lease)
+        try monitor.install(.init(slot: serviceName, identity: identity, pair: pair, limits: limits,
+            workerVolume: worker, dataVolume: data, sourceSHA256: source.map { Self.sha256(Data($0.utf8)) },
+            fingerprint: fingerprint ?? lock.withLock { identity.job.flatMap { jobFingerprints[$0] } }, diagnosticDeniedPaths: diagnosticDeniedPaths))
+    }
+
+    private func abandon(jobID: UUID) {
+        let context = lock.withLock { (jobAdmissions[jobID], submittedJobIDs.contains(jobID), stagingJobIDs.contains(jobID), sessionID) }
+        if let identity = context.0 {
+            memoryCoordinator.cancel(identity.id)
+            _ = lock.withLock { jobAdmissions.removeValue(forKey: jobID) }
+            memoryCoordinator.forget(identity.id)
+        }
+        guard context.1 || context.2 else { return }
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self, self.currentSessionID() == context.3 else { return }
+            if context.1 {
+                let request = BpyJobReference(sessionID: context.3, jobID: jobID)
+                _ = try? self.call(timeout: 2, allowClosing: true) { service, reply in
+                    service.cancelJob(try Self.encode(request), withReply: reply)
+                }
+            } else {
+                let request = BpyReleaseResourcesRequest(sessionID: context.3, jobID: jobID,
+                    disposition: .stagedInputs, fingerprint: nil, outputs: [])
+                _ = try? self.call(timeout: 2, allowClosing: true) { service, reply in
+                    service.releaseResources(try Self.encode(request), withReply: reply)
+                }
+            }
+        }
+    }
+
+    private func ensureOpen(restoreProbe: BpyNativeRestoreProbe? = nil,
+                            cancellation: BpyOperationCancellation = .init()) throws -> BpyServiceResponse {
+        try requireOperation(cancellation)
+        _ = try BpyHostStaging.shared.directory(stagingRoot.lastPathComponent)
         openLock.lock()
         do {
-            let response = try ensureOpenLocked(restoreProbe: restoreProbe)
+            try requireOperation(cancellation)
+            let response = try ensureOpenLocked(restoreProbe: restoreProbe, cancellation: cancellation, budget: OpenBudget())
             openLock.unlock()
             return response
         } catch {
             openLock.unlock()
+            if error is BpyAdmissionFailure || error is BpyLaunchDeferral || error is BpyExecutionInterruption { throw error }
             close()
             throw error
         }
     }
 
-    private func ensureOpenLocked(restoreProbe: BpyNativeRestoreProbe?) throws -> BpyServiceResponse {
+    private func ensureOpenLocked(restoreProbe: BpyNativeRestoreProbe?, cancellation: BpyOperationCancellation,
+                                  budget: OpenBudget) throws -> BpyServiceResponse {
         lock.lock()
         if closed || closing {
             lock.unlock()
-            throw BpyRuntimeError.unavailable("The 3D document session is closed.")
+            throw BpyAdmissionFailure.closed
         }
         if opened, !transportInvalidated {
             let response = lastReadyResponse
@@ -968,19 +1682,21 @@ final class BpyRuntimeSession: @unchecked Sendable {
         if shouldRotate { try rotateTransport() }
         let firstSession = currentSessionID()
         do {
-            return try openCurrentTransport(restoreProbe: restoreProbe)
+            return try openCurrentTransport(restoreProbe: restoreProbe, cancellation: cancellation, budget: budget)
         } catch {
+            if error is BpyAdmissionFailure || error is BpyLaunchDeferral || error is BpyExecutionInterruption { throw error }
+            if let runtimeError = error as? BpyRuntimeError, case .timedOut = runtimeError { throw error }
             lock.lock()
-            let unfinishedStorage = storagePreparation != nil && storageVolume == nil
+            let unfinishedStorage = (storagePreparation != nil && storageVolume == nil)
+                || ((storageVolume == nil) != (storageDataVolume == nil))
             lock.unlock()
             let firstError = error as NSError
             bpyOpenDiagnostics.notice("open.first.fail session=\(firstSession.uuidString) unfinishedStorage=\(unfinishedStorage) domain=\(firstError.domain) code=\(firstError.code)")
-            guard !unfinishedStorage else { throw error }
-            markTransportInvalid(currentSessionID())
+            guard !unfinishedStorage, lock.withLock({ transportInvalidated }) else { throw error }
             try rotateTransport()
             let retrySession = currentSessionID()
             do {
-                return try openCurrentTransport(restoreProbe: restoreProbe)
+                return try openCurrentTransport(restoreProbe: restoreProbe, cancellation: cancellation, budget: budget)
             } catch {
                 let retryError = error as NSError
                 bpyOpenDiagnostics.notice("open.retry.fail session=\(retrySession.uuidString) firstSession=\(firstSession.uuidString) domain=\(retryError.domain) code=\(retryError.code)")
@@ -989,112 +1705,109 @@ final class BpyRuntimeSession: @unchecked Sendable {
         }
     }
 
-    private func openCurrentTransport(restoreProbe: BpyNativeRestoreProbe?) throws -> BpyServiceResponse {
-        lock.lock()
-        guard !closed, !closing else {
-            lock.unlock()
-            throw BpyRuntimeError.unavailable("The 3D document session is closed.")
-        }
-        let identifier = sessionID
-        let revision = confirmedRevision
-        let checkpoint = confirmedSceneData
-        lock.unlock()
-        lock.lock()
-        let existingStorage = storageVolume?.lease
-        lock.unlock()
-        var request = BpyOpenSessionRequest(
-            sessionID: identifier, documentID: documentID, confirmedRevision: revision,
-            limits: limits, diagnosticOpenFailure: diagnosticOpenFailure, storage: existingStorage
-        )
-        var requestBytes = try Self.encode(request)
-        var response = try call(timeout: 180, observing: { bytes in
-            restoreProbe?.open = .init(method: "openSession", request: requestBytes.base64EncodedString(),
-                                       response: bytes.base64EncodedString())
-        }) { service, reply in
-            service.openSession(requestBytes, withReply: reply)
-        }
-        if let preparation = response.storagePreparation {
+    private func openCurrentTransport(restoreProbe: BpyNativeRestoreProbe?,
+                                      cancellation: BpyOperationCancellation, budget: OpenBudget) throws -> BpyServiceResponse {
+        try requireOperation(cancellation)
+        let context = try lock.withLock { (sessionID, confirmedRevision, try confirmedSceneFile?.retained(), storageVolume, storageDataVolume) }
+        let identifier = context.0, revision = context.1, checkpoint = context.2
+        defer { checkpoint?.release() }
+        var worker = context.3, data = context.4
+        if worker == nil && data == nil {
+            let request = BpyOpenSessionRequest(sessionID: identifier, documentID: documentID,
+                confirmedRevision: revision, limits: limits, diagnosticOpenFailure: diagnosticOpenFailure)
+            let response = try call(timeout: 180) { service, reply in
+                service.openSession(try Self.encode(request), withReply: reply)
+            }
             let transport = try currentConnection()
-            guard transport.1 == identifier, existingStorage == nil, preparation.id == identifier,
+            guard response.ok, let preparation = response.storagePreparation,
+                  transport.1 == identifier, preparation.id == identifier,
                   preparation.servicePID == transport.0.processIdentifier,
-                  processStartAbsoluteTime(preparation.servicePID) == preparation.serviceStart else {
-                throw BpyRuntimeError.invalidOutput("The 3D service changed its storage lease.")
+                  processStartAbsoluteTime(preparation.servicePID) == preparation.serviceStart,
+                  let dataBytes = limits.dataStorageBytes else {
+                throw BpyRuntimeError.invalidOutput("The 3D service changed its storage preparation.")
             }
-            bpyOpenDiagnostics.notice("open.preparation session=\(identifier.uuidString) servicePID=\(preparation.servicePID) serviceStart=\(preparation.serviceStart)")
-            lock.lock()
-            storagePreparation = preparation
-            lock.unlock()
-            let volume = try BpyRuntimeVolume.create(preparation: preparation, serviceName: serviceName,
-                                                     maximumBytes: limits.physicalStorageBytes) { [self] in
-                lock.lock()
-                claimedStoragePreparation = preparation
-                lock.unlock()
+            lock.withLock { storagePreparation = preparation }
+            let createdWorker = try BpyRuntimeVolume.create(preparation: preparation, serviceName: serviceName,
+                maximumBytes: limits.physicalStorageBytes, role: .worker) { [self] in
+                lock.withLock { claimedStoragePreparation = preparation }
             }
-            lock.lock()
-            storageVolume = volume
-            guard !closed, !closing, sessionID == identifier else {
-                lock.unlock()
-                throw BpyRuntimeError.unavailable("The 3D session closed while preparing storage.")
-            }
-            lock.unlock()
-            request = BpyOpenSessionRequest(
-                sessionID: identifier, documentID: documentID, confirmedRevision: revision,
-                limits: limits, diagnosticOpenFailure: diagnosticOpenFailure, storage: volume.lease
-            )
-            requestBytes = try Self.encode(request)
-            response = try call(timeout: 180, observing: { bytes in
-                restoreProbe?.open = .init(method: "openSession", request: requestBytes.base64EncodedString(),
-                                           response: bytes.base64EncodedString())
-            }) { service, reply in
-                service.openSession(requestBytes, withReply: reply)
-            }
+            lock.withLock { storageVolume = createdWorker }
+            try requireOperation(cancellation)
+            let createdData = try BpyRuntimeVolume.create(preparation: preparation, serviceName: serviceName,
+                maximumBytes: dataBytes, role: .data)
+            lock.withLock { storageDataVolume = createdData }
+            worker = createdWorker; data = createdData
         }
+        guard let worker, let data, let pairID = worker.lease.pairID else {
+            throw BpyRuntimeError.unavailable("The 3D storage pair is incomplete. Retry cleanup before opening the scene.")
+        }
+        let pair = BpyStoragePair(id: pairID, worker: worker.lease, data: data.lease)
+        guard pair.isValid(limits: limits), currentSessionID() == identifier else {
+            throw BpyRuntimeError.invalidOutput("The 3D storage pair changed.")
+        }
+        try BpyRetentionLedger.shared.configure(slot: serviceName, limits: limits)
+        let admission = try admit(kind: .probe, job: nil, timeout: Double(limits.timeoutSeconds),
+            admissionDeadline: budget.admissionDeadline, cancellation: cancellation)
+        if budget.admissionDeadline == nil { budget.admissionDeadline = admission.admissionDeadline }
+        defer {
+            memoryCoordinator.finish(admission.id)
+            memoryCoordinator.forget(admission.id)
+        }
+        try installAdmission(admission)
+        try requireOperation(cancellation)
+        if budget.rpcDeadline == nil { budget.rpcDeadline = try BpyRuntimeClock.awakeSeconds() + 180 }
+        let remaining = try (budget.rpcDeadline ?? 0) - BpyRuntimeClock.awakeSeconds()
+        guard remaining > 0 else { throw BpyAdmissionFailure.timedOut }
+        let request = BpyOpenSessionRequest(sessionID: identifier, documentID: documentID,
+            confirmedRevision: revision, limits: limits, diagnosticOpenFailure: diagnosticOpenFailure,
+            storagePair: pair, admission: admission.id, admissionDeadline: admission.admissionDeadline)
+        let requestBytes = try Self.encode(request)
+        let response = try call(timeout: remaining, observing: { bytes in
+            restoreProbe?.open = .init(method: "openSession", request: requestBytes.base64EncodedString(),
+                response: bytes.base64EncodedString())
+        }) { service, reply in service.openSession(requestBytes, withReply: reply) }
+        try requireExecutionActive(admission.id, cancellation: cancellation)
         guard response.ok, let runtime = response.runtime,
               runtime.pythonVersion == "3.13.15", runtime.bpyVersion == "5.2.2" else {
-            throw BpyRuntimeError.unavailable(
-                response.message ?? "The bundled 3D runtime has the wrong identity."
-            )
+            throw BpyRuntimeError.unavailable(response.message ?? "The bundled 3D runtime has the wrong identity.")
         }
-        lock.lock()
-        let volume = storageVolume
-        lock.unlock()
         let transport = try currentConnection()
         guard transport.1 == identifier, runtime.serviceProcessIdentifier == transport.0.processIdentifier else {
             throw BpyRuntimeError.invalidOutput("The 3D service returned another process identity.")
         }
-        try volume?.bindService(transport.0.processIdentifier)
+        try worker.bindService(transport.0.processIdentifier)
+        try data.bindService(transport.0.processIdentifier)
         if let revision, let checkpoint {
-            try restoreCheckpoint(checkpoint, revision: revision, sessionID: identifier, probe: restoreProbe)
+            try restoreCheckpoint(checkpoint, revision: revision, sessionID: identifier, probe: restoreProbe,
+                admission: admission.id, cancellation: cancellation)
         } else if revision != nil || checkpoint != nil {
             throw BpyRuntimeError.unavailable("The confirmed 3D checkpoint is incomplete.")
         }
-        lock.lock()
-        guard sessionID == identifier, !closed, !closing else {
-            lock.unlock()
-            throw BpyRuntimeError.unavailable("The 3D transport changed while it opened.")
+        try requireExecutionActive(admission.id, cancellation: cancellation)
+        try lock.withLock {
+            guard sessionID == identifier, !closed, !closing else { throw BpyAdmissionFailure.closed }
+            opened = true; transportInvalidated = false; lastReadyResponse = response
+            openAdmission = admission
         }
-        opened = true
-        transportInvalidated = false
-        lastReadyResponse = response
-        lock.unlock()
         return response
     }
 
-    private func restoreCheckpoint(_ data: Data, revision: String, sessionID: UUID,
-                                   probe: BpyNativeRestoreProbe?) throws {
-        probe?.checkpoint = data
+    private func restoreCheckpoint(_ file: BpyRuntimeFile, revision: String, sessionID: UUID,
+                                   probe: BpyNativeRestoreProbe?, admission: UUID, cancellation: BpyOperationCancellation) throws {
+        if probe != nil { probe?.checkpoint = try file.verifiedData(maximum: limits.inputBytes) }
         probe?.exchanges.removeAll()
-        let digest = Self.sha256(data)
+        let digest = file.sha256
         var offset: UInt64 = 0
-        while offset < UInt64(data.count) || data.isEmpty {
-            let end = min(data.count, Int(offset) + 4 * 1_024 * 1_024)
-            let chunk = data.subdata(in: Int(offset)..<end)
-            let final = end == data.count
+        while offset < file.byteCount || file.byteCount == 0 {
+            try requireExecutionActive(admission, cancellation: cancellation)
+            let end = min(file.byteCount, offset + 4 * 1_024 * 1_024)
+            let chunk = try file.read(offset: offset, maximum: Int(end - offset))
+            let final = end == file.byteCount
             let request = BpyRestoreCheckpointRequest(
                 sessionID: sessionID,
                 revision: revision,
                 offset: offset,
-                totalBytes: UInt64(data.count),
+                totalBytes: file.byteCount,
                 sha256: digest,
                 finalChunk: final
             )
@@ -1205,7 +1918,8 @@ final class BpyRuntimeSession: @unchecked Sendable {
         }
     }
 
-    private func upload(_ prepared: PreparedBpyInput, jobID: UUID) throws {
+    private func upload(_ prepared: PreparedBpyInput, jobID: UUID, cancellation: BpyOperationCancellation) throws {
+        try requireOperation(cancellation)
         let total = prepared.totalBytes
         var offset: UInt64 = 0
         if total == 0 {
@@ -1220,6 +1934,7 @@ final class BpyRuntimeSession: @unchecked Sendable {
             )
         } else {
             while let data = try prepared.handle.read(upToCount: 4 * 1_024 * 1_024), !data.isEmpty {
+                try requireOperation(cancellation)
                 let final = offset + UInt64(data.count) == total
                 try stageChunk(
                     jobID: jobID,
@@ -1230,6 +1945,7 @@ final class BpyRuntimeSession: @unchecked Sendable {
                     final: final,
                     data: data
                 )
+                try requireOperation(cancellation)
                 offset += UInt64(data.count)
             }
         }
@@ -1275,97 +1991,70 @@ final class BpyRuntimeSession: @unchecked Sendable {
         }
     }
 
-    private func downloadOutputs(
-        _ descriptors: [BpyOutputDescriptor],
-        jobID: UUID
-    ) throws -> [String: URL] {
-        lock.lock()
-        let expectedFingerprint = jobFingerprints[jobID]
-        lock.unlock()
-        guard let expectedFingerprint else {
-            throw BpyRuntimeError.invalidOutput("The 3D output has no retained job identity.")
+    private func downloadOutputs(_ descriptors: [BpyOutputDescriptor], jobID: UUID,
+                                 cancellation: BpyOperationCancellation, timeout: TimeInterval,
+                                 work: BpyConsumerWork) throws -> [String: BpyRuntimeFile] {
+        let context = lock.withLock { (jobFingerprints[jobID], outputReservations[jobID], transferDeadlines[jobID]) }
+        guard let fingerprint = context.0, let reservation = context.1,
+              BpyOutputContract.acceptsOutputs(descriptors, fileLimit: limits.files, byteLimit: limits.outputBytes) else {
+            throw BpyRuntimeError.invalidOutput("The 3D output has no valid retained reservation.")
         }
-        guard BpyOutputContract.acceptsOutputs(descriptors, fileLimit: limits.files, byteLimit: limits.outputBytes) else {
-            throw BpyRuntimeError.invalidOutput("The worker returned invalid or over-budget output descriptors.")
+        let deadline = try context.2 ?? (BpyRuntimeClock.awakeSeconds() + timeout)
+        lock.withLock { transferDeadlines[jobID] = deadline }
+        let ledger = BpyRetentionLedger.shared
+        let overlap = try ledger.reserve(slot: serviceName, owner: memoryOwner, kind: .transfer, bytes: limits.outputBytes)
+        lock.withLock {
+            transfers[jobID] = .init(reservation: overlap, transport: sessionID,
+                pairIDs: [storageVolume?.lease.id, storageDataVolume?.lease.id].compactMap { $0 },
+                request: .init(sessionID: sessionID, jobID: jobID, disposition: .abandonedResult,
+                    fingerprint: fingerprint, outputs: descriptors))
         }
-        let root = stagingRoot.appendingPathComponent(jobID.uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(
-            at: root,
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
-        )
-        var result: [String: URL] = [:]
+        defer { ledger.settle(reservation) }
+        let root = stagingRoot.appendingPathComponent(jobID.uuidString)
+        var files: [String: BpyRuntimeFile] = [:]
+        var returned = false
+        defer { if !returned { for file in files.values { file.release() } } }
         for descriptor in descriptors {
-            guard descriptor.name.range(
-                of: #"^[A-Za-z0-9][A-Za-z0-9._-]*$"#,
-                options: .regularExpression
-            ) != nil else {
-                throw BpyRuntimeError.invalidOutput("The worker returned an invalid output name.")
-            }
-            let partial = root.appendingPathComponent(descriptor.name + ".part")
-            let destination = root.appendingPathComponent(descriptor.name)
-            if FileManager.default.fileExists(atPath: partial.path) {
-                try FileManager.default.removeItem(at: partial)
-            }
-            guard FileManager.default.createFile(
-                atPath: partial.path,
-                contents: nil,
-                attributes: [.posixPermissions: 0o600]
-            ) else {
-                throw BpyRuntimeError.invalidOutput("The host output staging file could not be created.")
-            }
-            let handle = try FileHandle(forWritingTo: partial)
-            var digest = SHA256()
-            var offset: UInt64 = 0
-            do {
-                while offset < descriptor.byteCount {
-                    let count = min(4 * 1_024 * 1_024, Int(descriptor.byteCount - offset))
-                    let request = BpyReadOutputRequest(
-                        sessionID: currentSessionID(),
-                        jobID: jobID,
-                        name: descriptor.name,
-                        offset: offset,
-                        maximumBytes: count
-                    )
-                    let chunk = try callChunk(
-                        jobID: jobID,
-                        fingerprint: expectedFingerprint
-                    ) { service, reply in
-                        service.readOutput(try Self.encode(request), withReply: reply)
+            try requireOperation(cancellation)
+            try work.check()
+            let file = try ledger.creatingFile(reservation, bytes: descriptor.byteCount) {
+                try BpyRuntimeFile.receive(at: root.appendingPathComponent(descriptor.name),
+                byteCount: descriptor.byteCount, expectedSHA256: descriptor.sha256,
+                disposed: { removed, identity in
+                    if removed { ledger.disposed(reservation, identity: identity, bytes: identity.bytes) }
+                }) { offset, count in
+                    try self.requireOperation(cancellation)
+                    try work.check()
+                    let now = try BpyRuntimeClock.awakeSeconds()
+                    guard now < deadline else { throw BpyRuntimeError.timedOut }
+                    let request = BpyReadOutputRequest(sessionID: self.currentSessionID(), jobID: jobID,
+                        name: descriptor.name, offset: offset, maximumBytes: count)
+                    let chunk = try self.callChunk(timeout: min(30, deadline - now), jobID: jobID, fingerprint: fingerprint) { service, reply in
+                            service.readOutput(try Self.encode(request), withReply: reply)
+                        }
+                    try self.requireOperation(cancellation)
+                    try work.check()
+                    guard try BpyRuntimeClock.awakeSeconds() <= deadline, chunk.count == count else {
+                        throw BpyRuntimeError.timedOut
                     }
-                    guard !chunk.isEmpty, chunk.count <= count else {
-                        throw BpyRuntimeError.invalidOutput("The worker returned a truncated output.")
-                    }
-                    try handle.write(contentsOf: chunk)
-                    digest.update(data: chunk)
-                    offset += UInt64(chunk.count)
+                    return chunk
                 }
-                try handle.synchronize()
-                try handle.close()
-            } catch {
-                try? handle.close()
-                try? FileManager.default.removeItem(at: partial)
-                throw error
             }
-            let checksum = digest.finalize().map { String(format: "%02x", $0) }.joined()
-            guard offset == descriptor.byteCount, checksum == descriptor.sha256 else {
-                try? FileManager.default.removeItem(at: partial)
-                throw BpyRuntimeError.invalidOutput("The worker output checksum does not match.")
-            }
-            try validateMagic(partial, mediaType: descriptor.mediaType)
-            if FileManager.default.fileExists(atPath: destination.path) {
-                try FileManager.default.removeItem(at: destination)
-            }
-            try FileManager.default.moveItem(at: partial, to: destination)
-            result[descriptor.name] = destination
+            files[descriptor.name] = file
+            try ledger.bind(reservation, file: file)
+            try validateMagic(file, mediaType: descriptor.mediaType, checking: {
+                try self.requireOperation(cancellation)
+                try work.check()
+                guard try BpyRuntimeClock.awakeSeconds() <= deadline else { throw BpyRuntimeError.timedOut }
+            })
         }
-        return result
+        returned = true
+        return files
     }
 
-    private func validateMagic(_ url: URL, mediaType: String) throws {
-        let handle = try FileHandle(forReadingFrom: url)
-        defer { try? handle.close() }
-        let prefix = try handle.read(upToCount: 24) ?? Data()
+    private func validateMagic(_ file: BpyRuntimeFile, mediaType: String, checking: @escaping () throws -> Void) throws {
+        try checking()
+        let prefix = try file.read(maximum: 24)
         let valid: Bool
         switch mediaType {
         case "application/x-blender":
@@ -1373,7 +2062,8 @@ final class BpyRuntimeSession: @unchecked Sendable {
         case "image/png":
             valid = prefix.starts(with: Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]))
         case "application/json":
-            valid = (try? JSONSerialization.jsonObject(with: Data(contentsOf: url))) != nil
+            try BpyJSONValidation.validate(file, checking: checking)
+            valid = true
         default:
             valid = false
         }
@@ -1382,45 +2072,114 @@ final class BpyRuntimeSession: @unchecked Sendable {
         }
     }
 
-    private func cache(_ result: BpyRuntimeJobResult, for id: UUID) {
-        var evicted: [UUID] = []
-        lock.lock()
-        cachedResults[id] = result
-        cachedResultDates[id] = Date()
-        cachedResultOrder.removeAll(where: { $0 == id })
-        cachedResultOrder.append(id)
-        while cachedResultOrder.count > 16 {
-            let removed = cachedResultOrder.removeFirst()
-            cachedResults.removeValue(forKey: removed)
-            cachedResultDates.removeValue(forKey: removed)
-            validatedCandidates.removeValue(forKey: removed)
-            evicted.append(removed)
+    private func cache(_ result: BpyRuntimeJobResult, for id: UUID, cancellation: BpyOperationCancellation) throws {
+        try lock.withLock {
+            guard !closed, !closing, !transportInvalidated, result.lease?.transport == sessionID else { throw BpyAdmissionFailure.closed }
+            try cancellation.check()
+            if let log = result.response.stdout {
+                cachedLogs[id] = log; logOrder.removeAll { $0 == id }; logOrder.append(id)
+                while logOrder.count > 16 { cachedLogs.removeValue(forKey: logOrder.removeFirst()) }
+            }
+            var receipt = result.response
+            receipt.stdout = nil
+            cachedResults[id] = .init(response: receipt, stagedOutputs: result.stagedOutputs, lease: result.lease)
         }
-        lock.unlock()
-        removeStagedResults(evicted)
     }
 
-    private func purgeExpiredHostResults() {
-        let cutoff = Date().addingTimeInterval(-bpyHostResultRetentionSeconds)
-        lock.lock()
-        let expired = cachedResultDates.compactMap { id, date in date < cutoff ? id : nil }
-        expired.forEach {
-            cachedResults.removeValue(forKey: $0)
-            cachedResultDates.removeValue(forKey: $0)
-            validatedCandidates.removeValue(forKey: $0)
-            candidateJobIDs.remove($0)
+    private func releasedResult(jobID: UUID, leaseID: UUID, wasDetached: Bool) {
+        let released = lock.withLock { () -> (BpyRuntimeJobResult?, UUID?, Bool)? in
+            guard cachedResults[jobID]?.lease?.id == leaseID else { return nil }
+            validatedCandidates.removeValue(forKey: jobID); candidateJobIDs.remove(jobID)
+            spatialDerivations.removeValue(forKey: jobID)
+            transferDeadlines.removeValue(forKey: jobID)
+            cachedLogs.removeValue(forKey: jobID); logOrder.removeAll { $0 == jobID }
+            return (cachedResults.removeValue(forKey: jobID), outputReservations.removeValue(forKey: jobID), transfers[jobID] != nil)
         }
-        cachedResultOrder.removeAll(where: { expired.contains($0) })
-        lock.unlock()
-        removeStagedResults(expired)
+        guard let context = released else { return }
+        if let reservation = context.1 { BpyRetentionLedger.shared.settle(reservation) }
+        requestTransferRelease(jobID: jobID)
+        if let result = context.0, !context.2, !wasDetached {
+            let request = BpyReleaseResourcesRequest(sessionID: currentSessionID(), jobID: jobID,
+                disposition: .abandonedResult, fingerprint: result.response.jobFingerprint, outputs: result.response.outputs)
+            DispatchQueue.global(qos: .utility).async { [weak self] in
+                _ = try? self?.call(timeout: 2) { service, reply in service.releaseResources(try Self.encode(request), withReply: reply) }
+            }
+        }
+    }
+
+    private func requestTransferRelease(jobID: UUID) {
+        let needsRelease = lock.withLock { () -> Bool in
+            guard var record = transfers[jobID] else { return false }
+            record.releaseRequested = true
+            if record.releaseDeadline == nil { record.releaseDeadline = BpyRuntimeClock.read().map { $0.awake + 5 } }
+            transfers[jobID] = record
+            return true
+        }
+        if needsRelease {
+            DispatchQueue.global(qos: .utility).async { [self] in _ = releaseTransfer(jobID: jobID) }
+        }
+    }
+
+    @discardableResult
+    private func releaseTransfer(jobID: UUID) -> Bool {
+        transferCleanupLock.lock(); defer { transferCleanupLock.unlock() }
+        while true {
+            guard let record = lock.withLock({ transfers[jobID] }) else { return true }
+            guard record.releaseRequested, let deadline = record.releaseDeadline,
+                  let now = BpyRuntimeClock.read()?.awake else { return false }
+            let current = lock.withLock { sessionID == record.transport && !transportInvalidated && !closed }
+            if current {
+                guard now < deadline else { return recoverTransfer(jobID: jobID, record: record) }
+                do {
+                    let response = try call(timeout: min(2, deadline - now), allowClosing: true) { service, reply in
+                        service.releaseResources(try Self.encode(record.request), withReply: reply)
+                    }
+                    if response.ok { acknowledgeTransfer(jobID: jobID, reservation: record.reservation); return true }
+                    guard response.message == "result release pending" else { return recoverTransfer(jobID: jobID, record: record) }
+                } catch { return recoverTransfer(jobID: jobID, record: record) }
+            } else {
+                guard record.pairIDs.count == 2, let proof = try? queryStorageOwnership(),
+                      record.pairIDs.allSatisfy({ !proof.inUseStorageIDs.contains($0) }) else { return false }
+                acknowledgeTransfer(jobID: jobID, reservation: record.reservation)
+                return true
+            }
+            Thread.sleep(forTimeInterval: 0.005)
+        }
+    }
+
+    private func recoverTransfer(jobID: UUID, record: TransferRecord) -> Bool {
+        markTransportInvalid(record.transport, disposition: .releaseFailed)
+        guard lock.withLock({ transportRecovery })?.wait() == true,
+              record.pairIDs.count == 2, let proof = try? queryStorageOwnership(),
+              record.pairIDs.allSatisfy({ !proof.inUseStorageIDs.contains($0) }) else { return false }
+        acknowledgeTransfer(jobID: jobID, reservation: record.reservation)
+        return true
+    }
+
+    private func acknowledgeTransfer(jobID: UUID, reservation: UUID) {
+        let removed = lock.withLock { () -> Bool in
+            guard transfers[jobID]?.reservation == reservation else { return false }
+            transfers.removeValue(forKey: jobID)
+            return true
+        }
+        if removed { BpyRetentionLedger.shared.release(reservation) }
+    }
+
+    private func drainTransfers() throws {
+        let pending = lock.withLock { transfers.filter { $0.value.releaseRequested }.map(\.key) }
+        for job in pending where !releaseTransfer(jobID: job) {
+            throw BpyRuntimeError.unavailable("The prior 3D result is still being released. Retry after cleanup finishes.")
+        }
+    }
+
+    func releaseResult(jobID: UUID) {
+        let lease = lock.withLock { cachedResults[jobID]?.lease }
+        lease?.release()
     }
 
     private func removeStagedResults(_ ids: [UUID]) {
-        ids.forEach {
-            try? FileManager.default.removeItem(
-                at: stagingRoot.appendingPathComponent($0.uuidString, isDirectory: true)
-            )
-        }
+        let leases = lock.withLock { ids.compactMap { cachedResults[$0]?.lease } }
+        for lease in leases { lease.invalidate() }
     }
 
     private func installConnection() {
@@ -1430,7 +2189,8 @@ final class BpyRuntimeSession: @unchecked Sendable {
         var monitor: BpyHostMonitor?
         if let layout = try? BpyRuntimeBundleLayout(app: Bundle.main.bundleURL, serviceName: serviceName) {
             value.exportedInterface = NSXPCInterface(with: BpyHostMonitorProtocol.self)
-            monitor = BpyHostMonitor(connection: value, transport: identifier, layout: layout) { [weak self] process in
+            monitor = BpyHostMonitor(connection: value, transport: identifier, layout: layout,
+                memory: memoryCoordinator) { [weak self] process in
                 self?.recordMonitoredProcess(process, transportID: identifier)
             }
             value.exportedObject = monitor
@@ -1450,14 +2210,17 @@ final class BpyRuntimeSession: @unchecked Sendable {
     }
 
     private func rotateTransport() throws {
+        let invalid = lock.withLock { transportInvalidated }
+        if !invalid { try drainTransfers() }
         let identifier = currentSessionID()
-        markTransportInvalid(identifier)
+        markTransportInvalid(identifier, disposition: .rotation)
         lock.lock()
         let recovery = transportRecovery
         lock.unlock()
         guard recovery?.wait() == true else {
             throw BpyRuntimeError.unavailable("The previous 3D worker could not be observed exiting; recovery is blocked.")
         }
+        try drainTransfers()
         lock.lock()
         guard !closed, !closing else {
             lock.unlock()
@@ -1471,12 +2234,13 @@ final class BpyRuntimeSession: @unchecked Sendable {
         transportRecovery = nil
         activeProcessLease = nil
         lastReadyResponse = nil
+        uploadedJobIDs.removeAll(); stagingJobIDs.removeAll()
         lock.unlock()
         previous?.invalidate()
         installConnection()
     }
 
-    private func markTransportInvalid(_ identifier: UUID) {
+    private func markTransportInvalid(_ identifier: UUID, disposition: BpyTransportDisposition = .loss) {
         lock.lock()
         guard sessionID == identifier, !transportInvalidated else {
             lock.unlock()
@@ -1493,22 +2257,13 @@ final class BpyRuntimeSession: @unchecked Sendable {
         let unconfirmed = cachedResults.compactMap { key, value in
             value.response.state == .awaitingConfirmation ? key : nil
         }
-        unconfirmed.forEach {
-            cachedResults.removeValue(forKey: $0)
-            cachedResultDates.removeValue(forKey: $0)
-        }
-        cachedResultOrder.removeAll(where: { unconfirmed.contains($0) })
+        let invalidLeases = unconfirmed.compactMap { cachedResults[$0]?.lease }.filter { !$0.isDetached }
         lock.unlock()
         invalidConnection?.invalidate()
         if let monitor {
-            monitor.recover { recovery.finish(exited: $0) }
+            monitor.recover(disposition: disposition) { recovery.finish(exited: $0) }
         } else { recovery.finish(exited: false) }
-        let root = stagingRoot
-        DispatchQueue.global(qos: .utility).async {
-            unconfirmed.forEach {
-                try? FileManager.default.removeItem(at: root.appendingPathComponent($0.uuidString, isDirectory: true))
-            }
-        }
+        for lease in invalidLeases { lease.invalidate() }
     }
 
     private func currentSessionID() -> UUID {
@@ -1555,7 +2310,7 @@ final class BpyRuntimeSession: @unchecked Sendable {
             throw BpyRuntimeError.unavailable("The native protocol probe requires explicit acceptance.")
         }
         let identifier = currentSessionID()
-        let checkpoint = protocolProbeCheckpoint()
+        let checkpoint = try protocolProbeCheckpoint()
         guard let revision = checkpoint.0, let scene = checkpoint.1 else { throw BpyRuntimeError.invalidOutput("The protocol probe requires an actual confirmed scene.") }
         guard limits.inputBytes >= 8 else {
             throw BpyRuntimeError.invalidInput("The protocol probe requires at least eight input bytes.")
@@ -1567,7 +2322,7 @@ final class BpyRuntimeSession: @unchecked Sendable {
         var chunks: [String: String] = [:]
         func send(_ label: String, request: Data, connection foreign: NSXPCConnection? = nil,
                   _ invoke: (BpyRuntimeServiceProtocol, Data, @escaping (Data) -> Void) -> Void) throws -> BpyServiceResponse {
-            requests[label] = try (label.hasPrefix("storage-") ? Self.storageEvidenceRequest(request) : request).base64EncodedString()
+            requests[label] = try ((label.hasPrefix("storage-") || label == "reservation-failed-bookmark") ? Self.storageEvidenceRequest(request) : request).base64EncodedString()
             let response: BpyServiceResponse
             var responseBytes: Data?
             if let foreign {
@@ -1616,29 +2371,37 @@ final class BpyRuntimeSession: @unchecked Sendable {
                        { $0.openSession($1, withReply: $2) }).ok else {
             throw BpyRuntimeError.invalidOutput("The reservation probe could not prepare its session.")
         }
-        lock.lock()
-        let currentStorage = storageVolume?.lease
-        lock.unlock()
-        guard let currentStorage else { throw BpyRuntimeError.invalidOutput("The protocol probe has no actual storage lease.") }
+        let storageContext = lock.withLock { (storageVolume?.lease, storageDataVolume?.lease, openAdmission) }
+        guard let workerLease = storageContext.0, let dataLease = storageContext.1,
+              let pairID = workerLease.pairID, let originalAdmission = storageContext.2 else { throw SpatialSceneError.changed }
+        let pair = BpyStoragePair(id: pairID, worker: workerLease, data: dataLease)
         let storageReference = try Self.storageEvidenceRequest(Self.encode(BpyOpenSessionRequest(
-            sessionID: identifier, documentID: documentID, limits: limits, storage: currentStorage)))
+            sessionID: identifier, documentID: documentID, limits: limits, storagePair: pair, admission: originalAdmission.id, admissionDeadline: originalAdmission.admissionDeadline)))
+        func changedWorker(device: UInt64? = nil, capacity: UInt64? = nil, path: String? = nil, bookmark: Data? = nil) -> BpyStorageLease {
+            .init(id: workerLease.id, mountPath: path ?? workerLease.mountPath, device: device ?? workerLease.device,
+                capacityBytes: capacity ?? workerLease.capacityBytes, bookmark: bookmark ?? workerLease.bookmark,
+                role: workerLease.role, pairID: workerLease.pairID)
+        }
+        let wrongDevice = workerLease.device ^ ((workerLease.device ^ (1 << 31)) == dataLease.device ? (1 << 30) : (1 << 31))
         for (label, storage) in [
-            ("storage-wrong-device", BpyStorageLease(id: currentStorage.id, mountPath: currentStorage.mountPath,
-                device: currentStorage.device ^ 1, capacityBytes: currentStorage.capacityBytes, bookmark: currentStorage.bookmark)),
-            ("storage-wrong-capacity", BpyStorageLease(id: currentStorage.id, mountPath: currentStorage.mountPath,
-                device: currentStorage.device, capacityBytes: currentStorage.capacityBytes ^ 1, bookmark: currentStorage.bookmark)),
-            ("storage-wrong-path", BpyStorageLease(id: currentStorage.id, mountPath: currentStorage.mountPath + "/other",
-                device: currentStorage.device, capacityBytes: currentStorage.capacityBytes, bookmark: currentStorage.bookmark))
+            ("storage-wrong-device", changedWorker(device: wrongDevice)),
+            ("storage-wrong-capacity", changedWorker(capacity: workerLease.capacityBytes - 1)),
+            ("storage-wrong-path", changedWorker(path: workerLease.mountPath + "/other"))
         ] {
-            let probe = BpyOpenSessionRequest(sessionID: UUID(), documentID: documentID, limits: limits, storage: storage)
+            let target = UUID(), cancellation = BpyOperationCancellation()
+            let permit = try memoryCoordinator.admit(owner: memoryOwner, generation: memoryGeneration,
+                transport: target, job: nil, kind: .probe, timeout: Double(limits.timeoutSeconds), cancellation: cancellation)
+            defer { memoryCoordinator.finish(permit.id); memoryCoordinator.forget(permit.id) }
+            let forgedPair = BpyStoragePair(id: pair.id, worker: storage, data: dataLease)
+            let probe = BpyOpenSessionRequest(sessionID: target, documentID: documentID, limits: limits,
+                storagePair: forgedPair, admission: permit.id, admissionDeadline: permit.admissionDeadline)
             guard try !send(label, request: Self.encode(probe), { $0.openSession($1, withReply: $2) }).ok else {
-                throw BpyRuntimeError.invalidOutput("The service accepted a forged storage lease: " + label)
+                throw BpyRuntimeError.invalidOutput("The service accepted a forged storage pair: " + label)
             }
         }
-        let brokenStorage = BpyStorageLease(id: currentStorage.id, mountPath: currentStorage.mountPath,
-            device: currentStorage.device, capacityBytes: currentStorage.capacityBytes, bookmark: Data([1, 2, 3]))
+        let brokenPair = BpyStoragePair(id: pair.id, worker: changedWorker(bookmark: Data([1, 2, 3])), data: dataLease)
         let failedOpen = try Self.encode(BpyOpenSessionRequest(sessionID: reservationID, documentID: documentID,
-            limits: limits, storage: brokenStorage))
+            limits: limits, storagePair: brokenPair, admission: originalAdmission.id, admissionDeadline: originalAdmission.admissionDeadline))
         let reservationClose = try Self.encode(BpySessionReference(sessionID: reservationID))
         guard try !send("reservation-failed-bookmark", request: failedOpen, connection: staleConnection,
                         { $0.openSession($1, withReply: $2) }).ok,
@@ -1701,45 +2464,50 @@ final class BpyRuntimeSession: @unchecked Sendable {
             requestedTimeout: nil, effectiveTimeout: limits.timeoutSeconds,
             inputs: ["foo.part", "probe.json"].map { .init(name: $0, byteCount: 2, sha256: hash) },
             deniedPaths: [], autoexecControl: false, identityWriteFailure: false, identityCaptureFailure: false)
+        let verifiedSource = "assert set(p.name for p in input_dir.iterdir()) == {'foo', 'foo.part', 'probe.json'}; assert all((input_dir / n).read_text() == '{}' for n in ['foo', 'foo.part', 'probe.json'])"
+        let inputNames = ["foo", "foo.part", "probe.json"]
+        let source = verifiedSource
+        let fingerprint = BpyJobFingerprintV5.compute(expectedRevision: revision, source: source, requestedTimeout: nil,
+            effectiveTimeout: limits.timeoutSeconds, inputs: inputNames.map { .init(name: $0, byteCount: 2, sha256: hash) },
+            deniedPaths: [], autoexecControl: false, identityWriteFailure: false, identityCaptureFailure: false)
+        let cancellation = BpyOperationCancellation()
+        let admission = try admit(kind: .job, job: stagedID, timeout: Double(limits.timeoutSeconds), cancellation: cancellation)
+        try installAdmission(admission, source: verifiedSource, fingerprint: fingerprint)
+        defer {
+            memoryCoordinator.cancel(admission.id)
+            memoryCoordinator.finish(admission.id)
+            memoryCoordinator.forget(admission.id)
+        }
         let partialRun = BpyRunJobRequest(sessionID: identifier, jobID: stagedID, expectedRevision: revision,
-            source: partialSource, inputNames: ["foo.part", "probe.json"], fingerprint: partialFingerprint)
+            source: partialSource, inputNames: ["foo.part", "probe.json"], fingerprint: partialFingerprint, admission: admission.id, admissionDeadline: admission.admissionDeadline)
         guard try !send("submit-with-partial-input", request: Self.encode(partialRun), { $0.runJob($1, withReply: $2) }).ok,
               try stage("completed-partial-input", id: stagedID, size: 2, sha: hash, final: true,
                         data: Data("}".utf8), name: "foo", offset: 1).ok else {
             throw BpyRuntimeError.invalidOutput("A partial input reached execution or could not be completed after refusal.")
         }
-        let inputNames = ["foo", "foo.part", "probe.json"]
-        let source = "assert set(p.name for p in input_dir.iterdir()) == {'foo', 'foo.part', 'probe.json'}; assert all((input_dir / n).read_text() == '{}' for n in ['foo', 'foo.part', 'probe.json'])"
-        let fingerprint = BpyJobFingerprintV5.compute(expectedRevision: revision, source: source, requestedTimeout: nil,
-            effectiveTimeout: limits.timeoutSeconds, inputs: inputNames.map { .init(name: $0, byteCount: 2, sha256: hash) },
-            deniedPaths: [], autoexecControl: false, identityWriteFailure: false, identityCaptureFailure: false)
         let run = BpyRunJobRequest(sessionID: identifier, jobID: stagedID, expectedRevision: revision, source: source,
-            inputNames: inputNames, fingerprint: fingerprint)
+            inputNames: inputNames, fingerprint: fingerprint, admission: admission.id, admissionDeadline: admission.admissionDeadline)
+        lock.withLock {
+            jobFingerprints[stagedID] = fingerprint
+            jobOrigins[stagedID] = (revision, Self.sha256(scene))
+            submittedTransportIDs[stagedID] = identifier
+            submittedJobIDs.insert(stagedID)
+        }
         let accepted = try send("service-submit", request: Self.encode(run)) { $0.runJob($1, withReply: $2) }
         let joined = try send("service-submit-replay", request: Self.encode(run)) { $0.runJob($1, withReply: $2) }
         guard accepted.ok, joined.ok, joined.joinedExistingJob, joined.jobFingerprint == fingerprint else {
             throw BpyRuntimeError.invalidOutput("The actual service did not idempotently join its consumed Job ID.")
         }
-        let status = try Self.encode(BpyJobReference(sessionID: identifier, jobID: stagedID))
-        let deadline = Date().addingTimeInterval(Double(limits.timeoutSeconds) + 15)
-        var complete: BpyServiceResponse?
-        while Date() < deadline {
-            let polled = try send("service-completed", request: status) { $0.jobStatus($1, withReply: $2) }
-            guard let polledBytes = responses["service-completed"] else {
-                throw BpyRuntimeError.invalidOutput("The completion poll has no response bytes.")
-            }
-            completion.append(.init(method: "jobStatus", request: status.base64EncodedString(), response: polledBytes))
-            let value = try authorizeProcessIfNeeded(polled, jobID: stagedID, observing: { request, response in
-                completion.append(.init(method: "authorizeProcess", request: request.base64EncodedString(),
-                                        response: response.base64EncodedString()))
+        let complete = try waitForTerminal(jobID: stagedID, fingerprint: fingerprint, response: joined,
+            admission: admission, cancellation: cancellation, authorizeInitial: false, observing: { method, request, response in
+                if method == "jobStatus" {
+                    requests["service-completed"] = request.base64EncodedString()
+                    responses["service-completed"] = response.base64EncodedString()
+                    exchangeOrder.append("service-completed")
+                }
+                completion.append(.init(method: method, request: request.base64EncodedString(), response: response.base64EncodedString()))
             })
-            if value.state == .awaitingConfirmation { complete = value; break }
-            guard value.ok, value.state == .accepted || value.state == .running else {
-                throw BpyRuntimeError.invalidOutput(value.message ?? "The staged service job failed.")
-            }
-            Thread.sleep(forTimeInterval: 0.05)
-        }
-        guard let complete else { throw BpyRuntimeError.timedOut }
+        guard complete.state == .awaitingConfirmation else { throw BpyRuntimeError.invalidOutput("The staged service job failed.") }
         guard complete.jobID == stagedID, complete.jobFingerprint == fingerprint else {
             throw BpyRuntimeError.invalidOutput("The completed protocol job has another identity.")
         }
@@ -1750,7 +2518,7 @@ final class BpyRuntimeSession: @unchecked Sendable {
         _ = try cancel("cleanup-other", otherID)
         cleanedUp = true
         return try JSONEncoder().encode(BpyNativeProtocolProbeEvidence(
-            schema: "nexgenvideo/bpy-native-protocol-evidence/3", requests: requests, chunks: chunks,
+            schema: "nexgenvideo/bpy-native-protocol-evidence/4", requests: requests, chunks: chunks,
             responses: responses, exchangeOrder: exchangeOrder, completion: completion, restoreOpen: nil, restore: nil,
             storageReference: storageReference.base64EncodedString()))
     }
@@ -1760,7 +2528,7 @@ final class BpyRuntimeSession: @unchecked Sendable {
             throw BpyRuntimeError.unavailable("The native restore probe requires explicit acceptance.")
         }
         var document = try JSONDecoder().decode(BpyNativeProtocolProbeEvidence.self, from: evidence)
-        guard document.schema == "nexgenvideo/bpy-native-protocol-evidence/3", document.restore == nil else {
+        guard document.schema == "nexgenvideo/bpy-native-protocol-evidence/4", document.restore == nil else {
             throw BpyRuntimeError.invalidOutput("The protocol evidence already contains a restore.")
         }
         let probe = BpyNativeRestoreProbe()
@@ -1778,10 +2546,32 @@ final class BpyRuntimeSession: @unchecked Sendable {
         return (ready, try JSONEncoder().encode(document), checkpoint)
     }
 
-    private func protocolProbeCheckpoint() -> (String?, Data?) {
-        lock.lock()
-        defer { lock.unlock() }
-        return (confirmedRevision, confirmedSceneData)
+    private func protocolProbeCheckpoint() throws -> (String?, Data?) {
+        let current = try lock.withLock { (confirmedRevision, try confirmedSceneFile?.retained()) }
+        defer { current.1?.release() }
+        return (current.0, try current.1?.verifiedData(maximum: limits.inputBytes))
+    }
+
+    private func makeCheckpoint(_ payload: SpatialScenePayload, cancellation: BpyOperationCancellation) throws -> BpyRuntimeFile {
+        try requireOperation(cancellation)
+        guard payload.byteCount <= limits.inputBytes else { throw SpatialSceneError.changed }
+        if let existing = try lock.withLock({ try confirmedSceneFile?.retained() }) {
+            if existing.sha256 == payload.sha256 { return existing }
+            existing.release()
+        }
+        let ledger = BpyRetentionLedger.shared
+        try ledger.configure(slot: serviceName, limits: limits)
+        let reservation = try ledger.reserve(slot: serviceName, owner: memoryOwner, kind: .checkpoint, bytes: payload.byteCount)
+        defer { ledger.settle(reservation) }
+        let url = stagingRoot.appendingPathComponent("checkpoints/" + UUID().uuidString + ".blend")
+        let file = try ledger.creatingFile(reservation, bytes: payload.byteCount) {
+            try payload.checkpoint(to: url, maximum: limits.inputBytes,
+                checking: { try self.requireOperation(cancellation) }) { removed, identity in
+                if removed { ledger.disposed(reservation, identity: identity, bytes: identity.bytes) }
+            }
+        }
+        try ledger.bind(reservation, file: file)
+        return file
     }
 
     private func currentConnection(allowClosing: Bool = false) throws -> (NSXPCConnection, UUID) {
@@ -1887,16 +2677,9 @@ final class BpyRuntimeSession: @unchecked Sendable {
             throw BpyRuntimeError.invalidOutput("The 3D service returned an incomplete process authorization.")
         }
         let transportID = currentSessionID()
-        lock.lock()
-        let lease = activeProcessLease
-        lock.unlock()
-        guard lease?.transportID == transportID,
-              lease?.processIdentifier == processIdentifier,
-              lease?.startAbsoluteTime == startAbsoluteTime,
-              lease?.executable == executable,
-              processStartAbsoluteTime(processIdentifier) == startAbsoluteTime,
-              processExecutable(processIdentifier) == executable else {
-            throw BpyRuntimeError.invalidOutput("The 3D process could not be bound to the host lease.")
+        guard let monitor = lock.withLock({ hostMonitor }) else { throw BpyAdmissionFailure.closed }
+        guard try monitor.authorize(execution: authorizationID, pid: processIdentifier, start: startAbsoluteTime) else {
+            return response
         }
         let request = BpyAuthorizeProcessRequest(
             sessionID: transportID,
@@ -1912,7 +2695,7 @@ final class BpyRuntimeSession: @unchecked Sendable {
         }
         guard authorized.ok,
               authorized.jobID == jobID,
-              authorized.activeProcessAuthorizationID == nil else {
+              authorized.activeProcessAuthorizationID != authorizationID else {
             throw BpyRuntimeError.rejected(
                 authorized.message ?? "The 3D process authorization was rejected."
             )
@@ -1955,15 +2738,15 @@ final class BpyRuntimeSession: @unchecked Sendable {
         guard var request = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw BpyRuntimeError.invalidOutput("The storage probe request is not an object.")
         }
-        if request["storage"] != nil {
-            guard var storage = request["storage"] as? [String: Any],
-                  let encoded = storage.removeValue(forKey: "bookmark") as? String,
-                  let bookmark = Data(base64Encoded: encoded) else {
-                throw BpyRuntimeError.invalidOutput("The storage probe cannot redact its bookmark.")
+        if var pair = request["storagePair"] as? [String: Any] {
+            for role in ["worker", "data"] {
+                guard var storage = pair[role] as? [String: Any],
+                      let encoded = storage.removeValue(forKey: "bookmark") as? String,
+                      let bookmark = Data(base64Encoded: encoded) else { throw SpatialSceneError.changed }
+                storage["bookmarkSHA256"] = Self.sha256(bookmark)
+                pair[role] = storage
             }
-            // Archive identity evidence without the transferable filesystem capability.
-            storage["bookmarkSHA256"] = SHA256.hash(data: bookmark).map { String(format: "%02x", $0) }.joined()
-            request["storage"] = storage
+            request["storagePair"] = pair
         }
         return try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
     }
@@ -2206,14 +2989,15 @@ final class BpyRuntimeHost {
         if success {
             retiring.removeValue(forKey: key)
         } else if presentFailure && !shuttingDown {
-            NSApplication.shared.presentError(NSError(
-                domain: "NexGenVideo.BpyRuntime", code: 1,
-                userInfo: [
-                    NSLocalizedDescriptionKey: "3D runtime cleanup failed.",
-                    NSLocalizedFailureReasonErrorKey: retiring[key]?.cleanupFailure ?? "The runtime storage is still in use.",
-                    NSLocalizedRecoverySuggestionErrorKey: "The runtime slot stays reserved. Follow the recovery instruction above; project files remain unchanged."
-                ]
-            ))
+            NSApplication.shared.presentError(Self.cleanupError(reason: retiring[key]?.cleanupFailure))
         }
+    }
+
+    static func cleanupError(reason: String?) -> NSError {
+        NSError(domain: "NexGenVideo.BpyRuntime", code: 1, userInfo: [
+            NSLocalizedDescriptionKey: "3D runtime cleanup failed.",
+            NSLocalizedFailureReasonErrorKey: reason ?? "The runtime storage is still in use.",
+            NSLocalizedRecoverySuggestionErrorKey: "Save your project, then choose Quit NexGenVideo to retry cleanup."
+        ])
     }
 }

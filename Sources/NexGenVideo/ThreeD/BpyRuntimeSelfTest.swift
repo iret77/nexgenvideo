@@ -139,34 +139,90 @@ enum BpyRuntimeSelfTest {
         let nonce = UUID()
         let layout = try BpyRuntimeBundleLayout(app: Bundle.main.bundleURL, serviceName: bpyRuntimeServiceNames[slot])
         connection.exportedInterface = NSXPCInterface(with: BpyHostMonitorProtocol.self)
-        connection.exportedObject = BpyHostMonitor(connection: connection, transport: nonce, layout: layout)
-        let box = BpyBoundaryReplyBox()
-        let finished = DispatchSemaphore(value: 0)
+        let monitor = BpyHostMonitor(connection: connection, transport: nonce, layout: layout)
+        connection.exportedObject = monitor
         connection.resume()
         defer { connection.invalidate() }
-        guard let service = connection.remoteObjectProxyWithErrorHandler({ error in
-            box.store(error: error)
-            finished.signal()
-        }) as? BpyRuntimeServiceProtocol else {
+        guard let service = connection.remoteObjectProxyWithErrorHandler({ _ in }) as? BpyRuntimeServiceProtocol else {
             throw BpyRuntimeError.unavailable("The boundary XPC service is unavailable.")
         }
-        service.runBoundaryProbe(
-            try JSONEncoder().encode(BpyBoundaryProbeRequest(nonce: nonce))
-        ) { response in
-            box.store(response: response)
-            finished.signal()
+        func call(_ timeout: TimeInterval = 30, _ send: (@escaping (Data) -> Void) -> Void) throws -> Data {
+            let box = BpyBoundaryReplyBox()
+            let finished = DispatchSemaphore(value: 0)
+            send { response in box.store(response: response); finished.signal() }
+            guard finished.wait(timeout: .now() + timeout) == .success else { throw BpyRuntimeError.timedOut }
+            guard let body = box.load().0 else { throw BpyRuntimeError.invalidOutput("The boundary probe returned no result.") }
+            return body
         }
-        guard finished.wait(timeout: .now() + 8 * 20 + 10) == .success else {
-            throw BpyRuntimeError.timedOut
+        let limits = BpyRuntimeLimits(timeoutSeconds: 20)
+        let preparationRequest = try JSONEncoder().encode(BpyOpenSessionRequest(sessionID: nonce,
+            documentID: "native-boundary", limits: limits))
+        func storageProof() throws -> BpyStoragePreparation {
+            let response = try JSONDecoder().decode(BpyServiceResponse.self,
+                from: call { service.openSession(preparationRequest, withReply: $0) })
+            guard response.ok, let proof = response.storagePreparation else {
+                throw BpyRuntimeError.invalidOutput("The boundary storage owner is unavailable.")
+            }
+            return proof
         }
-        let value = box.load()
-        if let error = value.1 { throw error }
-        guard let data = value.0 else {
-            throw BpyRuntimeError.invalidOutput("The boundary probe returned no result.")
+        let preparation = try storageProof()
+        let worker = try BpyRuntimeVolume.create(preparation: preparation, serviceName: bpyRuntimeServiceNames[slot],
+            maximumBytes: limits.physicalStorageBytes)
+        var dataVolume: BpyRuntimeVolume?
+        defer {
+            BpyMemoryCoordinator.shared.close(owner: nonce)
+            if let proof = try? storageProof() {
+                try? dataVolume?.release(serviceStopped: false, serviceProof: proof)
+                try? worker.release(serviceStopped: false, serviceProof: proof)
+            }
         }
-        let result = try JSONDecoder().decode(BpyBoundaryProbeResult.self, from: data)
+        guard let dataBytes = limits.dataStorageBytes else { throw BpyRuntimeError.invalidOutput("Invalid boundary capacity.") }
+        let ownedData = try BpyRuntimeVolume.create(preparation: preparation, serviceName: bpyRuntimeServiceNames[slot],
+            maximumBytes: dataBytes, role: .data)
+        dataVolume = ownedData
+        let pair = BpyStoragePair(id: preparation.id, worker: worker.lease, data: ownedData.lease)
+        let memory = BpyMemoryCoordinator.shared
+        try memory.register(owner: nonce, generation: nonce)
+        func run(_ mode: BpyBoundaryMode) throws -> BpyBoundaryRun {
+            let admission = try memory.admit(owner: nonce, generation: nonce, transport: nonce, job: nil,
+                kind: .boundary, timeout: 20, cancellation: .init())
+            defer { memory.finish(admission.id); memory.forget(admission.id) }
+            try monitor.install(.init(slot: bpyRuntimeServiceNames[slot], identity: admission, pair: pair, limits: limits,
+                workerVolume: worker, dataVolume: ownedData, sourceSHA256: nil, fingerprint: nil, diagnosticDeniedPaths: []))
+            let request = try JSONEncoder().encode(BpyBoundaryProbeRequest(nonce: nonce, execution: UUID(), mode: mode,
+                storagePair: pair, admission: admission.id, admissionDeadline: admission.admissionDeadline, limits: limits))
+            let run = try JSONDecoder().decode(BpyBoundaryRun.self, from: call { service.runBoundaryProbe(request, withReply: $0) })
+            guard run.report.mode == mode.rawValue, run.supervisorParentProcessIdentifier == getpid(),
+                  run.supervisorGone, run.childGone else { throw BpyRuntimeError.invalidOutput("Boundary process ownership failed.") }
+            return run
+        }
+        let first = try run(.denials)
+        let retained = try [run(.openUnlinked), run(.readonlyUnlinked), run(.mappedUnlinked)]
+        let external = try run(.externalReadonly)
+        let internalLinked = try run(.internalWritable)
+        let fileport = try run(.fileportUnlinked)
+        let followup = try run(.denials)
+        let result = BpyBoundaryProbeResult(nonce: nonce, serviceProcessIdentifier: preparation.servicePID,
+            serviceStartAbsoluteTime: preparation.serviceStart,
+            supervisorProcessIdentifier: first.supervisorProcessIdentifier,
+            supervisorParentProcessIdentifier: first.supervisorParentProcessIdentifier,
+            supervisorStartAbsoluteTime: first.supervisorStartAbsoluteTime,
+            childProcessIdentifier: first.child.processIdentifier, childStartAbsoluteTime: first.child.startAbsoluteTime,
+            childParentProcessIdentifier: first.report.parentProcessIdentifier,
+            allowedWriteSucceeded: first.report.allowedWriteSucceeded, outsideWriteDeniedErrno: first.report.outsideWriteDeniedErrno,
+            forkDeniedErrno: first.report.forkDeniedErrno, networkDeniedErrno: first.report.networkDeniedErrno,
+            signalDeniedErrnos: first.report.signalDeniedErrnos,
+            unlinkedBytesObserved: retained.map(\.observedRetainedBytes).min() ?? 0,
+            unlinkedLimitReason: retained.allSatisfy { $0.limitReason == "disk" } ? "disk" : "",
+            cleanupSupervisorGone: retained.allSatisfy(\.supervisorGone), cleanupChildGone: retained.allSatisfy(\.childGone),
+            internalLinkedWritableDeduplicated: internalLinked.internalLinkedWritableDeduplicated,
+            fileportRetentionDeniedErrno: fileport.report.retentionDeniedErrno, fileportRetentionDenied: fileport.retentionDenied,
+            fileportBytesObserved: fileport.observedRetainedBytes, fileportLimitReason: fileport.limitReason ?? "",
+            healthyFollowupSucceeded: external.limitReason == nil && external.observedRetainedBytes < 1_048_576
+                && followup.supervisorGone && followup.childGone && followup.report.allowedWriteSucceeded)
+        let data = try JSONEncoder().encode(result)
         let permissionErrors = [Int32(EPERM), Int32(EACCES)]
-        guard result.schema == "nexgenvideo/bpy-boundary-probe/4",
+        guard result.schema == "nexgenvideo/bpy-boundary-probe/5",
               result.nonce == nonce,
               result.serviceProcessIdentifier > 1,
               result.supervisorProcessIdentifier > 1,
@@ -177,7 +233,7 @@ enum BpyRuntimeSelfTest {
               result.childProcessIdentifier,
               ]).count == 3,
               result.serviceStartAbsoluteTime > 0,
-              result.supervisorParentProcessIdentifier == result.serviceProcessIdentifier,
+              result.supervisorParentProcessIdentifier == getpid(),
               result.supervisorStartAbsoluteTime > 0,
               result.childStartAbsoluteTime > 0,
               result.childParentProcessIdentifier == result.supervisorProcessIdentifier,
@@ -204,6 +260,7 @@ enum BpyRuntimeSelfTest {
               var proof = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw BpyRuntimeError.invalidOutput("The boundary reply does not match its service slot.")
         }
+        proof["hostProcessIdentifier"] = getpid()
         proof["slot"] = slot
         proof["serviceName"] = bpyRuntimeServiceNames[slot]
         proof["serviceExecutable"] = peer.executable
@@ -288,6 +345,7 @@ enum BpyRuntimeSelfTest {
         result["appDelegateShutdown"] = true
         result["hostPeakMemoryBytes"] = hostPeakMemoryBytes()
         do {
+            result["runtimeObservation"] = try BpyRuntimeObservation.shared.evidence()
             let data = try JSONSerialization.data(
                 withJSONObject: result,
                 options: [.prettyPrinted, .sortedKeys]
@@ -439,6 +497,7 @@ enum BpyRuntimeSelfTest {
             throw BpyRuntimeError.invalidOutput("The warm filesystem-cache probe did not complete.")
         }
         _ = try sessionA.confirm(jobID: warmID, revision: "warm-probe")
+        warm.release()
 
         let firstID = UUID()
         let firstSource = acceptanceSceneSource()
@@ -500,6 +559,8 @@ enum BpyRuntimeSelfTest {
               duplicate.response.joinedExistingJob else {
             throw BpyRuntimeError.invalidOutput("An exact duplicate Job ID was not joined.")
         }
+        duplicate.release()
+        first.release()
         do {
             _ = try sessionA.runJob(
                 id: firstID,
@@ -582,6 +643,7 @@ enum BpyRuntimeSelfTest {
         let secondVerification = try verificationObject(secondVerificationURL)
         try assertDenied(secondVerification, paths: [firstSessionRoot])
         _ = try sessionB.confirm(jobID: secondDocumentID, revision: "document-b-revision")
+        secondDocument.release()
 
         let forgedID = UUID()
         let forged = try sessionA.runJob(
@@ -608,6 +670,7 @@ enum BpyRuntimeSelfTest {
         )
         try assertRecovered(afterTimeout, label: "timeout")
         _ = try sessionA.confirm(jobID: afterTimeoutID, revision: "revision-b")
+        afterTimeout.release()
 
         let cancelID = UUID()
         let cancelBox = BpySelfTestBox()
@@ -623,11 +686,21 @@ enum BpyRuntimeSelfTest {
         }
         try waitUntilRunning(sessionA, jobID: cancelID)
         _ = try sessionA.cancel(jobID: cancelID)
-        guard await cancelBox.wait(timeout: .seconds(10)),
-              let cancelOutcome = cancelBox.load(),
-              case .success(let cancelResult) = cancelOutcome,
-              cancelResult.response.state == .cancelled else {
-            throw BpyRuntimeError.invalidOutput("Cancellation did not stop the active process.")
+        guard await cancelBox.wait(timeout: .seconds(10)), let cancelOutcome = cancelBox.load() else {
+            throw BpyRuntimeError.invalidOutput("Cancellation did not settle the active operation.")
+        }
+        switch cancelOutcome {
+        case .success(let result):
+            defer { result.release() }
+            guard result.response.state == .cancelled else { throw BpyRuntimeError.invalidOutput("Cancellation returned a live candidate.") }
+        case .failure(let error):
+            guard error as? BpyAdmissionFailure == .cancelled else { throw error }
+        }
+        let cancelledStatus = try sessionA.status(jobID: cancelID)
+        guard cancelledStatus.state == .cancelled,
+              cancelledStatus.activeProcessIdentifier == nil,
+              cancelledStatus.activeWorkerProcessIdentifier == nil else {
+            throw BpyRuntimeError.invalidOutput("Cancellation did not prove the owned process exited.")
         }
 
         let transportJobID = UUID()
@@ -693,6 +766,7 @@ enum BpyRuntimeSelfTest {
         )
         try assertRecovered(afterThread, label: "persistent-thread")
         _ = try sessionA.confirm(jobID: afterThreadID, revision: "revision-c")
+        afterThread.release()
 
         let nativeOutputID = UUID()
         let nativeOutput = try sessionA.runJob(
@@ -713,6 +787,7 @@ enum BpyRuntimeSelfTest {
             throw BpyRuntimeError.invalidOutput("Native output corrupted the job control path.")
         }
         _ = try sessionA.confirm(jobID: nativeOutputID, revision: "revision-d")
+        nativeOutput.release()
 
         let forkID = UUID()
         let forkResult = try sessionA.runJob(
@@ -733,39 +808,11 @@ enum BpyRuntimeSelfTest {
             throw BpyRuntimeError.invalidOutput("The kernel process limit did not block fork.")
         }
         _ = try sessionA.confirm(jobID: forkID, revision: "revision-e")
+        forkResult.release()
 
-        let memoryID = UUID()
-        let memory = try sessionA.runJob(
-            id: memoryID,
-            expectedRevision: "revision-e",
-            source: """
-            try:
-                payload = bytearray(7 * 1024 * 1024 * 1024)
-            except MemoryError:
-                bpy.data.objects.new('RLIMIT_AS_ALLOCATION_DENIED', None)
-            else:
-                raise RuntimeError('7 GiB allocation bypassed the 6 GiB address-space limit')
-            """,
-            timeoutSeconds: 30
+        let memoryPolicyEvidence = try BpyMemoryRuntimeAcceptance.run(
+            output: output, session: sessionA, counterpart: sessionB, expectedRevision: "revision-e"
         )
-        guard memory.response.state == .awaitingConfirmation,
-              let memoryVerificationURL = memory.stagedOutputs["verification.json"],
-              let memoryNames = try verificationObject(memoryVerificationURL)["objectNames"] as? [String],
-              memoryNames.contains("RLIMIT_AS_ALLOCATION_DENIED") else {
-            throw BpyRuntimeError.invalidOutput("The Darwin RLIMIT_AS probe did not deny the allocation.")
-        }
-        _ = try sessionA.cancel(jobID: memoryID)
-
-        let outOfMemory = try sessionA.runJob(
-            id: UUID(),
-            expectedRevision: "revision-e",
-            source: "payload = bytearray(7 * 1024 * 1024 * 1024)",
-            timeoutSeconds: 30
-        )
-        guard let exhaustionState = outOfMemory.response.state,
-              [BpyRuntimeJobState.failed, .resourceLimited].contains(exhaustionState) else {
-            throw BpyRuntimeError.invalidOutput("Address-space exhaustion did not stop the untrusted job.")
-        }
         var untrustedExitEvidence: [[String: Any]] = []
         for code in [Int32(71), Int32(72)] {
             let source = """
@@ -930,7 +977,6 @@ enum BpyRuntimeSelfTest {
             documentID: "acceptance-resource-limits",
             limits: BpyRuntimeLimits(
                 timeoutSeconds: 30,
-                memoryBytes: 6 * 1_024 * 1_024 * 1_024,
                 inputBytes: 1_024 * 1_024,
                 outputBytes: 2 * 1_024 * 1_024,
                 stdoutBytes: 65_536,
@@ -1252,6 +1298,12 @@ enum BpyRuntimeSelfTest {
         projectC.close()
         try waitUntilReleased(reusedSession)
 
+        let unavailableSensor = try await Task.detached {
+            try BpyMemoryRuntimeAcceptance.unavailableSensor(output: output, serviceName: originalSlot)
+        }.value
+        let reapedRecovery = try await Task.detached {
+            try BpyReapedRecoveryAcceptance.run(output: output, serviceName: originalSlot)
+        }.value
         let productionSpatial = try await ProductionSpatialAcceptance.run(output: output)
         let storageRecovery = try await BpyStorageRecoveryAcceptance.run(output: output)
 
@@ -1286,11 +1338,13 @@ enum BpyRuntimeSelfTest {
             "nativeProtocolEvidenceSHA256": FileDigest.sha256(of: protocolEvidence),
             "nativeProtocolEvidenceFile": "native-protocol-evidence.json",
             "forgedResultState": forged.response.state?.rawValue ?? "",
-            "cancelState": cancelResult.response.state?.rawValue ?? "",
+            "cancelState": cancelledStatus.state?.rawValue ?? "",
             "transportTimeoutRecovered": afterTransport.response.state == .awaitingConfirmation,
             "droppedReplyEvidenceSHA256": FileDigest.sha256(of: droppedReply),
-            "rlimitASAllocationDenied": true,
-            "outOfMemoryState": outOfMemory.response.state?.rawValue ?? "",
+            "memoryPolicyVersion": "system-pressure-v1",
+            "memoryPolicy": memoryPolicyEvidence,
+            "unavailableSensor": unavailableSensor,
+            "reapedRecovery": reapedRecovery,
             "untrustedExitEvidenceFile": "native-untrusted-exits.json",
             "untrustedExitEvidenceSHA256": FileDigest.sha256(of: untrustedExitBytes),
             "structuralLimitState": structuralLimit.response.state?.rawValue ?? "",

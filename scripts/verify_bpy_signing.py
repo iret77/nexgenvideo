@@ -57,8 +57,8 @@ def validate(app, development=False):
         service = app / f"Contents/XPCServices/NexGenVideoBpyService{slot}.xpc"
         runtime = service / "Contents/Resources/BpyRuntime"
         runtimes.append(runtime)
-        expected[runtime / "python/bin/python3.13"] = {SANDBOX: True, INHERIT: True}
-        expected[service / "Contents/MacOS/NexGenVideoBpySupervisor"] = {SANDBOX: True, INHERIT: True}
+        expected[runtime / "python/bin/python3.13"] = {}
+        expected[service / "Contents/MacOS/NexGenVideoBpySupervisor"] = {}
         expected[service] = {SANDBOX: True}
         expected[service / "Contents/MacOS/NexGenVideoBpyService"] = {SANDBOX: True}
     for path, wanted in expected.items():

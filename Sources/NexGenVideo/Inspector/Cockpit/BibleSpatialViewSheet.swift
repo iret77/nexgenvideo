@@ -1,4 +1,5 @@
 import AppKit
+import BpyRuntimeProtocol
 import NexGenEngine
 import SwiftUI
 
@@ -18,10 +19,12 @@ struct BibleSpatialViewSheet: View {
     @State private var purpose = ""
     @State private var loading = false
     @State private var operation: Task<Void, Never>?
+    @State private var readLifetime = BpyOperationCancellation()
     @State private var saving = false
     @State private var prepared: PipelineSpatialDerivationWriter.PreparedBibleView?
     @State private var image: NSImage?
     @State private var failure: String?
+    @State private var notice: String?
     @State private var inspecting = false
     @State private var previewSHA256 = ""
 
@@ -107,6 +110,10 @@ struct BibleSpatialViewSheet: View {
                     }
                     if saving { ProgressView("Saving reference assignment…") }
                     else if operation != nil { ProgressView("Rendering location view…") }
+                    if let notice {
+                        Text(notice).foregroundStyle(AppTheme.Text.secondaryColor)
+                            .reviewAcceptanceProbe("bible.spatial.cancelled", text: notice)
+                    }
                     if let failure {
                         Text(failure).foregroundStyle(AppTheme.Status.errorColor).textSelection(.enabled)
                             .reviewAcceptanceProbe("bible.spatial.failure", text: failure)
@@ -135,7 +142,7 @@ struct BibleSpatialViewSheet: View {
         .reviewAcceptanceProbe("bible.spatial.sheet")
         .task { await load() }.task(id: sceneID) { await loadScene() }
         .interactiveDismissDisabled(operation != nil || saving)
-        .onDisappear { operation?.cancel() }
+        .onDisappear { operation?.cancel(); readLifetime.cancel() }
         .onChange(of: editor.workingRoot) { _, value in if value != home { operation?.cancel(); dismiss() } }
         .onChange(of: editor.openWorkingCopyGeneration) { _, value in if value != generation { operation?.cancel(); dismiss() } }
         .sheet(isPresented: $inspecting) {
@@ -152,15 +159,17 @@ struct BibleSpatialViewSheet: View {
             return
         }
         loading = true
-        failure = nil
+        failure = nil; notice = nil
         defer { loading = false }
+        let cancellation = BpyOperationCancellation()
+        cancellation.follow(readLifetime)
         do {
-            let value = try await Task.detached(priority: .userInitiated) {
+            let value = try await PipelineSpatialDerivationWriter.background(cancellation: cancellation, dataRoot: root) {
                 let bible = try YAMLArtifactStore(dataRoot: root).load(Bible.self, at: PipelineLayout.bibleFile)
                 try PipelineSpatialSceneAuthority.requireCurrent(dataRoot: root)
                 return (bible.locations.first { $0.id == locationID }, try FileDigest.sha256(of: ProjectLocalFile.resolve(PipelineLayout.bibleFile, dataRoot: root)),
                     try SpatialSceneStore.index(in: root).scenes)
-            }.value
+            }
             guard !Task.isCancelled, currentSession else { return }
             guard let currentLocation = value.0 else {
                 throw ToolError("This location is no longer in References. Close this view and select a current location.")
@@ -172,8 +181,12 @@ struct BibleSpatialViewSheet: View {
     private func loadScene() async {
         scene = nil; cameraID = nil
         guard currentSession, let selected = scenes.first(where: { $0.id == sceneID }), let root = DataRootResolver.dataRoot(of: home) else { return }
+        let cancellation = BpyOperationCancellation()
+        cancellation.follow(readLifetime)
         do {
-            let value = try await Task.detached(priority: .userInitiated) { try SpatialSceneStore.load(selected, in: root) }.value
+            let value = try await PipelineSpatialDerivationWriter.background(cancellation: cancellation, dataRoot: root) {
+                try SpatialSceneStore.load(selected, in: root)
+            }
             guard !Task.isCancelled, currentSession, sceneID == selected.id else { return }
             scene = value; failure = nil
         } catch { if !Task.isCancelled, currentSession { failure = error.localizedDescription } }
@@ -182,23 +195,33 @@ struct BibleSpatialViewSheet: View {
     private func render() {
         guard ready, let selected = scenes.first(where: { $0.id == sceneID }), let cameraID else { return }
         let viewID = viewID, purpose = purpose, expected = bibleSHA256
-        failure = nil
+        failure = nil; notice = nil
         operation = Task {
             defer { operation = nil }
             do {
                 let result = try await PipelineSpatialDerivationWriter.prepareBibleView(locationID: locationID, viewID: viewID,
                     purpose: purpose, scene: selected, cameraID: cameraID, expectedBibleSHA256: expected, editor: editor)
-                guard currentSession, !Task.isCancelled else { return }
+                guard currentSession else { return }
+                guard !Task.isCancelled else {
+                    failure = nil; notice = "The render was cancelled. References were not changed."
+                    return
+                }
                 guard let decoded = NSImage(data: result.imageData) else { throw GateBlocked("The rendered view could not be displayed. Render the preview again.") }
                 prepared = result; image = decoded; previewSHA256 = FileDigest.sha256(of: result.imageData)
-            } catch is CancellationError { if currentSession { failure = "The render was cancelled. References were not changed." } }
-            catch { if currentSession { failure = error.localizedDescription } }
+            } catch {
+                guard currentSession else { return }
+                if Task.isCancelled {
+                    failure = nil; notice = "The render was cancelled. References were not changed."
+                } else if error is CancellationError || (error as? BpyAdmissionFailure) == .cancelled {
+                    failure = "The location or project changed. Reload references and locations before rendering again."
+                } else { failure = error.localizedDescription }
+            }
         }
     }
 
     private func confirm() {
         guard active, let prepared else { return }
-        saving = true; failure = nil
+        saving = true; failure = nil; notice = nil
         operation = Task {
             defer { saving = false; operation = nil }
             do {

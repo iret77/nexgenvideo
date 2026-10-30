@@ -2,7 +2,9 @@
 import argparse
 import json
 import math
+import re
 from pathlib import Path
+from uuid import UUID
 
 
 CASES = {
@@ -16,10 +18,62 @@ CASES = {
         {"cancelPreservedDraft", "pendingTransformBlocked", "sparseReopenPreserved"}),
     "nativeClayUI": ("native full shot Clay render and inspect",
         {"shot-planning.clay.render", "shot-planning.clay.close", "production.input.video.close"}, set()),
+    "nativeBibleUI": ("Bible cancel during actual caller hash",
+        {"bible.spatial.render", "bible.spatial.cancel", "bible.spatial.assign", "bible.spatial.inspect"}, {"callerCancelled"}),
     "nativeSpatialStoryboardUI": ("native location sketch assigned",
         {"storyboard.spatial.scene", "storyboard.spatial.camera", "storyboard.spatial.assign", "storyboard.spatial.cancel"},
         {"cancelPreservedStoryboard"}),
 }
+
+CANCELLATIONS = {
+    "nativeClayUI": ("Clay close during loading", "Clay cancel during actual caller hash"),
+    "nativeBibleUI": ("Bible close during loading", "Bible cancel during actual caller hash"),
+}
+
+
+def valid_cancellation(state):
+    operation = state.get("operation")
+    size, hashed = state.get("bytes"), state.get("hashedBytes")
+    return (isinstance(operation, str) and UUID(operation).int != 0
+            and type(size) is int and type(hashed) is int and size > 65_536
+            and 0 < hashed < size and state.get("callerCancelled") is True)
+
+
+def valid_reload(state, render_key):
+    return (isinstance(state.get("reloadOperation"), str) and isinstance(state.get(render_key), str)
+            and UUID(state["reloadOperation"]).int != 0 and UUID(state[render_key]).int != 0
+            and UUID(state["reloadOperation"]) != UUID(state[render_key])
+            and state.get("reloadClose") == "done" and state.get("renderingDuringReload") is False)
+
+
+def require_cancellations(case, row):
+    labels = CANCELLATIONS.get(case, ())
+    if not labels: return
+    states = []
+    for label in labels:
+        matches = [item.get("evidence", {}) for item in row["interactions"]
+                   if item.get("kind") == "verified-state" and item.get("label") == label]
+        if len(matches) != 1: raise ValueError("native spatial cancellation record coverage")
+        try: valid = valid_cancellation(matches[0])
+        except (ValueError, TypeError, AttributeError): valid = False
+        if not valid: raise ValueError("native spatial cancellation caller hash")
+        states.append(matches[0])
+    if len({state["operation"] for state in states}) != len(states):
+        raise ValueError("native spatial cancellation distinct callers")
+    if case == "nativeClayUI":
+        success = [item.get("evidence", {}) for item in row["interactions"]
+                   if item.get("kind") == "verified-state" and item.get("label") == "Clay reload after render"]
+        if len(success) != 1: raise ValueError("native Clay reload after render coverage")
+        try:
+            valid = (valid_reload(states[-1], "operation") and valid_reload(success[0], "renderOperation")
+                     and states[-1].get("notice") == "Render cancelled. Clay video unchanged.")
+        except (ValueError, TypeError, AttributeError): valid = False
+        if not valid: raise ValueError("native Clay reload state")
+    if row.get("cancelDuringHash") is not True or row.get("closeDuringLoading") is not True:
+        raise ValueError("native spatial cancellation completed cases")
+    prefix = ("spatial-clay-" if case == "nativeClayUI" else "visual-bible-") + str(int(row["scale"] * 100))
+    if not any(re.fullmatch(prefix + r"-\d+-cancelled-during-hash\.png", name) for name in row["screenshots"]):
+        raise ValueError("native spatial cancellation screenshot")
 
 
 def validate(report, directory):
@@ -36,6 +90,7 @@ def validate(report, directory):
                     or not all(states[label].get(key) is True for key in flags)
                     or not any(item.get("kind") == "visible-group" and item.get("frames") for item in interactions)):
                     return False
+                require_cancellations(case, row)
                 if case in {"nativeClayUI", "nativeSpatialStoryboardUI"}:
                     backing = row.get("backingScale")
                     if (row.get("effectiveScale") != row["scale"] or isinstance(backing, bool)

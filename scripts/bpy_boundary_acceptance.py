@@ -30,7 +30,7 @@ def validate(proofs, fixture):
                 or proof.get("serviceName") != f"de.h5ventures.nexgenvideo.bpy-service-{slot}"
                 or proof.get("serviceExecutable") != str(executable.resolve())):
             raise ValueError("boundary service slot mismatch")
-        if proof.get("schema") != "nexgenvideo/bpy-boundary-probe/4":
+        if proof.get("schema") != "nexgenvideo/bpy-boundary-probe/5":
             raise ValueError("wrong boundary schema")
         uuid.UUID(proof.get("nonce", ""))
         for key in ("outsideWriteDeniedErrno", "networkDeniedErrno", "forkDeniedErrno",
@@ -42,7 +42,9 @@ def validate(proofs, fixture):
         pids = [proof.get(key) for key in ("serviceProcessIdentifier", "supervisorProcessIdentifier", "childProcessIdentifier")]
         if any(type(value) is not int or value <= 1 for value in pids) or len(set(pids)) != 3:
             raise ValueError("invalid boundary process identities")
-        if (proof.get("supervisorParentProcessIdentifier") != pids[0]
+        host_pid = proof.get("hostProcessIdentifier")
+        if (type(host_pid) is not int or host_pid <= 1 or host_pid in pids
+                or proof.get("supervisorParentProcessIdentifier") != host_pid
                 or proof.get("childParentProcessIdentifier") != pids[1]):
             raise ValueError("invalid native parent chain")
         for key in ("serviceStartAbsoluteTime", "supervisorStartAbsoluteTime", "childStartAbsoluteTime"):
@@ -124,6 +126,8 @@ def run(app, output, source_sha):
             raise ValueError("native boundary failed; inspect original logs")
         proofs = [json.loads((output / f"proof.slot{slot}.json").read_text()) for slot in range(2)]
         validate(proofs, fixture)
+        if any(proof["hostProcessIdentifier"] != process.pid for proof in proofs):
+            raise ValueError("boundary supervisor does not belong to its launched host")
         receipt["proofs"] = proofs
         receipt["completed"] = True
     finally:

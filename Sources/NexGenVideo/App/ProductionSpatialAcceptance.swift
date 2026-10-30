@@ -7,12 +7,16 @@ enum ProductionSpatialAcceptance {
         var opened: ProductionPlanningAcceptanceFixture.Context?
         var selectedScene: SpatialSceneHead?
         var nativeSceneUI: [[String: Any]] = []
+        var postCommitCancellation: [String: String] = [:]
+        var hashCancellation: [String: String] = [:]
         defer { opened?.document.close() }
         let context = try await ProductionPlanningAcceptanceFixture.makeScript { value in
             opened = value
             NSDocumentController.shared.addDocument(value.document)
             let native = try await ProductionSceneUIAcceptance.run(context: value, output: output)
             selectedScene = native.0; nativeSceneUI = native.1
+            postCommitCancellation = try await ProductionSpatialCommitCancellationAcceptance.run(context: value, output: output)
+            hashCancellation = try await ProductionSpatialHashCancellationAcceptance.run(context: value, output: output)
         }
         guard let selectedScene else { throw failed("The real location was not retained.") }
         let root = context.dataRoot
@@ -130,7 +134,8 @@ enum ProductionSpatialAcceptance {
             "nativeSceneUI": nativeSceneUI, "nativePoseUI": nativePoseUI, "nativeClayUI": nativeClayUI,
             "nativeSpatialStoryboardUI": nativeSpatialStoryboardUI,
             "nativeStoryboardUI": nativeStoryboardUI, "nativeBibleUI": nativeBibleUI,
-            "promotion": promotion, "referencePurpose": referencePurpose]
+            "promotion": promotion, "referencePurpose": referencePurpose, "postCommitCancellation": postCommitCancellation,
+            "hashCancellation": hashCancellation]
     }
 
     private static func failed(_ message: String) -> GateBlocked { GateBlocked("Spatial production acceptance: " + message) }

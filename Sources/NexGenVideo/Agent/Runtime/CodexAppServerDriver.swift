@@ -425,7 +425,7 @@ final class CodexAppServerJSONRPCDriver: CodexAppServerDriving {
         }
         terminationOwner = self
         do {
-            try process.run()
+            try process.runCoordinated()
         } catch {
             terminationOwner = nil
             output.fileHandleForReading.readabilityHandler = nil

@@ -1,4 +1,5 @@
 import AVFoundation
+import BpyRuntimeProtocol
 import CoreGraphics
 import CoreVideo
 import CryptoKit
@@ -38,20 +39,30 @@ final class SpatialClaySequenceCandidate: @unchecked Sendable {
     let proofData: Data
     let files: [String: URL]
     private let root: URL
+    private let retention: BpySequenceRetention
     private let release: @Sendable () -> Void
     private let lock = NSLock()
     private var available = true
 
     fileprivate init(proof: SpatialClaySequenceProof, files: [String: URL], root: URL,
-                     release: @escaping @Sendable () -> Void) throws {
+                     retention: BpySequenceRetention, release: @escaping @Sendable () -> Void) throws {
         self.proof = proof
         proofData = try SpatialSceneStore.encode(proof)
         self.files = files
         self.root = root
+        self.retention = retention
         self.release = release
     }
 
     var isAvailable: Bool { lock.withLock { available } }
+    var workOwner: UUID { retention.workOwner }
+
+    func borrowFiles() throws -> [BpyRuntimeFile] {
+        try lock.withLock {
+            guard available else { throw SpatialSceneError.changed }
+            return try retention.borrow()
+        }
+    }
 
     func discard() {
         let shouldRemove = lock.withLock {
@@ -61,22 +72,19 @@ final class SpatialClaySequenceCandidate: @unchecked Sendable {
         }
         guard shouldRemove else { return }
         release()
-        let directory = root
-        Task.detached(priority: .utility) {
-            do { try FileManager.default.removeItem(at: directory) }
-            catch let error as CocoaError where error.code == .fileNoSuchFile { }
-            catch { NSLog("Clay sequence cleanup failed: %@", error.localizedDescription) }
-        }
+        retention.release()
     }
 
     deinit { discard() }
 }
 
 final class SpatialClaySequenceReceipts: @unchecked Sendable {
+    private final class CandidateRef { weak var value: SpatialClaySequenceCandidate? }
     private struct Record {
         let binding: Data
         var chunkHashes: [String] = []
         var seal: String?
+        let candidate = CandidateRef()
     }
     private let lock = NSLock()
     private var records: [UUID: Record] = [:]
@@ -110,6 +118,7 @@ final class SpatialClaySequenceReceipts: @unchecked Sendable {
                 throw SpatialSceneError.invalid("The complete Clay sequence has no authenticated render history.")
             }
             record.seal = SpatialSceneStore.digest(candidate.proofData)
+            record.candidate.value = candidate
             records[candidate.proof.id] = record
         }
     }
@@ -124,27 +133,38 @@ final class SpatialClaySequenceReceipts: @unchecked Sendable {
     }
 
     func release(_ id: UUID) { lock.withLock { _ = records.removeValue(forKey: id) } }
-    func close() { lock.withLock { closed = true; records.removeAll() } }
+    func close() {
+        let candidates = lock.withLock {
+            closed = true
+            let candidates = records.values.compactMap { $0.candidate.value }
+            records.removeAll()
+            return candidates
+        }
+        for candidate in candidates { candidate.discard() }
+    }
 }
 
 extension SpatialClayRenderer {
     static func prepareSequence(
         request: SpatialClayRequest, revision: SpatialSceneRevision, state: SpatialClayState,
         timing: SpatialClaySequenceTiming, runtime: BpyRuntimeSession, runtimeRoot: URL,
+        cancellation: BpyOperationCancellation,
         jobID: UUID = UUID(), isCancelled: @escaping @Sendable () -> Bool = { false }
     ) async throws -> SpatialClaySequenceCandidate {
         let task = Task.detached(priority: .userInitiated) {
             try await prepareSequenceOffMain(request: request, revision: revision, state: state, timing: timing,
-                runtime: runtime, runtimeRoot: runtimeRoot, jobID: jobID,
+                runtime: runtime, runtimeRoot: runtimeRoot, jobID: jobID, cancellation: cancellation,
                 isCancelled: { Task.isCancelled || isCancelled() })
         }
-        return try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+        let registration = cancellation.observe { task.cancel() }
+        defer { withExtendedLifetime(registration) {} }
+        return try await withTaskCancellationHandler { try await task.value } onCancel: { cancellation.cancel(); task.cancel() }
     }
 
     private static func prepareSequenceOffMain(
         request: SpatialClayRequest, revision: SpatialSceneRevision, state: SpatialClayState,
         timing: SpatialClaySequenceTiming, runtime: BpyRuntimeSession, runtimeRoot: URL,
-        jobID: UUID, isCancelled: @escaping @Sendable () -> Bool
+        jobID: UUID, cancellation: BpyOperationCancellation, isCancelled: @escaping @Sendable () -> Bool
     ) async throws -> SpatialClaySequenceCandidate {
         try validateSequenceState(state, request: request, revision: revision)
         try validateSequenceRequest(request, revision: revision)
@@ -156,16 +176,15 @@ extension SpatialClayRenderer {
             timebaseNumerator: revision.snapshot.timebaseNumerator,
             timebaseDenominator: revision.snapshot.timebaseDenominator, chunks: [], outputs: [])
         let id = try runtime.beginSpatialSequence(binding: sequenceBinding(initial))
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ngv-clay-sequence-" + id.uuidString)
         var transferred = false
         defer {
             if !transferred {
                 runtime.releaseSpatialSequence(id)
-                try? FileManager.default.removeItem(at: root)
             }
         }
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false,
-                                               attributes: [.posixPermissions: 0o700])
+        let root = try BpyHostStaging.shared.directory("sequence-" + id.uuidString)
+        let retention = runtime.sequenceRetention(root: root)
+        defer { if !transferred { retention.release() } }
         var chunks: [SpatialClaySequenceChunk] = []
         var outputs: [SpatialClayOutput] = []
         var files: [String: URL] = [:]
@@ -181,21 +200,23 @@ extension SpatialClayRenderer {
                 width: request.width, height: request.height, samples: request.samples,
                 stateSHA256: SpatialSceneStore.digest(try SpatialSceneStore.encode(chunkState)))
             let chunk = try await prepare(request: chunkRequest, revision: revision, state: chunkState,
-                runtime: runtime, runtimeRoot: runtimeRoot, jobID: chunks.isEmpty ? jobID : UUID(), isCancelled: isCancelled)
-            try runtime.appendSpatialSequence(id, candidate: chunk, source: revision)
-            let stem = String(format: "chunk-%08d", offset)
+                runtime: runtime, runtimeRoot: runtimeRoot, cancellation: cancellation,
+                jobID: chunks.isEmpty ? jobID : UUID(), isCancelled: isCancelled)
+            defer { chunk.release() }
+            try runtime.appendSpatialSequence(id, candidate: chunk, source: revision, cancellation: cancellation)
+            let stem = String(format: "chunk-%08d", frames[0].frame)
             for output in chunk.proof.outputs {
-                guard let data = chunk.files[output.filename] else { throw SpatialSceneError.changed }
+                guard let file = chunk.files[output.filename] else { throw SpatialSceneError.changed }
                 let name = output.filename == "clay.mov" ? stem + ".mov" : output.filename
                 let url = root.appendingPathComponent(name)
-                try data.write(to: url, options: .withoutOverwriting)
+                try retention.copy(file, to: url)
                 files[name] = url
                 outputs.append(.init(filename: name, sha256: output.sha256, byteCount: output.byteCount,
                     width: output.width, height: output.height, frameCount: output.frameCount, mediaKind: output.mediaKind))
             }
             let proofName = stem + ".json"
             let proofURL = root.appendingPathComponent(proofName)
-            try chunk.proofData.write(to: proofURL, options: .withoutOverwriting)
+            try retention.copy(chunk.proofData, to: proofURL)
             files[proofName] = proofURL
             outputs.append(.init(filename: proofName, sha256: SpatialSceneStore.digest(chunk.proofData),
                 byteCount: chunk.proofData.count, width: 0, height: 0, frameCount: 0, mediaKind: "application/json"))
@@ -204,19 +225,22 @@ extension SpatialClayRenderer {
                 startFrame: chunkRequest.startFrame, endFrame: chunkRequest.endFrame,
                 jobID: chunk.proof.jobID, jobFingerprint: chunk.proof.jobFingerprint))
         }
-        let movie = root.appendingPathComponent("clay.mov")
-        try await encodeSequenceMovie(request: request, clock: clock, files: files, output: movie, isCancelled: isCancelled)
-        files["clay.mov"] = movie
-        let movieDigest = try sequenceFileDigest(movie)
-        outputs.append(.init(filename: "clay.mov", sha256: movieDigest.sha256, byteCount: movieDigest.byteCount,
+        let media = try retention.encoding(width: request.width, height: request.height)
+        defer { media.abandon() }
+        try await encodeSequenceMovie(request: request, clock: clock, files: files, media: media,
+            retention: retention, cancellation: cancellation, isCancelled: isCancelled)
+        let movie = try media.finish()
+        defer { movie.release() }
+        try retention.adopt(movie)
+        files["clay.mov"] = movie.url
+        outputs.append(.init(filename: "clay.mov", sha256: movie.sha256, byteCount: Int(movie.byteCount),
             width: request.width, height: request.height, frameCount: state.frames.count, mediaKind: "video/quicktime"))
         let proof = SpatialClaySequenceProof(id: id, request: request, state: state, scene: scene, timing: timing,
             timebaseNumerator: revision.snapshot.timebaseNumerator,
             timebaseDenominator: revision.snapshot.timebaseDenominator, chunks: chunks, outputs: outputs)
-        for url in files.values { try FileManager.default.setAttributes([.posixPermissions: 0o400], ofItemAtPath: url.path) }
-        let candidate = try SpatialClaySequenceCandidate(proof: proof, files: files, root: root,
+        let candidate = try SpatialClaySequenceCandidate(proof: proof, files: files, root: root, retention: retention,
                                                          release: { [weak runtime] in runtime?.releaseSpatialSequence(id) })
-        try await runtime.retainSpatialSequence(candidate, source: revision)
+        try await runtime.retainSpatialSequence(candidate, source: revision, cancellation: cancellation)
         guard !isCancelled() else { throw CancellationError() }
         transferred = true
         return candidate
@@ -246,71 +270,77 @@ extension SpatialClayRenderer {
         }
     }
 
-    static func validateSequence(proofData: Data, files: [String: URL], against revision: SpatialSceneRevision) throws {
-        let proof = try JSONDecoder().decode(SpatialClaySequenceProof.self, from: proofData)
-        try validateSequenceState(proof.state, request: proof.request, revision: revision)
-        try validateSequenceRequest(proof.request, revision: revision)
-        guard try SpatialSceneStore.encode(proof) == proofData, proof.schema == "spatial-derivation-sequence/v1",
-              proof.scene.id == revision.manifest.sceneID, proof.scene.revision == revision.manifest.revision,
-              proof.scene.name == revision.manifest.name,
-              proof.scene.manifestSHA256 == SpatialSceneStore.digest(revision.manifestData),
-              proof.timebaseNumerator == revision.snapshot.timebaseNumerator,
-              proof.timebaseDenominator == revision.snapshot.timebaseDenominator,
-              proof.outputs.count == files.count, Set(proof.outputs.map(\.filename)) == Set(files.keys),
-              !proof.chunks.isEmpty, Set(proof.chunks.map(\.jobID)).count == proof.chunks.count else {
-            throw SpatialSceneError.changed
-        }
-        _ = try sequenceClock(proof.timing, numerator: proof.timebaseNumerator,
-                              denominator: proof.timebaseDenominator, count: proof.state.frames.count)
-        var expectedNames = Set(["clay.mov"])
-        let metadata = Dictionary(uniqueKeysWithValues: proof.outputs.map { ($0.filename, $0) })
-        var next = proof.request.startFrame
-        let chunkSize = min(32, 33_554_432 / (proof.request.width * proof.request.height))
-        var rendererIdentity: [String]?
-        for chunk in proof.chunks {
-            guard next <= proof.request.endFrame, chunk.startFrame == next,
-                  chunk.endFrame == min(next + chunkSize - 1, proof.request.endFrame),
-                  let dataURL = files[chunk.proofFilename] else { throw SpatialSceneError.changed }
-            let data = try SpatialSceneStore.read(dataURL.lastPathComponent, in: dataURL.deletingLastPathComponent())
-            let item = try JSONDecoder().decode(SpatialDerivationProof.self, from: data)
-            guard SpatialSceneStore.digest(data) == chunk.proofSHA256,
-                  chunk.proofFilename == String(format: "chunk-%08d.json", next),
-                  chunk.movieFilename == (chunk.endFrame > next ? String(format: "chunk-%08d.mov", next) : nil),
-                  item.jobID == chunk.jobID, item.jobFingerprint == chunk.jobFingerprint,
-                  item.request.owner == proof.request.owner, item.request.ownerArtifactSHA256 == proof.request.ownerArtifactSHA256,
-                  item.request.ownerBindingSHA256 == proof.request.ownerBindingSHA256,
-                  item.request.cameraID == proof.request.cameraID, item.request.startFrame == next,
-                  item.request.endFrame == chunk.endFrame, item.request.width == proof.request.width,
-                  item.request.height == proof.request.height, item.request.samples == proof.request.samples,
-                  let state = item.state, state.frames == Array(proof.state.frames[next...chunk.endFrame]),
-                  metadata[chunk.proofFilename] == SpatialClayOutput(filename: chunk.proofFilename,
-                    sha256: chunk.proofSHA256, byteCount: data.count, width: 0, height: 0, frameCount: 0, mediaKind: "application/json") else {
+    static func validateSequence(proofData: Data, files: [String: URL], against revision: SpatialSceneRevision,
+                                 scope: BpyMediaReadScope) throws {
+        try scope.withConsumer { work in
+            try scope.check()
+            let proof = try JSONDecoder().decode(SpatialClaySequenceProof.self, from: proofData)
+            try validateSequenceState(proof.state, request: proof.request, revision: revision)
+            try validateSequenceRequest(proof.request, revision: revision)
+            guard try SpatialSceneStore.encode(proof) == proofData, proof.schema == "spatial-derivation-sequence/v1",
+                  proof.scene.id == revision.manifest.sceneID, proof.scene.revision == revision.manifest.revision,
+                  proof.scene.name == revision.manifest.name,
+                  proof.scene.manifestSHA256 == SpatialSceneStore.digest(revision.manifestData),
+                  proof.timebaseNumerator == revision.snapshot.timebaseNumerator,
+                  proof.timebaseDenominator == revision.snapshot.timebaseDenominator,
+                  proof.outputs.count == files.count, Set(proof.outputs.map(\.filename)) == Set(files.keys),
+                  !proof.chunks.isEmpty, Set(proof.chunks.map(\.jobID)).count == proof.chunks.count else {
                 throw SpatialSceneError.changed
             }
-            let identity = [item.runtimeLockSHA256, item.workerSHA256, item.rendererScriptSHA256,
-                            item.rendererBinarySHA256, item.renderer, item.blenderBuildHash]
-            if let rendererIdentity, rendererIdentity != identity { throw SpatialSceneError.changed }
-            rendererIdentity = identity
-            var chunkFiles: [String: Data] = [:]
-            for output in item.outputs {
-                let name = output.filename == "clay.mov" ? chunk.movieFilename : output.filename
-                guard let name, let url = files[name], expectedNames.insert(name).inserted,
-                      metadata[name] == SpatialClayOutput(filename: name, sha256: output.sha256, byteCount: output.byteCount,
-                        width: output.width, height: output.height, frameCount: output.frameCount, mediaKind: output.mediaKind) else {
+            _ = try sequenceClock(proof.timing, numerator: proof.timebaseNumerator,
+                                  denominator: proof.timebaseDenominator, count: proof.state.frames.count)
+            var expectedNames = Set(["clay.mov"])
+            let metadata = Dictionary(uniqueKeysWithValues: proof.outputs.map { ($0.filename, $0) })
+            var next = proof.request.startFrame
+            let chunkSize = min(32, 33_554_432 / (proof.request.width * proof.request.height))
+            var rendererIdentity: [String]?
+            for chunk in proof.chunks {
+                try scope.check()
+                guard next <= proof.request.endFrame, chunk.startFrame == next,
+                      chunk.endFrame == min(next + chunkSize - 1, proof.request.endFrame),
+                      let dataURL = files[chunk.proofFilename] else { throw SpatialSceneError.changed }
+                let data = try SpatialSceneStore.read(dataURL.lastPathComponent, in: dataURL.deletingLastPathComponent(),
+                    checking: { try scope.check(); try work.check() })
+                let item = try JSONDecoder().decode(SpatialDerivationProof.self, from: data)
+                guard SpatialSceneStore.digest(data) == chunk.proofSHA256,
+                      chunk.proofFilename == String(format: "chunk-%08d.json", next),
+                      chunk.movieFilename == (chunk.endFrame > next ? String(format: "chunk-%08d.mov", next) : nil),
+                      item.jobID == chunk.jobID, item.jobFingerprint == chunk.jobFingerprint,
+                      item.request.owner == proof.request.owner, item.request.ownerArtifactSHA256 == proof.request.ownerArtifactSHA256,
+                      item.request.ownerBindingSHA256 == proof.request.ownerBindingSHA256,
+                      item.request.cameraID == proof.request.cameraID, item.request.startFrame == next,
+                      item.request.endFrame == chunk.endFrame, item.request.width == proof.request.width,
+                      item.request.height == proof.request.height, item.request.samples == proof.request.samples,
+                      let state = item.state, state.frames == Array(proof.state.frames[(next - proof.request.startFrame)...(chunk.endFrame - proof.request.startFrame)]),
+                      metadata[chunk.proofFilename] == SpatialClayOutput(filename: chunk.proofFilename,
+                        sha256: chunk.proofSHA256, byteCount: data.count, width: 0, height: 0, frameCount: 0, mediaKind: "application/json") else {
                     throw SpatialSceneError.changed
                 }
-                chunkFiles[output.filename] = try SpatialSceneStore.read(url.lastPathComponent, in: url.deletingLastPathComponent())
+                let identity = [item.runtimeLockSHA256, item.workerSHA256, item.rendererScriptSHA256,
+                                item.rendererBinarySHA256, item.renderer, item.blenderBuildHash]
+                if let rendererIdentity, rendererIdentity != identity { throw SpatialSceneError.changed }
+                rendererIdentity = identity
+                var chunkFiles: [String: URL] = [:]
+                for output in item.outputs {
+                    let name = output.filename == "clay.mov" ? chunk.movieFilename : output.filename
+                    guard let name, let url = files[name], expectedNames.insert(name).inserted,
+                          metadata[name] == SpatialClayOutput(filename: name, sha256: output.sha256, byteCount: output.byteCount,
+                            width: output.width, height: output.height, frameCount: output.frameCount, mediaKind: output.mediaKind) else {
+                        throw SpatialSceneError.changed
+                    }
+                    chunkFiles[output.filename] = url
+                }
+                try validate(proof: item, proofData: data, files: chunkFiles, against: revision, scope: scope)
+                guard expectedNames.insert(chunk.proofFilename).inserted else { throw SpatialSceneError.changed }
+                next = chunk.endFrame + 1
             }
-            try validate(.init(proof: item, proofData: data, files: chunkFiles), against: revision)
-            guard expectedNames.insert(chunk.proofFilename).inserted else { throw SpatialSceneError.changed }
-            next = chunk.endFrame + 1
+            guard next == proof.request.endFrame + 1, expectedNames == Set(files.keys),
+                  let movie = files["clay.mov"], let output = metadata["clay.mov"] else { throw SpatialSceneError.changed }
+            let digest = try sequenceFileDigest(movie, scope: scope)
+            guard output == SpatialClayOutput(filename: "clay.mov", sha256: digest.sha256, byteCount: digest.byteCount,
+                width: proof.request.width, height: proof.request.height,
+                frameCount: proof.state.frames.count, mediaKind: "video/quicktime") else { throw SpatialSceneError.changed }
         }
-        guard next == proof.request.endFrame + 1, expectedNames == Set(files.keys),
-              let movie = files["clay.mov"], let output = metadata["clay.mov"] else { throw SpatialSceneError.changed }
-        let digest = try sequenceFileDigest(movie)
-        guard output == SpatialClayOutput(filename: "clay.mov", sha256: digest.sha256, byteCount: digest.byteCount,
-            width: proof.request.width, height: proof.request.height,
-            frameCount: proof.state.frames.count, mediaKind: "video/quicktime") else { throw SpatialSceneError.changed }
     }
 
     struct SequenceClock {
@@ -344,8 +374,13 @@ extension SpatialClayRenderer {
         return .init(timescale: Int32(scale), frameTicks: step, durationTicks: duration, count: count)
     }
 
-    static func sequenceFileDigest(_ url: URL) throws -> (sha256: String, byteCount: Int) {
-        let parent = Darwin.open(url.deletingLastPathComponent().path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+    private static func sequenceFileDigest(_ url: URL, scope: BpyMediaReadScope) throws -> (sha256: String, byteCount: Int) {
+        try scope.withConsumer { work in
+        let activity = BpyObservedActivity(options: .userInitiated, reason: "Verify a 3D movie", parent: work.id)
+        defer { activity.end() }
+        func check() throws { try scope.check(); try work.check() }
+        try check()
+        let parent = Darwin.open(url.deletingLastPathComponent().path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW_ANY | O_CLOEXEC)
         guard parent >= 0 else { throw SpatialSceneError.changed }
         defer { Darwin.close(parent) }
         let fd = Darwin.openat(parent, url.lastPathComponent, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
@@ -353,29 +388,40 @@ extension SpatialClayRenderer {
         defer { Darwin.close(fd) }
         var before = stat(), after = stat()
         guard fstat(fd, &before) == 0, before.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG),
+              before.st_uid == getuid(), before.st_nlink == 1,
               before.st_size > 0 else { throw SpatialSceneError.changed }
         let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: false)
         var digest = SHA256(), count = 0
         while let data = try handle.read(upToCount: 1_048_576), !data.isEmpty {
-            guard !Task.isCancelled else { throw CancellationError() }
+            try check()
             digest.update(data: data)
             count += data.count
         }
         guard fstat(fd, &after) == 0, before.st_size == count, before.st_size == after.st_size,
+              before.st_dev == after.st_dev, before.st_ino == after.st_ino, after.st_nlink == 1,
               before.st_mtimespec.tv_sec == after.st_mtimespec.tv_sec,
-              before.st_mtimespec.tv_nsec == after.st_mtimespec.tv_nsec else { throw SpatialSceneError.changed }
+              before.st_mtimespec.tv_nsec == after.st_mtimespec.tv_nsec,
+              before.st_ctimespec.tv_sec == after.st_ctimespec.tv_sec,
+              before.st_ctimespec.tv_nsec == after.st_ctimespec.tv_nsec else { throw SpatialSceneError.changed }
         return (digest.finalize().map { String(format: "%02x", $0) }.joined(), count)
+        }
     }
 
-    private static func sequenceImage(_ index: Int, request: SpatialClayRequest, files: [String: URL]) throws -> CGImage {
+    private static func sequenceImage(_ index: Int, request: SpatialClayRequest, files: [String: URL],
+                                      readFile: (URL) throws -> BpyRuntimeFile, checking: () throws -> Void) throws -> CGImage {
         guard let url = files[String(format: "clay-%08d.png", request.startFrame + index)] else { throw SpatialSceneError.changed }
-        return try decodePNG(SpatialSceneStore.read(url.lastPathComponent, in: url.deletingLastPathComponent()),
-                             width: request.width, height: request.height)
+        let file = try readFile(url)
+        defer { file.release() }
+        return try decodePNG(file.verifiedData(maximum: BpyRuntimeLimits.maximumOutputBytes, checking: checking), width: request.width, height: request.height)
     }
 
     private static func encodeSequenceMovie(request: SpatialClayRequest, clock: SequenceClock, files: [String: URL],
-                                            output: URL, isCancelled: @escaping @Sendable () -> Bool) async throws {
-        let writer = try AVAssetWriter(outputURL: output, fileType: .mov)
+                                            media: BpySequenceRetention.Encoding, retention: BpySequenceRetention,
+                                            cancellation: BpyOperationCancellation,
+                                            isCancelled: @escaping @Sendable () -> Bool) async throws {
+        let work = try BpyMemoryCoordinator.shared.beginConsumer(owner: media.workOwner, cancellation: cancellation)
+        defer { work.release() }
+        let writer = try AVAssetWriter(outputURL: media.url, fileType: .mov)
         writer.movieTimeScale = clock.timescale
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: request.width, AVVideoHeightKey: request.height,
@@ -388,21 +434,29 @@ extension SpatialClayRenderer {
         input.mediaTimeScale = clock.timescale
         guard writer.canAdd(input) else { throw SpatialSceneError.invalid("The Clay sequence encoder is unavailable.") }
         writer.add(input)
-        guard writer.startWriting() else { throw writer.error ?? SpatialSceneError.changed }
-        writer.startSession(atSourceTime: .zero)
-        var complete = false
-        defer { if !complete && writer.status == .writing { writer.cancelWriting() } }
+        let lifetime = try BpyMediaWriter(writer: writer, pin: media.retainForIO(), cancellation: cancellation, work: work)
+        defer { lifetime.requestCancel() }
+        do {
+        guard try lifetime.perform({ writer.startWriting() }) else { throw writer.error ?? SpatialSceneError.changed }
+        try lifetime.perform { writer.startSession(atSourceTime: .zero) }
         for index in 0..<clock.count {
-            let deadline = Date().addingTimeInterval(30)
+            try media.checkSize()
+            let deadline = try BpyRuntimeClock.awakeSeconds() + 30
             while !input.isReadyForMoreMediaData {
+                try work.check()
                 guard !isCancelled() else { throw CancellationError() }
-                guard Date() < deadline else { throw SpatialSceneError.invalid("The Clay sequence encoder stopped responding.") }
+                guard try BpyRuntimeClock.awakeSeconds() < deadline else { throw SpatialSceneError.invalid("The Clay sequence encoder stopped responding.") }
                 guard writer.status == .writing else { throw writer.error ?? SpatialSceneError.changed }
                 try await Task.sleep(for: .milliseconds(5))
             }
             guard !isCancelled() else { throw CancellationError() }
-            try autoreleasepool {
-                let image = try sequenceImage(index, request: request, files: files)
+            try BpyMediaDecode.withPixels(width: request.width, height: request.height,
+                encodedBytes: BpyRuntimeLimits.maximumOutputBytes, owner: media.workOwner, cancellation: cancellation,
+                checking: { if isCancelled() { throw CancellationError() } }) {
+                let image = try sequenceImage(index, request: request, files: files, readFile: { try retention.file(at: $0) }, checking: {
+                    try cancellation.check(); try work.check()
+                    if isCancelled() { throw CancellationError() }
+                })
                 var optional: CVPixelBuffer?
                 let attributes = [kCVPixelBufferCGImageCompatibilityKey: true, kCVPixelBufferCGBitmapContextCompatibilityKey: true] as CFDictionary
                 guard CVPixelBufferCreate(nil, image.width, image.height, kCVPixelFormatType_32BGRA,
@@ -429,29 +483,62 @@ extension SpatialClayRenderer {
                     presentationTimeStamp: clock.presentation(index), decodeTimeStamp: .invalid)
                 var sample: CMSampleBuffer?
                 guard CMSampleBufferCreateReadyWithImageBuffer(allocator: nil, imageBuffer: pixel, formatDescription: format,
-                    sampleTiming: &timing, sampleBufferOut: &sample) == noErr, let sample, input.append(sample) else {
+                    sampleTiming: &timing, sampleBufferOut: &sample) == noErr, let sample,
+                    try lifetime.perform({ input.append(sample) }) else {
                     throw writer.error ?? SpatialSceneError.invalid("The Clay sequence frame could not be written.")
                 }
             }
         }
-        writer.endSession(atSourceTime: clock.duration)
-        input.markAsFinished()
-        await writer.finishWriting()
+        try lifetime.perform { writer.endSession(atSourceTime: clock.duration); input.markAsFinished() }
+        try await lifetime.finish(deadline: BpyRuntimeClock.awakeSeconds() + 30,
+            checking: { if isCancelled() { throw CancellationError() } })
+        try work.check()
         guard writer.status == .completed, !isCancelled() else { throw writer.error ?? CancellationError() }
-        complete = true
+        try media.checkSize(planningFrame: false)
+        } catch {
+            try await lifetime.cancelAndWait()
+            try work.rethrowAfterCleanup(error)
+        }
     }
 
     static func verifySequenceMovie(_ candidate: SpatialClaySequenceCandidate,
+                                    cancellation: BpyOperationCancellation,
                                     isCancelled: @escaping @Sendable () -> Bool) async throws {
+        let task = Task.detached {
+            try await verifySequenceMovieOffMain(candidate, cancellation: cancellation, isCancelled: isCancelled)
+        }
+        let registration = cancellation.observe { task.cancel() }
+        defer { withExtendedLifetime(registration) {} }
+        try await withTaskCancellationHandler { try await task.value } onCancel: { cancellation.cancel(); task.cancel() }
+    }
+
+    private static func verifySequenceMovieOffMain(_ candidate: SpatialClaySequenceCandidate,
+        cancellation: BpyOperationCancellation, isCancelled: @escaping @Sendable () -> Bool
+    ) async throws {
+        let work = try BpyMemoryCoordinator.shared.beginConsumer(owner: candidate.workOwner, cancellation: cancellation)
+        defer { work.release() }
+        let borrowed = try candidate.borrowFiles()
+        var transferred = false
+        defer { if !transferred { for file in borrowed { file.release() } } }
         let proof = candidate.proof
         let clock = try sequenceClock(proof.timing, numerator: proof.timebaseNumerator,
                                       denominator: proof.timebaseDenominator, count: proof.state.frames.count)
         guard candidate.isAvailable, let movie = candidate.files["clay.mov"] else { throw SpatialSceneError.changed }
         let asset = AVURLAsset(url: movie)
+        transferred = true
+        let reading = try BpyMediaReader.begin(asset: asset, files: borrowed, cancellation: cancellation, work: work)
+        var complete = false
+        defer { reading.endBody(success: complete) }
+        do {
+        let byURL = Dictionary(uniqueKeysWithValues: borrowed.map { ($0.url, $0) })
+        try reading.check()
         let tracks = try await asset.loadTracks(withMediaType: .video)
+        try reading.progress()
         guard tracks.count == 1, let track = tracks.first else { throw SpatialSceneError.changed }
         let size = try await track.load(.naturalSize)
+        try reading.progress()
         let duration = try await asset.load(.duration)
+        try reading.progress()
         guard size.width == CGFloat(proof.request.width), size.height == CGFloat(proof.request.height),
               CMTimeCompare(duration, clock.duration) == 0 else {
             throw SpatialSceneError.invalid("The complete Clay movie dimensions or exact duration changed.")
@@ -462,21 +549,32 @@ extension SpatialClayRenderer {
         output.alwaysCopiesSampleData = false
         guard reader.canAdd(output) else { throw SpatialSceneError.changed }
         reader.add(output)
-        guard reader.startReading() else { throw reader.error ?? SpatialSceneError.changed }
-        defer { if reader.status == .reading { reader.cancelReading() } }
+        try reading.start(reader)
         for index in 0..<clock.count {
             guard !Task.isCancelled, !isCancelled(), candidate.isAvailable else { throw CancellationError() }
-            try autoreleasepool {
+            try BpyMediaDecode.withPixels(width: proof.request.width, height: proof.request.height,
+                encodedBytes: BpyRuntimeLimits.maximumOutputBytes, owner: candidate.workOwner, cancellation: cancellation,
+                checking: { try reading.check(); if isCancelled() { throw CancellationError() } }) {
                 guard let sample = output.copyNextSampleBuffer(), let image = CMSampleBufferGetImageBuffer(sample),
                       CMTimeCompare(CMSampleBufferGetPresentationTimeStamp(sample), clock.presentation(index)) == 0,
                       CMTimeCompare(CMSampleBufferGetDuration(sample), clock.sampleDuration(index)) == 0 else {
                     throw SpatialSceneError.invalid("The complete Clay movie lost a frame or changed its exact timing.")
                 }
-                try verifyMovieFrame(image, expected: sequenceImage(index, request: proof.request, files: candidate.files))
+                try verifyMovieFrame(image, expected: sequenceImage(index, request: proof.request, files: candidate.files, readFile: {
+                    guard let file = byURL[$0] else { throw SpatialSceneError.changed }
+                    return try file.retained()
+                }, checking: { try cancellation.check(); try reading.check() }))
             }
+            try reading.progress()
         }
         guard output.copyNextSampleBuffer() == nil, reader.status == .completed else {
             throw SpatialSceneError.invalid("The complete Clay movie has unexpected frames.")
+        }
+        try reading.check()
+        complete = true
+        } catch {
+            try reading.check()
+            throw error
         }
     }
 }

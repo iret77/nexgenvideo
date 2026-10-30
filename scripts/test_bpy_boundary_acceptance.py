@@ -13,9 +13,9 @@ class BoundaryProofTests(unittest.TestCase):
     def proofs(self):
         return [dict(slot=slot, serviceName=f"de.h5ventures.nexgenvideo.bpy-service-{slot}",
                      serviceExecutable=str(FIXTURE / f"Contents/XPCServices/NexGenVideoBpyService{slot}.xpc/Contents/MacOS/NexGenVideoBpyService"),
-                     schema="nexgenvideo/bpy-boundary-probe/4", nonce=str(uuid.uuid4()),
+                     schema="nexgenvideo/bpy-boundary-probe/5", nonce=str(uuid.uuid4()),
                      serviceProcessIdentifier=10 + slot * 10, supervisorProcessIdentifier=11 + slot * 10,
-                     childProcessIdentifier=12 + slot * 10, supervisorParentProcessIdentifier=10 + slot * 10,
+                     childProcessIdentifier=12 + slot * 10, hostProcessIdentifier=1000, supervisorParentProcessIdentifier=1000,
                      childParentProcessIdentifier=11 + slot * 10, serviceStartAbsoluteTime=100 + slot,
                      supervisorStartAbsoluteTime=200 + slot, childStartAbsoluteTime=300 + slot,
                      allowedWriteSucceeded=True, outsideWriteDeniedErrno=1, forkDeniedErrno=35,
@@ -40,12 +40,30 @@ class BoundaryProofTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 validate(value, FIXTURE)
 
+    def test_cross_slot_service_and_execution_identities_are_independent(self):
+        for field in ("serviceProcessIdentifier", "nonce"):
+            with self.subTest(field=field):
+                proofs = self.proofs()
+                proofs[1][field] = proofs[0][field]
+                with self.assertRaisesRegex(ValueError, "boundary slots shared their service or execution"):
+                    validate(proofs, FIXTURE)
+
+    def test_process_roles_are_distinct_and_cannot_claim_the_host_identity(self):
+        for name, mutation, message in (
+                ("child-is-supervisor", lambda item: item.update(childProcessIdentifier=item["supervisorProcessIdentifier"]),
+                 "invalid boundary process identities"),
+                ("host-is-service", lambda item: item.update(hostProcessIdentifier=item["serviceProcessIdentifier"],
+                    supervisorParentProcessIdentifier=item["serviceProcessIdentifier"]), "invalid native parent chain")):
+            with self.subTest(case=name):
+                proofs = self.proofs(); mutation(proofs[0])
+                with self.assertRaisesRegex(ValueError, message): validate(proofs, FIXTURE)
+
     def test_every_required_outcome_and_process_identity_is_checked(self):
         for slot in range(2):
             for key in ["allowedWriteSucceeded", "cleanupSupervisorGone", "cleanupChildGone",
                         "internalLinkedWritableDeduplicated", "healthyFollowupSucceeded",
                         "serviceProcessIdentifier", "supervisorProcessIdentifier", "childProcessIdentifier",
-                        "supervisorParentProcessIdentifier", "childParentProcessIdentifier",
+                        "hostProcessIdentifier", "supervisorParentProcessIdentifier", "childParentProcessIdentifier",
                         "serviceStartAbsoluteTime", "supervisorStartAbsoluteTime", "childStartAbsoluteTime"]:
                 proofs = self.proofs()
                 proofs[slot][key] = False

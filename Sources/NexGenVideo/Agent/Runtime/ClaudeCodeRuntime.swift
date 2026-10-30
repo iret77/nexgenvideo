@@ -51,7 +51,8 @@ final class ClaudeCodeRuntime {
         runtimeGenerationID: UUID = UUID(),
         resumeSessionId: String? = nil,
         seedMessages: [AgentMessage] = [],
-        resolveExecutable: @escaping () -> URL? = { ClaudeCodeLocator.resolve().executableURL },
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        resolveExecutable: (() -> URL?)? = nil,
         resolveWorkingDirectory: @MainActor @escaping () -> URL?,
         onSessionId: (@MainActor (String) -> Void)? = nil,
         onResumeFailed: (@MainActor () -> Void)? = nil,
@@ -66,7 +67,7 @@ final class ClaudeCodeRuntime {
         self.appSessionId = appSessionId
         self.runtimeGenerationID = runtimeGenerationID
         self.resumeSessionId = resumeSessionId
-        self.resolveExecutable = resolveExecutable
+        self.resolveExecutable = resolveExecutable ?? { ClaudeCodeLocator.locateOnly(environment: environment) }
         self.resolveWorkingDirectory = resolveWorkingDirectory
         self.onSessionId = onSessionId
         self.onResumeFailed = onResumeFailed

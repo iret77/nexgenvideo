@@ -6,38 +6,70 @@ cap concurrency at two active `VideoProject` documents. Each job starts a new Py
 from the last host-confirmed scene and a separate new process verifies the resulting scene. No
 Python interpreter, handler, module state, thread, or monkeypatch is reused by the next job.
 
+The host-launcher and `system-pressure-v1` changes are under review. The native checks described
+below are acceptance requirements; this source has not yet passed them.
+
 ## Trust boundary
 
 The app talks only to the two embedded `NexGenVideoBpyService` slots. Each service has its own App
 Sandbox container and has no network, user-selected-file, Keychain, application-group, or temporary-
-exception entitlement. The Python executable is signed only with App Sandbox inheritance. Provider
-keys are absent from its allowlisted environment. A worker receives private staged inputs and an
-in-memory-confirmed scene copy; it receives no project path and cannot write canonical project truth.
-Before Python starts, a signed native supervisor applies an additional Seatbelt profile that denies
-network, fork, the SBPL `signal` operation, and every write outside that process's private write root.
-The inherited XPC container is therefore not the worker's write boundary.
+exception entitlement. The unsandboxed app owns the native supervisor; the service requests launches
+through the existing reverse-XPC monitor. Supervisor and Python signatures have no App Sandbox
+inheritance or code-signing exception entitlements. The supervisor's child applies a deny-default
+Seatbelt profile before executing Python. It grants writes only to that execution's worker-volume
+root and exact read access to its staged inputs, checkpoint, frozen configuration and runtime.
+Network, fork, foreign-process signals and undeclared IPC remain denied. Provider keys are absent
+from the host-built environment. No canonical project path or write capability reaches the worker.
 
 Each XPC bundle contains its own `Contents/Resources/BpyRuntime` and its supervisor in
 `Contents/MacOS`. No runtime executable or script falls back to the outer app bundle. The two
 runtime copies use identical signed bytes; the outer app seals their exact paired inventory in
 `Contents/Resources/BpyRuntimeCompliance/runtime-tree-manifest.json`. Corresponding source and
 license evidence live once in that shared compliance directory. Bundle verification checks both
-copies, their signatures and inheritance entitlements, and the shared source closure.
+copies, their signatures and expected entitlements, and the shared source closure.
 
 The service requests kernel process measurements through its existing XPC connection back to the
 host. The host binds each observation to the actual connection peer, service slot, execution nonce,
 kernel start identities, parent relationships and executable paths. An epoch and monotonic request
 sequence prevent reuse across executions. Unknown or failed kernel views fail the execution; they
-never become zero usage. The service retains directory scanning, resource classification and limit
-decisions. Python cannot submit measurements or select processes for inspection.
+never become zero usage. The host owns pressure admission, child release and process cleanup.
+The service retains directory scanning and disk/file accounting. Python cannot submit trusted
+measurements or select processes for inspection.
 
-The service and supervisor spawn their direct children through an owned POSIX handle. Exit
+The host and supervisor spawn their direct children through an owned POSIX handle. Exit
 observation keeps the child unreaped until the owner collects its status, so a signal cannot target
-a recycled PID. A native child waits for host observation before executing Python. Parent loss is
+a recycled PID. Separate host-owned release pipes gate the supervisor and its child. Both volume
+journals contain the exact process identities before release. Configuration and source descriptors
+bind the launched job to host-verified bytes; no service-writable authorization file grants execution.
+The host coordinates its own process launches and pipe creation under one spawn lock. Parent loss is
 detected through `getppid` and an inherited pipe, without inspecting a foreign process from inside
 the sandbox. The supervisor stops and reaps its worker before exiting; the service never escalates
 to killing the supervisor while its worker might survive. Failed cleanup retains the slot and its
 storage. The host observes process exit and does not signal a foreign PID.
+
+### Concurrent host launch inventory
+
+The source audit covers the pinned dependencies as well as the app's coordinated `Process` sites.
+CLI metadata probes use the owned-child launcher and share one five-second status deadline.
+Version output uses bounded nonblocking reads; stdin and stderr use the null device. Timeout
+cleanup keeps child ownership through termination and reaping. Chat startup only locates the binary.
+[Sparkle 2.9.1's framework build phase](https://github.com/sparkle-project/Sparkle/blob/066e75a8b3e99962685d6a90cdd5293ebffd9261/Sparkle.xcodeproj/project.pbxproj)
+includes [SUInstallerLauncher](https://github.com/sparkle-project/Sparkle/blob/066e75a8b3e99962685d6a90cdd5293ebffd9261/InstallerLauncher/SUInstallerLauncher.m),
+which submits helper jobs through `SMJobSubmit`. The located production `NSTask` sites belong to its
+separate Autoupdate executable. The framework source therefore supplies no identified direct-child
+spawn that bypasses the app's spawn lock. This does not establish how opaque Apple frameworks create
+their processes.
+
+[Sentry 8.58.2's fatal-signal inventory](https://github.com/getsentry/sentry-cocoa/blob/cf44aa8cb4147f39e698c1f28be0b6b2c89f79d2/Sources/SentryCrash/Recording/Tools/SentryCrashSignalInfo.c)
+excludes `SIGCHLD`; its inspected Sources contain no direct spawn or foreign-child reaper. The package
+uses a binary distribution, so source inspection alone does not qualify the shipped bytes.
+[MCP Swift SDK 0.12.0's StdioTransport](https://github.com/modelcontextprotocol/swift-sdk/blob/6132fd4b5b4217ce4717c4775e4607f5c3120129/Sources/MCP/Base/Transports/StdioTransport.swift)
+uses supplied descriptors without spawning a child. The app's CLI wrappers own those launches.
+
+These findings are source evidence. The deployed macOS `Foundation.Process` implementation remains a
+native qualification target: [swift-corelibs-foundation builds for non-Darwin platforms](https://github.com/swiftlang/swift-foundation#foundation-framework),
+so its source cannot prove Apple's deployed descriptor-inheritance behavior. Native simultaneous
+launch and descriptor-isolation controls remain required.
 
 Native stdout and stderr are bounded diagnostic streams only. The service observes process termination and native resource limits; worker output cannot set state.
 The service addresses the signed `python/bin/python3.13` executable directly. Opening a session
@@ -51,10 +83,11 @@ types, and diagnostic OS denials. Only that verified result becomes a candidate.
 uses a real Blender Text side effect: production loading proves the side effect absent, while a
 separate isolated `use_scripts=true` process proves the fixture can trigger it.
 
-The child applies hard `RLIMIT_CORE`, `RLIMIT_FSIZE`, `RLIMIT_NOFILE`, `RLIMIT_CPU`, `RLIMIT_AS`, and
-`RLIMIT_NPROC=0` limits before importing bpy. The service additionally monitors worker physical
-footprint, its own physical footprint, total bytes and files across every worker-writable root, wall
-deadline, and the live descendant tree. Recursive accounting uses `getattrlistbulk` to obtain
+The child applies hard `RLIMIT_CORE`, `RLIMIT_FSIZE`, `RLIMIT_NOFILE`, `RLIMIT_CPU`, and
+`RLIMIT_NPROC=0` limits before importing bpy. `system-pressure-v1` imposes no address-space or
+fixed per-process footprint ceiling. Footprints remain observations. The host monitors system
+pressure, deadlines and exact owned processes; the service accounts for total bytes and files
+across every worker-writable root. Recursive accounting uses `getattrlistbulk` to obtain
 identity, type, logical size, and allocated size in the same directory-entry operation. Renamed
 directories are reopened by `fsgetpath` and verified by device/inode before traversal. Three complete
 bounded scans are identity-unioned, stop immediately at the file or byte limit, and fail closed after
@@ -97,15 +130,17 @@ FD, fileport, and mapping inspection are layered sampled controls. The host uses
 (device, inode) inventory. Native acceptance requires either a proven fileport denial or the actual
 retained bytes and disk-limit outcome; an allowed but uncounted fileport fails.
 
-Production worker roots now live on a host-created, private APFS sparse image. The host binds image
-and parent-directory identity to its lease; the XPC service independently validates the exact mount,
-device and `fstatfs` capacity before launching Python. Its virtual filesystem capacity is the requested disk budget or the 64 MiB filesystem floor,
-whichever is larger. The smaller logical disk/file monitor remains active for diagnostic budgets. The normal budget is 2 GiB. The host image additionally
-permits 64 MiB of format metadata; this is not an assertion that sparse-image metadata has already
-been measured on the deployment OS.
+Production storage uses two separate host-created APFS sparse images: a worker image and a data
+image, each with its own role, lease, device and recovery journal. The host binds image and
+parent-directory identity to each lease; the XPC service independently validates both mounts,
+devices and `fstatfs` capacities before execution. Worker capacity is the requested disk budget or
+the 64 MiB filesystem floor, whichever is larger. The smaller logical disk/file monitor remains
+active for diagnostic budgets. The default worker budget is 2 GiB and the default data image is
+5 GiB. The data formula includes 64 MiB for bounded control files and formatting; its adequacy
+requires native capacity evidence. An incomplete or mismatched pair cannot launch Python.
 
 Only the non-sandboxed host invokes `hdiutil`; neither Python nor the sandboxed XPC service receives
-mount authority. Recovery checks the original host/service start identities, private image inode and
+mount authority. Recovery checks the original host/service/supervisor/worker start identities, private image inode and
 current machine-readable image/device/mount mapping. It never force-unmounts or detaches an arbitrary
 device from a serialized path. The separate, non-sandboxed `NexGenVideoBpyStorage` helper atomically
 journals its own PID/start identity, rechecks the host, and waits for its directly launched hdiutil
@@ -144,17 +179,16 @@ are prepared but unexecuted. Acceptance still must prove bounded image growth, X
 all attach/close/crash transitions,
 and rejection of replaced image/mount/symlink identities. None of these new volume claims is marked
 verified by source inspection. Disk-quota completeness remains a distribution blocker until those
-actual macOS 26 results exist. `RLIMIT_AS` remains
-enabled because current XNU carries an address-space size limit in the VM map; acceptance records the
-configured limit and an over-allocation outcome so the shipped macOS
-behavior is measured. `RLIMIT_NPROC` supplies the kernel fork/spawn barrier for the non-root app
+actual macOS 26 results exist. The controlled virtual-mapping case requires exactly 8 GiB of untouched
+`PROT_NONE` address space and its deallocation, with no enforced `RLIMIT_AS` ceiling. It does not
+allocate 8 GiB of physical memory. `RLIMIT_NPROC` supplies the kernel fork/spawn barrier for the non-root app
 identity. Process-tree polling is cleanup and evidence around that barrier, not a replacement for
-it. The service launches a native supervisor while Python is still gated. The host
-must record the supervisor's exact PID, bundled executable, XNU start time, and
-one-use authorization ID before the service releases the gate. The supervisor is Python's direct
+it. The host launches a native supervisor while Python is still gated. It records the supervisor's
+exact PID, bundled executable and XNU start time in both durable role journals before releasing the
+supervisor. The child's exact identity is recorded before its separate release. The supervisor is Python's direct
 parent, so an in-place `execve` does not change ownership. A retained parent pipe and `getppid`
-identify parent loss without a sandbox-denied foreign-process query. On XPC invalidation the service
-requests termination through its owned POSIX handle. The host invalidates the transport, drains prior monitor requests on the monitor's serial queue,
+identify parent loss without a sandbox-denied foreign-process query. On XPC invalidation the host
+requests termination through its owned POSIX handle, drains prior monitor requests on the monitor's serial queue,
 and observes both the supervisor and every recorded worker exiting; it never signals a foreign PID.
 A retained detach receipt can be fetched again after a lost reply. The owned child handle separately
 records normal exit and signal death; only normal supervisor exit proves local child cleanup when
@@ -168,7 +202,7 @@ become a successful zero-resource sample. No worker-writable registry or global 
 termination authority.
 Recovery covers the supervisor and its single recorded worker; the kernel fork barrier prevents
 additional Python descendants. Detach receipts are bounded by the 65,536-execution transport cap.
-Recovery's five-second observation budget includes queue drain. If an external actor forcibly kills
+Recovery's original five-second cleanup budget includes queue drain. If an external actor forcibly kills
 the supervisor while its transport is lost, a surviving worker or unavailable cleanup proof retains
 the service slot and storage for restart recovery. This case does not authorize foreign-PID signals
 or a successful cleanup claim.
@@ -209,13 +243,14 @@ document must explicitly call the confirmed-state rotation path. Rotation is ref
 the host-confirmed revision and exact scene bytes, or while an unconfirmed candidate exists; only a
 successful explicit rotation clears the prior session's ID tombstones.
 
-Successful execution produces only an awaiting-confirmation candidate. Candidate/result bytes are
-retained for at most 15 minutes and within a documented per-session byte budget: the smaller of the
-session disk limit, half the service-memory limit, and four output limits. If capacity is needed,
-oldest terminal bytes expire first; their Job ID/fingerprint tombstones remain, and an expired
-candidate becomes rejected. Confirmation checks the host-staged scene hash and stores its exact
-bytes in both the service and host. Failed, cancelled, timed-out, resource-limited, crashed,
-rejected, or expired jobs cannot be confirmed.
+Successful execution produces only an awaiting-confirmation candidate. File-backed results remain
+owned until explicit transfer, rejection or release. There is no time-based expiry or eviction of
+live results. Reserve one job's maximum output before launching; per-slot retained capacity is
+`min(diskBytes, 4 * outputBytes)`. Exhausted capacity asks the caller to release owned results.
+Physical files, read pins and transfer overlap remain charged until disposal or acknowledgment
+actually completes. Compact Job ID/fingerprint receipts prevent a released result from running again.
+Confirmation checks the host-staged scene hash and retains its exact checkpoint file in the service
+and host. Failed, cancelled, timed-out, resource-limited, crashed or rejected jobs cannot be confirmed.
 
 XPC interruption, invalidation, timeout, and service death invalidate the transport. The service
 also closes only the session IDs owned by a client connection when that connection disappears. Reopening uses
@@ -224,8 +259,51 @@ revision. An incomplete revision/checkpoint pair fails closed. A failed open rem
 session; a client that exhausts both open attempts closes its transport and no longer occupies a host
 slot. Document close schedules cleanup; confirmed application termination awaits runtime shutdown.
 Canonical revisions retain exact scene, snapshot, resources and authenticated host adoption records.
-Transport recovery uses only the last confirmed in-memory checkpoint until the host explicitly loads a
-canonical revision.
+Transport recovery restores the last confirmed checkpoint file until the host explicitly loads a
+canonical revision. Intentional rotation preserves independently transferred host derivatives;
+unexpected transport loss invalidates untransferred results. Document close invalidates all its leases.
+
+## Automatic memory control
+
+The primary observation is an exact UInt32 read of `kern.memorystatus_vm_pressure_level`:
+normal `1`, warning `2`, critical `4`. Dispatch pressure events supplement that reading. A critical
+event latches a stop even when combined with other flags; a normal event cannot authorize work.
+Unknown pressure fails closed. New releases require a sample no older than 250 ms. An independent
+watchdog stops active work after 2.25 awake seconds without a valid observation; a historical gap
+does not override a valid reading already published before the decision.
+
+Normal pressure admits two logical executions; warning admits one new execution. A worker and its
+fresh verifier share that execution's permit, including optional diagnostic autoexec. Critical pressure
+requests both owned supervisors to stop before waiting for either. Stop decisions remain irreversible.
+Cleanup has its original five-second awake deadline. Unproved owned-process or storage cleanup
+blocks new work; a slow host media reader or encoder retains its own file pins and failed consumer
+without preventing the other document from making progress.
+
+The admission deadline and running deadline are distinct. Probes use the session's admission budget
+and a 120-second child budget. Collection may finish through `T + 15` only after all owned children
+have ended before `T`; one final bounded status read observes the original deadline without extending
+it. No stopped job retries automatically or reduces its quality.
+
+Runtime and canonical scenes use streamed, hash-verified files. Worker storage stays independently
+bounded by `W = diskBytes`, with its existing 64 MiB image floor. The separate data image provisions
+`ceilGiB(I + 3 * max(I, O) + min(W, 4 * O) + 64 MiB)`, at most 8 GiB per image. Sequence-owned
+staging has independent disk accounting and may exceed one job's retained-output allowance.
+Decoding reserves per-frame capacity before allocation; encoding streams frames rather than retaining
+an array of all decoded images.
+
+Productive execution, download, validation and bounded cleanup own observed ProcessInfo activities.
+Waiting for user confirmation owns none. Persisted media validation follows the document's working-copy
+generation and operation cancellation, including transaction staging; reading a saved image or hashing
+the runtime does not reserve a Blender slot. Closing a document cancels these reads before waiting for
+phases to settle. Readers and encoders retain their physical files until their cancellation APIs return.
+
+Native evidence records the actual OS version/build/kernel, architecture, image status, pressure source
+and UInt32 length, observed per-role footprints, swap, both clocks, activity lifetimes, stop grounds,
+request times and original cleanup state. Controlled critical-pressure cases are synthetic. Bounded
+native malloc and Python small-allocation probes use a measured baseline plus 128 MiB as the diagnostic
+threshold, baseline plus 256 MiB as the observed safety threshold, a 256 MiB maximum request and
+4 MiB touched chunks. These are diagnostic bounds, not production memory budgets. The safe acceptance
+plan proves no genuine system-wide critical-pressure delivery or forced-sleep behavior.
 
 ## Runtime and distribution
 
@@ -341,7 +419,8 @@ for acceptance.
 The runtime probe uses real `VideoProject` instances and windows through `BpyRuntimeHost`. It covers
 two slots, a denied third document, failed-open reuse, close/reuse, and AppDelegate shutdown. It also
 covers exact and changed duplicate payloads, forged native stdout plus an infinite loop, a persistent
-thread, ctypes stdout, a kernel-blocked fork, in-place `execve`, memory over-allocation, timeout,
+thread, ctypes stdout, a kernel-blocked fork, in-place `execve`, bounded footprint observation,
+untouched virtual mapping, injected pressure/observer failure, timeout,
 cancellation, worker crash, service and host kill/reopen cleanup, denied-file host positive controls,
 network and cross-container denials, disabled autorun plus isolated positive control, BMesh/modifier
 geometry, package-hidden file counts, aggregate writes outside outputs, resource-scan failure/recovery,

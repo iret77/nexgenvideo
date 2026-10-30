@@ -8,21 +8,21 @@ extension PipelineSpatialDerivationWriter {
         let viewID: String
         let purpose: String
         let imageData: Data
-        fileprivate let candidate: SpatialClayCandidate
+        fileprivate let proof: SpatialDerivationProof
+        fileprivate let proofData: Data
         fileprivate let originalBible: Bible
         fileprivate let originalBytes: Data
         fileprivate let contextFingerprint: String
-        fileprivate let scene: SpatialSceneRevision
         fileprivate let home: URL
         fileprivate let documentKey: String
         fileprivate let generation: UUID
 
         fileprivate init(locationID: String, viewID: String, purpose: String, imageData: Data,
-                         candidate: SpatialClayCandidate, originalBible: Bible, originalBytes: Data,
-                         contextFingerprint: String, scene: SpatialSceneRevision, home: URL, documentKey: String, generation: UUID) {
+                         proof: SpatialDerivationProof, proofData: Data, originalBible: Bible, originalBytes: Data,
+                         contextFingerprint: String, home: URL, documentKey: String, generation: UUID) {
             self.locationID = locationID; self.viewID = viewID; self.purpose = purpose; self.imageData = imageData
-            self.candidate = candidate; self.originalBible = originalBible; self.originalBytes = originalBytes
-            self.contextFingerprint = contextFingerprint; self.scene = scene; self.home = home; self.documentKey = documentKey
+            self.proof = proof; self.proofData = proofData; self.originalBible = originalBible; self.originalBytes = originalBytes
+            self.contextFingerprint = contextFingerprint; self.home = home; self.documentKey = documentKey
             self.generation = generation
         }
     }
@@ -49,6 +49,8 @@ extension PipelineSpatialDerivationWriter {
     @MainActor
     static func prepareBibleView(locationID: String, viewID: String, purpose: String, scene: SpatialSceneHead,
                                  cameraID: String, expectedBibleSHA256: String, editor: EditorViewModel) async throws -> PreparedBibleView {
+        let cancellation = BpyOperationCancellation()
+        return try await withTaskCancellationHandler {
         guard let home = editor.workingRoot, let key = editor.openWorkingCopyKey, let generation = editor.openWorkingCopyGeneration,
               let root = DataRootResolver.dataRoot(of: home), !editor.agentService.isStreaming, !editor.agentService.isComposerBlocked,
               let document = NSDocumentController.shared.documents.compactMap({ $0 as? VideoProject })
@@ -62,7 +64,7 @@ extension PipelineSpatialDerivationWriter {
         let runtime = operation.session
         let declaration = ProjectPackGate.MutationDeclaration(packName: editor.declaredPluginName,
             binding: editor.declaredPluginBinding, productionContract: editor.declaredProductionContract)
-        let input = try await background {
+        let input = try await background(cancellation: cancellation, dataRoot: root) {
             _ = try PipelinePlanningWriteAccess(dataRoot: root, declaration: declaration, phase: "bible")
             guard viewID.range(of: "^[a-z][a-z0-9_-]{0,63}$", options: .regularExpression) != nil,
                   !purpose.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -88,21 +90,26 @@ extension PipelineSpatialDerivationWriter {
         guard editor.workingRoot == home, editor.openWorkingCopyKey == key, editor.openWorkingCopyGeneration == generation,
               BpyRuntimeHost.shared.isOperationActive(operation) else { throw bibleViewChanged() }
         let candidate = try await SpatialClayRenderer.prepare(request: input.3, revision: input.2, runtime: runtime,
-            runtimeRoot: runtime.bundledRuntimeRoot)
-        let prepared = try await background {
-            try runtime.authenticateSpatialDerivation(candidate, source: input.2)
-            try SpatialClayRenderer.validate(candidate, against: input.2)
+            runtimeRoot: runtime.bundledRuntimeRoot, cancellation: cancellation)
+        defer { candidate.release() }
+        let prepared = try await background(cancellation: cancellation, dataRoot: root) {
+            try runtime.authenticateSpatialDerivation(candidate, source: input.2, cancellation: cancellation)
+            try SpatialClayRenderer.validate(candidate, against: input.2, cancellation: cancellation)
             guard input.5 == (try bibleContextFingerprint(dataRoot: root)),
                   candidate.proof.outputs.count == 1, let output = candidate.proof.outputs.first,
-                  output.mediaKind == "image/png", let image = candidate.files[output.filename] else { throw bibleViewChanged() }
+                  output.mediaKind == "image/png", let file = candidate.files[output.filename] else { throw bibleViewChanged() }
+            let image = try candidate.lease.withConsumer(cancellation: cancellation) { work, token in
+                try file.verifiedData(maximum: runtime.limits.outputBytes, checking: { try token.check(); try work.check() })
+            }
             return PreparedBibleView(locationID: locationID, viewID: viewID, purpose: input.4.purpose, imageData: image,
-                candidate: candidate, originalBible: input.1, originalBytes: input.0, contextFingerprint: input.5,
-                scene: input.2, home: home, documentKey: key, generation: generation)
+                proof: candidate.proof, proofData: candidate.proofData, originalBible: input.1, originalBytes: input.0, contextFingerprint: input.5,
+                home: home, documentKey: key, generation: generation)
         }
         try Task.checkCancellation()
         guard editor.workingRoot == home, editor.openWorkingCopyKey == key, editor.openWorkingCopyGeneration == generation,
               BpyRuntimeHost.shared.isOperationActive(operation) else { throw bibleViewChanged() }
         return prepared
+        } onCancel: { cancellation.cancel() }
     }
 
     @MainActor
@@ -166,23 +173,26 @@ extension PipelineSpatialDerivationWriter {
     }
 
     private static func publishBibleView(_ prepared: PreparedBibleView, access: PipelinePlanningWriteAccess) throws {
-        let root = access.dataRoot, candidate = prepared.candidate
+        let root = access.dataRoot, derivation = prepared.proof
         guard try bibleContextFingerprint(dataRoot: root) == prepared.contextFingerprint,
               let index = prepared.originalBible.locations.firstIndex(where: { $0.id == prepared.locationID }),
-              let output = candidate.proof.outputs.first, candidate.proof.outputs.count == 1 else { throw bibleViewChanged() }
-        let scene = try currentScene(candidate.proof.scene, dataRoot: root)
-        try SpatialClayRenderer.validate(candidate, against: scene)
+              let output = derivation.outputs.first, derivation.outputs.count == 1 else { throw bibleViewChanged() }
+        let scene = try currentScene(derivation.scene, dataRoot: root)
+        try BpyMediaReadScope.withScope(dataRoot: root) { scope in
+            try SpatialClayRenderer.validate(proof: derivation, proofData: prepared.proofData,
+                files: [output.filename: prepared.imageData], against: scene, scope: scope)
+        }
         let path = try ProductionWorkflowRecoveryMigration.outputPath(area: "bible",
-            leaf: "spatial-\(candidate.proof.id.uuidString.lowercased())/derivation.v1.json", dataRoot: root)
+            leaf: "spatial-\(derivation.id.uuidString.lowercased())/derivation.v1.json", dataRoot: root)
         let directory = (path as NSString).deletingLastPathComponent
-        let proof = PlanningWriterIO.reference(path, id: "bible-spatial-proof.\(candidate.proof.id)", role: "core.spatial-derivation", bytes: candidate.proofData)
-        let image = CanonicalArtifactReferenceV1(id: "bible-spatial-view.\(candidate.proof.id)", role: "core.bible-spatial-view",
+        let proof = PlanningWriterIO.reference(path, id: "bible-spatial-proof.\(derivation.id)", role: "core.spatial-derivation", bytes: prepared.proofData)
+        let image = CanonicalArtifactReferenceV1(id: "bible-spatial-view.\(derivation.id)", role: "core.bible-spatial-view",
             path: directory + "/" + output.filename, sha256: output.sha256)
-        let source = PlanningWriterIO.reference(directory + "/source-bible.yaml", id: "bible-spatial-source.\(candidate.proof.id)",
+        let source = PlanningWriterIO.reference(directory + "/source-bible.yaml", id: "bible-spatial-source.\(derivation.id)",
             role: "core.bible", bytes: prepared.originalBytes)
         let binding = BibleBinding(locationID: prepared.locationID,
             locationIdentitySHA256: try locationIdentityFingerprint(prepared.originalBible.locations[index]), viewID: prepared.viewID, purpose: prepared.purpose)
-        let record = BibleAdoption(id: candidate.proof.id, projectID: prepared.originalBible.project, binding: binding,
+        let record = BibleAdoption(id: derivation.id, projectID: prepared.originalBible.project, binding: binding,
             sourceBible: source, image: image, proof: proof,
             scene: .init(id: "bible-spatial-scene.\(scene.manifest.sceneID)", role: "core.production-spatial",
                 path: scenePath(scene), sha256: scene.manifest.sceneSHA256), sceneManifest: manifestReference(scene))
@@ -191,8 +201,8 @@ extension PipelineSpatialDerivationWriter {
         bible.locations[index].viewPurpose[prepared.viewID] = prepared.purpose
         let variants = try BibleIdentityVariantStoreV1.loadIfPresent(dataRoot: root)
             ?? BibleIdentityVariantsV1(project: bible.project, revision: 1, variants: [])
-        let files: [(path: String, bytes: Data)] = [(image.path, prepared.imageData), (proof.path, candidate.proofData),
-            (source.path, prepared.originalBytes), (adoptionPath(candidate.proof.id), try PlanningWriterIO.json(record))]
+        let files: [(path: String, bytes: Data)] = [(image.path, prepared.imageData), (proof.path, prepared.proofData),
+            (source.path, prepared.originalBytes), (adoptionPath(derivation.id), try PlanningWriterIO.json(record))]
         for file in files {
             if file.path.hasPrefix("bible/") { try ProductionWorkflowRecoveryMigration.requireNewOutput(file.path, dataRoot: root) }
             else { try requireNewMetadata(file.path, dataRoot: root) }
@@ -203,11 +213,20 @@ extension PipelineSpatialDerivationWriter {
     }
 
     static func bibleViewReferences(location: Location, viewID: String, dataRoot: URL) throws -> [CanonicalArtifactReferenceV1]? {
+        try BpyMediaReadScope.withScope(dataRoot: dataRoot) { scope in
+            try bibleViewReferences(location: location, viewID: viewID, dataRoot: dataRoot, scope: scope)
+        }
+    }
+
+    private static func bibleViewReferences(location: Location, viewID: String, dataRoot: URL,
+                                            scope: BpyMediaReadScope) throws -> [CanonicalArtifactReferenceV1]? {
+        try scope.check()
         guard let path = location.sheets[viewID] else { return nil }
         let parts = path.split(separator: "/")
         guard parts.count >= 3, parts[0] == "bible", parts[2].hasPrefix("spatial-") else { return nil }
         guard parts.count == 4, UUID(uuidString: String(parts[1])) != nil,
               let id = UUID(uuidString: String(parts[2].dropFirst("spatial-".count))) else { throw bibleViewChanged() }
+        return try scope.withConsumer { _ in
         let directory = (path as NSString).deletingLastPathComponent
         let recordPath = adoptionPath(id)
         let record = try PlanningWriterIO.read(BibleAdoption.self, at: recordPath, dataRoot: dataRoot)
@@ -233,10 +252,11 @@ extension PipelineSpatialDerivationWriter {
               proof.outputs.count == 1, let output = proof.outputs.first,
               path == directory + "/" + output.filename, record.image.sha256 == output.sha256 else { throw bibleViewChanged() }
         let imageData = try bytes(record.image, dataRoot: dataRoot)
-        try SpatialClayRenderer.validate(.init(proof: proof, proofData: proofData, files: [output.filename: imageData]), against: scene)
+        try SpatialClayRenderer.validate(proof: proof, proofData: proofData, files: [output.filename: imageData], against: scene, scope: scope)
         return [record.image, record.proof, record.sourceBible, record.scene, record.sceneManifest,
             try PlanningWriterIO.reference(recordPath, id: "bible-spatial-adoption.\(id)", role: "core.spatial-adoption", dataRoot: dataRoot)]
             + (try sceneReferences(dataRoot: dataRoot))
+        }
     }
 
     static func bibleGeometryReferences(location: Location, dataRoot: URL) throws -> [CanonicalArtifactReferenceV1] {

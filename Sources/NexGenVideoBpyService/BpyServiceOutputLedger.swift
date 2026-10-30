@@ -1,0 +1,3 @@
+import BpyRuntimeProtocol
+
+typealias BpyServiceOutputLedger = BpyRuntimeOutputLedger

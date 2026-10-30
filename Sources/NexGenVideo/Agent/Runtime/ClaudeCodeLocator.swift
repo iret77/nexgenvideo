@@ -1,16 +1,10 @@
+import BpyRuntimeProtocol
+import Darwin
 import Foundation
 
-// Locates the user's installed `claude` CLI and reads its version. The embedded runtime uses the
-// user's own logged-in Claude subscription, so we shell out to their existing binary rather than
-// bundling one. Pure helpers (candidatePaths/parseVersion) are unit-tested; resolve() does the IO.
+// Keep chat startup independent of metadata probes.
 
 struct ClaudeCodeLocator {
-
-    struct Result: Sendable, Equatable {
-        var executableURL: URL?
-        var version: String?
-        var found: Bool { executableURL != nil }
-    }
 
     struct Status: Sendable, Equatable {
         var executableURL: URL?
@@ -72,57 +66,61 @@ struct ClaudeCodeLocator {
         return locateExecutable(candidates: candidatePaths(home: home, path: environment["PATH"]))
     }
 
-    /// Resolve binary + version from the given environment. Synchronous — used by settings/status.
-    static func resolve(environment: [String: String] = ProcessInfo.processInfo.environment) -> Result {
-        let home = environment["HOME"] ?? NSHomeDirectory()
-        let candidates = candidatePaths(home: home, path: environment["PATH"])
-        guard let url = locateExecutable(candidates: candidates) else {
-            return Result(executableURL: nil, version: nil)
-        }
-        return Result(executableURL: url, version: readVersion(executableURL: url))
-    }
-
     static func status(environment: [String: String] = ProcessInfo.processInfo.environment) -> Status {
-        let result = resolve(environment: environment)
-        guard let executableURL = result.executableURL else {
+        let deadline = DispatchTime.now() + 5
+        guard let executableURL = locateOnly(environment: environment) else {
             return Status(executableURL: nil, version: nil, isAuthenticated: false)
         }
         return Status(
             executableURL: executableURL,
-            version: result.version,
-            isAuthenticated: readAuthentication(executableURL: executableURL)
+            version: readVersion(executableURL: executableURL, environment: environment, deadline: deadline),
+            isAuthenticated: probe(executableURL: executableURL, arguments: ["auth", "status", "--json"],
+                environment: environment, deadline: deadline, captureOutput: false)?.status == 0
         )
     }
 
-    private static func readVersion(executableURL: URL) -> String? {
-        let process = Process()
-        process.executableURL = executableURL
-        process.arguments = ["--version"]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
-        do {
-            try process.run()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
-            return parseVersion(String(decoding: data, as: UTF8.self))
-        } catch {
-            return nil
-        }
+    private static func readVersion(executableURL: URL, environment: [String: String], deadline: DispatchTime) -> String? {
+        guard let result = probe(executableURL: executableURL, arguments: ["--version"], environment: environment,
+                                 deadline: deadline, captureOutput: true), result.status == 0 else { return nil }
+        return parseVersion(String(decoding: result.output, as: UTF8.self))
     }
 
-    private static func readAuthentication(executableURL: URL) -> Bool {
-        let process = Process()
-        process.executableURL = executableURL
-        process.arguments = ["auth", "status", "--json"]
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        do {
-            try process.run()
-            process.waitUntilExit()
-            return process.terminationStatus == 0
-        } catch {
+    private static func probe(executableURL: URL, arguments: [String], environment: [String: String],
+                              deadline: DispatchTime, captureOutput: Bool) -> (status: Int32, output: Data)? {
+        guard DispatchTime.now() < deadline else { return nil }
+        let pipe = captureOutput ? Pipe() : nil
+        defer { try? pipe?.fileHandleForReading.close(); try? pipe?.fileHandleForWriting.close() }
+        let descriptor = pipe?.fileHandleForReading.fileDescriptor ?? -1
+        if descriptor >= 0 {
+            let flags = fcntl(descriptor, F_GETFL)
+            guard flags >= 0, fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) == 0 else { return nil }
+        }
+        guard let process = try? BpyOwnedProcess(executable: executableURL, arguments: arguments, environment: environment,
+            directory: FileManager.default.temporaryDirectory, input: .nullDevice,
+            output: pipe?.fileHandleForWriting ?? .nullDevice, errors: .nullDevice) else { return nil }
+        defer { _ = try? process.terminateAndReap(grace: 0.1) }
+        try? pipe?.fileHandleForWriting.close()
+        var output = Data(), buffer = [UInt8](repeating: 0, count: 4_096)
+        func drain() -> Bool {
+            guard descriptor >= 0 else { return true }
+            while DispatchTime.now() < deadline {
+                let received = buffer.withUnsafeMutableBytes { Darwin.read(descriptor, $0.baseAddress!, $0.count) }
+                if received > 0 {
+                    guard output.count + received <= 65_536 else { return false }
+                    output.append(contentsOf: buffer.prefix(received))
+                } else if received == 0 { return true }
+                else if errno != EINTR { return errno == EAGAIN || errno == EWOULDBLOCK }
+            }
             return false
         }
+        while DispatchTime.now() < deadline {
+            guard drain() else { return nil }
+            if let status = try? process.waitUntilExit(timeout: 0) {
+                guard drain() else { return nil }
+                return (status, output)
+            }
+            Thread.sleep(forTimeInterval: 0.005)
+        }
+        return nil
     }
 }

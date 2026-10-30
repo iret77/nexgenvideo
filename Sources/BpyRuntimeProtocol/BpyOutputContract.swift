@@ -39,4 +39,10 @@ public enum BpyOutputContract {
         workerFileCount >= 0 && workerFileCount < min(256, fileLimit)
             && workerBytes <= byteLimit && manifestBytes <= byteLimit - workerBytes
     }
+
+    public static func verificationReadMaximum(workerFileCount: Int, workerBytes: UInt64,
+                                                fileLimit: Int, byteLimit: UInt64) -> UInt64? {
+        permitsHostManifest(workerFileCount: workerFileCount, workerBytes: workerBytes,
+            manifestBytes: 0, fileLimit: fileLimit, byteLimit: byteLimit) ? byteLimit : nil
+    }
 }

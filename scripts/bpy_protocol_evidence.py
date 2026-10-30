@@ -161,10 +161,12 @@ def validate_reservation(requests, responses, owner_session):
     require(session != owner_session, "reservation must not reuse owner session")
     require(all(str(UUID(requests[label]["sessionID"])) == session for label in labels), "reservation session binding")
     require(opened == requests[labels[2]] == requests[labels[4]] == requests[labels[5]]
-            and opened.get("storage") is None, "same valid reservation contract")
+            and opened.get("storagePair") is None and opened.get("admission") is None, "same valid reservation contract")
     failed = requests[labels[1]]
-    require({key: value for key, value in failed.items() if key != "storage"} == opened, "failed open contract")
-    require(decode(failed["storage"]["bookmark"]) == bytes([1, 2, 3]), "actual invalid bookmark")
+    require({key: value for key, value in failed.items() if key not in ("storagePair", "admission", "admissionDeadline")} == opened, "failed open contract")
+    UUID(failed["admission"])
+    require(type(failed.get("admissionDeadline")) in (int, float) and failed["admissionDeadline"] > 0, "original failed-open admission clock")
+    require(failed["storagePair"]["worker"]["bookmarkSHA256"] == hashlib.sha256(bytes([1, 2, 3])).hexdigest(), "actual invalid bookmark")
     require(requests[labels[3]] == requests[labels[6]] == {"sessionID": opened["sessionID"]}, "stale close target")
     require(responses[labels[4]].get("message") == "invalid open request", "stale reservation owner refusal")
     for label in (labels[0], labels[2], labels[5]):
@@ -177,26 +179,37 @@ def validate_reservation(requests, responses, owner_session):
 def validate_storage(evidence, requests, responses, owner_session):
     reference = object_bytes(evidence["storageReference"])
     require(str(UUID(reference["sessionID"])) == owner_session, "storage reference owner")
-    require({key: value for key, value in reference.items() if key != "storage"} == requests["foreign-open"],
+    require({key: value for key, value in reference.items() if key not in ("storagePair", "admission", "admissionDeadline")} == requests["foreign-open"],
             "storage reference uses the valid owner contract")
-    storage = reference["storage"]
-    require(set(storage) == {"id", "mountPath", "device", "capacityBytes", "bookmarkSHA256"}, "redacted storage identity")
-    UUID(storage["id"])
-    require(integer(storage["device"]) and integer(storage["capacityBytes"], 1)
-            and storage["mountPath"].startswith("/") and re.fullmatch(r"[0-9a-f]{64}", storage["bookmarkSHA256"]),
-            "storage reference identity")
+    UUID(reference["admission"])
+    require(type(reference.get("admissionDeadline")) in (int, float) and reference["admissionDeadline"] > 0, "original admission clock")
+    pair = reference["storagePair"]
+    require(set(pair) == {"schema", "id", "worker", "data"} and pair["schema"] == "nexgenvideo/bpy-storage-pair/1", "paired storage schema")
+    UUID(pair["id"])
+    for role in ("worker", "data"):
+        storage = pair[role]
+        require(set(storage) == {"id", "mountPath", "device", "capacityBytes", "bookmarkSHA256", "role", "pairID"}, "redacted storage identity")
+        UUID(storage["id"])
+        require(storage["role"] == role and storage["pairID"] == pair["id"] and integer(storage["device"])
+                and integer(storage["capacityBytes"], 2) and storage["mountPath"].startswith("/")
+                and re.fullmatch(r"[0-9a-f]{64}", storage["bookmarkSHA256"]), "storage reference identity")
+    require(pair["worker"]["device"] != pair["data"]["device"] and pair["worker"]["id"] != pair["data"]["id"], "independent role devices")
+    storage = pair["worker"]
+    wrong_device = storage["device"] ^ (1 << (30 if storage["device"] ^ (1 << 31) == pair["data"]["device"] else 31))
     labels = ("storage-wrong-device", "storage-wrong-capacity", "storage-wrong-path")
     sessions = {owner_session, str(UUID(requests["reservation-first-owner"]["sessionID"]))}
+    admissions = {str(UUID(reference["admission"]))}
     for label, field, changed in zip(labels, ("device", "capacityBytes", "mountPath"),
-                                     (storage["device"] ^ 1, storage["capacityBytes"] ^ 1, storage["mountPath"] + "/other")):
+                                     (wrong_device, storage["capacityBytes"] - 1, storage["mountPath"] + "/other")):
         request = requests[label]
-        session = str(UUID(request["sessionID"]))
-        require(session not in sessions, "forged lease needs a fresh unreserved session")
-        sessions.add(session)
-        expected = dict(reference, sessionID=request["sessionID"], storage=dict(storage, **{field: changed}))
-        require(request == expected, "single forged lease field: " + label)
-        require(responses[label].get("ok") is False and responses[label].get("message") == "invalid open request",
-                "forged lease refused: " + label)
+        session, admission = str(UUID(request["sessionID"])), str(UUID(request["admission"]))
+        require(session not in sessions and admission not in admissions, "forged lease needs fresh session and admission")
+        sessions.add(session); admissions.add(admission)
+        require(type(request.get("admissionDeadline")) in (int, float) and request["admissionDeadline"] > 0, "forged-case admission clock")
+        expected = dict(reference, sessionID=request["sessionID"], admission=request["admission"], admissionDeadline=request["admissionDeadline"],
+                        storagePair=dict(pair, worker=dict(storage, **{field: changed})))
+        require(request == expected, "single forged worker lease field: " + label)
+        require(responses[label].get("ok") is False and responses[label].get("message") == "invalid open request", "forged lease refused: " + label)
     return set(labels)
 
 
@@ -214,7 +227,8 @@ def validate_storage_refusals(evidence, result, log_text, app):
         events.append((parts[0], fields, event))
     reference = object_bytes(evidence["storageReference"])
     session = str(UUID(reference["sessionID"]))
-    digest = reference["storage"]["bookmarkSHA256"]
+    digests = {role: reference["storagePair"][role]["bookmarkSHA256"] for role in ("worker", "data")}
+    digest = digests["worker"]
     service = result["serviceA"]
     service_path = re.escape(str(app)) + r"/Contents/XPCServices/NexGenVideoBpyService[0-9]+\.xpc/Contents/MacOS/NexGenVideoBpyService"
 
@@ -234,10 +248,10 @@ def validate_storage_refusals(evidence, result, log_text, app):
             return False
 
     anchors = [entry for entry in events if entry[0] == "open.check" and has_session(entry, session)]
-    require(len(anchors) == 1, "one original successful storage check")
+    require(len(anchors) == 2 and {entry[1].get("role") for entry in anchors} == {"worker", "data"}, "both original role storage checks")
     for entry in anchors:
         identity(entry)
-        require(entry[1].get("sha256") == digest and entry[1].get("file") == "true"
+        require(entry[1].get("sha256") == digests[entry[1]["role"]] and entry[1].get("file") == "true"
                 and entry[1].get("pathMatches") == "true" and entry[1].get("volumeMatch") == "equal", "original storage identity")
     owners = {str(UUID(entry[1]["owner"])) for entry in anchors}
     starts = {entry[1]["start"] for entry in anchors}
@@ -254,7 +268,7 @@ def validate_storage_refusals(evidence, result, log_text, app):
         for entry in selected:
             identity(entry)
             require(str(UUID(entry[1]["owner"])) in owners and entry[1].get("start") == start, "refusal owner/start")
-        require(checked[1].get("sha256") == digest and checked[1].get("file") == "true"
+        require(checked[1].get("role") == "worker" and checked[1].get("sha256") == digest and checked[1].get("file") == "true"
                 and checked[1].get("volumeMatch") == "equal"
                 and checked[1].get("pathMatches") == ("false" if label == "storage-wrong-path" else "true"),
                 "actual forged lease resolution: " + label)
@@ -267,7 +281,7 @@ def validate_storage_refusals(evidence, result, log_text, app):
 
 
 def validate(evidence, result, raw_bytes, checkpoint_bytes, restored_checkpoint_bytes):
-    require(evidence.get("schema") == "nexgenvideo/bpy-native-protocol-evidence/3", "protocol schema")
+    require(evidence.get("schema") == "nexgenvideo/bpy-native-protocol-evidence/4", "protocol schema")
     require(result.get("nativeProtocolEvidenceFile") == "native-protocol-evidence.json", "evidence filename")
     require(result.get("nativeProtocolEvidenceSHA256") == hashlib.sha256(raw_bytes).hexdigest(), "evidence digest")
     requests = {key: object_bytes(value) for key, value in evidence["requests"].items()}
@@ -323,6 +337,12 @@ def validate(evidence, result, raw_bytes, checkpoint_bytes, restored_checkpoint_
     require(chunks["valid-final-after-failure"] == chunks["invalid-final-hash"] == b"{}", "retry same bytes")
     require(good["sha256"] == hashlib.sha256(b"{}").hexdigest() and bad["sha256"] != good["sha256"], "hash refusal")
     limits = requests["foreign-open"]["limits"]
+    require(limits.get("memoryPolicy") == "system-pressure-v1", "versioned memory policy")
+    UUID(requests["service-submit"]["admission"])
+    require(type(requests["service-submit"].get("admissionDeadline")) in (int, float)
+            and requests["service-submit"]["admissionDeadline"] > 0, "execution admission clock")
+    require(requests["submit-with-partial-input"]["admission"] == requests["service-submit"]["admission"]
+            and requests["submit-with-partial-input"]["admissionDeadline"] == requests["service-submit"]["admissionDeadline"], "partial refusal retains actual admission")
     require(integer(limits["inputBytes"], 8), "probe input budget")
     reserved, blocked, released = (requests[label] for label in ("reserve-global-input-budget", "cross-job-budget-refused", "budget-released-after-cancel"))
     for item in (good, reserved, blocked, released):

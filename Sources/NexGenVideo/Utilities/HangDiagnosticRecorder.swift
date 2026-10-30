@@ -277,7 +277,7 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
         process.arguments = [String(getpid()), id.uuidString, folder.path]
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
-        try process.run()
+        try process.runCoordinated()
         helper = process
     }
 
