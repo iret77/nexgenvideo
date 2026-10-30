@@ -51,9 +51,11 @@ struct BpyMediaWriterCleanupTests {
             guard let lifetime else { throw SpatialSceneError.changed }
             try await lifetime.finish(deadline: finishDeadline, checking: {})
         }
-        #expect(backend.finishing.wait(timeout: .now() + 1) == .success)
+        let writerFinishing = await wait(backend.finishing, until: .now() + 1)
+        #expect(writerFinishing == .success)
         token.cancel()
-        #expect(backend.started.wait(timeout: .now() + 1) == .success)
+        let writerCancelling = await wait(backend.started, until: .now() + 1)
+        #expect(writerCancelling == .success)
         backend.fireFinish()
         try await Task.sleep(for: .seconds(6))
         switch await finishing.result {
@@ -84,5 +86,13 @@ struct BpyMediaWriterCleanupTests {
         do { try memory.checkConsumer(consumerID); Issue.record("The completed consumer retained its scope.") }
         catch let stop as BpyExecutionInterruption { #expect(stop.reason == .closed) }
         try other.check()
+    }
+
+    private func wait(_ semaphore: DispatchSemaphore, until deadline: DispatchTime) async -> DispatchTimeoutResult {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                continuation.resume(returning: semaphore.wait(timeout: deadline))
+            }
+        }
     }
 }

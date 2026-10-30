@@ -26,10 +26,11 @@ struct BpyLaunchGateReleaseTests {
             var byte: UInt8 = 1
             guard Darwin.write(writeFD, &byte, 1) == 1 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
         }
-        func pending() throws -> Int32 {
-            var bytes: Int32 = -1
-            guard ioctl(readFD, UInt(FIONREAD), &bytes) == 0 else { throw POSIXError(.EIO) }
-            return bytes
+        func hasPendingByte() throws -> Bool {
+            var descriptor = pollfd(fd: readFD, events: Int16(POLLIN), revents: 0)
+            let ready = Darwin.poll(&descriptor, 1, 0)
+            guard ready == 0 || (ready == 1 && descriptor.revents == Int16(POLLIN)) else { throw POSIXError(.EIO) }
+            return ready == 1
         }
         deinit { closeRead(); Darwin.close(writeFD) }
     }
@@ -42,8 +43,19 @@ struct BpyLaunchGateReleaseTests {
             let accepted = try BpyLaunchGateRelease.authorize(memory: memory, permit: permit, lock: gate.lock,
                 stopped: { gate.stop != nil }, writing: { try gate.write() }, released: { gate.released = true })
             #expect(!accepted && !gate.released && gate.writes == 0)
-            #expect(try gate.pending() == 0)
+            #expect(try !gate.hasPendingByte())
             #expect(try memory.receipt(permit).stop == nil)
+        }
+    }
+
+    @Test func anAdmittedUnstoppedGatePublishesItsReleaseByte() throws {
+        try withPermit { memory, permit in
+            let gate = try Gate()
+            #expect(try !gate.hasPendingByte())
+            let accepted = try BpyLaunchGateRelease.authorize(memory: memory, permit: permit, lock: gate.lock,
+                stopped: { gate.stop != nil }, writing: { try gate.write() }, released: { gate.released = true })
+            #expect(accepted && gate.released && gate.writes == 1)
+            #expect(try gate.hasPendingByte())
         }
     }
 

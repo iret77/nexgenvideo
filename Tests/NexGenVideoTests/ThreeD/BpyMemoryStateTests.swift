@@ -304,11 +304,13 @@ struct BpyMemoryStateTests {
         state.sampled(.normal, permanent: false, at: clock(0))
         for _ in 0..<100 {
             let owner = UUID(), admission = try request(&state, owner: owner)
-            #expect(!state.retire(owner: owner))
+            let retiredWithLiveWork = state.retire(owner: owner)
+            #expect(!retiredWithLiveWork)
             state.close(owner: owner, at: clock(0))
             #expect(throws: BpyAdmissionFailure.self) { _ = try request(&state, owner: owner) }
             state.forget(permit: admission.id)
-            #expect(state.retire(owner: owner))
+            let retiredAfterCleanup = state.retire(owner: owner)
+            #expect(retiredAfterCleanup)
         }
         #expect(state.generations.isEmpty && state.closedOwners.isEmpty && state.permits.isEmpty)
     }
