@@ -119,6 +119,7 @@ public final class BpyRuntimeFile: @unchecked Sendable {
         var readers = 0
         var closing = false
         var removesFile = true
+        var disposalEvents: [(String, UInt64)] = []
 
         init(descriptor: Int32, parent: Int32, name: String, identity: BpyRuntimeFileIdentity,
              sha256: String, url: URL, disposed: @escaping @Sendable (Bool, BpyRuntimeFileIdentity) -> Void) {
@@ -142,22 +143,33 @@ public final class BpyRuntimeFile: @unchecked Sendable {
             let dispose = lock.withLock {
                 guard owners == 0, readers == 0, !closing else { return false }
                 closing = true
+                disposalEvents.append(("queued", DispatchTime.now().uptimeNanoseconds))
                 return true
             }
             guard dispose else { return }
             DispatchQueue.global(qos: .utility).async { [self] in
+                lock.withLock { disposalEvents.append(("started", DispatchTime.now().uptimeNanoseconds)) }
                 if !removesFile {
                     let closed = Darwin.close(descriptor), parentClosed = Darwin.close(parent)
-                    disposed(closed == 0 && parentClosed == 0, identity)
+                    reportDisposal(closed == 0 && parentClosed == 0)
                     return
                 }
                 let removal = Removal(descriptor: descriptor, parent: parent, name: name)
-                removal.cleanup.whenComplete { [disposed, identity] in disposed(true, identity) }
+                removal.cleanup.whenComplete { [weak self, disposed, identity] in
+                    if let self { reportDisposal(true) }
+                    else { disposed(true, identity) }
+                }
                 if !removal.attempt() {
-                    disposed(false, identity)
+                    reportDisposal(false)
                     Recovery.shared.retain(removal)
                 }
             }
+        }
+
+        private func reportDisposal(_ removed: Bool) {
+            lock.withLock { disposalEvents.append((removed ? "removed" : "retry", DispatchTime.now().uptimeNanoseconds)) }
+            disposed(removed, identity)
+            lock.withLock { disposalEvents.append(("callback-returned", DispatchTime.now().uptimeNanoseconds)) }
         }
 
         func read(offset: UInt64, maximum: Int) throws -> Data {
@@ -199,6 +211,11 @@ public final class BpyRuntimeFile: @unchecked Sendable {
     public var sha256: String { storage.sha256 }
     public var url: URL { storage.url }
     public var byteCount: UInt64 { storage.identity.bytes }
+    var disposalDiagnostics: String {
+        storage.lock.withLock {
+            "owners=\(storage.owners), readers=\(storage.readers), closing=\(storage.closing), events=\(storage.disposalEvents), observedAt=\(DispatchTime.now().uptimeNanoseconds)"
+        }
+    }
 
     private init(storage: Storage) throws {
         self.storage = storage

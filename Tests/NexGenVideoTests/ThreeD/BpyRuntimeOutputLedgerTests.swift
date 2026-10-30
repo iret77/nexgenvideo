@@ -1,4 +1,4 @@
-import BpyRuntimeProtocol
+@testable import BpyRuntimeProtocol
 import Foundation
 import Testing
 
@@ -25,7 +25,7 @@ struct BpyRuntimeOutputLedgerTests {
             #expect(beforeRelease == .timedOut)
             checkpoint.release()
             let afterRelease = await waitForBpyTestSignal(completed, until: .now() + 2)
-            #expect(afterRelease == .success)
+            #expect(afterRelease == .success, Comment(rawValue: checkpoint.disposalDiagnostics))
             #expect(!FileManager.default.fileExists(atPath: checkpoint.url.path))
             ledger.settle(next)
         }
@@ -57,7 +57,7 @@ struct BpyRuntimeOutputLedgerTests {
             #expect(ledger.chargedBytes(first, file: sceneA) == 4)
             sceneA.release()
             let firstDisposal = await waitForBpyTestSignal(firstDisposed, until: .now() + 2)
-            #expect(firstDisposal == .success)
+            #expect(firstDisposal == .success, Comment(rawValue: sceneA.disposalDiagnostics))
             #expect(ledger.materialized(first) == 4)
             #expect(ledger.chargedBytes(first, file: sibling) == 4)
             let next = UUID()
@@ -72,9 +72,9 @@ struct BpyRuntimeOutputLedgerTests {
             try ledger.reserve(UUID(), maximum: 8)
             sibling.release(); checkpointB.release()
             let siblingDisposal = await waitForBpyTestSignal(siblingDisposed, until: .now() + 2)
-            #expect(siblingDisposal == .success)
+            #expect(siblingDisposal == .success, Comment(rawValue: sibling.disposalDiagnostics))
             let secondDisposal = await waitForBpyTestSignal(secondDisposed, until: .now() + 2)
-            #expect(secondDisposal == .success)
+            #expect(secondDisposal == .success, Comment(rawValue: sceneB.disposalDiagnostics))
         }
     }
 
@@ -93,7 +93,7 @@ struct BpyRuntimeOutputLedgerTests {
             #expect(try checkpoint.read(maximum: 4) == Data([1, 2, 3, 4]))
             checkpoint.release()
             let disposal = await waitForBpyTestSignal(completed, until: .now() + 2)
-            #expect(disposal == .success)
+            #expect(disposal == .success, Comment(rawValue: checkpoint.disposalDiagnostics))
             for id in next { ledger.settle(id) }
         }
     }
@@ -122,17 +122,17 @@ struct BpyRuntimeOutputLedgerTests {
             try ledger.updateCheckpoint(replacementJob, resultScene: nil, confirmedScene: replacement, change: .confirm)
             old.release()
             let oldDisposal = await waitForBpyTestSignal(oldDisposed, until: .now() + 2)
-            #expect(oldDisposal == .success)
+            #expect(oldDisposal == .success, Comment(rawValue: old.disposalDiagnostics))
             #expect(ledger.materialized(job) == 4)
             #expect(try sibling.read(maximum: 4) == Data([1, 2, 3, 4]))
             sibling.release()
             let siblingDisposal = await waitForBpyTestSignal(siblingDisposed, until: .now() + 2)
-            #expect(siblingDisposal == .success)
+            #expect(siblingDisposal == .success, Comment(rawValue: sibling.disposalDiagnostics))
             #expect(ledger.materialized(job) == 0)
             try ledger.reserve(UUID(), maximum: 20)
             replacement.release()
             let replacementDisposal = await waitForBpyTestSignal(replacementDisposed, until: .now() + 2)
-            #expect(replacementDisposal == .success)
+            #expect(replacementDisposal == .success, Comment(rawValue: replacement.disposalDiagnostics))
         }
     }
 

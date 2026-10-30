@@ -1,4 +1,4 @@
-import BpyRuntimeProtocol
+@testable import BpyRuntimeProtocol
 import Foundation
 import Testing
 @testable import NexGenVideo
@@ -33,7 +33,7 @@ struct BpyRuntimeResultLeaseTests {
             #expect(events.snapshot.0 == [false])
             #expect(throws: (any Error).self) { _ = try first.joinedForReplay() }
             let afterRelease = await waitForBpyTestSignal(disposed, until: .now() + 2)
-            #expect(afterRelease == .success)
+            #expect(afterRelease == .success, Comment(rawValue: file.disposalDiagnostics))
         }
     }
 
@@ -58,7 +58,7 @@ struct BpyRuntimeResultLeaseTests {
             #expect(events.snapshot.0 == [false])
             reader.release()
             let afterRelease = await waitForBpyTestSignal(disposed, until: .now() + 2)
-            #expect(afterRelease == .success)
+            #expect(afterRelease == .success, Comment(rawValue: file.disposalDiagnostics))
         }
     }
 
@@ -77,7 +77,7 @@ struct BpyRuntimeResultLeaseTests {
             second.release()
             #expect(events.snapshot.0 == [true])
             let disposal = await waitForBpyTestSignal(disposed, until: .now() + 2)
-            #expect(disposal == .success)
+            #expect(disposal == .success, Comment(rawValue: file.disposalDiagnostics))
         }
     }
 
