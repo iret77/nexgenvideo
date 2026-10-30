@@ -12,39 +12,46 @@ struct BpyMediaDecodeTests {
         func value() throws -> UUID { try lock.withLock { try #require(result).get() } }
     }
 
-    @Test func cancellationRemovesTheFIFOHeadWithoutConsumingAnotherWaitersSpace() throws {
+    @Test func cancellationRemovesTheFIFOHeadWithoutConsumingAnotherWaitersSpace() async throws {
         let pool = BpyMediaDecode.Pool(capacity: 6)
         let first = try pool.reserve(4, cancellation: .init(), timeout: 2, checking: {})
         defer { pool.release(first) }
         let head = Attempt(), follower = Attempt(), cancellation = BpyOperationCancellation()
-        DispatchQueue.global().async {
+        Thread {
             head.finish(Result { try pool.reserve(4, cancellation: cancellation, timeout: 2,
                 checking: { head.entered.signal() }) })
-        }
-        #expect(head.entered.wait(timeout: .now() + 1) == .success)
-        DispatchQueue.global().async {
+        }.start()
+        let headEntered = await waitForBpyTestSignal(head.entered, until: .now() + 1)
+        #expect(headEntered == .success)
+        Thread {
             follower.finish(Result { try pool.reserve(2, cancellation: .init(), timeout: 2,
                 checking: { follower.entered.signal() }) })
-        }
-        #expect(follower.entered.wait(timeout: .now() + 1) == .success)
-        #expect(follower.completed.wait(timeout: .now() + 0.05) == .timedOut)
+        }.start()
+        let followerEntered = await waitForBpyTestSignal(follower.entered, until: .now() + 1)
+        #expect(followerEntered == .success)
+        let followerBeforeCancellation = await waitForBpyTestSignal(follower.completed, until: .now() + 0.05)
+        #expect(followerBeforeCancellation == .timedOut)
         cancellation.cancel()
-        #expect(head.completed.wait(timeout: .now() + 1) == .success)
+        let headCompleted = await waitForBpyTestSignal(head.completed, until: .now() + 1)
+        #expect(headCompleted == .success)
         #expect(throws: BpyAdmissionFailure.self) { _ = try head.value() }
-        #expect(follower.completed.wait(timeout: .now() + 1) == .success)
+        let followerCompleted = await waitForBpyTestSignal(follower.completed, until: .now() + 1)
+        #expect(followerCompleted == .success)
         pool.release(try follower.value())
     }
 
-    @Test func perSlotCapacityWaitsForItsActualOwnerAndTimeoutDoesNotLeakAReservation() throws {
+    @Test func perSlotCapacityWaitsForItsActualOwnerAndTimeoutDoesNotLeakAReservation() async throws {
         let pool = BpyMediaDecode.Pool(capacity: 8)
         let first = try pool.reserve(4, slot: "slot-a", slotCapacity: 4, cancellation: .init(), timeout: 2, checking: {})
         let waiting = Attempt()
-        DispatchQueue.global().async {
+        Thread {
             waiting.finish(Result { try pool.reserve(1, slot: "slot-a", slotCapacity: 4,
                 cancellation: .init(), timeout: 0.1, checking: { waiting.entered.signal() }) })
-        }
-        #expect(waiting.entered.wait(timeout: .now() + 1) == .success)
-        #expect(waiting.completed.wait(timeout: .now() + 1) == .success)
+        }.start()
+        let entered = await waitForBpyTestSignal(waiting.entered, until: .now() + 1)
+        #expect(entered == .success)
+        let completed = await waitForBpyTestSignal(waiting.completed, until: .now() + 1)
+        #expect(completed == .success)
         #expect(throws: BpyRuntimeError.self) { _ = try waiting.value() }
         pool.release(first)
         let replacement = try pool.reserve(8, cancellation: .init(), timeout: 2, checking: {})

@@ -128,24 +128,27 @@ struct BpyMediaReadScopeTests {
         func value() throws -> UUID { try lock.withLock { try #require(result).get() } }
     }
 
-    @Test func closingTheDocumentWakesItsQueuedDecodeWithoutConsumingCapacity() throws {
+    @Test func closingTheDocumentWakesItsQueuedDecodeWithoutConsumingCapacity() async throws {
         let root = root(), generation = UUID(), pool = BpyMediaDecode.Pool(capacity: 1), waiting = Waiting()
         BpyMediaReadScope.register(root: root, generation: generation)
         defer { BpyMediaReadScope.close(root: root, generation: generation) }
         let blocker = try pool.reserve(1, cancellation: .init(), timeout: 5, checking: {})
         defer { pool.release(blocker) }
-        DispatchQueue.global().async {
+        Thread {
             waiting.finish(Result {
                 try BpyMediaReadScope.withScope(dataRoot: root) { scope in
                     try pool.reserve(1, cancellation: scope.cancellation, timeout: 5,
                         checking: { try scope.check(); waiting.entered.signal() })
                 }
             })
-        }
-        #expect(waiting.entered.wait(timeout: .now() + 1) == .success)
-        #expect(waiting.ended.wait(timeout: .now() + 0.05) == .timedOut)
+        }.start()
+        let entered = await waitForBpyTestSignal(waiting.entered, until: .now() + 1)
+        #expect(entered == .success)
+        let endedBeforeClose = await waitForBpyTestSignal(waiting.ended, until: .now() + 0.05)
+        #expect(endedBeforeClose == .timedOut)
         BpyMediaReadScope.close(root: root, generation: generation)
-        #expect(waiting.ended.wait(timeout: .now() + 1) == .success)
+        let endedAfterClose = await waitForBpyTestSignal(waiting.ended, until: .now() + 1)
+        #expect(endedAfterClose == .success)
         #expect(throws: BpyAdmissionFailure.self) { _ = try waiting.value() }
         pool.release(blocker)
         let replacement = try pool.reserve(1, cancellation: .init(), timeout: 1, checking: {})

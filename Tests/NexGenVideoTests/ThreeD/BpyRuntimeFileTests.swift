@@ -64,7 +64,7 @@ struct BpyRuntimeFileTests {
         }
     }
 
-    @Test func ownedFileSurvivesItsOriginalOwnerUntilLastBorrowReleases() throws {
+    @Test func ownedFileSurvivesItsOriginalOwnerUntilLastBorrowReleases() async throws {
         let root = try directory()
         defer { try? FileManager.default.removeItem(at: root) }
         let url = root.appendingPathComponent("result.bin")
@@ -75,9 +75,11 @@ struct BpyRuntimeFileTests {
         let borrow = try original.retained()
         original.release()
         #expect(try borrow.read(offset: 65_536, maximum: 65_536) == Data(repeating: 0x75, count: 65_536))
-        #expect(disposed.wait(timeout: .now()) == .timedOut)
+        let beforeRelease = await waitForBpyTestSignal(disposed, until: .now())
+        #expect(beforeRelease == .timedOut)
         borrow.release()
-        #expect(disposed.wait(timeout: .now() + 2) == .success)
+        let afterRelease = await waitForBpyTestSignal(disposed, until: .now() + 2)
+        #expect(afterRelease == .success)
         #expect(!FileManager.default.fileExists(atPath: url.path))
     }
 

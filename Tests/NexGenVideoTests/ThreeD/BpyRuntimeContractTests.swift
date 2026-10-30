@@ -113,13 +113,15 @@ struct BpyRuntimeContractTests {
         }
     }
 
-    @Test func dataImageDoesNotEnlargeTheWorkerFilesystem() {
+    @Test func dataImageDoesNotEnlargeTheWorkerFilesystem() throws {
         let defaults = BpyRuntimeLimits()
         #expect(defaults.physicalStorageBytes == 2 * 1_024 * 1_024 * 1_024)
         #expect(defaults.dataStorageBytes == 5 * 1_024 * 1_024 * 1_024)
         var minimumSlack = defaults
         minimumSlack.inputBytes = 448 * 1_024 * 1_024
-        #expect(minimumSlack.dataStorageBytes == 4 * 1_024 * 1_024 * 1_024)
+        let minimumCapacity = try #require(minimumSlack.dataStorageBytes)
+        let fourGiB: UInt64 = 4 * 1_024 * 1_024 * 1_024
+        #expect(minimumCapacity == fourGiB)
         #expect(minimumSlack.physicalStorageBytes == defaults.physicalStorageBytes)
         minimumSlack.inputBytes = 496 * 1_024 * 1_024
         #expect(minimumSlack.dataStorageBytes == 5 * 1_024 * 1_024 * 1_024)
