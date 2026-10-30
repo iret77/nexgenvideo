@@ -58,6 +58,16 @@ def api(path):
     return json.loads(read_api(path))
 
 
+def check_results(value):
+    require(type(value) is dict and set(value) == set(CHECKS), "Incomplete recorded source checks")
+    for name in CHECKS:
+        result = value[name]
+        require(type(result) is dict and set(result) == {"outcome", "conclusion"}
+                and result["outcome"] == result["conclusion"] == "success",
+                "Recorded source check did not pass: " + name)
+    return value
+
+
 def record(root):
     require(os.environ["GITHUB_EVENT_NAME"] == "pull_request", "Only PR jobs publish original source proof")
     event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
@@ -65,15 +75,16 @@ def record(root):
     checkout = git("rev-parse", "HEAD")
     require(checkout == os.environ["GITHUB_SHA"], "PR checkout differs from workflow source")
     require(not git("status", "--porcelain", "--untracked-files=no"), "PR source changed during checks")
+    results = check_results(json.loads(os.environ.get("NGV_SOURCE_CHECK_RESULTS", "null")))
     root.mkdir(parents=True, exist_ok=False)
-    write(root / "receipt.json", {"schema": "verified-pr-source/v1", "repository": os.environ["GITHUB_REPOSITORY"],
+    write(root / "receipt.json", {"schema": "verified-pr-source/v2", "repository": os.environ["GITHUB_REPOSITORY"],
         "runID": int(os.environ["GITHUB_RUN_ID"]), "attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
         "pullRequest": event["number"], "headSHA": pr["head"]["sha"],
         "headRepository": pr["head"]["repo"]["full_name"], "baseRef": pr["base"]["ref"],
-        "checkoutSHA": checkout, "treeSHA": git("rev-parse", "HEAD^{tree}")})
+        "checkoutSHA": checkout, "treeSHA": git("rev-parse", "HEAD^{tree}"), "checkResults": results})
 
 
-def verify_run(run, jobs, run_id):
+def verify_run_identity(run, jobs, run_id):
     require(run.get("id") == run_id and run.get("repository", {}).get("full_name") == REPOSITORY
             and run.get("event") == "pull_request" and run.get("path") == ".github/workflows/pr-checks.yml"
             and run.get("run_attempt") == 1 and run.get("status") == "completed"
@@ -86,11 +97,20 @@ def verify_run(run, jobs, run_id):
     require(job.get("run_id") == run_id and job.get("run_attempt") == 1
             and job.get("head_sha") == run["head_sha"] and job.get("status") == "completed"
             and job.get("conclusion") == "success", "Original PR job identity differs")
+    return job
+
+
+def verify_steps(job, receipt=None):
+    if receipt is not None and receipt.get("schema") == "verified-pr-source/v2":
+        check_results(receipt.get("checkResults"))
+        require(type(job.get("steps")) is list, "Original source step inventory is missing")
+        if not job["steps"]:
+            return "recorded-job-context/v2"
     for name in (*CHECKS, "Record verified source checkout", "Upload verified source checkout"):
         steps = [step for step in job.get("steps", []) if step.get("name") == name]
         require(len(steps) == 1 and steps[0].get("status") == "completed"
                 and steps[0].get("conclusion") == "success", "Original source step did not pass: " + name)
-    return job
+    return "rest-job-steps"
 
 
 def original_receipt(artifact, raw, run):
@@ -103,13 +123,15 @@ def original_receipt(artifact, raw, run):
         require(archive.namelist() == ["receipt.json"] and archive.getinfo("receipt.json").file_size <= 20_000,
                 "Original PR artifact contains unexpected entries")
         receipt = json.loads(archive.read("receipt.json"))
-    require(receipt.get("schema") == "verified-pr-source/v1" and receipt.get("repository") == REPOSITORY
+    require(receipt.get("schema") in ("verified-pr-source/v1", "verified-pr-source/v2") and receipt.get("repository") == REPOSITORY
             and receipt.get("headRepository") == REPOSITORY and receipt.get("runID") == run["id"]
             and receipt.get("attempt") == 1 and receipt.get("headSHA") == run["head_sha"],
             "Original PR receipt identity differs")
     require(type(receipt.get("pullRequest")) is int and receipt["pullRequest"] > 0
             and all(isinstance(receipt.get(key), str) and re.fullmatch(r"[a-f0-9]{40}", receipt[key])
                     for key in ("checkoutSHA", "treeSHA", "headSHA")), "Invalid original source identifiers")
+    if receipt["schema"] == "verified-pr-source/v2":
+        check_results(receipt.get("checkResults"))
     return receipt
 
 
@@ -148,7 +170,7 @@ def prepare(run_id, root):
     root.mkdir(parents=True, exist_ok=False)
     run = api(f"actions/runs/{run_id}")
     jobs = api(f"actions/runs/{run_id}/attempts/1/jobs?per_page=100")
-    job = verify_run(run, jobs, run_id)
+    job = verify_run_identity(run, jobs, run_id)
     artifacts = api(f"actions/runs/{run_id}/artifacts?per_page=100")
     require(artifacts.get("total_count") == len(artifacts.get("artifacts", [])), "Incomplete PR artifact inventory")
     selected = [item for item in artifacts["artifacts"] if item.get("name") == f"verified-pr-source-{run_id}-a1"]
@@ -157,6 +179,7 @@ def prepare(run_id, root):
     require(artifact.get("id") == selected[0]["id"], "Original artifact lookup differs")
     raw = read_api(f"actions/artifacts/{artifact['id']}/zip", 100_000)
     receipt = original_receipt(artifact, raw, run)
+    step_proof = verify_steps(job, receipt)
     pr = api(f"pulls/{receipt['pullRequest']}")
     commit = api(f"git/commits/{receipt['checkoutSHA']}")
     verify_tree(receipt, pr, commit, head, git("rev-parse", "HEAD^{tree}"), os.environ["GITHUB_REF_NAME"])
@@ -168,7 +191,7 @@ def prepare(run_id, root):
         "runID": os.environ["GITHUB_RUN_ID"], "attempt": os.environ["GITHUB_RUN_ATTEMPT"],
         "originalRun": run, "originalJobs": jobs, "originalArtifact": artifact, "originalReceipt": receipt,
         "originalCheckoutCommit": commit, "originalPR": pr, "originalResult": result,
-        "originalLogSHA256": digest(log), "reusedSteps": list(CHECKS)})
+        "originalLogSHA256": digest(log), "reusedSteps": list(CHECKS), "originalStepProof": step_proof})
     with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
         output.write("verified=true\n")
 

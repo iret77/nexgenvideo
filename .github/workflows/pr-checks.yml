@@ -23,19 +23,29 @@ jobs:
           fetch-depth: 0
 
       - name: Enforce AppTheme
+        id: app_theme
         run: python3 scripts/lint_app_theme.py
 
       - name: Validate pack pipeline contracts
+        id: pipeline_contracts
         run: |
           for manifest in plugins/*.json; do
             python3 scripts/validate_pipeline_contract.py "$manifest"
           done
 
       - name: Verify CI and fixture tooling
+        id: fixture_tooling
         run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
 
       - name: Record verified source checkout
         uses: ./.github/actions/record-source-checks
+        with:
+          step-results: |
+            {
+              "Enforce AppTheme": {"outcome": "${{ steps.app_theme.outcome }}", "conclusion": "${{ steps.app_theme.conclusion }}"},
+              "Validate pack pipeline contracts": {"outcome": "${{ steps.pipeline_contracts.outcome }}", "conclusion": "${{ steps.pipeline_contracts.conclusion }}"},
+              "Verify CI and fixture tooling": {"outcome": "${{ steps.fixture_tooling.outcome }}", "conclusion": "${{ steps.fixture_tooling.conclusion }}"}
+            }
 
       - name: Upload verified source checkout
         uses: actions/upload-artifact@v4
