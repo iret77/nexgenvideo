@@ -1977,6 +1977,21 @@ private final class ServiceSession: @unchecked Sendable {
         return true
     }
 
+    private func recordRuntimePreflight(_ preflight: BpyRuntimePreflight, serviceStart: UInt64) {
+        let session = request.sessionID.uuidString
+        let resources = [
+            ("pythonAlias", pythonURL.deletingLastPathComponent().appendingPathComponent("python3")),
+            ("pythonTarget", pythonURL), ("supervisor", supervisorURL),
+            ("worker", workerURL), ("sitePackages", sitePackagesURL),
+        ]
+        for (role, url) in resources {
+            let fields = BpyRuntimePreflight.diagnostics(at: url, pythonAlias: role == "pythonAlias")
+                .sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " ")
+            openDiagnostics.notice("open.runtime-resource session=\(session, privacy: .public) pid=\(getpid(), privacy: .public) start=\(serviceStart, privacy: .public) role=\(role, privacy: .public) \(fields, privacy: .public)")
+        }
+        openDiagnostics.notice("open.runtime-preflight session=\(session, privacy: .public) pid=\(getpid(), privacy: .public) start=\(serviceStart, privacy: .public) python=\(preflight.pythonExecutable, privacy: .public) supervisor=\(preflight.supervisorExecutable, privacy: .public) worker=\(preflight.workerExists, privacy: .public) sitePackages=\(preflight.sitePackagesExist, privacy: .public)")
+    }
+
     private func probeRuntime() throws -> ProbeManifest {
         let probeRoot = workerRoot.appendingPathComponent("probe", isDirectory: true)
         try? FileManager.default.removeItem(at: probeRoot)
@@ -2023,8 +2038,10 @@ private final class ServiceSession: @unchecked Sendable {
               let pair = request.storagePair, let permit = job?.admission ?? request.admission,
               let launchDeadline = job?.runningDeadline ?? job?.admissionDeadline ?? request.admissionDeadline,
               let service = processUsage(getpid()) else { throw POSIXError(.EPERM) }
-        try BpyRuntimePreflight(python: pythonURL, supervisor: supervisorURL,
-            worker: workerURL, sitePackages: sitePackagesURL).requireValid()
+        let preflight = BpyRuntimePreflight(python: pythonURL, supervisor: supervisorURL,
+            worker: workerURL, sitePackages: sitePackagesURL)
+        if launchMode == .probe { recordRuntimePreflight(preflight, serviceStart: service.startAbsoluteTime) }
+        try preflight.requireValid()
         for name in ["tmp", "home", "blender-config", "blender-scripts", "blender-data"] {
             try FileManager.default.createDirectory(at: processRoot.appendingPathComponent(name),
                 withIntermediateDirectories: true)
@@ -2547,6 +2564,7 @@ private final class BpyRuntimeService: NSObject, @unchecked Sendable {
                         $0.request.storagePair.map { [$0.worker.id, $0.data.id] } ?? []
                     } + BpyServiceStoragePair.inUseIDs
                 }
+                openDiagnostics.notice("open.prepared session=\(request.sessionID.uuidString, privacy: .public) owner=\(owner.uuidString, privacy: .public) pid=\(getpid(), privacy: .public) start=\(identity.startAbsoluteTime, privacy: .public)")
                 reply(encoded(.init(ok: true, storagePreparation: .init(id: request.sessionID,
                     servicePID: getpid(), serviceStart: identity.startAbsoluteTime, inUseStorageIDs: inUse))))
                 return

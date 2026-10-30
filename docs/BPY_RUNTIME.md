@@ -161,12 +161,17 @@ both the durable lease and the service request. For the transient cross-process 
 requires a file URL, the exact mount path, matching bookmark/live volume UUIDs, and the kernel-opened
 directory's owner, device, APFS mountpoint and capacity. Receiver staleness is diagnostic metadata,
 not resource identity: the same bytes can resolve fresh in the host and stale in the sandbox.
+This follows Apple's [temporary cross-process bookmark handoff](https://developer.apple.com/documentation/security/accessing-files-from-the-macos-app-sandbox):
+resolution starts implicit access, and the service balances it when the paired storage is released.
 The kernel rejects symlinks anywhere in the path using `O_NOFOLLOW_ANY`; opening the mounted directory
 does not require read access to ancestors outside the bookmark's granted subtree.
 Host resolution and service failure diagnostics compare bookmark digests and volume metadata without
 recording capability bytes.
 Native acceptance requires PID- and session-bound evidence that the first sandboxed open is denied
-before resolving the bookmark and that the same mount passes all checks afterwards. Forged device,
+before resolving the bookmark and that the same mount passes all checks afterwards.
+The worker and data roles each prove that transition with their own lease ID, device, capacity and
+exact host bookmark digest; one role cannot stand in for the other. Both roles remain bound to the
+same original preparation, connection owner, service PID/start and event order. Forged device,
 capacity and path leases must fail on fresh session IDs at the storage validation stage, with the
 specific Cocoa identity error; missing-path or later session failures cannot satisfy those controls.
 Their evidence stores bookmark hashes only.
