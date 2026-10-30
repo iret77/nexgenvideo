@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from verify_bpy_signing import INHERIT, SANDBOX, entitlements, validate
+from verify_bpy_signing import SANDBOX, entitlements, validate
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -182,7 +182,7 @@ class AppSigningTests(unittest.TestCase):
                         service = app / "Contents/XPCServices" / f"NexGenVideoBpyService{slot}.xpc"
                         self.assertEqual(entitlements(service), {SANDBOX: True})
                         self.assertEqual(entitlements(service / "Contents/MacOS/NexGenVideoBpySupervisor"),
-                                         {SANDBOX: True, INHERIT: True})
+                                         {})
 
 
 if __name__ == "__main__":
