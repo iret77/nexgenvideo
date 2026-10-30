@@ -20,7 +20,11 @@ MERGE = "c" * 40
 TREE = "d" * 40
 
 
-def fixtures():
+def successful_results():
+    return {name: {"outcome": "success", "conclusion": "success"} for name in proof.CHECKS}
+
+
+def fixtures(version=1):
     run = {"id": 100, "repository": {"full_name": proof.REPOSITORY}, "event": "pull_request",
            "path": ".github/workflows/pr-checks.yml", "head_sha": HEAD, "run_attempt": 1,
            "status": "completed", "conclusion": "success", "actor": {"login": "iret77"}}
@@ -28,9 +32,11 @@ def fixtures():
              for name in (*proof.CHECKS, "Record verified source checkout", "Upload verified source checkout")]
     jobs = {"total_count": 1, "jobs": [{"id": 200, "name": "Light Checks", "run_id": 100,
             "run_attempt": 1, "head_sha": HEAD, "status": "completed", "conclusion": "success", "steps": steps}]}
-    receipt = {"schema": "verified-pr-source/v1", "repository": proof.REPOSITORY,
+    receipt = {"schema": f"verified-pr-source/v{version}", "repository": proof.REPOSITORY,
                "headRepository": proof.REPOSITORY, "runID": 100, "attempt": 1, "headSHA": HEAD,
                "pullRequest": 300, "checkoutSHA": CHECKOUT, "treeSHA": TREE, "baseRef": "rc"}
+    if version == 2:
+        receipt["checkResults"] = successful_results()
     pr = {"number": 300, "merged": True, "merge_commit_sha": MERGE,
           "head": {"sha": HEAD, "repo": {"full_name": proof.REPOSITORY}},
           "base": {"ref": "rc", "repo": {"full_name": proof.REPOSITORY}}}
@@ -49,20 +55,21 @@ def fixtures():
 class VerifiedPRSourceChecksTests(unittest.TestCase):
     def test_original_job_requires_every_named_check_and_upload_to_pass(self):
         run, jobs, *_ = fixtures()
-        self.assertEqual(proof.verify_run(run, jobs, 100)["id"], 200)
+        self.assertEqual(proof.verify_run_identity(run, jobs, 100)["id"], 200)
+        self.assertEqual(proof.verify_steps(jobs["jobs"][0]), "rest-job-steps")
         for key, value in (("event", "push"), ("run_attempt", 2), ("conclusion", "failure"),
                            ("path", ".github/workflows/ci.yml"), ("actor", {"login": "other"})):
             with self.subTest(key=key), self.assertRaises(ValueError):
-                proof.verify_run(dict(run, **{key: value}), jobs, 100)
+                proof.verify_run_identity(dict(run, **{key: value}), jobs, 100)
         for index in range(5):
             for conclusion in ("failure", "skipped", "cancelled", None):
                 changed = deepcopy(jobs)
                 changed["jobs"][0]["steps"][index]["conclusion"] = conclusion
                 with self.subTest(index=index, conclusion=conclusion), self.assertRaises(ValueError):
-                    proof.verify_run(run, changed, 100)
+                    proof.verify_steps(changed["jobs"][0])
         for changed in ({"total_count": 2, "jobs": jobs["jobs"]}, {"total_count": 2, "jobs": jobs["jobs"] * 2}):
             with self.assertRaises(ValueError):
-                proof.verify_run(run, changed, 100)
+                proof.verify_run_identity(run, changed, 100)
 
     def test_archive_hash_identity_and_expiry_are_mandatory(self):
         run, _, receipt, _, _, artifact, raw, _ = fixtures()
@@ -73,6 +80,56 @@ class VerifiedPRSourceChecksTests(unittest.TestCase):
                 proof.original_receipt(dict(artifact, **{key: value}), raw, run)
         with self.assertRaises(ValueError):
             proof.original_receipt(artifact, raw + b"changed", run)
+
+    def test_recorded_context_handles_empty_metadata_without_overriding_contradictions(self):
+        run, jobs, receipt, *_ = fixtures(version=2)
+        missing = deepcopy(jobs)
+        missing["jobs"][0]["steps"] = []
+        self.assertEqual(proof.verify_steps(missing["jobs"][0], receipt), "recorded-job-context/v2")
+        with self.assertRaises(ValueError):
+            proof.verify_steps(missing["jobs"][0], fixtures()[2])
+        for invalid in (None, "", {}):
+            changed = deepcopy(jobs)
+            changed["jobs"][0]["steps"] = invalid
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                proof.verify_steps(changed["jobs"][0], receipt)
+        for index in range(5):
+            changed = deepcopy(jobs)
+            changed["jobs"][0]["steps"][index]["conclusion"] = "skipped"
+            with self.subTest(index=index), self.assertRaises(ValueError):
+                proof.verify_steps(changed["jobs"][0], receipt)
+        for steps in (jobs["jobs"][0]["steps"][:-1], jobs["jobs"][0]["steps"] * 2):
+            changed = deepcopy(jobs)
+            changed["jobs"][0]["steps"] = steps
+            with self.assertRaises(ValueError):
+                proof.verify_steps(changed["jobs"][0], receipt)
+
+    def test_context_receipt_rejects_missing_failed_and_suppressed_checks(self):
+        run, _, receipt, _, _, artifact, _, _ = fixtures(version=2)
+        contexts = [None, {}, [], {**successful_results(), "unexpected": {}}]
+        missing = successful_results()
+        missing.pop(proof.CHECKS[0])
+        contexts.append(missing)
+        for name in proof.CHECKS:
+            for result in (None, {}, [], {"outcome": "success"},
+                           {"outcome": "success", "conclusion": "success", "unexpected": True}):
+                changed = successful_results()
+                changed[name] = result
+                contexts.append(changed)
+            for field in ("outcome", "conclusion"):
+                for value in ("failure", "skipped", "cancelled", None, True):
+                    changed = successful_results()
+                    changed[name][field] = value
+                    contexts.append(changed)
+        for context in contexts:
+            changed = dict(receipt, checkResults=context)
+            data = io.BytesIO()
+            with zipfile.ZipFile(data, "w") as archive:
+                archive.writestr("receipt.json", json.dumps(changed))
+            raw = data.getvalue()
+            metadata = dict(artifact, size_in_bytes=len(raw), digest="sha256:" + proof.digest(raw))
+            with self.subTest(context=context), self.assertRaises(ValueError):
+                proof.original_receipt(metadata, raw, run)
 
     def test_same_tree_is_required_in_addition_to_exact_owned_pr_merge(self):
         _, _, receipt, pr, commit, *_ = fixtures()
@@ -90,6 +147,7 @@ class VerifiedPRSourceChecksTests(unittest.TestCase):
     def test_receipt_content_and_archive_layout_cannot_substitute_other_sources(self):
         run, _, receipt, _, _, artifact, _, _ = fixtures()
         mutations = [(key, value) for key, value in (
+            ("schema", "verified-pr-source/v3"),
             ("headRepository", "fork/project"), ("attempt", 2), ("runID", 99),
             ("checkoutSHA", "../foreign"), ("headSHA", "e" * 40),
             ("treeSHA", "invalid"), ("pullRequest", "300"), ("pullRequest", True))]
@@ -126,22 +184,53 @@ class VerifiedPRSourceChecksTests(unittest.TestCase):
             event.write_text(json.dumps({"number": 300, "pull_request": fixtures()[3]}))
             env = {"GITHUB_EVENT_NAME": "pull_request", "GITHUB_EVENT_PATH": str(event),
                    "GITHUB_SHA": CHECKOUT, "GITHUB_REPOSITORY": proof.REPOSITORY,
-                   "GITHUB_RUN_ID": "100", "GITHUB_RUN_ATTEMPT": "1"}
+                   "GITHUB_RUN_ID": "100", "GITHUB_RUN_ATTEMPT": "1",
+                   "NGV_SOURCE_CHECK_RESULTS": json.dumps(successful_results())}
             with patch.dict(os.environ, env), patch.object(proof, "git", side_effect=[CHECKOUT, "", TREE]):
                 proof.record(root / "proof")
             receipt = json.loads((root / "proof/receipt.json").read_text())
             self.assertEqual(receipt["checkoutSHA"], CHECKOUT)
             self.assertEqual(receipt["headSHA"], HEAD)
             self.assertEqual(receipt["treeSHA"], TREE)
+            self.assertEqual(receipt["schema"], "verified-pr-source/v2")
+            self.assertEqual(receipt["checkResults"], successful_results())
             with patch.dict(os.environ, env), patch.object(proof, "git", side_effect=[CHECKOUT, " M source"]):
                 with self.assertRaises(ValueError):
                     proof.record(root / "dirty")
             self.assertFalse((root / "dirty").exists())
 
-    def prepare_fixture(self, failure=None):
-        run, jobs, receipt, pr, commit, artifact, raw, log = fixtures()
+    def test_record_refuses_a_missing_or_masked_context_before_creating_proof(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            event = root / "event.json"
+            event.write_text(json.dumps({"number": 300, "pull_request": fixtures()[3]}))
+            masked = successful_results()
+            masked[proof.CHECKS[0]]["outcome"] = "failure"
+            env = {"GITHUB_EVENT_NAME": "pull_request", "GITHUB_EVENT_PATH": str(event),
+                   "GITHUB_SHA": CHECKOUT, "GITHUB_REPOSITORY": proof.REPOSITORY,
+                   "GITHUB_RUN_ID": "100", "GITHUB_RUN_ATTEMPT": "1"}
+            for index, context in enumerate((None, {}, masked)):
+                env["NGV_SOURCE_CHECK_RESULTS"] = json.dumps(context)
+                destination = root / f"rejected-{index}"
+                with patch.dict(os.environ, env), patch.object(proof, "git", side_effect=[CHECKOUT, ""]):
+                    with self.assertRaises(ValueError):
+                        proof.record(destination)
+                self.assertFalse(destination.exists())
+
+    def prepare_fixture(self, failure=None, version=1, empty_steps=False):
+        run, jobs, receipt, pr, commit, artifact, raw, log = fixtures(version=version)
+        if empty_steps:
+            jobs["jobs"][0]["steps"] = []
         if failure == "step":
+            jobs["jobs"][0]["steps"] = fixtures()[1]["jobs"][0]["steps"]
             jobs["jobs"][0]["steps"][0]["conclusion"] = "skipped"
+        if failure == "context":
+            receipt["checkResults"][proof.CHECKS[0]]["outcome"] = "failure"
+            data = io.BytesIO()
+            with zipfile.ZipFile(data, "w") as archive:
+                archive.writestr("receipt.json", json.dumps(receipt))
+            raw = data.getvalue()
+            artifact.update(size_in_bytes=len(raw), digest="sha256:" + proof.digest(raw))
         if failure == "tree":
             commit["tree"]["sha"] = "e" * 40
         if failure == "log":
@@ -168,14 +257,25 @@ class VerifiedPRSourceChecksTests(unittest.TestCase):
             self.assertEqual(composition["sourceSHA"], MERGE)
             self.assertEqual(composition["originalReceipt"], receipt)
             self.assertEqual(composition["reusedSteps"], list(proof.CHECKS))
+            self.assertEqual(composition["originalJobs"], jobs)
+            self.assertEqual(composition["originalStepProof"],
+                             "recorded-job-context/v2" if empty_steps else "rest-job-steps")
             self.assertEqual((root / "proof/original-job.log").read_bytes(), log)
             self.assertEqual((root / "proof/original-proof.zip").read_bytes(), raw)
 
     def test_prepare_emits_reuse_only_after_original_evidence_and_tree_checks(self):
         self.prepare_fixture()
+        self.prepare_fixture("empty", empty_steps=True)
         for failure in ("step", "tree", "log"):
             with self.subTest(failure=failure):
                 self.prepare_fixture(failure)
+
+    def test_prepare_accepts_real_context_without_rest_steps_and_keeps_every_other_gate(self):
+        self.prepare_fixture(version=2, empty_steps=True)
+        self.prepare_fixture(version=2)
+        for failure in ("step", "context", "tree", "log"):
+            with self.subTest(failure=failure):
+                self.prepare_fixture(failure, version=2, empty_steps=True)
 
     def test_download_is_byte_preserving_bounded_and_never_forwards_credentials(self):
         opener = MagicMock()
@@ -203,6 +303,13 @@ class VerifiedPRSourceChecksTests(unittest.TestCase):
         batch = (root / ".github/workflows/ci-batch.yml").read_text()
         self.assertLess(pr.index("- name: Verify CI and fixture tooling"), pr.index("- name: Record verified source checkout"))
         self.assertNotIn("continue-on-error", pr)
+        for name, identifier in zip(proof.CHECKS, ("app_theme", "pipeline_contracts", "fixture_tooling")):
+            step = pr.split("      - name: " + name + "\n", 1)[1].split("      - name:", 1)[0]
+            self.assertIn("        id: " + identifier + "\n", step)
+            for field in ("outcome", "conclusion"):
+                self.assertIn("${{ steps." + identifier + "." + field + " }}", pr)
+        action = (root / ".github/actions/record-source-checks/action.yml").read_text()
+        self.assertIn("NGV_SOURCE_CHECK_RESULTS: ${{ inputs.step-results }}", action)
         self.assertEqual(ci.count("steps.pr_source.outputs.verified != 'true'"), 3)
         for name in proof.CHECKS:
             step = ci.split("      - name: " + name + "\n", 1)[1].split("      - name:", 1)[0]
