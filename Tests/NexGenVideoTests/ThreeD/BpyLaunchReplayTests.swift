@@ -24,7 +24,7 @@ struct BpyLaunchReplayTests {
         let original = BpyMonitorResponse(status: .observed, request: request, epoch: f.epoch,
             service: f.service, supervisor: f.supervisor, stdout: Data("actual bytes".utf8), nextOutputOffset: 12)
         try replay.complete(original, request: request)
-        let recovered = try #require(replay.begin(request, peer: f.service))
+        let recovered = try #require(try replay.begin(request, peer: f.service))
         #expect(recovered.stdout == original.stdout)
         #expect(recovered.nextOutputOffset == 12 && recovered.sequence == 1)
         #expect(throws: POSIXError.self) { try replay.begin(f.request(.sample, sequence: 1, offset: 12), peer: f.service) }
@@ -39,7 +39,7 @@ struct BpyLaunchReplayTests {
             service: f.service, ended: [f.supervisor], exitStatus: 0, outputComplete: true)
         try replay.complete(original, request: request)
         for _ in 0..<2 {
-            let recovered = try #require(replay.begin(request, peer: f.service))
+            let recovered = try #require(try replay.begin(request, peer: f.service))
             #expect(recovered.ended == [f.supervisor])
             #expect(recovered.epoch == f.epoch && recovered.supervisor == nil)
         }
@@ -73,7 +73,7 @@ struct BpyLaunchReplayTests {
         #expect(throws: POSIXError.self) { try replay.begin(request, peer: f.service) }
         let failure = BpyMonitorResponse(status: .refused, request: request, epoch: f.epoch, service: f.service, errorCode: ETIMEDOUT)
         try replay.complete(failure, request: request)
-        let recovered = try #require(replay.begin(request, peer: f.service))
+        let recovered = try #require(try replay.begin(request, peer: f.service))
         #expect(recovered.status == .refused && recovered.errorCode == ETIMEDOUT)
     }
 }

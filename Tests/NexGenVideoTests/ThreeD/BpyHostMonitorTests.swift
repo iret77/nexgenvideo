@@ -143,7 +143,7 @@ struct BpyHostMonitorTests {
         var descriptor = pollfd(fd: output.fileHandleForReading.fileDescriptor, events: Int16(POLLIN), revents: 0)
         try #require(Darwin.poll(&descriptor, 1, 3_000) == 1)
         try #require(output.fileHandleForReading.read(upToCount: 5) == Data("ready".utf8))
-        let supervisor = try #require(BpyKernelInspection.process(process.processIdentifier))
+        let supervisor = try #require(try BpyKernelInspection.process(process.processIdentifier))
         let worker = try #require(BpyKernelInspection.descendants(of: supervisor).first)
         let observation = BpyProcessObservation(supervisor: supervisor, workerExecutable: worker.executable)
         try observation.captureChild(worker)

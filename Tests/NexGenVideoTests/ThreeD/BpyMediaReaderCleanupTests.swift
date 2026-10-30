@@ -42,13 +42,16 @@ struct BpyMediaReaderCleanupTests {
         work.release()
         media.abandon()
         reading.endBody(success: false)
-        #expect(asset.cancelled.wait(timeout: .now() + 1) == .success)
-        #expect(backend.cancelling.wait(timeout: .now() + 1) == .success)
+        let assetCancelled = await wait(asset.cancelled, until: .now() + 1)
+        #expect(assetCancelled == .success)
+        let readerCancelling = await wait(backend.cancelling, until: .now() + 1)
+        #expect(readerCancelling == .success)
         try await Task.sleep(for: .seconds(6))
         #expect(ledger.snapshot.count == 2)
         #expect(ledger.snapshot.allSatisfy { $0.bytes == limits.outputBytes })
         #expect(try Data(contentsOf: media.url) == bytes)
-        #expect(backend.returned.wait(timeout: .now()) == .timedOut)
+        let returnedBeforeRelease = await wait(backend.returned, until: .now())
+        #expect(returnedBeforeRelease == .timedOut)
         do { try memory.checkConsumer(consumerID); Issue.record("The reader cleanup overrun was lost.") }
         catch let stop as BpyExecutionInterruption { #expect(stop.reason == .cleanupFailed) }
         try memory.register(owner: otherOwner, generation: generation)
@@ -59,7 +62,8 @@ struct BpyMediaReaderCleanupTests {
         defer { other.release() }
         try other.check()
         backend.allowCompletion.signal()
-        #expect(backend.returned.wait(timeout: .now() + 1) == .success)
+        let returnedAfterRelease = await wait(backend.returned, until: .now() + 1)
+        #expect(returnedAfterRelease == .success)
         let deadline = try BpyRuntimeClock.awakeSeconds() + 3
         while !ledger.snapshot.isEmpty, try BpyRuntimeClock.awakeSeconds() < deadline {
             try await Task.sleep(for: .milliseconds(5))
@@ -70,5 +74,13 @@ struct BpyMediaReaderCleanupTests {
         do { try memory.checkConsumer(consumerID); Issue.record("The completed reader retained its consumer scope.") }
         catch let stop as BpyExecutionInterruption { #expect(stop.reason == .closed) }
         try other.check()
+    }
+
+    private func wait(_ semaphore: DispatchSemaphore, until deadline: DispatchTime) async -> DispatchTimeoutResult {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                continuation.resume(returning: semaphore.wait(timeout: deadline))
+            }
+        }
     }
 }
