@@ -24,6 +24,11 @@ Read and existence checks for `/` and the intermediate directories use exact dir
 Network, fork, foreign-process signals and undeclared IPC remain denied. Provider keys are absent
 from the host-built environment. No canonical project path or write capability reaches the worker.
 
+The host supplies a fixed, nonidentifying `USER=nexgenvideo`. Blender 5.2.2's
+[vendored glog initializer](https://github.com/blender/blender/blob/v5.2.2/extern/glog/src/utilities.cc)
+otherwise queries the account database and can dereference a missing result inside Seatbelt.
+No account name or inherited environment is needed for native-library initialization.
+
 Each XPC bundle contains its own `Contents/Resources/BpyRuntime` and its supervisor in
 `Contents/MacOS`. No runtime executable or script falls back to the outer app bundle. The two
 runtime copies use identical signed bytes; the outer app seals their exact paired inventory in

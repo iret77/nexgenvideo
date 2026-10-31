@@ -85,4 +85,18 @@ struct BpyHostConfigurationTests {
         ["objects": limits.objects, "vertices": limits.vertices, "polygons": limits.polygons,
             "renderWidth": limits.renderWidth, "renderHeight": limits.renderHeight, "renderPixels": limits.renderPixels]
     }
+
+    @Test func nativeLibraryIdentityIsFixedAndPreservesTheEnvironmentAllowlist() {
+        for root in ["/worker/job-one", "/worker/job-two"] {
+            let environment = BpyHostLauncher.workerEnvironment(rootPath: root)
+            #expect(Set(environment.keys) == Set(["USER", "HOME", "TMPDIR", "LANG", "BLENDER_USER_CONFIG",
+                "BLENDER_USER_SCRIPTS", "BLENDER_USER_DATAFILES", "PYTHONDONTWRITEBYTECODE"]))
+            #expect(environment["USER"] == "nexgenvideo")
+            #expect(environment["LANG"] == "en_US.UTF-8")
+            #expect(environment["PYTHONDONTWRITEBYTECODE"] == "1")
+            for key in ["HOME", "TMPDIR", "BLENDER_USER_CONFIG", "BLENDER_USER_SCRIPTS", "BLENDER_USER_DATAFILES"] {
+                #expect(environment[key]?.hasPrefix(root + "/") == true)
+            }
+        }
+    }
 }

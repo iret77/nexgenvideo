@@ -694,9 +694,7 @@ nonisolated final class BpyHostLauncher: @unchecked Sendable {
             self.canaryWrite = file
             return file
         }
-        let environment = ["HOME": rootPath + "/home", "TMPDIR": rootPath + "/tmp", "LANG": "en_US.UTF-8",
-            "BLENDER_USER_CONFIG": rootPath + "/blender-config", "BLENDER_USER_SCRIPTS": rootPath + "/blender-scripts",
-            "BLENDER_USER_DATAFILES": rootPath + "/blender-data", "PYTHONDONTWRITEBYTECODE": "1"]
+        let environment = Self.workerEnvironment(rootPath: rootPath)
         let boundaryOnly = spec.mode == .boundary && spec.boundary != .diagnosticPythonFootprint
         let configurationValue = BpySupervisorConfiguration(hostPID: host.pid, hostStart: host.start,
             mode: spec.mode, python: boundaryOnly ? try BpyRuntimePath.canonical(layout.supervisor)
@@ -1143,6 +1141,13 @@ nonisolated final class BpyHostLauncher: @unchecked Sendable {
             guard launches.values.filter({ $0.spec.permit == permit }).allSatisfy(\.reaped) else { return }
             bindings.removeValue(forKey: permit); authorizedPermits.remove(permit)
         }
+    }
+
+    static func workerEnvironment(rootPath: String) -> [String: String] {
+        // Vendored glog otherwise queries the unavailable account database during native initialization.
+        ["USER": "nexgenvideo", "HOME": rootPath + "/home", "TMPDIR": rootPath + "/tmp", "LANG": "en_US.UTF-8",
+            "BLENDER_USER_CONFIG": rootPath + "/blender-config", "BLENDER_USER_SCRIPTS": rootPath + "/blender-scripts",
+            "BLENDER_USER_DATAFILES": rootPath + "/blender-data", "PYTHONDONTWRITEBYTECODE": "1"]
     }
 
 }

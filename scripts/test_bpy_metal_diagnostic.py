@@ -199,7 +199,8 @@ class MetalControlTests(unittest.TestCase):
                 {'GH_TOKEN': 'fixture-token', 'PROVIDER_SECRET': 'fixture-secret', 'ANTHROPIC_API_KEY': 'fixture-api'}):
             base = Path(folder)
             environment = diagnostic.environment(base)
-            self.assertEqual(set(environment), {'HOME', 'TMPDIR', 'LANG', 'BLENDER_USER_CONFIG', 'BLENDER_USER_SCRIPTS', 'BLENDER_USER_DATAFILES'})
+            self.assertEqual(set(environment), {'USER', 'HOME', 'TMPDIR', 'LANG', 'BLENDER_USER_CONFIG', 'BLENDER_USER_SCRIPTS', 'BLENDER_USER_DATAFILES'})
+            self.assertEqual(environment['USER'], 'nexgenvideo')
             popen, killpg, select = subprocess.Popen, os.killpg, diagnostic.selectors.DefaultSelector.select
             original_mask = signal.pthread_sigmask(signal.SIG_BLOCK, set())
             snapshot_root = base / 'group-inspection'
@@ -223,7 +224,7 @@ class MetalControlTests(unittest.TestCase):
                 child.wait(timeout=5)
             grandchild_code = "import os,subprocess,sys;from pathlib import Path;p=subprocess.Popen([sys.executable,'-I','-c','import time;time.sleep(30)'],stdin=subprocess.DEVNULL);Path('grandchild.part').write_text(str(p.pid));os.replace('grandchild.part','grandchild.pid');print('grandchild-ready',flush=True)"
             cases = [
-                ('output', "import os,sys;assert sys.stdin.buffer.read()==b'';assert all(k not in os.environ for k in ['GH_TOKEN','PROVIDER_SECRET','ANTHROPIC_API_KEY']);sys.stdout.buffer.write(b'x'*(5*1024*1024))", 5),
+                ('output', "import os,sys;assert sys.stdin.buffer.read()==b'';assert os.environ['USER']=='nexgenvideo';assert all(k not in os.environ for k in ['GH_TOKEN','PROVIDER_SECRET','ANTHROPIC_API_KEY']);sys.stdout.buffer.write(b'x'*(5*1024*1024))", 5),
                 ('timeout', 'import time;time.sleep(30)', .15),
                 ('cancel', 'import time;time.sleep(30)', 5),
                 ('real-signal', 'import time;time.sleep(30)', 5),
