@@ -129,6 +129,8 @@ class CIWorkflowTests(unittest.TestCase):
                     """))
                 (root / "scripts").mkdir()
                 shutil.copyfile(ROOT / "scripts/bpy_runtime_acceptance.py", root / "scripts/bpy_runtime_acceptance_impl.py")
+                for name in ("run_macos_tests.py", "app_host_zombie_diagnostic.py", "verify_swift_test_output.py"):
+                    shutil.copyfile(ROOT / "scripts" / name, root / "scripts" / name)
                 (root / "scripts/bpy_runtime_acceptance.py").write_text(textwrap.dedent("""\
                     from contextlib import contextmanager
                     import json, os
@@ -386,7 +388,7 @@ class CIWorkflowTests(unittest.TestCase):
             {"ci.yml", "chat-hang-replay.yml", "recorded-hang-replay.yml",
              "signing-preflight.yml", "workspace-ui-acceptance.yml", "private-example-analysis.yml",
              "external-gui-acceptance.yml", "settings-owner-acceptance.yml", "smart-search-owner-acceptance.yml",
-             "bpy-source-closure.yml"},
+             "bpy-source-closure.yml", "bpy-runtime-acceptance.yml"},
         )
         for name in called:
             with self.subTest(workflow=name):
@@ -416,6 +418,8 @@ class CIWorkflowTests(unittest.TestCase):
                    "NGV_RUNTIME_RUN": "123", "NGV_SETTINGS_SCOPE": "packrecovery100"}, "followup"),
                  ({"NGV_MODE": "followup", "NGV_FOLLOWUP": "smartsearch",
                    "NGV_RUNTIME_RUN": "123"}, "followup"),
+                 ({"NGV_MODE": "followup", "NGV_FOLLOWUP": "bpy",
+                   "NGV_RUNTIME_RUN": "123"}, "followup"),
                  ({"NGV_MODE": "qualification"}, "qualification"),
                  ({"NGV_MODE": "qualification", "NGV_QUALIFICATION_RUN": "123"}, "qualification"),
                  ({"NGV_MODE": "qualification", "NGV_SOURCE_RUN": "456"}, "qualification"),
@@ -440,6 +444,8 @@ class CIWorkflowTests(unittest.TestCase):
                    {**followup, "NGV_INTERFACE_SCALE": "2"},
                    {**followup, "NGV_FOLLOWUP": "settings", "NGV_INTERFACE_SCALE": "1"},
                    {**followup, "NGV_FOLLOWUP": "smartsearch", "NGV_SETTINGS_SCOPE": "settings"},
+                   {**followup, "NGV_FOLLOWUP": "bpy", "NGV_SETTINGS_SCOPE": "settings"},
+                   {**followup, "NGV_FOLLOWUP": "bpy", "NGV_INTERFACE_SCALE": "1"},
                    {**followup, "NGV_FOLLOWUP": "settings", "NGV_SETTINGS_SCOPE": "unknown"},
                    {**followup, "NGV_FOLLOWUP": "settings", "NGV_SETTINGS_SCOPE": "packrecovery172100"},
                    {"NGV_QUALIFICATION_RUN": "123"}, {**followup, "NGV_QUALIFICATION_RUN": "123"},
