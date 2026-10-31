@@ -120,6 +120,18 @@ enum BpyRuntimeSelfTest {
                 pendingResult = try await run(output: output)
                 AppTermination.request()
             } catch {
+                if let outputDirectory {
+                    do {
+                        var diagnostic = try BpyRuntimeObservation.shared.diagnosticSnapshot()
+                        diagnostic["hostPID"] = getpid()
+                        diagnostic["sourceSHA"] = Bundle.main.object(forInfoDictionaryKey: "NGVSourceCommit") as? String ?? ""
+                        diagnostic["error"] = error.localizedDescription
+                        try JSONSerialization.data(withJSONObject: diagnostic, options: [.sortedKeys])
+                            .write(to: outputDirectory.appendingPathComponent("runtime-failure-observation.json"), options: .atomic)
+                    } catch {
+                        FileHandle.standardError.write(Data("SELFTEST_BPY_DIAGNOSTIC_FAIL \(error.localizedDescription)\n".utf8))
+                    }
+                }
                 let message = "SELFTEST_BPY_FAIL \(error.localizedDescription)\n"
                 FileHandle.standardError.write(Data(message.utf8))
                 Darwin.exit(1)
@@ -486,6 +498,13 @@ enum BpyRuntimeSelfTest {
         }
 
         let warmID = UUID()
+        let warmRequest: [String: Any] = [
+            "schema": "nexgenvideo/bpy-warm-probe/1", "hostPID": getpid(),
+            "sourceSHA": Bundle.main.object(forInfoDictionaryKey: "NGVSourceCommit") as? String ?? "",
+            "jobID": warmID.uuidString, "source": "pass",
+        ]
+        try JSONSerialization.data(withJSONObject: warmRequest, options: [.sortedKeys])
+            .write(to: output.appendingPathComponent("warm-job.json"), options: .atomic)
         let warmStarted = Date()
         let warm = try sessionA.runJob(
             id: warmID,

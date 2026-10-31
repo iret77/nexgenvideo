@@ -399,6 +399,14 @@ blocks the main actor; recorder recovery or startup-failure dialogs would block 
 
 The first scene's actual response and staged output names are saved to
 `acceptance-scene-response.json` before its result gate, including when that gate fails.
+The full Actions self-test also retains each accepted job on the client's `runJob` → `finish` path in
+immutable `job-response-*.json` files: the client result, last successfully decoded server reply and host permit
+decision. `finishReturned` describes terminal handling; missing responses and permit receipts are
+explicitly marked unavailable, and a thrown error is retained. Only the last reply is retained, up to
+8 MiB; oversized replies are marked as not retained. `warm-job.json` identifies the warm no-op job
+before execution. When the self-test run fails before shutdown, `runtime-failure-observation.json`
+preserves the partial resource trace. These diagnostics are not acceptance evidence; the complete
+result gates remain unchanged.
 
 `.github/workflows/bpy-source-closure.yml` is a manual/reusable source-evidence workflow bound to
 `github.sha`. Its Linux job assembles the exact source/notice closure and independently validates the

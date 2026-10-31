@@ -147,6 +147,17 @@ nonisolated final class BpyRuntimeObservation: @unchecked Sendable {
             peak: max(trace.footprints[key]?.peak ?? 0, process.footprint), clock: clock, error: nil)
     }
 
+    func diagnosticSnapshot() throws -> [String: Any] {
+        guard enabled else { throw SpatialSceneError.changed }
+        let value = queue.sync { trace }
+        let encoder = JSONEncoder()
+        encoder.nonConformingFloatEncodingStrategy = .convertToString(
+            positiveInfinity: "+Infinity", negativeInfinity: "-Infinity", nan: "NaN")
+        return ["schema": "nexgenvideo/bpy-runtime-diagnostic/1", "partialDiagnosticOnly": true,
+            "nonFiniteFloatEncoding": "strings",
+            "trace": try JSONSerialization.jsonObject(with: encoder.encode(value))]
+    }
+
     func evidence() throws -> [String: Any] {
         guard enabled else { throw SpatialSceneError.changed }
         let value = queue.sync {

@@ -782,7 +782,13 @@ final class BpyRuntimeSession: @unchecked Sendable {
             diagnosticSupervisorIdentityCaptureFailure: diagnosticSupervisorIdentityCaptureFailure,
             admission: admission.id, admissionDeadline: admission.admissionDeadline
         )
-        let response = try call { service, reply in
+        let diagnosticDirectory = Self.jobDiagnosticDirectory
+        var initialServerReply: Data?
+        var initialServerReplyBytes = 0
+        let response = try call(observing: diagnosticDirectory == nil ? nil : { data in
+            initialServerReplyBytes = data.count
+            if data.count <= Self.jobDiagnosticReplyBytes { initialServerReply = data }
+        }) { service, reply in
             service.runJob(try Self.encode(request), withReply: reply)
         }
         guard response.ok else {
@@ -800,7 +806,9 @@ final class BpyRuntimeSession: @unchecked Sendable {
             response: response,
             timeoutSeconds: timeout,
             diagnosticDeferExecutionAuthorization: diagnosticDeferExecutionAuthorization,
-            cancellation: cancellation, admission: admission
+            cancellation: cancellation, admission: admission,
+            diagnosticDirectory: diagnosticDirectory, initialServerReply: initialServerReply,
+            initialServerReplyBytes: initialServerReplyBytes
         )
         pendingLease = result.lease
         try requireOperation(cancellation)
@@ -815,57 +823,86 @@ final class BpyRuntimeSession: @unchecked Sendable {
     private func finish(
         jobID: UUID, fingerprint: String, response initialResponse: BpyServiceResponse,
         timeoutSeconds: Int, diagnosticDeferExecutionAuthorization: Bool,
-        cancellation: BpyOperationCancellation, admission: BpyAdmissionIdentity
+        cancellation: BpyOperationCancellation, admission: BpyAdmissionIdentity,
+        diagnosticDirectory: URL? = nil, initialServerReply: Data? = nil, initialServerReplyBytes: Int = 0
     ) throws -> BpyRuntimeJobResult {
-        let response = try waitForTerminal(jobID: jobID, fingerprint: fingerprint,
-            response: initialResponse, admission: admission, cancellation: cancellation,
-            diagnosticDeferExecutionAuthorization: diagnosticDeferExecutionAuthorization)
-        guard !response.resultExpired else {
-            throw BpyRuntimeError.rejected("The retained result for this Job ID has expired; it will not run again.")
-        }
         let memory = memoryCoordinator
-        memory.finish(admission.id)
-        let receipt = try memory.receipt(admission.id)
-        lock.withLock { jobAdmissions.removeValue(forKey: jobID) }
-        memory.forget(admission.id)
-        let succeeded = [.awaitingConfirmation, .confirmed].contains(response.state)
-        if succeeded {
-            if let failure = receipt.failure { throw failure }
-            if let stop = receipt.stop { throw BpyExecutionInterruption(reason: stop) }
-            guard receipt.cleanupComplete else {
-                throw BpyRuntimeError.invalidOutput("The 3D result has no completed process cleanup receipt.")
-            }
-        }
-        if response.runtime != nil {
-            lock.withLock { var ready = response; ready.stdout = nil; lastReadyResponse = ready }
-        }
+        var diagnosticResponse: BpyServiceResponse?
+        var diagnosticReceipt: BpyMemoryCoordinator.PermitReceipt?
+        var diagnosticError: Error?
+        var lastServerReply = initialServerReply
+        var lastServerMethod = "runJob"
+        var lastServerReplyBytes = initialServerReplyBytes
         var files: [String: BpyRuntimeFile] = [:]
         var returned = false
-        defer { if !returned { for file in files.values { file.release() } } }
-        if succeeded {
-            let work = try consumerWork(cancellation: cancellation)
-            defer { work.release() }
-            files = try downloadOutputs(response.outputs, jobID: jobID, cancellation: cancellation,
-                timeout: admission.timeout, work: work)
-            try work.check()
-        }
-        let origin = lock.withLock { jobOrigins[jobID] }
-        let leaseID = UUID()
-        let lease = BpyRuntimeResultLease(id: leaseID, transport: admission.transport, job: jobID, slot: serviceName,
-            owner: memoryOwner, limits: limits, sourceRevision: origin?.revision,
-            sourceSHA256: origin?.sha256, fingerprint: fingerprint,
-            response: response, files: files) { [weak self] detached in
-                self?.releasedResult(jobID: jobID, leaseID: leaseID, wasDetached: detached)
-            }
-        try lease.recordExecution(receipt)
-        if response.state == .awaitingConfirmation, let scene = files["scene.blend"] {
-            lock.withLock {
-                candidateJobIDs.insert(jobID)
-                validatedCandidates[jobID] = (scene.sha256, scene.url)
+        defer {
+            if let diagnosticDirectory {
+                Self.recordJobDiagnostic(directory: diagnosticDirectory, jobID: jobID,
+                    response: diagnosticResponse, initial: initialResponse,
+                    serverReply: lastServerReply, serverMethod: lastServerMethod,
+                    serverReplyBytes: lastServerReplyBytes,
+                    permit: diagnosticReceipt ?? (try? memory.receipt(admission.id)),
+                    error: diagnosticError, returned: returned, stagedOutputNames: files.keys.sorted())
             }
         }
-        returned = true
-        return .init(response: response, stagedOutputs: lease.urls, lease: lease)
+        do {
+            let response = try waitForTerminal(jobID: jobID, fingerprint: fingerprint,
+                response: initialResponse, admission: admission, cancellation: cancellation,
+                diagnosticDeferExecutionAuthorization: diagnosticDeferExecutionAuthorization,
+                observing: diagnosticDirectory == nil ? nil : { method, _, data in
+                    lastServerMethod = method
+                    lastServerReplyBytes = data.count
+                    lastServerReply = data.count <= Self.jobDiagnosticReplyBytes ? data : nil
+                })
+            diagnosticResponse = response
+            guard !response.resultExpired else {
+                throw BpyRuntimeError.rejected("The retained result for this Job ID has expired; it will not run again.")
+            }
+            memory.finish(admission.id)
+            let receipt = try memory.receipt(admission.id)
+            diagnosticReceipt = receipt
+            lock.withLock { jobAdmissions.removeValue(forKey: jobID) }
+            memory.forget(admission.id)
+            let succeeded = [.awaitingConfirmation, .confirmed].contains(response.state)
+            if succeeded {
+                if let failure = receipt.failure { throw failure }
+                if let stop = receipt.stop { throw BpyExecutionInterruption(reason: stop) }
+                guard receipt.cleanupComplete else {
+                    throw BpyRuntimeError.invalidOutput("The 3D result has no completed process cleanup receipt.")
+                }
+            }
+            if response.runtime != nil {
+                lock.withLock { var ready = response; ready.stdout = nil; lastReadyResponse = ready }
+            }
+            defer { if !returned { for file in files.values { file.release() } } }
+            if succeeded {
+                let work = try consumerWork(cancellation: cancellation)
+                defer { work.release() }
+                files = try downloadOutputs(response.outputs, jobID: jobID, cancellation: cancellation,
+                    timeout: admission.timeout, work: work)
+                try work.check()
+            }
+            let origin = lock.withLock { jobOrigins[jobID] }
+            let leaseID = UUID()
+            let lease = BpyRuntimeResultLease(id: leaseID, transport: admission.transport, job: jobID, slot: serviceName,
+                owner: memoryOwner, limits: limits, sourceRevision: origin?.revision,
+                sourceSHA256: origin?.sha256, fingerprint: fingerprint,
+                response: response, files: files) { [weak self] detached in
+                    self?.releasedResult(jobID: jobID, leaseID: leaseID, wasDetached: detached)
+                }
+            try lease.recordExecution(receipt)
+            if response.state == .awaitingConfirmation, let scene = files["scene.blend"] {
+                lock.withLock {
+                    candidateJobIDs.insert(jobID)
+                    validatedCandidates[jobID] = (scene.sha256, scene.url)
+                }
+            }
+            returned = true
+            return .init(response: response, stagedOutputs: lease.urls, lease: lease)
+        } catch {
+            diagnosticError = error
+            throw error
+        }
     }
 
     private func waitForTerminal(jobID: UUID, fingerprint: String, response initial: BpyServiceResponse,
@@ -1816,6 +1853,54 @@ final class BpyRuntimeSession: @unchecked Sendable {
         } catch {
             Log.app.error("3D startup diagnostics could not be saved: \(error.localizedDescription)",
                 telemetry: "bpy-open-diagnostics-write-failed")
+        }
+    }
+
+    private static var jobDiagnosticReplyBytes: Int { 8 * 1_024 * 1_024 }
+
+    private static var jobDiagnosticDirectory: URL? {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["GITHUB_ACTIONS"] == "true", environment["NGV_SELFTEST_BPY"]?.isEmpty == false,
+              let path = environment["NGV_BPY_COMMAND_EVIDENCE"], !path.isEmpty else { return nil }
+        return URL(fileURLWithPath: path, isDirectory: true)
+    }
+
+    private static func recordJobDiagnostic(directory: URL, jobID: UUID,
+        response: BpyServiceResponse?, initial: BpyServiceResponse,
+        serverReply: Data?, serverMethod: String, serverReplyBytes: Int,
+        permit: BpyMemoryCoordinator.PermitReceipt?, error: Error?, returned: Bool, stagedOutputNames: [String]) {
+        do {
+            let encoder = JSONEncoder()
+            encoder.nonConformingFloatEncodingStrategy = .convertToString(
+                positiveInfinity: "+Infinity", negativeInfinity: "-Infinity", nan: "NaN")
+            var record: [String: Any] = [
+                "schema": "nexgenvideo/bpy-job-diagnostic/1", "hostPID": getpid(),
+                "sourceSHA": Bundle.main.object(forInfoDictionaryKey: "NGVSourceCommit") as? String ?? "",
+                "jobID": jobID.uuidString, "finishReturned": returned,
+                "initialResponse": try JSONSerialization.jsonObject(with: encoder.encode(initial)),
+                "serverMethod": serverMethod, "serverReplyBytes": serverReplyBytes,
+                "serverReplyRetained": serverReply != nil, "stagedOutputNames": stagedOutputNames,
+                "serverReplyScope": "last-successfully-decoded",
+                "responseStatus": response == nil ? "unavailable" : "captured",
+                "permitReceiptStatus": permit == nil ? "unavailable" : "captured",
+                "partialDiagnosticOnly": true, "nonFiniteFloatEncoding": "strings",
+            ]
+            if let response { record["response"] = try JSONSerialization.jsonObject(with: encoder.encode(response)) }
+            if let permit { record["permitReceipt"] = try JSONSerialization.jsonObject(with: encoder.encode(permit)) }
+            if let error {
+                record["error"] = String(describing: error)
+                record["localizedError"] = error.localizedDescription
+            }
+            if let serverReply {
+                record["serverReply"] = serverReply.base64EncodedString()
+                record["serverReplySHA256"] = SHA256.hash(data: serverReply).map { String(format: "%02x", $0) }.joined()
+            }
+            let url = directory.appendingPathComponent("job-response-\(jobID.uuidString)-\(UUID().uuidString).json")
+            try JSONSerialization.data(withJSONObject: record, options: [.sortedKeys])
+                .write(to: url, options: .withoutOverwriting)
+        } catch {
+            Log.app.error("3D job diagnostics could not be saved: \(error.localizedDescription)",
+                telemetry: "bpy-job-diagnostics-write-failed")
         }
     }
 
