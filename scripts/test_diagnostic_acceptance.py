@@ -413,6 +413,53 @@ class CICandidateProvenanceTests(unittest.TestCase):
                                         stdin=subprocess.DEVNULL, capture_output=True, timeout=5)
                 self.assertEqual(result.returncode == 0, valid, result.stderr.decode())
 
+    def test_original_app_transfer_resumes_exact_bytes_and_rejects_changed_metadata(self):
+        import hashlib
+        import pinned_download as transfer
+        import reuse_bpy_binary_evidence as reuse
+        from test_pinned_download import Response
+
+        workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/bpy-runtime-acceptance.yml").read_text()
+        step = workflow.split("      - name: Retrieve the bound original CI app\n", 1)[1].split("\n      - ", 1)[0]
+        script = textwrap.dedent(step.split("          python3 - <<'PY'\n", 1)[1].split("          PY\n", 1)[0])
+        payload = b"original immutable App archive"
+        digest = hashlib.sha256(payload).hexdigest()
+        artifact = dict(id=42, name="NexGenVideo-app", expired=False, size_in_bytes=len(payload),
+                        digest="sha256:" + digest, workflow_run=dict(id=12, head_sha=self.source))
+        environment = dict(ORIGINAL_ARTIFACT="42", ORIGINAL_NAME="NexGenVideo-app",
+                           ORIGINAL_DIGEST=digest, ORIGINAL_RUN="12", ORIGINAL_SOURCE=self.source)
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.dict(os.environ, {**environment, "RUNNER_TEMP": directory}), \
+             patch.object(reuse, "api", return_value=artifact) as metadata, \
+             patch.object(reuse, "source_response", side_effect=[
+                 Response(payload[:5], failure=TimeoutError()),
+                 Response(payload[5:], 206, {"Content-Range": f"bytes 5-{len(payload) - 1}/{len(payload)}",
+                                            "Content-Length": str(len(payload) - 5)})]) as response, \
+             patch.object(transfer.time, "sleep"):
+            exec(script, {})
+            self.assertEqual((Path(directory) / "original-app.zip").read_bytes(), payload)
+            self.assertEqual([call.args[1] for call in response.call_args_list], [0, 5])
+            metadata.assert_called_once_with("/actions/artifacts/42")
+        for change in ({"id": 99}, {"name": "foreign"}, {"expired": True},
+                       {"digest": "sha256:" + "f" * 64}, {"size_in_bytes": 0},
+                       {"workflow_run": dict(id=99, head_sha=self.source)},
+                       {"workflow_run": dict(id=12, head_sha="f" * 40)}):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as directory, \
+                 patch.dict(os.environ, {**environment, "RUNNER_TEMP": directory}), \
+                 patch.object(reuse, "api", return_value={**artifact, **change}), \
+                 patch.object(reuse, "source_response") as response:
+                with self.assertRaises(ValueError):
+                    exec(script, {})
+                response.assert_not_called()
+                self.assertFalse((Path(directory) / "original-app.zip").exists())
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.dict(os.environ, {**environment, "RUNNER_TEMP": directory}), \
+             patch.object(reuse, "api", return_value=artifact), \
+             patch.object(reuse, "source_response", return_value=Response(b"x" * len(payload))) as response:
+            with self.assertRaisesRegex(ValueError, "size or digest mismatch"):
+                exec(script, {})
+            response.assert_called_once()
+
     def test_resumed_source_preparation_passes_the_original_receipt_identity(self):
         workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/bpy-runtime-acceptance.yml").read_text()
         step = workflow.split("      - name: Prepare qualified source for the original CI app\n", 1)[1].split("      - name:", 1)[0]
