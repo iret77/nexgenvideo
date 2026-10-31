@@ -84,7 +84,7 @@ def probe(config):
     write_manifest(config["manifest"], {
         "schema": "nexgenvideo/bpy-probe/1",
         "pythonVersion": ".".join(map(str, sys.version_info[:3])),
-        "bpyVersion": bpy.app.version_string,
+        "bpyVersion": ".".join(map(str, bpy.app.version)),
         "bpyModule": str(Path(bpy.__file__).resolve()),
         "executable": str(Path(sys.executable).resolve()),
         "processIdentifier": os.getpid(),
@@ -478,7 +478,7 @@ def verify_scene(config):
         "jobID": config["jobID"],
         "fingerprint": config["fingerprint"],
         "pythonVersion": ".".join(map(str, sys.version_info[:3])),
-        "bpyVersion": bpy.app.version_string,
+        "bpyVersion": ".".join(map(str, bpy.app.version)),
         "executable": str(Path(sys.executable).resolve()),
         "bpyModule": str(Path(bpy.__file__).resolve()),
         "processIdentifier": os.getpid(),

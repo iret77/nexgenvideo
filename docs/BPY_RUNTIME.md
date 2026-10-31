@@ -431,6 +431,10 @@ Native failure diagnostics also bind OS child reports to the recorded PID, paren
 interval and known supervisor or Python image. Missing reports stay explicit. Capture preserves the
 original failure and cancellation; a spawned-child announcement does not establish Python readiness.
 
+Probe and scene-verification manifests encode `bpyVersion` as `major.minor.micro` from
+`bpy.app.version`. `bpy.app.version_string` is display text and can include an `LTS` suffix.
+The host still requires the exact pinned version.
+
 The runtime probe uses real `VideoProject` instances and windows through `BpyRuntimeHost`. It covers
 two slots, a denied third document, failed-open reuse, close/reuse, and AppDelegate shutdown. It also
 covers exact and changed duplicate payloads, forged native stdout plus an infinite loop, a persistent
