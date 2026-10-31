@@ -136,7 +136,11 @@ actor FilmFlowOAuth {
         let connection = try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Connection, Error>) in
                 guard !Task.isCancelled else { continuation.resume(throwing: CancellationError()); return }
-                if refresh != nil { refreshWaiters[requestID] = continuation; return }
+                if refresh != nil {
+                    refreshWaiters[requestID] = continuation
+                    dependencies?.didAddRefreshWaiter?(refreshWaiters.count)
+                    return
+                }
                 guard let original = load(), original.resource == FilmFlowHTTP.endpoint, original.issuer == Self.issuer,
                       original.tokens.tokenEndpoint.host == Self.issuer.host, original.tokens.tokenEndpoint.scheme == "https",
                       original.tokens.tokenEndpoint.port == Self.issuer.port else {
@@ -147,6 +151,7 @@ actor FilmFlowOAuth {
                     continuation.resume(throwing: FilmFlowFailure.message("Sign in to FilmFlow again.")); return
                 }
                 refreshWaiters[requestID] = continuation
+                dependencies?.didAddRefreshWaiter?(refreshWaiters.count)
                 startRefresh(original)
             }
         } onCancel: {
@@ -256,6 +261,7 @@ actor FilmFlowOAuth {
         let delete: @Sendable () -> Bool
         let request: @Sendable (URLRequest) async throws -> Response
         var didFinishRefresh: (@Sendable () -> Void)? = nil
+        var didAddRefreshWaiter: (@Sendable (Int) -> Void)? = nil
     }
 
     private func requestData(_ request: URLRequest) async throws -> (Data, Response) {
