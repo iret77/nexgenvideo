@@ -9,6 +9,7 @@ private func fileportMakePort(_ descriptor: Int32, _ port: UnsafeMutablePointer<
 private typealias SandboxInit = @convention(c) (UnsafePointer<CChar>, UInt64,
     UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> Int32
 private typealias SandboxFreeError = @convention(c) (UnsafeMutablePointer<CChar>?) -> Void
+private typealias SandboxIssueFile = @convention(c) (UnsafePointer<CChar>, UnsafePointer<CChar>, UInt32) -> UnsafeMutablePointer<CChar>?
 nonisolated(unsafe) private var terminationRequested: sig_atomic_t = 0
 nonisolated(unsafe) private var reportOpen = false
 private func requestTermination(_ signal: Int32) { terminationRequested = 1 }
@@ -75,6 +76,8 @@ private func applyWorkerSandbox(root: String, configuration: BpySupervisorConfig
         (literal "/System/Volumes/Preboot/Cryptexes"))
     (allow file-read-metadata (literal "/") (literal "/System") (literal "/usr") (literal "/private"))
     (allow file-read* file-map-executable (subpath "\(runtime)") (literal "\(worker)"))
+    (allow file-issue-extension
+        (require-all (extension-class "com.apple.app-sandbox.read") (subpath "\(runtime)")))
     (allow file-read* file-write* (literal "\(root)") (subpath "\(root)"))
     (allow file-read* \(reads))
     \(execution)
@@ -124,7 +127,35 @@ private func closeReport() {
     Darwin.close(BpyLaunchDescriptors.report)
 }
 
-private func checkDenials(_ configuration: BpySupervisorConfiguration) throws {
+private func checkRuntimeExtensions(root: String, configuration: BpySupervisorConfiguration) throws {
+    guard let symbol = sandboxSymbol("sandbox_extension_issue_file") else { throw SupervisorError.sandboxUnavailable }
+    let issue = unsafeBitCast(symbol, to: SandboxIssueFile.self)
+    let read = "com.apple.app-sandbox.read"
+    let write = "com.apple.app-sandbox.read-write"
+    func check(_ path: String, extensionClass: String, allowed: Bool) throws {
+        errno = 0
+        let token = extensionClass.withCString { name in path.withCString { issue(name, $0, 0) } }
+        let error = errno
+        defer { free(token) }
+        guard allowed ? token != nil : token == nil && [EPERM, EACCES].contains(error) else {
+            throw SupervisorError.denialCheckFailed
+        }
+    }
+    for path in Set([configuration.runtime, URL(fileURLWithPath: configuration.python).deletingLastPathComponent().path]) {
+        try check(path, extensionClass: read, allowed: true)
+        try check(path, extensionClass: write, allowed: false)
+    }
+    let outside = [root, URL(fileURLWithPath: configuration.runtime).deletingLastPathComponent().path,
+        configuration.canaryRead, configuration.canaryWrite] + configuration.readPaths.filter {
+            $0 != configuration.runtime && !$0.hasPrefix(configuration.runtime + "/")
+        }
+    for path in Set(outside) {
+        try check(path, extensionClass: read, allowed: false)
+        try check(path, extensionClass: write, allowed: false)
+    }
+}
+
+private func checkDenials(root: String, configuration: BpySupervisorConfiguration) throws {
     errno = 0
     let read = Darwin.open(configuration.canaryRead, O_RDONLY)
     let readError = errno
@@ -136,6 +167,7 @@ private func checkDenials(_ configuration: BpySupervisorConfiguration) throws {
     guard read < 0, write < 0, [EPERM, EACCES].contains(readError), [EPERM, EACCES].contains(writeError) else {
         throw SupervisorError.denialCheckFailed
     }
+    try checkRuntimeExtensions(root: root, configuration: configuration)
 }
 
 private func ownExecutable() throws -> URL {
@@ -152,7 +184,7 @@ private func launchChild(_ configuration: BpySupervisorConfiguration) throws -> 
     do { try applyWorkerSandbox(root: root, configuration: configuration) }
     catch SupervisorError.sandboxUnavailable { try? report(.sandboxUnavailable); Darwin.exit(BpyLaunchStage.sandboxUnavailable.rawValue) }
     catch { try? report(.sandboxRejected); Darwin.exit(BpyLaunchStage.sandboxRejected.rawValue) }
-    do { try checkDenials(configuration) }
+    do { try checkDenials(root: root, configuration: configuration) }
     catch { try? report(.denialCheckFailed); Darwin.exit(BpyLaunchStage.denialCheckFailed.rawValue) }
     if configuration.mode == .boundary, let mode = configuration.boundary, mode.isHostDiagnostic {
         if mode == .diagnosticPythonFootprint { try execMemoryPython(configuration) }
