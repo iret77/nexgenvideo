@@ -20,7 +20,7 @@ struct BpyKernelInspectionTests {
     }
 
     @Test func stableIdentityAndPendingExitRemainDistinct() throws {
-        let live = try #require(process([identity(flags: 2)]))
+        let live = try #require(try process([identity(flags: 2)]))
         #expect(live.pid == 41 && live.start == 100 && live.parent == 40 && live.footprint == 4_096)
         #expect(live.executable == (try BpyRuntimePath.canonical(URL(fileURLWithPath: "/bin/sh"))))
         var queriedPath = false
