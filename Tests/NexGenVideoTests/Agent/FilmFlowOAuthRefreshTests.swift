@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import NexGenVideo
 
-@Suite("FilmFlow shared refresh ownership")
+@Suite("FilmFlow shared refresh ownership", .timeLimit(.minutes(1)))
 struct FilmFlowOAuthRefreshTests {
     @Test func cancelledReaderDoesNotCancelAnotherDocumentsRefresh() async throws {
         let original = originalConnection()
@@ -12,15 +12,17 @@ struct FilmFlowOAuthRefreshTests {
         let first = reader(auth, storage: storage, name: "first")
         let second = reader(auth, storage: storage, name: "second")
         defer { first.cancel(); second.cancel(); transport.release() }
-        try #require(await wait { await auth.pendingRefreshRequests == 2 && transport.refreshRequests.count == 1 })
+        try await storage.addedReaders.wait(for: 2)
+        try await transport.started.wait(for: 1)
+        try #require(await auth.pendingRefreshRequests == 2 && transport.refreshRequests.count == 1)
         first.cancel()
-        try #require(await wait { storage.finishedReaders.contains("first") })
+        let cancelled = try await readerResult(first, transport)
+        #expect(throws: CancellationError.self) { try cancelled.get() }
+        #expect(storage.finishedReaders.contains("first"))
         #expect(!storage.finishedReaders.contains("second"))
         #expect(storage.current == original && storage.saved.isEmpty)
         transport.release()
-        let cancelled = await first.value
-        #expect(throws: CancellationError.self) { try cancelled.get() }
-        let replacement = try await second.value.get()
+        let replacement = try await readerResult(second, transport).get()
         #expect(replacement.id == original.id && replacement.resource == original.resource)
         #expect(replacement.tokens.accessToken == "fixture-new-access")
         #expect(replacement.tokens.refreshToken == "fixture-new-refresh")
@@ -42,17 +44,20 @@ struct FilmFlowOAuthRefreshTests {
         let auth = makeAuth(storage, transport)
         let pending = reader(auth, storage: storage, name: "pending")
         defer { pending.cancel(); transport.release() }
-        try #require(await wait { await auth.pendingRefreshRequests == 1 && transport.refreshRequests.count == 1 })
+        try await storage.addedReaders.wait(for: 1)
+        try await transport.started.wait(for: 1)
+        try #require(await auth.pendingRefreshRequests == 1 && transport.refreshRequests.count == 1)
         if reconnect {
             let authorization = try await auth.begin()
             #expect(authorization.issuer == FilmFlowOAuth.issuer)
             #expect(authorization.clientID == "fixture-public-client")
         } else { try await auth.disconnect() }
-        try #require(await wait { storage.finishedReaders.contains("pending") })
-        let result = await pending.value
+        let result = try await readerResult(pending, transport)
+        #expect(storage.finishedReaders.contains("pending"))
         #expect(throws: CancellationError.self) { try result.get() }
         transport.release()
-        try #require(await wait { storage.finishedRefreshes == 1 })
+        try await storage.completedRefreshes.wait(for: 1)
+        #expect(storage.finishedRefreshes == 1)
         #expect(storage.saved.isEmpty)
         #expect(storage.current == (reconnect ? original : nil))
     }
@@ -60,7 +65,8 @@ struct FilmFlowOAuthRefreshTests {
     private func makeAuth(_ storage: FilmFlowRefreshStorage, _ transport: FilmFlowRefreshTransport) -> FilmFlowOAuth {
         FilmFlowOAuth(dependencies: .init(load: { storage.current }, save: { storage.store($0) },
             delete: { storage.clear(); return true }, request: { try await transport.request($0) },
-            didFinishRefresh: { storage.finishRefresh() }))
+            didFinishRefresh: { storage.finishRefresh() },
+            didAddRefreshWaiter: { storage.addedReaders.signal($0) }))
     }
 
     private func originalConnection() -> FilmFlowOAuth.Connection {
@@ -78,13 +84,26 @@ struct FilmFlowOAuthRefreshTests {
         }
     }
 
-    private func wait(_ condition: () async -> Bool) async -> Bool {
-        let deadline = ContinuousClock.now + .seconds(3)
-        while ContinuousClock.now < deadline {
-            if await condition() { return true }
-            try? await Task.sleep(for: .milliseconds(5))
+    private func readerResult(_ task: Task<Result<FilmFlowOAuth.Connection, Error>, Never>, _ transport: FilmFlowRefreshTransport) async throws -> Result<FilmFlowOAuth.Connection, Error> {
+        try Task.checkCancellation()
+        let result = await withTaskCancellationHandler { await task.value } onCancel: { task.cancel(); transport.release() }
+        try Task.checkCancellation()
+        return result
+    }
+}
+
+private final class FilmFlowRefreshGate: Sendable {
+    private let events = AsyncStream<Int>.makeStream(bufferingPolicy: .bufferingNewest(1))
+
+    func signal(_ count: Int) { events.continuation.yield(count) }
+
+    func wait(for minimum: Int) async throws {
+        try Task.checkCancellation()
+        for await count in events.stream {
+            try Task.checkCancellation()
+            if count >= minimum { return }
         }
-        return await condition()
+        throw CancellationError()
     }
 }
 
@@ -94,6 +113,8 @@ private final class FilmFlowRefreshStorage: @unchecked Sendable {
     private var writes: [FilmFlowOAuth.Connection] = []
     private var readers: Set<String> = []
     private var completions = 0
+    let addedReaders = FilmFlowRefreshGate()
+    let completedRefreshes = FilmFlowRefreshGate()
     init(_ connection: FilmFlowOAuth.Connection) { self.connection = connection }
     var current: FilmFlowOAuth.Connection? { lock.withLock { connection } }
     var saved: [FilmFlowOAuth.Connection] { lock.withLock { writes } }
@@ -102,7 +123,10 @@ private final class FilmFlowRefreshStorage: @unchecked Sendable {
     func store(_ value: FilmFlowOAuth.Connection) { lock.withLock { connection = value; writes.append(value) } }
     func clear() { lock.withLock { connection = nil } }
     func finishReader(_ name: String) { _ = lock.withLock { readers.insert(name) } }
-    func finishRefresh() { lock.withLock { completions += 1 } }
+    func finishRefresh() {
+        let count = lock.withLock { completions += 1; return completions }
+        completedRefreshes.signal(count)
+    }
 }
 
 private final class FilmFlowRefreshTransport: @unchecked Sendable {
@@ -110,6 +134,7 @@ private final class FilmFlowRefreshTransport: @unchecked Sendable {
     private var requests: [URLRequest] = []
     private var pending: [CheckedContinuation<FilmFlowOAuth.Response, Error>] = []
     private var released = false
+    let started = FilmFlowRefreshGate()
     var refreshRequests: [URLRequest] { lock.withLock { requests } }
     private let tokens = FilmFlowOAuth.Response(bytes: Data(#"{"access_token":"fixture-new-access","refresh_token":"fixture-new-refresh","expires_in":3600,"token_type":"Bearer"}"#.utf8), statusCode: 200)
 
@@ -122,6 +147,7 @@ private final class FilmFlowRefreshTransport: @unchecked Sendable {
                     if released { return true }
                     pending.append(continuation); return false
                 }
+                started.signal(1)
                 if immediate { continuation.resume(returning: tokens) }
             }
         }
