@@ -1,6 +1,7 @@
 """Keep owned-process diagnostics and require an actual armed host-crash probe."""
 import argparse
 import base64
+import ctypes
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import errno
@@ -21,6 +22,134 @@ import uuid
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from run_macos_tests import (host_binary_identity, owned_crash_report, read_stable_crash_report,
                              report_candidates, report_directories)
+from app_host_zombie_diagnostic import NativeReader
+
+
+class WorkerReader(NativeReader):
+    def __init__(self):
+        super().__init__()
+        self.libc.proc_listchildpids.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
+        self.libc.proc_listchildpids.restype = ctypes.c_int
+        self.libc.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
+        self.libc.proc_pidinfo.restype = ctypes.c_int
+        self.libc.proc_pidpath.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32]
+        self.libc.proc_pidpath.restype = ctypes.c_int
+
+    def children(self, pid):
+        values = (ctypes.c_int * 64)()
+        count = self.libc.proc_listchildpids(pid, values, ctypes.sizeof(values))
+        require(0 <= count < len(values), "owned child inventory unavailable or full")
+        return list(values[:count])
+
+    def identity(self, pid):
+        try:
+            before = self.usage(pid)
+            info, path = ctypes.create_string_buffer(64), ctypes.create_string_buffer(1024)
+            if self.libc.proc_pidinfo(pid, 13, 1, info, len(info)) != len(info):
+                return None
+            words = (ctypes.c_uint32 * 16).from_buffer_copy(info)
+            if words[0] != pid or words[3] == 5 or words[8] & 4:
+                return None
+            length = self.libc.proc_pidpath(pid, path, len(path))
+            if not 0 < length < len(path):
+                return None
+            after = self.usage(pid)
+            if before["startAbsoluteTime"] != after["startAbsoluteTime"] or before["imageUUID"] != after["imageUUID"]:
+                return None
+            return dict(pid=pid, parentPID=words[1], start=after["startAbsoluteTime"],
+                        imageUUID=after["imageUUID"], executable=str(Path(path.value.decode()).resolve(strict=True)))
+        except OSError as error:
+            if error.errno == errno.ESRCH:
+                return None
+            raise
+
+
+class WorkerSamples:
+    def __init__(self, process, binary, preparation, output, source_sha, reader):
+        self.process, self.reader, self.output, self.source = process, reader, output, source_sha
+        self.host = reader.identity(process.pid)
+        expected = host_binary_identity(binary)
+        require(self.host and self.host["executable"] == expected["hostExecutable"]
+                and self.host["imageUUID"] == expected["hostUUID"] and self.host["start"] > 0,
+                "live worker capture host differs")
+        self.templates = preparation["templates"]
+        self.seen, self.captured, self.next_poll = {}, [], 0
+
+    def template(self, value, role):
+        return value and value["start"] > 0 and any(t["role"] == role
+            and t["hostExecutable"] == value["executable"] and t["hostUUID"] == value["imageUUID"]
+            for t in self.templates)
+
+    def current(self, chain):
+        return self.process.poll() is None and all(self.reader.identity(v["pid"]) == v for v in chain)
+
+    def poll(self, now):
+        if len(self.captured) >= 2 or now < self.next_poll or not self.current([self.host]):
+            return
+        self.next_poll = now + 1
+        live = {}
+        for pid in self.reader.children(self.host["pid"]):
+            if len(self.captured) >= 2:
+                break
+            supervisor = self.reader.identity(pid)
+            if not self.template(supervisor, "supervisor") or supervisor["parentPID"] != self.host["pid"]:
+                continue
+            for child in self.reader.children(pid):
+                worker = self.reader.identity(child)
+                if not self.template(worker, "python") or worker["parentPID"] != pid:
+                    continue
+                if not Path(worker["executable"]).is_relative_to(Path(supervisor["executable"]).parents[2]):
+                    continue
+                key = (child, worker["start"])
+                live[key] = self.seen.get(key, now)
+                threshold = 60 if any(v["worker"] == worker for v in self.captured) else 20
+                if now - live[key] >= threshold and self.current([self.host, supervisor, worker]):
+                    self.capture(supervisor, worker)
+                    if len(self.captured) >= 2:
+                        break
+        self.seen = live
+
+    def capture(self, supervisor, worker):
+        folder = self.output / "live-workers"
+        folder.mkdir(exist_ok=True)
+        number = len(self.captured) + 1
+        sample = folder / (str(number) + ".sample.txt")
+        receipt = dict(schema="nexgenvideo/bpy-live-worker-sample/1", appSourceSHA=self.source,
+            harnessSHA=os.environ.get("GITHUB_SHA", ""), host=self.host, supervisor=supervisor, worker=worker,
+            sampleSeconds=1, timeoutSeconds=5, status="unverified")
+        self.captured.append(receipt)
+        try:
+            require(not sample.exists() and not sample.is_symlink(), "occupied worker sample destination")
+            require(self.current([self.host, supervisor, worker]), "worker capture identity changed before sampling")
+            with (folder / (str(number) + ".tool.log")).open("xb") as log:
+                result = subprocess.run(["/usr/bin/sample", str(worker["pid"]), "1", "-mayDie", "-file", str(sample)],
+                    stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, timeout=5)
+            require(result.returncode == 0 and self.current([self.host, supervisor, worker]),
+                    "worker capture failed or identity changed during sampling")
+            require(sample.is_file() and not sample.is_symlink() and sample.stat().st_size <= 2 * 1024 * 1024,
+                    "worker sample unavailable or oversized")
+            raw = sample.read_bytes()
+            text = raw.decode()
+            require(re.search(r"^Process:.*\[" + str(worker["pid"]) + r"\]$", text, re.M)
+                and re.search(r"^Parent Process:.*\[" + str(supervisor["pid"]) + r"\]$", text, re.M),
+                "worker sample has foreign process ancestry")
+            require(text.count("\nBinary Images:\n") == 1, "worker sample has no unique image section")
+            images = text.split("\nBinary Images:\n", 1)[1]
+            pattern = re.compile(r"^\s*0x[0-9a-f]+\s+-\s+0x[0-9a-f]+\s+.+ <([0-9A-Fa-f-]{36})> (/[^\r\n]+)$", re.M)
+            require(any(str(uuid.UUID(u)) == worker["imageUUID"] and path == worker["executable"]
+                        for u, path in pattern.findall(images)), "worker sample does not contain the owned executable image")
+            receipt.update(status="verified", sampleBytes=len(raw), sampleSHA256=hashlib.sha256(raw).hexdigest())
+        except InterruptedError:
+            raise
+        except Exception as error:
+            receipt["error"] = str(error)
+        finally:
+            try:
+                (folder / (str(number) + ".json")).write_text(json.dumps(receipt, sort_keys=True) + "\n")
+            except InterruptedError:
+                raise
+            except OSError:
+                pass
 
 
 def stop_open_capture(process):
@@ -507,8 +636,24 @@ def supervise(binary, output, mode, source_sha, timeout):
         process = subprocess.Popen([str(binary), "-hangDiagnosticMode", "disabled"],
             env=environment, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr)
         try:
+            workers = None
+            if mode == "runtime" and sys.platform == "darwin" and postmortem is not None:
+                try:
+                    workers = WorkerSamples(process, binary, postmortem, output, source_sha, WorkerReader())
+                except InterruptedError:
+                    raise
+                except Exception as error:
+                    diagnostic_error(output, "live-worker-setup", error)
             (output / "process.json").write_text(json.dumps(dict(pid=process.pid, sourceSHA=source_sha, mode=mode)) + "\n")
             while process.poll() is None:
+                if workers is not None:
+                    try:
+                        workers.poll(time.monotonic())
+                    except InterruptedError:
+                        raise
+                    except Exception as error:
+                        diagnostic_error(output, "live-worker-capture", error)
+                        workers = None
                 try:
                     collect_hangs(process, output, start, captured)
                 except InterruptedError:
