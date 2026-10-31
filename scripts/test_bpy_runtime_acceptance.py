@@ -739,5 +739,145 @@ class WorkerPostmortemTests(unittest.TestCase):
             self.assertTrue(all(c.poll() is not None for c in children))
 
 
+class LiveWorkerSampleTests(unittest.TestCase):
+    app = Path('/app/NexGenVideo.app/Contents/MacOS/NexGenVideo')
+    service = '/app/NexGenVideo.app/Contents/XPCServices/Service.xpc'
+    image = '28e32694-8c96-33f4-9ebc-ab10afa8977b'
+
+    def fixture(self, output):
+        supervisor = self.service + '/Contents/MacOS/NexGenVideoBpySupervisor'
+        python = self.service + '/Contents/Resources/BpyRuntime/python/bin/python3.13'
+        identities = {pid: dict(pid=pid, parentPID=parent, start=pid * 10, imageUUID=self.image, executable=path)
+                      for pid, parent, path in [(10, 9, str(self.app)), (20, 10, supervisor), (30, 20, python)]}
+        reader = mock.Mock()
+        reader.identity.side_effect = lambda pid: copy.deepcopy(identities.get(pid))
+        reader.children.side_effect = lambda pid: [20] if pid == 10 else [30]
+        process = mock.Mock(pid=10)
+        process.poll.return_value = None
+        templates = [dict(role=role, hostExecutable=identities[pid]['executable'], hostUUID=self.image)
+                     for role, pid in [('supervisor', 20), ('python', 30)]]
+        with mock.patch.object(driver, 'host_binary_identity', return_value=dict(hostExecutable=str(self.app), hostUUID=self.image)):
+            capture = driver.WorkerSamples(process, self.app, dict(templates=templates), output, 'a' * 40, reader)
+        return capture, identities, reader
+
+    def sample(self, command, **kwargs):
+        self.assertEqual(command[:5], ['/usr/bin/sample', '30', '1', '-mayDie', '-file'])
+        self.assertEqual(kwargs['timeout'], 5)
+        self.assertEqual(kwargs['stdin'], subprocess.DEVNULL)
+        self.assertEqual(kwargs['stderr'], subprocess.STDOUT)
+        text = ('Process: Python [30]\nParent Process: Supervisor [20]\n\nBinary Images:\n'
+                '  0x1000 - 0x2000 Python (3.13) <' + self.image + '> ' + self.service +
+                '/Contents/Resources/BpyRuntime/python/bin/python3.13\n')
+        Path(command[-1]).write_text(text)
+        return subprocess.CompletedProcess(command, 0)
+
+    def test_owned_worker_capture_waits_for_age_and_is_bounded_to_two_samples(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            capture, _, reader = self.fixture(output)
+            with mock.patch.object(driver.subprocess, 'run', side_effect=self.sample) as run:
+                for age, expected in [(0, 0), (19, 0), (20, 1), (21, 1), (59, 1), (60, 2), (61, 2), (120, 2)]:
+                    capture.poll(age)
+                    self.assertEqual(run.call_count, expected, age)
+                self.assertEqual(run.call_count, 2)
+            self.assertEqual(set(reader.children.call_args_list[0].args), {10})
+            self.assertTrue(all(call.args[0] in {10, 20} for call in reader.children.call_args_list))
+            for index in (1, 2):
+                value = json.loads((output / f'live-workers/{index}.json').read_text())
+                self.assertEqual(value['status'], 'verified')
+                self.assertEqual(value['worker']['start'], 300)
+                self.assertEqual(value['appSourceSHA'], 'a' * 40)
+                raw = (output / f'live-workers/{index}.sample.txt').read_bytes()
+                self.assertEqual(value['sampleSHA256'], hashlib.sha256(raw).hexdigest())
+
+    def test_foreign_parent_image_and_reused_birth_never_trigger_a_sample(self):
+        mutations = [('parentPID', 99), ('imageUUID', str(uuid.uuid4())), ('executable', '/foreign/python')]
+        for pid in (20, 30):
+            for field, value in mutations:
+                with self.subTest(pid=pid, field=field), tempfile.TemporaryDirectory() as directory:
+                    capture, identities, _ = self.fixture(Path(directory))
+                    identities[pid][field] = value
+                    with mock.patch.object(driver.subprocess, 'run') as run:
+                        capture.poll(0)
+                        capture.poll(60)
+                        run.assert_not_called()
+        with tempfile.TemporaryDirectory() as directory:
+            capture, identities, _ = self.fixture(Path(directory))
+            other = identities[30]['executable'].replace('/Service.xpc/', '/OtherService.xpc/')
+            identities[30]['executable'] = other
+            capture.templates.append(dict(role='python', hostExecutable=other, hostUUID=self.image))
+            with mock.patch.object(driver.subprocess, 'run') as run:
+                capture.poll(0)
+                capture.poll(60)
+                run.assert_not_called()
+        with tempfile.TemporaryDirectory() as directory:
+            capture, identities, _ = self.fixture(Path(directory))
+            with mock.patch.object(driver.subprocess, 'run') as run:
+                capture.poll(0)
+                identities[30]['start'] += 1
+                capture.poll(20)
+                run.assert_not_called()
+                identities[10]['start'] += 1
+                capture.poll(60)
+                run.assert_not_called()
+
+    def test_sample_timeout_malformed_ancestry_and_identity_change_remain_unverified(self):
+        for mode in ['timeout', 'parent', 'image', 'reused']:
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                capture, identities, _ = self.fixture(Path(directory))
+                def sample(command, **kwargs):
+                    if mode == 'timeout':
+                        raise subprocess.TimeoutExpired(command, 5)
+                    result = self.sample(command, **kwargs)
+                    path = Path(command[-1])
+                    if mode == 'parent':
+                        path.write_text(path.read_text().replace('[20]', '[99]'))
+                    elif mode == 'image':
+                        path.write_text(path.read_text().replace(self.image, str(uuid.uuid4())))
+                    else:
+                        identities[30]['start'] += 1
+                    return result
+                with mock.patch.object(driver.subprocess, 'run', side_effect=sample):
+                    capture.poll(0)
+                    capture.poll(20)
+                receipt = json.loads((Path(directory) / 'live-workers/1.json').read_text())
+                self.assertEqual(receipt['status'], 'unverified')
+                self.assertIn('error', receipt)
+                self.assertNotIn('sampleSHA256', receipt)
+
+    def test_capture_cancellation_propagates_even_when_receipt_storage_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            capture, _, _ = self.fixture(Path(directory))
+            with mock.patch.object(driver.subprocess, 'run', side_effect=InterruptedError('CI stop')), \
+                    mock.patch.object(Path, 'write_text', side_effect=OSError('disk failure')):
+                capture.poll(0)
+                with self.assertRaisesRegex(InterruptedError, 'CI stop'):
+                    capture.poll(20)
+        for interrupted in (False, True):
+            with self.subTest(interrupted=interrupted), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory)
+                process = mock.Mock(pid=10, returncode=0)
+                process.poll.side_effect = [None, None] if interrupted else [None, None, 0, 0]
+                worker = mock.Mock()
+                worker.poll.side_effect = InterruptedError('CI stop') if interrupted else RuntimeError('capture failed')
+                with mock.patch.object(driver.sys, 'platform', 'darwin'), \
+                        mock.patch.object(driver, 'prepare_worker_postmortem', return_value=dict(templates=[])), \
+                        mock.patch.object(driver, 'WorkerReader'), \
+                        mock.patch.object(driver, 'WorkerSamples', return_value=worker), \
+                        mock.patch.object(driver, 'collect_hangs'), mock.patch.object(driver, 'sample_owned'), \
+                        mock.patch.object(driver, 'collect_worker_postmortem'), \
+                        mock.patch.object(driver.subprocess, 'Popen', return_value=process):
+                    if interrupted:
+                        with self.assertRaisesRegex(InterruptedError, 'CI stop'):
+                            supervise(self.app, output, 'runtime', 'a' * 40, 3)
+                        process.kill.assert_called_once()
+                    else:
+                        supervise(self.app, output, 'runtime', 'a' * 40, 3)
+                        self.assertEqual(json.loads((output / 'process-result.json').read_text())['returncode'], 0)
+                        self.assertTrue((output / 'live-worker-capture-error.json').is_file())
+                    self.assertEqual(worker.poll.call_count, 1)
+                    process.wait.assert_called_once_with(timeout=5)
+
+
 if __name__ == "__main__":
     unittest.main()
