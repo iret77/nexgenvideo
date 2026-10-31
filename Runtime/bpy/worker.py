@@ -1,6 +1,8 @@
 import json
 import errno
 import hashlib
+import importlib.machinery
+import importlib.util
 import math
 import os
 import resource
@@ -58,11 +60,29 @@ def apply_limits(config):
 def load_runtime(site_packages):
     root = str(Path(site_packages).resolve())
     sys.path[:] = [root] + [path for path in sys.path if "site-packages" not in path]
-    import bpy
+    if "bpy" in sys.modules:
+        fail("bpy was loaded before native identity capture")
+    spec = importlib.util.find_spec("bpy")
+    if (spec is None or spec.name != "bpy" or not isinstance(spec.origin, str)
+            or not isinstance(spec.loader, importlib.machinery.ExtensionFileLoader)):
+        fail("bpy requires its bundled native extension loader")
+    loader = spec.loader
+    native_module = loader.get_filename("bpy")
+    if native_module != spec.origin or native_module != os.path.join(root, "bpy", "__init__.so"):
+        fail("bpy native loader identity differs from its bundled entry point")
+    if not stat.S_ISREG(os.lstat(native_module).st_mode):
+        fail("bpy native entry point is not a regular file")
+    try:
+        bpy = importlib.util.module_from_spec(spec)
+        sys.modules["bpy"] = bpy
+        loader.exec_module(bpy)
+    except BaseException:
+        sys.modules.pop("bpy", None)
+        raise
     import bmesh
     import mathutils
 
-    return bpy, bmesh, mathutils
+    return bpy, bmesh, mathutils, native_module
 
 
 def load_scene(bpy, scene_path, use_scripts):
@@ -80,12 +100,12 @@ def load_scene(bpy, scene_path, use_scripts):
 
 def probe(config):
     started = time.monotonic()
-    bpy, _, _ = load_runtime(config["sitePackages"])
+    bpy, _, _, native_module = load_runtime(config["sitePackages"])
     write_manifest(config["manifest"], {
         "schema": "nexgenvideo/bpy-probe/1",
         "pythonVersion": ".".join(map(str, sys.version_info[:3])),
         "bpyVersion": ".".join(map(str, bpy.app.version)),
-        "bpyModule": str(Path(bpy.__file__).resolve()),
+        "bpyModule": native_module,
         "executable": str(Path(sys.executable).resolve()),
         "processIdentifier": os.getpid(),
         "startupSeconds": time.monotonic() - started,
@@ -95,7 +115,7 @@ def probe(config):
 def execute_job(config, bound_source):
     source_bytes, identity = bound_source
     require_source_identity(config["sourcePath"], identity)
-    bpy, bmesh, mathutils = load_runtime(config["sitePackages"])
+    bpy, bmesh, mathutils, _ = load_runtime(config["sitePackages"])
     load_scene(bpy, config.get("confirmedScene"), False)
     input_dir = Path(config["inputDirectory"]).resolve()
     output_dir = Path(config["outputDirectory"]).resolve()
@@ -459,7 +479,7 @@ def blender_binary_evidence(bpy):
 
 def verify_scene(config):
     started = time.monotonic()
-    bpy, _, _ = load_runtime(config["sitePackages"])
+    bpy, _, _, native_module = load_runtime(config["sitePackages"])
     scene_digest = file_sha256(config["scenePath"])
     load_scene(bpy, config["scenePath"], False)
     if file_sha256(config["scenePath"]) != scene_digest:
@@ -480,7 +500,7 @@ def verify_scene(config):
         "pythonVersion": ".".join(map(str, sys.version_info[:3])),
         "bpyVersion": ".".join(map(str, bpy.app.version)),
         "executable": str(Path(sys.executable).resolve()),
-        "bpyModule": str(Path(bpy.__file__).resolve()),
+        "bpyModule": native_module,
         "processIdentifier": os.getpid(),
         "verificationSeconds": time.monotonic() - started,
         "objects": objects,
@@ -569,7 +589,7 @@ def spatial_snapshot(bpy, meshes):
 
 
 def autoexec_positive_control(config):
-    bpy, _, _ = load_runtime(config["sitePackages"])
+    bpy, _, _, _ = load_runtime(config["sitePackages"])
     load_scene(bpy, config["scenePath"], True)
     write_manifest(config["manifest"], {
         "schema": "nexgenvideo/bpy-autoexec-positive/1",

@@ -435,6 +435,13 @@ Probe and scene-verification manifests encode `bpyVersion` as `major.minor.micro
 `bpy.app.version`. `bpy.app.version_string` is display text and can include an `LTS` suffix.
 The host still requires the exact pinned version.
 
+Their `bpyModule` identity is the bundled native extension loader's path, captured before that
+exact loader creates and initializes Blender. Blender replaces its module metadata with the Python
+facade during startup; the facade's `__file__` is not the loaded native image. Preloaded modules,
+non-native loaders and mismatched native paths are rejected before initialization.
+The exact finder paths must agree, and a leaf-only `lstat` requires a regular native file;
+this does not require access to metadata outside the runtime subtree.
+
 The runtime probe uses real `VideoProject` instances and windows through `BpyRuntimeHost`. It covers
 two slots, a denied third document, failed-open reuse, close/reuse, and AppDelegate shutdown. It also
 covers exact and changed duplicate payloads, forged native stdout plus an infinite loop, a persistent
