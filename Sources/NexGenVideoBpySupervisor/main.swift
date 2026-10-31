@@ -67,8 +67,12 @@ private func applyWorkerSandbox(root: String, configuration: BpySupervisorConfig
         (subpath "/usr/share/icu") (subpath "/usr/share/zoneinfo")
         (literal "/private/etc/passwd") (literal "/private/etc/localtime")
         (literal "/dev/null") (literal "/dev/urandom") (literal "/dev/random"))
-    (allow file-read* file-map-executable
+    (allow file-read* file-test-existence file-map-executable
         (subpath "/System/Cryptexes/OS") (subpath "/System/Volumes/Preboot/Cryptexes/OS"))
+    (allow file-read* file-test-existence
+        (literal "/") (literal "/System") (literal "/System/Cryptexes")
+        (literal "/System/Volumes") (literal "/System/Volumes/Preboot")
+        (literal "/System/Volumes/Preboot/Cryptexes"))
     (allow file-read-metadata (literal "/") (literal "/System") (literal "/usr") (literal "/private"))
     (allow file-read* file-map-executable (subpath "\(runtime)") (literal "\(worker)"))
     (allow file-read* file-write* (literal "\(root)") (subpath "\(root)"))
