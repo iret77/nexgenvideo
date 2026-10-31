@@ -1,12 +1,68 @@
 import copy
+import json
+import plistlib
+import subprocess
+import sys
+import tempfile
 import unittest
 import uuid
 from pathlib import Path
+from unittest import mock
 
+import bpy_boundary_acceptance as driver
 from bpy_boundary_acceptance import validate
 
 
 FIXTURE = Path("/fixture/NexGenVideo.app")
+
+
+class BoundaryStartupTests(unittest.TestCase):
+    def test_boundary_fixture_declines_recording_without_mutating_original_app(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            app = root / "original.app"
+            source = "a" * 40
+            resources = app / "Contents/Resources"
+            resources.mkdir(parents=True)
+            (app / "Contents/Info.plist").write_bytes(plistlib.dumps({"NGVSourceCommit": source}))
+            binary = app / "Contents/MacOS/NexGenVideo"
+            binary.parent.mkdir()
+            binary.write_text("#!" + sys.executable + '''
+import json, os, sys
+from pathlib import Path
+output = Path(os.environ["NGV_SELFTEST_BPY_BOUNDARY"])
+(output.parent / "launch-arguments.json").write_text(json.dumps(sys.argv[1:]))
+for slot in range(2):
+    Path(str(output) + ".slot" + str(slot) + ".json").write_text(json.dumps({"hostProcessIdentifier": os.getpid()}))
+print("SELFTEST_BPY_BOUNDARY_OK", flush=True)
+''')
+            binary.chmod(0o755)
+            for slot in range(2):
+                service = app / f"Contents/XPCServices/NexGenVideoBpyService{slot}.xpc/Contents"
+                runtime = service / "Resources/BpyRuntime"
+                runtime.mkdir(parents=True)
+                (runtime / "payload").write_bytes(b"paired original runtime")
+                (service / "MacOS").mkdir()
+                for name in ("NexGenVideoBpyService", "NexGenVideoBpySupervisor"):
+                    (service / "MacOS" / name).write_bytes(b"controlled boundary executable")
+            before = driver.paired(app)
+            output = root / "evidence/boundary"
+            with mock.patch.object(driver.platform, "system", return_value="Darwin"), \
+                    mock.patch.object(driver, "runtime_identity", return_value={"osVersion": "27.0", "osBuild": "fixture", "architecture": "arm64"}), \
+                    mock.patch.object(driver.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)), \
+                    mock.patch.object(driver.subprocess, "check_output", return_value=""), \
+                    mock.patch.object(driver, "validate") as validate:
+                driver.run(app, output, source)
+            self.assertEqual(json.loads((output / "launch-arguments.json").read_text()),
+                             ["-hangDiagnosticMode", "disabled"])
+            validate.assert_called_once()
+            receipt = json.loads((output / "result.json").read_text())
+            self.assertTrue(receipt["completed"])
+            self.assertTrue(receipt["processReaped"])
+            self.assertTrue(receipt["originalUnchanged"])
+            self.assertTrue(receipt["originalSignatureVerifiedAfter"])
+            self.assertEqual(receipt["exitCode"], 0)
+            self.assertEqual(driver.paired(app), before)
 
 
 class BoundaryProofTests(unittest.TestCase):

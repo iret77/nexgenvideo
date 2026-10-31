@@ -504,7 +504,8 @@ def supervise(binary, output, mode, source_sha, timeout):
     start = time.time()
     deadline = time.monotonic() + timeout
     with (output / "runtime.log").open("wb") as stdout, (output / "runtime-stderr.log").open("wb") as stderr:
-        process = subprocess.Popen([str(binary)], env=environment, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr)
+        process = subprocess.Popen([str(binary), "-hangDiagnosticMode", "disabled"],
+            env=environment, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr)
         try:
             (output / "process.json").write_text(json.dumps(dict(pid=process.pid, sourceSHA=source_sha, mode=mode)) + "\n")
             while process.poll() is None:
