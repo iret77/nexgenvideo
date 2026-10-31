@@ -12,10 +12,10 @@ on:
       followup_workflow:
         description: Only this acceptance runs in followup mode; initial mode requires none
         type: choice
-        options: [none, externalgui, settings, smartsearch]
+        options: [none, externalgui, settings, smartsearch, bpy]
         default: none
       runtime_run_id:
-        description: Same-source producer run required in followup mode
+        description: App producer run; bpy diagnoses its original App, other followups require the same source
         type: string
         default: ''
       completed_app_tests_run_id:
@@ -109,6 +109,9 @@ jobs:
     timeout-minutes: 5
     outputs:
       mode: ${{ steps.inputs.outputs.mode }}
+      bpy_source_sha: ${{ steps.bpy.outputs.source_sha }}
+      bpy_artifact_id: ${{ steps.bpy.outputs.artifact_id }}
+      bpy_artifact_sha256: ${{ steps.bpy.outputs.artifact_sha256 }}
     steps:
       - name: Reject incomplete or incompatible dispatch inputs
         id: inputs
@@ -184,8 +187,8 @@ jobs:
               if followup != 'none' or run_id or settings != 'all' or scale != 'all':
                   raise SystemExit('Initial mode requires no followup/run ID and default acceptance selectors.')
           else:
-              if followup not in {'externalgui', 'settings', 'smartsearch'}:
-                  raise SystemExit('Followup mode requires externalgui, settings or smartsearch.')
+              if followup not in {'externalgui', 'settings', 'smartsearch', 'bpy'}:
+                  raise SystemExit('Followup mode requires externalgui, settings, smartsearch or bpy.')
               if not re.fullmatch(r'[1-9][0-9]*', run_id):
                   raise SystemExit('Followup mode requires a positive producer runtime_run_id.')
               if followup != 'settings' and settings != 'all':
@@ -198,13 +201,30 @@ jobs:
       - uses: actions/checkout@v4
         if: inputs.mode == 'followup'
       - name: Require an existing exact same-source app before allocating Mac jobs
-        if: inputs.mode == 'followup'
+        if: inputs.mode == 'followup' && inputs.followup_workflow != 'bpy'
         env:
           GH_TOKEN: ${{ github.token }}
           NGV_RUNTIME_RUN: ${{ inputs.runtime_run_id }}
         run: |
           python3 scripts/workspace_native_ci.py resolve --run-id "$NGV_RUNTIME_RUN" \
             --artifact workspace-ui-app --identity "$RUNNER_TEMP/followup-runtime-identity.json"
+      - name: Bind the failed original bpy job and unchanged App before allocating Mac jobs
+        id: bpy
+        if: inputs.mode == 'followup' && inputs.followup_workflow == 'bpy'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NGV_RUNTIME_RUN: ${{ inputs.runtime_run_id }}
+        run: |
+          python3 scripts/workspace_native_ci.py resolve-bpy-followup --run-id "$NGV_RUNTIME_RUN" \
+            --identity "$RUNNER_TEMP/bpy-followup-runtime-identity.json"
+      - name: Retain the original App and failed-job binding
+        if: inputs.mode == 'followup' && inputs.followup_workflow == 'bpy'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bpy-followup-input-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/bpy-followup-runtime-identity.json
+          if-no-files-found: error
+          retention-days: 90
 
   bpy-qualification:
     needs: validate
@@ -229,6 +249,19 @@ jobs:
       app_inventory_run_id: ${{ inputs.app_inventory_run_id }}
       completed_source_checks_run_id: ${{ inputs.completed_source_checks_run_id }}
       verified_pr_run_id: ${{ inputs.verified_pr_run_id }}
+
+  bpy-runtime-followup:
+    needs: validate
+    if: needs.validate.outputs.mode == 'followup' && inputs.followup_workflow == 'bpy'
+    uses: ./.github/workflows/bpy-runtime-acceptance.yml
+    with:
+      artifact: NexGenVideo-app
+      app_zip: NexGenVideo.zip
+      distribution: false
+      runtime_run_id: ${{ inputs.runtime_run_id }}
+      expected_source_sha: ${{ needs.validate.outputs.bpy_source_sha }}
+      app_artifact_id: ${{ needs.validate.outputs.bpy_artifact_id }}
+      app_artifact_sha256: ${{ needs.validate.outputs.bpy_artifact_sha256 }}
 
   chat-hang-replay:
     needs: [validate, ci]

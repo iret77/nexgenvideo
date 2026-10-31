@@ -411,6 +411,8 @@ def report_candidates(directories, name):
                 if len(result) >= 128:
                     errors.append("Candidate limit reached")
                     return result, errors
+        except InterruptedError:
+            raise
         except OSError as error:
             errors.append(str(error))
     return result, errors
@@ -478,6 +480,25 @@ def owned_crash_report(raw, context):
             "hasLastExceptionBacktrace": bool(report.get("lastExceptionBacktrace")), "hasASI": bool(report.get("asi"))}
 
 
+def read_stable_crash_report(name, identity):
+    if Path(name).suffix != ".ips":
+        raise ValueError("Legacy .crash format not bound; no foreign or unbound bytes copied")
+    if identity[2] > 32 * 1024 * 1024:
+        raise ValueError("Report exceeds 32 MiB; no truncated report copied")
+    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as stream:
+        before = os.fstat(stream.fileno())
+        if not stat.S_ISREG(before.st_mode):
+            raise ValueError("Report is no longer a regular file")
+        raw = stream.read(32 * 1024 * 1024 + 1)
+        after = os.fstat(stream.fileno())
+    current = (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+    initial = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+    if current != identity or initial != current or len(raw) != after.st_size:
+        raise ValueError("Report changed while being read")
+    return raw
+
+
 def capture_post_mortem(folder, context, original_exit):
     deadline = time.monotonic() + 30
     folder.mkdir()
@@ -511,21 +532,7 @@ def capture_post_mortem(folder, context, original_exit):
                     result["candidateStatus"][name] = "Waiting for stable report bytes"
                     continue
                 try:
-                    if Path(name).suffix != ".ips":
-                        raise ValueError("Legacy .crash format not bound; no foreign or unbound bytes copied")
-                    if identity[2] > 32 * 1024 * 1024:
-                        raise ValueError("Report exceeds 32 MiB; no truncated report copied")
-                    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-                    with os.fdopen(fd, "rb") as stream:
-                        before = os.fstat(stream.fileno())
-                        if not stat.S_ISREG(before.st_mode):
-                            raise ValueError("Report is no longer a regular file")
-                        raw = stream.read(32 * 1024 * 1024 + 1)
-                        after = os.fstat(stream.fileno())
-                    current = (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
-                    initial = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
-                    if current != identity or initial != current or len(raw) != after.st_size:
-                        raise ValueError("Report changed while being read")
+                    raw = read_stable_crash_report(name, identity)
                     binding = owned_crash_report(raw, context)
                     destination = folder / ("owned-host-" + str(len(result["reports"])) + ".ips")
                     destination.write_bytes(raw)

@@ -424,6 +424,9 @@ for acceptance.
 Failed startup probes retain their bounded process output, exit status, launch stage and validation
 stage in the existing service response. Native CI saves the exact failed response with its source,
 session and SHA-256 in the diagnostic artifact; it never records the open request or its bookmarks.
+Native failure diagnostics also bind OS child reports to the recorded PID, parent, launch/crash
+interval and known supervisor or Python image. Missing reports stay explicit. Capture preserves the
+original failure and cancellation; a spawned-child announcement does not establish Python readiness.
 
 The runtime probe uses real `VideoProject` instances and windows through `BpyRuntimeHost`. It covers
 two slots, a denied third document, failed-open reuse, close/reuse, and AppDelegate shutdown. It also

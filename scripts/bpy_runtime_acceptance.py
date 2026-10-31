@@ -1,16 +1,26 @@
 """Keep owned-process diagnostics and require an actual armed host-crash probe."""
 import argparse
+import base64
 from contextlib import contextmanager
+from datetime import datetime, timezone
 import errno
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
+import selectors
 import signal
+import stat
 import subprocess
+import sys
 import time
 import uuid
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from run_macos_tests import (host_binary_identity, owned_crash_report, read_stable_crash_report,
+                             report_candidates, report_directories)
 
 
 def stop_open_capture(process):
@@ -287,6 +297,195 @@ def diagnostic_error(output, label, error):
         pass
 
 
+def prepare_worker_postmortem(binary):
+    app = binary.resolve().parents[2]
+    templates, errors = [], []
+    for slot in range(2):
+        service = app / ("Contents/XPCServices/NexGenVideoBpyService" + str(slot) + ".xpc")
+        for role, path in (("supervisor", service / "Contents/MacOS/NexGenVideoBpySupervisor"),
+                           ("python", service / "Contents/Resources/BpyRuntime/python/bin/python3.13")):
+            try:
+                resolved = path.resolve(strict=True)
+                resolved.relative_to(app)
+                templates.append(dict(role=role, **host_binary_identity(resolved)))
+            except InterruptedError:
+                raise
+            except (OSError, ValueError) as error:
+                errors.append(dict(role=role, slot=slot, error=str(error)))
+    directories = report_directories()
+    prefixes = tuple(sorted({Path(t["hostExecutable"]).name for t in templates} | {"Python", "python"}))
+    baseline, scan_errors = report_candidates(directories, prefixes)
+    return dict(templates=templates, directories=[str(p) for p in directories], prefixes=prefixes,
+                baseline=baseline, preparationErrors=errors, baselineErrors=scan_errors)
+
+
+def failed_worker_contexts(path, host_pid, source_sha, preparation, started, observed):
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(descriptor, "rb") as stream:
+        before = os.fstat(stream.fileno())
+        require(stat.S_ISREG(before.st_mode) and before.st_uid == os.getuid()
+                and before.st_nlink == 1 and 0 < before.st_size <= 1_048_576, "unsafe failed-response record")
+        data = stream.read(1_048_577)
+        after = os.fstat(stream.fileno())
+    require((before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+            == (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+            and len(data) == after.st_size, "failed-response record changed")
+    record = json.loads(data)
+    require(isinstance(record, dict), "invalid failed-response record")
+    require(record.get("schema") == "nexgenvideo/bpy-open-failure/1"
+            and type(record.get("hostPID")) is int and record["hostPID"] == host_pid
+            and record.get("sourceSHA") == source_sha, "foreign failed-response record")
+    require(isinstance(record.get("sessionID"), str), "invalid failed-response session")
+    uuid.UUID(record["sessionID"])
+    raw = base64.b64decode(record["response"], validate=True)
+    require(hashlib.sha256(raw).hexdigest() == record.get("responseSHA256"), "failed-response digest differs")
+    response = json.loads(raw)
+    require(isinstance(response, dict), "invalid failed startup response")
+    require(response.get("ok") is False, "not a failed startup response")
+    metrics = response.get("metrics", {})
+    require(isinstance(metrics, dict), "invalid startup metrics")
+    if "probe.exitStatus" not in metrics:
+        return []
+
+    def integer(name, minimum, maximum):
+        value = metrics.get(name)
+        require(type(value) in (int, float) and minimum <= value <= maximum
+                and math.isfinite(value) and int(value) == value, "invalid " + name)
+        return int(value)
+
+    status = integer("probe.exitStatus", 0, 255)
+    if status == 0:
+        return []
+    supervisor = integer("probe.supervisorPID", 2, 2_147_483_647)
+    worker = integer("probe.workerPID", -1, 2_147_483_647)
+    termination = integer("probe.terminationSignal", -1, 127)
+    require(supervisor != host_pid and worker not in (0, 1, host_pid, supervisor), "reused process identity")
+    target, parent = (supervisor, host_pid) if termination > 0 else (worker, supervisor)
+    if target < 2:
+        return []
+    return [dict(template, pid=target, parentPID=parent, launchEarliest=started,
+                 launchLatest=observed, exitObserved=observed, sourceSHA=source_sha,
+                 hostPID=host_pid, sessionID=record["sessionID"], workerExitStatus=status,
+                 failureResponseSHA256=record["responseSHA256"])
+            for template in preparation["templates"]
+            if termination <= 0 or template["role"] == "supervisor"]
+
+
+def capture_worker_log(folder, pid, contexts, started, observed, deadline):
+    paths = sorted({c["hostExecutable"] for c in contexts if c["pid"] == pid})
+    predicate = " OR ".join("processImagePath == " + json.dumps(path) for path in paths)
+    dates = [datetime.fromtimestamp(stamp, timezone.utc).strftime("%Y-%m-%d %H:%M:%S%z")
+             for stamp in (started - 1, observed + 1)]
+    command = ["/usr/bin/log", "show", "--style", "json", "--no-pager", "--info", "--debug",
+               "--process", str(pid), "--start", dates[0], "--end", dates[1], "--predicate", predicate]
+    result, captured, discarded = dict(command=command), bytearray(), 0
+    process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT, start_new_session=True)
+    selector = selectors.DefaultSelector()
+    try:
+        os.set_blocking(process.stdout.fileno(), False)
+        selector.register(process.stdout, selectors.EVENT_READ)
+        end = min(deadline, time.monotonic() + 5)
+        eof = False
+        while not (eof and process.poll() is not None):
+            require(time.monotonic() < end, "worker log query timed out")
+            for key, _ in selector.select(min(0.1, max(0, end - time.monotonic()))):
+                try:
+                    block = os.read(key.fd, 65_536)
+                except BlockingIOError:
+                    continue
+                if not block:
+                    eof = True
+                    selector.unregister(key.fileobj)
+                    continue
+                remaining = max(0, 4 * 1024 * 1024 - len(captured))
+                captured.extend(block[:remaining])
+                discarded += max(0, len(block) - remaining)
+        result["exitCode"] = process.wait(timeout=1)
+    finally:
+        selector.close()
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=5)
+        process.stdout.close()
+        (folder / ("process-" + str(pid) + ".log")).write_bytes(captured)
+        result.update(bytes=len(captured), discardedBytes=discarded)
+    return result
+
+
+def collect_worker_postmortem(output, host_pid, source_sha, preparation, started):
+    folder = output / "worker-postmortem"
+    folder.mkdir()
+    observed = time.time()
+    receipt = dict(schema="nexgenvideo/bpy-worker-postmortem/1", appSourceSHA=source_sha,
+                   harnessSHA=os.environ.get("GITHUB_SHA", ""), hostPID=host_pid,
+                   contexts=[], reports=[], errors=[], candidateStatus={},
+                   preparationErrors=preparation["preparationErrors"],
+                   baselineErrors=preparation.get("baselineErrors", []),
+                   causality="An encoded exit status does not identify the crash cause")
+    paths = sorted(output.glob("open-failure-*.json"))
+    require(len(paths) <= 16, "failed-response record bound exceeded")
+    for path in paths:
+        try:
+            receipt["contexts"].extend(failed_worker_contexts(path, host_pid, source_sha, preparation, started, observed))
+        except InterruptedError:
+            raise
+        except (OSError, ValueError, TypeError, KeyError, AssertionError) as error:
+            receipt["errors"].append(dict(file=path.name, error=str(error)))
+    pending = {c["pid"] for c in receipt["contexts"]}
+    deadline, previous, checked = time.monotonic() + 30, {}, {}
+    receipt["unifiedLogs"] = {}
+    for pid in sorted(pending):
+        if time.monotonic() >= deadline:
+            break
+        try:
+            receipt["unifiedLogs"][str(pid)] = capture_worker_log(
+                folder, pid, receipt["contexts"], started, observed, deadline)
+        except InterruptedError:
+            raise
+        except (OSError, subprocess.SubprocessError, AssertionError) as error:
+            receipt["unifiedLogs"][str(pid)] = dict(error=str(error))
+    directories = [Path(p) for p in preparation["directories"]]
+    while pending and time.monotonic() < deadline:
+        candidates, receipt["scanErrors"] = report_candidates(directories, preparation["prefixes"])
+        for name, identity in candidates.items():
+            if not pending or time.monotonic() >= deadline:
+                break
+            if identity == preparation["baseline"].get(name) or identity != previous.get(name) or identity == checked.get(name):
+                continue
+            checked[name] = identity
+            try:
+                raw = read_stable_crash_report(name, identity)
+                contexts = [c for c in receipt["contexts"] if c["pid"] in pending]
+                rejections = []
+                for context in contexts:
+                    try:
+                        binding = owned_crash_report(raw, context)
+                    except (ValueError, TypeError, KeyError) as error:
+                        rejections.append(str(error))
+                        continue
+                    destination = folder / ("worker-" + str(context["pid"]) + ".ips")
+                    destination.write_bytes(raw)
+                    receipt["reports"].append(dict(file=destination.name, bytes=len(raw), pid=context["pid"],
+                        sha256=hashlib.sha256(raw).hexdigest(), expectedImage=context["hostExecutable"], **binding))
+                    pending.remove(context["pid"])
+                    break
+                else:
+                    raise ValueError("; ".join(sorted(set(rejections))) or "No pending owned worker identity")
+                receipt["candidateStatus"][name] = "Bound original worker report copied"
+            except InterruptedError:
+                raise
+            except (OSError, ValueError, TypeError, KeyError) as error:
+                receipt["candidateStatus"][name] = str(error)
+        previous = candidates
+        if pending:
+            time.sleep(min(1, max(0, deadline - time.monotonic())))
+    receipt["missingPIDs"] = sorted(pending)
+    receipt["status"] = "bound-report-captured" if receipt["reports"] else "no-bound-report"
+    (folder / "receipt.json").write_text(json.dumps(receipt, sort_keys=True) + "\n")
+    return receipt
+
+
 def supervise(binary, output, mode, source_sha, timeout):
     output.mkdir(parents=True, exist_ok=True)
     proof_path = output / "armed.json"
@@ -295,6 +494,13 @@ def supervise(binary, output, mode, source_sha, timeout):
     if mode != "runtime":
         environment.update(NGV_SELFTEST_BPY_HOST_CRASH=mode, NGV_SELFTEST_BPY_HOST_CRASH_EVIDENCE=str(proof_path))
     captured = set()
+    try:
+        postmortem = prepare_worker_postmortem(binary)
+    except InterruptedError:
+        raise
+    except Exception as error:
+        diagnostic_error(output, "worker-postmortem-preparation", error)
+        postmortem = None
     start = time.time()
     deadline = time.monotonic() + timeout
     with (output / "runtime.log").open("wb") as stdout, (output / "runtime-stderr.log").open("wb") as stderr:
@@ -327,8 +533,17 @@ def supervise(binary, output, mode, source_sha, timeout):
             (output / "process-failure.json").write_text(json.dumps(dict(pid=process.pid, error=str(error))) + "\n")
             try:
                 sample_owned(process, output, "failure")
+            except InterruptedError:
+                raise
             except Exception as sample_error:
                 diagnostic_error(output, "sample", sample_error)
+            if postmortem is not None and not isinstance(error, (InterruptedError, KeyboardInterrupt, SystemExit)):
+                try:
+                    collect_worker_postmortem(output, process.pid, source_sha, postmortem, start)
+                except InterruptedError:
+                    raise
+                except Exception as capture_error:
+                    diagnostic_error(output, "worker-postmortem", capture_error)
             raise
         finally:
             if process.poll() is None:

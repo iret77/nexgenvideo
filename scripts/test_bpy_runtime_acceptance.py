@@ -1,4 +1,6 @@
 import copy
+import base64
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -11,6 +13,7 @@ import unittest
 from unittest import mock
 import uuid
 
+import bpy_runtime_acceptance as driver
 from bpy_runtime_acceptance import capture_open_logs, collect_hangs, diagnostic_error, stop_open_capture, supervise, verify_crash, verify_storage_scope
 
 
@@ -534,6 +537,177 @@ time.sleep(30)
                     if child.poll() is None:
                         child.kill()
                     child.wait(timeout=5)
+
+
+class WorkerPostmortemTests(unittest.TestCase):
+    source = "a" * 40
+    started = 1793408400
+    image_uuid = "22222222-2222-2222-2222-222222222222"
+
+    def record(self, root, change=None, metrics=None, omit_metrics=()):
+        values = {"probe.exitStatus": 134, "probe.terminationSignal": -1,
+                  "probe.workerPID": 42, "probe.supervisorPID": 41}
+        values.update(metrics or {})
+        for key in omit_metrics:
+            values.pop(key)
+        raw = json.dumps(dict(ok=False, metrics=values)).encode()
+        record = dict(schema="nexgenvideo/bpy-open-failure/1", hostPID=40, sourceSHA=self.source,
+                      sessionID=str(uuid.uuid4()), response=base64.b64encode(raw).decode(),
+                      responseSHA256=hashlib.sha256(raw).hexdigest())
+        record.update(change or {})
+        path = root / "open-failure-owned.json"
+        path.write_text(json.dumps(record))
+        return path
+
+    def preparation(self, root):
+        return dict(templates=[dict(role="supervisor", hostExecutable="/app/Supervisor",
+                                   hostSHA256="b" * 64, hostUUID="11111111-1111-1111-1111-111111111111"),
+                               dict(role="python", hostExecutable="/app/python3.13",
+                                    hostSHA256="c" * 64, hostUUID=self.image_uuid)],
+                    directories=[str(root)], prefixes=("Supervisor", "Python", "python"),
+                    baseline={}, preparationErrors=[], baselineErrors=[])
+
+    def report(self, **changes):
+        body = dict(pid=42, parentPid=41, procLaunch="2026-10-31T01:00:00Z",
+                    captureTime="2026-10-31T01:00:00.5Z", procPath="/Users/USER/redacted/Python",
+                    usedImages=[dict(uuid=self.image_uuid)], exception=dict(type="EXC_CRASH"))
+        body.update(changes)
+        return (json.dumps(dict(bug_type="309")) + "\n" + json.dumps(body)).encode()
+
+    def test_failure_record_binds_the_worker_and_both_possible_images(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            contexts = driver.failed_worker_contexts(self.record(root), 40, self.source,
+                self.preparation(root), self.started, self.started + 1)
+            self.assertEqual({c["role"] for c in contexts}, {"python", "supervisor"})
+            self.assertTrue(all(c["pid"] == 42 and c["parentPID"] == 41 for c in contexts))
+            with self.subTest(termination="supervisor"):
+                contexts = driver.failed_worker_contexts(
+                    self.record(root, metrics={"probe.terminationSignal": 6}), 40, self.source,
+                    self.preparation(root), self.started, self.started + 1)
+                self.assertEqual(len(contexts), 1)
+                self.assertEqual(contexts[0]["role"], "supervisor")
+                self.assertEqual(contexts[0]["pid"], 41)
+                self.assertEqual(contexts[0]["parentPID"], 40)
+            for metrics, omitted in (({"probe.exitStatus": 0}, ()),
+                                     ({}, ("probe.exitStatus",)),
+                                     ({"probe.workerPID": -1}, ())):
+                with self.subTest(metrics=metrics, omitted=omitted):
+                    self.assertEqual(driver.failed_worker_contexts(
+                        self.record(root, metrics=metrics, omit_metrics=omitted), 40, self.source,
+                        self.preparation(root), self.started, self.started + 1), [])
+
+    def test_failure_record_rejects_foreign_forged_and_reused_process_metadata(self):
+        for change in ({"hostPID": 99}, {"sourceSHA": "f" * 40}, {"responseSHA256": "0" * 64},
+                       {"schema": "unknown"}, {"response": "invalid base64"}):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                with self.assertRaises((AssertionError, ValueError)):
+                    driver.failed_worker_contexts(self.record(root, change), 40, self.source,
+                        self.preparation(root), self.started, self.started + 1)
+        for metrics in ({"probe.workerPID": 41}, {"probe.supervisorPID": 40},
+                        {"probe.workerPID": float("nan")}, {"probe.workerPID": True}):
+            with self.subTest(metrics=metrics), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                with self.assertRaises(AssertionError):
+                    driver.failed_worker_contexts(self.record(root, metrics=metrics), 40, self.source,
+                        self.preparation(root), self.started, self.started + 1)
+
+    def collect(self, root):
+        with mock.patch.object(driver, "capture_worker_log", return_value={}), \
+             mock.patch.object(driver.time, "time", return_value=self.started + 1), \
+             mock.patch.object(driver.time, "monotonic", side_effect=range(10000)), \
+             mock.patch.object(driver.time, "sleep"), \
+             mock.patch.dict(os.environ, {"GITHUB_SHA": "d" * 40}):
+            return driver.collect_worker_postmortem(root, 40, self.source, self.preparation(root), self.started)
+
+    def test_python_report_alias_is_bound_to_the_original_worker_image(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.record(root)
+            raw = self.report()
+            (root / "Python-owned.ips").write_bytes(raw)
+            receipt = self.collect(root)
+            self.assertEqual(receipt["status"], "bound-report-captured")
+            self.assertEqual(receipt["appSourceSHA"], self.source)
+            self.assertEqual(receipt["harnessSHA"], "d" * 40)
+            self.assertEqual((root / "worker-postmortem/worker-42.ips").read_bytes(), raw)
+            self.assertEqual(receipt["reports"][0]["sha256"], hashlib.sha256(raw).hexdigest())
+
+    def test_foreign_parent_stale_time_and_wrong_image_reports_are_not_copied(self):
+        for changes in ({"pid": 99}, {"parentPid": 99}, {"procLaunch": "2026-10-30T01:00:00Z"},
+                        {"usedImages": [dict(uuid="another-image")]}):
+            with self.subTest(changes=changes), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self.record(root)
+                (root / "Python-unowned.ips").write_bytes(self.report(**changes))
+                receipt = self.collect(root)
+                self.assertEqual(receipt["status"], "no-bound-report")
+                self.assertEqual(receipt["missingPIDs"], [42])
+                self.assertEqual(list((root / "worker-postmortem").glob("*.ips")), [])
+
+    def test_stable_report_reader_rejects_changed_bytes_and_symlinks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            report = root / "Python-owned.ips"
+            report.write_bytes(self.report())
+            info = report.stat()
+            identity = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
+            report.write_bytes(self.report(pid=12345))
+            with self.assertRaises(ValueError):
+                driver.read_stable_crash_report(str(report), identity)
+            link = root / "Python-link.ips"
+            link.symlink_to(report)
+            with self.assertRaises(OSError):
+                driver.read_stable_crash_report(str(link), identity)
+
+    def test_postmortem_failure_does_not_replace_the_original_probe_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            process = mock.Mock(pid=40, returncode=1)
+            process.poll.return_value = 1
+            with mock.patch.object(driver.subprocess, "Popen", return_value=process), \
+                 mock.patch.object(driver, "prepare_worker_postmortem", return_value={}), \
+                 mock.patch.object(driver, "collect_hangs"), mock.patch.object(driver, "sample_owned"), \
+                 mock.patch.object(driver, "collect_worker_postmortem", side_effect=ValueError("capture failed")):
+                with self.assertRaisesRegex(AssertionError, "before its crash was armed"):
+                    supervise(root / "app", root, "before-authorization", self.source, 3)
+            self.assertIn("before its crash was armed", json.loads((root / "process-failure.json").read_text())["error"])
+            self.assertIn("capture failed", (root / "worker-postmortem-error.json").read_text())
+
+    def test_postmortem_cancellation_is_propagated_after_owned_app_cleanup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            process = mock.Mock(pid=40, returncode=1)
+            process.poll.return_value = 1
+            with mock.patch.object(driver.subprocess, "Popen", return_value=process), \
+                 mock.patch.object(driver, "prepare_worker_postmortem", return_value={}), \
+                 mock.patch.object(driver, "collect_hangs"), mock.patch.object(driver, "sample_owned"), \
+                 mock.patch.object(driver, "collect_worker_postmortem", side_effect=InterruptedError("cancelled")):
+                with self.assertRaisesRegex(InterruptedError, "cancelled"):
+                    supervise(root / "app", root, "before-authorization", self.source, 3)
+            process.wait.assert_called_once_with(timeout=5)
+
+    def test_unified_log_output_is_bounded_and_its_owned_process_is_reaped(self):
+        original_popen = subprocess.Popen
+        children = []
+
+        def spawn(command, **kwargs):
+            self.assertEqual(command[command.index("--process") + 1], "42")
+            child = original_popen([sys.executable, "-c", "import os; os.write(1, b'x' * (5 * 1024 * 1024))"], **kwargs)
+            children.append(child)
+            return child
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            contexts = [dict(pid=42, hostExecutable="/app/python3.13")]
+            with mock.patch.object(driver.subprocess, "Popen", side_effect=spawn):
+                result = driver.capture_worker_log(root, 42, contexts, self.started, self.started + 1,
+                                                   time.monotonic() + 10)
+            self.assertEqual(result["bytes"], 4 * 1024 * 1024)
+            self.assertEqual(result["discardedBytes"], 1024 * 1024)
+            self.assertEqual((root / "process-42.log").stat().st_size, 4 * 1024 * 1024)
+            self.assertTrue(all(c.poll() is not None for c in children))
 
 
 if __name__ == "__main__":
