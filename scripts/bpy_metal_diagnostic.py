@@ -156,7 +156,7 @@ def source_input(source, path):
 
 
 def environment(root):
-    return {"HOME": str(root / "home"), "TMPDIR": str(root / "tmp"), "LANG": "en_US.UTF-8",
+    return {"USER": "nexgenvideo", "HOME": str(root / "home"), "TMPDIR": str(root / "tmp"), "LANG": "en_US.UTF-8",
             "BLENDER_USER_CONFIG": str(root / "blender-config"),
             "BLENDER_USER_SCRIPTS": str(root / "blender-scripts"),
             "BLENDER_USER_DATAFILES": str(root / "blender-data")}
@@ -526,6 +526,7 @@ def collect(app, output, source, original_input=None):
             "Storage uses synthetic ordinary directories rather than host-created APFS images.",
             "The confirmed warm-probe scene and load_scene scripts-auto-exec setting are not opened; the scene resets factory state itself.",
             "Production uses -I -S with denied pycache writes; this control adds -B to preserve App bytes.",
+            "This control supplies fixed USER=nexgenvideo; older App launch environments may omit USER.",
             "Production runs save_as_mainfile after the scene; this control stops after the scene.",
             "OS-managed Metal caches outside scratch may be warm, including from the preceding failed native attempt; completion does not prove cold-compile time."])
     scratch, bindings, executable, identity, runtime = None, None, None, None, None
