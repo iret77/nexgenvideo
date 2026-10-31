@@ -18,6 +18,8 @@ through the existing reverse-XPC monitor. Supervisor and Python signatures have 
 inheritance or code-signing exception entitlements. The supervisor's child applies a deny-default
 Seatbelt profile before executing Python. It grants writes only to that execution's worker-volume
 root and exact read access to its staged inputs, checkpoint, frozen configuration and runtime.
+It also grants read and executable-mapping access to the OS cryptex at
+`/System/Cryptexes/OS` and `/System/Volumes/Preboot/Cryptexes/OS` for the worker's lifetime.
 Network, fork, foreign-process signals and undeclared IPC remain denied. Provider keys are absent
 from the host-built environment. No canonical project path or write capability reaches the worker.
 
