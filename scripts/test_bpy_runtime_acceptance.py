@@ -390,6 +390,35 @@ class SupervisionTests(unittest.TestCase):
         binary.chmod(0o755)
         return binary
 
+    def test_all_bpy_modes_decline_recording_on_the_owned_process(self):
+        source = '''import json, os, signal, sys, uuid
+from pathlib import Path
+output = Path(os.environ["NGV_BPY_COMMAND_EVIDENCE"])
+(output / "launch-arguments.json").write_text(json.dumps(sys.argv[1:]))
+mode = os.environ.get("NGV_SELFTEST_BPY_HOST_CRASH")
+if mode:
+    proof = dict(schema=1, pid=os.getpid(), sourceSHA="''' + self.source + '''", mode=mode,
+                 state="running", jobID=str(uuid.uuid4()), supervisorPID=os.getpid() + 1)
+    if mode == "before-authorization":
+        proof["authorizationID"] = str(uuid.uuid4())
+    else:
+        proof["workerPID"] = os.getpid() + 2
+    Path(os.environ["NGV_SELFTEST_BPY_HOST_CRASH_EVIDENCE"]).write_text(json.dumps(proof))
+    os.kill(os.getpid(), signal.SIGKILL)
+'''
+        for mode in ("runtime", "before-authorization", "after-authorization"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                binary = self.executable(root, source)
+                with mock.patch.object(driver, "prepare_worker_postmortem", return_value=None), \
+                        mock.patch.object(driver, "collect_hangs"):
+                    supervise(binary, root / "evidence", mode, self.source, 3)
+                self.assertEqual(json.loads((root / "evidence/launch-arguments.json").read_text()),
+                                 ["-hangDiagnosticMode", "disabled"])
+                result = json.loads((root / "evidence/process-result.json").read_text())
+                self.assertEqual(result["returncode"], 0 if mode == "runtime" else -signal.SIGKILL)
+                self.assertFalse((root / "evidence/process-failure.json").exists())
+
     def test_runtime_nonzero_is_preserved(self):
         with tempfile.TemporaryDirectory() as temporary, mock.patch("bpy_runtime_acceptance.sample_owned"):
             root = Path(temporary)

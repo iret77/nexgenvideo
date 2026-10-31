@@ -391,6 +391,12 @@ omit Python/bpy with `--without-bpy-runtime-for-ci-transfer`; they cannot provid
 
 ## Prepared Actions acceptance
 
+Owned bpy acceptance processes select the normal `-hangDiagnosticMode disabled` preference for
+that launch only, including the derived boundary fixture; the choice is not persisted. Ordinary
+first-launch consent is unchanged. The independent main-thread hang watchdog stays active and its
+reports and samples are still collected. The recorder stays off because this self-test deliberately
+blocks the main actor; recorder recovery or startup-failure dialogs would block its continuations.
+
 `.github/workflows/bpy-source-closure.yml` is a manual/reusable source-evidence workflow bound to
 `github.sha`. Its Linux job assembles the exact source/notice closure and independently validates the
 archive membership, all hashes, official library evidence and source inventory. Candidate mode also
