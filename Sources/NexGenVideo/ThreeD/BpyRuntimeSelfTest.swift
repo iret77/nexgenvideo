@@ -512,6 +512,15 @@ enum BpyRuntimeSelfTest {
             diagnosticAutoexecPositiveControl: true
         )
         let hostJobSeconds = Date().timeIntervalSince(firstStarted)
+        let sceneReceipt: [String: Any] = [
+            "schema": "nexgenvideo/bpy-scene-acceptance/1", "hostPID": getpid(),
+            "sourceSHA": Bundle.main.object(forInfoDictionaryKey: "NGVSourceCommit") as? String ?? "",
+            "jobID": firstID.uuidString,
+            "response": try JSONSerialization.jsonObject(with: JSONEncoder().encode(first.response)),
+            "stagedOutputNames": first.stagedOutputs.keys.sorted(),
+        ]
+        try JSONSerialization.data(withJSONObject: sceneReceipt, options: [.sortedKeys])
+            .write(to: output.appendingPathComponent("acceptance-scene-response.json"), options: .atomic)
         guard first.response.state == .awaitingConfirmation,
               (first.response.metrics["worker_host_monitor_samples"] ?? 0) > 0,
               (first.response.metrics["verifier_host_monitor_samples"] ?? 0) > 0,

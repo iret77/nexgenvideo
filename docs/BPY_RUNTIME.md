@@ -397,6 +397,9 @@ first-launch consent is unchanged. The independent main-thread hang watchdog sta
 reports and samples are still collected. The recorder stays off because this self-test deliberately
 blocks the main actor; recorder recovery or startup-failure dialogs would block its continuations.
 
+The first scene's actual response and staged output names are saved to
+`acceptance-scene-response.json` before its result gate, including when that gate fails.
+
 `.github/workflows/bpy-source-closure.yml` is a manual/reusable source-evidence workflow bound to
 `github.sha`. Its Linux job assembles the exact source/notice closure and independently validates the
 archive membership, all hashes, official library evidence and source inventory. Candidate mode also
