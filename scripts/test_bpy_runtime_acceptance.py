@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import subprocess
 import sys
@@ -395,6 +396,7 @@ class SupervisionTests(unittest.TestCase):
 from pathlib import Path
 output = Path(os.environ["NGV_BPY_COMMAND_EVIDENCE"])
 (output / "launch-arguments.json").write_text(json.dumps(sys.argv[1:]))
+(output / "launch-diagnostic-environment.json").write_text(json.dumps({"sandboxLogFlagPresent": "NGV_BPY_CAPTURE_SANDBOX_LOGS" in os.environ}))
 mode = os.environ.get("NGV_SELFTEST_BPY_HOST_CRASH")
 if mode:
     proof = dict(schema=1, pid=os.getpid(), sourceSHA="''' + self.source + '''", mode=mode,
@@ -410,11 +412,15 @@ if mode:
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 binary = self.executable(root, source)
-                with mock.patch.object(driver, "prepare_worker_postmortem", return_value=None), \
+                with mock.patch.dict(driver.os.environ, NGV_BPY_CAPTURE_SANDBOX_LOGS='1'), \
+                        mock.patch.object(driver, "prepare_worker_postmortem", return_value=None), \
                         mock.patch.object(driver, "collect_hangs"):
                     supervise(binary, root / "evidence", mode, self.source, 3)
+                    self.assertEqual(driver.os.environ['NGV_BPY_CAPTURE_SANDBOX_LOGS'], '1')
                 self.assertEqual(json.loads((root / "evidence/launch-arguments.json").read_text()),
                                  ["-hangDiagnosticMode", "disabled"])
+                self.assertEqual(json.loads((root / "evidence/launch-diagnostic-environment.json").read_text()),
+                                 {"sandboxLogFlagPresent": False})
                 result = json.loads((root / "evidence/process-result.json").read_text())
                 self.assertEqual(result["returncode"], 0 if mode == "runtime" else -signal.SIGKILL)
                 self.assertFalse((root / "evidence/process-failure.json").exists())
@@ -877,6 +883,188 @@ class LiveWorkerSampleTests(unittest.TestCase):
                         self.assertTrue((output / 'live-worker-capture-error.json').is_file())
                     self.assertEqual(worker.poll.call_count, 1)
                     process.wait.assert_called_once_with(timeout=5)
+
+
+class LiveWorkerSandboxLogTests(unittest.TestCase):
+    def fixture(self, output):
+        support = LiveWorkerSampleTests('test_owned_worker_capture_waits_for_age_and_is_bounded_to_two_samples')
+        with mock.patch.dict(driver.os.environ, NGV_BPY_CAPTURE_SANDBOX_LOGS='1'):
+            capture, identities, reader = support.fixture(output)
+        return support, capture, identities, reader
+
+    def test_diagnostic_logs_survive_sample_timeout_and_keep_two_owned_time_windows(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _, capture, _, _ = self.fixture(root)
+            clock = [0.0]
+            def query(folder, pid, contexts, started, observed, deadline, **kwargs):
+                self.assertEqual(pid, 30)
+                self.assertEqual(contexts, [dict(pid=30, hostExecutable=capture.templates[1]['hostExecutable'])])
+                self.assertTrue(kwargs['include_sandbox'])
+                self.assertEqual(started, 1001)
+                self.assertEqual(observed, 1000 + int(clock[0]))
+                self.assertEqual(deadline, clock[0] + 5)
+                (folder / 'process-30.log').write_bytes(b'[]\n')
+                return dict(exitCode=0, bytes=3, discardedBytes=0)
+            with mock.patch.object(driver.time, 'time', side_effect=lambda: 1000.25 + clock[0]), \
+                    mock.patch.object(driver.time, 'monotonic', side_effect=lambda: clock[0]), \
+                    mock.patch.object(driver.subprocess, 'run', side_effect=subprocess.TimeoutExpired('sample', 5)), \
+                    mock.patch.object(driver, 'capture_worker_log', side_effect=query) as logs:
+                for age, count in [(0, 0), (19, 0), (20, 1), (21, 1), (59, 1), (60, 2), (61, 2), (120, 2)]:
+                    clock[0] = float(age)
+                    capture.poll(age)
+                    self.assertEqual(logs.call_count, count, age)
+            for index in (1, 2):
+                sample = json.loads((root / f'live-workers/{index}.json').read_text())
+                log = json.loads((root / f'live-workers/{index}.sandbox.json').read_text())
+                self.assertEqual(sample['status'], 'unverified')
+                self.assertEqual(log['status'], 'captured')
+                self.assertEqual(log['worker']['start'], 300)
+                self.assertEqual(log['appSourceSHA'], 'a' * 40)
+                self.assertEqual(log['sha256'], hashlib.sha256(b'[]\n').hexdigest())
+        for flag in (None, '0'):
+            with self.subTest(flag=flag), tempfile.TemporaryDirectory() as directory, \
+                    mock.patch.dict(driver.os.environ):
+                driver.os.environ.pop('NGV_BPY_CAPTURE_SANDBOX_LOGS', None)
+                if flag is not None:
+                    driver.os.environ['NGV_BPY_CAPTURE_SANDBOX_LOGS'] = flag
+                root = Path(directory)
+                support = LiveWorkerSampleTests('test_owned_worker_capture_waits_for_age_and_is_bounded_to_two_samples')
+                capture, _, _ = support.fixture(root)
+                with mock.patch.object(driver.subprocess, 'run', side_effect=support.sample), \
+                        mock.patch.object(driver, 'capture_worker_log') as logs:
+                    for age in (0, 20, 60):
+                        capture.poll(age)
+                logs.assert_not_called()
+                self.assertFalse(list(root.rglob('*.sandbox*')))
+
+    def test_foreign_reused_and_changed_clock_scopes_never_become_captured(self):
+        for mode in ('foreign-parent', 'reused-before', 'clock-jump', 'backwards', 'reused-after'):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                _, capture, identities, _ = self.fixture(root)
+                supervisor, worker = copy.deepcopy(identities[20]), copy.deepcopy(identities[30])
+                if mode == 'foreign-parent':
+                    identities[30]['parentPID'] = 99
+                if mode == 'reused-before':
+                    identities[30]['start'] += 1
+                def query(folder, *args, **kwargs):
+                    (folder / 'process-30.log').write_bytes(b'[]')
+                    identities[30]['start'] += 1
+                    return dict(exitCode=0)
+                wall = 1200.25 if mode == 'clock-jump' else 999 if mode == 'backwards' else 1020.25
+                with mock.patch.object(driver.time, 'time', return_value=wall), \
+                        mock.patch.object(driver.time, 'monotonic', return_value=20), \
+                        mock.patch.object(driver, 'capture_worker_log', side_effect=query) as logs:
+                    capture.capture_log(root, 1, supervisor, worker, (1000.25, 0))
+                self.assertEqual(logs.call_count, int(mode == 'reused-after'))
+                receipt = json.loads((root / '1.sandbox.json').read_text())
+                self.assertEqual(receipt['status'], 'unverified')
+        for label, wall, started, expected in [('within-tolerance', 1020.03125, (1000.0, 0.0), 1),
+                ('beyond-tolerance', 1020.0625, (1000.0, 0.0), 0),
+                ('future-monotonic', 999.0, (1000.0, 21.0), 0)]:
+            with self.subTest(clock=label), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                _, capture, identities, _ = self.fixture(root)
+                def query(folder, *args, **kwargs):
+                    (folder / 'process-30.log').write_bytes(b'[]')
+                    return dict(exitCode=0)
+                with mock.patch.object(driver.time, 'time', return_value=wall), \
+                        mock.patch.object(driver.time, 'monotonic', return_value=20), \
+                        mock.patch.object(driver, 'capture_worker_log', side_effect=query) as logs:
+                    capture.capture_log(root, 1, identities[20], identities[30], started)
+                self.assertEqual(logs.call_count, expected)
+                self.assertEqual(json.loads((root / '1.sandbox.json').read_text())['status'],
+                                 'captured' if expected else 'unverified')
+
+    def test_log_predicate_includes_only_exact_owned_process_and_kernel_pid_marker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            contexts = [dict(pid=30, hostExecutable='/app/python3.13')]
+            with mock.patch.object(driver.subprocess, 'Popen', side_effect=RuntimeError('before spawn')) as spawn:
+                with self.assertRaisesRegex(RuntimeError, 'before spawn'):
+                    driver.capture_worker_log(root, 30, contexts, 1001, 1020, time.monotonic() + 5,
+                                              include_sandbox=True)
+            command = spawn.call_args.args[0]
+            self.assertNotIn('--process', command)
+            self.assertEqual(command[command.index('--start') + 1], '1970-01-01 00:16:41+0000')
+            self.assertEqual(command[command.index('--end') + 1], '1970-01-01 00:17:00+0000')
+            predicate = command[command.index('--predicate') + 1]
+            self.assertIn('processID == 30 AND (processImagePath == "/app/python3.13")', predicate)
+            self.assertIn('process == "kernel" OR process == "sandboxd"', predicate)
+            marker = json.loads(predicate.split('eventMessage MATCHES ', 1)[1][:-1])
+            self.assertIsNotNone(re.fullmatch(marker, 'Sandbox: python3.13(30) deny(1) file-write-create'))
+            for text in ('Sandbox: python3.13(30) deny(1) mach-lookup com.apple.MTLCompilerService\n'
+                         'Violation: deny(1) mach-lookup ...\nThread 0 ...',
+                         'Sandbox: python3.13(30) deny(1) file-read-data /x\n'):
+                self.assertIsNotNone(re.fullmatch(marker, text))
+            for foreign in ('python3.13(300)', 'python3.13(31)', 'foreign(30)', 'evilpython3.13(30)'):
+                for suffix in (' deny(1) file-read-data', ' deny(1) file-read-data\nViolation: deny\nThread 0 ...'):
+                    self.assertIsNone(re.fullmatch(marker, 'Sandbox: ' + foreign + suffix))
+            self.assertIsNone(re.fullmatch(marker, 'Another record\nSandbox: python3.13(30) deny(1) file-read-data'))
+            with mock.patch.object(driver.subprocess, 'Popen', side_effect=RuntimeError('legacy before spawn')) as spawn:
+                with self.assertRaisesRegex(RuntimeError, 'legacy before spawn'):
+                    driver.capture_worker_log(root, 30, contexts, 1001, 1020, time.monotonic() + 5)
+            self.assertEqual(spawn.call_args.args[0], ['/usr/bin/log', 'show', '--style', 'json', '--no-pager',
+                '--info', '--debug', '--process', '30', '--start', '1970-01-01 00:16:40+0000',
+                '--end', '1970-01-01 00:17:01+0000', '--predicate', 'processImagePath == "/app/python3.13"'])
+            for pid, paths, start, end in [(1, contexts, 1001, 1020), (True, contexts, 1001, 1020),
+                    (30, [dict(pid=30, hostExecutable='relative')], 1001, 1020),
+                    (30, contexts + [dict(pid=30, hostExecutable='/other/python')], 1001, 1020),
+                    (30, contexts, 1020, 1001), (30, contexts, float('nan'), 1020)]:
+                with self.subTest(pid=pid, paths=paths, start=start), \
+                        mock.patch.object(driver.subprocess, 'Popen') as spawn:
+                    with self.assertRaises(AssertionError):
+                        driver.capture_worker_log(root, pid, paths, start, end, time.monotonic() + 5,
+                                                  include_sandbox=True)
+                    spawn.assert_not_called()
+
+    def test_log_failures_preserve_samples_and_bounded_queries_reap_their_children(self):
+        for error in (OSError('log unavailable'), InterruptedError('CI cancelled')):
+            with self.subTest(error=error), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                support, capture, _, _ = self.fixture(root)
+                with mock.patch.object(driver.time, 'time', return_value=1020.25), \
+                        mock.patch.object(driver.time, 'monotonic', return_value=20), \
+                        mock.patch.object(driver.subprocess, 'run', side_effect=support.sample), \
+                        mock.patch.object(driver, 'capture_worker_log', side_effect=error):
+                    if isinstance(error, InterruptedError):
+                        with self.assertRaisesRegex(InterruptedError, 'CI cancelled'):
+                            capture.capture(capture.reader.identity(20), capture.reader.identity(30), (1000.25, 0))
+                    else:
+                        capture.capture(capture.reader.identity(20), capture.reader.identity(30), (1000.25, 0))
+                self.assertEqual(json.loads((root / 'live-workers/1.json').read_text())['status'], 'verified')
+                self.assertEqual(json.loads((root / 'live-workers/1.sandbox.json').read_text())['status'], 'unverified')
+        original_popen = subprocess.Popen
+        for stalled in (False, True):
+            with self.subTest(stalled=stalled), tempfile.TemporaryDirectory() as directory:
+                children = []
+                def spawn(command, **kwargs):
+                    self.assertNotIn('--process', command)
+                    self.assertEqual(kwargs['stdin'], subprocess.DEVNULL)
+                    self.assertTrue(kwargs['start_new_session'])
+                    script = 'import time; time.sleep(60)' if stalled else "import os; os.write(1, b'x' * (5 * 1024 * 1024))"
+                    child = original_popen([sys.executable, '-c', script], **kwargs)
+                    children.append(child)
+                    return child
+                try:
+                    with mock.patch.object(driver.subprocess, 'Popen', side_effect=spawn):
+                        if stalled:
+                            with self.assertRaisesRegex(AssertionError, 'timed out'):
+                                driver.capture_worker_log(Path(directory), 30, [dict(pid=30, hostExecutable='/app/python')],
+                                    1001, 1020, time.monotonic() + 0.15, include_sandbox=True)
+                        else:
+                            result = driver.capture_worker_log(Path(directory), 30,
+                                [dict(pid=30, hostExecutable='/app/python')], 1001, 1020,
+                                time.monotonic() + 10, include_sandbox=True)
+                            self.assertEqual(result['bytes'], 4 * 1024 * 1024)
+                            self.assertEqual(result['discardedBytes'], 1024 * 1024)
+                    self.assertTrue(children and all(child.poll() is not None for child in children))
+                finally:
+                    for child in children:
+                        if child.poll() is None:
+                            child.kill()
+                        child.wait(timeout=5)
 
 
 if __name__ == "__main__":

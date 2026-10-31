@@ -74,6 +74,8 @@ class WorkerSamples:
                 "live worker capture host differs")
         self.templates = preparation["templates"]
         self.seen, self.captured, self.next_poll = {}, [], 0
+        self.capture_sandbox_logs = os.environ.get("NGV_BPY_CAPTURE_SANDBOX_LOGS") == "1"
+        self.log_starts = {}
 
     def template(self, value, role):
         return value and value["start"] > 0 and any(t["role"] == role
@@ -87,7 +89,7 @@ class WorkerSamples:
         if len(self.captured) >= 2 or now < self.next_poll or not self.current([self.host]):
             return
         self.next_poll = now + 1
-        live = {}
+        live, log_starts = {}, {}
         for pid in self.reader.children(self.host["pid"]):
             if len(self.captured) >= 2:
                 break
@@ -102,14 +104,20 @@ class WorkerSamples:
                     continue
                 key = (child, worker["start"])
                 live[key] = self.seen.get(key, now)
+                if self.capture_sandbox_logs:
+                    log_starts[key] = self.log_starts.get(key, (time.time(), time.monotonic()))
                 threshold = 60 if any(v["worker"] == worker for v in self.captured) else 20
                 if now - live[key] >= threshold and self.current([self.host, supervisor, worker]):
-                    self.capture(supervisor, worker)
+                    if self.capture_sandbox_logs:
+                        self.capture(supervisor, worker, log_starts[key])
+                    else:
+                        self.capture(supervisor, worker)
                     if len(self.captured) >= 2:
                         break
         self.seen = live
+        self.log_starts = log_starts
 
-    def capture(self, supervisor, worker):
+    def capture(self, supervisor, worker, log_started=None):
         folder = self.output / "live-workers"
         folder.mkdir(exist_ok=True)
         number = len(self.captured) + 1
@@ -118,6 +126,7 @@ class WorkerSamples:
             harnessSHA=os.environ.get("GITHUB_SHA", ""), host=self.host, supervisor=supervisor, worker=worker,
             sampleSeconds=1, timeoutSeconds=5, status="unverified")
         self.captured.append(receipt)
+        cancelled = False
         try:
             require(not sample.exists() and not sample.is_symlink(), "occupied worker sample destination")
             require(self.current([self.host, supervisor, worker]), "worker capture identity changed before sampling")
@@ -140,12 +149,52 @@ class WorkerSamples:
                         for u, path in pattern.findall(images)), "worker sample does not contain the owned executable image")
             receipt.update(status="verified", sampleBytes=len(raw), sampleSHA256=hashlib.sha256(raw).hexdigest())
         except InterruptedError:
+            cancelled = True
+            raise
+        except Exception as error:
+            receipt["error"] = str(error)
+        except BaseException:
+            cancelled = True
+            raise
+        finally:
+            try:
+                (folder / (str(number) + ".json")).write_text(json.dumps(receipt, sort_keys=True) + "\n")
+            except InterruptedError:
+                raise
+            except OSError:
+                pass
+            if self.capture_sandbox_logs and not cancelled:
+                self.capture_log(folder, number, supervisor, worker, log_started)
+
+    def capture_log(self, folder, number, supervisor, worker, started):
+        destination = folder / (str(number) + ".sandbox")
+        receipt = dict(schema="nexgenvideo/bpy-live-worker-log/1", appSourceSHA=self.source,
+            harnessSHA=os.environ.get("GITHUB_SHA", ""), host=self.host, supervisor=supervisor,
+            worker=worker, status="unverified")
+        try:
+            require(self.current([self.host, supervisor, worker]), "worker log identity changed before query")
+            observed, monotonic = time.time(), time.monotonic()
+            require(started is not None and all(math.isfinite(v) for v in (*started, observed, monotonic))
+                and started[0] > 0 and started[1] <= monotonic
+                and abs((observed - started[0]) - (monotonic - started[1])) < 0.05,
+                "worker log clock interval unavailable or changed")
+            destination.mkdir()
+            receipt.update(started=math.ceil(started[0]), observed=math.floor(observed))
+            result = capture_worker_log(destination, worker["pid"],
+                [dict(pid=worker["pid"], hostExecutable=worker["executable"])],
+                receipt["started"], receipt["observed"], time.monotonic() + 5, include_sandbox=True)
+            receipt["query"] = result
+            require(result.get("exitCode") == 0 and self.current([self.host, supervisor, worker]),
+                "worker log query failed or identity changed")
+            raw = (destination / ("process-" + str(worker["pid"]) + ".log")).read_bytes()
+            receipt.update(status="captured", bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest())
+        except InterruptedError:
             raise
         except Exception as error:
             receipt["error"] = str(error)
         finally:
             try:
-                (folder / (str(number) + ".json")).write_text(json.dumps(receipt, sort_keys=True) + "\n")
+                (folder / (str(number) + ".sandbox.json")).write_text(json.dumps(receipt, sort_keys=True) + "\n")
             except InterruptedError:
                 raise
             except OSError:
@@ -500,13 +549,23 @@ def failed_worker_contexts(path, host_pid, source_sha, preparation, started, obs
             if termination <= 0 or template["role"] == "supervisor"]
 
 
-def capture_worker_log(folder, pid, contexts, started, observed, deadline):
+def capture_worker_log(folder, pid, contexts, started, observed, deadline, include_sandbox=False):
     paths = sorted({c["hostExecutable"] for c in contexts if c["pid"] == pid})
     predicate = " OR ".join("processImagePath == " + json.dumps(path) for path in paths)
+    if include_sandbox:
+        require(type(pid) is int and pid > 1 and len(paths) == 1 and Path(paths[0]).is_absolute()
+                and all(math.isfinite(v) for v in (started, observed)) and 0 < started < observed,
+                "invalid owned worker log scope")
+        marker = r"(?s)[^\n]*Sandbox: " + re.escape(Path(paths[0]).name) + r"\(" + str(pid) + r"\)(?:\s.*)?"
+        predicate = ("(processID == " + str(pid) + " AND (" + predicate + ")) OR "
+                     "((process == \"kernel\" OR process == \"sandboxd\") AND eventMessage MATCHES "
+                     + json.dumps(marker) + ")")
     dates = [datetime.fromtimestamp(stamp, timezone.utc).strftime("%Y-%m-%d %H:%M:%S%z")
-             for stamp in (started - 1, observed + 1)]
+             for stamp in ((started, observed) if include_sandbox else (started - 1, observed + 1))]
     command = ["/usr/bin/log", "show", "--style", "json", "--no-pager", "--info", "--debug",
-               "--process", str(pid), "--start", dates[0], "--end", dates[1], "--predicate", predicate]
+               "--start", dates[0], "--end", dates[1], "--predicate", predicate]
+    if not include_sandbox:
+        command[7:7] = ["--process", str(pid)]
     result, captured, discarded = dict(command=command), bytearray(), 0
     process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                stderr=subprocess.STDOUT, start_new_session=True)
@@ -620,6 +679,7 @@ def supervise(binary, output, mode, source_sha, timeout):
     proof_path = output / "armed.json"
     require(not proof_path.exists(), "occupied host-crash proof")
     environment = dict(os.environ, NGV_BPY_COMMAND_EVIDENCE=str(output))
+    environment.pop("NGV_BPY_CAPTURE_SANDBOX_LOGS", None)
     if mode != "runtime":
         environment.update(NGV_SELFTEST_BPY_HOST_CRASH=mode, NGV_SELFTEST_BPY_HOST_CRASH_EVIDENCE=str(proof_path))
     captured = set()

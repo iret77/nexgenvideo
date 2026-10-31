@@ -213,6 +213,7 @@ jobs:
       - name: Run real bpy acceptance without ambient Blender or Python
         env:
           EXPECTED_SOURCE: ${{ inputs.expected_source_sha || github.sha }}
+          NGV_BPY_CAPTURE_SANDBOX_LOGS: ${{ inputs.app_artifact_id != '' && '1' || '0' }}
         run: |
           set -euo pipefail
           APP="$RUNNER_TEMP/relocated/NexGenVideo.app"
