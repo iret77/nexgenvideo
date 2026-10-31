@@ -69,6 +69,7 @@ jobs:
           output.mkdir(parents=True, exist_ok=True)
           paths = ['scripts/bpy_runtime_acceptance.py', 'scripts/run_macos_tests.py',
                    'scripts/app_host_zombie_diagnostic.py', 'scripts/verify_swift_test_output.py',
+                   'scripts/reuse_bpy_binary_evidence.py', 'scripts/pinned_download.py',
                    '.github/workflows/bpy-runtime-acceptance.yml']
           value = dict(schema='nexgenvideo/bpy-execution-provenance/1',
               appSourceSHA=os.environ['APP_SOURCE'], harnessSHA=os.environ['GITHUB_SHA'],
@@ -87,14 +88,31 @@ jobs:
         if: inputs.runtime_run_id != ''
         env:
           GH_TOKEN: ${{ github.token }}
+          ORIGINAL_RUN: ${{ inputs.runtime_run_id }}
+          ORIGINAL_SOURCE: ${{ inputs.expected_source_sha }}
+          ORIGINAL_NAME: ${{ inputs.artifact }}
           ORIGINAL_ARTIFACT: ${{ inputs.app_artifact_id }}
           ORIGINAL_DIGEST: ${{ inputs.app_artifact_sha256 }}
         run: |
           set -euo pipefail
           [[ "$ORIGINAL_ARTIFACT" =~ ^[1-9][0-9]*$ ]]
           [[ "$ORIGINAL_DIGEST" =~ ^[0-9a-f]{64}$ ]]
-          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ORIGINAL_ARTIFACT/zip" > "$RUNNER_TEMP/original-app.zip"
-          test "$(shasum -a 256 "$RUNNER_TEMP/original-app.zip" | cut -d' ' -f1)" = "$ORIGINAL_DIGEST"
+          python3 - <<'PY'
+          import os, sys
+          from pathlib import Path
+          sys.path.insert(0, str(Path('scripts').resolve()))
+          from reuse_bpy_binary_evidence import api, download
+          identifier = int(os.environ['ORIGINAL_ARTIFACT'])
+          artifact = api('/actions/artifacts/' + str(identifier))
+          origin = artifact.get('workflow_run', {})
+          if (artifact.get('id') != identifier or artifact.get('name') != os.environ['ORIGINAL_NAME']
+              or artifact.get('expired') is not False
+              or artifact.get('digest') != 'sha256:' + os.environ['ORIGINAL_DIGEST']
+              or origin.get('id') != int(os.environ['ORIGINAL_RUN'])
+              or origin.get('head_sha') != os.environ['ORIGINAL_SOURCE']):
+              raise ValueError('Original App artifact identity changed before transfer')
+          download(artifact, Path(os.environ['RUNNER_TEMP']) / 'original-app.zip')
+          PY
           ditto -x -k "$RUNNER_TEMP/original-app.zip" "$RUNNER_TEMP/download"
       - uses: actions/download-artifact@v4
         if: inputs.runtime_run_id == ''
