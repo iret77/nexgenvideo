@@ -72,6 +72,46 @@ nonisolated final class BpyRuntimeObservation: @unchecked Sendable {
     private var trace = Trace()
     private var lastSwap: TimeInterval?
     private var lastSystemObservation: [String: TimeInterval] = [:]
+    private struct InspectionFailure: Codable, Sendable {
+        let operation: String
+        let pid: Int32
+        let domain: String
+        let code: Int
+        let context: [String: String]
+        let clock: BpyClockReading?
+    }
+    private let inspectionFailuresEnabled: Bool = {
+        let environment = ProcessInfo.processInfo.environment
+        return environment["GITHUB_ACTIONS"] == "true"
+            && environment["NGV_BPY_COMMAND_EVIDENCE"]?.isEmpty == false
+            && ["NGV_SELFTEST_BPY", "NGV_SELFTEST_BPY_BOUNDARY", "NGV_SELFTEST_BPY_HOST_CRASH"].contains {
+                environment[$0]?.isEmpty == false
+            }
+    }()
+    private let inspectionFailureLock = NSLock()
+    private var inspectionFailures: [InspectionFailure] = []
+    private var inspectionFailuresOverflow = false
+
+    func inspectionFailure(operation: String, pid: Int32, error: any Error, context: [String: String] = [:]) {
+        guard inspectionFailuresEnabled else { return }
+        let error = error as NSError
+        let failure = InspectionFailure(operation: operation, pid: pid, domain: error.domain, code: error.code,
+            context: context, clock: BpyRuntimeClock.read())
+        inspectionFailureLock.withLock {
+            guard inspectionFailures.count < 128 else { inspectionFailuresOverflow = true; return }
+            inspectionFailures.append(failure)
+        }
+    }
+
+    func inspectionFailureSnapshot() throws -> [String: Any] {
+        let (failures, overflow) = inspectionFailureLock.withLock { (inspectionFailures, inspectionFailuresOverflow) }
+        let encoder = JSONEncoder()
+        encoder.nonConformingFloatEncodingStrategy = .convertToString(
+            positiveInfinity: "+Infinity", negativeInfinity: "-Infinity", nan: "NaN")
+        return ["schema": "nexgenvideo/bpy-inspection-failures/1", "partialDiagnosticOnly": true,
+            "enabled": inspectionFailuresEnabled, "overflow": overflow,
+            "events": try JSONSerialization.jsonObject(with: encoder.encode(failures))]
+    }
 
     func pressure(controller: UUID, sample: BpyMemoryCoordinator.Sample) {
         guard enabled else { return }
@@ -155,6 +195,7 @@ nonisolated final class BpyRuntimeObservation: @unchecked Sendable {
             positiveInfinity: "+Infinity", negativeInfinity: "-Infinity", nan: "NaN")
         return ["schema": "nexgenvideo/bpy-runtime-diagnostic/1", "partialDiagnosticOnly": true,
             "nonFiniteFloatEncoding": "strings",
+            "inspectionFailures": try inspectionFailureSnapshot(),
             "trace": try JSONSerialization.jsonObject(with: encoder.encode(value))]
     }
 

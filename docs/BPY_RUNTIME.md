@@ -444,6 +444,13 @@ for acceptance.
 Failed startup probes retain their bounded process output, exit status, launch stage and validation
 stage in the existing service response. Native CI saves the exact failed response with its source,
 session and SHA-256 in the diagnostic artifact; it never records the open request or its bookmarks.
+In all three native CI modes, failed kernel inspections and stream reads also retain the original
+error domain/code, operation, target PID and available query results and raw errno in a 128-event
+host buffer. Launch observation and stream-read failures add the execution, permit and process
+identities. Open/job failure diagnostics and the full self-test's partial trace include this buffer
+with an explicit overflow flag. Each failing native self-test catch path (boundary, host-crash,
+full run) also saves it as `host-inspection-failures-*.json`. Capture performs no file I/O on the
+observation path and does not change failure classification or process cleanup.
 Native failure diagnostics also bind OS child reports to the recorded PID, parent, launch/crash
 interval and known supervisor or Python image. Missing reports stay explicit. Capture preserves the
 original failure and cancellation; a spawned-child announcement does not establish Python readiness.

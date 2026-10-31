@@ -123,7 +123,8 @@ def run(app, output, source_sha):
                        derivedHashes={name: digest(fixture / name) for name in paths})
         with (output / "stdout.log").open("xb") as stdout, (output / "stderr.log").open("xb") as stderr:
             process = subprocess.Popen([str(fixture / "Contents/MacOS/NexGenVideo"), "-hangDiagnosticMode", "disabled"],
-                env=dict(os.environ, NGV_SELFTEST_BPY_BOUNDARY=str(output / "proof")),
+                env=dict(os.environ, NGV_SELFTEST_BPY_BOUNDARY=str(output / "proof"),
+                         NGV_BPY_COMMAND_EVIDENCE=str(output)),
                 stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr)
             receipt["processIdentifier"] = process.pid
             try:

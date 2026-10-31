@@ -259,6 +259,7 @@ nonisolated final class BpyHostLauncher: @unchecked Sendable {
                 return true
             }
             guard reserved else { return }
+            recordInspectionFailure(error, operation: "stream." + String(describing: channel))
             let fallback = lock.withLock { stop ?? .observationFailed }
             let reason = (try? memory.receipt(spec.permit).stop) ?? fallback
             requestStop(reason)
@@ -268,6 +269,20 @@ nonisolated final class BpyHostLauncher: @unchecked Sendable {
                 handle.readabilityHandler = nil
             }
             if channel != .report { try? handle.close() }
+        }
+
+        func recordInspectionFailure(_ error: any Error, operation: String) {
+            let context: [String: String] = lock.withLock { [
+                "execution": request.execution.uuidString, "permit": spec.permit.uuidString,
+                "mode": spec.mode.rawValue, "servicePID": String(service.pid), "serviceStart": String(service.start),
+                "supervisorPID": supervisor.map { String($0.pid) } ?? "unavailable",
+                "supervisorStart": supervisor.map { String($0.start) } ?? "unavailable",
+                "workerPID": worker.map { String($0.pid) } ?? childPID.map { String($0) } ?? "unavailable",
+                "workerStart": worker.map { String($0.start) } ?? "unavailable",
+                "stage": stage.map { String(describing: $0) } ?? "unavailable",
+                "existingStop": stop?.rawValue ?? "none",
+            ] }
+            BpyRuntimeObservation.shared.inspectionFailure(operation: operation, pid: getpid(), error: error, context: context)
         }
 
         func requestStop(_ reason: BpyMemoryStop) {
@@ -753,6 +768,7 @@ nonisolated final class BpyHostLauncher: @unchecked Sendable {
                 do { try observe(launch) }
                 catch is BpyLaunchDeferral { continue }
                 catch {
+                    launch.recordInspectionFailure(error, operation: "observeLaunches")
                     let reason = launch.lock.withLock { launch.stop } ?? Self.observationStop(error: error, stage: launch.lock.withLock { launch.stage })
                     launch.requestStop(reason)
                     memory.cancel(launch.spec.permit, reason: reason)
