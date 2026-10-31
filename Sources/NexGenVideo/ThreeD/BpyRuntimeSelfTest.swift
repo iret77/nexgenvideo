@@ -1608,6 +1608,7 @@ enum BpyRuntimeSelfTest {
         light = bpy.data.objects.new('NGV_Key', light_data)
         scene.collection.objects.link(light)
         light.location = (2.0, -3.0, 7.0)
+        scene.world = bpy.data.worlds.new('NGV_World')
         scene.world.color = (0.04, 0.04, 0.04)
 
         scene.render.resolution_x = 640
