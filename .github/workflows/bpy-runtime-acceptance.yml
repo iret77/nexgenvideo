@@ -55,6 +55,29 @@ jobs:
             [[ "$ORIGINAL_ARTIFACT" =~ ^[1-9][0-9]*$ ]]
             [[ "$ORIGINAL_DIGEST" =~ ^[0-9a-f]{64}$ ]]
           fi
+      - name: Record original App and current harness provenance
+        env:
+          APP_SOURCE: ${{ inputs.expected_source_sha || github.sha }}
+          PRODUCER_RUN: ${{ inputs.runtime_run_id || github.run_id }}
+          ORIGINAL_ARTIFACT: ${{ inputs.app_artifact_id }}
+          ORIGINAL_DIGEST: ${{ inputs.app_artifact_sha256 }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          output = Path(os.environ['RUNNER_TEMP']) / 'evidence'
+          output.mkdir(parents=True, exist_ok=True)
+          paths = ['scripts/bpy_runtime_acceptance.py', 'scripts/run_macos_tests.py',
+                   'scripts/app_host_zombie_diagnostic.py', 'scripts/verify_swift_test_output.py',
+                   '.github/workflows/bpy-runtime-acceptance.yml']
+          value = dict(schema='nexgenvideo/bpy-execution-provenance/1',
+              appSourceSHA=os.environ['APP_SOURCE'], harnessSHA=os.environ['GITHUB_SHA'],
+              producerRunID=int(os.environ['PRODUCER_RUN']), executionRunID=int(os.environ['GITHUB_RUN_ID']),
+              executionAttempt=int(os.environ['GITHUB_RUN_ATTEMPT']),
+              originalArtifactID=os.environ['ORIGINAL_ARTIFACT'], originalArtifactSHA256=os.environ['ORIGINAL_DIGEST'],
+              harnessFiles={p: hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in paths})
+          (output / 'execution-provenance.json').write_text(json.dumps(value, sort_keys=True) + '\n')
+          PY
       - uses: actions/download-artifact@v4
         if: inputs.runtime_run_id == ''
         with:
@@ -398,7 +421,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: managed-bpy-runtime-evidence-${{ github.sha }}
+          name: ${{ inputs.runtime_run_id != '' && format('managed-bpy-original-app-diagnostic-{0}-harness-{1}', inputs.expected_source_sha, github.sha) || format('managed-bpy-runtime-evidence-{0}', github.sha) }}
           overwrite: true
           path: ${{ runner.temp }}/evidence
           if-no-files-found: error

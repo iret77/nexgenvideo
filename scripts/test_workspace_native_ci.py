@@ -401,4 +401,100 @@ class NativeQualificationTests(unittest.TestCase):
             ci.latest_native_jobs({('cards', 1)})
 
 
+class BpyFollowupBindingTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.identity = Path(self.temp.name) / 'original-app.json'
+        self.run = {'id': 77, 'repository': {'full_name': 'iret77/nexgenvideo'},
+                    'head_sha': 'a' * 40, 'event': 'workflow_dispatch',
+                    'path': '.github/workflows/ci-batch.yml', 'status': 'completed', 'conclusion': 'failure'}
+        steps = [{'name': n, 'status': 'completed', 'conclusion': 'success'} for n in
+                 ('Build', 'Test', 'Bundle (debug, ad-hoc signed)', 'Upload .app artifact')]
+        self.jobs = [{'id': 101, 'name': 'Core / Build & Test', 'status': 'completed',
+                      'conclusion': 'success', 'steps': steps},
+                     {'id': 102, 'name': 'Core / bpy-runtime / runtime', 'status': 'completed', 'conclusion': 'failure'}]
+        self.artifacts = [{'id': 8, 'name': 'NexGenVideo-app', 'expired': False,
+                           'digest': 'sha256:' + 'b' * 64, 'workflow_run': {'id': 77, 'head_sha': 'a' * 40}}]
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def api(self, path):
+        if path == '/actions/runs/77':
+            return self.run
+        if '/jobs?' in path:
+            return {'jobs': self.jobs}
+        if '/artifacts?' in path:
+            return {'artifacts': self.artifacts}
+        raise AssertionError('Unexpected API route: ' + path)
+
+    def resolve(self):
+        with patch.dict(os.environ, {'GITHUB_SHA': 'd' * 40}), \
+             patch.object(ci, 'api', side_effect=self.api), patch.object(ci, 'outputs') as emitted:
+            result = ci.resolve_bpy_followup(77, self.identity)
+        return result, emitted
+
+    def test_original_app_source_is_separate_from_the_current_harness(self):
+        result, emitted = self.resolve()
+        self.assertEqual(result['scope'], 'original-app-diagnostic')
+        self.assertEqual(result['appSourceSHA'], 'a' * 40)
+        self.assertEqual(result['harnessSHA'], 'd' * 40)
+        self.assertEqual(result['failedRuntimeJobID'], 102)
+        self.assertEqual(json.loads(self.identity.read_text()), result)
+        emitted.assert_called_once_with({'source_sha': 'a' * 40, 'artifact_id': '8', 'artifact_sha256': 'b' * 64})
+
+    def test_foreign_or_incompatible_original_producers_are_rejected(self):
+        original = copy.deepcopy(self.run)
+        for change in ({'id': 78}, {'repository': {'full_name': 'foreign/repo'}}, {'head_sha': 'invalid'},
+                       {'event': 'pull_request'}, {'path': '.github/workflows/release.yml'},
+                       {'status': 'queued'}, {'conclusion': 'cancelled'}, {'conclusion': 'success'}):
+            self.run = {**original, **change}
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                self.resolve()
+        self.assertFalse(self.identity.exists())
+
+    def test_only_a_failed_native_job_with_a_completed_original_build_can_resume(self):
+        original = copy.deepcopy(self.jobs)
+        changes = [('build-failed', lambda: self.jobs[0].update(conclusion='failure')),
+                   ('skipped-test', lambda: self.jobs[0]['steps'][1].update(conclusion='skipped')),
+                   ('missing-test', lambda: self.jobs[0]['steps'].pop(1)),
+                   ('native-passed', lambda: self.jobs[1].update(conclusion='success')),
+                   ('native-pending', lambda: self.jobs[1].update(status='in_progress')),
+                   ('ambiguous-native', lambda: self.jobs.append(copy.deepcopy(self.jobs[1]))),
+                   ('invalid-job', lambda: self.jobs[1].update(id=0))]
+        for name, mutate in changes:
+            self.jobs = copy.deepcopy(original)
+            mutate()
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                self.resolve()
+        self.assertFalse(self.identity.exists())
+
+    def test_original_artifact_identity_cannot_be_swapped_or_ambiguous(self):
+        original = copy.deepcopy(self.artifacts)
+        for change in ({'expired': True}, {'digest': ''}, {'id': True},
+                       {'workflow_run': {'id': 78, 'head_sha': 'a' * 40}},
+                       {'workflow_run': {'id': 77, 'head_sha': 'f' * 40}}):
+            self.artifacts = [{**original[0], **change}]
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                self.resolve()
+        self.artifacts = [original[0], {**original[0], 'id': 9}]
+        with self.assertRaises(ValueError):
+            self.resolve()
+        self.assertFalse(self.identity.exists())
+
+    def test_binding_reads_later_inventory_pages_without_losing_the_original(self):
+        def api(path):
+            if path == '/actions/runs/77':
+                return self.run
+            kind = 'jobs' if '/jobs?' in path else 'artifacts'
+            if 'page=1&' in path or path.endswith('page=1'):
+                return {kind: [{'id': i, 'name': 'unrelated'} for i in range(100)]}
+            return {kind: self.jobs if kind == 'jobs' else self.artifacts}
+
+        with patch.dict(os.environ, {'GITHUB_SHA': 'd' * 40}), patch.object(ci, 'api', side_effect=api), \
+             patch.object(ci, 'outputs'):
+            result = ci.resolve_bpy_followup(77, self.identity)
+        self.assertEqual(result['runtimeArtifactID'], 8)
+
+
 if __name__ == '__main__': unittest.main()

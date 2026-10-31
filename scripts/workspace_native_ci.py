@@ -109,6 +109,66 @@ def resolve(run_id, name, artifact_id, destination):
     outputs({'artifact_id': str(artifact['id']), 'runtime_run_id': str(run_id)})
 
 
+def resolve_bpy_followup(run_id, destination):
+    if type(run_id) is not int or run_id <= 0:
+        raise ValueError('A positive original producer run is required')
+    run = api('/actions/runs/' + str(run_id))
+    source = run.get('head_sha', '')
+    harness = os.environ.get('GITHUB_SHA', '')
+    if (run.get('id') != run_id or run.get('repository', {}).get('full_name') != REPOSITORY
+            or run.get('event') != 'workflow_dispatch'
+            or run.get('path') != '.github/workflows/ci-batch.yml'
+            or run.get('status') not in {'in_progress', 'completed'}
+            or run.get('conclusion') not in {None, 'failure'}
+            or not re.fullmatch(r'[0-9a-f]{40}', source)
+            or not re.fullmatch(r'[0-9a-f]{40}', harness)):
+        raise ValueError('The original failed CI producer or current harness identity is invalid')
+
+    def records(kind):
+        values = []
+        for page in range(1, 11):
+            query = f'/actions/runs/{run_id}/{kind}?per_page=100&page={page}'
+            if kind == 'jobs':
+                query += '&filter=latest'
+            batch = api(query)[kind]
+            if not isinstance(batch, list) or len(batch) > 100:
+                raise ValueError('Invalid original producer inventory')
+            values.extend(batch)
+            if len(batch) < 100:
+                return values
+        raise ValueError('Original producer inventory exceeds the bounded lookup')
+
+    jobs = records('jobs')
+
+    def job(name, conclusion):
+        matches = [j for j in jobs if j.get('name') == name or j.get('name', '').endswith(' / ' + name)]
+        if (len(matches) != 1 or matches[0].get('status') != 'completed'
+                or matches[0].get('conclusion') != conclusion
+                or type(matches[0].get('id')) is not int or matches[0]['id'] <= 0):
+            raise ValueError('Missing or ambiguous original ' + name + ' result')
+        return matches[0]
+
+    build = job('Build & Test', 'success')
+    failed = job('bpy-runtime / runtime', 'failure')
+    for name in ('Build', 'Test', 'Bundle (debug, ad-hoc signed)', 'Upload .app artifact'):
+        steps = [s for s in build.get('steps', []) if s.get('name') == name]
+        if len(steps) != 1 or steps[0].get('status') != 'completed' or steps[0].get('conclusion') != 'success':
+            raise ValueError('Original producer did not complete ' + name)
+    artifacts = [a for a in records('artifacts') if a.get('name') == 'NexGenVideo-app' and a.get('expired') is False]
+    if len(artifacts) != 1:
+        raise ValueError('One unexpired original App artifact is required')
+    artifact = artifacts[0]
+    require_artifact(run, artifact, source, run_id, 'NexGenVideo-app')
+    identity = {'schema': 'nexgenvideo/bpy-followup-input/1', 'scope': 'original-app-diagnostic',
+                'appSourceSHA': source, 'harnessSHA': harness, 'runtimeRunID': run_id,
+                'buildJobID': build['id'], 'failedRuntimeJobID': failed['id'],
+                'runtimeArtifactID': artifact['id'], 'runtimeArtifactDigest': artifact['digest']}
+    atomic_json(destination, identity)
+    outputs({'source_sha': source, 'artifact_id': str(artifact['id']),
+             'artifact_sha256': artifact['digest'].removeprefix('sha256:')})
+    return identity
+
+
 class ArtifactRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, request, response, code, message, headers, target):
         return None
@@ -421,6 +481,8 @@ def main():
     resolver = sub.add_parser('resolve'); resolver.add_argument('--run-id', type=int, required=True)
     resolver.add_argument('--artifact', default='workspace-ui-app'); resolver.add_argument('--artifact-id', type=int)
     resolver.add_argument('--identity', type=Path, required=True)
+    bpy = sub.add_parser('resolve-bpy-followup'); bpy.add_argument('--run-id', type=int, required=True)
+    bpy.add_argument('--identity', type=Path, required=True)
     for name in ('prepare', 'verify-runtime', 'download-runtime'):
         command = sub.add_parser(name); command.add_argument('directory', type=Path); command.add_argument('identity', type=Path)
         if name == 'verify-runtime': command.add_argument('identity_sha')
@@ -433,6 +495,7 @@ def main():
         value = selection(args.scope, args.case, args.scale); atomic_json(args.output, value)
         outputs({'matrix': value['matrix'], 'native': bool(value['matrix']['include']), 'batch': value['batch']})
     elif args.command == 'resolve': resolve(args.run_id, args.artifact, args.artifact_id, args.identity)
+    elif args.command == 'resolve-bpy-followup': resolve_bpy_followup(args.run_id, args.identity)
     elif args.command == 'prepare': prepare(args.directory, args.identity)
     elif args.command == 'verify-runtime': verify_runtime(args.directory, args.identity, args.identity_sha)
     elif args.command == 'download-runtime': download_runtime(args.identity, args.directory)

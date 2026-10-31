@@ -397,7 +397,7 @@ class CICandidateProvenanceTests(unittest.TestCase):
 
     def test_runtime_selectors_cannot_override_normal_or_signed_source(self):
         workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/bpy-runtime-acceptance.yml").read_text()
-        step = workflow.split("      - name: Validate original app selectors\n", 1)[1].split("      - uses:", 1)[0]
+        step = workflow.split("      - name: Validate original app selectors\n", 1)[1].split("\n      - ", 1)[0]
         script = textwrap.dedent(step.split("        run: |\n", 1)[1])
         empty = dict(ORIGINAL_RUN="", ORIGINAL_SOURCE="", ORIGINAL_ARTIFACT="", ORIGINAL_DIGEST="", DISTRIBUTION="false")
         complete = {**empty, "ORIGINAL_RUN": "12", "ORIGINAL_SOURCE": self.source,

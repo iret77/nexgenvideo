@@ -42,7 +42,8 @@ the normal source checks still execute. Proof recording and upload run after the
 PR checks; their failures also fail Light Checks. The proof does not replace a
 check or claim native product verification.
 
-Use the registered `CI Batch` entrypoint on the exact producer commit with
+For the three same-source followups, use the registered `CI Batch` entrypoint on
+the exact producer commit with
 `mode=followup`, its `runtime_run_id`, and exactly one `followup_workflow`:
 `externalgui`, `settings`, or `smartsearch`. This calls the reusable workflow from
 that commit even before its standalone dispatch is registered on the default branch.
@@ -51,6 +52,7 @@ analysis regardless of the initial-mode checkbox defaults. Linux validation reje
 missing or incompatible selectors and requires one unexpired, source-matching
 `workspace-ui-app` from the named producer before allocating any Mac job. Existing
 consumer archive, source and app checks remain in force.
+The original-App `bpy` diagnostic below uses the current harness commit instead.
 
 For `externalgui`, `interface_scale` selects `all`, `1`, `1.25`, or `1.5`. For
 `settings`, `settings_scope` selects all cases, the Settings or Recovery family,
@@ -67,6 +69,18 @@ at `all`. Initial mode remains the default and keeps the existing checkbox behav
 it rejects supplied followup selectors or a producer run ID. Workspace cases retain
 their separate registered `Workspace UI Acceptance` entrypoint and artifact-reuse
 inputs. Followup success proves only the selected surface and cases.
+
+The `bpy` followup diagnoses the original failed native job using its unchanged
+`NexGenVideo-app`. Validation derives the original source, artifact ID and digest
+from the named producer, requiring successful build/test/bundle/upload steps and
+an actual failed bpy job. The native workflow independently checks those exact
+App bytes, signature, source stamp and qualified runtime inputs. Its evidence
+records original App source and current harness source separately.
+The retained input artifact also names the original successful build and failed
+native job; diagnostic artifact names include both source identities.
+Harness-only postmortem changes therefore need no repeat compilation or unit
+execution; this does not qualify changed application code. All native acceptance steps remain
+enabled. The other followups retain their same-source requirement.
 
 ### Managed bpy qualification before app builds
 

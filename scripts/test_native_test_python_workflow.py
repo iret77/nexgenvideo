@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import unittest
 
 import yaml
@@ -10,13 +11,24 @@ SELECTION = "./.github/actions/setup-native-test-python"
 
 class NativeTestPythonWorkflowTests(unittest.TestCase):
     def test_every_native_driver_caller_selects_python_before_using_or_replacing_source(self):
+        invocation = re.compile(r'''(?m)^[ \t]*(?:[^\s#]+[ \t]+)*?(?:["']?\S*python[0-9.]*["']?|"?\$[A-Za-z_]\w*"?)[ \t]+[^\n]*(?<![\w])(?:run_macos_tests|run_bpy_owned_child_probe)\.py(?=["'\s]|$)''')
+        for script, expected in (
+            ("python3 scripts/run_macos_tests.py --swift-testing", True),
+            ('  python3 "$RUNNER_TEMP/harness/run_macos_tests.py" --cache-path "$CACHE"', True),
+            ('"$PYTHON" -I scripts/run_bpy_owned_child_probe.py "$OUTPUT"', True),
+            ("paths = ['scripts/run_macos_tests.py', 'scripts/run_bpy_owned_child_probe.py']", False),
+            ("python3 -m unittest discover -s scripts -p 'test_run_macos_tests.py'", False),
+            ("/usr/bin/time -l python3 scripts/run_macos_tests.py", True),
+            ('timeout 600 "$PYTHON" scripts/run_bpy_owned_child_probe.py', True),
+        ):
+            with self.subTest(script=script):
+                self.assertEqual(bool(invocation.search(script)), expected)
         callers = set()
         for path in sorted((ROOT / ".github/workflows").glob("*.y*ml")):
             for name, job in yaml.safe_load(path.read_text())["jobs"].items():
                 steps = job.get("steps", [])
                 calls = [index for index, step in enumerate(steps)
-                         if any(name in step.get("run", "")
-                                for name in ("run_macos_tests.py", "run_bpy_owned_child_probe.py"))]
+                         if invocation.search(step.get("run", ""))]
                 if not calls:
                     continue
                 runner = job.get("runs-on")
