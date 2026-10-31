@@ -767,6 +767,10 @@ nonisolated final class BpyHostLauncher: @unchecked Sendable {
             if !launch.reaped {
                 do { try observe(launch) }
                 catch is BpyLaunchDeferral { continue }
+                catch let pending as BpyKernelInspection.ExitPending where launch.lock.withLock({
+                    Self.shouldDeferExit(pending, supervisor: launch.supervisor, worker: launch.worker,
+                        terminated: launch.termination != nil, stage: launch.stage)
+                }) { continue }
                 catch {
                     launch.recordInspectionFailure(error, operation: "observeLaunches")
                     let reason = launch.lock.withLock { launch.stop } ?? Self.observationStop(error: error, stage: launch.lock.withLock { launch.stage })
@@ -781,6 +785,12 @@ nonisolated final class BpyHostLauncher: @unchecked Sendable {
                 timer?.cancel(); timer = nil
             }
         }
+    }
+
+    static func shouldDeferExit(_ pending: BpyKernelInspection.ExitPending, supervisor: BpyObservedProcess?,
+                               worker: BpyObservedProcess?, terminated: Bool, stage: BpyLaunchStage?) -> Bool {
+        guard !terminated, stage.map({ $0.rawValue < 80 }) ?? true else { return false }
+        return [supervisor, worker].contains { $0?.pid == pending.pid && $0?.start == pending.start }
     }
 
     static func observationStop(error: any Error, stage: BpyLaunchStage?) -> BpyMemoryStop {

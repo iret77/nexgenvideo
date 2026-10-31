@@ -16,13 +16,29 @@ private func monitorPIDPath(_ pid: Int32, _ buffer: UnsafeMutableRawPointer, _ s
 private func monitorChildren(_ pid: Int32, _ buffer: UnsafeMutableRawPointer?, _ size: Int32) -> Int32
 
 nonisolated enum BpyKernelInspection {
+    struct ProcessIdentity: Sendable {
+        let start: UInt64
+        let footprint: UInt64
+        let parent: Int32
+        let flags: UInt32
+
+        var isExiting: Bool { flags & 4 != 0 }
+    }
+
+    struct ExitPending: Error, Sendable, Equatable {
+        let pid: Int32
+        let start: UInt64
+    }
+
     private static func failure(_ code: POSIXError.Code, operation: String, pid: Int32,
-                                result: Int64? = nil, argument: UInt64? = nil, queryErrno: Int32? = nil) -> POSIXError {
+                                result: Int64? = nil, argument: UInt64? = nil, queryErrno: Int32? = nil,
+                                flags: UInt32? = nil) -> POSIXError {
         let error = POSIXError(code)
         var context: [String: String] = [:]
         if let result { context["result"] = String(result) }
         if let argument { context["argument"] = String(argument) }
         if let queryErrno { context["queryErrno"] = String(queryErrno) }
+        if let flags { context["processFlags"] = String(flags) }
         BpyRuntimeObservation.shared.inspectionFailure(operation: operation, pid: pid, error: error, context: context)
         return error
     }
@@ -45,7 +61,7 @@ nonisolated enum BpyKernelInspection {
         return (start, buffer.load(fromByteOffset: 72, as: UInt64.self))
     }
 
-    private static func liveIdentity(_ pid: Int32) throws -> (start: UInt64, footprint: UInt64, parent: Int32)? {
+    private static func liveIdentity(_ pid: Int32) throws -> ProcessIdentity? {
         guard let before = try identity(pid) else { return nil }
         let buffer = UnsafeMutableRawPointer.allocate(byteCount: 64, alignment: 8)
         defer { buffer.deallocate() }
@@ -61,25 +77,40 @@ nonisolated enum BpyKernelInspection {
         }
         if buffer.load(fromByteOffset: 12, as: UInt32.self) == 5 { return nil }
         guard let after = try identity(pid), after.start == before.start else { return nil }
-        return (after.start, after.footprint, buffer.load(fromByteOffset: 4, as: Int32.self))
+        return .init(start: after.start, footprint: after.footprint,
+            parent: buffer.load(fromByteOffset: 4, as: Int32.self), flags: buffer.load(fromByteOffset: 32, as: UInt32.self))
     }
 
     static func process(_ pid: Int32) throws -> BpyObservedProcess? {
-        guard let before = try liveIdentity(pid) else { return nil }
+        try process(pid, identity: liveIdentity, executablePath: executablePath)
+    }
+
+    private static func executablePath(_ pid: Int32) throws -> (length: Int32, error: Int32, path: String?) {
         let buffer = UnsafeMutableRawPointer.allocate(byteCount: 1_024, alignment: 8)
         defer { buffer.deallocate() }
         buffer.initializeMemory(as: UInt8.self, repeating: 0, count: 1_024)
         errno = 0
         let length = monitorPIDPath(pid, buffer, 1_024)
         let pathError = errno
-        guard length > 0, length < 1_024 else {
-            if try liveIdentity(pid)?.start != before.start { return nil }
-            throw failure(.init(rawValue: pathError) ?? .EIO, operation: "proc_pidpath", pid: pid,
-                result: Int64(length), queryErrno: pathError)
+        let path = length > 0 && length < 1_024
+            ? try kernelPath(buffer, offset: 0, pid: pid, operation: "process.path") : nil
+        return (length, pathError, path)
+    }
+
+    static func process(_ pid: Int32, identity: (Int32) throws -> ProcessIdentity?,
+                        executablePath: (Int32) throws -> (length: Int32, error: Int32, path: String?)) throws -> BpyObservedProcess? {
+        guard let before = try identity(pid) else { return nil }
+        if before.isExiting { throw ExitPending(pid: pid, start: before.start) }
+        let result = try executablePath(pid)
+        guard result.length > 0, result.length < 1_024 else {
+            guard let after = try identity(pid), after.start == before.start else { return nil }
+            if result.error == ESRCH, after.isExiting { throw ExitPending(pid: pid, start: before.start) }
+            throw failure(.init(rawValue: result.error) ?? .EIO, operation: "proc_pidpath", pid: pid,
+                result: Int64(result.length), queryErrno: result.error, flags: after.flags)
         }
-        let path = try kernelPath(buffer, offset: 0, pid: pid, operation: "process.path")
-        guard try liveIdentity(pid)?.start == before.start else { return nil }
-        guard let path else { throw failure(.EIO, operation: "process.emptyPath", pid: pid) }
+        guard let after = try identity(pid), after.start == before.start else { return nil }
+        if after.isExiting { throw ExitPending(pid: pid, start: before.start) }
+        guard let path = result.path else { throw failure(.EIO, operation: "process.emptyPath", pid: pid) }
         let executable: String
         do { executable = try BpyRuntimePath.canonical(URL(fileURLWithPath: path)) }
         catch {
@@ -125,7 +156,13 @@ nonisolated enum BpyKernelInspection {
     }
 
     static func matches(_ process: BpyObservedProcess) throws -> Bool {
-        try liveIdentity(process.pid)?.start == process.start
+        try matches(process, identity: liveIdentity)
+    }
+
+    static func matches(_ process: BpyObservedProcess, identity: (Int32) throws -> ProcessIdentity?) throws -> Bool {
+        guard let current = try identity(process.pid), current.start == process.start else { return false }
+        if current.isExiting { throw ExitPending(pid: process.pid, start: process.start) }
+        return true
     }
 
     private static func kernelPath(_ buffer: UnsafeRawPointer, offset: Int, pid: Int32, operation: String) throws -> String? {

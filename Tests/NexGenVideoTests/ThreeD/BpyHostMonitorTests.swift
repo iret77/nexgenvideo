@@ -153,7 +153,12 @@ struct BpyHostMonitorTests {
         #expect(throws: POSIXError.self) { try observation.sample() }
         try input.fileHandleForWriting.write(contentsOf: Data("finish\n".utf8))
         let deadline = try BpyRuntimeClock.awakeSeconds() + 3
-        while try BpyKernelInspection.matches(worker) {
+        func workerPresent() throws -> Bool {
+            do { return try BpyKernelInspection.matches(worker) }
+            catch let pending as BpyKernelInspection.ExitPending
+                where pending == .init(pid: worker.pid, start: worker.start) { return true }
+        }
+        while try workerPresent() {
             try #require(BpyRuntimeClock.awakeSeconds() < deadline)
             Thread.sleep(forTimeInterval: 0.005)
         }
