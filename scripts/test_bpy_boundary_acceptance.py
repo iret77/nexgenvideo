@@ -32,6 +32,7 @@ import json, os, sys
 from pathlib import Path
 output = Path(os.environ["NGV_SELFTEST_BPY_BOUNDARY"])
 (output.parent / "launch-arguments.json").write_text(json.dumps(sys.argv[1:]))
+(output.parent / "launch-evidence-directory.txt").write_text(os.environ["NGV_BPY_COMMAND_EVIDENCE"])
 for slot in range(2):
     Path(str(output) + ".slot" + str(slot) + ".json").write_text(json.dumps({"hostProcessIdentifier": os.getpid()}))
 print("SELFTEST_BPY_BOUNDARY_OK", flush=True)
@@ -55,6 +56,7 @@ print("SELFTEST_BPY_BOUNDARY_OK", flush=True)
                 driver.run(app, output, source)
             self.assertEqual(json.loads((output / "launch-arguments.json").read_text()),
                              ["-hangDiagnosticMode", "disabled"])
+            self.assertEqual((output / "launch-evidence-directory.txt").read_text(), str(output))
             validate.assert_called_once()
             receipt = json.loads((output / "result.json").read_text())
             self.assertTrue(receipt["completed"])

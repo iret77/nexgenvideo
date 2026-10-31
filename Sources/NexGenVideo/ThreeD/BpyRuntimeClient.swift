@@ -1838,7 +1838,7 @@ final class BpyRuntimeSession: @unchecked Sendable {
     private static func recordOpenFailure(_ response: Data, sessionID: UUID) {
         guard ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] == "true",
               let path = ProcessInfo.processInfo.environment["NGV_BPY_COMMAND_EVIDENCE"] else { return }
-        let record: [String: Any] = [
+        var record: [String: Any] = [
             "schema": "nexgenvideo/bpy-open-failure/1", "sessionID": sessionID.uuidString,
             "hostPID": getpid(),
             "sourceSHA": Bundle.main.object(forInfoDictionaryKey: "NGVSourceCommit") as? String ?? "",
@@ -1846,6 +1846,7 @@ final class BpyRuntimeSession: @unchecked Sendable {
             "response": response.base64EncodedString(),
         ]
         do {
+            record["hostInspectionFailures"] = try BpyRuntimeObservation.shared.inspectionFailureSnapshot()
             let url = URL(fileURLWithPath: path, isDirectory: true)
                 .appendingPathComponent("open-failure-\(UUID().uuidString).json")
             try JSONSerialization.data(withJSONObject: record, options: [.sortedKeys])
@@ -1884,6 +1885,7 @@ final class BpyRuntimeSession: @unchecked Sendable {
                 "responseStatus": response == nil ? "unavailable" : "captured",
                 "permitReceiptStatus": permit == nil ? "unavailable" : "captured",
                 "partialDiagnosticOnly": true, "nonFiniteFloatEncoding": "strings",
+                "hostInspectionFailures": try BpyRuntimeObservation.shared.inspectionFailureSnapshot(),
             ]
             if let response { record["response"] = try JSONSerialization.jsonObject(with: encoder.encode(response)) }
             if let permit { record["permitReceipt"] = try JSONSerialization.jsonObject(with: encoder.encode(permit)) }

@@ -83,6 +83,7 @@ enum BpyRuntimeSelfTest {
                     FileHandle.standardOutput.write(Data("SELFTEST_BPY_BOUNDARY_OK\n".utf8))
                     Darwin.exit(0)
                 } catch {
+                    recordInspectionFailureDiagnostic()
                     FileHandle.standardError.write(
                         Data("SELFTEST_BPY_BOUNDARY_FAIL \(error.localizedDescription)\n".utf8)
                     )
@@ -97,6 +98,7 @@ enum BpyRuntimeSelfTest {
                 do {
                     try runHostCrashProbe(mode: mode)
                 } catch {
+                    recordInspectionFailureDiagnostic()
                     FileHandle.standardError.write(
                         Data("SELFTEST_BPY_HOST_CRASH_FAIL \(error.localizedDescription)\n".utf8)
                     )
@@ -120,6 +122,7 @@ enum BpyRuntimeSelfTest {
                 pendingResult = try await run(output: output)
                 AppTermination.request()
             } catch {
+                recordInspectionFailureDiagnostic()
                 if let outputDirectory {
                     do {
                         var diagnostic = try BpyRuntimeObservation.shared.diagnosticSnapshot()
@@ -136,6 +139,23 @@ enum BpyRuntimeSelfTest {
                 FileHandle.standardError.write(Data(message.utf8))
                 Darwin.exit(1)
             }
+        }
+    }
+
+    private static func recordInspectionFailureDiagnostic() {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["GITHUB_ACTIONS"] == "true",
+              let path = environment["NGV_BPY_COMMAND_EVIDENCE"], !path.isEmpty else { return }
+        do {
+            var record = try BpyRuntimeObservation.shared.inspectionFailureSnapshot()
+            record["hostPID"] = getpid()
+            record["sourceSHA"] = Bundle.main.object(forInfoDictionaryKey: "NGVSourceCommit") as? String ?? ""
+            let url = URL(fileURLWithPath: path, isDirectory: true)
+                .appendingPathComponent("host-inspection-failures-\(UUID().uuidString).json")
+            try JSONSerialization.data(withJSONObject: record, options: [.sortedKeys])
+                .write(to: url, options: .withoutOverwriting)
+        } catch {
+            FileHandle.standardError.write(Data("SELFTEST_BPY_INSPECTION_DIAGNOSTIC_FAIL \(error.localizedDescription)\n".utf8))
         }
     }
 
