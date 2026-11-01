@@ -6,7 +6,7 @@ on:
       scope:
         description: Native probes or isolated owned-child and worker-sandbox components
         type: choice
-        options: [native, owned-child, worker-sandbox, worker-memory]
+        options: [native, owned-child, worker-sandbox, worker-memory, clay-timing]
         default: native
       owned_child_binary_run_id:
         description: Optional exact retained owned-child diagnostic binary
@@ -26,6 +26,44 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  clay-timing:
+    if: inputs.scope == 'clay-timing'
+    runs-on: macrunner
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-xcode-27
+      - name: Compile the exact H264 fixture and timing diagnostic
+        run: |
+          set -euo pipefail
+          test "$GITHUB_RUN_ATTEMPT" = 1
+          mkdir -p "$RUNNER_TEMP/clay-timing"
+          sw_vers > "$RUNNER_TEMP/clay-timing/os-version.log"
+          xcrun swiftc --version > "$RUNNER_TEMP/clay-timing/swift-version.log"
+          xcrun --sdk macosx --show-sdk-path > "$RUNNER_TEMP/clay-timing/sdk-path.log"
+          xcrun swiftc -parse-as-library -swift-version 6 -target arm64-apple-macos26.0 \
+            Tests/NexGenVideoTests/Search/FixtureVideo.swift scripts/clay_sample_timing_probe.swift \
+            -o "$RUNNER_TEMP/clay-timing-probe"
+      - name: Capture every coded and decoded sample through EOF
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import subprocess
+          root = Path(os.environ['RUNNER_TEMP'])
+          with (root / 'clay-timing/probe.log').open('w') as log:
+              result = subprocess.run([str(root / 'clay-timing-probe'), str(root / 'clay-timing')],
+                                      stdin=subprocess.DEVNULL, stdout=log, stderr=log, timeout=60)
+          raise SystemExit(result.returncode)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: clay-sample-timing-diagnostic-${{ github.run_id }}
+          path: ${{ runner.temp }}/clay-timing
+          if-no-files-found: error
+          retention-days: 7
+
   build:
     if: inputs.scope == 'native'
     runs-on: macrunner
