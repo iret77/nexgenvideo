@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 
 nonisolated enum SpatialEvaluatedGeometryAcceptance {
     static func run(runtime: BpyRuntimeSession, runtimeRoot: URL, output: URL) async throws {
+        try runtime.loadProjectCheckpoint(sceneRevision: nil, cancellation: .init())
         let script = try String(contentsOf: runtimeRoot.appendingPathComponent("scene_operations.py"), encoding: .utf8)
         let source = "import json\nngv_command = {'kind':'create'}\n" + script + "\n" + fixture
         let result = try runtime.runJob(id: UUID(), expectedRevision: nil, source: source)
