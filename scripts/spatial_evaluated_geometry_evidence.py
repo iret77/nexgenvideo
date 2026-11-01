@@ -45,6 +45,19 @@ def command(source, script):
     return json.loads(settings), settings.encode()
 
 
+def portable_rejection(source, expected_source, response, timeout):
+    require(source == expected_source, "portable negative changed more than its declared mutation")
+    require(response.get("ok") is True and response.get("state") == "failed"
+            and response.get("message") == "verification rejected an invalid scene"
+            and response.get("outputs") == [], "portable negative was not rejected by the scene verifier")
+    require(any(stage.get("stage") == "verification" for stage in response.get("progress", [])),
+            "portable negative never reached the independent verifier")
+    require(response.get("jobFingerprint") == fingerprint(source, None, timeout), "foreign portable negative program")
+    identity = response.get("jobID")
+    require(type(identity) is str and identity, "missing portable negative job identity")
+    return identity.lower()
+
+
 def matrix(actual, expected):
     require(len(actual) == len(expected) == 16, "wrong matrix shape")
     require(all(type(a) in (int, float) and type(b) in (int, float) and math.isfinite(a) and math.isfinite(b)
@@ -111,10 +124,32 @@ def verify(directory, runtime_root):
     require(simulation["isBaked"] is False and "Bake simulation caches" in simulation["reason"], "unbaked simulation was silently accepted")
     receipt = manifest["receipt"]
     require(receipt["jobFingerprint"] == fingerprint(source, None, observation["sourceJobTimeoutSeconds"]), "source job fingerprint is not reproducible")
+    response, verification = read("scene-response.json"), read("scene-verification.json")
+    require(response.get("ok") is True and response.get("state") == "awaitingConfirmation"
+            and response["jobID"].lower() == receipt["jobID"].lower()
+            and response["jobFingerprint"] == receipt["jobFingerprint"], "foreign positive source response")
+    for name, retained_name in [("scene.blend", "scene.blend"), ("verification.json", "scene-verification.json"),
+                                ("simulation-preflight.json", "simulation-preflight.json")]:
+        outputs = [item for item in response["outputs"] if item["name"] == name]
+        require(len(outputs) == 1 and outputs[0]["sha256"] == digest(retained_name)
+                and outputs[0]["byteCount"] == len(data(retained_name)), "source output descriptor differs from retained bytes")
+    require(verification["jobID"].lower() == receipt["jobID"].lower()
+            and verification["fingerprint"] == receipt["jobFingerprint"]
+            and verification["spatial"] == snapshot, "positive source snapshot differs from actual verification")
+    require(len(verification["scenes"]) == 1 and verification["scenes"][0]["name"] == "Deformation active"
+            and snapshot["frame"] == snapshot["restFrame"] == 0, "positive portable scene scope differs")
+    negative_jobs = {receipt["jobID"].lower()}
+    for name, mutation in [("second-scene", "bpy.data.scenes.new('Unposed foreign scene')"),
+                           ("second-view-layer", "bpy.context.scene.view_layers.new('Additional render layer')"),
+                           ("rest-outside-interval", "bpy.context.scene['ngv_rest_frame'] = 2")]:
+        job = portable_rejection(data(f"negative-{name}.py").decode(), source + "\n" + mutation + "\n",
+                                 read(f"negative-{name}.response.json"), observation["sourceJobTimeoutSeconds"])
+        require(job not in negative_jobs, "portable negative reused a source job")
+        negative_jobs.add(job)
     require(receipt["sceneSHA256"] == geometry["sceneSHA256"] and receipt["snapshotSHA256"] == geometry["snapshotSHA256"]
             and receipt["workerSHA256"] == geometry["workerSHA256"] and receipt["runtimeLockSHA256"] == geometry["runtimeLockSHA256"]
             and receipt["blenderBuildHash"] == build, "source receipt closure differs")
-    actual, next_frame, jobs = [], 0, {receipt["jobID"].lower()}
+    actual, next_frame, jobs = [], 0, set(negative_jobs)
     for chunk in geometry["chunks"]:
         start, end = integer(chunk["startFrame"], "chunk start"), integer(chunk["endFrame"], "chunk end")
         require(start == next_frame <= end < start + 120, "partial chunk coverage")

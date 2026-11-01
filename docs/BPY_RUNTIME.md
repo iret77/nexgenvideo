@@ -584,6 +584,11 @@ render command, executable/script hashes and output PNGs before a canonical owne
 Persisted host adoption evidence is separate from agent-authored JSON. The camera-snapshot hash binds
 the camera at scene save time; per-frame render poses record the camera actually used for each image.
 
+The deformation acceptance fixture uses one scene, one view layer, and an explicit frame interval
+containing its rest frame. A render-hidden mesh remains in the portable snapshot but must not enter
+evaluated geometry. Separate native jobs require verifier rejection of a second scene, a second view
+layer, and a rest frame outside the interval; their exact programs and responses are retained.
+
 PNG frames are authoritative. MOV is a decoded/validated H.264 preview with explicit rational timing
 and BT.709 color metadata; it is not a lossless or pixel-identical substitute. Blender's float32 FPS
 base is reconstructed as a small rational only when that value round-trips to the identical stored
