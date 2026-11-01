@@ -449,6 +449,15 @@ public enum BpyRuntimeJobState: String, Codable, Sendable, Equatable {
     case crashed
     case resourceLimited
 
+    public static func terminal(forStopReason reason: String) -> Self {
+        switch reason {
+        case "deadline": .timedOut
+        case "pressure", "disk", "file-count", "process-count": .resourceLimited
+        case "cancelled", "closed": .cancelled
+        default: .failed
+        }
+    }
+
     public var isTerminal: Bool {
         switch self {
         case .confirmed, .rejected, .failed, .cancelled, .timedOut, .crashed,
