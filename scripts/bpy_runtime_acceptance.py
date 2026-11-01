@@ -275,6 +275,45 @@ def require(condition, message):
         raise AssertionError(message)
 
 
+def verify_verifier_storage_binding(result, protocol_bytes, scene, app, source_sha):
+    protocol = json.loads(protocol_bytes)
+    require(protocol["schema"] == "nexgenvideo/bpy-native-protocol-evidence/4", "invalid protocol evidence schema")
+    require(hashlib.sha256(protocol_bytes).hexdigest() == result["nativeProtocolEvidenceSHA256"],
+            "protocol evidence differs from the native result")
+    reference = json.loads(base64.b64decode(protocol["storageReference"], validate=True))
+    require(reference["schema"] == "nexgenvideo/bpy-open-session/2", "invalid storage reference schema")
+    pair = reference["storagePair"]
+    require(pair["schema"] == "nexgenvideo/bpy-storage-pair/1", "invalid storage pair schema")
+    worker, data = pair["worker"], pair["data"]
+    require(worker["role"] == "worker" and data["role"] == "data"
+            and worker["pairID"] == pair["id"] == data["pairID"]
+            and worker["device"] != data["device"], "storage roles or pair identity differ")
+    session = reference["sessionID"]
+    require(str(uuid.UUID(session)).upper() == session, "invalid storage session identity")
+    worker_mount, data_mount = Path(worker["mountPath"]), Path(data["mountPath"])
+    require(worker_mount.is_absolute() and data_mount.is_absolute()
+            and str(worker_mount) == worker["mountPath"] and str(data_mount) == data["mountPath"]
+            and ".." not in worker_mount.parts and ".." not in data_mount.parts
+            and worker_mount.name == "mount", "invalid storage mount path")
+    slot = re.fullmatch(r"de\.h5ventures\.nexgenvideo\.bpy-service-([01])", worker_mount.parent.name)
+    require(slot is not None, "invalid verifier slot")
+    require(data_mount == worker_mount.parent.with_name(worker_mount.parent.name + "-data") / "mount",
+            "worker and data mounts belong to different slots")
+    verification = result["trustedVerification"]
+    require(scene["schema"] == "nexgenvideo/bpy-scene-acceptance/1" and scene["sourceSHA"] == source_sha
+            and scene["response"]["ok"] is True
+            and scene["jobID"] == scene["response"]["jobID"] == verification["jobID"]
+            and scene["response"]["jobFingerprint"] == verification["fingerprint"],
+            "verifier does not belong to the original scene job")
+    require(str(uuid.UUID(verification["jobID"])).upper() == verification["jobID"], "invalid verifier job identity")
+    executable = (app / "Contents/XPCServices" / ("NexGenVideoBpyService" + slot.group(1) + ".xpc")
+                  / "Contents/Resources/BpyRuntime/python/bin/python3.13")
+    require(verification["executable"] == str(executable), "verifier executable belongs to another slot")
+    require(verification["sessionRoot"] == str(data_mount / session), "verifier data session differs")
+    expected = worker_mount / session / "jobs" / verification["jobID"] / "verification/blender-config"
+    require(verification["blenderUserConfig"] == str(expected), "verifier configuration is outside its exact worker job")
+
+
 def verify_crash(proof, mode, pid, source_sha, returncode):
     require(returncode == -signal.SIGKILL, "host probe did not reach its intentional SIGKILL")
     require(proof.get("schema") == 1 and proof.get("pid") == pid and proof.get("sourceSHA") == source_sha,
@@ -791,6 +830,11 @@ def main():
             (output / "storage-scope-proof.json").write_text(json.dumps(proof, sort_keys=True) + "\n")
     else:
         supervise(binary, args.output.resolve(), args.mode, args.source_sha, timeout)
+    if args.mode == "runtime":
+        output = args.output.resolve()
+        verify_verifier_storage_binding(json.loads((output / "result.json").read_text()),
+            (output / "native-protocol-evidence.json").read_bytes(),
+            json.loads((output / "acceptance-scene-response.json").read_text()), args.app.resolve(), args.source_sha)
 
 
 if __name__ == "__main__":

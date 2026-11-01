@@ -432,6 +432,18 @@ result gates remain unchanged. A failed protocol-probe terminal state also write
 successfully decoded reply up to 8 MiB, the initial replay response, no permit receipt and
 service-declared output names. It is diagnostic data, not acceptance evidence.
 
+Cross-document isolation uses the other document's retained confirmed scene file. Its host-visible
+SHA-256 must match the first trusted verification before the second document runs, and the second
+verifier must report a permission denial for that same file. `native-duplicate-replay.json` records
+the actual confirmed replay and changed-source refusal; `native-cross-document-denial.json` binds
+the host scene hash and path to the second document's verification.
+Both records are diagnostic localization aids behind the self-test evidence gate; they do not
+replace acceptance evidence or the complete result gates.
+
+The runtime driver binds the verifier's configuration to the exact worker volume, slot, session
+and original scene job recorded by the protocol and scene receipts. The session root remains on
+the separate data volume.
+
 `.github/workflows/bpy-source-closure.yml` is a manual/reusable source-evidence workflow bound to
 `github.sha`. Its Linux job assembles the exact source/notice closure and independently validates the
 archive membership, all hashes, official library evidence and source inventory. Candidate mode also

@@ -465,7 +465,6 @@ jobs:
             and (.trustedVerification.executable | startswith($app + "/"))
             and (.trustedVerification.bpyModule | startswith($app + "/"))
             and .trustedVerification.blenderUserConfig != $foreign
-            and (.trustedVerification.sessionRoot as $session | .trustedVerification.blenderUserConfig | startswith($session + "/"))
             and (.trustedVerification.networkDenied.denied == true)
             and (.trustedVerification.networkDenied.errno == 1 or .trustedVerification.networkDenied.errno == 13)
             and all(.trustedVerification.deniedPaths[]; .denied == true and (.errno == 1 or .errno == 13))

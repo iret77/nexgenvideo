@@ -623,6 +623,14 @@ enum BpyRuntimeSelfTest {
         } catch let error as BpyRuntimeError {
             guard case .rejected("A Job ID cannot be reused with different source, inputs, revision, or options.") = error else { throw error }
         }
+        let duplicateReceipt: [String: Any] = [
+            "schema": "nexgenvideo/bpy-duplicate-replay/1", "hostPID": getpid(),
+            "sourceSHA": Bundle.main.object(forInfoDictionaryKey: "NGVSourceCommit") as? String ?? "",
+            "response": try JSONSerialization.jsonObject(with: JSONEncoder().encode(duplicate.response)),
+            "changedDuplicateRejected": true,
+        ]
+        try JSONSerialization.data(withJSONObject: duplicateReceipt, options: [.sortedKeys])
+            .write(to: output.appendingPathComponent("native-duplicate-replay.json"), options: .atomic)
 
         let fifo = approvedDirectory.appendingPathComponent("fifo.json")
         guard mkfifo(fifo.path, 0o600) == 0 else { throw BpyRuntimeError.invalidInput("The FIFO rejection fixture could not be created.") }
@@ -667,6 +675,14 @@ enum BpyRuntimeSelfTest {
             }
         }
 
+        let firstConfirmedScene = URL(fileURLWithPath: firstSessionRoot, isDirectory: true)
+            .appendingPathComponent("results", isDirectory: true)
+            .appendingPathComponent(firstID.uuidString, isDirectory: true)
+            .appendingPathComponent("scene.blend")
+        let confirmedSceneSHA = try FileDigest.sha256(of: firstConfirmedScene)
+        guard confirmedSceneSHA == verification["sceneSHA256"] as? String else {
+            throw BpyRuntimeError.invalidOutput("The document isolation control does not match the verified scene.")
+        }
         let secondDocumentID = UUID()
         let secondDocument = try sessionB.runJob(
             id: secondDocumentID,
@@ -680,7 +696,7 @@ enum BpyRuntimeSelfTest {
             bm.to_mesh(mesh)
             bm.free()
             """,
-            diagnosticDeniedPaths: [firstSessionRoot]
+            diagnosticDeniedPaths: [firstConfirmedScene.path]
         )
         guard secondDocument.response.state == .awaitingConfirmation,
               (secondDocument.response.metrics["worker_host_monitor_samples"] ?? 0) > 0,
@@ -689,7 +705,16 @@ enum BpyRuntimeSelfTest {
             throw BpyRuntimeError.invalidOutput("The second document did not complete.")
         }
         let secondVerification = try verificationObject(secondVerificationURL)
-        try assertDenied(secondVerification, paths: [firstSessionRoot])
+        try assertDenied(secondVerification, paths: [firstConfirmedScene.path])
+        let isolationReceipt: [String: Any] = [
+            "schema": "nexgenvideo/bpy-cross-document-denial/1", "hostPID": getpid(),
+            "sourceSHA": Bundle.main.object(forInfoDictionaryKey: "NGVSourceCommit") as? String ?? "",
+            "firstDocumentJobID": firstID.uuidString, "secondDocumentJobID": secondDocumentID.uuidString,
+            "firstScenePath": firstConfirmedScene.path, "hostSceneSHA256": confirmedSceneSHA,
+            "verification": secondVerification,
+        ]
+        try JSONSerialization.data(withJSONObject: isolationReceipt, options: [.sortedKeys])
+            .write(to: output.appendingPathComponent("native-cross-document-denial.json"), options: .atomic)
         _ = try sessionB.confirm(jobID: secondDocumentID, revision: "document-b-revision")
         secondDocument.release()
 
