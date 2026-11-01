@@ -40,6 +40,20 @@ runs:
         echo "path=$path" >> "$GITHUB_OUTPUT"
         echo "NGV_SWIFTPM_CACHE_PATH=$path" >> "$GITHUB_ENV"
 
+    - name: Complete Git maintenance before copying dependencies
+      shell: bash
+      run: |
+        set -euo pipefail
+        git config --list > /dev/null
+        cache_git_count="$(printf '%s\n' "${GIT_CONFIG_COUNT:-0}" | awk '{ printf "%d", $0 }')"
+        {
+          printf 'GIT_CONFIG_KEY_%s=maintenance.autoDetach\n' "$cache_git_count"
+          printf 'GIT_CONFIG_VALUE_%s=false\n' "$cache_git_count"
+          printf 'GIT_CONFIG_KEY_%s=gc.autoDetach\n' "$((cache_git_count + 1))"
+          printf 'GIT_CONFIG_VALUE_%s=false\n' "$((cache_git_count + 1))"
+          printf 'GIT_CONFIG_COUNT=%s\n' "$((cache_git_count + 2))"
+        } >> "$GITHUB_ENV"
+
     - name: Cache resolved dependencies
       if: inputs.restore-only != 'true'
       uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4

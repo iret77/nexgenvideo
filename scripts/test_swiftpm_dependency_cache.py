@@ -96,6 +96,49 @@ class SwiftPMDependencyCacheTests(unittest.TestCase):
             self.assertEqual(values[0], values[1])
             self.assertNotEqual(values[0], values[2])
 
+    def test_git_maintenance_is_foreground_without_clobbering_existing_config(self):
+        step = ACTION.read_text().split("    - name: Complete Git maintenance before copying dependencies\n", 1)[1].split("\n    - name:", 1)[0]
+        shell = "\n".join(line[8:] for line in step.split("      run: |\n", 1)[1].splitlines())
+        for inherited_count in (None, "", "0", "2", "02"):
+            with self.subTest(inherited_count=inherited_count), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                environment_file = root / "environment"
+                environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_CONFIG")}
+                environment.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull, GITHUB_ENV=str(environment_file))
+                if inherited_count is not None:
+                    environment["GIT_CONFIG_COUNT"] = inherited_count
+                if inherited_count in ("2", "02"):
+                    environment.update(GIT_CONFIG_KEY_0="test.preserved", GIT_CONFIG_VALUE_0="original",
+                                       GIT_CONFIG_KEY_1="maintenance.autoDetach", GIT_CONFIG_VALUE_1="true")
+                result = subprocess.run(["bash", "-euo", "pipefail", "-c", shell], cwd=root, env=environment,
+                                        capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                environment.update(dict(line.split("=", 1) for line in environment_file.read_text().splitlines()))
+                for key in ("maintenance.autoDetach", "gc.autoDetach"):
+                    actual = subprocess.run(["git", "config", "--type=bool", "--get", key], cwd=root, env=environment,
+                                            capture_output=True, text=True, timeout=5)
+                    self.assertEqual((actual.returncode, actual.stdout.strip()), (0, "false"), actual.stderr)
+                if inherited_count in ("2", "02"):
+                    actual = subprocess.run(["git", "config", "--get", "test.preserved"], cwd=root, env=environment,
+                                            capture_output=True, text=True, timeout=5)
+                    self.assertEqual((actual.returncode, actual.stdout.strip()), (0, "original"), actual.stderr)
+                self.assertEqual(result.stdout, "")
+
+    def test_invalid_inherited_git_configuration_fails_before_environment_mutation(self):
+        step = ACTION.read_text().split("    - name: Complete Git maintenance before copying dependencies\n", 1)[1].split("\n    - name:", 1)[0]
+        shell = "\n".join(line[8:] for line in step.split("      run: |\n", 1)[1].splitlines())
+        for inherited in ({"GIT_CONFIG_COUNT": "invalid"}, {"GIT_CONFIG_COUNT": "-1"},
+                          {"GIT_CONFIG_COUNT": "1"}, {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "test.missing"}):
+            with self.subTest(inherited=inherited), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                environment_file = root / "environment"
+                environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_CONFIG")}
+                environment.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull, GITHUB_ENV=str(environment_file), **inherited)
+                result = subprocess.run(["bash", "-euo", "pipefail", "-c", shell], cwd=root, env=environment,
+                                        capture_output=True, text=True, timeout=5)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(environment_file.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -97,12 +97,27 @@ nonisolated final class BpyHostLauncher: @unchecked Sendable {
         var childReadyReceived: BpyClockReading?
         private var ioRetired = false
         var configurationFile: BpyRuntimeFile?
+        private var retainsHostReply = false
 
         init(request: BpyMonitorRequest, spec: BpyHostLaunchSpec, binding: Binding, service: BpyObservedProcess, memory: BpyMemoryCoordinator) throws {
             self.request = request; self.spec = spec; self.binding = binding; self.service = service
             self.memory = memory
             supervisorGate = try PipeEnds(); childGate = try PipeEnds(); reports = try PipeEnds()
             output = try PipeEnds(); errors = try PipeEnds(); diagnosticGate = try PipeEnds()
+        }
+
+        func retainHostReply() throws {
+            try memory.retainHostReplies(spec.permit)
+            lock.withLock { retainsHostReply = true }
+        }
+
+        func releaseHostReply() {
+            let retained = lock.withLock {
+                guard retainsHostReply else { return false }
+                retainsHostReply = false
+                return true
+            }
+            if retained { memory.releaseHostReplies(spec.permit) }
         }
 
         func startReaders() {
@@ -409,6 +424,7 @@ nonisolated final class BpyHostLauncher: @unchecked Sendable {
     deinit {
         timer?.cancel()
         Self.quarantine.retain(launches.values.filter { !$0.reaped })
+        for launch in launches.values { launch.releaseHostReply() }
     }
 
     func install(_ binding: Binding) throws {
@@ -583,6 +599,7 @@ nonisolated final class BpyHostLauncher: @unchecked Sendable {
                       bindings[spec.permit] != nil, !stoppedPermits.contains(spec.permit),
                       !launches.values.contains(where: { !$0.reaped }) else { throw POSIXError(.EBUSY) }
                 launches[request.execution] = launch
+                try launch.retainHostReply()
             }
             try spawn(launch)
         } catch {
@@ -606,6 +623,7 @@ nonisolated final class BpyHostLauncher: @unchecked Sendable {
                             code: Int32((error as NSError).code), epoch: created?.epoch)
                         launches.removeValue(forKey: request.execution)
                     }
+                    created?.releaseHostReply()
                 }
                 pruneBinding(permit: spec.permit)
             }
@@ -1123,6 +1141,7 @@ nonisolated final class BpyHostLauncher: @unchecked Sendable {
             launch.lock.withLock { disposal.process = launch.process; launch.process = nil }
         }
         retirement.async { disposal.process = nil }
+        launch.releaseHostReply()
         pruneBinding(permit: launch.spec.permit)
     }
 
@@ -1139,6 +1158,7 @@ nonisolated final class BpyHostLauncher: @unchecked Sendable {
             launch.lock.withLock { disposal.process = launch.process; launch.process = nil }
         }
         retirement.async { disposal.process = nil }
+        launch.releaseHostReply()
         pruneBinding(permit: launch.spec.permit)
     }
 

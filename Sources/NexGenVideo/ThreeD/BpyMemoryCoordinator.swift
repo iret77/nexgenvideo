@@ -83,6 +83,7 @@ nonisolated final class BpyMemoryCoordinator: @unchecked Sendable {
         var notified = false
     }
     private var consumers: [UUID: Consumer] = [:]
+    private var hostReplyReaders: [UUID: Int] = [:]
 
     init(sensor: @escaping @Sendable () -> SensorReading = BpyMemoryCoordinator.readPressure,
          clock: @escaping @Sendable () -> BpyClockReading? = BpyRuntimeClock.read) {
@@ -284,6 +285,10 @@ nonisolated final class BpyMemoryCoordinator: @unchecked Sendable {
 
     func forget(_ id: UUID) {
         lock.withLock {
+            guard hostReplyReaders[id] == nil else {
+                pendingForget.insert(id)
+                return
+            }
             state.forget(permit: id)
             if state.permits[id] == nil {
                 wake.removeValue(forKey: id)
@@ -292,6 +297,31 @@ nonisolated final class BpyMemoryCoordinator: @unchecked Sendable {
                 authorizationSamples.removeValue(forKey: id)
             } else { pendingForget.insert(id) }
             retireOwnersLocked()
+        }
+    }
+
+    func retainHostReplies(_ id: UUID) throws {
+        try lock.withLock {
+            _ = try receiptLocked(id)
+            hostReplyReaders[id, default: 0] += 1
+        }
+    }
+
+    func releaseHostReplies(_ id: UUID) {
+        let shouldForget = lock.withLock {
+            guard let readers = hostReplyReaders[id] else { return false }
+            if readers > 1 { hostReplyReaders[id] = readers - 1; return false }
+            hostReplyReaders.removeValue(forKey: id)
+            return pendingForget.contains(id)
+        }
+        if shouldForget { forget(id) }
+    }
+
+    func cleanupDeadline(for transport: UUID) -> TimeInterval? {
+        lock.withLock {
+            state.permits.values.filter {
+                $0.identity.transport == transport && (!$0.cleanupComplete || hostReplyReaders[$0.identity.id] != nil)
+            }.compactMap { $0.cleanupStarted.map { $0 + BpyMemoryState.cleanupBudget } }.min()
         }
     }
 
