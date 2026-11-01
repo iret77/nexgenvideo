@@ -287,7 +287,12 @@ nonisolated final class BpyHostLauncher: @unchecked Sendable {
         }
 
         func recordInspectionFailure(_ error: any Error, operation: String) {
-            let context: [String: String] = lock.withLock { [
+            let context = lock.withLock { inspectionContext(error) }
+            BpyRuntimeObservation.shared.inspectionFailure(operation: operation, pid: getpid(), error: error, context: context)
+        }
+
+        private func inspectionContext(_ error: any Error) -> [String: String] {
+            var context: [String: String] = [
                 "execution": request.execution.uuidString, "permit": spec.permit.uuidString,
                 "mode": spec.mode.rawValue, "servicePID": String(service.pid), "serviceStart": String(service.start),
                 "supervisorPID": supervisor.map { String($0.pid) } ?? "unavailable",
@@ -296,8 +301,26 @@ nonisolated final class BpyHostLauncher: @unchecked Sendable {
                 "workerStart": worker.map { String($0.start) } ?? "unavailable",
                 "stage": stage.map { String(describing: $0) } ?? "unavailable",
                 "existingStop": stop?.rawValue ?? "none",
-            ] }
-            BpyRuntimeObservation.shared.inspectionFailure(operation: operation, pid: getpid(), error: error, context: context)
+                "terminated": String(termination != nil),
+            ]
+            if let pending = error as? BpyKernelInspection.ExitPending {
+                context["pendingPID"] = String(pending.pid)
+                context["pendingStart"] = String(pending.start)
+                context["pendingOwner"] = BpyHostLauncher.exitOwner(pending, supervisor: supervisor, worker: worker)?.rawValue ?? "none"
+            }
+            return context
+        }
+
+        func recordObservationFailure(_ error: any Error) {
+            let captured: (BpyRuntimeObservation.TerminalExitRole?, [String: String]) = lock.withLock {
+                (BpyHostLauncher.expectedTerminalExitRole(error, supervisor: supervisor, worker: worker,
+                    terminated: termination != nil, stage: stage), inspectionContext(error))
+            }
+            if let role = captured.0, let pending = error as? BpyKernelInspection.ExitPending {
+                BpyRuntimeObservation.shared.expectedTerminalExit(operation: "observeLaunches", role: role, pending: pending, context: captured.1)
+            } else {
+                BpyRuntimeObservation.shared.inspectionFailure(operation: "observeLaunches", pid: getpid(), error: error, context: captured.1)
+            }
         }
 
         func requestStop(_ reason: BpyMemoryStop) {
@@ -796,7 +819,7 @@ nonisolated final class BpyHostLauncher: @unchecked Sendable {
                         terminated: launch.termination != nil, stage: launch.stage)
                 }) { continue }
                 catch {
-                    launch.recordInspectionFailure(error, operation: "observeLaunches")
+                    launch.recordObservationFailure(error)
                     let reason = launch.lock.withLock { launch.stop } ?? Self.observationStop(error: error, stage: launch.lock.withLock { launch.stage })
                     launch.requestStop(reason)
                     memory.cancel(launch.spec.permit, reason: reason)
@@ -815,6 +838,20 @@ nonisolated final class BpyHostLauncher: @unchecked Sendable {
                                worker: BpyObservedProcess?, terminated: Bool, stage: BpyLaunchStage?) -> Bool {
         guard !terminated, stage.map({ $0.rawValue < 80 }) ?? true else { return false }
         return [supervisor, worker].contains { $0?.pid == pending.pid && $0?.start == pending.start }
+    }
+
+    static func expectedTerminalExitRole(_ error: any Error, supervisor: BpyObservedProcess?, worker: BpyObservedProcess?,
+                                        terminated: Bool, stage: BpyLaunchStage?) -> BpyRuntimeObservation.TerminalExitRole? {
+        guard let pending = error as? BpyKernelInspection.ExitPending,
+              terminated || stage.map({ $0.rawValue >= 80 }) == true else { return nil }
+        return exitOwner(pending, supervisor: supervisor, worker: worker)
+    }
+
+    private static func exitOwner(_ pending: BpyKernelInspection.ExitPending, supervisor: BpyObservedProcess?,
+                                  worker: BpyObservedProcess?) -> BpyRuntimeObservation.TerminalExitRole? {
+        if supervisor?.pid == pending.pid && supervisor?.start == pending.start { return .supervisor }
+        if worker?.pid == pending.pid && worker?.start == pending.start { return .worker }
+        return nil
     }
 
     static func observationStop(error: any Error, stage: BpyLaunchStage?) -> BpyMemoryStop {

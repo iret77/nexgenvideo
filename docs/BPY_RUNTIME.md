@@ -503,7 +503,14 @@ host buffer. Launch observation and stream-read failures add the execution, perm
 identities. Open/job failure diagnostics and the full self-test's partial trace include this buffer
 with an explicit overflow flag. Each failing native self-test catch path (boundary, host-crash,
 full run) also saves it as `host-inspection-failures-*.json`. Capture performs no file I/O on the
-observation path and does not change failure classification or process cleanup.
+observation path and does not change stop decisions or process cleanup.
+Typed pending exits for an exact recorded supervisor or worker PID and birth, after observed
+termination or a terminal launch stage, are retained separately as `expectedTerminalExits` rather
+than inspection-failure `events`. This separate 128-record buffer deduplicates the same execution,
+permit, operation, role and process identity and shares the inspection overflow flag. It uses the
+same three CI-mode gates and never adds an activity begin/end event. Pending-exit context includes
+the actual pending PID, birth, known owner and observed termination. Unmatched process identities
+and operating-system errors remain inspection failures; a reported but uncaptured child is unmatched.
 Native failure diagnostics also bind OS child reports to the recorded PID, parent, launch/crash
 interval and known supervisor or Python image. Missing reports stay explicit. Capture preserves the
 original failure and cancellation; a spawned-child announcement does not establish Python readiness.

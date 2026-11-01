@@ -66,7 +66,7 @@ nonisolated final class BpyRuntimeObservation: @unchecked Sendable {
     }
 
     static let shared = BpyRuntimeObservation()
-    private let enabled = ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"]?.isEmpty == false
+    private let enabled: Bool
     var isEnabled: Bool { enabled }
     private let queue = DispatchQueue(label: "de.h5ventures.nexgenvideo.bpy.observation", qos: .utility)
     private var trace = Trace()
@@ -80,17 +80,29 @@ nonisolated final class BpyRuntimeObservation: @unchecked Sendable {
         let context: [String: String]
         let clock: BpyClockReading?
     }
-    private let inspectionFailuresEnabled: Bool = {
-        let environment = ProcessInfo.processInfo.environment
-        return environment["GITHUB_ACTIONS"] == "true"
+    enum TerminalExitRole: String, Codable, Sendable { case supervisor, worker }
+    private struct TerminalExit: Codable, Sendable {
+        let operation: String
+        let role: TerminalExitRole
+        let pendingPID: Int32
+        let pendingStart: UInt64
+        let context: [String: String]
+        let clock: BpyClockReading?
+    }
+    private let inspectionFailuresEnabled: Bool
+    private let inspectionFailureLock = NSLock()
+    private var inspectionFailures: [InspectionFailure] = []
+    private var inspectionFailuresOverflow = false
+    private var terminalExits: [TerminalExit] = []
+
+    init(environment: [String: String] = ProcessInfo.processInfo.environment) {
+        enabled = environment["NGV_SELFTEST_BPY"]?.isEmpty == false
+        inspectionFailuresEnabled = environment["GITHUB_ACTIONS"] == "true"
             && environment["NGV_BPY_COMMAND_EVIDENCE"]?.isEmpty == false
             && ["NGV_SELFTEST_BPY", "NGV_SELFTEST_BPY_BOUNDARY", "NGV_SELFTEST_BPY_HOST_CRASH"].contains {
                 environment[$0]?.isEmpty == false
             }
-    }()
-    private let inspectionFailureLock = NSLock()
-    private var inspectionFailures: [InspectionFailure] = []
-    private var inspectionFailuresOverflow = false
+    }
 
     func inspectionFailure(operation: String, pid: Int32, error: any Error, context: [String: String] = [:]) {
         guard inspectionFailuresEnabled else { return }
@@ -103,14 +115,30 @@ nonisolated final class BpyRuntimeObservation: @unchecked Sendable {
         }
     }
 
+    func expectedTerminalExit(operation: String, role: TerminalExitRole, pending: BpyKernelInspection.ExitPending,
+                              context: [String: String]) {
+        guard inspectionFailuresEnabled else { return }
+        let event = TerminalExit(operation: operation, role: role, pendingPID: pending.pid,
+            pendingStart: pending.start, context: context, clock: BpyRuntimeClock.read())
+        inspectionFailureLock.withLock {
+            guard !terminalExits.contains(where: {
+                $0.operation == operation && $0.role == role && $0.pendingPID == pending.pid && $0.pendingStart == pending.start
+                    && $0.context["execution"] == context["execution"] && $0.context["permit"] == context["permit"]
+            }) else { return }
+            guard terminalExits.count < 128 else { inspectionFailuresOverflow = true; return }
+            terminalExits.append(event)
+        }
+    }
+
     func inspectionFailureSnapshot() throws -> [String: Any] {
-        let (failures, overflow) = inspectionFailureLock.withLock { (inspectionFailures, inspectionFailuresOverflow) }
+        let (failures, exits, overflow) = inspectionFailureLock.withLock { (inspectionFailures, terminalExits, inspectionFailuresOverflow) }
         let encoder = JSONEncoder()
         encoder.nonConformingFloatEncodingStrategy = .convertToString(
             positiveInfinity: "+Infinity", negativeInfinity: "-Infinity", nan: "NaN")
         return ["schema": "nexgenvideo/bpy-inspection-failures/1", "partialDiagnosticOnly": true,
             "enabled": inspectionFailuresEnabled, "overflow": overflow,
-            "events": try JSONSerialization.jsonObject(with: encoder.encode(failures))]
+            "events": try JSONSerialization.jsonObject(with: encoder.encode(failures)),
+            "expectedTerminalExits": try JSONSerialization.jsonObject(with: encoder.encode(exits))]
     }
 
     func pressure(controller: UUID, sample: BpyMemoryCoordinator.Sample) {
