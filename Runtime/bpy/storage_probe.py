@@ -4,6 +4,7 @@ import errno
 import json
 import mmap
 import os
+import resource
 import socket
 
 
@@ -65,30 +66,54 @@ def storage_probe(mode):
             os.close(descriptor)
         filled = 0
         observed = 0
-        descriptor = os.open(output_dir / "pressure.bin", os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+        file_size_limit = resource.getrlimit(resource.RLIMIT_FSIZE)[0]
+        pressure_limit = capacity + len(block) if file_size_limit == resource.RLIM_INFINITY else file_size_limit
+        if pressure_limit <= 0:
+            raise RuntimeError("storage pressure requires a positive per-file limit")
+        descriptors = []
+        file_sizes = []
         try:
-            os.unlink(output_dir / "pressure.bin")
-            while filled <= capacity + len(block):
+            while observed == 0 and filled <= capacity + len(block):
+                path = output_dir / f"pressure-{len(descriptors)}.bin"
                 try:
-                    count = os.write(descriptor, block)
-                    if count <= 0:
-                        raise RuntimeError("storage write stopped without ENOSPC")
-                    filled += count
+                    descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
                 except OSError as error:
                     observed = error.errno
                     break
-            if observed == 0:
-                try:
-                    os.fsync(descriptor)
-                except OSError as error:
-                    observed = error.errno
+                descriptors.append(descriptor)
+                file_sizes.append(0)
+                os.unlink(path)
+                while file_sizes[-1] < pressure_limit and filled <= capacity + len(block):
+                    try:
+                        count = os.write(descriptor, block[:min(len(block), pressure_limit - file_sizes[-1])])
+                        if count <= 0:
+                            raise RuntimeError("storage write stopped without ENOSPC")
+                        file_sizes[-1] += count
+                        filled += count
+                    except OSError as error:
+                        observed = error.errno
+                        break
+                if observed == 0:
+                    try:
+                        os.fsync(descriptor)
+                    except OSError as error:
+                        observed = error.errno
             if observed != errno.ENOSPC or filled <= 0 or filled > capacity:
                 raise RuntimeError(f"filesystem did not enforce its capacity: {observed}/{filled}/{capacity}")
         finally:
-            os.close(descriptor)
+            close_error = None
+            for descriptor in descriptors:
+                try:
+                    os.close(descriptor)
+                except OSError as error:
+                    close_error = close_error or error
+            if close_error is not None:
+                raise close_error
         (output_dir / "storage-proof.json").write_text(json.dumps({
             "mode": mode, "capacityBytes": capacity, "filledBytes": filled, "retainedBytes": retained,
             "retentionDeniedErrno": denied, "storageErrno": observed,
+            "fileSizeLimitBytes": file_size_limit, "pressureFileCount": len(descriptors),
+            "largestPressureFileBytes": max(file_sizes),
         }))
     finally:
         for endpoint in sockets:
