@@ -36,21 +36,85 @@ def cancel(number, _frame):
     raise ControlCancelled(number)
 
 
-CHILD = r'''
-import hashlib, json, os, signal, sys, time
+SCENE_TRACE = r'''
+import faulthandler, sys, time
+
+class SceneObservationFailed(BaseException):
+    pass
+
+def device_snapshot(bpy):
+    scene = bpy.context.scene
+    preferences = bpy.context.preferences.addons["cycles"].preferences
+    devices = []
+    for item in preferences.devices:
+        if len(devices) == 64:
+            raise ValueError("device inventory exceeds its bound")
+        devices.append(dict(type=str(item.type)[:256], name=str(item.name)[:256], use=bool(item.use)))
+    return dict(device=str(scene.cycles.device)[:256], engine=str(scene.render.engine)[:256],
+        samples=scene.cycles.samples, computeDeviceType=str(preferences.compute_device_type)[:256], devices=devices)
+
+def observe_scene(source, namespace, bpy, receipt, persist):
+    code = compile(source, "<ngv-exact-scene-metal-control>", "exec")
+    lines = {index for index, line in enumerate(source.decode().splitlines(), 1)
+             if line.strip() == "bpy.ops.render.render(write_still=True)"}
+    if not 1 <= len(lines) <= 2:
+        raise SceneObservationFailed("expected one or two exact render call sites")
+    calls = receipt["renderCalls"] = []
+    active = None
+    def trace(frame, event, arg):
+        nonlocal active
+        if frame.f_code is not code:
+            return None
+        try:
+            if active is not None and event in ("line", "return", "exception"):
+                active.update(state="raised" if event == "exception" else "returned",
+                    endedWall=time.time(), endedMonotonic=time.monotonic())
+                if event == "exception":
+                    active.update(error=arg[0].__name__[:256], message=str(arg[1])[:512])
+                active = None
+                persist()
+            if event == "line" and frame.f_lineno in lines:
+                if len(calls) >= len(lines):
+                    raise ValueError("render call count exceeds its bound")
+                active = dict(ordinal=len(calls) + 1, line=frame.f_lineno, state="entered",
+                    enteredWall=time.time(), enteredMonotonic=time.monotonic(), **device_snapshot(bpy))
+                calls.append(active)
+                persist()
+        except Exception as error:
+            raise SceneObservationFailed("render observation failed: " + type(error).__name__) from error
+        return trace
+    previous, timer = sys.gettrace(), False
+    try:
+        faulthandler.dump_traceback_later(20, repeat=True, file=sys.stderr, exit=False)
+        timer = True
+        sys.settrace(trace)
+        exec(code, namespace)
+    finally:
+        try:
+            sys.settrace(previous)
+        finally:
+            if timer:
+                faulthandler.cancel_dump_traceback_later()
+'''
+
+
+CHILD = SCENE_TRACE + r'''
+import hashlib, json, os, signal
 from pathlib import Path
 signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT, signal.SIGTERM})
 config = json.loads(Path(sys.argv[1]).read_text())
 root = Path(config["root"])
 receipt = dict(schema="nexgenvideo/bpy-metal-control-result/1", scope=config["scope"],
     appSourceSHA=config["source"], sceneSHA256=config["sceneSHA256"], pid=os.getpid(),
-    executable=str(Path(sys.executable).resolve()), python=sys.version.split()[0], phases=[])
-def save(state):
-    receipt["state"] = state
-    receipt["phases"].append(dict(state=state, wall=time.time(), monotonic=time.monotonic()))
+    executable=str(Path(sys.executable).resolve()), python=sys.version.split()[0], phases=[], renderCalls=[])
+def persist():
     temporary = root / "result.part"
     temporary.write_text(json.dumps(receipt, sort_keys=True) + "\n")
     temporary.replace(root / "result.json")
+def save(state):
+    receipt["state"] = state
+    receipt["phases"].append(dict(state=state, wall=time.time(), monotonic=time.monotonic()))
+    persist()
 save("loading")
 try:
     runtime = Path(config["runtime"])
@@ -71,14 +135,10 @@ try:
     if hashlib.sha256(source).hexdigest() != config["sceneSHA256"]:
         raise RuntimeError("bound scene bytes changed")
     save("rendering")
-    exec(compile(source, "<ngv-exact-scene-metal-control>", "exec"),
+    observe_scene(source,
          dict(bpy=bpy, bmesh=bmesh, mathutils=mathutils, Path=Path,
-              input_dir=root / "inputs", output_dir=root / "outputs"))
-    preferences = bpy.context.preferences.addons["cycles"].preferences
-    receipt.update(device=bpy.context.scene.cycles.device,
-        engine=bpy.context.scene.render.engine, samples=bpy.context.scene.cycles.samples,
-        computeDeviceType=preferences.compute_device_type,
-        devices=[dict(type=item.type, name=item.name[:256], use=bool(item.use)) for item in preferences.devices][:64])
+              input_dir=root / "inputs", output_dir=root / "outputs"), bpy, receipt, persist)
+    receipt.update(device_snapshot(bpy))
     save("completed")
 except BaseException as error:
     receipt.update(error=type(error).__name__, message=str(error)[:512])
@@ -391,6 +451,42 @@ def read_json(path):
     return json.loads(raw)
 
 
+def valid_render_calls(calls, phases, supervision):
+    if not isinstance(calls, list) or len(calls) > 2:
+        return False
+    rendering = next((p["monotonic"] for p in phases if p["state"] == "rendering"), None)
+    previous = rendering
+    for index, call in enumerate(calls):
+        if (not isinstance(call, dict) or type(call.get("ordinal")) is not int or call["ordinal"] != index + 1
+            or type(call.get("line")) is not int or not 1 <= call["line"] <= 100000
+            or call.get("state") not in ("entered", "returned", "raised")
+            or any(not isinstance(call.get(k), str) or len(call[k]) > 256
+                   for k in ("device", "engine", "computeDeviceType"))
+            or type(call.get("samples")) is not int or not 1 <= call["samples"] <= 1000000):
+            return False
+        devices = call.get("devices")
+        if (not isinstance(devices, list) or len(devices) > 64
+            or any(not isinstance(d, dict) or type(d.get("use")) is not bool
+                   or any(not isinstance(d.get(k), str) or len(d[k]) > 256 for k in ("type", "name")) for d in devices)):
+            return False
+        keys = ("enteredWall", "enteredMonotonic")
+        if call["state"] != "entered":
+            keys += ("endedWall", "endedMonotonic")
+        elif any(k in call for k in ("endedWall", "endedMonotonic")) or phases[-1]["state"] == "completed":
+            return False
+        if any(type(call.get(k)) not in (int, float) or not math.isfinite(call[k]) for k in keys):
+            return False
+        end = call.get("endedMonotonic", supervision["endedMonotonic"])
+        if (previous is None or not previous <= call["enteredMonotonic"] <= end <= supervision["endedMonotonic"]
+            or call["state"] == "entered" and index != len(calls) - 1
+            or call["state"] != "entered" and end > phases[-1]["monotonic"] and phases[-1]["state"] in ("completed", "failed")
+            or call["state"] == "raised" and any(not isinstance(call.get(k), str) or len(call[k]) > bound
+                                                for k, bound in (("error", 256), ("message", 512)))):
+            return False
+        previous = end
+    return True
+
+
 def verdict(root, supervision, source, digest, executable, bindings):
     proof = dict(status="invalidReceipt", childState=None, phaseDurations=[],
                  imagePresent=(root / "outputs/render.png").is_file())
@@ -418,11 +514,12 @@ def verdict(root, supervision, source, digest, executable, bindings):
     normal = states[:-1] if states[-1] == "failed" else states
     if (normal != allowed[:len(normal)] or any(a["monotonic"] > b["monotonic"] for a, b in zip(phases, phases[1:]))
         or phases[0]["monotonic"] < supervision["startedMonotonic"]
-        or phases[-1]["monotonic"] > supervision["endedMonotonic"]):
+        or phases[-1]["monotonic"] > supervision["endedMonotonic"]
+        or not valid_render_calls(result.get("renderCalls"), phases, supervision)):
         return proof
     proof["childState"] = result["state"]
     proof["child"] = {k: result[k] for k in ("state", "device", "samples", "engine", "computeDeviceType",
-        "devices", "workerSHA256", "nativeModule", "bpyModuleSHA256", "phases", "error", "message") if k in result}
+        "devices", "workerSHA256", "nativeModule", "bpyModuleSHA256", "phases", "renderCalls", "error", "message") if k in result}
     for index, phase in enumerate(phases):
         end = phases[index + 1]["monotonic"] if index + 1 < len(phases) else supervision["endedMonotonic"]
         proof["phaseDurations"].append(dict(state=phase["state"], seconds=end - phase["monotonic"]))
@@ -432,14 +529,20 @@ def verdict(root, supervision, source, digest, executable, bindings):
                            "runtimeLoaded": "timedOutWhileLoading"}[result["state"]]
         return proof
     if supervision.get("exitCode") != 0 or not supervision["reaped"]:
-        proof["status"] = "processFailedAfterCompletion" if result["state"] == "completed" else "processFailed"
+        proof["status"] = ("observationFailed" if supervision.get("exitCode") != 0 and result.get("error") == "SceneObservationFailed"
+                           else "processFailedAfterCompletion" if result["state"] == "completed" else "processFailed")
         return proof
     if (result.get("state") != "completed" or result.get("bpy") != "5.2.2"
         or result.get("engine") != "CYCLES" or result.get("samples") != 8
+        or not result["renderCalls"] or result["renderCalls"][-1]["state"] != "returned"
+        or result["renderCalls"][-1]["device"] != result.get("device")
+        or any(call["engine"] != "CYCLES" or call["samples"] != 8 for call in result["renderCalls"])
         or any(result.get(k) != bindings[k] for k in ("workerSHA256", "nativeModule", "bpyModuleSHA256"))):
         return proof
     if result.get("device") != "GPU":
         proof["status"] = "cpuFallbackNotGPUProof"
+        return proof
+    if len(result["renderCalls"]) != 1 or result["renderCalls"][0]["device"] != "GPU":
         return proof
     devices = result.get("devices")
     if (result.get("computeDeviceType") != "METAL" or not isinstance(devices, list) or not 1 <= len(devices) <= 64
@@ -525,10 +628,12 @@ def collect(app, output, source, original_input=None):
             "The supervisor execve launch and fixed descriptor layout are not reproduced.",
             "Storage uses synthetic ordinary directories rather than host-created APFS images.",
             "The confirmed warm-probe scene and load_scene scripts-auto-exec setting are not opened; the scene resets factory state itself.",
-            "Production uses -I -S with denied pycache writes; this control adds -B to preserve App bytes.",
+            "Production uses -I -S with denied pycache writes; this control adds -B to preserve App bytes and -u for unbuffered output.",
+            "Exact-scene line tracing records state before each render call; a line event alone does not attest native renderer entry.",
+            "A 20-second faulthandler watchdog repeats Python-only stacks into the bounded output; no native C stack is captured.",
             "This control supplies fixed USER=nexgenvideo; older App launch environments may omit USER.",
             "Production runs save_as_mainfile after the scene; this control stops after the scene.",
-            "OS-managed Metal caches outside scratch may be warm, including from the preceding failed native attempt; completion does not prove cold-compile time."])
+            "This diagnostic runs before native App selftests in its job VM. Later native results are supplemental; VM order does not prove a clean physical GPU or cold OS-managed Metal caches."])
     scratch, bindings, executable, identity, runtime = None, None, None, None, None
     try:
         with (app / "Contents/Info.plist").open("rb") as f:
@@ -566,7 +671,7 @@ def collect(app, output, source, original_input=None):
                       source=source, sceneSHA256=receipt["sceneSHA256"], **bindings)
         (output / "control.json").write_text(json.dumps(config) + "\n")
         (output / "control.py").write_text(CHILD)
-        command = [str(executable), "-I", "-B", "-S", str(output / "control.py"), str(output / "control.json")]
+        command = [str(executable), "-I", "-B", "-S", "-u", str(output / "control.py"), str(output / "control.json")]
         receipt["supervision"] = run_bounded(command, environment(scratch), output, output / "process.log")
     except (KeyboardInterrupt, ControlCancelled):
         receipt["status"] = "interrupted"
