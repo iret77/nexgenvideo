@@ -40,21 +40,50 @@ struct SpatialClaySequencePresentationTests {
         #expect(CMTimeCompare(CMSampleBufferGetDuration(last), CMTime(value: 1_001, timescale: 24_000)) == 0)
         #expect(CMTimeCompare(CMSampleBufferGetDuration(last), clock.sampleDuration(240)) != 0)
         #expect(CMTimeCompare(CMSampleBufferGetOutputDuration(last), CMTime(value: 501, timescale: 24_000)) == 0)
-        #expect(SpatialClayRenderer.sequenceSampleHasExpectedPresentation(last, index: 240, clock: clock))
-        #expect(SpatialClayRenderer.sequenceSampleHasExpectedPresentation(try sample(index: 239), index: 239, clock: clock))
+        #expect(SpatialClayRenderer.SequenceFrameTiming(last).matches(index: 240, clock: clock, endingAt: clock.duration))
+        #expect(SpatialClayRenderer.SequenceFrameTiming(try sample(index: 239)).matches(index: 239, clock: clock, endingAt: clock.presentation(240)))
     }
 
     @Test func incorrectOrUnknownOutputTimingIsRejected() throws {
         let clock = try completeClock()
-        let trims: [Int64?] = [nil, 499, 501]
+        let trims: [Int64?] = [501, 1_001]
         for trim in trims {
-            #expect(!SpatialClayRenderer.sequenceSampleHasExpectedPresentation(try sample(trim: trim), index: 240, clock: clock))
+            #expect(!SpatialClayRenderer.SequenceFrameTiming(try sample(trim: trim)).matches(index: 240, clock: clock, endingAt: clock.duration))
         }
-        #expect(!SpatialClayRenderer.sequenceSampleHasExpectedPresentation(try sample(offset: 1, trim: 500), index: 240, clock: clock))
-        #expect(!SpatialClayRenderer.sequenceSampleHasExpectedPresentation(try sample(duration: .invalid), index: 240, clock: clock))
+        #expect(!SpatialClayRenderer.SequenceFrameTiming(try sample(offset: 1, trim: 500)).matches(index: 240, clock: clock, endingAt: clock.duration))
+        #expect(!SpatialClayRenderer.SequenceFrameTiming(try sample(duration: .invalid)).matches(index: 240, clock: clock, endingAt: .invalid))
         let valid = try sample(trim: 500)
         for index in [-1, 239, 241] {
-            #expect(!SpatialClayRenderer.sequenceSampleHasExpectedPresentation(valid, index: index, clock: clock))
+            #expect(!SpatialClayRenderer.SequenceFrameTiming(valid).matches(index: index, clock: clock, endingAt: clock.duration))
+        }
+    }
+
+    @Test func unspecifiedDecodedDurationsRequireObservedBoundaries() throws {
+        let clock = try completeClock()
+        let unknown = SpatialClayRenderer.SequenceFrameTiming(try sample(index: 239, duration: .invalid))
+        let next = SpatialClayRenderer.SequenceFrameTiming(try sample(duration: .invalid))
+        #expect(unknown.matches(index: 239, clock: clock, endingAt: next.presentation))
+        #expect(!unknown.matches(index: 239, clock: clock, endingAt: CMTimeAdd(next.presentation, CMTime(value: 1, timescale: 24_000))))
+        #expect(!unknown.matches(index: 239, clock: clock, endingAt: .invalid))
+        #expect(next.matches(index: 240, clock: clock, endingAt: CMTime(value: 240_741, timescale: 24_000)))
+        #expect(!next.matches(index: 240, clock: clock, endingAt: CMTime(value: 241_241, timescale: 24_000)))
+        for count in [0, 2] {
+            let wrong = SpatialClayRenderer.SequenceFrameTiming(sampleCount: count, presentation: next.presentation, duration: .invalid)
+            #expect(!wrong.matches(index: 240, clock: clock, endingAt: clock.duration))
+        }
+        for duration in [CMTime.zero, .indefinite, .positiveInfinity, CMTime(value: -1, timescale: 24_000), CMTime(value: 500, timescale: 24_000)] {
+            let last = SpatialClayRenderer.SequenceFrameTiming(sampleCount: 1, presentation: next.presentation, duration: duration)
+            #expect(!last.matches(index: 240, clock: clock, endingAt: clock.duration))
+        }
+        let clipped = SpatialClayRenderer.SequenceFrameTiming(try sample())
+        #expect(clipped.matches(index: 240, clock: clock, endingAt: clock.duration))
+        let trimmed = SpatialClayRenderer.SequenceFrameTiming(try sample(trim: 499))
+        #expect(trimmed.matches(index: 240, clock: clock, endingAt: clock.duration))
+        let incorrectDurations: [Int64] = [-1, 1_000, 1_002]
+        for ticks in incorrectDurations {
+            let wrong = SpatialClayRenderer.SequenceFrameTiming(sampleCount: 1, presentation: unknown.presentation,
+                duration: CMTime(value: ticks, timescale: 24_000))
+            #expect(!wrong.matches(index: 239, clock: clock, endingAt: next.presentation))
         }
     }
 
@@ -65,6 +94,9 @@ struct SpatialClaySequencePresentationTests {
         let asset = AVURLAsset(url: url)
         #expect(CMTimeCompare(try await asset.load(.duration), CMTime(value: 2_503, timescale: 24_000)) == 0)
         let track = try #require(try await asset.loadTracks(withMediaType: .video).first)
+        let trackRange = try await track.load(.timeRange)
+        #expect(CMTimeCompare(trackRange.start, .zero) == 0)
+        #expect(CMTimeCompare(trackRange.duration, CMTime(value: 2_503, timescale: 24_000)) == 0)
         let expected = try SpatialClayRenderer.sequenceClock(.init(numerator: 2_503, denominator: 24_000),
             numerator: 24_000, denominator: 1_001, count: 3)
         let settings: [[String: Any]?] = [nil, [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]]
@@ -76,13 +108,36 @@ struct SpatialClaySequencePresentationTests {
             try #require(reader.canAdd(output))
             reader.add(output)
             try #require(reader.startReading())
-            for index in 0..<3 {
-                let sample = try #require(output.copyNextSampleBuffer())
+            var index = 0
+            var leadingMarker = false, trailingMarker = false
+            var previous: SpatialClayRenderer.SequenceFrameTiming?
+            while let sample = output.copyNextSampleBuffer() {
+                let timing = SpatialClayRenderer.SequenceFrameTiming(sample)
+                if timing.sampleCount == 0 {
+                    let atStart = index == 0 && CMTimeCompare(timing.presentation, .zero) == 0
+                    let atEnd = index == 3 && CMTimeCompare(timing.presentation, CMTimeRangeGetEnd(trackRange)) == 0
+                    try #require(outputSettings == nil)
+                    try #require(timing.presentation.isNumeric && timing.duration.isNumeric)
+                    #expect(CMTimeCompare(timing.duration, .zero) == 0)
+                    #expect(CMSampleBufferGetFormatDescription(sample) == nil)
+                    #expect(CMSampleBufferGetDataBuffer(sample) == nil)
+                    try #require((atStart && !leadingMarker) || (atEnd && !trailingMarker))
+                    leadingMarker = leadingMarker || atStart
+                    trailingMarker = trailingMarker || atEnd
+                    continue
+                }
+                try #require(index < 3)
                 if outputSettings != nil { #expect(CMSampleBufferGetImageBuffer(sample) != nil) }
-                #expect(SpatialClayRenderer.sequenceSampleHasExpectedPresentation(sample, index: index, clock: expected),
-                    "frame \(index): raw \(CMSampleBufferGetDuration(sample)), output \(CMSampleBufferGetOutputDuration(sample))")
+                #expect(timing.hasExpectedStart(index: index, clock: expected))
+                if let previous {
+                    #expect(previous.matches(index: index - 1, clock: expected, endingAt: timing.presentation))
+                }
+                previous = timing
+                index += 1
             }
-            #expect(output.copyNextSampleBuffer() == nil && reader.status == .completed)
+            #expect(index == 3 && reader.status == .completed)
+            let last = try #require(previous)
+            #expect(last.matches(index: 2, clock: expected, endingAt: CMTimeRangeGetEnd(trackRange)))
         }
     }
 }

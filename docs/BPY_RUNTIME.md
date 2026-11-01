@@ -591,13 +591,15 @@ Complete Shot Planning renders use a file-backed sequence candidate. Determinist
 respect the per-job frame/pixel envelope; the shot itself is not truncated or resampled. Each chunk
 is authenticated before checkpoint rotation discards its runtime cache. A private host aggregate
 binds the full request/state, ordered chunk receipts and every output byte. The final MOV streams
-from PNGs and is decoded frame by frame against them, including exact rational output PTS and the
-final partial output duration from canonical story timing. Core Media output timing applies sample
-trim attachments; a coded sample's raw duration can extend beyond its presented interval. The verifier still
-requires the exact frame count, images, total duration and end of stream. Canonical adoption copies the complete output
+from PNGs and is decoded frame by frame against them. Each exact rational presentation interval ends
+at the next decoded frame's output PTS or the independently loaded video track end. Decoded buffers
+may omit duration; a known nonfinal output duration must equal its interval exactly. Only the final
+coded sample may extend past the verified track end. Independent native acceptance checks coded timing and distinguishes
+zero-duration edit markers from frames. Both paths require the exact frame count, track range, total
+duration and end of stream; the decoded verifier also checks every image. Canonical adoption copies the complete output
 map before calling `discard()`; discard revokes its receipt and schedules removal of temporary files.
 Native acceptance includes 241 frames at 384×384, beyond both former whole-shot limits, a partial
-last frame, substituted-image rejection and receipt revocation. This acceptance is prepared, not run.
+last frame, substituted-image rejection and receipt revocation. This acceptance is prepared, not yet passed.
 
 ## Document and application shutdown
 

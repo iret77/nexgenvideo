@@ -131,20 +131,52 @@ nonisolated enum SpatialSceneRuntimeAcceptance {
               CMTimeCompare(try await asset.load(.duration), CMTime(value: 240_741, timescale: 24_000)) == 0 else {
             throw SpatialSceneError.invalid("The native full shot was rounded to whole scene frames.")
         }
+        let trackRange = try await track.load(.timeRange)
+        guard trackRange.start.isNumeric, trackRange.duration.isNumeric,
+              CMTimeCompare(trackRange.start, .zero) == 0,
+              CMTimeCompare(trackRange.duration, CMTime(value: 240_741, timescale: 24_000)) == 0 else {
+            throw SpatialSceneError.invalid("The native full shot changed its video presentation range.")
+        }
         let reader = try AVAssetReader(asset: asset)
         let samples = AVAssetReaderTrackOutput(track: track, outputSettings: nil)
         guard reader.canAdd(samples) else { throw SpatialSceneError.changed }
         reader.add(samples)
         guard reader.startReading() else { throw SpatialSceneError.changed }
         defer { if reader.status == .reading { reader.cancelReading() } }
-        for index in 0...240 {
-            guard let sample = samples.copyNextSampleBuffer(),
-                  CMTimeCompare(CMSampleBufferGetOutputPresentationTimeStamp(sample), CMTime(value: Int64(index) * 1_001, timescale: 24_000)) == 0,
-                  CMTimeCompare(CMSampleBufferGetOutputDuration(sample), CMTime(value: index == 240 ? 501 : 1_001, timescale: 24_000)) == 0 else {
+        var index = 0
+        var leadingMarker = false, trailingMarker = false
+        while let sample = samples.copyNextSampleBuffer() {
+            let presentation = CMSampleBufferGetOutputPresentationTimeStamp(sample)
+            let duration = CMSampleBufferGetOutputDuration(sample)
+            if CMSampleBufferGetNumSamples(sample) == 0 {
+                let atStart = index == 0 && CMTimeCompare(presentation, .zero) == 0
+                let atEnd = index == 241 && CMTimeCompare(presentation, CMTimeRangeGetEnd(trackRange)) == 0
+                guard presentation.isNumeric, duration.isNumeric,
+                      CMTimeCompare(duration, .zero) == 0,
+                      CMSampleBufferGetFormatDescription(sample) == nil,
+                      CMSampleBufferGetDataBuffer(sample) == nil,
+                      (atStart && !leadingMarker) || (atEnd && !trailingMarker) else {
+                    throw SpatialSceneError.invalid("The native full shot contains an unexpected empty interval.")
+                }
+                leadingMarker = leadingMarker || atStart
+                trailingMarker = trailingMarker || atEnd
+                continue
+            }
+            guard index <= 240, CMSampleBufferGetNumSamples(sample) == 1,
+                  presentation.isNumeric, duration.isNumeric, CMTimeCompare(duration, .zero) > 0,
+                  CMTimeCompare(presentation, CMTime(value: Int64(index) * 1_001, timescale: 24_000)) == 0 else {
                 throw SpatialSceneError.invalid("The native full shot changed a frame timestamp or its partial last sample.")
             }
+            let sampleEnd = CMTimeAdd(presentation, duration)
+            guard sampleEnd.isNumeric else { throw SpatialSceneError.changed }
+            let visibleEnd = index == 240 ? CMTimeMinimum(sampleEnd, CMTimeRangeGetEnd(trackRange)) : sampleEnd
+            let expectedEnd = CMTime(value: index == 240 ? 240_741 : Int64(index + 1) * 1_001, timescale: 24_000)
+            guard CMTimeCompare(visibleEnd, expectedEnd) == 0 else {
+                throw SpatialSceneError.invalid("The native full shot changed a frame timestamp or its partial last sample.")
+            }
+            index += 1
         }
-        guard samples.copyNextSampleBuffer() == nil, reader.status == .completed else { throw SpatialSceneError.changed }
+        guard index == 241, reader.status == .completed else { throw SpatialSceneError.changed }
         let proof = candidate.proof
         let extraName = "chunk-00000241.json"
         let extraURL = first.deletingLastPathComponent().appendingPathComponent(extraName)
