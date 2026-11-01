@@ -9,11 +9,39 @@ nonisolated enum SpatialEvaluatedGeometryAcceptance {
         try runtime.loadProjectCheckpoint(sceneRevision: nil, cancellation: .init())
         let script = try String(contentsOf: runtimeRoot.appendingPathComponent("scene_operations.py"), encoding: .utf8)
         let source = "import json\nngv_command = {'kind':'create'}\n" + script + "\n" + fixture
+        let directory = output.appendingPathComponent("evaluated-deformation")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Data(source.utf8).write(to: directory.appendingPathComponent("scene-program.py"), options: .atomic)
+        let invalidFixtures = [
+            ("second-scene", "bpy.data.scenes.new('Unposed foreign scene')"),
+            ("second-view-layer", "bpy.context.scene.view_layers.new('Additional render layer')"),
+            ("rest-outside-interval", "bpy.context.scene['ngv_rest_frame'] = 2")
+        ]
+        for (name, mutation) in invalidFixtures {
+            let invalidSource = source + "\n" + mutation + "\n"
+            try Data(invalidSource.utf8).write(to: directory.appendingPathComponent("negative-\(name).py"), options: .atomic)
+            let rejected = try runtime.runJob(id: UUID(), expectedRevision: nil, source: invalidSource)
+            defer { rejected.release() }
+            try JSONEncoder().encode(rejected.response).write(to: directory.appendingPathComponent("negative-\(name).response.json"), options: .atomic)
+            guard rejected.response.ok, rejected.response.state == .failed,
+                  rejected.response.message == "verification rejected an invalid scene",
+                  rejected.response.progress.contains(where: { $0.stage == "verification" }),
+                  rejected.response.outputs.isEmpty, rejected.stagedOutputs.isEmpty else {
+                throw SpatialSceneError.invalid("The invalid \(name) fixture did not return the expected verifier rejection: \(rejected.response.state?.rawValue ?? "unknown state"): \(rejected.response.message ?? "no message").")
+            }
+        }
         let result = try runtime.runJob(id: UUID(), expectedRevision: nil, source: source)
         defer { result.release() }
+        try JSONEncoder().encode(result.response).write(to: directory.appendingPathComponent("scene-response.json"), options: .atomic)
+        guard result.response.ok, result.response.state == .awaitingConfirmation else {
+            throw SpatialSceneError.invalid("The deformation fixture failed: \(result.response.message ?? result.response.state?.rawValue ?? "unknown state").")
+        }
         guard let preflightURL = result.stagedOutputs["simulation-preflight.json"],
-              let preflightOutput = result.response.outputs.first(where: { $0.name == "simulation-preflight.json" }) else { throw SpatialSceneError.changed }
+              let preflightOutput = result.response.outputs.first(where: { $0.name == "simulation-preflight.json" }),
+              let verificationURL = result.stagedOutputs["verification.json"] else { throw SpatialSceneError.changed }
         let preflight = try Data(contentsOf: preflightURL)
+        try preflight.write(to: directory.appendingPathComponent("simulation-preflight.json"), options: .atomic)
+        try Data(contentsOf: verificationURL).write(to: directory.appendingPathComponent("scene-verification.json"), options: .atomic)
         guard SpatialSceneStore.digest(preflight) == preflightOutput.sha256,
               let preflightValue = try JSONSerialization.jsonObject(with: preflight) as? [String: Any],
               preflightValue["isBaked"] as? Bool == false,
@@ -65,8 +93,6 @@ nonisolated enum SpatialEvaluatedGeometryAcceptance {
         guard let first = clay.files["clay-00000000.png"], let last = clay.files["clay-00000001.png"], first.sha256 != last.sha256 else {
             throw SpatialSceneError.invalid("Native deformation did not change the actual Clay pixels.")
         }
-        let directory = output.appendingPathComponent("evaluated-deformation")
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         for (name, bytes) in candidate.files { try bytes.write(to: directory.appendingPathComponent(name)) }
         for (name, file) in clay.files {
             try file.verify()
@@ -81,8 +107,6 @@ nonisolated enum SpatialEvaluatedGeometryAcceptance {
         try revision.manifestData.write(to: directory.appendingPathComponent("scene-manifest.v1.json"))
         try revision.scenePayload.export(to: directory.appendingPathComponent("scene.blend"), checking: {})
         try revision.snapshotData.write(to: directory.appendingPathComponent("snapshot.v1.json"))
-        try Data(source.utf8).write(to: directory.appendingPathComponent("scene-program.py"))
-        try preflight.write(to: directory.appendingPathComponent("simulation-preflight.json"))
         let plan = try NativeBlockoutPlanProjection(snapshot: revision.snapshot, snapshotData: revision.snapshotData, state: state,
             geometry: candidate.geometry, locationID: "deformation")
         try NativeBlockoutExporter.export(width: 640, height: 480, frameCount: 2,
@@ -184,12 +208,13 @@ bpy.context.collection.objects.link(curve_object)
 apply_command({'kind':'camera', 'name':'Plan Camera', 'matrixWorld':[[1,0,0,1],[0,0,-1,-12],[0,1,0,4],[0,0,0,1]],
                'verticalFieldOfView':1.1, 'near':0.01, 'far':100, 'width':128, 'height':128, 'frame':0, 'keyframe':False})
 bpy.context.scene.name = 'Deformation active'
-bpy.context.scene.view_layers.new('Additional render layer')
-foreign_scene = bpy.data.scenes.new('Unposed foreign scene')
 foreign_mesh = bpy.data.meshes.new('Foreign geometry')
 foreign_mesh.from_pydata([(1000,0,0),(1001,0,0),(1000,1,0)], [], [(0,1,2)])
 foreign_object = bpy.data.objects.new('ForeignMesh', foreign_mesh)
-foreign_scene.collection.objects.link(foreign_object)
+bpy.context.collection.objects.link(foreign_object)
+foreign_object.hide_render = True
+bpy.context.scene.frame_start = 0
+bpy.context.scene.frame_end = 1
 bpy.context.scene['ngv_rest_frame'] = 0
 bpy.context.scene.frame_set(0)
 """#

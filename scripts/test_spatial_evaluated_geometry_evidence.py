@@ -1,7 +1,7 @@
 """Synthetic validator negatives, never evidence of a native Blender run."""
 import json
 import unittest
-from spatial_evaluated_geometry_evidence import command, fingerprint, integer, matrix
+from spatial_evaluated_geometry_evidence import command, fingerprint, integer, matrix, portable_rejection
 
 
 class GeometryEvidenceValidationTests(unittest.TestCase):
@@ -34,6 +34,22 @@ class GeometryEvidenceValidationTests(unittest.TestCase):
         for value in [True, 1.0, -1]:
             with self.assertRaises(ValueError):
                 integer(value, "frame")
+
+    def test_portable_negative_requires_exact_program_and_verifier_rejection(self):
+        source = "print('scene')\nbpy.data.scenes.new('extra')\n"
+        response = {"ok": True, "state": "failed", "message": "verification rejected an invalid scene",
+                    "outputs": [], "progress": [{"stage": "worker"}, {"stage": "verification"}],
+                    "jobID": "12345678-1234-1234-1234-123456789ABC", "jobFingerprint": fingerprint(source, None, 120)}
+        self.assertEqual(portable_rejection(source, source, response, 120), response["jobID"].lower())
+        for changes in [{"state": "awaitingConfirmation"}, {"ok": False}, {"state": "crashed"},
+                        {"message": "worker reported exit 70"}, {"outputs": [{"name": "scene.blend"}]},
+                        {"progress": [{"stage": "worker"}]}, {"jobID": None}, {"jobFingerprint": "foreign"}]:
+            with self.assertRaises(ValueError):
+                portable_rejection(source, source, dict(response, **changes), 120)
+        with self.assertRaises(ValueError):
+            portable_rejection(source, source + "print('unrelated')\n", response, 120)
+        with self.assertRaises(ValueError):
+            portable_rejection(source, source, response, 121)
 
 
 if __name__ == "__main__":
