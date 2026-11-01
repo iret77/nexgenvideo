@@ -90,8 +90,9 @@ struct BpyHostConfigurationTests {
         for root in ["/worker/job-one", "/worker/job-two"] {
             let environment = BpyHostLauncher.workerEnvironment(rootPath: root)
             #expect(Set(environment.keys) == Set(["USER", "HOME", "TMPDIR", "LANG", "BLENDER_USER_CONFIG",
-                "BLENDER_USER_SCRIPTS", "BLENDER_USER_DATAFILES", "PYTHONDONTWRITEBYTECODE"]))
+                "BLENDER_USER_SCRIPTS", "BLENDER_USER_DATAFILES", "PYTHONDONTWRITEBYTECODE", "CYCLES_METAL_ASYNC_PSO_CREATION"]))
             #expect(environment["USER"] == "nexgenvideo")
+            #expect(environment["CYCLES_METAL_ASYNC_PSO_CREATION"] == "0")
             #expect(environment["LANG"] == "en_US.UTF-8")
             #expect(environment["PYTHONDONTWRITEBYTECODE"] == "1")
             for key in ["HOME", "TMPDIR", "BLENDER_USER_CONFIG", "BLENDER_USER_SCRIPTS", "BLENDER_USER_DATAFILES"] {

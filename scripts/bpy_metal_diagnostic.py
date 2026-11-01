@@ -639,7 +639,7 @@ def collect(app, output, source, original_input=None):
             "Exact-scene line tracing records state before each render call; a line event alone does not attest native renderer entry.",
             "A 20-second faulthandler watchdog repeats Python-only stacks into the bounded output; no native C stack is captured.",
             "This control supplies fixed USER=nexgenvideo; older App launch environments may omit USER.",
-            "This diagnostic requests synchronous Metal pipeline creation with CYCLES_METAL_ASYNC_PSO_CREATION=0; production uses its default.",
+            "This diagnostic sets CYCLES_METAL_ASYNC_PSO_CREATION=0; the original App retains its source-stamped worker environment.",
             "Production runs save_as_mainfile after the scene; this control stops after the scene.",
             "This diagnostic runs before native App selftests in its job VM. Later native results are supplemental; VM order does not prove a clean physical GPU or cold OS-managed Metal caches."])
     scratch, bindings, executable, identity, runtime = None, None, None, None, None

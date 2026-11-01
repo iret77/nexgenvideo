@@ -1145,7 +1145,8 @@ nonisolated final class BpyHostLauncher: @unchecked Sendable {
 
     static func workerEnvironment(rootPath: String) -> [String: String] {
         // Vendored glog otherwise queries the unavailable account database during native initialization.
-        ["USER": "nexgenvideo", "HOME": rootPath + "/home", "TMPDIR": rootPath + "/tmp", "LANG": "en_US.UTF-8",
+        ["USER": "nexgenvideo", "CYCLES_METAL_ASYNC_PSO_CREATION": "0",
+            "HOME": rootPath + "/home", "TMPDIR": rootPath + "/tmp", "LANG": "en_US.UTF-8",
             "BLENDER_USER_CONFIG": rootPath + "/blender-config", "BLENDER_USER_SCRIPTS": rootPath + "/blender-scripts",
             "BLENDER_USER_DATAFILES": rootPath + "/blender-data", "PYTHONDONTWRITEBYTECODE": "1"]
     }

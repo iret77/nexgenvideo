@@ -29,6 +29,14 @@ The host supplies a fixed, nonidentifying `USER=nexgenvideo`. Blender 5.2.2's
 otherwise queries the account database and can dereference a missing result inside Seatbelt.
 No account name or inherited environment is needed for native-library initialization.
 
+The host also fixes `CYCLES_METAL_ASYNC_PSO_CREATION=0` before loading bpy. Blender 5.2.2
+[reads this flag](https://github.com/blender/blender/blob/v5.2.2/intern/cycles/util/debug.cpp)
+to select its existing [synchronous Metal pipeline-creation path](https://github.com/blender/blender/blob/v5.2.2/intern/cycles/device/metal/kernel.mm).
+The unrestricted fresh-first comparison hung in the configured GPU render with the default
+asynchronous path; changing only this flag completed the same scene without entering its CPU
+fallback. This keeps Metal rendering, scene quality and execution limits intact. The constrained
+App path still requires fresh native acceptance; the diagnostic alone does not qualify it.
+
 Each XPC bundle contains its own `Contents/Resources/BpyRuntime` and its supervisor in
 `Contents/MacOS`. No runtime executable or script falls back to the outer app bundle. The two
 runtime copies use identical signed bytes; the outer app seals their exact paired inventory in
