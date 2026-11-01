@@ -594,8 +594,15 @@ binds the full request/state, ordered chunk receipts and every output byte. The 
 from PNGs and is decoded frame by frame against them. Each exact rational presentation interval ends
 at the next decoded frame's output PTS or the independently loaded video track end. Decoded buffers
 may omit duration; a known nonfinal output duration must equal its interval exactly. Only the final
-coded sample may extend past the verified track end. Independent native acceptance checks coded timing and distinguishes
-zero-duration edit markers from frames. Both paths require the exact frame count, track range, total
+coded sample may extend past the verified track end. Independent native acceptance checks coded timing
+and separates zero-sample controls from frames. A leading boundary has PTS zero before the first
+frame and no active recognized end flags or notification. Flag values must be CFBoolean.
+Decoder-drain (CFBoolean true) and consumption
+notification (an opaque CFDictionary) occur after all frames; their PTS may be absent, otherwise it
+must equal the verified track end. The permanent end carries both EmptyMedia and PermanentEmptyMedia
+flags and the exact track-end PTS. Every control has numeric zero raw/output duration and no format,
+data or image payload. Each role occurs at most once; every other zero-sample buffer fails.
+Both paths require the exact frame count, track range, total
 duration and end of stream; the decoded verifier also checks every image. Canonical adoption copies the complete output
 map before calling `discard()`; discard revokes its receipt and schedules removal of temporary files.
 Native acceptance includes 241 frames at 384×384, beyond both former whole-shot limits, a partial
