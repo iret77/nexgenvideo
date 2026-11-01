@@ -173,6 +173,69 @@ jobs:
           printf '#!/bin/sh\nexit 99\n' > "$RUNNER_TEMP/fake-bin/python3"
           printf '#!/bin/sh\nexit 99\n' > "$RUNNER_TEMP/fake-bin/blender"
           chmod +x "$RUNNER_TEMP/fake-bin/python3" "$RUNNER_TEMP/fake-bin/blender"
+      - name: Capture the exact scene outside the sandbox as diagnostic evidence
+        if: ${{ inputs.runtime_run_id != '' && inputs.app_artifact_id != '' }}
+        timeout-minutes: 4
+        env:
+          EXPECTED_SOURCE: ${{ inputs.expected_source_sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/relocated/NexGenVideo.app"
+          CONTROL="$RUNNER_TEMP/evidence/unconfined-metal-control"
+          control=
+          finish_control() {
+            result=$?
+            trap - EXIT INT TERM
+            for attempt in {1..100}; do
+              remaining=0
+              pgrep -f "$APP/Contents/(MacOS/NexGenVideo($| )|XPCServices/NexGenVideoBpyService[01]\.xpc/Contents/(MacOS/NexGenVideoBpySupervisor|Resources/BpyRuntime/python))|$CONTROL" \
+                > "$RUNNER_TEMP/evidence/control-residual-processes.log" || remaining=$?
+              [ "$remaining" -eq 0 ] || break
+              sleep 0.1
+            done
+            [ "$remaining" -eq 1 ] || result=1
+            codesign --verify --deep --strict "$APP" \
+              > "$RUNNER_TEMP/evidence/control-signature-after.log" 2>&1 || result=1
+            exit "$result"
+          }
+          cancel_control() {
+            code=$1
+            trap - INT TERM
+            if [ -n "$control" ]; then
+              kill -TERM "$control" 2>/dev/null || true
+              wait "$control" || true
+            fi
+            exit "$code"
+          }
+          trap finish_control EXIT
+          trap 'cancel_control 130' INT
+          trap 'cancel_control 143' TERM
+          status=0
+          pgrep -f "$RUNNER_TEMP/relocated/NexGenVideo.app/Contents/(MacOS/NexGenVideo($| )|XPCServices/NexGenVideoBpyService[01]\.xpc/Contents/(MacOS/NexGenVideoBpySupervisor|Resources/BpyRuntime/python))" \
+            > "$RUNNER_TEMP/evidence/original-processes-before-control.log" || status=$?
+          [ "$status" -eq 1 ]
+          before=0
+          codesign --verify --deep --strict "$APP" \
+            > "$RUNNER_TEMP/evidence/control-signature-before.log" 2>&1 || before=$?
+          printf '%s\n' "$before" > "$RUNNER_TEMP/evidence/control-signature-before.status"
+          python3 - <<'PY' > "$RUNNER_TEMP/evidence/control-source-fetch.log" 2>&1 &
+          import os, sys
+          from pathlib import Path
+          sys.path.insert(0, 'scripts')
+          from bpy_metal_diagnostic import prefetch_source
+          prefetch_source(os.environ['EXPECTED_SOURCE'], Path(os.environ['RUNNER_TEMP']) / 'metal-control-source.json')
+          PY
+          control=$!
+          wait "$control"
+          control=
+          "$APP/Contents/XPCServices/NexGenVideoBpyService0.xpc/Contents/Resources/BpyRuntime/python/bin/python3.13" \
+            -I -B -S scripts/bpy_metal_diagnostic.py "$APP" --source-sha "$EXPECTED_SOURCE" \
+            --source-input "$RUNNER_TEMP/metal-control-source.json" --output "$CONTROL" \
+            < /dev/null > "$RUNNER_TEMP/evidence/control-supervisor.log" 2>&1 &
+          control=$!
+          wait "$control"
+          control=
       - name: Prove deterministic deletion during native directory accounting
         env:
           EXPECTED_SOURCE: ${{ inputs.expected_source_sha || github.sha }}
@@ -433,69 +496,6 @@ jobs:
           after="$(pgrep -f 'BpyRuntime/python' || true)"
           [ -z "$after" ] || { echo "orphan bpy workers: $after"; exit 1; }
           du -sk "$APP" > "$EVIDENCE/app-size-kib.txt"
-      - name: Capture the exact scene outside the sandbox as diagnostic evidence
-        if: ${{ failure() && inputs.app_artifact_id != '' && steps.native.outcome == 'failure' }}
-        timeout-minutes: 4
-        env:
-          EXPECTED_SOURCE: ${{ inputs.expected_source_sha }}
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          APP="$RUNNER_TEMP/relocated/NexGenVideo.app"
-          CONTROL="$RUNNER_TEMP/evidence/unconfined-metal-control"
-          control=
-          finish_control() {
-            result=$?
-            trap - EXIT INT TERM
-            for attempt in {1..100}; do
-              remaining=0
-              pgrep -f "$APP/Contents/(MacOS/NexGenVideo($| )|XPCServices/NexGenVideoBpyService[01]\.xpc/Contents/(MacOS/NexGenVideoBpySupervisor|Resources/BpyRuntime/python))|$CONTROL" \
-                > "$RUNNER_TEMP/evidence/control-residual-processes.log" || remaining=$?
-              [ "$remaining" -eq 0 ] || break
-              sleep 0.1
-            done
-            [ "$remaining" -eq 1 ] || result=1
-            codesign --verify --deep --strict "$APP" \
-              > "$RUNNER_TEMP/evidence/control-signature-after.log" 2>&1 || result=1
-            exit "$result"
-          }
-          cancel_control() {
-            code=$1
-            trap - INT TERM
-            if [ -n "$control" ]; then
-              kill -TERM "$control" 2>/dev/null || true
-              wait "$control" || true
-            fi
-            exit "$code"
-          }
-          trap finish_control EXIT
-          trap 'cancel_control 130' INT
-          trap 'cancel_control 143' TERM
-          status=0
-          pgrep -f "$RUNNER_TEMP/relocated/NexGenVideo.app/Contents/(MacOS/NexGenVideo($| )|XPCServices/NexGenVideoBpyService[01]\.xpc/Contents/(MacOS/NexGenVideoBpySupervisor|Resources/BpyRuntime/python))" \
-            > "$RUNNER_TEMP/evidence/original-processes-before-control.log" || status=$?
-          [ "$status" -eq 1 ]
-          before=0
-          codesign --verify --deep --strict "$APP" \
-            > "$RUNNER_TEMP/evidence/control-signature-before.log" 2>&1 || before=$?
-          printf '%s\n' "$before" > "$RUNNER_TEMP/evidence/control-signature-before.status"
-          python3 - <<'PY' > "$RUNNER_TEMP/evidence/control-source-fetch.log" 2>&1 &
-          import os, sys
-          from pathlib import Path
-          sys.path.insert(0, 'scripts')
-          from bpy_metal_diagnostic import prefetch_source
-          prefetch_source(os.environ['EXPECTED_SOURCE'], Path(os.environ['RUNNER_TEMP']) / 'metal-control-source.json')
-          PY
-          control=$!
-          wait "$control"
-          control=
-          "$APP/Contents/XPCServices/NexGenVideoBpyService0.xpc/Contents/Resources/BpyRuntime/python/bin/python3.13" \
-            -I -B -S scripts/bpy_metal_diagnostic.py "$APP" --source-sha "$EXPECTED_SOURCE" \
-            --source-input "$RUNNER_TEMP/metal-control-source.json" --output "$CONTROL" \
-            < /dev/null > "$RUNNER_TEMP/evidence/control-supervisor.log" 2>&1 &
-          control=$!
-          wait "$control"
-          control=
       - name: Prove both sandbox boundary slots using an explicitly derived fixture
         timeout-minutes: 12
         env:

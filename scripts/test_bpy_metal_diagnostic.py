@@ -14,6 +14,7 @@ import sys
 import tempfile
 import threading
 import time
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 import uuid
@@ -48,6 +49,9 @@ class MetalControlTests(unittest.TestCase):
             appSourceSHA=source, sceneSHA256=digest, pid=123, executable=str(executable),
             state='completed', python='3.13.15', bpy='5.2.2', engine='CYCLES', samples=8,
             device='GPU', computeDeviceType='METAL', devices=[dict(type='METAL', name='fixture GPU', use=True)],
+            renderCalls=[dict(ordinal=1, line=10, state='returned', enteredWall=1002.1, enteredMonotonic=102.1,
+                endedWall=1002.5, endedMonotonic=102.5, device='GPU', engine='CYCLES', samples=8,
+                computeDeviceType='METAL', devices=[dict(type='METAL', name='fixture GPU', use=True)])],
             phases=[dict(state=state, wall=1000 + i, monotonic=100 + i)
                     for i, state in enumerate(['loading', 'runtimeLoaded', 'rendering', 'completed'])], **bindings)
 
@@ -113,8 +117,15 @@ class MetalControlTests(unittest.TestCase):
         current = (Path(__file__).resolve().parents[1] / diagnostic.SOURCE_PATH).read_bytes()
         compile(diagnostic.scene_source(current), '<actual-bound-scene>', 'exec')
         workflow = (Path(__file__).resolve().parents[1] / '.github/workflows/bpy-runtime-acceptance.yml').read_text()
-        block = workflow.split('- name: Capture the exact scene outside the sandbox as diagnostic evidence', 1)[1].split('- name: Prove both sandbox boundary', 1)[0]
-        self.assertIn("failure() && inputs.app_artifact_id != '' && steps.native.outcome == 'failure'", block)
+        control_name = '- name: Capture the exact scene outside the sandbox as diagnostic evidence'
+        first_native = '- name: Prove deterministic deletion during native directory accounting'
+        block = workflow.split(control_name, 1)[1].split(first_native, 1)[0]
+        self.assertIn("inputs.runtime_run_id != '' && inputs.app_artifact_id != ''", block)
+        self.assertNotIn('failure()', block)
+        self.assertLess(workflow.index(control_name), workflow.index(first_native))
+        self.assertLess(workflow.index(first_native), workflow.index('- name: Prove pre-lease and post-exec host-crash cleanup'))
+        self.assertLess(workflow.index(first_native), workflow.index('- name: Run real bpy acceptance'))
+        self.assertLess(workflow.index(first_native), workflow.index('- name: Prove both sandbox boundary'))
         self.assertIn('trap finish_control EXIT', block)
         self.assertIn('control-residual-processes.log', block)
         self.assertIn('codesign --verify --deep --strict', block)
@@ -160,7 +171,24 @@ class MetalControlTests(unittest.TestCase):
             self.assertEqual(good['childState'], 'completed')
             self.assertEqual([p['seconds'] for p in good['phaseDurations']], [1, 1, 1, 2])
             self.assertEqual(good['child']['devices'], receipt['devices'])
-            self.assertEqual(verdict(dict(receipt, device='CPU'))['status'], 'cpuFallbackNotGPUProof')
+            cpu = copy.deepcopy(receipt)
+            cpu['device'] = cpu['renderCalls'][0]['device'] = 'CPU'
+            self.assertEqual(verdict(cpu)['status'], 'cpuFallbackNotGPUProof')
+            repeated = copy.deepcopy(receipt)
+            first = repeated['renderCalls'][0]
+            first.update(state='raised', endedWall=1002.2, endedMonotonic=102.2,
+                         error='RuntimeError', message='fixture GPU failed')
+            second = copy.deepcopy(receipt['renderCalls'][0])
+            second.update(ordinal=2, line=20, enteredWall=1002.3, enteredMonotonic=102.3)
+            repeated['renderCalls'].append(second)
+            self.assertEqual(verdict(repeated)['status'], 'invalidReceipt')
+            for key, value in [('enteredMonotonic', float('nan')), ('enteredWall', float('inf')),
+                               ('endedMonotonic', 106), ('line', 0), ('ordinal', 2), ('devices', [{}]),
+                               ('samples', True), ('state', 'invented')]:
+                changed = copy.deepcopy(receipt)
+                changed['renderCalls'][0][key] = value
+                with self.subTest(renderField=key):
+                    self.assertEqual(verdict(changed)['status'], 'invalidReceipt')
             late = copy.deepcopy(receipt)
             late['phases'][-1]['monotonic'] = supervision['endedMonotonic'] + 1
             self.assertEqual(verdict(late)['status'], 'invalidReceipt')
@@ -176,11 +204,24 @@ class MetalControlTests(unittest.TestCase):
             self.assertEqual(ended['childState'], 'completed')
             rendering = dict(receipt, state='rendering', phases=receipt['phases'][:3])
             self.assertEqual(verdict(rendering, dict(supervision, timedOut=True))['status'], 'timedOutDuringRender')
+            active = copy.deepcopy(rendering)
+            active['renderCalls'][0]['state'] = 'entered'
+            for key in ('endedWall', 'endedMonotonic'):
+                del active['renderCalls'][0][key]
+            observed = verdict(active, dict(supervision, timedOut=True))
+            self.assertEqual(observed['status'], 'timedOutDuringRender')
+            self.assertEqual(observed['child']['renderCalls'][0]['device'], 'GPU')
+            before_call = dict(rendering, renderCalls=[])
+            self.assertEqual(verdict(before_call, dict(supervision, timedOut=True))['child']['renderCalls'], [])
             failed = dict(receipt, state='failed', phases=receipt['phases'][:3] + [dict(state='failed', wall=1003, monotonic=103)])
             failure = verdict(failed, dict(supervision, timedOut=True))
             self.assertEqual(failure['status'], 'timedOutAfterFailure')
             self.assertEqual(failure['childState'], 'failed')
             self.assertEqual(diagnostic.exit_status(dict(failure, supervision=supervision)), 0)
+            for error, expected in [('SceneObservationFailed', 'observationFailed'), ('RuntimeError', 'processFailed')]:
+                result = verdict(dict(failed, error=error), dict(supervision, exitCode=1))
+                self.assertEqual(result['status'], expected)
+                self.assertEqual(diagnostic.exit_status(dict(result, supervision=supervision)), 0)
             self.assertEqual(verdict(control=dict(supervision, exitCode=1))['status'], 'processFailedAfterCompletion')
             self.assertEqual(verdict(control=dict(supervision, reaped=False))['status'], 'processFailedAfterCompletion')
             self.assertEqual(diagnostic.exit_status(dict(status='timedOutDuringRender', supervision=supervision)), 0)
@@ -193,6 +234,77 @@ class MetalControlTests(unittest.TestCase):
             (root / 'outputs/render.png').write_bytes(image)
             with mock.patch.object(diagnostic, 'image_bytes', side_effect=diagnostic.ControlCancelled(15)), self.assertRaises(diagnostic.ControlCancelled):
                 verdict()
+
+    def test_exact_scene_trace_records_gpu_failure_cpu_fallback_and_restores_observers(self):
+        namespace = {}
+        exec(diagnostic.SCENE_TRACE, namespace)
+        source = (b'side_effects.append("before")\ntry:\n    bpy.ops.render.render(write_still=True)\n'
+                  b'except Exception:\n    bpy.context.scene.cycles.device = "CPU"\n'
+                  b'    bpy.ops.render.render(write_still=True)\nside_effects.append("after")\n')
+        digest = hashlib.sha256(source).hexdigest()
+        for mode in ('gpu-success', 'cpu-fallback', 'both-fail', 'observer-fail'):
+            with self.subTest(mode=mode):
+                cycles = SimpleNamespace(device='GPU', samples=8)
+                preferences = SimpleNamespace(compute_device_type='METAL',
+                    devices=[SimpleNamespace(type='METAL', name='fixture GPU', use=True)])
+                bpy = SimpleNamespace(context=SimpleNamespace(scene=SimpleNamespace(cycles=cycles,
+                    render=SimpleNamespace(engine='CYCLES')), preferences=SimpleNamespace(addons={
+                    'cycles': SimpleNamespace(preferences=preferences)})))
+                calls, saved, effects, receipt = [], [], [], {}
+                def render(*, write_still):
+                    self.assertTrue(write_still)
+                    self.assertEqual(saved[-1]['renderCalls'][-1]['state'], 'entered')
+                    self.assertEqual(saved[-1]['renderCalls'][-1]['device'], cycles.device)
+                    calls.append(cycles.device)
+                    if mode == 'both-fail' or mode == 'cpu-fallback' and cycles.device == 'GPU':
+                        raise RuntimeError('fixture render failed')
+                bpy.ops = SimpleNamespace(render=SimpleNamespace(render=render))
+                def persist():
+                    if mode == 'observer-fail':
+                        raise OSError('fixture receipt write failed')
+                    saved.append(copy.deepcopy(receipt))
+                previous = sys.gettrace()
+                def prior_trace(*_args):
+                    return None
+                try:
+                    sys.settrace(prior_trace)
+                    with mock.patch.object(namespace['faulthandler'], 'dump_traceback_later') as dump, \
+                         mock.patch.object(namespace['faulthandler'], 'cancel_dump_traceback_later') as cancel:
+                        expected = (namespace['SceneObservationFailed'] if mode == 'observer-fail'
+                                    else RuntimeError if mode == 'both-fail' else None)
+                        def execute():
+                            namespace['observe_scene'](source, dict(bpy=bpy, side_effects=effects), bpy, receipt, persist)
+                        if expected:
+                            with self.assertRaises(expected):
+                                execute()
+                        else:
+                            execute()
+                        dump.assert_called_once_with(20, repeat=True, file=sys.stderr, exit=False)
+                        cancel.assert_called_once_with()
+                        self.assertIs(sys.gettrace(), prior_trace)
+                finally:
+                    sys.settrace(previous)
+                self.assertEqual(hashlib.sha256(source).hexdigest(), digest)
+                if mode == 'observer-fail':
+                    self.assertEqual(calls, [])
+                    self.assertEqual(cycles.device, 'GPU')
+                    self.assertEqual(effects, ['before'])
+                    continue
+                fallback = mode != 'gpu-success'
+                self.assertEqual(calls, ['GPU', 'CPU'] if fallback else ['GPU'])
+                self.assertEqual(effects, ['before'] if mode == 'both-fail' else ['before', 'after'])
+                observed = receipt['renderCalls']
+                self.assertEqual([c['state'] for c in observed],
+                    ['raised', 'raised' if mode == 'both-fail' else 'returned'] if fallback else ['returned'])
+                self.assertEqual([c['line'] for c in observed], [3, 6] if fallback else [3])
+                self.assertEqual([c['ordinal'] for c in observed], list(range(1, len(observed) + 1)))
+                self.assertEqual([c['device'] for c in observed], calls)
+                for call in observed:
+                    self.assertLessEqual(call['enteredMonotonic'], call['endedMonotonic'])
+                    self.assertEqual(call['samples'], 8)
+                    self.assertEqual(call['computeDeviceType'], 'METAL')
+                if fallback:
+                    self.assertEqual(observed[0]['error'], 'RuntimeError')
 
     def test_owned_control_has_empty_stdin_sanitized_env_bounded_output_and_reaps_on_timeout(self):
         with tempfile.TemporaryDirectory() as folder, mock.patch.dict(os.environ,
@@ -373,7 +485,7 @@ class MetalControlTests(unittest.TestCase):
                 seen = {}
                 def run(command, env, root, log):
                     config = json.loads((root / 'control.json').read_text())
-                    self.assertEqual(command, [str(executable), '-I', '-B', '-S', str(root / 'control.py'), str(root / 'control.json')])
+                    self.assertEqual(command, [str(executable), '-I', '-B', '-S', '-u', str(root / 'control.py'), str(root / 'control.json')])
                     scratch = Path(env['HOME']).parent
                     self.assertEqual(env, diagnostic.environment(scratch))
                     self.assertTrue(all(not Path(value).is_relative_to(output) for key, value in env.items() if key != 'LANG'))
