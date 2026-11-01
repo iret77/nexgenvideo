@@ -928,7 +928,8 @@ enum BpyRuntimeSelfTest {
             child = libc.fork()
             if child != -1 or ctypes.get_errno() not in (errno.EAGAIN, errno.EPERM):
                 raise RuntimeError(f'fork was not kernel-blocked: child={child}, errno={ctypes.get_errno()}')
-            bpy.data.objects.new('FORK_BLOCKED', None)
+            marker = bpy.data.objects.new('FORK_BLOCKED', None)
+            bpy.context.scene.collection.objects.link(marker)
             """
         )
         guard forkResult.response.state == .awaitingConfirmation,
@@ -937,6 +938,16 @@ enum BpyRuntimeSelfTest {
         }
         _ = try sessionA.confirm(jobID: forkID, revision: "revision-e")
         forkResult.release()
+
+        let checkpointProbeID = UUID()
+        let checkpointProbe = try sessionA.runJob(
+            id: checkpointProbeID,
+            expectedRevision: "revision-e",
+            source: inspectionSource(label: "after-fork-confirmation", requiredObject: "FORK_BLOCKED")
+        )
+        try assertRecovered(checkpointProbe, label: "fork checkpoint save/reload")
+        _ = try sessionA.cancel(jobID: checkpointProbeID)
+        checkpointProbe.release()
 
         let memoryPolicyEvidence = try BpyMemoryRuntimeAcceptance.run(
             output: output, session: sessionA, counterpart: sessionB, expectedRevision: "revision-e"
