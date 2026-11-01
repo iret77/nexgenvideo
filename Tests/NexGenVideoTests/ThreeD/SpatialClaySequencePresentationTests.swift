@@ -109,21 +109,63 @@ struct SpatialClaySequencePresentationTests {
             reader.add(output)
             try #require(reader.startReading())
             var index = 0
-            var leadingMarker = false, trailingMarker = false
+            var controlCount = 0
+            var controls = SpatialSceneRuntimeAcceptance.ClayMovieControls()
             var previous: SpatialClayRenderer.SequenceFrameTiming?
             while let sample = output.copyNextSampleBuffer() {
                 let timing = SpatialClayRenderer.SequenceFrameTiming(sample)
                 if timing.sampleCount == 0 {
-                    let atStart = index == 0 && CMTimeCompare(timing.presentation, .zero) == 0
-                    let atEnd = index == 3 && CMTimeCompare(timing.presentation, CMTimeRangeGetEnd(trackRange)) == 0
+                    controlCount += 1
                     try #require(outputSettings == nil)
-                    try #require(timing.presentation.isNumeric && timing.duration.isNumeric)
-                    #expect(CMTimeCompare(timing.duration, .zero) == 0)
-                    #expect(CMSampleBufferGetFormatDescription(sample) == nil)
-                    #expect(CMSampleBufferGetDataBuffer(sample) == nil)
-                    try #require((atStart && !leadingMarker) || (atEnd && !trailingMarker))
-                    leadingMarker = leadingMarker || atStart
-                    trailingMarker = trailingMarker || atEnd
+                    let before = controls
+                    let accepted = controls.consume(sample, afterFrames: index, expectedFrames: 3, trackEnd: CMTimeRangeGetEnd(trackRange))
+                    try #require(accepted, "after \(index) of 3 frames: \(sample)")
+                    var duplicate = controls
+                    let repeated = duplicate.consume(sample, afterFrames: index, expectedFrames: 3, trackEnd: CMTimeRangeGetEnd(trackRange))
+                    #expect(!repeated)
+                    var middle = before
+                    let misplaced = middle.consume(sample, afterFrames: 1, expectedFrames: 3, trackEnd: CMTimeRangeGetEnd(trackRange))
+                    #expect(!misplaced)
+                    typealias Input = SpatialSceneRuntimeAcceptance.ClayMovieControls.Input
+                    let original = Input(sample)
+                    var negatives: [Input] = []
+                    func addNegative(_ update: (inout Input) -> Void) {
+                        var copy = original
+                        update(&copy)
+                        negatives.append(copy)
+                    }
+                    addNegative { $0.sampleCount = 1 }
+                    addNegative { $0.formatPresent = true }
+                    addNegative { $0.dataPresent = true }
+                    addNegative { $0.imagePresent = true }
+                    for duration in [CMTime(value: 1, timescale: 24_000), CMTime(value: -1, timescale: 24_000), .indefinite, .invalid] {
+                        addNegative { $0.rawDuration = duration }
+                        addNegative { $0.duration = duration }
+                    }
+                    addNegative { $0.drain = NSNumber(value: 1) }
+                    addNegative { $0.empty = NSNumber(value: 1) }
+                    addNegative { $0.permanent = NSNumber(value: 1) }
+                    addNegative { $0.notification = NSString(string: "not a dictionary") }
+                    addNegative {
+                        $0.drain = NSNumber(value: true)
+                        $0.empty = NSNumber(value: true)
+                    }
+                    if original.drain == nil { addNegative { $0.drain = NSNumber(value: true) } }
+                    if original.empty == nil { addNegative { $0.empty = NSNumber(value: true) } }
+                    if original.permanent == nil { addNegative { $0.permanent = NSNumber(value: true) } }
+                    if original.empty != nil { addNegative { $0.empty = nil } }
+                    addNegative {
+                        $0.presentation = index == 0 ? CMTime(value: 1, timescale: 24_000)
+                            : CMTimeAdd(CMTimeRangeGetEnd(trackRange), CMTime(value: 1, timescale: 24_000))
+                    }
+                    addNegative { $0.presentation = .indefinite }
+                    if index == 0 || original.permanent != nil { addNegative { $0.presentation = .invalid } }
+                    if original.permanent != nil { addNegative { $0.permanent = nil } }
+                    for (negativeIndex, invalid) in negatives.enumerated() {
+                        var state = before
+                        let acceptedInvalid = state.consume(invalid, afterFrames: index, expectedFrames: 3, trackEnd: CMTimeRangeGetEnd(trackRange))
+                        #expect(!acceptedInvalid, "negative \(negativeIndex), after \(index) of 3 frames: \(invalid)")
+                    }
                     continue
                 }
                 try #require(index < 3)
@@ -136,6 +178,7 @@ struct SpatialClaySequencePresentationTests {
                 index += 1
             }
             #expect(index == 3 && reader.status == .completed)
+            #expect(controlCount == (outputSettings == nil ? 4 : 0))
             let last = try #require(previous)
             #expect(last.matches(index: 2, clock: expected, endingAt: CMTimeRangeGetEnd(trackRange)))
         }

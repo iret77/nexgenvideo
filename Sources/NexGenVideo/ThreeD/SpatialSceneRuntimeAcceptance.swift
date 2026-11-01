@@ -1,10 +1,85 @@
 import AVFoundation
 import BpyRuntimeProtocol
+import CoreFoundation
 import CoreGraphics
 import ImageIO
 import Foundation
 
 nonisolated enum SpatialSceneRuntimeAcceptance {
+    struct ClayMovieControls {
+        struct Input {
+            var sampleCount: Int
+            var formatPresent: Bool
+            var dataPresent: Bool
+            var imagePresent: Bool
+            var rawDuration: CMTime
+            var duration: CMTime
+            var presentation: CMTime
+            var drain: CFTypeRef?
+            var empty: CFTypeRef?
+            var permanent: CFTypeRef?
+            var notification: CFTypeRef?
+
+            init(_ sample: CMSampleBuffer) {
+                sampleCount = CMSampleBufferGetNumSamples(sample)
+                formatPresent = CMSampleBufferGetFormatDescription(sample) != nil
+                dataPresent = CMSampleBufferGetDataBuffer(sample) != nil
+                imagePresent = CMSampleBufferGetImageBuffer(sample) != nil
+                rawDuration = CMSampleBufferGetDuration(sample)
+                duration = CMSampleBufferGetOutputDuration(sample)
+                presentation = CMSampleBufferGetOutputPresentationTimeStamp(sample)
+                drain = CMGetAttachment(sample, key: kCMSampleBufferAttachmentKey_DrainAfterDecoding, attachmentModeOut: nil)
+                empty = CMGetAttachment(sample, key: kCMSampleBufferAttachmentKey_EmptyMedia, attachmentModeOut: nil)
+                permanent = CMGetAttachment(sample, key: kCMSampleBufferAttachmentKey_PermanentEmptyMedia, attachmentModeOut: nil)
+                notification = CMGetAttachment(sample, key: kCMSampleBufferAttachmentKey_PostNotificationWhenConsumed, attachmentModeOut: nil)
+            }
+        }
+
+        private enum Role: Hashable { case leading, drain, notification, end }
+        private var seen: Set<Role> = []
+
+        mutating func consume(_ sample: CMSampleBuffer, afterFrames: Int, expectedFrames: Int, trackEnd: CMTime) -> Bool {
+            consume(Input(sample), afterFrames: afterFrames, expectedFrames: expectedFrames, trackEnd: trackEnd)
+        }
+
+        mutating func consume(_ input: Input, afterFrames: Int, expectedFrames: Int, trackEnd: CMTime) -> Bool {
+            let rawDuration = input.rawDuration
+            let duration = input.duration
+            let presentation = input.presentation
+            guard expectedFrames > 0, (0...expectedFrames).contains(afterFrames), trackEnd.isNumeric,
+                  CMTimeCompare(trackEnd, .zero) > 0, input.sampleCount == 0,
+                  !input.formatPresent, !input.dataPresent, !input.imagePresent, rawDuration.isNumeric, duration.isNumeric,
+                  CMTimeCompare(rawDuration, .zero) == 0, CMTimeCompare(duration, .zero) == 0 else { return false }
+            func flag(_ value: CFTypeRef?) -> Bool? {
+                guard let value else { return false }
+                guard CFGetTypeID(value) == CFBooleanGetTypeID() else { return nil }
+                return (value as? NSNumber)?.boolValue
+            }
+            guard let drain = flag(input.drain), let empty = flag(input.empty),
+                  let permanent = flag(input.permanent) else { return false }
+            let notification = input.notification
+            let role: Role
+            if drain, !empty, !permanent, notification == nil {
+                guard afterFrames == expectedFrames,
+                      !presentation.isValid || (presentation.isNumeric && CMTimeCompare(presentation, trackEnd) == 0) else { return false }
+                role = .drain
+            } else if let notification, !drain, !empty, !permanent {
+                guard afterFrames == expectedFrames, CFGetTypeID(notification) == CFDictionaryGetTypeID(),
+                      !presentation.isValid || (presentation.isNumeric && CMTimeCompare(presentation, trackEnd) == 0) else { return false }
+                role = .notification
+            } else if empty, permanent, !drain, notification == nil {
+                guard afterFrames == expectedFrames, presentation.isNumeric,
+                      CMTimeCompare(presentation, trackEnd) == 0 else { return false }
+                role = .end
+            } else {
+                guard !drain, !empty, !permanent, notification == nil, afterFrames == 0,
+                      presentation.isNumeric, CMTimeCompare(presentation, .zero) == 0 else { return false }
+                role = .leading
+            }
+            return seen.insert(role).inserted
+        }
+    }
+
     static func run(serviceName: String, output: URL) async throws -> [String: Bool] {
         try await Task.detached {
             let runtime = BpyRuntimeSession(documentID: "spatial-native-acceptance", serviceName: serviceName)
@@ -144,22 +219,14 @@ nonisolated enum SpatialSceneRuntimeAcceptance {
         guard reader.startReading() else { throw SpatialSceneError.changed }
         defer { if reader.status == .reading { reader.cancelReading() } }
         var index = 0
-        var leadingMarker = false, trailingMarker = false
+        var controls = ClayMovieControls()
         while let sample = samples.copyNextSampleBuffer() {
             let presentation = CMSampleBufferGetOutputPresentationTimeStamp(sample)
             let duration = CMSampleBufferGetOutputDuration(sample)
             if CMSampleBufferGetNumSamples(sample) == 0 {
-                let atStart = index == 0 && CMTimeCompare(presentation, .zero) == 0
-                let atEnd = index == 241 && CMTimeCompare(presentation, CMTimeRangeGetEnd(trackRange)) == 0
-                guard presentation.isNumeric, duration.isNumeric,
-                      CMTimeCompare(duration, .zero) == 0,
-                      CMSampleBufferGetFormatDescription(sample) == nil,
-                      CMSampleBufferGetDataBuffer(sample) == nil,
-                      (atStart && !leadingMarker) || (atEnd && !trailingMarker) else {
-                    throw SpatialSceneError.invalid("The native full shot contains an unexpected empty interval.")
+                guard controls.consume(sample, afterFrames: index, expectedFrames: 241, trackEnd: CMTimeRangeGetEnd(trackRange)) else {
+                    throw SpatialSceneError.invalid("The native full shot contains an unexpected control buffer after \(index) of 241 frames: \(sample)")
                 }
-                leadingMarker = leadingMarker || atStart
-                trailingMarker = trailingMarker || atEnd
                 continue
             }
             guard index <= 240, CMSampleBufferGetNumSamples(sample) == 1,
