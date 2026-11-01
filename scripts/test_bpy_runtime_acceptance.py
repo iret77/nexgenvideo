@@ -205,6 +205,88 @@ class StorageScopeProofTests(unittest.TestCase):
                 self.check(events)
 
 
+class VerifierConfigurationTests(unittest.TestCase):
+    def test_runtime_entrypoint_binds_exact_verifier_config_to_original_storage(self):
+        session = "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"
+        job = "BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB"
+        other = "CCCCCCCC-CCCC-4CCC-8CCC-CCCCCCCCCCCC"
+        cases = [("valid-slot-0", 0, True), ("valid-slot-1", 1, True)] + [
+            (name, 0, False) for name in ["wrong-slot", "wrong-session", "wrong-job", "data-volume",
+                "directory-prefix", "extra-child", "foreign-root", "foreign-executable", "foreign-data-mount",
+                "foreign-storage-session", "foreign-scene-job", "wrong-source", "wrong-fingerprint",
+                "missing-pair", "missing-verification", "missing-scene-job", "missing-protocol-reference", "changed-protocol"]
+        ]
+        for name, slot, accepted in cases:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary).resolve()
+                app, output = root / "NexGenVideo.app", root / "evidence"
+                binary = app / "Contents/MacOS/NexGenVideo"
+                binary.parent.mkdir(parents=True)
+                binary.write_text("native fixture is never executed")
+                output.mkdir()
+                worker = Path("/cache/BpyVolumes") / f"de.h5ventures.nexgenvideo.bpy-service-{slot}" / "mount"
+                data = worker.parent.with_name(worker.parent.name + "-data") / "mount"
+                config = str(worker / session / "jobs" / job / "verification/blender-config")
+                executable = str(app / "Contents/XPCServices" / f"NexGenVideoBpyService{slot}.xpc"
+                                 / "Contents/Resources/BpyRuntime/python/bin/python3.13")
+                reference = {"schema": "nexgenvideo/bpy-open-session/2", "sessionID": session,
+                    "storagePair": {"schema": "nexgenvideo/bpy-storage-pair/1", "id": other,
+                        "worker": {"role": "worker", "pairID": other, "device": 11, "mountPath": str(worker)},
+                        "data": {"role": "data", "pairID": other, "device": 22, "mountPath": str(data)}}}
+                verification = {"jobID": job, "fingerprint": "f" * 64, "sessionRoot": str(data / session),
+                                "blenderUserConfig": config, "executable": executable}
+                scene = {"schema": "nexgenvideo/bpy-scene-acceptance/1", "sourceSHA": "a" * 40,
+                    "jobID": job, "response": {"ok": True, "jobID": job, "jobFingerprint": "f" * 64}}
+                paths = {"wrong-slot": config.replace("bpy-service-0/", "bpy-service-1/"),
+                    "wrong-session": config.replace(session, other), "wrong-job": config.replace(job, other),
+                    "data-volume": str(data / session / "jobs" / job / "verification/blender-config"),
+                    "directory-prefix": str(data / session / "blender-config"), "extra-child": config + "/extra",
+                    "foreign-root": "/foreign/verification/blender-config"}
+                if name in paths:
+                    verification["blenderUserConfig"] = paths[name]
+                elif name == "foreign-executable":
+                    verification["executable"] = executable.replace("BpyService0.xpc", "BpyService1.xpc")
+                elif name == "foreign-data-mount":
+                    reference["storagePair"]["data"]["mountPath"] = str(data).replace("service-0-data", "service-1-data")
+                elif name == "foreign-storage-session":
+                    reference["sessionID"] = other
+                elif name == "foreign-scene-job":
+                    verification["jobID"] = other
+                    verification["blenderUserConfig"] = config.replace(job, other)
+                elif name == "wrong-source":
+                    scene["sourceSHA"] = "b" * 40
+                elif name == "wrong-fingerprint":
+                    scene["response"]["jobFingerprint"] = "e" * 64
+                elif name == "missing-pair":
+                    reference.pop("storagePair")
+                protocol = {"schema": "nexgenvideo/bpy-native-protocol-evidence/4",
+                    "storageReference": base64.b64encode(json.dumps(reference).encode()).decode()}
+                if name == "missing-protocol-reference":
+                    protocol.pop("storageReference")
+                protocol_bytes = json.dumps(protocol).encode()
+                result = {"trustedVerification": verification,
+                          "nativeProtocolEvidenceSHA256": hashlib.sha256(protocol_bytes).hexdigest()}
+                if name == "missing-verification":
+                    result.pop("trustedVerification")
+                elif name == "missing-scene-job":
+                    scene.pop("jobID")
+                if name == "changed-protocol":
+                    protocol_bytes += b"\n"
+                (output / "result.json").write_text(json.dumps(result))
+                (output / "native-protocol-evidence.json").write_bytes(protocol_bytes)
+                (output / "acceptance-scene-response.json").write_text(json.dumps(scene))
+                args = ["bpy_runtime_acceptance.py", str(app), "--mode", "runtime", "--output", str(output),
+                        "--source-sha", "a" * 40, "--deadline", str(time.time() + 30)]
+                with mock.patch.object(sys, "argv", args), mock.patch.object(driver, "supervise") as supervised, \
+                     mock.patch.object(driver.signal, "signal"):
+                    if accepted:
+                        driver.main()
+                    else:
+                        with self.assertRaises((AssertionError, KeyError, ValueError, TypeError)):
+                            driver.main()
+                    supervised.assert_called_once()
+
+
 class OpenCaptureTests(unittest.TestCase):
     def test_isolated_runtime_entrypoint_keeps_working_without_local_imports(self):
         script = Path(__file__).with_name("bpy_runtime_acceptance.py")
