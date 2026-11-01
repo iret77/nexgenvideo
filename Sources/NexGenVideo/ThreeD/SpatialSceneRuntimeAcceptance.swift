@@ -139,8 +139,8 @@ nonisolated enum SpatialSceneRuntimeAcceptance {
         defer { if reader.status == .reading { reader.cancelReading() } }
         for index in 0...240 {
             guard let sample = samples.copyNextSampleBuffer(),
-                  CMTimeCompare(CMSampleBufferGetPresentationTimeStamp(sample), CMTime(value: Int64(index) * 1_001, timescale: 24_000)) == 0,
-                  CMTimeCompare(CMSampleBufferGetDuration(sample), CMTime(value: index == 240 ? 501 : 1_001, timescale: 24_000)) == 0 else {
+                  CMTimeCompare(CMSampleBufferGetOutputPresentationTimeStamp(sample), CMTime(value: Int64(index) * 1_001, timescale: 24_000)) == 0,
+                  CMTimeCompare(CMSampleBufferGetOutputDuration(sample), CMTime(value: index == 240 ? 501 : 1_001, timescale: 24_000)) == 0 else {
                 throw SpatialSceneError.invalid("The native full shot changed a frame timestamp or its partial last sample.")
             }
         }
