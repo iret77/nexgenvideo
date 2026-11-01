@@ -217,7 +217,11 @@ A retained detach receipt can be fetched again after a lost reply. The owned chi
 records normal exit and signal death; only normal supervisor exit proves local child cleanup when
 the host connection has already disappeared. The supervisor alone escalates termination of
 its unreaped direct child, then waits for the exact `waitpid` result before exiting. Cleanup failures
-retain the owner, session slot and storage until reaping succeeds. Reverse-XPC replies remain serviceable during close, cancel, retirement and shutdown. Checkpoint
+retain the owner, session slot and storage until reaping succeeds. Reverse-XPC replies remain serviceable during close, cancel, retirement and shutdown.
+Logical retirement blocks ordinary calls and late replies while the captured connection serves cleanup.
+Owner close first performs its session-close exchange with the existing ten-second bound; other retirements
+perform it after host reaping within the remaining original five-second awake budget, before connection invalidation;
+an unacknowledged close leaves the service's ownership and retirement gates in force. Checkpoint
 and upload hashing still run synchronously, when no worker is executing. A host observation lease includes the
 connection, execution nonce, epoch, sequence and kernel process identities. Completed processes,
 including unreaped zombies, are distinguished from unreadable live processes; permission errors never
@@ -281,7 +285,8 @@ actually completes. Compact Job ID/fingerprint receipts prevent a released resul
 Confirmation checks the host-staged scene hash and retains its exact checkpoint file in the service
 and host. Failed, cancelled, timed-out, resource-limited, crashed or rejected jobs cannot be confirmed.
 
-XPC interruption, invalidation, timeout, and service death invalidate the transport. The service
+XPC interruption, invalidation, timeout, and service death retire the transport. A live reverse endpoint
+remains available for authenticated cleanup through the bounded close exchange. The service
 also closes only the session IDs owned by a client connection when that connection disappears. Reopening uses
 a new transport/session identity and restores only the host's exact last-confirmed scene bytes and
 revision. An incomplete revision/checkpoint pair fails closed. A failed open removes the service
@@ -315,7 +320,10 @@ it. No stopped job retries automatically or reduces its quality.
 
 Cancellation requests process cleanup without retiring the executing call's admission. The call keeps
 its permit through its last receipt read, including when cleanup finishes first. The executing call owns
-the permit before monitor installation so installation failures also retire unpublished permits. Native acceptance
+the permit before monitor installation so installation failures also retire unpublished permits. Each live host
+launch independently retains that same canonical permit until its terminal replay or launch-failure record exists,
+or its launcher is torn down.
+Caller completion and process cleanup cannot remove a receipt still needed for service sampling or detach. Native acceptance
 pauses a running caller before a receipt read, completes cancellation and cleanup, then resumes that
 same caller and verifies cancellation, absent child processes and final permit retirement.
 

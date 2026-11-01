@@ -31,8 +31,42 @@ private final class BpyTransportRecovery: @unchecked Sendable {
     private let completed = DispatchGroup()
     private let lock = NSLock()
     private var exited = false
+    private let connection: NSXPCConnection?
 
-    init() { completed.enter() }
+    init(connection: NSXPCConnection?) {
+        self.connection = connection
+        completed.enter()
+    }
+
+    func closeSession(_ identifier: UUID, deadline: TimeInterval?) -> Bool {
+        guard let connection, let deadline else { return false }
+        return Self.closeSession(connection, identifier: identifier, deadline: deadline)
+    }
+
+    static func closeSession(_ connection: NSXPCConnection, identifier: UUID, deadline: TimeInterval) -> Bool {
+        guard let request = try? JSONEncoder().encode(BpySessionReference(sessionID: identifier)) else { return false }
+        while let now = BpyRuntimeClock.read()?.awake, now < deadline {
+            let box = BpyReplyBox(), ready = DispatchSemaphore(value: 0)
+            guard let service = connection.remoteObjectProxyWithErrorHandler({ error in
+                if box.store(error: error) { ready.signal() }
+            }) as? BpyRuntimeServiceProtocol else { return false }
+            service.closeSession(request) { data in
+                if box.store(response: data) { ready.signal() }
+            }
+            guard ready.wait(timeout: .now() + (deadline - now)) == .success else { return false }
+            let received = box.load()
+            guard received.2 == nil, let data = received.0,
+                  let response = try? JSONDecoder().decode(BpyServiceResponse.self, from: data) else { return false }
+            if response.ok { return true }
+            guard response.message == "session cleanup is still in progress" else { return false }
+            if let current = BpyRuntimeClock.read()?.awake, current < deadline {
+                Thread.sleep(forTimeInterval: min(0.005, deadline - current))
+            }
+        }
+        return false
+    }
+
+    func invalidate() { connection?.invalidate() }
 
     func finish(exited: Bool) {
         lock.lock()
@@ -1071,6 +1105,10 @@ final class BpyRuntimeSession: @unchecked Sendable {
         }
         lock.lock()
         let previousCheckpoint = confirmedSceneFile
+        guard sessionID == request.sessionID, !transportInvalidated, !closed, !closing else {
+            lock.unlock()
+            throw BpyRuntimeError.unavailable("The 3D XPC service is unavailable.")
+        }
         confirmedRevision = revision
         confirmedSceneFile = replacementCheckpoint
         installedCheckpoint = true
@@ -1539,13 +1577,11 @@ final class BpyRuntimeSession: @unchecked Sendable {
         let identifier = sessionID
         let activeConnection = connection
         lock.unlock()
-        if activeConnection != nil {
-            let request = BpySessionReference(sessionID: identifier)
-            _ = try? call(timeout: 10, allowClosing: true) { service, reply in
-                service.closeSession(try Self.encode(request), withReply: reply)
-            }
+        var ownerClosed = false
+        if let activeConnection, let now = BpyRuntimeClock.read()?.awake {
+            ownerClosed = BpyTransportRecovery.closeSession(activeConnection, identifier: identifier, deadline: now + 10)
         }
-        markTransportInvalid(identifier, disposition: .close)
+        markTransportInvalid(identifier, disposition: .close, ownerClosed: ownerClosed)
         lock.lock()
         let volumes = [(BpyStorageRole.worker, storageVolume), (BpyStorageRole.data, storageDataVolume)]
         let preparation = claimedStoragePreparation
@@ -1855,7 +1891,10 @@ final class BpyRuntimeSession: @unchecked Sendable {
         try requireExecutionActive(admission.id, cancellation: cancellation)
         try lock.withLock {
             guard sessionID == identifier, !closed, !closing else { throw BpyAdmissionFailure.closed }
-            opened = true; transportInvalidated = false; lastReadyResponse = response
+            guard !transportInvalidated else {
+                throw BpyRuntimeError.unavailable("The 3D XPC service is unavailable.")
+            }
+            opened = true; lastReadyResponse = response
             openAdmission = admission
         }
         return response
@@ -2380,16 +2419,17 @@ final class BpyRuntimeSession: @unchecked Sendable {
         installConnection()
     }
 
-    private func markTransportInvalid(_ identifier: UUID, disposition: BpyTransportDisposition = .loss) {
+    private func markTransportInvalid(_ identifier: UUID, disposition: BpyTransportDisposition = .loss, ownerClosed: Bool = false) {
         lock.lock()
         guard sessionID == identifier, !transportInvalidated else {
             lock.unlock()
             return
         }
-        let recovery = BpyTransportRecovery()
+        let recovery = BpyTransportRecovery(connection: connection)
+        let deadline = BpyRuntimeClock.read().map { $0.awake + BpyMemoryState.cleanupBudget }
         transportRecovery = recovery
-        let invalidConnection = connection
         let monitor = hostMonitor
+        let memory = memoryCoordinator
         transportInvalidated = true
         opened = false
         validatedCandidates.removeAll()
@@ -2399,10 +2439,19 @@ final class BpyRuntimeSession: @unchecked Sendable {
         }
         let invalidLeases = unconfirmed.compactMap { cachedResults[$0]?.lease }.filter { !$0.isDetached }
         lock.unlock()
-        invalidConnection?.invalidate()
         if let monitor {
-            monitor.recover(disposition: disposition) { recovery.finish(exited: $0) }
-        } else { recovery.finish(exited: false) }
+            monitor.recover(disposition: disposition) { exited in
+                let originalDeadline = memory.cleanupDeadline(for: identifier)
+                let closeDeadline = deadline.map { min($0, originalDeadline ?? $0) }
+                let acknowledged = disposition == .close ? ownerClosed : recovery.closeSession(identifier, deadline: closeDeadline)
+                bpyOpenDiagnostics.notice("transport.retired session=\(identifier.uuidString) disposition=\(disposition.rawValue) serviceClosed=\(acknowledged) hostRecovered=\(exited)")
+                recovery.invalidate()
+                recovery.finish(exited: exited)
+            }
+        } else {
+            recovery.invalidate()
+            recovery.finish(exited: false)
+        }
         for lease in invalidLeases { lease.invalidate() }
     }
 
@@ -2727,7 +2776,7 @@ final class BpyRuntimeSession: @unchecked Sendable {
     private func currentConnection(allowClosing: Bool = false) throws -> (NSXPCConnection, UUID) {
         lock.lock()
         defer { lock.unlock() }
-        guard !closed, (!closing || allowClosing), let connection else {
+        guard !closed, !transportInvalidated, (!closing || allowClosing), let connection else {
             throw BpyRuntimeError.unavailable("The 3D XPC service is unavailable.")
         }
         return (connection, sessionID)
@@ -2758,6 +2807,9 @@ final class BpyRuntimeSession: @unchecked Sendable {
         }
         let value = box.load()
         if let error = value.2 { throw error }
+        guard lock.withLock({ sessionID == transportID && !transportInvalidated }) else {
+            throw BpyRuntimeError.unavailable("The 3D XPC service is unavailable.")
+        }
         guard let data = value.0 else {
             throw BpyRuntimeError.unavailable("Empty 3D service reply.")
         }
@@ -2791,6 +2843,9 @@ final class BpyRuntimeSession: @unchecked Sendable {
         }
         let value = box.load()
         if let error = value.2 { throw error }
+        guard lock.withLock({ sessionID == transportID && !transportInvalidated }) else {
+            throw BpyRuntimeError.unavailable("The 3D XPC service is unavailable.")
+        }
         guard let responseData = value.0, let chunk = value.1 else {
             throw BpyRuntimeError.unavailable("Empty 3D service reply.")
         }
