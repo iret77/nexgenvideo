@@ -318,6 +318,9 @@ and a 120-second child budget. Collection may finish through `T + 15` only after
 have ended before `T`; one final bounded status read observes the original deadline without extending
 it. No stopped job retries automatically or reduces its quality.
 
+A launch failure after admission and before the first child release ends the accepted job as failed once
+cleanup is proven. Unlaunched launch refusals and environmental stops still fail admission.
+
 Cancellation requests process cleanup without retiring the executing call's admission. The call keeps
 its permit through its last receipt read, including when cleanup finishes first. The executing call owns
 the permit before monitor installation so installation failures also retire unpublished permits. Each live host

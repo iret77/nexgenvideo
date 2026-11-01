@@ -1840,10 +1840,12 @@ private final class ServiceSession: @unchecked Sendable {
         if let reason = result.limitReason {
             lock.access {
                 guard job.state == .running else { return }
-                job.state = reason == "deadline" ? .timedOut : .resourceLimited
-                job.message = reason == "deadline"
-                    ? "job exceeded \(job.timeoutSeconds) seconds"
-                    : "job exceeded the \(reason) limit"
+                job.state = BpyRuntimeJobState.terminal(forStopReason: reason)
+                switch job.state {
+                case .timedOut: job.message = "job exceeded \(job.timeoutSeconds) seconds"
+                case .resourceLimited: job.message = "job exceeded the \(reason) limit"
+                default: job.message = "job stopped by the host: \(reason)"
+                }
                 job.stdout = boundedLogText(result.log, bytes: request.limits.stdoutBytes)
                 job.source = nil
                 job.terminalAt = Date()
@@ -1926,8 +1928,10 @@ private final class ServiceSession: @unchecked Sendable {
         if let reason = result.limitReason {
             lock.access {
                 guard job.state == .running else { return }
-                job.state = reason == "deadline" ? .timedOut : .resourceLimited
-                job.message = "verification exceeded the \(reason) limit"
+                job.state = BpyRuntimeJobState.terminal(forStopReason: reason)
+                job.message = [.timedOut, .resourceLimited].contains(job.state)
+                    ? "verification exceeded the \(reason) limit"
+                    : "verification stopped by the host: \(reason)"
                 job.terminalAt = Date()
             }
             throw CocoaError(.fileReadCorruptFile)

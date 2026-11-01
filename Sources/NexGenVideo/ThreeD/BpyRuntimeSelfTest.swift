@@ -977,7 +977,9 @@ enum BpyRuntimeSelfTest {
             timeoutSeconds: 30,
             diagnosticSupervisorIdentityWriteFailure: true
         )
-        guard identityWriteFailure.response.state == .failed else {
+        guard identityWriteFailure.response.state == .failed,
+              identityWriteFailure.response.message == BpyAdmissionFailure.launchFailed.errorDescription,
+              identityWriteFailure.response.outputs.isEmpty, identityWriteFailure.stagedOutputs.isEmpty else {
             throw BpyRuntimeError.invalidOutput(
                 "The injected supervisor identity-write failure was not reported."
             )
@@ -1001,7 +1003,9 @@ enum BpyRuntimeSelfTest {
             timeoutSeconds: 30,
             diagnosticSupervisorIdentityCaptureFailure: true
         )
-        guard identityCaptureFailure.response.state == .failed else {
+        guard identityCaptureFailure.response.state == .failed,
+              identityCaptureFailure.response.message == BpyAdmissionFailure.launchFailed.errorDescription,
+              identityCaptureFailure.response.outputs.isEmpty, identityCaptureFailure.stagedOutputs.isEmpty else {
             throw BpyRuntimeError.invalidOutput(
                 "The injected supervisor identity-capture failure was not reported."
             )
