@@ -106,7 +106,8 @@ config = json.loads(Path(sys.argv[1]).read_text())
 root = Path(config["root"])
 receipt = dict(schema="nexgenvideo/bpy-metal-control-result/1", scope=config["scope"],
     appSourceSHA=config["source"], sceneSHA256=config["sceneSHA256"], pid=os.getpid(),
-    executable=str(Path(sys.executable).resolve()), python=sys.version.split()[0], phases=[], renderCalls=[])
+    executable=str(Path(sys.executable).resolve()), python=sys.version.split()[0], phases=[], renderCalls=[],
+    metalAsyncPSOCreation=os.environ.get("CYCLES_METAL_ASYNC_PSO_CREATION"))
 def persist():
     temporary = root / "result.part"
     temporary.write_text(json.dumps(receipt, sort_keys=True) + "\n")
@@ -117,6 +118,8 @@ def save(state):
     persist()
 save("loading")
 try:
+    if receipt["metalAsyncPSOCreation"] != "0":
+        raise RuntimeError("synchronous Metal diagnostic flag differs")
     runtime = Path(config["runtime"])
     worker_path = Path(config["worker"])
     worker_bytes = worker_path.read_bytes()
@@ -216,7 +219,8 @@ def source_input(source, path):
 
 
 def environment(root):
-    return {"USER": "nexgenvideo", "HOME": str(root / "home"), "TMPDIR": str(root / "tmp"), "LANG": "en_US.UTF-8",
+    return {"USER": "nexgenvideo", "CYCLES_METAL_ASYNC_PSO_CREATION": "0",
+            "HOME": str(root / "home"), "TMPDIR": str(root / "tmp"), "LANG": "en_US.UTF-8",
             "BLENDER_USER_CONFIG": str(root / "blender-config"),
             "BLENDER_USER_SCRIPTS": str(root / "blender-scripts"),
             "BLENDER_USER_DATAFILES": str(root / "blender-data")}
@@ -501,7 +505,8 @@ def verdict(root, supervision, source, digest, executable, bindings):
     if (result.get("schema") != "nexgenvideo/bpy-metal-control-result/1"
         or result.get("scope") != SCOPE or result.get("appSourceSHA") != source
         or result.get("sceneSHA256") != digest or result.get("pid") != supervision["pid"]
-        or result.get("executable") != str(executable) or result.get("python") != "3.13.15"):
+        or result.get("executable") != str(executable) or result.get("python") != "3.13.15"
+        or result.get("metalAsyncPSOCreation") != "0"):
         return proof
     phases = result.get("phases")
     allowed = ["loading", "runtimeLoaded", "rendering", "completed"]
@@ -519,7 +524,8 @@ def verdict(root, supervision, source, digest, executable, bindings):
         return proof
     proof["childState"] = result["state"]
     proof["child"] = {k: result[k] for k in ("state", "device", "samples", "engine", "computeDeviceType",
-        "devices", "workerSHA256", "nativeModule", "bpyModuleSHA256", "phases", "renderCalls", "error", "message") if k in result}
+        "devices", "workerSHA256", "nativeModule", "bpyModuleSHA256", "phases", "renderCalls",
+        "metalAsyncPSOCreation", "error", "message") if k in result}
     for index, phase in enumerate(phases):
         end = phases[index + 1]["monotonic"] if index + 1 < len(phases) else supervision["endedMonotonic"]
         proof["phaseDurations"].append(dict(state=phase["state"], seconds=end - phase["monotonic"]))
@@ -621,6 +627,7 @@ def exit_status(receipt):
 def collect(app, output, source, original_input=None):
     output.mkdir(mode=0o700, parents=True, exist_ok=False)
     receipt = dict(schema="nexgenvideo/bpy-metal-control/1", scope=SCOPE,
+        diagnosticVariant="metal-synchronous-pso",
         appSourceSHA=source, harnessSHA=os.environ.get("GITHUB_SHA"),
         executionRunID=os.environ.get("GITHUB_RUN_ID"), status="unverified", phaseDurations=[],
         differences=["Seatbelt is not applied.", "App pressure, disk/file and physical-volume supervision are not applied.",
@@ -632,6 +639,7 @@ def collect(app, output, source, original_input=None):
             "Exact-scene line tracing records state before each render call; a line event alone does not attest native renderer entry.",
             "A 20-second faulthandler watchdog repeats Python-only stacks into the bounded output; no native C stack is captured.",
             "This control supplies fixed USER=nexgenvideo; older App launch environments may omit USER.",
+            "This diagnostic requests synchronous Metal pipeline creation with CYCLES_METAL_ASYNC_PSO_CREATION=0; production uses its default.",
             "Production runs save_as_mainfile after the scene; this control stops after the scene.",
             "This diagnostic runs before native App selftests in its job VM. Later native results are supplemental; VM order does not prove a clean physical GPU or cold OS-managed Metal caches."])
     scratch, bindings, executable, identity, runtime = None, None, None, None, None

@@ -47,7 +47,7 @@ class MetalControlTests(unittest.TestCase):
     def result(executable, bindings, digest, source='a' * 40):
         return dict(schema='nexgenvideo/bpy-metal-control-result/1', scope=diagnostic.SCOPE,
             appSourceSHA=source, sceneSHA256=digest, pid=123, executable=str(executable),
-            state='completed', python='3.13.15', bpy='5.2.2', engine='CYCLES', samples=8,
+            state='completed', python='3.13.15', bpy='5.2.2', engine='CYCLES', samples=8, metalAsyncPSOCreation='0',
             device='GPU', computeDeviceType='METAL', devices=[dict(type='METAL', name='fixture GPU', use=True)],
             renderCalls=[dict(ordinal=1, line=10, state='returned', enteredWall=1002.1, enteredMonotonic=102.1,
                 endedWall=1002.5, endedMonotonic=102.5, device='GPU', engine='CYCLES', samples=8,
@@ -199,6 +199,8 @@ class MetalControlTests(unittest.TestCase):
                                ('bpyModuleSHA256', 'f' * 64), ('computeDeviceType', 'NONE'), ('devices', [])]:
                 with self.subTest(key=key):
                     self.assertEqual(verdict(dict(receipt, **{key: value}))['status'], 'invalidReceipt')
+            for flag in (None, '1'):
+                self.assertEqual(verdict(dict(receipt, metalAsyncPSOCreation=flag))['status'], 'invalidReceipt')
             ended = verdict(control=dict(supervision, timedOut=True))
             self.assertEqual(ended['status'], 'timedOutAfterCompletion')
             self.assertEqual(ended['childState'], 'completed')
@@ -308,11 +310,13 @@ class MetalControlTests(unittest.TestCase):
 
     def test_owned_control_has_empty_stdin_sanitized_env_bounded_output_and_reaps_on_timeout(self):
         with tempfile.TemporaryDirectory() as folder, mock.patch.dict(os.environ,
-                {'GH_TOKEN': 'fixture-token', 'PROVIDER_SECRET': 'fixture-secret', 'ANTHROPIC_API_KEY': 'fixture-api'}):
+                {'GH_TOKEN': 'fixture-token', 'PROVIDER_SECRET': 'fixture-secret', 'ANTHROPIC_API_KEY': 'fixture-api',
+                 'CYCLES_METAL_ASYNC_PSO_CREATION': '1'}):
             base = Path(folder)
             environment = diagnostic.environment(base)
-            self.assertEqual(set(environment), {'USER', 'HOME', 'TMPDIR', 'LANG', 'BLENDER_USER_CONFIG', 'BLENDER_USER_SCRIPTS', 'BLENDER_USER_DATAFILES'})
+            self.assertEqual(set(environment), {'USER', 'CYCLES_METAL_ASYNC_PSO_CREATION', 'HOME', 'TMPDIR', 'LANG', 'BLENDER_USER_CONFIG', 'BLENDER_USER_SCRIPTS', 'BLENDER_USER_DATAFILES'})
             self.assertEqual(environment['USER'], 'nexgenvideo')
+            self.assertEqual(environment['CYCLES_METAL_ASYNC_PSO_CREATION'], '0')
             popen, killpg, select = subprocess.Popen, os.killpg, diagnostic.selectors.DefaultSelector.select
             original_mask = signal.pthread_sigmask(signal.SIG_BLOCK, set())
             snapshot_root = base / 'group-inspection'
@@ -336,7 +340,7 @@ class MetalControlTests(unittest.TestCase):
                 child.wait(timeout=5)
             grandchild_code = "import os,subprocess,sys;from pathlib import Path;p=subprocess.Popen([sys.executable,'-I','-c','import time;time.sleep(30)'],stdin=subprocess.DEVNULL);Path('grandchild.part').write_text(str(p.pid));os.replace('grandchild.part','grandchild.pid');print('grandchild-ready',flush=True)"
             cases = [
-                ('output', "import os,sys;assert sys.stdin.buffer.read()==b'';assert os.environ['USER']=='nexgenvideo';assert all(k not in os.environ for k in ['GH_TOKEN','PROVIDER_SECRET','ANTHROPIC_API_KEY']);sys.stdout.buffer.write(b'x'*(5*1024*1024))", 5),
+                ('output', "import os,sys;assert sys.stdin.buffer.read()==b'';assert os.environ['USER']=='nexgenvideo';assert os.environ['CYCLES_METAL_ASYNC_PSO_CREATION']=='0';assert all(k not in os.environ for k in ['GH_TOKEN','PROVIDER_SECRET','ANTHROPIC_API_KEY']);sys.stdout.buffer.write(b'x'*(5*1024*1024))", 5),
                 ('timeout', 'import time;time.sleep(30)', .15),
                 ('cancel', 'import time;time.sleep(30)', 5),
                 ('real-signal', 'import time;time.sleep(30)', 5),
@@ -508,6 +512,8 @@ class MetalControlTests(unittest.TestCase):
                     self.assertIn('original runtime bytes or inventory changed', result['errorMessage'])
                 else:
                     self.assertEqual(result['status'], 'gpuBranchCompletedDiagnosticOnly')
+                    self.assertEqual(result['diagnosticVariant'], 'metal-synchronous-pso')
+                    self.assertEqual(result['child']['metalAsyncPSOCreation'], '0')
                     self.assertTrue(result['runtimeUnchanged'])
                     self.assertEqual(result['workerSHA256'], hashlib.sha256(worker.read_bytes()).hexdigest())
                     self.assertEqual(result['bpyModuleSHA256'], hashlib.sha256(module.read_bytes()).hexdigest())
