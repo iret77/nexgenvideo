@@ -9,11 +9,14 @@ enum FixtureVideo {
         let seconds: Double
     }
 
-    static func write(scenes: [Scene], fps: Int32 = 5, size: Int = 320, transform: CGAffineTransform = .identity) async throws -> URL {
+    static func write(scenes: [Scene], fps: Int32 = 5, size: Int = 320, transform: CGAffineTransform = .identity,
+                      presentation: (timescale: Int32, ticks: [Int64], end: Int64)? = nil,
+                      fileType: AVFileType = .mp4) async throws -> URL {
         let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("fixture-\(UUID().uuidString).mp4")
-        let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
-        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
+            .appendingPathComponent("fixture-\(UUID().uuidString).\(fileType == .mov ? "mov" : "mp4")")
+        let writer = try AVAssetWriter(outputURL: url, fileType: fileType)
+        defer { if writer.status == .writing { writer.cancelWriting() } }
+        var settings: [String: Any] = [
             AVVideoCodecKey: AVVideoCodecType.h264,
             AVVideoWidthKey: size,
             AVVideoHeightKey: size,
@@ -22,8 +25,14 @@ enum FixtureVideo {
                 AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
                 AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
             ],
-        ])
+        ]
+        if presentation != nil { settings[AVVideoCompressionPropertiesKey] = [AVVideoAllowFrameReorderingKey: false] }
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
         input.transform = transform
+        if let presentation {
+            writer.movieTimeScale = presentation.timescale
+            input.mediaTimeScale = presentation.timescale
+        }
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(
             assetWriterInput: input,
             sourcePixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
@@ -36,12 +45,23 @@ enum FixtureVideo {
         for scene in scenes {
             let buffer = try solidBuffer(rgb: scene.rgb, size: size, pool: adaptor.pixelBufferPool)
             for _ in 0..<Int(scene.seconds * Double(fps)) {
+                let deadline = Date().addingTimeInterval(10)
                 while !input.isReadyForMoreMediaData {
+                    guard writer.status == .writing, Date() < deadline else { throw NSError(domain: "FixtureVideo", code: 3) }
                     try await Task.sleep(for: .milliseconds(10))
                 }
-                adaptor.append(buffer, withPresentationTime: CMTime(value: frameIndex, timescale: fps))
+                let time: CMTime
+                if let presentation {
+                    guard presentation.ticks.indices.contains(Int(frameIndex)) else { throw NSError(domain: "FixtureVideo", code: 4) }
+                    time = CMTime(value: presentation.ticks[Int(frameIndex)], timescale: presentation.timescale)
+                } else { time = CMTime(value: frameIndex, timescale: fps) }
+                guard adaptor.append(buffer, withPresentationTime: time) else { throw writer.error ?? NSError(domain: "FixtureVideo", code: 5) }
                 frameIndex += 1
             }
+        }
+        if let presentation {
+            guard Int(frameIndex) == presentation.ticks.count else { throw NSError(domain: "FixtureVideo", code: 6) }
+            writer.endSession(atSourceTime: CMTime(value: presentation.end, timescale: presentation.timescale))
         }
         input.markAsFinished()
         await writer.finishWriting()

@@ -355,6 +355,15 @@ extension SpatialClayRenderer {
         }
     }
 
+    static func sequenceSampleHasExpectedPresentation(_ sample: CMSampleBuffer, index: Int, clock: SequenceClock) -> Bool {
+        guard (0..<clock.count).contains(index) else { return false }
+        let presentation = CMSampleBufferGetOutputPresentationTimeStamp(sample)
+        let duration = CMSampleBufferGetOutputDuration(sample)
+        return presentation.isNumeric && duration.isNumeric
+            && CMTimeCompare(presentation, clock.presentation(index)) == 0
+            && CMTimeCompare(duration, clock.sampleDuration(index)) == 0
+    }
+
     static func sequenceClock(_ timing: SpatialClaySequenceTiming, numerator: Int, denominator: Int,
                               count: Int) throws -> SequenceClock {
         guard timing.numerator > 0, timing.denominator > 0, numerator > 0, numerator <= Int32.max,
@@ -512,6 +521,38 @@ extension SpatialClayRenderer {
         try await withTaskCancellationHandler { try await task.value } onCancel: { cancellation.cancel(); task.cancel() }
     }
 
+    private static func recordSequenceTimingFailure(_ sample: CMSampleBuffer?, index: Int, clock: SequenceClock,
+                                                    candidate: SpatialClaySequenceCandidate, reader: AVAssetReader) {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["GITHUB_ACTIONS"] == "true", environment["NGV_SELFTEST_BPY"]?.isEmpty == false,
+              let directory = environment["NGV_BPY_COMMAND_EVIDENCE"], !directory.isEmpty else { return }
+        func time(_ value: CMTime) -> [String: Any] {
+            ["value": value.value, "timescale": value.timescale, "flags": value.flags.rawValue, "epoch": value.epoch]
+        }
+        var actual: [String: Any] = ["present": false]
+        if let sample {
+            actual = ["present": true, "sampleCount": CMSampleBufferGetNumSamples(sample),
+                "rawPresentation": time(CMSampleBufferGetPresentationTimeStamp(sample)),
+                "rawDuration": time(CMSampleBufferGetDuration(sample)),
+                "outputPresentation": time(CMSampleBufferGetOutputPresentationTimeStamp(sample)),
+                "outputDuration": time(CMSampleBufferGetOutputDuration(sample))]
+            let image = CMSampleBufferGetImageBuffer(sample)
+            actual["imagePresent"] = image != nil
+            if let image { actual["width"] = CVPixelBufferGetWidth(image); actual["height"] = CVPixelBufferGetHeight(image) }
+        }
+        let error = reader.error as NSError?
+        let record: [String: Any] = ["schema": "nexgenvideo/clay-movie-timing-failure/1", "partialDiagnosticOnly": true,
+            "candidateID": candidate.proof.id.uuidString, "frameIndex": index, "frameCount": clock.count,
+            "expectedPresentation": time(clock.presentation(index)), "expectedDuration": time(clock.sampleDuration(index)),
+            "actual": actual, "readerStatus": reader.status.rawValue,
+            "readerErrorDomain": error?.domain ?? "", "readerErrorCode": error?.code ?? 0]
+        let url = URL(fileURLWithPath: directory, isDirectory: true)
+            .appendingPathComponent("clay-movie-timing-failure-\(candidate.proof.id.uuidString).json")
+        if let data = try? JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]) {
+            try? data.write(to: url, options: [.atomic])
+        }
+    }
+
     private static func verifySequenceMovieOffMain(_ candidate: SpatialClaySequenceCandidate,
         cancellation: BpyOperationCancellation, isCancelled: @escaping @Sendable () -> Bool
     ) async throws {
@@ -555,9 +596,10 @@ extension SpatialClayRenderer {
             try BpyMediaDecode.withPixels(width: proof.request.width, height: proof.request.height,
                 encodedBytes: BpyRuntimeLimits.maximumOutputBytes, owner: candidate.workOwner, cancellation: cancellation,
                 checking: { try reading.check(); if isCancelled() { throw CancellationError() } }) {
-                guard let sample = output.copyNextSampleBuffer(), let image = CMSampleBufferGetImageBuffer(sample),
-                      CMTimeCompare(CMSampleBufferGetPresentationTimeStamp(sample), clock.presentation(index)) == 0,
-                      CMTimeCompare(CMSampleBufferGetDuration(sample), clock.sampleDuration(index)) == 0 else {
+                let sample = output.copyNextSampleBuffer()
+                let image = sample.flatMap { CMSampleBufferGetImageBuffer($0) }
+                guard let sample, let image, sequenceSampleHasExpectedPresentation(sample, index: index, clock: clock) else {
+                    recordSequenceTimingFailure(sample, index: index, clock: clock, candidate: candidate, reader: reader)
                     throw SpatialSceneError.invalid("The complete Clay movie lost a frame or changed its exact timing.")
                 }
                 try verifyMovieFrame(image, expected: sequenceImage(index, request: proof.request, files: candidate.files, readFile: {
