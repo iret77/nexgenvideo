@@ -67,7 +67,7 @@ struct BpyHostConfigurationTests {
             transport: transport, job: job, kind: .job, insertedAt: 1, admissionDeadline: 31, timeout: 30, diagnosticAutoexec: false),
             limits: .init(), workerMount: "/worker", dataMount: "/data",
             root: root + (mode == .job ? "/worker" : "/verification"), sitePackages: "/runtime/site-packages",
-            readPaths: [scene], sourceSHA256: String(repeating: "a", count: 64),
+            readPaths: [scene, "/data/" + transport.uuidString + "/jobs/" + job.uuidString + "/inputs"], sourceSHA256: String(repeating: "a", count: 64),
             fingerprint: String(repeating: "c", count: 64), diagnosticDeniedPaths: [])
     }
 
@@ -97,6 +97,25 @@ struct BpyHostConfigurationTests {
             #expect(environment["PYTHONDONTWRITEBYTECODE"] == "1")
             for key in ["HOME", "TMPDIR", "BLENDER_USER_CONFIG", "BLENDER_USER_SCRIPTS", "BLENDER_USER_DATAFILES"] {
                 #expect(environment[key]?.hasPrefix(root + "/") == true)
+            }
+        }
+    }
+
+    @Test func jobRequiresItsExactHostValidatedInputDirectoryReadGrant() throws {
+        let context = context()
+        let service = configuration(context)
+        let bytes = try JSONSerialization.data(withJSONObject: service)
+        _ = try BpyHostConfiguration.freeze(bytes, context: context)
+        let directory = try #require(service["inputDirectory"] as? String)
+        for substitute in [directory + "/fixture.json", directory + "/..", "/foreign/inputs"] {
+            let missingDirectory = BpyHostConfiguration.Context(mode: context.mode, identity: context.identity,
+                limits: context.limits, workerMount: context.workerMount, dataMount: context.dataMount,
+                root: context.root, sitePackages: context.sitePackages,
+                readPaths: context.readPaths.subtracting([directory]).union([substitute]),
+                sourceSHA256: context.sourceSHA256, fingerprint: context.fingerprint,
+                diagnosticDeniedPaths: context.diagnosticDeniedPaths)
+            #expect(throws: (any Error).self) {
+                _ = try BpyHostConfiguration.freeze(bytes, context: missingDirectory)
             }
         }
     }

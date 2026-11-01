@@ -76,6 +76,7 @@ nonisolated enum BpyHostConfiguration {
                   config.jobID == job.uuidString, config.sessionRoot == session, config.workerRoot == workerSession,
                   config.sourcePath == session + "/jobs/" + job.uuidString + "/source.py",
                   config.inputDirectory == session + "/jobs/" + job.uuidString + "/inputs",
+                  context.readPaths.contains(config.inputDirectory ?? ""),
                   config.outputDirectory == context.root + "/outputs", config.limits == Geometry(context.limits),
                   config.manifest == nil, config.scenePath == nil else { throw SpatialSceneError.changed }
             if let checkpoint = config.confirmedScene {

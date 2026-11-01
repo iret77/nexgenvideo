@@ -1680,6 +1680,7 @@ private final class ServiceSession: @unchecked Sendable {
         do {
             let directory = jobDirectory(job.id)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: inputDirectory(job.id), withIntermediateDirectories: true)
             let sourceURL = directory.appendingPathComponent("source.py")
             guard let source = lock.access({ job.source }) else {
                 throw CocoaError(.fileReadCorruptFile)

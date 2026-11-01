@@ -34,8 +34,10 @@ The host also fixes `CYCLES_METAL_ASYNC_PSO_CREATION=0` before loading bpy. Blen
 to select its existing [synchronous Metal pipeline-creation path](https://github.com/blender/blender/blob/v5.2.2/intern/cycles/device/metal/kernel.mm).
 The unrestricted fresh-first comparison hung in the configured GPU render with the default
 asynchronous path; changing only this flag completed the same scene without entering its CPU
-fallback. This keeps Metal rendering, scene quality and execution limits intact. The constrained
-App path still requires fresh native acceptance; the diagnostic alone does not qualify it.
+fallback. This keeps Metal rendering, scene quality and execution limits intact. A subsequent
+[cold constrained App run](https://github.com/iret77/nexgenvideo/actions/runs/41261960051)
+completed the GPU scene and trusted verification in 19.6 seconds under the original 120-second
+limit. That run then failed the staged-input protocol probe; full native qualification remains open.
 
 Each XPC bundle contains its own `Contents/Resources/BpyRuntime` and its supervisor in
 `Contents/MacOS`. No runtime executable or script falls back to the outer app bundle. The two
@@ -255,6 +257,12 @@ requires a regular single-link file, hashes and streams the same descriptor, and
 device, size, mtime, and ctime afterward. The service rechecks bytes, hashes, names, counts, links,
 and aggregate limits.
 
+The service creates an input directory for every executed job, including jobs with no input files.
+The host opens that exact directory on the trusted data volume with no symlink
+traversal and validates its device, owner, and directory type. Its literal read grant permits
+enumerating staged input names; reading each file still requires that file's separate grant.
+The frozen job configuration requires the directory grant before launch.
+
 A Job ID is immutable within a session. Its SHA-256 fingerprint length-prefixes the protocol tag,
 expected confirmed revision, requested and effective timeout, exact source bytes, ordered input
 names/sizes/hashes, and diagnostic options. The client and service compute it independently. An identical retry joins
@@ -419,7 +427,10 @@ explicitly marked unavailable, and a thrown error is retained. Only the last rep
 8 MiB; oversized replies are marked as not retained. `warm-job.json` identifies the warm no-op job
 before execution. When the self-test run fails before shutdown, `runtime-failure-observation.json`
 preserves the partial resource trace. These diagnostics are not acceptance evidence; the complete
-result gates remain unchanged.
+result gates remain unchanged. A failed protocol-probe terminal state also writes one partial
+`job-response-*.json` record behind the same CI, self-test and evidence-directory gate: the last
+successfully decoded reply up to 8 MiB, the initial replay response, no permit receipt and
+service-declared output names. It is diagnostic data, not acceptance evidence.
 
 `.github/workflows/bpy-source-closure.yml` is a manual/reusable source-evidence workflow bound to
 `github.sha`. Its Linux job assembles the exact source/notice closure and independently validates the

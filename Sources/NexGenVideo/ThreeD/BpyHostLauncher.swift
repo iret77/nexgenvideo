@@ -655,6 +655,14 @@ nonisolated final class BpyHostLauncher: @unchecked Sendable {
                 readPaths.append(try path(file))
             }
         }
+        var inputDirectory: Int32 = -1
+        defer { if inputDirectory >= 0 { Darwin.close(inputDirectory) } }
+        if spec.mode == .job {
+            guard let job = spec.job else { throw POSIXError(.EPERM) }
+            inputDirectory = try open(transport.uuidString + "/jobs/" + job.uuidString + "/inputs",
+                relativeTo: dataMount, device: pair.data.device, directory: true)
+            readPaths.append(try path(inputDirectory))
+        }
         let frozen = try BpyHostConfiguration.freeze(configurationBytes, context: .init(mode: spec.mode,
             identity: launch.binding.identity, limits: launch.binding.limits,
             workerMount: pair.worker.mountPath, dataMount: pair.data.mountPath, root: rootPath,
