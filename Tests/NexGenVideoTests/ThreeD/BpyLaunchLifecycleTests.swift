@@ -201,4 +201,64 @@ struct BpyLaunchLifecycleTests {
         #expect(observation.finishes == 0)
         #expect(!observation.events.contains("inspect-worker"))
     }
+
+    @Test func recoveryWaitsForSpawnReportEOFAndWorkerExitBeforeReleasingOwnership() {
+        var now = 0.0, pauses = 0
+        var spawned = false, reportEOF = false, workerExited = false, released = false
+        let result = BpyLaunchLifecycle.recover(until: 5,
+            clock: { .init(awake: now, continuous: now) }, cleanupDeadline: { 5 },
+            cleanup: { if spawned && reportEOF && workerExited { released = true } },
+            recovered: { released }, pause: { duration in
+                #expect(!released)
+                now += duration; pauses += 1
+                if pauses == 1 { spawned = true }
+                if pauses == 2 { reportEOF = true }
+                if pauses == 3 { workerExited = true }
+            })
+        #expect(result)
+        #expect(spawned && reportEOF && workerExited && released)
+        #expect(pauses >= 3)
+        #expect(now <= 5)
+    }
+
+    @Test func recoveryKeepsAnUnobservedWorkerOwnedAtTheOriginalDeadline() {
+        var now = 0.0, attempts = 0
+        let result = BpyLaunchLifecycle.recover(until: 0.01,
+            clock: { .init(awake: now, continuous: now) }, cleanupDeadline: { nil },
+            cleanup: { attempts += 1 }, recovered: { false }, pause: { now += $0 })
+        #expect(!result)
+        #expect(attempts > 1)
+        #expect(now == 0.01)
+    }
+
+    @Test func recoveryNeverExtendsEarlierCleanupOrAcceptsInvalidAndLateClocks() {
+        var now = 0.0
+        let extended = BpyLaunchLifecycle.recover(until: 5,
+            clock: { .init(awake: now, continuous: now) },
+            cleanupDeadline: { now < 0.005 ? 0.006 : 0.02 }, cleanup: {},
+            recovered: { now >= 0.007 }, pause: { now += $0 })
+        #expect(!extended)
+        #expect(now <= 0.006)
+        let unavailableClocks: [Double?] = [nil, Double.nan, -Double.infinity, -1]
+        for value in unavailableClocks {
+            var cleaned = false
+            let result = BpyLaunchLifecycle.recover(until: 5,
+                clock: { value.map { BpyClockReading(awake: $0, continuous: $0) } },
+                cleanupDeadline: { nil }, cleanup: { cleaned = true }, recovered: { true }, pause: { _ in })
+            #expect(!result)
+            #expect(!cleaned)
+        }
+        for completedAt in [0.5, 2.1] {
+            now = 1
+            let result = BpyLaunchLifecycle.recover(until: 2,
+                clock: { .init(awake: now, continuous: now) }, cleanupDeadline: { nil },
+                cleanup: { now = completedAt }, recovered: { true }, pause: { _ in })
+            #expect(!result)
+        }
+        now = 1
+        let latePredicate = BpyLaunchLifecycle.recover(until: 2,
+            clock: { .init(awake: now, continuous: now) }, cleanupDeadline: { nil }, cleanup: {},
+            recovered: { now = 2.1; return true }, pause: { _ in })
+        #expect(!latePredicate)
+    }
 }

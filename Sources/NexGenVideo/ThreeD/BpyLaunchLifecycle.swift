@@ -1,3 +1,4 @@
+import BpyRuntimeProtocol
 import Foundation
 
 nonisolated enum BpyLaunchLifecycle {
@@ -52,5 +53,27 @@ nonisolated enum BpyLaunchLifecycle {
             return false
         }
         return true
+    }
+
+    static func recover(until deadline: TimeInterval?, clock: () -> BpyClockReading?,
+                        cleanupDeadline: () -> TimeInterval?, cleanup: () -> Void,
+                        recovered: () -> Bool, pause: (TimeInterval) -> Void) -> Bool {
+        guard var limit = deadline, limit.isFinite, limit >= 0 else { return false }
+        var previous = 0.0
+        while true {
+            if let original = cleanupDeadline() {
+                guard original.isFinite, original >= 0 else { return false }
+                limit = min(limit, original)
+            }
+            guard let before = clock(), before.isValid, before.awake >= previous, before.awake <= limit else { return false }
+            cleanup()
+            let done = recovered()
+            guard let after = clock(), after.isValid, after.awake >= before.awake, after.awake <= limit else { return false }
+            if done { return true }
+            let remaining = limit - after.awake
+            guard remaining > 0 else { return false }
+            previous = after.awake
+            pause(min(0.005, remaining))
+        }
     }
 }

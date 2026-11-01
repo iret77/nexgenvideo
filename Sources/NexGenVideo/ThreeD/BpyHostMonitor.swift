@@ -107,10 +107,29 @@ nonisolated final class BpyHostMonitor: NSObject, BpyHostMonitorProtocol, @unche
     func recover(disposition: BpyTransportDisposition, timeout: TimeInterval = 5,
                  completion: @escaping @Sendable (Bool) -> Void) {
         guard timeout.isFinite, timeout >= 0, timeout <= 5 else { completion(false); return }
+        let deadline = BpyRuntimeClock.read().map { $0.awake + timeout }
         launcher.beginRecovery(reason: disposition.stop)
         recovery.async { [self] in
-            launcher.cleanup()
-            completion(launcher.recovered)
+            let exited = BpyLaunchLifecycle.recover(until: deadline, clock: BpyRuntimeClock.read,
+                cleanupDeadline: { launcher.recoveryDeadline }, cleanup: { launcher.cleanup() },
+                recovered: { launcher.recovered }, pause: { Thread.sleep(forTimeInterval: $0) })
+            if !exited { recordRecoveryFailure(deadline: deadline) }
+            completion(exited)
+        }
+    }
+
+    private func recordRecoveryFailure(deadline: TimeInterval?) {
+        guard let path = ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"], path.hasPrefix("/") else { return }
+        var directory = ObjCBool(false)
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &directory), directory.boolValue else { return }
+        var record = launcher.recoveryDiagnostic()
+        record["deadline"] = deadline.map { String($0) } ?? "unavailable"
+        record["capturedAt"] = BpyRuntimeClock.read().map { String($0.awake) } ?? "unavailable"
+        do {
+            let bytes = try JSONSerialization.data(withJSONObject: record, options: [.sortedKeys])
+            try bytes.write(to: URL(fileURLWithPath: path).appendingPathComponent("recovery-failure-\(UUID().uuidString).json"), options: .atomic)
+        } catch {
+            FileHandle.standardError.write(Data("SELFTEST_BPY_RECOVERY_DIAGNOSTIC_FAIL\n".utf8))
         }
     }
 }
