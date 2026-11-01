@@ -2449,6 +2449,25 @@ final class BpyRuntimeSession: @unchecked Sendable {
             "response": bytes.base64EncodedString()] as [String: Any], options: [.sortedKeys])
     }
 
+    func nativeExecMarker(jobID: UUID, marker: String, workerPID: Int32) throws -> Bool {
+        guard ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"]?.isEmpty == false,
+              marker == "NGV_PARENT_DEATH_EXEC_READY_" + jobID.uuidString, workerPID > 1 else {
+            throw BpyRuntimeError.unavailable("The execution marker requires explicit acceptance.")
+        }
+        let context = lock.withLock { (sessionID, storageVolume, jobAdmissions[jobID]) }
+        guard let volume = context.1, context.2?.transport == context.0 else { throw SpatialSceneError.changed }
+        let mount = try BpyStoragePaths.validateMount(volume.lease, maximumBytes: limits.physicalStorageBytes)
+        defer { Darwin.close(mount) }
+        let bytes = Data("{\"marker\":\"\(marker)\",\"pid\":\(workerPID)}".utf8)
+        let relative = context.0.uuidString + "/jobs/" + jobID.uuidString + "/worker/outputs/exec-ready.json"
+        do {
+            let file = try BpyRuntimeFile.borrow(relative,
+                in: URL(fileURLWithPath: volume.lease.mountPath), maximum: 1_024, expectedSHA256: Self.sha256(bytes))
+            defer { file.release() }
+            return try file.verifiedData(maximum: 1_024) == bytes
+        } catch let error as POSIXError where error.code == .ENOENT { return false }
+    }
+
     func nativeProtocolProbe(confirmedJobID: UUID) throws -> Data {
         guard ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"]?.isEmpty == false else {
             throw BpyRuntimeError.unavailable("The native protocol probe requires explicit acceptance.")

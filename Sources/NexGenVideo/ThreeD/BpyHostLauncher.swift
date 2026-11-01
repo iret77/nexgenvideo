@@ -1062,7 +1062,41 @@ nonisolated final class BpyHostLauncher: @unchecked Sendable {
         }
     }
 
+    var recoveryDeadline: TimeInterval? {
+        let permits = lock.withLock { Set(launches.values.filter { !$0.reaped }.map(\.spec.permit)) }
+        return permits.compactMap { id in
+            (try? memory.receipt(id))?.cleanupStarted.map { $0 + BpyMemoryState.cleanupBudget }
+        }.min()
+    }
+
     var recovered: Bool { lock.withLock { launches.values.allSatisfy(\.reaped) } }
+
+    func recoveryDiagnostic() -> [String: Any] {
+        let pending = lock.withLock { launches.values.filter { !$0.reaped } }
+        let records = pending.prefix(64).map { launch in
+            var record: [String: String] = launch.lock.withLock { [
+                "execution": launch.request.execution.uuidString, "permit": launch.spec.permit.uuidString,
+                "spawnFinished": String(launch.spawnFinished), "released": String(launch.released),
+                "childReleased": String(launch.childReleased), "workerEnded": String(launch.workerEnded),
+                "supervisorPID": launch.supervisor.map { String($0.pid) } ?? "none",
+                "workerPID": launch.worker.map { String($0.pid) } ?? "none",
+                "childPID": launch.childPID.map { String($0) } ?? "none",
+                "termination": launch.termination.map { String(describing: $0) } ?? "none",
+                "launchError": launch.launchError.map { String($0) } ?? "none",
+                "report": String(describing: launch.streams.report),
+                "output": String(describing: launch.streams.output), "errors": String(describing: launch.streams.errors)
+            ] }
+            if let receipt = try? memory.receipt(launch.spec.permit) {
+                record["cleanupComplete"] = String(receipt.cleanupComplete)
+                record["cleanupStarted"] = receipt.cleanupStarted.map { String($0) } ?? "none"
+                record["cleanupFinished"] = receipt.cleanupFinishedAt.map { String($0) } ?? "none"
+            }
+            return record
+        }
+        return ["schema": "nexgenvideo/bpy-recovery-failure/1", "transport": transport.uuidString,
+                "pendingCount": pending.count, "truncated": pending.count > records.count,
+                "pending": records, "recoveredAtCapture": recovered]
+    }
 
     private var isSelfTest: Bool {
         ["NGV_SELFTEST_BPY", "NGV_SELFTEST_BPY_BOUNDARY", "NGV_SELFTEST_BPY_HOST_CRASH"].contains {

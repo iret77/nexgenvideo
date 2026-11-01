@@ -1033,11 +1033,45 @@ enum BpyRuntimeSelfTest {
         try assertRecovered(afterIdentityCaptureFailure, label: "supervisor identity-capture failure")
         _ = try sessionA.cancel(jobID: afterIdentityCaptureFailureID)
 
+        let heldDeathID = UUID(), heldDeathBox = BpySelfTestBox()
+        DispatchQueue.global(qos: .userInitiated).async {
+            heldDeathBox.store(Result {
+                try sessionA.runJob(id: heldDeathID, expectedRevision: "revision-e",
+                    source: "import time; time.sleep(120)", timeoutSeconds: 30,
+                    diagnosticDeferExecutionAuthorization: true)
+            })
+        }
+        try waitUntilRunning(sessionA, jobID: heldDeathID)
+        let heldDeathStatus = try sessionA.status(jobID: heldDeathID)
+        guard heldDeathStatus.firstRelease == nil, heldDeathStatus.activeProcessAuthorizationID != nil,
+              let heldPID = heldDeathStatus.activeProcessIdentifier,
+              let heldStart = heldDeathStatus.activeProcessStartAbsoluteTime,
+              let heldServicePID = try sessionA.ready().runtime?.serviceProcessIdentifier,
+              heldServicePID > 1, Darwin.kill(heldServicePID, SIGKILL) == 0,
+              await heldDeathBox.wait(timeout: .seconds(10)),
+              let heldDeathOutcome = heldDeathBox.load(), case .failure = heldDeathOutcome else {
+            throw BpyRuntimeError.invalidOutput("The service-death probe did not retain an unreleased launch.")
+        }
+        let heldDeathReady = try sessionA.ready()
+        guard heldDeathReady.confirmedRevision == "revision-e",
+              heldDeathReady.runtime?.serviceProcessIdentifier != heldServicePID,
+              try BpyKernelInspection.process(heldPID)?.start != heldStart else {
+            throw BpyRuntimeError.invalidOutput("An unreleased launch blocked service-death recovery.")
+        }
+
         let parentDeathID = UUID()
+        let parentDeathMarker = "NGV_PARENT_DEATH_EXEC_READY_" + parentDeathID.uuidString
         let parentDeathSource = """
         import os
         import sys
-        os.execv(sys.executable, [sys.executable, '-I', '-c', 'import time; time.sleep(120)'])
+        ready_program = (
+            "import json, os, sys, time; from pathlib import Path; "
+            "destination = Path(sys.argv[1]); temporary = destination.with_suffix('.tmp'); "
+            "temporary.write_text(json.dumps({'marker':sys.argv[2], 'pid':os.getpid()}, sort_keys=True, separators=(',',':'))); "
+            "os.replace(temporary, destination); time.sleep(120)"
+        )
+        os.execv(sys.executable, [sys.executable, '-I', '-c',
+            ready_program, str(output_dir / 'exec-ready.json'), '\(parentDeathMarker)'])
         """
         let parentDeathBox = BpySelfTestBox()
         DispatchQueue.global(qos: .userInitiated).async {
@@ -1050,8 +1084,8 @@ enum BpyRuntimeSelfTest {
                 )
             })
         }
-        try waitUntilRunning(sessionA, jobID: parentDeathID)
-        guard let servicePID = readyA.runtime?.serviceProcessIdentifier,
+        let parentDeathWorker = try waitUntilExecReady(sessionA, jobID: parentDeathID, marker: parentDeathMarker)
+        guard let servicePID = try sessionA.ready().runtime?.serviceProcessIdentifier,
               servicePID > 1, Darwin.kill(servicePID, SIGKILL) == 0,
               await parentDeathBox.wait(timeout: .seconds(10)),
               let parentDeathOutcome = parentDeathBox.load(),
@@ -1065,7 +1099,8 @@ enum BpyRuntimeSelfTest {
         try restoredProtocol.checkpoint.write(to: output.appendingPathComponent("native-protocol-restored-checkpoint.blend"), options: .atomic)
         try protocolEvidence.write(to: output.appendingPathComponent("native-protocol-evidence.json"), options: .atomic)
         guard reopened.confirmedRevision == "revision-e",
-              reopened.runtime?.serviceProcessIdentifier != servicePID else {
+              reopened.runtime?.serviceProcessIdentifier != servicePID,
+              try BpyKernelInspection.process(parentDeathWorker.pid)?.start != parentDeathWorker.start else {
             throw BpyRuntimeError.invalidOutput("The host checkpoint was not restored after service death.")
         }
         do {
@@ -1520,7 +1555,10 @@ enum BpyRuntimeSelfTest {
             "failedOpenReleased": true,
             "closeBeforeOpenReleased": true,
             "serviceRecoveryRevision": reopened.confirmedRevision ?? "",
+            "serviceDeathBeforeReleaseRecovered": true,
             "parentDeathJobFailedClosed": true,
+            "parentDeathExecObserved": true,
+            "parentDeathWorkerExitObserved": true,
             "execveOrphanReaped": true,
             "threeRealDocuments": true,
             "thirdDocumentInitiallyDenied": true,
@@ -1777,6 +1815,25 @@ enum BpyRuntimeSelfTest {
                response.activeProcessStartAbsoluteTime != nil,
                response.activeProcessExecutable != nil {
                 return
+            }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        throw BpyRuntimeError.timedOut
+    }
+
+    private static func waitUntilExecReady(_ session: BpyRuntimeSession, jobID: UUID,
+                                          marker: String) throws -> BpyObservedProcess {
+        let executable = try BpyRuntimePath.canonical(
+            session.bundledRuntimeRoot.appendingPathComponent("python/bin/python3.13"))
+        let deadline = Date().addingTimeInterval(10)
+        while Date() < deadline {
+            let response = try session.status(jobID: jobID)
+            if response.ok, response.jobID == jobID, response.state == .running, response.firstRelease != nil,
+               let pid = response.activeWorkerProcessIdentifier,
+               let worker = try BpyKernelInspection.process(pid), worker.executable == executable,
+               try BpyKernelInspection.matches(worker),
+               try session.nativeExecMarker(jobID: jobID, marker: marker, workerPID: pid) {
+                return worker
             }
             Thread.sleep(forTimeInterval: 0.05)
         }

@@ -229,7 +229,12 @@ become a successful zero-resource sample. No worker-writable registry or global 
 termination authority.
 Recovery covers the supervisor and its single recorded worker; the kernel fork barrier prevents
 additional Python descendants. Detach receipts are bounded by the 65,536-execution transport cap.
-Recovery's original five-second cleanup budget includes queue drain. If an external actor forcibly kills
+Recovery waits for asynchronous spawn completion, report EOF and exact worker-exit proof within the
+earliest original cleanup deadline. Queue delay consumes that same five-second budget; a supervisor's
+exit alone never completes recovery. Service-death probes separately stop a still-held launch and
+an exec-replaced worker. The latter writes an atomic marker; both probes independently check the
+captured process identity after recovery.
+If an external actor forcibly kills
 the supervisor while its transport is lost, a surviving worker or unavailable cleanup proof retains
 the service slot and storage for restart recovery. This case does not authorize foreign-PID signals
 or a successful cleanup claim.

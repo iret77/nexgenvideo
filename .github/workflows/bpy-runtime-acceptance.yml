@@ -433,7 +433,10 @@ jobs:
             and .resourceSupervisorRecovered == true
             and .crashState == "crashed"
             and .serviceRecoveryRevision == "revision-e"
+            and .serviceDeathBeforeReleaseRecovered == true
             and .parentDeathJobFailedClosed == true
+            and .parentDeathExecObserved == true
+            and .parentDeathWorkerExitObserved == true
             and .execveOrphanReaped == true
             and .threeRealDocuments == true
             and .thirdDocumentInitiallyDenied == true
