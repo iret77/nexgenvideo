@@ -2621,7 +2621,17 @@ final class BpyRuntimeSession: @unchecked Sendable {
                 }
                 completion.append(.init(method: method, request: request.base64EncodedString(), response: response.base64EncodedString()))
             })
-        guard complete.state == .awaitingConfirmation else { throw BpyRuntimeError.invalidOutput("The staged service job failed.") }
+        guard complete.state == .awaitingConfirmation else {
+            let error = BpyRuntimeError.invalidOutput("The staged service job failed.")
+            if let directory = Self.jobDiagnosticDirectory {
+                let reply = completion.last.flatMap { Data(base64Encoded: $0.response) }
+                Self.recordJobDiagnostic(directory: directory, jobID: stagedID, response: complete, initial: joined,
+                    serverReply: reply.flatMap { $0.count <= Self.jobDiagnosticReplyBytes ? $0 : nil },
+                    serverMethod: completion.last?.method ?? "unavailable", serverReplyBytes: reply?.count ?? 0,
+                    permit: nil, error: error, returned: false, stagedOutputNames: complete.outputs.map(\.name))
+            }
+            throw error
+        }
         guard complete.jobID == stagedID, complete.jobFingerprint == fingerprint else {
             throw BpyRuntimeError.invalidOutput("The completed protocol job has another identity.")
         }
