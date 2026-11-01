@@ -31,6 +31,7 @@
             "3D workers start without relying on the system account database, verify the bundled runtime identity and use synchronous Metal pipeline creation to avoid stalled compilation. Scripts can list their approved inputs while other files remain inaccessible.",
             "3D runtime startup reports closed input or output channels as errors instead of terminating the runtime process.",
             "Stopped 3D workers remain owned and can be terminated and reaped during cancellation.",
+            "Canceling a running 3D job reports the correct cancellation status.",
             "3D work responds to system memory pressure and retains stopped workers and their resources until cleanup finishes.",
             "Canceling location preparation leaves Bible and Clay previews ready to retry. Completed location edits preserve their new state and Undo step.",
             "GPU effect libraries use the same macOS 26 deployment target as the app when built with newer SDKs."

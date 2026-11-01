@@ -313,6 +313,12 @@ and a 120-second child budget. Collection may finish through `T + 15` only after
 have ended before `T`; one final bounded status read observes the original deadline without extending
 it. No stopped job retries automatically or reduces its quality.
 
+Cancellation requests process cleanup without retiring the executing call's admission. The call keeps
+its permit through its last receipt read, including when cleanup finishes first. The executing call owns
+the permit before monitor installation so installation failures also retire unpublished permits. Native acceptance
+pauses a running caller before a receipt read, completes cancellation and cleanup, then resumes that
+same caller and verifies cancellation, absent child processes and final permit retirement.
+
 Runtime and canonical scenes use streamed, hash-verified files. Worker storage stays independently
 bounded by `W = diskBytes`, with its existing 64 MiB image floor. The separate data image provisions
 `ceilGiB(I + 3 * max(I, O) + min(W, 4 * O) + 64 MiB)`, at most 8 GiB per image. Sequence-owned

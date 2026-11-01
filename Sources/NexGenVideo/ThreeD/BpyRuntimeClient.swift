@@ -635,23 +635,34 @@ final class BpyRuntimeSession: @unchecked Sendable {
         diagnosticDeferExecutionAuthorization: Bool = false,
         diagnosticSupervisorIdentityWriteFailure: Bool = false,
         diagnosticSupervisorIdentityCaptureFailure: Bool = false,
+        diagnosticReceiptBarrier: (@Sendable (BpyAdmissionIdentity) throws -> Void)? = nil,
         cancellation: BpyOperationCancellation = .init()
     ) throws -> BpyRuntimeJobResult {
         submissionLock.lock()
         defer { submissionLock.unlock() }
         try requireOperation(cancellation)
+        if diagnosticReceiptBarrier != nil {
+            guard ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"]?.isEmpty == false else {
+                throw BpyRuntimeError.invalidInput("The receipt barrier requires native runtime acceptance.")
+            }
+        }
         let ownsExecution = lock.withLock { cachedResults[id] == nil && !submittedJobIDs.contains(id) }
         lock.withLock { operationTokens[id] = cancellation }
         let cancellationRegistration = cancellation.observe { [weak self] in
-            if ownsExecution { self?.abandon(jobID: id) }
+            if ownsExecution { self?.requestCancellation(jobID: id) }
         }
         defer { withExtendedLifetime(cancellationRegistration) {} }
         var returned = false
         var pendingLease: BpyRuntimeResultLease?
+        var ownedAdmission: BpyAdmissionIdentity?
         defer {
             if !returned && ownsExecution {
                 pendingLease?.release()
                 abandon(jobID: id)
+                if let ownedAdmission {
+                    memoryCoordinator.cancel(ownedAdmission.id)
+                    memoryCoordinator.forget(ownedAdmission.id)
+                }
                 requestTransferRelease(jobID: id)
                 if let reservation = lock.withLock({ outputReservations.removeValue(forKey: id) }) {
                     BpyRetentionLedger.shared.settle(reservation)
@@ -760,9 +771,11 @@ final class BpyRuntimeSession: @unchecked Sendable {
         else {
             admission = try admit(kind: .job, job: id, timeout: Double(timeout),
                 diagnosticAutoexec: diagnosticAutoexecPositiveControl, cancellation: cancellation)
+            ownedAdmission = admission
             try installAdmission(admission, source: source, diagnosticDeniedPaths: diagnosticDeniedPaths)
             lock.withLock { jobAdmissions[id] = admission }
         }
+        ownedAdmission = admission
         try requireOperation(cancellation)
         lock.withLock {
             submittedJobIDs.insert(id)
@@ -806,6 +819,7 @@ final class BpyRuntimeSession: @unchecked Sendable {
             response: response,
             timeoutSeconds: timeout,
             diagnosticDeferExecutionAuthorization: diagnosticDeferExecutionAuthorization,
+            diagnosticReceiptBarrier: diagnosticReceiptBarrier,
             cancellation: cancellation, admission: admission,
             diagnosticDirectory: diagnosticDirectory, initialServerReply: initialServerReply,
             initialServerReplyBytes: initialServerReplyBytes
@@ -823,6 +837,7 @@ final class BpyRuntimeSession: @unchecked Sendable {
     private func finish(
         jobID: UUID, fingerprint: String, response initialResponse: BpyServiceResponse,
         timeoutSeconds: Int, diagnosticDeferExecutionAuthorization: Bool,
+        diagnosticReceiptBarrier: (@Sendable (BpyAdmissionIdentity) throws -> Void)?,
         cancellation: BpyOperationCancellation, admission: BpyAdmissionIdentity,
         diagnosticDirectory: URL? = nil, initialServerReply: Data? = nil, initialServerReplyBytes: Int = 0
     ) throws -> BpyRuntimeJobResult {
@@ -849,6 +864,7 @@ final class BpyRuntimeSession: @unchecked Sendable {
             let response = try waitForTerminal(jobID: jobID, fingerprint: fingerprint,
                 response: initialResponse, admission: admission, cancellation: cancellation,
                 diagnosticDeferExecutionAuthorization: diagnosticDeferExecutionAuthorization,
+                diagnosticReceiptBarrier: diagnosticReceiptBarrier,
                 observing: diagnosticDirectory == nil ? nil : { method, _, data in
                     lastServerMethod = method
                     lastServerReplyBytes = data.count
@@ -908,10 +924,12 @@ final class BpyRuntimeSession: @unchecked Sendable {
     private func waitForTerminal(jobID: UUID, fingerprint: String, response initial: BpyServiceResponse,
                                  admission: BpyAdmissionIdentity, cancellation: BpyOperationCancellation,
                                  diagnosticDeferExecutionAuthorization: Bool = false, authorizeInitial: Bool = true,
+                                 diagnosticReceiptBarrier: (@Sendable (BpyAdmissionIdentity) throws -> Void)? = nil,
                                  observing: ((String, Data, Data) -> Void)? = nil) throws -> BpyServiceResponse {
         var response = initial
         var polling = BpyTerminalPollState()
         var canAuthorize = authorizeInitial
+        var receiptBarrier = diagnosticReceiptBarrier
         let memory = memoryCoordinator
         func deadline(_ receipt: BpyMemoryCoordinator.PermitReceipt) -> TimeInterval {
             receipt.cleanupStarted.map { $0 + 5 }
@@ -924,6 +942,11 @@ final class BpyRuntimeSession: @unchecked Sendable {
                     observing?("authorizeProcess", request, response)
                 })
                 if ![.accepted, .running].contains(response.state) { break }
+            }
+            if let barrier = receiptBarrier, response.activeWorkerProcessIdentifier != nil,
+               response.activeProcessAuthorizationID == nil {
+                receiptBarrier = nil
+                try barrier(admission)
             }
             let before = try memory.receipt(admission.id)
             let now = try BpyRuntimeClock.awakeSeconds()
@@ -1660,11 +1683,14 @@ final class BpyRuntimeSession: @unchecked Sendable {
     }
 
     private func abandon(jobID: UUID) {
+        requestCancellation(jobID: jobID)
+        _ = lock.withLock { jobAdmissions.removeValue(forKey: jobID) }
+    }
+
+    private func requestCancellation(jobID: UUID) {
         let context = lock.withLock { (jobAdmissions[jobID], submittedJobIDs.contains(jobID), stagingJobIDs.contains(jobID), sessionID) }
         if let identity = context.0 {
             memoryCoordinator.cancel(identity.id)
-            _ = lock.withLock { jobAdmissions.removeValue(forKey: jobID) }
-            memoryCoordinator.forget(identity.id)
         }
         guard context.1 || context.2 else { return }
         DispatchQueue.global(qos: .utility).async { [weak self] in

@@ -747,18 +747,60 @@ enum BpyRuntimeSelfTest {
 
         let cancelID = UUID()
         let cancelBox = BpySelfTestBox()
+        let cancelAdmissionBox = BpyBoundaryReplyBox()
+        let cancelReceiptResume = DispatchSemaphore(value: 0)
+        defer { cancelReceiptResume.signal() }
+        try JSONSerialization.data(withJSONObject: [
+            "schema": "nexgenvideo/bpy-cancellation-start/1",
+            "sourceSHA": Bundle.main.object(forInfoDictionaryKey: "NGVSourceCommit") as? String ?? "",
+            "hostPID": ProcessInfo.processInfo.processIdentifier,
+            "jobID": cancelID.uuidString
+        ], options: [.prettyPrinted, .sortedKeys]).write(to: output.appendingPathComponent("native-cancellation-start.json"), options: .atomic)
         DispatchQueue.global(qos: .userInitiated).async {
             cancelBox.store(Result {
                 try sessionA.runJob(
                     id: cancelID,
                     expectedRevision: "revision-b",
                     source: "while True: pass",
-                    timeoutSeconds: 30
+                    timeoutSeconds: 30,
+                    diagnosticReceiptBarrier: { admission in
+                        cancelAdmissionBox.store(response: try JSONEncoder().encode(admission))
+                        guard cancelReceiptResume.wait(timeout: .now() + 10) == .success else {
+                            throw BpyRuntimeError.invalidOutput("The cancellation receipt barrier did not resume.")
+                        }
+                    }
                 )
             })
         }
         try waitUntilRunning(sessionA, jobID: cancelID)
+        let barrierDeadline = ProcessInfo.processInfo.systemUptime + 10
+        while cancelAdmissionBox.load().0 == nil {
+            if let early = cancelBox.load() {
+                switch early {
+                case .success(let result):
+                    result.release()
+                    throw BpyRuntimeError.invalidOutput("The cancellation job settled before its receipt barrier.")
+                case .failure(let error): throw error
+                }
+            }
+            guard ProcessInfo.processInfo.systemUptime < barrierDeadline else { throw BpyRuntimeError.timedOut }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        guard let admissionBytes = cancelAdmissionBox.load().0 else { throw BpyRuntimeError.timedOut }
+        let cancelAdmission = try JSONDecoder().decode(BpyAdmissionIdentity.self, from: admissionBytes)
+        guard cancelAdmission.job == cancelID else { throw SpatialSceneError.changed }
         _ = try sessionA.cancel(jobID: cancelID)
+        let cleanupDeadline = ProcessInfo.processInfo.systemUptime + 5
+        var cancelledReceipt = try BpyMemoryCoordinator.shared.receipt(cancelAdmission.id)
+        while !cancelledReceipt.cleanupComplete {
+            guard ProcessInfo.processInfo.systemUptime < cleanupDeadline else { throw BpyRuntimeError.timedOut }
+            try await Task.sleep(for: .milliseconds(10))
+            cancelledReceipt = try BpyMemoryCoordinator.shared.receipt(cancelAdmission.id)
+        }
+        guard cancelledReceipt.stop == .cancelled, cancelledReceipt.firstRelease != nil else {
+            throw BpyRuntimeError.invalidOutput("Cancellation lost its original execution receipt.")
+        }
+        cancelReceiptResume.signal()
         guard await cancelBox.wait(timeout: .seconds(10)), let cancelOutcome = cancelBox.load() else {
             throw BpyRuntimeError.invalidOutput("Cancellation did not settle the active operation.")
         }
@@ -775,6 +817,19 @@ enum BpyRuntimeSelfTest {
               cancelledStatus.activeWorkerProcessIdentifier == nil else {
             throw BpyRuntimeError.invalidOutput("Cancellation did not prove the owned process exited.")
         }
+        do {
+            _ = try BpyMemoryCoordinator.shared.receipt(cancelAdmission.id)
+            throw BpyRuntimeError.invalidOutput("Cancellation retained a finished execution permit.")
+        } catch let error as BpyAdmissionFailure where error == .closed {}
+        try JSONSerialization.data(withJSONObject: [
+            "schema": "nexgenvideo/bpy-cancellation-receipt/1",
+            "sourceSHA": Bundle.main.object(forInfoDictionaryKey: "NGVSourceCommit") as? String ?? "",
+            "hostPID": ProcessInfo.processInfo.processIdentifier,
+            "jobID": cancelID.uuidString,
+            "receiptBeforeWaiterResumed": try JSONSerialization.jsonObject(with: JSONEncoder().encode(cancelledReceipt)),
+            "statusAfterWaiterSettled": try JSONSerialization.jsonObject(with: JSONEncoder().encode(cancelledStatus)),
+            "permitRetiredAfterWaiterSettled": true
+        ], options: [.prettyPrinted, .sortedKeys]).write(to: output.appendingPathComponent("native-cancellation-receipt.json"), options: .atomic)
 
         let transportJobID = UUID()
         let transportBox = BpySelfTestBox()
