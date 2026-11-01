@@ -355,13 +355,39 @@ extension SpatialClayRenderer {
         }
     }
 
-    static func sequenceSampleHasExpectedPresentation(_ sample: CMSampleBuffer, index: Int, clock: SequenceClock) -> Bool {
-        guard (0..<clock.count).contains(index) else { return false }
-        let presentation = CMSampleBufferGetOutputPresentationTimeStamp(sample)
-        let duration = CMSampleBufferGetOutputDuration(sample)
-        return presentation.isNumeric && duration.isNumeric
-            && CMTimeCompare(presentation, clock.presentation(index)) == 0
-            && CMTimeCompare(duration, clock.sampleDuration(index)) == 0
+    struct SequenceFrameTiming {
+        let sampleCount: Int
+        let presentation: CMTime
+        let duration: CMTime
+
+        init(_ sample: CMSampleBuffer) {
+            self.init(sampleCount: CMSampleBufferGetNumSamples(sample),
+                presentation: CMSampleBufferGetOutputPresentationTimeStamp(sample), duration: CMSampleBufferGetOutputDuration(sample))
+        }
+
+        init(sampleCount: Int, presentation: CMTime, duration: CMTime) {
+            self.sampleCount = sampleCount
+            self.presentation = presentation
+            self.duration = duration
+        }
+
+        func hasExpectedStart(index: Int, clock: SequenceClock) -> Bool {
+            sampleCount == 1 && (0..<clock.count).contains(index) && presentation.isNumeric
+                && CMTimeCompare(presentation, clock.presentation(index)) == 0
+        }
+
+        func matches(index: Int, clock: SequenceClock, endingAt observedEnd: CMTime) -> Bool {
+            guard hasExpectedStart(index: index, clock: clock) else { return false }
+            let expectedDuration = clock.sampleDuration(index)
+            guard observedEnd.isNumeric,
+                  CMTimeCompare(observedEnd, CMTimeAdd(presentation, expectedDuration)) == 0 else { return false }
+            if !duration.isValid { return true }
+            guard duration.isNumeric, CMTimeCompare(duration, .zero) > 0 else { return false }
+            let sampleEnd = CMTimeAdd(presentation, duration)
+            guard sampleEnd.isNumeric else { return false }
+            let visibleEnd = index == clock.count - 1 ? CMTimeMinimum(sampleEnd, observedEnd) : sampleEnd
+            return CMTimeCompare(visibleEnd, observedEnd) == 0
+        }
     }
 
     static func sequenceClock(_ timing: SpatialClaySequenceTiming, numerator: Int, denominator: Int,
@@ -522,7 +548,8 @@ extension SpatialClayRenderer {
     }
 
     private static func recordSequenceTimingFailure(_ sample: CMSampleBuffer?, index: Int, clock: SequenceClock,
-                                                    candidate: SpatialClaySequenceCandidate, reader: AVAssetReader) {
+        candidate: SpatialClaySequenceCandidate, reader: AVAssetReader,
+        timing: SequenceFrameTiming? = nil, observedEnd: CMTime? = nil) {
         let environment = ProcessInfo.processInfo.environment
         guard environment["GITHUB_ACTIONS"] == "true", environment["NGV_SELFTEST_BPY"]?.isEmpty == false,
               let directory = environment["NGV_BPY_COMMAND_EVIDENCE"], !directory.isEmpty else { return }
@@ -539,7 +566,11 @@ extension SpatialClayRenderer {
             let image = CMSampleBufferGetImageBuffer(sample)
             actual["imagePresent"] = image != nil
             if let image { actual["width"] = CVPixelBufferGetWidth(image); actual["height"] = CVPixelBufferGetHeight(image) }
+        } else if let timing {
+            actual = ["present": true, "sampleCount": timing.sampleCount,
+                "outputPresentation": time(timing.presentation), "outputDuration": time(timing.duration)]
         }
+        if let observedEnd { actual["observedIntervalEnd"] = time(observedEnd) }
         let error = reader.error as NSError?
         let record: [String: Any] = ["schema": "nexgenvideo/clay-movie-timing-failure/1", "partialDiagnosticOnly": true,
             "candidateID": candidate.proof.id.uuidString, "frameIndex": index, "frameCount": clock.count,
@@ -580,8 +611,13 @@ extension SpatialClayRenderer {
         try reading.progress()
         let duration = try await asset.load(.duration)
         try reading.progress()
+        let trackRange = try await track.load(.timeRange)
+        try reading.progress()
         guard size.width == CGFloat(proof.request.width), size.height == CGFloat(proof.request.height),
-              CMTimeCompare(duration, clock.duration) == 0 else {
+              CMTimeCompare(duration, clock.duration) == 0,
+              trackRange.start.isNumeric, trackRange.duration.isNumeric,
+              CMTimeCompare(trackRange.start, .zero) == 0,
+              CMTimeCompare(trackRange.duration, clock.duration) == 0 else {
             throw SpatialSceneError.invalid("The complete Clay movie dimensions or exact duration changed.")
         }
         let reader = try AVAssetReader(asset: asset)
@@ -591,6 +627,7 @@ extension SpatialClayRenderer {
         guard reader.canAdd(output) else { throw SpatialSceneError.changed }
         reader.add(output)
         try reading.start(reader)
+        var previous: SequenceFrameTiming?
         for index in 0..<clock.count {
             guard !Task.isCancelled, !isCancelled(), candidate.isAvailable else { throw CancellationError() }
             try BpyMediaDecode.withPixels(width: proof.request.width, height: proof.request.height,
@@ -598,19 +635,36 @@ extension SpatialClayRenderer {
                 checking: { try reading.check(); if isCancelled() { throw CancellationError() } }) {
                 let sample = output.copyNextSampleBuffer()
                 let image = sample.flatMap { CMSampleBufferGetImageBuffer($0) }
-                guard let sample, let image, sequenceSampleHasExpectedPresentation(sample, index: index, clock: clock) else {
+                guard let sample, let image else {
                     recordSequenceTimingFailure(sample, index: index, clock: clock, candidate: candidate, reader: reader)
+                    throw SpatialSceneError.invalid("The complete Clay movie lost a frame or changed its exact timing.")
+                }
+                let timing = SequenceFrameTiming(sample)
+                guard timing.hasExpectedStart(index: index, clock: clock) else {
+                    recordSequenceTimingFailure(sample, index: index, clock: clock, candidate: candidate, reader: reader)
+                    throw SpatialSceneError.invalid("The complete Clay movie lost a frame or changed its exact timing.")
+                }
+                if let previous, !previous.matches(index: index - 1, clock: clock, endingAt: timing.presentation) {
+                    recordSequenceTimingFailure(nil, index: index - 1, clock: clock, candidate: candidate, reader: reader,
+                        timing: previous, observedEnd: timing.presentation)
                     throw SpatialSceneError.invalid("The complete Clay movie lost a frame or changed its exact timing.")
                 }
                 try verifyMovieFrame(image, expected: sequenceImage(index, request: proof.request, files: candidate.files, readFile: {
                     guard let file = byURL[$0] else { throw SpatialSceneError.changed }
                     return try file.retained()
                 }, checking: { try cancellation.check(); try reading.check() }))
+                previous = timing
             }
             try reading.progress()
         }
         guard output.copyNextSampleBuffer() == nil, reader.status == .completed else {
             throw SpatialSceneError.invalid("The complete Clay movie has unexpected frames.")
+        }
+        let trackEnd = CMTimeRangeGetEnd(trackRange)
+        guard let previous, previous.matches(index: clock.count - 1, clock: clock, endingAt: trackEnd) else {
+            recordSequenceTimingFailure(nil, index: clock.count - 1, clock: clock, candidate: candidate, reader: reader,
+                timing: previous, observedEnd: trackEnd)
+            throw SpatialSceneError.invalid("The complete Clay movie lost a frame or changed its exact timing.")
         }
         try reading.check()
         complete = true
