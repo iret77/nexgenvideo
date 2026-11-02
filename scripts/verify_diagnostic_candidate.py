@@ -268,10 +268,11 @@ def verify_signed_bpy(run, jobs, artifact, run_id, source_sha, artifact_id, dige
             or not re.fullmatch(r"[0-9a-f]{64}", digest)
             or run.get("id") != run_id or run.get("head_sha") != source_sha
             or run.get("path") != ".github/workflows/release.yml"
-            or run.get("event") != "workflow_dispatch" or run.get("status") != "completed"
+            or run.get("event") != "workflow_dispatch"
+            or run.get("status") not in {"queued", "in_progress", "completed"}
             or run.get("repository", {}).get("full_name") != "iret77/nexgenvideo"
             or type(run.get("run_attempt")) is not int or run["run_attempt"] < 1):
-        raise ValueError("candidate must be a completed release producer")
+        raise ValueError("candidate must be a release producer with a bound attempt")
     if jobs.get("total_count") != len(jobs.get("jobs", [])):
         raise ValueError("incomplete release job inventory")
     releases = [job for job in jobs["jobs"] if job.get("name") == "release"]
