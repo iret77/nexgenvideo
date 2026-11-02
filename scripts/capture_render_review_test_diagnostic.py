@@ -619,6 +619,10 @@ def validate_framework_selection(swift_runs, xctest_runs, app_only, without_prob
     elif profile == "app-reproduction":
         if "--filter" in command or not Path(argument("--bin-root")).is_absolute():
             raise ValueError("Full App capture requires retained products and no filter")
+    elif profile == "film-review-export":
+        from app_host_zombie_diagnostic import FILM_REVIEW_FILTER
+        if argument("--filter") != FILM_REVIEW_FILTER or "--bin-root" in command:
+            raise ValueError("Film-review capture requires the exact method and fresh products")
     else:
         raise ValueError("Unknown App-only diagnostic profile")
     for flag, value in (("--scope", "app-swift-testing"),):

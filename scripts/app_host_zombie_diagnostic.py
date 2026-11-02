@@ -13,13 +13,19 @@ import threading
 import time
 import uuid
 
+FILM_REVIEW_FILTER = "PipelineProductionSequenceReviewStoreTests/realFilmReviewBindsExternalSourcesActualCutAndPersistedObservations"
+OWNED_APP_PROFILES = ("zombies", "glow-reproduction", "app-reproduction", "film-review-export")
+
 
 def diagnostic_key(key):
     return (key.startswith((b"MTL_", b"Malloc", b"OBJC_DEBUG_", b"NSZombie", b"DYLD_PRINT_"))
-            or key in {b"NSDeallocateZombies", b"METAL_DEVICE_WRAPPER_TYPE", b"DYLD_INSERT_LIBRARIES"})
+            or key in {b"NSDeallocateZombies", b"METAL_DEVICE_WRAPPER_TYPE", b"DYLD_INSERT_LIBRARIES",
+                       b"NGV_FILM_REVIEW_EXPORT_DIAGNOSTIC"})
 
 
 def profile_switch(profile):
+    if profile == "film-review-export":
+        return "NGV_FILM_REVIEW_EXPORT_DIAGNOSTIC", "1"
     if profile == "zombies":
         return "NSZombieEnabled", "YES"
     if profile in ("glow-reproduction", "app-reproduction"):
@@ -206,7 +212,7 @@ class ZombieCapture:
 
     def write(self):
         name = {"zombies": "zombie-diagnostic.json", "glow-reproduction": "glow-diagnostic.json",
-                "app-reproduction": "app-diagnostic.json"}[self.profile]
+                "app-reproduction": "app-diagnostic.json", "film-review-export": "film-review-diagnostic.json"}[self.profile]
         path = self.folder / name
         temporary = path.with_suffix(".pending")
         temporary.write_text(json.dumps(self.receipt, indent=2) + "\n")

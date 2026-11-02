@@ -6,7 +6,7 @@ on:
       candidate_kind:
         description: Signed release verification or targeted failed CI diagnostics
         type: choice
-        options: [signed-release, ci-runtime, ci-bpy-open-diagnostic, ci-bpy-resource-diagnostic, ci-app-test-diagnostic, ci-app-glow-replay, ci-app-full-replay, ci-builtin-blur, ci-builtin-blur-scribble, ci-builtin-blur-floor, ci-builtin-blur-preheat, ci-glow-context]
+        options: [signed-release, ci-runtime, ci-bpy-open-diagnostic, ci-bpy-resource-diagnostic, ci-app-test-diagnostic, ci-film-review-export, ci-app-glow-replay, ci-app-full-replay, ci-builtin-blur, ci-builtin-blur-scribble, ci-builtin-blur-floor, ci-builtin-blur-preheat, ci-glow-context]
         default: signed-release
       run_id:
         description: "Original producer workflow run"
@@ -83,6 +83,28 @@ jobs:
       - name: Verify signed acceptance tooling
         if: inputs.candidate_kind == 'signed-release'
         run: python3 -m unittest discover -s scripts -p 'test_*.py'
+      - name: Verify and bind the single film-review diagnostic
+        if: inputs.candidate_kind == 'ci-film-review-export'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s scripts -p 'test_film_review_export_diagnostic.py' -v
+          python3 -m unittest discover -s scripts -p 'test_app_host_zombie_diagnostic.py' -v
+          python3 -m unittest discover -s scripts -p 'test_appkit_host_stale_diagnostic.py' -v
+          python3 -m unittest discover -s scripts -p 'test_run_macos_tests.py' -v
+          python3 -m unittest discover -s scripts -p 'test_swift_test_failure_propagation.py' -v
+          python3 -m unittest discover -s scripts -p 'test_native_test_python_workflow.py' -v
+          python3 -m unittest discover -s scripts -p 'test_swiftpm_dependency_cache.py' -v
+          python3 -m unittest discover -s scripts -p 'test_ci_workflow.py' -v
+          python3 scripts/film_review_export_diagnostic.py bind --evidence "$RUNNER_TEMP/film-review-binding"
+      - uses: actions/upload-artifact@v4
+        if: always() && inputs.candidate_kind == 'ci-film-review-export'
+        with:
+          name: film-review-binding
+          path: ${{ runner.temp }}/film-review-binding
+          if-no-files-found: error
+          retention-days: 90
       - name: Verify changed runtime acceptance tooling
         if: inputs.candidate_kind == 'ci-runtime'
         run: |
@@ -219,7 +241,7 @@ jobs:
           retention-days: 90
 
       - name: Bind the successful release job and immutable artifact
-        if: inputs.candidate_kind != 'ci-bpy-resource-diagnostic' && inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor' && inputs.candidate_kind != 'ci-builtin-blur-preheat' && inputs.candidate_kind != 'ci-glow-context'
+        if: inputs.candidate_kind != 'ci-film-review-export' && inputs.candidate_kind != 'ci-bpy-resource-diagnostic' && inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor' && inputs.candidate_kind != 'ci-builtin-blur-preheat' && inputs.candidate_kind != 'ci-glow-context'
         env:
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_KIND: ${{ inputs.candidate_kind }}
@@ -243,12 +265,113 @@ jobs:
             "$CANDIDATE_ARTIFACT" "$CANDIDATE_DIGEST" "$RUNNER_TEMP/candidate-metadata" \
             --candidate-kind "$CANDIDATE_KIND" "${extra[@]}"
       - uses: actions/upload-artifact@v4
-        if: inputs.candidate_kind != 'ci-bpy-resource-diagnostic' && inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor' && inputs.candidate_kind != 'ci-builtin-blur-preheat' && inputs.candidate_kind != 'ci-glow-context'
+        if: inputs.candidate_kind != 'ci-film-review-export' && inputs.candidate_kind != 'ci-bpy-resource-diagnostic' && inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor' && inputs.candidate_kind != 'ci-builtin-blur-preheat' && inputs.candidate_kind != 'ci-glow-context'
         with:
           name: diagnostic-candidate-identity
           path: ${{ runner.temp }}/candidate-metadata/*.json
           if-no-files-found: error
           retention-days: 90
+
+  ci-film-review-export:
+    needs: source
+    if: inputs.candidate_kind == 'ci-film-review-export'
+    runs-on: macrunner
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-native-test-python
+      - uses: ./.github/actions/setup-xcode-27
+      - uses: actions/download-artifact@v4
+        with:
+          name: film-review-binding
+          path: ${{ runner.temp }}/film-review-binding
+      - name: Verify diagnostic source before compiling
+        run: |
+          python3 -I - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          binding = json.loads((Path(os.environ['RUNNER_TEMP']) / 'film-review-binding/binding.json').read_text())
+          assert binding['diagnosticSourceSHA'] == os.environ['GITHUB_SHA']
+          assert binding['parentSHA'] == os.environ['CANDIDATE_SOURCE'] and binding['coreAcceptance'] is False
+          assert subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip() == os.environ['GITHUB_SHA']
+          PY
+          scripts/verify_tracked_source_state.sh
+      - uses: ./.github/actions/cache-swiftpm-dependencies
+        with:
+          restore-only: 'true'
+      - name: Compile diagnostic native products
+        timeout-minutes: 40
+        run: |
+          set -euo pipefail
+          swift build --cache-path "$NGV_SWIFTPM_CACHE_PATH" --build-tests 2>&1 | tee "$RUNNER_TEMP/film-review-build.log"
+          scripts/verify_tracked_source_state.sh
+          scripts/stage_test_runtime.sh debug
+      - name: Retain compiled products before diagnostic execution
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          export FILM_REVIEW_BIN_ROOT="$(swift build --cache-path "$NGV_SWIFTPM_CACHE_PATH" --show-bin-path)"
+          python3 -I - <<'PY'
+          import hashlib, json, os, subprocess
+          from pathlib import Path
+          product_version = subprocess.check_output(['sw_vers', '-productVersion'], text=True).strip()
+          build_version = subprocess.check_output(['sw_vers', '-buildVersion'], text=True).strip()
+          assert product_version.split('.')[0] == '27'
+          binary = Path(os.environ['FILM_REVIEW_BIN_ROOT']).resolve(strict=True)
+          records = {}
+          for name in ('NexGenVideoAppKitTestHost', 'NexGenVideoTests.xctest/Contents/MacOS/NexGenVideoTests'):
+              path = binary / name
+              records[name] = {'sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
+                               'uuidOutput': subprocess.check_output(['xcrun', 'dwarfdump', '--uuid', str(path)], text=True),
+                               'arch': subprocess.check_output(['lipo', '-archs', str(path)], text=True).strip(),
+                               'buildVersion': subprocess.check_output(['xcrun', 'vtool', '-show-build', str(path)], text=True)}
+              assert records[name]['arch'] == 'arm64' and 'minos 26.0' in records[name]['buildVersion']
+          record = {'sourceSHA': os.environ['GITHUB_SHA'], 'coreAcceptance': False, 'binaries': records,
+                    'productVersion': product_version, 'buildVersion': build_version,
+                    'xcode': subprocess.check_output(['xcodebuild', '-version'], text=True)}
+          (Path(os.environ['RUNNER_TEMP']) / 'film-review-binding/compiled-products.json').write_text(json.dumps(record, indent=2) + '\n')
+          PY
+          ditto -c -k --keepParent "$FILM_REVIEW_BIN_ROOT" "$RUNNER_TEMP/film-review-test-products.zip"
+      - name: Diagnose only the original unfinished film-review test once
+        timeout-minutes: 6
+        run: |
+          set -euo pipefail
+          export SWIFT_BACKTRACE=enable=yes,interactive=no,demangle=yes,cache=no
+          python3 scripts/capture_render_review_test_diagnostic.py \
+            --evidence "$RUNNER_TEMP/film-review-export" --log "$RUNNER_TEMP/film-review-test.log" \
+            --swift-testing-runs 1 --xctest-runs 0 --without-runloop-probe --app-only -- \
+            python3 scripts/run_macos_tests.py --cache-path "$NGV_SWIFTPM_CACHE_PATH" \
+              --scope app-swift-testing --app-diagnostic film-review-export \
+              --filter PipelineProductionSequenceReviewStoreTests/realFilmReviewBindsExternalSourcesActualCutAndPersistedObservations \
+              --product-source-sha "$GITHUB_SHA" --evidence "$RUNNER_TEMP/film-review-export/hosted-suite"
+      - name: Preserve diagnostic interpretation
+        if: always()
+        run: |
+          python3 scripts/film_review_export_diagnostic.py interpret --evidence "$RUNNER_TEMP/film-review-export"
+      - name: Verify unchanged diagnostic source
+        if: always()
+        run: scripts/verify_tracked_source_state.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: film-review-export-diagnostic-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/film-review-export
+            ${{ runner.temp }}/film-review-test.log
+            ${{ runner.temp }}/film-review-build.log
+            ${{ runner.temp }}/film-review-binding
+          if-no-files-found: error
+          retention-days: 90
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: film-review-test-products-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/film-review-test-products.zip
+          if-no-files-found: warn
+          compression-level: 0
+          retention-days: 7
 
   ci-builtin-blur-floor:
     needs: source

@@ -60,6 +60,7 @@ class NativeTestPythonWorkflowTests(unittest.TestCase):
             ("ci.yml", "build_test"), ("release.yml", "release"),
             ("workspace-ui-acceptance.yml", "build"), ("codex-app-server-acceptance.yml", "acceptance"),
             ("diagnostic-acceptance.yml", "ci-app-test"),
+            ("diagnostic-acceptance.yml", "ci-film-review-export"),
             ("diagnostic-acceptance.yml", "ci-app-retained-replay"),
             ("native-acceptance-probes.yml", "owned-child"),
         })

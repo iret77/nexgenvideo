@@ -126,6 +126,8 @@ final class ExportService {
             await ExportCoordinator.acquireExport()
         }
         defer { if acquireSlot { ExportCoordinator.endExport() } }
+        let diagnoseReview = nativeReviewAuthorization != nil && FilmReviewExportDiagnostic.enabled
+        if diagnoseReview { FilmReviewExportDiagnostic.emit("slot.acquired", exportID: outputURL.lastPathComponent) }
         if let nativeReviewAuthorization {
             do {
                 guard format == .h264 else { throw ExportError.invalidFormat }
@@ -269,15 +271,33 @@ final class ExportService {
             if cancelRequested { throw CancellationError() }
             activeExportSession = session
             defer { activeExportSession = nil }
+            if diagnoseReview {
+                await FilmReviewExportDiagnostic.prepared(prepared.result, session: session,
+                    timeline: timeline, resolver: resolver, output: outputURL)
+            }
 
             // AVAssetExportSession fails if the file already exists
             try? FileManager.default.removeItem(at: outputURL)
 
             nonisolated(unsafe) let unsafeSession = session
+            let diagnosticStates: Task<Void, Never>? = diagnoseReview ? Task { @MainActor in
+                for await state in unsafeSession.states(updateInterval: 1) {
+                    if Task.isCancelled { break }
+                    FilmReviewExportDiagnostic.state(state, exportID: outputURL.lastPathComponent)
+                }
+                FilmReviewExportDiagnostic.emit("states.ended", exportID: outputURL.lastPathComponent,
+                    fields: ["cancelled": Task.isCancelled])
+            } : nil
+            defer { diagnosticStates?.cancel() }
             event?(.exporting)
             let progressTask = Task { @MainActor in
+                var lastDiagnostic = -Double.infinity
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .milliseconds(200))
+                    if diagnoseReview && ProcessInfo.processInfo.systemUptime - lastDiagnostic >= 5 {
+                        lastDiagnostic = ProcessInfo.processInfo.systemUptime
+                        FilmReviewExportDiagnostic.heartbeat(unsafeSession, output: outputURL)
+                    }
                     let p = Double(unsafeSession.progress)
                     if p != self.progress {
                         self.progress = p
@@ -287,12 +307,19 @@ final class ExportService {
             }
 
             do {
+                if diagnoseReview { FilmReviewExportDiagnostic.emit("session.begin", exportID: outputURL.lastPathComponent) }
                 try await session.export(to: outputURL, as: fileType)
+                if diagnoseReview { FilmReviewExportDiagnostic.emit("session.returned", exportID: outputURL.lastPathComponent) }
                 try await Task.detached(priority: .userInitiated) { try ProjectEffectResources.requireCurrent(effectResources) }.value
+                if diagnoseReview { FilmReviewExportDiagnostic.emit("post.effects", exportID: outputURL.lastPathComponent) }
                 try await revalidateReview(styleReview, authorization: nativeReviewAuthorization, production: production,
                     timeline: timeline, resolver: resolver, outputURL: outputURL)
+                if diagnoseReview { FilmReviewExportDiagnostic.emit("post.review", exportID: outputURL.lastPathComponent) }
                 try await ProductionExportBinding.revalidate(production, timeline: timeline, resolver: resolver)
+                if diagnoseReview { FilmReviewExportDiagnostic.emit("post.binding", exportID: outputURL.lastPathComponent) }
                 let outputSize = await Self.encodedVideoSize(of: outputURL) ?? prepared.renderSize
+                if diagnoseReview { FilmReviewExportDiagnostic.emit("post.size", exportID: outputURL.lastPathComponent) }
+                if diagnoseReview { FilmReviewExportDiagnostic.heartbeat(unsafeSession, output: outputURL) }
                 lastReport = ExportRunReport(
                     outputSize: outputSize,
                     offlineMediaRefs: prepared.result.offlineMediaRefs,
@@ -306,6 +333,10 @@ final class ExportService {
                     data: ["format": String(describing: format), "resolution": resolution.rawValue]
                 )
             } catch {
+                if diagnoseReview {
+                    FilmReviewExportDiagnostic.emit("session.or.post.threw", exportID: outputURL.lastPathComponent,
+                        fields: ["domain": (error as NSError).domain, "code": (error as NSError).code])
+                }
                 if cancelRequested || error is CancellationError
                     || ((error as NSError).domain == NSCocoaErrorDomain
                         && (error as NSError).code == NSUserCancelledError) {

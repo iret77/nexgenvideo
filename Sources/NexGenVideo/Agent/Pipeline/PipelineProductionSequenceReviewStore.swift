@@ -154,11 +154,21 @@ enum PipelineProductionSequenceReviewStore {
         let output = FileManager.default.temporaryDirectory.appendingPathComponent("production-review-" + UUID().uuidString + ".mp4")
         defer { try? FileManager.default.removeItem(at: output) }
         let authorization = ReelAuthorization(home: access.home, expected: input, output: output, originalResolver: resolver)
+        if FilmReviewExportDiagnostic.enabled {
+            FilmReviewExportDiagnostic.emit("capture.begin", exportID: output.lastPathComponent, fields: [
+                "fingerprint": input.fingerprint, "timelineSHA256": input.edl.timelineSHA256,
+                "opacities": actualTimeline.tracks.flatMap(\.clips).map(\.opacity),
+                "sources": input.sources.map { ["mediaID": $0.mediaID, "sha256": $0.frozen.sha256,
+                    "originKind": String($0.originIdentity.prefix(while: { $0 != ":" }))] }
+            ])
+        }
         let exporter = ExportService()
         await withTaskCancellationHandler {
             await exporter.export(timeline: actualTimeline, resolver: exportResolver, format: .h264, resolution: .r720p,
                 outputURL: output, nativeReviewAuthorization: authorization)
         } onCancel: { Task { @MainActor in exporter.cancel() } }
+        FilmReviewExportDiagnostic.emit("capture.export.returned", exportID: output.lastPathComponent,
+            fields: ["error": exporter.error ?? "none"])
         try Task.checkCancellation()
         if let error = exporter.error { throw GateBlocked("The film review could not be rendered: " + error) }
         guard exporter.lastReport?.offlineMediaRefs.isEmpty == true,
@@ -222,6 +232,7 @@ enum PipelineProductionSequenceReviewStore {
             catch { transaction.discard(); throw error }
         }
         let result = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+        FilmReviewExportDiagnostic.emit("capture.verify.returned", exportID: output.lastPathComponent)
         defer { Task.detached { result.0.discard() } }
         try Task.checkCancellation()
         let written = try result.0.commit { _ in
@@ -232,6 +243,7 @@ enum PipelineProductionSequenceReviewStore {
             try ProjectWorkingCopy.markDirty(key: access.key)
         }
         editor.onPipelineChanged?()
+        FilmReviewExportDiagnostic.emit("capture.committed", exportID: output.lastPathComponent)
         return written
     }
 

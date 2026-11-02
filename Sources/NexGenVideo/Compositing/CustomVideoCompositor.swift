@@ -13,6 +13,15 @@ final class CustomVideoCompositor: NSObject, AVVideoCompositing, @unchecked Send
     private let lock = NSLock()
     private var pending: [ObjectIdentifier: AVAsynchronousVideoCompositionRequest] = [:]
 
+    override init() {
+        super.init()
+        FilmReviewExportDiagnostic.created(self)
+    }
+
+    deinit {
+        FilmReviewExportDiagnostic.destroyed(self, pendingCount: pending.count)
+    }
+
     var sourcePixelBufferAttributes: [String: any Sendable]? {
         [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
          kCVPixelBufferMetalCompatibilityKey as String: true]
@@ -26,17 +35,22 @@ final class CustomVideoCompositor: NSObject, AVVideoCompositing, @unchecked Send
     func renderContextChanged(_ newRenderContext: AVVideoCompositionRenderContext) {}
 
     func startRequest(_ request: AVAsynchronousVideoCompositionRequest) {
+        let instance = FilmReviewExportDiagnostic.identity(self)
+        FilmReviewExportDiagnostic.request("started", instance: instance, request: request)
         lock.lock()
         pending[ObjectIdentifier(request)] = request
         lock.unlock()
 
         queue.async { [weak self] in
-            guard let self else { return }
+            guard let self else {
+                FilmReviewExportDiagnostic.request("dropped", instance: instance, request: request)
+                return
+            }
             self.lock.lock()
             let live = self.pending.removeValue(forKey: ObjectIdentifier(request)) != nil
             self.lock.unlock()
             guard live else { return }
-            Self.process(request)
+            Self.process(request, instance: instance)
         }
     }
 
@@ -45,22 +59,28 @@ final class CustomVideoCompositor: NSObject, AVVideoCompositing, @unchecked Send
         let cancelled = pending.values
         pending.removeAll()
         lock.unlock()
-        for request in cancelled { request.finishCancelledRequest() }
+        for request in cancelled {
+            request.finishCancelledRequest()
+            FilmReviewExportDiagnostic.request("cancelled", instance: FilmReviewExportDiagnostic.identity(self), request: request)
+        }
     }
 
-    private static func process(_ request: AVAsynchronousVideoCompositionRequest) {
+    private static func process(_ request: AVAsynchronousVideoCompositionRequest, instance: Int) {
         guard let instruction = request.videoCompositionInstruction as? CompositorInstruction else {
             // Foreign instruction (shouldn't happen): pass the first source through.
             if let first = request.sourceTrackIDs.first,
                let buffer = request.sourceFrame(byTrackID: first.int32Value) {
                 request.finish(withComposedVideoFrame: buffer)
+                FilmReviewExportDiagnostic.request("frame", instance: instance, request: request)
             } else {
                 request.finish(with: RenderError())
+                FilmReviewExportDiagnostic.request("error", instance: instance, request: request)
             }
             return
         }
         guard let output = request.renderContext.newPixelBuffer() else {
             request.finish(with: RenderError())
+            FilmReviewExportDiagnostic.request("error", instance: instance, request: request)
             return
         }
         FrameRenderer.render(
@@ -71,5 +91,6 @@ final class CustomVideoCompositor: NSObject, AVVideoCompositing, @unchecked Send
             context: ciContext
         )
         request.finish(withComposedVideoFrame: output)
+        FilmReviewExportDiagnostic.request("frame", instance: instance, request: request)
     }
 }

@@ -17,7 +17,7 @@ import time
 import uuid
 
 from verify_swift_test_output import ANSI, assess_output
-from app_host_zombie_diagnostic import ZombieCapture, diagnostic_environment, probe_child_stdio
+from app_host_zombie_diagnostic import FILM_REVIEW_FILTER, OWNED_APP_PROFILES, ZombieCapture, diagnostic_environment, probe_child_stdio
 
 
 NO_MATCH = "warning: No matching test cases were run"
@@ -192,7 +192,7 @@ def run_process(command, path, environment, observation=None):
             if observation is not None:
                 observation.update(pid=process.pid, launchLatest=time.time())
             diagnostic = None
-            if observation is not None and observation.get("diagnosticProfile") in ("zombies", "glow-reproduction", "app-reproduction"):
+            if observation is not None and observation.get("diagnosticProfile") in OWNED_APP_PROFILES:
                 try:
                     diagnostic = ZombieCapture(process.pid, command, observation, path.parent,
                                                environment["GITHUB_SHA"], profile=observation["diagnosticProfile"])
@@ -621,8 +621,13 @@ def run(args):
     profile = getattr(args, "app_diagnostic", None)
     product_source = getattr(args, "product_source_sha", None)
     retained_root = getattr(args, "bin_root", None)
-    if profile and (profile not in ("zombies", "glow-reproduction", "app-reproduction") or args.scope != "app-swift-testing"):
+    if "NGV_FILM_REVIEW_EXPORT_DIAGNOSTIC" in os.environ:
+        raise VerificationError("The film-review switch must be supplied by the owned diagnostic profile")
+    if profile and (profile not in OWNED_APP_PROFILES or args.scope != "app-swift-testing"):
         raise VerificationError("The diagnostic requires its owned App SwiftTesting backend")
+    if profile == "film-review-export" and (args.filter != FILM_REVIEW_FILTER or retained_root
+            or args.configuration != "debug" or args.scratch_path or args.swiftc_flag):
+        raise VerificationError("Film-review diagnostics require the exact original method and fresh debug products")
     if profile == "zombies" and (args.filter or retained_root):
         raise VerificationError("The zombie diagnostic requires the full original App build")
     if profile in ("glow-reproduction", "app-reproduction") and (not retained_root
@@ -804,7 +809,7 @@ def main():
     parser.add_argument("--swiftc-flag", action="append", default=[])
     parser.add_argument("--filter", default="")
     parser.add_argument("--scope", choices=("all", "app-swift-testing"), default="all")
-    parser.add_argument("--app-diagnostic", choices=("zombies", "glow-reproduction", "app-reproduction"))
+    parser.add_argument("--app-diagnostic", choices=OWNED_APP_PROFILES)
     parser.add_argument("--product-source-sha")
     parser.add_argument("--bin-root", type=Path)
     args = parser.parse_args()
