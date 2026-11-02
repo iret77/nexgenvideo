@@ -11,12 +11,20 @@ on:
       dmg_copy_probe:
         type: boolean
         default: false
+      dmg_probe_mode:
+        type: string
+        default: copy
   workflow_dispatch:
     inputs:
       dmg_copy_probe:
         description: Check the fixed DMG copy using the existing signed App without compilation
         type: boolean
         default: false
+      dmg_probe_mode:
+        description: Copy verification or capacity measurement without copying
+        type: choice
+        options: [copy, capacity]
+        default: copy
 
 permissions:
   contents: read
@@ -40,9 +48,10 @@ jobs:
       - name: Verify DMG copy tooling and bind the existing signed App
         env:
           GH_TOKEN: ${{ github.token }}
+          DMG_PROBE_MODE: ${{ inputs.dmg_probe_mode }}
         run: |
           python3 -m unittest discover -s scripts -p 'test_release_dmg_packaging.py' -v
-          python3 scripts/release_dmg_probe.py bind --root "$RUNNER_TEMP/dmg-probe-binding"
+          python3 scripts/release_dmg_probe.py bind --mode "$DMG_PROBE_MODE" --root "$RUNNER_TEMP/dmg-probe-binding"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: dmg-probe-binding-${{ github.run_id }}
@@ -74,9 +83,10 @@ jobs:
       - name: Verify the exact retained signed App survives the fixed DMG copy
         env:
           GH_TOKEN: ${{ github.token }}
+          DMG_PROBE_MODE: ${{ inputs.dmg_probe_mode }}
         run: |
           set -euo pipefail
-          python3 scripts/release_dmg_probe.py inspect --root "$RUNNER_TEMP/dmg-probe" \
+          python3 scripts/release_dmg_probe.py inspect --mode "$DMG_PROBE_MODE" --root "$RUNNER_TEMP/dmg-probe" \
             2>&1 | tee "$RUNNER_TEMP/dmg-probe/probe.log"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()

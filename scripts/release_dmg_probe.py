@@ -7,10 +7,12 @@ import subprocess
 import sys
 import time
 import zipfile
+import tempfile
+import platform
 
 from retained_app_test_products import api, archive_bytes, checksum, download, require, verify_artifact, write
 from release_checkpoint import NATIVE_TIMEOUT, identity, tree_digest, validate_app_zip, verify_manifest
-from verify_dmg_copy import verify
+from verify_dmg_copy import detach, verify
 
 
 SOURCE = "abd136f44ea643ac6e001b63b5833aa217aff0e5"
@@ -45,7 +47,7 @@ def validate(producer, jobs, artifact):
     return selected[0]
 
 
-def bind(root):
+def bind(root, mode="copy"):
     require(os.environ["GITHUB_REPOSITORY"] == "iret77/nexgenvideo", "Foreign probe repository")
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], stdin=subprocess.DEVNULL, text=True, timeout=30).strip()
     require(head == os.environ["GITHUB_SHA"], "Probe checkout differs")
@@ -62,10 +64,56 @@ def bind(root):
     job = validate(producer, jobs, artifact)
     root.mkdir(parents=True, exist_ok=False)
     write(root / "binding.json", {"schema": "release-dmg-probe-binding/v1", "productSourceSHA": SOURCE,
-          "harnessSourceSHA": os.environ["GITHUB_SHA"], "producer": producer, "job": job, "artifact": artifact})
+          "harnessSourceSHA": os.environ["GITHUB_SHA"], "mode": mode,
+          "producer": producer, "job": job, "artifact": artifact})
 
 
-def inspect(root):
+def capacity(app, root):
+    entries = [app, *app.rglob("*")]
+    regular = [p for p in entries if p.is_file() and not p.is_symlink()]
+    estimated = 128 * 1024**2 + 4096
+    for directory, _, names in os.walk(app):
+        estimated += sum(((Path(directory) / name).lstat().st_size + 4095) // 4096 * 4096 for name in names)
+    def space(path):
+        value = os.statvfs(path)
+        return {"blockBytes": value.f_frsize, "totalBytes": value.f_blocks * value.f_frsize,
+                "freeBytes": value.f_bavail * value.f_frsize}
+    report = {"schema": "release-dmg-capacity/v1", "qualified": False, "releaseAccepted": False,
+              "appState": "verified-original-unstapled",
+              "productSourceSHA": SOURCE, "harnessSourceSHA": os.environ["GITHUB_SHA"],
+              "restoredAppTreeSHA256": tree_digest(app), "macOS": platform.mac_ver()[0],
+              "machine": platform.machine(), "fileCount": len(regular), "entryCount": len(entries),
+              "logicalBytes": sum(p.lstat().st_size for p in regular),
+              "allocatedBytes": sum(p.lstat().st_blocks * 512 for p in entries),
+              "largestFiles": [{"path": p.relative_to(app).as_posix(), "bytes": p.lstat().st_size,
+                                "allocatedBytes": p.lstat().st_blocks * 512}
+                               for p in sorted(regular, key=lambda p: p.lstat().st_size, reverse=True)[:10]],
+              "defaultDmgbuildEstimateBytes": estimated, "hostBeforeCreate": space(root)}
+    output = root / "report"
+    output.mkdir()
+    write(output / "capacity.json", report)
+    image = root / "capacity.dmg"
+    subprocess.run(["hdiutil", "create", "-ov", "-volname", "NexGenVideo-capacity", "-fs", "APFS",
+                    "-fsargs", "", "-size", str(estimated / 1000) + "K", str(image)],
+                   stdin=subprocess.DEVNULL, check=True, timeout=NATIVE_TIMEOUT)
+    report["hostAfterCreate"] = space(root)
+    report["imageLogicalBytes"] = image.stat().st_size
+    report["imageAllocatedBytes"] = image.stat().st_blocks * 512
+    write(output / "capacity.json", report)
+    with tempfile.TemporaryDirectory() as mount:
+        subprocess.run(["hdiutil", "attach", str(image), "-nobrowse", "-owners", "off", "-mountpoint", mount],
+                       stdin=subprocess.DEVNULL, check=True, timeout=NATIVE_TIMEOUT)
+        try:
+            report["emptyImage"] = space(mount)
+            report["copyPerformed"] = False
+            write(output / "capacity.json", report)
+        finally:
+            detach(mount)
+    write(output / "capacity.json", report)
+    print(json.dumps(report, sort_keys=True), flush=True)
+
+
+def inspect(root, mode="copy"):
     started = time.monotonic()
     durations = {}
     def timed(stage, operation):
@@ -80,7 +128,8 @@ def inspect(root):
     binding = json.loads((root / "binding.json").read_text())
     require(binding.get("schema") == "release-dmg-probe-binding/v1"
             and binding.get("productSourceSHA") == SOURCE
-            and binding.get("harnessSourceSHA") == os.environ["GITHUB_SHA"], "Probe source binding differs")
+            and binding.get("harnessSourceSHA") == os.environ["GITHUB_SHA"]
+            and binding.get("mode", "copy") == mode, "Probe source binding differs")
     artifact = api(f"actions/artifacts/{ARTIFACT}")
     validate(binding["producer"], {"total_count": 1, "jobs": [binding["job"]]}, artifact)
     timed("download", lambda: download(artifact, root / "signed.zip"))
@@ -99,6 +148,9 @@ def inspect(root):
     restored = tree_digest(app)
     require(restored == manifest["appTreeSHA256"] and identity(root) == manifest["identity"],
             "Restored App differs from its signed manifest")
+    if mode == "capacity":
+        capacity(app, root)
+        return
     timed("staple", lambda: run("xcrun", "stapler", "staple", str(app)))
     timed("stapleValidate", lambda: run("xcrun", "stapler", "validate", str(app)))
     dmg = root / "NexGenVideo.dmg"
@@ -131,5 +183,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(allow_abbrev=False)
     parser.add_argument("operation", choices=("bind", "inspect"))
     parser.add_argument("--root", type=Path, required=True)
+    parser.add_argument("--mode", choices=("copy", "capacity"), default="copy")
     args = parser.parse_args()
-    bind(args.root) if args.operation == "bind" else inspect(args.root)
+    bind(args.root, args.mode) if args.operation == "bind" else inspect(args.root, args.mode)

@@ -154,6 +154,20 @@ class ReleaseDmgPackagingTests(unittest.TestCase):
                             self.assertEqual(result["restoredAppTreeSHA256"], expected)
                             self.assertIs(result["qualified"], False)
                             self.assertTrue(any(c[:3] == ("xcrun", "stapler", "validate") for c in commands))
+            measurement = base / "measurement"
+            measurement.mkdir()
+            commands = []
+            def measure_run(args, **kwargs):
+                commands.append(args)
+                if list(args[:2]) == ["hdiutil", "create"]: Path(args[-1]).write_bytes(b"empty-image")
+            with patch.dict(os.environ, GITHUB_SHA="a" * 40), patch.object(probe.subprocess, "run", side_effect=measure_run):
+                probe.capacity(source, measurement)
+            measured = json.loads((measurement / "report/capacity.json").read_text())
+            self.assertEqual(measured["restoredAppTreeSHA256"], expected)
+            self.assertEqual(measured["fileCount"], 2)
+            self.assertIs(measured["copyPerformed"], False)
+            self.assertIs(measured["qualified"], False)
+            self.assertFalse(any(args[0] in ("ditto", "dmgbuild", "xcrun") for args in commands))
 
     def test_signing_preflight_keeps_normal_mode_and_scoped_probe(self):
         text = (ROOT / ".github/workflows/signing-preflight.yml").read_text()
@@ -162,6 +176,7 @@ class ReleaseDmgPackagingTests(unittest.TestCase):
             definition = workflow[True][trigger]["inputs"]["dmg_copy_probe"]
             self.assertEqual(definition["type"], "boolean")
             self.assertIs(definition["default"], False)
+            self.assertEqual(workflow[True][trigger]["inputs"]["dmg_probe_mode"]["default"], "copy")
         jobs = workflow["jobs"]
         self.assertEqual(workflow["permissions"], {"contents": "read"})
         self.assertNotIn("permissions", jobs["preflight"])
