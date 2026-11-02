@@ -1,8 +1,10 @@
 import copy
+import hashlib
 import io
 import os
 from pathlib import Path
 import plistlib
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -32,6 +34,64 @@ class ExternalTestBundleTests(unittest.TestCase):
         self.job = {'id': 56, 'name': 'external-gui-acceptance / Build external UI tests', 'run_id': 12,
                     'head_sha': self.sha, 'run_attempt': 1, 'status': 'completed', 'conclusion': 'success',
                     'labels': ['self-hosted', 'macrunner']}
+
+    def source_identity_fixture(self, changed=(), ancestor=True, dirty=False):
+        revision = 'c' * 40
+        payloads = {}
+        for name in journey.TEST_INPUTS:
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            content = name.encode()
+            path.write_bytes(content + (b'dirty' if dirty else b''))
+            relative = (journey.ROOT / name).relative_to(journey.REPOSITORY).as_posix()
+            payloads[relative] = content
+        payloads['scripts/verify_diagnostic_candidate.py'] = (journey.REPOSITORY / 'scripts/verify_diagnostic_candidate.py').read_bytes()
+
+        def output(arguments, **kwargs):
+            if arguments[-1] == 'HEAD': return revision.encode()
+            if 'merge-base' in arguments:
+                if not ancestor: raise subprocess.CalledProcessError(1, arguments)
+                return b''
+            if 'diff' in arguments: return '\0'.join(changed).encode()
+            if 'show' in arguments:
+                commit, relative = arguments[-1].split(':', 1)
+                self.assertEqual(commit, revision)
+                return payloads[relative]
+            self.fail('Unexpected source identity command: ' + str(arguments))
+
+        return revision, payloads, output
+
+    def test_retained_product_accepts_committed_independent_harness(self):
+        revision, payloads, output = self.source_identity_fixture(journey.SIGNED_JOURNEY_HARNESS_PATHS)
+        with patch.object(journey, 'output', side_effect=output):
+            actual, fingerprints = journey.test_source_identity(self.sha, input_root=self.root)
+        self.assertEqual(actual, revision)
+        self.assertEqual(fingerprints, {name: hashlib.sha256(value).hexdigest() for name, value in payloads.items()})
+
+    def test_retained_product_rejects_product_changes_and_unrelated_history(self):
+        for path in ('Sources/NexGenVideo/App/NexGenVideoApp.swift', 'Package.resolved', 'scripts/bundle.sh',
+                     'musicvideo/manifest.json', '.github/workflows/release.yml'):
+            _, _, output = self.source_identity_fixture([path])
+            with self.subTest(path=path), patch.object(journey, 'output', side_effect=output), self.assertRaises(ValueError):
+                journey.test_source_identity(self.sha, input_root=self.root)
+        _, _, output = self.source_identity_fixture(ancestor=False)
+        with patch.object(journey, 'output', side_effect=output), self.assertRaises(subprocess.CalledProcessError):
+            journey.test_source_identity(self.sha, input_root=self.root)
+
+    def test_test_identity_rejects_uncommitted_harness_inputs(self):
+        _, _, output = self.source_identity_fixture(dirty=True)
+        with patch.object(journey, 'output', side_effect=output), self.assertRaises(ValueError):
+            journey.test_source_identity(self.sha, input_root=self.root)
+
+    def test_external_continuation_gates_mac_jobs_and_keeps_product_and_test_identity(self):
+        workflow = (journey.REPOSITORY / '.github/workflows/external-gui-acceptance.yml').read_text()
+        source, build = workflow.split('  test-build:\n', 1)
+        self.assertIn('--candidate-kind signed-journey', source)
+        self.assertIn('needs: cases', build)
+        self.assertIn('if: inputs.product_source_sha != \'\'', source)
+        self.assertIn('artifact.get(\'digest\') != \'sha256:\' + os.environ[\'ORIGINAL_DIGEST\']', workflow)
+        self.assertIn('--dmg-sha256 "$EXPECTED_DMG_SHA256" --source-sha "$PRODUCT_SOURCE"', workflow)
+        self.assertNotIn('bundle.sh', workflow)
 
     def archive(self, entries):
         archive = self.root / 'tests.tar.gz'

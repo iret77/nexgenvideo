@@ -22,6 +22,9 @@ import time
 
 ROOT = Path(__file__).resolve().parent
 REPOSITORY = ROOT.parents[1]
+sys.path.insert(0, str(REPOSITORY / 'scripts'))
+from verify_diagnostic_candidate import SIGNED_JOURNEY_HARNESS_PATHS
+sys.path.pop(0)
 TEST_INPUTS = ('acceptance.py', 'test_bundle.py', 'project.yml', 'NexGenVideoExternalUITests/UserJourneyTests.swift')
 CONFIG = Path('/tmp/nexgenvideo-external-gui-config.json')
 STAGES = ['home', 'settings', 'new-project', 'media-import', 'source-insert',
@@ -111,16 +114,27 @@ def metadata(app, source_sha):
 
 def test_source_identity(source_sha, input_root=ROOT):
     revision = output(['git', '-C', REPOSITORY, 'rev-parse', 'HEAD']).decode().strip()
-    require(revision == source_sha, 'Test checkout differs from the app source SHA')
+    require(re.fullmatch('[a-f0-9]{40}', source_sha) and re.fullmatch('[a-f0-9]{40}', revision),
+            'Invalid product or test source SHA')
+    if revision != source_sha:
+        output(['git', '-C', REPOSITORY, 'merge-base', '--is-ancestor', source_sha, revision])
+        changed = output(['git', '-C', REPOSITORY, 'diff', '--no-renames', '--name-only', '-z', source_sha, revision])
+        require(not set(filter(None, changed.decode().split('\0'))) - SIGNED_JOURNEY_HARNESS_PATHS,
+                'Product inputs changed since the retained signed App')
     fingerprints = {}
     for name in TEST_INPUTS:
         path = input_root / name
         require(path.is_file() and not path.is_symlink(), 'Test input is not a regular file: ' + name)
         relative = (ROOT / name).relative_to(REPOSITORY).as_posix()
-        committed = output(['git', '-C', REPOSITORY, 'show', source_sha + ':' + relative])
+        committed = output(['git', '-C', REPOSITORY, 'show', revision + ':' + relative])
         digest = sha256(path)
         require(digest == hashlib.sha256(committed).hexdigest(), 'Test input differs from its committed bytes: ' + relative)
         fingerprints[relative] = digest
+    shared = 'scripts/verify_diagnostic_candidate.py'
+    committed = output(['git', '-C', REPOSITORY, 'show', revision + ':' + shared])
+    digest = sha256(REPOSITORY / shared)
+    require(digest == hashlib.sha256(committed).hexdigest(), 'Shared source gate differs from its committed bytes')
+    fingerprints[shared] = digest
     return revision, fingerprints
 
 
@@ -356,7 +370,7 @@ def run(args):
         for name in ('tests.tar.gz', 'tests-input.json', 'tests-producer.json'):
             shutil.copy2(test_input / name, evidence / name)
         work = Path(tempfile.mkdtemp(prefix='ngv-external-tests-'))
-        xctestrun, tests = test_bundle.consume(evidence, work / 'Products', args.source_sha, identity['testFiles'])
+        xctestrun, tests = test_bundle.consume(evidence, work / 'Products', identity['testSourceSHA'], identity['testFiles'])
         identity['testBundle'] = {key: tests[key] for key in (
             'runID', 'attempt', 'archiveSHA256', 'productsSHA256', 'xctestrun', 'xcode')}
         identity['testBundle'].update(receiptSHA256=sha256(evidence / 'tests-input.json'),
@@ -434,22 +448,23 @@ def validate(args):
     require(result.get('schema') == 'nexgenvideo/external-gui-result/1' and result.get('completed') is True
             and result.get('exitCode') == 0,
             'External GUI evidence is incomplete')
-    require(result['sourceSHA'] == identity['sourceSHA'] == identity['testSourceSHA'] == args.source_sha,
+    require(result['sourceSHA'] == identity['sourceSHA'] == args.source_sha,
             'Evidence belongs to another source revision')
     validate_app_identity(evidence, result, identity, args.source_sha, args.scale, args.dmg_sha256)
     require(result['identitySHA256'] == sha256(evidence / 'identity.json')
             and result['journeySHA256'] == sha256(evidence / 'journey.json'), 'Evidence bytes changed')
     require(result.get('runtimeSHA256') == sha256(evidence / 'runtime.json'), 'Runtime evidence changed')
     validate_runtime(evidence)
-    _, source_files = test_source_identity(args.source_sha)
-    require(identity.get('testFiles') == source_files, 'Qualified test source files changed')
-    tests = test_bundle.verify_input(evidence, args.source_sha, source_files)
+    test_revision, source_files = test_source_identity(args.source_sha)
+    require(identity.get('testSourceSHA') == test_revision and identity.get('testFiles') == source_files,
+            'Qualified test source identity changed')
+    tests = test_bundle.verify_input(evidence, test_revision, source_files)
     expected = {key: tests[key] for key in ('runID', 'attempt', 'archiveSHA256', 'productsSHA256', 'xctestrun', 'xcode')}
     expected.update(receiptSHA256=sha256(evidence / 'tests-input.json'),
                     producerSHA256=sha256(evidence / 'tests-producer.json'))
     require(identity.get('testBundle') == expected, 'UI test bundle provenance changed')
     with tempfile.TemporaryDirectory(prefix='ngv-validate-tests-') as temporary:
-        xctestrun, _ = test_bundle.consume(evidence, Path(temporary) / 'Products', args.source_sha, source_files)
+        xctestrun, _ = test_bundle.consume(evidence, Path(temporary) / 'Products', test_revision, source_files)
         require((evidence / 'test-bundle.sha256').read_text().strip() == sha256(xctestrun),
                 'Qualified xctestrun changed')
     summary = read_json(evidence / 'summary.json')
