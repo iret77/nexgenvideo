@@ -1595,6 +1595,14 @@ final class BpyRuntimeSession: @unchecked Sendable {
         return failure == nil
     }
 
+    func nativeStorageOwnershipSnapshot() throws -> (Set<UUID>, BpyStoragePreparation) {
+        guard ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"]?.isEmpty == false else {
+            throw BpyRuntimeError.unavailable("The storage ownership probe requires native runtime acceptance.")
+        }
+        let identifiers = lock.withLock { [storageVolume?.lease.id, storageDataVolume?.lease.id].compactMap { $0 } }
+        return (Set(identifiers), try queryStorageOwnership())
+    }
+
     private func queryStorageOwnership() throws -> BpyStoragePreparation {
         let query = NSXPCConnection(serviceName: serviceName)
         query.remoteObjectInterface = NSXPCInterface(with: BpyRuntimeServiceProtocol.self)

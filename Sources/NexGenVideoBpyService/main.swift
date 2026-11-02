@@ -1638,8 +1638,16 @@ private final class ServiceSession: @unchecked Sendable {
             guard let deadline = storageCleanupDeadline, let now = BpyRuntimeClock.read()?.awake, now < deadline else { return false }
             Thread.sleep(forTimeInterval: 0.005)
         }
-        try? FileManager.default.removeItem(at: root)
-        try? FileManager.default.removeItem(at: workerRoot)
+        lock.access { retryStagingCleanup() }
+        do {
+            try BpyWorkerJobCleanup.removeAllJobs(in: workerRoot, device: storageAccess.pair.worker.device)
+            for directory in [root, workerRoot] {
+                do { try FileManager.default.removeItem(at: directory) }
+                catch let error as CocoaError where error.code == .fileNoSuchFile { }
+            }
+        } catch {
+            // The host disposes owned volumes after process and reader proofs.
+        }
         storageAccess.release()
         return true
     }
@@ -1714,6 +1722,7 @@ private final class ServiceSession: @unchecked Sendable {
                 injectSupervisorIdentityCaptureFailure: job.diagnosticSupervisorIdentityCaptureFailure
             )
             try requireSuccessful(worker, job: job)
+            lock.access { job.stdout = boundedLogText(worker.log, bytes: request.limits.stdoutBytes) }
             try enforceStoredResources(job)
             try verifyStagedInputs(job.id)
             lock.access {
@@ -1767,7 +1776,6 @@ private final class ServiceSession: @unchecked Sendable {
                 job.outputs = descriptors
                 job.outputFiles = outputFiles
                 job.outputReservation = descriptors.reduce(0) { $0 + $1.byteCount }
-                job.stdout = boundedLogText(worker.log, bytes: request.limits.stdoutBytes)
                 job.metrics = [
                     "job_wall_seconds": wallSeconds,
                     "worker_wall_seconds": worker.duration,
@@ -1821,10 +1829,9 @@ private final class ServiceSession: @unchecked Sendable {
     private func disposeJobStaging(_ id: UUID) throws {
         let prefix = id.uuidString + "/"
         for (key, upload) in uploads where key.hasPrefix(prefix) { try upload.close() }
-        for directory in [jobDirectory(id), workerRoot.appendingPathComponent("jobs/" + id.uuidString)] {
-            do { try FileManager.default.removeItem(at: directory) }
-            catch let error as CocoaError where error.code == .fileNoSuchFile { }
-        }
+        do { try FileManager.default.removeItem(at: jobDirectory(id)) }
+        catch let error as CocoaError where error.code == .fileNoSuchFile { }
+        try BpyWorkerJobCleanup.removeJob(id, in: workerRoot, device: storageAccess.pair.worker.device)
         uploads = uploads.filter { !$0.key.hasPrefix(prefix) }
         completedInputs.removeValue(forKey: id)
         stagingCleanup.remove(id)

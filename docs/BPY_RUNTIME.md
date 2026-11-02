@@ -550,6 +550,15 @@ without an enabled View Layer,
 the exact `signal` denial for probes 0/SIGSTOP/SIGKILL followed by a healthy job, a supervisor failure
 after child start but before identity write followed by a healthy job, an unavailable child identity
 with a TERM-ignoring owned child followed by a healthy job, and a perspective Cycles render.
+The OS-boundary probe links its marker into the saved scene and retains its exact program,
+returned response, and verification bytes before checking the marker after the independent reload.
+Job cleanup repairs unreadable owned directories only inside the stopped job's worker tree. It
+checks owner and volume, never follows symbolic links, and keeps admission blocked until cleanup
+succeeds. Iterative traversal keeps descriptor and native stack use independent of directory depth. After process
+and reader shutdown, session close releases storage ownership even when residue remains, so the host
+can dispose of its validated private volumes. The native probe records whether immutable flags were
+applied or denied and verifies ownership release and real slot reuse. The aggregate-byte probe uses
+a valid render resolution and requires the disk-limit reason.
 
 Evidence separates host-observed open-to-ready and job durations from service-observed cold start,
 worker/verifier wall times, worker/verifier/service footprints, disk/file peaks, and descendant peak.
