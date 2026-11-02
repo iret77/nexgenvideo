@@ -26,6 +26,7 @@ HARNESS_PATHS = {
     "scripts/test_native_test_python_workflow.py",
     "scripts/dmg-settings.py", "scripts/verify_dmg_copy.py", "scripts/release_dmg_probe.py",
     "scripts/test_release_dmg_packaging.py", ".github/workflows/signing-preflight.yml",
+    "scripts/plan_dmg_capacity.py",
 }
 
 

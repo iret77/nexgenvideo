@@ -13,6 +13,7 @@ import platform
 from retained_app_test_products import api, archive_bytes, checksum, download, require, verify_artifact, write
 from release_checkpoint import NATIVE_TIMEOUT, identity, tree_digest, validate_app_zip, verify_manifest
 from verify_dmg_copy import detach, verify
+from plan_dmg_capacity import plan
 
 
 SOURCE = "abd136f44ea643ac6e001b63b5833aa217aff0e5"
@@ -22,7 +23,7 @@ DIGEST = "d486805bcce8f44a38cfdf824f84644ffedbea7b8ab8ddf4caaf4c350300c8d6"
 PATHS = {"scripts/dmg-settings.py", "scripts/bundle.sh", "scripts/verify_dmg_copy.py",
          "scripts/release_dmg_probe.py", "scripts/test_release_dmg_packaging.py",
          ".github/workflows/signing-preflight.yml", "scripts/release_native_proof.py",
-         "scripts/release_checkpoint.py"}
+         "scripts/release_checkpoint.py", "scripts/plan_dmg_capacity.py"}
 
 
 def validate(producer, jobs, artifact):
@@ -163,7 +164,11 @@ def inspect(root, mode="copy"):
         stdin=subprocess.DEVNULL, text=True, timeout=NATIVE_TIMEOUT))
     require(tooling["packages"]["dmgbuild"] == "1.6.7", "DMG tooling version differs")
     print(json.dumps({"tooling": tooling, "python": sys.version, "executable": sys.executable}), flush=True)
-    environment = dict(os.environ, DMG_APP=str(app), DMG_BG=str(background), DMG_VOLICON=str(icon))
+    capacity_plan = timed("capacityPlan", lambda: plan(app))
+    plan_file = root / "capacity-plan.json"
+    write(plan_file, capacity_plan)
+    environment = dict(os.environ, DMG_APP=str(app), DMG_BG=str(background), DMG_VOLICON=str(icon),
+                       DMG_CAPACITY_PLAN=str(plan_file))
     timed("dmgbuild", lambda: run(os.environ["DMGBUILD_BIN"], "-s", "scripts/dmg-settings.py",
                                 "NexGenVideo", str(dmg), env=environment))
     result = verify(app, dmg)
@@ -172,6 +177,7 @@ def inspect(root, mode="copy"):
                   notarizationSubmitted=False, releaseAccepted=False, qualified=False, dmgSHA256=checksum(dmg),
                   restoredAppTreeSHA256=restored, python={"version": sys.version, "executable": sys.executable},
                   tooling=tooling, totalSeconds=time.monotonic() - started,
+                  capacityPlan=capacity_plan,
                   phaseSeconds={**durations, **{"verify." + k: v for k, v in result["phaseSeconds"].items()}})
     report = root / "report"
     report.mkdir()

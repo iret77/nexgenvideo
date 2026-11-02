@@ -2,12 +2,21 @@
 # Driven by env vars from bundle.sh. Icon positions are tuned to the backdrop but can't be rendered in
 # CI — adjust icon_locations / window_rect after a visual check on a Mac.
 import os
+import json
+from pathlib import Path
 
 application = os.environ["DMG_APP"]
 _app = os.path.basename(application)
 
 format = "UDZO"
 filesystem = "APFS"
+_capacity = json.loads(Path(os.environ["DMG_CAPACITY_PLAN"]).read_text())
+if (_capacity.get("schema") != "release-dmg-capacity-plan/v1"
+        or _capacity.get("capacityVerified") is not True
+        or _capacity.get("appPath") != str(Path(application).resolve())
+        or type(_capacity.get("imageSizeSectors")) is not int or _capacity["imageSizeSectors"] <= 0):
+    raise ValueError("Missing or mismatched measured DMG capacity")
+size = str(_capacity["imageSizeSectors"]) + "b"
 files = [application]
 symlinks = {"Applications": "/Applications"}
 

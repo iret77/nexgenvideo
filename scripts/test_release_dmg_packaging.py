@@ -14,6 +14,7 @@ import yaml
 
 import release_dmg_probe as probe
 import verify_dmg_copy as dmg_copy
+import plan_dmg_capacity as sizing
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,13 +22,21 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class ReleaseDmgPackagingTests(unittest.TestCase):
     def test_large_bundle_uses_apfs_and_verifies_copy_before_signing(self):
-        with patch.dict(os.environ, DMG_APP="/example/NexGenVideo.app"):
-            settings = runpy.run_path(str(ROOT / "scripts/dmg-settings.py"))
+        with tempfile.TemporaryDirectory() as directory:
+            plan_file = Path(directory) / "capacity.json"
+            plan_file.write_text(json.dumps({"schema": "release-dmg-capacity-plan/v1", "capacityVerified": True,
+                "appPath": "/example/NexGenVideo.app", "imageSizeSectors": 10000000}))
+            with patch.dict(os.environ, DMG_APP="/example/NexGenVideo.app", DMG_CAPACITY_PLAN=str(plan_file)):
+                settings = runpy.run_path(str(ROOT / "scripts/dmg-settings.py"))
+                self.assertEqual(settings["size"], "10000000b")
+                plan_file.write_text(json.dumps({"capacityVerified": False}))
+                with self.assertRaises(ValueError): runpy.run_path(str(ROOT / "scripts/dmg-settings.py"))
         self.assertEqual(settings["filesystem"], "APFS")
         self.assertEqual(settings["format"], "UDZO")
         self.assertEqual(settings["files"], ["/example/NexGenVideo.app"])
         text = (ROOT / "scripts/bundle.sh").read_text()
         body = text.split("build_dmg() {", 1)[1].split("notarize_dmg() {", 1)[0]
+        self.assertLess(body.index("plan_dmg_capacity.py"), body.index('"$DMGBUILD_BIN" -s'))
         self.assertLess(body.index('"$DMGBUILD_BIN" -s'), body.index("verify_dmg_copy.py"))
         self.assertLess(body.index("verify_dmg_copy.py"), body.index('codesign --force --timestamp'))
         self.assertIn('python3 "$ROOT/scripts/verify_dmg_copy.py" "$APP" "$DMG"', body)
@@ -141,6 +150,7 @@ class ReleaseDmgPackagingTests(unittest.TestCase):
                          patch.object(probe, "verify_manifest", return_value=manifest), \
                          patch.object(probe.subprocess, "run", side_effect=run), \
                          patch.object(probe.subprocess, "check_output", return_value=json.dumps({"packages": {"dmgbuild": "1.6.7"}})), \
+                         patch.object(probe, "plan", return_value={"capacityVerified": True}), \
                          patch.object(probe, "verify", return_value={"phaseSeconds": {}}), \
                          patch.object(Path, "is_file", autospec=True, side_effect=lambda p:
                              False if mutation == "background" and p.name == "dmg-background.png" else is_file(p)):
@@ -168,6 +178,34 @@ class ReleaseDmgPackagingTests(unittest.TestCase):
             self.assertIs(measured["copyPerformed"], False)
             self.assertIs(measured["qualified"], False)
             self.assertFalse(any(args[0] in ("ditto", "dmgbuild", "xcrun") for args in commands))
+
+    def test_capacity_planner_preserves_real_free_space_reserve(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app = Path(directory) / "NexGenVideo.app"
+            app.mkdir()
+            with (app / "payload").open("wb") as payload: payload.truncate(500 * 1024**2)
+            overhead = 209753600 + 12197888
+            def measure(sectors):
+                return {"freeBytes": sectors * 512 - overhead, "totalBytes": sectors * 512,
+                        "imageBytes": sectors * 512, "blockBytes": 4096}
+            with patch.object(sizing, "measure", side_effect=measure) as measured:
+                result = sizing.plan(app)
+            self.assertTrue(result["capacityVerified"])
+            self.assertEqual(result["reserveBytes"], 128 * 1024**2)
+            self.assertEqual(len(result["attempts"]), measured.call_count)
+            self.assertEqual(measured.call_count, 2)
+            self.assertGreaterEqual(result["attempts"][-1]["freeBytes"], result["payloadBytes"] + result["reserveBytes"])
+            self.assertEqual(result["imageSizeSectors"], result["attempts"][-1]["requestedSectors"])
+
+    def test_capacity_planner_fails_closed_when_volume_does_not_grow(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app = Path(directory) / "NexGenVideo.app"
+            app.mkdir()
+            with patch.object(sizing, "measure", return_value={"freeBytes": 0}) as measured:
+                with self.assertRaisesRegex(ValueError, "did not reach"):
+                    sizing.plan(app)
+            self.assertEqual(measured.call_count, 3)
+            self.assertEqual(len(set(call.args[0] for call in measured.call_args_list)), 3)
 
     def test_signing_preflight_keeps_normal_mode_and_scoped_probe(self):
         text = (ROOT / ".github/workflows/signing-preflight.yml").read_text()

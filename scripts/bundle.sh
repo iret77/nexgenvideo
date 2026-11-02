@@ -113,7 +113,9 @@ build_dmg() {
   echo "==> Building DMG"
   rm -f "$DMG"
   DMG_VOLNAME="NexGenVideo"
-  DMG_APP="$APP" DMG_BG="$DMG_BG" DMG_VOLICON="$RESOURCES/AppIcon.icns" \
+  DMG_CAPACITY_PLAN="$DMG.capacity.json"
+  python3 "$ROOT/scripts/plan_dmg_capacity.py" "$APP" "$DMG_CAPACITY_PLAN"
+  DMG_APP="$APP" DMG_BG="$DMG_BG" DMG_VOLICON="$RESOURCES/AppIcon.icns" DMG_CAPACITY_PLAN="$DMG_CAPACITY_PLAN" \
     "$DMGBUILD_BIN" -s "$ROOT/scripts/dmg-settings.py" "$DMG_VOLNAME" "$DMG"
   python3 "$ROOT/scripts/verify_dmg_copy.py" "$APP" "$DMG"
 
