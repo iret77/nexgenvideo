@@ -95,6 +95,10 @@ jobs:
             echo "::error::Notary continuation already selects its original signed build"
             exit 1
           fi
+          if [ "$DRY_RUN" = "true" ] && [ "$ARTIFACT_ONLY" != "true" ] && { [ -n "${SIGNED_BUILD_RUN:-}" ] || [ -n "${NOTARY_PROGRESS_RUN:-}" ]; }; then
+            echo "::error::Preview channels are run-specific; use artifact_only or stable mode for continuation"
+            exit 1
+          fi
           if [ "$ARTIFACT_ONLY" = "true" ] && [ "$DRY_RUN" != "true" ]; then
             echo "::error::artifact_only requires dry_run=true"
             exit 1
@@ -624,8 +628,6 @@ jobs:
     # Xcode 27 is required to compile, sign, notarize, staple, and package the app.
     runs-on: macrunner
     timeout-minutes: 90
-    env:
-      NOTARY_STATE_DIR: ${{ runner.temp }}/release-notary-state
     outputs:
       dmg_sha256: ${{ steps.gui-input.outputs.dmg_sha256 }}
     permissions:
@@ -663,6 +665,7 @@ jobs:
               echo "PLUGIN_CATALOG_URL=${{ github.server_url }}/${{ github.repository }}/releases/download/plugins/catalog.json"
             } >> "$GITHUB_ENV"
           fi
+          echo "NOTARY_STATE_DIR=$RUNNER_TEMP/release-notary-state" >> "$GITHUB_ENV"
           echo "Building $V (dry=${{ inputs.dry_run }})"
 
       - name: Import Developer ID cert into a temporary keychain
@@ -695,10 +698,18 @@ jobs:
             || { echo "::error::Release build mutated tracked files beyond $PLIST"; exit 1; }
           echo "BUILD_NUMBER=$NEW" >> "$GITHUB_ENV"
 
+      - name: Bind saved notarization
+        if: inputs.notary_progress_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOTARY_PROGRESS_RUN: ${{ inputs.notary_progress_run_id }}
+        run: python3 scripts/release_checkpoint.py prepare-notary --run-id "$NOTARY_PROGRESS_RUN" --root "$RUNNER_TEMP/release-notary-binding"
+
       - name: Bind signed build input
         env:
           GH_TOKEN: ${{ github.token }}
           SIGNED_BUILD_RUN: ${{ needs.release-gate.outputs.restored-build-run || inputs.signed_build_run_id || github.run_id }}
+          RELEASE_NOTARY_BINDING: ${{ inputs.notary_progress_run_id != '' && format('{0}/release-notary-binding', runner.temp) || '' }}
         run: python3 scripts/release_checkpoint.py prepare --run-id "$SIGNED_BUILD_RUN" --root "$RUNNER_TEMP/release-signed-binding"
 
       - name: Restore exact signed build
@@ -706,13 +717,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/release_checkpoint.py restore --root "$RUNNER_TEMP/release-signed-binding"
-
-      - name: Bind saved notarization
-        if: inputs.notary_progress_run_id != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-          NOTARY_PROGRESS_RUN: ${{ inputs.notary_progress_run_id }}
-        run: python3 scripts/release_checkpoint.py prepare-notary --run-id "$NOTARY_PROGRESS_RUN" --root "$RUNNER_TEMP/release-notary-binding"
 
       - name: Restore saved notarization and DMG
         id: restore-notary
@@ -837,11 +841,9 @@ jobs:
         run: scripts/bundle.sh release --build-dmg
 
       - name: Record DMG before notarization
-        if: steps.restore-notary.outputs.dmg_present != 'true'
         run: python3 scripts/release_checkpoint.py create-dmg --root "$RUNNER_TEMP/release-dmg-input"
 
       - name: Retain DMG before notarization
-        if: steps.restore-notary.outputs.dmg_present != 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-dmg-input-${{ github.sha }}
@@ -853,6 +855,15 @@ jobs:
       - name: Notarize and staple DMG
         timeout-minutes: 20
         run: scripts/bundle.sh release --notarize-dmg
+
+      - name: Retain notarization submissions
+        if: always() && steps.signed-input.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-notary-state-${{ github.sha }}
+          path: ${{ runner.temp }}/release-notary-state/*.json
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Verify the exact DMG users install
         env:
@@ -1315,21 +1326,13 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      - name: Retain notarization submissions
-        if: always() && steps.signed-input.outcome == 'success'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: release-notary-state-${{ github.sha }}
-          path: ${{ runner.temp }}/release-notary-state/
-          if-no-files-found: error
-          retention-days: 7
-
       - name: Clean up keychain
         if: always()
         run: security delete-keychain "${SIGN_KEYCHAIN:-}" 2>/dev/null || true
 
   diagnostic-acceptance:
     needs: release
+    if: ${{ !cancelled() && needs.release.result == 'success' }}
     runs-on: macrunner
     timeout-minutes: 10
     permissions:
@@ -1376,6 +1379,7 @@ jobs:
       contents: read
       actions: read
     needs: release
+    if: ${{ !cancelled() && needs.release.result == 'success' }}
     uses: ./.github/workflows/bpy-runtime-acceptance.yml
     with:
       artifact: diagnostic-release-evidence
@@ -1384,6 +1388,7 @@ jobs:
 
   external-user-acceptance:
     needs: release
+    if: ${{ !cancelled() && needs.release.result == 'success' }}
     permissions:
       contents: read
       actions: read
@@ -1397,7 +1402,7 @@ jobs:
 
   chat-hang-replay:
     needs: [release, diagnostic-acceptance, bpy-runtime]
-    if: ${{ inputs.artifact_only }}
+    if: ${{ !cancelled() && inputs.artifact_only && needs.release.result == 'success' && needs.diagnostic-acceptance.result == 'success' && needs.bpy-runtime.result == 'success' }}
     permissions:
       contents: read
       actions: read
@@ -1407,7 +1412,7 @@ jobs:
 
   musicvideo-analysis-acceptance:
     needs: [release, diagnostic-acceptance, bpy-runtime]
-    if: ${{ inputs.artifact_only }}
+    if: ${{ !cancelled() && inputs.artifact_only && needs.release.result == 'success' && needs.diagnostic-acceptance.result == 'success' && needs.bpy-runtime.result == 'success' }}
     permissions:
       contents: read
       actions: read
@@ -1421,7 +1426,7 @@ jobs:
 
   publish:
     needs: [release-gate, release, diagnostic-acceptance, bpy-runtime, external-user-acceptance]
-    if: ${{ inputs.artifact_only == false && inputs.dry_run == false && needs.release-gate.outputs.publication-resumed != 'true' && needs.release.result == 'success' }}
+    if: ${{ !cancelled() && inputs.artifact_only == false && inputs.dry_run == false && needs.release-gate.outputs.publication-resumed != 'true' && needs.release-gate.result == 'success' && needs.release.result == 'success' && needs.diagnostic-acceptance.result == 'success' && needs.bpy-runtime.result == 'success' && needs.external-user-acceptance.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     permissions:

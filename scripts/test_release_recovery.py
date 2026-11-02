@@ -163,6 +163,41 @@ class ReleaseRecoveryTests(unittest.TestCase):
         else:
             self.assertEqual(args[:3], ("codesign", "--verify", "--strict"))
 
+    def notary_run(self, root, run_id, context, app_tree, dmg, plugins, restored=False):
+        root.mkdir()
+        run = {"id": run_id, "head_sha": SOURCE, "repository": {"full_name": checkpoint.REPOSITORY},
+               "path": ".github/workflows/release.yml", "event": "workflow_dispatch", "run_attempt": 1,
+               "actor": {"login": "iret77"}, "status": "completed", "conclusion": "failure"}
+        job = {"name": "release", "head_sha": SOURCE, "run_id": run_id, "run_attempt": 1,
+               "labels": ["macrunner"], "status": "completed", "conclusion": "failure",
+               "started_at": "2026-11-02T10:00:00Z", "completed_at": "2026-11-02T12:00:00Z",
+               "steps": [{"name": name, "conclusion": result} for name, result in (
+                   ("Build and sign DMG", "skipped" if restored else "success"),
+                   ("Restore saved notarization and DMG", "success" if restored else "skipped"),
+                   ("Record DMG before notarization", "success"), ("Retain DMG before notarization", "success"))]}
+        state = root / "state.zip"
+        digest = checkpoint.checksum(dmg)
+        with zipfile.ZipFile(state, "w") as archive:
+            archive.writestr("context.json", json.dumps(context))
+            archive.writestr(digest + ".json", json.dumps({"schema": "release-notary/v1", "sourceSHA": SOURCE,
+                              "sha256": digest, "submissionID": UUID}))
+        payload = root / "dmg.zip"
+        manifest = {"schema": "release-dmg-checkpoint/v1", "context": context, "appTreeSHA256": app_tree,
+                    "files": {name: {"bytes": path.stat().st_size, "sha256": checkpoint.checksum(path)}
+                              for name, path in (("NexGenVideo.dmg", dmg), ("plugins.tar.gz", plugins))}}
+        with zipfile.ZipFile(payload, "w") as archive:
+            archive.writestr("dmg-checkpoint.json", json.dumps(manifest))
+            archive.write(dmg, "NexGenVideo.dmg")
+            archive.write(plugins, "plugins.tar.gz")
+        state_item = self.artifact(run, "release-notary-state-" + SOURCE, state, run_id * 10)
+        dmg_item = self.artifact(run, "release-dmg-input-" + SOURCE, payload, run_id * 10 + 1)
+        responses = {f"actions/runs/{run_id}": run,
+            f"actions/runs/{run_id}/attempts/1/jobs?per_page=100": {"total_count": 1, "jobs": [job]},
+            f"actions/runs/{run_id}/artifacts?per_page=100": {"total_count": 2, "artifacts": [state_item, dmg_item]},
+            f"actions/artifacts/{state_item['id']}": state_item, f"actions/artifacts/{dmg_item['id']}": dmg_item}
+        sources = {state_item["id"]: state, dmg_item["id"]: payload}
+        return responses, sources, job
+
     def test_native_reuse_accepts_exact_completed_release_evidence(self):
         run, jobs = self.original()
         self.assertEqual(native.verify_original(run, jobs)["id"], native.JOB)
@@ -279,8 +314,10 @@ class ReleaseRecoveryTests(unittest.TestCase):
             step = text[start:end]
             changed = step.replace("inputs.artifact_only == false", "true")
             self.assertNotEqual(native.workflow_observations(text[:start] + changed + text[end:]), original)
-        for word in ("gh label list", "gh label view", "--repo iret77/nexgenvideo", "scripts/publish_release_metadata.sh"):
-            self.assertNotEqual(native.workflow_observations(text.replace(word, "changed")), original)
+        for word in ("gh label list", "gh label view", "--repo iret77/nexgenvideo", "scripts/publish_release_metadata.sh",
+                     "python3 scripts/update_appcast.py"):
+            changed = text.replace(word, "changed") if word in text else text + "\n# " + word + "\n"
+            self.assertNotEqual(native.workflow_observations(changed), original)
 
     def test_signed_input_roundtrips_exact_bytes(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -335,6 +372,40 @@ class ReleaseRecoveryTests(unittest.TestCase):
                     self.assertEqual(recorded["manifest"], manifest)
                     job["conclusion"] = "failure"
                     with self.assertRaises(ValueError): checkpoint.prepare(123, root / "failed-builder")
+                job["conclusion"] = "success"
+                packaging = dict(job, name="release")
+                responses["actions/runs/123/attempts/1/jobs?per_page=100"] = {"total_count": 2, "jobs": [job, packaging]}
+                state = root / "notary-state.zip"
+                context = {"schema": "release-notary-context/v1", "repository": checkpoint.REPOSITORY,
+                           "sourceSHA": SOURCE, "runID": 123, "buildRunID": 123}
+                journal = {"schema": "release-notary/v1", "sourceSHA": SOURCE, "sha256": "c" * 64, "submissionID": UUID}
+                sources = {100: archive, 101: proof, 102: state}
+                for with_journal in (False, True):
+                    with zipfile.ZipFile(state, "w") as zipped:
+                        zipped.writestr("context.json", json.dumps(context))
+                        if with_journal: zipped.writestr("c" * 64 + ".json", json.dumps(journal))
+                    item = self.artifact(run, "release-notary-state-" + SOURCE, state, 102)
+                    responses["actions/runs/123/artifacts?per_page=100"] = {"total_count": 3,
+                        "artifacts": [payload_item, proof_item, item]}
+                    responses["actions/artifacts/102"] = item
+                    target = root / ("journal-present" if with_journal else "context-only")
+                    with patch.object(checkpoint, "api", side_effect=responses.__getitem__), \
+                            patch.object(checkpoint, "download", side_effect=lambda item, destination: shutil.copyfile(sources[item["id"]], destination)):
+                        if with_journal:
+                            with self.assertRaisesRegex(ValueError, "notary_progress_run_id"): checkpoint.prepare(123, target)
+                            self.assertFalse((target / "binding.json").exists())
+                            with patch.dict(os.environ, GITHUB_RUN_ID="123"):
+                                checkpoint.prepare(123, root / "same-run")
+                            saved = root / "saved-notary"
+                            saved.mkdir()
+                            shutil.copyfile(state, saved / "state.zip")
+                            checkpoint.write(saved / "notary-binding.json", {"schema": "release-notary-binding/v1",
+                                "context": context, "producer": {"id": 123}, "stateArtifact": item})
+                            with patch.dict(os.environ, RELEASE_NOTARY_BINDING=str(saved)):
+                                checkpoint.prepare(123, root / "verified-notary")
+                        else:
+                            checkpoint.prepare(123, target)
+                            self.assertTrue((target / "binding.json").exists())
 
     def test_signed_input_rejects_modified_or_escaping_payload(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -363,6 +434,15 @@ class ReleaseRecoveryTests(unittest.TestCase):
                 item.size = 3
                 tar.addfile(item, io.BytesIO(b"bad"))
             with self.assertRaises(ValueError): checkpoint.extract_tar(path, root, {"plugins"})
+            for index, kind in enumerate((tarfile.SYMTYPE, tarfile.LNKTYPE)):
+                path = root / f"tar-link{index}.tar.gz"
+                with tarfile.open(path, "w:gz") as tar:
+                    item = tarfile.TarInfo("plugins/escape")
+                    item.type = kind
+                    item.linkname = "../NexGenVideo.app" if kind == tarfile.SYMTYPE else "NexGenVideo.app/Contents/Info.plist"
+                    tar.addfile(item)
+                with self.subTest(kind=kind), self.assertRaises(ValueError):
+                    checkpoint.extract_tar(path, root, {"plugins"})
             self.assertFalse((root / "outside").exists())
 
     def test_resume_keeps_completed_build_and_tests(self):
@@ -385,6 +465,23 @@ class ReleaseRecoveryTests(unittest.TestCase):
         phase_exit = bundle.index('if [ "$MODE" = "notarize-app" ] ||')
         self.assertLess(phase_exit, bundle.index('swift build', phase_exit))
         self.assertIn("exit 0", bundle[phase_exit:bundle.index('swift build', phase_exit)])
+        def ancestors(name):
+            needs = jobs[name].get("needs", [])
+            if isinstance(needs, str): needs = [needs]
+            return set(needs).union(*(ancestors(parent) for parent in needs))
+        for name, job in jobs.items():
+            if "release" not in ancestors(name):
+                continue
+            direct = job["needs"] if isinstance(job["needs"], list) else [job["needs"]]
+            for artifact_only in (True, False):
+                expected = artifact_only if name in ("chat-hang-replay", "musicvideo-analysis-acceptance") else not artifact_only if name == "publish" else True
+                with self.subTest(job=name, artifact_only=artifact_only):
+                    self.assertEqual(condition_enabled(job.get("if"), artifact_only, artifact_only,
+                                                      ancestry_success=False), expected)
+                    if expected:
+                        for failed in direct:
+                            self.assertFalse(condition_enabled(job.get("if"), artifact_only, artifact_only,
+                                ancestry_success=False, needs_results={failed: "failure"}), (name, failed))
 
     def test_notary_journal_binds_payload_and_submission(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -417,6 +514,53 @@ class ReleaseRecoveryTests(unittest.TestCase):
             artifact.write_bytes(b"new-payload")
             self.assertEqual(execute().returncode, 0)
             self.assertEqual(calls.read_text().splitlines(), ["submit", "wait", "wait", "submit", "wait"])
+            base = root / "chain"
+            base.mkdir()
+            manifest, _ = self.signed(base)
+            shutil.copytree(base / "original/NexGenVideo.app", base / ".build/NexGenVideo.app")
+            dmg = base / "original/NexGenVideo.dmg"
+            dmg.write_bytes(b"same-signed-dmg-before-Apple-wait")
+            old_context = {"schema": "release-notary-context/v1", "repository": checkpoint.REPOSITORY,
+                           "sourceSHA": SOURCE, "buildRunID": 123, "runID": 321}
+            current = dict(old_context, runID=456)
+            state = base / "notary"
+            state.mkdir()
+            checkpoint.write(state / "context.json", current)
+            responses, sources, job = self.notary_run(base / "first", 321, old_context,
+                manifest["appTreeSHA256"], dmg, base / "original/plugins.tar.gz")
+            def fake_mac(*args):
+                if args[:2] == ("hdiutil", "attach"):
+                    shutil.copytree(base / "original/NexGenVideo.app", Path(args[-1]) / "NexGenVideo.app")
+                elif args[:2] == ("hdiutil", "detach"):
+                    return
+                elif args[0] == "ditto":
+                    shutil.copytree(args[1], args[2], dirs_exist_ok=True)
+                else:
+                    self.assertEqual(args[0], "tar")
+                    subprocess.run(args, check=True, stdin=subprocess.DEVNULL, timeout=10)
+            environment = dict(GITHUB_SHA=SOURCE, NOTARY_STATE_DIR=str(state), GITHUB_OUTPUT=str(base / "output"))
+            with chdir(base), patch.dict(os.environ, environment), patch.object(checkpoint, "api", side_effect=responses.__getitem__), \
+                    patch.object(checkpoint, "download", side_effect=lambda item, destination: shutil.copyfile(sources[item["id"]], destination)), \
+                    patch.object(checkpoint, "run", side_effect=fake_mac):
+                binding = base / "first-binding"
+                checkpoint.prepare_notary(321, binding)
+                checkpoint.restore_notary(binding)
+                self.assertEqual((base / ".build/NexGenVideo.dmg").read_bytes(), dmg.read_bytes())
+                self.assertIn("dmg_present=true\n", (base / "output").read_text())
+                next_checkpoint = base / "next-dmg"
+                checkpoint.create_dmg(next_checkpoint)
+                next_manifest = json.loads((next_checkpoint / "dmg-checkpoint.json").read_text())
+                self.assertEqual(next_manifest["context"], current)
+                self.assertEqual((next_checkpoint / "NexGenVideo.dmg").read_bytes(), dmg.read_bytes())
+                second_responses, second_sources, second_job = self.notary_run(base / "second", 456, current,
+                    manifest["appTreeSHA256"], next_checkpoint / "NexGenVideo.dmg", next_checkpoint / "plugins.tar.gz", restored=True)
+                responses.update(second_responses)
+                sources.update(second_sources)
+                checkpoint.prepare_notary(456, base / "second-binding")
+                second_job["steps"][1]["conclusion"] = "failure"
+                with self.assertRaises(ValueError): checkpoint.prepare_notary(456, base / "bad-restore")
+                (binding / "state.zip").write_bytes(b"tampered-state")
+                with self.assertRaises(ValueError): checkpoint.restore_notary(binding)
 
     def test_release_stages_keep_all_acceptance_and_publication_guards(self):
         workflow = yaml.safe_load(WORKFLOW.read_text())
@@ -424,13 +568,24 @@ class ReleaseRecoveryTests(unittest.TestCase):
         for job in jobs.values():
             if "runs-on" in job and job["runs-on"] != "ubuntu-24.04":
                 self.assertEqual(job["runs-on"], "macrunner")
+            for key in ("env", "if", "runs-on", "timeout-minutes", "concurrency"):
+                self.assertNotRegex(json.dumps(job.get(key)), r"\$\{\{[^}]*\b(?:runner|env|steps|job)\.", key)
         build = {step.get("name"): step for step in jobs["release-build"]["steps"]}
         package = {step.get("name"): step for step in jobs["release"]["steps"]}
         for name in ("Record signed build before notarization", "Retain signed build input", "Retain signed build proof"):
             self.assertNotIn("if", build[name])
         names = [step.get("name") for step in jobs["release"]["steps"]]
+        self.assertLess(names.index("Resolve version + mode"), names.index("Restore exact signed build"))
+        self.assertIn('echo "NOTARY_STATE_DIR=$RUNNER_TEMP/release-notary-state" >> "$GITHUB_ENV"',
+                      package["Resolve version + mode"]["run"])
         self.assertLess(names.index("Retain DMG before notarization"), names.index("Notarize and staple DMG"))
+        self.assertEqual(names.index("Retain notarization submissions"), names.index("Notarize and staple DMG") + 1)
+        for step in jobs["release"]["steps"][names.index("Retain notarization submissions") + 1:]:
+            self.assertNotRegex(step.get("run", ""), r"notarize\.sh|bundle\.sh[^\n]*--notarize-")
+        for name in ("Record DMG before notarization", "Retain DMG before notarization"):
+            self.assertNotIn("if", package[name])
         self.assertEqual(package["Retain notarization submissions"]["if"], "always() && steps.signed-input.outcome == 'success'")
+        self.assertTrue(package["Retain notarization submissions"]["with"]["path"].endswith("/*.json"))
         for name in ("Notarize and staple downloadable format packs", "Notarize and staple app", "Notarize and staple DMG"):
             self.assertEqual(package[name]["timeout-minutes"], 20)
         for name in ("Verify the exact DMG users install", "Transfer the verified installed DMG app for workspace acceptance",

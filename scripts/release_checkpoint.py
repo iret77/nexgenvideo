@@ -155,7 +155,61 @@ def extract_tar(path, build, allowed):
             name = PurePosixPath(item.name)
             require(bool(name.parts) and not name.is_absolute() and ".." not in name.parts
                     and name.parts[0] in allowed, "Payload tar escapes its declared roots")
-        archive.extractall(build, filter="data")
+            require(not (build / name.parts[0]).is_symlink(), "Payload tar root is a symlink")
+            if item.issym() or item.islnk():
+                target = posixpath.normpath(posixpath.join(str(name.parent), item.linkname)
+                                           if item.issym() else item.linkname)
+                link = PurePosixPath(target)
+                require(not link.is_absolute() and bool(link.parts) and ".." not in link.parts
+                        and link.parts[0] == name.parts[0], "Payload tar link escapes its declared root")
+        def confined(item, destination):
+            checked = tarfile.data_filter(item, destination)
+            root = PurePosixPath(checked.name).parts[0]
+            require((build / checked.name).resolve().is_relative_to((build / root).resolve()),
+                    "Payload tar resolves outside its declared root")
+            return checked
+        archive.extractall(build, filter=confined)
+
+
+def require_saved_notary(producer, jobs, inventory, root):
+    if producer["id"] == int(os.environ["GITHUB_RUN_ID"]):
+        return
+    name = "release-notary-state-" + os.environ["GITHUB_SHA"]
+    matches = [item for item in inventory if item.get("name") == name]
+    require(len(matches) <= 1, "Original notary state is ambiguous")
+    if not matches:
+        return
+    packaging = [job for job in jobs if job.get("name") == "release"]
+    require(len(packaging) == 1 and packaging[0].get("head_sha") == producer["head_sha"]
+            and packaging[0].get("labels") == ["macrunner"], "Original notary job differs")
+    artifact = api(f"actions/artifacts/{matches[0]['id']}")
+    digest = artifact.get("digest", "")
+    require(re.fullmatch(r"sha256:[a-f0-9]{64}", digest) and artifact["size_in_bytes"] < 4 * 1024**2,
+            "Invalid original notary state")
+    verify_artifact(artifact, producer, packaging[0], artifact["id"], digest[7:], name)
+    with tempfile.TemporaryDirectory(dir=root.parent) as directory:
+        path = Path(directory) / "state.zip"
+        download(artifact, path)
+        require(checksum(path) == digest[7:], "Original notary state changed")
+        with zipfile.ZipFile(path) as archive:
+            journals = [name for name in archive.namelist() if re.fullmatch(r"[a-f0-9]{64}\.json", name)]
+            if not journals:
+                return
+            notary_root = os.environ.get("RELEASE_NOTARY_BINDING", "")
+            require(notary_root, "Original build has Apple submissions; use notary_progress_run_id")
+            notary_root = Path(notary_root)
+            binding = json.loads((notary_root / "notary-binding.json").read_text())
+            context = binding.get("context", {})
+            require(binding.get("schema") == "release-notary-binding/v1"
+                    and context.get("sourceSHA") == producer["head_sha"]
+                    and context.get("buildRunID") == producer["id"]
+                    and context.get("runID") == binding.get("producer", {}).get("id")
+                    and checksum(notary_root / "state.zip") == binding["stateArtifact"]["digest"][7:],
+                    "Saved notary continuation belongs to another build")
+            with zipfile.ZipFile(notary_root / "state.zip") as saved:
+                for name in journals:
+                    require(json.loads(archive_bytes(archive, name)) == json.loads(archive_bytes(saved, name)),
+                            "Saved continuation lost an original Apple submission")
 
 
 def prepare(run_id, root):
@@ -178,6 +232,7 @@ def prepare(run_id, root):
             "Original signed build did not pass")
     artifacts = api(f"actions/runs/{run_id}/artifacts?per_page=100")
     require(artifacts.get("total_count") == len(artifacts.get("artifacts", [])), "Incomplete signed artifact inventory")
+    require_saved_notary(producer, jobs["jobs"], artifacts["artifacts"], root)
     prefix = "release-signed-input-" + source
     selected = {}
     for name in (prefix, prefix + "-proof"):
@@ -298,10 +353,15 @@ def prepare_notary(run_id, root):
     state = selected.get("release-notary-state-" + source)
     require(state and state["size_in_bytes"] < 4 * 1024**2, "Notary state is missing or oversized")
     if selected.get("release-dmg-input-" + source):
-        for name in ("Build and sign DMG", "Retain DMG before notarization"):
+        for name in ("Record DMG before notarization", "Retain DMG before notarization"):
             steps = [step for step in job.get("steps", []) if step.get("name") == name]
             require(len(steps) == 1 and steps[0].get("conclusion") == "success",
                     "Original DMG stage did not pass: " + name)
+        steps = {step.get("name"): step.get("conclusion") for step in job.get("steps", [])}
+        require(steps.get("Build and sign DMG") == "success"
+                or steps.get("Build and sign DMG") == "skipped"
+                and steps.get("Restore saved notarization and DMG") == "success",
+                "Original DMG was neither built nor restored successfully")
     root.mkdir(parents=True, exist_ok=False)
     download(state, root / "state.zip")
     require(checksum(root / "state.zip") == state["digest"][7:], "Notary state changed")

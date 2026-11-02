@@ -46,8 +46,10 @@ def matching_shell_lines(step, prefix):
     return [line.strip() for line in step.splitlines() if line.strip().startswith(prefix)]
 
 
-def condition_enabled(condition, artifact_only, dry_run, resumed=False):
+def condition_enabled(condition, artifact_only, dry_run, resumed=False, *, needs_results=None, ancestry_success=True):
     expression = str(condition or "true").removeprefix("${{").removesuffix("}}").strip()
+    if not ancestry_success and not re.search(r"\b(?:always|cancelled|success|failure)\(\)", expression):
+        return False
     values = {
         "inputs.artifact_only": artifact_only,
         "inputs.dry_run": dry_run,
@@ -57,11 +59,15 @@ def condition_enabled(condition, artifact_only, dry_run, resumed=False):
         "needs.release.result": "success",
         "needs.release-gate.result": "success",
         "needs.release-build.result": "success",
+        "needs.diagnostic-acceptance.result": "success",
+        "needs.bpy-runtime.result": "success",
+        "needs.external-user-acceptance.result": "success",
         "inputs.signed_build_run_id": "",
         "inputs.completed_release_tests_run_id": "",
         "inputs.notary_progress_run_id": "",
         "steps.restore-notary.outputs.dmg_present": "",
     }
+    values.update({f"needs.{name}.result": result for name, result in (needs_results or {}).items()})
     expression = re.sub(r"\b(?:inputs|env|needs|steps)\.[\w.-]+",
                         lambda match: repr(values[match.group()]), expression)
     expression = expression.replace("!cancelled()", "true").replace("&&", " and ").replace("||", " or ")
@@ -169,6 +175,19 @@ class ReleaseWorkflowTests(unittest.TestCase):
                     channel = "preview-123" if dry_run and not artifact_only else "plugins"
                     self.assertIn(f"PLUGIN_CHANNEL_TAG={channel}\n", actual)
                     self.assertIn(f"PLUGIN_CATALOG_URL=https://github.com/iret77/nexgenvideo/releases/download/{channel}/catalog.json\n", actual)
+        for selector in ("SIGNED_BUILD_RUN", "NOTARY_PROGRESS_RUN"):
+            for artifact_only, dry_run, accepted in ((True, True, True), (False, False, True), (False, True, False)):
+                with self.subTest(selector=selector, artifact_only=artifact_only, dry_run=dry_run):
+                    environment = dict(os.environ)
+                    environment.update(REL_VERSION="1.8.0", ARTIFACT_ONLY=str(artifact_only).lower(),
+                                       DRY_RUN=str(dry_run).lower(), RELEASE_TEST_RUN="", SIGNED_BUILD_RUN="",
+                                       NOTARY_PROGRESS_RUN="")
+                    environment[selector] = "123"
+                    result = subprocess.run(["bash", "-c", validate], env=environment,
+                                            capture_output=True, text=True, timeout=5)
+                    self.assertEqual(result.returncode == 0, accepted, result.stdout + result.stderr)
+                    if not accepted:
+                        self.assertIn("Preview channels are run-specific", result.stdout)
 
     def test_artifact_only_keeps_distribution_and_native_gates(self):
         workflow = self.workflow()

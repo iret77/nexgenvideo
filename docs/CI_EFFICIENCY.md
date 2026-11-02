@@ -149,13 +149,18 @@ The builder runs full Release tests in their isolated scratch directory, then bu
 and signs the production app and pack. Before any Apple wait, it retains the exact
 App ZIP, pack, four symbol bundles and bpy receipt with a source-bound manifest.
 The packaging job restores these bytes and retains its signed DMG before submitting
-it. Every packaging exit uploads the payload-bound Apple submission journal.
+it. The payload-bound Apple submission journal uploads immediately after the final
+Apple step, or after any earlier step failure, before installed-DMG verification
+and the remaining large artifact transfers.
 Normal installed-DMG, pack loading, diagnostic, bpy and external-user checks remain
 required after restoration; a checkpoint alone is not acceptance.
 
 A continuation on the exact same commit selects `signed_build_run_id`, or
 `notary_progress_run_id` to recover the original build and saved submissions/DMG.
-These selectors are mutually exclusive. Failed producer identity, source, attempt,
+These selectors are mutually exclusive. Continuations support artifact-only and
+stable modes; run-specific preview catalog URLs cannot be restored into a new run.
+A signed-build selector refuses existing submissions and directs the continuation
+to the notarization selector. Failed producer identity, source, attempt,
 artifact digest, bundle identity or byte checks stop restoration. A saved Apple
 submission is waited on again and must actually return Accepted. No journal status
 substitutes for Apple, stapling or the independent installed-DMG checks. Artifacts
