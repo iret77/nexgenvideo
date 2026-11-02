@@ -12,6 +12,7 @@ import zipfile
 
 from hang_diagnostic_acceptance import capture_helper_failure, verify_helper_recovery, verify_retained_key
 from verify_diagnostic_candidate import APP_DIAGNOSTIC_PATHS, BPY_DIAGNOSTIC_PATHS, CI_HARNESS_PATHS, HARNESS_PATHS, verify, verify_app_crash_archive, verify_app_diagnostic, verify_bpy_diagnostic, verify_ci
+from verify_diagnostic_candidate import SIGNED_BPY_HARNESS_PATHS, verify_signed_bpy
 
 
 class AppCrashCandidateTests(unittest.TestCase):
@@ -215,6 +216,103 @@ class CandidateProvenanceTests(unittest.TestCase):
                 self.check([*HARNESS_PATHS, path])
 
 
+class SignedBpyCandidateTests(unittest.TestCase):
+    def setUp(self):
+        self.source, self.digest = "a" * 40, "b" * 64
+        self.run = dict(id=12, head_sha=self.source, path=".github/workflows/release.yml",
+                        event="workflow_dispatch", head_branch="release-candidate", status="completed",
+                        conclusion="failure", run_attempt=2, repository=dict(full_name="iret77/nexgenvideo"))
+        self.jobs = dict(total_count=1, jobs=[dict(name="release", conclusion="success", status="completed",
+                        run_id=12, head_sha=self.source, run_attempt=2,
+                        started_at="2026-11-02T20:20:00Z", completed_at="2026-11-02T20:51:03Z")])
+        self.artifact = dict(id=34, name="diagnostic-release-evidence", expired=False,
+                        digest="sha256:" + self.digest, workflow_run=dict(id=12, head_sha=self.source),
+                        created_at="2026-11-02T20:50:20Z", updated_at="2026-11-02T20:50:47Z",
+                        expires_at="2099-01-01T00:00:00Z")
+
+    def check(self, paths=SIGNED_BPY_HARNESS_PATHS):
+        verify_signed_bpy(self.run, self.jobs, self.artifact, 12, self.source, 34, self.digest, paths)
+
+    def test_accepts_signed_release_job_despite_later_acceptance_failure(self):
+        self.check()
+
+    def test_rejects_foreign_or_unfinished_producer(self):
+        for key, value in (("id", 13), ("head_sha", "c" * 40), ("path", ".github/workflows/ci.yml"),
+                           ("event", "push"), ("status", "in_progress"), ("run_attempt", 0),
+                           ("repository", dict(full_name="other/repo"))):
+            old = self.run[key]
+            self.run[key] = value
+            with self.subTest(field=key), self.assertRaises(ValueError):
+                self.check()
+            self.run[key] = old
+
+    def test_rejects_failed_foreign_or_wrong_attempt_release_job(self):
+        job = self.jobs["jobs"][0]
+        for key, value in (("conclusion", "failure"), ("status", "in_progress"), ("run_id", 13),
+                           ("head_sha", "c" * 40), ("run_attempt", 1)):
+            old = job[key]
+            job[key] = value
+            with self.subTest(field=key), self.assertRaises(ValueError):
+                self.check()
+            job[key] = old
+
+    def test_rejects_missing_duplicate_or_truncated_job_inventory(self):
+        original = self.jobs
+        for jobs in (dict(total_count=0, jobs=[]), dict(total_count=2, jobs=original["jobs"]),
+                     dict(total_count=2, jobs=original["jobs"] * 2)):
+            self.jobs = jobs
+            with self.subTest(jobs=jobs), self.assertRaises(ValueError):
+                self.check()
+        self.jobs = original
+
+    def test_rejects_substituted_expired_or_other_attempt_artifact(self):
+        for key, value in (("id", 35), ("name", "NexGenVideo-app"), ("expired", True),
+                           ("digest", "sha256:" + "c" * 64),
+                           ("workflow_run", dict(id=13, head_sha=self.source)),
+                           ("workflow_run", dict(id=12, head_sha="c" * 40)),
+                           ("created_at", "2026-11-02T20:00:00Z"),
+                           ("updated_at", "2026-11-02T21:00:00Z"),
+                           ("expires_at", "2020-01-01T00:00:00Z")):
+            old = self.artifact[key]
+            self.artifact[key] = value
+            with self.subTest(field=key), self.assertRaises(ValueError):
+                self.check()
+            self.artifact[key] = old
+
+    def test_product_runtime_lockfiles_and_source_pins_cannot_change(self):
+        for path in ("Sources/NexGenVideo/App/NexGenVideoApp.swift", "Package.resolved", "Package.swift",
+                     "scripts/bundle.sh", ".github/workflows/release.yml", "Info.plist",
+                     "musicvideo/manifest.json", "scripts/consume_bpy_distributable_source.py",
+                     ".github/actions/prepare-bpy-source/action.yml", "scripts/bpy_runtime_acceptance.py"):
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                self.check([*SIGNED_BPY_HARNESS_PATHS, path])
+
+    def test_distribution_source_comes_from_its_app_artifact_without_sibling_job(self):
+        workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/bpy-runtime-acceptance.yml").read_text()
+        receipt = workflow.split("name: managed-bpy-source-receipt-", 1)[0].rsplit("      - uses:", 1)[1]
+        self.assertIn("if: inputs.runtime_run_id == '' && !inputs.distribution", receipt)
+        source = workflow.split("      - name: Prepare qualified source for the original CI app\n", 1)[1].split("      - name:", 1)[0]
+        self.assertIn("if: inputs.runtime_run_id != '' || inputs.distribution", source)
+        self.assertIn("ORIGINAL_SOURCE: ${{ inputs.expected_source_sha || github.sha }}", source)
+        self.assertIn('--receipt "$RUNNER_TEMP/download/bpy-source/bpy-source-receipt.json"', source)
+        relocate = workflow.split("      - name: Relocate the exact app and prepare denied resources\n", 1)[1].split("      - name:", 1)[0]
+        for command in ('scripts/verify_bpy_bundle.sh "$APP" --distribution', 'xcrun stapler validate "$APP"',
+                        'spctl -a -vvv -t exec "$APP"', 'codesign --verify --strict --verbose=2 "$APP"'):
+            self.assertIn(command, relocate)
+
+    def test_signed_retry_is_source_gated_and_runs_distribution_acceptance(self):
+        workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/diagnostic-acceptance.yml").read_text()
+        job = workflow.split("  signed-bpy:\n", 1)[1].split("\n  ci-bpy-resource-diagnostic:", 1)[0]
+        for binding in ('needs: source', "if: inputs.candidate_kind == 'signed-bpy'",
+                        'uses: ./.github/workflows/bpy-runtime-acceptance.yml',
+                        'artifact: diagnostic-release-evidence', 'app_zip: diagnostic-app.zip', 'distribution: true',
+                        'runtime_run_id: ${{ inputs.run_id }}', 'expected_source_sha: ${{ inputs.source_sha }}',
+                        'app_artifact_id: ${{ inputs.artifact_id }}', 'app_artifact_sha256: ${{ inputs.artifact_sha256 }}'):
+            self.assertIn(binding, job)
+        self.assertNotIn('continue-on-error', job)
+        self.assertNotIn('bundle.sh', job)
+
+
 class BpyOpenCandidateTests(unittest.TestCase):
     def setUp(self):
         self.source = "a" * 40
@@ -395,7 +493,7 @@ class CICandidateProvenanceTests(unittest.TestCase):
             with self.subTest(change=change), self.assertRaises(ValueError):
                 self.check()
 
-    def test_runtime_selectors_cannot_override_normal_or_signed_source(self):
+    def test_runtime_selectors_require_complete_retained_identity(self):
         workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/bpy-runtime-acceptance.yml").read_text()
         step = workflow.split("      - name: Validate original app selectors\n", 1)[1].split("\n      - ", 1)[0]
         script = textwrap.dedent(step.split("        run: |\n", 1)[1])
@@ -403,7 +501,7 @@ class CICandidateProvenanceTests(unittest.TestCase):
         complete = {**empty, "ORIGINAL_RUN": "12", "ORIGINAL_SOURCE": self.source,
                     "ORIGINAL_ARTIFACT": "34", "ORIGINAL_DIGEST": self.digest}
         cases = [(empty, True), ({**empty, "DISTRIBUTION": "true"}, True), (complete, True),
-                 ({**complete, "DISTRIBUTION": "true"}, False)]
+                 ({**complete, "DISTRIBUTION": "true"}, True)]
         for key in ("ORIGINAL_RUN", "ORIGINAL_SOURCE", "ORIGINAL_ARTIFACT", "ORIGINAL_DIGEST"):
             cases.append(({**complete, key: ""}, False))
             cases.append(({**complete, key: "invalid"}, False))
@@ -463,8 +561,8 @@ class CICandidateProvenanceTests(unittest.TestCase):
     def test_resumed_source_preparation_passes_the_original_receipt_identity(self):
         workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/bpy-runtime-acceptance.yml").read_text()
         step = workflow.split("      - name: Prepare qualified source for the original CI app\n", 1)[1].split("      - name:", 1)[0]
-        self.assertIn("if: inputs.runtime_run_id != ''", step)
-        self.assertIn("ORIGINAL_SOURCE: ${{ inputs.expected_source_sha }}", step)
+        self.assertIn("if: inputs.runtime_run_id != '' || inputs.distribution", step)
+        self.assertIn("ORIGINAL_SOURCE: ${{ inputs.expected_source_sha || github.sha }}", step)
         script = textwrap.dedent(step.split("        run: |\n", 1)[1])
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -480,7 +578,7 @@ class CICandidateProvenanceTests(unittest.TestCase):
                              "--output-directory", str(root / "source"), "--source-sha", self.source,
                              "--receipt", str(root / "download/bpy-source/bpy-source-receipt.json")])
         normal = workflow.split("      - uses: ./.github/actions/prepare-bpy-source\n", 1)[1].split("      - name:", 1)[0]
-        self.assertIn("if: inputs.runtime_run_id == ''", normal)
+        self.assertIn("if: inputs.runtime_run_id == '' && !inputs.distribution", normal)
 
 
 class HelperRecoveryEvidenceTests(unittest.TestCase):
