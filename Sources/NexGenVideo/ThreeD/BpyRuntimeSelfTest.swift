@@ -1354,7 +1354,7 @@ enum BpyRuntimeSelfTest {
             """
         )
         guard aggregateBytes.response.state == .resourceLimited,
-              aggregateBytes.response.message == "job exceeded the disk limit" else {
+              aggregateBytes.response.message == "The 3D job exceeded its temporary storage limit. Reduce its output before retrying." else {
             throw BpyRuntimeError.invalidOutput("Aggregate bytes outside outputs were not terminal.")
         }
         let unlinkedStorage = try constrained.runJob(
@@ -1377,7 +1377,7 @@ enum BpyRuntimeSelfTest {
             timeoutSeconds: 5
         )
         guard unlinkedStorage.response.state == .resourceLimited,
-              unlinkedStorage.response.message == "job exceeded the disk limit" else {
+              unlinkedStorage.response.message == "The 3D job exceeded its temporary storage limit. Reduce its output before retrying." else {
             throw BpyRuntimeError.invalidOutput("Open unlinked vnodes escaped the disk limit.")
         }
         let renameChurnStorage = try constrained.runJob(
@@ -1400,7 +1400,7 @@ enum BpyRuntimeSelfTest {
             timeoutSeconds: 5
         )
         guard renameChurnStorage.response.state == .resourceLimited,
-              renameChurnStorage.response.message == "job exceeded the disk limit" else {
+              renameChurnStorage.response.message == "The 3D job exceeded its temporary storage limit. Reduce its output before retrying." else {
             throw BpyRuntimeError.invalidOutput("Closed rename-churn storage escaped the disk limit.")
         }
         let healthyChurn = try constrained.runJob(

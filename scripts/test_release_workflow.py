@@ -192,6 +192,29 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertEqual(external["artifact_mode"], "dmg")
         self.assertEqual(external["expected_dmg_sha256"], "${{ needs.release.outputs.dmg_sha256 }}")
         self.assertIs(workflow["jobs"]["bpy-runtime"]["with"]["distribution"], True)
+        diagnostic = workflow["jobs"]["diagnostic-acceptance"]["steps"]
+        by_name = {step.get("name"): step for step in diagnostic}
+        for name, command in (
+            ("Exercise native Export Cancel, Retry and Reveal actions",
+             "python3 scripts/export_actions_acceptance.py NexGenVideo.app --output evidence/export-actions.json"),
+            ("Verify asynchronous termination, cancellation and restart",
+             "python3 scripts/app_termination_acceptance.py NexGenVideo.app --output evidence/termination"),
+        ):
+            self.assertEqual(by_name[name]["run"], command)
+            self.assertFalse(by_name[name].get("continue-on-error", False))
+        self.assertEqual(by_name["Verify asynchronous termination, cancellation and restart"]["if"], "${{ !cancelled() }}")
+        self.assertNotIn("if", by_name["Exercise native Export Cancel, Retry and Reveal actions"])
+        pricing = by_name["Verify generation batch pricing recovery"]
+        self.assertNotIn("if", pricing)
+        for required in ("set -euo pipefail", "NGV_SELFTEST_GENERATION_BATCH_RECOVERY=1",
+                         "NexGenVideo.app/Contents/MacOS/NexGenVideo", "grep -qx 'SELFTEST_GENERATION_BATCH_RECOVERY_OK'"):
+            self.assertIn(required, pricing["run"])
+        self.assertFalse(pricing.get("continue-on-error", False))
+        upload = next(step for step in diagnostic if step.get("with", {}).get("name") == "diagnostic-runtime-acceptance")
+        self.assertEqual(upload["if"], "always()")
+        for path in ("evidence/*.json", "evidence/*.log", "evidence/*.png",
+                     "evidence/helper-recovery-recordings.zip", "evidence/termination/"):
+            self.assertIn(path, upload["with"]["path"].splitlines())
 
     def release_transfer_fixture(self, directory):
         root = Path(directory)

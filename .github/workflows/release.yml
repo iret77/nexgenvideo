@@ -1131,11 +1131,28 @@ jobs:
           codesign --verify --strict --verbose=2 NexGenVideo.app
           xcrun stapler validate NexGenVideo.app
           python3 scripts/hang_diagnostic_acceptance.py NexGenVideo.app diagnostic-symbols/NexGenVideo.dSYM --output evidence
+      - name: Exercise native Export Cancel, Retry and Reveal actions
+        run: python3 scripts/export_actions_acceptance.py NexGenVideo.app --output evidence/export-actions.json
+      - name: Verify generation batch pricing recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          NGV_SELFTEST_GENERATION_BATCH_RECOVERY=1 \
+            NexGenVideo.app/Contents/MacOS/NexGenVideo \
+            | grep -qx 'SELFTEST_GENERATION_BATCH_RECOVERY_OK'
+      - name: Verify asynchronous termination, cancellation and restart
+        if: ${{ !cancelled() }}
+        run: python3 scripts/app_termination_acceptance.py NexGenVideo.app --output evidence/termination
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: diagnostic-runtime-acceptance
-          path: evidence/result.json
+          path: |
+            evidence/*.json
+            evidence/*.log
+            evidence/*.png
+            evidence/helper-recovery-recordings.zip
+            evidence/termination/
           retention-days: 90
 
   bpy-runtime:
