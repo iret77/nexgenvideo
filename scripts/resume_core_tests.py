@@ -1,5 +1,6 @@
 """Carry verified Core backends across harness-only changes, then complete normal App tests."""
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -24,8 +25,17 @@ HARNESS_PATHS = {
     "scripts/verify_diagnostic_candidate.py",
     "scripts/test_swiftpm_dependency_cache.py", "scripts/resume_core_source_checks.py",
     "scripts/test_resume_core_source_checks.py",
+    "scripts/test_ci_workflow.py", "scripts/test_verified_pr_source_checks.py",
 }
 BUILD_JOB = "Compile, unit tests, app and native bpy acceptance / Build & Test"
+TIMEOUT_SOURCE = "0d991d3bd23b0f1eb62bac7fdfe102fe4df34d9f"
+TIMEOUT_RUN = 41366151985
+TIMEOUT_DIGEST = "3bf3e356352e5d57151b244545aa71ec1b31570b997cea7a35d4df4304efcee3"
+CONTEXT_RUN = 41390599748
+CONTEXT_SOURCE = "bf55cd2cee1f808f4ddf995132aed82dd6b80699"
+CONTEXT_PRODUCT = "21160564f484cbd9aaa1a563d561077e523a03ab"
+CONTEXT_ARTIFACT = 13117531199
+CONTEXT_DIGEST = "0dda9c73da9de95853cca890eab496417bf5d6a2418539d634056980299e2477"
 
 
 def command(args):
@@ -78,7 +88,7 @@ def inventory(raw):
     return {"functions": sorted(functions), "skips": sorted(set(functions) & skipped)}
 
 
-def verify_backends(archive, root, source):
+def verify_backends(archive, root, source, timeout=False):
     suite = archive_json(archive, "hosted-suite/suite.json")
     require(suite.get("schema") == 1 and suite.get("sourceSHA") == source
             and suite.get("scope") == "all" and suite.get("configuration") == "debug"
@@ -86,8 +96,10 @@ def verify_backends(archive, root, source):
             and suite.get("completed") is False
             and [p.get("name") for p in suite.get("phases", [])]
             == ["xctest", "engine-swift-testing", "app-swift-testing"], "Original suite selection differs")
-    require(suite["phases"][2].get("status") == "failed"
-            and suite["phases"][2].get("exitCode", 0) != 0, "Original App phase did not fail")
+    app = suite["phases"][2]
+    require((timeout and app.get("status") == "running" and "exitCode" not in app)
+            or (not timeout and app.get("status") == "failed" and app.get("exitCode", 0) != 0),
+            "Original App phase did not fail or match the pinned interrupted timeout")
     proofs = []
     for phase, swift, xctest in ((suite["phases"][0], 0, 2), (suite["phases"][1], 1, 0)):
         require(phase.get("status") == "verified-execution" and phase.get("exitCode") == 0
@@ -117,8 +129,11 @@ def verify_backends(archive, root, source):
 
 def verify_archive(root, source):
     with zipfile.ZipFile(root / "original.zip") as archive:
-        suite, proofs = verify_backends(archive, root, source)
+        timeout = source == TIMEOUT_SOURCE and checksum(root / "original.zip") == TIMEOUT_DIGEST
+        suite, proofs = verify_backends(archive, root, source, timeout=timeout)
         discovery = inventory(archive_bytes(archive, "hosted-suite/app-swift-testing/events.jsonl"))
+        if timeout:
+            return {"backends": proofs, "appInventory": discovery, "os": timeout_platform(archive, suite, root)}
         raw = archive_bytes(archive, "hosted-suite/app-swift-testing/post-mortem/owned-host-0.ips").decode()
         decoder = json.JSONDecoder()
         header, end = decoder.raw_decode(raw)
@@ -126,6 +141,91 @@ def verify_archive(root, source):
         require(header.get("app_name") == "NexGenVideoAppKitTestHost"
                 and crash.get("pid") == suite["phases"][2].get("pid"), "Original platform report is not owned")
         return {"backends": proofs, "appInventory": discovery, "os": crash["osVersion"]}
+
+
+def timeout_platform(archive, suite, root):
+    capture = archive_json(archive, "appkit-host-stale/capture-receipt.json")
+    status = archive_json(archive, "appkit-host-stale-status.json")
+    snapshot = archive_bytes(archive, "appkit-host-stale/suite-original.json")
+    sample = archive_bytes(archive, "appkit-host-stale/sample.txt")
+    target = capture["target"]
+    command = suite["phases"][2]["command"]
+    wrapper = archive_json(archive, "run.json")
+    require(wrapper["runID"] == str(TIMEOUT_RUN) and wrapper["sourceSHA"] == TIMEOUT_SOURCE
+            and wrapper["status"] == "running" and json.loads(snapshot) == suite
+            and status["suiteSHA256"] == hashlib.sha256(snapshot).hexdigest()
+            and status["target"] == target and status["rootIdentity"]["pid"] == target["parentPID"]
+            == capture["driverPID"] == status["driverPID"]
+            and capture["status"] == "capture-returned" and capture["returnCode"] == 0
+            and capture["originalRunningCommand"] == status["originalRunningCommand"] == command
+            and command == [str(Path(suite["binPath"]) / "NexGenVideoAppKitTestHost"), "--event-stream-version", "0"]
+            and target["executable"] == command[0] and type(target["pid"]) is int and target["pid"] > 0
+            and capture["sampleSHA256"] == hashlib.sha256(sample).hexdigest()
+            and capture["sampleBytes"] == len(sample), "Interrupted timeout sample is not bound to its original host")
+    text = sample.decode()
+    require(re.search(rf"(?m)^Process:\s+NexGenVideoAppKitTestHost \[{target['pid']}\]$", text)
+            and re.search(rf"(?m)^Parent Process:\s+Python \[{target['parentPID']}\]$", text)
+            and "##[error]The action 'Test' has timed out after 30 minutes." in (root / "original-job.log").read_text(),
+            "Original owned sample or action timeout evidence differs")
+    platform = re.findall(r"(?m)^OS Version:\s+(macOS [0-9.]+) \(([^)]+)\)$", text)
+    require(len(platform) == 1, "Original timeout platform is ambiguous")
+    return {"train": platform[0][0], "build": platform[0][1]}
+
+
+def inventory_producer(run, jobs):
+    if run.get("id") != CONTEXT_RUN:
+        return verify_producer(run, jobs, run["head_sha"]), f"app-zombie-diagnostic-{run['id']}-a1"
+    require(run.get("head_sha") == CONTEXT_SOURCE and run.get("run_attempt") == 1
+            and run.get("repository", {}).get("full_name") == "iret77/nexgenvideo"
+            and run.get("path") == ".github/workflows/diagnostic-acceptance.yml"
+            and run.get("event") == "workflow_dispatch" and run.get("status") == "completed"
+            and run.get("conclusion") == "success"
+            and jobs.get("total_count") == len(jobs.get("jobs", [])), "Completed context producer differs")
+    matches = [j for j in jobs["jobs"] if j.get("name") == "ci-film-review-context"]
+    require(len(matches) == 1, "Missing or duplicate completed context job")
+    job = matches[0]
+    require(job.get("run_id") == CONTEXT_RUN and job.get("head_sha") == CONTEXT_SOURCE
+            and job.get("run_attempt") == 1 and job.get("status") == "completed"
+            and job.get("conclusion") == "success", "Completed context job identity differs")
+    for name in ("Restore exact compiled products without rebuilding", "Reproduce the original App process context once",
+                 "Preserve App context interpretation and unchanged products", "Verify unchanged context product source"):
+        require(sum(s.get("name") == name and s.get("conclusion") == "success" for s in job["steps"]) == 1,
+                "Completed context step differs: " + name)
+    return job, f"film-review-context-diagnostic-{CONTEXT_RUN}-a1"
+
+
+def context_inventory(root, binding, source, failure_artifact, job, name):
+    artifact = binding["artifact"]
+    require(source == TIMEOUT_SOURCE and failure_artifact.get("id") == 13109352050
+            and failure_artifact.get("digest") == "sha256:" + TIMEOUT_DIGEST
+            and artifact.get("id") == CONTEXT_ARTIFACT and checksum(root / "inventory.zip") == CONTEXT_DIGEST,
+            "Completed context inventory is not bound to the original timeout")
+    verify_artifact(artifact, binding["run"], job, CONTEXT_ARTIFACT, CONTEXT_DIGEST, name)
+    with zipfile.ZipFile(root / "inventory.zip") as archive:
+        original = archive_json(archive, "film-review-context-binding/binding.json")
+        suite = archive_json(archive, "film-review-context/hosted-suite/suite.json")
+        wrapper = archive_json(archive, "film-review-context/run.json")
+        phase = suite["phases"][0]
+        require(original["originalFailureRun"] == TIMEOUT_RUN and original["originalFailureDigest"] == TIMEOUT_DIGEST
+                and original["harnessSHA"] == suite["sourceSHA"] == suite["harnessSourceSHA"] == CONTEXT_SOURCE
+                and original["productSHA"] == suite["productSourceSHA"] == CONTEXT_PRODUCT
+                and original["coreAcceptance"] is original["releaseAcceptance"] is False
+                and suite["completed"] is True and len(suite["phases"]) == 1
+                and suite["scope"] == "app-swift-testing" and suite["filter"] == ".*"
+                and phase["status"] == "verified-execution" and phase["exitCode"] == 0
+                and phase["outputCapture"]["eof"] is True and phase["outputCapture"]["originalExitCode"] == 0
+                and wrapper["sourceSHA"] == CONTEXT_SOURCE and wrapper["runID"] == str(CONTEXT_RUN)
+                and wrapper["testExitCode"] == wrapper["effectiveExitCode"] == 0,
+                "Completed diagnostic inventory is incomplete or belongs to another execution")
+        path = root / "inventory-events.jsonl"
+        path.write_bytes(archive_bytes(archive, "film-review-context/hosted-suite/app-swift-testing/events.jsonl"))
+        events = swift_events(path, "NexGenVideoTests")
+        require(events == phase["events"] and events["discoveredFunctionIDs"] == original["expectedDiscoveredFunctionIDs"]
+                and events["startedFunctionIDs"] == events["endedFunctionIDs"] == original["expectedFunctionIDs"]
+                and events["skippedFunctionIDs"] == original["expectedSkippedFunctionIDs"]
+                and len(events["discoveredFunctionIDs"]) == 3668 and events["functionExecutions"] == 3660
+                and len(events["skippedFunctionIDs"]) == 8, "Completed original App inventory differs")
+        return {"functions": events["discoveredFunctionIDs"], "skips": events["skippedFunctionIDs"]}
 
 
 def toolchain(log):
@@ -144,7 +244,9 @@ def swift_identity(output):
 
 def verify_inventory(root, binding, source, failure_artifact):
     run, artifact = binding["run"], binding["artifact"]
-    job = verify_producer(run, binding["jobs"], run["head_sha"])
+    job, name = inventory_producer(run, binding["jobs"])
+    if run["id"] == CONTEXT_RUN:
+        return context_inventory(root, binding, source, failure_artifact, job, name)
     verify_sources(run["head_sha"], os.environ["GITHUB_SHA"])
     verify_artifact(artifact, run, job, artifact["id"], checksum(root / "inventory.zip"),
                     f"app-zombie-diagnostic-{run['id']}-a1")
@@ -189,16 +291,19 @@ def prepare(run_id, inventory_run_id, root):
     proof = verify_archive(root, run["head_sha"])
     inventory_run = api(f"actions/runs/{inventory_run_id}")
     inventory_jobs = api(f"actions/runs/{inventory_run_id}/attempts/1/jobs?per_page=100")
-    verify_producer(inventory_run, inventory_jobs, inventory_run["head_sha"])
+    _, inventory_name = inventory_producer(inventory_run, inventory_jobs)
     listing = api(f"actions/runs/{inventory_run_id}/artifacts?per_page=100")
     require(listing.get("total_count") == len(listing.get("artifacts", [])), "Incomplete inventory artifact list")
-    matches = [a for a in listing["artifacts"] if a.get("name") == f"app-zombie-diagnostic-{inventory_run_id}-a1"]
+    matches = [a for a in listing["artifacts"] if a.get("name") == inventory_name]
     require(len(matches) == 1, "Missing or duplicate completed App inventory")
     download(matches[0], root / "inventory.zip")
     binding = {"run": inventory_run, "jobs": inventory_jobs, "artifact": matches[0]}
     full_inventory = verify_inventory(root, binding, run["head_sha"], artifact)
-    require(full_inventory["functions"] == proof["appInventory"]["functions"]
-            and set(proof["appInventory"]["skips"]) <= set(full_inventory["skips"]), "App discovery changed after original failure")
+    original_inventory = proof["appInventory"]
+    skips_match = (full_inventory["skips"] == original_inventory["skips"] if inventory_run_id == CONTEXT_RUN
+                   else set(original_inventory["skips"]) <= set(full_inventory["skips"]))
+    require(full_inventory["functions"] == original_inventory["functions"] and skips_match,
+            "App discovery changed after original failure")
     receipt = {"schema": "core-backend-resume/v1", "sourceSHA": head,
                "runID": os.environ["GITHUB_RUN_ID"], "attempt": os.environ["GITHUB_RUN_ATTEMPT"],
                "originalSourceSHA": run["head_sha"], "originalRun": run, "originalJobs": jobs,

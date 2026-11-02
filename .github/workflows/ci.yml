@@ -78,7 +78,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           ORIGINAL_PR_RUN: ${{ inputs.verified_pr_run_id }}
-          OTHER_SOURCE_REUSE: ${{ inputs.completed_source_checks_run_id != '' || inputs.completed_full_core_run_id != '' || inputs.completed_backends_run_id != '' || inputs.completed_app_tests_run_id != '' || inputs.app_inventory_run_id != '' }}
+          OTHER_SOURCE_REUSE: ${{ inputs.completed_source_checks_run_id != '' || inputs.completed_full_core_run_id != '' || inputs.completed_app_tests_run_id != '' }}
         run: |
           test "$OTHER_SOURCE_REUSE" = false
           python3 scripts/verified_pr_source_checks.py prepare --run-id "$ORIGINAL_PR_RUN" \
