@@ -20,7 +20,6 @@ on:
 
 permissions:
   contents: read
-  actions: read
 
 concurrency:
   group: signing-preflight-${{ github.workflow }}-${{ github.ref }}
@@ -29,6 +28,9 @@ concurrency:
 jobs:
   source:
     if: inputs.dmg_copy_probe
+    permissions:
+      contents: read
+      actions: read
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -51,10 +53,14 @@ jobs:
   dmg-copy-probe:
     needs: source
     if: inputs.dmg_copy_probe
+    permissions:
+      contents: read
+      actions: read
     runs-on: macrunner
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: ./.github/actions/setup-native-test-python
       - uses: ./.github/actions/setup-xcode-27
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:

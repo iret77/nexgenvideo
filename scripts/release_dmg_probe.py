@@ -4,10 +4,12 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
+import time
 import zipfile
 
 from retained_app_test_products import api, archive_bytes, checksum, download, require, verify_artifact, write
-from release_checkpoint import validate_app_zip, verify_manifest
+from release_checkpoint import NATIVE_TIMEOUT, identity, tree_digest, validate_app_zip, verify_manifest
 from verify_dmg_copy import verify
 
 
@@ -17,7 +19,8 @@ ARTIFACT = 13159028671
 DIGEST = "d486805bcce8f44a38cfdf824f84644ffedbea7b8ab8ddf4caaf4c350300c8d6"
 PATHS = {"scripts/dmg-settings.py", "scripts/bundle.sh", "scripts/verify_dmg_copy.py",
          "scripts/release_dmg_probe.py", "scripts/test_release_dmg_packaging.py",
-         ".github/workflows/signing-preflight.yml", "scripts/release_native_proof.py"}
+         ".github/workflows/signing-preflight.yml", "scripts/release_native_proof.py",
+         "scripts/release_checkpoint.py"}
 
 
 def validate(producer, jobs, artifact):
@@ -63,13 +66,24 @@ def bind(root):
 
 
 def inspect(root):
+    started = time.monotonic()
+    durations = {}
+    def timed(stage, operation):
+        start = time.monotonic()
+        try:
+            return operation()
+        finally:
+            durations[stage] = time.monotonic() - start
+            print(json.dumps({"stage": stage, "seconds": durations[stage]}), flush=True)
+    def run(*args, **kwargs):
+        subprocess.run(args, stdin=subprocess.DEVNULL, check=True, timeout=NATIVE_TIMEOUT, **kwargs)
     binding = json.loads((root / "binding.json").read_text())
     require(binding.get("schema") == "release-dmg-probe-binding/v1"
             and binding.get("productSourceSHA") == SOURCE
             and binding.get("harnessSourceSHA") == os.environ["GITHUB_SHA"], "Probe source binding differs")
     artifact = api(f"actions/artifacts/{ARTIFACT}")
     validate(binding["producer"], {"total_count": 1, "jobs": [binding["job"]]}, artifact)
-    download(artifact, root / "signed.zip")
+    timed("download", lambda: download(artifact, root / "signed.zip"))
     require(checksum(root / "signed.zip") == DIGEST, "Signed source artifact changed")
     app_zip = root / "NexGenVideo.zip"
     with zipfile.ZipFile(root / "signed.zip") as archive:
@@ -80,19 +94,33 @@ def inspect(root):
             shutil.copyfileobj(source, target)
     require(checksum(app_zip) == manifest["files"]["NexGenVideo.zip"]["sha256"], "App ZIP bytes differ")
     validate_app_zip(app_zip)
-    subprocess.run(["ditto", "-x", "-k", str(app_zip), str(root)], stdin=subprocess.DEVNULL,
-                   check=True, timeout=180)
+    timed("extract", lambda: run("ditto", "-x", "-k", str(app_zip), str(root)))
     app = root / "NexGenVideo.app"
-    subprocess.run(["xcrun", "stapler", "staple", str(app)], stdin=subprocess.DEVNULL, check=True, timeout=180)
+    restored = tree_digest(app)
+    require(restored == manifest["appTreeSHA256"] and identity(root) == manifest["identity"],
+            "Restored App differs from its signed manifest")
+    timed("staple", lambda: run("xcrun", "stapler", "staple", str(app)))
+    timed("stapleValidate", lambda: run("xcrun", "stapler", "validate", str(app)))
     dmg = root / "NexGenVideo.dmg"
-    environment = dict(os.environ, DMG_APP=str(app), DMG_BG=str(Path("assets/dmg-background.png").resolve()),
-                       DMG_VOLICON=str(Path("Sources/NexGenVideo/Resources/AppIcon.icns").resolve()))
-    subprocess.run([os.environ["DMGBUILD_BIN"], "-s", "scripts/dmg-settings.py", "NexGenVideo", str(dmg)],
-                   env=environment, stdin=subprocess.DEVNULL, check=True, timeout=180)
+    background = Path("assets/dmg-background.png").resolve()
+    icon = Path("Sources/NexGenVideo/Resources/AppIcon.icns").resolve()
+    require(background.is_file() and icon.is_file(), "Missing DMG background or volume icon")
+    tooling = json.loads(subprocess.check_output([str(Path(os.environ["DMGBUILD_BIN"]).with_name("python")),
+        "-c", "import json,sys,importlib.metadata as m; print(json.dumps({'python':sys.version,"
+        "'executable':sys.executable,'packages':{p:m.version(p) for p in ['dmgbuild','ds-store','mac-alias']}}))"],
+        stdin=subprocess.DEVNULL, text=True, timeout=NATIVE_TIMEOUT))
+    require(tooling["packages"]["dmgbuild"] == "1.6.7", "DMG tooling version differs")
+    print(json.dumps({"tooling": tooling, "python": sys.version, "executable": sys.executable}), flush=True)
+    environment = dict(os.environ, DMG_APP=str(app), DMG_BG=str(background), DMG_VOLICON=str(icon))
+    timed("dmgbuild", lambda: run(os.environ["DMGBUILD_BIN"], "-s", "scripts/dmg-settings.py",
+                                "NexGenVideo", str(dmg), env=environment))
     result = verify(app, dmg)
     result.update(productSourceSHA=SOURCE, harnessSourceSHA=os.environ["GITHUB_SHA"],
                   originalProducerRun=RUN, originalArtifactID=ARTIFACT, compilationPerformed=False,
-                  notarizationSubmitted=False, releaseAccepted=False, dmgSHA256=checksum(dmg))
+                  notarizationSubmitted=False, releaseAccepted=False, qualified=False, dmgSHA256=checksum(dmg),
+                  restoredAppTreeSHA256=restored, python={"version": sys.version, "executable": sys.executable},
+                  tooling=tooling, totalSeconds=time.monotonic() - started,
+                  phaseSeconds={**durations, **{"verify." + k: v for k, v in result["phaseSeconds"].items()}})
     report = root / "report"
     report.mkdir()
     write(report / "result.json", result)
