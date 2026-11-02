@@ -412,6 +412,7 @@ class CIWorkflowTests(unittest.TestCase):
                     "NGV_SOURCE_RUN": "", "NGV_VERIFIED_PR": ""}
         valid = [({}, "initial"),
                  ({"NGV_VERIFIED_PR": "123"}, "initial"),
+                 ({"NGV_VERIFIED_PR": "123", "NGV_COMPLETED_BACKENDS": "456", "NGV_APP_INVENTORY": "789"}, "initial"),
                  ({"NGV_MODE": "followup", "NGV_FOLLOWUP": "externalgui",
                    "NGV_RUNTIME_RUN": "123", "NGV_INTERFACE_SCALE": "1.25"}, "followup"),
                  ({"NGV_MODE": "followup", "NGV_FOLLOWUP": "settings",
@@ -430,6 +431,8 @@ class CIWorkflowTests(unittest.TestCase):
                     "NGV_SETTINGS_SCOPE": scope}, "followup")
                   for scope in ("packresume172", "packresume172100", "packresume172125", "packresume172150")]
         invalid = [{"NGV_MODE": ""}, {"NGV_MODE": "unknown"}, {"NGV_MODE": "followup"},
+                   {"NGV_VERIFIED_PR": "123", "NGV_COMPLETED_BACKENDS": "456", "NGV_APP_INVENTORY": "789",
+                    "NGV_SOURCE_CHECKS": "321"},
                    *[{"NGV_VERIFIED_PR": value} for value in ("0", "-1", " 123", "abc", "1.5")],
                    {**followup, "NGV_VERIFIED_PR": "123"},
                    {"NGV_MODE": "qualification", "NGV_VERIFIED_PR": "123"},

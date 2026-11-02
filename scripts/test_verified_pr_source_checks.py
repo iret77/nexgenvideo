@@ -329,9 +329,10 @@ class VerifiedPRSourceChecksTests(unittest.TestCase):
         ci = (root / ".github/workflows/ci.yml").read_text()
         binding = ci.split("      - name: Bind exact PR source checks\n", 1)[1].split("      - name:", 1)[0]
         body = textwrap.dedent(binding.split("        run: |\n", 1)[1])
-        for name in ("completed_source_checks_run_id", "completed_full_core_run_id", "completed_backends_run_id",
-                     "completed_app_tests_run_id", "app_inventory_run_id"):
+        for name in ("completed_source_checks_run_id", "completed_full_core_run_id", "completed_app_tests_run_id"):
             self.assertIn("inputs." + name + " != ''", binding)
+        for name in ("completed_backends_run_id", "app_inventory_run_id"):
+            self.assertNotIn("inputs." + name + " != ''", binding)
         with tempfile.TemporaryDirectory() as directory:
             temp = Path(directory)
             marker = temp / "called"

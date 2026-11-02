@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -347,6 +348,190 @@ class CoreResumeTests(unittest.TestCase):
                     else:
                         with self.assertRaises((ValueError, resume.VerificationError)):
                             resume.verify_inventory(root, binding, SOURCE, failure)
+
+
+class CoreTimeoutResumeTests(unittest.TestCase):
+    def test_only_the_exact_original_timeout_can_supply_an_unfinished_backend(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            def interrupted(suite, files):
+                suite["phases"][2] = {"name": "app-swift-testing", "status": "running"}
+            archive_fixture(root, interrupted)
+            digest = resume.checksum(root / "original.zip")
+            with patch.object(resume, "TIMEOUT_SOURCE", SOURCE), patch.object(resume, "TIMEOUT_DIGEST", digest), \
+                 patch.object(resume, "timeout_platform", return_value={"train": "macOS 27.0", "build": "26A428"}) as platform:
+                self.assertEqual(len(resume.verify_archive(root, SOURCE)["backends"]), 2)
+                platform.assert_called_once()
+            for expected_source, expected_digest in ((HEAD, digest), (SOURCE, "f" * 64)):
+                with self.subTest(source=expected_source, digest=expected_digest), \
+                     patch.object(resume, "TIMEOUT_SOURCE", expected_source), \
+                     patch.object(resume, "TIMEOUT_DIGEST", expected_digest), \
+                     patch.object(resume, "timeout_platform", return_value={"train": "macOS 27.0", "build": "26A428"}) as platform:
+                    with self.assertRaisesRegex(ValueError, "Original App phase did not fail"):
+                        resume.verify_archive(root, SOURCE)
+                    platform.assert_not_called()
+
+    def test_timeout_platform_requires_owned_sample_snapshot_and_action_timeout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            command = ["/products/NexGenVideoAppKitTestHost", "--event-stream-version", "0"]
+            suite = {"binPath": "/products", "phases": [{}, {}, {"command": command}]}
+            target = {"pid": 42, "parentPID": 41, "executable": command[0]}
+            sample = ("Process: NexGenVideoAppKitTestHost [42]\nParent Process: Python [41]\n"
+                      "OS Version: macOS 27.0 (26A428)\n")
+            snapshot = json.dumps(suite)
+            capture = {"target": target, "driverPID": 41, "status": "capture-returned", "returnCode": 0,
+                       "originalRunningCommand": command, "sampleSHA256": hashlib.sha256(sample.encode()).hexdigest(),
+                       "sampleBytes": len(sample)}
+            status = {"suiteSHA256": hashlib.sha256(snapshot.encode()).hexdigest(), "target": target,
+                      "rootIdentity": {"pid": 41}, "driverPID": 41, "originalRunningCommand": command}
+            wrapper = {"runID": str(resume.TIMEOUT_RUN), "sourceSHA": resume.TIMEOUT_SOURCE, "status": "running"}
+            files = {"appkit-host-stale/capture-receipt.json": json.dumps(capture),
+                     "appkit-host-stale-status.json": json.dumps(status),
+                     "appkit-host-stale/suite-original.json": snapshot,
+                     "appkit-host-stale/sample.txt": sample, "run.json": json.dumps(wrapper)}
+            variants = [None, ("capture", "returnCode", 1), ("capture", "driverPID", 99),
+                        ("capture", "status", "capture-unavailable"),
+                        ("capture", "originalRunningCommand", ["/other"]),
+                        ("status", "originalRunningCommand", ["/other"]),
+                        ("capture", "sampleSHA256", "f" * 64), ("capture", "sampleBytes", 1),
+                        ("status", "suiteSHA256", "f" * 64), ("status", "target", {**target, "pid": 99}),
+                        ("status", "rootIdentity", {"pid": 99}),
+                        ("target", "executable", "/other/NexGenVideoAppKitTestHost"),
+                        ("snapshot", "binPath", "/other"), ("suite", "binPath", "/other"),
+                        ("wrapper", "runID", "999"), ("wrapper", "sourceSHA", HEAD),
+                        ("wrapper", "status", "completed"), ("sample", "Process", "WrongHost"),
+                        ("sample", "Parent Process", "WrongParent"), ("sample", "OS Version", "missing"),
+                        ("log", "timeout", "missing")]
+            for variant in variants:
+                selected = dict(files)
+                selected_suite = copy.deepcopy(suite)
+                if variant and variant[0] in {"capture", "status", "wrapper"}:
+                    filename = {"capture": "appkit-host-stale/capture-receipt.json", "status": "appkit-host-stale-status.json",
+                                "wrapper": "run.json"}[variant[0]]
+                    selected[filename] = json.dumps({**json.loads(selected[filename]), variant[1]: variant[2]})
+                elif variant and variant[0] == "target":
+                    for filename in ("appkit-host-stale/capture-receipt.json", "appkit-host-stale-status.json"):
+                        value = json.loads(selected[filename]);value["target"][variant[1]] = variant[2]
+                        selected[filename] = json.dumps(value)
+                elif variant and variant[0] in {"snapshot", "suite"}:
+                    changed_suite = {**suite, variant[1]: variant[2]}
+                    selected["appkit-host-stale/suite-original.json"] = json.dumps(changed_suite)
+                    selected["appkit-host-stale-status.json"] = json.dumps({**status,
+                        "suiteSHA256": hashlib.sha256(json.dumps(changed_suite).encode()).hexdigest()})
+                    if variant[0] == "suite": selected_suite = changed_suite
+                elif variant and variant[0] == "sample":
+                    selected["appkit-host-stale/sample.txt"] = sample.replace(variant[1] + ":", variant[2] + ":", 1)
+                    changed = selected["appkit-host-stale/sample.txt"].encode()
+                    selected["appkit-host-stale/capture-receipt.json"] = json.dumps({**capture,
+                        "sampleSHA256": hashlib.sha256(changed).hexdigest(), "sampleBytes": len(changed)})
+                (root / "original-job.log").write_text("missing" if variant and variant[0] == "log" else
+                    "2026-11-02T01:17:21Z ##[error]The action 'Test' has timed out after 30 minutes.\n")
+                with zipfile.ZipFile(root / "proof.zip", "w") as archive:
+                    for name, value in selected.items(): archive.writestr(name, value)
+                with self.subTest(variant=variant), zipfile.ZipFile(root / "proof.zip") as archive:
+                    if variant is None:
+                        self.assertEqual(resume.timeout_platform(archive, selected_suite, root), {"train": "macOS 27.0", "build": "26A428"})
+                    else:
+                        with self.assertRaises(ValueError): resume.timeout_platform(archive, selected_suite, root)
+
+    def test_context_inventory_producer_rejects_changed_run_job_and_step(self):
+        run = {"id": resume.CONTEXT_RUN, "head_sha": resume.CONTEXT_SOURCE, "run_attempt": 1,
+               "repository": {"full_name": "iret77/nexgenvideo"}, "path": ".github/workflows/diagnostic-acceptance.yml",
+               "event": "workflow_dispatch", "status": "completed", "conclusion": "success"}
+        job = {"name": "ci-film-review-context", "run_id": resume.CONTEXT_RUN, "head_sha": resume.CONTEXT_SOURCE,
+               "run_attempt": 1, "status": "completed", "conclusion": "success", "steps": [
+            {"name": name, "conclusion": "success"} for name in (
+                "Restore exact compiled products without rebuilding", "Reproduce the original App process context once",
+                "Preserve App context interpretation and unchanged products", "Verify unchanged context product source")]}
+        jobs = {"total_count": 1, "jobs": [job]}
+        self.assertEqual(resume.inventory_producer(run, jobs)[0], job)
+        for key, value in (("head_sha", HEAD), ("run_attempt", 2), ("conclusion", "failure"),
+                           ("path", ".github/workflows/ci-batch.yml"), ("event", "push")):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                resume.inventory_producer({**run, key: value}, jobs)
+        for changed in ({**jobs, "total_count": 2}, {"total_count": 2, "jobs": [job, job]},
+                        {**jobs, "jobs": [{**job, "head_sha": HEAD}]}, {**jobs, "jobs": [{**job, "steps": []}]}):
+            with self.subTest(jobs=changed), self.assertRaises(ValueError):
+                resume.inventory_producer(run, changed)
+
+    def test_context_supplies_only_exact_completed_inventory_not_normal_acceptance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            functions = sorted(f"NexGenVideoTests.Example/test{i}()/Example.swift:{i + 1}:1" for i in range(3668))
+            skipped, executed = functions[-8:], functions[:-8]
+            records = [{"version": 0, "kind": "test", "payload": {"kind": "function", "id": identity,
+                        "sourceLocation": {"fileID": "NexGenVideoTests/Example.swift"}}} for identity in functions]
+            records += [{"version": 0, "kind": "event", "payload": {"kind": "runStarted"}}]
+            records += [{"version": 0, "kind": "event", "payload": {"kind": kind, "testID": identity}}
+                        for identity in executed for kind in ("testStarted", "testEnded")]
+            records += [{"version": 0, "kind": "event", "payload": {"kind": "testSkipped", "testID": identity}}
+                        for identity in skipped]
+            records += [{"version": 0, "kind": "event", "payload": {"kind": "runEnded"}}]
+            raw = "".join(json.dumps(r) + "\n" for r in records)
+            (root / "events.jsonl").write_text(raw)
+            events = resume.swift_events(root / "events.jsonl", "NexGenVideoTests")
+            original = {"originalFailureRun": resume.TIMEOUT_RUN, "originalFailureDigest": resume.TIMEOUT_DIGEST,
+                        "harnessSHA": resume.CONTEXT_SOURCE, "productSHA": resume.CONTEXT_PRODUCT,
+                        "coreAcceptance": False, "releaseAcceptance": False,
+                        "expectedDiscoveredFunctionIDs": functions, "expectedSkippedFunctionIDs": skipped,
+                        "expectedFunctionIDs": executed}
+            suite = {"sourceSHA": resume.CONTEXT_SOURCE, "harnessSourceSHA": resume.CONTEXT_SOURCE,
+                     "productSourceSHA": resume.CONTEXT_PRODUCT, "completed": True, "scope": "app-swift-testing",
+                     "filter": ".*", "phases": [{"status": "verified-execution", "exitCode": 0,
+                         "outputCapture": {"eof": True, "originalExitCode": 0}, "events": events}]}
+            wrapper = {"sourceSHA": resume.CONTEXT_SOURCE, "runID": str(resume.CONTEXT_RUN),
+                       "testExitCode": 0, "effectiveExitCode": 0}
+            failure = {"id": 13109352050, "digest": "sha256:" + resume.TIMEOUT_DIGEST}
+            binding = {"artifact": {"id": resume.CONTEXT_ARTIFACT}, "run": {"id": resume.CONTEXT_RUN}}
+            variants = [None, ("original", "originalFailureRun", 999), ("original", "coreAcceptance", True),
+                        ("original", "expectedSkippedFunctionIDs", []), ("suite", "completed", False),
+                        ("suite", "sourceSHA", HEAD), ("suite", "productSourceSHA", HEAD),
+                        ("suite", "filter", "One"), ("wrapper", "effectiveExitCode", 1),
+                        ("wrapper", "runID", "999"), ("binding", "artifact", {"id": 999}),
+                        ("failure", "digest", "sha256:" + "f" * 64), ("digest", "value", "f" * 64),
+                        ("inventory", "missingExecution", executed[0]), ("inventory", "missingSkip", skipped[0]),
+                        ("inventory", "extraDiscovery", "NexGenVideoTests.Example/extra()/Example.swift:99999:1")]
+            for variant in variants:
+                values = {"original": copy.deepcopy(original), "suite": copy.deepcopy(suite),
+                          "wrapper": copy.deepcopy(wrapper), "binding": copy.deepcopy(binding), "failure": copy.deepcopy(failure)}
+                if variant and variant[0] in values: values[variant[0]][variant[1]] = variant[2]
+                selected_raw = raw
+                if variant and variant[0] == "inventory":
+                    identity = variant[2]
+                    selected_records = copy.deepcopy(records)
+                    if variant[1] == "extraDiscovery":
+                        selected_records.insert(0, {"version": 0, "kind": "test", "payload": {
+                            "kind": "function", "id": identity, "sourceLocation": {"fileID": "NexGenVideoTests/Example.swift"}}})
+                        values["original"]["expectedDiscoveredFunctionIDs"] = sorted(functions + [identity])
+                    else:
+                        kinds = {"testStarted", "testEnded"} if variant[1] == "missingExecution" else {"testSkipped"}
+                        selected_records = [r for r in selected_records
+                            if not (r["kind"] == "event" and r["payload"].get("testID") == identity
+                                    and r["payload"]["kind"] in kinds)]
+                        key = "expectedFunctionIDs" if variant[1] == "missingExecution" else "expectedSkippedFunctionIDs"
+                        values["original"][key] = [v for v in values["original"][key] if v != identity]
+                    selected_raw = "".join(json.dumps(r) + "\n" for r in selected_records)
+                    (root / "events.jsonl").write_text(selected_raw)
+                    values["suite"]["phases"][0]["events"] = resume.swift_events(root / "events.jsonl", "NexGenVideoTests")
+                with zipfile.ZipFile(root / "inventory.zip", "w") as archive:
+                    for name, key in (("film-review-context-binding/binding.json", "original"),
+                                      ("film-review-context/hosted-suite/suite.json", "suite"),
+                                      ("film-review-context/run.json", "wrapper")):
+                        archive.writestr(name, json.dumps(values[key]))
+                    archive.writestr("film-review-context/hosted-suite/app-swift-testing/events.jsonl", selected_raw)
+                digest = "f" * 64 if variant and variant[0] == "digest" else resume.checksum(root / "inventory.zip")
+                with self.subTest(variant=variant), patch.object(resume, "CONTEXT_DIGEST", digest), \
+                     patch.object(resume, "verify_artifact") as artifact_check:
+                    if variant is None:
+                        self.assertEqual(resume.context_inventory(root, values["binding"], resume.TIMEOUT_SOURCE,
+                            values["failure"], {}, "inventory"), {"functions": functions, "skips": skipped})
+                        artifact_check.assert_called_once_with(values["binding"]["artifact"], values["binding"]["run"],
+                            {}, resume.CONTEXT_ARTIFACT, digest, "inventory")
+                    else:
+                        with self.assertRaises(ValueError):
+                            resume.context_inventory(root, values["binding"], resume.TIMEOUT_SOURCE,
+                                values["failure"], {}, "inventory")
 
 
 if __name__ == "__main__":
