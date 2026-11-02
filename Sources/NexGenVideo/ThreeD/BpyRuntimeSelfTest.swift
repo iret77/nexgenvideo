@@ -1170,41 +1170,46 @@ enum BpyRuntimeSelfTest {
             serviceName: originalSlot
         )
         _ = try constrained.ready()
-        let containerScope = try constrained.runJob(
-            id: UUID(),
-            expectedRevision: nil,
-            source: """
-            import errno
-            import os
-            import signal
-            sibling = session_root.parent / 'hostile-container-sibling'
+        let containerScopeSource = """
+        import errno
+        import os
+        import signal
+        sibling = session_root.parent / 'hostile-container-sibling'
+        try:
+            sibling.write_bytes(b'escaped')
+        except OSError as error:
+            if error.errno not in (errno.EPERM, errno.EACCES):
+                raise
+        else:
+            raise RuntimeError('worker wrote outside its per-process Seatbelt root')
+        for attempted_signal in (0, signal.SIGSTOP, signal.SIGKILL):
             try:
-                sibling.write_bytes(b'escaped')
+                os.kill(os.getppid(), attempted_signal)
             except OSError as error:
                 if error.errno not in (errno.EPERM, errno.EACCES):
                     raise
             else:
-                raise RuntimeError('worker wrote outside its per-process Seatbelt root')
-            for attempted_signal in (0, signal.SIGSTOP, signal.SIGKILL):
-                try:
-                    os.kill(os.getppid(), attempted_signal)
-                except OSError as error:
-                    if error.errno not in (errno.EPERM, errno.EACCES):
-                        raise
-                else:
-                    raise RuntimeError(
-                        f'worker signalled its native supervisor with {attempted_signal}'
-                    )
-            bpy.data.objects.new('CONTAINER_SIBLING_AND_SIGNAL_BLOCKED', None)
-            bpy.context.scene.render.resolution_x = 64
-            bpy.context.scene.render.resolution_y = 64
-            """
-        )
+                raise RuntimeError(
+                    f'worker signalled its native supervisor with {attempted_signal}'
+                )
+        marker = bpy.data.objects.new('CONTAINER_SIBLING_AND_SIGNAL_BLOCKED', None)
+        bpy.context.scene.collection.objects.link(marker)
+        bpy.context.scene.render.resolution_x = 64
+        bpy.context.scene.render.resolution_y = 64
+        """
+        let containerDirectory = output.appendingPathComponent("container-scope")
+        try FileManager.default.createDirectory(at: containerDirectory, withIntermediateDirectories: true)
+        try Data(containerScopeSource.utf8).write(to: containerDirectory.appendingPathComponent("program.py"), options: .atomic)
+        let containerScope = try constrained.runJob(id: UUID(), expectedRevision: nil, source: containerScopeSource)
+        try JSONEncoder().encode(containerScope.response).write(to: containerDirectory.appendingPathComponent("response.json"), options: .atomic)
+        if let verification = containerScope.stagedOutputs["verification.json"] {
+            try Data(contentsOf: verification).write(to: containerDirectory.appendingPathComponent("verification.json"), options: .atomic)
+        }
         guard containerScope.response.state == .awaitingConfirmation,
               let containerVerificationURL = containerScope.stagedOutputs["verification.json"],
               let containerNames = try verificationObject(containerVerificationURL)["objectNames"] as? [String],
               containerNames.contains("CONTAINER_SIBLING_AND_SIGNAL_BLOCKED") else {
-            throw BpyRuntimeError.invalidOutput("The per-process OS write scope was not enforced.")
+            throw BpyRuntimeError.invalidOutput("The OS-boundary probe could not be verified: state=\(containerScope.response.state?.rawValue ?? "unknown") message=\(containerScope.response.message ?? "none") outputs=\(containerScope.stagedOutputs.keys.sorted()).")
         }
         guard let containerScopeID = containerScope.response.jobID else {
             throw BpyRuntimeError.invalidOutput("The OS-boundary probe omitted its Job ID.")
@@ -1341,12 +1346,15 @@ enum BpyRuntimeSelfTest {
             expectedRevision: nil,
             source: """
             import os
+            bpy.context.scene.render.resolution_x = 64
+            bpy.context.scene.render.resolution_y = 64
             home = Path(os.environ['HOME'])
             (home / 'large.bin').write_bytes(b'x' * 1800000)
             (home / 'aggregate.bin').write_bytes(b'x' * 500000)
             """
         )
-        guard aggregateBytes.response.state == .resourceLimited else {
+        guard aggregateBytes.response.state == .resourceLimited,
+              aggregateBytes.response.message == "job exceeded the disk limit" else {
             throw BpyRuntimeError.invalidOutput("Aggregate bytes outside outputs were not terminal.")
         }
         let unlinkedStorage = try constrained.runJob(
@@ -1464,8 +1472,64 @@ enum BpyRuntimeSelfTest {
             throw BpyRuntimeError.invalidOutput("The healthy resource probe omitted its Job ID.")
         }
         _ = try constrained.cancel(jobID: recoveredJobID)
+        let residueDirectory = output.appendingPathComponent("immutable-cleanup")
+        try FileManager.default.createDirectory(at: residueDirectory, withIntermediateDirectories: true)
+        let residueSource = """
+        import errno
+        import os
+        import stat
+        bpy.context.scene.render.resolution_x = 64
+        bpy.context.scene.render.resolution_y = 64
+        target = Path(os.environ['HOME']) / 'immutable.bin'
+        target.write_bytes(b'x')
+        try:
+            os.chflags(target, stat.UF_IMMUTABLE)
+        except PermissionError as error:
+            if error.errno not in (errno.EPERM, errno.EACCES):
+                raise
+            print(f'NGV_CLEANUP_IMMUTABLE_DENIED:{error.errno}', flush=True)
+        else:
+            print('NGV_CLEANUP_IMMUTABLE_APPLIED', flush=True)
+        """
+        try Data(residueSource.utf8).write(to: residueDirectory.appendingPathComponent("program.py"), options: .atomic)
+        let residue = try constrained.runJob(id: UUID(), expectedRevision: nil, source: residueSource)
+        try JSONEncoder().encode(residue.response).write(to: residueDirectory.appendingPathComponent("response.json"), options: .atomic)
+        let residueLog = (residue.response.stdout ?? "").split(whereSeparator: \.isNewline).map(String.init)
+        let immutableApplied = residueLog.contains("NGV_CLEANUP_IMMUTABLE_APPLIED")
+        let immutableDenied = residueLog.contains("NGV_CLEANUP_IMMUTABLE_DENIED:\(EPERM)")
+            || residueLog.contains("NGV_CLEANUP_IMMUTABLE_DENIED:\(EACCES)")
+        guard immutableApplied != immutableDenied,
+              residue.response.state == (immutableApplied ? .crashed : .awaitingConfirmation) else {
+            throw BpyRuntimeError.invalidOutput("The immutable cleanup probe returned no verified flag outcome.")
+        }
+        if immutableApplied {
+            do {
+                _ = try constrained.runJob(id: UUID(), expectedRevision: nil,
+                    source: "bpy.context.scene.render.resolution_x = 64\nbpy.context.scene.render.resolution_y = 64")
+                throw BpyRuntimeError.invalidOutput("Unremoved job residue did not block admission.")
+            } catch BpyRuntimeError.rejected(let message) {
+                try Data(message.utf8).write(to: residueDirectory.appendingPathComponent("admission.txt"), options: .atomic)
+                guard message == "3D storage cleanup is pending. Retry after cleanup finishes." else {
+                    throw BpyRuntimeError.rejected(message)
+                }
+            }
+        } else if let jobID = residue.response.jobID {
+            _ = try constrained.cancel(jobID: jobID)
+        }
+        let ownershipBefore = try constrained.nativeStorageOwnershipSnapshot()
+        try JSONEncoder().encode(ownershipBefore.1).write(to: residueDirectory.appendingPathComponent("ownership-before.json"), options: .atomic)
+        guard ownershipBefore.0.count == 2, ownershipBefore.0.isSubset(of: Set(ownershipBefore.1.inUseStorageIDs)) else {
+            throw BpyRuntimeError.invalidOutput("The cleanup probe did not own both runtime volumes.")
+        }
+        try JSONEncoder().encode(ownershipBefore.0.sorted { $0.uuidString < $1.uuidString })
+            .write(to: residueDirectory.appendingPathComponent("volume-ids.json"), options: .atomic)
         guard constrained.close() else {
             throw BpyRuntimeError.invalidOutput("The resource-limit runtime storage was not released.")
+        }
+        let ownershipAfter = try constrained.nativeStorageOwnershipSnapshot()
+        try JSONEncoder().encode(ownershipAfter.1).write(to: residueDirectory.appendingPathComponent("ownership-after.json"), options: .atomic)
+        guard ownershipBefore.0.isDisjoint(with: Set(ownershipAfter.1.inUseStorageIDs)) else {
+            throw BpyRuntimeError.invalidOutput("The closed resource-limit session retained service storage ownership.")
         }
 
         guard let reusedSession = BpyRuntimeHost.shared.session(for: projectC),
@@ -1549,6 +1613,9 @@ enum BpyRuntimeSelfTest {
             "supervisorIdentityCaptureFailureState": identityCaptureFailure.response.state?.rawValue ?? "",
             "supervisorIdentityCaptureFailureRecovered": true,
             "resourceSupervisorRecovered": true,
+            "immutableCleanupFlagApplied": immutableApplied,
+            "immutableCleanupFlagDenied": immutableDenied,
+            "closedSessionStorageOwnershipReleased": true,
             "crashState": crashed.response.state?.rawValue ?? "",
             "duplicateJoined": duplicate.response.joinedExistingJob,
             "changedDuplicateRejected": true,

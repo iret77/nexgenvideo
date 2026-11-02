@@ -27,6 +27,7 @@
             "AI and export activity distinguish running work, decisions needing attention and failures. Failed or interrupted exports remain visible with their recovery details.",
             "Quitting and restarting wait for active work to close. Canceling quit keeps NexGenVideo open and cancels the pending restart.",
             "3D storage verifies the reserved volume’s identity when passing access from the app to its sandboxed runtime.",
+            "3D jobs clean up their own unreadable temporary folders so a failed script does not block the next job.",
             "3D startup diagnostics identify blocked runtime components without exposing project paths.",
             "3D workers start without relying on the system account database, verify the bundled runtime identity and use synchronous Metal pipeline creation to avoid stalled compilation. Scripts can list their approved inputs while other files remain inaccessible.",
             "3D runtime startup reports closed input or output channels as errors instead of terminating the runtime process.",
