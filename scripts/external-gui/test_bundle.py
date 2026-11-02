@@ -264,6 +264,17 @@ def consume(directory, destination, source_sha, source_files):
     return xctestrun, receipt
 
 
+def require_runner_access(products, log):
+    runners = list(products.rglob('*-Runner.app'))
+    require(len(runners) == 1 and not runners[0].is_symlink(), 'Expected one independent UI test runner')
+    raw = journey.output(['codesign', '-d', '--entitlements', ':-', runners[0]])
+    entitlements = plistlib.loads(raw) if raw.strip() else {}
+    require(isinstance(entitlements, dict) and not entitlements.get('com.apple.security.app-sandbox'),
+            'Independent UI test runner cannot access its project and evidence directory')
+    with log.open('ab') as stream:
+        stream.write(b'\nIndependent UI test runner entitlements:\n' + plistlib.dumps(entitlements) + b'\n')
+
+
 def build(args):
     require(os.environ.get('GITHUB_ACTIONS') == 'true', 'Build external UI tests only in GitHub Actions')
     source_sha, source_files = journey.test_source_identity(os.environ['GITHUB_SHA'])
@@ -283,6 +294,7 @@ def build(args):
                          '-derivedDataPath', work / 'build', 'MACOSX_DEPLOYMENT_TARGET=26.0', 'ARCHS=arm64',
                          'ONLY_ACTIVE_ARCH=YES'], destination / 'build.log', timeout=240)
         products = work / 'build/Build/Products'
+        require_runner_access(products, destination / 'build.log')
         paths = list(products.glob('*.xctestrun'))
         require(len(paths) == 1, 'Expected one external xctestrun bundle')
         check_test_paths(paths[0], products)

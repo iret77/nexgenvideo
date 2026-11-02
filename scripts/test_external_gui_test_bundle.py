@@ -112,6 +112,24 @@ class ExternalTestBundleTests(unittest.TestCase):
         with patch.object(journey, 'output', side_effect=output):
             self.assertEqual(journey.test_source_identity(self.sha, input_root=self.root)[0], revision)
 
+    def test_independent_runner_rejects_the_observed_file_access_sandbox(self):
+        products = self.root / 'Products'
+        (products / 'Debug/UITests-Runner.app').mkdir(parents=True)
+        entitlements = {'com.apple.security.app-sandbox': True, 'com.apple.security.network.client': True}
+        with patch.object(journey, 'output', return_value=plistlib.dumps(entitlements)), self.assertRaises(ValueError):
+            bundle.require_runner_access(products, self.root / 'build.log')
+
+    def test_independent_runner_preserves_its_automation_entitlements(self):
+        products = self.root / 'Products'
+        (products / 'Debug/UITests-Runner.app').mkdir(parents=True)
+        entitlements = {'com.apple.security.get-task-allow': True, 'com.apple.security.network.client': True}
+        raw = plistlib.dumps(entitlements)
+        for record in (raw, b''):
+            with self.subTest(record=record), patch.object(journey, 'output', return_value=record) as inspect:
+                bundle.require_runner_access(products, self.root / 'build.log')
+            self.assertEqual(inspect.call_args.args[0][:4], ['codesign', '-d', '--entitlements', ':-'])
+        self.assertIn(raw, (self.root / 'build.log').read_bytes())
+
     def archive(self, entries):
         archive = self.root / 'tests.tar.gz'
         with tarfile.open(archive, 'w:gz') as handle:

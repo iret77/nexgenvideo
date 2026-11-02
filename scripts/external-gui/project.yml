@@ -9,6 +9,7 @@ settings:
     CODE_SIGN_STYLE: Manual
     CODE_SIGN_IDENTITY: "-"
     GENERATE_INFOPLIST_FILE: YES
+    ENABLE_APP_SANDBOX: NO
 targets:
   NexGenVideoExternalUITests:
     type: bundle.ui-testing
