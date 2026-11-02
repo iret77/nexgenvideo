@@ -183,4 +183,87 @@ struct BpyKernelInspectionTests {
             #expect((snapshot["events"] as? [[String: Any]])?.isEmpty == true)
         }
     }
+
+    private func descriptorFixture(fileports: Bool = true, failureStage: Int? = nil,
+                                   error: Int32 = ESRCH, failureValue: Int32 = 0, identityLost: Bool = false,
+                                   record: (String) -> Void = { _ in }) throws -> [BpyObservedVnode] {
+        let owned = BpyObservedProcess(pid: 41, start: 100, parent: 40, executable: "/bin/sh", footprint: 4_096)
+        var failed = false
+        return try BpyKernelInspection.descriptors(owned, fileports: fileports, matching: { value in
+            #expect(value == owned)
+            return !(failed && identityLost)
+        }, list: { flavor, buffer, size in
+            #expect(flavor == (fileports ? 14 : 1))
+            let stage = buffer == nil ? 0 : 1
+            record(stage == 0 ? "capacity" : "list")
+            if failureStage == stage { failed = true; return (Int(failureValue), error) }
+            guard let buffer else { #expect(size == 0); return (16, 0) }
+            #expect(size > 16)
+            for offset in [0, 8] {
+                buffer.storeBytes(of: Int32(7 + offset / 8), toByteOffset: offset, as: Int32.self)
+                buffer.storeBytes(of: UInt32(1), toByteOffset: offset + 4, as: UInt32.self)
+            }
+            return (16, 0)
+        }, vnode: { descriptor, buffer in
+            record("vnode:\(descriptor)")
+            if failureStage == 2, descriptor == 8 { failed = true; return (failureValue, error) }
+            buffer.storeBytes(of: UInt32(2), toByteOffset: 24, as: UInt32.self)
+            buffer.storeBytes(of: UInt16(S_IFREG), toByteOffset: 28, as: UInt16.self)
+            buffer.storeBytes(of: UInt16(1), toByteOffset: 30, as: UInt16.self)
+            buffer.storeBytes(of: UInt64(descriptor), toByteOffset: 32, as: UInt64.self)
+            buffer.storeBytes(of: Int64(1_234), toByteOffset: 112, as: Int64.self)
+            buffer.storeBytes(of: Int64(8), toByteOffset: 120, as: Int64.self)
+            for (index, byte) in (Array("/owned/\(descriptor)".utf8) + [0]).enumerated() {
+                buffer.storeBytes(of: byte, toByteOffset: 176 + index, as: UInt8.self)
+            }
+            return (1_200, 0)
+        })
+    }
+
+    @Test func fileportTaskTransitionsDiscardPartialSnapshotsAndResample() throws {
+        for stage in 0...2 {
+            var published = false
+            var queries: [String] = []
+            do {
+                _ = try descriptorFixture(failureStage: stage, record: { queries.append($0) })
+                published = true
+            } catch is BpyLaunchDeferral {
+            } catch {
+                Issue.record("A live fileport task transition became a permanent failure: \(error)")
+            }
+            #expect(!published)
+            if stage == 2 { #expect(queries.contains("vnode:7") && queries.contains("vnode:8")) }
+            let complete = try descriptorFixture()
+            #expect(complete.count == 2 && complete.map(\.inode) == [7, 8])
+            #expect(complete.map(\.path) == ["/owned/7", "/owned/8"])
+            #expect(complete.allSatisfy { $0.logical == 1_234 && $0.blocks == 8 && $0.links == 1 })
+        }
+        #expect(try descriptorFixture(failureStage: 0, error: 0).isEmpty)
+        #expect(try descriptorFixture(failureStage: 1, error: 0).isEmpty)
+    }
+
+    @Test func fileportDeferralRequiresZeroESRCHAndTheSameOwnedBirth() throws {
+        for fileports in [false, true] {
+            for stage in 0...2 {
+                for code: Int32 in [ESRCH, EPERM, EACCES, EIO] {
+                    do {
+                        _ = try descriptorFixture(fileports: fileports, failureStage: stage, error: code)
+                        Issue.record("An incomplete kernel inspection was accepted")
+                    } catch is BpyLaunchDeferral {
+                        #expect(fileports && code == ESRCH)
+                    } catch let error as POSIXError {
+                        #expect(!(fileports && code == ESRCH) && error.code.rawValue == code)
+                    }
+                    let gone = try descriptorFixture(fileports: fileports, failureStage: stage, error: code, identityLost: true)
+                    #expect(gone.isEmpty)
+                }
+                do {
+                    _ = try descriptorFixture(fileports: fileports, failureStage: stage, failureValue: -1)
+                    Issue.record("A malformed nonzero inspection result was accepted")
+                } catch let error as POSIXError {
+                    #expect(error.code == .ESRCH)
+                }
+            }
+        }
+    }
 }
