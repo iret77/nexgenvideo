@@ -234,11 +234,14 @@ class SignedBpyCandidateTests(unittest.TestCase):
         verify_signed_bpy(self.run, self.jobs, self.artifact, 12, self.source, 34, self.digest, paths)
 
     def test_accepts_signed_release_job_despite_later_acceptance_failure(self):
-        self.check()
+        for status in ("queued", "in_progress", "completed"):
+            self.run["status"] = status
+            with self.subTest(run_status=status):
+                self.check()
 
     def test_rejects_foreign_or_unfinished_producer(self):
         for key, value in (("id", 13), ("head_sha", "c" * 40), ("path", ".github/workflows/ci.yml"),
-                           ("event", "push"), ("status", "in_progress"), ("run_attempt", 0),
+                           ("event", "push"), ("status", "waiting"), ("run_attempt", 0),
                            ("repository", dict(full_name="other/repo"))):
             old = self.run[key]
             self.run[key] = value
