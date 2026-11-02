@@ -22,12 +22,18 @@ on:
         description: Already-built app and external pack from this CI batch
         type: string
         default: ""
+      verified_pr_run_id:
+        description: Successful PR source checks for this exact merge tree
+        type: string
+        default: ""
     secrets:
       NGV_GHCR_TOKEN:
         required: true
 
 permissions:
   contents: read
+  actions: read
+  pull-requests: read
 
 concurrency:
   group: private-example-analysis-${{ github.ref }}-${{ inputs.dataset }}
@@ -74,7 +80,17 @@ jobs:
           [ "$(jq -r '.repository // empty' <<<"$REPORT_PACKAGE_JSON")" = "" ] \
             || { echo "::error::analysis report package is linked to a repository"; exit 1; }
 
+      - name: Bind exact PR source checks
+        if: inputs.verified_pr_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERIFIED_PR_RUN: ${{ inputs.verified_pr_run_id }}
+        run: |
+          python3 scripts/verified_pr_source_checks.py prepare --run-id "$VERIFIED_PR_RUN" \
+            --output "$RUNNER_TEMP/private-analysis-pr-source"
+
       - name: Verify fixture bundle tooling
+        if: inputs.verified_pr_run_id == ''
         run: python3 -m unittest discover -s scripts -p 'test_*.py'
 
       - name: Install pinned ORAS CLI

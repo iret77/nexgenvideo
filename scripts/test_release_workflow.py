@@ -215,6 +215,41 @@ class ReleaseWorkflowTests(unittest.TestCase):
         for path in ("evidence/*.json", "evidence/*.log", "evidence/*.png",
                      "evidence/helper-recovery-recordings.zip", "evidence/termination/"):
             self.assertIn(path, upload["with"]["path"].splitlines())
+        inputs = workflow[True]["workflow_dispatch"]["inputs"]
+        self.assertEqual(inputs["verified_pr_run_id"]["type"], "string")
+        self.assertEqual(inputs["verified_pr_run_id"]["default"], "")
+        gates = {step.get("name"): step for step in workflow["jobs"]["release-gate"]["steps"]}
+        binding = gates["Bind exact PR source checks"]
+        self.assertEqual(binding["if"], "inputs.verified_pr_run_id != ''")
+        self.assertFalse(binding.get("continue-on-error", False))
+        self.assertIn('scripts/verified_pr_source_checks.py prepare --run-id "$VERIFIED_PR_RUN"', binding["run"])
+        self.assertEqual(binding["env"]["VERIFIED_PR_RUN"], "${{ inputs.verified_pr_run_id }}")
+        for name in ("Enforce AppTheme", "Verify private fixture bundle tooling"):
+            self.assertEqual(gates[name]["if"], "inputs.verified_pr_run_id == ''")
+        preflight_condition = gates["Release source preflight"]["if"]
+        self.assertEqual(preflight_condition, "${{ steps.publication-state.outputs.resumed != 'true' }}")
+        self.assertNotIn("verified_pr_run_id", preflight_condition)
+        for artifact_only, dry_run in ((True, True), (False, False)):
+            self.assertTrue(condition_enabled(preflight_condition, artifact_only, dry_run, False))
+        for name in ("chat-hang-replay", "musicvideo-analysis-acceptance"):
+            job = workflow["jobs"][name]
+            self.assertEqual(job["needs"], ["release", "diagnostic-acceptance", "bpy-runtime"])
+            self.assertTrue(condition_enabled(job.get("if"), True, True))
+            self.assertFalse(condition_enabled(job.get("if"), False, False))
+            self.assertEqual(job["with"]["runtime_artifact"], "workspace-ui-app")
+        private = workflow["jobs"]["musicvideo-analysis-acceptance"]
+        self.assertEqual(private["permissions"]["pull-requests"], "read")
+        self.assertEqual(private["with"]["verified_pr_run_id"], "${{ inputs.verified_pr_run_id }}")
+        self.assertEqual(private["secrets"], {"NGV_GHCR_TOKEN": "${{ secrets.NGV_GHCR_TOKEN }}"})
+        analysis = yaml.safe_load((ROOT / ".github/workflows/private-example-analysis.yml").read_text())
+        self.assertEqual(analysis["permissions"]["actions"], "read")
+        self.assertEqual(analysis["permissions"]["pull-requests"], "read")
+        private_gates = {step.get("name"): step for step in analysis["jobs"]["source-gate"]["steps"]}
+        self.assertEqual(private_gates["Bind exact PR source checks"]["if"], "inputs.verified_pr_run_id != ''")
+        self.assertIn('scripts/verified_pr_source_checks.py prepare --run-id "$VERIFIED_PR_RUN"',
+                      private_gates["Bind exact PR source checks"]["run"])
+        self.assertFalse(private_gates["Bind exact PR source checks"].get("continue-on-error", False))
+        self.assertEqual(private_gates["Verify fixture bundle tooling"]["if"], "inputs.verified_pr_run_id == ''")
 
     def release_transfer_fixture(self, directory):
         root = Path(directory)

@@ -38,6 +38,10 @@ on:
         description: Optional completed same-source external UI test producer
         type: string
         default: ''
+      verified_pr_run_id:
+        description: Successful PR source checks for this exact merge tree
+        type: string
+        default: ''
   # `workflow_dispatch` is the ONLY trigger. Nothing a commit, a merge, or a PR touches may start a
   # signed build — not the bundling scripts, not the pack manifests, not this file. A build happens
   # when a human asks for one, never as a side effect of changing code. Do not add `push:` or
@@ -127,11 +131,31 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Bind exact PR source checks
+        if: inputs.verified_pr_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERIFIED_PR_RUN: ${{ inputs.verified_pr_run_id }}
+        run: |
+          python3 scripts/verified_pr_source_checks.py prepare --run-id "$VERIFIED_PR_RUN" \
+            --output "$RUNNER_TEMP/release-pr-source"
+
       - name: Enforce AppTheme
+        if: inputs.verified_pr_run_id == ''
         run: python3 scripts/lint_app_theme.py
 
       - name: Verify private fixture bundle tooling
+        if: inputs.verified_pr_run_id == ''
         run: python3 -m unittest discover -s scripts -p 'test_*.py'
+
+      - name: Retain exact PR source proof
+        if: always() && inputs.verified_pr_run_id != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-pr-source-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-pr-source
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Inspect or resume release publication
         if: ${{ inputs.artifact_only == false && inputs.dry_run == false }}
@@ -1178,6 +1202,30 @@ jobs:
       expected_dmg_sha256: ${{ needs.release.outputs.dmg_sha256 }}
       interface_scale: '1'
       test_bundle_run_id: ${{ inputs.test_bundle_run_id }}
+
+  chat-hang-replay:
+    needs: [release, diagnostic-acceptance, bpy-runtime]
+    if: ${{ inputs.artifact_only }}
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/chat-hang-replay.yml
+    with:
+      runtime_artifact: workspace-ui-app
+
+  musicvideo-analysis-acceptance:
+    needs: [release, diagnostic-acceptance, bpy-runtime]
+    if: ${{ inputs.artifact_only }}
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    uses: ./.github/workflows/private-example-analysis.yml
+    with:
+      runtime_artifact: workspace-ui-app
+      verified_pr_run_id: ${{ inputs.verified_pr_run_id }}
+    secrets:
+      NGV_GHCR_TOKEN: ${{ secrets.NGV_GHCR_TOKEN }}
 
   publish:
     needs: [release-gate, release, diagnostic-acceptance, bpy-runtime, external-user-acceptance]

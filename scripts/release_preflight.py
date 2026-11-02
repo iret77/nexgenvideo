@@ -997,6 +997,119 @@ def validate_release_assets() -> None:
         fail(f"scripts/dmg-settings.py is unreadable or invalid Python: {error}")
 
 
+def project_migration_registrations(source: str) -> set[tuple[str, str]]:
+    pattern = re.compile(
+        r'\s+|//[^\n]*|/\*|(?P<hash>#+)(?P<quote>"""|").*?(?P=quote)(?P=hash)'
+        r'|""".*?"""|"(?:\\.|[^"\\])*"|[A-Za-z_]\w*|.',
+        re.DOTALL,
+    )
+    tokens = []
+    offset = 0
+    while offset < len(source):
+        match = pattern.match(source, offset)
+        if match is None:
+            raise ValueError("unrecognized Swift source")
+        token = match.group()
+        offset = match.end()
+        if token == "/*":
+            depth = 1
+            while depth:
+                marker = re.search(r"/\*|\*/", source[offset:])
+                if marker is None:
+                    raise ValueError("unterminated Swift comment")
+                depth += 1 if marker.group() == "/*" else -1
+                offset += marker.end()
+        elif not token.isspace() and not token.startswith("//"):
+            tokens.append(token)
+
+    def closing(items, opening, left, right):
+        depth = 0
+        for index in range(opening, len(items)):
+            if items[index] == left:
+                depth += 1
+            elif items[index] == right:
+                depth -= 1
+                if depth == 0:
+                    return index
+        raise ValueError("unbalanced Swift declaration")
+
+    def literal(value, bindings):
+        if value in bindings:
+            return bindings[value]
+        try:
+            result = json.loads(value)
+        except (ValueError, TypeError):
+            raise ValueError("migration schema must be a literal or its loop binding") from None
+        if not isinstance(result, str):
+            raise ValueError("migration schema must be a string")
+        return result
+
+    def registration(items, start, receiver, bindings):
+        if items[start:start + 4] != [receiver, ".", "registerProjectSchemaMigration", "("]:
+            raise ValueError("literal migration loop must register its bound schema")
+        end = closing(items, start + 3, "(", ")")
+        arguments = items[start + 4:end]
+        if (len(arguments) < 7 or arguments[:2] != ["from", ":"]
+                or arguments[3:6] != [",", "to", ":"]
+                or len(arguments) > 7 and arguments[7] != ","):
+            raise ValueError("migration registration needs from and to schemas")
+        pair = (literal(arguments[2], bindings), literal(arguments[6], bindings))
+        after = end + 1
+        if after < len(items) and items[after] == "{":
+            after = closing(items, after, "{", "}") + 1
+        if after < len(items) and items[after] == ";":
+            after += 1
+        return pair, after
+
+    declarations = [
+        index for index in range(len(tokens) - 9)
+        if tokens[index:index + 5] == ["public", "func", "register", "(", "_"]
+        and tokens[index + 6:index + 10] == [":", "EngineRegistry", ")", "{"]
+    ]
+    if len(declarations) != 1:
+        raise ValueError("pack must have exactly one register(_: EngineRegistry) declaration")
+    for index in declarations:
+        receiver = tokens[index + 5]
+        end = closing(tokens, index + 9, "{", "}")
+        items = tokens[index + 10:end]
+        pairs = set()
+        cursor = 0
+        while cursor < len(items):
+            if items[cursor] == ";":
+                cursor += 1
+            elif items[cursor:cursor + 4] == [receiver, ".", "registerProjectSchemaMigration", "("]:
+                pair, cursor = registration(items, cursor, receiver, {})
+                pairs.add(pair)
+            elif (items[cursor:cursor + 1] == ["for"] and cursor + 3 < len(items)
+                  and items[cursor + 2:cursor + 4] == ["in", "["]):
+                variable = items[cursor + 1]
+                array_end = closing(items, cursor + 3, "[", "]")
+                values = items[cursor + 4:array_end]
+                if values[-1:] == [","]:
+                    values = values[:-1]
+                try:
+                    schemas = json.loads("[" + "".join(values) + "]")
+                except ValueError:
+                    raise ValueError("migration loop must use a literal schema list") from None
+                if not all(isinstance(value, str) for value in schemas):
+                    raise ValueError("migration loop schemas must be strings")
+                opening = array_end + 1
+                if items[opening:opening + 1] != ["{"]:
+                    raise ValueError("migration loop body is missing")
+                loop_end = closing(items, opening, "{", "}")
+                body = items[opening + 1:loop_end]
+                for schema in schemas:
+                    pair, consumed = registration(body, 0, receiver, {variable: schema})
+                    if consumed != len(body):
+                        raise ValueError("migration loop must contain only its registration")
+                    pairs.add(pair)
+                cursor = loop_end + 1
+            else:
+                break
+        return pairs
+    return set()
+
+
 def validate_plugin_version(release_version: str, published_catalog: Path) -> None:
     manifest_path = ROOT / "plugins/musicvideo.json"
     manifest = load_json(manifest_path)
@@ -1039,17 +1152,15 @@ def validate_plugin_version(release_version: str, published_catalog: Path) -> No
         source_match.group(1), "MusicvideoPack.version"
     ) != pack_version:
         fail("MusicvideoPack.version must equal plugins/musicvideo.json version")
-    for source_schema in migrates_from:
-        declaration = (
-            'registerProjectSchemaMigration(\n'
-            f'            from: "{source_schema}",\n'
-            f'            to: "{project_schema}",'
+    try:
+        registrations = project_migration_registrations(source)
+    except ValueError as error:
+        fail(f"MusicvideoPack migration registration is not understood: {error}")
+    if not {(value, project_schema) for value in migrates_from} <= registrations:
+        fail(
+            "MusicvideoPack must register every migration declared by "
+            "plugins/musicvideo.json"
         )
-        if declaration not in source:
-            fail(
-                "MusicvideoPack must register every migration declared by "
-                "plugins/musicvideo.json"
-            )
     min_app_match = re.search(
         r'let musicvideoMinAppVersion = "(\d+\.\d+\.\d+)"',
         source,
