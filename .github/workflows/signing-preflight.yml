@@ -7,7 +7,24 @@ name: Signing preflight
 
 on:
   workflow_call:
+    inputs:
+      dmg_copy_probe:
+        type: boolean
+        default: false
+      dmg_probe_mode:
+        type: string
+        default: copy
   workflow_dispatch:
+    inputs:
+      dmg_copy_probe:
+        description: Check the fixed DMG copy using the existing signed App without compilation
+        type: boolean
+        default: false
+      dmg_probe_mode:
+        description: Copy verification or capacity measurement without copying
+        type: choice
+        options: [copy, capacity]
+        default: copy
 
 permissions:
   contents: read
@@ -17,7 +34,73 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  source:
+    if: inputs.dmg_copy_probe
+    permissions:
+      contents: read
+      actions: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Verify DMG copy tooling and bind the existing signed App
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DMG_PROBE_MODE: ${{ inputs.dmg_probe_mode }}
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_release_dmg_packaging.py' -v
+          python3 scripts/release_dmg_probe.py bind --mode "$DMG_PROBE_MODE" --root "$RUNNER_TEMP/dmg-probe-binding"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dmg-probe-binding-${{ github.run_id }}
+          path: ${{ runner.temp }}/dmg-probe-binding/
+          if-no-files-found: error
+          retention-days: 7
+
+  dmg-copy-probe:
+    needs: source
+    if: inputs.dmg_copy_probe
+    permissions:
+      contents: read
+      actions: read
+    runs-on: macrunner
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: ./.github/actions/setup-native-test-python
+      - uses: ./.github/actions/setup-xcode-27
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: dmg-probe-binding-${{ github.run_id }}
+          path: ${{ runner.temp }}/dmg-probe
+      - name: Prepare pinned DMG tooling
+        run: |
+          python3 -m venv "$RUNNER_TEMP/dmgvenv"
+          "$RUNNER_TEMP/dmgvenv/bin/pip" install --quiet --disable-pip-version-check "dmgbuild==1.6.7"
+          echo "DMGBUILD_BIN=$RUNNER_TEMP/dmgvenv/bin/dmgbuild" >> "$GITHUB_ENV"
+      - name: Verify the exact retained signed App survives the fixed DMG copy
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DMG_PROBE_MODE: ${{ inputs.dmg_probe_mode }}
+        run: |
+          set -euo pipefail
+          python3 scripts/release_dmg_probe.py inspect --mode "$DMG_PROBE_MODE" --root "$RUNNER_TEMP/dmg-probe" \
+            2>&1 | tee "$RUNNER_TEMP/dmg-probe/probe.log"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: dmg-copy-probe-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/dmg-probe/probe.log
+            ${{ runner.temp }}/dmg-probe/binding.json
+            ${{ runner.temp }}/dmg-probe/report/
+          if-no-files-found: error
+          retention-days: 90
+
   preflight:
+    if: ${{ !inputs.dmg_copy_probe }}
     # macOS is required for Keychain, codesign, and notarytool verification.
     runs-on: macrunner
     timeout-minutes: 15

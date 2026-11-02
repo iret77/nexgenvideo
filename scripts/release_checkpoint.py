@@ -18,6 +18,7 @@ from retained_app_test_products import api, archive_bytes, checksum, download, r
 
 REPOSITORY = "iret77/nexgenvideo"
 FILES = ("NexGenVideo.zip", "symbols.tar.gz", "plugins.tar.gz", "bpy-source-receipt.json")
+NATIVE_TIMEOUT = 900
 
 
 def tree_digest(root):
@@ -63,7 +64,7 @@ def validate_app_zip(path):
 
 
 def run(*args):
-    subprocess.run(args, stdin=subprocess.DEVNULL, check=True, timeout=900)
+    subprocess.run(args, stdin=subprocess.DEVNULL, check=True, timeout=NATIVE_TIMEOUT)
 
 
 def identity(root):
