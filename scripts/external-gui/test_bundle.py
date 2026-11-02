@@ -23,7 +23,7 @@ REPOSITORY = 'iret77/nexgenvideo'
 ARTIFACT = 'external-gui-tests'
 MEMBERS = {'tests.tar.gz', 'tests-input.json'}
 WORKFLOWS = {'.github/workflows/external-gui-acceptance.yml', '.github/workflows/ci-batch.yml',
-             '.github/workflows/release.yml'}
+             '.github/workflows/release.yml', '.github/workflows/diagnostic-acceptance.yml'}
 
 
 def require(value, message):

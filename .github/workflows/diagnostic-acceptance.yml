@@ -6,7 +6,7 @@ on:
       candidate_kind:
         description: Signed release verification or targeted failed CI diagnostics
         type: choice
-        options: [signed-release, signed-bpy, ci-runtime, ci-bpy-open-diagnostic, ci-bpy-resource-diagnostic, ci-app-test-diagnostic, ci-app-glow-replay, ci-app-full-replay, ci-builtin-blur, ci-builtin-blur-scribble, ci-builtin-blur-floor, ci-builtin-blur-preheat, ci-glow-context]
+        options: [signed-release, signed-bpy, signed-journey, ci-runtime, ci-bpy-open-diagnostic, ci-bpy-resource-diagnostic, ci-app-test-diagnostic, ci-app-glow-replay, ci-app-full-replay, ci-builtin-blur, ci-builtin-blur-scribble, ci-builtin-blur-floor, ci-builtin-blur-preheat, ci-glow-context]
         default: signed-release
       run_id:
         description: "Original producer workflow run"
@@ -24,6 +24,15 @@ on:
         description: "SHA-256 of the original artifact archive"
         type: string
         required: true
+      expected_dmg_sha256:
+        description: Exact signed DMG SHA256 for signed-journey continuation
+        type: string
+        default: ''
+      interface_scale:
+        description: Text size for signed-journey continuation
+        type: choice
+        options: ['1', '1.25', '1.5', all]
+        default: '1'
 
       product_source_sha:
         description: Original product commit for replay, or normal blur experiment commit
@@ -674,6 +683,19 @@ jobs:
       expected_source_sha: ${{ inputs.source_sha }}
       app_artifact_id: ${{ inputs.artifact_id }}
       app_artifact_sha256: ${{ inputs.artifact_sha256 }}
+
+  signed-journey:
+    needs: source
+    if: inputs.candidate_kind == 'signed-journey'
+    uses: ./.github/workflows/external-gui-acceptance.yml
+    with:
+      runtime_run_id: ${{ inputs.run_id }}
+      interface_scale: ${{ inputs.interface_scale }}
+      artifact_mode: dmg
+      product_source_sha: ${{ inputs.source_sha }}
+      runtime_artifact_id: ${{ inputs.artifact_id }}
+      runtime_artifact_sha256: ${{ inputs.artifact_sha256 }}
+      expected_dmg_sha256: ${{ inputs.expected_dmg_sha256 }}
 
   ci-bpy-resource-diagnostic:
     needs: source

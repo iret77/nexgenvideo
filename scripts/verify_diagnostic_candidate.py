@@ -25,6 +25,7 @@ SIGNED_BPY_HARNESS_PATHS = HARNESS_PATHS | {".github/workflows/bpy-runtime-accep
 SIGNED_JOURNEY_HARNESS_PATHS = SIGNED_BPY_HARNESS_PATHS | {
     ".github/workflows/external-gui-acceptance.yml",
     "scripts/external-gui/acceptance.py",
+    "scripts/external-gui/test_bundle.py",
     "scripts/external-gui/NexGenVideoExternalUITests/UserJourneyTests.swift",
     "scripts/test_external_gui_test_bundle.py",
 }

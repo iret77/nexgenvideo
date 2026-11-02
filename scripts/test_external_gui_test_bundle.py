@@ -92,6 +92,25 @@ class ExternalTestBundleTests(unittest.TestCase):
         self.assertIn('artifact.get(\'digest\') != \'sha256:\' + os.environ[\'ORIGINAL_DIGEST\']', workflow)
         self.assertIn('--dmg-sha256 "$EXPECTED_DMG_SHA256" --source-sha "$PRODUCT_SOURCE"', workflow)
         self.assertNotIn('bundle.sh', workflow)
+        registered = (journey.REPOSITORY / '.github/workflows/diagnostic-acceptance.yml').read_text()
+        entry = registered.split('  signed-journey:\n', 1)[1].split('\n  ci-bpy-resource-diagnostic:', 1)[0]
+        for binding in ('needs: source', "if: inputs.candidate_kind == 'signed-journey'",
+                        'uses: ./.github/workflows/external-gui-acceptance.yml', 'artifact_mode: dmg',
+                        'runtime_run_id: ${{ inputs.run_id }}', 'product_source_sha: ${{ inputs.source_sha }}',
+                        'runtime_artifact_id: ${{ inputs.artifact_id }}',
+                        'runtime_artifact_sha256: ${{ inputs.artifact_sha256 }}',
+                        'expected_dmg_sha256: ${{ inputs.expected_dmg_sha256 }}'):
+            self.assertIn(binding, entry)
+
+    def test_registered_continuation_can_produce_exact_ui_tests(self):
+        run = {**self.run, 'path': '.github/workflows/diagnostic-acceptance.yml', 'event': 'workflow_dispatch'}
+        bundle.require_origin(run, self.artifact, self.sha, 12)
+        run['path'] = '.github/workflows/untrusted.yml'
+        with self.assertRaises(ValueError):
+            bundle.require_origin(run, self.artifact, self.sha, 12)
+        revision, _, output = self.source_identity_fixture(['scripts/external-gui/test_bundle.py'])
+        with patch.object(journey, 'output', side_effect=output):
+            self.assertEqual(journey.test_source_identity(self.sha, input_root=self.root)[0], revision)
 
     def archive(self, entries):
         archive = self.root / 'tests.tar.gz'
