@@ -72,6 +72,16 @@ nonisolated struct BpyTerminalPollState {
                 response.state = .failed; response.message = "The 3D runtime could not be monitored safely. Retry after cleanup finishes."
             }
         }
+        // Final storage scans can finish without a host stop receipt.
+        if response.state == .resourceLimited {
+            switch response.message {
+            case .some("job exceeded the disk limit"), .some("verification exceeded the disk limit"):
+                response.message = "The 3D job exceeded its temporary storage limit. Reduce its output before retrying."
+            case .some("job exceeded the file-count limit"), .some("verification exceeded the file-count limit"):
+                response.message = "The 3D job created too many temporary files. Reduce its output before retrying."
+            default: break
+            }
+        }
         return response
     }
 }

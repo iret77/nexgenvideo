@@ -138,4 +138,52 @@ struct BpyTerminalSettlementTests {
             #expect(BpyRuntimeJobState.terminal(forStopReason: raw) == .failed)
         }
     }
+
+    @Test func diskLimitPresentationDoesNotDependOnWhenAccountingFinishes() throws {
+        let rawMessage = "job exceeded the disk limit"
+        let publicMessage = "The 3D job exceeded its temporary storage limit. Reduce its output before retrying."
+        let fileCountMessage = "The 3D job created too many temporary files. Reduce its output before retrying."
+        let finished = try Fixture()
+        defer { finished.cleanup() }
+        try finished.prepare(released: true)
+        finished.finishCleanup()
+        let finalReceipt = try finished.memory.receipt(finished.admission.id)
+        #expect(finalReceipt.stop == nil && finalReceipt.cleanupComplete && finalReceipt.firstRelease != nil)
+        let cases: [(BpyRuntimeJobState, String?, String?)] = [
+            (.resourceLimited, rawMessage, publicMessage),
+            (.resourceLimited, "verification exceeded the disk limit", publicMessage),
+            (.resourceLimited, publicMessage, publicMessage),
+            (.resourceLimited, "job exceeded the file-count limit", fileCountMessage),
+            (.resourceLimited, "verification exceeded the file-count limit", fileCountMessage),
+            (.resourceLimited, fileCountMessage, fileCountMessage),
+            (.resourceLimited, "verified scene exceeded a structural limit", "verified scene exceeded a structural limit"),
+            (.resourceLimited, "job exceeded the disk limit elsewhere", "job exceeded the disk limit elsewhere"),
+            (.resourceLimited, nil, nil),
+            (.failed, rawMessage, rawMessage),
+            (.crashed, rawMessage, rawMessage),
+            (.failed, "job exceeded the file-count limit", "job exceeded the file-count limit"),
+            (.crashed, "verification exceeded the disk limit", "verification exceeded the disk limit"),
+        ]
+        for (state, message, expected) in cases {
+            var response = finished.reply(state)
+            response.message = message
+            let result = try BpyTerminalPollState.settle(response, receipt: finalReceipt, timeout: 30)
+            #expect(result.state == state && result.message == expected)
+        }
+        let hostStops: [(BpyMemoryStop, String, String)] = [
+            (.disk, rawMessage, publicMessage),
+            (.fileCount, "job exceeded the file-count limit", fileCountMessage),
+        ]
+        for (reason, message, expected) in hostStops {
+            let running = try Fixture()
+            defer { running.cleanup() }
+            try running.prepare(released: true)
+            let stopped = try running.stop(reason)
+            var response = running.reply(.failed)
+            response.message = message
+            let result = try BpyTerminalPollState.settle(response, receipt: stopped, timeout: 30)
+            #expect(stopped.stop == reason && stopped.cleanupComplete)
+            #expect(result.state == .resourceLimited && result.message == expected)
+        }
+    }
 }
