@@ -7,6 +7,7 @@ application = os.environ["DMG_APP"]
 _app = os.path.basename(application)
 
 format = "UDZO"
+filesystem = "APFS"
 files = [application]
 symlinks = {"Applications": "/Applications"}
 

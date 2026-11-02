@@ -115,6 +115,7 @@ build_dmg() {
   DMG_VOLNAME="NexGenVideo"
   DMG_APP="$APP" DMG_BG="$DMG_BG" DMG_VOLICON="$RESOURCES/AppIcon.icns" \
     "$DMGBUILD_BIN" -s "$ROOT/scripts/dmg-settings.py" "$DMG_VOLNAME" "$DMG"
+  python3 "$ROOT/scripts/verify_dmg_copy.py" "$APP" "$DMG"
 
   echo "==> Codesigning DMG"
   codesign --force --timestamp --sign "$SIGN_IDENTITY" "$DMG"

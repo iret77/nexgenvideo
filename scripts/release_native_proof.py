@@ -24,6 +24,8 @@ HARNESS_PATHS = {
     "scripts/bundle.sh", "scripts/notarize.sh", "scripts/test_notarize.py",
     "scripts/test_release_workflow.py", "docs/CI_EFFICIENCY.md",
     "scripts/test_native_test_python_workflow.py",
+    "scripts/dmg-settings.py", "scripts/verify_dmg_copy.py", "scripts/release_dmg_probe.py",
+    "scripts/test_release_dmg_packaging.py", ".github/workflows/signing-preflight.yml",
 }
 
 
