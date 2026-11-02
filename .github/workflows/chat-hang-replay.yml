@@ -1,23 +1,80 @@
 name: Chat Hang Replay
 on:
   workflow_dispatch:
+    inputs:
+      runtime_run_id:
+        description: Original signed release producer run
+        type: string
+        default: ''
+      runtime_source_sha:
+        description: Original App source commit
+        type: string
+        default: ''
+      runtime_artifact_id:
+        description: Immutable original workspace-ui-app artifact ID
+        type: string
+        default: ''
+      runtime_artifact_sha256:
+        description: Original GitHub artifact SHA256
+        type: string
+        default: ''
   workflow_call:
     inputs:
       runtime_artifact:
         description: Already-built app from this CI batch
         type: string
         default: ""
+      runtime_run_id:
+        type: string
+        default: ''
+      runtime_source_sha:
+        type: string
+        default: ''
+      runtime_artifact_id:
+        type: string
+        default: ''
+      runtime_artifact_sha256:
+        type: string
+        default: ''
 
 permissions:
   contents: read
+  actions: read
+
+env:
+  ORIGINAL_RUN: ${{ inputs.runtime_run_id }}
+  ORIGINAL_SOURCE: ${{ inputs.runtime_source_sha }}
+  ORIGINAL_ARTIFACT: ${{ inputs.runtime_artifact_id }}
+  ORIGINAL_DIGEST: ${{ inputs.runtime_artifact_sha256 }}
 
 concurrency:
   group: chat-hang-replay-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Bind the original signed App before macOS allocation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ -z "$ORIGINAL_RUN" ]; then
+            test -z "$ORIGINAL_SOURCE$ORIGINAL_ARTIFACT$ORIGINAL_DIGEST"
+          else
+            python3 -m unittest discover -s scripts -p 'test_retained_release_runtime.py'
+            python3 scripts/retained_release_runtime.py bind --run-id "$ORIGINAL_RUN" \
+              --source-sha "$ORIGINAL_SOURCE" --artifact-id "$ORIGINAL_ARTIFACT" \
+              --artifact-sha256 "$ORIGINAL_DIGEST" --receipt "$RUNNER_TEMP/retained-chat-input.json"
+          fi
   build:
-    if: inputs.runtime_artifact == ''
+    needs: source
+    if: inputs.runtime_artifact == '' && inputs.runtime_run_id == ''
     runs-on: macrunner
     timeout-minutes: 25
     steps:
@@ -35,23 +92,39 @@ jobs:
           retention-days: 3
 
   replay:
-    needs: build
-    if: ${{ !cancelled() && (needs.build.result == 'success' || (needs.build.result == 'skipped' && inputs.runtime_artifact != '')) }}
+    needs: [source, build]
+    if: ${{ !cancelled() && needs.source.result == 'success' && (needs.build.result == 'success' || (needs.build.result == 'skipped' && (inputs.runtime_artifact != '' || inputs.runtime_run_id != ''))) }}
     runs-on: macrunner
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-native-test-python
+        if: inputs.runtime_run_id != ''
       - uses: actions/download-artifact@v4
+        if: inputs.runtime_run_id == ''
         with:
           name: ${{ inputs.runtime_artifact || 'chat-replay' }}
           path: ${{ runner.temp }}/chat-replay
+      - name: Restore the original signed App without rebuilding
+        if: inputs.runtime_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/retained_release_runtime.py restore --run-id "$ORIGINAL_RUN" \
+            --source-sha "$ORIGINAL_SOURCE" --artifact-id "$ORIGINAL_ARTIFACT" \
+            --artifact-sha256 "$ORIGINAL_DIGEST" --destination "$RUNNER_TEMP/chat-replay" \
+            --receipt "$RUNNER_TEMP/evidence/execution-provenance.json"
       - name: Require production macOS and stress the real panel
         env:
           RUNTIME_ARCHIVE: ${{ inputs.runtime_artifact != '' && 'workspace-ui.tar.gz' || 'chat-replay.tar.gz' }}
         run: |
           set -euo pipefail
           test "$(sw_vers -productVersion | cut -d. -f1)" -ge 26
-          tar -xzf "$RUNNER_TEMP/chat-replay/$RUNTIME_ARCHIVE" -C "$RUNNER_TEMP/chat-replay"
+          if [ -z "$ORIGINAL_RUN" ]; then
+            tar -xzf "$RUNNER_TEMP/chat-replay/$RUNTIME_ARCHIVE" -C "$RUNNER_TEMP/chat-replay"
+          fi
           test -x "$RUNNER_TEMP/chat-replay/NexGenVideo.app/Contents/MacOS/NexGenVideo"
           python3 scripts/chat_hang_replay.py "$RUNNER_TEMP/chat-replay/NexGenVideo.app/Contents/MacOS/NexGenVideo" "$RUNNER_TEMP/evidence"
       - uses: actions/upload-artifact@v4
@@ -60,6 +133,7 @@ jobs:
           name: chat-replay-evidence
           path: |
             ${{ runner.temp }}/evidence/result.json
+            ${{ runner.temp }}/evidence/execution-provenance.json
             ${{ runner.temp }}/evidence/replay.log
             ${{ runner.temp }}/evidence/panel-*.png
             ${{ runner.temp }}/evidence/sample.txt

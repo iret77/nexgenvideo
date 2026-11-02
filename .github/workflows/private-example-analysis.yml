@@ -13,6 +13,26 @@ on:
         required: true
         default: "claude_mouse"
         type: string
+      runtime_run_id:
+        description: Original signed release producer run
+        type: string
+        default: ''
+      runtime_source_sha:
+        description: Original App source commit
+        type: string
+        default: ''
+      runtime_artifact_id:
+        description: Immutable original workspace-ui-app artifact ID
+        type: string
+        default: ''
+      runtime_artifact_sha256:
+        description: Original GitHub artifact SHA256
+        type: string
+        default: ''
+      verified_pr_run_id:
+        description: Successful exact-tree PR source checks
+        type: string
+        default: ''
   workflow_call:
     inputs:
       dataset:
@@ -26,6 +46,18 @@ on:
         description: Successful PR source checks for this exact merge tree
         type: string
         default: ""
+      runtime_run_id:
+        type: string
+        default: ''
+      runtime_source_sha:
+        type: string
+        default: ''
+      runtime_artifact_id:
+        type: string
+        default: ''
+      runtime_artifact_sha256:
+        type: string
+        default: ''
     secrets:
       NGV_GHCR_TOKEN:
         required: true
@@ -34,6 +66,12 @@ permissions:
   contents: read
   actions: read
   pull-requests: read
+
+env:
+  ORIGINAL_RUN: ${{ inputs.runtime_run_id }}
+  ORIGINAL_SOURCE: ${{ inputs.runtime_source_sha }}
+  ORIGINAL_ARTIFACT: ${{ inputs.runtime_artifact_id }}
+  ORIGINAL_DIGEST: ${{ inputs.runtime_artifact_sha256 }}
 
 concurrency:
   group: private-example-analysis-${{ github.ref }}-${{ inputs.dataset }}
@@ -79,6 +117,20 @@ jobs:
             || { echo "::error::analysis report package is not private"; exit 1; }
           [ "$(jq -r '.repository // empty' <<<"$REPORT_PACKAGE_JSON")" = "" ] \
             || { echo "::error::analysis report package is linked to a repository"; exit 1; }
+
+      - name: Bind the original signed App before macOS allocation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ -z "$ORIGINAL_RUN" ]; then
+            test -z "$ORIGINAL_SOURCE$ORIGINAL_ARTIFACT$ORIGINAL_DIGEST"
+          else
+            python3 -m unittest discover -s scripts -p 'test_retained_release_runtime.py'
+            python3 scripts/retained_release_runtime.py bind --run-id "$ORIGINAL_RUN" \
+              --source-sha "$ORIGINAL_SOURCE" --artifact-id "$ORIGINAL_ARTIFACT" \
+              --artifact-sha256 "$ORIGINAL_DIGEST" --receipt "$RUNNER_TEMP/retained-audio-input.json"
+          fi
 
       - name: Bind exact PR source checks
         if: inputs.verified_pr_run_id != ''
@@ -138,7 +190,7 @@ jobs:
   build-runtime-harness:
     name: Build Private Analysis Harness
     needs: source-gate
-    if: inputs.runtime_artifact == ''
+    if: inputs.runtime_artifact == '' && inputs.runtime_run_id == ''
     # Compilation and bundling stay on the designated Xcode 27 build runner.
     runs-on: macrunner
     timeout-minutes: 20
@@ -170,12 +222,16 @@ jobs:
   analyze:
     name: Analyze Private Example
     needs: [source-gate, build-runtime-harness]
-    if: ${{ !cancelled() && needs.source-gate.result == 'success' && (needs.build-runtime-harness.result == 'success' || (needs.build-runtime-harness.result == 'skipped' && inputs.runtime_artifact != '')) }}
+    if: ${{ !cancelled() && needs.source-gate.result == 'success' && (needs.build-runtime-harness.result == 'success' || (needs.build-runtime-harness.result == 'skipped' && (inputs.runtime_artifact != '' || inputs.runtime_run_id != ''))) }}
     runs-on: macrunner
     # Bootstrap ceiling for the first measured real-file run; replace with p90 × 2 once run data exists.
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-native-test-python
+        if: inputs.runtime_run_id != ''
 
       - name: Verify supported runtime
         shell: bash
@@ -192,7 +248,8 @@ jobs:
               'osBuild': subprocess.check_output(['sw_vers', '-buildVersion'], text=True).strip(),
               'architecture': platform.machine(),
               'runnerName': os.environ.get('RUNNER_NAME'),
-              'sourceSHA': os.environ['GITHUB_SHA'],
+              'sourceSHA': os.environ.get('ORIGINAL_SOURCE') or os.environ['GITHUB_SHA'],
+              'harnessSHA': os.environ['GITHUB_SHA'],
           }, indent=2) + '\n')
           PYTHON
           if [ "$runtime_major" -lt 26 ]; then
@@ -212,12 +269,14 @@ jobs:
           retention-days: 14
 
       - name: Download runtime harness
+        if: inputs.runtime_run_id == ''
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: ${{ inputs.runtime_artifact || format('private-analysis-runtime-{0}-{1}', github.run_id, github.run_attempt) }}
           path: ${{ runner.temp }}/runtime-harness
 
       - name: Restore runtime harness
+        if: inputs.runtime_run_id == ''
         run: |
           set -euo pipefail
           mkdir -p .build
@@ -226,6 +285,23 @@ jobs:
           tar -xzf "${archives[0]}" -C .build
           [ -x .build/NexGenVideo.app/Contents/MacOS/NexGenVideo ]
           [ -d .build/plugins/musicvideo.ngvpack ]
+
+      - name: Restore the original signed App and external pack without rebuilding
+        if: inputs.runtime_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/retained_release_runtime.py restore --run-id "$ORIGINAL_RUN" \
+            --source-sha "$ORIGINAL_SOURCE" --artifact-id "$ORIGINAL_ARTIFACT" \
+            --artifact-sha256 "$ORIGINAL_DIGEST" --destination .build \
+            --receipt "$RUNNER_TEMP/analysis-runtime/execution-provenance.json"
+      - uses: actions/upload-artifact@v4
+        if: always() && inputs.runtime_run_id != ''
+        with:
+          name: retained-private-analysis-input-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/analysis-runtime/execution-provenance.json
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Install pinned ORAS CLI
         uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d
@@ -269,7 +345,7 @@ jobs:
           NGV_EXAMPLE_REGISTRY_REFERENCE: ghcr.io/iret77/nexgenvideo-examples@${{ vars.NGV_EXAMPLE_FIXTURE_DIGEST }}
           NGV_EXAMPLE_DATASET: ${{ inputs.dataset }}
           NGV_EXAMPLE_REPORT_DIR: ${{ runner.temp }}/analysis-report
-          NGV_GIT_COMMIT: ${{ github.sha }}
+          NGV_GIT_COMMIT: ${{ inputs.runtime_source_sha || github.sha }}
         run: .build/NexGenVideo.app/Contents/MacOS/NexGenVideo -ApplePersistenceIgnoreState YES
 
       - name: Verify actual optional material intake
