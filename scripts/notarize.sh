@@ -55,8 +55,25 @@ credentials=(
   --output-format json
 )
 
-retry_notarytool "notary upload" submit "$ARTIFACT" "${credentials[@]}"
-SUBMISSION_ID="$(python3 - "$OUTPUT" <<'PY'
+JOURNAL=""
+if [ -n "${NOTARY_STATE_DIR:-}" ]; then
+  mkdir -p "$NOTARY_STATE_DIR"
+  ARTIFACT_SHA="$(shasum -a 256 "$ARTIFACT" | awk '{print $1}')"
+  JOURNAL="$NOTARY_STATE_DIR/$ARTIFACT_SHA.json"
+fi
+if [ -n "$JOURNAL" ] && [ -f "$JOURNAL" ]; then
+  SUBMISSION_ID="$(python3 - "$JOURNAL" "$ARTIFACT_SHA" "${GITHUB_SHA:-}" <<'PY'
+import json
+import sys
+receipt = json.load(open(sys.argv[1], encoding="utf-8"))
+if receipt.get("schema") != "release-notary/v1" or receipt.get("sha256") != sys.argv[2] or receipt.get("sourceSHA") != sys.argv[3]:
+    raise SystemExit("notary receipt belongs to another payload or source")
+print(receipt.get("submissionID", ""))
+PY
+)"
+else
+  retry_notarytool "notary upload" submit "$ARTIFACT" "${credentials[@]}"
+  SUBMISSION_ID="$(python3 - "$OUTPUT" <<'PY'
 import json
 import sys
 
@@ -64,8 +81,23 @@ with open(sys.argv[1], encoding="utf-8") as handle:
     print(json.load(handle).get("id", ""))
 PY
 )"
+fi
 [[ "$SUBMISSION_ID" =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$ ]] \
   || { echo "!! notary upload returned no valid submission ID" >&2; exit 1; }
+
+if [ -n "$JOURNAL" ]; then
+  python3 - "$JOURNAL" "$ARTIFACT_SHA" "$SUBMISSION_ID" "${GITHUB_SHA:-}" <<'PY'
+import json
+import os
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+temporary = path.with_suffix(".pending")
+temporary.write_text(json.dumps({"schema": "release-notary/v1", "sha256": sys.argv[2],
+    "submissionID": sys.argv[3], "sourceSHA": sys.argv[4]}, indent=2) + "\n")
+os.replace(temporary, path)
+PY
+fi
 
 if ! retry_notarytool "notary wait for $SUBMISSION_ID" wait "$SUBMISSION_ID" "${credentials[@]}"; then
   notarytool log "$SUBMISSION_ID" "${credentials[@]}" || true

@@ -22,14 +22,16 @@ ASSEMBLE_PACK = ROOT / "scripts/assemble_ngvpack.sh"
 
 
 def named_release_steps(text):
-    release = text[text.index("\n  release:\n") + 1 :]
-    steps = release[release.index("    steps:\n") + len("    steps:\n") :]
-    chunks = re.split(r"(?m)^      - ", steps)[1:]
     result = []
-    for chunk in chunks:
-        match = re.match(r"name: ([^\n]+)", chunk)
-        if match:
-            result.append((match.group(1), chunk))
+    for name in ("release-build", "release"):
+        header = "\n  " + name + ":\n"
+        release = text[text.index(header) + len(header) :]
+        release = re.split(r"(?m)^  [A-Za-z0-9_-]+:\n", release, maxsplit=1)[0]
+        steps = release[release.index("    steps:\n") + len("    steps:\n") :]
+        for chunk in re.split(r"(?m)^      - ", steps)[1:]:
+            match = re.match(r"name: ([^\n]+)", chunk)
+            if match:
+                result.append((match.group(1), chunk))
     return result
 
 
@@ -53,10 +55,16 @@ def condition_enabled(condition, artifact_only, dry_run, resumed=False):
         "needs.release-gate.outputs.publication-resumed": str(resumed).lower(),
         "steps.publication-state.outputs.resumed": str(resumed).lower(),
         "needs.release.result": "success",
+        "needs.release-gate.result": "success",
+        "needs.release-build.result": "success",
+        "inputs.signed_build_run_id": "",
+        "inputs.completed_release_tests_run_id": "",
+        "inputs.notary_progress_run_id": "",
+        "steps.restore-notary.outputs.dmg_present": "",
     }
     expression = re.sub(r"\b(?:inputs|env|needs|steps)\.[\w.-]+",
                         lambda match: repr(values[match.group()]), expression)
-    expression = expression.replace("&&", " and ").replace("||", " or ")
+    expression = expression.replace("!cancelled()", "true").replace("&&", " and ").replace("||", " or ")
     tree = ast.parse(expression, mode="eval")
     allowed = (ast.Expression, ast.BoolOp, ast.And, ast.Or, ast.Compare, ast.Eq,
                ast.NotEq, ast.Constant, ast.Name, ast.Load)
@@ -166,12 +174,14 @@ class ReleaseWorkflowTests(unittest.TestCase):
         workflow = self.workflow()
         release = workflow["jobs"]["release"]
         self.assertTrue(condition_enabled(release.get("if"), True, True))
-        steps = {step.get("name"): step for step in release["steps"]}
+        steps = {step.get("name"): step for job in ("release-build", "release")
+                 for step in workflow["jobs"][job]["steps"]}
         for name in (
             "Build and sign app", "Assemble format packs (.ngvpack + catalog entry)",
             "Notarize and staple downloadable format packs",
             "Load-test — the SIGNED app actually loads the SIGNED pack from an EXTERNAL dir",
-            "Notarize app and build signed, notarized DMG", "Verify the exact DMG users install",
+            "Notarize and staple app", "Build and sign DMG", "Notarize and staple DMG",
+            "Verify the exact DMG users install",
             "Record unpublished candidate bytes", "Upload unpublished candidate",
         ):
             self.assertTrue(condition_enabled(steps[name].get("if"), True, True), name)
@@ -427,7 +437,10 @@ class ReleaseWorkflowTests(unittest.TestCase):
 
         for name in (build_name, stage_name, test_name, bundle_name, pack_name):
             self.assertEqual(names.count(name), 1)
-            self.assertNotRegex(by_name[name], r"(?m)^        if:")
+            if name in (build_name, stage_name, test_name):
+                self.assertIn("        if: inputs.completed_release_tests_run_id == ''", by_name[name])
+            else:
+                self.assertNotRegex(by_name[name], r"(?m)^        if:")
             self.assertNotRegex(by_name[name], r"(?m)^        continue-on-error:")
         self.assertEqual(single_line_run(by_name[build_name]), build)
         self.assertEqual(single_line_run(by_name[stage_name]), stage)

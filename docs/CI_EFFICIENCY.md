@@ -142,6 +142,36 @@ journey at 100%. Publication and publication recovery require that journey's
 success for the same source and DMG hash. A failed GUI job resumes against the
 existing DMG without repeating compilation, signing or notarization.
 
+### Release checkpoints and notarization continuation
+
+The release workflow separates `release-build` from `release`, both on macrunner.
+The builder runs full Release tests in their isolated scratch directory, then builds
+and signs the production app and pack. Before any Apple wait, it retains the exact
+App ZIP, pack, four symbol bundles and bpy receipt with a source-bound manifest.
+The packaging job restores these bytes and retains its signed DMG before submitting
+it. Every packaging exit uploads the payload-bound Apple submission journal.
+Normal installed-DMG, pack loading, diagnostic, bpy and external-user checks remain
+required after restoration; a checkpoint alone is not acceptance.
+
+A continuation on the exact same commit selects `signed_build_run_id`, or
+`notary_progress_run_id` to recover the original build and saved submissions/DMG.
+These selectors are mutually exclusive. Failed producer identity, source, attempt,
+artifact digest, bundle identity or byte checks stop restoration. A saved Apple
+submission is waited on again and must actually return Accepted. No journal status
+substitutes for Apple, stapling or the independent installed-DMG checks. Artifacts
+expire after seven days; missing retained bytes cannot be reconstructed by a receipt.
+
+The one-time `completed_release_tests_run_id` path accepts only the pinned completed
+Release suite from run 41440677172. Its original job reached the notarization timeout
+after all 4,607 tests passed. Recovery verifies the original job, archive digest,
+raw framework output, native event inventories and AppKit host receipt. It permits
+only listed release-harness/documentation changes and preserves all workflow
+observations used by the native publication tests. The next builder must match the
+original arm64 OS, Xcode build and Python version. Any native source, test, dependency
+or runtime input change rejects reuse. Without this selector full Release tests run.
+The three recovery selectors cannot be combined; source checks always cover the
+current source and the production build never uses the old testable objects.
+
 ## CI pipeline
 
 CI classifies the diff (a run without a pull-request base verifies everything),

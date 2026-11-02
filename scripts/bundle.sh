@@ -18,6 +18,9 @@ for arg in "$@"; do
     --sign)        MODE="sign" ;;
     --dist)        MODE="dist" ;;
     --package)     MODE="package" ;;
+    --notarize-app) MODE="notarize-app" ;;
+    --build-dmg) MODE="build-dmg" ;;
+    --notarize-dmg) MODE="notarize-dmg" ;;
     --without-bpy-runtime-for-ci-transfer) BPY_BUNDLE_MODE="omitted" ;;
     --bpy-boundary-probe-for-ci-transfer) BPY_BUNDLE_MODE="boundary" ;;
     *) echo "unknown arg: $arg" >&2; exit 1 ;;
@@ -67,7 +70,7 @@ upload_dsyms() {
   sentry-cli debug-files upload --include-sources "$DSYM" || echo "!! sentry-cli upload failed (continuing)"
 }
 
-package_release() {
+prepare_packaging() {
   if [ -z "$NOTARY_KEY_FILE" ] || [ -z "$NOTARY_KEY_ID" ] || [ -z "$NOTARY_ISSUER" ]; then
     echo "!! notarization needs NOTARY_KEY_FILE / NOTARY_KEY_ID / NOTARY_ISSUER" >&2
     exit 1
@@ -87,17 +90,26 @@ package_release() {
     DMGBUILD_BIN="$DMG_VENV/bin/dmgbuild"
   fi
 
-  echo "==> Zipping .app for notarization"
-  rm -f "$ZIP"
-  /usr/bin/ditto -c -k --keepParent "$APP" "$ZIP"
+}
 
+notarize_app() {
+  if [ -n "${NGV_SIGNED_APP_ARCHIVE_SHA256:-}" ]; then
+    [ "$(shasum -a 256 "$ZIP" | awk '{print $1}')" = "$NGV_SIGNED_APP_ARCHIVE_SHA256" ] \
+      || { echo "!! signed App archive differs from its verified input" >&2; exit 1; }
+  else
+    echo "==> Zipping .app for notarization"
+    rm -f "$ZIP"
+    /usr/bin/ditto -c -k --keepParent "$APP" "$ZIP"
+  fi
   echo "==> Submitting to Apple notary (this can take several minutes)"
   "$ROOT/scripts/notarize.sh" "$ZIP"
 
   echo "==> Stapling ticket to .app"
   xcrun stapler staple "$APP"
-  rm -f "$ZIP"
+}
 
+build_dmg() {
+  xcrun stapler validate "$APP"
   echo "==> Building DMG"
   rm -f "$DMG"
   DMG_VOLNAME="NexGenVideo"
@@ -106,7 +118,9 @@ package_release() {
 
   echo "==> Codesigning DMG"
   codesign --force --timestamp --sign "$SIGN_IDENTITY" "$DMG"
+}
 
+notarize_dmg() {
   echo "==> Submitting DMG to notary"
   "$ROOT/scripts/notarize.sh" "$DMG"
 
@@ -122,8 +136,16 @@ package_release() {
   echo "   (Sparkle EdDSA signing + appcast update happen in the release workflow.)"
 }
 
+package_release() {
+  prepare_packaging
+  notarize_app
+  build_dmg
+  notarize_dmg
+}
+
 # For signed builds, resolve the Developer ID Application identity from the keychain.
-if [ "$MODE" = "fast" ] || [ "$MODE" = "sign" ] || [ "$MODE" = "dist" ] || [ "$MODE" = "package" ]; then
+if [ "$MODE" = "fast" ] || [ "$MODE" = "sign" ] || [ "$MODE" = "dist" ] || [ "$MODE" = "package" ] \
+  || [ "$MODE" = "notarize-app" ] || [ "$MODE" = "build-dmg" ] || [ "$MODE" = "notarize-dmg" ]; then
   if [ -z "$SIGN_IDENTITY" ]; then
     SIGN_IDENTITY="$(security find-identity -v -p codesigning | awk '/Developer ID Application/{print $2; exit}')"
   fi
@@ -135,8 +157,21 @@ if [ "$BPY_BUNDLE_MODE" != "full" ] && [ "$MODE" != "dev" ]; then
   exit 1
 fi
 
-if [ "$MODE" = "dist" ] || [ "$MODE" = "package" ]; then
+if [ "$MODE" = "dist" ] || [ "$MODE" = "package" ] || [ "$MODE" = "notarize-app" ] \
+  || [ "$MODE" = "build-dmg" ] || [ "$MODE" = "notarize-dmg" ]; then
   python3 "$ROOT/scripts/verify_bpy_runtime.py" --distribution
+fi
+
+if [ "$MODE" = "notarize-app" ] || [ "$MODE" = "build-dmg" ] || [ "$MODE" = "notarize-dmg" ]; then
+  [ "$CONFIG" = "release" ] || { echo "!! packaging requires release configuration" >&2; exit 1; }
+  codesign --verify --strict --verbose=2 "$APP"
+  prepare_packaging
+  case "$MODE" in
+    notarize-app) notarize_app ;;
+    build-dmg) build_dmg ;;
+    notarize-dmg) notarize_dmg ;;
+  esac
+  exit 0
 fi
 
 if [ "$MODE" = "package" ]; then

@@ -38,6 +38,18 @@ on:
         description: Optional completed same-source external UI test producer
         type: string
         default: ''
+      completed_release_tests_run_id:
+        description: Pinned completed Release tests for unchanged native inputs
+        type: string
+        default: ''
+      signed_build_run_id:
+        description: Same-source successful signed build to package without rebuilding
+        type: string
+        default: ''
+      notary_progress_run_id:
+        description: Same-source failed notarization to continue from its saved payload and Apple IDs
+        type: string
+        default: ''
       verified_pr_run_id:
         description: Successful PR source checks for this exact merge tree
         type: string
@@ -56,6 +68,7 @@ jobs:
     timeout-minutes: 75
     outputs:
       publication-resumed: ${{ steps.publication-state.outputs.resumed }}
+      restored-build-run: ${{ steps.prior-notary.outputs.build_run_id }}
     permissions:
       actions: write
       contents: write
@@ -67,10 +80,21 @@ jobs:
           REL_VERSION: ${{ inputs.version }}
           ARTIFACT_ONLY: ${{ inputs.artifact_only }}
           DRY_RUN: ${{ inputs.dry_run }}
+          RELEASE_TEST_RUN: ${{ inputs.completed_release_tests_run_id }}
+          SIGNED_BUILD_RUN: ${{ inputs.signed_build_run_id }}
+          NOTARY_PROGRESS_RUN: ${{ inputs.notary_progress_run_id }}
         run: |
           set -euo pipefail
           echo "$REL_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' \
             || { echo "::error::version must be X.Y.Z"; exit 1; }
+          if [ -n "${RELEASE_TEST_RUN:-}" ] && { [ -n "${SIGNED_BUILD_RUN:-}" ] || [ -n "${NOTARY_PROGRESS_RUN:-}" ]; }; then
+            echo "::error::Select completed native tests or an existing signed build, never both"
+            exit 1
+          fi
+          if [ -n "${SIGNED_BUILD_RUN:-}" ] && [ -n "${NOTARY_PROGRESS_RUN:-}" ]; then
+            echo "::error::Notary continuation already selects its original signed build"
+            exit 1
+          fi
           if [ "$ARTIFACT_ONLY" = "true" ] && [ "$DRY_RUN" != "true" ]; then
             echo "::error::artifact_only requires dry_run=true"
             exit 1
@@ -139,6 +163,37 @@ jobs:
         run: |
           python3 scripts/verified_pr_source_checks.py prepare --run-id "$VERIFIED_PR_RUN" \
             --output "$RUNNER_TEMP/release-pr-source"
+
+      - name: Bind completed Release tests
+        if: inputs.completed_release_tests_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TEST_RUN: ${{ inputs.completed_release_tests_run_id }}
+        run: python3 scripts/release_native_proof.py prepare --run-id "$RELEASE_TEST_RUN" --root "$RUNNER_TEMP/release-native"
+
+      - name: Retain completed Release test proof
+        if: always() && inputs.completed_release_tests_run_id != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-native-proof-${{ github.run_id }}
+          path: ${{ runner.temp }}/release-native
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Validate prior signed build
+        if: inputs.signed_build_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SIGNED_BUILD_RUN: ${{ inputs.signed_build_run_id }}
+        run: python3 scripts/release_checkpoint.py prepare --run-id "$SIGNED_BUILD_RUN" --root "$RUNNER_TEMP/prior-release-signed-input"
+
+      - name: Validate prior notarization
+        id: prior-notary
+        if: inputs.notary_progress_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOTARY_PROGRESS_RUN: ${{ inputs.notary_progress_run_id }}
+        run: python3 scripts/release_checkpoint.py prepare-notary --run-id "$NOTARY_PROGRESS_RUN" --root "$RUNNER_TEMP/prior-notary"
 
       - name: Enforce AppTheme
         if: inputs.verified_pr_run_id == ''
@@ -372,22 +427,21 @@ jobs:
       contents: read
       actions: read
     needs: release-gate
-    if: ${{ needs.release-gate.outputs.publication-resumed != 'true' }}
+    if: ${{ needs.release-gate.outputs.publication-resumed != 'true' && inputs.signed_build_run_id == '' && inputs.notary_progress_run_id == '' }}
     uses: ./.github/workflows/bpy-qualified-source.yml
 
-  release:
+  release-build:
     needs: [release-gate, bpy-source]
-    if: ${{ needs.release-gate.outputs.publication-resumed != 'true' }}
-    # Xcode 27 is required to compile, sign, notarize, staple, and package the app.
+    if: ${{ needs.release-gate.outputs.publication-resumed != 'true' && inputs.signed_build_run_id == '' && inputs.notary_progress_run_id == '' }}
     runs-on: macrunner
     timeout-minutes: 90
-    outputs:
-      dmg_sha256: ${{ steps.gui-input.outputs.dmg_sha256 }}
     permissions:
-      contents: write
+      contents: read
       actions: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
 
       - uses: ./.github/actions/setup-native-test-python
       - uses: ./.github/actions/setup-xcode-27
@@ -424,26 +478,7 @@ jobs:
         env:
           CERT_B64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
           CERT_PW: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-        run: |
-          set -euo pipefail
-          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
-          KEYCHAIN_PW="$(openssl rand -base64 24)"
-          CERT_PATH="$RUNNER_TEMP/cert.p12"
-          printf '%s' "$CERT_B64" | base64 --decode > "$CERT_PATH"
-          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN"
-          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
-          security import "$CERT_PATH" -P "$CERT_PW" -A -t cert -f pkcs12 \
-            -k "$KEYCHAIN" -T /usr/bin/codesign -T /usr/bin/security
-          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PW" "$KEYCHAIN" >/dev/null
-          security list-keychains -d user -s "$KEYCHAIN" \
-            $(security list-keychains -d user | sed 's/"//g')
-          IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN" \
-            | awk '/Developer ID Application/{print $2; exit}')"
-          [ -n "$IDENTITY" ] || { echo "No 'Developer ID Application' identity in the .p12"; exit 1; }
-          echo "SIGN_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
-          echo "SIGN_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
-          rm -f "$CERT_PATH"
+        run: bash scripts/release_signing_environment.sh import
 
       - name: Prepare notary + Sparkle keys
         env:
@@ -451,42 +486,21 @@ jobs:
           NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
           NOTARY_ISSUER: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
           SPARKLE_PRIV_B64: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
-        run: |
-          set -euo pipefail
-          printf '%s' "$NOTARY_KEY_B64" | base64 --decode > "$RUNNER_TEMP/notary.p8"
-          {
-            echo "NOTARY_KEY_FILE=$RUNNER_TEMP/notary.p8"
-            echo "NOTARY_KEY_ID=$NOTARY_KEY_ID"
-            echo "NOTARY_ISSUER=$NOTARY_ISSUER"
-          } >> "$GITHUB_ENV"
-          if [ -n "${SPARKLE_PRIV_B64:-}" ]; then
-            printf '%s' "$SPARKLE_PRIV_B64" | base64 --decode > "$RUNNER_TEMP/sparkle_priv.der"
-            echo "SPARKLE_PRIV_DER=$RUNNER_TEMP/sparkle_priv.der" >> "$GITHUB_ENV"
-          elif [ "$REL_DRY" = "false" ]; then
-            echo "::error::SPARKLE_ED_PRIVATE_KEY is required for a published release"
-            exit 1
-          fi
+        run: bash scripts/release_signing_environment.sh keys
 
       - name: Validate release credentials and DMG tooling
-        run: |
-          set -euo pipefail
-          xcrun notarytool history \
-            --key "$NOTARY_KEY_FILE" \
-            --key-id "$NOTARY_KEY_ID" \
-            --issuer "$NOTARY_ISSUER" >/dev/null
-          DMG_VENV="$RUNNER_TEMP/dmgvenv"
-          python3 -m venv "$DMG_VENV"
-          "$DMG_VENV/bin/pip" install \
-            --quiet \
-            --disable-pip-version-check \
-            "dmgbuild==1.6.7" \
-            "cryptography==50.0.2"
-          [ -x "$DMG_VENV/bin/dmgbuild" ]
-          if [ -n "${SPARKLE_PRIV_DER:-}" ]; then
-            "$DMG_VENV/bin/python" scripts/sparkle_ed25519.py check "$SPARKLE_PRIV_DER"
-          fi
-          echo "DMGBUILD_BIN=$DMG_VENV/bin/dmgbuild" >> "$GITHUB_ENV"
-          echo "DMG_PYTHON=$DMG_VENV/bin/python" >> "$GITHUB_ENV"
+        run: bash scripts/release_signing_environment.sh validate
+
+      - name: Restore verified Release test proof
+        if: inputs.completed_release_tests_run_id != ''
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-native-proof-${{ github.run_id }}
+          path: ${{ runner.temp }}/release-native
+
+      - name: Validate reused Release test environment
+        if: inputs.completed_release_tests_run_id != ''
+        run: python3 scripts/release_native_proof.py environment --root "$RUNNER_TEMP/release-native"
 
       - name: Bump version
         run: |
@@ -502,16 +516,20 @@ jobs:
           echo "BUILD_NUMBER=$NEW" >> "$GITHUB_ENV"
 
       - name: Build the exact release test configuration
+        if: inputs.completed_release_tests_run_id == ''
         # Testable release objects stay isolated from the production bundle build.
         run: swift build --cache-path "$NGV_SWIFTPM_CACHE_PATH" -c release --scratch-path "$RUNNER_TEMP/release-tests" --build-tests -Xswiftc -enable-testing
 
       - name: Verify release build did not mutate tracked source
+        if: inputs.completed_release_tests_run_id == ''
         run: scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist
 
       - name: Stage release test runtime inputs
+        if: inputs.completed_release_tests_run_id == ''
         run: scripts/stage_test_runtime.sh release "$RUNNER_TEMP/release-tests"
 
       - name: Test the exact release configuration
+        if: inputs.completed_release_tests_run_id == ''
         shell: bash
         run: |
           set -euo pipefail
@@ -522,7 +540,7 @@ jobs:
           python3 scripts/verify_swift_test_output.py --log release-test.log --swift-testing-runs 2 --xctest-runs 2
 
       - name: Upload release test evidence
-        if: always()
+        if: always() && inputs.completed_release_tests_run_id == ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-test-evidence
@@ -533,6 +551,7 @@ jobs:
           retention-days: 7
 
       - name: Verify release tests did not mutate tracked source
+        if: inputs.completed_release_tests_run_id == ''
         run: scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -568,7 +587,148 @@ jobs:
           scripts/assemble_ngvpack.sh plugins/musicvideo.json release .build/plugins "${SIGN_IDENTITY:-}"
           ls -la .build/plugins
 
+      - name: Verify signed input assembly did not mutate tracked source
+        run: scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist
+
+      - name: Record signed build before notarization
+        env:
+          RELEASE_NATIVE_PROOF: ${{ inputs.completed_release_tests_run_id != '' && format('{0}/release-native/receipt.json', runner.temp) || '' }}
+          RELEASE_TEST_EVIDENCE: ${{ runner.temp }}/release-test-evidence
+        run: python3 scripts/release_checkpoint.py create --root "$RUNNER_TEMP/release-signed-input"
+
+      - name: Retain signed build input
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-signed-input-${{ github.sha }}
+          path: ${{ runner.temp }}/release-signed-input/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Retain signed build proof
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-signed-input-${{ github.sha }}-proof
+          path: ${{ runner.temp }}/release-signed-input/manifest.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Clean up keychain
+        if: always()
+        run: security delete-keychain "${SIGN_KEYCHAIN:-}" 2>/dev/null || true
+
+
+  release:
+    needs: [release-gate, release-build]
+    if: ${{ !cancelled() && needs.release-gate.result == 'success' && needs.release-gate.outputs.publication-resumed != 'true' && (needs.release-build.result == 'success' || (needs.release-build.result == 'skipped' && (inputs.signed_build_run_id != '' || inputs.notary_progress_run_id != ''))) }}
+    # Xcode 27 is required to compile, sign, notarize, staple, and package the app.
+    runs-on: macrunner
+    timeout-minutes: 90
+    env:
+      NOTARY_STATE_DIR: ${{ runner.temp }}/release-notary-state
+    outputs:
+      dmg_sha256: ${{ steps.gui-input.outputs.dmg_sha256 }}
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - uses: ./.github/actions/setup-native-test-python
+      - uses: ./.github/actions/setup-xcode-27
+
+      - name: Resolve version + mode
+        env:
+          ARTIFACT_ONLY: ${{ inputs.artifact_only }}
+        run: |
+          set -euo pipefail
+          V="${{ inputs.version }}"
+          echo "$V" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "version must be X.Y.Z (got '$V')"; exit 1; }
+          DRY="${{ inputs.dry_run }}"
+          {
+            echo "REL_VERSION=$V"
+            echo "REL_DRY=$DRY"
+          } >> "$GITHUB_ENV"
+          if [ "$DRY" = "true" ] && [ "$ARTIFACT_ONLY" != "true" ]; then
+            PREVIEW_TAG="preview-${{ github.run_id }}"
+            {
+              echo "PLUGIN_CHANNEL_TAG=$PREVIEW_TAG"
+              echo "PLUGIN_CATALOG_URL=${{ github.server_url }}/${{ github.repository }}/releases/download/$PREVIEW_TAG/catalog.json"
+            } >> "$GITHUB_ENV"
+          else
+            {
+              echo "PLUGIN_CHANNEL_TAG=plugins"
+              echo "PLUGIN_CATALOG_URL=${{ github.server_url }}/${{ github.repository }}/releases/download/plugins/catalog.json"
+            } >> "$GITHUB_ENV"
+          fi
+          echo "Building $V (dry=${{ inputs.dry_run }})"
+
+      - name: Import Developer ID cert into a temporary keychain
+        env:
+          CERT_B64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          CERT_PW: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: bash scripts/release_signing_environment.sh import
+
+      - name: Prepare notary + Sparkle keys
+        env:
+          NOTARY_KEY_B64: ${{ secrets.MACOS_NOTARY_KEY_P8_BASE64 }}
+          NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+          SPARKLE_PRIV_B64: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: bash scripts/release_signing_environment.sh keys
+
+      - name: Validate release credentials and DMG tooling
+        run: bash scripts/release_signing_environment.sh validate
+
+      - name: Bump version
+        run: |
+          set -euo pipefail
+          PLIST="Sources/NexGenVideo/Resources/Info.plist"
+          CUR="$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$PLIST")"
+          NEW=$((CUR + 1))
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $REL_VERSION" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $NEW" "$PLIST"
+          CHANGED_PATHS="$(git diff --no-renames --name-only | LC_ALL=C sort)"
+          [ "$CHANGED_PATHS" = "$PLIST" ] \
+            || { echo "::error::Release build mutated tracked files beyond $PLIST"; exit 1; }
+          echo "BUILD_NUMBER=$NEW" >> "$GITHUB_ENV"
+
+      - name: Bind signed build input
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SIGNED_BUILD_RUN: ${{ needs.release-gate.outputs.restored-build-run || inputs.signed_build_run_id || github.run_id }}
+        run: python3 scripts/release_checkpoint.py prepare --run-id "$SIGNED_BUILD_RUN" --root "$RUNNER_TEMP/release-signed-binding"
+
+      - name: Restore exact signed build
+        id: signed-input
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/release_checkpoint.py restore --root "$RUNNER_TEMP/release-signed-binding"
+
+      - name: Bind saved notarization
+        if: inputs.notary_progress_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOTARY_PROGRESS_RUN: ${{ inputs.notary_progress_run_id }}
+        run: python3 scripts/release_checkpoint.py prepare-notary --run-id "$NOTARY_PROGRESS_RUN" --root "$RUNNER_TEMP/release-notary-binding"
+
+      - name: Restore saved notarization and DMG
+        id: restore-notary
+        if: inputs.notary_progress_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/release_checkpoint.py restore-notary --root "$RUNNER_TEMP/release-notary-binding"
+
+      - uses: ./.github/actions/prepare-bpy-source
+        with:
+          directory: .build/bpy-source
+          receipt: .build/bpy-source/bpy-source-receipt.json
+
       - name: Notarize and staple downloadable format packs
+        if: steps.restore-notary.outputs.dmg_present != 'true'
+        timeout-minutes: 20
         run: |
           set -euo pipefail
           for PACK_ZIP in .build/plugins/*.ngvpack.zip; do
@@ -667,8 +827,32 @@ jobs:
       - name: Verify pack assembly did not mutate tracked source
         run: scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist
 
-      - name: Notarize app and build signed, notarized DMG
-        run: scripts/bundle.sh release --package
+      - name: Notarize and staple app
+        if: steps.restore-notary.outputs.dmg_present != 'true'
+        timeout-minutes: 20
+        run: scripts/bundle.sh release --notarize-app
+
+      - name: Build and sign DMG
+        if: steps.restore-notary.outputs.dmg_present != 'true'
+        run: scripts/bundle.sh release --build-dmg
+
+      - name: Record DMG before notarization
+        if: steps.restore-notary.outputs.dmg_present != 'true'
+        run: python3 scripts/release_checkpoint.py create-dmg --root "$RUNNER_TEMP/release-dmg-input"
+
+      - name: Retain DMG before notarization
+        if: steps.restore-notary.outputs.dmg_present != 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-dmg-input-${{ github.sha }}
+          path: ${{ runner.temp }}/release-dmg-input/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+      - name: Notarize and staple DMG
+        timeout-minutes: 20
+        run: scripts/bundle.sh release --notarize-dmg
 
       - name: Verify the exact DMG users install
         env:
@@ -1086,8 +1270,7 @@ jobs:
           ditto .build/NexGenVideo.dSYM .build/diagnostic-symbols/NexGenVideo.dSYM
           ditto .build/NexGenVideoDiagnostics.dSYM .build/diagnostic-symbols/NexGenVideoDiagnostics.dSYM
           ditto .build/NexGenEngine.dSYM .build/diagnostic-symbols/NexGenEngine.dSYM
-          SYMBOL_BIN="$(swift build -c release --show-bin-path)"
-          dsymutil "$SYMBOL_BIN/libMusicvideoPlugin.dylib" -o .build/diagnostic-symbols/MusicvideoPlugin.dSYM
+          ditto .build/MusicvideoPlugin.dSYM .build/diagnostic-symbols/MusicvideoPlugin.dSYM
           ditto -c -k --keepParent .build/diagnostic-symbols .build/diagnostic-symbols.zip
           dwarfdump --uuid .build/NexGenVideo.app/Contents/MacOS/NexGenVideo
           dwarfdump --uuid .build/NexGenVideo.dSYM
@@ -1129,6 +1312,15 @@ jobs:
           path: |
             .build/publication/*.pending.json
             .build/publication/*.transaction.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Retain notarization submissions
+        if: always() && steps.signed-input.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-notary-state-${{ github.sha }}
+          path: ${{ runner.temp }}/release-notary-state/
           if-no-files-found: error
           retention-days: 7
 
