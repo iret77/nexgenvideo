@@ -21,6 +21,7 @@ CI_HARNESS_PATHS = HARNESS_PATHS | {
     "scripts/verify_macho_dependencies.py",
     "scripts/test_verify_macho_dependencies.py",
 }
+SIGNED_BPY_HARNESS_PATHS = HARNESS_PATHS | {".github/workflows/bpy-runtime-acceptance.yml"}
 
 BPY_DIAGNOSTIC_PATHS = {
     ".github/workflows/diagnostic-acceptance.yml",
@@ -262,6 +263,41 @@ def verify(run, jobs, artifact, run_id, source_sha, artifact_id, digest, changed
         raise ValueError("application or build inputs changed; a new signed build is required")
 
 
+def verify_signed_bpy(run, jobs, artifact, run_id, source_sha, artifact_id, digest, changed_paths):
+    if (not re.fullmatch(r"[0-9a-f]{40}", source_sha)
+            or not re.fullmatch(r"[0-9a-f]{64}", digest)
+            or run.get("id") != run_id or run.get("head_sha") != source_sha
+            or run.get("path") != ".github/workflows/release.yml"
+            or run.get("event") != "workflow_dispatch" or run.get("status") != "completed"
+            or run.get("repository", {}).get("full_name") != "iret77/nexgenvideo"
+            or type(run.get("run_attempt")) is not int or run["run_attempt"] < 1):
+        raise ValueError("candidate must be a completed release producer")
+    if jobs.get("total_count") != len(jobs.get("jobs", [])):
+        raise ValueError("incomplete release job inventory")
+    releases = [job for job in jobs["jobs"] if job.get("name") == "release"]
+    if (len(releases) != 1 or releases[0].get("conclusion") != "success"
+            or releases[0].get("status") != "completed"
+            or releases[0].get("run_id") != run_id
+            or releases[0].get("head_sha") != source_sha
+            or releases[0].get("run_attempt") != run["run_attempt"]):
+        raise ValueError("candidate release job did not succeed in the bound attempt")
+    if (artifact.get("id") != artifact_id or artifact.get("name") != "diagnostic-release-evidence"
+            or artifact.get("expired") is not False or artifact.get("digest") != "sha256:" + digest
+            or artifact.get("workflow_run", {}).get("id") != run_id
+            or artifact.get("workflow_run", {}).get("head_sha") != source_sha):
+        raise ValueError("candidate artifact provenance mismatch")
+    try:
+        instant = lambda value: datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if not (instant(releases[0]["started_at"]) <= instant(artifact["created_at"])
+                <= instant(artifact["updated_at"]) <= instant(releases[0]["completed_at"])
+                and instant(artifact["expires_at"]) > datetime.now(timezone.utc)):
+            raise ValueError("candidate artifact is not bound to the successful release attempt")
+    except (KeyError, TypeError) as error:
+        raise ValueError("missing release production timestamps") from error
+    if set(changed_paths) - SIGNED_BPY_HARNESS_PATHS:
+        raise ValueError("application or build inputs changed; retained signed App cannot be used")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("run_id", type=int)
@@ -269,7 +305,7 @@ def main():
     parser.add_argument("artifact_id", type=int)
     parser.add_argument("digest")
     parser.add_argument("metadata", type=Path)
-    parser.add_argument("--candidate-kind", choices=("signed-release", "ci-runtime", "ci-bpy-open-diagnostic", "ci-app-test-diagnostic"), default="signed-release")
+    parser.add_argument("--candidate-kind", choices=("signed-release", "signed-bpy", "ci-runtime", "ci-bpy-open-diagnostic", "ci-app-test-diagnostic"), default="signed-release")
     parser.add_argument("--crash-archive", type=Path)
     args = parser.parse_args()
     if (args.candidate_kind == "ci-app-test-diagnostic") != (args.crash_archive is not None):
@@ -278,7 +314,7 @@ def main():
     paths = subprocess.check_output([
         "git", "diff", "--no-renames", "--name-only", "-z", args.source_sha, "HEAD"
     ]).decode().split("\0")
-    verifier = {"signed-release": verify, "ci-runtime": verify_ci,
+    verifier = {"signed-release": verify, "signed-bpy": verify_signed_bpy, "ci-runtime": verify_ci,
                 "ci-bpy-open-diagnostic": verify_bpy_diagnostic,
                 "ci-app-test-diagnostic": verify_app_diagnostic}[args.candidate_kind]
     verifier(*(json.loads((args.metadata / name).read_text()) for name in ("run.json", "jobs.json", "artifact.json")),

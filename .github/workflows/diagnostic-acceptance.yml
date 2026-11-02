@@ -6,7 +6,7 @@ on:
       candidate_kind:
         description: Signed release verification or targeted failed CI diagnostics
         type: choice
-        options: [signed-release, ci-runtime, ci-bpy-open-diagnostic, ci-bpy-resource-diagnostic, ci-app-test-diagnostic, ci-app-glow-replay, ci-app-full-replay, ci-builtin-blur, ci-builtin-blur-scribble, ci-builtin-blur-floor, ci-builtin-blur-preheat, ci-glow-context]
+        options: [signed-release, signed-bpy, ci-runtime, ci-bpy-open-diagnostic, ci-bpy-resource-diagnostic, ci-app-test-diagnostic, ci-app-glow-replay, ci-app-full-replay, ci-builtin-blur, ci-builtin-blur-scribble, ci-builtin-blur-floor, ci-builtin-blur-preheat, ci-glow-context]
         default: signed-release
       run_id:
         description: "Original producer workflow run"
@@ -90,6 +90,13 @@ jobs:
           python3 -m unittest discover -s scripts -p 'test_verify_macho_dependencies.py'
           python3 -m unittest discover -s scripts -p 'test_ci_workflow.py'
           python3 -m unittest discover -s scripts -p 'test_release_workflow.py'
+      - name: Verify retained signed bpy acceptance tooling
+        if: inputs.candidate_kind == 'signed-bpy'
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_diagnostic_acceptance.py'
+          python3 -m unittest discover -s scripts -p 'test_ci_workflow.py'
+          python3 -m unittest discover -s scripts -p 'test_release_workflow.py'
+          python3 -m unittest discover -s scripts -p 'test_consume_bpy_distributable_source.py'
       - name: Verify isolated bpy diagnostic tooling
         if: inputs.candidate_kind == 'ci-bpy-open-diagnostic'
         run: |
@@ -650,6 +657,19 @@ jobs:
       artifact: NexGenVideo-app
       app_zip: NexGenVideo.zip
       distribution: false
+      runtime_run_id: ${{ inputs.run_id }}
+      expected_source_sha: ${{ inputs.source_sha }}
+      app_artifact_id: ${{ inputs.artifact_id }}
+      app_artifact_sha256: ${{ inputs.artifact_sha256 }}
+
+  signed-bpy:
+    needs: source
+    if: inputs.candidate_kind == 'signed-bpy'
+    uses: ./.github/workflows/bpy-runtime-acceptance.yml
+    with:
+      artifact: diagnostic-release-evidence
+      app_zip: diagnostic-app.zip
+      distribution: true
       runtime_run_id: ${{ inputs.run_id }}
       expected_source_sha: ${{ inputs.source_sha }}
       app_artifact_id: ${{ inputs.artifact_id }}
