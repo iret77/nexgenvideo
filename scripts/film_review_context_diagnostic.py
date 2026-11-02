@@ -1,4 +1,4 @@
-"""Replay the bounded native-export context using the exact isolated-test products."""
+"""Replay the original App process using the exact isolated-test products."""
 import argparse
 import hashlib
 import io
@@ -15,6 +15,9 @@ from retained_app_test_products import (api, archive_bytes, archive_json, checks
                                         download, manifest, require, verify_artifact, verify_tree, write, UUID)
 
 PRODUCT = "21160564f484cbd9aaa1a563d561077e523a03ab"
+HARNESS_PARENT = "fd176e09d589f298e30165901e902a1a86cc84d5"
+EXECUTIONS = 3660
+SKIPS = 8
 PRODUCER = 41378923780
 DIAGNOSTIC = 13112521512
 DIAGNOSTIC_DIGEST = "c09415efe56b38c884ec12eeef48446e74a61a81d5f3e4e0bc240b21b2aa1153"
@@ -26,13 +29,22 @@ PATHS = {".github/workflows/diagnostic-acceptance.yml", "scripts/app_host_zombie
          "scripts/test_film_review_context_diagnostic.py"}
 
 
-def selected_inventory(rows):
+def original_inventory(rows):
     functions = sorted(row["payload"]["id"] for row in rows if row.get("kind") == "test"
                        and row.get("payload", {}).get("kind") == "function"
                        and re.search(FILM_REVIEW_CONTEXT_FILTER, row["payload"]["id"]))
-    require(len(functions) == len(set(functions)) == 41 and original.TEST_ID in functions,
-            "The original bounded export context differs")
-    return functions
+    skipped = sorted({row["payload"]["testID"] for row in rows if row.get("kind") == "event"
+                      and row.get("payload", {}).get("kind") == "testSkipped"})
+    require(len(functions) == len(set(functions)) == EXECUTIONS + SKIPS
+            and len(skipped) == SKIPS and set(skipped) <= set(functions)
+            and original.TEST_ID in functions and original.TEST_ID not in skipped,
+            "The complete original App discovery or declared skips differ")
+    return functions, skipped
+
+
+def selected_inventory(rows):
+    functions, skipped = original_inventory(rows)
+    return sorted(set(functions) - set(skipped))
 
 
 def executed_product_root(suite, compiled, profile, harness):
@@ -111,8 +123,8 @@ def source(folder):
     require(all(os.environ.get(k) == v for k, v in expected.items()), "Context producer inputs differ")
     require(os.environ.get("GITHUB_REPOSITORY") == "iret77/nexgenvideo", "Context repository differs")
     sha = command(["git", "rev-parse", "HEAD"])
-    require(sha == os.environ.get("GITHUB_SHA") and command(["git", "show", "-s", "--format=%P"]) == PRODUCT,
-            "Context harness must be a direct child of the unchanged product")
+    require(sha == os.environ.get("GITHUB_SHA") and command(["git", "show", "-s", "--format=%P"]) == HARNESS_PARENT,
+            "Context harness must be a direct child of the completed bounded context harness")
     changed = set(command(["git", "diff", "--name-only", PRODUCT, sha]).splitlines())
     require(changed == PATHS and checksum(original.TEST) == original.TEST_DIGEST,
             "Context harness changed unreviewed source or the original test")
@@ -168,9 +180,11 @@ def source(folder):
             and interpretation["coreAcceptance"] is interpretation["releaseAcceptance"] is False,
             "Isolated test did not produce its original complete diagnostic")
     original_root = executed_product_root(suite, compiled, "film-review-export", PRODUCT)
+    discovered, skipped = original_inventory(rows)
     binding = {"harnessSHA": sha, "productSHA": PRODUCT, "producerRun": PRODUCER,
                "kind": "ci-film-review-context", "selection": FILM_REVIEW_CONTEXT_FILTER,
                "expectedFunctionIDs": selected_inventory(rows), "compiled": compiled, "originalBinRoot": original_root,
+               "expectedDiscoveredFunctionIDs": discovered, "expectedSkippedFunctionIDs": skipped,
                "productsArtifact": artifacts["products"], "originalFailureRun": original.RUN,
                "originalFailureDigest": original.DIGEST, "coreAcceptance": False, "releaseAcceptance": False}
     write(folder / "binding.json", binding)
@@ -251,10 +265,14 @@ def verify(folder, evidence):
         phase = suite["phases"][0]
         require(phase["events"]["startedFunctionIDs"] == phase["events"]["endedFunctionIDs"]
                 == binding["expectedFunctionIDs"] and phase["events"]["functionExecutions"] == suite["testExecutions"]
-                == len(binding["expectedFunctionIDs"]) == 41 and phase["status"] == "verified-execution"
+                == len(binding["expectedFunctionIDs"]) == EXECUTIONS and phase["status"] == "verified-execution"
+                and phase["events"]["discoveredFunctionIDs"] == binding["expectedDiscoveredFunctionIDs"]
+                and phase["events"]["skippedFunctionIDs"] == binding["expectedSkippedFunctionIDs"]
+                and len(binding["expectedDiscoveredFunctionIDs"]) == EXECUTIONS + SKIPS
+                and len(binding["expectedSkippedFunctionIDs"]) == SKIPS
                 and phase["exitCode"] == phase["outputCapture"]["originalExitCode"] == 0
                 and phase["outputCapture"]["eof"] is True and phase["diagnostic"]["status"] == "verified",
-                "The bounded original context did not complete once")
+                "The original App process context did not complete once")
         require(executed_product_root(suite, binding["compiled"], "film-review-context", binding["harnessSHA"])
                 == restored["binRoot"] and phase["diagnostic"]["memoryErrors"] == []
                 and phase["diagnostic"]["sampleCount"] >= 2, "Owned context root or process observation differs")
@@ -272,7 +290,8 @@ def verify(folder, evidence):
             ledger = next(row for row in last["ledger"] if row["instance"] == last["compositor"])
             require(ledger["started"] == ledger["frame"] == 240 and ledger["pending"] == ledger["dropped"]
                     == ledger["error"] == ledger["cancelled"] == 0, "A review request is unfinished")
-        report.update(status="bounded-context-completed-cause-not-proven", functionCount=len(binding["expectedFunctionIDs"]),
+        report.update(status="app-context-completed-cause-not-proven", functionCount=len(binding["expectedFunctionIDs"]),
+                      discoveredCount=len(binding["expectedDiscoveredFunctionIDs"]), skippedFunctionIDs=binding["expectedSkippedFunctionIDs"],
                       captureCount=len(captures), targetCaptureCount=len(target))
     except (OSError, ValueError, TypeError, KeyError, IndexError, StopIteration) as error:
         report["limitation"] = str(error)
@@ -287,7 +306,7 @@ def verify(folder, evidence):
     report.update(marker_summary(records))
     write(evidence / "context-markers.json", records)
     write(evidence / "context-interpretation.json", report)
-    return 0 if report["status"] == "bounded-context-completed-cause-not-proven" else 1
+    return 0 if report["status"] == "app-context-completed-cause-not-proven" else 1
 
 
 def main():

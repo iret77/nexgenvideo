@@ -20,11 +20,14 @@ class FilmReviewContextTests(unittest.TestCase):
         harness, image = "a" * 40, "28e32694-8c96-33f4-9ebc-ab10afa8977b"
         binary = "/original/.build/out/Products/Debug"
         identities = sorted([context.original.TEST_ID] + [
-            "NexGenVideoTests.ExportQueueTests/context" + str(i) + "()/Queue.swift:1:1" for i in range(40)])
+            "NexGenVideoTests.ExportQueueTests/context" + str(i) + "()/Queue.swift:1:1" for i in range(context.EXECUTIONS - 1)])
+        skipped = ["NexGenVideoTests.Unavailable/skip" + str(i) + "()/Unavailable.swift:1:1" for i in range(context.SKIPS)]
+        discovered = sorted(identities + skipped)
         compiled = dict(sourceSHA=context.PRODUCT, binaries={"NexGenVideoAppKitTestHost":
             dict(sha256="b" * 64, uuidOutput="UUID: " + image + " (arm64)")})
         binding = dict(productSHA=context.PRODUCT, harnessSHA=harness, expectedFunctionIDs=identities,
-                       compiled=compiled, originalBinRoot=binary)
+                       compiled=compiled, originalBinRoot=binary,
+                       expectedDiscoveredFunctionIDs=discovered, expectedSkippedFunctionIDs=skipped)
         receipt = dict(pid=123, parentPID=122, sourceSHA=harness, hostExecutable=binary + "/NexGenVideoAppKitTestHost",
                        bundleBinary=binary + "/NexGenVideoTests.xctest/Contents/MacOS/NexGenVideoTests")
         diagnostic = dict(pid=123, parentPID=122, profile="film-review-context", status="verified",
@@ -33,10 +36,11 @@ class FilmReviewContextTests(unittest.TestCase):
             environment={"NGV_FILM_REVIEW_EXPORT_DIAGNOSTIC": "1", "otherDiagnosticVariablesPresent": False})
         phase = dict(pid=123, status="verified-execution", diagnostic=diagnostic, originalHostReceipt=receipt,
             exitCode=0, outputCapture=dict(originalExitCode=0, eof=True),
-            events=dict(startedFunctionIDs=identities, endedFunctionIDs=identities, functionExecutions=41))
+            events=dict(startedFunctionIDs=identities, endedFunctionIDs=identities, functionExecutions=context.EXECUTIONS,
+                        discoveredFunctionIDs=discovered, skippedFunctionIDs=skipped))
         suite = dict(binPath=binary, completed=True, scope="app-swift-testing", phases=[phase],
             sourceSHA=harness, harnessSourceSHA=harness, productSourceSHA=context.PRODUCT,
-            filter=profiles.FILM_REVIEW_CONTEXT_FILTER, testExecutions=41)
+            filter=profiles.FILM_REVIEW_CONTEXT_FILTER, testExecutions=context.EXECUTIONS)
         wrapper = dict(runID="17", sourceSHA=harness, testExitCode=0, effectiveExitCode=0)
         stages = ["capture.begin", "slot.acquired", "session.prepared", "session.begin", "session.returned",
                   "states.ended", "post.effects", "post.review", "post.binding", "post.size", "heartbeat",
@@ -105,13 +109,15 @@ class FilmReviewContextTests(unittest.TestCase):
             download.assert_not_called()
 
     def test_complete_context_and_single_mutation_rejections(self):
-        for change in ("none", "executions", "root", "bundle", "environment", "profile", "uuid", "wrapper",
+        for change in ("none", "executions", "discovery", "skips", "root", "bundle", "environment", "profile", "uuid", "wrapper",
                        "order", "commit", "started", "pending", "three-captures", "four-external"):
             with self.subTest(change=change), tempfile.TemporaryDirectory() as directory:
                 fixture = self.complete_fixture()
                 phase = fixture["suite"]["phases"][0]
                 captures = [r for r in fixture["rows"] if r["stage"] == "capture.begin"]
-                if change == "executions": phase["events"]["functionExecutions"] = 42
+                if change == "executions": phase["events"]["functionExecutions"] = context.EXECUTIONS + 1
+                if change == "discovery": phase["events"]["discoveredFunctionIDs"] = phase["events"]["discoveredFunctionIDs"][:-1]
+                if change == "skips": phase["events"]["skippedFunctionIDs"] = []
                 if change == "root": fixture["suite"]["binPath"] = "/other/.build/out/Products/Debug"
                 if change == "bundle": phase["originalHostReceipt"]["bundleBinary"] = "/other/test"
                 if change == "environment": phase["diagnostic"]["environment"]["extra"] = "1"
@@ -169,13 +175,14 @@ class FilmReviewContextTests(unittest.TestCase):
             self.assertFalse(result["captures"]["capture-0"]["statesEnded"]["present"])
             self.assertEqual([r["instance"] for r in result["ledger"]["unbalanced"]], [99])
 
-    def test_original_inventory_requires_the_failed_method_and_exact_bounded_count(self):
-        identities = [context.original.TEST_ID] + [
-            "NexGenVideoTests.ExportQueueTests/context" + str(i) + "()/Queue.swift:1:1" for i in range(40)]
-        rows = [dict(kind="test", payload=dict(kind="function", id=i)) for i in identities]
-        rows.append(dict(kind="test", payload=dict(kind="function", id="NexGenVideoTests.Unrelated/test()/U.swift:1:1")))
+    def test_original_inventory_retains_complete_discovery_and_declared_skips(self):
+        fixture = self.complete_fixture()["binding"]
+        identities = fixture["expectedFunctionIDs"]
+        rows = [dict(kind="test", payload=dict(kind="function", id=i)) for i in fixture["expectedDiscoveredFunctionIDs"]]
+        rows += [dict(kind="event", payload=dict(kind="testSkipped", testID=i)) for i in fixture["expectedSkippedFunctionIDs"]]
         self.assertEqual(context.selected_inventory(rows), sorted(identities))
-        for changed in (rows[1:], rows + [rows[1]], rows[:-2]):
+        without_target = [r for r in rows if r["payload"].get("id") != context.original.TEST_ID]
+        for changed in (without_target, rows + [rows[1]], rows[:-1]):
             with self.assertRaises(ValueError):
                 context.selected_inventory(changed)
 
@@ -246,7 +253,7 @@ class FilmReviewContextTests(unittest.TestCase):
         scripts = "\n".join(step.get("run", "") for step in job["steps"])
         self.assertNotIn("swift build", scripts)
         self.assertNotIn("swift test", scripts)
-        runs = [step for step in job["steps"] if step.get("name") == "Run only the bounded native export context once"]
+        runs = [step for step in job["steps"] if step.get("name") == "Reproduce the original App process context once"]
         self.assertEqual(len(runs), 1)
         self.assertIn("--app-diagnostic film-review-context", runs[0]["run"])
         self.assertIn("--bin-root", runs[0]["run"])

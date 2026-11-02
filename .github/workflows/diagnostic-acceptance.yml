@@ -83,7 +83,7 @@ jobs:
       - name: Verify signed acceptance tooling
         if: inputs.candidate_kind == 'signed-release'
         run: python3 -m unittest discover -s scripts -p 'test_*.py'
-      - name: Verify and bind the bounded film-review context
+      - name: Verify and bind the original App process context
         if: inputs.candidate_kind == 'ci-film-review-context'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -335,8 +335,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 "$RUNNER_TEMP/film-review-context-harness/film_review_context_diagnostic.py" restore --metadata "$RUNNER_TEMP/film-review-context-binding"
-      - name: Run only the bounded native export context once
+      - name: Reproduce the original App process context once
         timeout-minutes: 8
+        env:
+          NGV_BLOCKOUT_ORIENTATION_EVIDENCE_DIR: ${{ runner.temp }}/blockout-orientation-evidence
         run: |
           set -euo pipefail
           export SWIFT_BACKTRACE=enable=yes,interactive=no,demangle=yes,cache=no
@@ -348,7 +350,7 @@ jobs:
               --scope app-swift-testing --app-diagnostic film-review-context --filter "$selection" \
               --bin-root "$GITHUB_WORKSPACE/.build/out/Products/Debug" --product-source-sha "$PRODUCT_SHA" \
               --evidence "$RUNNER_TEMP/film-review-context/hosted-suite"
-      - name: Preserve bounded context interpretation and unchanged products
+      - name: Preserve App context interpretation and unchanged products
         if: always()
         run: |
           python3 "$RUNNER_TEMP/film-review-context-harness/film_review_context_diagnostic.py" verify \
@@ -365,6 +367,7 @@ jobs:
             ${{ runner.temp }}/film-review-context.log
             ${{ runner.temp }}/film-review-context-binding/*.json
             ${{ runner.temp }}/film-review-context-binding/*.log
+            ${{ runner.temp }}/blockout-orientation-evidence
           if-no-files-found: error
           retention-days: 90
 

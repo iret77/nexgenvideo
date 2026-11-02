@@ -14,7 +14,7 @@ import time
 import uuid
 
 FILM_REVIEW_FILTER = "PipelineProductionSequenceReviewStoreTests/realFilmReviewBindsExternalSourcesActualCutAndPersistedObservations"
-FILM_REVIEW_CONTEXT_FILTER = "(ExportQueueTests/|ExportServiceRoundTripTests/|LottieExportTests/|TextExportGlyphTests/|ClipBlendPipelineTests/previewFinalAndExportHaveMatchingTextBlendPixels|ProductionRuntimeContextTests/actualNativeFilmFindingsReachRepairTurnOnlyForTheirUnchangedCut|ExportProjectToolTests/videoRejoinReportsActualPendingTerminalAndInterruptedState|PipelineProductionSequenceReviewStoreTests/realFilmReviewBindsExternalSourcesActualCutAndPersistedObservations)"
+FILM_REVIEW_CONTEXT_FILTER = ".*"
 OWNED_APP_PROFILES = ("zombies", "glow-reproduction", "app-reproduction", "film-review-export", "film-review-context")
 
 
