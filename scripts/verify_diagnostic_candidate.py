@@ -29,6 +29,13 @@ SIGNED_JOURNEY_HARNESS_PATHS = SIGNED_BPY_HARNESS_PATHS | {
     "scripts/external-gui/NexGenVideoExternalUITests/UserJourneyTests.swift",
     "scripts/test_external_gui_test_bundle.py",
 }
+SIGNED_WORKSPACE_HARNESS_PATHS = SIGNED_JOURNEY_HARNESS_PATHS | {
+    ".github/workflows/chat-hang-replay.yml",
+    ".github/workflows/private-example-analysis.yml",
+    "scripts/retained_release_runtime.py",
+    "scripts/test_retained_release_runtime.py",
+    "scripts/test_private_example_workflow.py",
+}
 
 BPY_DIAGNOSTIC_PATHS = {
     ".github/workflows/diagnostic-acceptance.yml",
@@ -309,6 +316,10 @@ def verify_signed_bpy(run, jobs, artifact, run_id, source_sha, artifact_id, dige
 
 def verify_signed_journey(*args):
     verify_signed_bpy(*args, artifact_name="release-user-journey-input", harness_paths=SIGNED_JOURNEY_HARNESS_PATHS)
+
+
+def verify_signed_workspace(*args):
+    verify_signed_bpy(*args, artifact_name="workspace-ui-app", harness_paths=SIGNED_WORKSPACE_HARNESS_PATHS)
 
 
 def main():
