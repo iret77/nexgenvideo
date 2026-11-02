@@ -295,13 +295,6 @@ jobs:
             --source-sha "$ORIGINAL_SOURCE" --artifact-id "$ORIGINAL_ARTIFACT" \
             --artifact-sha256 "$ORIGINAL_DIGEST" --destination .build \
             --receipt "$RUNNER_TEMP/analysis-runtime/execution-provenance.json"
-      - uses: actions/upload-artifact@v4
-        if: always() && inputs.runtime_run_id != ''
-        with:
-          name: retained-private-analysis-input-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/analysis-runtime/execution-provenance.json
-          if-no-files-found: error
-          retention-days: 90
 
       - name: Install pinned ORAS CLI
         uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d
@@ -363,6 +356,9 @@ jobs:
             exit 0
           fi
           cd "$RUNNER_TEMP/analysis-report"
+          if [ -f "$RUNNER_TEMP/analysis-runtime/execution-provenance.json" ]; then
+            cp "$RUNNER_TEMP/analysis-runtime/execution-provenance.json" retained-runtime.json
+          fi
           layers=(
             provenance.json:application/vnd.nexgenvideo.example-analysis-provenance.v6+json
           )

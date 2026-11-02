@@ -14,7 +14,7 @@ class PrivateExampleWorkflowTests(unittest.TestCase):
         analyze = text[text.index("  analyze:") :]
 
         self.assertIn("needs: source-gate", build)
-        self.assertIn("if: inputs.runtime_artifact == ''", build)
+        self.assertIn("if: inputs.runtime_artifact == '' && inputs.runtime_run_id == ''", build)
         self.assertIn("runs-on: macrunner", build)
         self.assertIn("scripts/bundle.sh debug", build)
         self.assertIn("scripts/assemble_ngvpack.sh", build)
@@ -25,7 +25,7 @@ class PrivateExampleWorkflowTests(unittest.TestCase):
         self.assertIn(
             "if: ${{ !cancelled() && needs.source-gate.result == 'success' && "
             "(needs.build-runtime-harness.result == 'success' || "
-            "(needs.build-runtime-harness.result == 'skipped' && inputs.runtime_artifact != '')) }}",
+            "(needs.build-runtime-harness.result == 'skipped' && (inputs.runtime_artifact != '' || inputs.runtime_run_id != ''))) }}",
             analyze,
         )
         self.assertIn("actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093", analyze)
@@ -69,6 +69,7 @@ class PrivateExampleWorkflowTests(unittest.TestCase):
         self.assertIn("if [ -s measurement-proof.json ]; then", publish)
         self.assertIn("analysis-measurement-proof.v1", publish)
         self.assertIn('tar -czf "$RUNNER_TEMP/musicvideo-acceptance.tar.gz" .', publish)
+        self.assertIn('cp "$RUNNER_TEMP/analysis-runtime/execution-provenance.json" retained-runtime.json', publish)
         self.assertIn("musicvideo-acceptance.tar.gz:application/vnd.nexgenvideo.musicvideo-acceptance.v1+tar+gzip", publish)
         self.assertNotIn("if [ -s hostflow/fullflow.json", publish)
 
@@ -105,17 +106,19 @@ class PrivateExampleWorkflowTests(unittest.TestCase):
         gate = WORKFLOW.read_text().split("      - name: Verify supported runtime", 1)[1].split(
             "      - name: Retain actual runtime identity", 1)[0]
         code = textwrap.dedent(gate.split("<<'PYTHON'\n", 1)[1].split("\n          PYTHON", 1)[0])
-        with tempfile.TemporaryDirectory() as temporary:
-            environment = {'RUNNER_TEMP': temporary, 'RUNTIME_PRODUCT_VERSION': '27.0.1',
-                           'RUNNER_NAME': 'runner-test', 'GITHUB_SHA': 'a' * 40,
-                           'PRIVATE_FIXTURE_CONTENT': 'must-stay-private'}
-            with patch.dict(os.environ, environment, clear=True), \
-                patch('platform.machine', return_value='arm64'), \
-                patch('subprocess.check_output', return_value='27B001\n'):
-                exec(compile(code, 'runtime-identity-writer', 'exec'), {})
-            record = json.loads((Path(temporary) / 'analysis-runtime/runtime-environment.json').read_text())
-            self.assertEqual(record, {'productVersion': '27.0.1', 'osBuild': '27B001', 'architecture': 'arm64',
-                                      'runnerName': 'runner-test', 'sourceSHA': 'a' * 40})
+        for original_source in ('', 'b' * 40):
+            with self.subTest(original_source=original_source), tempfile.TemporaryDirectory() as temporary:
+                environment = {'RUNNER_TEMP': temporary, 'RUNTIME_PRODUCT_VERSION': '27.0.1',
+                               'RUNNER_NAME': 'runner-test', 'GITHUB_SHA': 'a' * 40,
+                               'ORIGINAL_SOURCE': original_source, 'PRIVATE_FIXTURE_CONTENT': 'must-stay-private'}
+                with patch.dict(os.environ, environment, clear=True), \
+                    patch('platform.machine', return_value='arm64'), \
+                    patch('subprocess.check_output', return_value='27B001\n'):
+                    exec(compile(code, 'runtime-identity-writer', 'exec'), {})
+                record = json.loads((Path(temporary) / 'analysis-runtime/runtime-environment.json').read_text())
+                self.assertEqual(record, {'productVersion': '27.0.1', 'osBuild': '27B001', 'architecture': 'arm64',
+                                          'runnerName': 'runner-test', 'sourceSHA': original_source or 'a' * 40,
+                                          'harnessSHA': 'a' * 40})
 
     def test_public_selftest_log_is_content_free(self):
         text = SELFTEST.read_text()

@@ -34,6 +34,7 @@ SIGNED_WORKSPACE_HARNESS_PATHS = SIGNED_JOURNEY_HARNESS_PATHS | {
     ".github/workflows/private-example-analysis.yml",
     "scripts/retained_release_runtime.py",
     "scripts/test_retained_release_runtime.py",
+    "scripts/test_private_example_workflow.py",
 }
 
 BPY_DIAGNOSTIC_PATHS = {
