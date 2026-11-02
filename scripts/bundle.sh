@@ -57,6 +57,37 @@ ZIP="$ROOT/.build/NexGenVideo.zip"
 DMG="$ROOT/.build/NexGenVideo.dmg"
 DSYM="$ROOT/.build/NexGenVideo.dSYM"
 
+verify_app_resources() (
+  staging="$(mktemp -d "$ROOT/.build/resource-selftest.XXXXXX")"
+  relocated="$staging/NexGenVideo.app"
+  hidden_resources="$staging/swiftpm-resources"
+  restore_resources() {
+    if [ -e "$hidden_resources" ]; then mv "$hidden_resources" "$RES_BUNDLE"; fi
+    if [ -e "$relocated" ]; then mv "$relocated" "$APP"; fi
+  }
+  trap restore_resources EXIT
+  mv "$APP" "$relocated"
+  mv "$RES_BUNDLE" "$hidden_resources"
+  NGV_SELFTEST_APP_RESOURCES=1 python3 - "$relocated/Contents/MacOS/NexGenVideo" <<'PY' 2>&1 | tee "$staging/result.log"
+import contextlib, os, signal, subprocess, sys
+process = subprocess.Popen([sys.argv[1]], stdin=subprocess.DEVNULL, start_new_session=True)
+try:
+    code = process.wait(timeout=60)
+except subprocess.TimeoutExpired:
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(process.pid, signal.SIGTERM)
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
+        process.wait(timeout=5)
+    code = 1
+raise SystemExit(code)
+PY
+  grep -Fx 'SELFTEST_APP_RESOURCES_OK production model-capabilities fcpxml' "$staging/result.log"
+)
+
 upload_dsyms() {
   if [ -z "${SENTRY_AUTH_TOKEN:-}" ] || [ -z "${SENTRY_ORG:-}" ] || [ -z "${SENTRY_PROJECT:-}" ]; then
     echo "==> Sentry creds not set — skipping dSYM upload"
@@ -288,6 +319,7 @@ touch "$APP"
 if [ "$MODE" = "fast" ]; then
   echo "==> Codesigning fast app"
   "$ROOT/scripts/sign_app.sh" "$APP" fast "$BPY_BUNDLE_MODE" "$SIGN_IDENTITY"
+  verify_app_resources
   echo "==> Done: $APP (fast mode — stable identity, no dSYM)"
   exit 0
 fi
@@ -301,12 +333,14 @@ dsymutil "$BIN_DIRECTORY/libNexGenEngine.dylib" -o "$ROOT/.build/NexGenEngine.dS
 if [ "$MODE" = "dev" ]; then
   echo "==> Ad-hoc signing dev app"
   "$ROOT/scripts/sign_app.sh" "$APP" dev "$BPY_BUNDLE_MODE" -
+  verify_app_resources
   upload_dsyms
   echo "==> Done: $APP (ad-hoc signed)"
   exit 0
 fi
 
 "$ROOT/scripts/sign_app.sh" "$APP" distribution "$BPY_BUNDLE_MODE" "$SIGN_IDENTITY"
+verify_app_resources
 
 if [ "$MODE" = "sign" ]; then
   echo "==> Done: $APP (signed, not notarized)"

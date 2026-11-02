@@ -18,6 +18,7 @@
         {
           "heading": "Editing and delivery",
           "items": [
+            "Production instructions, model capabilities and FCPXML schemas load from the installed app without requiring a development build folder.",
             "Object context connects production sources with shots, generated media and timeline placements. Shared editing and postproduction controls remain available throughout production.",
             "Film review findings open their exact timeline range and affected clips. Changed cuts or sources require a current review before navigation.",
             "Selecting a reviewed take shows the next planned video shot that still needs a selected take, without approving or generating it automatically.",

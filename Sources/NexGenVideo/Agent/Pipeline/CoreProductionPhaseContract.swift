@@ -3,7 +3,7 @@ import NexGenEngine
 
 enum CoreProductionPhaseContract {
     static func resolve() throws -> ResolvedPhaseContract {
-        guard let root = Bundle.module.url(forResource: "ProductionWorkflow", withExtension: nil) else {
+        guard let root = AppResourceLocator.url(forResource: "ProductionWorkflow") else {
             throw PhaseContractError.missingResource("ProductionWorkflow")
         }
         let phases = try ProductionWorkflowV2.corePhases.enumerated().map { index, id in
