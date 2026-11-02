@@ -14,7 +14,8 @@ import time
 import uuid
 
 FILM_REVIEW_FILTER = "PipelineProductionSequenceReviewStoreTests/realFilmReviewBindsExternalSourcesActualCutAndPersistedObservations"
-OWNED_APP_PROFILES = ("zombies", "glow-reproduction", "app-reproduction", "film-review-export")
+FILM_REVIEW_CONTEXT_FILTER = "(ExportQueueTests/|ExportServiceRoundTripTests/|LottieExportTests/|TextExportGlyphTests/|ClipBlendPipelineTests/previewFinalAndExportHaveMatchingTextBlendPixels|ProductionRuntimeContextTests/actualNativeFilmFindingsReachRepairTurnOnlyForTheirUnchangedCut|ExportProjectToolTests/videoRejoinReportsActualPendingTerminalAndInterruptedState|PipelineProductionSequenceReviewStoreTests/realFilmReviewBindsExternalSourcesActualCutAndPersistedObservations)"
+OWNED_APP_PROFILES = ("zombies", "glow-reproduction", "app-reproduction", "film-review-export", "film-review-context")
 
 
 def diagnostic_key(key):
@@ -24,7 +25,7 @@ def diagnostic_key(key):
 
 
 def profile_switch(profile):
-    if profile == "film-review-export":
+    if profile in ("film-review-export", "film-review-context"):
         return "NGV_FILM_REVIEW_EXPORT_DIAGNOSTIC", "1"
     if profile == "zombies":
         return "NSZombieEnabled", "YES"
@@ -212,7 +213,8 @@ class ZombieCapture:
 
     def write(self):
         name = {"zombies": "zombie-diagnostic.json", "glow-reproduction": "glow-diagnostic.json",
-                "app-reproduction": "app-diagnostic.json", "film-review-export": "film-review-diagnostic.json"}[self.profile]
+                "app-reproduction": "app-diagnostic.json", "film-review-export": "film-review-diagnostic.json",
+                "film-review-context": "film-review-context.json"}[self.profile]
         path = self.folder / name
         temporary = path.with_suffix(".pending")
         temporary.write_text(json.dumps(self.receipt, indent=2) + "\n")

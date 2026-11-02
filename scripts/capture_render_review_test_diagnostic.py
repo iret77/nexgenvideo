@@ -623,6 +623,10 @@ def validate_framework_selection(swift_runs, xctest_runs, app_only, without_prob
         from app_host_zombie_diagnostic import FILM_REVIEW_FILTER
         if argument("--filter") != FILM_REVIEW_FILTER or "--bin-root" in command:
             raise ValueError("Film-review capture requires the exact method and fresh products")
+    elif profile == "film-review-context":
+        from app_host_zombie_diagnostic import FILM_REVIEW_CONTEXT_FILTER
+        if argument("--filter") != FILM_REVIEW_CONTEXT_FILTER or not Path(argument("--bin-root")).is_absolute():
+            raise ValueError("Film-review context requires the exact cohort and retained products")
     else:
         raise ValueError("Unknown App-only diagnostic profile")
     for flag, value in (("--scope", "app-swift-testing"),):

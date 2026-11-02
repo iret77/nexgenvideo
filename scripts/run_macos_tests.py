@@ -17,7 +17,7 @@ import time
 import uuid
 
 from verify_swift_test_output import ANSI, assess_output
-from app_host_zombie_diagnostic import FILM_REVIEW_FILTER, OWNED_APP_PROFILES, ZombieCapture, diagnostic_environment, probe_child_stdio
+from app_host_zombie_diagnostic import FILM_REVIEW_CONTEXT_FILTER, FILM_REVIEW_FILTER, OWNED_APP_PROFILES, ZombieCapture, diagnostic_environment, probe_child_stdio
 
 
 NO_MATCH = "warning: No matching test cases were run"
@@ -630,14 +630,16 @@ def run(args):
         raise VerificationError("Film-review diagnostics require the exact original method and fresh debug products")
     if profile == "zombies" and (args.filter or retained_root):
         raise VerificationError("The zombie diagnostic requires the full original App build")
-    if profile in ("glow-reproduction", "app-reproduction") and (not retained_root
+    if profile in ("glow-reproduction", "app-reproduction", "film-review-context") and (not retained_root
             or args.configuration != "debug" or args.scratch_path or args.swiftc_flag):
         raise VerificationError("The replay diagnostic requires the exact retained debug products")
     if profile == "glow-reproduction" and args.filter != "GlowKernelTests":
         raise VerificationError("The Glow diagnostic requires the exact Glow selection")
+    if profile == "film-review-context" and args.filter != FILM_REVIEW_CONTEXT_FILTER:
+        raise VerificationError("Film-review context requires its exact bounded native export selection")
     if profile == "app-reproduction" and args.filter:
         raise VerificationError("The full App replay cannot filter the original aggregate")
-    if retained_root and profile not in ("glow-reproduction", "app-reproduction"):
+    if retained_root and profile not in ("glow-reproduction", "app-reproduction", "film-review-context"):
         raise VerificationError("An explicit product path is restricted to retained App diagnostics")
     if bool(profile) != bool(product_source) or product_source and not re.fullmatch(r"[a-f0-9]{40}", product_source):
         raise VerificationError("The App diagnostic requires its explicit original product source")
