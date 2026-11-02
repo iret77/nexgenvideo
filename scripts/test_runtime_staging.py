@@ -8,6 +8,50 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 
+class AppResourceProbeTests(unittest.TestCase):
+    def run_probe(self, exit_code, marker=True):
+        script = (ROOT / 'scripts/bundle.sh').read_text()
+        body = script.split('verify_app_resources() (\n', 1)[1].split('\n)\n', 1)[0]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            app = root / '.build/NexGenVideo.app'
+            executable = app / 'Contents/MacOS/NexGenVideo'
+            executable.parent.mkdir(parents=True)
+            resources = app / 'Contents/Resources'
+            resources.mkdir()
+            (resources / 'marker').write_bytes(b'original packaged bytes')
+            build_bundle = root / '.build/native/NexGenVideo_NexGenVideo.bundle'
+            build_bundle.mkdir(parents=True)
+            (build_bundle / 'marker').write_bytes(b'compiler resource bytes')
+            executable.write_text('#!/bin/bash\nset -euo pipefail\n'
+                                  '[ "$NGV_SELFTEST_APP_RESOURCES" = 1 ]\n'
+                                  '[ ! -e "$ORIGINAL_APP" ]\n'
+                                  '[ ! -e "$ORIGINAL_BUNDLE" ]\n'
+                                  '[ -f "$(dirname "$0")/../Resources/marker" ]\n'
+                                  'echo SELFTEST_APP_RESOURCES_REACHED\n'
+                                  + ('echo "SELFTEST_APP_RESOURCES_OK production model-capabilities fcpxml"\n' if marker else '')
+                                  + f'exit {exit_code}\n')
+            executable.chmod(0o755)
+            environment = {**os.environ, 'ROOT': str(root), 'APP': str(app), 'RES_BUNDLE': str(build_bundle),
+                           'ORIGINAL_APP': str(app), 'ORIGINAL_BUNDLE': str(build_bundle)}
+            result = subprocess.run(['bash', '-c', 'set -euo pipefail\nverify_app_resources() (\n' + body + '\n)\nverify_app_resources'],
+                                    env=environment, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
+            self.assertTrue(executable.is_file(), result.stderr)
+            self.assertEqual((resources / 'marker').read_bytes(), b'original packaged bytes')
+            self.assertEqual((build_bundle / 'marker').read_bytes(), b'compiler resource bytes')
+            self.assertIn('SELFTEST_APP_RESOURCES_REACHED', result.stdout)
+            return result.returncode
+
+    def test_resource_probe_relocates_app_and_hides_the_compiler_bundle(self):
+        self.assertEqual(self.run_probe(0), 0)
+
+    def test_resource_probe_restores_both_locations_and_preserves_failure(self):
+        self.assertEqual(self.run_probe(17), 17)
+
+    def test_resource_probe_rejects_a_binary_without_the_success_marker(self):
+        self.assertEqual(self.run_probe(0, marker=False), 1)
+
+
 class RuntimeStagingTests(unittest.TestCase):
     @staticmethod
     def write_resource_fixture(source, newline="\n"):

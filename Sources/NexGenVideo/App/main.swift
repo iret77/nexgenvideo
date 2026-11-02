@@ -3,6 +3,7 @@ import AppKit
 Log.bootstrap()
 let app = NexGenVideoApplication.shared
 precondition(app is NexGenVideoApplication)
+AppResourceSelfTest.runIfRequested()
 AppTerminationSelfTest.runIfRequested()
 ChatHangReplay.runIfRequested()
 HangDiagnosticReplay.runIfRequested()

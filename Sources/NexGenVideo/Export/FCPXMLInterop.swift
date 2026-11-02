@@ -288,7 +288,7 @@ enum FCPXMLSchemaValidator {
 
     private static func schemaURL(for version: FCPXMLVersion) throws -> URL {
         let filename = "FCPXMLv" + version.rawValue.replacingOccurrences(of: ".", with: "_")
-        guard let url = Bundle.module.url(
+        guard let url = AppResourceLocator.url(
             forResource: filename,
             withExtension: "dtd",
             subdirectory: "FCPXML DTDs"
