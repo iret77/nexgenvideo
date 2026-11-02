@@ -22,6 +22,13 @@ CI_HARNESS_PATHS = HARNESS_PATHS | {
     "scripts/test_verify_macho_dependencies.py",
 }
 SIGNED_BPY_HARNESS_PATHS = HARNESS_PATHS | {".github/workflows/bpy-runtime-acceptance.yml"}
+SIGNED_JOURNEY_HARNESS_PATHS = SIGNED_BPY_HARNESS_PATHS | {
+    ".github/workflows/external-gui-acceptance.yml",
+    "scripts/external-gui/acceptance.py",
+    "scripts/external-gui/test_bundle.py",
+    "scripts/external-gui/NexGenVideoExternalUITests/UserJourneyTests.swift",
+    "scripts/test_external_gui_test_bundle.py",
+}
 
 BPY_DIAGNOSTIC_PATHS = {
     ".github/workflows/diagnostic-acceptance.yml",
@@ -263,7 +270,8 @@ def verify(run, jobs, artifact, run_id, source_sha, artifact_id, digest, changed
         raise ValueError("application or build inputs changed; a new signed build is required")
 
 
-def verify_signed_bpy(run, jobs, artifact, run_id, source_sha, artifact_id, digest, changed_paths):
+def verify_signed_bpy(run, jobs, artifact, run_id, source_sha, artifact_id, digest, changed_paths,
+                      *, artifact_name="diagnostic-release-evidence", harness_paths=SIGNED_BPY_HARNESS_PATHS):
     if (not re.fullmatch(r"[0-9a-f]{40}", source_sha)
             or not re.fullmatch(r"[0-9a-f]{64}", digest)
             or run.get("id") != run_id or run.get("head_sha") != source_sha
@@ -282,7 +290,7 @@ def verify_signed_bpy(run, jobs, artifact, run_id, source_sha, artifact_id, dige
             or releases[0].get("head_sha") != source_sha
             or releases[0].get("run_attempt") != run["run_attempt"]):
         raise ValueError("candidate release job did not succeed in the bound attempt")
-    if (artifact.get("id") != artifact_id or artifact.get("name") != "diagnostic-release-evidence"
+    if (artifact.get("id") != artifact_id or artifact.get("name") != artifact_name
             or artifact.get("expired") is not False or artifact.get("digest") != "sha256:" + digest
             or artifact.get("workflow_run", {}).get("id") != run_id
             or artifact.get("workflow_run", {}).get("head_sha") != source_sha):
@@ -295,8 +303,12 @@ def verify_signed_bpy(run, jobs, artifact, run_id, source_sha, artifact_id, dige
             raise ValueError("candidate artifact is not bound to the successful release attempt")
     except (KeyError, TypeError) as error:
         raise ValueError("missing release production timestamps") from error
-    if set(changed_paths) - SIGNED_BPY_HARNESS_PATHS:
+    if set(changed_paths) - harness_paths:
         raise ValueError("application or build inputs changed; retained signed App cannot be used")
+
+
+def verify_signed_journey(*args):
+    verify_signed_bpy(*args, artifact_name="release-user-journey-input", harness_paths=SIGNED_JOURNEY_HARNESS_PATHS)
 
 
 def main():
@@ -306,7 +318,7 @@ def main():
     parser.add_argument("artifact_id", type=int)
     parser.add_argument("digest")
     parser.add_argument("metadata", type=Path)
-    parser.add_argument("--candidate-kind", choices=("signed-release", "signed-bpy", "ci-runtime", "ci-bpy-open-diagnostic", "ci-app-test-diagnostic"), default="signed-release")
+    parser.add_argument("--candidate-kind", choices=("signed-release", "signed-bpy", "signed-journey", "ci-runtime", "ci-bpy-open-diagnostic", "ci-app-test-diagnostic"), default="signed-release")
     parser.add_argument("--crash-archive", type=Path)
     args = parser.parse_args()
     if (args.candidate_kind == "ci-app-test-diagnostic") != (args.crash_archive is not None):
@@ -315,7 +327,8 @@ def main():
     paths = subprocess.check_output([
         "git", "diff", "--no-renames", "--name-only", "-z", args.source_sha, "HEAD"
     ]).decode().split("\0")
-    verifier = {"signed-release": verify, "signed-bpy": verify_signed_bpy, "ci-runtime": verify_ci,
+    verifier = {"signed-release": verify, "signed-bpy": verify_signed_bpy,
+                "signed-journey": verify_signed_journey, "ci-runtime": verify_ci,
                 "ci-bpy-open-diagnostic": verify_bpy_diagnostic,
                 "ci-app-test-diagnostic": verify_app_diagnostic}[args.candidate_kind]
     verifier(*(json.loads((args.metadata / name).read_text()) for name in ("run.json", "jobs.json", "artifact.json")),

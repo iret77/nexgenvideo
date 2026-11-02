@@ -252,7 +252,7 @@ final class UserJourneyTests: XCTestCase {
         element.click()
     }
 
-    private func key(_ key: String, modifiers: XCUIKeyModifierFlags = []) throws {
+    private func key(_ key: String, modifiers: XCUIElement.KeyModifierFlags = []) throws {
         actions.append(["kind": "key", "key": key, "modifiers": modifiers.rawValue])
         app.typeKey(key, modifierFlags: modifiers)
     }

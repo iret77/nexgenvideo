@@ -12,7 +12,7 @@ import zipfile
 
 from hang_diagnostic_acceptance import capture_helper_failure, verify_helper_recovery, verify_retained_key
 from verify_diagnostic_candidate import APP_DIAGNOSTIC_PATHS, BPY_DIAGNOSTIC_PATHS, CI_HARNESS_PATHS, HARNESS_PATHS, verify, verify_app_crash_archive, verify_app_diagnostic, verify_bpy_diagnostic, verify_ci
-from verify_diagnostic_candidate import SIGNED_BPY_HARNESS_PATHS, verify_signed_bpy
+from verify_diagnostic_candidate import SIGNED_BPY_HARNESS_PATHS, SIGNED_JOURNEY_HARNESS_PATHS, verify_signed_bpy, verify_signed_journey
 
 
 class AppCrashCandidateTests(unittest.TestCase):
@@ -314,6 +314,19 @@ class SignedBpyCandidateTests(unittest.TestCase):
             self.assertIn(binding, job)
         self.assertNotIn('continue-on-error', job)
         self.assertNotIn('bundle.sh', job)
+
+    def test_signed_journey_requires_its_own_immutable_release_dmg_artifact(self):
+        self.artifact['name'] = 'release-user-journey-input'
+        arguments = [self.run, self.jobs, self.artifact, 12, self.source, 34, self.digest]
+        verify_signed_journey(*arguments, SIGNED_JOURNEY_HARNESS_PATHS)
+        for name in ('diagnostic-release-evidence', 'workspace-ui-app'):
+            self.artifact['name'] = name
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                verify_signed_journey(*arguments, SIGNED_JOURNEY_HARNESS_PATHS)
+        self.artifact['name'] = 'release-user-journey-input'
+        for path in ('Sources/NexGenVideo/App/NexGenVideoApp.swift', 'Package.resolved', 'scripts/bundle.sh'):
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                verify_signed_journey(*arguments, [*SIGNED_JOURNEY_HARNESS_PATHS, path])
 
 
 class BpyOpenCandidateTests(unittest.TestCase):

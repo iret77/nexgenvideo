@@ -16,6 +16,27 @@ on:
         description: Optional completed same-source producer of external-gui-tests; empty builds once
         type: string
         default: ''
+      artifact_mode:
+        description: Retained App or exact signed DMG
+        type: choice
+        options: [app, dmg]
+        default: app
+      product_source_sha:
+        description: Original signed product source for a CI-only DMG continuation
+        type: string
+        default: ''
+      runtime_artifact_id:
+        description: Immutable original release-user-journey-input artifact ID
+        type: string
+        default: ''
+      runtime_artifact_sha256:
+        description: Original GitHub artifact SHA256
+        type: string
+        default: ''
+      expected_dmg_sha256:
+        description: Exact signed and stapled DMG SHA256
+        type: string
+        default: ''
   workflow_call:
     inputs:
       runtime_run_id:
@@ -36,10 +57,22 @@ on:
       expected_dmg_sha256:
         type: string
         default: ''
+      product_source_sha:
+        type: string
+        default: ''
+      runtime_artifact_id:
+        type: string
+        default: ''
+      runtime_artifact_sha256:
+        type: string
+        default: ''
 
 permissions:
   contents: read
   actions: read
+
+env:
+  PRODUCT_SOURCE: ${{ inputs.product_source_sha || github.sha }}
 
 concurrency:
   group: external-gui-${{ github.ref }}-${{ github.run_id }}
@@ -52,6 +85,9 @@ jobs:
     outputs:
       scales: ${{ steps.select.outputs.scales }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Select independent user journeys
         id: select
         env:
@@ -59,6 +95,10 @@ jobs:
           ARTIFACT_MODE: ${{ inputs.artifact_mode || 'app' }}
           EXPECTED_DMG_SHA256: ${{ inputs.expected_dmg_sha256 }}
           TEST_BUNDLE_RUN_ID: ${{ inputs.test_bundle_run_id }}
+          RETAINED_SOURCE: ${{ inputs.product_source_sha }}
+          RETAINED_RUN: ${{ inputs.runtime_run_id }}
+          RETAINED_ARTIFACT: ${{ inputs.runtime_artifact_id }}
+          RETAINED_DIGEST: ${{ inputs.runtime_artifact_sha256 }}
         run: |
           python3 - <<'PY'
           import json, os, re
@@ -72,10 +112,43 @@ jobs:
               raise SystemExit('Unknown app artifact kind')
           if mode == 'dmg' and not re.fullmatch('[a-f0-9]{64}', os.environ['EXPECTED_DMG_SHA256']):
               raise SystemExit('DMG acceptance requires its exact publication hash')
+          if os.environ['RETAINED_SOURCE']:
+              if (mode != 'dmg' or not re.fullmatch('[0-9a-f]{40}', os.environ['RETAINED_SOURCE'])
+                  or not re.fullmatch('[1-9][0-9]*', os.environ['RETAINED_RUN'])
+                  or not re.fullmatch('[1-9][0-9]*', os.environ['RETAINED_ARTIFACT'])
+                  or not re.fullmatch('[0-9a-f]{64}', os.environ['RETAINED_DIGEST'])):
+                  raise SystemExit('Retained signed DMG requires its complete immutable producer identity')
+          elif os.environ['RETAINED_ARTIFACT'] or os.environ['RETAINED_DIGEST']:
+              raise SystemExit('Retained artifact selectors require the original product source')
           scales = ['1', '1.25', '1.5'] if scale == 'all' else [scale]
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               output.write('scales=' + json.dumps(scales) + '\n')
           PY
+      - name: Bind the retained signed DMG and unchanged product inputs
+        if: inputs.product_source_sha != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ORIGINAL_RUN: ${{ inputs.runtime_run_id }}
+          ORIGINAL_ARTIFACT: ${{ inputs.runtime_artifact_id }}
+          ORIGINAL_DIGEST: ${{ inputs.runtime_artifact_sha256 }}
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s scripts -p 'test_external_gui_test_bundle.py'
+          python3 -m unittest discover -s scripts -p 'test_diagnostic_acceptance.py'
+          mkdir -p "$RUNNER_TEMP/retained-dmg"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ORIGINAL_RUN" > "$RUNNER_TEMP/retained-dmg/run.json"
+          ATTEMPT="$(jq -r .run_attempt "$RUNNER_TEMP/retained-dmg/run.json")"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ORIGINAL_RUN/attempts/$ATTEMPT/jobs?per_page=100" > "$RUNNER_TEMP/retained-dmg/jobs.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ORIGINAL_ARTIFACT" > "$RUNNER_TEMP/retained-dmg/artifact.json"
+          python3 scripts/verify_diagnostic_candidate.py "$ORIGINAL_RUN" "$PRODUCT_SOURCE" \
+            "$ORIGINAL_ARTIFACT" "$ORIGINAL_DIGEST" "$RUNNER_TEMP/retained-dmg" --candidate-kind signed-journey
+      - uses: actions/upload-artifact@v4
+        if: inputs.product_source_sha != ''
+        with:
+          name: retained-dmg-producer
+          path: ${{ runner.temp }}/retained-dmg/*.json
+          if-no-files-found: error
+          retention-days: 90
 
   test-build:
     needs: cases
@@ -154,6 +227,8 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -179,11 +254,36 @@ jobs:
           "$MEDIA_TOOLS_BIN/ffprobe" -version
           echo "$MEDIA_TOOLS_BIN" >> "$GITHUB_PATH"
       - uses: actions/download-artifact@v4
+        if: inputs.product_source_sha == ''
         with:
-          name: ${{ inputs.runtime_artifact || 'workspace-ui-app' }}
+          name: ${{ inputs.artifact_mode == 'dmg' && 'release-user-journey-input' || inputs.runtime_artifact || 'workspace-ui-app' }}
           run-id: ${{ inputs.runtime_run_id || github.run_id }}
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}/external-runtime
+      - name: Retrieve the exact retained DMG artifact
+        if: inputs.product_source_sha != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ORIGINAL_ARTIFACT: ${{ inputs.runtime_artifact_id }}
+          ORIGINAL_DIGEST: ${{ inputs.runtime_artifact_sha256 }}
+          ORIGINAL_RUN: ${{ inputs.runtime_run_id }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, sys
+          from pathlib import Path
+          sys.path.insert(0, str(Path('scripts').resolve()))
+          from reuse_bpy_binary_evidence import api, download
+          artifact = api('/actions/artifacts/' + os.environ['ORIGINAL_ARTIFACT'])
+          if (artifact.get('id') != int(os.environ['ORIGINAL_ARTIFACT'])
+              or artifact.get('name') != 'release-user-journey-input' or artifact.get('expired') is not False
+              or artifact.get('digest') != 'sha256:' + os.environ['ORIGINAL_DIGEST']
+              or artifact.get('workflow_run', {}).get('id') != int(os.environ['ORIGINAL_RUN'])
+              or artifact.get('workflow_run', {}).get('head_sha') != os.environ['PRODUCT_SOURCE']):
+              raise ValueError('Retained signed DMG artifact identity changed')
+          download(artifact, Path(os.environ['RUNNER_TEMP']) / 'retained-dmg.zip')
+          PY
+          ditto -x -k "$RUNNER_TEMP/retained-dmg.zip" "$RUNNER_TEMP/external-runtime"
       - uses: actions/download-artifact@v4
         with:
           artifact-ids: ${{ needs.test-runtime.outputs.artifact_id }}
@@ -239,7 +339,7 @@ jobs:
         run: |
           python3 scripts/external-gui/acceptance.py run \
             --dmg "$RUNNER_TEMP/external-runtime/NexGenVideo.dmg" \
-            --dmg-sha256 "$EXPECTED_DMG_SHA256" --source-sha "$GITHUB_SHA" \
+            --dmg-sha256 "$EXPECTED_DMG_SHA256" --source-sha "$PRODUCT_SOURCE" \
             --scale "$INTERFACE_SCALE" --evidence "$RUNNER_TEMP/external-gui" \
             --test-runtime "$RUNNER_TEMP/external-tests-input" --test-producer-sha256 "$TEST_PRODUCER_SHA256"
       - name: Validate actual journey and exported-file evidence
@@ -251,7 +351,7 @@ jobs:
           set -euo pipefail
           if [ "$ARTIFACT_MODE" = dmg ]; then
             python3 scripts/external-gui/acceptance.py validate \
-              --evidence "$RUNNER_TEMP/external-gui" --source-sha "$GITHUB_SHA" \
+              --evidence "$RUNNER_TEMP/external-gui" --source-sha "$PRODUCT_SOURCE" \
               --scale "$INTERFACE_SCALE" \
               --dmg-sha256 "$EXPECTED_DMG_SHA256"
           else
