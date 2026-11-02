@@ -176,16 +176,33 @@ nonisolated enum BpyKernelInspection {
     }
 
     static func descriptors(_ process: BpyObservedProcess, fileports: Bool) throws -> [BpyObservedVnode] {
-        guard try matches(process) else { return [] }
+        try descriptors(process, fileports: fileports, matching: { try matches($0) }, list: { flavor, buffer, size in
+            errno = 0
+            let count = Int(monitorPIDInfo(process.pid, flavor, 0, buffer, size))
+            return (count, errno)
+        }, vnode: { descriptor, buffer in
+            errno = 0
+            let size = fileports
+                ? monitorFileportInfo(process.pid, UInt32(bitPattern: descriptor), 2, buffer, 1_200)
+                : monitorFDInfo(process.pid, descriptor, 2, buffer, 1_200)
+            return (size, errno)
+        })
+    }
+
+    static func descriptors(_ process: BpyObservedProcess, fileports: Bool,
+                            matching: (BpyObservedProcess) throws -> Bool,
+                            list: (Int32, UnsafeMutableRawPointer?, Int32) -> (Int, Int32),
+                            vnode queryVnode: (Int32, UnsafeMutableRawPointer) -> (Int32, Int32)) throws -> [BpyObservedVnode] {
+        guard try matching(process) else { return [] }
         let flavor: Int32 = fileports ? 14 : 1
         let operation = fileports ? "fileports" : "descriptors"
         let maximum = 8 * 4_096
-        errno = 0
-        let required = Int(monitorPIDInfo(process.pid, flavor, 0, nil, 0))
-        let requiredError = errno
+        let (required, requiredError) = list(flavor, nil, 0)
         if required == 0 && fileports && requiredError == 0 { return [] }
         guard required > 0 else {
-            if try !matches(process) { return [] }
+            if try !matching(process) { return [] }
+            // A live BSD birth can outlast the Mach IPC space inspected by fileport queries.
+            if fileports, required == 0, requiredError == ESRCH { throw BpyLaunchDeferral.observation }
             throw failure(.init(rawValue: requiredError) ?? .EIO, operation: operation + ".capacityQuery", pid: process.pid,
                 result: Int64(required), queryErrno: requiredError)
         }
@@ -194,12 +211,11 @@ nonisolated enum BpyKernelInspection {
         let buffer = UnsafeMutableRawPointer.allocate(byteCount: capacity, alignment: 8)
         defer { buffer.deallocate() }
         buffer.initializeMemory(as: UInt8.self, repeating: 0, count: capacity)
-        errno = 0
-        let count = Int(monitorPIDInfo(process.pid, flavor, 0, buffer, Int32(capacity)))
-        let listError = errno
+        let (count, listError) = list(flavor, buffer, Int32(capacity))
         if count == 0 && fileports && listError == 0 { return [] }
         guard count > 0 else {
-            if try !matches(process) { return [] }
+            if try !matching(process) { return [] }
+            if fileports, count == 0, listError == ESRCH { throw BpyLaunchDeferral.observation }
             throw failure(.init(rawValue: listError) ?? .EIO, operation: operation + ".list", pid: process.pid,
                 result: Int64(count), argument: UInt64(capacity), queryErrno: listError)
         }
@@ -214,14 +230,11 @@ nonisolated enum BpyKernelInspection {
             let type = buffer.load(fromByteOffset: offset + 4, as: UInt32.self)
             guard (fileports || descriptor >= 0), type == 1 else { continue }
             vnode.initializeMemory(as: UInt8.self, repeating: 0, count: 1_200)
-            errno = 0
-            let size = fileports
-                ? monitorFileportInfo(process.pid, UInt32(bitPattern: descriptor), 2, vnode, 1_200)
-                : monitorFDInfo(process.pid, descriptor, 2, vnode, 1_200)
-            let vnodeError = errno
+            let (size, vnodeError) = queryVnode(descriptor, vnode)
             guard size == 1_200 else {
-                if try !matches(process) { return [] }
+                if try !matching(process) { return [] }
                 if size == 0 && [EBADF, ENOENT, EINVAL].contains(vnodeError) { continue }
+                if fileports, size == 0, vnodeError == ESRCH { throw BpyLaunchDeferral.observation }
                 throw failure(.init(rawValue: vnodeError) ?? .EIO, operation: operation + ".vnode", pid: process.pid,
                     result: Int64(size), argument: UInt64(UInt32(bitPattern: descriptor)), queryErrno: vnodeError)
             }
@@ -232,7 +245,7 @@ nonisolated enum BpyKernelInspection {
                 blocks: vnode.load(fromByteOffset: 120, as: Int64.self), path: try kernelPath(vnode, offset: 176,
                     pid: process.pid, operation: operation + ".path")))
         }
-        return try matches(process) ? records : []
+        return try matching(process) ? records : []
     }
 
     static func mappings(_ process: BpyObservedProcess) throws -> [BpyObservedVnode] {
