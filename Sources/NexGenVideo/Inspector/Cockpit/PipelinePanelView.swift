@@ -760,7 +760,8 @@ struct PipelinePanelView: View {
 
     @ViewBuilder
     private func acceptanceProbe(_ part: String, enabled: Bool? = nil, text: String? = nil) -> some View {
-        if WorkspaceUIAcceptance.isRequested || MusicvideoHostFlowAcceptance.isRequested {
+        if WorkspaceUIAcceptance.isRequested || MusicvideoHostFlowAcceptance.isRequested
+            || ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"]?.isEmpty == false {
             AppRelaunchClickProbe(identifier: "pipeline.overview.\(part)",
                 acceptanceState: enabled, acceptanceText: text)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)

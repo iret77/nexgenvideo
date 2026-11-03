@@ -15,7 +15,7 @@ enum ProductionSceneUIAcceptance {
                 await context.editor.refreshEngineState()
                 try await driver.wait("minimum scene viewport") { window.contentView?.bounds.size == NSSize(width: 960, height: 640) }
                 try await ProductionV2PlanningAcceptance.selectPhase("production_design", context: context, driver: driver)
-                try await driver.segment("production-design.view", title: "Locations · 3D", titles: ["Design", "Locations · 3D"], in: window)
+                try await driver.segment("production-design.view", title: "Locations · 3D", titles: ["Design", "Locations · 3D"], expected: "locations", in: window)
                 try await driver.wait("real location runtime ready", seconds: 90) {
                     driver.state("spatial.location.create", in: window) == true || driver.text("spatial.workspace.error", in: window) != nil
                 }

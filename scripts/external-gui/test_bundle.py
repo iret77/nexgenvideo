@@ -269,10 +269,10 @@ def require_runner_access(products, log):
     require(len(runners) == 1 and not runners[0].is_symlink(), 'Expected one independent UI test runner')
     raw = journey.output(['codesign', '-d', '--entitlements', ':-', runners[0]])
     entitlements = plistlib.loads(raw) if raw.strip() else {}
-    require(isinstance(entitlements, dict) and not entitlements.get('com.apple.security.app-sandbox'),
-            'Independent UI test runner cannot access its project and evidence directory')
     with log.open('ab') as stream:
         stream.write(b'\nIndependent UI test runner entitlements:\n' + plistlib.dumps(entitlements) + b'\n')
+    require(isinstance(entitlements, dict) and not entitlements.get('com.apple.security.app-sandbox'),
+            'Independent UI test runner cannot access its project and evidence directory')
 
 
 def build(args):
