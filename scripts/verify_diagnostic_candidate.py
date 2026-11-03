@@ -22,7 +22,7 @@ CI_HARNESS_PATHS = HARNESS_PATHS | {
     "scripts/test_verify_macho_dependencies.py",
 }
 SIGNED_BPY_HARNESS_PATHS = HARNESS_PATHS | {".github/workflows/bpy-runtime-acceptance.yml"}
-SIGNED_JOURNEY_HARNESS_PATHS = SIGNED_BPY_HARNESS_PATHS | {
+SIGNED_JOURNEY_BASE_HARNESS_PATHS = SIGNED_BPY_HARNESS_PATHS | {
     ".github/workflows/external-gui-acceptance.yml",
     "scripts/external-gui/acceptance.py",
     "scripts/external-gui/test_bundle.py",
@@ -30,7 +30,11 @@ SIGNED_JOURNEY_HARNESS_PATHS = SIGNED_BPY_HARNESS_PATHS | {
     "scripts/external-gui/NexGenVideoExternalUITests/UserJourneyTests.swift",
     "scripts/test_external_gui_test_bundle.py",
 }
-SIGNED_WORKSPACE_HARNESS_PATHS = SIGNED_JOURNEY_HARNESS_PATHS | {
+SIGNED_JOURNEY_HARNESS_PATHS = SIGNED_JOURNEY_BASE_HARNESS_PATHS | {
+    ".github/workflows/segment-geometry-diagnostic.yml",
+    "scripts/segment_geometry_diagnostic.swift",
+}
+SIGNED_WORKSPACE_HARNESS_PATHS = SIGNED_JOURNEY_BASE_HARNESS_PATHS | {
     ".github/workflows/chat-hang-replay.yml",
     ".github/workflows/private-example-analysis.yml",
     "scripts/retained_release_runtime.py",

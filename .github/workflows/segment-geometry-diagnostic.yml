@@ -1,0 +1,186 @@
+name: Diagnose native segmented-control geometry
+
+on:
+  workflow_dispatch:
+    inputs:
+      producer_run_id:
+        description: Original failed release acceptance producer
+        type: string
+        required: true
+      producer_source_sha:
+        description: Exact source of the original signed app
+        type: string
+        required: true
+      evidence_artifact_id:
+        description: Original managed bpy runtime evidence artifact
+        type: string
+        required: true
+      evidence_artifact_sha256:
+        description: SHA256 of that exact evidence archive
+        type: string
+        required: true
+      expected_dmg_sha256:
+        description: Exact final DMG hash from the release workspace producer
+        type: string
+        required: true
+  workflow_call:
+    inputs:
+      producer_run_id:
+        type: string
+        required: true
+      producer_source_sha:
+        type: string
+        required: true
+      evidence_artifact_id:
+        type: string
+        required: true
+      evidence_artifact_sha256:
+        type: string
+        required: true
+      expected_dmg_sha256:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: segment-geometry-${{ inputs.producer_run_id }}
+  cancel-in-progress: false
+
+jobs:
+  diagnostic:
+    runs-on: macrunner
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SEGMENT_PRODUCER_RUN: ${{ inputs.producer_run_id }}
+      SEGMENT_PRODUCER_SOURCE: ${{ inputs.producer_source_sha }}
+      SEGMENT_EVIDENCE_ID: ${{ inputs.evidence_artifact_id }}
+      SEGMENT_EVIDENCE_SHA256: ${{ inputs.evidence_artifact_sha256 }}
+      SEGMENT_DMG_SHA256: ${{ inputs.expected_dmg_sha256 }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Bind the original failure and exact DMG producer
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, math, os, pathlib, re, subprocess, zipfile
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'segment-geometry'
+          root.mkdir()
+          (root / 'binding-claims.json').write_text(json.dumps({key: value for key, value in os.environ.items()
+              if key.startswith('SEGMENT_') or key in ('GITHUB_SHA', 'GITHUB_RUN_ID')}, indent=2) + '\n')
+          def api(path):
+              return json.loads(subprocess.check_output(['gh', 'api', 'repos/iret77/nexgenvideo' + path], timeout=30))
+          def sha(path):
+              value = hashlib.sha256()
+              with path.open('rb') as stream:
+                  for block in iter(lambda: stream.read(1024 * 1024), b''): value.update(block)
+              return value.hexdigest()
+          assert os.environ['GITHUB_REPOSITORY'] == 'iret77/nexgenvideo'
+          run_id, artifact_id = int(os.environ['SEGMENT_PRODUCER_RUN']), int(os.environ['SEGMENT_EVIDENCE_ID'])
+          source = os.environ['SEGMENT_PRODUCER_SOURCE']
+          digest, dmg = os.environ['SEGMENT_EVIDENCE_SHA256'], os.environ['SEGMENT_DMG_SHA256']
+          assert run_id > 0 and artifact_id > 0 and re.fullmatch('[a-f0-9]{40}', source)
+          assert re.fullmatch('[a-f0-9]{64}', digest) and re.fullmatch('[a-f0-9]{64}', dmg)
+          allowed = {'.github/workflows/diagnostic-acceptance.yml', '.github/workflows/segment-geometry-diagnostic.yml',
+                     'scripts/segment_geometry_diagnostic.swift', 'scripts/verify_diagnostic_candidate.py',
+                     'scripts/external-gui/NexGenVideoExternalUITests/UserJourneyTests.swift'}
+          changed = subprocess.check_output(['git', 'diff', '--name-only', source, os.environ['GITHUB_SHA']], text=True).splitlines()
+          assert set(changed) <= allowed, 'App or existing harness inputs differ from the original producer'
+          run = api('/actions/runs/' + str(run_id))
+          assert run['repository']['full_name'] == 'iret77/nexgenvideo' and run['head_sha'] == source
+          assert run['path'] == '.github/workflows/release.yml' and run['event'] == 'workflow_dispatch'
+          assert run['status'] == 'completed' and run['conclusion'] == 'failure' and run['run_attempt'] == 1
+          jobs = api('/actions/runs/' + str(run_id) + '/jobs?per_page=100')['jobs']
+          for name, conclusion in [('release', 'success'), ('bpy-runtime / runtime', 'failure')]:
+              selected = [j for j in jobs if j['name'] == name]
+              assert len(selected) == 1 and selected[0]['conclusion'] == conclusion and selected[0]['labels'] == ['macrunner']
+          inventory = api('/actions/runs/' + str(run_id) + '/artifacts?per_page=100')
+          assert inventory['total_count'] <= 100
+          def download(artifact, target):
+              assert artifact['expired'] is False and artifact['workflow_run']['id'] == run_id
+              assert artifact['workflow_run']['head_sha'] == source
+              assert re.fullmatch('sha256:[a-f0-9]{64}', artifact['digest']) and artifact['size_in_bytes'] <= 64 * 1024 * 1024
+              with target.open('xb') as stream:
+                  subprocess.run(['gh', 'api', 'repos/iret77/nexgenvideo/actions/artifacts/' + str(artifact['id']) + '/zip'],
+                      stdin=subprocess.DEVNULL, stdout=stream, check=True, timeout=120)
+              assert target.stat().st_size == artifact['size_in_bytes'] and sha(target) == artifact['digest'].split(':')[1]
+          evidence = [a for a in inventory['artifacts'] if a['id'] == artifact_id]
+          producer = [a for a in inventory['artifacts'] if a['name'] == 'release-workspace-producer']
+          assert len(evidence) == len(producer) == 1
+          evidence, producer = evidence[0], producer[0]
+          assert evidence['name'] == 'managed-bpy-runtime-evidence-' + source and evidence['digest'] == 'sha256:' + digest
+          download(evidence, root / 'original-evidence.zip')
+          download(producer, root / 'original-producer.zip')
+          with zipfile.ZipFile(root / 'original-producer.zip') as archive:
+              assert archive.namelist() == ['release-workspace-producer.json']
+              receipt = json.loads(archive.read('release-workspace-producer.json'))
+          assert receipt['schema'] == 'nexgenvideo/release-workspace-producer/1'
+          assert receipt['runID'] == str(run_id) and receipt['runAttempt'] == '1' and receipt['sourceSHA'] == source
+          assert receipt['dmgSHA256'] == dmg
+          with zipfile.ZipFile(root / 'original-evidence.zip') as archive:
+              assert len(archive.namelist()) == len(set(archive.namelist()))
+              scene = json.loads(archive.read('spatial-scene-100.json'))
+              provenance = json.loads(archive.read('execution-provenance.json'))
+              original_os = archive.read('os.txt').decode()
+          assert provenance['appSourceSHA'] == source and provenance['executionRunID'] == run_id
+          assert provenance['producerRunID'] == run_id and provenance['executionAttempt'] == 1
+          assert scene['failure'] == 'The actual segment has no unique visible accessibility frame: Locations · 3D'
+          controls = [r for r in scene['interactions'] if r['kind'] == 'segment-accessibility' and r['id'] == 'production-design.view']
+          probes = [r for r in scene['interactions'] if r['kind'] == 'visible-group' and r['ids'] == ['production-design.view']]
+          assert len(controls) == len(probes) == 1 and len(probes[0]['frames']) == 1
+          elements = controls[0]['elements']
+          for label in ['Design', 'Locations · 3D']:
+              assert len([e for e in elements if label in (e['label'], e['title'])]) == 1
+          parent_frames = {tuple(e['screenFrame']) for e in elements if not e['label'] and not e['title']}
+          assert len(parent_frames) == 1
+          probe_frame, control_frame = probes[0]['frames'][0], list(parent_frames.pop())
+          assert all(isinstance(v, (int, float)) and math.isfinite(v) for v in probe_frame + control_frame)
+          assert 0 < control_frame[2] < probe_frame[2] <= 960 and 0 < probe_frame[3] <= control_frame[3] <= 64
+          current_os = subprocess.check_output(['sw_vers'], text=True)
+          assert current_os.strip() == original_os.strip(), 'Framework OS differs from the failed app execution'
+          assert subprocess.check_output(['uname', '-m'], text=True).strip() == 'arm64'
+          xcode = subprocess.check_output(['xcodebuild', '-version'], text=True)
+          assert int(xcode.splitlines()[0].split()[1].split('.')[0]) >= 27
+          spec = {'probeFrame': probe_frame, 'controlAXFrame': control_frame, 'labels': ['Design', 'Locations · 3D'],
+                  'originalObservedElements': elements, 'originalSourceSHA': source, 'producerRunID': run_id,
+                  'dmgSHA256': dmg, 'harnessSourceSHA': os.environ['GITHUB_SHA'], 'currentOS': current_os, 'xcode': xcode}
+          (root / 'input.json').write_text(json.dumps(spec, indent=2) + '\n')
+          PY
+      - name: Observe native segment enablement and coordinate conversion
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, subprocess
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'segment-geometry'
+          binary = root / 'segment-geometry-diagnostic'
+          with (root / 'compiler.log').open('wb') as log:
+              subprocess.run(['xcrun', 'swiftc', '-swift-version', '6', '-parse-as-library',
+                  'scripts/segment_geometry_diagnostic.swift', '-o', str(binary)],
+                  stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, check=True, timeout=90)
+          with (root / 'runtime.log').open('wb') as log:
+              result = subprocess.run([str(binary), str(root / 'input.json'), str(root)],
+                  stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, timeout=30)
+          assert result.returncode == 0
+          report = json.loads((root / 'segment-geometry.json').read_text())
+          assert report['classification'] == 'platform-control-reproduction-only' and report['appAcceptance'] is False
+          assert len(report['samples']) == 9 and all(sample['elements'] for sample in report['samples'])
+          paths = ['.github/workflows/diagnostic-acceptance.yml', '.github/workflows/segment-geometry-diagnostic.yml',
+                   'scripts/segment_geometry_diagnostic.swift', 'scripts/verify_diagnostic_candidate.py',
+                   'scripts/external-gui/NexGenVideoExternalUITests/UserJourneyTests.swift']
+          hashes = {p: hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest() for p in paths}
+          (root / 'diagnostic-receipt.json').write_text(json.dumps({'schema': 'nexgenvideo/segment-diagnostic-receipt/1',
+              'runID': os.environ['GITHUB_RUN_ID'], 'sourceSHA': os.environ['GITHUB_SHA'], 'sourceFiles': hashes,
+              'reportSHA256': hashlib.sha256((root / 'segment-geometry.json').read_bytes()).hexdigest(),
+              'appBuilds': 0, 'appAcceptance': False}, indent=2) + '\n')
+          PY
+      - name: Retain the one-time diagnostic observations
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: native-segment-geometry-${{ github.run_id }}
+          path: ${{ runner.temp }}/segment-geometry/
+          if-no-files-found: error
+          retention-days: 14

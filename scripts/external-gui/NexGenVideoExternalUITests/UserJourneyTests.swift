@@ -10,6 +10,7 @@ final class UserJourneyTests: XCTestCase {
     private var actions: [[String: Any]] = []
     private var output: URL!
     private var sequence = 0
+    private var answeredDiagnosticsConsent = false
 
     private struct Failure: Error { let message: String }
 
@@ -148,10 +149,33 @@ final class UserJourneyTests: XCTestCase {
     }
 
     private func home() throws {
+        try wait("normal Home or diagnostics consent", timeout: 60) {
+            self.app.staticTexts["Welcome to NexGenVideo"].exists || !self.diagnosticsConsentDialogs().isEmpty
+        }
+        let consents = diagnosticsConsentDialogs()
+        if !consents.isEmpty {
+            try require(consents.count == 1 && !answeredDiagnosticsConsent,
+                        "Diagnostics consent is ambiguous or did not retain the preceding choice")
+            let consent = consents[0]
+            for choice in ["Record with replay content", "Record structure only", "Disable recording"] {
+                try require(consent.buttons[choice].exists, "Missing native diagnostics consent choice: " + choice)
+            }
+            _ = try evidence("startup-diagnostics-consent")
+            try click(consent.buttons["Disable recording"], "Disable recording")
+            try wait("diagnostics consent closed") { self.diagnosticsConsentDialogs().isEmpty }
+            answeredDiagnosticsConsent = true
+        }
         try wait("normal Home window", timeout: 60) { self.app.staticTexts["Welcome to NexGenVideo"].exists }
         let whatsNew = app.buttons["home.whats-new.continue"]
         if whatsNew.exists { try click(whatsNew, "Continue") }
         try require(app.buttons["home.settings"].exists, "Home settings entry is absent")
+    }
+
+    private func diagnosticsConsentDialogs() -> [XCUIElement] {
+        let title = "Record UI hang diagnostics"
+        return app.dialogs.allElementsBoundByIndex.filter {
+            $0.staticTexts.matching(NSPredicate(format: "label == %@ OR value == %@", title, title)).count == 1
+        }
     }
 
     private func launch() throws {
