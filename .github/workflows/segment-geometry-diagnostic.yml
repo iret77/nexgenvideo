@@ -85,7 +85,9 @@ jobs:
           digest, dmg = os.environ['SEGMENT_EVIDENCE_SHA256'], os.environ['SEGMENT_DMG_SHA256']
           assert run_id > 0 and artifact_id > 0 and re.fullmatch('[a-f0-9]{40}', source)
           assert re.fullmatch('[a-f0-9]{64}', digest) and re.fullmatch('[a-f0-9]{64}', dmg)
-          allowed = {'.github/workflows/diagnostic-acceptance.yml', '.github/workflows/segment-geometry-diagnostic.yml', 'scripts/segment_geometry_diagnostic.swift'}
+          allowed = {'.github/workflows/diagnostic-acceptance.yml', '.github/workflows/segment-geometry-diagnostic.yml',
+                     'scripts/segment_geometry_diagnostic.swift', 'scripts/verify_diagnostic_candidate.py',
+                     'scripts/external-gui/NexGenVideoExternalUITests/UserJourneyTests.swift'}
           changed = subprocess.check_output(['git', 'diff', '--name-only', source, os.environ['GITHUB_SHA']], text=True).splitlines()
           assert set(changed) <= allowed, 'App or existing harness inputs differ from the original producer'
           run = api('/actions/runs/' + str(run_id))
@@ -165,7 +167,9 @@ jobs:
           report = json.loads((root / 'segment-geometry.json').read_text())
           assert report['classification'] == 'platform-control-reproduction-only' and report['appAcceptance'] is False
           assert len(report['samples']) == 9 and all(sample['elements'] for sample in report['samples'])
-          paths = ['.github/workflows/diagnostic-acceptance.yml', '.github/workflows/segment-geometry-diagnostic.yml', 'scripts/segment_geometry_diagnostic.swift']
+          paths = ['.github/workflows/diagnostic-acceptance.yml', '.github/workflows/segment-geometry-diagnostic.yml',
+                   'scripts/segment_geometry_diagnostic.swift', 'scripts/verify_diagnostic_candidate.py',
+                   'scripts/external-gui/NexGenVideoExternalUITests/UserJourneyTests.swift']
           hashes = {p: hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest() for p in paths}
           (root / 'diagnostic-receipt.json').write_text(json.dumps({'schema': 'nexgenvideo/segment-diagnostic-receipt/1',
               'runID': os.environ['GITHUB_RUN_ID'], 'sourceSHA': os.environ['GITHUB_SHA'], 'sourceFiles': hashes,
