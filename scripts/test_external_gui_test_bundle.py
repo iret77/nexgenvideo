@@ -118,13 +118,14 @@ class ExternalTestBundleTests(unittest.TestCase):
         entitlements = {'com.apple.security.app-sandbox': True, 'com.apple.security.network.client': True}
         with patch.object(journey, 'output', return_value=plistlib.dumps(entitlements)), self.assertRaises(ValueError):
             bundle.require_runner_access(products, self.root / 'build.log')
+        self.assertIn(plistlib.dumps(entitlements), (self.root / 'build.log').read_bytes())
 
     def test_independent_runner_preserves_its_automation_entitlements(self):
         products = self.root / 'Products'
         (products / 'Debug/UITests-Runner.app').mkdir(parents=True)
         entitlements = {'com.apple.security.get-task-allow': True, 'com.apple.security.network.client': True}
         raw = plistlib.dumps(entitlements)
-        for record in (raw, b''):
+        for record in (raw, plistlib.dumps({**entitlements, 'com.apple.security.app-sandbox': False}), b''):
             with self.subTest(record=record), patch.object(journey, 'output', return_value=record) as inspect:
                 bundle.require_runner_access(products, self.root / 'build.log')
             self.assertEqual(inspect.call_args.args[0][:4], ['codesign', '-d', '--entitlements', ':-'])

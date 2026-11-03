@@ -15,6 +15,10 @@ targets:
     type: bundle.ui-testing
     platform: macOS
     sources: [NexGenVideoExternalUITests]
+    entitlements:
+      path: NexGenVideoExternalUITests.entitlements
+      properties:
+        com.apple.security.app-sandbox: false
 schemes:
   NexGenVideoExternalGUI:
     build:

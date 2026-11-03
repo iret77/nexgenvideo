@@ -374,7 +374,7 @@ final class ProductionVisualSourcesDriver {
         try await wait("picker binding " + id) { self.text(id, in: target) == expected }
     }
 
-    func segment(_ id: String, title: String, titles: [String], in target: NSWindow) async throws {
+    func segment(_ id: String, title: String, titles: [String], expected: String? = nil, in target: NSWindow) async throws {
         try await reveal(id, in: target)
         try visible([id], in: target)
         guard titles.contains(title), let view = probe(id, in: target), let root = target.contentView else {
@@ -413,7 +413,7 @@ final class ProductionVisualSourcesDriver {
         let fraction = NSPoint(x: (selected.midX - view.bounds.minX) / view.bounds.width,
                                y: (selected.midY - view.bounds.minY) / view.bounds.height)
         try await click(id, in: target, fraction: fraction)
-        try await wait("native segment selected " + title) { self.text(id, in: target) == title }
+        try await wait("native segment selected " + title) { self.text(id, in: target) == (expected ?? title) }
     }
 
     func chooseFile(_ url: URL?, in sheet: NSWindow, trigger: String? = "storyboard.native-sketch.choose", returnsToParent: Bool = true) async throws {
