@@ -236,10 +236,20 @@ enum AppViewOwnerAcceptance {
 
     private static func recordAccessibilityControls(_ label: String, in window: NSWindow,
                                                     driver: ProductionVisualSourcesDriver) throws {
-        let buttons = AppNativeMenuAcceptance.buttons(in: window).map {
-            ["label": $0.title, "enabled": $0.enabled, "frame": NSStringFromRect($0.frame)] as [String: Any]
+        guard let root = window.contentView else { throw GateBlocked("The accessibility window is unavailable.") }
+        var pending: [any NSAccessibilityProtocol] = [root], visited = Set<ObjectIdentifier>()
+        var buttons: [[String: Any]] = []
+        while let element = pending.popLast(), visited.count < 2048 {
+            guard visited.insert(ObjectIdentifier(element)).inserted else { continue }
+            let frame = element.accessibilityFrame()
+            if element.accessibilityRole() == .button, frame.width > 0, frame.height > 0, window.frame.contains(frame) {
+                buttons.append(["title": element.accessibilityTitle() ?? "", "label": element.accessibilityLabel() ?? "",
+                                "help": element.accessibilityHelp() ?? "", "enabled": element.isAccessibilityEnabled(),
+                                "accessibilityElement": element.isAccessibilityElement(), "frame": NSStringFromRect(frame)])
+            }
+            pending += (element.accessibilityChildren() ?? []).compactMap { $0 as? any NSAccessibilityProtocol }
         }
-        try driver.record(label, fields: ["buttons": buttons])
+        try driver.record(label, fields: ["windowFrame": NSStringFromRect(window.frame), "buttons": buttons])
     }
 
     private static func overlayDrag(clip: Clip, editor: EditorViewModel, window: NSWindow,
