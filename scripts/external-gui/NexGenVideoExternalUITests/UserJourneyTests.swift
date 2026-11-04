@@ -62,7 +62,10 @@ final class UserJourneyTests: XCTestCase {
         try editor(project)
         let empty = try snapshot("new-project", project: project)
         try require(clips(empty).isEmpty, "The new generic project contains clips")
-        try require(!FileManager.default.fileExists(atPath: project.appendingPathComponent("ngv.json").path),
+        let declaration = try json(project.appendingPathComponent("ngv.json"))
+        try require(UUID(uuidString: declaration["id"] as? String ?? "") != nil,
+                    "The new generic project has no valid project identity")
+        try require(["activePlugin", "activePluginVersion", "activePluginProjectSchema"].allSatisfy { declaration[$0] == nil },
                     "New generic project unexpectedly declares a format pack")
         try stage("new-project")
 
@@ -135,6 +138,8 @@ final class UserJourneyTests: XCTestCase {
         try editor(project)
         let reopened = try snapshot("reopen", project: project)
         try require(NSDictionary(dictionary: reopened).isEqual(to: inserted), "Reopen changed the saved timeline")
+        try require(NSDictionary(dictionary: try json(project.appendingPathComponent("ngv.json"))).isEqual(to: declaration),
+                    "Reopen changed the project identity or format declaration")
         try stage("reopen")
 
         try menu("File", "Export…")
@@ -192,15 +197,19 @@ final class UserJourneyTests: XCTestCase {
 
     private func editor(_ project: URL) throws {
         try wait("normal editor document", timeout: 60) {
-            self.app.windows.allElementsBoundByIndex.contains { $0.label == "NexGenVideo — \(project.deletingPathExtension().lastPathComponent)" }
+            self.projectWindows(project).count == 1
         }
     }
 
     private func documentWindow(_ project: URL) throws -> XCUIElement {
-        let windows = app.windows.matching(NSPredicate(format: "label == %@",
-            "NexGenVideo — \(project.deletingPathExtension().lastPathComponent)"))
+        let windows = projectWindows(project)
         try require(windows.count == 1, "Expected one exact project window")
         return windows.element(boundBy: 0)
+    }
+
+    private func projectWindows(_ project: URL) -> XCUIElementQuery {
+        app.windows.matching(NSPredicate(format: "title == %@",
+            "NexGenVideo — \(project.deletingPathExtension().lastPathComponent)"))
     }
 
     private func focusTimeline() throws {
@@ -346,7 +355,7 @@ final class UserJourneyTests: XCTestCase {
 
     private func snapshot(_ name: String, project: URL) throws -> [String: Any] {
         let value = try timeline(project)
-        for file in ["project.json", "media.json"] {
+        for file in ["project.json", "media.json", "ngv.json"] {
             let source = project.appendingPathComponent(file)
             if FileManager.default.fileExists(atPath: source.path) {
                 try Data(contentsOf: source).write(to: output.appendingPathComponent(name + "-" + file), options: .atomic)
