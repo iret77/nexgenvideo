@@ -57,6 +57,36 @@ def run_commands(text):
 
 
 class CIWorkflowTests(unittest.TestCase):
+    def test_workspace_source_reuse_requires_full_composition_and_preserves_dynamic_guards(self):
+        text = (WORKFLOWS / 'workspace-ui-acceptance.yml').read_text()
+        for section in ('workflow_dispatch:', 'workflow_call:'):
+            block = text.split(section, 1)[1].split('\npermissions:', 1)[0]
+            self.assertIn('verified_pr_run_id:', block)
+            self.assertIn('runtime_source_sha:', block)
+        source = text.split('  source:\n', 1)[1].split('  bpy-source:\n', 1)[0]
+        self.assertLess(source.index('Bind complete original PR source checks'), source.index('Verify case isolation'))
+        self.assertIn('scripts/verified_pr_source_checks.py prepare --run-id "$NGV_PR_SOURCE_RUN"', source)
+        self.assertIn('native-source-checks/receipt.json', source)
+        self.assertIn('path: ${{ runner.temp }}/native-source-checks/*', source)
+        steps = re.split(r'(?m)^      - ', source)
+        subset = [step for step in steps if 'unittest discover' in step or 'run: python3 scripts/lint_app_theme.py' in step]
+        self.assertGreater(len(subset), 20)
+        for step in subset:
+            self.assertIn("if: inputs.verified_pr_run_id == ''", step)
+        plan = next(step for step in steps if step.startswith('name: Validate and select'))
+        distribution = next(step for step in steps if step.startswith('name: Require distributable'))
+        self.assertNotIn('if:', plan); self.assertNotIn('if:', distribution)
+        runtime = text.split('  runtime:\n', 1)[1].split('  acceptance:\n', 1)[0]
+        for flag in ('--product-source', '--source-proof', '--source-proof-sha', '--source-run', '--source-artifact'):
+            self.assertIn(flag, runtime)
+        self.assertIn('pull-requests: read', text)
+        self.assertNotIn('continue-on-error', text)
+        composite = (ROOT / '.github/actions/prepare-native-runtime/action.yml').read_text()
+        self.assertIn('scripts/workspace_native_ci.py verify-runtime', composite)
+        self.assertIn('= "$EXPECTED_APP_SOURCE"', composite)
+        self.assertNotIn('= "$GITHUB_SHA"', composite)
+        self.assertIn('"$ACTUAL_APP_TREE" = "$EXPECTED_APP_TREE"', composite)
+
     def test_multiline_command_comparison_observes_real_body_and_nested_indentation(self):
         block = "        run: |\n          for manifest in plugins/*.json; do\n            validate original\n          done\n      - name: next\n        run: echo next\n"
         commands = run_commands(block)
