@@ -510,7 +510,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         workflow = self.workflow()
         steps = {step.get("name"): step for step in workflow["jobs"]["release-build"]["steps"]}
         shell = steps["Test the exact release configuration"]["run"]
-        for retained, status in (("", 0), ("41830485668", 0), ("41830485668", 7)):
+        for retained, status in ((None, 0), ("", 0), ("41830485668", 0), ("41830485668", 7)):
             with self.subTest(retained=retained, status=status), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 shim = root / "python3"
@@ -520,8 +520,10 @@ class ReleaseWorkflowTests(unittest.TestCase):
                 shim.chmod(0o755)
                 environment = dict(os.environ, PATH=str(root) + os.pathsep + os.environ["PATH"],
                                    ARG_LOG=str(root / "args.jsonl"), TEST_STATUS=str(status),
-                                   RELEASE_ENGINE_RUN=retained, RUNNER_TEMP=str(root / "runtime with spaces"),
+                                   RELEASE_ENGINE_RUN=retained or "", RUNNER_TEMP=str(root / "runtime with spaces"),
                                    NGV_SWIFTPM_CACHE_PATH="dependency cache with spaces")
+                if retained is None:
+                    environment.pop("RELEASE_ENGINE_RUN", None)
                 result = subprocess.run(["bash", "-c", shell], env=environment, cwd=root,
                                         capture_output=True, text=True, timeout=10)
                 calls = [json.loads(line) for line in (root / "args.jsonl").read_text().splitlines()]

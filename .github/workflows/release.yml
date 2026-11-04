@@ -587,7 +587,7 @@ jobs:
           TEST_COMMAND=(python3 scripts/run_macos_tests.py --cache-path "$NGV_SWIFTPM_CACHE_PATH" \
             -c release --scratch-path "$RUNNER_TEMP/release-tests" --swiftc-flag=-enable-testing \
             --evidence "$RUNNER_TEMP/release-test-evidence")
-          if [ -n "$RELEASE_ENGINE_RUN" ]; then
+          if [ -n "${RELEASE_ENGINE_RUN:-}" ]; then
             TEST_COMMAND+=(--retained-release-engine "$RUNNER_TEMP/release-engine")
           fi
           "${TEST_COMMAND[@]}" 2>&1 | tee release-test.log
