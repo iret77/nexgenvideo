@@ -16,6 +16,16 @@ on:
         type: choice
         options: [all, settings, settings100, settings125, settings150, packrecovery, packrecovery100, packrecovery125, packrecovery150, packresume172, packresume172100, packresume172125, packresume172150]
         default: all
+      release_binding:
+        description: Explicit final-DMG binding supplied by the CI Batch preflight
+        type: string
+        default: ''
+      identity_artifact_id:
+        type: string
+        default: ''
+      identity_sha256:
+        type: string
+        default: ''
   workflow_call:
     inputs:
       runtime_run_id:
@@ -27,6 +37,15 @@ on:
       acceptance_scope:
         type: string
         default: all
+      release_binding:
+        type: string
+        default: ''
+      identity_artifact_id:
+        type: string
+        default: ''
+      identity_sha256:
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -43,6 +62,45 @@ jobs:
     outputs:
       matrix: ${{ steps.cases.outputs.matrix }}
     steps:
+      - name: Require complete signed Settings preflight inputs
+        env:
+          NGV_BINDING: ${{ inputs.release_binding }}
+          NGV_IDENTITY: ${{ inputs.identity_artifact_id }}
+          NGV_IDENTITY_SHA: ${{ inputs.identity_sha256 }}
+        run: |
+          python3 - <<'PY'
+          import os, re
+          binding, identity, digest = (os.environ[key] for key in ('NGV_BINDING', 'NGV_IDENTITY', 'NGV_IDENTITY_SHA'))
+          if bool(binding) != bool(identity and digest) or (not binding and (identity or digest)):
+              raise SystemExit('Signed Settings requires the complete reviewed preflight artifact.')
+          if binding and (not re.fullmatch('[1-9][0-9]*', identity) or not re.fullmatch('[a-f0-9]{64}', digest)):
+              raise SystemExit('Invalid Settings preflight identity.')
+          PY
+      - uses: actions/download-artifact@v4
+        if: inputs.release_binding != ''
+        with:
+          artifact-ids: ${{ inputs.identity_artifact_id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/settings-release-input
+      - name: Bind the selected release to this workflow execution
+        if: inputs.release_binding != ''
+        env:
+          NGV_BINDING: ${{ inputs.release_binding }}
+          NGV_IDENTITY_SHA: ${{ inputs.identity_sha256 }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib
+          identity = pathlib.Path(os.environ['RUNNER_TEMP']) / 'settings-release-input/identity.json'
+          if hashlib.sha256(identity.read_bytes()).hexdigest() != os.environ['NGV_IDENTITY_SHA']:
+              raise SystemExit('Settings preflight bytes changed.')
+          record = json.loads(identity.read_text())
+          if (record.get('binding') != json.loads(os.environ['NGV_BINDING'])
+                  or record.get('executionRunID') != os.environ['GITHUB_RUN_ID']
+                  or record.get('harnessSourceSHA') != os.environ['GITHUB_SHA']
+                  or record.get('attempt') != os.environ['GITHUB_RUN_ATTEMPT']
+                  or os.environ['GITHUB_RUN_ATTEMPT'] != '1'):
+              raise SystemExit('Settings preflight belongs to another input or execution.')
+          PY
       - name: Select independently resumable native cases
         id: cases
         env:
@@ -82,17 +140,22 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/download-artifact@v4
+        if: inputs.release_binding == ''
         with:
           name: ${{ inputs.runtime_artifact }}
           run-id: ${{ inputs.runtime_run_id || github.run_id }}
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}/settings-runtime
       - uses: ./.github/actions/prepare-bpy-source
+        if: inputs.release_binding == ''
         with:
           directory: ${{ runner.temp }}/settings-runtime/qualified-source
           receipt: ${{ runner.temp }}/settings-runtime/bpy-source-receipt.json
       - name: Require the actual same-source CI distribution
+        if: inputs.release_binding == ''
         run: |
           set -euo pipefail
           test "$(sw_vers -productVersion | cut -d. -f1)" -ge 26
@@ -101,6 +164,20 @@ jobs:
             "$RUNNER_TEMP/settings-runtime/qualified-source/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json"
           tar -xzf "$RUNNER_TEMP/settings-runtime/workspace-ui.tar.gz" -C "$RUNNER_TEMP/settings-runtime"
           [ "$(/usr/libexec/PlistBuddy -c 'Print :NGVSourceCommit' "$RUNNER_TEMP/settings-runtime/NexGenVideo.app/Contents/Info.plist")" = "$GITHUB_SHA" ]
+      - uses: actions/download-artifact@v4
+        if: inputs.release_binding != ''
+        with:
+          artifact-ids: ${{ inputs.identity_artifact_id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/settings-release-input
+      - name: Restore the exact final DMG runtime and target pack
+        if: inputs.release_binding != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NGV_IDENTITY_SHA: ${{ inputs.identity_sha256 }}
+        run: |
+          python3 scripts/release_acceptance_identity.py restore --identity "$RUNNER_TEMP/settings-release-input" \
+            --identity-sha256 "$NGV_IDENTITY_SHA" --output "$RUNNER_TEMP/settings-runtime"
       - name: Prepare real published baseline and unchanged CI target ZIPs
         id: packs
         env:
@@ -118,11 +195,18 @@ jobs:
           NGV_BASELINE_PACK: ${{ steps.packs.outputs.baseline }}
           NGV_TARGET_PACK: ${{ steps.packs.outputs.target }}
           NGV_SCALE: ${{ matrix.scale }}
+          NGV_RELEASE_BINDING: ${{ inputs.release_binding }}
         run: |
+          identity=()
+          if [ -n "$NGV_RELEASE_BINDING" ]; then
+            test -f "$RUNNER_TEMP/settings-runtime/acceptance-input.json"
+            identity+=(--runtime-identity "$RUNNER_TEMP/settings-runtime/acceptance-input.json")
+          fi
           python3 scripts/settings_owner_acceptance.py \
             --executable "$RUNNER_TEMP/settings-runtime/NexGenVideo.app/Contents/MacOS/NexGenVideo" \
             --output "$RUNNER_TEMP/settings-evidence" --baseline-pack-zip "$NGV_BASELINE_PACK" \
-            --target-pack-zip "$NGV_TARGET_PACK" --scale "$NGV_SCALE"
+            --target-pack-zip "$NGV_TARGET_PACK" --scale "$NGV_SCALE" \
+            --target-pack-root "$RUNNER_TEMP/settings-runtime/plugins/musicvideo.ngvpack" "${identity[@]}"
       - name: Exercise genuine native upgrade and Recovery restart
         if: matrix.family == 'packrecovery' || matrix.family == 'packresume172'
         env:
@@ -130,12 +214,19 @@ jobs:
           NGV_BASELINE_PACK: ${{ steps.packs.outputs.baseline }}
           NGV_TARGET_PACK: ${{ steps.packs.outputs.target }}
           NGV_RECOVERY_SCENARIO: ${{ matrix.baseline_profile }}
+          NGV_RELEASE_BINDING: ${{ inputs.release_binding }}
         run: |
+          identity=()
+          if [ -n "$NGV_RELEASE_BINDING" ]; then
+            test -f "$RUNNER_TEMP/settings-runtime/acceptance-input.json"
+            identity+=(--runtime-identity "$RUNNER_TEMP/settings-runtime/acceptance-input.json")
+          fi
           python3 scripts/pack_recovery_owner_acceptance.py \
             --executable "$RUNNER_TEMP/settings-runtime/NexGenVideo.app/Contents/MacOS/NexGenVideo" \
             --output "$RUNNER_TEMP/settings-evidence" --baseline-pack-zip "$NGV_BASELINE_PACK" \
             --target-pack-zip "$NGV_TARGET_PACK" --scale "$NGV_SCALE" \
-            --scenario "$NGV_RECOVERY_SCENARIO" --pack-pair "$RUNNER_TEMP/settings-packs/pack-pair.json"
+            --scenario "$NGV_RECOVERY_SCENARIO" --pack-pair "$RUNNER_TEMP/settings-packs/pack-pair.json" \
+            --target-pack-root "$RUNNER_TEMP/settings-runtime/plugins/musicvideo.ngvpack" "${identity[@]}"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -143,5 +234,6 @@ jobs:
           path: |
             ${{ runner.temp }}/settings-evidence/**
             ${{ runner.temp }}/settings-packs/pack-pair.json
+            ${{ runner.temp }}/settings-runtime/acceptance-input.json
           if-no-files-found: warn
           retention-days: 14

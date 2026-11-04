@@ -51,6 +51,31 @@ SIGNED_DESKTOP_HARNESS_PATHS = {
     "scripts/test_ci_workflow.py",
     "scripts/test_diagnostic_acceptance.py",
 }
+SIGNED_ACCEPTANCE_EVIDENCE_PATHS = {
+    ".github/workflows/ci-batch.yml",
+    ".github/workflows/settings-owner-acceptance.yml",
+    ".github/workflows/diagnostic-acceptance.yml",
+    ".github/workflows/external-gui-acceptance.yml",
+    "scripts/verify_diagnostic_candidate.py",
+    "scripts/retained_release_runtime.py",
+    "scripts/release_acceptance_identity.py",
+    "scripts/settings_owner_acceptance.py",
+    "scripts/pack_recovery_owner_acceptance.py",
+    "scripts/external-gui/acceptance.py",
+    "scripts/external-gui/transport.py",
+    "scripts/external-gui/transport_fixture.py",
+    "scripts/external-gui/NexGenVideoExternalUITests/UserJourneyTests.swift",
+    "scripts/test_diagnostic_acceptance.py",
+    "scripts/test_retained_release_runtime.py",
+    "scripts/test_release_acceptance_identity.py",
+    "scripts/test_settings_owner_acceptance.py",
+    "scripts/test_pack_recovery_owner_acceptance.py",
+    "scripts/test_external_gui_test_bundle.py",
+    "scripts/test_ci_workflow.py",
+    "scripts/test_external_transport.py",
+}
+SIGNED_TRANSPORT_HARNESS_PATHS = SIGNED_ACCEPTANCE_EVIDENCE_PATHS
+SIGNED_SETTINGS_HARNESS_PATHS = SIGNED_ACCEPTANCE_EVIDENCE_PATHS
 
 BPY_DIAGNOSTIC_PATHS = {
     ".github/workflows/diagnostic-acceptance.yml",
@@ -333,6 +358,20 @@ def verify_signed_journey(*args):
     verify_signed_bpy(*args, artifact_name="release-user-journey-input", harness_paths=SIGNED_JOURNEY_HARNESS_PATHS)
 
 
+def verify_signed_transport(*args):
+    verify_signed_bpy(*args, artifact_name="release-user-journey-input", harness_paths=SIGNED_TRANSPORT_HARNESS_PATHS)
+    release = next(job for job in args[1]["jobs"] if job["name"] == "release")
+    if release.get("labels") != ["macrunner"]:
+        raise ValueError("retained transport DMG must be produced on macrunner")
+
+
+def verify_signed_settings(*args):
+    verify_signed_bpy(*args, artifact_name="workspace-ui-app", harness_paths=SIGNED_SETTINGS_HARNESS_PATHS)
+    release = next(job for job in args[1]["jobs"] if job["name"] == "release")
+    if release.get("labels") != ["macrunner"]:
+        raise ValueError("retained Settings runtime must be produced on macrunner")
+
+
 def verify_signed_workspace(*args):
     verify_signed_bpy(*args, artifact_name="workspace-ui-app", harness_paths=SIGNED_WORKSPACE_HARNESS_PATHS)
 
@@ -351,7 +390,7 @@ def main():
     parser.add_argument("artifact_id", type=int)
     parser.add_argument("digest")
     parser.add_argument("metadata", type=Path)
-    parser.add_argument("--candidate-kind", choices=("signed-release", "signed-bpy", "signed-journey", "ci-runtime", "ci-bpy-open-diagnostic", "ci-app-test-diagnostic"), default="signed-release")
+    parser.add_argument("--candidate-kind", choices=("signed-release", "signed-bpy", "signed-journey", "signed-transport", "ci-runtime", "ci-bpy-open-diagnostic", "ci-app-test-diagnostic"), default="signed-release")
     parser.add_argument("--crash-archive", type=Path)
     args = parser.parse_args()
     if (args.candidate_kind == "ci-app-test-diagnostic") != (args.crash_archive is not None):
@@ -361,7 +400,7 @@ def main():
         "git", "diff", "--no-renames", "--name-only", "-z", args.source_sha, "HEAD"
     ]).decode().split("\0")
     verifier = {"signed-release": verify, "signed-bpy": verify_signed_bpy,
-                "signed-journey": verify_signed_journey, "ci-runtime": verify_ci,
+                "signed-journey": verify_signed_journey, "signed-transport": verify_signed_transport, "ci-runtime": verify_ci,
                 "ci-bpy-open-diagnostic": verify_bpy_diagnostic,
                 "ci-app-test-diagnostic": verify_app_diagnostic}[args.candidate_kind]
     verifier(*(json.loads((args.metadata / name).read_text()) for name in ("run.json", "jobs.json", "artifact.json")),

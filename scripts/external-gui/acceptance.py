@@ -26,7 +26,7 @@ REPOSITORY = ROOT.parents[1]
 sys.path.insert(0, str(REPOSITORY / 'scripts'))
 from verify_diagnostic_candidate import SIGNED_JOURNEY_HARNESS_PATHS
 sys.path.pop(0)
-TEST_INPUTS = ('acceptance.py', 'test_bundle.py', 'project.yml', 'NexGenVideoExternalUITests/UserJourneyTests.swift')
+TEST_INPUTS = ('acceptance.py', 'test_bundle.py', 'transport.py', 'project.yml', 'NexGenVideoExternalUITests/UserJourneyTests.swift')
 COLOR_HELPER = 'scripts/export_color_diagnostic.swift'
 SHARED_INPUTS = ('scripts/verify_diagnostic_candidate.py', COLOR_HELPER)
 CONFIG = Path('/tmp/nexgenvideo-external-gui-config.json')
@@ -115,14 +115,14 @@ def metadata(app, source_sha):
                 'executableSHA256': sha256(executable), 'treeSHA256': tree_sha256(app)}
 
 
-def test_source_identity(source_sha, input_root=ROOT):
+def test_source_identity(source_sha, input_root=ROOT, *, allowed_paths=None):
     revision = output(['git', '-C', REPOSITORY, 'rev-parse', 'HEAD']).decode().strip()
     require(re.fullmatch('[a-f0-9]{40}', source_sha) and re.fullmatch('[a-f0-9]{40}', revision),
             'Invalid product or test source SHA')
     if revision != source_sha:
         output(['git', '-C', REPOSITORY, 'merge-base', '--is-ancestor', source_sha, revision])
         changed = output(['git', '-C', REPOSITORY, 'diff', '--no-renames', '--name-only', '-z', source_sha, revision])
-        require(not set(filter(None, changed.decode().split('\0'))) - SIGNED_JOURNEY_HARNESS_PATHS,
+        require(not set(filter(None, changed.decode().split('\0'))) - (SIGNED_JOURNEY_HARNESS_PATHS if allowed_paths is None else allowed_paths),
                 'Product inputs changed since the retained signed App')
     fingerprints = {}
     for name in TEST_INPUTS:
@@ -143,10 +143,10 @@ def test_source_identity(source_sha, input_root=ROOT):
     return revision, fingerprints
 
 
-def install(args, evidence):
+def install(args, evidence, *, allowed_paths=None):
     installed = Path('/Applications/NexGenVideo.app')
     require(not installed.exists(), 'Refusing to replace an already installed app')
-    test_revision, test_files = test_source_identity(args.source_sha)
+    test_revision, test_files = test_source_identity(args.source_sha, allowed_paths=allowed_paths)
     identity = {'schema': 'nexgenvideo/external-gui-input/1', 'sourceSHA': args.source_sha,
                 'testSourceSHA': test_revision, 'testFiles': test_files,
                 'scale': args.scale, 'runID': os.environ.get('GITHUB_RUN_ID'),
@@ -444,6 +444,7 @@ def run(args):
         write_json(evidence / 'configuration.json', config)
         (evidence / 'test-bundle.sha256').write_text(sha256(xctestrun) + '\n')
         code = command(['xcodebuild', 'test-without-building', '-xctestrun', xctestrun,
+                        '-only-testing:NexGenVideoExternalUITests/UserJourneyTests/testGenericEditingThroughInstalledApp',
                         '-destination', 'platform=macOS,arch=arm64', '-parallel-testing-enabled', 'NO',
                         '-resultBundlePath', evidence / 'tests.xcresult'], evidence / 'tests.log', timeout=720, check=False)
         result['exitCode'] = code

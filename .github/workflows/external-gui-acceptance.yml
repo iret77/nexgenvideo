@@ -37,6 +37,20 @@ on:
         description: Exact signed and stapled DMG SHA256
         type: string
         default: ''
+      scenario:
+        description: Existing normal journey or targeted public transport actions
+        type: choice
+        options: [journey, transport]
+        default: journey
+      verified_pr_run_id:
+        type: string
+        default: ''
+      fixture_artifact_id:
+        type: string
+        default: ''
+      fixture_sha256:
+        type: string
+        default: ''
   workflow_call:
     inputs:
       runtime_run_id:
@@ -66,10 +80,23 @@ on:
       runtime_artifact_sha256:
         type: string
         default: ''
+      scenario:
+        type: string
+        default: journey
+      verified_pr_run_id:
+        type: string
+        default: ''
+      fixture_artifact_id:
+        type: string
+        default: ''
+      fixture_sha256:
+        type: string
+        default: ''
 
 permissions:
   contents: read
   actions: read
+  pull-requests: read
 
 env:
   PRODUCT_SOURCE: ${{ inputs.product_source_sha || github.sha }}
@@ -99,6 +126,10 @@ jobs:
           RETAINED_RUN: ${{ inputs.runtime_run_id }}
           RETAINED_ARTIFACT: ${{ inputs.runtime_artifact_id }}
           RETAINED_DIGEST: ${{ inputs.runtime_artifact_sha256 }}
+          SCENARIO: ${{ inputs.scenario || 'journey' }}
+          VERIFIED_PR_RUN: ${{ inputs.verified_pr_run_id }}
+          FIXTURE_ARTIFACT: ${{ inputs.fixture_artifact_id }}
+          FIXTURE_SHA: ${{ inputs.fixture_sha256 }}
         run: |
           python3 - <<'PY'
           import json, os, re
@@ -106,6 +137,20 @@ jobs:
           if scale not in {'all', '1', '1.25', '1.5'}:
               raise SystemExit('Unknown interface text size')
           mode = os.environ['ARTIFACT_MODE']
+          scenario = os.environ['SCENARIO']
+          if scenario not in {'journey', 'transport'}:
+              raise SystemExit('Unknown public XCTest scenario')
+          if scenario == 'transport':
+              if (mode != 'dmg' or scale != '1.5' or not os.environ['RETAINED_SOURCE']
+                  or not re.fullmatch('[1-9][0-9]*', os.environ['VERIFIED_PR_RUN'])
+                  or not re.fullmatch('[1-9][0-9]*', os.environ['FIXTURE_ARTIFACT'])
+                  or not re.fullmatch('[a-f0-9]{64}', os.environ['FIXTURE_SHA'])):
+                  raise SystemExit('Public transport needs the complete retained DMG, source and fixture identities')
+          elif os.environ['FIXTURE_ARTIFACT'] or os.environ['FIXTURE_SHA']:
+              raise SystemExit('A transport fixture cannot replace a normal journey')
+          if os.environ['VERIFIED_PR_RUN'] and (not os.environ['RETAINED_SOURCE']
+                  or not re.fullmatch('[1-9][0-9]*', os.environ['VERIFIED_PR_RUN'])):
+              raise SystemExit('PR source proof requires a retained signed product')
           if os.environ['TEST_BUNDLE_RUN_ID'] and not re.fullmatch('[1-9][0-9]*', os.environ['TEST_BUNDLE_RUN_ID']):
               raise SystemExit('UI test producer run ID must be positive')
           if mode not in {'app', 'dmg'}:
@@ -131,17 +176,24 @@ jobs:
           ORIGINAL_RUN: ${{ inputs.runtime_run_id }}
           ORIGINAL_ARTIFACT: ${{ inputs.runtime_artifact_id }}
           ORIGINAL_DIGEST: ${{ inputs.runtime_artifact_sha256 }}
+          VERIFIED_PR_RUN: ${{ inputs.verified_pr_run_id }}
+          CANDIDATE_KIND: ${{ inputs.scenario == 'transport' && 'signed-transport' || 'signed-journey' }}
         run: |
           set -euo pipefail
-          python3 -m unittest discover -s scripts -p 'test_external_gui_test_bundle.py'
-          python3 -m unittest discover -s scripts -p 'test_diagnostic_acceptance.py'
+          if [ -n "$VERIFIED_PR_RUN" ]; then
+            python3 scripts/verified_pr_source_checks.py prepare --run-id "$VERIFIED_PR_RUN" \
+              --output "$RUNNER_TEMP/public-client-source-proof"
+          else
+            python3 -m unittest discover -s scripts -p 'test_external_gui_test_bundle.py'
+            python3 -m unittest discover -s scripts -p 'test_diagnostic_acceptance.py'
+          fi
           mkdir -p "$RUNNER_TEMP/retained-dmg"
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ORIGINAL_RUN" > "$RUNNER_TEMP/retained-dmg/run.json"
           ATTEMPT="$(jq -r .run_attempt "$RUNNER_TEMP/retained-dmg/run.json")"
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ORIGINAL_RUN/attempts/$ATTEMPT/jobs?per_page=100" > "$RUNNER_TEMP/retained-dmg/jobs.json"
           gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ORIGINAL_ARTIFACT" > "$RUNNER_TEMP/retained-dmg/artifact.json"
           python3 scripts/verify_diagnostic_candidate.py "$ORIGINAL_RUN" "$PRODUCT_SOURCE" \
-            "$ORIGINAL_ARTIFACT" "$ORIGINAL_DIGEST" "$RUNNER_TEMP/retained-dmg" --candidate-kind signed-journey
+            "$ORIGINAL_ARTIFACT" "$ORIGINAL_DIGEST" "$RUNNER_TEMP/retained-dmg" --candidate-kind "$CANDIDATE_KIND"
       - uses: actions/upload-artifact@v4
         if: inputs.product_source_sha != ''
         with:
@@ -222,7 +274,7 @@ jobs:
       max-parallel: 1
       matrix:
         scale: ${{ fromJSON(needs.cases.outputs.scales) }}
-    name: Normal app at ${{ matrix.scale }} text size
+    name: ${{ inputs.scenario == 'transport' && 'Public transport at' || 'Normal app at' }} ${{ matrix.scale }} text size
     runs-on: macrunner
     timeout-minutes: 25
     steps:
@@ -233,6 +285,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Prepare job-local independent media tools
+        if: inputs.scenario != 'transport'
         id: media-tools
         uses: mamba-org/setup-micromamba@f457c30a868e4760d3a6fcea5f25dc655b8edf39
         with:
@@ -246,6 +299,7 @@ jobs:
           cache-downloads: false
           post-cleanup: all
       - name: Require both independent media executables
+        if: inputs.scenario != 'transport'
         env:
           MEDIA_TOOLS_BIN: ${{ steps.media-tools.outputs.environment-path }}/bin
         run: |
@@ -331,7 +385,7 @@ jobs:
             --scale "$INTERFACE_SCALE" --evidence "$RUNNER_TEMP/external-gui" \
             --test-runtime "$RUNNER_TEMP/external-tests-input" --test-producer-sha256 "$TEST_PRODUCER_SHA256"
       - name: Install and exercise the exact publication DMG
-        if: inputs.artifact_mode == 'dmg'
+        if: inputs.artifact_mode == 'dmg' && inputs.scenario != 'transport'
         env:
           EXPECTED_DMG_SHA256: ${{ inputs.expected_dmg_sha256 }}
           INTERFACE_SCALE: ${{ matrix.scale }}
@@ -342,7 +396,26 @@ jobs:
             --dmg-sha256 "$EXPECTED_DMG_SHA256" --source-sha "$PRODUCT_SOURCE" \
             --scale "$INTERFACE_SCALE" --evidence "$RUNNER_TEMP/external-gui" \
             --test-runtime "$RUNNER_TEMP/external-tests-input" --test-producer-sha256 "$TEST_PRODUCER_SHA256"
+      - uses: actions/download-artifact@v4
+        if: inputs.scenario == 'transport'
+        with:
+          artifact-ids: ${{ inputs.fixture_artifact_id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/transport-fixture
+      - name: Exercise the public transport on the same exact DMG
+        if: inputs.scenario == 'transport'
+        env:
+          EXPECTED_DMG_SHA256: ${{ inputs.expected_dmg_sha256 }}
+          FIXTURE_SHA256: ${{ inputs.fixture_sha256 }}
+          TEST_PRODUCER_SHA256: ${{ needs.test-runtime.outputs.producer_sha256 }}
+        run: |
+          python3 scripts/external-gui/transport.py run --dmg "$RUNNER_TEMP/external-runtime/NexGenVideo.dmg" \
+            --dmg-sha256 "$EXPECTED_DMG_SHA256" --source-sha "$PRODUCT_SOURCE" \
+            --fixture "$RUNNER_TEMP/transport-fixture" --fixture-sha256 "$FIXTURE_SHA256" \
+            --scale 1.5 --evidence "$RUNNER_TEMP/external-gui" \
+            --test-runtime "$RUNNER_TEMP/external-tests-input" --test-producer-sha256 "$TEST_PRODUCER_SHA256"
       - name: Validate actual journey and exported-file evidence
+        if: inputs.scenario != 'transport'
         env:
           ARTIFACT_MODE: ${{ inputs.artifact_mode || 'app' }}
           EXPECTED_DMG_SHA256: ${{ inputs.expected_dmg_sha256 }}
@@ -359,10 +432,17 @@ jobs:
             python3 scripts/external-gui/acceptance.py validate \
               --evidence "$RUNNER_TEMP/external-gui" --source-sha "$GITHUB_SHA" --scale "$INTERFACE_SCALE"
           fi
+      - name: Validate six actual public transport cursor actions
+        if: inputs.scenario == 'transport'
+        env:
+          EXPECTED_DMG_SHA256: ${{ inputs.expected_dmg_sha256 }}
+        run: |
+          python3 scripts/external-gui/transport.py validate --source-sha "$PRODUCT_SOURCE" \
+            --dmg-sha256 "$EXPECTED_DMG_SHA256" --scale 1.5 --evidence "$RUNNER_TEMP/external-gui"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: external-gui-${{ inputs.artifact_mode || 'app' }}-${{ matrix.scale }}-${{ github.run_attempt }}
+          name: ${{ inputs.scenario == 'transport' && 'external-transport' || 'external-gui' }}-${{ inputs.artifact_mode || 'app' }}-${{ matrix.scale }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/external-gui
           if-no-files-found: warn
           retention-days: 14

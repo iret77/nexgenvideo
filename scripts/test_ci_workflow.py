@@ -439,7 +439,7 @@ class CIWorkflowTests(unittest.TestCase):
         code = "\n".join(line[10:] for line in code.splitlines())
         defaults = {"NGV_MODE": "initial", "NGV_FOLLOWUP": "none", "NGV_RUNTIME_RUN": "",
                     "NGV_SETTINGS_SCOPE": "all", "NGV_INTERFACE_SCALE": "all", "NGV_QUALIFICATION_RUN": "",
-                    "NGV_SOURCE_RUN": "", "NGV_VERIFIED_PR": ""}
+                    "NGV_SOURCE_RUN": "", "NGV_VERIFIED_PR": "", "NGV_RELEASE_BINDING": ""}
         valid = [({}, "initial"),
                  ({"NGV_VERIFIED_PR": "123"}, "initial"),
                  ({"NGV_VERIFIED_PR": "123", "NGV_COMPLETED_BACKENDS": "456", "NGV_APP_INVENTORY": "789"}, "initial"),
@@ -460,6 +460,10 @@ class CIWorkflowTests(unittest.TestCase):
         valid += [({"NGV_MODE": "followup", "NGV_FOLLOWUP": "settings", "NGV_RUNTIME_RUN": "123",
                     "NGV_SETTINGS_SCOPE": scope}, "followup")
                   for scope in ("packresume172", "packresume172100", "packresume172125", "packresume172150")]
+        signed_settings = {"NGV_MODE": "followup", "NGV_FOLLOWUP": "settings", "NGV_RUNTIME_RUN": "123",
+                           "NGV_SETTINGS_SCOPE": "settings150", "NGV_VERIFIED_PR": "456",
+                           "NGV_RELEASE_BINDING": json.dumps({"runID": 123})}
+        valid.append((signed_settings, "followup"))
         invalid = [{"NGV_MODE": ""}, {"NGV_MODE": "unknown"}, {"NGV_MODE": "followup"},
                    {"NGV_VERIFIED_PR": "123", "NGV_COMPLETED_BACKENDS": "456", "NGV_APP_INVENTORY": "789",
                     "NGV_SOURCE_CHECKS": "321"},
@@ -491,6 +495,11 @@ class CIWorkflowTests(unittest.TestCase):
                    {"NGV_MODE": "qualification", "NGV_RUNTIME_RUN": "123"},
                    {"NGV_MODE": "qualification", "NGV_SETTINGS_SCOPE": "settings100"},
                    {"NGV_MODE": "qualification", "NGV_INTERFACE_SCALE": "1"}]
+        invalid += [signed_settings | {key: value} for key, value in
+                    (("NGV_MODE", "initial"), ("NGV_FOLLOWUP", "externalgui"), ("NGV_RUNTIME_RUN", "124"),
+                     ("NGV_VERIFIED_PR", ""), ("NGV_RELEASE_BINDING", "[]"),
+                     ("NGV_RELEASE_BINDING", json.dumps({"runID": "123"})), ("NGV_COMPLETED_BACKENDS", "789"),
+                     ("NGV_SOURCE_CHECKS", "789"))]
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "outputs"
             for values, mode in valid:
@@ -511,7 +520,8 @@ class CIWorkflowTests(unittest.TestCase):
 
     def test_settings_recovery_families_keep_stable_cases_and_add_exact_preview_resume_cases(self):
         text = (WORKFLOWS / "settings-owner-acceptance.yml").read_text()
-        code = text.split("          python3 - <<'PY'\n", 1)[1].split("          PY", 1)[0]
+        selection = text.split("      - name: Select independently resumable native cases\n", 1)[1].split("\n  acceptance:", 1)[0]
+        code = selection.split("          python3 - <<'PY'\n", 1)[1].split("          PY", 1)[0]
         code = "\n".join(line[10:] for line in code.splitlines())
         groups = {
             "settings": {"settings100", "settings125", "settings150"},
@@ -545,6 +555,43 @@ class CIWorkflowTests(unittest.TestCase):
                 with self.subTest(invalid=scope):
                     self.assertNotEqual(result.returncode, 0)
                     self.assertEqual(output.read_text(), "")
+
+    def test_settings_preflight_requires_all_identity_fields_and_exact_execution(self):
+        text = (WORKFLOWS / "settings-owner-acceptance.yml").read_text()
+        def block(name):
+            step = text.split("      - name: " + name + "\n", 1)[1].split("      - ", 1)[0]
+            code = step.split("          python3 - <<'PY'\n", 1)[1].split("          PY", 1)[0]
+            return "\n".join(line[10:] for line in code.splitlines())
+        fields = block("Require complete signed Settings preflight inputs")
+        bind = block("Bind the selected release to this workflow execution")
+        empty = {"NGV_BINDING": "", "NGV_IDENTITY": "", "NGV_IDENTITY_SHA": ""}
+        complete = {"NGV_BINDING": '{"runID":123}', "NGV_IDENTITY": "456", "NGV_IDENTITY_SHA": "a" * 64}
+        for values in (empty, complete):
+            result = subprocess.run([sys.executable, "-c", fields], capture_output=True, env=os.environ | values)
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
+        invalid = [complete | {key: ""} for key in complete]
+        invalid += [empty | {key: "1"} for key in ("NGV_IDENTITY", "NGV_IDENTITY_SHA")]
+        invalid += [complete | {"NGV_IDENTITY": "0"}, complete | {"NGV_IDENTITY_SHA": "invalid"}]
+        for values in invalid:
+            result = subprocess.run([sys.executable, "-c", fields], capture_output=True, env=os.environ | values)
+            with self.subTest(partial=values):
+                self.assertNotEqual(result.returncode, 0)
+        with tempfile.TemporaryDirectory() as directory:
+            import hashlib
+            identity = Path(directory) / "settings-release-input/identity.json"
+            identity.parent.mkdir()
+            record = {"binding": {"runID": 123}, "executionRunID": "789", "harnessSourceSHA": "b" * 40, "attempt": "1"}
+            identity.write_text(json.dumps(record))
+            env = {"RUNNER_TEMP": directory, "NGV_BINDING": complete["NGV_BINDING"],
+                   "NGV_IDENTITY_SHA": hashlib.sha256(identity.read_bytes()).hexdigest(),
+                   "GITHUB_RUN_ID": "789", "GITHUB_SHA": "b" * 40, "GITHUB_RUN_ATTEMPT": "1"}
+            result = subprocess.run([sys.executable, "-c", bind], capture_output=True, env=os.environ | env)
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
+            for key, value in (("GITHUB_RUN_ID", "790"), ("GITHUB_SHA", "c" * 40), ("GITHUB_RUN_ATTEMPT", "2"),
+                               ("NGV_BINDING", '{"runID":124}'), ("NGV_IDENTITY_SHA", "d" * 64)):
+                result = subprocess.run([sys.executable, "-c", bind], capture_output=True, env=os.environ | env | {key: value})
+                with self.subTest(substitution=key):
+                    self.assertNotEqual(result.returncode, 0)
 
 
 if __name__ == "__main__":

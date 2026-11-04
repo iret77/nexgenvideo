@@ -42,6 +42,10 @@ on:
         description: Successful PR source checks for the exact current merge tree
         type: string
         default: ''
+      release_binding:
+        description: Exact final-DMG runtime binding for a signed Settings followup
+        type: string
+        default: ''
       qualification_binary_run_id:
         description: Optional prior qualification run; reuse its passing binary evidence without another Mac job
         type: string
@@ -112,6 +116,8 @@ jobs:
       bpy_source_sha: ${{ steps.bpy.outputs.source_sha }}
       bpy_artifact_id: ${{ steps.bpy.outputs.artifact_id }}
       bpy_artifact_sha256: ${{ steps.bpy.outputs.artifact_sha256 }}
+      settings_identity_artifact_id: ${{ steps.settings_identity_artifact.outputs.artifact-id }}
+      settings_identity_sha256: ${{ steps.settings_identity.outputs.identity_sha256 }}
     steps:
       - name: Reject incomplete or incompatible dispatch inputs
         id: inputs
@@ -129,11 +135,12 @@ jobs:
           NGV_APP_INVENTORY: ${{ inputs.app_inventory_run_id }}
           NGV_SOURCE_CHECKS: ${{ inputs.completed_source_checks_run_id }}
           NGV_VERIFIED_PR: ${{ inputs.verified_pr_run_id }}
+          NGV_RELEASE_BINDING: ${{ inputs.release_binding }}
           NGV_COMPLETED_FULL: ${{ inputs.completed_full_core_run_id }}
           NGV_APP_ASSERTIONS: ${{ inputs.completed_app_tests_run_id }}
         run: |
           python3 - <<'PYTHON'
-          import os, re
+          import json, os, re
           mode = os.environ['NGV_MODE']
           followup = os.environ['NGV_FOLLOWUP']
           run_id = os.environ['NGV_RUNTIME_RUN']
@@ -146,12 +153,21 @@ jobs:
           app_inventory = os.environ.get('NGV_APP_INVENTORY', '')
           source_checks = os.environ.get('NGV_SOURCE_CHECKS', '')
           verified_pr = os.environ.get('NGV_VERIFIED_PR', '')
+          release_binding = os.environ.get('NGV_RELEASE_BINDING', '')
           completed_full = os.environ.get('NGV_COMPLETED_FULL', '')
           app_assertions = os.environ.get('NGV_APP_ASSERTIONS', '')
-          if verified_pr and (mode != 'initial' or not re.fullmatch(r'[1-9][0-9]*', verified_pr)
+          signed_settings = bool(release_binding) and mode == 'followup' and followup == 'settings'
+          if release_binding and not signed_settings:
+              raise SystemExit('A final-DMG binding applies only to an exact Settings followup.')
+          if signed_settings:
+              binding = json.loads(release_binding)
+              if (not isinstance(binding, dict) or type(binding.get('runID')) is not int
+                      or str(binding['runID']) != run_id or not re.fullmatch(r'[1-9][0-9]*', verified_pr)):
+                  raise SystemExit('Signed Settings requires the same producer and a complete current PR source proof.')
+          if verified_pr and ((mode != 'initial' and not signed_settings) or not re.fullmatch(r'[1-9][0-9]*', verified_pr)
                               or any((completed_full, source_checks,
                                       app_assertions, binary_run_id, source_run_id))):
-              raise SystemExit('PR source reuse requires the exact merged PR in initial mode without another source proof.')
+              raise SystemExit('PR source reuse requires an exact merged PR in a supported mode without another source proof.')
           if app_assertions and (mode != 'initial' or app_assertions != '40254944746'
                                  or any((completed_full, completed_backends, app_inventory, source_checks, binary_run_id, source_run_id))):
               raise SystemExit('App assertion continuation requires its pinned producer and no other reuse inputs.')
@@ -200,14 +216,34 @@ jobs:
           PYTHON
       - uses: actions/checkout@v4
         if: inputs.mode == 'followup'
+        with:
+          fetch-depth: 0
       - name: Require an existing exact same-source app before allocating Mac jobs
-        if: inputs.mode == 'followup' && inputs.followup_workflow != 'bpy'
+        if: inputs.mode == 'followup' && inputs.followup_workflow != 'bpy' && inputs.release_binding == ''
         env:
           GH_TOKEN: ${{ github.token }}
           NGV_RUNTIME_RUN: ${{ inputs.runtime_run_id }}
         run: |
           python3 scripts/workspace_native_ci.py resolve --run-id "$NGV_RUNTIME_RUN" \
             --artifact workspace-ui-app --identity "$RUNNER_TEMP/followup-runtime-identity.json"
+      - name: Bind reviewed final DMG runtime for Settings
+        id: settings_identity
+        if: inputs.mode == 'followup' && inputs.followup_workflow == 'settings' && inputs.release_binding != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NGV_RELEASE_BINDING: ${{ inputs.release_binding }}
+          NGV_VERIFIED_PR: ${{ inputs.verified_pr_run_id }}
+        run: |
+          python3 scripts/release_acceptance_identity.py bind --binding "$NGV_RELEASE_BINDING" \
+            --source-run "$NGV_VERIFIED_PR" --output "$RUNNER_TEMP/settings-release-input"
+      - uses: actions/upload-artifact@v4
+        id: settings_identity_artifact
+        if: inputs.mode == 'followup' && inputs.followup_workflow == 'settings' && inputs.release_binding != ''
+        with:
+          name: settings-release-input-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/settings-release-input/
+          if-no-files-found: error
+          retention-days: 14
       - name: Bind the failed original bpy job and unchanged App before allocating Mac jobs
         id: bpy
         if: inputs.mode == 'followup' && inputs.followup_workflow == 'bpy'
@@ -312,6 +348,9 @@ jobs:
       runtime_artifact: workspace-ui-app
       runtime_run_id: ${{ inputs.runtime_run_id }}
       acceptance_scope: ${{ inputs.settings_scope }}
+      release_binding: ${{ inputs.release_binding }}
+      identity_artifact_id: ${{ needs.validate.outputs.settings_identity_artifact_id }}
+      identity_sha256: ${{ needs.validate.outputs.settings_identity_sha256 }}
 
   musicvideo-analysis-acceptance:
     needs: [validate, ci]

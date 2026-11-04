@@ -9,6 +9,8 @@ import struct
 import subprocess
 import zipfile
 
+from release_acceptance_identity import after_case, before_case, digest, installed_target
+
 
 def pack_metadata(path):
     path = path.resolve(strict=True)
@@ -29,7 +31,7 @@ def pack_metadata(path):
     }
 
 
-def validate_result(output, isolated_home, baseline, target, scale):
+def validate_result(output, isolated_home, baseline, target, scale, *, expected_tree=None):
     result = json.loads((output / "settings-owner-result.json").read_text())
     driver = result["driver"]
     progress = json.loads((output / driver["progress"]).read_text())
@@ -88,7 +90,8 @@ def validate_result(output, isolated_home, baseline, target, scale):
             raise AssertionError("The actual native window was smaller than the acceptance viewport")
     installs = list(isolated_home.rglob(target["version"] + ".ngvpack/Contents/Info.plist"))
     if len(installs) != 1 or hashlib.sha256(installs[0].read_bytes()).hexdigest() != target["infoSHA256"]:
-        raise AssertionError("The actual target pack bytes were not retained in the isolated install")
+        raise AssertionError("The installed target Info.plist differs from the supplied archive")
+    installed = installed_target(isolated_home, target, expected_tree) if expected_tree is not None else None
     if list(isolated_home.rglob(baseline["version"] + ".ngvpack/Contents/Info.plist")):
         raise AssertionError("The selected baseline version was not actually removed")
     pinned = json.loads((output / ("settings-owner-" + str(round(scale * 100))) / "Pinned original format.ngv/ngv.json").read_text())
@@ -98,7 +101,8 @@ def validate_result(output, isolated_home, baseline, target, scale):
     if result.get("scale") != scale or result.get("realCredentials") is not False or result.get("realNetworkRequests") != 0:
         raise AssertionError("The native result does not declare its isolation limits")
     return {"scale": scale, "pointerInputs": len(pointers), "screenshots": len(screenshots),
-            "actualPackInfoSHA256": target["infoSHA256"], "recoveryUpgrade": "pending separate native project flow"}
+            "actualPackInfoSHA256": target["infoSHA256"], "actualPackTree": installed,
+            "recoveryUpgrade": "pending separate native project flow"}
 
 
 def main():
@@ -107,8 +111,12 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--baseline-pack-zip", type=Path, required=True)
     parser.add_argument("--target-pack-zip", type=Path, required=True)
+    parser.add_argument("--target-pack-root", type=Path)
+    parser.add_argument("--runtime-identity", type=Path)
     parser.add_argument("--scale", type=float, choices=(1, 1.25, 1.5), action="append")
     args = parser.parse_args()
+    if args.runtime_identity is not None and args.target_pack_root is None:
+        parser.error("A retained release identity requires its exact target pack tree")
     baseline, target = pack_metadata(args.baseline_pack_zip), pack_metadata(args.target_pack_zip)
     if baseline["id"] != target["id"]:
         raise ValueError("The two actual pack artifacts must share their ID")
@@ -128,13 +136,26 @@ def main():
         env.update({"CFFIXED_USER_HOME": str(home), "NGV_SETTINGS_OWNER_ACCEPTANCE": "1",
                     "NGV_WORKSPACE_UI_ACCEPTANCE": "1", "NGV_SETTINGS_OWNER_EVIDENCE": str(run),
                     "NGV_SETTINGS_OWNER_SCALE": str(scale), "NGV_SETTINGS_PACK_FIXTURE": str(manifest)})
-        with (run / "settings.log").open("w") as log:
-            process = subprocess.run([str(args.executable.resolve(strict=True)), "-ApplePersistenceIgnoreState", "YES",
-                                      "-interfaceTextScale", str(scale)], env=env, stdin=subprocess.DEVNULL,
-                                     stdout=log, stderr=subprocess.STDOUT, timeout=360, check=False)
-        if process.returncode:
-            raise RuntimeError("The native Settings process failed; inspect " + str(run / "settings.log"))
-        results.append(validate_result(run, home, baseline, target, scale))
+        before = before_case(args.executable, args.target_pack_root, args.runtime_identity) if args.target_pack_root else None
+        if before is not None:
+            before.update(targetArchiveSHA256=digest(args.target_pack_zip), baselineArchiveSHA256=digest(args.baseline_pack_zip))
+            (run / "byte-binding-before.json").write_text(json.dumps(before, indent=2) + "\n")
+        try:
+            with (run / "settings.log").open("w") as log:
+                process = subprocess.run([str(args.executable.resolve(strict=True)), "-ApplePersistenceIgnoreState", "YES",
+                                          "-interfaceTextScale", str(scale)], env=env, stdin=subprocess.DEVNULL,
+                                         stdout=log, stderr=subprocess.STDOUT, timeout=360, check=False)
+            if process.returncode:
+                raise RuntimeError("The native Settings process failed; inspect " + str(run / "settings.log"))
+            expected_tree = before['before']['packTreeSHA256'] if before is not None else None
+            results.append(validate_result(run, home, baseline, target, scale, expected_tree=expected_tree))
+        finally:
+            if before is not None:
+                after = after_case(args.executable, args.target_pack_root, before, run / "byte-binding-after.json")
+                if (digest(args.target_pack_zip) != before['targetArchiveSHA256']
+                        or digest(args.baseline_pack_zip) != before['baselineArchiveSHA256']):
+                    raise ValueError("Settings changed its exact input pack archives")
+                (run / "byte-binding-after.json").write_text(json.dumps(after, indent=2) + "\n")
     (output / "settings-owner-validation.json").write_text(json.dumps({"nativeSettings": results}, indent=2))
 
 

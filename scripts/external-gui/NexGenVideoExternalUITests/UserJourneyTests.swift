@@ -10,6 +10,11 @@ final class UserJourneyTests: XCTestCase {
     private var output: URL!
     private var sequence = 0
     private var answeredDiagnosticsConsent = false
+    private var geometrySamples: [[String: Any]] = []
+    private var geometryPhases: [String: [[String: Any]]] = [:]
+    private var evidenceSchema: String {
+        config["scenario"] as? String == "transport" ? "nexgenvideo/external-transport/1" : "nexgenvideo/external-gui-journey/1"
+    }
 
     private struct Failure: Error { let message: String }
 
@@ -32,12 +37,13 @@ final class UserJourneyTests: XCTestCase {
             app.terminate()
         }
         if output != nil {
-            try write(["schema": "nexgenvideo/external-gui-journey/1", "stages": stages,
+            try write(["schema": evidenceSchema, "stages": stages,
                        "actions": actions], to: output.appendingPathComponent("journey.json"))
         }
     }
 
     func testGenericEditingThroughInstalledApp() throws {
+        try require(config["scenario"] == nil, "The normal journey received another scenario")
         try launch()
         try home()
         try stage("home")
@@ -156,6 +162,262 @@ final class UserJourneyTests: XCTestCase {
         try stage("export", fields: ["movieSHA256": try digest(movie)])
     }
 
+    func testTimelineTransportThroughInstalledApp() throws {
+        try require(config["scenario"] as? String == "transport", "Missing explicit transport scenario")
+        guard let fixture = config["transportFixture"] as? [String: Any],
+              let hashes = fixture["projectFiles"] as? [String: String] else {
+            throw Failure(message: "Missing independently verified transport fixture")
+        }
+        try require(integer(fixture["fps"]) == 30 && integer(fixture["endFrame"]) == 120
+                    && integer(fixture["sourceFrames"]) == 120, "Unexpected transport endpoint oracle")
+        let project = URL(fileURLWithPath: try string("project"))
+        try verifyTransportFiles(project, hashes: hashes)
+        try require(try digest(URL(fileURLWithPath: string("source"))) == fixture["sourceSHA256"] as? String,
+                    "The transport source bytes changed")
+        try launch()
+        try home()
+        try menu("NexGenVideo", "Settings…")
+        let settings = app.windows["Settings"]
+        let pickers = settings.popUpButtons.matching(NSPredicate(format: "label == %@", "Interface text, Interface text size"))
+        try wait("unique transport text size picker") { pickers.count == 1 }
+        let picker = pickers.element(boundBy: 0)
+        let scale = try string("scaleLabel")
+        try click(picker, "Interface text size")
+        try click(app.menuItems[scale], scale)
+        try wait("transport interface text size") { String(describing: picker.value ?? "").contains(scale) }
+        try click(settings.buttons[XCUIIdentifierCloseWindow], "native Settings close")
+        try wait("transport Settings closed") { !settings.exists }
+        try menu("File", "Open…")
+        try openPanel(project)
+        try editor(project)
+        try focusTimeline(project)
+        let window = try documentWindow(project)
+        try menu("View", "Edit Workspace")
+        try menu("View", "Layout")
+        try click(app.menuItems["Default"], "Default layout")
+        let preview = window.staticTexts.matching(NSPredicate(format: "label == %@", "Film Preview"))
+        try wait("unique visible Film Preview title") {
+            self.visibleInputs(preview).count == 1
+        }
+        try transportGeometryPair("before", window: window)
+        try click(visibleInputs(preview)[0], "Film Preview focus")
+        try menu("View", "Maximize Focused Panel")
+        try transportGeometryPair("maximized", window: window)
+        try transportSurface("maximized-timeline-preview", window: window)
+        try key(XCUIKeyboardKey.escape.rawValue)
+        try transportGeometryPair("restored", window: window)
+        try menu("View", "Theater")
+        let exit = try transportButton("Exit Theater", window: window)
+        try require(exit.isHittable, "The actual Theater exit is absent")
+        try transportSurface("theater-timeline", window: window)
+        try click(exit, "Exit Theater")
+        try wait("public Theater exit") { !exit.exists || !exit.isHittable }
+        try click(window.buttons[XCUIIdentifierCloseWindow], "native transport document close")
+        try wait("transport document closed") { !window.exists }
+        try verifyTransportFiles(project, hashes: hashes)
+    }
+
+    private func verifyTransportFiles(_ project: URL, hashes: [String: String]) throws {
+        try require(Set(hashes.keys) == Set(["project.json", "media.json", "ngv.json"]), "Incomplete transport project bytes")
+        for (name, expected) in hashes {
+            try require(try digest(project.appendingPathComponent(name)) == expected, "Transport changed " + name)
+        }
+    }
+
+    private func transportGeometryPair(_ phase: String, window: XCUIElement) throws {
+        let deadline = Date().addingTimeInterval(20)
+        var first = try transportGeometrySnapshot(phase, window: window)
+        while Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.5)
+            let second = try transportGeometrySnapshot(phase, window: window)
+            let a = try JSONSerialization.data(withJSONObject: first["nodes"]!, options: [.sortedKeys])
+            let b = try JSONSerialization.data(withJSONObject: second["nodes"]!, options: [.sortedKeys])
+            if a == b {
+                geometryPhases[phase] = [first, second]
+                try write(["schema": "nexgenvideo/public-preview-geometry/1", "phases": geometryPhases],
+                          to: output.appendingPathComponent("geometry.json"))
+                return
+            }
+            first = second
+        }
+        throw Failure(message: "The public preview hierarchy did not settle for " + phase)
+    }
+
+    private func transportGeometrySnapshot(_ phase: String, window: XCUIElement) throws -> [String: Any] {
+        let capture = try evidence("preview-geometry-" + phase)
+        try require(window.sheets.count == 0 && app.alerts.count == 0 && app.dialogs.count == 0,
+                    "A modal surface blocks the preview geometry")
+        var nodes: [[String: Any]] = []
+        func walk(_ element: XCUIElement, path: String, parent: String?, depth: Int) throws {
+            try require(depth <= 40 && nodes.count < 3000, "The public accessibility hierarchy is unbounded")
+            let frame = element.frame
+            let coordinates = [Double(frame.minX), Double(frame.minY), Double(frame.width), Double(frame.height)]
+            let kind: String
+            switch element.elementType {
+            case .window: kind = "window"
+            case .group: kind = "group"
+            case .splitGroup: kind = "splitGroup"
+            case .button: kind = "button"
+            case .staticText: kind = "staticText"
+            default: kind = "other-" + String(element.elementType.rawValue)
+            }
+            nodes.append(["path": path, "parent": parent.map { $0 as Any } ?? NSNull(), "type": kind,
+                          "title": element.title, "label": element.label,
+                          "value": element.value as? String ?? "", "identifier": element.identifier,
+                          "enabled": element.isEnabled, "hittable": element.isHittable,
+                          "frame": coordinates.allSatisfy(\.isFinite) ? coordinates : [],
+                          "invalidFrame": coordinates.allSatisfy(\.isFinite) ? "" : frame.debugDescription])
+            for (index, child) in element.children(matching: .any).allElementsBoundByIndex.enumerated() {
+                try walk(child, path: path + "/" + String(index), parent: path, depth: depth + 1)
+            }
+        }
+        try walk(window, path: "w", parent: nil, depth: 0)
+        let anchors = try [("staticText", "Film Preview"), ("button", "Go to Start"), ("button", "Go to End")].map { anchor in
+            let (kind, label) = anchor
+            let matches = nodes.filter { node in
+                node["type"] as? String == kind && node["label"] as? String == label
+                    && node["enabled"] as? Bool == true && node["hittable"] as? Bool == true
+            }
+            try require(matches.count == 1, "The public preview anchor is missing or ambiguous: " + label)
+            return matches[0]["path"] as! String
+        }
+        let common = nodes.filter { node in
+            guard let path = node["path"] as? String, path != "w" else { return false }
+            return anchors.allSatisfy { $0.hasPrefix(path + "/") }
+        }
+        let minimal = common.filter { node in
+            let path = node["path"] as! String
+            return !common.contains { other in
+                (other["path"] as! String).hasPrefix(path + "/")
+            }
+        }
+        try require(minimal.count == 1, "The public preview has no unique minimal common container")
+        let observation: [String: Any] = ["phase": phase, "time": Date().timeIntervalSince1970,
+                                        "nodes": nodes, "selectedPreviewPath": minimal[0]["path"] as! String,
+                                        "modalCounts": ["sheets": window.sheets.count, "alerts": app.alerts.count, "dialogs": app.dialogs.count],
+                                        "evidence": capture, "actionCount": actions.count]
+        geometrySamples.append(observation)
+        try write(["schema": "nexgenvideo/public-preview-geometry-samples/1", "samples": geometrySamples],
+                  to: output.appendingPathComponent("geometry-samples.json"))
+        return observation
+    }
+
+    private func transportButton(_ label: String, window: XCUIElement) throws -> XCUIElement {
+        let query = window.buttons.matching(NSPredicate(format: "label == %@", label))
+        try wait("unique visible " + label) { self.visibleInputs(query).count == 1 }
+        let button = visibleInputs(query)[0]
+        try require(finiteFrame(button.frame) && window.frame.contains(button.frame), "Transport control escaped its window")
+        return button
+    }
+
+    private func transportSurface(_ surface: String, window: XCUIElement) throws {
+        let start = try transportButton("Go to Start", window: window)
+        let end = try transportButton("Go to End", window: window)
+        try require(start.frame.maxX < end.frame.minX, "Transport endpoint order is reversed")
+        let initial = try transportCursor(window, start: start)
+        let frame = initial["frame"] as? Int ?? -1
+        if frame == 0 {
+            try click(transportButton("Next Frame", window: window), "transport preparation Next Frame")
+            _ = try stableTransportCursor(1, window: window, start: start)
+        } else if frame == 120 {
+            try click(transportButton("Previous Frame", window: window), "transport preparation Previous Frame")
+            _ = try stableTransportCursor(119, window: window, start: start)
+        }
+        let prepared = try transportCursor(window, start: start)
+        let preparedFrame = prepared["frame"] as? Int ?? -1
+        try require(preparedFrame > 0 && preparedFrame < 120, "Transport did not begin at a real interior cursor")
+        for (ordinal, target) in [0, 120, 0].enumerated() {
+            let button = target == 120 ? end : start
+            let before = try transportCursor(window, start: start)
+            try require(before["frame"] as? Int != target, "An endpoint action would be a no-op")
+            let control = publicTransportElement(button)
+            let preceding = try evidence(surface + "-before-" + String(ordinal))
+            try click(button, target == 120 ? "Go to End" : "Go to Start")
+            let after = try stableTransportCursor(target, window: window, start: start)
+            try stage(surface + "-" + String(ordinal), fields: [
+                "surface": surface, "endpointOrdinal": ordinal, "targetFrame": target,
+                "before": before, "after": after, "control": control, "beforeEvidence": preceding,
+                "window": publicTransportElement(window), "paused": true
+            ])
+        }
+    }
+
+    private func stableTransportCursor(_ expected: Int, window: XCUIElement, start: XCUIElement) throws -> [String: Any] {
+        let deadline = Date().addingTimeInterval(20)
+        var stableSince: Date?
+        var observations = 0
+        var result: [String: Any] = [:]
+        while Date() < deadline {
+            result = try transportCursor(window, start: start)
+            if result["frame"] as? Int == expected {
+                if stableSince == nil { stableSince = Date(); observations = 0 }
+                observations += 1
+                if let since = stableSince, Date().timeIntervalSince(since) >= 0.5 && observations >= 2 {
+                    result["stableSeconds"] = Date().timeIntervalSince(since)
+                    result["observations"] = observations
+                    return result
+                }
+            } else { stableSince = nil; observations = 0 }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        try require(false, "The public cursor did not reach stable frame " + String(expected))
+        return result
+    }
+
+    private func transportCursor(_ window: XCUIElement, start: XCUIElement) throws -> [String: Any] {
+        _ = try transportButton("Play", window: window)
+        try require(visibleInputs(window.buttons.matching(NSPredicate(format: "label == %@", "Pause"))).isEmpty,
+                    "Transport must remain paused")
+        var candidates: [(XCUIElement, [Int], String)] = []
+        for text in window.staticTexts.allElementsBoundByIndex {
+            let frame = text.frame
+            guard text.exists && text.isHittable && finiteFrame(frame) && window.frame.contains(frame)
+                    && frame.maxX <= start.frame.minX
+                    && abs(frame.midY - start.frame.midY) <= max(frame.height, start.frame.height) / 2 else { continue }
+            let values = [text.label, text.value as? String ?? ""].filter { !$0.isEmpty }
+            let parsed = values.compactMap { transportTimecodes($0) }
+            guard let tokens = parsed.first else { continue }
+            try require(parsed.allSatisfy { $0 == tokens }, "Public cursor label and value disagree")
+            candidates.append((text, tokens, values[0]))
+        }
+        candidates.sort { $0.0.frame.minX < $1.0.frame.minX }
+        try require(candidates.count == 1 || candidates.count == 2, "Public cursor and duration layout is ambiguous")
+        guard let current = candidates.first else { throw Failure(message: "No public cursor field") }
+        if candidates.count == 2 {
+            try require(current.1.count == 1 && candidates[1].1 == [120]
+                        && current.0.frame.maxX <= candidates[1].0.frame.minX, "Cursor and duration fields overlap or disagree")
+        } else {
+            try require(current.1.count == 1 || current.1 == [current.1[0], 120], "Combined cursor and duration disagree")
+        }
+        return ["frame": current.1[0], "role": "left-current-cursor", "field": publicTransportElement(current.0),
+                "startControl": publicTransportElement(start),
+                "candidates": candidates.map { ["element": publicTransportElement($0.0), "tokens": $0.1] }]
+    }
+
+    private func transportTimecodes(_ value: String) -> [Int]? {
+        let tokens = value.components(separatedBy: "/").map { $0.trimmingCharacters(in: .whitespaces) }
+        guard (1...2).contains(tokens.count) else { return nil }
+        var frames: [Int] = []
+        for token in tokens {
+            let parts = token.split(separator: ":", omittingEmptySubsequences: false)
+            guard parts.count == 4 && parts.allSatisfy({ $0.count == 2 && $0.allSatisfy(\.isNumber) }) else { return nil }
+            let values = parts.compactMap { Int($0) }
+            guard values.count == 4 && values[1] < 60 && values[2] < 60 && values[3] < 30 else { return nil }
+            frames.append(((values[0] * 60 + values[1]) * 60 + values[2]) * 30 + values[3])
+        }
+        return frames
+    }
+
+    private func finiteFrame(_ frame: CGRect) -> Bool {
+        [frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite) && frame.width > 0 && frame.height > 0
+    }
+
+    private func publicTransportElement(_ element: XCUIElement) -> [String: Any] {
+        ["label": element.label, "value": element.value as? String ?? "", "identifier": element.identifier,
+         "enabled": element.isEnabled, "hittable": element.isHittable,
+         "frame": [element.frame.minX, element.frame.minY, element.frame.width, element.frame.height]]
+    }
+
     private func home() throws {
         try wait("normal Home or diagnostics consent", timeout: 60) {
             self.app.staticTexts["Welcome to NexGenVideo"].exists || !self.diagnosticsConsentDialogs().isEmpty
@@ -232,7 +494,7 @@ final class UserJourneyTests: XCTestCase {
         try require(viewport.contains(point) && point.y > viewport.minY + 24
                     && canvas.scrollBars.allElementsBoundByIndex.allSatisfy { !$0.frame.contains(point) },
                     "The timeline focus point intersects its ruler, scrollbars or clipped bounds")
-        actions.append(["kind": "click", "target": "visible timeline canvas", "x": point.x, "y": point.y,
+        recordAction(["kind": "click", "target": "visible timeline canvas", "x": point.x, "y": point.y,
                         "windowFrame": NSStringFromRect(windowFrame), "canvasFrame": NSStringFromRect(frame),
                         "visibleViewport": NSStringFromRect(viewport)])
         let coordinate = canvas.coordinate(withNormalizedOffset: .zero)
@@ -318,7 +580,7 @@ final class UserJourneyTests: XCTestCase {
                 return button
             }
             let action = actions.count
-            actions.append(["kind": "scroll", "target": "Source inspector", "deltaX": 0, "deltaY": deltaY,
+            recordAction(["kind": "scroll", "target": "Source inspector", "deltaX": 0, "deltaY": deltaY,
                             "viewport": NSStringFromRect(viewport), "beforeFrame": NSStringFromRect(before),
                             "targetEnabled": button.isEnabled])
             pane.scroll(byDeltaX: 0, deltaY: deltaY)
@@ -334,19 +596,25 @@ final class UserJourneyTests: XCTestCase {
 
     private func click(_ element: XCUIElement, _ name: String) throws {
         try wait(name) { element.exists && element.isEnabled && element.isHittable }
-        actions.append(["kind": "click", "target": name, "frame": NSStringFromRect(element.frame)])
+        recordAction(["kind": "click", "target": name, "frame": NSStringFromRect(element.frame)])
         element.click()
     }
 
     private func key(_ key: String, modifiers: XCUIElement.KeyModifierFlags = [], in element: XCUIElement? = nil) throws {
-        actions.append(["kind": "key", "key": key, "modifiers": modifiers.rawValue])
+        recordAction(["kind": "key", "key": key, "modifiers": modifiers.rawValue])
         if let element { element.typeKey(key, modifierFlags: modifiers) }
         else { app.typeKey(key, modifierFlags: modifiers) }
     }
 
     private func type(_ text: String, in element: XCUIElement) throws {
-        actions.append(["kind": "text", "text": text, "identifier": element.identifier, "label": element.label])
+        recordAction(["kind": "text", "text": text, "identifier": element.identifier, "label": element.label])
         element.typeText(text)
+    }
+
+    private func recordAction(_ fields: [String: Any]) {
+        var action = fields
+        if config["scenario"] as? String == "transport" { action["time"] = Date().timeIntervalSince1970 }
+        actions.append(action)
     }
 
     private func wait(_ label: String, timeout: TimeInterval = 20, until condition: @escaping () -> Bool) throws {
@@ -383,7 +651,7 @@ final class UserJourneyTests: XCTestCase {
                                  "evidence": try evidence(name), "actionCount": actions.count]
         row.merge(fields) { _, new in new }
         stages.append(row)
-        try write(["schema": "nexgenvideo/external-gui-journey/1", "stages": stages,
+        try write(["schema": evidenceSchema, "stages": stages,
                    "actions": actions], to: output.appendingPathComponent("journey.json"))
     }
 
