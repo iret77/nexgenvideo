@@ -327,7 +327,7 @@ def run(args):
         for name in ('tests.tar.gz', 'tests-input.json', 'tests-producer.json'):
             shutil.copy2(test_input / name, evidence / name)
         work = Path(tempfile.mkdtemp(prefix='ngv-public-transport-tests-'))
-        xctestrun, tests = test_bundle.consume(evidence, work / 'Products', identity['testSourceSHA'], identity['testFiles'])
+        xctestrun, tests = test_bundle.consume(evidence, work / 'Products', identity['testSourceSHA'], identity['testFiles'], transport_reuse=True)
         (evidence / 'test-bundle.sha256').write_text(journey.sha256(xctestrun) + '\n')
         working = evidence / 'External GUI.ngv'
         shutil.copytree(project, working, symlinks=True)
@@ -405,12 +405,12 @@ def validate(args):
     from verify_diagnostic_candidate import SIGNED_TRANSPORT_HARNESS_PATHS
     revision, files = journey.test_source_identity(args.source_sha, allowed_paths=SIGNED_TRANSPORT_HARNESS_PATHS)
     require(identity.get('testSourceSHA') == revision and identity.get('testFiles') == files, 'Transport client source changed')
-    tests = test_bundle.verify_input(evidence, revision, files)
+    tests = test_bundle.verify_input(evidence, revision, files, transport_reuse=True)
     expected = {key: tests[key] for key in ('runID', 'attempt', 'archiveSHA256', 'productsSHA256', 'xctestrun', 'xcode')}
     expected.update(receiptSHA256=journey.sha256(evidence / 'tests-input.json'), producerSHA256=journey.sha256(evidence / 'tests-producer.json'))
     require(identity.get('testBundle') == expected, 'Transport test products changed')
     with tempfile.TemporaryDirectory(prefix='ngv-transport-validate-') as temporary:
-        xctestrun, _ = test_bundle.consume(evidence, Path(temporary) / 'Products', revision, files)
+        xctestrun, _ = test_bundle.consume(evidence, Path(temporary) / 'Products', revision, files, transport_reuse=True)
         require(journey.sha256(xctestrun) == (evidence / 'test-bundle.sha256').read_text().strip(), 'Transport test launch description changed')
     summary = journey.read_json(evidence / 'summary.json')
     require(summary.get('passedTests') == 1 and summary.get('failedTests') == 0 and summary.get('skippedTests') == 0,
