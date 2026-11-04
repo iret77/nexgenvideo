@@ -6,6 +6,7 @@ import simd
 
 struct SpatialSceneView: View {
     @Bindable var session: SpatialSceneSession
+    @Environment(\.interfaceScale) private var textScale
     var editingEnabled = true
     @State private var newName = "Location"
     @State private var position = SIMD3<Double>.zero
@@ -26,111 +27,35 @@ struct SpatialSceneView: View {
     }
 
     var body: some View {
-        HSplitView {
-            ScrollView {
-                VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-                    Text("Locations").interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
-                    ForEach(session.locations) { head in
-                        Button(head.name) { session.open(head) }
-                            .buttonStyle(.capsule(isSelected: head.id == session.current?.manifest.sceneID))
-                            .disabled(session.busy)
-                            .reviewAcceptanceProbe("spatial.location.\(head.id.uuidString)", state: !session.busy)
-                    }
-                    TextField("Location name", text: $newName)
-                        .disabled(!editingEnabled)
-                        .accessibilityIdentifier("spatial.location.name")
-                        .reviewAcceptanceProbe("spatial.location.name", state: editable, text: newName)
-                    Button("Create location") { Task { await session.create(name: newName) } }
-                        .disabled(!canCreate)
-                        .accessibilityIdentifier("spatial.location.create")
-                        .reviewAcceptanceProbe("spatial.location.create", state: canCreate)
-                    AppDivider()
-                    if session.current != nil {
-                        Menu("Add object") {
-                            ForEach(["cube", "sphere", "cylinder", "plane"], id: \.self) { kind in
-                                Button(kind.capitalized) { Task { await session.addPrimitive(kind) } }
-                            }
+        GeometryReader { geometry in
+            let minimumWidth = (AppTheme.Layout.spatialInspectorMinWidth + AppTheme.Layout.spatialViewportMinWidth) * textScale
+                + AppTheme.BorderWidth.thin
+            if geometry.size.width >= minimumWidth {
+                HSplitView {
+                    ScrollView { inspectorContent }
+                        .frame(minWidth: AppTheme.Layout.spatialInspectorMinWidth * textScale,
+                               idealWidth: AppTheme.Layout.workflowSidebarDefault * textScale)
+                    sceneContent()
+                        .frame(minWidth: AppTheme.Layout.spatialViewportMinWidth * textScale)
+                }
+            } else {
+                VStack(spacing: AppTheme.Spacing.sm) {
+                    sceneHeader.padding(AppTheme.Spacing.md)
+                    sceneError.padding(.horizontal, AppTheme.Spacing.md)
+                    ScrollView {
+                        VStack(spacing: AppTheme.Spacing.md) {
+                            sceneBody(previewHeight: min(AppTheme.Layout.spatialCompactPreviewMaxHeight,
+                                max(AppTheme.Layout.inspectorMinHeight, geometry.size.height
+                                    - AppTheme.Layout.workspaceHeaderHeight - AppTheme.Layout.toolbarHeight - AppTheme.Spacing.xxl)),
+                                zoomRequiresOption: true)
+                                .padding(.horizontal, AppTheme.Spacing.md)
+                            AppDivider()
+                            inspectorContent
                         }
-                        .accessibilityIdentifier("spatial.object.add")
-                        .reviewAcceptanceProbe("spatial.object.add", state: editable)
-                        .disabled(!editingEnabled)
-                        Button("Import GLB…") { Task { await session.importGLB() } }
-                            .disabled(!editingEnabled)
-                            .accessibilityIdentifier("spatial.import")
-                        .reviewAcceptanceProbe("spatial.import", state: editable)
-                        ForEach(session.snapshot?.objects ?? []) { object in
-                            Button(object.name) { session.selectedObjectID = object.id }
-                                .buttonStyle(.capsule(isSelected: session.selectedObjectID == object.id))
-                                .accessibilityIdentifier("spatial.object.\(object.id)")
-                        .reviewAcceptanceProbe("spatial.object.\(object.id)", state: !session.busy)
-                        }
-                        if session.selectedObject != nil { transformInspector.disabled(!editingEnabled) }
-                        AppDivider()
-                        cameraInspector
                     }
                 }
-                .buttonStyle(.capsule(size: .regular))
-                .disabled(session.busy)
-                .padding(AppTheme.Spacing.md)
+                .buttonStyle(.capsule())
             }
-            .frame(minWidth: AppTheme.Layout.workflowSidebarMin, idealWidth: AppTheme.Layout.workflowSidebarDefault)
-
-            VStack(spacing: AppTheme.Spacing.sm) {
-                HStack {
-                    Text(session.current?.manifest.name ?? "Location editor")
-                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
-                    Spacer()
-                    Button("Undo") { Task { await session.undo() } }.disabled(!editingEnabled || !session.canUndo)
-                        .reviewAcceptanceProbe("spatial.undo", state: editingEnabled && session.canUndo)
-                    Button("Redo") { Task { await session.redo() } }.disabled(!editingEnabled || !session.canRedo)
-                        .reviewAcceptanceProbe("spatial.redo", state: editingEnabled && session.canRedo)
-                    if session.busy {
-                        ProgressView().controlSize(.small)
-                        if session.canCancel {
-                            Button("Cancel") { session.cancel() }
-                                .accessibilityIdentifier("spatial.cancel")
-                                .reviewAcceptanceProbe("spatial.cancel")
-                        }
-                    }
-                }
-                if session.snapshot != nil {
-                    if let data = session.cameraPreview, let image = NSImage(data: data) {
-                        Image(nsImage: image).resizable().scaledToFit()
-                            .accessibilityIdentifier("spatial.camera.rendered")
-                        .reviewAcceptanceProbe("spatial.camera.rendered", text: session.current?.manifest.snapshotSHA256 ?? "")
-                        Button("Return to viewport") { session.dismissCameraPreview() }
-                            .reviewAcceptanceProbe("spatial.camera.return")
-                    } else {
-                        SpatialSceneViewport(session: session)
-                            .accessibilityIdentifier("spatial.viewport")
-                        .reviewAcceptanceProbe("spatial.viewport", state: !session.busy)
-                    }
-                    HStack {
-                        Text("Frame")
-                        TextField("Frame", value: $requestedFrame, format: .number)
-                            .onSubmit { Task { await session.evaluate(frame: requestedFrame) } }
-                            .accessibilityIdentifier("spatial.frame")
-                        .reviewAcceptanceProbe("spatial.frame", state: !session.busy, text: String(requestedFrame))
-                        Button("Evaluate") { Task { await session.evaluate(frame: requestedFrame) } }
-                            .disabled(session.busy).reviewAcceptanceProbe("spatial.frame.evaluate", state: !session.busy)
-                        Spacer()
-                        Text("Drag to orbit · Option-drag to pan · Scroll to zoom")
-                            .foregroundStyle(AppTheme.Text.secondaryColor)
-                    }
-                } else {
-                    ContentUnavailableView("No location selected", systemImage: "cube.transparent",
-                                           description: Text("Create a location or open an existing one."))
-                }
-                if let error = session.error {
-                    Text(error).foregroundStyle(AppTheme.Status.errorColor)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .accessibilityIdentifier("spatial.error")
-                        .reviewAcceptanceProbe("spatial.error", text: error)
-                }
-            }
-            .buttonStyle(.capsule())
-            .padding(AppTheme.Spacing.md)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .interfaceFont(size: AppTheme.Typography.ui)
         .foregroundStyle(AppTheme.Text.primaryColor)
@@ -139,6 +64,149 @@ struct SpatialSceneView: View {
         .task { session.reload() }
         .onChange(of: session.selectedObjectID) { _, _ in updateInspector() }
         .onChange(of: session.snapshot) { _, _ in updateInspector(); requestedFrame = session.frame }
+    }
+
+    private var inspectorContent: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+            Text("Locations").interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
+            ForEach(session.locations) { head in
+                Button(head.name) { session.open(head) }
+                    .buttonStyle(.capsule(isSelected: head.id == session.current?.manifest.sceneID))
+                    .disabled(session.busy)
+                    .reviewAcceptanceProbe("spatial.location.\(head.id.uuidString)", state: !session.busy)
+            }
+            TextField("Location name", text: $newName)
+                .disabled(!editingEnabled)
+                .accessibilityIdentifier("spatial.location.name")
+                .reviewAcceptanceProbe("spatial.location.name", state: editable, text: newName)
+            Button("Create location") { Task { await session.create(name: newName) } }
+                .disabled(!canCreate)
+                .accessibilityIdentifier("spatial.location.create")
+                .reviewAcceptanceProbe("spatial.location.create", state: canCreate)
+            AppDivider()
+            if session.current != nil {
+                Menu("Add object") {
+                    ForEach(["cube", "sphere", "cylinder", "plane"], id: \.self) { kind in
+                        Button(kind.capitalized) { Task { await session.addPrimitive(kind) } }
+                    }
+                }
+                .accessibilityIdentifier("spatial.object.add")
+                .reviewAcceptanceProbe("spatial.object.add", state: editable)
+                .disabled(!editingEnabled)
+                Button("Import GLB…") { Task { await session.importGLB() } }
+                    .disabled(!editingEnabled)
+                    .accessibilityIdentifier("spatial.import")
+                .reviewAcceptanceProbe("spatial.import", state: editable)
+                ForEach(session.snapshot?.objects ?? []) { object in
+                    Button(object.name) { session.selectedObjectID = object.id }
+                        .buttonStyle(.capsule(isSelected: session.selectedObjectID == object.id))
+                        .accessibilityIdentifier("spatial.object.\(object.id)")
+                .reviewAcceptanceProbe("spatial.object.\(object.id)", state: !session.busy)
+                }
+                if session.selectedObject != nil { transformInspector.disabled(!editingEnabled) }
+                AppDivider()
+                cameraInspector
+            }
+        }
+        .buttonStyle(.capsule(size: .regular))
+        .disabled(session.busy)
+        .padding(AppTheme.Spacing.md)
+    }
+
+    private var sceneHeader: some View {
+        HStack(spacing: AppTheme.Spacing.sm) {
+            Text(session.current?.manifest.name ?? "Location editor")
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
+                .lineLimit(1)
+                .help(session.current?.manifest.name ?? "Location editor")
+            Spacer(minLength: AppTheme.Spacing.sm)
+            Button("Undo") { Task { await session.undo() } }.disabled(!editingEnabled || !session.canUndo)
+                .fixedSize(horizontal: true, vertical: false)
+                .reviewAcceptanceProbe("spatial.undo", state: editingEnabled && session.canUndo)
+            Button("Redo") { Task { await session.redo() } }.disabled(!editingEnabled || !session.canRedo)
+                .fixedSize(horizontal: true, vertical: false)
+                .reviewAcceptanceProbe("spatial.redo", state: editingEnabled && session.canRedo)
+            if session.busy {
+                ProgressView().controlSize(.small)
+                if session.canCancel {
+                    Button("Cancel") { session.cancel() }
+                        .fixedSize(horizontal: true, vertical: false)
+                        .accessibilityIdentifier("spatial.cancel")
+                        .reviewAcceptanceProbe("spatial.cancel")
+                }
+            }
+        }
+    }
+
+    private func sceneContent() -> some View {
+        VStack(spacing: AppTheme.Spacing.sm) {
+            sceneHeader
+            sceneError
+            sceneBody()
+        }
+        .buttonStyle(.capsule())
+        .padding(AppTheme.Spacing.md)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func sceneBody(previewHeight: CGFloat? = nil, zoomRequiresOption: Bool = false) -> some View {
+        VStack(spacing: AppTheme.Spacing.sm) {
+            if session.snapshot != nil {
+                sceneViewport(zoomRequiresOption: zoomRequiresOption).frame(height: previewHeight)
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+                    HStack(spacing: AppTheme.Spacing.sm) {
+                        Text("Frame").fixedSize()
+                        TextField("Frame", value: $requestedFrame, format: .number)
+                            .frame(width: AppTheme.Layout.spatialFrameFieldWidth * textScale)
+                            .onSubmit { Task { await session.evaluate(frame: requestedFrame) } }
+                            .accessibilityIdentifier("spatial.frame")
+                            .reviewAcceptanceProbe("spatial.frame", state: !session.busy, text: String(requestedFrame))
+                        Button("Evaluate") { Task { await session.evaluate(frame: requestedFrame) } }
+                            .fixedSize(horizontal: true, vertical: false)
+                            .disabled(session.busy)
+                            .reviewAcceptanceProbe("spatial.frame.evaluate", state: !session.busy)
+                        Spacer(minLength: AppTheme.Spacing.none)
+                    }
+                    Text(zoomRequiresOption ? "Drag to orbit · Option-drag to pan · Option-scroll to zoom"
+                                            : "Drag to orbit · Option-drag to pan · Scroll to zoom")
+                        .foregroundStyle(AppTheme.Text.secondaryColor)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else {
+                ContentUnavailableView("No location selected", systemImage: "cube.transparent",
+                                       description: Text("Create a location or open an existing one."))
+                    .frame(height: previewHeight)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: previewHeight == nil ? .infinity : nil)
+    }
+
+    @ViewBuilder
+    private var sceneError: some View {
+        if let error = session.error {
+            Text(error).foregroundStyle(AppTheme.Status.errorColor)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("spatial.error")
+                .reviewAcceptanceProbe("spatial.error", text: error)
+        }
+    }
+
+    @ViewBuilder
+    private func sceneViewport(zoomRequiresOption: Bool) -> some View {
+        if let data = session.cameraPreview, let image = NSImage(data: data) {
+            VStack(spacing: AppTheme.Spacing.sm) {
+                Image(nsImage: image).resizable().scaledToFit()
+                    .accessibilityIdentifier("spatial.camera.rendered")
+                    .reviewAcceptanceProbe("spatial.camera.rendered", text: session.current?.manifest.snapshotSHA256 ?? "")
+                Button("Return to viewport") { session.dismissCameraPreview() }
+                    .fixedSize(horizontal: true, vertical: false)
+                    .reviewAcceptanceProbe("spatial.camera.return")
+            }
+        } else {
+            SpatialSceneViewport(session: session, zoomRequiresOption: zoomRequiresOption)
+                .accessibilityIdentifier("spatial.viewport")
+                .reviewAcceptanceProbe("spatial.viewport", state: !session.busy)
+        }
     }
 
     private var transformInspector: some View {
@@ -248,6 +316,7 @@ private extension SIMD3 where Scalar == Double {
 
 private struct SpatialSceneViewport: View {
     @Bindable var session: SpatialSceneSession
+    var zoomRequiresOption = false
     @State private var root = Entity()
     @State private var camera = Entity()
     @State private var renderError: String?
@@ -287,7 +356,7 @@ private struct SpatialSceneViewport: View {
             }
         }.onEnded { _ in previousDrag = .zero })
         .overlay {
-            SpatialViewportScroll { delta in
+            SpatialViewportScroll(zoomRequiresOption: zoomRequiresOption) { delta in
                 guard session.selectedCamera == nil else { return }
                 let offset = session.freeCameraPosition - session.freeCameraTarget
                 let distance = max(0.1, min(10_000, simd_length(offset) * exp(Float(delta) * 0.01)))
@@ -356,18 +425,28 @@ private struct SpatialSceneViewport: View {
 }
 
 private struct SpatialViewportScroll: NSViewRepresentable {
+    let zoomRequiresOption: Bool
     let zoom: (CGFloat) -> Void
 
-    func makeNSView(context: Context) -> ScrollView { ScrollView(zoom: zoom) }
-    func updateNSView(_ view: ScrollView, context: Context) { view.zoom = zoom }
+    func makeNSView(context: Context) -> ScrollView { ScrollView(zoomRequiresOption: zoomRequiresOption, zoom: zoom) }
+    func updateNSView(_ view: ScrollView, context: Context) {
+        view.zoomRequiresOption = zoomRequiresOption
+        view.zoom = zoom
+    }
 
     final class ScrollView: NSView {
+        var zoomRequiresOption: Bool
         var zoom: (CGFloat) -> Void
-        init(zoom: @escaping (CGFloat) -> Void) { self.zoom = zoom; super.init(frame: .zero) }
+        init(zoomRequiresOption: Bool, zoom: @escaping (CGFloat) -> Void) {
+            self.zoomRequiresOption = zoomRequiresOption; self.zoom = zoom; super.init(frame: .zero)
+        }
         required init?(coder: NSCoder) { nil }
         override func hitTest(_ point: NSPoint) -> NSView? {
             NSApp.currentEvent?.type == .scrollWheel ? super.hitTest(point) : nil
         }
-        override func scrollWheel(with event: NSEvent) { zoom(event.scrollingDeltaY) }
+        override func scrollWheel(with event: NSEvent) {
+            if zoomRequiresOption && !event.modifierFlags.contains(.option) { super.scrollWheel(with: event) }
+            else { zoom(event.scrollingDeltaY) }
+        }
     }
 }

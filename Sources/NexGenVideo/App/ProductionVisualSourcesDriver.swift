@@ -140,11 +140,38 @@ final class ProductionVisualSourcesDriver {
         let point = view.convert(NSPoint(x: view.bounds.minX + view.bounds.width * fraction.x,
                                         y: view.bounds.minY + view.bounds.height * fraction.y), to: root)
         let hit = root.hitTest(root.convert(point, to: root.superview))
+        let windowPoint = root.convert(point, to: nil), windowNumber = target.windowNumber
+        @MainActor final class Delivery {
+            var down = false
+            var up = false
+            var events: [[String: Any]] = []
+        }
+        let delivery = Delivery()
+        let monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp]) { event in
+            let number = event.windowNumber, location = event.locationInWindow, type = event.type
+            MainActor.assumeIsolated {
+                guard number == windowNumber, location == windowPoint else { return }
+                if type == .leftMouseDown { delivery.down = true }
+                if type == .leftMouseUp { delivery.up = true }
+                let local = root.convert(location, from: nil)
+                let actual = root.hitTest(root.convert(local, to: root.superview))
+                delivery.events.append(["type": type.rawValue, "window": number,
+                    "point": [location.x, location.y], "hitClass": actual.map { String(describing: Swift.type(of: $0)) } ?? "none"])
+            }
+            return event
+        }
+        defer { if let monitor { NSEvent.removeMonitor(monitor) } }
         guard hit != nil, WorkspaceUIAcceptance.click(identifier: id, in: target, fraction: fraction) == nil else {
             throw GateBlocked("The actual pointer target is unavailable: " + id)
         }
+        let index = interactions.count
         interactions.append(["kind": "pointer", "id": id, "window": target.windowNumber,
-            "frame": rect(frame), "point": [point.x, point.y], "hitClass": String(describing: type(of: hit!))])
+            "frame": rect(frame), "point": [point.x, point.y], "hitClass": String(describing: type(of: hit!)),
+            "windowPoint": [windowPoint.x, windowPoint.y]])
+        try await Task.sleep(for: .milliseconds(50))
+        interactions[index]["localMonitorEvents"] = delivery.events
+        interactions[index]["localMonitorDownObserved"] = delivery.down
+        interactions[index]["localMonitorUpObserved"] = delivery.up
         try persist()
     }
 
