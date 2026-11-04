@@ -1,5 +1,4 @@
 import AppKit
-import ApplicationServices
 import CryptoKit
 import XCTest
 
@@ -220,14 +219,35 @@ final class UserJourneyTests: XCTestCase {
         try click(app.menuItems[item], item)
     }
 
+    private struct TextInputIdentity: Hashable {
+        let kind: String
+        let identifier: String
+        let label: String
+
+        init(_ element: XCUIElement) {
+            kind = String(element.elementType.rawValue)
+            identifier = element.identifier
+            label = element.label
+        }
+    }
+
+    private func visibleInputs(_ query: XCUIElementQuery) -> [XCUIElement] {
+        query.allElementsBoundByIndex.filter { $0.exists && $0.isEnabled && $0.isHittable }
+    }
+
     private func savePanel(name: String, previous: String, directory: URL) throws {
         let values = [previous, (previous as NSString).deletingPathExtension, previous + ".ngv"]
-        let field = app.textFields.matching(NSPredicate(format: "value IN %@", values)).firstMatch
+        let fields = app.textFields.matching(NSPredicate(format: "identifier == %@", "saveAsNameTextField"))
+        try wait("unique native save name") { self.visibleInputs(fields).count == 1 }
+        let visible = visibleInputs(fields)
+        try require(visible.count == 1, "The native save filename is ambiguous or missing")
+        let field = visible[0]
+        try require(values.contains(field.value as? String ?? ""), "The native save filename differs from the expected default")
         try click(field, "save name: " + previous)
-        try key("a", modifiers: .command)
-        try type(name)
+        try key("a", modifiers: .command, in: field)
+        try type(name, in: field)
         try wait("edited native save filename") {
-            guard let focused = self.focusedElement(), let value = self.attribute(kAXValueAttribute, of: focused) as? String else { return false }
+            guard let value = field.value as? String else { return false }
             return value == name || value == (name as NSString).deletingPathExtension
         }
         try goTo(directory)
@@ -243,33 +263,28 @@ final class UserJourneyTests: XCTestCase {
     }
 
     private func goTo(_ url: URL) throws {
-        let previous = focusedElement()
+        let previous = Set((visibleInputs(app.textFields) + visibleInputs(app.comboBoxes)).map(TextInputIdentity.init))
         try key("g", modifiers: [.command, .shift])
-        try wait("Go to Folder path editor") {
-            guard let field = self.focusedElement(), previous.map({ CFEqual($0, field) }) != true else { return false }
-            return [kAXTextFieldRole, kAXComboBoxRole].contains(self.attribute(kAXRoleAttribute, of: field) as? String ?? "")
+        var destination: XCUIElement?
+        try wait("unique native Go to Folder editor") {
+            let fields = self.visibleInputs(self.app.textFields).filter { !previous.contains(TextInputIdentity($0)) }
+            let boxes = self.visibleInputs(self.app.comboBoxes).filter { !previous.contains(TextInputIdentity($0)) }
+            let candidates = fields.isEmpty ? boxes : fields
+            guard candidates.count == 1 else { return false }
+            destination = candidates[0]
+            return true
         }
-        guard let field = focusedElement() else { throw Failure(message: "Go to Folder has no focused editor") }
-        try key("a", modifiers: .command)
-        try type(url.path)
-        try wait("typed destination in native path editor") { self.attribute(kAXValueAttribute, of: field) as? String == url.path }
-        try key(XCUIKeyboardKey.return.rawValue)
+        let field = try XCTUnwrap(destination)
+        let identity = TextInputIdentity(field)
+        try click(field, "Go to Folder path editor")
+        try key("a", modifiers: .command, in: field)
+        try type(url.path, in: field)
+        try wait("typed destination in native path editor") { field.value as? String == url.path }
+        try key(XCUIKeyboardKey.return.rawValue, in: field)
         try wait("Go to Folder dismissed") {
-            guard let current = self.focusedElement() else { return true }
-            return !CFEqual(current, field) || self.attribute(kAXValueAttribute, of: current) as? String != url.path
+            let current = self.visibleInputs(self.app.textFields) + self.visibleInputs(self.app.comboBoxes)
+            return !current.contains { TextInputIdentity($0) == identity }
         }
-    }
-
-    private func focusedElement() -> AXUIElement? {
-        guard let value = attribute(kAXFocusedUIElementAttribute, of: AXUIElementCreateSystemWide()),
-              CFGetTypeID(value as CFTypeRef) == AXUIElementGetTypeID() else { return nil }
-        return (value as! AXUIElement)
-    }
-
-    private func attribute(_ name: String, of element: AXUIElement) -> AnyObject? {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success else { return nil }
-        return value
     }
 
     private func click(_ element: XCUIElement, _ name: String) throws {
@@ -278,14 +293,15 @@ final class UserJourneyTests: XCTestCase {
         element.click()
     }
 
-    private func key(_ key: String, modifiers: XCUIElement.KeyModifierFlags = []) throws {
+    private func key(_ key: String, modifiers: XCUIElement.KeyModifierFlags = [], in element: XCUIElement? = nil) throws {
         actions.append(["kind": "key", "key": key, "modifiers": modifiers.rawValue])
-        app.typeKey(key, modifierFlags: modifiers)
+        if let element { element.typeKey(key, modifierFlags: modifiers) }
+        else { app.typeKey(key, modifierFlags: modifiers) }
     }
 
-    private func type(_ text: String) throws {
-        actions.append(["kind": "text", "text": text])
-        app.typeText(text)
+    private func type(_ text: String, in element: XCUIElement) throws {
+        actions.append(["kind": "text", "text": text, "identifier": element.identifier, "label": element.label])
+        element.typeText(text)
     }
 
     private func wait(_ label: String, timeout: TimeInterval = 20, until condition: @escaping () -> Bool) throws {
