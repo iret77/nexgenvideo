@@ -195,6 +195,7 @@ struct TheaterOverlayView: View {
         }
         .buttonStyle(.plain)
         .help("Exit theater (Esc)")
+        .accessibilityLabel("Exit Theater")
     }
 
     private var transportCluster: some View {
@@ -205,11 +206,11 @@ struct TheaterOverlayView: View {
                 .frame(width: AppTheme.ComponentSize.theaterTransportWidth, height: AppTheme.Spacing.mdLg)
             HStack(spacing: AppTheme.Spacing.lg) {
                 timecode(editor.playheadState.timelineFrame, fps: fps, color: AppTheme.Accent.timecodeColor)
-                controlButton("backward.end.fill") { editor.seekToFrame(0) }
-                controlButton("backward.frame.fill") { editor.stepBackward() }
-                controlButton(editor.isPlaying ? "pause.fill" : "play.fill") { editor.togglePlayback() }
-                controlButton("forward.frame.fill") { editor.stepForward() }
-                controlButton("forward.end.fill") { editor.seekToFrame(duration) }
+                controlButton("backward.end.fill", label: "Go to Start") { editor.seekToFrame(0) }
+                controlButton("backward.frame.fill", label: "Previous Frame") { editor.stepBackward() }
+                controlButton(editor.isPlaying ? "pause.fill" : "play.fill", label: editor.isPlaying ? "Pause" : "Play") { editor.togglePlayback() }
+                controlButton("forward.frame.fill", label: "Next Frame") { editor.stepForward() }
+                controlButton("forward.end.fill", label: "Go to End") { editor.seekToFrame(duration) }
                 timecode(duration, fps: fps, color: AppTheme.Text.secondaryColor)
             }
         }
@@ -225,7 +226,7 @@ struct TheaterOverlayView: View {
             .monospacedDigit()
     }
 
-    private func controlButton(_ systemName: String, action: @escaping () -> Void) -> some View {
+    private func controlButton(_ systemName: String, label: LocalizedStringResource, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
                 .interfaceFont(size: AppTheme.Typography.ui)
@@ -233,6 +234,8 @@ struct TheaterOverlayView: View {
                 .frame(width: AppTheme.IconSize.md, height: AppTheme.IconSize.md)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .help(label)
     }
 
     private func scrubBar(duration: Int) -> some View {

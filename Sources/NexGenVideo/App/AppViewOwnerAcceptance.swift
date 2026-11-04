@@ -153,12 +153,14 @@ enum AppViewOwnerAcceptance {
         try await AppNativeMenuAcceptance.choose(["View", "Maximize Focused Panel"], in: window, driver: driver)
         try await driver.wait("native maximized viewer") { editor.maximizedPanel == .preview }
         try driver.capture("viewer-maximized", target: window)
+        try recordAccessibilityControls("maximized preview accessibility", in: window, driver: driver)
         try driver.pressKey(53, characters: "\u{1b}", in: window)
         try await driver.wait("native maximize restored") { editor.maximizedPanel == nil }
         let frame = editor.currentFrame
         try await AppNativeMenuAcceptance.choose(["View", "Theater"], in: window, driver: driver)
         try await driver.wait("actual theater presentation") { editor.theaterActive }
         try driver.capture("theater", target: window)
+        try recordAccessibilityControls("theater accessibility", in: window, driver: driver)
         try driver.pressKey(53, characters: "\u{1b}", in: window)
         try await driver.wait("theater restores exact editor context") {
             !editor.theaterActive && editor.currentFrame == frame && editor.selectedClipIds == selection
@@ -230,6 +232,25 @@ enum AppViewOwnerAcceptance {
             "maximizedViewerRestored": true, "theaterRestored": true, "fullScreenRestored": true,
             "viewerZoomFit": true, "anchoredCanvasWheel": true, "freePanPreservesOutput": true, "transformAndCropRemainInteractive": true, "frameStepPlayback": true, "timelineZoom": true,
             "unchangedTimelineSHA256": try ExportArtwork.timelineHash(timeline)]
+    }
+
+    private static func recordAccessibilityControls(_ label: String, in window: NSWindow,
+                                                    driver: ProductionVisualSourcesDriver) throws {
+        guard let root = window.contentView else { throw GateBlocked("The accessibility window is unavailable.") }
+        var pending: [any NSAccessibilityProtocol] = [root], visited = Set<ObjectIdentifier>()
+        var buttons: [[String: Any]] = []
+        while visited.count < 2048, let element = pending.popLast() {
+            guard visited.insert(ObjectIdentifier(element)).inserted else { continue }
+            let frame = element.accessibilityFrame()
+            if element.accessibilityRole() == .button, frame.width > 0, frame.height > 0, window.frame.contains(frame) {
+                buttons.append(["title": element.accessibilityTitle() ?? "", "label": element.accessibilityLabel() ?? "",
+                                "help": element.accessibilityHelp() ?? "", "enabled": element.isAccessibilityEnabled(),
+                                "accessibilityElement": element.isAccessibilityElement(), "frame": NSStringFromRect(frame)])
+            }
+            pending += (element.accessibilityChildren() ?? []).compactMap { $0 as? any NSAccessibilityProtocol }
+        }
+        try driver.record(label, fields: ["windowFrame": NSStringFromRect(window.frame), "buttons": buttons,
+                                          "visitedCount": visited.count, "traversalComplete": pending.isEmpty])
     }
 
     private static func overlayDrag(clip: Clip, editor: EditorViewModel, window: NSWindow,

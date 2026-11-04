@@ -1,6 +1,7 @@
 import copy
 import hashlib
 import io
+import json
 import os
 from pathlib import Path
 import plistlib
@@ -45,7 +46,8 @@ class ExternalTestBundleTests(unittest.TestCase):
             path.write_bytes(content + (b'dirty' if dirty else b''))
             relative = (journey.ROOT / name).relative_to(journey.REPOSITORY).as_posix()
             payloads[relative] = content
-        payloads['scripts/verify_diagnostic_candidate.py'] = (journey.REPOSITORY / 'scripts/verify_diagnostic_candidate.py').read_bytes()
+        for shared in journey.SHARED_INPUTS:
+            payloads[shared] = (journey.REPOSITORY / shared).read_bytes()
 
         def output(arguments, **kwargs):
             if arguments[-1] == 'HEAD': return revision.encode()
@@ -82,6 +84,76 @@ class ExternalTestBundleTests(unittest.TestCase):
         _, _, output = self.source_identity_fixture(dirty=True)
         with patch.object(journey, 'output', side_effect=output), self.assertRaises(ValueError):
             journey.test_source_identity(self.sha, input_root=self.root)
+        _, payloads, output = self.source_identity_fixture()
+        payloads[journey.COLOR_HELPER] = b'other committed color helper'
+        with patch.object(journey, 'output', side_effect=output), self.assertRaises(ValueError):
+            journey.test_source_identity(self.sha, input_root=self.root)
+
+    def color_report(self):
+        report = {'schema': 'nexgenvideo/export-color-diagnostic/1',
+                  'classification': 'native-decoder-color-observation-only', 'readFailures': {},
+                  'commonRec709ComparisonAvailable': True, 'commonOutputColorSpace': 'kCGColorSpaceITUR_709',
+                  'nativeCommonRec709RGBMAE': 2.978622685185185, 'nativeUnmanagedRGBMAE': 15.078940972222222}
+        for role, name, profile in [('source', 'GUI acceptance source.mp4', 'Composite NTSC'),
+                                    ('export', 'user-export.mp4', 'HDTV')]:
+            report[role] = {'filename': name, 'sampleTimeSeconds': 1, 'dimensions': [320, 180],
+                            'hasEffectiveCIColorSpace': True, 'commonRec709Available': True,
+                            'effectiveCIColorSpace': profile}
+        return report
+
+    def test_color_comparison_accepts_same_color_in_distinct_profiles(self):
+        report = self.color_report()
+        self.assertGreater(report['nativeUnmanagedRGBMAE'], 15)
+        self.assertEqual(journey.color_error(report), 2.978622685185185)
+
+    def test_color_comparison_rejects_unavailable_or_inconsistent_measurements(self):
+        for key, value in [('commonRec709ComparisonAvailable', False), ('readFailures', {'source': 'missing'}),
+                           ('commonOutputColorSpace', 'kCGColorSpaceSRGB'), ('schema', 'unbound'),
+                           ('nativeCommonRec709RGBMAE', 15), ('nativeCommonRec709RGBMAE', -1),
+                           ('nativeCommonRec709RGBMAE', float('nan')), ('nativeCommonRec709RGBMAE', float('inf')),
+                           ('nativeCommonRec709RGBMAE', True)]:
+            report = self.color_report()
+            report[key] = value
+            with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                journey.color_error(report)
+        for role in ['source', 'export']:
+            for key, value in [('sampleTimeSeconds', 0.5), ('sampleTimeSeconds', True), ('filename', 'other.mp4'),
+                               ('dimensions', [1920, 1080]), ('hasEffectiveCIColorSpace', False),
+                               ('commonRec709Available', False), ('effectiveCIColorSpace', '')]:
+                report = self.color_report()
+                report[role][key] = value
+                with self.subTest(role=role, key=key), self.assertRaises(ValueError):
+                    journey.color_error(report)
+
+    def test_color_comparison_evidence_binds_helper_report_and_video_bytes(self):
+        (self.root / 'GUI acceptance source.mp4').write_bytes(b'source')
+        (self.root / 'user-export.mp4').write_bytes(b'export')
+        (self.root / 'native-color-check').write_bytes(b'native executable')
+        (self.root / 'native-color.json').write_text(json.dumps(self.color_report()))
+        files = {journey.COLOR_HELPER: 'd' * 64}
+        movie = {'sourceSHA256': journey.sha256(self.root / 'GUI acceptance source.mp4'),
+                 'sha256': journey.sha256(self.root / 'user-export.mp4'), 'sampleTimeSeconds': 1,
+                 'meanAbsoluteChannelError': 2.978622685185185, 'maximumMeanAbsoluteChannelError': 15}
+        movie['colorComparison'] = {'sourceSHA256': movie['sourceSHA256'], 'exportSHA256': movie['sha256'],
+                                    'helperSHA256': files[journey.COLOR_HELPER],
+                                    'reportSHA256': journey.sha256(self.root / 'native-color.json'),
+                                    'executableSHA256': journey.sha256(self.root / 'native-color-check')}
+        journey.validate_color_evidence(self.root, movie, files)
+        changed = copy.deepcopy(movie)
+        changed['colorComparison'].pop('helperSHA256')
+        with self.assertRaises(ValueError):
+            journey.validate_color_evidence(self.root, changed, {})
+        for key in movie['colorComparison']:
+            changed = copy.deepcopy(movie)
+            changed['colorComparison'][key] = 'e' * 64
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                journey.validate_color_evidence(self.root, changed, files)
+        for name in ['GUI acceptance source.mp4', 'user-export.mp4', 'native-color-check', 'native-color.json']:
+            original = (self.root / name).read_bytes()
+            (self.root / name).write_bytes(original + b'changed')
+            with self.subTest(file=name), self.assertRaises(ValueError):
+                journey.validate_color_evidence(self.root, movie, files)
+            (self.root / name).write_bytes(original)
 
     def test_external_continuation_gates_mac_jobs_and_keeps_product_and_test_identity(self):
         workflow = (journey.REPOSITORY / '.github/workflows/external-gui-acceptance.yml').read_text()

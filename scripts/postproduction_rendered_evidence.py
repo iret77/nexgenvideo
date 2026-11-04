@@ -208,7 +208,8 @@ def validate(value, output, scale):
             if (len(texts), len(drags), len(selections)) != ((1, 0, 0) if numeric else (0, 1, 0) if key.startswith("wheel-") else (0, 0, 0) if key.startswith("level-") else (0, 1, 1)): return False, []
             pointers = [row["id"] for row in inputs if row.get("kind") == "pointer" and row.get("id") not in SECTIONS | {"inspector.tab.Adjust"}]
             expected_pointers = (["inspector.adjust.value." + numeric[0] + "." + numeric[1]] if numeric else
-                                 ["inspector.wheel.level." + key.split("-")[1].title()] if key.startswith("level-") else [])
+                                 ["inspector.wheel.level." + key.split("-")[1].title()] if key.startswith("level-") else
+                                 ["inspector." + key.rsplit("-", 1)[0] + ".channel"] if key.startswith(("curve-", "hue-curve-")) else [])
             if pointers != expected_pointers: return False, []
             if sum(row.get("kind") == "pointer" and row.get("id") == "inspector.tab.Adjust" for row in inputs) > (1 if key == CASES[0] else 0): return False, []
             if any(sum(row.get("kind") == "pointer" and row.get("id") == section for row in inputs) > 2 for section in SECTIONS): return False, []
