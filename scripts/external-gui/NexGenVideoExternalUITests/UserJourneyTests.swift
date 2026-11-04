@@ -43,12 +43,14 @@ final class UserJourneyTests: XCTestCase {
 
         try menu("NexGenVideo", "Settings…")
         let scale = try string("scaleLabel")
-        let picker = app.popUpButtons.matching(identifier: "Interface text size").firstMatch
+        let settings = app.windows["Settings"]
+        let pickers = settings.popUpButtons.matching(NSPredicate(format: "label == %@", "Interface text, Interface text size"))
+        try wait("unique Interface text size control") { pickers.count == 1 }
+        let picker = pickers.element(boundBy: 0)
         try click(picker, "Interface text size")
         try click(app.menuItems[scale], scale)
         try wait("selected interface text size") { String(describing: picker.value ?? "").contains(scale) }
         try stage("settings", fields: ["scaleLabel": scale])
-        let settings = app.windows["Settings"]
         try click(settings.buttons[XCUIIdentifierCloseWindow], "native Settings close")
         try wait("Settings closed") { !settings.exists }
 
