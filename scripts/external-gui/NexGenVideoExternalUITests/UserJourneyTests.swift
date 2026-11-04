@@ -101,7 +101,7 @@ final class UserJourneyTests: XCTestCase {
         try stage("source-insert", fields: ["clearRangeEnabled": clearRangeEnabled])
 
         try menu("View", "Edit Workspace")
-        try focusTimeline()
+        try focusTimeline(project)
         try key("a", modifiers: .command)
         for _ in 0..<30 { try key(XCUIKeyboardKey.rightArrow.rawValue) }
         try menu("Edit", "Split at Playhead")
@@ -212,17 +212,36 @@ final class UserJourneyTests: XCTestCase {
             "NexGenVideo — \(project.deletingPathExtension().lastPathComponent)"))
     }
 
-    private func focusTimeline() throws {
-        let header = app.groups["Track controls"]
-        try wait("native timeline track controls") { header.exists && !header.frame.isEmpty }
-        try require(header.frame.height > 48, "Timeline focus point could intersect the 24-point ruler")
-        let point = CGPoint(x: header.frame.maxX + 24, y: header.frame.midY)
-        try require(app.windows.allElementsBoundByIndex.contains { $0.frame.contains(point) },
-                    "Timeline canvas lies outside the visible document")
-        actions.append(["kind": "click", "target": "canvas beside Track controls", "x": point.x, "y": point.y])
-        let coordinate = header.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 0.5))
-            .withOffset(CGVector(dx: 24, dy: 0))
+    private func focusTimeline(_ project: URL) throws {
+        let window = try documentWindow(project)
+        let windowFrame = window.frame
+        let candidates = window.scrollViews.allElementsBoundByIndex.filter { pane in
+            let viewport = pane.frame.intersection(windowFrame)
+            guard viewport.minX.isFinite && viewport.minY.isFinite && viewport.width.isFinite
+                    && viewport.height.isFinite && viewport.width > 48 && viewport.height > 48 else { return false }
+            return pane.scrollBars.allElementsBoundByIndex.contains {
+                let bar = $0.frame.intersection(viewport)
+                return !bar.isEmpty && bar.width.isFinite && bar.height.isFinite && bar.width > bar.height
+            }
+        }
+        try require(candidates.count == 1, "The document has no unique visible timeline scroll area")
+        let canvas = candidates[0]
+        let frame = canvas.frame
+        let viewport = frame.intersection(windowFrame)
+        let point = CGPoint(x: viewport.minX + 24, y: viewport.midY)
+        try require(viewport.contains(point) && point.y > viewport.minY + 24
+                    && canvas.scrollBars.allElementsBoundByIndex.allSatisfy { !$0.frame.contains(point) },
+                    "The timeline focus point intersects its ruler, scrollbars or clipped bounds")
+        actions.append(["kind": "click", "target": "visible timeline canvas", "x": point.x, "y": point.y,
+                        "windowFrame": NSStringFromRect(windowFrame), "canvasFrame": NSStringFromRect(frame),
+                        "visibleViewport": NSStringFromRect(viewport)])
+        let coordinate = canvas.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: point.x - frame.minX, dy: point.y - frame.minY))
         coordinate.click()
+        try wait("timeline preview after canvas focus") {
+            window.staticTexts["Film Preview"].exists && window.staticTexts["Film Preview"].isHittable
+        }
+        _ = try evidence("timeline-canvas-focus")
     }
 
     private func menu(_ title: String, _ item: String) throws {
