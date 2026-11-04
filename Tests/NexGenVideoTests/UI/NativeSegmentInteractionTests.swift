@@ -96,7 +96,7 @@ struct NativeSegmentInteractionTests {
     @Test func emptyAndNonfiniteAccessibilityFramesAreRejected() {
         let fixture = Fixture()
         #expect(fixture.interaction(NSRect(x: 112, y: 0, width: 0, height: 24)) == nil)
-        #expect(fixture.driver.segmentInteractionGeometry(NSRect(x: .nan, y: 0, width: 112, height: 24),
+        #expect(fixture.driver.segmentInteractionGeometry(NSRect(x: CGFloat.nan, y: 0, width: 112, height: 24),
             control: fixture.control, segmentIndex: 1, probe: fixture.probe, in: fixture.window).frame == nil)
     }
 
