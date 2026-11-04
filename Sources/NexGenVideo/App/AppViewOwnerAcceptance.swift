@@ -239,7 +239,7 @@ enum AppViewOwnerAcceptance {
         guard let root = window.contentView else { throw GateBlocked("The accessibility window is unavailable.") }
         var pending: [any NSAccessibilityProtocol] = [root], visited = Set<ObjectIdentifier>()
         var buttons: [[String: Any]] = []
-        while let element = pending.popLast(), visited.count < 2048 {
+        while visited.count < 2048, let element = pending.popLast() {
             guard visited.insert(ObjectIdentifier(element)).inserted else { continue }
             let frame = element.accessibilityFrame()
             if element.accessibilityRole() == .button, frame.width > 0, frame.height > 0, window.frame.contains(frame) {
