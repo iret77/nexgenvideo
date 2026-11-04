@@ -1442,6 +1442,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      pull-requests: read
     uses: ./.github/workflows/external-gui-acceptance.yml
     with:
       runtime_artifact: release-user-journey-input
