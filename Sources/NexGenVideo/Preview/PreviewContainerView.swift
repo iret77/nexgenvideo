@@ -212,11 +212,11 @@ struct PreviewContainerView: View {
 
     private func transportControls(duration: Int, compact: Bool) -> some View {
         HStack(spacing: compact ? AppTheme.Spacing.sm : AppTheme.Spacing.md) {
-            transportButton("backward.end.fill") { seekTo(0) }
+            transportButton("backward.end.fill", label: "Go to Start") { seekTo(0) }
             if !compact {
-                transportButton("backward.frame.fill") { seekTo(playheadFrame - 1) }
+                transportButton("backward.frame.fill", label: "Previous Frame") { seekTo(playheadFrame - 1) }
             }
-            transportButton(editor.isPlaying ? "pause.fill" : "play.fill") {
+            transportButton(editor.isPlaying ? "pause.fill" : "play.fill", label: editor.isPlaying ? "Pause" : "Play") {
                 if isTimeline {
                     editor.togglePlayback()
                 } else {
@@ -224,9 +224,9 @@ struct PreviewContainerView: View {
                 }
             }
             if !compact {
-                transportButton("forward.frame.fill") { seekTo(playheadFrame + 1) }
+                transportButton("forward.frame.fill", label: "Next Frame") { seekTo(playheadFrame + 1) }
             }
-            transportButton("forward.end.fill") { seekTo(duration) }
+            transportButton("forward.end.fill", label: "Go to End") { seekTo(duration) }
         }
     }
 
@@ -254,9 +254,10 @@ struct PreviewContainerView: View {
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .frame(width: AppTheme.IconSize.mdLg, height: AppTheme.IconSize.mdLg)
                 .hoverHighlight()
-                .help("Capture Frame to Media")
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("Capture Frame to Media")
+        .help("Capture Frame to Media")
         .tourAnchor(.screenshotButton)
         .reviewAcceptanceProbe("preview.capture-frame")
     }
@@ -749,7 +750,7 @@ struct PreviewContainerView: View {
         }
     }
 
-    private func transportButton(_ systemName: String, action: @escaping () -> Void) -> some View {
+    private func transportButton(_ systemName: String, label: LocalizedStringResource, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
                 .interfaceFont(size: AppTheme.Typography.ui)
@@ -758,6 +759,8 @@ struct PreviewContainerView: View {
                 .hoverHighlight()
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .help(label)
         .reviewAcceptanceProbe("preview.transport." + systemName)
     }
 }

@@ -153,12 +153,14 @@ enum AppViewOwnerAcceptance {
         try await AppNativeMenuAcceptance.choose(["View", "Maximize Focused Panel"], in: window, driver: driver)
         try await driver.wait("native maximized viewer") { editor.maximizedPanel == .preview }
         try driver.capture("viewer-maximized", target: window)
+        try recordAccessibilityControls("maximized preview accessibility", in: window, driver: driver)
         try driver.pressKey(53, characters: "\u{1b}", in: window)
         try await driver.wait("native maximize restored") { editor.maximizedPanel == nil }
         let frame = editor.currentFrame
         try await AppNativeMenuAcceptance.choose(["View", "Theater"], in: window, driver: driver)
         try await driver.wait("actual theater presentation") { editor.theaterActive }
         try driver.capture("theater", target: window)
+        try recordAccessibilityControls("theater accessibility", in: window, driver: driver)
         try driver.pressKey(53, characters: "\u{1b}", in: window)
         try await driver.wait("theater restores exact editor context") {
             !editor.theaterActive && editor.currentFrame == frame && editor.selectedClipIds == selection
@@ -230,6 +232,14 @@ enum AppViewOwnerAcceptance {
             "maximizedViewerRestored": true, "theaterRestored": true, "fullScreenRestored": true,
             "viewerZoomFit": true, "anchoredCanvasWheel": true, "freePanPreservesOutput": true, "transformAndCropRemainInteractive": true, "frameStepPlayback": true, "timelineZoom": true,
             "unchangedTimelineSHA256": try ExportArtwork.timelineHash(timeline)]
+    }
+
+    private static func recordAccessibilityControls(_ label: String, in window: NSWindow,
+                                                    driver: ProductionVisualSourcesDriver) throws {
+        let buttons = AppNativeMenuAcceptance.buttons(in: window).map {
+            ["label": $0.title, "enabled": $0.enabled, "frame": NSStringFromRect($0.frame)] as [String: Any]
+        }
+        try driver.record(label, fields: ["buttons": buttons])
     }
 
     private static func overlayDrag(clip: Clip, editor: EditorViewModel, window: NSWindow,
