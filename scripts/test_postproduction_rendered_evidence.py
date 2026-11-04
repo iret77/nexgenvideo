@@ -92,6 +92,7 @@ def rendered_fixture(output, scale=1.5):
             effect = "color.curves" if prefix == "curve" else "color.hueCurves"
             params = {"curve" if prefix == "curve" else "curves": {"string": json.dumps(curves)}}
             rows.append({"kind": "segment-accessibility", "id": "inspector." + prefix + ".channel", "item": channel})
+            rows.append({"kind": "pointer", "id": "inspector." + prefix + ".channel"})
             rows.append({"kind": "drag", "id": "inspector." + prefix + ".canvas", "start": [.5, .5], "end": [.5, .75]})
         actual = copy.deepcopy(baseline)
         actual["tracks"][0]["clips"][0]["effects"] = [{"id": key, "type": effect, "enabled": True, "params": params}]
@@ -335,6 +336,8 @@ class RenderedOutputEvidenceTests(unittest.TestCase):
     def test_each_input_family_rejects_extra_mutating_pointer_and_unknown_scroll(self):
         for label in ("color.exposure", "wheel-lift", "level-gain", "curve-R", "hue-curve-Sat"):
             for event in ({"kind": "pointer", "id": "inspector.wheel.level.Gain"},
+                          {"kind": "pointer", "id": "inspector.curve.channel"},
+                          {"kind": "pointer", "id": "inspector.hue-curve.channel"},
                           {"kind": "wheel", "id": "foreign", "delta": 100, "before": [0, 0], "after": [0, 100]}):
                 changed = copy.deepcopy(self.value)
                 before = next(i for i, row in enumerate(changed["interactions"]) if row.get("label") == "rendered adjustment before undo" and row["evidence"]["case"] == label)

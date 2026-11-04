@@ -377,7 +377,7 @@ final class ProductionVisualSourcesDriver {
     func segment(_ id: String, title: String, titles: [String], expected: String? = nil, in target: NSWindow) async throws {
         try await reveal(id, in: target)
         try visible([id], in: target)
-        guard titles.contains(title), let view = probe(id, in: target), let root = target.contentView else {
+        guard let segmentIndex = titles.firstIndex(of: title), let view = probe(id, in: target), let root = target.contentView else {
             throw GateBlocked("The native segmented control is unavailable: " + id)
         }
         let frame = view.convert(view.bounds, to: root)
@@ -386,7 +386,7 @@ final class ProductionVisualSourcesDriver {
                 && control.segmentCount == titles.count
                 && (0..<control.segmentCount).map { control.label(forSegment: $0) } == titles.map(Optional.some)
         }
-        guard controls.count == 1, let control = controls.first, control.isEnabled else {
+        guard controls.count == 1, let control = controls.first, control.isEnabled, control.isEnabled(forSegment: segmentIndex) else {
             throw GateBlocked("The actual segmented control does not match its visible labels: " + id)
         }
         var pending: [any NSAccessibilityProtocol] = [control]
@@ -397,12 +397,16 @@ final class ProductionVisualSourcesDriver {
             guard visited.insert(ObjectIdentifier(element)).inserted else { continue }
             let label = element.accessibilityLabel() ?? "", itemTitle = element.accessibilityTitle() ?? ""
             let screenFrame = element.accessibilityFrame()
-            observed.append(["label": label, "title": itemTitle, "screenFrame": rect(screenFrame)])
+            let enabled = element.isAccessibilityEnabled()
+            let geometry = segmentInteractionGeometry(screenFrame, control: control, segmentIndex: segmentIndex, probe: view, in: target)
+            var observation = geometry.evidence
+            observation["label"] = label
+            observation["title"] = itemTitle
+            observation["accessibilityEnabled"] = enabled
+            observed.append(observation)
             if ObjectIdentifier(element) != ObjectIdentifier(control), [label, itemTitle].contains(title),
-               screenFrame.width > 0 && screenFrame.height > 0 && element.isAccessibilityEnabled() {
-                let local = view.convert(target.convertFromScreen(screenFrame), from: nil)
-                if view.bounds.contains(local), !matches.contains(local) { matches.append(local) }
-            }
+               screenFrame.width > 0 && screenFrame.height > 0 && enabled,
+               let candidate = geometry.frame, !matches.contains(candidate) { matches.append(candidate) }
             pending += (element.accessibilityChildren() ?? []).compactMap { $0 as? any NSAccessibilityProtocol }
         }
         interactions.append(["kind": "segment-accessibility", "id": id, "item": title, "elements": observed])
@@ -412,8 +416,57 @@ final class ProductionVisualSourcesDriver {
         }
         let fraction = NSPoint(x: (selected.midX - view.bounds.minX) / view.bounds.width,
                                y: (selected.midY - view.bounds.minY) / view.bounds.height)
-        try await click(id, in: target, fraction: fraction)
-        try await wait("native segment selected " + title) { self.text(id, in: target) == (expected ?? title) }
+        guard state(id, in: target) == true, fullyVisible(control, root: root),
+              let hit = root.hitTest(root.convert(view.convert(NSPoint(x: selected.midX, y: selected.midY), to: root), to: root.superview)),
+              hit === control || hit.isDescendant(of: control),
+              WorkspaceUIAcceptance.click(identifier: id, in: target, fraction: fraction) == nil else {
+            throw GateBlocked("The actual segment cannot receive pointer input: " + title)
+        }
+        let point = view.convert(NSPoint(x: selected.midX, y: selected.midY), to: root)
+        interactions.append(["kind": "pointer", "id": id, "window": target.windowNumber,
+            "frame": rect(frame), "point": [point.x, point.y], "hitClass": String(describing: type(of: hit))])
+        try persist()
+        try await wait("native segment selected " + title) {
+            control.selectedSegment == segmentIndex && self.text(id, in: target) == (expected ?? title)
+        }
+    }
+
+    func segmentInteractionGeometry(_ screenFrame: NSRect, control: NSSegmentedControl, segmentIndex: Int,
+                                    probe: NSView, in target: NSWindow) -> (frame: NSRect?, evidence: [String: Any]) {
+        var evidence: [String: Any] = ["screenFrame": rect(screenFrame).map { $0.isFinite ? $0 as Any : String(describing: $0) }, "probeBounds": rect(probe.bounds),
+            "controlBounds": rect(control.bounds), "controlVisibleRect": rect(control.visibleRect),
+            "controlFrameInProbe": rect(control.convert(control.bounds, to: probe)), "controlEnabled": control.isEnabled]
+        func rejected(_ reason: String) -> (frame: NSRect?, evidence: [String: Any]) {
+            evidence["rejection"] = reason
+            return (nil, evidence)
+        }
+        guard control.window === target, probe.window === target, let root = target.contentView else {
+            return rejected("different-window")
+        }
+        guard (0..<control.segmentCount).contains(segmentIndex) else { return rejected("invalid-segment") }
+        evidence["segmentEnabled"] = control.isEnabled(forSegment: segmentIndex)
+        guard control.isEnabled, control.isEnabled(forSegment: segmentIndex) else { return rejected("disabled-control-or-segment") }
+        guard [screenFrame.minX, screenFrame.minY, screenFrame.width, screenFrame.height].allSatisfy(\.isFinite),
+              screenFrame.width > 0, screenFrame.height > 0 else { return rejected("invalid-accessibility-frame") }
+        let native = control.convert(target.convertFromScreen(screenFrame), from: nil)
+        // AX frames include native decoration beyond the control's pointer bounds.
+        let interaction = native.intersection(control.bounds)
+        evidence["nativeAccessibilityFrame"] = rect(native)
+        evidence["localFrame"] = rect(probe.convert(native, from: control))
+        guard !interaction.isNull, interaction.width > 0, interaction.height > 0 else { return rejected("no-native-intersection") }
+        let local = probe.convert(interaction, from: control)
+        evidence["nativeInteractionFrame"] = rect(interaction)
+        evidence["interactionFrame"] = rect(local)
+        guard fullyVisible(control, root: root), control.visibleRect.contains(control.bounds) else {
+            return rejected("clipped-or-hidden-native-control")
+        }
+        guard control.bounds.contains(NSPoint(x: native.midX, y: native.midY)) else { return rejected("accessibility-center-outside-control") }
+        guard control.visibleRect.contains(interaction), probe.bounds.contains(local) else { return rejected("interaction-outside-probe") }
+        let hit = root.hitTest(control.convert(NSPoint(x: interaction.midX, y: interaction.midY), to: root.superview))
+        evidence["hitClass"] = hit.map { String(describing: type(of: $0)) } ?? "none"
+        guard let hit, hit === control || hit.isDescendant(of: control) else { return rejected("covered-pointer-target") }
+        evidence["rejection"] = ""
+        return (local, evidence)
     }
 
     func chooseFile(_ url: URL?, in sheet: NSWindow, trigger: String? = "storyboard.native-sketch.choose", returnsToParent: Bool = true) async throws {
