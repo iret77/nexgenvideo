@@ -7,14 +7,20 @@ import Testing
 struct NativeSegmentInteractionTests {
     @MainActor
     private final class Fixture {
+        private final class FlippedProbe: NSView {
+            override var isFlipped: Bool { true }
+        }
+
         let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 600, height: 200),
                               styleMask: [.borderless], backing: .buffered, defer: false)
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 200))
-        let probe = NSView(frame: NSRect(x: 20, y: 20, width: 373, height: 24))
+        let probe: NSView
         let control = NSSegmentedControl(frame: NSRect(x: 151, y: 0, width: 222, height: 24))
         let driver: ProductionVisualSourcesDriver
 
-        init() {
+        init(probeFlipped: Bool = false) {
+            let frame = NSRect(x: 20, y: 20, width: 373, height: 24)
+            probe = probeFlipped ? FlippedProbe(frame: frame) : NSView(frame: frame)
             window.contentView = root
             root.addSubview(probe)
             probe.addSubview(control)
@@ -36,13 +42,20 @@ struct NativeSegmentInteractionTests {
     }
 
     @Test func nativeDecorationOutsideTheProbeUsesActualPointerBounds() throws {
-        let fixture = Fixture()
-        let raw = NSRect(x: 112, y: -1, width: 112, height: 24)
-        #expect(!fixture.probe.bounds.contains(fixture.probe.convert(raw, from: fixture.control)))
-        let interaction = try #require(fixture.interaction(raw))
-        #expect(interaction == NSRect(x: 263, y: 0, width: 110, height: 23))
-        let point = fixture.probe.convert(NSPoint(x: interaction.midX, y: interaction.midY), to: fixture.root)
-        #expect(fixture.root.hitTest(point) === fixture.control)
+        for flipped in [false, true] {
+            let fixture = Fixture(probeFlipped: flipped)
+            #expect(fixture.probe.isFlipped == flipped)
+            #expect(fixture.probe.bounds == NSRect(x: 0, y: 0, width: 373, height: 24))
+            #expect(fixture.control.bounds == NSRect(x: 0, y: 0, width: 222, height: 24))
+            #expect(fixture.control.frame == NSRect(x: 151, y: 0, width: 222, height: 24))
+            let raw = NSRect(x: 112, y: -1, width: 112, height: 24)
+            #expect(!fixture.probe.bounds.contains(fixture.probe.convert(raw, from: fixture.control)))
+            let interaction = try #require(fixture.interaction(raw))
+            let expectedY: CGFloat = fixture.control.isFlipped == fixture.probe.isFlipped ? 0 : 1
+            #expect(interaction == NSRect(x: 263, y: expectedY, width: 110, height: 23))
+            let point = fixture.probe.convert(NSPoint(x: interaction.midX, y: interaction.midY), to: fixture.root)
+            #expect(fixture.root.hitTest(point) === fixture.control)
+        }
     }
 
     @Test func disabledSegmentCannotProduceAnInteractionFrame() {

@@ -449,7 +449,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         )
         stage = 'scripts/stage_test_runtime.sh release "$RUNNER_TEMP/release-tests"'
         test = (
-            'python3 scripts/run_macos_tests.py --cache-path "$NGV_SWIFTPM_CACHE_PATH" \\'
+            'TEST_COMMAND=(python3 scripts/run_macos_tests.py --cache-path "$NGV_SWIFTPM_CACHE_PATH" \\'
         )
         bundle = "scripts/bundle.sh release --sign"
         pack = 'scripts/assemble_ngvpack.sh plugins/musicvideo.json release .build/plugins "${SIGN_IDENTITY:-}"'
@@ -463,11 +463,12 @@ class ReleaseWorkflowTests(unittest.TestCase):
             self.assertNotRegex(by_name[name], r"(?m)^        continue-on-error:")
         self.assertEqual(single_line_run(by_name[build_name]), build)
         self.assertEqual(single_line_run(by_name[stage_name]), stage)
-        self.assertEqual(matching_shell_lines(by_name[test_name], "python3 scripts/run_macos_tests.py "), [test])
+        self.assertEqual(matching_shell_lines(by_name[test_name], "TEST_COMMAND=(python3 scripts/run_macos_tests.py "), [test])
         self.assertIn('-c release --scratch-path "$RUNNER_TEMP/release-tests" --swiftc-flag=-enable-testing',
                       by_name[test_name])
-        self.assertIn('--evidence "$RUNNER_TEMP/release-test-evidence" 2>&1 | tee release-test.log',
+        self.assertIn('--evidence "$RUNNER_TEMP/release-test-evidence")',
                       by_name[test_name])
+        self.assertIn('"${TEST_COMMAND[@]}" 2>&1 | tee release-test.log', by_name[test_name])
         self.assertIn('scripts/verify_swift_test_output.py --log release-test.log --swift-testing-runs 2 --xctest-runs 2',
                       by_name[test_name])
         self.assertIn('name: release-test-evidence', by_name['Upload release test evidence'])
@@ -504,6 +505,50 @@ class ReleaseWorkflowTests(unittest.TestCase):
                 expected = ["build", "--cache-path", "/exact/cache"]
                 if config == "release": expected += ["--jobs", "1"]
                 self.assertEqual(arguments, expected + ["-c", config])
+
+    def test_engine_resume_preserves_fresh_app_commands_and_failure_propagation(self):
+        workflow = self.workflow()
+        steps = {step.get("name"): step for step in workflow["jobs"]["release-build"]["steps"]}
+        shell = steps["Test the exact release configuration"]["run"]
+        for retained, status in (("", 0), ("41830485668", 0), ("41830485668", 7)):
+            with self.subTest(retained=retained, status=status), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                shim = root / "python3"
+                shim.write_text("#!" + sys.executable + "\nimport json, os, sys\n"
+                                "with open(os.environ['ARG_LOG'], 'a') as f: f.write(json.dumps(sys.argv[1:])+'\\n')\n"
+                                "sys.exit(int(os.environ['TEST_STATUS']) if sys.argv[1].endswith('run_macos_tests.py') else 0)\n")
+                shim.chmod(0o755)
+                environment = dict(os.environ, PATH=str(root) + os.pathsep + os.environ["PATH"],
+                                   ARG_LOG=str(root / "args.jsonl"), TEST_STATUS=str(status),
+                                   RELEASE_ENGINE_RUN=retained, RUNNER_TEMP=str(root / "runtime with spaces"),
+                                   NGV_SWIFTPM_CACHE_PATH="dependency cache with spaces")
+                result = subprocess.run(["bash", "-c", shell], env=environment, cwd=root,
+                                        capture_output=True, text=True, timeout=10)
+                calls = [json.loads(line) for line in (root / "args.jsonl").read_text().splitlines()]
+                expected = ["scripts/run_macos_tests.py", "--cache-path", environment["NGV_SWIFTPM_CACHE_PATH"],
+                            "-c", "release", "--scratch-path", environment["RUNNER_TEMP"] + "/release-tests",
+                            "--swiftc-flag=-enable-testing", "--evidence",
+                            environment["RUNNER_TEMP"] + "/release-test-evidence"]
+                if retained:
+                    expected += ["--retained-release-engine", environment["RUNNER_TEMP"] + "/release-engine"]
+                self.assertEqual(calls[0], expected)
+                self.assertEqual(result.returncode, status, result.stderr)
+                self.assertEqual(len(calls), 1 if status else 2)
+                if not status:
+                    self.assertEqual(calls[1], ["scripts/verify_swift_test_output.py", "--log", "release-test.log",
+                                               "--swift-testing-runs", "2", "--xctest-runs", "2"])
+
+        gate = {step.get("name"): step for step in workflow["jobs"]["release-gate"]["steps"]}
+        for changes in ({}, {"ARTIFACT_ONLY": "false"}, {"DRY_RUN": "false"},
+                        {"RELEASE_TEST_RUN": "123"}, {"SIGNED_BUILD_RUN": "123"}, {"NOTARY_PROGRESS_RUN": "123"}):
+            with self.subTest(changes=changes):
+                environment = dict(os.environ, REL_VERSION="1.8.0", ARTIFACT_ONLY="true", DRY_RUN="true",
+                                   RELEASE_ENGINE_RUN="41830485668", RELEASE_TEST_RUN="", SIGNED_BUILD_RUN="",
+                                   NOTARY_PROGRESS_RUN="")
+                environment.update(changes)
+                result = subprocess.run(["bash", "-c", gate["Validate release input"]["run"]],
+                                        env=environment, capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode == 0, not changes, result.stdout + result.stderr)
 
     def test_all_notary_submissions_use_the_retrying_helper(self):
         workflow = WORKFLOW.read_text()
