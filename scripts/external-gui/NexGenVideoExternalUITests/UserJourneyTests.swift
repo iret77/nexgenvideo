@@ -1,5 +1,4 @@
 import AppKit
-import ApplicationServices
 import CryptoKit
 import XCTest
 
@@ -13,6 +12,8 @@ final class UserJourneyTests: XCTestCase {
     private var answeredDiagnosticsConsent = false
 
     private struct Failure: Error { let message: String }
+
+    private var windowButtons: XCUIElementQuery { app.windows.descendants(matching: .button) }
 
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -61,7 +62,10 @@ final class UserJourneyTests: XCTestCase {
         try editor(project)
         let empty = try snapshot("new-project", project: project)
         try require(clips(empty).isEmpty, "The new generic project contains clips")
-        try require(!FileManager.default.fileExists(atPath: project.appendingPathComponent("ngv.json").path),
+        let declaration = try json(project.appendingPathComponent("ngv.json"))
+        try require(UUID(uuidString: declaration["id"] as? String ?? "") != nil,
+                    "The new generic project has no valid project identity")
+        try require(["activePlugin", "activePluginVersion", "activePluginProjectSchema"].allSatisfy { declaration[$0] == nil },
                     "New generic project unexpectedly declares a format pack")
         try stage("new-project")
 
@@ -82,11 +86,11 @@ final class UserJourneyTests: XCTestCase {
         try stage("media-import")
 
         try click(assetLabel, sourceTitle)
-        let clearRange = app.buttons["Clear Range"]
+        let clearRange = windowButtons["Clear Range"]
         try wait("source range controls") { clearRange.exists }
         try require(!clearRange.isEnabled, "A newly imported full source has an enabled Clear Range control")
         let clearRangeEnabled = clearRange.isEnabled
-        try click(app.buttons["Insert"], "Insert")
+        try click(windowButtons["Insert"], "Insert")
         try key("s", modifiers: .command)
         try wait("inserted clip saved") { (try? self.clips(self.timeline(project)).count) == 1 }
         let inserted = try snapshot("source-insert", project: project)
@@ -134,15 +138,17 @@ final class UserJourneyTests: XCTestCase {
         try editor(project)
         let reopened = try snapshot("reopen", project: project)
         try require(NSDictionary(dictionary: reopened).isEqual(to: inserted), "Reopen changed the saved timeline")
+        try require(NSDictionary(dictionary: try json(project.appendingPathComponent("ngv.json"))).isEqual(to: declaration),
+                    "Reopen changed the project identity or format declaration")
         try stage("reopen")
 
         try menu("File", "Export…")
-        let exportStart = app.buttons["export.start"]
+        let exportStart = windowButtons["export.start"]
         try click(exportStart, "Export")
         let movie = URL(fileURLWithPath: try string("movie"))
         try savePanel(name: movie.lastPathComponent, previous: "export.mp4", directory: movie.deletingLastPathComponent())
         try wait("completed export with Reveal enabled", timeout: 180) {
-            let reveal = self.app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@",
+            let reveal = self.windowButtons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@",
                                                                "export.job.", ".reveal"))
             return reveal.allElementsBoundByIndex.contains { $0.exists && $0.isEnabled }
                 && FileManager.default.fileExists(atPath: movie.path)
@@ -168,9 +174,9 @@ final class UserJourneyTests: XCTestCase {
             answeredDiagnosticsConsent = true
         }
         try wait("normal Home window", timeout: 60) { self.app.staticTexts["Welcome to NexGenVideo"].exists }
-        let whatsNew = app.buttons["home.whats-new.continue"]
+        let whatsNew = windowButtons["home.whats-new.continue"]
         if whatsNew.exists { try click(whatsNew, "Continue") }
-        try require(app.buttons["home.settings"].exists, "Home settings entry is absent")
+        try require(windowButtons["home.settings"].exists, "Home settings entry is absent")
     }
 
     private func diagnosticsConsentDialogs() -> [XCUIElement] {
@@ -191,15 +197,19 @@ final class UserJourneyTests: XCTestCase {
 
     private func editor(_ project: URL) throws {
         try wait("normal editor document", timeout: 60) {
-            self.app.windows.allElementsBoundByIndex.contains { $0.label == "NexGenVideo — \(project.deletingPathExtension().lastPathComponent)" }
+            self.projectWindows(project).count == 1
         }
     }
 
     private func documentWindow(_ project: URL) throws -> XCUIElement {
-        let windows = app.windows.matching(NSPredicate(format: "label == %@",
-            "NexGenVideo — \(project.deletingPathExtension().lastPathComponent)"))
+        let windows = projectWindows(project)
         try require(windows.count == 1, "Expected one exact project window")
         return windows.element(boundBy: 0)
+    }
+
+    private func projectWindows(_ project: URL) -> XCUIElementQuery {
+        app.windows.matching(NSPredicate(format: "title == %@",
+            "NexGenVideo — \(project.deletingPathExtension().lastPathComponent)"))
     }
 
     private func focusTimeline() throws {
@@ -220,56 +230,72 @@ final class UserJourneyTests: XCTestCase {
         try click(app.menuItems[item], item)
     }
 
+    private struct TextInputIdentity: Hashable {
+        let kind: String
+        let identifier: String
+        let label: String
+
+        init(_ element: XCUIElement) {
+            kind = String(element.elementType.rawValue)
+            identifier = element.identifier
+            label = element.label
+        }
+    }
+
+    private func visibleInputs(_ query: XCUIElementQuery) -> [XCUIElement] {
+        query.allElementsBoundByIndex.filter { $0.exists && $0.isEnabled && $0.isHittable }
+    }
+
     private func savePanel(name: String, previous: String, directory: URL) throws {
         let values = [previous, (previous as NSString).deletingPathExtension, previous + ".ngv"]
-        let field = app.textFields.matching(NSPredicate(format: "value IN %@", values)).firstMatch
+        let fields = app.textFields.matching(NSPredicate(format: "identifier == %@", "saveAsNameTextField"))
+        try wait("unique native save name") { self.visibleInputs(fields).count == 1 }
+        let visible = visibleInputs(fields)
+        try require(visible.count == 1, "The native save filename is ambiguous or missing")
+        let field = visible[0]
+        try require(values.contains(field.value as? String ?? ""), "The native save filename differs from the expected default")
         try click(field, "save name: " + previous)
-        try key("a", modifiers: .command)
-        try type(name)
+        try key("a", modifiers: .command, in: field)
+        try type(name, in: field)
         try wait("edited native save filename") {
-            guard let focused = self.focusedElement(), let value = self.attribute(kAXValueAttribute, of: focused) as? String else { return false }
+            guard let value = field.value as? String else { return false }
             return value == name || value == (name as NSString).deletingPathExtension
         }
         try goTo(directory)
-        try click(app.buttons["Save"], "Save")
-        try wait("save panel closed") { !self.app.buttons["Save"].exists }
+        try click(windowButtons["Save"], "Save")
+        try wait("save panel closed") { !self.windowButtons["Save"].exists }
     }
 
     private func openPanel(_ file: URL) throws {
-        try wait("native Open button") { self.app.buttons["Open"].exists }
+        try wait("native Open button") { self.windowButtons["Open"].exists }
         try goTo(file)
-        try click(app.buttons["Open"], "Open")
-        try wait("open panel closed") { !self.app.buttons["Open"].exists }
+        try click(windowButtons["Open"], "Open")
+        try wait("open panel closed") { !self.windowButtons["Open"].exists }
     }
 
     private func goTo(_ url: URL) throws {
-        let previous = focusedElement()
+        let previous = Set((visibleInputs(app.textFields) + visibleInputs(app.comboBoxes)).map(TextInputIdentity.init))
         try key("g", modifiers: [.command, .shift])
-        try wait("Go to Folder path editor") {
-            guard let field = self.focusedElement(), previous.map({ CFEqual($0, field) }) != true else { return false }
-            return [kAXTextFieldRole, kAXComboBoxRole].contains(self.attribute(kAXRoleAttribute, of: field) as? String ?? "")
+        var destination: XCUIElement?
+        try wait("unique native Go to Folder editor") {
+            let fields = self.visibleInputs(self.app.textFields).filter { !previous.contains(TextInputIdentity($0)) }
+            let boxes = self.visibleInputs(self.app.comboBoxes).filter { !previous.contains(TextInputIdentity($0)) }
+            let candidates = fields.isEmpty ? boxes : fields
+            guard candidates.count == 1 else { return false }
+            destination = candidates[0]
+            return true
         }
-        guard let field = focusedElement() else { throw Failure(message: "Go to Folder has no focused editor") }
-        try key("a", modifiers: .command)
-        try type(url.path)
-        try wait("typed destination in native path editor") { self.attribute(kAXValueAttribute, of: field) as? String == url.path }
-        try key(XCUIKeyboardKey.return.rawValue)
+        let field = try XCTUnwrap(destination)
+        let identity = TextInputIdentity(field)
+        try click(field, "Go to Folder path editor")
+        try key("a", modifiers: .command, in: field)
+        try type(url.path, in: field)
+        try wait("typed destination in native path editor") { field.value as? String == url.path }
+        try key(XCUIKeyboardKey.return.rawValue, in: field)
         try wait("Go to Folder dismissed") {
-            guard let current = self.focusedElement() else { return true }
-            return !CFEqual(current, field) || self.attribute(kAXValueAttribute, of: current) as? String != url.path
+            let current = self.visibleInputs(self.app.textFields) + self.visibleInputs(self.app.comboBoxes)
+            return !current.contains { TextInputIdentity($0) == identity }
         }
-    }
-
-    private func focusedElement() -> AXUIElement? {
-        guard let value = attribute(kAXFocusedUIElementAttribute, of: AXUIElementCreateSystemWide()),
-              CFGetTypeID(value as CFTypeRef) == AXUIElementGetTypeID() else { return nil }
-        return (value as! AXUIElement)
-    }
-
-    private func attribute(_ name: String, of element: AXUIElement) -> AnyObject? {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success else { return nil }
-        return value
     }
 
     private func click(_ element: XCUIElement, _ name: String) throws {
@@ -278,14 +304,15 @@ final class UserJourneyTests: XCTestCase {
         element.click()
     }
 
-    private func key(_ key: String, modifiers: XCUIElement.KeyModifierFlags = []) throws {
+    private func key(_ key: String, modifiers: XCUIElement.KeyModifierFlags = [], in element: XCUIElement? = nil) throws {
         actions.append(["kind": "key", "key": key, "modifiers": modifiers.rawValue])
-        app.typeKey(key, modifierFlags: modifiers)
+        if let element { element.typeKey(key, modifierFlags: modifiers) }
+        else { app.typeKey(key, modifierFlags: modifiers) }
     }
 
-    private func type(_ text: String) throws {
-        actions.append(["kind": "text", "text": text])
-        app.typeText(text)
+    private func type(_ text: String, in element: XCUIElement) throws {
+        actions.append(["kind": "text", "text": text, "identifier": element.identifier, "label": element.label])
+        element.typeText(text)
     }
 
     private func wait(_ label: String, timeout: TimeInterval = 20, until condition: @escaping () -> Bool) throws {
@@ -328,7 +355,7 @@ final class UserJourneyTests: XCTestCase {
 
     private func snapshot(_ name: String, project: URL) throws -> [String: Any] {
         let value = try timeline(project)
-        for file in ["project.json", "media.json"] {
+        for file in ["project.json", "media.json", "ngv.json"] {
             let source = project.appendingPathComponent(file)
             if FileManager.default.fileExists(atPath: source.path) {
                 try Data(contentsOf: source).write(to: output.appendingPathComponent(name + "-" + file), options: .atomic)
