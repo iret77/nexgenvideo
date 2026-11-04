@@ -478,6 +478,10 @@ enum AppTheme {
         static let blockoutReferenceSize = CGSize(width: 320, height: 180)
         static let workflowSidebarDefault: CGFloat = 260
         static let workflowSidebarMin: CGFloat = 220
+        static let spatialInspectorMinWidth: CGFloat = 260
+        static let spatialViewportMinWidth: CGFloat = 360
+        static let spatialCompactPreviewMaxHeight: CGFloat = 220
+        static let spatialFrameFieldWidth: CGFloat = 64
         static let productionInspectorDefault: CGFloat = 300
         static let productionInspectorMin: CGFloat = 240
         static let storyboardCardMinWidth: CGFloat = 220

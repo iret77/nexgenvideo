@@ -158,7 +158,9 @@ class ExternalTestBundleTests(unittest.TestCase):
     def test_external_continuation_gates_mac_jobs_and_keeps_product_and_test_identity(self):
         workflow = (journey.REPOSITORY / '.github/workflows/external-gui-acceptance.yml').read_text()
         source, build = workflow.split('  test-build:\n', 1)
-        self.assertIn('--candidate-kind signed-journey', source)
+        binding = source.split('      - name: Bind the retained signed DMG and unchanged product inputs\n', 1)[1]
+        self.assertIn("CANDIDATE_KIND: ${{ inputs.scenario == 'transport' && 'signed-transport' || 'signed-journey' }}", binding)
+        self.assertIn('--candidate-kind "$CANDIDATE_KIND"', binding)
         self.assertIn('needs: cases', build)
         self.assertIn('if: inputs.product_source_sha != \'\'', source)
         self.assertIn('artifact.get(\'digest\') != \'sha256:\' + os.environ[\'ORIGINAL_DIGEST\']', workflow)
@@ -183,6 +185,40 @@ class ExternalTestBundleTests(unittest.TestCase):
         revision, _, output = self.source_identity_fixture(['scripts/external-gui/test_bundle.py'])
         with patch.object(journey, 'output', side_effect=output):
             self.assertEqual(journey.test_source_identity(self.sha, input_root=self.root)[0], revision)
+
+    def test_transport_input_guard_preserves_journey_and_requires_exact_complete_fixture(self):
+        text = (journey.REPOSITORY / '.github/workflows/external-gui-acceptance.yml').read_text()
+        step = text.split('      - name: Select independent user journeys\n', 1)[1].split('      - name:', 1)[0]
+        code = step.split("          python3 - <<'PY'\n", 1)[1].split('          PY', 1)[0]
+        code = '\n'.join(line[10:] for line in code.splitlines())
+        defaults = {'INTERFACE_SCALE': 'all', 'ARTIFACT_MODE': 'app', 'EXPECTED_DMG_SHA256': '',
+                    'TEST_BUNDLE_RUN_ID': '', 'RETAINED_SOURCE': '', 'RETAINED_RUN': '',
+                    'RETAINED_ARTIFACT': '', 'RETAINED_DIGEST': '', 'SCENARIO': 'journey',
+                    'VERIFIED_PR_RUN': '', 'FIXTURE_ARTIFACT': '', 'FIXTURE_SHA': ''}
+        signed = {'ARTIFACT_MODE': 'dmg', 'EXPECTED_DMG_SHA256': '1' * 64,
+                  'RETAINED_SOURCE': self.sha, 'RETAINED_RUN': '12', 'RETAINED_ARTIFACT': '34', 'RETAINED_DIGEST': '2' * 64}
+        transport = signed | {'SCENARIO': 'transport', 'INTERFACE_SCALE': '1.5',
+                              'VERIFIED_PR_RUN': '56', 'FIXTURE_ARTIFACT': '78', 'FIXTURE_SHA': '3' * 64}
+        output = self.root / 'guard-output'
+        for values, expected in [({}, ['1', '1.25', '1.5']), (signed, ['1', '1.25', '1.5']), (transport, ['1.5'])]:
+            output.write_text('')
+            result = subprocess.run([sys.executable, '-c', code], capture_output=True,
+                                    env=os.environ | defaults | values | {'GITHUB_OUTPUT': str(output)})
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
+            self.assertEqual(json.loads(output.read_text().removeprefix('scales=')), expected)
+        invalid = [transport | {key: ''} for key in ('EXPECTED_DMG_SHA256', 'RETAINED_SOURCE', 'RETAINED_RUN',
+                   'RETAINED_ARTIFACT', 'RETAINED_DIGEST', 'VERIFIED_PR_RUN', 'FIXTURE_ARTIFACT', 'FIXTURE_SHA')]
+        invalid += [transport | {'INTERFACE_SCALE': scale} for scale in ('all', '1', '1.25')]
+        invalid += [transport | {key: value} for key, value in [('ARTIFACT_MODE', 'app'), ('SCENARIO', 'other'),
+                    ('VERIFIED_PR_RUN', '0'), ('FIXTURE_ARTIFACT', '-1'), ('FIXTURE_SHA', 'invalid')]]
+        invalid += [signed | {key: '1'} for key in ('FIXTURE_ARTIFACT', 'FIXTURE_SHA')]
+        for values in invalid:
+            output.write_text('')
+            result = subprocess.run([sys.executable, '-c', code], capture_output=True,
+                                    env=os.environ | defaults | values | {'GITHUB_OUTPUT': str(output)})
+            with self.subTest(invalid=values):
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(output.read_text(), '')
 
     def test_independent_runner_rejects_the_observed_file_access_sandbox(self):
         products = self.root / 'Products'

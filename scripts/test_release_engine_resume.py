@@ -169,18 +169,74 @@ class ReleaseEngineResumeTests(unittest.TestCase):
             changed["phases"][1]["reusedFrom"]["sourceSHA"] = SOURCE
             with self.assertRaises(ValueError): resume.verify_completed_suite(changed, SOURCE, RUN)
 
-    def test_source_closure_rejects_engine_dependency_runtime_and_dirty_inputs(self):
+    def source_closure(self, changed, dirty="", parser_changed=False, object_changed=None, version_bump=False):
         parser = "def swift_events(path, module):\n    return {}\n"
-        def invoke(changed, dirty="", after=parser):
-            with patch.object(resume, "command", side_effect=[SOURCE, changed, dirty, parser]), \
-                    patch.object(resume.subprocess, "run"), patch.object(Path, "read_text", return_value=after):
-                return resume.verify_sources(SOURCE)
-        self.assertEqual(invoke(resume.FIXTURE), [resume.FIXTURE])
+        def output(*args):
+            if args == ("git", "rev-parse", "HEAD"):
+                return SOURCE
+            if args == ("git", "diff", "--name-only", "--no-renames", resume.SOURCE, SOURCE):
+                return changed
+            if args == ("git", "diff", "HEAD", "--name-only", "--no-renames"):
+                return dirty
+            if args == ("git", "show", resume.SOURCE + ":scripts/run_macos_tests.py"):
+                return parser
+            if args[:2] == ("git", "rev-parse"):
+                revision, path = args[2].split(":", 1)
+                self.assertIn(revision, (resume.SOURCE, SOURCE))
+                return "0" * 40 if (revision, path) == object_changed else resume.ENGINE_SOURCE_OBJECTS[path]
+            self.fail("Unexpected source query: " + repr(args))
+        after = parser.replace("{}", "{'changed': True}") if parser_changed else parser
+        with patch.object(resume, "command", side_effect=output), patch.object(resume.subprocess, "run"), \
+                patch.object(Path, "read_text", return_value=after):
+            return resume.verify_sources(SOURCE, version_bump)
+
+    def test_source_closure_rejects_engine_dependency_runtime_and_dirty_inputs(self):
+        self.assertEqual(self.source_closure(resume.FIXTURE), [resume.FIXTURE])
         for path in ("Engine/Package.swift", "Package.resolved", "Runtime/bpy/runtime-lock.json",
                      "Sources/MusicvideoPlugin/Pack.swift", "Sources/NexGenVideo/App/AppViewOwnerAcceptance.swift"):
-            with self.subTest(path=path), self.assertRaises(ValueError): invoke(resume.FIXTURE + "\n" + path)
-        with self.assertRaises(ValueError): invoke(resume.FIXTURE, resume.FIXTURE)
-        with self.assertRaises(ValueError): invoke(resume.FIXTURE, after=parser.replace("{}", "{'changed': True}"))
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                self.source_closure(resume.FIXTURE + "\n" + path)
+        with self.assertRaises(ValueError): self.source_closure(resume.FIXTURE, resume.FIXTURE)
+        with self.assertRaises(ValueError): self.source_closure(resume.FIXTURE, parser_changed=True)
+        plist = "Sources/NexGenVideo/Resources/Info.plist"
+        with self.assertRaises(ValueError): self.source_closure(resume.FIXTURE, plist)
+        self.assertEqual(self.source_closure(resume.FIXTURE, plist, version_bump=True), [resume.FIXTURE])
+        with self.assertRaises(ValueError):
+            self.source_closure(resume.FIXTURE, plist + "\nEngine/Package.swift", version_bump=True)
+
+    def test_reviewed_app_ui_and_ci_changes_require_unchanged_engine_dependency_objects(self):
+        changed = [resume.FIXTURE, "Sources/NexGenVideo/ThreeD/SpatialSceneView.swift",
+                   "Sources/NexGenVideo/UI/AppTheme.swift", "scripts/external-gui/transport.py",
+                   "scripts/test_verified_pr_source_checks.py"]
+        self.assertEqual(self.source_closure("\n".join(changed)), changed)
+        paths = ("Engine", "Package.swift", "Package.resolved", "Tests/NexGenEngineTests",
+                 "Sources/MusicvideoPlugin", "Sources/FixtureFictionPlugin",
+                 "docs/migrations/ai-film-production-d07a1ce5.inventory.json",
+                 "Runtime", "Vendor", "scripts/stage_test_runtime.sh", "scripts/verify_swift_test_output.py")
+        for revision in (resume.SOURCE, SOURCE):
+            for path in paths:
+                with self.subTest(revision=revision, path=path), self.assertRaises(ValueError):
+                    self.source_closure("\n".join(changed), object_changed=(revision, path))
+
+    def test_extended_app_receipt_requires_exact_engine_dependency_closure_and_preserves_legacy(self):
+        receipt = self.receipt()
+        with self.phase_pin(receipt):
+            resume.verify_receipt(receipt, SOURCE, RUN)
+            receipt["changedPaths"].append("Sources/NexGenVideo/ThreeD/SpatialSceneView.swift")
+            with self.assertRaises(ValueError): resume.verify_receipt(receipt, SOURCE, RUN)
+            receipt["engineSourceObjects"] = dict(resume.ENGINE_SOURCE_OBJECTS)
+            resume.verify_receipt(receipt, SOURCE, RUN)
+            for path in resume.ENGINE_SOURCE_OBJECTS:
+                changed = copy.deepcopy(receipt)
+                changed["engineSourceObjects"][path] = "0" * 40
+                with self.subTest(path=path), self.assertRaises(ValueError):
+                    resume.verify_receipt(changed, SOURCE, RUN)
+            changed = copy.deepcopy(receipt)
+            changed["engineSourceObjects"].pop("Package.swift")
+            with self.assertRaises(ValueError): resume.verify_receipt(changed, SOURCE, RUN)
+            changed = copy.deepcopy(receipt)
+            changed["engineSourceObjects"]["Sources/NexGenVideo"] = "0" * 40
+            with self.assertRaises(ValueError): resume.verify_receipt(changed, SOURCE, RUN)
 
     def test_signed_input_cannot_disguise_retained_tests_as_fresh(self):
         receipt = self.receipt()

@@ -24,12 +24,12 @@ enum ProductionSceneUIAcceptance {
                 try await driver.fill("spatial.location.name", value: name, in: window)
                 var previous = driver.text("spatial.scene", in: window)
                 try await driver.click("spatial.location.create", in: window)
-                try await revision(after: previous, driver: driver)
+                try await revision(after: previous, action: "create location", scene: name, root: root, driver: driver)
                 let empty = try await read(name: name, root: root)
                 guard empty.1.snapshot.objects.isEmpty else { throw failed("The new native location did not start empty.") }
                 previous = driver.text("spatial.scene", in: window)
                 try await driver.menu("spatial.object.add", title: "Cube", in: window)
-                try await revision(after: previous, driver: driver)
+                try await revision(after: previous, action: "add cube", scene: name, root: root, driver: driver)
                 let created = try await read(name: name, root: root)
                 guard created.1.snapshot.objects.count == 1, let cube = created.1.snapshot.objects.first else {
                     throw failed("The Add object menu did not create exactly one real cube.")
@@ -38,20 +38,20 @@ enum ProductionSceneUIAcceptance {
                 try await driver.fill("spatial.position.0", value: "0.5", in: window)
                 previous = driver.text("spatial.scene", in: window)
                 try await driver.click("spatial.transform.apply", in: window)
-                try await revision(after: previous, driver: driver)
+                try await revision(after: previous, action: "apply transform", scene: name, root: root, driver: driver)
                 let moved = try await read(name: name, root: root)
                 guard let movedCube = moved.1.snapshot.objects.first(where: { $0.id == cube.id }),
                       abs(movedCube.matrixWorld[3] - 0.5) < 0.000001 else { throw failed("The typed transform did not change the actual Blender object.") }
                 previous = driver.text("spatial.scene", in: window)
                 try await driver.click("spatial.undo", in: window)
-                try await revision(after: previous, driver: driver)
+                try await revision(after: previous, action: "undo", scene: name, root: root, driver: driver)
                 let undone = try await read(name: name, root: root)
                 guard undone.1.snapshot.objects.first(where: { $0.id == cube.id })?.matrixWorld == cube.matrixWorld else {
                     throw failed("Native scene Undo did not restore the preceding object matrix.")
                 }
                 previous = driver.text("spatial.scene", in: window)
                 try await driver.click("spatial.redo", in: window)
-                try await revision(after: previous, driver: driver)
+                try await revision(after: previous, action: "redo", scene: name, root: root, driver: driver)
                 let restored = try await read(name: name, root: root)
                 guard restored.1.snapshot.objects.first(where: { $0.id == cube.id })?.matrixWorld == movedCube.matrixWorld else {
                     throw failed("Native scene Redo did not restore the actual transform.")
@@ -74,7 +74,7 @@ enum ProductionSceneUIAcceptance {
                 try await driver.wait("native camera keyframe checked") { driver.state("spatial.camera.keyframe", in: window) == true }
                 previous = driver.text("spatial.scene", in: window)
                 try await driver.click("spatial.camera.apply", in: window)
-                try await revision(after: previous, driver: driver)
+                try await revision(after: previous, action: "save camera", scene: name, root: root, driver: driver)
                 let cameraRevision = try await read(name: name, root: root)
                 guard cameraRevision.1.snapshot.cameras.count == 1, let camera = cameraRevision.1.snapshot.cameras.first,
                       camera.name == "Wide camera", camera.width == 128, camera.height == 128,
@@ -84,6 +84,7 @@ enum ProductionSceneUIAcceptance {
                 try await driver.wait("actual camera frame visible", seconds: 90) {
                     driver.state("spatial.scene", in: window) == true && driver.text("spatial.camera.rendered", in: window) != nil
                 }
+                try await driver.reveal("spatial.camera.return", in: window)
                 try await driver.reveal("spatial.camera.rendered", in: window)
                 try driver.visible(["spatial.camera.rendered", "spatial.camera.return"], in: window)
                 try driver.capture("camera-rendered", target: window)
@@ -125,12 +126,48 @@ enum ProductionSceneUIAcceptance {
         }.value
     }
 
-    private static func revision(after previous: String?, driver: ProductionVisualSourcesDriver) async throws {
-        try await driver.wait("native Blender revision committed", seconds: 90) {
-            driver.text("spatial.error", in: driver.window) != nil || (driver.state("spatial.scene", in: driver.window) == true
-                && driver.text("spatial.scene", in: driver.window) != previous)
+    private static func revision(after previous: String?, action: String, scene: String, root: URL,
+                                 driver: ProductionVisualSourcesDriver) async throws {
+        do {
+            try await driver.wait("native scene revision committed after " + action, seconds: 90) {
+                driver.text("spatial.error", in: driver.window) != nil || (driver.state("spatial.scene", in: driver.window) == true
+                    && driver.text("spatial.scene", in: driver.window) != previous)
+            }
+        } catch {
+            try? await revisionEvidence(action: action, scene: scene, previous: previous, root: root, driver: driver, completed: false)
+            throw error
         }
-        if let error = driver.text("spatial.error", in: driver.window) { throw failed(error) }
+        if let error = driver.text("spatial.error", in: driver.window) {
+            try? await revisionEvidence(action: action, scene: scene, previous: previous, root: root, driver: driver, completed: false)
+            throw failed(error)
+        }
+        try await revisionEvidence(action: action, scene: scene, previous: previous, root: root, driver: driver, completed: true)
+    }
+
+    private static func revisionEvidence(action: String, scene: String, previous: String?, root: URL,
+                                         driver: ProductionVisualSourcesDriver, completed: Bool) async throws {
+        let canonical = await Task.detached { () -> [String: String] in
+            do {
+                guard let head = try SpatialSceneStore.index(in: root).scenes.first(where: { $0.name == scene }) else {
+                    return ["error": "The named scene has no canonical head."]
+                }
+                return ["sceneID": head.id.uuidString, "revision": head.revision.uuidString,
+                        "manifestSHA256": head.manifestSHA256]
+            } catch { return ["error": error.localizedDescription] }
+        }.value
+        let probe = driver.text("spatial.scene", in: driver.window)
+        try driver.record("native scene revision observation", fields: ["action": action, "scene": scene,
+            "waitCompleted": completed, "previousProbe": previous as Any? ?? NSNull(),
+            "currentProbe": probe as Any? ?? NSNull(), "canonical": canonical,
+            "ready": driver.state("spatial.scene", in: driver.window) as Any? ?? NSNull(),
+            "canUndo": driver.state("spatial.undo", in: driver.window) as Any? ?? NSNull(),
+            "canRedo": driver.state("spatial.redo", in: driver.window) as Any? ?? NSNull(),
+            "sceneError": driver.text("spatial.error", in: driver.window) as Any? ?? NSNull()])
+        if completed {
+            guard canonical["error"] == nil, canonical["revision"] == probe else {
+                throw failed("The visible scene revision differs from its canonical head after " + action + ".")
+            }
+        }
     }
 
     private static func failed(_ message: String) -> GateBlocked { GateBlocked("Native scene acceptance: " + message) }

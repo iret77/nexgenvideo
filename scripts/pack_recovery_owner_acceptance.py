@@ -13,6 +13,7 @@ import uuid
 from urllib.parse import unquote, urlparse
 
 from settings_owner_acceptance import pack_metadata
+from release_acceptance_identity import after_case, before_case, installed_target
 from prepare_settings_pack_artifacts import PREVIEW_PROFILE, PREVIEW_RELEASE, PREVIEW_COMMIT, STABLE_PROFILE, require_baseline
 
 
@@ -495,10 +496,14 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--baseline-pack-zip", type=Path, required=True)
     parser.add_argument("--target-pack-zip", type=Path, required=True)
+    parser.add_argument("--target-pack-root", type=Path)
+    parser.add_argument("--runtime-identity", type=Path)
     parser.add_argument("--scale", type=float, choices=(1, 1.25, 1.5), default=1)
     parser.add_argument("--scenario", choices=(STABLE_PROFILE, PREVIEW_PROFILE), default=STABLE_PROFILE)
     parser.add_argument("--pack-pair", type=Path)
     args = parser.parse_args()
+    if args.runtime_identity is not None and args.target_pack_root is None:
+        parser.error("A retained release identity requires its exact target pack tree")
     baseline, target = pack_metadata(args.baseline_pack_zip), pack_metadata(args.target_pack_zip)
     if baseline["id"] != target["id"] or target["id"] != "musicvideo" or target["projectSchema"] != "musicvideo/3.0.0":
         raise ValueError("Supply the actual legacy Musicvideo ZIP and current V2 Musicvideo ZIP")
@@ -526,6 +531,10 @@ def main():
     deadline = time.monotonic() + timeout
     owner = str(uuid.uuid4())
     executable = args.executable.resolve(strict=True)
+    before = before_case(executable, args.target_pack_root, args.runtime_identity) if args.target_pack_root else None
+    if before is not None:
+        before.update(targetArchiveSHA256=digest(args.target_pack_zip), baselineArchiveSHA256=digest(args.baseline_pack_zip))
+        (output / "byte-binding-before.json").write_text(json.dumps(before, indent=2) + "\n")
     with (output / "pack-recovery.log").open("w") as log:
         process = subprocess.Popen([str(executable), "--ngv-pack-recovery-owner=" + owner,
                                     "-ApplePersistenceIgnoreState", "YES", "-interfaceTextScale", str(args.scale)],
@@ -555,9 +564,18 @@ def main():
             if owned_process_alive(resumed, executable, owner):
                 raise TimeoutError("The actual resumed Recovery process did not exit before validation")
             result = validate(output, expected_scale=args.scale, expected_scenario=args.scenario)
+            if before is not None:
+                result["actualPackTree"] = installed_target(home, target, before['before']['packTreeSHA256'])
             (output / "pack-recovery-validation.json").write_text(json.dumps(result, indent=2))
         finally:
-            cleanup_owned(output, process, executable, owner)
+            try:
+                cleanup_owned(output, process, executable, owner)
+            finally:
+                if before is not None:
+                    after_case(executable, args.target_pack_root, before, output / "byte-binding-after.json")
+                    if (digest(args.target_pack_zip) != before['targetArchiveSHA256']
+                            or digest(args.baseline_pack_zip) != before['baselineArchiveSHA256']):
+                        raise ValueError("Recovery changed its exact input pack archives")
 
 
 if __name__ == "__main__":

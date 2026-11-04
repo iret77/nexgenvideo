@@ -12,7 +12,7 @@ from verify_diagnostic_candidate import verify_signed_workspace
 from workspace_native_ci import extract_transfer, runtime_receipt
 
 
-def bind(run_id, source_sha, artifact_id, digest):
+def bind(run_id, source_sha, artifact_id, digest, *, verifier=None):
     if (run_id <= 0 or artifact_id <= 0 or not re.fullmatch('[0-9a-f]{40}', source_sha)
             or not re.fullmatch('[0-9a-f]{64}', digest)):
         raise ValueError('A complete original release runtime identity is required')
@@ -25,8 +25,8 @@ def bind(run_id, source_sha, artifact_id, digest):
         raise ValueError('Original release has no execution attempt')
     jobs = api(f'/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100')
     artifact = api('/actions/artifacts/' + str(artifact_id))
-    verify_signed_workspace(run, jobs, artifact, run_id, source_sha, artifact_id, digest,
-                            list(filter(None, changed.split('\0'))))
+    (verifier or verify_signed_workspace)(run, jobs, artifact, run_id, source_sha, artifact_id, digest,
+                                         list(filter(None, changed.split('\0'))))
     harness = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
     producer = next(job for job in jobs['jobs'] if job['name'] == 'release')
     proof = dict(schema='nexgenvideo/retained-release-runtime/1', productSourceSHA=source_sha,

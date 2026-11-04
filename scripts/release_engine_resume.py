@@ -27,11 +27,49 @@ EVENT_DIGEST = "2f872313ee84af000898df20f29be6a62154c87524cce06d8059a089d27206ed
 CONSOLE_DIGEST = "a97b3156108f080b112d3ce9019985bceebed8d2a16bf7e81024b77fff9f9ac9"
 NAME = "engine-swift-testing"
 FIXTURE = "Tests/NexGenVideoTests/UI/NativeSegmentInteractionTests.swift"
-PATHS = {
+ORIGINAL_PATHS = {
     FIXTURE, ".github/workflows/release.yml", "scripts/release_engine_resume.py",
     "scripts/test_release_engine_resume.py", "scripts/run_macos_tests.py",
     "scripts/test_run_macos_tests.py", "scripts/release_checkpoint.py",
     "scripts/test_release_recovery.py", "scripts/test_release_workflow.py",
+}
+PATHS = ORIGINAL_PATHS | {
+    "Sources/NexGenVideo/App/ProductionSceneUIAcceptance.swift",
+    "Sources/NexGenVideo/App/ProductionVisualSourcesDriver.swift",
+    "Sources/NexGenVideo/ThreeD/SpatialSceneView.swift", "Sources/NexGenVideo/UI/AppTheme.swift",
+    ".github/workflows/ci-batch.yml", ".github/workflows/diagnostic-acceptance.yml",
+    ".github/workflows/external-gui-acceptance.yml", ".github/workflows/settings-owner-acceptance.yml",
+    "scripts/external-gui/NexGenVideoExternalUITests/UserJourneyTests.swift",
+    "scripts/external-gui/acceptance.py", "scripts/external-gui/transport.py",
+    "scripts/external-gui/transport_fixture.py", "scripts/pack_recovery_owner_acceptance.py",
+    "scripts/release_acceptance_identity.py", "scripts/retained_release_runtime.py",
+    "scripts/settings_owner_acceptance.py", "scripts/test_ci_workflow.py",
+    "scripts/test_external_gui_test_bundle.py", "scripts/test_external_transport.py",
+    "scripts/test_release_acceptance_identity.py", "scripts/verify_diagnostic_candidate.py",
+    "scripts/test_verified_pr_source_checks.py",
+}
+ENGINE_SOURCE_OBJECTS = {
+    "Engine": "29cfed623d13e6d84d5822a30b98e088fc123c3f",
+    "Package.swift": "37f605bfb8cdccc48821b39484c819ba3e5eff43",
+    "Package.resolved": "530cdaed0a29a65181353d86d05cf9dc04890cc2",
+    "Tests/NexGenEngineTests": "bbb8baff2d9dcfb569f5828fc0de5c36a0589826",
+    "Sources/MusicvideoPlugin": "2eeef41c978f57342cc9534defec31ab5fba39ea",
+    "Sources/FixtureFictionPlugin": "ec63ab91074a258add456a1059049779b338cd7d",
+    "Sources/NexGenVideo/Resources/AppResources.txt": "ed934b45d5a6ee37540078228114536ea83d1c98",
+    "docs/migrations/ai-film-production-d07a1ce5.inventory.json": "89d5b2ba08800cf90ba879b824db1e7ab951bc34",
+    "Runtime": "910b87b08a3a8c976e0f2502580c843b0df74154",
+    "Metal": "4fddc68f15d9ff70104869a2dffd8e5956e9b5d8",
+    "Vendor": "51e93c100e00dcd196edac0e70e1af921d52055a",
+    "plugins": "b75e017d3145010368ae417bc410574f3f0300c1",
+    "Tests/AppKitTestHost": "087f895d5e7243a0cbf4bf8b7775f974cffdc2c3",
+    "Tests/AppKitTestHostSupport": "180f486523e826b8b462011d42bf758fdc4e1d6f",
+    "Sources/BpyRuntimeProtocol": "4bf768314bb52830a55da47d6a25ff36e9f2cf94",
+    "Sources/BpySupervisorPOSIX": "f1469002cfa83206e5d74aa6c71aba4aab365f6b",
+    "Sources/NexGenVideoBpyService": "b7d478b9196a2bc0c2eb4b4876c012f44a4045d1",
+    "Sources/NexGenVideoBpyStorage": "b9bf2fa702b820f2eb88f95591ad9eb76c7dc776",
+    "Sources/NexGenVideoBpySupervisor": "27230f5bbb93ad75eebf69bc6520c951213dc800",
+    "scripts/stage_test_runtime.sh": "7f83d8afe0c3a769c5f8d67e2ce59a041ec831dd",
+    "scripts/verify_swift_test_output.py": "5b8993b80a71ad03807b8116b2bc50fc795a90e2",
 }
 
 
@@ -45,6 +83,13 @@ def event_parser(source):
     return ast.dump(function, include_attributes=False)
 
 
+def verify_engine_source_objects(head):
+    for path, pinned in ENGINE_SOURCE_OBJECTS.items():
+        require(command("git", "rev-parse", SOURCE + ":" + path) == pinned
+                and command("git", "rev-parse", head + ":" + path) == pinned,
+                "Retained Engine dependency object changed: " + path)
+
+
 def verify_sources(head, version_bump=False):
     require(re.fullmatch(r"[a-f0-9]{40}", head) and command("git", "rev-parse", "HEAD") == head,
             "Release Engine resume checkout differs")
@@ -52,10 +97,11 @@ def verify_sources(head, version_bump=False):
                    stdin=subprocess.DEVNULL, check=True, timeout=30)
     changed = command("git", "diff", "--name-only", "--no-renames", SOURCE, head).splitlines()
     require(FIXTURE in changed and set(changed) <= PATHS,
-            "Engine, pack, native app, dependency, runtime or unrelated source changed")
+            "Unreviewed Engine, pack, app, dependency, runtime or unrelated source changed")
     dirty = command("git", "diff", "HEAD", "--name-only", "--no-renames").splitlines()
     require(set(dirty) <= ({"Sources/NexGenVideo/Resources/Info.plist"} if version_bump else set()),
             "Engine resume tracked inputs are dirty")
+    verify_engine_source_objects(head)
     before = command("git", "show", SOURCE + ":scripts/run_macos_tests.py")
     require(event_parser(before) == event_parser(Path("scripts/run_macos_tests.py").read_text()),
             "The retained native event verification contract changed")
@@ -164,7 +210,8 @@ def prepare(run_id, root):
                "runID": int(os.environ["GITHUB_RUN_ID"]), "attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
                "originalSourceSHA": SOURCE, "originalRun": original, "originalJobs": jobs,
                "artifact": artifact, "artifactSHA256": DIGEST, "originalLogSHA256": LOG_DIGEST,
-               "changedPaths": changed, "toolchain": toolchain(raw), "proof": proof,
+               "changedPaths": changed, "engineSourceObjects": ENGINE_SOURCE_OBJECTS,
+               "toolchain": toolchain(raw), "proof": proof,
                "acquiredAt": datetime.now(timezone.utc).isoformat()}
     verify_receipt(receipt, head, int(os.environ["GITHUB_RUN_ID"]))
     write(root / "receipt.json", receipt)
@@ -199,6 +246,12 @@ def verify_receipt(receipt, source, run_id):
             and phase.get("framework", {}).get("passed") is True, "Engine resume phase proof differs")
     require(FIXTURE in receipt.get("changedPaths", []) and set(receipt["changedPaths"]) <= PATHS,
             "Engine resume source closure differs")
+    if "engineSourceObjects" in receipt:
+        require(receipt["engineSourceObjects"] == ENGINE_SOURCE_OBJECTS,
+                "Retained Engine dependency receipt differs")
+    else:
+        require(set(receipt["changedPaths"]) <= ORIGINAL_PATHS,
+                "Extended App/CI continuation requires exact Engine dependency objects")
 
 
 def verify(root, version_bump=False):
