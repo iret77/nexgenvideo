@@ -1,0 +1,176 @@
+name: Observe native color interpretation of retained export evidence
+
+on:
+  workflow_call:
+    inputs:
+      producer_run_id:
+        type: string
+        required: true
+      producer_source_sha:
+        type: string
+        required: true
+      product_source_sha:
+        type: string
+        required: true
+      evidence_artifact_id:
+        type: string
+        required: true
+      evidence_artifact_sha256:
+        type: string
+        required: true
+      expected_dmg_sha256:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: export-color-${{ inputs.producer_run_id }}
+  cancel-in-progress: false
+
+jobs:
+  diagnostic:
+    runs-on: macrunner
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      COLOR_PRODUCER_RUN: ${{ inputs.producer_run_id }}
+      COLOR_PRODUCER_SOURCE: ${{ inputs.producer_source_sha }}
+      COLOR_PRODUCT_SOURCE: ${{ inputs.product_source_sha }}
+      COLOR_EVIDENCE_ID: ${{ inputs.evidence_artifact_id }}
+      COLOR_EVIDENCE_SHA256: ${{ inputs.evidence_artifact_sha256 }}
+      COLOR_DMG_SHA256: ${{ inputs.expected_dmg_sha256 }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Bind the actual failed pixel comparison and retained source/export bytes
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, re, subprocess, zipfile
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'export-color'
+          root.mkdir()
+          def api(path):
+              return json.loads(subprocess.check_output(['gh', 'api', 'repos/iret77/nexgenvideo' + path],
+                  stdin=subprocess.DEVNULL, timeout=30))
+          def sha(data): return hashlib.sha256(data).hexdigest()
+          run_id, artifact_id = int(os.environ['COLOR_PRODUCER_RUN']), int(os.environ['COLOR_EVIDENCE_ID'])
+          source, product = os.environ['COLOR_PRODUCER_SOURCE'], os.environ['COLOR_PRODUCT_SOURCE']
+          digest, dmg = os.environ['COLOR_EVIDENCE_SHA256'], os.environ['COLOR_DMG_SHA256']
+          assert run_id > 0 and artifact_id > 0
+          assert all(re.fullmatch('[0-9a-f]{40}', x) for x in [source, product])
+          assert all(re.fullmatch('[0-9a-f]{64}', x) for x in [digest, dmg])
+          subprocess.run(['git', 'merge-base', '--is-ancestor', source, os.environ['GITHUB_SHA']], check=True)
+          allowed = {'.github/workflows/diagnostic-acceptance.yml', '.github/workflows/export-color-diagnostic.yml',
+                     'scripts/export_color_diagnostic.swift'}
+          changed = subprocess.check_output(['git', 'diff', '--name-only', source, os.environ['GITHUB_SHA']], text=True).splitlines()
+          assert set(changed) <= allowed, 'App or existing acceptance inputs changed'
+          run = api('/actions/runs/' + str(run_id))
+          assert run['id'] == run_id and run['head_sha'] == source and run['run_attempt'] == 1
+          assert run['status'] == 'completed' and run['conclusion'] == 'failure'
+          assert run['path'] == '.github/workflows/diagnostic-acceptance.yml' and run['workflow_id'] == 355242770
+          assert run['repository']['full_name'] == 'iret77/nexgenvideo' and run['event'] == 'workflow_dispatch'
+          jobs = api('/actions/runs/' + str(run_id) + '/jobs?per_page=100')['jobs']
+          gui = [j for j in jobs if j['name'] == 'signed-journey / Normal app at 1 text size']
+          assert len(gui) == 1 and gui[0]['conclusion'] == 'failure' and gui[0]['labels'] == ['macrunner']
+          artifact = api('/actions/artifacts/' + str(artifact_id))
+          assert artifact['id'] == artifact_id and artifact['name'] == 'external-gui-dmg-1-1' and not artifact['expired']
+          assert artifact['workflow_run']['id'] == run_id and artifact['workflow_run']['head_sha'] == source
+          assert artifact['digest'] == 'sha256:' + digest
+          archive = root / 'original-evidence.zip'
+          with archive.open('xb') as output:
+              subprocess.run(['gh', 'api', 'repos/iret77/nexgenvideo/actions/artifacts/' + str(artifact_id) + '/zip'],
+                  stdin=subprocess.DEVNULL, stdout=output, check=True, timeout=90)
+          raw = archive.read_bytes()
+          assert len(raw) == artifact['size_in_bytes'] and sha(raw) == digest
+          with zipfile.ZipFile(archive) as z:
+              assert len(z.namelist()) == len(set(z.namelist()))
+              identity, result, summary, journey = [json.loads(z.read(n)) for n in ['identity.json', 'result.json', 'summary.json', 'journey.json']]
+              assert identity['sourceSHA'] == identity['app']['NGVSourceCommit'] == product
+              assert identity['testSourceSHA'] == source and identity['dmgSHA256'] == dmg and identity['mode'] == 'dmg'
+              assert identity['runID'] == str(run_id) and identity['runAttempt'] == '1'
+              assert result['completed'] is False and result['sourceSHA'] == product and result['exitCode'] == 0
+              assert result['error'] == 'Exported pixels differ from the imported source at the same time'
+              assert (summary['passedTests'], summary['failedTests'], summary['skippedTests']) == (1, 0, 0)
+              stages = ['home', 'settings', 'new-project', 'media-import', 'source-insert', 'timeline-split', 'timeline-undo', 'close', 'reopen', 'export']
+              assert [s['stage'] for s in journey['stages']] == stages
+              for stage in journey['stages']:
+                  for field in ['screenshot', 'accessibility']:
+                      name = stage['evidence'][field]
+                      assert pathlib.PurePosixPath(name).name == name
+                      assert sha(z.read(name)) == stage['evidence'][field + 'SHA256']
+              original = z.read('GUI acceptance source.mp4')
+              exported = z.read('user-export.mp4')
+              manifest = json.loads(z.read('media-import-media.json'))['entries']
+              assert len(manifest) == 1 and manifest[0]['originalFilename'] == 'GUI acceptance source.mp4'
+              relative = pathlib.PurePosixPath(manifest[0]['source']['project']['relativePath'])
+              assert not relative.is_absolute() and '..' not in relative.parts
+              assert z.read('External GUI.ngv/' + str(relative)) == original
+              assert sha(exported) == journey['stages'][-1]['movieSHA256']
+              for name, data in [('GUI acceptance source.mp4', original), ('user-export.mp4', exported)]:
+                  (root / name).write_bytes(data)
+              for name in ['identity.json', 'result.json', 'summary.json', 'journey.json', 'source-frame.png', 'export-frame.png', 'export-ffprobe.json']:
+                  (root / name).write_bytes(z.read(name))
+          binding = {'producerRunID': run_id, 'producerSourceSHA': source, 'productSourceSHA': product,
+              'evidenceArtifactID': artifact_id, 'evidenceArtifactSHA256': digest, 'dmgSHA256': dmg,
+              'sourceVideoSHA256': sha(original), 'exportVideoSHA256': sha(exported),
+              'harnessSourceSHA': os.environ['GITHUB_SHA'], 'appAcceptance': False,
+              'producerAppFinalIdentityGuardExecuted': False}
+          (root / 'binding.json').write_text(json.dumps(binding, indent=2) + '\n')
+          PY
+      - name: Prepare the same job-local independent media tools as the original journey
+        id: media-tools
+        uses: mamba-org/setup-micromamba@f457c30a868e4760d3a6fcea5f25dc655b8edf39
+        with:
+          environment-name: ngv-media
+          create-args: 'ffmpeg=9.0.2=gpl_*'
+          micromamba-root-path: ${{ runner.temp }}/micromamba
+          micromamba-binary-path: ${{ runner.temp }}/micromamba-bin/micromamba
+          init-shell: 'none'
+          generate-run-shell: false
+          cache-environment: false
+          cache-downloads: false
+          post-cleanup: all
+      - name: Record and expose both independent media executables
+        env:
+          MEDIA_TOOLS_BIN: ${{ steps.media-tools.outputs.environment-path }}/bin
+        run: |
+          test "$(uname -m)" = arm64
+          "$MEDIA_TOOLS_BIN/ffmpeg" -version > "$RUNNER_TEMP/export-color/ffmpeg-version.log"
+          "$MEDIA_TOOLS_BIN/ffprobe" -version > "$RUNNER_TEMP/export-color/ffprobe-version.log"
+          echo "$MEDIA_TOOLS_BIN" >> "$GITHUB_PATH"
+      - name: Observe native decoder metadata and fixed common color space
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, subprocess
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'export-color'
+          for label, name in [('source', 'GUI acceptance source.mp4'), ('export', 'user-export.mp4')]:
+              with (root / (label + '-ffprobe.json')).open('wb') as log:
+                  subprocess.run(['ffprobe', '-v', 'error', '-show_streams', '-show_format', '-of', 'json', str(root / name)],
+                      stdin=subprocess.DEVNULL, stdout=log, check=True, timeout=20)
+          binary = root / 'native-export-color'
+          with (root / 'compiler.log').open('wb') as log:
+              subprocess.run(['xcrun', 'swiftc', '-swift-version', '6', '-parse-as-library', 'scripts/export_color_diagnostic.swift', '-o', str(binary)],
+                  stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, check=True, timeout=90)
+          with (root / 'runtime.log').open('wb') as log:
+              subprocess.run([str(binary), str(root)], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, check=True, timeout=40)
+          report = json.loads((root / 'native-color.json').read_text())
+          assert report['classification'] == 'native-decoder-color-observation-only' and report['appAcceptance'] is False
+          assert report['appBuilds'] == report['appLaunches'] == report['nativeAppUnitRuns'] == 0
+          paths = ['.github/workflows/diagnostic-acceptance.yml', '.github/workflows/export-color-diagnostic.yml', 'scripts/export_color_diagnostic.swift']
+          receipt = {'sourceSHA': os.environ['GITHUB_SHA'], 'runID': os.environ['GITHUB_RUN_ID'],
+              'sourceFiles': {p: hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest() for p in paths},
+              'reportSHA256': hashlib.sha256((root / 'native-color.json').read_bytes()).hexdigest(),
+              'appAcceptance': False, 'appBuilds': 0, 'uiJourneyReruns': 0, 'nativeAppUnitRuns': 0}
+          (root / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
+          PY
+      - name: Retain exact-byte native observations
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: native-export-color-${{ github.run_id }}
+          path: ${{ runner.temp }}/export-color/
+          if-no-files-found: error
+          retention-days: 14
