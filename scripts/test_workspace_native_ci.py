@@ -5,6 +5,7 @@ import io
 import json
 import os
 from pathlib import Path
+import subprocess
 import tarfile
 import tempfile
 import unittest
@@ -29,6 +30,147 @@ class NativeQualificationTests(unittest.TestCase):
 
     def tearDown(self):
         self.environment.stop(); self.temp.cleanup()
+
+    def source_proof(self):
+        from test_verified_pr_source_checks import fixtures, MERGE, TREE
+        from verified_pr_source_checks import CHECKS, test_completion
+        run, jobs, receipt, pr, commit, artifact, raw, log = fixtures(2)
+        record = {'schema': 'core-pr-source-composition/v1', 'sourceSHA': MERGE, 'runID': '77', 'attempt': '1',
+            'originalRun': run, 'originalJobs': jobs, 'originalArtifact': artifact, 'originalReceipt': receipt,
+            'originalCheckoutCommit': commit, 'originalPR': pr, 'originalResult': test_completion(log),
+            'originalLogSHA256': hashlib.sha256(log).hexdigest(), 'reusedSteps': list(CHECKS),
+            'originalStepProof': 'rest-job-steps'}
+        directory = self.root / 'source'; directory.mkdir()
+        (directory / 'receipt.json').write_text(json.dumps(record, indent=2) + '\n')
+        (directory / 'original-proof.zip').write_bytes(raw)
+        (directory / 'original-job.log').write_bytes(log)
+        return directory, record, MERGE, TREE
+
+    def retained_identity(self):
+        harness = 'c' * 40
+        value = {**self.identity, 'schema': 'nexgenvideo/native-input/2', 'sourceSHA': 'e' * 40,
+            'harnessSourceSHA': harness, 'runtimeRunID': 12, 'runtimeArtifactID': 34,
+            'runtimeArtifactDigest': 'sha256:' + 'b' * 64,
+            'sourceComposition': {'receiptSHA256': 'd' * 64,
+                'composition': {'schema': 'core-pr-source-composition/v1', 'sourceSHA': harness}}}
+        value['retainedRelease'] = {'productSourceSHA': value['sourceSHA'], 'harnessSourceSHA': harness,
+            'producerRunID': 12, 'runtimeArtifactID': 34, 'runtimeArtifactDigest': value['runtimeArtifactDigest']}
+        return value
+
+    def test_retained_inputs_require_complete_release_source_and_no_unit_filter(self):
+        valid = ['workspace-ui-app', '12', 'e' * 40, '100', '']
+        ci.validate_inputs(*valid)
+        ci.validate_inputs('', '', '', '', '')
+        ci.validate_inputs('', '12', '', '100', '')
+        for index, replacement in [(0, ''), (0, 'NexGenVideo-app'), (1, ''), (1, '0'),
+                                   (2, 'not-a-commit'), (3, ''), (3, '0'), (4, 'NativeSegment')]:
+            changed = valid.copy(); changed[index] = replacement
+            with self.subTest(index=index, replacement=replacement), self.assertRaises(ValueError):
+                ci.validate_inputs(*changed)
+
+    def test_source_composition_rejects_substituted_receipt_tree_log_and_execution(self):
+        directory, record, harness, tree = self.source_proof()
+        environment = {'GITHUB_SHA': harness, 'GITHUB_REF_NAME': 'rc'}
+        with patch.dict(os.environ, environment), patch.object(ci.subprocess, 'check_output', side_effect=[harness + '\n', tree + '\n']):
+            result = ci.source_composition(directory, ci.sha(directory / 'receipt.json'), 100)
+        self.assertEqual(result['composition'], record)
+        for change in ({'sourceSHA': 'f' * 40}, {'runID': '78'}, {'attempt': '3'}, {'reusedSteps': []},
+                       {'originalLogSHA256': '0' * 64}, {'originalReceipt': {}},
+                       {'originalPR': {**record['originalPR'], 'merge_commit_sha': 'f' * 40}}):
+            (directory / 'receipt.json').write_text(json.dumps({**record, **change}))
+            with self.subTest(change=change), patch.dict(os.environ, environment), \
+                 patch.object(ci.subprocess, 'check_output', side_effect=[harness + '\n', tree + '\n']), self.assertRaises(ValueError):
+                ci.source_composition(directory, ci.sha(directory / 'receipt.json'), 100)
+        (directory / 'receipt.json').write_text(json.dumps(record))
+        with patch.dict(os.environ, environment), self.assertRaisesRegex(ValueError, 'composition changed'):
+            ci.source_composition(directory, '0' * 64, 100)
+
+    def test_retained_resolver_binds_exact_release_product_and_original_attempt(self):
+        from test_diagnostic_acceptance import SignedBpyCandidateTests
+        producer = SignedBpyCandidateTests(); producer.setUp()
+        producer.artifact['name'] = 'workspace-ui-app'
+        producer.jobs['jobs'][0]['labels'] = ['macrunner']
+        producer.jobs['jobs'][0]['id'] = 56
+        directory, record, harness, tree = self.source_proof()
+        path = '.github/workflows/workspace-ui-acceptance.yml'
+        environment = {'GITHUB_SHA': harness, 'GITHUB_REF_NAME': 'rc'}
+        for changed in (path, 'Sources/NexGenVideo/App/NexGenVideoApp.swift'):
+            with self.subTest(changed=changed), patch.dict(os.environ, environment), \
+                 patch.object(ci, 'api', side_effect=[producer.run, producer.artifact, producer.jobs]), \
+                 patch.object(ci.subprocess, 'run') as git_run, \
+                 patch.object(ci.subprocess, 'check_output', side_effect=[harness + '\n', tree + '\n', (changed + '\0').encode()]), \
+                 patch.object(ci, 'outputs'):
+                if changed != path:
+                    with self.assertRaises(ValueError):
+                        ci.resolve(12, 'workspace-ui-app', 34, self.identity_file, product_source=producer.source,
+                            proof_directory=directory, proof_sha=ci.sha(directory / 'receipt.json'), source_run=100, source_artifact=600)
+                else:
+                    ci.resolve(12, 'workspace-ui-app', 34, self.identity_file, product_source=producer.source,
+                        proof_directory=directory, proof_sha=ci.sha(directory / 'receipt.json'), source_run=100, source_artifact=600)
+                    identity = json.loads(self.identity_file.read_text())
+                    self.assertEqual((identity['sourceSHA'], identity['harnessSourceSHA']), (producer.source, harness))
+                    self.assertEqual(identity['retainedRelease']['producerAttempt'], 2)
+                    self.assertEqual(identity['retainedRelease']['producerJobID'], 56)
+                    self.assertEqual(identity['sourceComposition']['composition'], record)
+                    self.assertEqual(identity['sourceComposition']['artifactID'], 600)
+                    self.assertEqual(ci.execution_source(identity), harness)
+                    self.assertEqual(git_run.call_args_list[0].args[0], ['git', 'merge-base', '--is-ancestor', producer.source, 'HEAD'])
+        with patch.dict(os.environ, environment), self.assertRaises(ValueError):
+            ci.resolve(12, 'workspace-ui-app', 34, self.identity_file, product_source=producer.source)
+        for position in (0, 1):
+            failures = [None, None]
+            failures[position] = subprocess.CalledProcessError(1, 'git')
+            with self.subTest(git_failure=position), patch.dict(os.environ, environment), \
+                 patch.object(ci, 'api', side_effect=[producer.run, producer.artifact]), \
+                 patch.object(ci.subprocess, 'check_output', side_effect=[harness + '\n', tree + '\n']), \
+                 patch.object(ci.subprocess, 'run', side_effect=failures), self.assertRaises(subprocess.CalledProcessError):
+                ci.resolve(12, 'workspace-ui-app', 34, self.identity_file, product_source=producer.source,
+                    proof_directory=directory, proof_sha=ci.sha(directory / 'receipt.json'), source_run=100, source_artifact=600)
+
+    def test_retained_worker_checks_product_harness_validator_and_archive_independently(self):
+        runtime = self.root / 'runtime'; runtime.mkdir()
+        archive = runtime / 'workspace-ui.tar.gz'; archive.write_bytes(b'exact-product-app')
+        identity = self.retained_identity(); identity['archiveSHA256'] = ci.sha(archive)
+        self.identity_file.write_text(json.dumps(identity))
+        with patch.dict(os.environ, {'GITHUB_SHA': identity['harnessSourceSHA']}), \
+             patch.object(ci, 'fingerprint', return_value=identity['validatorSHA256']):
+            ci.verify_runtime(runtime, self.identity_file, ci.sha(self.identity_file))
+            for changed in ({'harnessSourceSHA': 'f' * 40}, {'sourceSHA': identity['harnessSourceSHA']},
+                            {'validatorSHA256': 'd' * 64}, {'retainedRelease': {}},
+                            {'sourceComposition': {}}, {'schema': 'nexgenvideo/native-input/1'}):
+                self.identity_file.write_text(json.dumps({**identity, **changed}))
+                with self.subTest(changed=changed), self.assertRaises(ValueError):
+                    ci.verify_runtime(runtime, self.identity_file, ci.sha(self.identity_file))
+            self.identity_file.write_text(json.dumps(identity)); archive.write_bytes(b'changed-app')
+            with self.assertRaises(ValueError): ci.verify_runtime(runtime, self.identity_file, ci.sha(self.identity_file))
+
+    def test_retained_summary_requires_harness_job_and_evidence_origins(self):
+        self.identity = self.retained_identity()
+        plan = self.root / 'plan.json'; plan.write_text(json.dumps(ci.selection('all', 'cards', '1')))
+        self.identity['planSHA256'] = ci.sha(plan); self.identity_file.write_text(json.dumps(self.identity))
+        evidence = self.root / 'case'; self.cards(evidence)
+        publication = self.root / 'publication'; ci.archive_evidence(evidence, self.identity_file, 'cards', 1, publication)
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, 'w') as bundle:
+            for path in publication.iterdir(): bundle.writestr(path.name, path.read_bytes())
+        payload = stream.getvalue(); harness = self.identity['harnessSourceSHA']
+        artifact = {'id': 3, 'name': 'native-evidence-cards-100-a2', 'expired': False,
+            'workflow_run': {'id': 77, 'head_sha': harness}, 'digest': 'sha256:' + hashlib.sha256(payload).hexdigest()}
+        job = {'id': 99, 'name': 'Native cards-100', 'run_id': 77, 'run_attempt': 2,
+            'head_sha': harness, 'status': 'completed', 'conclusion': 'success'}
+        def response(path):
+            if '/artifacts?' in path: return {'artifacts': [artifact]}
+            return {'jobs': [job] if '/attempts/2/' in path else []}
+        with patch.dict(os.environ, {'GITHUB_SHA': harness}), patch.object(ci, 'fingerprint', return_value=self.identity['validatorSHA256']), \
+             patch.object(ci, 'api', side_effect=response), \
+             patch.object(ci, 'download_artifact', side_effect=lambda _, __, target: target.write_bytes(payload)):
+            self.assertEqual(ci.summarize(self.root, self.root / 'valid', plan, self.identity_file, ci.sha(self.identity_file), remote=True), 0)
+            for value in (job, artifact['workflow_run']):
+                value['head_sha'] = self.identity['sourceSHA']
+                with self.subTest(origin=value):
+                    self.assertEqual(ci.summarize(self.root, self.root / ('wrong-' + str(len(value))), plan,
+                        self.identity_file, ci.sha(self.identity_file), remote=True), 1)
+                value['head_sha'] = harness
 
     def test_full_plan_is_the_exact_case_scale_product(self):
         plan = ci.selection('all')

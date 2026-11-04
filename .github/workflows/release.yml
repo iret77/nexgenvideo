@@ -438,7 +438,7 @@ jobs:
     needs: [release-gate, bpy-source]
     if: ${{ needs.release-gate.outputs.publication-resumed != 'true' && inputs.signed_build_run_id == '' && inputs.notary_progress_run_id == '' }}
     runs-on: macrunner
-    timeout-minutes: 90
+    timeout-minutes: 120
     permissions:
       contents: read
       actions: read
@@ -519,10 +519,18 @@ jobs:
             || { echo "::error::Release build mutated tracked files beyond $PLIST"; exit 1; }
           echo "BUILD_NUMBER=$NEW" >> "$GITHUB_ENV"
 
+      - name: Record release compiler configuration
+        run: |
+          swift --version
+          xcodebuild -version
+          sw_vers
+          sysctl -n hw.memsize hw.logicalcpu
+          echo "Release SwiftPM scheduler jobs: 1"
+
       - name: Build the exact release test configuration
         if: inputs.completed_release_tests_run_id == ''
         # Testable release objects stay isolated from the production bundle build.
-        run: swift build --cache-path "$NGV_SWIFTPM_CACHE_PATH" -c release --scratch-path "$RUNNER_TEMP/release-tests" --build-tests -Xswiftc -enable-testing
+        run: swift build --jobs 1 --cache-path "$NGV_SWIFTPM_CACHE_PATH" -c release --scratch-path "$RUNNER_TEMP/release-tests" --build-tests -Xswiftc -enable-testing
 
       - name: Verify release build did not mutate tracked source
         if: inputs.completed_release_tests_run_id == ''
