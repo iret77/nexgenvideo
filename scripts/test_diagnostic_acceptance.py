@@ -13,6 +13,7 @@ import zipfile
 from hang_diagnostic_acceptance import capture_helper_failure, verify_helper_recovery, verify_retained_key
 from verify_diagnostic_candidate import APP_DIAGNOSTIC_PATHS, BPY_DIAGNOSTIC_PATHS, CI_HARNESS_PATHS, HARNESS_PATHS, verify, verify_app_crash_archive, verify_app_diagnostic, verify_bpy_diagnostic, verify_ci
 from verify_diagnostic_candidate import SIGNED_BPY_HARNESS_PATHS, SIGNED_JOURNEY_HARNESS_PATHS, verify_signed_bpy, verify_signed_journey
+from verify_diagnostic_candidate import SIGNED_DESKTOP_HARNESS_PATHS, SIGNED_WORKSPACE_HARNESS_PATHS, verify_signed_desktop, verify_signed_workspace
 
 
 class AppCrashCandidateTests(unittest.TestCase):
@@ -238,6 +239,25 @@ class SignedBpyCandidateTests(unittest.TestCase):
             self.run["status"] = status
             with self.subTest(run_status=status):
                 self.check()
+
+    def test_desktop_retention_has_a_distinct_role_and_keeps_producer_attempt_guards(self):
+        self.artifact['name'] = 'workspace-ui-app'
+        self.jobs['jobs'][0]['labels'] = ['macrunner']
+        arguments = [self.run, self.jobs, self.artifact, 12, self.source, 34, self.digest]
+        verify_signed_desktop(*arguments, SIGNED_DESKTOP_HARNESS_PATHS)
+        for path in ('.github/workflows/chat-hang-replay.yml', '.github/workflows/private-example-analysis.yml',
+                     'scripts/bundle.sh', 'Sources/NexGenVideo/App/NexGenVideoApp.swift',
+                     'musicvideo/manifest.json', 'Package.resolved', 'scripts/unrelated.py'):
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                verify_signed_desktop(*arguments, [*SIGNED_DESKTOP_HARNESS_PATHS, path])
+        with self.assertRaises(ValueError):
+            verify_signed_workspace(*arguments, ['.github/workflows/workspace-ui-acceptance.yml'])
+        self.assertNotIn('.github/workflows/workspace-ui-acceptance.yml', SIGNED_WORKSPACE_HARNESS_PATHS)
+        for field, value in [('run_attempt', 1), ('conclusion', 'failure'), ('labels', ['ubuntu-24.04'])]:
+            job = self.jobs['jobs'][0]; old = job[field]; job[field] = value
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                verify_signed_desktop(*arguments, SIGNED_DESKTOP_HARNESS_PATHS)
+            job[field] = old
 
     def test_rejects_foreign_or_unfinished_producer(self):
         for key, value in (("id", 13), ("head_sha", "c" * 40), ("path", ".github/workflows/ci.yml"),

@@ -16,6 +16,14 @@ on:
         description: Origin run of that exact runtime artifact
         type: string
         default: ''
+      verified_pr_run_id:
+        description: Successful exact current harness PR source receipt
+        type: string
+        default: ''
+      runtime_source_sha:
+        description: Original signed release source; requires runtime and verified source receipt
+        type: string
+        default: ''
       acceptance_case:
         description: Optional single case within the selected scope
         type: string
@@ -39,6 +47,14 @@ on:
       runtime_run_id:
         type: string
         default: ''
+      verified_pr_run_id:
+        description: Successful exact current harness PR source receipt
+        type: string
+        default: ''
+      runtime_source_sha:
+        description: Original signed release source; requires runtime and verified source receipt
+        type: string
+        default: ''
       acceptance_case:
         type: string
         default: ''
@@ -59,6 +75,7 @@ on:
 permissions:
   contents: read
   actions: read
+  pull-requests: read
 
 concurrency:
   group: workspace-ui-acceptance-${{ github.ref }}
@@ -72,8 +89,42 @@ jobs:
       matrix: ${{ steps.plan.outputs.matrix }}
       native: ${{ steps.plan.outputs.native }}
       batch: ${{ steps.plan.outputs.batch }}
+      source_artifact_id: ${{ steps.source_proof.outputs.artifact-id }}
+      source_proof_sha: ${{ steps.pr_source.outputs.source_proof_sha }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate complete runtime and source reuse inputs
+        env:
+          NGV_RUNTIME_ARTIFACT: ${{ inputs.runtime_artifact }}
+          NGV_RUNTIME_RUN: ${{ inputs.runtime_run_id }}
+          NGV_PRODUCT_SOURCE: ${{ inputs.runtime_source_sha }}
+          NGV_PR_SOURCE_RUN: ${{ inputs.verified_pr_run_id }}
+          NGV_UNIT_FILTER: ${{ inputs.unit_test_filter }}
+        run: |
+          python3 scripts/workspace_native_ci.py validate-inputs --artifact "$NGV_RUNTIME_ARTIFACT" \
+            --run-id "$NGV_RUNTIME_RUN" --product-source "$NGV_PRODUCT_SOURCE" \
+            --source-run "$NGV_PR_SOURCE_RUN" --unit-filter "$NGV_UNIT_FILTER"
+      - name: Bind complete original PR source checks
+        id: pr_source
+        if: inputs.verified_pr_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NGV_PR_SOURCE_RUN: ${{ inputs.verified_pr_run_id }}
+        run: |
+          python3 scripts/verified_pr_source_checks.py prepare --run-id "$NGV_PR_SOURCE_RUN" \
+            --output "$RUNNER_TEMP/native-source-checks"
+          SOURCE_PROOF_SHA="$(python3 -c 'import hashlib, pathlib, sys; print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())' "$RUNNER_TEMP/native-source-checks/receipt.json")"
+          echo "source_proof_sha=$SOURCE_PROOF_SHA" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        id: source_proof
+        if: inputs.verified_pr_run_id != ''
+        with:
+          name: native-source-checks-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/native-source-checks/*
+          if-no-files-found: error
+          retention-days: 14
       - name: Validate and select independent case/scale jobs
         id: plan
         env:
@@ -84,34 +135,48 @@ jobs:
           python3 scripts/workspace_native_ci.py plan --scope "$NGV_ACCEPTANCE_SCOPE" \
             --case "$NGV_ACCEPTANCE_CASE" --scale "$NGV_ACCEPTANCE_SCALE" --output "$RUNNER_TEMP/native-plan.json"
       - name: Verify case isolation, artifact identity and evidence transfer rejection
+        if: inputs.verified_pr_run_id == ''
         run: python3 -m unittest discover -s scripts -p 'test_workspace_native_ci.py'
       - name: Verify native batch busy/Continue evidence rejection
+        if: inputs.verified_pr_run_id == ''
         run: python3 -m unittest discover -s scripts -p 'test_generation_batch_busy_evidence.py'
       - name: Verify native structured agent results and image detail evidence rejection
+        if: inputs.verified_pr_run_id == ''
         run: |
           python3 -m unittest discover -s scripts -p 'test_*structured*.py'
           python3 -m unittest discover -s scripts -p 'test_review_child_owner_evidence.py'
       - name: Verify export formats and restart evidence rejection
+        if: inputs.verified_pr_run_id == ''
         run: python3 -m unittest discover -s scripts -p 'test_export_owner_evidence.py'
       - name: Verify native timeline edit evidence rejection
+        if: inputs.verified_pr_run_id == ''
         run: python3 -m unittest discover -s scripts -p 'test_timeline_editing_evidence.py'
       - name: Validate layered timeline evidence tests
+        if: inputs.verified_pr_run_id == ''
         run: python3 -m unittest discover -s scripts -p 'test_layered_timeline_evidence.py'
       - name: Verify actual rendered postproduction evidence rejection
+        if: inputs.verified_pr_run_id == ''
         run: python3 -m unittest discover -s scripts -p 'test_postproduction_rendered_evidence.py'
       - name: Verify cover format and typography evidence rejection
+        if: inputs.verified_pr_run_id == ''
         run: python3 -m unittest discover -s scripts -p 'test_production_cover_owner_evidence.py'
       - name: Verify FilmFlow snapshot and native adoption evidence
+        if: inputs.verified_pr_run_id == ''
         run: python3 -m unittest discover -s scripts -p 'test_filmflow_owner_evidence.py'
       - name: Verify attributed native take repair evidence rejection
+        if: inputs.verified_pr_run_id == ''
         run: python3 -m unittest discover -s scripts -p 'test_production_take_repair_evidence.py'
       - name: Verify native technical edit evidence rejection
+        if: inputs.verified_pr_run_id == ''
         run: python3 -m unittest discover -s scripts -p 'test_production_technical_*.py'
       - name: Verify generated sketch and frame evidence rejection
+        if: inputs.verified_pr_run_id == ''
         run: python3 -m unittest discover -s scripts -p 'test_production_frames_owner_evidence.py'
       - name: Verify object context and history evidence rejection
+        if: inputs.verified_pr_run_id == ''
         run: python3 -m unittest discover -s scripts -p 'test_production_object_context_evidence.py'
       - name: Verify typed Bible and full-owner evidence rejection
+        if: inputs.verified_pr_run_id == ''
         run: |
           python3 -m venv "$RUNNER_TEMP/bible-parser"
           "$RUNNER_TEMP/bible-parser/bin/python" -m pip install --quiet PyYAML==6.0.3
@@ -124,24 +189,33 @@ jobs:
           "$RUNNER_TEMP/bible-parser/bin/python" -m unittest discover -s scripts -p 'test_workspace_ui_v2_owner.py'
           "$RUNNER_TEMP/bible-parser/bin/python" -m unittest discover -s scripts -p 'test_workspace_ui_film_review.py'
       - name: Verify Analysis remeasurement and retry evidence rejection
+        if: inputs.verified_pr_run_id == ''
         run: python3 -m unittest discover -s scripts -p 'test_analysis_remeasurement_owner_evidence.py'
       - name: Verify Ledger decision and lock evidence rejection
+        if: inputs.verified_pr_run_id == ''
         run: python3 -m unittest discover -s scripts -p 'test_ledger_*evidence.py'
       - name: Verify caption decision and physical cut evidence rejection
+        if: inputs.verified_pr_run_id == ''
         run: |
           python3 -m unittest discover -s scripts -p 'test_caption_revision_evidence.py'
           python3 -m unittest discover -s scripts -p 'test_caption_translation_evidence.py'
       - name: Validate decoded still evidence rejection cases
+        if: inputs.verified_pr_run_id == ''
         run: python3 -m unittest discover -s scripts -p 'test_production_animated_still_owner_evidence.py'
       - name: Verify manual generation evidence rejection
+        if: inputs.verified_pr_run_id == ''
         run: python3 -m unittest discover -s scripts -p 'test_workspace_ui_manual*.py'
       - name: Verify native color reference evidence rejection
+        if: inputs.verified_pr_run_id == ''
         run: python3 -m unittest discover -s scripts -p 'test_color_reference*.py'
       - name: Verify native video modes evidence rejection
+        if: inputs.verified_pr_run_id == ''
         run: python3 -m unittest discover -s scripts -p 'test_manual_video_modes_evidence.py'
       - name: Verify durable generation restart evidence rejection
+        if: inputs.verified_pr_run_id == ''
         run: python3 -m unittest discover -s scripts -p 'test_generation_recovery_acceptance.py'
       - run: python3 scripts/lint_app_theme.py
+        if: inputs.verified_pr_run_id == ''
       - name: Require distributable runtime for this full app
         run: python3 scripts/verify_bpy_runtime.py --distribution
       - name: Reject a silently skipped unit filter
@@ -240,18 +314,37 @@ jobs:
       identity_sha: ${{ steps.prepare.outputs.identity_sha256 }}
     steps:
       - uses: actions/checkout@v4
-      - name: Resolve the exact same-source build artifact
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        if: inputs.verified_pr_run_id != ''
+        with:
+          merge-multiple: true
+          artifact-ids: ${{ needs.source.outputs.source_artifact_id }}
+          run-id: ${{ github.run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/native-source-checks
+      - name: Resolve the exact qualified build artifact
         id: resolve
         env:
           GH_TOKEN: ${{ github.token }}
           NGV_RUNTIME_RUN: ${{ inputs.runtime_run_id || github.run_id }}
           NGV_RUNTIME_ARTIFACT: ${{ inputs.runtime_artifact || 'workspace-ui-app' }}
           NGV_RUNTIME_ARTIFACT_ID: ${{ needs.build.outputs.app_artifact_id }}
+          NGV_PRODUCT_SOURCE: ${{ inputs.runtime_source_sha }}
+          NGV_PR_SOURCE_RUN: ${{ inputs.verified_pr_run_id }}
+          NGV_SOURCE_PROOF_SHA: ${{ needs.source.outputs.source_proof_sha }}
+          NGV_SOURCE_PROOF_ARTIFACT: ${{ needs.source.outputs.source_artifact_id }}
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/native-identity"
           args=()
           if [ -n "$NGV_RUNTIME_ARTIFACT_ID" ]; then args+=(--artifact-id "$NGV_RUNTIME_ARTIFACT_ID"); fi
+          if [ -n "$NGV_PRODUCT_SOURCE" ]; then args+=(--product-source "$NGV_PRODUCT_SOURCE"); fi
+          if [ -n "$NGV_PR_SOURCE_RUN" ]; then
+            args+=(--source-proof "$RUNNER_TEMP/native-source-checks" --source-proof-sha "$NGV_SOURCE_PROOF_SHA"
+              --source-run "$NGV_PR_SOURCE_RUN" --source-artifact "$NGV_SOURCE_PROOF_ARTIFACT")
+          fi
           python3 scripts/workspace_native_ci.py resolve --run-id "$NGV_RUNTIME_RUN" \
             --artifact "$NGV_RUNTIME_ARTIFACT" "${args[@]}" --identity "$RUNNER_TEMP/native-identity/identity.json"
       - name: Download and require the exact GitHub artifact digest

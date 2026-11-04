@@ -42,6 +42,15 @@ SIGNED_WORKSPACE_HARNESS_PATHS = SIGNED_JOURNEY_BASE_HARNESS_PATHS | {
     "scripts/test_retained_release_runtime.py",
     "scripts/test_private_example_workflow.py",
 }
+SIGNED_DESKTOP_HARNESS_PATHS = {
+    ".github/workflows/workspace-ui-acceptance.yml",
+    ".github/actions/prepare-native-runtime/action.yml",
+    "scripts/workspace_native_ci.py",
+    "scripts/verify_diagnostic_candidate.py",
+    "scripts/test_workspace_native_ci.py",
+    "scripts/test_ci_workflow.py",
+    "scripts/test_diagnostic_acceptance.py",
+}
 
 BPY_DIAGNOSTIC_PATHS = {
     ".github/workflows/diagnostic-acceptance.yml",
@@ -326,6 +335,13 @@ def verify_signed_journey(*args):
 
 def verify_signed_workspace(*args):
     verify_signed_bpy(*args, artifact_name="workspace-ui-app", harness_paths=SIGNED_WORKSPACE_HARNESS_PATHS)
+
+
+def verify_signed_desktop(*args):
+    verify_signed_bpy(*args, artifact_name="workspace-ui-app", harness_paths=SIGNED_DESKTOP_HARNESS_PATHS)
+    release = next(job for job in args[1]["jobs"] if job["name"] == "release")
+    if release.get("labels") != ["macrunner"]:
+        raise ValueError("retained desktop runtime must be produced on macrunner")
 
 
 def main():

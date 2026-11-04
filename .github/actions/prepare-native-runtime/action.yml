@@ -48,7 +48,8 @@ runs:
         test "$(uname -m)" = arm64
         python3 scripts/workspace_native_ci.py verify-runtime "$RUNNER_TEMP/native-runtime" "$RUNNER_TEMP/native-identity/identity.json" "$NGV_NATIVE_IDENTITY_SHA"
         tar -xzf "$RUNNER_TEMP/native-runtime/workspace-ui.tar.gz" -C "$RUNNER_TEMP/native-runtime"
-        [ "$(/usr/libexec/PlistBuddy -c 'Print :NGVSourceCommit' "$RUNNER_TEMP/native-runtime/NexGenVideo.app/Contents/Info.plist")" = "$GITHUB_SHA" ]
+        EXPECTED_APP_SOURCE="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["sourceSHA"])' "$RUNNER_TEMP/native-identity/identity.json")"
+        [ "$(/usr/libexec/PlistBuddy -c 'Print :NGVSourceCommit' "$RUNNER_TEMP/native-runtime/NexGenVideo.app/Contents/Info.plist")" = "$EXPECTED_APP_SOURCE" ]
         ACTUAL_APP_TREE="$(python3 scripts/external-gui/acceptance.py tree-sha256 --app "$RUNNER_TEMP/native-runtime/NexGenVideo.app")"
         EXPECTED_APP_TREE="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["appTreeSHA256"])' "$RUNNER_TEMP/native-identity/identity.json")"
         [ "$ACTUAL_APP_TREE" = "$EXPECTED_APP_TREE" ]

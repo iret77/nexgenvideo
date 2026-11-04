@@ -6,6 +6,7 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import stat
+import subprocess
 import tarfile
 import tempfile
 import urllib.request
@@ -82,10 +83,81 @@ def require_artifact(run, artifact, source_sha, run_id, name):
         raise ValueError('Native runtime artifact has a different source, repository or producer')
 
 
-def resolve(run_id, name, artifact_id, destination):
-    source_sha = os.environ['GITHUB_SHA']
+def validate_inputs(artifact, run_id, product_source, source_run, unit_filter):
+    if source_run and not re.fullmatch(r'[1-9][0-9]*', source_run):
+        raise ValueError('A positive verified PR source run is required')
+    if (artifact or run_id) and unit_filter:
+        raise ValueError('A retained runtime cannot silently skip a unit filter')
+    if product_source and (not re.fullmatch(r'[a-f0-9]{40}', product_source)
+            or artifact != 'workspace-ui-app' or not re.fullmatch(r'[1-9][0-9]*', run_id)
+            or not source_run or unit_filter):
+        raise ValueError('Retained desktop input requires complete release and verified source identities')
+
+
+def source_composition(directory, expected_sha, source_run):
+    from verified_pr_source_checks import CHECKS, original_receipt, verify_run_identity, verify_steps, verify_tree, test_completion
+    receipt_file = directory / 'receipt.json'
+    if not re.fullmatch(r'[a-f0-9]{64}', expected_sha) or sha(receipt_file) != expected_sha:
+        raise ValueError('The complete PR source composition changed')
+    record = json.loads(receipt_file.read_text())
+    if (record.get('schema') != 'core-pr-source-composition/v1'
+            or record.get('sourceSHA') != os.environ['GITHUB_SHA']
+            or record.get('runID') != os.environ['GITHUB_RUN_ID']
+            or not re.fullmatch(r'[1-9][0-9]*', record.get('attempt', ''))
+            or not 1 <= int(record['attempt']) <= int(os.environ['GITHUB_RUN_ATTEMPT'])
+            or record.get('originalRun', {}).get('id') != source_run or record.get('reusedSteps') != list(CHECKS)):
+        raise ValueError('The source composition belongs to another harness or execution')
+    job = verify_run_identity(record['originalRun'], record['originalJobs'], source_run)
+    original = original_receipt(record['originalArtifact'], (directory / 'original-proof.zip').read_bytes(), record['originalRun'])
+    head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True, timeout=30).strip()
+    tree = subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], text=True, timeout=30).strip()
+    if head != os.environ['GITHUB_SHA'] or original != record['originalReceipt']:
+        raise ValueError('The source checkout or original receipt changed')
+    verify_tree(original, record['originalPR'], record['originalCheckoutCommit'], head, tree, os.environ['GITHUB_REF_NAME'])
+    if verify_steps(job, original) != record['originalStepProof']:
+        raise ValueError('Original source step evidence changed')
+    raw = (directory / 'original-job.log').read_bytes()
+    if (hashlib.sha256(raw).hexdigest() != record['originalLogSHA256']
+            or test_completion(raw) != record['originalResult']):
+        raise ValueError('Original source test completion changed')
+    return {'receiptSHA256': expected_sha, 'composition': record}
+
+
+def execution_source(identity):
+    if identity.get('schema') == 'nexgenvideo/native-input/2':
+        harness = identity.get('harnessSourceSHA', '')
+        proof = identity.get('retainedRelease', {})
+        source = identity.get('sourceComposition', {}).get('composition', {})
+        if (not re.fullmatch(r'[a-f0-9]{40}', harness)
+                or source.get('schema') != 'core-pr-source-composition/v1'
+                or not re.fullmatch(r'[a-f0-9]{64}', identity.get('sourceComposition', {}).get('receiptSHA256', ''))
+                or proof.get('productSourceSHA') != identity['sourceSHA']
+                or proof.get('harnessSourceSHA') != harness
+                or proof.get('producerRunID') != identity['runtimeRunID']
+                or proof.get('runtimeArtifactID') != identity['runtimeArtifactID']
+                or proof.get('runtimeArtifactDigest') != identity['runtimeArtifactDigest']
+                or source.get('sourceSHA') != harness):
+            raise ValueError('Retained runtime product and harness identities are incomplete')
+        return harness
+    if 'harnessSourceSHA' in identity or 'retainedRelease' in identity:
+        raise ValueError('Retained runtime requires its explicit identity schema')
+    return identity['sourceSHA']
+
+
+def resolve(run_id, name, artifact_id, destination, *, product_source='', proof_directory=None,
+            proof_sha='', source_run=0, source_artifact=0):
+    harness = os.environ['GITHUB_SHA']
+    source_sha = product_source or harness
     if not re.fullmatch(r'[0-9a-f]{40}', source_sha):
         raise ValueError('Invalid source commit')
+    composition = None
+    if proof_directory is not None:
+        if source_run <= 0 or source_artifact <= 0:
+            raise ValueError('Complete source proof artifact identity is required')
+        composition = source_composition(proof_directory, proof_sha, source_run)
+        composition.update(artifactID=source_artifact, executionRunID=int(os.environ['GITHUB_RUN_ID']))
+    elif product_source or proof_sha or source_run or source_artifact:
+        raise ValueError('A complete current source proof is required')
     run = api('/actions/runs/' + str(run_id))
     if artifact_id:
         artifact = api('/actions/artifacts/' + str(artifact_id))
@@ -105,6 +177,24 @@ def resolve(run_id, name, artifact_id, destination):
     identity = {'schema': 'nexgenvideo/native-input/1', 'sourceSHA': source_sha, 'runtimeRunID': run_id,
                 'runtimeArtifactID': artifact['id'], 'runtimeArtifactDigest': artifact['digest'],
                 'runtimeArtifactName': name, 'validatorSHA256': fingerprint()}
+    if composition is not None:
+        identity['sourceComposition'] = composition
+    if product_source:
+        from verify_diagnostic_candidate import verify_signed_desktop
+        if name != 'workspace-ui-app':
+            raise ValueError('Retained desktop requires the release workspace runtime')
+        subprocess.run(['git', 'merge-base', '--is-ancestor', source_sha, 'HEAD'], check=True, timeout=30)
+        subprocess.run(['git', 'diff', '--exit-code', 'HEAD', '--'], check=True, stdout=subprocess.DEVNULL, timeout=30)
+        changed = subprocess.check_output(['git', 'diff', '--no-renames', '--name-only', '-z', source_sha, 'HEAD'], timeout=30).decode()
+        jobs = api(f'/actions/runs/{run_id}/attempts/{run["run_attempt"]}/jobs?per_page=100')
+        verify_signed_desktop(run, jobs, artifact, run_id, source_sha, artifact['id'],
+                              artifact['digest'].removeprefix('sha256:'), list(filter(None, changed.split('\0'))))
+        producer = next(job for job in jobs['jobs'] if job['name'] == 'release')
+        identity.update(schema='nexgenvideo/native-input/2', harnessSourceSHA=harness,
+            retainedRelease={'productSourceSHA': source_sha, 'harnessSourceSHA': harness,
+                'producerRunID': run_id, 'producerAttempt': run['run_attempt'], 'producerJobID': producer['id'],
+                'runtimeArtifactID': artifact['id'], 'runtimeArtifactDigest': artifact['digest'],
+                'changedHarnessPaths': sorted(filter(None, changed.split('\0')))})
     atomic_json(destination, identity)
     outputs({'artifact_id': str(artifact['id']), 'runtime_run_id': str(run_id)})
 
@@ -257,7 +347,7 @@ def verify_runtime(directory, identity_file, expected_identity_sha):
     if sha(identity_file) != expected_identity_sha:
         raise ValueError('The runtime qualification identity changed')
     identity = json.loads(identity_file.read_text())
-    if identity['sourceSHA'] != os.environ['GITHUB_SHA'] or identity['validatorSHA256'] != fingerprint():
+    if execution_source(identity) != os.environ['GITHUB_SHA'] or identity['validatorSHA256'] != fingerprint():
         raise ValueError('The runtime or validator input changed')
     if sha(directory / 'workspace-ui.tar.gz') != identity['archiveSHA256']:
         raise ValueError('The immutable native runtime changed')
@@ -389,6 +479,10 @@ def summarize(artifacts, output, plan_file, identity_file, expected_identity_sha
     if sha(identity_file) != expected_identity_sha:
         raise ValueError('The expected qualification identity changed')
     plan = json.loads(plan_file.read_text()); identity = json.loads(identity_file.read_text())
+    harness = execution_source(identity)
+    if identity.get('schema') == 'nexgenvideo/native-input/2' and (
+            harness != os.environ['GITHUB_SHA'] or identity.get('validatorSHA256') != fingerprint()):
+        raise ValueError('Qualification source or validator input changed')
     if sha(plan_file) != identity.get('planSHA256'):
         raise ValueError('The expected case/scale plan changed')
     expected = {(entry['case'], entry['scale']) for entry in plan['matrix']['include']}
@@ -429,7 +523,7 @@ def summarize(artifacts, output, plan_file, identity_file, expected_identity_sha
         try:
             if remote and (not job or not item or job[0] != item[0]
                 or job[1].get('run_id') != int(os.environ['GITHUB_RUN_ID'])
-                or job[1].get('head_sha') != identity['sourceSHA'] or job[1].get('status') != 'completed'
+                or job[1].get('head_sha') != harness or job[1].get('status') != 'completed'
                 or job[1].get('conclusion') != 'success'):
                 raise ValueError('The latest native job did not pass with this exact evidence attempt')
             if item:
@@ -439,7 +533,7 @@ def summarize(artifacts, output, plan_file, identity_file, expected_identity_sha
                     if remote:
                         if (source.get('expired') is not False
                             or source.get('workflow_run', {}).get('id') != int(os.environ['GITHUB_RUN_ID'])
-                            or source.get('workflow_run', {}).get('head_sha') != identity['sourceSHA']
+                            or source.get('workflow_run', {}).get('head_sha') != harness
                             or type(source.get('id')) is not int or source['id'] <= 0
                             or not re.fullmatch(r'sha256:[0-9a-f]{64}', source.get('digest', ''))):
                             raise ValueError('Evidence artifact has a different source or is expired')
@@ -481,6 +575,12 @@ def main():
     resolver = sub.add_parser('resolve'); resolver.add_argument('--run-id', type=int, required=True)
     resolver.add_argument('--artifact', default='workspace-ui-app'); resolver.add_argument('--artifact-id', type=int)
     resolver.add_argument('--identity', type=Path, required=True)
+    resolver.add_argument('--product-source', default=''); resolver.add_argument('--source-proof', type=Path)
+    resolver.add_argument('--source-proof-sha', default=''); resolver.add_argument('--source-run', type=int, default=0)
+    resolver.add_argument('--source-artifact', type=int, default=0)
+    validate = sub.add_parser('validate-inputs')
+    for name in ('artifact', 'run-id', 'product-source', 'source-run', 'unit-filter'):
+        validate.add_argument('--' + name, default='')
     bpy = sub.add_parser('resolve-bpy-followup'); bpy.add_argument('--run-id', type=int, required=True)
     bpy.add_argument('--identity', type=Path, required=True)
     for name in ('prepare', 'verify-runtime', 'download-runtime'):
@@ -494,7 +594,10 @@ def main():
     if args.command == 'plan':
         value = selection(args.scope, args.case, args.scale); atomic_json(args.output, value)
         outputs({'matrix': value['matrix'], 'native': bool(value['matrix']['include']), 'batch': value['batch']})
-    elif args.command == 'resolve': resolve(args.run_id, args.artifact, args.artifact_id, args.identity)
+    elif args.command == 'validate-inputs': validate_inputs(args.artifact, args.run_id, args.product_source, args.source_run, args.unit_filter)
+    elif args.command == 'resolve': resolve(args.run_id, args.artifact, args.artifact_id, args.identity,
+        product_source=args.product_source, proof_directory=args.source_proof, proof_sha=args.source_proof_sha,
+        source_run=args.source_run, source_artifact=args.source_artifact)
     elif args.command == 'resolve-bpy-followup': resolve_bpy_followup(args.run_id, args.identity)
     elif args.command == 'prepare': prepare(args.directory, args.identity)
     elif args.command == 'verify-runtime': verify_runtime(args.directory, args.identity, args.identity_sha)
