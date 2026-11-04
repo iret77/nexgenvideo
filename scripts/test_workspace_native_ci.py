@@ -90,6 +90,7 @@ class NativeQualificationTests(unittest.TestCase):
         producer = SignedBpyCandidateTests(); producer.setUp()
         producer.artifact['name'] = 'workspace-ui-app'
         producer.jobs['jobs'][0]['labels'] = ['macrunner']
+        producer.jobs['jobs'][0]['id'] = 56
         directory, record, harness, tree = self.source_proof()
         path = '.github/workflows/workspace-ui-acceptance.yml'
         environment = {'GITHUB_SHA': harness, 'GITHUB_REF_NAME': 'rc'}
@@ -109,6 +110,7 @@ class NativeQualificationTests(unittest.TestCase):
                     identity = json.loads(self.identity_file.read_text())
                     self.assertEqual((identity['sourceSHA'], identity['harnessSourceSHA']), (producer.source, harness))
                     self.assertEqual(identity['retainedRelease']['producerAttempt'], 2)
+                    self.assertEqual(identity['retainedRelease']['producerJobID'], 56)
                     self.assertEqual(identity['sourceComposition']['composition'], record)
                     self.assertEqual(identity['sourceComposition']['artifactID'], 600)
                     self.assertEqual(ci.execution_source(identity), harness)
