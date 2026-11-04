@@ -97,7 +97,15 @@ def create(root):
         require(suite.get("sourceSHA") == os.environ["GITHUB_SHA"] and suite.get("completed") is True
                 and suite.get("configuration") == "release" and suite.get("scope") == "all"
                 and suite.get("filter") == "", "Fresh Release tests did not complete")
-        evidence = {"schema": "fresh-release-tests/v1", "suite": suite}
+        if "retainedBackends" in suite:
+            from release_engine_resume import verify_completed_suite
+            verify_completed_suite(suite, os.environ["GITHUB_SHA"], int(os.environ["GITHUB_RUN_ID"]))
+            evidence = {"schema": "resumed-release-tests/v1", "suite": suite}
+        else:
+            require(not any(key in suite for key in ("freshTestExecutions", "reusedTestExecutions"))
+                    and all("reusedFrom" not in phase for phase in suite.get("phases", [])),
+                    "Retained Release executions cannot be labeled fresh")
+            evidence = {"schema": "fresh-release-tests/v1", "suite": suite}
     info = identity(build)
     require(info["version"] == os.environ["REL_VERSION"]
             and info["sourceSHA"] == os.environ["GITHUB_SHA"], "Signed App version or source differs")
@@ -133,12 +141,18 @@ def verify_manifest(manifest, source, run_id):
                 and evidence.get("artifactSHA256") == DIGEST
                 and evidence.get("proof", {}).get("executions") == 4607,
                 "Reused native test evidence differs")
+    elif evidence.get("schema") == "resumed-release-tests/v1":
+        from release_engine_resume import verify_completed_suite
+        verify_completed_suite(evidence.get("suite", {}), source, run_id)
     else:
         suite = evidence.get("suite", {})
         require(evidence.get("schema") == "fresh-release-tests/v1"
                 and suite.get("sourceSHA") == source and suite.get("completed") is True
                 and suite.get("configuration") == "release" and suite.get("scope") == "all"
-                and suite.get("filter") == "", "Signed input lacks completed Release tests")
+                and suite.get("filter") == ""
+                and not any(key in suite for key in ("retainedBackends", "freshTestExecutions", "reusedTestExecutions"))
+                and all("reusedFrom" not in phase for phase in suite.get("phases", [])),
+                "Signed input lacks completed fresh Release tests")
     require(set(manifest.get("files", {})) == set(FILES), "Signed input file inventory differs")
     for value in manifest["files"].values():
         require(type(value.get("bytes")) is int and 0 < value["bytes"] < 12 * 1024**3

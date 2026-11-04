@@ -621,6 +621,10 @@ def run(args):
     profile = getattr(args, "app_diagnostic", None)
     product_source = getattr(args, "product_source_sha", None)
     retained_root = getattr(args, "bin_root", None)
+    retained_engine = getattr(args, "retained_release_engine", None)
+    if retained_engine and (args.scope != "all" or args.configuration != "release" or args.filter
+            or profile or retained_root or not args.scratch_path or args.swiftc_flag != ["-enable-testing"]):
+        raise VerificationError("Retained Engine proof requires the full normal testable Release configuration")
     if profile and (profile not in ("zombies", "glow-reproduction", "app-reproduction") or args.scope != "app-swift-testing"):
         raise VerificationError("The diagnostic requires its owned App SwiftTesting backend")
     if profile == "zombies" and (args.filter or retained_root):
@@ -647,6 +651,9 @@ def run(args):
     for flag in args.swiftc_flag:
         common += ["-Xswiftc", flag]
     try:
+        if retained_engine:
+            from release_engine_resume import verify
+            verify(retained_engine, version_bump=True)
         if profile:
             checkout = subprocess.run(["git", "rev-parse", "HEAD"], stdin=subprocess.DEVNULL,
                                       capture_output=True, text=True, timeout=15)
@@ -683,6 +690,21 @@ def run(args):
         combined = args.evidence / "combined.log"
         combined.write_text("")
         for name in phases:
+            if name == "engine-swift-testing" and retained_engine:
+                from release_engine_resume import install
+                phase, receipt = install(retained_engine, args.evidence)
+                result["phases"].append(phase)
+                result["retainedBackends"] = [receipt]
+                result["reusedTestExecutions"] = phase["events"]["functionExecutions"]
+                executions += result["reusedTestExecutions"]
+                retained_console = Path(phase["log"]).read_text()
+                with combined.open("a") as destination:
+                    destination.write(retained_console)
+                print("Retained Engine execution from run " + str(receipt["originalRun"]["id"])
+                      + " / source " + receipt["originalSourceSHA"] + "; no Engine test process started.", flush=True)
+                print(retained_console, end="" if retained_console.endswith("\n") else "\n", flush=True)
+                write_json(result_path, result)
+                continue
             folder = args.evidence / name
             folder.mkdir()
             log = folder / "console.log"
@@ -783,7 +805,12 @@ def run(args):
         if not args.filter:
             result["combinedFrameworks"] = framework_output(combined, 2 if args.scope == "all" else 1,
                                                              2 if args.scope == "all" else 0)
-        result.update(completed=True, testExecutions=executions)
+        result["testExecutions"] = executions
+        if retained_engine:
+            from release_engine_resume import verify_completed_suite
+            result["freshTestExecutions"] = executions - result["reusedTestExecutions"]
+            verify_completed_suite(dict(result, completed=True), source_sha, int(os.environ["GITHUB_RUN_ID"]))
+        result["completed"] = True
         write_json(result_path, result)
         return 0
     except (OSError, ValueError, subprocess.SubprocessError, VerificationError) as error:
@@ -807,6 +834,7 @@ def main():
     parser.add_argument("--app-diagnostic", choices=("zombies", "glow-reproduction", "app-reproduction"))
     parser.add_argument("--product-source-sha")
     parser.add_argument("--bin-root", type=Path)
+    parser.add_argument("--retained-release-engine", type=Path)
     args = parser.parse_args()
     if args.filter and not args.filter.strip():
         parser.error("An explicit filter cannot be whitespace only")

@@ -23,17 +23,20 @@ XCTEST = ("Test Suite 'All tests' started at now.\n"
           "Test Suite 'All tests' passed at now.\n")
 
 
-def events(module, *, empty=False, version=0):
+def events(module, *, empty=False, version=0, count=1):
     records = []
+    identities = []
     if not empty:
-        records.append({"kind": "test", "payload": {"kind": "function", "id": "opaque identity",
-                        "sourceLocation": {"fileID": module + "/Example.swift"}}})
-    kinds = ["runStarted"] + ([] if empty else ["testStarted", "testEnded"]) + ["runEnded"]
-    for kind in kinds:
-        payload = {"kind": kind}
-        if kind.startswith("test"):
-            payload["testID"] = "opaque identity"
-        records.append({"kind": "event", "payload": payload})
+        for index in range(count):
+            identity = "opaque identity" if count == 1 else "opaque identity " + str(index)
+            identities.append(identity)
+            records.append({"kind": "test", "payload": {"kind": "function", "id": identity,
+                            "sourceLocation": {"fileID": module + "/Example.swift"}}})
+    records.append({"kind": "event", "payload": {"kind": "runStarted"}})
+    for identity in identities:
+        for kind in ("testStarted", "testEnded"):
+            records.append({"kind": "event", "payload": {"kind": kind, "testID": identity}})
+    records.append({"kind": "event", "payload": {"kind": "runEnded"}})
     return [dict(record, version=version) for record in records]
 
 
@@ -156,7 +159,7 @@ raise SystemExit(7)
     def invoke(self, root, *, filter="", scope="all", exits=None, empty=(), console=None,
                receipt_change=None, query_error=None, capture_error=None, watchdog_error=None, preflight_error=None,
                app_diagnostic=None, diagnostic_status="verified", product_source_sha=None, checkout_source=None,
-               retained=False, output_capture=None):
+               retained=False, output_capture=None, retained_engine=None, function_counts=None):
         binary_root = root / "built products"
         binary_root.mkdir(exist_ok=True)
         host = binary_root / "NexGenVideoAppKitTestHost"
@@ -174,6 +177,7 @@ raise SystemExit(7)
                                   scratch_path=None if retained else "release scratch", swiftc_flag=[] if retained else ["-enable-testing"],
                                   evidence=root / "evidence", filter=filter, scope=scope,
                                   app_diagnostic=app_diagnostic,
+                                  retained_release_engine=retained_engine,
                                   bin_root=binary_root if retained else None,
                                   product_source_sha=product_source_sha or ("c" * 40 if app_diagnostic else None))
         calls = []
@@ -207,7 +211,7 @@ raise SystemExit(7)
                 log.write_text(output)
             if name != "xctest":
                 module = "NexGenEngineTests" if name == "engine-swift-testing" else "NexGenVideoTests"
-                records = events(module, empty=name in empty)
+                records = events(module, empty=name in empty, count=(function_counts or {}).get(name, 1))
                 write_events(log.parent / "events.jsonl", records)
                 if name == "app-swift-testing":
                     receipt = {"schema": 1, "pid": 123, "parentPID": os.getpid(),
@@ -219,7 +223,10 @@ raise SystemExit(7)
                     (log.parent / "host-receipt.json").write_text(json.dumps(receipt))
             return (exits or {}).get(name, 0), 123
 
-        with patch.dict(os.environ, {"GITHUB_SHA": "a" * 40}, clear=True), \
+        actions_environment = {"GITHUB_SHA": "a" * 40}
+        if retained_engine:
+            actions_environment.update(GITHUB_RUN_ID="123", GITHUB_RUN_ATTEMPT="1", GITHUB_REPOSITORY="iret77/nexgenvideo")
+        with patch.dict(os.environ, actions_environment, clear=True), \
                 patch.object(driver.subprocess, "run", side_effect=query), \
                 patch.object(driver, "run_process", side_effect=process), \
                 patch.object(driver, "probe_child_stdio", side_effect=preflight_error,
@@ -235,6 +242,57 @@ raise SystemExit(7)
         self.watchdog_calls = watchdog.call_args_list
         self.preflight_calls = preflight.call_args_list
         return code, json.loads((args.evidence / "suite.json").read_text()), calls, queries
+
+    def test_release_engine_proof_failure_never_falls_back_to_native_execution(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                patch("release_engine_resume.verify", side_effect=ValueError("Original Engine proof changed")):
+            code, receipt, calls, queries = self.invoke(Path(directory), retained_engine=Path("retained"))
+            self.assertEqual(code, 1)
+            self.assertFalse(receipt["completed"])
+            self.assertEqual(receipt["phases"], [])
+            self.assertEqual(calls, [])
+            self.assertEqual(queries, [])
+            self.assertIn("Original Engine proof changed", receipt["error"])
+
+        import release_engine_resume as resume
+        import test_release_engine_resume as fixtures
+        factory = fixtures.ReleaseEngineResumeTests()
+        retained = factory.receipt()
+        engine_console = SWIFT.replace("1 test in", "896 tests in")
+        def install(_, evidence):
+            folder = evidence / "engine-swift-testing"
+            folder.mkdir()
+            (folder / "console.log").write_text(engine_console)
+            phase = dict(retained["proof"]["phase"], log=str(folder / "console.log"),
+                         reusedFrom={"runID": resume.RUN, "sourceSHA": resume.SOURCE, "jobID": resume.JOB,
+                                     "artifactID": resume.ARTIFACT, "artifactSHA256": resume.DIGEST})
+            return phase, retained
+        xctest_console = XCTEST.replace("Test Case '-[Example testExample]' started.\n",
+            "".join(f"Test Case '-[Example test{index}]' started.\n" for index in range(48)))
+        with tempfile.TemporaryDirectory() as directory, factory.phase_pin(retained), \
+                patch.object(resume, "verify", return_value=retained), \
+                patch.object(resume, "install", side_effect=install):
+            root = Path(directory)
+            code, receipt, calls, _ = self.invoke(root, retained_engine=Path("retained"),
+                function_counts={"app-swift-testing": 3676},
+                output_capture={"originalExitCode": 0, "eof": True},
+                console={"xctest": xctest_console, "app-swift-testing": SWIFT.replace("1 test in", "3676 tests in")})
+            self.assertEqual(code, 0, receipt)
+            self.assertTrue(receipt["completed"])
+            self.assertEqual([call[0] for call in calls], ["xctest", "app-swift-testing"])
+            self.assertEqual((receipt["testExecutions"], receipt["freshTestExecutions"], receipt["reusedTestExecutions"]),
+                             (4620, 3724, 896))
+            self.assertEqual(receipt["retainedBackends"], [retained])
+            self.assertEqual(receipt["phases"][1]["reusedFrom"]["sourceSHA"], resume.SOURCE)
+            self.assertNotEqual(receipt["sourceSHA"], resume.SOURCE)
+            combined = (root / "evidence/combined.log").read_text()
+            self.assertIn(engine_console, combined)
+            self.assertIn("3676 tests in", combined)
+
+        for scope, selected in (("app-swift-testing", ""), ("all", "NativeSegmentInteractionTests")):
+            with self.subTest(scope=scope, selected=selected), tempfile.TemporaryDirectory() as directory:
+                with self.assertRaises(driver.VerificationError):
+                    self.invoke(Path(directory), scope=scope, filter=selected, retained_engine=Path("retained"))
 
     def test_zombies_only_apply_to_the_complete_failed_app_backend(self):
         with tempfile.TemporaryDirectory() as directory:

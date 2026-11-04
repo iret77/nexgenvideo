@@ -42,6 +42,10 @@ on:
         description: Pinned completed Release tests for unchanged native inputs
         type: string
         default: ''
+      completed_engine_tests_run_id:
+        description: Pinned successful Engine backend from the failed Release test suite
+        type: string
+        default: ''
       signed_build_run_id:
         description: Same-source successful signed build to package without rebuilding
         type: string
@@ -81,12 +85,17 @@ jobs:
           ARTIFACT_ONLY: ${{ inputs.artifact_only }}
           DRY_RUN: ${{ inputs.dry_run }}
           RELEASE_TEST_RUN: ${{ inputs.completed_release_tests_run_id }}
+          RELEASE_ENGINE_RUN: ${{ inputs.completed_engine_tests_run_id }}
           SIGNED_BUILD_RUN: ${{ inputs.signed_build_run_id }}
           NOTARY_PROGRESS_RUN: ${{ inputs.notary_progress_run_id }}
         run: |
           set -euo pipefail
           echo "$REL_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' \
             || { echo "::error::version must be X.Y.Z"; exit 1; }
+          if [ -n "${RELEASE_ENGINE_RUN:-}" ] && { [ "$ARTIFACT_ONLY" != "true" ] || [ "$DRY_RUN" != "true" ] || [ -n "${RELEASE_TEST_RUN:-}" ] || [ -n "${SIGNED_BUILD_RUN:-}" ] || [ -n "${NOTARY_PROGRESS_RUN:-}" ]; }; then
+            echo "::error::Engine backend continuation requires artifact_only and fresh App tests"
+            exit 1
+          fi
           if [ -n "${RELEASE_TEST_RUN:-}" ] && { [ -n "${SIGNED_BUILD_RUN:-}" ] || [ -n "${NOTARY_PROGRESS_RUN:-}" ]; }; then
             echo "::error::Select completed native tests or an existing signed build, never both"
             exit 1
@@ -181,6 +190,22 @@ jobs:
         with:
           name: release-native-proof-${{ github.run_id }}
           path: ${{ runner.temp }}/release-native
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Bind completed Release Engine tests
+        if: inputs.completed_engine_tests_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ENGINE_RUN: ${{ inputs.completed_engine_tests_run_id }}
+        run: python3 scripts/release_engine_resume.py prepare --run-id "$RELEASE_ENGINE_RUN" --root "$RUNNER_TEMP/release-engine"
+
+      - name: Retain completed Release Engine proof
+        if: always() && inputs.completed_engine_tests_run_id != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-engine-proof-${{ github.run_id }}
+          path: ${{ runner.temp }}/release-engine
           if-no-files-found: error
           retention-days: 7
 
@@ -506,6 +531,17 @@ jobs:
         if: inputs.completed_release_tests_run_id != ''
         run: python3 scripts/release_native_proof.py environment --root "$RUNNER_TEMP/release-native"
 
+      - name: Restore completed Release Engine proof
+        if: inputs.completed_engine_tests_run_id != ''
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-engine-proof-${{ github.run_id }}
+          path: ${{ runner.temp }}/release-engine
+
+      - name: Validate completed Release Engine environment
+        if: inputs.completed_engine_tests_run_id != ''
+        run: python3 scripts/release_engine_resume.py verify --root "$RUNNER_TEMP/release-engine"
+
       - name: Bump version
         run: |
           set -euo pipefail
@@ -543,12 +579,18 @@ jobs:
       - name: Test the exact release configuration
         if: inputs.completed_release_tests_run_id == ''
         shell: bash
+        env:
+          RELEASE_ENGINE_RUN: ${{ inputs.completed_engine_tests_run_id }}
         run: |
           set -euo pipefail
           export SWIFT_BACKTRACE=enable=yes,interactive=no,demangle=yes,cache=no
-          python3 scripts/run_macos_tests.py --cache-path "$NGV_SWIFTPM_CACHE_PATH" \
+          TEST_COMMAND=(python3 scripts/run_macos_tests.py --cache-path "$NGV_SWIFTPM_CACHE_PATH" \
             -c release --scratch-path "$RUNNER_TEMP/release-tests" --swiftc-flag=-enable-testing \
-            --evidence "$RUNNER_TEMP/release-test-evidence" 2>&1 | tee release-test.log
+            --evidence "$RUNNER_TEMP/release-test-evidence")
+          if [ -n "${RELEASE_ENGINE_RUN:-}" ]; then
+            TEST_COMMAND+=(--retained-release-engine "$RUNNER_TEMP/release-engine")
+          fi
+          "${TEST_COMMAND[@]}" 2>&1 | tee release-test.log
           python3 scripts/verify_swift_test_output.py --log release-test.log --swift-testing-runs 2 --xctest-runs 2
 
       - name: Upload release test evidence

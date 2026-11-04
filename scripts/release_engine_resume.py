@@ -1,0 +1,284 @@
+"""Retain the completed Engine backend from the pinned failed Release test run."""
+import argparse
+import ast
+import copy
+from datetime import datetime, timezone
+import hashlib
+import json
+import os
+from pathlib import Path
+import platform
+import re
+import subprocess
+import zipfile
+
+from retained_app_test_products import api, archive_bytes, checksum, download, require, verify_artifact, write
+from verify_swift_test_output import ANSI, assess_output
+
+
+RUN = 41830485668
+JOB = 126577339321
+SOURCE = "abb97672b1699af433673582545859c2b292bffb"
+ARTIFACT = 13324133993
+DIGEST = "7a000e82a53debe556234c1fc8364434b13f1284a4cca70ae62793e40e826d77"
+LOG_DIGEST = "0f634eddc6ed44ed1afb4b7ad0be28e0f5e130d90f885a2c8bdd5ed6841f928f"
+PHASE_DIGEST = "c8580031c5cfe3844f2169d03bf947847c34f1099c9a09cf2fe4f40b301925d9"
+EVENT_DIGEST = "2f872313ee84af000898df20f29be6a62154c87524cce06d8059a089d27206ed"
+CONSOLE_DIGEST = "a97b3156108f080b112d3ce9019985bceebed8d2a16bf7e81024b77fff9f9ac9"
+NAME = "engine-swift-testing"
+FIXTURE = "Tests/NexGenVideoTests/UI/NativeSegmentInteractionTests.swift"
+PATHS = {
+    FIXTURE, ".github/workflows/release.yml", "scripts/release_engine_resume.py",
+    "scripts/test_release_engine_resume.py", "scripts/run_macos_tests.py",
+    "scripts/test_run_macos_tests.py", "scripts/release_checkpoint.py",
+    "scripts/test_release_recovery.py", "scripts/test_release_workflow.py",
+}
+
+
+def command(*args):
+    return subprocess.check_output(args, stdin=subprocess.DEVNULL, text=True, timeout=40).strip()
+
+
+def event_parser(source):
+    tree = ast.parse(source)
+    function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "swift_events")
+    return ast.dump(function, include_attributes=False)
+
+
+def verify_sources(head, version_bump=False):
+    require(re.fullmatch(r"[a-f0-9]{40}", head) and command("git", "rev-parse", "HEAD") == head,
+            "Release Engine resume checkout differs")
+    subprocess.run(["git", "merge-base", "--is-ancestor", SOURCE, head],
+                   stdin=subprocess.DEVNULL, check=True, timeout=30)
+    changed = command("git", "diff", "--name-only", "--no-renames", SOURCE, head).splitlines()
+    require(FIXTURE in changed and set(changed) <= PATHS,
+            "Engine, pack, native app, dependency, runtime or unrelated source changed")
+    dirty = command("git", "diff", "HEAD", "--name-only", "--no-renames").splitlines()
+    require(set(dirty) <= ({"Sources/NexGenVideo/Resources/Info.plist"} if version_bump else set()),
+            "Engine resume tracked inputs are dirty")
+    before = command("git", "show", SOURCE + ":scripts/run_macos_tests.py")
+    require(event_parser(before) == event_parser(Path("scripts/run_macos_tests.py").read_text()),
+            "The retained native event verification contract changed")
+    return changed
+
+
+def verify_original(run, jobs):
+    require(run.get("id") == RUN and run.get("head_sha") == SOURCE
+            and run.get("repository", {}).get("full_name") == "iret77/nexgenvideo"
+            and run.get("path") == ".github/workflows/release.yml" and run.get("run_attempt") == 1
+            and run.get("actor", {}).get("login") == "iret77" and run.get("event") == "workflow_dispatch"
+            and run.get("status") == "completed" and run.get("conclusion") == "failure",
+            "Original partial Release run differs")
+    require(jobs.get("total_count") == len(jobs.get("jobs", [])), "Incomplete original Release jobs")
+    matches = [job for job in jobs["jobs"] if job.get("id") == JOB and job.get("name") == "release-build"]
+    require(len(matches) == 1, "Original Release builder is absent or ambiguous")
+    job = matches[0]
+    require(job.get("run_id") == RUN and job.get("head_sha") == SOURCE and job.get("run_attempt") == 1
+            and job.get("labels") == ["macrunner"] and job.get("status") == "completed"
+            and job.get("conclusion") == "failure", "Original builder execution differs")
+    for name, conclusion in (("Record release compiler configuration", "success"),
+                             ("Build the exact release test configuration", "success"),
+                             ("Verify release build did not mutate tracked source", "success"),
+                             ("Stage release test runtime inputs", "success"),
+                             ("Test the exact release configuration", "failure"),
+                             ("Upload release test evidence", "success")):
+        steps = [step for step in job.get("steps", []) if step.get("name") == name]
+        require(len(steps) == 1 and steps[0].get("conclusion") == conclusion,
+                "Original builder stage differs: " + name)
+    require([step["name"] for step in job["steps"] if step.get("conclusion") == "failure"]
+            == ["Test the exact release configuration"], "Original builder has another failure")
+    return job
+
+
+def verify_archive(path, root):
+    from run_macos_tests import swift_events
+    with zipfile.ZipFile(path) as archive:
+        names = [name for name in archive.namelist() if name.rsplit("/", 1)[-1] == "suite.json"]
+        require(len(names) == 1, "Original partial suite is ambiguous")
+        prefix = names[0][:-len("suite.json")]
+        suite = json.loads(archive_bytes(archive, names[0]))
+        require(suite.get("schema") == 1 and suite.get("sourceSHA") == SOURCE
+                and suite.get("configuration") == "release" and suite.get("scope") == "all"
+                and suite.get("filter") == "" and suite.get("completed") is False
+                and not any(key in suite for key in ("retainedBackends", "productSourceSHA", "harnessSourceSHA")),
+                "Original partial Release suite differs")
+        phases = suite.get("phases", [])
+        require([phase.get("name") for phase in phases] == ["xctest", NAME, "app-swift-testing"],
+                "Original backend order differs")
+        phase = phases[1]
+        require(phase.get("status") == "verified-execution" and phase.get("exitCode") == 0
+                and phase.get("outputCapture", {}).get("originalExitCode") == 0
+                and phase.get("outputCapture", {}).get("eof") is True
+                and not any(value.startswith("--filter") for value in phase.get("command", []))
+                and "diagnostic" not in phase, "Original Engine backend was filtered, failed or incomplete")
+        folder = root / NAME
+        folder.mkdir()
+        for name in ("console.log", "events.jsonl"):
+            (folder / name).write_bytes(archive_bytes(archive, prefix + NAME + "/" + name))
+        events = swift_events(folder / "events.jsonl", "NexGenEngineTests")
+        framework = assess_output(folder / "console.log", swift_testing_runs=1, xctest_runs=0)
+        require(events == phase.get("events") and events["functionExecutions"] == 896
+                and len(events["discoveredFunctionIDs"]) == 910 and len(events["skippedFunctionIDs"]) == 14
+                and framework.get("passed") is True and framework == phase.get("framework"),
+                "Original complete Engine execution proof differs")
+        return {"phase": phase, "eventsSHA256": checksum(folder / "events.jsonl"),
+                "logSHA256": checksum(folder / "console.log")}
+
+
+def toolchain(raw):
+    text = "\n".join(re.sub(r"^\d{4}-\d\d-\d\dT\S+Z ", "", line)
+                     for line in ANSI.sub("", raw.decode()).splitlines())
+    patterns = {"swift": r"(?m)^Apple Swift version [^\n]+\nTarget: [^\n]+",
+                "xcode": r"(?m)^Xcode [^\n]+\nBuild version [^\n]+",
+                "python": r"Successfully set up CPython \(([^)]+)\)",
+                "osVersion": r"(?m)^ProductVersion:\s*([^\n]+)",
+                "osBuild": r"(?m)^BuildVersion:\s*([^\n]+)"}
+    result = {}
+    for key, pattern in patterns.items():
+        matches = set(re.findall(pattern, text))
+        require(len(matches) == 1, "Original toolchain identity is missing or ambiguous: " + key)
+        result[key] = matches.pop().strip()
+    return result
+
+
+def prepare(run_id, root):
+    require(run_id == RUN and os.environ["GITHUB_REPOSITORY"] == "iret77/nexgenvideo",
+            "Only the pinned completed Engine backend can resume")
+    require(os.environ["GITHUB_RUN_ATTEMPT"] == "1", "Engine acquisition cannot reuse another Actions attempt")
+    head = os.environ["GITHUB_SHA"]
+    changed = verify_sources(head)
+    root.mkdir(parents=True, exist_ok=False)
+    original = api(f"actions/runs/{RUN}")
+    jobs = api(f"actions/runs/{RUN}/attempts/1/jobs?per_page=100")
+    job = verify_original(original, jobs)
+    artifact = api(f"actions/artifacts/{ARTIFACT}")
+    verify_artifact(artifact, original, job, ARTIFACT, DIGEST, "release-test-evidence")
+    download(artifact, root / "original.zip")
+    proof = verify_archive(root / "original.zip", root)
+    from verified_pr_source_checks import read_api
+    raw = read_api(f"actions/jobs/{JOB}/logs", 4_000_000)
+    require(hashlib.sha256(raw).hexdigest() == LOG_DIGEST, "Original complete builder log changed")
+    (root / "original-job.log").write_bytes(raw)
+    verify_artifact(artifact, original, job, ARTIFACT, DIGEST, "release-test-evidence")
+    receipt = {"schema": "release-engine-resume/v1", "sourceSHA": head,
+               "runID": int(os.environ["GITHUB_RUN_ID"]), "attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
+               "originalSourceSHA": SOURCE, "originalRun": original, "originalJobs": jobs,
+               "artifact": artifact, "artifactSHA256": DIGEST, "originalLogSHA256": LOG_DIGEST,
+               "changedPaths": changed, "toolchain": toolchain(raw), "proof": proof,
+               "acquiredAt": datetime.now(timezone.utc).isoformat()}
+    verify_receipt(receipt, head, int(os.environ["GITHUB_RUN_ID"]))
+    write(root / "receipt.json", receipt)
+
+
+def verify_receipt(receipt, source, run_id):
+    require(receipt.get("schema") == "release-engine-resume/v1" and receipt.get("sourceSHA") == source
+            and receipt.get("runID") == run_id and receipt.get("attempt") == 1
+            and receipt.get("originalSourceSHA") == SOURCE and receipt.get("artifactSHA256") == DIGEST
+            and receipt.get("originalLogSHA256") == LOG_DIGEST, "Engine resume receipt identity differs")
+    job = verify_original(receipt["originalRun"], receipt["originalJobs"])
+    artifact = receipt["artifact"]
+    require(artifact.get("id") == ARTIFACT and artifact.get("name") == "release-test-evidence"
+            and artifact.get("digest") == "sha256:" + DIGEST and artifact.get("expired") is False
+            and artifact.get("workflow_run", {}).get("id") == RUN
+            and artifact.get("workflow_run", {}).get("head_sha") == SOURCE,
+            "Acquired Engine artifact identity differs")
+    instant = lambda value: datetime.fromisoformat(value.replace("Z", "+00:00"))
+    require(isinstance(receipt.get("acquiredAt"), str), "Engine acquisition timestamp is missing")
+    acquired = instant(receipt["acquiredAt"])
+    require(instant(job["started_at"]) <= instant(artifact["created_at"])
+            <= instant(artifact["updated_at"]) <= instant(job["completed_at"])
+            <= acquired < instant(artifact["expires_at"]) and acquired <= datetime.now(timezone.utc),
+            "Engine artifact was not acquired during its valid retention")
+    phase = receipt.get("proof", {}).get("phase", {})
+    require(hashlib.sha256(json.dumps(phase, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            == PHASE_DIGEST and receipt["proof"].get("eventsSHA256") == EVENT_DIGEST
+            and receipt["proof"].get("logSHA256") == CONSOLE_DIGEST, "Pinned Engine execution bytes differ")
+    require(phase.get("name") == NAME and phase.get("status") == "verified-execution"
+            and phase.get("exitCode") == 0 and phase.get("outputCapture", {}).get("eof") is True
+            and phase.get("events", {}).get("functionExecutions") == 896
+            and phase.get("framework", {}).get("passed") is True, "Engine resume phase proof differs")
+    require(FIXTURE in receipt.get("changedPaths", []) and set(receipt["changedPaths"]) <= PATHS,
+            "Engine resume source closure differs")
+
+
+def verify(root, version_bump=False):
+    require(os.environ["GITHUB_REPOSITORY"] == "iret77/nexgenvideo"
+            and os.environ["GITHUB_RUN_ATTEMPT"] == "1", "Engine proof cannot cross repository or Actions attempt")
+    receipt = json.loads((root / "receipt.json").read_text())
+    require(receipt.get("attempt") == int(os.environ["GITHUB_RUN_ATTEMPT"]), "Current Engine proof attempt differs")
+    verify_receipt(receipt, os.environ["GITHUB_SHA"], int(os.environ["GITHUB_RUN_ID"]))
+    require(verify_sources(receipt["sourceSHA"], version_bump) == receipt["changedPaths"],
+            "Current Engine source closure differs")
+    require(checksum(root / "original.zip") == DIGEST and checksum(root / "original-job.log") == LOG_DIGEST,
+            "Retained Engine input bytes differ")
+    proof = receipt["proof"]
+    require(checksum(root / NAME / "events.jsonl") == proof["eventsSHA256"]
+            and checksum(root / NAME / "console.log") == proof["logSHA256"]
+            and toolchain((root / "original-job.log").read_bytes()) == receipt["toolchain"],
+            "Retained Engine execution data changed")
+    current = {"swift": command("swift", "--version"), "xcode": command("xcodebuild", "-version"),
+               "python": platform.python_version(), "osVersion": command("sw_vers", "-productVersion"),
+               "osBuild": command("sw_vers", "-buildVersion")}
+    require(platform.machine() == "arm64" and current == receipt["toolchain"],
+            "Current Release Engine runtime or toolchain differs")
+    write(root / "current-environment.json", current)
+    return receipt
+
+
+def install(root, evidence):
+    receipt = verify(root, version_bump=True)
+    target = evidence / NAME
+    target.mkdir()
+    for name in ("console.log", "events.jsonl"):
+        (target / name).write_bytes((root / NAME / name).read_bytes())
+    phase = copy.deepcopy(receipt["proof"]["phase"])
+    phase.update(log=str(target / "console.log"), reusedFrom={"runID": RUN, "sourceSHA": SOURCE,
+                 "jobID": JOB, "artifactID": ARTIFACT, "artifactSHA256": DIGEST})
+    write(evidence / "retained-engine-receipt.json", receipt)
+    return phase, receipt
+
+
+def verify_completed_suite(suite, source, run_id):
+    require(suite.get("schema") == 1 and suite.get("sourceSHA") == source and suite.get("completed") is True
+            and suite.get("scope") == "all" and suite.get("configuration") == "release"
+            and suite.get("filter") == "" and suite.get("testExecutions") == 4620
+            and suite.get("freshTestExecutions") == 3724 and suite.get("reusedTestExecutions") == 896
+            and suite.get("combinedFrameworks", {}).get("passed") is True,
+            "Resumed Release aggregate is incomplete")
+    retained = suite.get("retainedBackends", [])
+    require(len(retained) == 1, "Resumed Release must retain exactly the Engine backend")
+    verify_receipt(retained[0], source, run_id)
+    phases = suite.get("phases", [])
+    require([phase.get("name") for phase in phases] == ["xctest", NAME, "app-swift-testing"],
+            "Resumed Release backend inventory differs")
+    for phase in phases:
+        require(phase.get("status") == "verified-execution" and phase.get("exitCode") == 0
+                and phase.get("outputCapture", {}).get("originalExitCode") == 0
+                and phase.get("outputCapture", {}).get("eof") is True
+                and phase.get("framework", {}).get("passed") is True and "diagnostic" not in phase
+                and not any(value.startswith("--filter") for value in phase.get("command", [])),
+                "Resumed Release contains a failed, incomplete or filtered backend")
+    expected = copy.deepcopy(retained[0]["proof"]["phase"])
+    expected.update(log=phases[1]["log"], reusedFrom={"runID": RUN, "sourceSHA": SOURCE,
+                    "jobID": JOB, "artifactID": ARTIFACT, "artifactSHA256": DIGEST})
+    require(phases[1] == expected and all("reusedFrom" not in phases[index] for index in (0, 2)),
+            "Resumed Release backend provenance differs")
+    require(phases[0].get("testCaseExecutions") == 48
+            and phases[2].get("events", {}).get("functionExecutions") == 3676,
+            "Fresh App backend execution counts differ")
+    host = phases[2].get("originalHostReceipt", {})
+    require(host.get("sourceSHA") == source and all(host.get(key) is True for key in
+            ("mainThread", "applicationRunningAtStart", "started", "completed", "abiSucceeded", "runReturnedAfterCompletion")),
+            "Fresh App host did not complete successfully")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(allow_abbrev=False)
+    parser.add_argument("operation", choices=("prepare", "verify"))
+    parser.add_argument("--root", type=Path, required=True)
+    parser.add_argument("--run-id", type=int)
+    args = parser.parse_args()
+    if args.operation == "prepare":
+        prepare(args.run_id, args.root)
+    else:
+        verify(args.root)
