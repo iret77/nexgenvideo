@@ -249,7 +249,8 @@ enum AppViewOwnerAcceptance {
             }
             pending += (element.accessibilityChildren() ?? []).compactMap { $0 as? any NSAccessibilityProtocol }
         }
-        try driver.record(label, fields: ["windowFrame": NSStringFromRect(window.frame), "buttons": buttons])
+        try driver.record(label, fields: ["windowFrame": NSStringFromRect(window.frame), "buttons": buttons,
+                                          "visitedCount": visited.count, "traversalComplete": pending.isEmpty])
     }
 
     private static func overlayDrag(clip: Clip, editor: EditorViewModel, window: NSWindow,
