@@ -230,18 +230,6 @@ final class UserJourneyTests: XCTestCase {
         try click(app.menuItems[item], item)
     }
 
-    private struct TextInputIdentity: Hashable {
-        let kind: String
-        let identifier: String
-        let label: String
-
-        init(_ element: XCUIElement) {
-            kind = String(element.elementType.rawValue)
-            identifier = element.identifier
-            label = element.label
-        }
-    }
-
     private func visibleInputs(_ query: XCUIElementQuery) -> [XCUIElement] {
         query.allElementsBoundByIndex.filter { $0.exists && $0.isEnabled && $0.isHittable }
     }
@@ -274,28 +262,19 @@ final class UserJourneyTests: XCTestCase {
     }
 
     private func goTo(_ url: URL) throws {
-        let previous = Set((visibleInputs(app.textFields) + visibleInputs(app.comboBoxes)).map(TextInputIdentity.init))
+        let sheets = app.sheets.matching(NSPredicate(format: "identifier == %@", "GoToWindow"))
+        try require(sheets.count == 0, "A native Go to Folder sheet is already open")
         try key("g", modifiers: [.command, .shift])
-        var destination: XCUIElement?
-        try wait("unique native Go to Folder editor") {
-            let fields = self.visibleInputs(self.app.textFields).filter { !previous.contains(TextInputIdentity($0)) }
-            let boxes = self.visibleInputs(self.app.comboBoxes).filter { !previous.contains(TextInputIdentity($0)) }
-            let candidates = fields.isEmpty ? boxes : fields
-            guard candidates.count == 1 else { return false }
-            destination = candidates[0]
-            return true
-        }
-        let field = try XCTUnwrap(destination)
-        let identity = TextInputIdentity(field)
+        try wait("unique native Go to Folder sheet") { sheets.count == 1 }
+        let fields = sheets.element(boundBy: 0).textFields.matching(NSPredicate(format: "identifier == %@", "PathTextField"))
+        try wait("unique native Go to Folder editor") { fields.count == 1 }
+        let field = fields.element(boundBy: 0)
         try click(field, "Go to Folder path editor")
         try key("a", modifiers: .command, in: field)
         try type(url.path, in: field)
         try wait("typed destination in native path editor") { field.value as? String == url.path }
         try key(XCUIKeyboardKey.return.rawValue, in: field)
-        try wait("Go to Folder dismissed") {
-            let current = self.visibleInputs(self.app.textFields) + self.visibleInputs(self.app.comboBoxes)
-            return !current.contains { TextInputIdentity($0) == identity }
-        }
+        try wait("Go to Folder dismissed") { sheets.count == 0 }
     }
 
     private func click(_ element: XCUIElement, _ name: String) throws {
