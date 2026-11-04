@@ -7,28 +7,42 @@ struct ExportColorDiagnostic {
     struct Snapshot {
         let metadata: [String: Any]
         let raw: [UInt8]
-        let rec709: [UInt8]
+        let rec709: [UInt8]?
     }
 
     @MainActor
     static func main() async throws {
         guard CommandLine.arguments.count == 2 else { throw Failure("Expected the bound evidence directory") }
         let root = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
-        let source = try await snapshot(root.appendingPathComponent("GUI acceptance source.mp4"), label: "source", root: root)
-        let exported = try await snapshot(root.appendingPathComponent("user-export.mp4"), label: "export", root: root)
-        let result: [String: Any] = [
+        var observations: [String: Snapshot] = [:], failures: [String: String] = [:]
+        for (label, name) in [("source", "GUI acceptance source.mp4"), ("export", "user-export.mp4")] {
+            do { observations[label] = try await snapshot(root.appendingPathComponent(name), label: label, root: root) }
+            catch { failures[label] = String(describing: error) }
+        }
+        var result: [String: Any] = [
             "schema": "nexgenvideo/export-color-diagnostic/1",
             "classification": "native-decoder-color-observation-only", "appAcceptance": false,
-            "source": source.metadata, "export": exported.metadata,
-            "nativeUnmanagedRGBMAE": try error(source.raw, exported.raw),
-            "nativeCommonRec709RGBMAE": try error(source.rec709, exported.rec709),
+            "readFailures": failures,
             "existingAcceptanceThreshold": 15,
             "commonOutputColorSpace": "kCGColorSpaceITUR_709",
             "appBuilds": 0, "appLaunches": 0, "nativeAppUnitRuns": 0,
             "osVersion": ProcessInfo.processInfo.operatingSystemVersionString
         ]
+        for label in ["source", "export"] { result[label] = observations[label]?.metadata ?? ["readFailed": true] }
+        if let source = observations["source"], let exported = observations["export"] {
+            result["nativeUnmanagedRGBMAE"] = try error(source.raw, exported.raw)
+            if let left = source.rec709, let right = exported.rec709 {
+                result["nativeCommonRec709RGBMAE"] = try error(left, right)
+                result["commonRec709ComparisonAvailable"] = true
+            } else {
+                result["nativeCommonRec709RGBMAE"] = NSNull()
+                result["commonRec709ComparisonAvailable"] = false
+                result["normalizationUnavailableReason"] = "At least one native sample has no effective input profile or the fixed common color spaces are unavailable"
+            }
+        }
         try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys])
             .write(to: root.appendingPathComponent("native-color.json"))
+        guard failures.isEmpty else { throw Failure("Both native sample observations were attempted; some samples failed") }
     }
 
     @MainActor
@@ -63,17 +77,19 @@ struct ExportColorDiagnostic {
         try JSONSerialization.data(withJSONObject: metadata, options: [.prettyPrinted, .sortedKeys]).write(to: observation)
         guard abs(pts - 1) < 0.000001, CVPixelBufferGetWidth(buffer) == 320,
               CVPixelBufferGetHeight(buffer) == 180 else { throw Failure("The native sample time or dimensions differ") }
-        guard image.colorSpace != nil, let rec709 = CGColorSpace(name: CGColorSpace.itur_709),
-              let linear = CGColorSpace(name: CGColorSpace.extendedLinearSRGB) else {
-            throw Failure("The native sample has no effective color space")
-        }
         let rawImage = CIImage(cvPixelBuffer: buffer, options: [.colorSpace: NSNull()])
         let rawContext = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
-        let managedContext = CIContext(options: [.workingColorSpace: linear, .outputColorSpace: rec709])
         let raw = render(rawImage, context: rawContext, colorSpace: nil)
-        let managed = render(image, context: managedContext, colorSpace: rec709)
+        var managed: [UInt8]?
+        if image.colorSpace != nil, let rec709 = CGColorSpace(name: CGColorSpace.itur_709),
+           let linear = CGColorSpace(name: CGColorSpace.extendedLinearSRGB) {
+            let context = CIContext(options: [.workingColorSpace: linear, .outputColorSpace: rec709])
+            managed = render(image, context: context, colorSpace: rec709)
+        }
         metadata["unmanagedRGBSamples"] = samples(raw)
-        metadata["commonRec709RGBSamples"] = samples(managed)
+        if let managed { metadata["commonRec709RGBSamples"] = samples(managed) }
+        else { metadata["commonRec709RGBSamples"] = NSNull() }
+        metadata["commonRec709Available"] = managed != nil
         try JSONSerialization.data(withJSONObject: metadata, options: [.prettyPrinted, .sortedKeys]).write(to: observation)
         reader.cancelReading()
         return Snapshot(metadata: metadata, raw: raw, rec709: managed)

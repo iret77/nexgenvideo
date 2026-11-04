@@ -120,6 +120,27 @@ jobs:
               'producerAppFinalIdentityGuardExecuted': False}
           (root / 'binding.json').write_text(json.dumps(binding, indent=2) + '\n')
           PY
+      - name: Prepare the same job-local independent media tools as the original journey
+        id: media-tools
+        uses: mamba-org/setup-micromamba@f457c30a868e4760d3a6fcea5f25dc655b8edf39
+        with:
+          environment-name: ngv-media
+          create-args: 'ffmpeg=9.0.2=gpl_*'
+          micromamba-root-path: ${{ runner.temp }}/micromamba
+          micromamba-binary-path: ${{ runner.temp }}/micromamba-bin/micromamba
+          init-shell: 'none'
+          generate-run-shell: false
+          cache-environment: false
+          cache-downloads: false
+          post-cleanup: all
+      - name: Record and expose both independent media executables
+        env:
+          MEDIA_TOOLS_BIN: ${{ steps.media-tools.outputs.environment-path }}/bin
+        run: |
+          test "$(uname -m)" = arm64
+          "$MEDIA_TOOLS_BIN/ffmpeg" -version > "$RUNNER_TEMP/export-color/ffmpeg-version.log"
+          "$MEDIA_TOOLS_BIN/ffprobe" -version > "$RUNNER_TEMP/export-color/ffprobe-version.log"
+          echo "$MEDIA_TOOLS_BIN" >> "$GITHUB_PATH"
       - name: Observe native decoder metadata and fixed common color space
         run: |
           python3 - <<'PY'
