@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import platform
@@ -26,6 +27,8 @@ sys.path.insert(0, str(REPOSITORY / 'scripts'))
 from verify_diagnostic_candidate import SIGNED_JOURNEY_HARNESS_PATHS
 sys.path.pop(0)
 TEST_INPUTS = ('acceptance.py', 'test_bundle.py', 'project.yml', 'NexGenVideoExternalUITests/UserJourneyTests.swift')
+COLOR_HELPER = 'scripts/export_color_diagnostic.swift'
+SHARED_INPUTS = ('scripts/verify_diagnostic_candidate.py', COLOR_HELPER)
 CONFIG = Path('/tmp/nexgenvideo-external-gui-config.json')
 STAGES = ['home', 'settings', 'new-project', 'media-import', 'source-insert',
           'timeline-split', 'timeline-undo', 'close', 'reopen', 'export']
@@ -130,11 +133,13 @@ def test_source_identity(source_sha, input_root=ROOT):
         digest = sha256(path)
         require(digest == hashlib.sha256(committed).hexdigest(), 'Test input differs from its committed bytes: ' + relative)
         fingerprints[relative] = digest
-    shared = 'scripts/verify_diagnostic_candidate.py'
-    committed = output(['git', '-C', REPOSITORY, 'show', revision + ':' + shared])
-    digest = sha256(REPOSITORY / shared)
-    require(digest == hashlib.sha256(committed).hexdigest(), 'Shared source gate differs from its committed bytes')
-    fingerprints[shared] = digest
+    for shared in SHARED_INPUTS:
+        require((REPOSITORY / shared).is_file() and not (REPOSITORY / shared).is_symlink(),
+                'Shared qualification input is not a regular file')
+        committed = output(['git', '-C', REPOSITORY, 'show', revision + ':' + shared])
+        digest = sha256(REPOSITORY / shared)
+        require(digest == hashlib.sha256(committed).hexdigest(), 'Shared qualification input differs from its committed bytes')
+        fingerprints[shared] = digest
     return revision, fingerprints
 
 
@@ -270,6 +275,44 @@ def stop_owned_app(evidence):
     write_json(evidence / 'cleanup.json', {'ownedExecutable': executable, 'terminatedPIDs': owned})
 
 
+def color_error(report):
+    require(isinstance(report, dict) and report.get('schema') == 'nexgenvideo/export-color-diagnostic/1'
+            and report.get('classification') == 'native-decoder-color-observation-only'
+            and report.get('readFailures') == {}
+            and report.get('commonRec709ComparisonAvailable') is True
+            and report.get('commonOutputColorSpace') == 'kCGColorSpaceITUR_709',
+            'The native comparison did not establish a common Rec.709 color space')
+    for role, filename in [('source', 'GUI acceptance source.mp4'), ('export', 'user-export.mp4')]:
+        sample = report.get(role, {})
+        require(isinstance(sample, dict) and sample.get('filename') == filename
+                and type(sample.get('sampleTimeSeconds')) in (int, float) and sample['sampleTimeSeconds'] == 1
+                and sample.get('dimensions') == [320, 180] and sample.get('hasEffectiveCIColorSpace') is True
+                and sample.get('commonRec709Available') is True
+                and isinstance(sample.get('effectiveCIColorSpace'), str) and sample['effectiveCIColorSpace'],
+                'The native color comparison has an incomplete or different sample')
+    error = report.get('nativeCommonRec709RGBMAE')
+    require(type(error) in (int, float) and math.isfinite(error) and 0 <= error < 15,
+            'Exported pixels differ from the imported source in the same Rec.709 color space')
+    return error
+
+
+def validate_color_evidence(evidence, movie, source_files):
+    proof = movie['colorComparison']
+    require(isinstance(source_files.get(COLOR_HELPER), str)
+            and re.fullmatch('[a-f0-9]{64}', source_files[COLOR_HELPER])
+            and proof.get('reportSHA256') == sha256(evidence / 'native-color.json')
+            and proof.get('helperSHA256') == source_files.get(COLOR_HELPER)
+            and proof.get('executableSHA256') == sha256(evidence / 'native-color-check'),
+            'Native color comparison provenance changed')
+    require(sha256(evidence / 'GUI acceptance source.mp4') == proof.get('sourceSHA256') == movie['sourceSHA256']
+            and sha256(evidence / 'user-export.mp4') == proof.get('exportSHA256') == movie['sha256'],
+            'Native color comparison belongs to different video bytes')
+    require(type(movie.get('meanAbsoluteChannelError')) in (int, float)
+            and movie['meanAbsoluteChannelError'] == color_error(read_json(evidence / 'native-color.json'))
+            and movie.get('maximumMeanAbsoluteChannelError') == 15 and movie.get('sampleTimeSeconds') == 1,
+            'Qualified color comparison changed')
+
+
 def verify_movie(evidence, config):
     movie = Path(config['movie'])
     source = Path(config['source'])
@@ -289,11 +332,27 @@ def verify_movie(evidence, config):
         frames.append(raw)
         command(['ffmpeg', '-nostdin', '-v', 'error', '-ss', '1', '-i', path, '-frames:v', '1',
                  evidence / (name + '-frame.png')], evidence / 'decode.log')
-    error = sum(abs(a - b) for a, b in zip(*frames)) / len(frames[0])
-    require(error < 15, 'Exported pixels differ from the imported source at the same time')
-    return {'sha256': sha256(movie), 'sourceSHA256': sha256(source), 'sampleTimeSeconds': 1,
+    unmanaged_error = sum(abs(a - b) for a, b in zip(*frames)) / len(frames[0])
+    require(source.resolve(strict=True) == (evidence / 'GUI acceptance source.mp4').resolve(strict=True)
+            and movie.resolve(strict=True) == (evidence / 'user-export.mp4').resolve(strict=True),
+            'The native comparison input paths differ from the actual journey')
+    source_hash, movie_hash = sha256(source), sha256(movie)
+    helper_hash = sha256(REPOSITORY / COLOR_HELPER)
+    executable = evidence / 'native-color-check'
+    command(['xcrun', 'swiftc', '-swift-version', '6', '-parse-as-library', REPOSITORY / COLOR_HELPER,
+             '-o', executable], evidence / 'native-color-compiler.log', timeout=90)
+    command([executable, evidence], evidence / 'native-color-runtime.log', timeout=40)
+    require(sha256(REPOSITORY / COLOR_HELPER) == helper_hash, 'Native comparison helper changed during execution')
+    error = color_error(read_json(evidence / 'native-color.json'))
+    result = {'sha256': movie_hash, 'sourceSHA256': source_hash, 'sampleTimeSeconds': 1,
             'meanAbsoluteChannelError': error, 'maximumMeanAbsoluteChannelError': 15,
+            'unmanagedFFmpegMeanAbsoluteChannelError': unmanaged_error,
+            'colorComparison': {'reportSHA256': sha256(evidence / 'native-color.json'),
+                                'helperSHA256': helper_hash, 'executableSHA256': sha256(executable),
+                                'sourceSHA256': source_hash, 'exportSHA256': movie_hash},
             'frames': {name: sha256(evidence / name) for name in ['source-frame.png', 'export-frame.png']}}
+    validate_color_evidence(evidence, result, {COLOR_HELPER: helper_hash})
+    return result
 
 
 def require_runtime_host(runtime):
@@ -475,6 +534,7 @@ def validate(args):
             'Qualified movie differs from the visible completion')
     require(sha256(evidence / 'user-export.mp4') == result['export']['sha256'], 'Qualified movie changed')
     require(sha256(evidence / 'GUI acceptance source.mp4') == result['export']['sourceSHA256'], 'Imported fixture changed')
+    validate_color_evidence(evidence, result['export'], source_files)
     for name, digest in result['export']['frames'].items():
         require(sha256(evidence / name) == digest, 'Decoded frame evidence changed')
     print(json.dumps({'completed': True, 'sourceSHA': args.source_sha, 'mode': result['mode'],

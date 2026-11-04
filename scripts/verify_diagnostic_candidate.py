@@ -33,6 +33,7 @@ SIGNED_JOURNEY_BASE_HARNESS_PATHS = SIGNED_BPY_HARNESS_PATHS | {
 SIGNED_JOURNEY_HARNESS_PATHS = SIGNED_JOURNEY_BASE_HARNESS_PATHS | {
     ".github/workflows/segment-geometry-diagnostic.yml",
     "scripts/segment_geometry_diagnostic.swift",
+    "scripts/export_color_diagnostic.swift",
 }
 SIGNED_WORKSPACE_HARNESS_PATHS = SIGNED_JOURNEY_BASE_HARNESS_PATHS | {
     ".github/workflows/chat-hang-replay.yml",
