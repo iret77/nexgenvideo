@@ -13,6 +13,8 @@ final class UserJourneyTests: XCTestCase {
 
     private struct Failure: Error { let message: String }
 
+    private var windowButtons: XCUIElementQuery { app.windows.descendants(matching: .button) }
+
     override func setUpWithError() throws {
         continueAfterFailure = false
         config = try json(URL(fileURLWithPath: "/tmp/nexgenvideo-external-gui-config.json"))
@@ -81,11 +83,11 @@ final class UserJourneyTests: XCTestCase {
         try stage("media-import")
 
         try click(assetLabel, sourceTitle)
-        let clearRange = app.buttons["Clear Range"]
+        let clearRange = windowButtons["Clear Range"]
         try wait("source range controls") { clearRange.exists }
         try require(!clearRange.isEnabled, "A newly imported full source has an enabled Clear Range control")
         let clearRangeEnabled = clearRange.isEnabled
-        try click(app.buttons["Insert"], "Insert")
+        try click(windowButtons["Insert"], "Insert")
         try key("s", modifiers: .command)
         try wait("inserted clip saved") { (try? self.clips(self.timeline(project)).count) == 1 }
         let inserted = try snapshot("source-insert", project: project)
@@ -136,12 +138,12 @@ final class UserJourneyTests: XCTestCase {
         try stage("reopen")
 
         try menu("File", "Export…")
-        let exportStart = app.buttons["export.start"]
+        let exportStart = windowButtons["export.start"]
         try click(exportStart, "Export")
         let movie = URL(fileURLWithPath: try string("movie"))
         try savePanel(name: movie.lastPathComponent, previous: "export.mp4", directory: movie.deletingLastPathComponent())
         try wait("completed export with Reveal enabled", timeout: 180) {
-            let reveal = self.app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@",
+            let reveal = self.windowButtons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@",
                                                                "export.job.", ".reveal"))
             return reveal.allElementsBoundByIndex.contains { $0.exists && $0.isEnabled }
                 && FileManager.default.fileExists(atPath: movie.path)
@@ -167,9 +169,9 @@ final class UserJourneyTests: XCTestCase {
             answeredDiagnosticsConsent = true
         }
         try wait("normal Home window", timeout: 60) { self.app.staticTexts["Welcome to NexGenVideo"].exists }
-        let whatsNew = app.buttons["home.whats-new.continue"]
+        let whatsNew = windowButtons["home.whats-new.continue"]
         if whatsNew.exists { try click(whatsNew, "Continue") }
-        try require(app.buttons["home.settings"].exists, "Home settings entry is absent")
+        try require(windowButtons["home.settings"].exists, "Home settings entry is absent")
     }
 
     private func diagnosticsConsentDialogs() -> [XCUIElement] {
@@ -251,15 +253,15 @@ final class UserJourneyTests: XCTestCase {
             return value == name || value == (name as NSString).deletingPathExtension
         }
         try goTo(directory)
-        try click(app.buttons["Save"], "Save")
-        try wait("save panel closed") { !self.app.buttons["Save"].exists }
+        try click(windowButtons["Save"], "Save")
+        try wait("save panel closed") { !self.windowButtons["Save"].exists }
     }
 
     private func openPanel(_ file: URL) throws {
-        try wait("native Open button") { self.app.buttons["Open"].exists }
+        try wait("native Open button") { self.windowButtons["Open"].exists }
         try goTo(file)
-        try click(app.buttons["Open"], "Open")
-        try wait("open panel closed") { !self.app.buttons["Open"].exists }
+        try click(windowButtons["Open"], "Open")
+        try wait("open panel closed") { !self.windowButtons["Open"].exists }
     }
 
     private func goTo(_ url: URL) throws {
