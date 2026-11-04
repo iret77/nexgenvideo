@@ -21,6 +21,28 @@ BUNDLE = ROOT / "scripts/bundle.sh"
 ASSEMBLE_PACK = ROOT / "scripts/assemble_ngvpack.sh"
 
 
+def reusable_permission_violations(workflows):
+    ranks = {"none": 0, "read": 1, "write": 2}
+    failures = []
+    for caller_name, caller in workflows.items():
+        for job_name, job in caller.get("jobs", {}).items():
+            target = job.get("uses", "")
+            prefix = "./.github/workflows/"
+            if not target.startswith(prefix):
+                continue
+            callee_name = target.removeprefix(prefix)
+            callee = workflows[callee_name]
+            granted = job.get("permissions", caller.get("permissions", {}))
+            requested = [callee.get("permissions", {})]
+            requested += [child["permissions"] for child in callee.get("jobs", {}).values() if "permissions" in child]
+            scopes = set().union(*(value.keys() for value in requested))
+            for scope in sorted(scopes):
+                needed = max(ranks[value.get(scope, "none")] for value in requested)
+                if ranks[granted.get(scope, "none")] < needed:
+                    failures.append((caller_name, job_name, callee_name, scope))
+    return failures
+
+
 def named_release_steps(text):
     result = []
     for name in ("release-build", "release"):
@@ -103,6 +125,34 @@ def active_publication_steps(workflow, artifact_only, dry_run, resumed=False):
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
+    def test_local_reusable_workflow_permissions_are_granted_by_every_caller(self):
+        workflows = {path.name: yaml.safe_load(path.read_text()) for path in (ROOT / ".github/workflows").glob("*.yml")}
+        self.assertEqual(reusable_permission_violations(workflows), [])
+        changed = copy.deepcopy(workflows)
+        changed["release.yml"]["jobs"]["external-user-acceptance"]["permissions"].pop("pull-requests")
+        self.assertIn(("release.yml", "external-user-acceptance", "external-gui-acceptance.yml", "pull-requests"),
+                      reusable_permission_violations(changed))
+
+    def test_reusable_permission_comparison_obeys_job_override_inheritance_and_scope_strength(self):
+        callee = {"permissions": {"contents": "read", "pull-requests": "read"}, "jobs": {"run": {}}}
+        caller = {"permissions": {"contents": "write", "pull-requests": "write"},
+                  "jobs": {"call": {"uses": "./.github/workflows/callee.yml"}}}
+        fixture = {"caller.yml": caller, "callee.yml": callee}
+        self.assertEqual(reusable_permission_violations(fixture), [])
+        caller["jobs"]["call"]["permissions"] = {"contents": "read"}
+        self.assertEqual(reusable_permission_violations(fixture),
+                         [("caller.yml", "call", "callee.yml", "pull-requests")])
+        caller["jobs"]["call"]["permissions"]["pull-requests"] = "none"
+        self.assertEqual(reusable_permission_violations(fixture),
+                         [("caller.yml", "call", "callee.yml", "pull-requests")])
+        caller["jobs"]["call"]["permissions"]["pull-requests"] = "read"
+        self.assertEqual(reusable_permission_violations(fixture), [])
+        callee["jobs"]["run"]["permissions"] = {"contents": "write"}
+        self.assertEqual(reusable_permission_violations(fixture),
+                         [("caller.yml", "call", "callee.yml", "contents")])
+        caller["jobs"]["call"]["permissions"]["contents"] = "write"
+        self.assertEqual(reusable_permission_violations(fixture), [])
+
     def workflow(self):
         return yaml.safe_load(WORKFLOW.read_text())
 
