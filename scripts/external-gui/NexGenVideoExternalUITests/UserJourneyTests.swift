@@ -90,7 +90,7 @@ final class UserJourneyTests: XCTestCase {
         try wait("source range controls") { clearRange.exists }
         try require(!clearRange.isEnabled, "A newly imported full source has an enabled Clear Range control")
         let clearRangeEnabled = clearRange.isEnabled
-        try click(windowButtons["Insert"], "Insert")
+        try click(sourceInsert(in: project), "Insert")
         try key("s", modifiers: .command)
         try wait("inserted clip saved") { (try? self.clips(self.timeline(project)).count) == 1 }
         let inserted = try snapshot("source-insert", project: project)
@@ -275,6 +275,42 @@ final class UserJourneyTests: XCTestCase {
         try wait("typed destination in native path editor") { field.value as? String == url.path }
         try key(XCUIKeyboardKey.return.rawValue, in: field)
         try wait("Go to Folder dismissed") { sheets.count == 0 }
+    }
+
+    private func sourceInsert(in project: URL) throws -> XCUIElement {
+        let window = try documentWindow(project)
+        let panes = window.scrollViews
+            .containing(.button, identifier: "Insert").containing(.button, identifier: "Clear Range")
+        try wait("unique source inspector") { panes.count == 1 }
+        let pane = panes.element(boundBy: 0)
+        let buttons = pane.buttons.matching(NSPredicate(format: "label == %@", "Insert"))
+        try require(buttons.count == 1, "Source Insert is missing or ambiguous")
+        let button = buttons.element(boundBy: 0)
+        try wait("enabled source Insert") { button.exists && button.isEnabled }
+        let viewport = pane.frame
+        try require(viewport.minX.isFinite && viewport.minY.isFinite && viewport.width.isFinite
+                    && viewport.height.isFinite && !viewport.isEmpty
+                    && window.frame.contains(viewport), "The source inspector viewport is not visible")
+        var deltaY = -viewport.height * 0.75
+        for _ in 0..<4 {
+            let before = button.frame
+            if button.isHittable && viewport.contains(before) {
+                _ = try evidence("source-insert-visible")
+                return button
+            }
+            let action = actions.count
+            actions.append(["kind": "scroll", "target": "Source inspector", "deltaX": 0, "deltaY": deltaY,
+                            "viewport": NSStringFromRect(viewport), "beforeFrame": NSStringFromRect(before),
+                            "targetEnabled": button.isEnabled])
+            pane.scroll(byDeltaX: 0, deltaY: deltaY)
+            let after = button.frame
+            actions[action]["afterFrame"] = NSStringFromRect(after)
+            actions[action]["targetHittable"] = button.isHittable
+            if abs(after.midY - viewport.midY) >= abs(before.midY - viewport.midY) { deltaY = -deltaY }
+        }
+        try require(button.isHittable && viewport.contains(button.frame), "Source Insert remains outside its visible inspector")
+        _ = try evidence("source-insert-visible")
+        return button
     }
 
     private func click(_ element: XCUIElement, _ name: String) throws {
