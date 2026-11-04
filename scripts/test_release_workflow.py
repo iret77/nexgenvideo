@@ -444,7 +444,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         bundle_name = "Build and sign app"
         pack_name = "Assemble format packs (.ngvpack + catalog entry)"
         build = (
-            'swift build --cache-path "$NGV_SWIFTPM_CACHE_PATH" -c release '
+            'swift build --jobs 1 --cache-path "$NGV_SWIFTPM_CACHE_PATH" -c release '
             '--scratch-path "$RUNNER_TEMP/release-tests" --build-tests -Xswiftc -enable-testing'
         )
         stage = 'scripts/stage_test_runtime.sh release "$RUNNER_TEMP/release-tests"'
@@ -491,6 +491,19 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("-enable-testing", ASSEMBLE_PACK.read_text())
         self.assertNotIn("--scratch-path", ASSEMBLE_PACK.read_text())
         self.assertNotIn("$RUNNER_TEMP", by_name[pack_name])
+
+        compile_block = BUNDLE.read_text().split('echo "==> Building ($CONFIG)"', 1)[1].split('BIN_DIRECTORY=', 1)[0]
+        for config in ("release", "debug"):
+            with self.subTest(config=config), tempfile.TemporaryDirectory() as directory:
+                capture = Path(directory) / "arguments"
+                shell = 'set -euo pipefail\nswift() { printf \'%s\\0\' "$@" > "$NGV_TEST_BUILD_ARGUMENTS"; }\n' + compile_block
+                environment = {**os.environ, "CONFIG": config, "NGV_SWIFTPM_CACHE_PATH": "/exact/cache",
+                               "NGV_TEST_BUILD_ARGUMENTS": str(capture)}
+                subprocess.run(["bash", "-c", shell], env=environment, check=True, capture_output=True, timeout=10)
+                arguments = [item.decode() for item in capture.read_bytes().split(b"\0")[:-1]]
+                expected = ["build", "--cache-path", "/exact/cache"]
+                if config == "release": expected += ["--jobs", "1"]
+                self.assertEqual(arguments, expected + ["-c", config])
 
     def test_all_notary_submissions_use_the_retrying_helper(self):
         workflow = WORKFLOW.read_text()

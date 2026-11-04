@@ -221,7 +221,11 @@ SWIFTPM_CACHE_ARGS=()
 if [ -n "${NGV_SWIFTPM_CACHE_PATH:-}" ]; then
   SWIFTPM_CACHE_ARGS=(--cache-path "$NGV_SWIFTPM_CACHE_PATH")
 fi
-swift build "${SWIFTPM_CACHE_ARGS[@]}" -c "$CONFIG"
+SWIFTPM_BUILD_ARGS=(-c "$CONFIG")
+if [ "$CONFIG" = "release" ]; then
+  SWIFTPM_BUILD_ARGS=(--jobs 1 "${SWIFTPM_BUILD_ARGS[@]}")
+fi
+swift build "${SWIFTPM_CACHE_ARGS[@]}" "${SWIFTPM_BUILD_ARGS[@]}"
 BIN_DIRECTORY="$(swift build "${SWIFTPM_CACHE_ARGS[@]}" -c "$CONFIG" --show-bin-path)"
 BIN="$BIN_DIRECTORY/NexGenVideo"
 
