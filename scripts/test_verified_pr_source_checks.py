@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 import textwrap
 import unittest
@@ -320,7 +321,38 @@ class VerifiedPRSourceChecksTests(unittest.TestCase):
         self.assertIn('test "$OTHER_SOURCE_REUSE" = false', binding)
         self.assertNotIn("continue-on-error", binding)
         self.assertIn("verified_pr_run_id: ${{ inputs.verified_pr_run_id }}", batch)
-        self.assertIn("if verified_pr and (mode != 'initial'", batch)
+        code = textwrap.dedent(batch.split("          python3 - <<'PYTHON'\n", 1)[1].split("          PYTHON", 1)[0])
+        defaults = {"NGV_MODE": "initial", "NGV_FOLLOWUP": "none", "NGV_RUNTIME_RUN": "",
+                    "NGV_SETTINGS_SCOPE": "all", "NGV_INTERFACE_SCALE": "all", "NGV_QUALIFICATION_RUN": "",
+                    "NGV_SOURCE_RUN": "", "NGV_VERIFIED_PR": "456", "NGV_RELEASE_BINDING": ""}
+        signed = {"NGV_MODE": "followup", "NGV_FOLLOWUP": "settings", "NGV_RUNTIME_RUN": "123",
+                  "NGV_RELEASE_BINDING": json.dumps({"runID": 123})}
+        cases = [({}, "initial"), (signed, "followup"),
+                 ({"NGV_MODE": "qualification"}, None),
+                 ({"NGV_MODE": "followup", "NGV_FOLLOWUP": "externalgui", "NGV_RUNTIME_RUN": "123"}, None),
+                 (signed | {"NGV_RELEASE_BINDING": ""}, None),
+                 (signed | {"NGV_RUNTIME_RUN": "124"}, None),
+                 (signed | {"NGV_VERIFIED_PR": ""}, None),
+                 *[({"NGV_VERIFIED_PR": value}, None) for value in ("0", "-1", " 456", "abc")],
+                 *[(signed | {key: "789"}, None) for key in
+                   ("NGV_COMPLETED_FULL", "NGV_SOURCE_CHECKS", "NGV_APP_ASSERTIONS",
+                    "NGV_QUALIFICATION_RUN", "NGV_SOURCE_RUN")]]
+        environment = {key: value for key, value in os.environ.items() if not key.startswith("NGV_")}
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "outputs"
+            for values, expected_mode in cases:
+                with self.subTest(batch_inputs=values):
+                    output.write_text("")
+                    result = subprocess.run([sys.executable, "-c", code], stdin=subprocess.DEVNULL,
+                        capture_output=True, timeout=10,
+                        env=environment | defaults | values | {"GITHUB_OUTPUT": str(output)})
+                    if expected_mode is None:
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertTrue(result.stderr.strip())
+                        self.assertEqual(output.read_text(), "")
+                    else:
+                        self.assertEqual(result.returncode, 0, result.stderr.decode())
+                        self.assertEqual(output.read_text(), "mode=" + expected_mode + "\n")
         for workflow in (ci, batch):
             self.assertIn("  pull-requests: read\n", re.split(r"(?m)^jobs:\s*\n", workflow, maxsplit=1)[0])
 

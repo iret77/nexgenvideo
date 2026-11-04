@@ -206,7 +206,8 @@ class ReleaseEngineResumeTests(unittest.TestCase):
 
     def test_reviewed_app_ui_and_ci_changes_require_unchanged_engine_dependency_objects(self):
         changed = [resume.FIXTURE, "Sources/NexGenVideo/ThreeD/SpatialSceneView.swift",
-                   "Sources/NexGenVideo/UI/AppTheme.swift", "scripts/external-gui/transport.py"]
+                   "Sources/NexGenVideo/UI/AppTheme.swift", "scripts/external-gui/transport.py",
+                   "scripts/test_verified_pr_source_checks.py"]
         self.assertEqual(self.source_closure("\n".join(changed)), changed)
         paths = ("Engine", "Package.swift", "Package.resolved", "Tests/NexGenEngineTests",
                  "Sources/MusicvideoPlugin", "Sources/FixtureFictionPlugin",

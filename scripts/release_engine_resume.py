@@ -46,6 +46,7 @@ PATHS = ORIGINAL_PATHS | {
     "scripts/settings_owner_acceptance.py", "scripts/test_ci_workflow.py",
     "scripts/test_external_gui_test_bundle.py", "scripts/test_external_transport.py",
     "scripts/test_release_acceptance_identity.py", "scripts/verify_diagnostic_candidate.py",
+    "scripts/test_verified_pr_source_checks.py",
 }
 ENGINE_SOURCE_OBJECTS = {
     "Engine": "29cfed623d13e6d84d5822a30b98e088fc123c3f",
