@@ -512,6 +512,8 @@ def validate_dmg_descriptor(proof, producer, job, payload, product, proof_artifa
             and context.get("sourceSHA") == product and context.get("producerSourceSHA") == producer["head_sha"]
             and context.get("runID") == producer["id"] and type(context.get("buildRunID")) is int,
             "DMG checkpoint proof context differs")
+    require(all(re.fullmatch('[a-f0-9]{64}', checkpoint.get(key, '')) for key in ('appTreeSHA256', 'appRuntimeTreeSHA256')),
+            'DMG checkpoint lacks separate signed and runtime tree identities')
     for key in ("NexGenVideo.dmg", "plugins.tar.gz"):
         value = checkpoint.get("files", {}).get(key, {})
         require(type(value.get("bytes")) is int and value["bytes"] > 0
@@ -863,6 +865,8 @@ def record_dmg_payload(root, artifact_id, checksum):
                         "buildRunID": binding["originalSignedBuildRunID"], "runID": binding["runID"]}
     require(checkpoint.get("schema") == "release-dmg-checkpoint/v2" and checkpoint.get("context") == expected_context,
             "DMG payload checkpoint source differs")
+    require(all(re.fullmatch('[a-f0-9]{64}', checkpoint.get(key, '')) for key in ('appTreeSHA256', 'appRuntimeTreeSHA256')),
+            'DMG payload lacks separate signed and runtime tree identities')
     artifact = api("actions/artifacts/" + str(artifact_id))
     require(artifact.get("id") == artifact_id and artifact.get("digest") == "sha256:" + checksum
             and artifact.get("name") == "release-dmg-input-" + binding["productSourceSHA"]
@@ -955,7 +959,7 @@ def record_complete(root, app, archive_sha, source_receipt_sha, pack_archive):
     checkpoint = json.loads(Path(os.environ['RETAINED_PACKAGING_DMG_CHECKPOINT']).read_bytes())
     submitted = checkpoint.get('files', {}).get('NexGenVideo.dmg', {}).get('sha256')
     require(submitted in journals and checkpoint.get('context') == context
-            and checkpoint.get('appTreeSHA256') == app['treeSHA256'], 'Submitted DMG lost its copy or Apple binding')
+            and checkpoint.get('appRuntimeTreeSHA256') == app['treeSHA256'], 'Submitted DMG lost its copy or Apple binding')
     inventory = api(f"actions/runs/{binding['runID']}/artifacts?per_page=100")
     require(inventory.get('total_count') == len(inventory.get('artifacts', [])), 'Incomplete current DMG proof inventory')
     found = [item for item in inventory['artifacts'] if item.get('name') == 'release-dmg-proof-' + binding['productSourceSHA']]
@@ -1108,7 +1112,7 @@ def validate_binding(record, files, *, execution=False, chain=None):
         require(submission.get('schema') == 'nexgenvideo/dmg-artifact-proof/1' and submission.get('sourceSHA') == product
                 and submission.get('producerSourceSHA') == producer and submission.get('runID') == record['runID']
                 and checkpoint.get('schema') == 'release-dmg-checkpoint/v2' and checkpoint.get('context') == final['notaryContext']
-                and checkpoint.get('appTreeSHA256') == final['appTreeSHA256']
+                and checkpoint.get('appRuntimeTreeSHA256') == final['appTreeSHA256']
                 and checkpoint.get('files', {}).get('NexGenVideo.dmg', {}).get('sha256') == final['submittedDMGSHA256'],
                 'Complete proof substituted the submitted DMG identity')
         jobs = api(f"actions/runs/{record['runID']}/attempts/1/jobs?per_page=100")

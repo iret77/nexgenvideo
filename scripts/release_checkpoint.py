@@ -368,10 +368,14 @@ def create_dmg(root):
         require(context.get("producerSourceSHA") == os.environ["GITHUB_SHA"]
                 and context.get("runID") == int(os.environ["GITHUB_RUN_ID"])
                 and context.get("buildRunID") == retained["originalSignedBuildRunID"], "DMG context belongs to another packaging execution")
-    write(root / "dmg-checkpoint.json", {"schema": "release-dmg-checkpoint/v2" if retained is not None else "release-dmg-checkpoint/v1", "context": context,
+    checkpoint = {"schema": "release-dmg-checkpoint/v2" if retained is not None else "release-dmg-checkpoint/v1", "context": context,
           "appTreeSHA256": tree_digest(build / "NexGenVideo.app"), "files": {
               name: {"bytes": (root / name).stat().st_size, "sha256": checksum(root / name)}
-              for name in ("NexGenVideo.dmg", "plugins.tar.gz")}})
+              for name in ("NexGenVideo.dmg", "plugins.tar.gz")}}
+    if retained is not None:
+        from release_acceptance_identity import tree_sha256
+        checkpoint['appRuntimeTreeSHA256'] = tree_sha256(build / 'NexGenVideo.app')
+    write(root / 'dmg-checkpoint.json', checkpoint)
     if retained is not None:
         with Path(os.environ["GITHUB_ENV"]).open("a") as output:
             output.write("RETAINED_PACKAGING_DMG_CHECKPOINT=" + str((root / "dmg-checkpoint.json").resolve()) + "\n")

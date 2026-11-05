@@ -294,7 +294,7 @@ class RetainedPackagingTests(unittest.TestCase):
         def publish(record, files):
             if record['stage'] == 'complete':
                 checkpoint = {'schema': 'release-dmg-checkpoint/v2', 'context': record['final']['notaryContext'],
-                              'appTreeSHA256': '7' * 64, 'files': {'NexGenVideo.dmg': {'bytes': 10, 'sha256': 'c' * 64},
+                              'appTreeSHA256': 'd' * 64, 'appRuntimeTreeSHA256': '7' * 64, 'files': {'NexGenVideo.dmg': {'bytes': 10, 'sha256': 'c' * 64},
                                                                'plugins.tar.gz': {'bytes': 20, 'sha256': 'd' * 64}}}
                 payload = artifact(703, 'release-dmg-input-' + self.product, current, current_release, b'actual checkpoint bytes')
                 payload.update(created_at='2026-11-04T10:05:00Z', updated_at='2026-11-04T10:06:00Z')
@@ -854,6 +854,66 @@ class RetainedPackagingTests(unittest.TestCase):
                     env=environment, capture_output=True, text=True, timeout=15)
                 with self.subTest(inputs=inputs):
                     self.assertEqual(result.returncode == 0, accepted, result.stdout + result.stderr)
+
+    def test_v2_dmg_checkpoint_keeps_both_actual_bundle_tree_algorithms(self):
+        import release_acceptance_identity as identities
+        import release_checkpoint as checkpoint
+        with tempfile.TemporaryDirectory() as directory, chdir(directory):
+            app = Path('.build/NexGenVideo.app'); contents = app / 'Contents'
+            (contents / 'MacOS').mkdir(parents=True); (contents / 'Resources').mkdir()
+            executable = contents / 'MacOS/NexGenVideo'; executable.write_bytes(b'synthetic App fixture'); executable.chmod(0o755)
+            (contents / 'Resources/data').write_bytes(b'exact resources')
+            (contents / 'Current').symlink_to('MacOS')
+            Path('.build/NexGenVideo.dmg').write_bytes(b'actual submitted DMG fixture')
+            signed_tree = checkpoint.tree_digest(app); runtime_tree = identities.tree_sha256(app)
+            self.assertNotEqual(signed_tree, runtime_tree)
+            state = Path(directory) / 'notary'; state.mkdir()
+            context = {'schema': 'release-notary-context/v2', 'repository': packaging.REPOSITORY,
+                       'sourceSHA': self.product, 'producerSourceSHA': self.producer, 'buildRunID': 50, 'runID': 70}
+            (state / 'context.json').write_text(json.dumps(context))
+            def tar(*args):
+                self.assertEqual(args[:2], ('tar', '-czf'))
+                Path(args[2]).write_bytes(b'exact pack TAR fixture')
+            environment = {'GITHUB_SHA': self.producer, 'GITHUB_RUN_ID': '70', 'NOTARY_STATE_DIR': str(state),
+                           'GITHUB_ENV': str(Path(directory) / 'outputs')}
+            with patch.dict(os.environ, environment), patch.object(checkpoint, 'packaging_binding',
+                    return_value={'productSourceSHA': self.product, 'originalSignedBuildRunID': 50}), \
+                    patch.object(checkpoint, 'run', side_effect=tar):
+                checkpoint.create_dmg(Path(directory) / 'checkpoint')
+            record = json.loads((Path(directory) / 'checkpoint/dmg-checkpoint.json').read_text())
+            self.assertEqual(record['schema'], 'release-dmg-checkpoint/v2')
+            self.assertEqual(record['appTreeSHA256'], signed_tree)
+            self.assertEqual(record['appRuntimeTreeSHA256'], runtime_tree)
+            self.assertNotEqual(record['appTreeSHA256'], record['appRuntimeTreeSHA256'])
+
+    def test_complete_receipt_rejects_missing_or_signed_algorithm_in_runtime_tree_field(self):
+        routes, downloads, environment, values, journals, publish = self.provenance_fixture()
+        with patch.dict(os.environ, environment), patch.object(packaging, 'utc_now', return_value='2026-11-04T10:20:00Z'), \
+                patch.object(packaging, 'live_api', side_effect=routes.__getitem__), \
+                patch.object(packaging, 'live_read_api', side_effect=lambda route, **kwargs: downloads[route]), \
+                patch.object(packaging, 'git', side_effect=lambda *args: self.local_git_fixture()[args]):
+            record, files = packaging.collect_binding(values)
+            complete = self.complete_fixture(record, journals); publish(complete, files)
+            with zipfile.ZipFile(io.BytesIO(files['submitted-dmg-proof.zip'])) as archive:
+                original = json.loads(archive.read('manifest.json'))
+            self.assertNotEqual(original['checkpoint']['appTreeSHA256'], original['checkpoint']['appRuntimeTreeSHA256'])
+            for missing in (True, False):
+                changed = copy.deepcopy(original)
+                if missing: changed['checkpoint'].pop('appRuntimeTreeSHA256')
+                else: changed['checkpoint']['appRuntimeTreeSHA256'] = changed['checkpoint']['appTreeSHA256']
+                raw = io.BytesIO()
+                with zipfile.ZipFile(raw, 'w') as archive: archive.writestr('manifest.json', json.dumps(changed))
+                broken = copy.deepcopy(complete); altered = dict(files, **{'submitted-dmg-proof.zip': raw.getvalue()})
+                broken['files']['submitted-dmg-proof.zip'] = {'bytes': len(raw.getvalue()), 'sha256': packaging.digest(raw.getvalue())}
+                broken['final']['dmgSubmissionArtifact'].update(size_in_bytes=len(raw.getvalue()), digest='sha256:' + packaging.digest(raw.getvalue()))
+                outer = io.BytesIO()
+                with zipfile.ZipFile(outer, 'w') as archive:
+                    for name, value in {**altered, 'packaging-provenance.json': packaging.encoded(broken)}.items(): archive.writestr(name, value)
+                routes['actions/artifacts/701'].update(size_in_bytes=len(outer.getvalue()), digest='sha256:' + packaging.digest(outer.getvalue()))
+                downloads['actions/artifacts/701/zip'] = outer.getvalue()
+                selected = packaging.selectors(self.producer, '701', packaging.digest(outer.getvalue()))
+                with self.subTest(missing=missing), self.assertRaisesRegex(ValueError, 'submitted DMG identity'):
+                    packaging.load_provenance(70, self.product, selected)
 
 
 if __name__ == "__main__":
