@@ -58,6 +58,18 @@ on:
         description: Exact original normal-journey evidence ZIP digest
         type: string
         default: ''
+      test_bundle_run_id:
+        description: Original compiled UI test producer for signed journey or transport
+        type: string
+        default: ''
+      test_bundle_artifact_id:
+        description: Exact original compiled UI test artifact
+        type: string
+        default: ''
+      test_bundle_artifact_sha256:
+        description: SHA256 of the original compiled UI test archive
+        type: string
+        default: ''
 
       product_source_sha:
         description: Original product commit for replay, or normal blur experiment commit
@@ -119,13 +131,31 @@ jobs:
     runs-on: ubuntu-24.04
     # Signed acceptance runs the full six-minute suite; targeted diagnostic modes keep their bound.
     timeout-minutes: ${{ (inputs.candidate_kind == 'signed-release' || inputs.candidate_kind == 'signed-transport') && 10 || 5 }}
-    outputs:
-      fixture_artifact_id: ${{ steps.transport_fixture_artifact.outputs.artifact-id }}
-      fixture_sha256: ${{ steps.transport_fixture.outputs.fixture_sha256 }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Require exact compiled UI client selectors
+        env:
+          KIND: ${{ inputs.candidate_kind }}
+          TEST_BUNDLE_RUN_ID: ${{ inputs.test_bundle_run_id }}
+          TEST_BUNDLE_ARTIFACT_ID: ${{ inputs.test_bundle_artifact_id }}
+          TEST_BUNDLE_ARTIFACT_SHA256: ${{ inputs.test_bundle_artifact_sha256 }}
+        run: |
+          python3 - <<'PY'
+          import os, sys
+          values = [os.environ[key] for key in ('TEST_BUNDLE_RUN_ID', 'TEST_BUNDLE_ARTIFACT_ID', 'TEST_BUNDLE_ARTIFACT_SHA256')]
+          kind = os.environ['KIND']
+          if kind not in {'signed-journey', 'signed-transport'}:
+              if any(values):
+                  raise ValueError('Compiled UI client selectors cannot be ignored by another mode')
+          else:
+              if kind == 'signed-transport' and not all(values):
+                  raise ValueError('Transport requires the exact original compiled UI client run, artifact and digest')
+              sys.path.insert(0, 'scripts/external-gui')
+              from test_bundle import validate_client_source
+              validate_client_source(*values, os.environ['GITHUB_SHA'])
+          PY
       - name: Require exact public transport continuation inputs
         env:
           KIND: ${{ inputs.candidate_kind }}
@@ -385,13 +415,42 @@ jobs:
           path: ${{ runner.temp }}/candidate-metadata/*.json
           if-no-files-found: error
           retention-days: 90
+
+  transport-fixture:
+    needs: source
+    if: inputs.candidate_kind == 'signed-transport'
+    runs-on: macrunner
+    timeout-minutes: 10
+    outputs:
+      fixture_artifact_id: ${{ steps.transport_fixture_artifact.outputs.artifact-id }}
+      fixture_sha256: ${{ steps.transport_fixture.outputs.fixture_sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Prepare job-local independent fixture media tools
+        if: inputs.candidate_kind == 'signed-transport'
+        id: fixture-media-tools
+        uses: mamba-org/setup-micromamba@f457c30a868e4760d3a6fcea5f25dc655b8edf39
+        with:
+          environment-name: ngv-media
+          create-args: 'ffmpeg=9.0.2=gpl_*'
+          micromamba-root-path: ${{ runner.temp }}/micromamba
+          micromamba-binary-path: ${{ runner.temp }}/micromamba-bin/micromamba
+          init-shell: 'none'
+          generate-run-shell: false
+          cache-environment: false
+          cache-downloads: false
+          post-cleanup: all
       - name: Require independent fixture media inspection
         if: inputs.candidate_kind == 'signed-transport'
+        env:
+          MEDIA_TOOLS_BIN: ${{ steps.fixture-media-tools.outputs.environment-path }}/bin
         run: |
-          if ! command -v ffprobe >/dev/null; then
-            sudo apt-get update
-            sudo apt-get install --yes --no-install-recommends ffmpeg
-          fi
+          test "$(uname -m)" = arm64
+          "$MEDIA_TOOLS_BIN/ffmpeg" -version
+          "$MEDIA_TOOLS_BIN/ffprobe" -version
+          echo "$MEDIA_TOOLS_BIN" >> "$GITHUB_PATH"
       - name: Retain the actual passed normal-journey project
         id: transport_fixture
         if: inputs.candidate_kind == 'signed-transport'
@@ -896,6 +955,9 @@ jobs:
     if: inputs.candidate_kind == 'signed-journey'
     uses: ./.github/workflows/external-gui-acceptance.yml
     with:
+      test_bundle_run_id: ${{ inputs.test_bundle_run_id }}
+      test_bundle_artifact_id: ${{ inputs.test_bundle_artifact_id }}
+      test_bundle_artifact_sha256: ${{ inputs.test_bundle_artifact_sha256 }}
       verified_pr_run_id: ${{ inputs.verified_pr_run_id }}
       packaging_producer_source_sha: ${{ inputs.packaging_producer_source_sha }}
       packaging_provenance_artifact_id: ${{ inputs.packaging_provenance_artifact_id }}
@@ -909,10 +971,13 @@ jobs:
       expected_dmg_sha256: ${{ inputs.expected_dmg_sha256 }}
 
   signed-transport:
-    needs: source
+    needs: [source, transport-fixture]
     if: inputs.candidate_kind == 'signed-transport'
     uses: ./.github/workflows/external-gui-acceptance.yml
     with:
+      test_bundle_run_id: ${{ inputs.test_bundle_run_id }}
+      test_bundle_artifact_id: ${{ inputs.test_bundle_artifact_id }}
+      test_bundle_artifact_sha256: ${{ inputs.test_bundle_artifact_sha256 }}
       packaging_producer_source_sha: ${{ inputs.packaging_producer_source_sha }}
       packaging_provenance_artifact_id: ${{ inputs.packaging_provenance_artifact_id }}
       packaging_provenance_artifact_sha256: ${{ inputs.packaging_provenance_artifact_sha256 }}
@@ -925,8 +990,8 @@ jobs:
       expected_dmg_sha256: ${{ inputs.expected_dmg_sha256 }}
       scenario: transport
       verified_pr_run_id: ${{ inputs.verified_pr_run_id }}
-      fixture_artifact_id: ${{ needs.source.outputs.fixture_artifact_id }}
-      fixture_sha256: ${{ needs.source.outputs.fixture_sha256 }}
+      fixture_artifact_id: ${{ needs.transport-fixture.outputs.fixture_artifact_id }}
+      fixture_sha256: ${{ needs.transport-fixture.outputs.fixture_sha256 }}
 
   ci-bpy-resource-diagnostic:
     needs: source
