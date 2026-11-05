@@ -62,6 +62,7 @@ struct SpatialSceneView: View {
         .background(AppTheme.Background.surfaceColor)
         .reviewAcceptanceProbe("spatial.scene", state: !session.busy, text: session.current?.manifest.revision.uuidString ?? "")
         .reviewAcceptanceProbe("spatial.history.intent", text: session.historyIntent?.diagnosticText)
+        .reviewAcceptanceProbe("spatial.history.trace", text: session.historyTrace.diagnosticText)
         .task { session.reload() }
         .onChange(of: session.selectedObjectID) { _, _ in updateInspector() }
         .onChange(of: session.snapshot) { _, _ in updateInspector(); requestedFrame = session.frame }

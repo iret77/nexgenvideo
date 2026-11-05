@@ -100,7 +100,16 @@ enum ProductionSceneUIAcceptance {
                     "cameraRenderPreservedScene": true])
                 guard let viewport = window.contentView?.bounds.size else { throw failed("The native document viewport is unavailable.") }
                 results.append(driver.result().merging(["scale": scale, "viewport": [viewport.width, viewport.height]]) { _, new in new })
-            } catch { driver.failure(error); throw error }
+            } catch {
+                do {
+                    let project = try ProductionSpatialHistoryAcceptance.retainProject(context: context, output: output,
+                        outcome: "failed", error: error, name: "spatial-scene-failure-\(Int(scale * 100))")
+                    try driver.record("actual scene failure canonical bytes", fields: ["canonicalProject": project,
+                        "sceneReadyAtCapture": driver.state("spatial.scene", in: window) as Any? ?? NSNull()])
+                } catch { FileHandle.standardError.write(Data(("SCENE_EVIDENCE_FAIL " + error.localizedDescription + "\n").utf8)) }
+                driver.failure(error)
+                throw error
+            }
         }
         guard let lastHead else { throw failed("No actual native location was created.") }
         return (lastHead, results)
@@ -163,6 +172,7 @@ enum ProductionSceneUIAcceptance {
             "canUndo": driver.state("spatial.undo", in: driver.window) as Any? ?? NSNull(),
             "canRedo": driver.state("spatial.redo", in: driver.window) as Any? ?? NSNull(),
             "historyIntent": driver.text("spatial.history.intent", in: driver.window) as Any? ?? NSNull(),
+            "historyTrace": driver.text("spatial.history.trace", in: driver.window) as Any? ?? NSNull(),
             "historyNotice": driver.text("spatial.history.notice", in: driver.window) as Any? ?? NSNull(),
             "sceneError": driver.text("spatial.error", in: driver.window) as Any? ?? NSNull()])
         if completed {

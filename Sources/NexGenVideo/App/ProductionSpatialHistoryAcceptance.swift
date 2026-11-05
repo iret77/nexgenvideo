@@ -4,6 +4,19 @@ import SwiftUI
 
 @MainActor
 enum ProductionSpatialHistoryAcceptance {
+    @MainActor private final class HistoryRejectionObserver {
+        weak var session: SpatialSceneSession?
+        var armed = false
+        var rejected: SpatialSceneHistoryIntent?
+
+        func progress(_ progress: SpatialSceneCommitProgress) {
+            guard armed, progress == .committed, let session else { return }
+            armed = false
+            _ = session.requestRedo()
+            rejected = session.historyIntent
+        }
+    }
+
     private final class HistoryWindow: NSWindow {
         var afterMouseUp: (() -> Void)?
 
@@ -34,7 +47,10 @@ enum ProductionSpatialHistoryAcceptance {
         let operation = try BpyRuntimeHost.shared.acquireOperation(document: context.document, documentID: key)
         defer { BpyRuntimeHost.shared.releaseOperation(operation) }
         let authority = try PipelineSpatialSceneAuthority(editor: context.editor, runtime: operation.session)
-        let session = SpatialSceneSession(pipelineRoot: context.dataRoot, runtime: operation.session, authority: authority)
+        let observer = HistoryRejectionObserver()
+        let session = SpatialSceneSession(pipelineRoot: context.dataRoot, runtime: operation.session,
+            authority: authority, commitObserver: observer.progress)
+        observer.session = session
         await session.create(name: "History admission control")
         guard session.error == nil, let empty = session.current, !session.canUndo,
               session.requestUndo() == nil, session.historyIntent?.status == .rejectedHistory,
@@ -58,6 +74,24 @@ enum ProductionSpatialHistoryAcceptance {
             try await driver.wait("real history control ready", seconds: 90) {
                 !session.busy && session.canUndo && driver.state("spatial.undo", in: window) == true
             }
+            let beforeReload = try await read(session: session, root: context.dataRoot)
+            session.reload()
+            guard session.busy, session.requestUndo() == nil,
+                  session.historyIntent?.status == .rejectedBusy, session.error == nil else { throw SpatialSceneError.changed }
+            let busyRejection = session.historyIntent
+            try await driver.wait("history retry notice after real reload", seconds: 90) {
+                !session.busy && session.canUndo && driver.state("spatial.undo", in: window) == true
+                    && driver.text("spatial.history.notice", in: window) == "Undo was not applied. Try again."
+            }
+            let afterReload = try await read(session: session, root: context.dataRoot)
+            guard afterReload.0.manifestData == beforeReload.0.manifestData, afterReload.1 == beforeReload.1,
+                  session.historyIntent?.id == busyRejection?.id, session.error == nil else {
+                throw failed("The rejected history request or same-head reload changed canonical history.")
+            }
+            try driver.record("busy history reload rejection", fields: ["rejected": try receipt(busyRejection),
+                "notice": driver.text("spatial.history.notice", in: window) as Any? ?? NSNull(),
+                "canonicalRevision": afterReload.0.manifest.revision.uuidString, "revisionCount": afterReload.1])
+            try driver.capture("history-retry-notice", target: window)
             let undone = try await clickHistory(undo: true, session: session, window: window, driver: driver,
                 expected: prior, previous: edited, root: context.dataRoot)
             let redone = try await clickHistory(undo: false, session: session, window: window, driver: driver,
@@ -82,15 +116,43 @@ enum ProductionSpatialHistoryAcceptance {
                 throw failed("The awaited Undo returned before its actual restoration completed.")
             }
             await session.redo()
-            _ = try await restored(session: session, expected: redone, previous: awaitedUndo,
+            let awaitedRedo = try await restored(session: session, expected: redone, previous: awaitedUndo,
                 beforeCount: beforeCancel.1 + 1, root: context.dataRoot)
             guard session.historyIntent?.origin == .awaitedCall, session.historyIntent?.status == .committed,
-                  session.canUndo, !session.canRedo else { throw SpatialSceneError.changed }
+                  session.canUndo, !session.canRedo, !session.historyTrace.overflow else { throw SpatialSceneError.changed }
+            await session.undo()
+            let beforeEdit = try await restored(session: session, expected: awaitedUndo, previous: awaitedRedo,
+                beforeCount: beforeCancel.1 + 2, root: context.dataRoot)
+            guard session.canRedo else { throw SpatialSceneError.changed }
+            observer.armed = true
+            await session.addPrimitive("sphere")
+            let afterEdit = try await read(session: session, root: context.dataRoot)
+            guard !observer.armed, let rejected = observer.rejected, rejected.action == .redo,
+                  rejected.status == .rejectedBusy, rejected.busyAtRequest,
+                  rejected.sourceRevision == beforeEdit.manifest.revision,
+                  session.historyIntent?.id == rejected.id, session.error == nil,
+                  !session.canRedo, session.canUndo, afterEdit.1 == beforeCancel.1 + 4,
+                  afterEdit.0.manifest.parentRevision == beforeEdit.manifest.revision,
+                  afterEdit.0.manifest.restoredFromRevision == nil, afterEdit.0.snapshot.objects.count == 2,
+                  afterEdit.0.snapshot.objects.first(where: { $0.id == cube.id })?.matrixWorld == cube.matrixWorld else {
+                throw failed("A new scene edit did not invalidate the previous Redo without replaying it.")
+            }
+            try await driver.wait("unavailable history notice after actual edit") {
+                driver.state("spatial.redo", in: window) == false
+                    && driver.text("spatial.history.notice", in: window) == "Redo is no longer available."
+            }
+            try driver.record("busy Redo rejected before actual edit invalidates Redo", fields: [
+                "rejected": try receipt(rejected), "canonicalRevision": afterEdit.0.manifest.revision.uuidString,
+                "notice": driver.text("spatial.history.notice", in: window) as Any? ?? NSNull(), "canRedo": session.canRedo])
+            try driver.capture("history-no-redo-after-edit", target: window)
             try driver.record("history admission regression complete", fields: [
                 "schema": "nexgenvideo/spatial-history-admission/1", "sceneID": edited.manifest.sceneID.uuidString,
                 "priorRevision": prior.manifest.revision.uuidString, "editedRevision": edited.manifest.revision.uuidString,
                 "undoRevision": undone.manifest.revision.uuidString, "redoRevision": redone.manifest.revision.uuidString,
-                "emptyRejected": true, "cancelledBeforeWork": true, "awaitedCompletionVerified": true])
+                "emptyRejected": true, "busyReloadRejectedWithRetryNotice": true,
+                "invalidatedRedoRejectedWithoutRetryInstruction": true,
+                "cancelledBeforeWork": true, "awaitedCompletionVerified": true,
+                "historyTrace": try JSONSerialization.jsonObject(with: JSONEncoder().encode(session.historyTrace))])
             return driver.result()
         } catch {
             window.afterMouseUp = nil
@@ -98,14 +160,23 @@ enum ProductionSpatialHistoryAcceptance {
             window.contentView = nil
             window.close()
             await session.cancelAndWait()
+            do {
+                let record: [String: Any] = ["schema": "nexgenvideo/spatial-history-failure/1",
+                    "error": error.localizedDescription, "busyAfterCleanup": session.busy,
+                    "historyIntent": try receipt(session.historyIntent),
+                    "historyTrace": try JSONSerialization.jsonObject(with: JSONEncoder().encode(session.historyTrace))]
+                try JSONSerialization.data(withJSONObject: record, options: [.sortedKeys])
+                    .write(to: output.appendingPathComponent("spatial-history-failure.json"), options: .atomic)
+            } catch { FileHandle.standardError.write(Data(("HISTORY_TRACE_EVIDENCE_FAIL " + error.localizedDescription + "\n").utf8)) }
             throw error
         }
     }
 
-    private static func retainProject(context: ProductionPlanningAcceptanceFixture.Context, output: URL,
-                                      outcome: String, error: (any Error)? = nil) throws -> [String: String] {
+    static func retainProject(context: ProductionPlanningAcceptanceFixture.Context, output: URL,
+                              outcome: String, error: (any Error)? = nil,
+                              name: String = "spatial-history-project") throws -> [String: String] {
         guard let source = context.editor.workingRoot else { throw SpatialSceneError.changed }
-        let name = "spatial-history-project.ngv", target = output.appendingPathComponent(name, isDirectory: true)
+        let package = name + ".ngv", target = output.appendingPathComponent(package, isDirectory: true)
         try FileManager.default.copyItem(at: source, to: target)
         guard let files = FileManager.default.enumerator(at: target, includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey]) else {
             throw SpatialSceneError.changed
@@ -120,13 +191,13 @@ enum ProductionSpatialHistoryAcceptance {
             closure.append(["path": relative, "bytes": data.count, "sha256": FileDigest.sha256(of: data)])
         }
         guard !closure.isEmpty else { throw SpatialSceneError.changed }
-        let record: [String: Any] = ["schema": "nexgenvideo/spatial-history-project/1", "project": name,
+        let record: [String: Any] = ["schema": "nexgenvideo/spatial-history-project/1", "project": package,
             "outcome": outcome, "error": error?.localizedDescription as Any? ?? NSNull(),
             "files": closure.sorted { ($0["path"] as! String) < ($1["path"] as! String) }]
         let data = try JSONSerialization.data(withJSONObject: record, options: [.sortedKeys])
-        let manifest = "spatial-history-project-files.json"
+        let manifest = name + "-files.json"
         try data.write(to: output.appendingPathComponent(manifest), options: .atomic)
-        return ["project": name, "manifest": manifest, "sha256": FileDigest.sha256(of: data)]
+        return ["project": package, "manifest": manifest, "sha256": FileDigest.sha256(of: data)]
     }
 
     private static func clickHistory(undo: Bool, session: SpatialSceneSession, window: HistoryWindow,
@@ -168,8 +239,16 @@ enum ProductionSpatialHistoryAcceptance {
               let attemptedAt, admitted.observedUptime <= attemptedAt, busyBeforeReload, busyAfterReload,
               rejected?.status == .rejectedBusy, rejected?.busyAtRequest == true,
               errorAfterRejection == nil,
-              session.historyIntent?.id == admitted.id, session.historyIntent?.status == .committed else {
+              session.historyIntent?.id == admitted.id, session.historyIntent?.status == .committed,
+              !session.historyTrace.overflow else {
             throw failed("The genuine ready history callback did not claim its restoration before the reload attempt.")
+        }
+        let events = session.historyTrace.events.filter { $0.id == admitted.id }
+        guard events.map(\.status) == [.admitted, .committed],
+              events.allSatisfy({ $0.action == action && $0.sourceRevision == previous.manifest.revision
+                  && $0.priorRevision == expected.manifest.revision }),
+              events[0].observedUptime <= events[1].observedUptime else {
+            throw failed("The actual history intent trace lost or duplicated its admitted restoration.")
         }
         let result = try await restored(session: session, expected: expected, previous: previous,
             beforeCount: before.1, root: root)

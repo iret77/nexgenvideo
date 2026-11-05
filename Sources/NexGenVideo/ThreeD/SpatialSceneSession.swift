@@ -26,6 +26,17 @@ struct SpatialSceneHistoryIntent: Codable, Sendable {
     }
 }
 
+struct SpatialSceneHistoryTrace: Encodable, Sendable {
+    let schema = "nexgenvideo/spatial-history-intents/1"
+    var events: [SpatialSceneHistoryIntent] = []
+    var overflow = false
+
+    var diagnosticText: String? {
+        guard let data = try? JSONEncoder().encode(self) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+}
+
 @MainActor
 protocol SpatialSceneAuthority: AnyObject {
     func requireReadableScene() async throws
@@ -66,6 +77,7 @@ final class SpatialSceneSession {
     private let commitObserver: (@MainActor (SpatialSceneCommitProgress) -> Void)?
     private var userCancellationRequested = false
     private(set) var historyIntent: SpatialSceneHistoryIntent?
+    private(set) var historyTrace = SpatialSceneHistoryTrace()
 
     init(pipelineRoot: URL, runtime: BpyRuntimeSession, authority: any SpatialSceneAuthority,
          commitObserver: (@MainActor (SpatialSceneCommitProgress) -> Void)? = nil) {
@@ -82,9 +94,13 @@ final class SpatialSceneSession {
     var canCancel: Bool { busy && commitProgress == nil && !userCancellationRequested }
     var historyNotice: String? {
         switch historyIntent?.status {
-        case .rejectedBusy: "Wait for the current location action before using history."
-        case .rejectedHistory: "No saved location history is available."
-        default: nil
+        case .rejectedBusy:
+            if busy { return "Wait for the current location action before using history." }
+            let action = historyIntent?.action == .undo ? "Undo" : "Redo"
+            let available = historyIntent?.action == .undo ? canUndo : canRedo
+            return action + (available ? " was not applied. Try again." : " is no longer available.")
+        case .rejectedHistory: return "No saved location history is available."
+        default: return nil
         }
     }
 
@@ -412,8 +428,10 @@ final class SpatialSceneSession {
 
     private func recordHistory(_ intent: SpatialSceneHistoryIntent) {
         historyIntent = intent
-        BpyRuntimeObservation.shared.activity(id: intent.id, parent: nil,
-            scope: "scene.history." + intent.action.rawValue + "." + intent.origin.rawValue, event: intent.status.rawValue)
+        if ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"]?.isEmpty == false {
+            if historyTrace.events.count < 256 { historyTrace.events.append(intent) }
+            else { historyTrace.overflow = true }
+        }
     }
 
     private func beginHistory(undo: Bool, origin: SpatialSceneHistoryIntent.Origin) -> (id: UUID, task: Task<Void, Never>)? {
