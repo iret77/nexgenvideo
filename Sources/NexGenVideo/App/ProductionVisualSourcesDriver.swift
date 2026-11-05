@@ -178,17 +178,26 @@ final class ProductionVisualSourcesDriver {
     func clickButton(_ id: String, title: String, in target: NSWindow) async throws {
         try await reveal(id, in: target)
         var match: (frames: [NSRect], evidence: [String: Any]) = ([], [:])
+        stage = "actual enabled button " + title
+        try persist()
+        let deadline = ProcessInfo.processInfo.systemUptime + 10
         do {
-            try await wait("actual enabled button " + title) {
-                match = self.buttonFrames(id, title: title, in: target)
-                return self.state(id, in: target) == true && match.frames.count == 1
+            while ProcessInfo.processInfo.systemUptime < deadline {
+                try Task.checkCancellation()
+                match = await buttonFrames(id, title: title, in: target)
+                if state(id, in: target) == true && match.frames.count == 1 { break }
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            guard state(id, in: target) == true && match.frames.count == 1 else {
+                throw GateBlocked("Native visual sources: actual enabled button " + title + "; " + diagnostic())
             }
         } catch {
             interactions.append(match.evidence)
             try persist()
             throw error
         }
-        match = buttonFrames(id, title: title, in: target)
+        match = await buttonFrames(id, title: title, in: target)
+        try Task.checkCancellation()
         interactions.append(match.evidence)
         try persist()
         guard match.frames.count == 1, let frame = match.frames.first, let view = probe(id, in: target) else {
@@ -205,39 +214,43 @@ final class ProductionVisualSourcesDriver {
         }
     }
 
-    private func buttonFrames(_ id: String, title: String, in target: NSWindow) -> (frames: [NSRect], evidence: [String: Any]) {
+    private func buttonFrames(_ id: String, title: String, in target: NSWindow) async -> (frames: [NSRect], evidence: [String: Any]) {
         var evidence: [String: Any] = ["kind": "button-accessibility", "id": id, "item": title, "window": target.windowNumber]
         guard target.isKeyWindow, let root = target.contentView, let view = probe(id, in: target),
-              view.window === target, fullyVisible(view, root: root) else { return ([], evidence) }
-        var pending: [any NSAccessibilityProtocol] = [root]
-        var visited = Set<ObjectIdentifier>(), frames: [NSRect] = []
-        var observed: [[String: Any]] = []
-        while visited.count < 2048, let element = pending.popLast() {
-            guard visited.insert(ObjectIdentifier(element)).inserted else { continue }
-            let label = element.accessibilityLabel() ?? "", itemTitle = element.accessibilityTitle() ?? ""
-            if [label, itemTitle].contains(title) {
-                let frame = element.accessibilityFrame(), role = element.accessibilityRole()
-                let enabled = element.isAccessibilityEnabled()
-                let finite = [frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite)
-                var item: [String: Any] = ["label": label, "title": itemTitle, "role": role?.rawValue ?? "none",
-                    "enabled": enabled, "screenFrame": rect(frame).map { $0.isFinite ? $0 as Any : String(describing: $0) }]
-                if finite, frame.width > 0, frame.height > 0, target.frame.contains(frame) {
-                    let local = view.convert(target.convertFromScreen(frame), from: nil)
-                    let withinProbe = view.bounds.insetBy(dx: -1, dy: -1).contains(local)
-                        && view.bounds.contains(NSPoint(x: local.midX, y: local.midY))
-                    item["frameInProbe"] = rect(local)
-                    item["withinProbe"] = withinProbe
-                    if role == .button, enabled, withinProbe { frames.append(local) }
-                }
-                observed.append(item)
-            }
-            pending += (element.accessibilityChildren() ?? []).compactMap { $0 as? any NSAccessibilityProtocol }
+              view.window === target, fullyVisible(view, root: root), let screen = NSScreen.screens.first else { return ([], evidence) }
+        let windowFrame = target.frame
+        let publicWindow = NSRect(x: windowFrame.minX, y: screen.frame.maxY - windowFrame.maxY,
+                                  width: windowFrame.width, height: windowFrame.height)
+        let request = NativeButtonAccessibility.Request(pid: getpid(), windowNumber: target.windowNumber,
+            windowFrame: .init(publicWindow))
+        let snapshot = await NativeButtonAccessibility.read(request)
+        evidence["publicAX"] = snapshot.evidence
+        evidence["visited"] = snapshot.nodes.count
+        evidence["truncated"] = !snapshot.complete
+        guard target.isKeyWindow, target.frame == windowFrame, view.window === target,
+              probe(id, in: target) === view, fullyVisible(view, root: root) else { return ([], evidence) }
+        let probeScreen = target.convertToScreen(view.convert(view.bounds, to: nil))
+        let publicProbe = NSRect(x: probeScreen.minX, y: screen.frame.maxY - probeScreen.maxY,
+                                 width: probeScreen.width, height: probeScreen.height)
+        let nodes = NativeButtonAccessibility.buttons(snapshot, title: title, inside: .init(publicProbe))
+        var frames: [NSRect] = [], observed: [[String: Any]] = []
+        for node in nodes {
+            guard let frame = node.frame else { continue }
+            let screenFrame = NSRect(x: frame.x, y: screen.frame.maxY - frame.y - frame.height,
+                                     width: frame.width, height: frame.height)
+            let local = view.convert(target.convertFromScreen(screenFrame), from: nil)
+            let within = view.bounds.insetBy(dx: -1, dy: -1).contains(local)
+                && view.bounds.contains(NSPoint(x: local.midX, y: local.midY))
+            var item = node.evidence
+            item["screenFrame"] = rect(screenFrame)
+            item["frameInProbe"] = rect(local)
+            item["withinProbe"] = within
+            observed.append(item)
+            if within { frames.append(local) }
         }
         evidence["elements"] = observed
         evidence["probeBounds"] = rect(view.bounds)
-        evidence["visited"] = visited.count
-        evidence["truncated"] = !pending.isEmpty
-        return (pending.isEmpty ? frames : [], evidence)
+        return (snapshot.complete ? frames : [], evidence)
     }
 
     func drag(_ id: String, from start: NSPoint, to end: NSPoint, in target: NSWindow) async throws {

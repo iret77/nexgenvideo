@@ -1,3 +1,5 @@
+import ast
+import base64
 import copy
 import hashlib
 import io
@@ -5,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import re
 import subprocess
 import sys
 import tarfile
@@ -192,7 +195,8 @@ class ExternalTestBundleTests(unittest.TestCase):
         code = step.split("          python3 - <<'PY'\n", 1)[1].split('          PY', 1)[0]
         code = '\n'.join(line[10:] for line in code.splitlines())
         defaults = {'INTERFACE_SCALE': 'all', 'ARTIFACT_MODE': 'app', 'EXPECTED_DMG_SHA256': '',
-                    'TEST_BUNDLE_RUN_ID': '', 'RETAINED_SOURCE': '', 'RETAINED_RUN': '',
+                    'TEST_BUNDLE_RUN_ID': '', 'TEST_BUNDLE_ARTIFACT_ID': '', 'TEST_BUNDLE_ARTIFACT_SHA256': '',
+                    'RETAINED_SOURCE': '', 'RETAINED_RUN': '',
                     'RETAINED_ARTIFACT': '', 'RETAINED_DIGEST': '', 'SCENARIO': 'journey',
                     'VERIFIED_PR_RUN': '', 'FIXTURE_ARTIFACT': '', 'FIXTURE_SHA': ''}
         signed = {'ARTIFACT_MODE': 'dmg', 'EXPECTED_DMG_SHA256': '1' * 64,
@@ -212,6 +216,10 @@ class ExternalTestBundleTests(unittest.TestCase):
         invalid += [transport | {key: value} for key, value in [('ARTIFACT_MODE', 'app'), ('SCENARIO', 'other'),
                     ('VERIFIED_PR_RUN', '0'), ('FIXTURE_ARTIFACT', '-1'), ('FIXTURE_SHA', 'invalid')]]
         invalid += [signed | {key: '1'} for key in ('FIXTURE_ARTIFACT', 'FIXTURE_SHA')]
+        invalid += [{'TEST_BUNDLE_ARTIFACT_ID': '34'}, {'TEST_BUNDLE_ARTIFACT_SHA256': 'a' * 64},
+                    {'TEST_BUNDLE_RUN_ID': '12', 'TEST_BUNDLE_ARTIFACT_ID': '34'},
+                    {'TEST_BUNDLE_RUN_ID': '12', 'TEST_BUNDLE_ARTIFACT_ID': '0', 'TEST_BUNDLE_ARTIFACT_SHA256': 'a' * 64},
+                    {'TEST_BUNDLE_RUN_ID': '12', 'TEST_BUNDLE_ARTIFACT_ID': '34', 'TEST_BUNDLE_ARTIFACT_SHA256': 'invalid'}]
         for values in invalid:
             output.write_text('')
             result = subprocess.run([sys.executable, '-c', code], capture_output=True,
@@ -430,6 +438,308 @@ class ExternalTestBundleTests(unittest.TestCase):
                 (result, identity, 'f' * 64)):
             with self.subTest(expected=expected, identity=changed_identity), self.assertRaises(ValueError):
                 journey.validate_app_identity(self.root, changed_result, changed_identity, self.sha, '1.5', expected)
+
+
+    def compiled_client_fixture(self):
+        current = 'd' * 40
+        payloads = {(journey.ROOT / name).relative_to(journey.REPOSITORY).as_posix(): (journey.ROOT / name).read_bytes()
+                    for name in journey.TEST_INPUTS}
+        payloads.update({name: (journey.REPOSITORY / name).read_bytes() for name in journey.SHARED_INPUTS})
+        files = {name: hashlib.sha256(raw).hexdigest() for name, raw in payloads.items()}
+        original = dict(payloads)
+        helper = 'scripts/external-gui/test_bundle.py'
+        added = {'_safe_function', '_builder_view', '_workflow_build_view', '_guard_import_view',
+                 '_source_snapshot', '_compiled_compatibility', 'validate_client_selectors', 'validate_client_source'}
+        lines = original[helper].decode().splitlines(keepends=True)
+        excluded = set()
+        for node in ast.parse(original[helper]).body:
+            if isinstance(node, ast.FunctionDef) and node.name in added:
+                excluded.update(range(node.lineno - 1, node.end_lineno))
+        original[helper] = ''.join(line for index, line in enumerate(lines) if index not in excluded).encode()
+        original[helper] = original[helper].replace(b"    resolver.add_argument('--artifact-sha256')\n", b'')
+        guard = 'scripts/verify_diagnostic_candidate.py'
+        lines = original[guard].decode().splitlines(keepends=True)
+        excluded = set()
+        for node in ast.parse(original[guard]).body:
+            if isinstance(node, ast.FunctionDef) and node.name == 'verify_scene_history_hierarchy':
+                excluded.update(range(node.lineno - 1, node.end_lineno))
+        original[guard] = ''.join(line for index, line in enumerate(lines) if index not in excluded).encode()
+        workflow = '.github/workflows/external-gui-acceptance.yml'
+        current_workflow = (journey.REPOSITORY / workflow).read_bytes()
+        action = '.github/actions/setup-xcode-27/action.yml'
+        original[action] = (journey.REPOSITORY / action).read_bytes()
+        original[workflow] = re.sub(rb'(?m)^      test_bundle_artifact_(?:id|sha256):\n(?:        [^\n]+\n)+',
+                                    b'', current_workflow)
+        original_files = {name: hashlib.sha256(original[name]).hexdigest() for name in files}
+        xctestrun = plistlib.dumps({'Test': {'TestHostPath': '__TESTROOT__/Runner.app',
+            'TestBundlePath': '__TESTHOST__/Contents/PlugIns/Test.xctest'}})
+        entries = [('Runner.app/Contents/PlugIns/Test.xctest/binary', 'file', b'original native client'),
+                   ('Tests.xctestrun', 'file', xctestrun)]
+        archive = self.archive(entries)
+        products = self.root / 'original-products'
+        for name, _, content in entries:
+            path = products / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+        receipt = {'schema': 'nexgenvideo/external-tests-input/1', 'sourceSHA': self.sha,
+            'testFiles': original_files, 'architecture': 'arm64', 'deploymentTarget': '26.0',
+            'xcode': 'Xcode 27.2\nBuild version 27B52', 'runID': 12, 'attempt': 1,
+            'archiveSHA256': journey.sha256(archive), 'productsSHA256': bundle.products_sha256(products),
+            'xctestrun': 'Tests.xctestrun'}
+        raw_receipt = (json.dumps(receipt, indent=2) + '\n').encode()
+        transfer = self.root / 'transfer.zip'
+        with zipfile.ZipFile(transfer, 'w') as handle:
+            handle.write(archive, 'tests.tar.gz')
+            handle.writestr('tests-input.json', raw_receipt)
+        artifact = self.artifact | {'digest': 'sha256:' + journey.sha256(transfer)}
+        comparison = {'base_commit': {'sha': self.sha}, 'merge_base_commit': {'sha': self.sha},
+            'status': 'ahead', 'total_commits': 1, 'commits': [{'sha': current}],
+            'files': [{'filename': helper, 'status': 'modified'}, {'filename': guard, 'status': 'modified'},
+                      {'filename': workflow, 'status': 'modified'},
+                      {'filename': 'Sources/NexGenVideo/App/NativeButtonAccessibility.swift', 'status': 'added'}]}
+        history = copy.deepcopy(comparison)
+
+        def git_output(arguments, **kwargs):
+            if arguments == ['xcodebuild', '-version']: return receipt['xcode'].encode()
+            if arguments[-2:] == ['rev-parse', 'HEAD']: return current.encode()
+            if 'merge-base' in arguments: return history['merge_base_commit']['sha'].encode()
+            if 'rev-list' in arguments: return '\n'.join(item['sha'] for item in history['commits']).encode()
+            if 'diff' in arguments:
+                statuses = {'added': 'A', 'modified': 'M', 'removed': 'D', 'renamed': 'R100'}
+                return ''.join(statuses[item['status']] + '\0' + item['filename'] + '\0'
+                               for item in history['files']).encode()
+            if 'show' in arguments:
+                commit, name = arguments[-1].split(':', 1)
+                if commit == current and name in {workflow, action}: return (journey.REPOSITORY / name).read_bytes()
+                self.assertEqual(commit, self.sha)
+                return original[name]
+            self.fail('Unexpected compiled-client command: ' + str(arguments))
+
+        def api(route):
+            if route == '/actions/runs/12': return copy.deepcopy(self.run)
+            if route == '/actions/artifacts/34': return copy.deepcopy(artifact)
+            if route.startswith('/contents/'):
+                name, ref = route.removeprefix('/contents/').split('?ref=')
+                self.assertEqual(ref, self.sha)
+                return {'type': 'file', 'encoding': 'base64', 'content': base64.b64encode(original[name]).decode()}
+            if route == '/compare/' + self.sha + '...' + current: return copy.deepcopy(comparison)
+            self.fail('Unexpected compiled-client API route: ' + route)
+
+        def download(item, destination):
+            self.assertEqual(item, artifact)
+            destination.write_bytes(transfer.read_bytes())
+
+        return SimpleNamespace(current=current, files=files, original=original, original_files=original_files,
+            current_workflow=current_workflow, receipt=receipt, raw_receipt=raw_receipt, artifact=artifact,
+            comparison=comparison, history=history, git_output=git_output, api=api, download=download,
+            destination=self.root / 'resolved')
+
+    def resolve_compiled_fixture(self, fixture, *, artifact_id=34, digest=None):
+        if digest is None: digest = fixture.artifact['digest'].removeprefix('sha256:')
+        with patch.dict(os.environ, {'GITHUB_SHA': fixture.current, 'GITHUB_RUN_ID': '78',
+                                    'GITHUB_OUTPUT': str(self.root / 'output')}), \
+                patch.object(journey, 'test_source_identity', return_value=(fixture.current, fixture.files)), \
+                patch.object(journey, 'output', side_effect=fixture.git_output), \
+                patch.object(bundle, 'api', side_effect=fixture.api), \
+                patch.object(bundle, 'items', side_effect=lambda route, key: [fixture.artifact] if key == 'artifacts' else [self.job]), \
+                patch.object(bundle, 'download', side_effect=fixture.download):
+            bundle.resolve(SimpleNamespace(run_id=12, artifact_id=artifact_id, artifact_sha256=digest,
+                                           destination=str(fixture.destination)))
+
+    def assert_compiled_guard_rejects(self, fixture, reason):
+        files = {name: hashlib.sha256(fixture.original[name]).hexdigest() for name in fixture.files}
+        with patch.object(journey, 'output', side_effect=fixture.git_output), self.assertRaisesRegex(ValueError, reason):
+            bundle._compiled_compatibility(self.sha, files, fixture.current, fixture.files,
+                                            fixture.original, fixture.comparison)
+
+    def test_compiled_client_reuse_preserves_original_receipt_products_and_producer(self):
+        fixture = self.compiled_client_fixture()
+        self.resolve_compiled_fixture(fixture)
+        self.assertEqual((fixture.destination / 'tests-input.json').read_bytes(), fixture.raw_receipt)
+        producer = journey.read_json(fixture.destination / 'tests-producer.json')
+        proof = producer['compiledCompatibility']
+        self.assertEqual(proof['producerSourceSHA'], self.sha)
+        self.assertEqual(proof['consumerSourceSHA'], fixture.current)
+        self.assertEqual(proof['producerFiles'], fixture.original_files)
+        self.assertEqual(proof['consumerFiles'], fixture.files)
+        self.assertEqual(producer['run'], self.run)
+        self.assertEqual(producer['job'], self.job)
+        with patch.object(journey, 'output', side_effect=fixture.git_output):
+            xctestrun, receipt = bundle.consume(fixture.destination, self.root / 'consumed', fixture.current, fixture.files)
+            self.assertEqual(receipt, fixture.receipt)
+            self.assertEqual((xctestrun.parent / 'Runner.app/Contents/PlugIns/Test.xctest/binary').read_bytes(),
+                             b'original native client')
+            self.assertEqual(bundle.products_sha256(xctestrun.parent), fixture.receipt['productsSHA256'])
+            self.assertEqual(bundle.verify_input(fixture.destination, fixture.current, fixture.files), fixture.receipt)
+
+    def test_client_selectors_require_positive_complete_immutable_identity(self):
+        for values in [('', '', ''), ('12', '', ''), ('12', '34', 'a' * 64)]:
+            bundle.validate_client_selectors(*values)
+        for values in [('0', '', ''), ('-1', '', ''), ('12', '0', 'a' * 64), ('', '34', 'a' * 64),
+                       ('12', '34', ''), ('12', '', 'a' * 64), ('12', '34', 'z' * 64), ('12', '34', 'a' * 63)]:
+            with self.subTest(values=values), self.assertRaises(ValueError):
+                bundle.validate_client_selectors(*values)
+        bundle.validate_client_selectors('12', '34', '', require_pair=False)
+
+    def test_client_run_only_selector_rejects_different_source_before_mac_allocation(self):
+        with patch.object(bundle, 'api', return_value=self.run) as api:
+            bundle.validate_client_source('12', '', '', self.sha)
+            with self.assertRaises(ValueError):
+                bundle.validate_client_source('12', '', '', 'd' * 40)
+            self.assertEqual(api.call_count, 2)
+        with patch.object(bundle, 'api') as api:
+            bundle.validate_client_source('12', '34', 'a' * 64, 'd' * 40)
+            bundle.validate_client_source('', '', '', self.sha)
+            api.assert_not_called()
+        with patch.object(bundle, 'api', return_value={**self.run, 'repository': {'full_name': 'other/repository'}}), \
+                self.assertRaises(ValueError):
+            bundle.validate_client_source('12', '', '', self.sha)
+
+    def test_compiled_client_reuse_rejects_missing_or_wrong_pins_before_download(self):
+        fixture = self.compiled_client_fixture()
+        for artifact_id, digest in [(None, ''), (34, ''), (34, 'e' * 64)]:
+            with self.subTest(artifact_id=artifact_id, digest=digest), self.assertRaises(ValueError):
+                self.resolve_compiled_fixture(fixture, artifact_id=artifact_id, digest=digest)
+            self.assertFalse(fixture.destination.exists())
+            self.assertFalse((self.root / 'external-tests-transfer.zip').exists())
+
+    def test_compiled_client_reuse_rejects_changed_swift_project_and_shared_inputs(self):
+        fixture = self.compiled_client_fixture()
+        for name in fixture.original_files:
+            if name in {'scripts/external-gui/test_bundle.py', 'scripts/external-gui/transport.py',
+                        'scripts/release_engine_resume.py', 'scripts/verify_diagnostic_candidate.py'}: continue
+            original = fixture.original[name]
+            fixture.original[name] += b'\nchanged compilation input'
+            with self.subTest(input=name):
+                self.assert_compiled_guard_rejects(fixture, 'Compiled UI test source, project or reachable shared helper changed')
+            fixture.original[name] = original
+
+    def test_compiled_client_reuse_rejects_changed_builder_imports_constants_and_cli(self):
+        fixture = self.compiled_client_fixture()
+        helper = 'scripts/external-gui/test_bundle.py'
+        original = fixture.original[helper]
+        for changed in [original.replace(b"'ARCHS=arm64'", b"'ARCHS=x86_64'"), b'import altered_build_tool\n' + original,
+                        original.replace(b"ARTIFACT = 'external-gui-tests'", b"ARTIFACT = 'different-tests'"),
+                        original.replace(b"builder.add_argument('--destination', required=True)",
+                                         b"builder.add_argument('--destination', required=False)")]:
+            self.assertNotEqual(changed, original)
+            fixture.original[helper] = changed
+            self.assert_compiled_guard_rejects(fixture, 'UI test build closure, imports or constants changed')
+        fixture.original[helper] = original
+
+    def test_compiled_client_reuse_rejects_consumer_import_side_effects(self):
+        fixture = self.compiled_client_fixture()
+        helper = 'scripts/external-gui/test_bundle.py'
+        original = fixture.original[helper]
+        for declaration in [b'@change_module\ndef resolve(args):', b'def resolve(args=change_module()):',
+                            b'def resolve(args: change_module()):', b'def resolve(args) -> change_module():']:
+            fixture.original[helper] = original.replace(b'def resolve(args):', declaration)
+            self.assertNotEqual(fixture.original[helper], original)
+            self.assert_compiled_guard_rejects(fixture, 'Compatibility (declaration|default|annotation)')
+        fixture.original[helper] = original
+
+    def test_shared_builder_import_allows_only_unused_lazy_function_additions(self):
+        original = 'import os as platform\nVALUE = 1\ndef build():\n    return VALUE\n'
+        allowed = original + 'def extra_role(*args, **kwargs):\n    from unexecuted_role import run\n    return run(*args, **kwargs)\n'
+        self.assertEqual(bundle._guard_import_view(original, allowed), bundle._guard_import_view(original, original))
+        for changed in [original.replace('VALUE = 1', 'VALUE = 2'), original + 'import unexpected\n',
+                        original + 'VALUE = 3\n', original + 'extra_role()\n',
+                        original + 'def platform():\n    pass\n', original + 'def build():\n    pass\n',
+                        original + '@execute\ndef extra_role():\n    pass\n',
+                        original + 'def extra_role(value=execute()):\n    pass\n',
+                        original + 'def extra_role(value: execute()):\n    pass\n',
+                        original + 'def __getattr__(name):\n    raise RuntimeError("import side effect")\n',
+                        original + 'def __dir__():\n    return []\n']:
+            with self.subTest(changed=changed), self.assertRaises(ValueError):
+                bundle._guard_import_view(original, changed)
+
+    def test_compiled_client_reuse_rejects_changed_local_xcode_action(self):
+        fixture = self.compiled_client_fixture()
+        fixture.original['.github/actions/setup-xcode-27/action.yml'] += b'\n    - run: changed_compiler_setup\n'
+        self.assert_compiled_guard_rejects(fixture, 'UI test Xcode setup action changed')
+
+    def test_compiled_client_reuses_with_different_unexecuted_engine_qualification_bytes(self):
+        fixture = self.compiled_client_fixture()
+        name = 'scripts/release_engine_resume.py'
+        fixture.original[name] += b'\ndef old_native_qualification():\n    return "original"\n'
+        fixture.original_files[name] = hashlib.sha256(fixture.original[name]).hexdigest()
+        change = {'filename': name, 'status': 'modified'}
+        fixture.comparison['files'].append(change)
+        fixture.history['files'].append(dict(change))
+        with patch.object(journey, 'output', side_effect=fixture.git_output):
+            proof = bundle._compiled_compatibility(self.sha, fixture.original_files, fixture.current,
+                                                   fixture.files, fixture.original, fixture.comparison)
+        self.assertNotEqual(proof['producerFiles'][name], proof['consumerFiles'][name])
+        self.assertEqual(proof['originalSources'][name].encode(), fixture.original[name])
+
+    def test_compiled_client_workflow_keeps_global_defaults_and_actual_build_job(self):
+        workflow = (journey.REPOSITORY / '.github/workflows/external-gui-acceptance.yml').read_text()
+        before = re.sub(r'(?m)^      test_bundle_artifact_(?:id|sha256):\n(?:        [^\n]+\n)+', '', workflow)
+        self.assertEqual(bundle._workflow_build_view(before), bundle._workflow_build_view(workflow))
+        for old, new in [('runs-on: macrunner', 'runs-on: other-runner'),
+                         ('python3 scripts/external-gui/test_bundle.py build', 'python3 changed_builder.py build'),
+                         ('contents: read', 'contents: write')]:
+            changed = workflow.replace(old, new)
+            self.assertNotEqual(changed, workflow)
+            self.assertNotEqual(bundle._workflow_build_view(changed), bundle._workflow_build_view(workflow))
+        changed = workflow.replace("      test_bundle_artifact_id:\n        description:",
+                                   "      test_bundle_artifact_id:\n        default: '34'\n        description:", 1)
+        self.assertNotEqual(changed, workflow)
+        with self.assertRaises(ValueError): bundle._workflow_build_view(changed)
+
+    def test_compiled_client_reuse_rejects_incomplete_or_renamed_source_graph(self):
+        fixture = self.compiled_client_fixture()
+        original = copy.deepcopy(fixture.comparison)
+        for key, value in [('total_commits', 2), ('status', 'diverged'), ('files', []),
+                           ('merge_base_commit', {'sha': 'f' * 40}), ('commits', [{'sha': 'f' * 40}])]:
+            fixture.comparison[key] = value
+            with self.subTest(key=key): self.assert_compiled_guard_rejects(fixture, 'ancestor|graph|comparison')
+            fixture.comparison = copy.deepcopy(original)
+        fixture.comparison['files'][0]['previous_filename'] = 'renamed-client.py'
+        self.assert_compiled_guard_rejects(fixture, 'comparison')
+        fixture.comparison = copy.deepcopy(original)
+        fixture.history['files'][0]['status'] = 'renamed'
+        self.assert_compiled_guard_rejects(fixture, 'status inventory')
+
+    def test_compiled_client_posthoc_rejects_altered_proof_and_consumer_wrong_xcode(self):
+        fixture = self.compiled_client_fixture()
+        self.resolve_compiled_fixture(fixture)
+        path = fixture.destination / 'tests-producer.json'
+        producer = journey.read_json(path)
+        for mutation in ['missing', 'consumer', 'recipe', 'original']:
+            changed = copy.deepcopy(producer)
+            if mutation == 'missing': changed.pop('compiledCompatibility')
+            elif mutation == 'consumer': changed['compiledCompatibility']['consumerSourceSHA'] = 'f' * 40
+            elif mutation == 'recipe': changed['compiledCompatibility']['buildRecipeSHA256'] = 'f' * 64
+            else: changed['compiledCompatibility']['originalSources']['scripts/external-gui/project.yml'] += '\nchanged'
+            journey.write_json(path, changed)
+            with self.subTest(mutation=mutation), patch.object(journey, 'output', side_effect=fixture.git_output), \
+                    self.assertRaises(ValueError):
+                bundle.verify_input(fixture.destination, fixture.current, fixture.files)
+        journey.write_json(path, producer)
+        def changed_xcode(arguments, **kwargs):
+            if arguments == ['xcodebuild', '-version']: return b'Xcode 27.2\nBuild version other'
+            return fixture.git_output(arguments, **kwargs)
+        with patch.object(journey, 'output', side_effect=changed_xcode), self.assertRaisesRegex(ValueError, 'actual Xcode'):
+            bundle.consume(fixture.destination, self.root / 'wrong-xcode', fixture.current, fixture.files)
+        self.assertFalse((self.root / 'wrong-xcode').exists())
+
+    def test_client_artifact_selectors_reach_release_consumer_and_pre_mac_source_guard(self):
+        release = (journey.REPOSITORY / '.github/workflows/release.yml').read_text()
+        external = (journey.REPOSITORY / '.github/workflows/external-gui-acceptance.yml').read_text()
+        for name in ['test_bundle_artifact_id', 'test_bundle_artifact_sha256']:
+            self.assertIn(name + ': ${{ inputs.' + name + ' }}', release)
+            self.assertEqual(external.count('      ' + name + ':\n'), 2)
+        for workflow in [release, external]:
+            self.assertIn('validate_client_source(', workflow)
+        self.assertIn('TEST_CLIENT_SHA256:', release)
+        self.assertIn('TEST_BUNDLE_ARTIFACT_SHA256:', external)
+        source, rest = external.split('  test-build:\n', 1)
+        self.assertIn('validate_client_source(', source)
+        self.assertIn('needs: cases', rest)
+        self.assertIn('--artifact-sha256 "$TEST_BUNDLE_ARTIFACT_SHA256"', rest)
+        runtime = rest.split('  test-runtime:\n', 1)[1].split('  acceptance:\n', 1)[0]
+        self.assertIn('fetch-depth: 0', runtime)
 
 
 if __name__ == '__main__':
