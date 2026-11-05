@@ -212,7 +212,7 @@ final class ProductionVisualSourcesDriver {
         var pending: [any NSAccessibilityProtocol] = [root]
         var visited = Set<ObjectIdentifier>(), frames: [NSRect] = []
         var observed: [[String: Any]] = []
-        while let element = pending.popLast(), visited.count < 2048 {
+        while visited.count < 2048, let element = pending.popLast() {
             guard visited.insert(ObjectIdentifier(element)).inserted else { continue }
             let label = element.accessibilityLabel() ?? "", itemTitle = element.accessibilityTitle() ?? ""
             if [label, itemTitle].contains(title) {
@@ -227,7 +227,7 @@ final class ProductionVisualSourcesDriver {
                         && view.bounds.contains(NSPoint(x: local.midX, y: local.midY))
                     item["frameInProbe"] = rect(local)
                     item["withinProbe"] = withinProbe
-                    if role == .button, enabled, withinProbe, !frames.contains(local) { frames.append(local) }
+                    if role == .button, enabled, withinProbe { frames.append(local) }
                 }
                 observed.append(item)
             }
