@@ -277,11 +277,13 @@ class ReleaseWorkflowTests(unittest.TestCase):
             ("Exercise native Export Cancel, Retry and Reveal actions",
              "python3 scripts/export_actions_acceptance.py NexGenVideo.app --output evidence/export-actions.json"),
             ("Verify asynchronous termination, cancellation and restart",
-             "python3 scripts/app_termination_acceptance.py NexGenVideo.app --output evidence/termination"),
+             'python3 scripts/app_termination_acceptance.py NexGenVideo.app --output evidence/termination --product-source "$PRODUCT_SOURCE"'),
         ):
             self.assertEqual(by_name[name]["run"], command)
             self.assertFalse(by_name[name].get("continue-on-error", False))
         self.assertEqual(by_name["Verify asynchronous termination, cancellation and restart"]["if"], "${{ !cancelled() }}")
+        self.assertEqual(by_name["Verify asynchronous termination, cancellation and restart"]["env"]["PRODUCT_SOURCE"],
+                         "${{ needs.release.outputs.product_source_sha }}")
         self.assertNotIn("if", by_name["Exercise native Export Cancel, Retry and Reveal actions"])
         pricing = by_name["Verify generation batch pricing recovery"]
         self.assertNotIn("if", pricing)

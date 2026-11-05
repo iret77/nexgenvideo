@@ -4,6 +4,8 @@ from contextlib import suppress
 import json
 import os
 from pathlib import Path
+import plistlib
+import re
 import subprocess
 import time
 
@@ -19,6 +21,16 @@ def require(condition, message):
 
 def read_events(path):
     return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+
+def source_identity(app, product_source=None):
+    harness = os.environ.get("GITHUB_SHA", "")
+    source = harness if product_source is None else product_source
+    require(all(re.fullmatch(r"[a-f0-9]{40}", value) for value in (harness, source)), "missing source binding")
+    with (app / "Contents/Info.plist").open("rb") as stream:
+        identity = plistlib.load(stream)
+    require(identity.get("NGVSourceCommit") == source, "App source differs from its expected product source")
+    return source, harness
 
 
 def verify(mode, events, pid, source_sha, returncode, timed_out=False):
@@ -121,6 +133,10 @@ def run_case(binary, root, mode, source_sha):
                         break
                     time.sleep(0.05)
             events = read_events(path)
+            observation = dict(schema="nexgenvideo/termination-process-observation/1", mode=mode, pid=process.pid,
+                               sourceSHA=source_sha, harnessSourceSHA=os.environ.get("GITHUB_SHA"),
+                               returncode=process.returncode, timedOut=timed_out, events=events)
+            (directory / "observation.json").write_text(json.dumps(observation, indent=2) + "\n")
             verify(mode, events, process.pid, source_sha, process.returncode, timed_out)
             if mode == "raw-control":
                 sample = (directory / "sample.log").read_text()
@@ -128,7 +144,9 @@ def run_case(binary, root, mode, source_sha):
             report = dict(mode=mode, pid=process.pid, sourceSHA=source_sha, returncode=process.returncode,
                           timedOut=timed_out, events=events, passed=True)
         except BaseException as error:
-            (directory / "failure.json").write_text(json.dumps(dict(error=str(error), pid=process.pid)) + "\n")
+            (directory / "failure.json").write_text(json.dumps(dict(error=str(error), pid=process.pid,
+                sourceSHA=source_sha, harnessSourceSHA=os.environ.get("GITHUB_SHA"),
+                returncode=process.returncode, timedOut=timed_out)) + "\n")
             if process.poll() is None and not capture_attempted:
                 try:
                     capture(process, directory)
@@ -168,11 +186,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("app", type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--product-source")
     args = parser.parse_args()
     require(os.environ.get("GITHUB_ACTIONS") == "true", "native acceptance runs only in Actions")
-    source_sha = os.environ.get("GITHUB_SHA", "")
-    require(len(source_sha) == 40 and all(char in "0123456789abcdef" for char in source_sha), "missing source binding")
-    binary = args.app.resolve() / "Contents/MacOS/NexGenVideo"
+    app = args.app.resolve()
+    source_sha, harness_sha = source_identity(app, args.product_source)
+    binary = app / "Contents/MacOS/NexGenVideo"
     require(binary.is_file(), "missing app executable")
     args.output.mkdir(parents=True, exist_ok=False)
     failures = {}
@@ -181,7 +200,7 @@ def main():
             run_case(binary, args.output.resolve(), mode, source_sha)
         except Exception as error:
             failures[mode] = str(error)
-    (args.output / "result.json").write_text(json.dumps(dict(sourceSHA=source_sha, modes=list(MODES),
+    (args.output / "result.json").write_text(json.dumps(dict(sourceSHA=source_sha, harnessSourceSHA=harness_sha, modes=list(MODES),
                                                             passed=not failures, failures=failures)) + "\n")
     require(not failures, "Native termination failures: " + json.dumps(failures))
     print("Native termination: all eight cases passed")

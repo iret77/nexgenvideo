@@ -1,10 +1,14 @@
 import unittest
 from pathlib import Path
+import json
+import os
+import plistlib
 import subprocess
+import sys
 import tempfile
 from unittest.mock import Mock, patch
 
-from app_termination_acceptance import capture_pid, run_case, verify
+from app_termination_acceptance import MODES, capture_pid, main, run_case, source_identity, verify
 
 
 class TerminationEvidenceTests(unittest.TestCase):
@@ -59,6 +63,72 @@ class TerminationEvidenceTests(unittest.TestCase):
         foreign = dict(events[-1], pid=456)
         with self.assertRaisesRegex(AssertionError, "second application"):
             verify("task", events + [foreign], 123, self.source, 0)
+
+    def test_retained_source_is_explicit_and_never_rewrites_the_harness(self):
+        with tempfile.TemporaryDirectory() as root, patch.dict(os.environ, {"GITHUB_SHA": "b" * 40}):
+            app = Path(root) / "App.app"
+            (app / "Contents").mkdir(parents=True)
+            (app / "Contents/Info.plist").write_bytes(plistlib.dumps({"NGVSourceCommit": self.source}))
+            self.assertEqual(source_identity(app, self.source), (self.source, "b" * 40))
+            self.assertEqual(os.environ["GITHUB_SHA"], "b" * 40)
+            with self.assertRaisesRegex(AssertionError, "App source differs"):
+                source_identity(app)
+            for source in ("", "a" * 39, "A" * 40, "a" * 41):
+                with self.subTest(source=source), self.assertRaisesRegex(AssertionError, "source binding"):
+                    source_identity(app, source)
+
+    def test_cli_foreign_app_source_fails_before_any_native_process(self):
+        with tempfile.TemporaryDirectory() as root:
+            app = Path(root) / "App.app"
+            (app / "Contents/MacOS").mkdir(parents=True)
+            (app / "Contents/MacOS/NexGenVideo").touch()
+            (app / "Contents/Info.plist").write_bytes(plistlib.dumps({"NGVSourceCommit": "c" * 40}))
+            output = Path(root) / "output"
+            args = ["termination", str(app), "--output", str(output), "--product-source", self.source]
+            with patch.object(sys, "argv", args), patch.dict(os.environ, {"GITHUB_ACTIONS": "true", "GITHUB_SHA": "b" * 40}), \
+                    patch("app_termination_acceptance.run_case") as run:
+                with self.assertRaisesRegex(AssertionError, "App source differs"):
+                    main()
+                run.assert_not_called()
+                self.assertFalse(output.exists())
+
+    def test_cli_default_same_source_keeps_all_eight_modes(self):
+        with tempfile.TemporaryDirectory() as root:
+            app = Path(root) / "App.app"
+            (app / "Contents/MacOS").mkdir(parents=True)
+            (app / "Contents/MacOS/NexGenVideo").touch()
+            (app / "Contents/Info.plist").write_bytes(plistlib.dumps({"NGVSourceCommit": self.source}))
+            output = Path(root) / "output"
+            with patch.object(sys, "argv", ["termination", str(app), "--output", str(output)]), \
+                    patch.dict(os.environ, {"GITHUB_ACTIONS": "true", "GITHUB_SHA": self.source}), \
+                    patch("app_termination_acceptance.run_case") as run:
+                main()
+                self.assertEqual([call.args[2] for call in run.call_args_list], list(MODES))
+                self.assertTrue(all(call.args[3] == self.source for call in run.call_args_list))
+
+    def test_failed_source_guard_preserves_the_actual_process_observation(self):
+        process = Mock(pid=123, returncode=0)
+        process.wait.return_value = 0
+        process.poll.return_value = 0
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root)
+            events = self.completed()
+
+            def started(*args, **kwargs):
+                (directory / "task/events.jsonl").write_text("\n".join(json.dumps(event) for event in events) + "\n")
+                return process
+
+            with patch("app_termination_acceptance.subprocess.Popen", side_effect=started), \
+                    patch.dict(os.environ, {"GITHUB_SHA": "b" * 40}):
+                with self.assertRaisesRegex(AssertionError, "foreign-source"):
+                    run_case(directory / "App.app/Contents/MacOS/NexGenVideo", directory, "task", "b" * 40)
+            observation = json.loads((directory / "task/observation.json").read_text())
+            self.assertEqual(observation["returncode"], 0)
+            self.assertIs(observation["timedOut"], False)
+            self.assertEqual(observation["events"], events)
+            self.assertEqual(observation["sourceSHA"], "b" * 40)
+            self.assertEqual(observation["harnessSourceSHA"], "b" * 40)
+            self.assertFalse((directory / "task/result.json").exists())
 
     def test_duplicate_quit_must_be_coalesced_and_native_reentry_must_return(self):
         events = self.events(["boot", "request-accepted", "should-terminate", "reply-later", "duplicate-rejected", "duplicate-rejected",

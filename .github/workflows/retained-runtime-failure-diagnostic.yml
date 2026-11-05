@@ -1,0 +1,83 @@
+name: Measure retained runtime failures
+
+on:
+  workflow_call:
+    inputs:
+      producer_run_id:
+        type: string
+        required: true
+      product_source_sha:
+        type: string
+        required: true
+      artifact_id:
+        type: string
+        required: true
+      artifact_sha256:
+        type: string
+        required: true
+      packaging_producer_source_sha:
+        type: string
+        required: true
+      packaging_provenance_artifact_id:
+        type: string
+        required: true
+      packaging_provenance_artifact_sha256:
+        type: string
+        required: true
+      expected_dmg_sha256:
+        type: string
+        required: true
+      verified_pr_run_id:
+        type: string
+        required: true
+      runtime_failure_binding:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+
+jobs:
+  measurement:
+    runs-on: macrunner
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      KIND: native-retained-failures
+      SCALE: '1'
+      VERIFIED_PR: ${{ inputs.verified_pr_run_id }}
+      CANDIDATE_RUN: ${{ inputs.producer_run_id }}
+      CANDIDATE_SOURCE: ${{ inputs.product_source_sha }}
+      CANDIDATE_ARTIFACT: ${{ inputs.artifact_id }}
+      CANDIDATE_DIGEST: ${{ inputs.artifact_sha256 }}
+      PACKAGING_PRODUCER_SOURCE: ${{ inputs.packaging_producer_source_sha }}
+      PACKAGING_PROVENANCE_ARTIFACT_ID: ${{ inputs.packaging_provenance_artifact_id }}
+      PACKAGING_PROVENANCE_ARTIFACT_SHA256: ${{ inputs.packaging_provenance_artifact_sha256 }}
+      DMG_DIGEST: ${{ inputs.expected_dmg_sha256 }}
+      RUNTIME_FAILURE_BINDING: ${{ inputs.runtime_failure_binding }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-xcode-27
+      - name: Bind complete current merged source receipt
+        run: python3 scripts/verified_pr_source_checks.py prepare --run-id "$VERIFIED_PR" --output "$RUNNER_TEMP/runtime-failure-source"
+      - name: Measure failed lifecycle cases and framework pointer delivery
+        run: python3 scripts/retained_runtime_failure_diagnostic.py run --output "$RUNNER_TEMP/retained-runtime-failures"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: retained-runtime-failures-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/runtime-failure-source/
+            ${{ runner.temp }}/retained-runtime-failures/*.json
+            ${{ runner.temp }}/retained-runtime-failures/*.jsonl
+            ${{ runner.temp }}/retained-runtime-failures/*.log
+            ${{ runner.temp }}/retained-runtime-failures/*.png
+            ${{ runner.temp }}/retained-runtime-failures/*.swift
+            ${{ runner.temp }}/retained-runtime-failures/termination/
+            ${{ runner.temp }}/retained-runtime-failures/canonical/
+          if-no-files-found: error
+          retention-days: 90
