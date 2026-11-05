@@ -15,7 +15,7 @@ on:
       candidate_kind:
         description: Signed release verification or targeted failed CI diagnostics
         type: choice
-        options: [signed-release, signed-bpy, signed-journey, signed-transport, native-segment-geometry, native-export-color, ci-runtime, ci-bpy-open-diagnostic, ci-bpy-resource-diagnostic, ci-app-test-diagnostic, ci-app-glow-replay, ci-app-full-replay, ci-builtin-blur, ci-builtin-blur-scribble, ci-builtin-blur-floor, ci-builtin-blur-preheat, ci-glow-context]
+        options: [signed-release, signed-bpy, signed-journey, signed-transport, native-retained-failures, native-segment-geometry, native-export-color, ci-runtime, ci-bpy-open-diagnostic, ci-bpy-resource-diagnostic, ci-app-test-diagnostic, ci-app-glow-replay, ci-app-full-replay, ci-builtin-blur, ci-builtin-blur-scribble, ci-builtin-blur-floor, ci-builtin-blur-preheat, ci-glow-context]
         default: signed-release
       run_id:
         description: "Original producer workflow run"
@@ -79,6 +79,10 @@ on:
         description: Original failed test diagnostic SHA256 for retained replay
         type: string
         default: ""
+      runtime_failure_binding:
+        description: Exact Diagnostic and bpy failure job and artifact identities as JSON
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -136,13 +140,19 @@ jobs:
           EXTRA_FAILURE: ${{ inputs.failure_artifact_id }}
           EXTRA_PRODUCTS_SHA: ${{ inputs.products_artifact_sha256 }}
           EXTRA_FAILURE_SHA: ${{ inputs.failure_artifact_sha256 }}
+          RUNTIME_FAILURE_BINDING: ${{ inputs.runtime_failure_binding }}
         run: |
           python3 - <<'PY'
           import os, re, sys
           sys.path.insert(0, 'scripts')
           from retained_packaging import environment_selectors
           packaging = environment_selectors()
-          if packaging is not None and (os.environ['KIND'] not in {'signed-bpy', 'signed-journey', 'signed-transport'}
+          if os.environ['KIND'] == 'native-retained-failures':
+              from retained_runtime_failure_diagnostic import validate_inputs
+              validate_inputs(os.environ)
+          elif os.environ['RUNTIME_FAILURE_BINDING']:
+              raise ValueError('Runtime failure binding cannot be ignored by another mode')
+          if packaging is not None and (os.environ['KIND'] not in {'signed-bpy', 'signed-journey', 'signed-transport', 'native-retained-failures'}
                   or not re.fullmatch('[1-9][0-9]*', os.environ['VERIFIED_PR'])):
               raise ValueError('Packaging continuation needs signed mode and current exact PR source proof')
           fields = [os.environ[key] for key in ('VERIFIED_PR', 'JOURNEY_JOB', 'JOURNEY_ARTIFACT', 'JOURNEY_DIGEST')]
@@ -166,6 +176,22 @@ jobs:
       - name: Verify signed acceptance tooling
         if: inputs.candidate_kind == 'signed-release'
         run: python3 -m unittest discover -s scripts -p 'test_*.py'
+      - name: Bind exact retained runtime failures
+        if: inputs.candidate_kind == 'native-retained-failures'
+        env:
+          KIND: ${{ inputs.candidate_kind }}
+          VERIFIED_PR: ${{ inputs.verified_pr_run_id }}
+          SCALE: ${{ inputs.interface_scale }}
+          DMG_DIGEST: ${{ inputs.expected_dmg_sha256 }}
+          RUNTIME_FAILURE_BINDING: ${{ inputs.runtime_failure_binding }}
+        run: python3 scripts/retained_runtime_failure_diagnostic.py bind --output "$RUNNER_TEMP/runtime-failure-binding"
+      - uses: actions/upload-artifact@v4
+        if: always() && inputs.candidate_kind == 'native-retained-failures'
+        with:
+          name: retained-runtime-failure-source-binding
+          path: ${{ runner.temp }}/runtime-failure-binding/
+          if-no-files-found: error
+          retention-days: 90
       - name: Verify changed runtime acceptance tooling
         if: inputs.candidate_kind == 'ci-runtime'
         run: |
@@ -309,7 +335,7 @@ jobs:
           retention-days: 90
 
       - name: Bind the successful release job and immutable artifact
-        if: inputs.candidate_kind != 'native-segment-geometry' && inputs.candidate_kind != 'native-export-color' && inputs.candidate_kind != 'ci-bpy-resource-diagnostic' && inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor' && inputs.candidate_kind != 'ci-builtin-blur-preheat' && inputs.candidate_kind != 'ci-glow-context'
+        if: inputs.candidate_kind != 'native-retained-failures' && inputs.candidate_kind != 'native-segment-geometry' && inputs.candidate_kind != 'native-export-color' && inputs.candidate_kind != 'ci-bpy-resource-diagnostic' && inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor' && inputs.candidate_kind != 'ci-builtin-blur-preheat' && inputs.candidate_kind != 'ci-glow-context'
         env:
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_KIND: ${{ inputs.candidate_kind }}
@@ -334,7 +360,7 @@ jobs:
             --candidate-kind "$CANDIDATE_KIND" \
             --packaging-producer-source "$PACKAGING_PRODUCER_SOURCE" --packaging-provenance-artifact-id "$PACKAGING_PROVENANCE_ARTIFACT_ID" --packaging-provenance-artifact-sha256 "$PACKAGING_PROVENANCE_ARTIFACT_SHA256" "${extra[@]}"
       - uses: actions/upload-artifact@v4
-        if: inputs.candidate_kind != 'native-segment-geometry' && inputs.candidate_kind != 'native-export-color' && inputs.candidate_kind != 'ci-bpy-resource-diagnostic' && inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor' && inputs.candidate_kind != 'ci-builtin-blur-preheat' && inputs.candidate_kind != 'ci-glow-context'
+        if: inputs.candidate_kind != 'native-retained-failures' && inputs.candidate_kind != 'native-segment-geometry' && inputs.candidate_kind != 'native-export-color' && inputs.candidate_kind != 'ci-bpy-resource-diagnostic' && inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor' && inputs.candidate_kind != 'ci-builtin-blur-preheat' && inputs.candidate_kind != 'ci-glow-context'
         with:
           name: diagnostic-candidate-identity
           path: ${{ runner.temp }}/candidate-metadata/*.json
@@ -371,6 +397,22 @@ jobs:
           path: ${{ runner.temp }}/transport-fixture/
           if-no-files-found: error
           retention-days: 14
+
+  native-retained-failures:
+    needs: source
+    if: inputs.candidate_kind == 'native-retained-failures'
+    uses: ./.github/workflows/retained-runtime-failure-diagnostic.yml
+    with:
+      producer_run_id: ${{ inputs.run_id }}
+      product_source_sha: ${{ inputs.source_sha }}
+      artifact_id: ${{ inputs.artifact_id }}
+      artifact_sha256: ${{ inputs.artifact_sha256 }}
+      packaging_producer_source_sha: ${{ inputs.packaging_producer_source_sha }}
+      packaging_provenance_artifact_id: ${{ inputs.packaging_provenance_artifact_id }}
+      packaging_provenance_artifact_sha256: ${{ inputs.packaging_provenance_artifact_sha256 }}
+      expected_dmg_sha256: ${{ inputs.expected_dmg_sha256 }}
+      verified_pr_run_id: ${{ inputs.verified_pr_run_id }}
+      runtime_failure_binding: ${{ inputs.runtime_failure_binding }}
 
   ci-builtin-blur-floor:
     needs: source

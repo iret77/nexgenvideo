@@ -1571,7 +1571,9 @@ jobs:
             | grep -qx 'SELFTEST_GENERATION_BATCH_RECOVERY_OK'
       - name: Verify asynchronous termination, cancellation and restart
         if: ${{ !cancelled() }}
-        run: python3 scripts/app_termination_acceptance.py NexGenVideo.app --output evidence/termination
+        env:
+          PRODUCT_SOURCE: ${{ needs.release.outputs.product_source_sha }}
+        run: python3 scripts/app_termination_acceptance.py NexGenVideo.app --output evidence/termination --product-source "$PRODUCT_SOURCE"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
