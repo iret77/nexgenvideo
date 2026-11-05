@@ -37,6 +37,10 @@ on:
         description: Complete current merged PR source proof for public transport
         type: string
         default: ''
+      test_bundle_run_id:
+        description: Successful unchanged external UI test bundle producer for public transport
+        type: string
+        default: ''
       journey_job_id:
         description: Passed normal journey job from the original release run
         type: string
@@ -113,6 +117,7 @@ jobs:
         env:
           KIND: ${{ inputs.candidate_kind }}
           VERIFIED_PR: ${{ inputs.verified_pr_run_id }}
+          TEST_BUNDLE: ${{ inputs.test_bundle_run_id }}
           JOURNEY_JOB: ${{ inputs.journey_job_id }}
           JOURNEY_ARTIFACT: ${{ inputs.journey_artifact_id }}
           JOURNEY_DIGEST: ${{ inputs.journey_artifact_sha256 }}
@@ -129,11 +134,12 @@ jobs:
           fields = [os.environ[key] for key in ('VERIFIED_PR', 'JOURNEY_JOB', 'JOURNEY_ARTIFACT', 'JOURNEY_DIGEST')]
           if os.environ['KIND'] == 'signed-transport':
               if (any(not re.fullmatch('[1-9][0-9]*', value) for value in fields[:3])
+                      or not re.fullmatch('[1-9][0-9]*', os.environ['TEST_BUNDLE'])
                       or not re.fullmatch('[a-f0-9]{64}', fields[3]) or os.environ['SCALE'] != '1.5'
                       or not re.fullmatch('[a-f0-9]{64}', os.environ['DMG_DIGEST'])
                       or any(os.environ[key] for key in ('EXTRA_SOURCE', 'EXTRA_PRODUCTS', 'EXTRA_FAILURE', 'EXTRA_PRODUCTS_SHA', 'EXTRA_FAILURE_SHA'))):
                   raise SystemExit('Public transport requires one passed journey, exact DMG, current source proof and no diagnostic reuse inputs.')
-          elif any(fields):
+          elif any(fields) or os.environ['TEST_BUNDLE']:
               raise SystemExit('Public transport inputs cannot be silently ignored by another mode.')
           PY
       - name: Reuse complete current merged PR source proof
@@ -816,6 +822,7 @@ jobs:
       runtime_artifact_sha256: ${{ inputs.artifact_sha256 }}
       expected_dmg_sha256: ${{ inputs.expected_dmg_sha256 }}
       scenario: transport
+      test_bundle_run_id: ${{ inputs.test_bundle_run_id }}
       verified_pr_run_id: ${{ inputs.verified_pr_run_id }}
       fixture_artifact_id: ${{ needs.source.outputs.fixture_artifact_id }}
       fixture_sha256: ${{ needs.source.outputs.fixture_sha256 }}

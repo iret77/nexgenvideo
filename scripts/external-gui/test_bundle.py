@@ -120,6 +120,113 @@ def require_job(job, run_id, source_sha, attempt):
             and 'macrunner' in job.get('labels', []), 'UI test build job did not finish successfully')
 
 
+def _test_builder_view(text, *, workflow=False, shared_guard=False):
+    import ast
+    if workflow:
+        prefix, jobs = text.split('\njobs:\n', 1)
+        matches = list(re.finditer(r'(?m)^  ([A-Za-z0-9_-]+):\n', jobs))
+        require([match[1] for match in matches] == ['cases', 'test-build', 'test-runtime', 'acceptance'],
+                'Unrecognized UI test build workflow')
+        return prefix + '\njobs:\n' + ''.join(jobs[match.start():matches[index + 1].start() if index + 1 < len(matches) else len(jobs)]
+            for index, match in enumerate(matches) if match[1] not in {'test-runtime', 'acceptance'})
+    module = ast.parse(text)
+    if shared_guard:
+        assignments = [node for node in module.body if isinstance(node, ast.Assign) and len(node.targets) == 1
+                       and isinstance(node.targets[0], ast.Name) and node.targets[0].id == 'SIGNED_TRANSPORT_HARNESS_PATHS']
+        require(len(assignments) == 1, 'Unsupported transport-only guard change')
+        original = ast.parse('SIGNED_ACCEPTANCE_EVIDENCE_PATHS', mode='eval').body
+        extended = ast.parse('SIGNED_ACCEPTANCE_EVIDENCE_PATHS | {"scripts/external-gui/test_bundle.py"}', mode='eval').body
+        require(ast.dump(assignments[0].value) in {ast.dump(original), ast.dump(extended)}, 'Unsupported transport-only guard change')
+        assignments[0].value = original
+        return ast.dump(module, include_attributes=False)
+    consumers = {'resolve', 'verify_input', 'consume', '_test_builder_view', '_source_snapshot', '_transport_compatibility'}
+    for node in module.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in consumers:
+            require(not node.decorator_list and node.returns is None
+                    and all(argument.annotation is None for argument in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs))
+                    and node.args.vararg is None and node.args.kwarg is None, 'Consumer declaration changes module execution')
+            for value in [*node.args.defaults, *filter(None, node.args.kw_defaults)]:
+                require(isinstance(ast.literal_eval(value), (bool, type(None))), 'Consumer default changes module execution')
+    module.body = [node for node in module.body if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) or node.name not in consumers]
+    return ast.dump(module, include_attributes=False)
+
+
+def _source_snapshot(source_sha, paths):
+    import base64
+    require(re.fullmatch('[a-f0-9]{40}', source_sha), 'Invalid original test source')
+    files = {}
+    texts = {}
+    for name in [*paths, '.github/workflows/external-gui-acceptance.yml']:
+        response = api('/contents/' + name + '?ref=' + source_sha)
+        require(response.get('type') == 'file' and response.get('encoding') == 'base64', 'Original test input is not a regular source file')
+        raw = base64.b64decode(response['content'], validate=False)
+        files[name] = hashlib.sha256(raw).hexdigest()
+        if name in {'scripts/external-gui/test_bundle.py', '.github/workflows/external-gui-acceptance.yml'}:
+            texts[name] = raw.decode()
+    return files, texts
+
+
+def _transport_compatibility(producer_sha, producer_files, current_sha, current_files, builder, workflow, comparison):
+    from verify_diagnostic_candidate import SIGNED_TRANSPORT_HARNESS_PATHS
+    require(re.fullmatch('[a-f0-9]{40}', producer_sha) and producer_sha != current_sha
+            and set(producer_files) == set(current_files), 'Different or incomplete original UI test inputs')
+    require(comparison.get('base_commit', {}).get('sha') == producer_sha
+            and comparison.get('merge_base_commit', {}).get('sha') == producer_sha
+            and comparison.get('status') == 'ahead'
+            and 0 < len(comparison.get('commits', [])) == comparison.get('total_commits') <= 250
+            and comparison['commits'][-1].get('sha') == current_sha
+            and len(comparison.get('files', [])) < 300
+            and all(item.get('status') == 'modified' and not item.get('previous_filename') for item in comparison['files'])
+            and not {item['filename'] for item in comparison['files']} - SIGNED_TRANSPORT_HARNESS_PATHS,
+            'UI test reuse is outside the retained transport harness')
+    git = ['git', '-C', journey.REPOSITORY]
+    require(journey.output([*git, 'rev-parse', 'HEAD']).decode().strip() == current_sha,
+            'UI test consumer is not the declared checkout')
+    require(journey.output([*git, 'merge-base', producer_sha, current_sha]).decode().strip() == producer_sha,
+            'Original UI test producer is not an ancestor')
+    commits = journey.output([*git, 'rev-list', producer_sha + '..' + current_sha]).decode().splitlines()
+    require(len(commits) == len(set(commits)) == comparison['total_commits']
+            and set(commits) == {item['sha'] for item in comparison['commits']}, 'Original UI test commit graph changed')
+    changes = journey.output([*git, 'diff', '--no-renames', '--name-status', '-z', producer_sha, current_sha]).decode().split('\0')
+    require(changes[-1] == '' and len(changes[:-1]) % 2 == 0, 'Incomplete original UI test source diff')
+    changes = list(zip(changes[:-1:2], changes[1:-1:2]))
+    require(all(status == 'M' and name in SIGNED_TRANSPORT_HARNESS_PATHS for status, name in changes)
+            and len(changes) == len(comparison['files'])
+            and {name for _, name in changes} == {item['filename'] for item in comparison['files']},
+            'Original UI test source diff changed')
+    original_blobs = {name: journey.output([*git, 'show', producer_sha + ':' + name]) for name in producer_files}
+    require({name: hashlib.sha256(raw).hexdigest() for name, raw in original_blobs.items()} == producer_files,
+            'Original UI test input map differs from its Git objects')
+    helper = 'scripts/external-gui/test_bundle.py'
+    runtime = 'scripts/external-gui/transport.py'
+    guard = 'scripts/verify_diagnostic_candidate.py'
+    require(all(producer_files[name] == value for name, value in current_files.items() if name not in {helper, runtime, guard}),
+            'Compiled UI test inputs or shared build helpers changed')
+    current_guard = (journey.REPOSITORY / guard).read_bytes()
+    require(hashlib.sha256(current_guard).hexdigest() == current_files[guard], 'Current UI test build guard bytes changed')
+    guard_recipe = _test_builder_view(original_blobs[guard].decode(), shared_guard=True)
+    require(guard_recipe == _test_builder_view(current_guard.decode(), shared_guard=True), 'UI test build guard changed outside the transport declaration')
+    current_builder = Path(__file__).read_bytes().decode()
+    require(hashlib.sha256(current_builder.encode()).hexdigest() == current_files[helper]
+            and builder.encode() == original_blobs[helper], 'UI test build source bytes changed')
+    recipe = _test_builder_view(builder)
+    require(recipe == _test_builder_view(current_builder), 'UI test build recipe, imports or constants changed')
+    workflow_path = '.github/workflows/external-gui-acceptance.yml'
+    require(workflow.encode() == journey.output([*git, 'show', producer_sha + ':' + workflow_path]),
+            'Original UI test workflow differs from its Git object')
+    current_workflow = journey.output(['git', '-C', journey.REPOSITORY, 'show', current_sha + ':' + workflow_path]).decode()
+    require((journey.REPOSITORY / workflow_path).read_bytes().decode() == current_workflow, 'Current UI test workflow is uncommitted')
+    workflow_recipe = _test_builder_view(workflow, workflow=True)
+    require(workflow_recipe == _test_builder_view(current_workflow, workflow=True), 'UI test build workflow changed')
+    return {'schema': 'nexgenvideo/external-tests-transport-compatibility/1', 'kind': 'transport',
+        'producerSourceSHA': producer_sha, 'consumerSourceSHA': current_sha,
+        'producerFiles': producer_files, 'consumerFiles': current_files, 'producerBuilder': builder,
+        'producerWorkflow': workflow, 'comparison': comparison,
+        'buildRecipeSHA256': hashlib.sha256(recipe.encode()).hexdigest(),
+        'buildGuardSHA256': hashlib.sha256(guard_recipe.encode()).hexdigest(),
+        'buildWorkflowSHA256': hashlib.sha256(workflow_recipe.encode()).hexdigest()}
+
+
 def resolve(args):
     source_sha, source_files = journey.test_source_identity(os.environ['GITHUB_SHA'])
     run = api(f'/actions/runs/{args.run_id}')
@@ -131,23 +238,34 @@ def resolve(args):
         if artifact.get('name') == ARTIFACT and artifact.get('expired') is False]
     require(len(candidates) == 1, 'Exactly one original UI test artifact is required')
     artifact = candidates[0]
-    require_origin(run, artifact, source_sha, args.run_id)
+    producer_sha = run.get('head_sha')
+    compatibility = None
+    producer_files = source_files
+    if producer_sha != source_sha:
+        require(os.environ.get('NGV_TRANSPORT_TEST_BUNDLE_REUSE') == '1', 'UI test producer has a different source')
+        snapshot, texts = _source_snapshot(producer_sha, source_files)
+        producer_files = {name: snapshot[name] for name in source_files}
+        compatibility = _transport_compatibility(producer_sha, producer_files, source_sha, source_files,
+            texts['scripts/external-gui/test_bundle.py'], texts['.github/workflows/external-gui-acceptance.yml'],
+            api('/compare/' + producer_sha + '...' + source_sha))
+    require_origin(run, artifact, producer_sha, args.run_id)
     destination = Path(args.destination)
     destination.mkdir(parents=True, exist_ok=False)
     archive = destination.parent / 'external-tests-transfer.zip'
     download(artifact, archive)
     unpack_transfer(archive, destination)
     receipt = journey.read_json(destination / 'tests-input.json')
-    require_receipt(receipt, source_sha, source_files)
+    require_receipt(receipt, producer_sha, producer_files)
     require(receipt['runID'] == args.run_id, 'UI test receipt has another producer')
     jobs = [job for job in items(f'/actions/runs/{args.run_id}/attempts/{receipt["attempt"]}/jobs', 'jobs')
             if job.get('name', '').split(' / ')[-1] == 'Build external UI tests']
     require(len(jobs) == 1, 'Expected one original UI test build job')
-    require_job(jobs[0], args.run_id, source_sha, receipt['attempt'])
+    require_job(jobs[0], args.run_id, producer_sha, receipt['attempt'])
     require(journey.sha256(destination / 'tests.tar.gz') == receipt['archiveSHA256'], 'UI test archive changed')
     journey.write_json(destination / 'tests-producer.json', {
         'schema': 'nexgenvideo/external-tests-producer/1', 'run': run, 'artifact': artifact, 'job': jobs[0],
-        'receiptSHA256': journey.sha256(destination / 'tests-input.json')})
+        'receiptSHA256': journey.sha256(destination / 'tests-input.json'),
+        **({'transportCompatibility': compatibility} if compatibility else {})})
     with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
         output.write('producer_sha256=' + journey.sha256(destination / 'tests-producer.json') + '\n')
 
@@ -242,21 +360,32 @@ def check_test_paths(xctestrun, products):
     require({'TestBundlePath', 'TestHostPath'} <= found, 'Missing UI test bundle or test host path')
 
 
-def verify_input(directory, source_sha, source_files):
+def verify_input(directory, source_sha, source_files, *, transport_reuse=False):
     receipt = journey.read_json(directory / 'tests-input.json')
     producer = journey.read_json(directory / 'tests-producer.json')
-    require_receipt(receipt, source_sha, source_files)
+    producer_sha = source_sha
+    producer_files = source_files
+    compatibility = producer.get('transportCompatibility')
+    if compatibility is not None:
+        require(transport_reuse and compatibility.get('schema') == 'nexgenvideo/external-tests-transport-compatibility/1'
+                and compatibility.get('kind') == 'transport', 'UI test compatibility requires explicit public transport')
+        producer_sha = compatibility.get('producerSourceSHA')
+        producer_files = compatibility.get('producerFiles')
+        require(compatibility == _transport_compatibility(producer_sha, producer_files, source_sha, source_files,
+            compatibility['producerBuilder'], compatibility['producerWorkflow'], compatibility['comparison']),
+            'UI test transport compatibility changed')
+    require_receipt(receipt, producer_sha, producer_files)
     require(producer.get('schema') == 'nexgenvideo/external-tests-producer/1'
             and producer.get('receiptSHA256') == journey.sha256(directory / 'tests-input.json'),
             'UI test producer receipt changed')
-    require_origin(producer['run'], producer['artifact'], source_sha, receipt['runID'])
-    require_job(producer['job'], receipt['runID'], source_sha, receipt['attempt'])
+    require_origin(producer['run'], producer['artifact'], producer_sha, receipt['runID'])
+    require_job(producer['job'], receipt['runID'], producer_sha, receipt['attempt'])
     require(journey.sha256(directory / 'tests.tar.gz') == receipt['archiveSHA256'], 'UI test archive changed')
     return receipt
 
 
-def consume(directory, destination, source_sha, source_files):
-    receipt = verify_input(directory, source_sha, source_files)
+def consume(directory, destination, source_sha, source_files, *, transport_reuse=False):
+    receipt = verify_input(directory, source_sha, source_files, transport_reuse=transport_reuse)
     unpack_products(directory / 'tests.tar.gz', destination)
     require(products_sha256(destination) == receipt['productsSHA256'], 'UI test product tree changed')
     xctestrun = destination / receipt['xctestrun']
