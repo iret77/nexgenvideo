@@ -120,7 +120,189 @@ def require_job(job, run_id, source_sha, attempt):
             and 'macrunner' in job.get('labels', []), 'UI test build job did not finish successfully')
 
 
+def _safe_function(node):
+    import ast
+    require(isinstance(node, ast.FunctionDef) and not node.decorator_list and node.returns is None,
+            'Compatibility declaration changes module execution')
+    arguments = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs,
+                 *([node.args.vararg] if node.args.vararg else []), *([node.args.kwarg] if node.args.kwarg else [])]
+    require(all(argument.annotation is None for argument in arguments), 'Compatibility annotation executes at import')
+    require(all(isinstance(value, ast.Constant) and isinstance(value.value, (str, int, float, bool, type(None)))
+                for value in [*node.args.defaults, *filter(None, node.args.kw_defaults)]),
+            'Compatibility default executes at import')
+
+
+def _builder_view(text):
+    import ast
+    module = ast.parse(text)
+    consumers = {'resolve', 'verify_input', 'consume', '_safe_function', '_builder_view',
+                 '_workflow_build_view', '_guard_import_view', '_source_snapshot', '_compiled_compatibility',
+                 'validate_client_selectors', 'validate_client_source'}
+    for node in module.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in consumers:
+            _safe_function(node)
+    module.body = [node for node in module.body if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                   or node.name not in consumers]
+    for node in module.body:
+        if isinstance(node, ast.FunctionDef) and node.name == 'main':
+            retained = []
+            for statement in node.body:
+                call = statement.value if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call) else None
+                if (call is not None and isinstance(call.func, ast.Attribute) and isinstance(call.func.value, ast.Name)
+                        and call.func.value.id == 'resolver' and call.func.attr == 'add_argument'
+                        and len(call.args) == 1 and isinstance(call.args[0], ast.Constant)
+                        and call.args[0].value == '--artifact-sha256'):
+                    require(not call.keywords, 'UI test artifact selector changes parser execution')
+                else:
+                    retained.append(statement)
+            node.body = retained
+    return ast.dump(module, include_attributes=False)
+
+
+def _workflow_build_view(text):
+    prefix, jobs = text.split('\njobs:\n', 1)
+    prefix, descriptions = re.subn(r'(?m)^(      test_bundle_run_id:\n        description:) [^\n]+$',
+        r'\1 Original immutable client producer', prefix)
+    require(descriptions == 1, 'Unrecognized UI test producer documentation')
+    def selector(match):
+        fields = {}
+        for line in match[0].splitlines()[1:]:
+            key, value = line.strip().split(':', 1)
+            require(key not in fields, 'Duplicate UI test selector field')
+            fields[key] = value.strip()
+        require(set(fields) <= {'description', 'type', 'default', 'required'}
+                and fields.get('type') == 'string' and fields.get('default') == "''"
+                and fields.get('required', 'false') == 'false', 'UI test selectors alter build defaults')
+        return ''
+    prefix = re.sub(r'(?m)^      test_bundle_artifact_(?:id|sha256):\n(?:        [^\n]+\n)+', selector, prefix)
+    matches = list(re.finditer(r'(?m)^  ([A-Za-z0-9_-]+):\n', jobs))
+    require([match[1] for match in matches] == ['cases', 'test-build', 'test-runtime', 'acceptance'],
+            'Unrecognized UI test build workflow')
+    return prefix + '\njobs:\n' + ''.join(
+        jobs[match.start():matches[index + 1].start() if index + 1 < len(matches) else len(jobs)]
+        for index, match in enumerate(matches) if match[1] == 'test-build')
+
+
+def _guard_import_view(original, current):
+    import ast
+    producer, consumer = ast.parse(original), ast.parse(current)
+    names = {node.id for node in ast.walk(producer) if isinstance(node, ast.Name)}
+    names.update(node.name for node in producer.body if isinstance(node, (ast.FunctionDef, ast.ClassDef)))
+    names.update(node.asname or node.name.split('.')[0] for node in ast.walk(producer) if isinstance(node, ast.alias))
+    expected = [ast.dump(node, include_attributes=False) for node in producer.body]
+    retained, added = [], set()
+    index = 0
+    for node in consumer.body:
+        value = ast.dump(node, include_attributes=False)
+        if index < len(expected) and value == expected[index]:
+            retained.append(node); index += 1
+            continue
+        _safe_function(node)
+        require(not (node.name.startswith('__') and node.name.endswith('__')),
+                'UI test import adds an implicit module hook')
+        require(node.name not in names and node.name not in added, 'UI test import adds or replaces a reachable binding')
+        added.add(node.name)
+    require(index == len(expected), 'UI test shared import changes existing executable definitions')
+    return ast.dump(ast.Module(body=retained, type_ignores=[]), include_attributes=False)
+
+
+def _source_snapshot(source_sha, paths):
+    import base64
+    require(re.fullmatch('[a-f0-9]{40}', source_sha), 'Invalid original UI test source')
+    values = {}
+    for name in [*paths, '.github/workflows/external-gui-acceptance.yml', '.github/actions/setup-xcode-27/action.yml']:
+        entry = api('/contents/' + name + '?ref=' + source_sha)
+        require(entry.get('type') == 'file' and entry.get('encoding') == 'base64',
+                'Original UI test input is not a regular file')
+        values[name] = base64.b64decode(entry['content'], validate=False)
+    return values
+
+
+def _compiled_compatibility(producer_sha, producer_files, current_sha, current_files, originals, comparison):
+    require(re.fullmatch('[a-f0-9]{40}', producer_sha) and producer_sha != current_sha
+            and set(producer_files) == set(current_files), 'Incomplete original UI test qualification inputs')
+    require(comparison.get('base_commit', {}).get('sha') == producer_sha
+            and comparison.get('merge_base_commit', {}).get('sha') == producer_sha
+            and comparison.get('status') == 'ahead'
+            and 0 < len(comparison.get('commits', [])) == comparison.get('total_commits') <= 250
+            and comparison['commits'][-1].get('sha') == current_sha
+            and len(comparison.get('files', [])) < 300, 'Original client is not a complete current ancestor')
+    git = ['git', '-C', journey.REPOSITORY]
+    require(journey.output([*git, 'rev-parse', 'HEAD']).decode().strip() == current_sha
+            and journey.output([*git, 'merge-base', producer_sha, current_sha]).decode().strip() == producer_sha,
+            'UI test consumer differs from its declared Git ancestry')
+    commits = journey.output([*git, 'rev-list', producer_sha + '..' + current_sha]).decode().splitlines()
+    require(len(commits) == len(set(commits)) == comparison['total_commits']
+            and set(commits) == {item['sha'] for item in comparison['commits']}, 'UI test commit graph differs')
+    diff = journey.output([*git, 'diff', '--no-renames', '--name-status', '-z', producer_sha, current_sha]).decode().split('\0')
+    require(diff[-1] == '' and len(diff[:-1]) % 2 == 0, 'Incomplete UI test source diff')
+    changes = list(zip(diff[:-1:2], diff[1:-1:2]))
+    local = {name: status for status, name in changes}
+    require(len(local) == len(changes) and all(status in {'A', 'M', 'D'} for status, _ in changes),
+            'Ambiguous, renamed or incomplete UI test source status inventory')
+    statuses = {'added': 'A', 'modified': 'M', 'removed': 'D'}
+    require(len(local) == len(comparison['files'])
+            and local == {item['filename']: statuses.get(item.get('status')) for item in comparison['files']}
+            and all(item.get('status') in {'added', 'modified', 'removed'} and not item.get('previous_filename')
+                    for item in comparison['files']), 'UI test source comparison differs')
+    actual = {name: journey.output([*git, 'show', producer_sha + ':' + name]) for name in producer_files}
+    require(actual == {name: originals[name] for name in producer_files}
+            and {name: hashlib.sha256(raw).hexdigest() for name, raw in actual.items()} == producer_files,
+            'Original UI test receipt differs from its actual Git objects')
+    helper, guard = 'scripts/external-gui/test_bundle.py', 'scripts/verify_diagnostic_candidate.py'
+    metadata_only = {'scripts/external-gui/transport.py', 'scripts/release_engine_resume.py'}
+    require(all(producer_files[name] == digest for name, digest in current_files.items() if name not in {helper, guard, *metadata_only}),
+            'Compiled UI test source, project or reachable shared helper changed')
+    recipe = _builder_view(originals[helper].decode())
+    require(recipe == _builder_view(Path(__file__).read_text()), 'UI test build closure, imports or constants changed')
+    imported = _guard_import_view(originals[guard].decode(), (journey.REPOSITORY / guard).read_text())
+    require(imported == _guard_import_view(originals[guard].decode(), originals[guard].decode()),
+            'UI test builder import changed')
+    workflow = '.github/workflows/external-gui-acceptance.yml'
+    require(originals[workflow] == journey.output([*git, 'show', producer_sha + ':' + workflow]),
+            'Original UI test build workflow differs from Git')
+    current_workflow = journey.output([*git, 'show', current_sha + ':' + workflow])
+    require(current_workflow == (journey.REPOSITORY / workflow).read_bytes(), 'Current UI test workflow is uncommitted')
+    workflow_recipe = _workflow_build_view(originals[workflow].decode())
+    require(workflow_recipe == _workflow_build_view(current_workflow.decode()), 'UI test build workflow changed')
+    action = '.github/actions/setup-xcode-27/action.yml'
+    require(originals[action] == journey.output([*git, 'show', producer_sha + ':' + action])
+            == journey.output([*git, 'show', current_sha + ':' + action])
+            == (journey.REPOSITORY / action).read_bytes(), 'UI test Xcode setup action changed')
+    require(hashlib.sha256(Path(__file__).read_bytes()).hexdigest() == current_files[helper]
+            and hashlib.sha256((journey.REPOSITORY / guard).read_bytes()).hexdigest() == current_files[guard],
+            'Current UI test compatibility source differs from its receipt')
+    return {'schema': 'nexgenvideo/external-tests-compiled-compatibility/1',
+        'producerSourceSHA': producer_sha, 'consumerSourceSHA': current_sha,
+        'producerFiles': producer_files, 'consumerFiles': current_files,
+        'originalSources': {name: raw.decode() for name, raw in originals.items()}, 'comparison': comparison,
+        'buildRecipeSHA256': hashlib.sha256(recipe.encode()).hexdigest(),
+        'buildImportSHA256': hashlib.sha256(imported.encode()).hexdigest(),
+        'buildWorkflowSHA256': hashlib.sha256(workflow_recipe.encode()).hexdigest(),
+        'buildActionSHA256': hashlib.sha256(originals[action]).hexdigest()}
+
+
+def validate_client_selectors(run_id, artifact_id='', digest='', require_pair=True):
+    require(not run_id or re.fullmatch('[1-9][0-9]*', run_id), 'UI test run ID must be positive')
+    require(not artifact_id or re.fullmatch('[1-9][0-9]*', artifact_id), 'UI test artifact ID must be positive')
+    require(not digest or re.fullmatch('[a-f0-9]{64}', digest), 'UI test artifact digest must be SHA-256')
+    require(not (artifact_id or digest) or bool(run_id), 'UI test artifact selectors need their producer run')
+    require(not digest or bool(artifact_id), 'UI test digest needs its artifact ID')
+    require(not require_pair or bool(artifact_id) == bool(digest), 'UI test artifact selectors must be complete')
+
+
+def validate_client_source(run_id, artifact_id, digest, source_sha):
+    validate_client_selectors(run_id, artifact_id, digest)
+    require(re.fullmatch('[a-f0-9]{40}', source_sha), 'UI test consumer source must be exact')
+    if run_id and not artifact_id:
+        run = api('/actions/runs/' + run_id)
+        require(run.get('repository', {}).get('full_name') == REPOSITORY and run.get('head_sha') == source_sha,
+                'A different client source requires its exact original artifact ID and digest')
+
+
 def resolve(args):
+    selected_digest = getattr(args, 'artifact_sha256', '') or ''
+    validate_client_selectors(str(args.run_id), str(args.artifact_id or ''), selected_digest, require_pair=False)
     source_sha, source_files = journey.test_source_identity(os.environ['GITHUB_SHA'])
     run = api(f'/actions/runs/{args.run_id}')
     current = int(os.environ['GITHUB_RUN_ID'])
@@ -131,23 +313,35 @@ def resolve(args):
         if artifact.get('name') == ARTIFACT and artifact.get('expired') is False]
     require(len(candidates) == 1, 'Exactly one original UI test artifact is required')
     artifact = candidates[0]
-    require_origin(run, artifact, source_sha, args.run_id)
+    original_source = run.get('head_sha', '')
+    require_origin(run, artifact, original_source, args.run_id)
+    if original_source != source_sha:
+        validate_client_selectors(str(args.run_id), str(args.artifact_id or ''), selected_digest)
+        require(bool(args.artifact_id) and bool(selected_digest), 'Compiled-client reuse needs its exact artifact ID and digest')
+    if selected_digest:
+        require(artifact['digest'] == 'sha256:' + selected_digest, 'Pinned UI test artifact digest changed')
     destination = Path(args.destination)
     destination.mkdir(parents=True, exist_ok=False)
     archive = destination.parent / 'external-tests-transfer.zip'
     download(artifact, archive)
     unpack_transfer(archive, destination)
     receipt = journey.read_json(destination / 'tests-input.json')
-    require_receipt(receipt, source_sha, source_files)
+    compatibility = None
+    if original_source != source_sha:
+        originals = _source_snapshot(original_source, source_files)
+        compatibility = _compiled_compatibility(original_source, receipt.get('testFiles', {}), source_sha,
+            source_files, originals, api('/compare/' + original_source + '...' + source_sha))
+    require_receipt(receipt, original_source, receipt.get('testFiles') if compatibility else source_files)
     require(receipt['runID'] == args.run_id, 'UI test receipt has another producer')
     jobs = [job for job in items(f'/actions/runs/{args.run_id}/attempts/{receipt["attempt"]}/jobs', 'jobs')
             if job.get('name', '').split(' / ')[-1] == 'Build external UI tests']
     require(len(jobs) == 1, 'Expected one original UI test build job')
-    require_job(jobs[0], args.run_id, source_sha, receipt['attempt'])
+    require_job(jobs[0], args.run_id, original_source, receipt['attempt'])
     require(journey.sha256(destination / 'tests.tar.gz') == receipt['archiveSHA256'], 'UI test archive changed')
     journey.write_json(destination / 'tests-producer.json', {
         'schema': 'nexgenvideo/external-tests-producer/1', 'run': run, 'artifact': artifact, 'job': jobs[0],
-        'receiptSHA256': journey.sha256(destination / 'tests-input.json')})
+        'receiptSHA256': journey.sha256(destination / 'tests-input.json'),
+        **({'compiledCompatibility': compatibility} if compatibility else {})})
     with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
         output.write('producer_sha256=' + journey.sha256(destination / 'tests-producer.json') + '\n')
 
@@ -245,18 +439,33 @@ def check_test_paths(xctestrun, products):
 def verify_input(directory, source_sha, source_files):
     receipt = journey.read_json(directory / 'tests-input.json')
     producer = journey.read_json(directory / 'tests-producer.json')
-    require_receipt(receipt, source_sha, source_files)
+    original_source = receipt.get('sourceSHA', '')
+    compatibility = producer.get('compiledCompatibility')
+    if original_source != source_sha:
+        require(isinstance(compatibility, dict)
+                and compatibility.get('schema') == 'nexgenvideo/external-tests-compiled-compatibility/1',
+                'A different client source needs a complete compiled-input compatibility proof')
+        originals = {name: text.encode() for name, text in compatibility['originalSources'].items()}
+        actual = _compiled_compatibility(original_source, receipt.get('testFiles', {}), source_sha,
+            source_files, originals, compatibility['comparison'])
+        require(actual == compatibility, 'UI test compiled-input compatibility proof changed')
+    else:
+        require(compatibility is None, 'Unexpected UI test compatibility proof for identical sources')
+    require_receipt(receipt, original_source, receipt.get('testFiles') if compatibility else source_files)
     require(producer.get('schema') == 'nexgenvideo/external-tests-producer/1'
             and producer.get('receiptSHA256') == journey.sha256(directory / 'tests-input.json'),
             'UI test producer receipt changed')
-    require_origin(producer['run'], producer['artifact'], source_sha, receipt['runID'])
-    require_job(producer['job'], receipt['runID'], source_sha, receipt['attempt'])
+    require_origin(producer['run'], producer['artifact'], original_source, receipt['runID'])
+    require_job(producer['job'], receipt['runID'], original_source, receipt['attempt'])
     require(journey.sha256(directory / 'tests.tar.gz') == receipt['archiveSHA256'], 'UI test archive changed')
     return receipt
 
 
 def consume(directory, destination, source_sha, source_files):
     receipt = verify_input(directory, source_sha, source_files)
+    if receipt['sourceSHA'] != source_sha:
+        require(receipt['xcode'] == journey.output(['xcodebuild', '-version']).decode().strip(),
+                'Original XCTest client has a different actual Xcode build')
     unpack_products(directory / 'tests.tar.gz', destination)
     require(products_sha256(destination) == receipt['productsSHA256'], 'UI test product tree changed')
     xctestrun = destination / receipt['xctestrun']
@@ -326,6 +535,7 @@ def main():
     resolver = commands.add_parser('resolve')
     resolver.add_argument('--run-id', type=int, required=True)
     resolver.add_argument('--artifact-id', type=int)
+    resolver.add_argument('--artifact-sha256')
     resolver.add_argument('--destination', required=True)
     args = parser.parse_args()
     if args.command == 'build':

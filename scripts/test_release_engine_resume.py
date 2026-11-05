@@ -299,5 +299,86 @@ class ReleaseEngineResumeTests(unittest.TestCase):
             with self.assertRaises(ValueError): checkpoint.verify_manifest(manifest, SOURCE, RUN)
 
 
+    def button_suite(self):
+        receipt = self.receipt()
+        receipt["changedPaths"].append(resume.BUTTON_FIXTURE)
+        receipt["engineSourceObjects"] = dict(resume.ENGINE_SOURCE_OBJECTS)
+        suite = self.suite(receipt)
+        original = [f"NexGenVideoTests.Existing/test{index}()/Existing.swift:1:6" for index in range(3676)]
+        skipped = [f"NexGenVideoTests.Existing/skipped{index}()/Existing.swift:1:6" for index in range(8)]
+        added = [f"NexGenVideoTests.NativeButtonInteractionTests/{name}()/NativeButtonInteractionTests.swift:1:6"
+                 for name in sorted(resume.BUTTON_TEST_METHODS)]
+        baseline = {"discoveredFunctionIDs": original + skipped, "startedFunctionIDs": original,
+                    "endedFunctionIDs": original, "skippedFunctionIDs": skipped}
+        fingerprints = {key: hashlib.sha256(json.dumps(sorted(values), separators=(",", ":")).encode()).hexdigest()
+                        for key, values in baseline.items()}
+        events = {key: values + ([] if key == "skippedFunctionIDs" else added) for key, values in baseline.items()}
+        events["functionExecutions"] = 3693
+        suite.update(testExecutions=4637, freshTestExecutions=3741)
+        suite["phases"][2]["events"] = events
+        return receipt, suite, fingerprints
+
+    def test_button_candidate_preserves_original_inventory_and_completes_all_new_methods(self):
+        receipt, suite, fingerprints = self.button_suite()
+        with self.phase_pin(receipt), patch.object(resume, "APP_BASELINE_INVENTORY_HASHES", fingerprints):
+            resume.verify_completed_suite(suite, SOURCE, RUN)
+            self.assertEqual(suite["phases"][1]["events"]["functionExecutions"], 896)
+            self.assertEqual(len(suite["phases"][2]["events"]["discoveredFunctionIDs"]), 3701)
+            self.assertEqual(len(suite["phases"][2]["events"]["skippedFunctionIDs"]), 8)
+            original = self.receipt()
+            with self.phase_pin(original):
+                resume.verify_completed_suite(self.suite(original), SOURCE, RUN)
+
+    def test_button_candidate_rejects_old_mixed_or_inflated_aggregate_counts(self):
+        receipt, suite, fingerprints = self.button_suite()
+        with self.phase_pin(receipt), patch.object(resume, "APP_BASELINE_INVENTORY_HASHES", fingerprints):
+            for key, value in [("testExecutions", 4620), ("testExecutions", 4654),
+                               ("freshTestExecutions", 3724), ("reusedTestExecutions", 913)]:
+                changed = copy.deepcopy(suite)
+                changed[key] = value
+                with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                    resume.verify_completed_suite(changed, SOURCE, RUN)
+            changed = copy.deepcopy(suite)
+            changed["phases"][2]["events"]["functionExecutions"] = 3676
+            with self.assertRaises(ValueError): resume.verify_completed_suite(changed, SOURCE, RUN)
+            changed = copy.deepcopy(suite)
+            changed["retainedBackends"][0]["changedPaths"].remove(resume.BUTTON_FIXTURE)
+            with self.assertRaises(ValueError): resume.verify_completed_suite(changed, SOURCE, RUN)
+
+    def test_button_candidate_rejects_missing_skipped_duplicate_or_replaced_function_ids(self):
+        receipt, suite, fingerprints = self.button_suite()
+        with self.phase_pin(receipt), patch.object(resume, "APP_BASELINE_INVENTORY_HASHES", fingerprints):
+            for key in fingerprints:
+                for mutation in ["missing", "duplicate", "baseline-substitution", "unknown-button", "invalid-value"]:
+                    changed = copy.deepcopy(suite)
+                    values = changed["phases"][2]["events"][key]
+                    if mutation == "missing": values.pop()
+                    elif mutation == "duplicate": values.append(values[-1])
+                    elif mutation == "baseline-substitution": values[0] = values[0].replace("Existing", "Different")
+                    elif mutation == "unknown-button":
+                        values[-1] = "NexGenVideoTests.NativeButtonInteractionTests/unreviewed()/NativeButtonInteractionTests.swift:1:6"
+                    else: values[0] = None
+                    with self.subTest(key=key, mutation=mutation), self.assertRaises(ValueError):
+                        resume.verify_completed_suite(changed, SOURCE, RUN)
+            changed = copy.deepcopy(suite)
+            events = changed["phases"][2]["events"]
+            events["skippedFunctionIDs"].append(events["endedFunctionIDs"].pop())
+            with self.assertRaises(ValueError): resume.verify_completed_suite(changed, SOURCE, RUN)
+
+    def test_button_candidate_source_extension_retains_engine_and_harness_object_pins(self):
+        paths = [resume.FIXTURE, resume.BUTTON_FIXTURE, "Sources/NexGenVideo/App/NativeButtonAccessibility.swift",
+                 ".github/workflows/scene-history-hierarchy-diagnostic.yml", "scripts/external-gui/test_bundle.py",
+                 "scripts/scene_history_ax_observer.swift", "scripts/scene_history_hierarchy.py",
+                 "scripts/test_scene_history_hierarchy.py", *resume.REVIEWED_HARNESS_OBJECTS]
+        self.assertEqual(self.source_closure("\n".join(paths)), paths)
+        for collection, revisions in [(resume.ENGINE_SOURCE_OBJECTS, (resume.SOURCE, SOURCE)),
+                                      (resume.REVIEWED_HARNESS_OBJECTS, (resume.REVIEWED_HARNESS_SOURCE, SOURCE))]:
+            for revision in revisions:
+                for path in collection:
+                    with self.subTest(revision=revision, path=path), self.assertRaises(ValueError):
+                        self.source_closure("\n".join(paths), object_changed=(revision, path))
+        with self.assertRaises(ValueError): self.source_closure("\n".join(paths + ["Sources/NexGenVideo/App/Unreviewed.swift"]))
+
+
 if __name__ == "__main__":
     unittest.main()

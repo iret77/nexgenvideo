@@ -27,6 +27,25 @@ EVENT_DIGEST = "2f872313ee84af000898df20f29be6a62154c87524cce06d8059a089d27206ed
 CONSOLE_DIGEST = "a97b3156108f080b112d3ce9019985bceebed8d2a16bf7e81024b77fff9f9ac9"
 NAME = "engine-swift-testing"
 FIXTURE = "Tests/NexGenVideoTests/UI/NativeSegmentInteractionTests.swift"
+BUTTON_FIXTURE = "Tests/NexGenVideoTests/UI/NativeButtonInteractionTests.swift"
+BUTTON_TEST_METHODS = {
+    "aSecondOwnCGWindowAtTheSameFramePreventsWindowBinding", "actualDisabledSwiftUIButtonIsExcluded",
+    "actualDuplicateButtonsCannotBecomeAUniqueTarget", "actualSwiftUIButtonIsDiscoveredWithoutAnExternalReader",
+    "actualTraversalBudgetCannotQualifyAPartialTree", "anUnreadableSecondButtonCannotMakeTheFirstButtonUnique",
+    "anUnreadableSecondWindowCannotMakeTheFirstWindowUnique", "cancellationDuringTheLastChildMessageCannotQualifyATree",
+    "cancellationIsRetainedAsAnIncompleteQuery", "failedGeometryOrPIDAttributesCannotSupplyAFrame",
+    "incompleteAndAmbiguousWindowEvidenceCannotSelectAButton", "nonfiniteEmptyAndOutOfProbeFramesAreRejected",
+    "ownProcessBoundaryRejectsForeignRequests", "realDecorationTolerancePreservesTheActualProbeCenter",
+    "roleLabelAndEnabledStateAreIndependentRequirements", "theLastChildMessageUsesItsOwnRemainingTimeout",
+    "unknownCGMetadataCannotHideACompetingOwnWindow",
+}
+# Retain the exact App inventories from candidate N artifact 13429616466.
+APP_BASELINE_INVENTORY_HASHES = {
+    "discoveredFunctionIDs": "6df708800b56cfd5a024ea069ce6c8699c8fba023a0d2a628726de6c83899cc9",
+    "startedFunctionIDs": "a04165ed3fdd3eebe321250903e5a3c758b3f5faca762b9a638684d5bd50f154",
+    "endedFunctionIDs": "a04165ed3fdd3eebe321250903e5a3c758b3f5faca762b9a638684d5bd50f154",
+    "skippedFunctionIDs": "b2638f6ed2917cc9610e45aa2fbf9c434235e3f5cf0db78d63c15ce44e248b18",
+}
 ORIGINAL_PATHS = {
     FIXTURE, ".github/workflows/release.yml", "scripts/release_engine_resume.py",
     "scripts/test_release_engine_resume.py", "scripts/run_macos_tests.py",
@@ -100,6 +119,12 @@ REVIEWED_HARNESS_OBJECTS = {
     "scripts/workspace_native_ci.py": "75334f813fee5bd1564eb5225b7579ffd20c0465"
 }
 PATHS |= set(REVIEWED_HARNESS_OBJECTS)
+PATHS |= {
+    BUTTON_FIXTURE, "Sources/NexGenVideo/App/NativeButtonAccessibility.swift",
+    ".github/workflows/scene-history-hierarchy-diagnostic.yml", "scripts/external-gui/test_bundle.py",
+    "scripts/scene_history_ax_observer.swift", "scripts/scene_history_hierarchy.py",
+    "scripts/test_scene_history_hierarchy.py",
+}
 
 
 def command(*args):
@@ -336,15 +361,34 @@ def install(root, evidence):
     return phase, receipt
 
 
+def verify_button_inventory(events):
+    prefix = "NexGenVideoTests.NativeButtonInteractionTests/"
+    for key, expected_hash in APP_BASELINE_INVENTORY_HASHES.items():
+        values = events.get(key)
+        require(isinstance(values, list) and all(isinstance(value, str) for value in values)
+                and len(values) == len(set(values)), "Fresh App function inventory is malformed or duplicated")
+        added = [value for value in values if value.startswith(prefix)]
+        matched = [re.fullmatch(re.escape(prefix) + r"([A-Za-z0-9_]+)\(\)/NativeButtonInteractionTests\.swift:[1-9][0-9]*:[1-9][0-9]*", value)
+                   for value in added]
+        expected = set() if key == "skippedFunctionIDs" else BUTTON_TEST_METHODS
+        require(all(matched) and len(added) == len(expected)
+                and {match[1] for match in matched} == expected, "New native button methods did not all execute exactly once")
+        original = sorted(value for value in values if not value.startswith(prefix))
+        digest = hashlib.sha256(json.dumps(original, separators=(",", ":")).encode()).hexdigest()
+        require(digest == expected_hash, "Original App discovery, start, end or skip inventory changed")
+
+
 def verify_completed_suite(suite, source, run_id):
+    retained = suite.get("retainedBackends", [])
+    require(isinstance(retained, list) and len(retained) == 1 and isinstance(retained[0], dict),
+            "Resumed Release must retain exactly the Engine backend")
+    added = 17 if BUTTON_FIXTURE in retained[0].get("changedPaths", []) else 0
     require(suite.get("schema") == 1 and suite.get("sourceSHA") == source and suite.get("completed") is True
             and suite.get("scope") == "all" and suite.get("configuration") == "release"
-            and suite.get("filter") == "" and suite.get("testExecutions") == 4620
-            and suite.get("freshTestExecutions") == 3724 and suite.get("reusedTestExecutions") == 896
+            and suite.get("filter") == "" and suite.get("testExecutions") == 4620 + added
+            and suite.get("freshTestExecutions") == 3724 + added and suite.get("reusedTestExecutions") == 896
             and suite.get("combinedFrameworks", {}).get("passed") is True,
             "Resumed Release aggregate is incomplete")
-    retained = suite.get("retainedBackends", [])
-    require(len(retained) == 1, "Resumed Release must retain exactly the Engine backend")
     verify_receipt(retained[0], source, run_id)
     phases = suite.get("phases", [])
     require([phase.get("name") for phase in phases] == ["xctest", NAME, "app-swift-testing"],
@@ -362,8 +406,10 @@ def verify_completed_suite(suite, source, run_id):
     require(phases[1] == expected and all("reusedFrom" not in phases[index] for index in (0, 2)),
             "Resumed Release backend provenance differs")
     require(phases[0].get("testCaseExecutions") == 48
-            and phases[2].get("events", {}).get("functionExecutions") == 3676,
+            and phases[2].get("events", {}).get("functionExecutions") == 3676 + added,
             "Fresh App backend execution counts differ")
+    if added:
+        verify_button_inventory(phases[2].get("events", {}))
     host = phases[2].get("originalHostReceipt", {})
     require(host.get("sourceSHA") == source and all(host.get(key) is True for key in
             ("mainThread", "applicationRunningAtStart", "started", "completed", "abiSucceeded", "runReturnedAfterCompletion")),

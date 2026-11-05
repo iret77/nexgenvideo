@@ -22,7 +22,15 @@ on:
         options: [all, '1', '1.25', '1.5']
         default: all
       test_bundle_run_id:
-        description: Optional completed same-source producer of external-gui-tests; empty builds once
+        description: Optional original producer with identical compiled client inputs; empty builds once
+        type: string
+        default: ''
+      test_bundle_artifact_id:
+        description: Exact original external-gui-tests artifact ID
+        type: string
+        default: ''
+      test_bundle_artifact_sha256:
+        description: SHA-256 of that exact original client archive
         type: string
         default: ''
       artifact_mode:
@@ -81,6 +89,12 @@ on:
         type: string
         default: workspace-ui-app
       test_bundle_run_id:
+        type: string
+        default: ''
+      test_bundle_artifact_id:
+        type: string
+        default: ''
+      test_bundle_artifact_sha256:
         type: string
         default: ''
       artifact_mode:
@@ -144,6 +158,9 @@ jobs:
           ARTIFACT_MODE: ${{ inputs.artifact_mode || 'app' }}
           EXPECTED_DMG_SHA256: ${{ inputs.expected_dmg_sha256 }}
           TEST_BUNDLE_RUN_ID: ${{ inputs.test_bundle_run_id }}
+          TEST_BUNDLE_ARTIFACT_ID: ${{ inputs.test_bundle_artifact_id }}
+          TEST_BUNDLE_ARTIFACT_SHA256: ${{ inputs.test_bundle_artifact_sha256 }}
+          GH_TOKEN: ${{ github.token }}
           RETAINED_SOURCE: ${{ inputs.product_source_sha }}
           RETAINED_RUN: ${{ inputs.runtime_run_id }}
           RETAINED_ARTIFACT: ${{ inputs.runtime_artifact_id }}
@@ -157,6 +174,10 @@ jobs:
           import json, os, re, sys
           sys.path.insert(0, 'scripts')
           from retained_packaging import environment_selectors
+          sys.path.insert(0, 'scripts/external-gui')
+          from test_bundle import validate_client_source
+          validate_client_source(os.environ['TEST_BUNDLE_RUN_ID'], os.environ['TEST_BUNDLE_ARTIFACT_ID'],
+              os.environ['TEST_BUNDLE_ARTIFACT_SHA256'], os.environ['GITHUB_SHA'])
           packaging = environment_selectors()
           if packaging is not None and (not os.environ['RETAINED_SOURCE']
                   or not re.fullmatch('[1-9][0-9]*', os.environ['VERIFIED_PR_RUN'])):
@@ -275,17 +296,21 @@ jobs:
       producer_sha256: ${{ steps.resolve.outputs.producer_sha256 }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Bind the original successful test build and exact GitHub artifact bytes
         id: resolve
         env:
           GH_TOKEN: ${{ github.token }}
           TEST_BUNDLE_RUN_ID: ${{ inputs.test_bundle_run_id || github.run_id }}
-          TEST_BUNDLE_ARTIFACT_ID: ${{ needs.test-build.outputs.artifact_id }}
+          TEST_BUNDLE_ARTIFACT_ID: ${{ inputs.test_bundle_artifact_id || needs.test-build.outputs.artifact_id }}
+          TEST_BUNDLE_ARTIFACT_SHA256: ${{ inputs.test_bundle_artifact_sha256 }}
         run: |
-          args=()
-          if [ -n "$TEST_BUNDLE_ARTIFACT_ID" ]; then args+=(--artifact-id "$TEST_BUNDLE_ARTIFACT_ID"); fi
+          set --
+          if [ -n "$TEST_BUNDLE_ARTIFACT_ID" ]; then set -- "$@" --artifact-id "$TEST_BUNDLE_ARTIFACT_ID"; fi
+          if [ -n "$TEST_BUNDLE_ARTIFACT_SHA256" ]; then set -- "$@" --artifact-sha256 "$TEST_BUNDLE_ARTIFACT_SHA256"; fi
           python3 scripts/external-gui/test_bundle.py resolve --run-id "$TEST_BUNDLE_RUN_ID" \
-            "${args[@]}" --destination "$RUNNER_TEMP/external-tests-input"
+            "$@" --destination "$RUNNER_TEMP/external-tests-input"
       - uses: actions/upload-artifact@v4
         id: upload
         with:

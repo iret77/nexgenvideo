@@ -35,7 +35,15 @@ on:
         default: false
         type: boolean
       test_bundle_run_id:
-        description: Optional completed same-source external UI test producer
+        description: Optional original producer with identical compiled XCTest client inputs
+        type: string
+        default: ''
+      test_bundle_artifact_id:
+        description: Exact original external-gui-tests artifact ID
+        type: string
+        default: ''
+      test_bundle_artifact_sha256:
+        description: SHA-256 of that exact original client archive
         type: string
         default: ''
       completed_release_tests_run_id:
@@ -149,6 +157,21 @@ jobs:
 
       - name: Validate every retained product selector before publication or runner allocation
         run: python3 scripts/retained_packaging.py validate-inputs
+
+      - name: Validate exact external XCTest client selectors
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TEST_CLIENT_RUN: ${{ inputs.test_bundle_run_id }}
+          TEST_CLIENT_ARTIFACT: ${{ inputs.test_bundle_artifact_id }}
+          TEST_CLIENT_SHA256: ${{ inputs.test_bundle_artifact_sha256 }}
+        run: |
+          python3 - <<'PY'
+          import os, sys
+          sys.path.insert(0, 'scripts/external-gui')
+          from test_bundle import validate_client_source
+          validate_client_source(os.environ['TEST_CLIENT_RUN'], os.environ['TEST_CLIENT_ARTIFACT'],
+              os.environ['TEST_CLIENT_SHA256'], os.environ['GITHUB_SHA'])
+          PY
 
       - name: Require the default branch for stable publication
         if: ${{ inputs.artifact_only == false && inputs.dry_run == false }}
@@ -1628,6 +1651,8 @@ jobs:
       expected_dmg_sha256: ${{ needs.release.outputs.dmg_sha256 }}
       interface_scale: '1'
       test_bundle_run_id: ${{ inputs.test_bundle_run_id }}
+      test_bundle_artifact_id: ${{ inputs.test_bundle_artifact_id }}
+      test_bundle_artifact_sha256: ${{ inputs.test_bundle_artifact_sha256 }}
 
   chat-hang-replay:
     needs: [release, diagnostic-acceptance, bpy-runtime]
