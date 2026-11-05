@@ -12,21 +12,25 @@ from verify_diagnostic_candidate import verify_signed_workspace
 from workspace_native_ci import extract_transfer, runtime_receipt
 
 
-def bind(run_id, source_sha, artifact_id, digest, *, verifier=None):
+def bind(run_id, source_sha, artifact_id, digest, *, verifier=None, packaging=None):
     if (run_id <= 0 or artifact_id <= 0 or not re.fullmatch('[0-9a-f]{40}', source_sha)
             or not re.fullmatch('[0-9a-f]{64}', digest)):
         raise ValueError('A complete original release runtime identity is required')
-    subprocess.run(['git', 'merge-base', '--is-ancestor', source_sha, 'HEAD'], check=True)
+    from retained_packaging import consumer_binding, consumer_source
+    packaging_binding = consumer_binding(run_id, source_sha, packaging)
+    producer_source = consumer_source(source_sha, packaging_binding)
+    subprocess.run(['git', 'merge-base', '--is-ancestor', producer_source, 'HEAD'], check=True)
     subprocess.run(['git', 'diff', '--exit-code', 'HEAD', '--'], check=True, stdout=subprocess.DEVNULL)
-    changed = subprocess.check_output(['git', 'diff', '--no-renames', '--name-only', '-z', source_sha, 'HEAD']).decode()
+    changed = subprocess.check_output(['git', 'diff', '--no-renames', '--name-only', '-z', producer_source, 'HEAD']).decode()
     run = api('/actions/runs/' + str(run_id))
     attempt = run.get('run_attempt')
     if type(attempt) is not int or attempt <= 0:
         raise ValueError('Original release has no execution attempt')
     jobs = api(f'/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100')
     artifact = api('/actions/artifacts/' + str(artifact_id))
+    options = {'packaging': packaging} if packaging is not None else {}
     (verifier or verify_signed_workspace)(run, jobs, artifact, run_id, source_sha, artifact_id, digest,
-                                         list(filter(None, changed.split('\0'))))
+                                         list(filter(None, changed.split('\0'))), **options)
     harness = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
     producer = next(job for job in jobs['jobs'] if job['name'] == 'release')
     proof = dict(schema='nexgenvideo/retained-release-runtime/1', productSourceSHA=source_sha,
@@ -35,6 +39,8 @@ def bind(run_id, source_sha, artifact_id, digest, *, verifier=None):
                  runtimeArtifactSHA256=digest, executionRunID=os.environ.get('GITHUB_RUN_ID'),
                  executionAttempt=os.environ.get('GITHUB_RUN_ATTEMPT'),
                  changedHarnessPaths=sorted(filter(None, changed.split('\0'))))
+    if packaging_binding is not None:
+        proof.update(schema='nexgenvideo/retained-release-runtime/2', packaging=packaging_binding)
     return artifact, proof
 
 
@@ -69,7 +75,7 @@ def restore(artifact, proof, directory):
     payload = transfer / 'payload'
     payload.mkdir()
     extract_transfer(archive, payload, {'workspace-ui.tar.gz', 'workspace-ui-input.json', 'bpy-source-receipt.json'})
-    receipt = runtime_receipt(payload, {'sourceSHA': proof['productSourceSHA']})
+    receipt = runtime_receipt(payload, {'sourceSHA': proof['productSourceSHA'], **({'packaging': proof['packaging']} if 'packaging' in proof else {})})
     directory.mkdir(parents=True, exist_ok=True)
     if (directory / 'NexGenVideo.app').exists() or (directory / 'plugins').exists():
         raise ValueError('Refusing to replace an existing runtime')
@@ -82,6 +88,7 @@ def restore(artifact, proof, directory):
 
 
 def main():
+    from retained_packaging import consumer_arguments, argument_selectors
     parser = argparse.ArgumentParser()
     parser.add_argument('mode', choices=('bind', 'restore'))
     parser.add_argument('--run-id', type=int, required=True)
@@ -90,10 +97,12 @@ def main():
     parser.add_argument('--artifact-sha256', required=True)
     parser.add_argument('--receipt', type=Path, required=True)
     parser.add_argument('--destination', type=Path)
+    consumer_arguments(parser)
     args = parser.parse_args()
     if (args.mode == 'restore') != (args.destination is not None):
         parser.error('Only restore requires a runtime destination')
-    artifact, proof = bind(args.run_id, args.source_sha, args.artifact_id, args.artifact_sha256)
+    artifact, proof = bind(args.run_id, args.source_sha, args.artifact_id, args.artifact_sha256,
+                           packaging=argument_selectors(args))
     if args.mode == 'restore':
         restore(artifact, proof, args.destination.resolve())
     args.receipt.parent.mkdir(parents=True, exist_ok=True)

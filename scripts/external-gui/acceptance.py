@@ -25,10 +25,12 @@ ROOT = Path(__file__).resolve().parent
 REPOSITORY = ROOT.parents[1]
 sys.path.insert(0, str(REPOSITORY / 'scripts'))
 from verify_diagnostic_candidate import SIGNED_JOURNEY_HARNESS_PATHS
-sys.path.pop(0)
+import retained_packaging
 TEST_INPUTS = ('acceptance.py', 'test_bundle.py', 'transport.py', 'project.yml', 'NexGenVideoExternalUITests/UserJourneyTests.swift')
 COLOR_HELPER = 'scripts/export_color_diagnostic.swift'
-SHARED_INPUTS = ('scripts/verify_diagnostic_candidate.py', COLOR_HELPER)
+PACKAGING_INPUTS = retained_packaging.VERIFIER_INPUTS
+SHARED_INPUTS = tuple(name for name in dict.fromkeys(('scripts/verify_diagnostic_candidate.py', COLOR_HELPER) + PACKAGING_INPUTS)
+                      if name not in {'scripts/external-gui/' + value for value in TEST_INPUTS})
 CONFIG = Path('/tmp/nexgenvideo-external-gui-config.json')
 STAGES = ['home', 'settings', 'new-project', 'media-import', 'source-insert',
           'timeline-split', 'timeline-undo', 'close', 'reopen', 'export']
@@ -115,13 +117,14 @@ def metadata(app, source_sha):
                 'executableSHA256': sha256(executable), 'treeSHA256': tree_sha256(app)}
 
 
-def test_source_identity(source_sha, input_root=ROOT, *, allowed_paths=None):
+def test_source_identity(source_sha, input_root=ROOT, *, allowed_paths=None, packaging=None):
     revision = output(['git', '-C', REPOSITORY, 'rev-parse', 'HEAD']).decode().strip()
     require(re.fullmatch('[a-f0-9]{40}', source_sha) and re.fullmatch('[a-f0-9]{40}', revision),
             'Invalid product or test source SHA')
-    if revision != source_sha:
-        output(['git', '-C', REPOSITORY, 'merge-base', '--is-ancestor', source_sha, revision])
-        changed = output(['git', '-C', REPOSITORY, 'diff', '--no-renames', '--name-only', '-z', source_sha, revision])
+    producer_source = retained_packaging.consumer_source(source_sha, packaging)
+    if revision != producer_source:
+        output(['git', '-C', REPOSITORY, 'merge-base', '--is-ancestor', producer_source, revision])
+        changed = output(['git', '-C', REPOSITORY, 'diff', '--no-renames', '--name-only', '-z', producer_source, revision])
         require(not set(filter(None, changed.decode().split('\0'))) - (SIGNED_JOURNEY_HARNESS_PATHS if allowed_paths is None else allowed_paths),
                 'Product inputs changed since the retained signed App')
     fingerprints = {}
@@ -146,12 +149,21 @@ def test_source_identity(source_sha, input_root=ROOT, *, allowed_paths=None):
 def install(args, evidence, *, allowed_paths=None):
     installed = Path('/Applications/NexGenVideo.app')
     require(not installed.exists(), 'Refusing to replace an already installed app')
-    test_revision, test_files = test_source_identity(args.source_sha, allowed_paths=allowed_paths)
+    packaging = retained_packaging.file_binding(args)
+    test_revision, test_files = test_source_identity(args.source_sha, allowed_paths=allowed_paths, packaging=packaging)
     identity = {'schema': 'nexgenvideo/external-gui-input/1', 'sourceSHA': args.source_sha,
                 'testSourceSHA': test_revision, 'testFiles': test_files,
                 'scale': args.scale, 'runID': os.environ.get('GITHUB_RUN_ID'),
                 'runAttempt': os.environ.get('GITHUB_RUN_ATTEMPT'),
                 'osVersion': output(['sw_vers', '-productVersion']).decode().strip()}
+    if packaging is not None:
+        require(args.dmg, 'Packaging acceptance requires the exact final DMG')
+        final = retained_packaging.consumer_record(packaging, args.source_sha)['final']
+        require(args.dmg_sha256 == final['dmgSHA256'], 'DMG differs from canonical packaging proof')
+        require(retained_packaging.consumer_binding(packaging['producerRunID'], args.source_sha, packaging['selectors'],
+                archive_root=evidence / 'packaging-provenance') == packaging, 'GUI packaging evidence changed')
+        identity.update(schema='nexgenvideo/external-gui-input/2', packaging=packaging)
+        write_json(evidence / 'packaging-consumer.json', packaging)
     if args.dmg:
         dmg = Path(args.dmg).resolve(strict=True)
         require(re.fullmatch('[a-f0-9]{64}', args.dmg_sha256 or ''), 'DMG mode requires its expected SHA-256')
@@ -480,7 +492,15 @@ def run(args):
 
 
 def validate_app_identity(evidence, result, identity, source_sha, scale, dmg_sha256):
-    require(identity.get('schema') == 'nexgenvideo/external-gui-input/1'
+    schema = 'nexgenvideo/external-gui-input/1'
+    if identity.get('schema') == 'nexgenvideo/external-gui-input/2':
+        record = retained_packaging.consumer_record(identity.get('packaging'), source_sha)
+        require(dmg_sha256 == record['final']['dmgSHA256']
+                and identity.get('app') == record['final']['app'], 'GUI identity differs from canonical packaging proof')
+        schema = 'nexgenvideo/external-gui-input/2'
+    else:
+        require('packaging' not in identity, 'Packaging GUI identity requires its explicit schema')
+    require(identity.get('schema') == schema
             and identity.get('app', {}).get('NGVSourceCommit') == source_sha
             and result.get('mode') == identity.get('mode'), 'Qualified app identity changed')
     require(scale in SCALES and identity.get('scale') == scale, 'Evidence belongs to another interface scale')
@@ -515,7 +535,9 @@ def validate(args):
             and result['journeySHA256'] == sha256(evidence / 'journey.json'), 'Evidence bytes changed')
     require(result.get('runtimeSHA256') == sha256(evidence / 'runtime.json'), 'Runtime evidence changed')
     validate_runtime(evidence)
-    test_revision, source_files = test_source_identity(args.source_sha)
+    supplied = retained_packaging.file_binding(args)
+    require(supplied == identity.get('packaging'), 'GUI packaging selectors changed after execution')
+    test_revision, source_files = test_source_identity(args.source_sha, packaging=supplied)
     require(identity.get('testSourceSHA') == test_revision and identity.get('testFiles') == source_files,
             'Qualified test source identity changed')
     tests = test_bundle.verify_input(evidence, test_revision, source_files)
@@ -561,6 +583,8 @@ def main():
     check.add_argument('--evidence', required=True)
     check.add_argument('--scale', choices=SCALES, required=True)
     check.add_argument('--dmg-sha256', help='Required by a publication caller; app-artifact evidence cannot satisfy it')
+    for command in (execute, check):
+        command.add_argument('--packaging-binding', type=Path)
     tree = commands.add_parser('tree-sha256')
     tree.add_argument('--app', required=True)
     args = parser.parse_args()

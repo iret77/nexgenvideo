@@ -17,6 +17,10 @@ runs:
         SOURCE_RECEIPT: ${{ inputs.receipt }}
       run: |
         set -euo pipefail
-        args=(--output-directory "$SOURCE_DIRECTORY" --source-sha "$GITHUB_SHA")
+        ngv_bpy_source_sha="$GITHUB_SHA"
+        if [ -n "${RETAINED_PACKAGING_ROOT:-}${RETAINED_PACKAGING_INPUT_SHA256:-}" ]; then
+          ngv_bpy_source_sha="$(python3 scripts/retained_packaging.py source)"
+        fi
+        args=(--output-directory "$SOURCE_DIRECTORY" --source-sha "$ngv_bpy_source_sha")
         if [ -n "$SOURCE_RECEIPT" ]; then args+=(--receipt "$SOURCE_RECEIPT"); fi
         python3 scripts/consume_bpy_distributable_source.py "${args[@]}"

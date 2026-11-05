@@ -3,6 +3,15 @@ name: Verify existing diagnostic candidate
 on:
   workflow_dispatch:
     inputs:
+      packaging_producer_source_sha:
+        type: string
+        default: ''
+      packaging_provenance_artifact_id:
+        type: string
+        default: ''
+      packaging_provenance_artifact_sha256:
+        type: string
+        default: ''
       candidate_kind:
         description: Signed release verification or targeted failed CI diagnostics
         type: choice
@@ -81,6 +90,10 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  GH_TOKEN: ${{ github.token }}
+  PACKAGING_PRODUCER_SOURCE: ${{ inputs.packaging_producer_source_sha }}
+  PACKAGING_PROVENANCE_ARTIFACT_ID: ${{ inputs.packaging_provenance_artifact_id }}
+  PACKAGING_PROVENANCE_ARTIFACT_SHA256: ${{ inputs.packaging_provenance_artifact_sha256 }}
   CANDIDATE_RUN: ${{ inputs.run_id }}
   CANDIDATE_SOURCE: ${{ inputs.source_sha }}
   CANDIDATE_ARTIFACT: ${{ inputs.artifact_id }}
@@ -125,7 +138,13 @@ jobs:
           EXTRA_FAILURE_SHA: ${{ inputs.failure_artifact_sha256 }}
         run: |
           python3 - <<'PY'
-          import os, re
+          import os, re, sys
+          sys.path.insert(0, 'scripts')
+          from retained_packaging import environment_selectors
+          packaging = environment_selectors()
+          if packaging is not None and (os.environ['KIND'] not in {'signed-bpy', 'signed-journey', 'signed-transport'}
+                  or not re.fullmatch('[1-9][0-9]*', os.environ['VERIFIED_PR'])):
+              raise ValueError('Packaging continuation needs signed mode and current exact PR source proof')
           fields = [os.environ[key] for key in ('VERIFIED_PR', 'JOURNEY_JOB', 'JOURNEY_ARTIFACT', 'JOURNEY_DIGEST')]
           if os.environ['KIND'] == 'signed-transport':
               if (any(not re.fullmatch('[1-9][0-9]*', value) for value in fields[:3])
@@ -133,11 +152,11 @@ jobs:
                       or not re.fullmatch('[a-f0-9]{64}', os.environ['DMG_DIGEST'])
                       or any(os.environ[key] for key in ('EXTRA_SOURCE', 'EXTRA_PRODUCTS', 'EXTRA_FAILURE', 'EXTRA_PRODUCTS_SHA', 'EXTRA_FAILURE_SHA'))):
                   raise SystemExit('Public transport requires one passed journey, exact DMG, current source proof and no diagnostic reuse inputs.')
-          elif any(fields):
+          elif any(fields[1:]) or fields[0] and packaging is None:
               raise SystemExit('Public transport inputs cannot be silently ignored by another mode.')
           PY
       - name: Reuse complete current merged PR source proof
-        if: inputs.candidate_kind == 'signed-transport'
+        if: inputs.candidate_kind == 'signed-transport' || inputs.packaging_producer_source_sha != ''
         env:
           GH_TOKEN: ${{ github.token }}
           VERIFIED_PR: ${{ inputs.verified_pr_run_id }}
@@ -155,7 +174,7 @@ jobs:
           python3 -m unittest discover -s scripts -p 'test_ci_workflow.py'
           python3 -m unittest discover -s scripts -p 'test_release_workflow.py'
       - name: Verify retained signed bpy acceptance tooling
-        if: inputs.candidate_kind == 'signed-bpy'
+        if: inputs.candidate_kind == 'signed-bpy' && inputs.packaging_producer_source_sha == ''
         run: |
           python3 -m unittest discover -s scripts -p 'test_diagnostic_acceptance.py'
           python3 -m unittest discover -s scripts -p 'test_ci_workflow.py'
@@ -312,7 +331,8 @@ jobs:
           fi
           python3 scripts/verify_diagnostic_candidate.py "$CANDIDATE_RUN" "$CANDIDATE_SOURCE" \
             "$CANDIDATE_ARTIFACT" "$CANDIDATE_DIGEST" "$RUNNER_TEMP/candidate-metadata" \
-            --candidate-kind "$CANDIDATE_KIND" "${extra[@]}"
+            --candidate-kind "$CANDIDATE_KIND" \
+            --packaging-producer-source "$PACKAGING_PRODUCER_SOURCE" --packaging-provenance-artifact-id "$PACKAGING_PROVENANCE_ARTIFACT_ID" --packaging-provenance-artifact-sha256 "$PACKAGING_PROVENANCE_ARTIFACT_SHA256" "${extra[@]}"
       - uses: actions/upload-artifact@v4
         if: inputs.candidate_kind != 'native-segment-geometry' && inputs.candidate_kind != 'native-export-color' && inputs.candidate_kind != 'ci-bpy-resource-diagnostic' && inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor' && inputs.candidate_kind != 'ci-builtin-blur-preheat' && inputs.candidate_kind != 'ci-glow-context'
         with:
@@ -338,6 +358,9 @@ jobs:
           DMG_DIGEST: ${{ inputs.expected_dmg_sha256 }}
         run: |
           python3 scripts/external-gui/transport_fixture.py --run-id "$CANDIDATE_RUN" \
+            --packaging-producer-source "$PACKAGING_PRODUCER_SOURCE" \
+            --packaging-provenance-artifact-id "$PACKAGING_PROVENANCE_ARTIFACT_ID" \
+            --packaging-provenance-artifact-sha256 "$PACKAGING_PROVENANCE_ARTIFACT_SHA256" \
             --job-id "$JOURNEY_JOB" --artifact-id "$JOURNEY_ARTIFACT" --artifact-sha256 "$JOURNEY_DIGEST" \
             --source-sha "$CANDIDATE_SOURCE" --dmg-sha256 "$DMG_DIGEST" --output "$RUNNER_TEMP/transport-fixture"
       - uses: actions/upload-artifact@v4
@@ -782,6 +805,9 @@ jobs:
     if: inputs.candidate_kind == 'signed-bpy'
     uses: ./.github/workflows/bpy-runtime-acceptance.yml
     with:
+      packaging_producer_source_sha: ${{ inputs.packaging_producer_source_sha }}
+      packaging_provenance_artifact_id: ${{ inputs.packaging_provenance_artifact_id }}
+      packaging_provenance_artifact_sha256: ${{ inputs.packaging_provenance_artifact_sha256 }}
       artifact: diagnostic-release-evidence
       app_zip: diagnostic-app.zip
       distribution: true
@@ -795,6 +821,10 @@ jobs:
     if: inputs.candidate_kind == 'signed-journey'
     uses: ./.github/workflows/external-gui-acceptance.yml
     with:
+      verified_pr_run_id: ${{ inputs.verified_pr_run_id }}
+      packaging_producer_source_sha: ${{ inputs.packaging_producer_source_sha }}
+      packaging_provenance_artifact_id: ${{ inputs.packaging_provenance_artifact_id }}
+      packaging_provenance_artifact_sha256: ${{ inputs.packaging_provenance_artifact_sha256 }}
       runtime_run_id: ${{ inputs.run_id }}
       interface_scale: ${{ inputs.interface_scale }}
       artifact_mode: dmg
@@ -808,6 +838,9 @@ jobs:
     if: inputs.candidate_kind == 'signed-transport'
     uses: ./.github/workflows/external-gui-acceptance.yml
     with:
+      packaging_producer_source_sha: ${{ inputs.packaging_producer_source_sha }}
+      packaging_provenance_artifact_id: ${{ inputs.packaging_provenance_artifact_id }}
+      packaging_provenance_artifact_sha256: ${{ inputs.packaging_provenance_artifact_sha256 }}
       runtime_run_id: ${{ inputs.run_id }}
       interface_scale: '1.5'
       artifact_mode: dmg

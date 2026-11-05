@@ -201,11 +201,45 @@ class ReleaseDmgPackagingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             app = Path(directory) / "NexGenVideo.app"
             app.mkdir()
-            with patch.object(sizing, "measure", return_value={"freeBytes": 0}) as measured:
+            with patch.object(sizing, "measure", return_value={"freeBytes": 0, "totalBytes": 4096,
+                    "blockBytes": 4096, "imageBytes": 8192}) as measured:
                 with self.assertRaisesRegex(ValueError, "did not reach"):
                     sizing.plan(app)
-            self.assertEqual(measured.call_count, 3)
-            self.assertEqual(len(set(call.args[0] for call in measured.call_args_list)), 3)
+            self.assertLessEqual(measured.call_count, 8)
+            sizes = [call.args[0] for call in measured.call_args_list]
+            self.assertGreater(len(sizes), 1)
+            self.assertTrue(all(after > before for before, after in zip(sizes, sizes[1:])))
+
+    def test_capacity_planner_outgrows_measured_apfs_metadata_tail(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app = Path(directory) / "NexGenVideo.app"
+            app.mkdir()
+            with (app / "payload").open("wb") as payload: payload.truncate(500 * 1024**2)
+            overheads = [221843456, 222261248, 222277632]
+            calls = []
+            def measure(sectors):
+                index = len(calls)
+                overhead = overheads[min(index, 2)] + max(0, index - 2) * 16384
+                calls.append(sectors)
+                return {"freeBytes": sectors * 512 - overhead, "totalBytes": sectors * 512 - 209753600,
+                        "imageBytes": sectors * 512, "blockBytes": 4096}
+            with patch.object(sizing, "measure", side_effect=measure):
+                result = sizing.plan(app)
+            self.assertGreaterEqual(result["attempts"][-1]["freeBytes"], result["requiredFreeBytes"])
+            self.assertEqual(result["reserveBytes"], 128 * 1024**2)
+            self.assertTrue(all(attempt["freeBytes"] < result["requiredFreeBytes"] for attempt in result["attempts"][:-1]))
+            self.assertLessEqual(len(calls), 8)
+
+    def test_capacity_planner_rejects_invalid_measured_volume(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app = Path(directory) / "NexGenVideo.app"
+            app.mkdir()
+            valid = {"freeBytes": 4096, "totalBytes": 8192, "blockBytes": 4096, "imageBytes": 16384}
+            for key, value in [("freeBytes", -1), ("freeBytes", True), ("freeBytes", 12288),
+                               ("totalBytes", 32768), ("blockBytes", 0), ("imageBytes", 0)]:
+                with self.subTest(key=key, value=value), patch.object(sizing, "measure", return_value=valid | {key: value}), \
+                        self.assertRaisesRegex(ValueError, "Invalid DMG capacity measurement"):
+                    sizing.plan(app)
 
     def test_signing_preflight_keeps_normal_mode_and_scoped_probe(self):
         text = (ROOT / ".github/workflows/signing-preflight.yml").read_text()

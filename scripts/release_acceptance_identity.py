@@ -42,8 +42,18 @@ def tree_sha256(path):
 
 
 def declared_binding(value):
-    require(type(value) is dict and set(value) == FIELDS
-            and value.get('schema') == 'nexgenvideo/release-acceptance-binding/1', 'Incomplete explicit release binding')
+    require(type(value) is dict, 'Incomplete explicit release binding')
+    if value.get('schema') == 'nexgenvideo/release-acceptance-binding/2':
+        from retained_packaging import selectors
+        require(set(value) == FIELDS | {'packaging', 'packagingProvenanceSHA256'}
+                and type(value.get('packaging')) is dict
+                and set(value['packaging']) == {'producerSourceSHA', 'artifactID', 'artifactSHA256'}, 'Incomplete packaging release binding')
+        selected = value['packaging']
+        require(type(selected.get('artifactID')) is int and selectors(selected.get('producerSourceSHA'),
+                str(selected.get('artifactID')), selected.get('artifactSHA256')) == selected
+                and re.fullmatch('[a-f0-9]{64}', value.get('packagingProvenanceSHA256', '')), 'Invalid packaging release binding')
+    else:
+        require(set(value) == FIELDS and value.get('schema') == 'nexgenvideo/release-acceptance-binding/1', 'Incomplete explicit release binding')
     require(re.fullmatch('[a-f0-9]{40}', value.get('sourceSHA', '')), 'Invalid retained product source')
     require(value.get('attempt') == 1 and type(value.get('attempt')) is int, 'Only the bound original attempt is accepted')
     for key in ('runID', 'runtimeArtifactID', 'producerArtifactID'):
@@ -55,7 +65,23 @@ def declared_binding(value):
 
 def validate_producer(producer, binding, runtime_receipt=None):
     declared_binding(binding)
-    require(producer.get('schema') == 'nexgenvideo/release-workspace-producer/1'
+    schema = 'nexgenvideo/release-workspace-producer/1'
+    if binding['schema'] == 'nexgenvideo/release-acceptance-binding/2':
+        from retained_packaging import consumer_binding, consumer_record, validate_runtime_receipt
+        proof = consumer_binding(binding['runID'], binding['sourceSHA'], binding['packaging'])
+        record = consumer_record(proof, binding['sourceSHA'], binding['runID'])
+        require(proof['rawProofSHA256'] == binding['packagingProvenanceSHA256']
+                == producer.get('packagingProvenanceSHA256')
+                and producer.get('producerSourceSHA') == record['producerSourceSHA']
+                and all(binding[key] == record['final'][key] for key in ('dmgSHA256', 'appTreeSHA256', 'packTreeSHA256')),
+                'Final producer differs from canonical packaging proof')
+        if runtime_receipt is not None:
+            validate_runtime_receipt(runtime_receipt, binding['sourceSHA'], proof)
+        schema = 'nexgenvideo/release-workspace-producer/2'
+    else:
+        require('producerSourceSHA' not in producer and 'packagingProvenanceSHA256' not in producer,
+                'Packaging producer requires its explicit binding schema')
+    require(producer.get('schema') == schema
             and producer.get('sourceSHA') == binding['sourceSHA']
             and producer.get('runID') == str(binding['runID']) and producer.get('runAttempt') == '1'
             and producer.get('dmgSHA256') == binding['dmgSHA256']
@@ -134,13 +160,14 @@ def bind(binding, source_run, destination):
     source = destination / 'source-proof'
     prepare(source_run, source)
     artifact, retained = bind_runtime(binding['runID'], binding['sourceSHA'], binding['runtimeArtifactID'],
-                                      binding['runtimeArtifactSHA256'], verifier=verify_signed_settings)
+                                      binding['runtimeArtifactSHA256'], verifier=verify_signed_settings,
+                                      **({'packaging': binding['packaging']} if 'packaging' in binding else {}))
     run = api('/actions/runs/' + str(binding['runID']))
     jobs = api(f"/actions/runs/{binding['runID']}/attempts/1/jobs?per_page=100")
     producer_artifact = api('/actions/artifacts/' + str(binding['producerArtifactID']))
     verify_signed_bpy(run, jobs, producer_artifact, binding['runID'], binding['sourceSHA'], binding['producerArtifactID'],
         binding['producerArtifactSHA256'], retained['changedHarnessPaths'], artifact_name='release-workspace-producer',
-        harness_paths=SIGNED_SETTINGS_HARNESS_PATHS)
+        harness_paths=SIGNED_SETTINGS_HARNESS_PATHS, **({'packaging': binding['packaging']} if 'packaging' in binding else {}))
     archive = destination / 'producer.zip'
     download(producer_artifact, archive)
     with zipfile.ZipFile(archive) as bundle:
@@ -179,7 +206,8 @@ def restore(directory, expected_sha, destination):
     source_composition(directory / 'source-proof', record['sourceProofSHA256'], record['sourceRunID'])
     binding = declared_binding(record['binding'])
     artifact, retained = bind_runtime(binding['runID'], binding['sourceSHA'], binding['runtimeArtifactID'],
-                                      binding['runtimeArtifactSHA256'], verifier=verify_signed_settings)
+                                      binding['runtimeArtifactSHA256'], verifier=verify_signed_settings,
+                                      **({'packaging': binding['packaging']} if 'packaging' in binding else {}))
     require(retained == record['retainedRuntime'] and artifact == record['runtimeArtifact'], 'Original runtime or current harness changed')
     restore_runtime(artifact, retained, destination)
     payload = destination.parent / (destination.name + '-retained-transfer') / 'payload'

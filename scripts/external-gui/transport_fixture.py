@@ -49,17 +49,20 @@ def prepare(args):
     run = test_bundle.api('/actions/runs/' + str(args.run_id))
     job = test_bundle.api('/actions/jobs/' + str(args.job_id))
     artifact = test_bundle.api('/actions/artifacts/' + str(args.artifact_id))
-    require(run.get('head_sha') == args.source_sha and run.get('run_attempt') == 1
+    packaging = journey.retained_packaging.argument_selectors(args)
+    proof = journey.retained_packaging.consumer_binding(args.run_id, args.source_sha, packaging)
+    producer_source = journey.retained_packaging.consumer_source(args.source_sha, proof)
+    require(run.get('head_sha') == producer_source and run.get('run_attempt') == 1
             and run.get('path') == '.github/workflows/release.yml' and run.get('actor', {}).get('login') == 'iret77'
             and run.get('repository', {}).get('full_name') == 'iret77/nexgenvideo', 'Journey belongs to another product run')
-    require(job.get('run_id') == args.run_id and job.get('head_sha') == args.source_sha and job.get('run_attempt') == 1
+    require(job.get('run_id') == args.run_id and job.get('head_sha') == producer_source and job.get('run_attempt') == 1
             and job.get('name') == 'external-user-acceptance / Normal app at 1 text size'
             and job.get('labels') == ['macrunner'] and job.get('status') == 'completed' and job.get('conclusion') == 'success',
             'Only the completed actual normal DMG journey can supply a project')
     require(artifact.get('id') == args.artifact_id and artifact.get('name') == 'external-gui-dmg-1-1'
             and artifact.get('expired') is False and artifact.get('digest') == 'sha256:' + args.artifact_sha256
             and artifact.get('workflow_run', {}).get('id') == args.run_id
-            and artifact.get('workflow_run', {}).get('head_sha') == args.source_sha, 'Original journey artifact differs')
+            and artifact.get('workflow_run', {}).get('head_sha') == producer_source, 'Original journey artifact differs')
     work = Path(tempfile.mkdtemp(prefix='ngv-passed-journey-'))
     archive = work / 'original.zip'
     test_bundle.download(artifact, archive)
@@ -67,9 +70,14 @@ def prepare(args):
     evidence = work / 'evidence'
     extract(archive, evidence)
     validator = work / 'original-validator'
-    journey.command(['git', '-C', journey.REPOSITORY, 'worktree', 'add', '--detach', validator, args.source_sha], work / 'validator.log')
+    journey.command(['git', '-C', journey.REPOSITORY, 'worktree', 'add', '--detach', validator, producer_source], work / 'validator.log')
+    extra = []
+    if proof is not None:
+        binding_file = work / 'packaging-consumer.json'
+        journey.write_json(binding_file, proof)
+        extra = ['--packaging-binding', binding_file]
     journey.command(['python3', validator / 'scripts/external-gui/acceptance.py', 'validate', '--source-sha', args.source_sha,
-                     '--evidence', evidence, '--scale', '1', '--dmg-sha256', args.dmg_sha256], work / 'validator.log', timeout=180)
+                     '--evidence', evidence, '--scale', '1', '--dmg-sha256', args.dmg_sha256, *extra], work / 'validator.log', timeout=180)
     result = journey.read_json(evidence / 'result.json')
     identity = journey.read_json(evidence / 'identity.json')
     require(result.get('completed') is True and result.get('dmgSHA256') == args.dmg_sha256
@@ -96,6 +104,12 @@ def prepare(args):
                'sourceRelativePath': source.relative_to(original).as_posix(), 'fps': 30, 'endFrame': 120, 'sourceFrames': 120}
     fixture_identity(original, source, fixture)
     output = Path(args.output); output.mkdir(parents=True, exist_ok=False)
+    if proof is not None:
+        require(identity.get('testSourceSHA') == producer_source and identity.get('packaging') == proof
+                and journey.read_json(evidence / 'tests-input.json').get('sourceSHA') == producer_source,
+                'Original journey or compiled client lost its actual packaging producer')
+        fixture.update(schema='nexgenvideo/transport-fixture/2', packaging=proof, journeyProducerSourceSHA=producer_source)
+        journey.retained_packaging.consumer_binding(args.run_id, args.source_sha, packaging, archive_root=output / 'packaging-provenance')
     shutil.copytree(original, output / 'External GUI.ngv', symlinks=True)
     shutil.copy2(work / 'validator.log', output / 'original-journey-validation.log')
     journey.write_json(output / 'source-ffprobe.json', probe)
@@ -114,6 +128,7 @@ def main():
     parser.add_argument('--source-sha', required=True)
     parser.add_argument('--dmg-sha256', required=True)
     parser.add_argument('--output', required=True)
+    journey.retained_packaging.consumer_arguments(parser)
     prepare(parser.parse_args())
 
 

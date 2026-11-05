@@ -21,6 +21,18 @@ FILES = ("NexGenVideo.zip", "symbols.tar.gz", "plugins.tar.gz", "bpy-source-rece
 NATIVE_TIMEOUT = 900
 
 
+def packaging_binding():
+    if not os.environ.get("RETAINED_PACKAGING_ROOT") and not os.environ.get("RETAINED_PACKAGING_INPUT_SHA256"):
+        return None
+    from retained_packaging import current_binding
+    return current_binding()
+
+
+def product_source():
+    binding = packaging_binding()
+    return binding["productSourceSHA"] if binding is not None else os.environ["GITHUB_SHA"]
+
+
 def tree_digest(root):
     digest = hashlib.sha256()
     for path in sorted(root.rglob("*")):
@@ -186,10 +198,10 @@ def extract_tar(path, build, allowed):
         archive.extractall(build, filter=confined)
 
 
-def require_saved_notary(producer, jobs, inventory, root):
+def require_saved_notary(producer, jobs, inventory, root, *, retained=None):
     if producer["id"] == int(os.environ["GITHUB_RUN_ID"]):
         return
-    name = "release-notary-state-" + os.environ["GITHUB_SHA"]
+    name = "release-notary-state-" + producer["head_sha"]
     matches = [item for item in inventory if item.get("name") == name]
     require(len(matches) <= 1, "Original notary state is ambiguous")
     if not matches:
@@ -215,7 +227,7 @@ def require_saved_notary(producer, jobs, inventory, root):
             notary_root = Path(notary_root)
             binding = json.loads((notary_root / "notary-binding.json").read_text())
             context = binding.get("context", {})
-            require(binding.get("schema") == "release-notary-binding/v1"
+            require(binding.get("schema") == ("release-notary-binding/v2" if retained is not None else "release-notary-binding/v1")
                     and context.get("sourceSHA") == producer["head_sha"]
                     and context.get("buildRunID") == producer["id"]
                     and context.get("runID") == binding.get("producer", {}).get("id")
@@ -228,7 +240,10 @@ def require_saved_notary(producer, jobs, inventory, root):
 
 
 def prepare(run_id, root):
-    source = os.environ["GITHUB_SHA"]
+    retained = packaging_binding()
+    source = retained["productSourceSHA"] if retained is not None else os.environ["GITHUB_SHA"]
+    if retained is not None:
+        require(run_id == retained["originalSignedBuildRunID"], "Retained packaging selected another signed build")
     require(run_id > 0 and os.environ["GITHUB_REPOSITORY"] == REPOSITORY, "Invalid signed input producer")
     producer = api(f"actions/runs/{run_id}")
     require(producer.get("head_sha") == source
@@ -247,7 +262,7 @@ def prepare(run_id, root):
             "Original signed build did not pass")
     artifacts = api(f"actions/runs/{run_id}/artifacts?per_page=100")
     require(artifacts.get("total_count") == len(artifacts.get("artifacts", [])), "Incomplete signed artifact inventory")
-    require_saved_notary(producer, jobs["jobs"], artifacts["artifacts"], root)
+    require_saved_notary(producer, jobs["jobs"], artifacts["artifacts"], root, retained=retained)
     prefix = "release-signed-input-" + source
     selected = {}
     for name in (prefix, prefix + "-proof"):
@@ -266,19 +281,32 @@ def prepare(run_id, root):
     with zipfile.ZipFile(root / "proof.zip") as archive:
         require(archive.namelist() == ["manifest.json"], "Unexpected signed proof entries")
         manifest = verify_manifest(json.loads(archive_bytes(archive, "manifest.json")), source, run_id)
-    write(root / "binding.json", {"schema": "release-signed-binding/v1", "sourceSHA": source,
-          "producer": producer, "builder": builders[0], "artifact": selected[prefix], "manifest": manifest})
+    binding = {"schema": "release-signed-binding/v1", "sourceSHA": source,
+               "producer": producer, "builder": builders[0], "artifact": selected[prefix], "manifest": manifest}
+    if retained is not None:
+        binding.update(schema="release-signed-binding/v2", producerSourceSHA=os.environ["GITHUB_SHA"],
+                       executionRunID=int(os.environ["GITHUB_RUN_ID"]),
+                       packagingInputSHA256=os.environ["RETAINED_PACKAGING_INPUT_SHA256"])
+    write(root / "binding.json", binding)
 
 
 def restore(root):
     binding = json.loads((root / "binding.json").read_text())
-    require(binding.get("schema") == "release-signed-binding/v1"
-            and binding.get("sourceSHA") == os.environ["GITHUB_SHA"], "Signed input binding differs")
+    retained = packaging_binding()
+    source = retained["productSourceSHA"] if retained is not None else os.environ["GITHUB_SHA"]
+    require(binding.get("schema") == ("release-signed-binding/v2" if retained is not None else "release-signed-binding/v1")
+            and binding.get("sourceSHA") == source, "Signed input binding differs")
+    if retained is not None:
+        require(binding.get("producerSourceSHA") == os.environ["GITHUB_SHA"]
+                and binding.get("executionRunID") == int(os.environ["GITHUB_RUN_ID"])
+                and binding.get("packagingInputSHA256") == os.environ["RETAINED_PACKAGING_INPUT_SHA256"]
+                and binding.get("producer", {}).get("id") == retained["originalSignedBuildRunID"],
+                "Retained signed binding belongs to another execution")
     artifact = binding["artifact"]
     require(artifact["size_in_bytes"] < 8 * 1024**3, "Signed input archive exceeds its bound")
     download(artifact, root / "payload.zip")
     require(checksum(root / "payload.zip") == artifact["digest"][7:], "Signed input archive changed")
-    manifest = verify_manifest(binding["manifest"], os.environ["GITHUB_SHA"], binding["producer"]["id"])
+    manifest = verify_manifest(binding["manifest"], source, binding["producer"]["id"])
     payload = root / "payload"
     payload.mkdir()
     with zipfile.ZipFile(root / "payload.zip") as archive:
@@ -317,9 +345,12 @@ def restore(root):
     if os.environ.get("NOTARY_STATE_DIR"):
         state = Path(os.environ["NOTARY_STATE_DIR"])
         state.mkdir(parents=True, exist_ok=True)
-        write(state / "context.json", {"schema": "release-notary-context/v1", "repository": REPOSITORY,
-              "sourceSHA": binding["sourceSHA"], "buildRunID": binding["producer"]["id"],
-              "runID": int(os.environ["GITHUB_RUN_ID"])})
+        context = {"schema": "release-notary-context/v1", "repository": REPOSITORY,
+                   "sourceSHA": binding["sourceSHA"], "buildRunID": binding["producer"]["id"],
+                   "runID": int(os.environ["GITHUB_RUN_ID"])}
+        if retained is not None:
+            context.update(schema="release-notary-context/v2", producerSourceSHA=os.environ["GITHUB_SHA"])
+        write(state / "context.json", context)
 
 
 def create_dmg(root):
@@ -328,18 +359,34 @@ def create_dmg(root):
     shutil.copyfile(build / "NexGenVideo.dmg", root / "NexGenVideo.dmg")
     run("tar", "-czf", str(root / "plugins.tar.gz"), "-C", str(build), "plugins")
     context = json.loads(Path(os.environ["NOTARY_STATE_DIR"]).joinpath("context.json").read_text())
-    require(context["sourceSHA"] == os.environ["GITHUB_SHA"], "Notary context belongs to another source")
-    write(root / "dmg-checkpoint.json", {"schema": "release-dmg-checkpoint/v1", "context": context,
+    retained = packaging_binding()
+    source = retained["productSourceSHA"] if retained is not None else os.environ["GITHUB_SHA"]
+    require(context["sourceSHA"] == source
+            and context.get("schema") == ("release-notary-context/v2" if retained is not None else "release-notary-context/v1"),
+            "Notary context belongs to another source")
+    if retained is not None:
+        require(context.get("producerSourceSHA") == os.environ["GITHUB_SHA"]
+                and context.get("runID") == int(os.environ["GITHUB_RUN_ID"])
+                and context.get("buildRunID") == retained["originalSignedBuildRunID"], "DMG context belongs to another packaging execution")
+    write(root / "dmg-checkpoint.json", {"schema": "release-dmg-checkpoint/v2" if retained is not None else "release-dmg-checkpoint/v1", "context": context,
           "appTreeSHA256": tree_digest(build / "NexGenVideo.app"), "files": {
               name: {"bytes": (root / name).stat().st_size, "sha256": checksum(root / name)}
               for name in ("NexGenVideo.dmg", "plugins.tar.gz")}})
+    if retained is not None:
+        with Path(os.environ["GITHUB_ENV"]).open("a") as output:
+            output.write("RETAINED_PACKAGING_DMG_CHECKPOINT=" + str((root / "dmg-checkpoint.json").resolve()) + "\n")
 
 
 def prepare_notary(run_id, root):
-    source = os.environ["GITHUB_SHA"]
+    retained = packaging_binding()
+    source = retained["productSourceSHA"] if retained is not None else os.environ["GITHUB_SHA"]
+    producer_source = source
+    if retained is not None:
+        require(run_id == retained["mode"]["priorNotaryRunID"], "Retained packaging selected another notary producer")
+        producer_source = retained["previousNotary"]["producer"]["head_sha"]
     producer = api(f"actions/runs/{run_id}")
     require(producer.get("repository", {}).get("full_name") == REPOSITORY
-            and producer.get("head_sha") == source and producer.get("actor", {}).get("login") == "iret77"
+            and producer.get("head_sha") == producer_source and producer.get("actor", {}).get("login") == "iret77"
             and producer.get("path") == ".github/workflows/release.yml"
             and producer.get("event") == "workflow_dispatch" and producer.get("run_attempt") == 1
             and producer.get("status") == "completed" and producer.get("conclusion") in ("failure", "cancelled"),
@@ -348,7 +395,7 @@ def prepare_notary(run_id, root):
     require(jobs.get("total_count") == len(jobs.get("jobs", [])), "Incomplete notarization job inventory")
     matches = [job for job in jobs["jobs"] if job.get("name") == "release"]
     require(len(matches) == 1 and matches[0].get("labels") == ["macrunner"]
-            and matches[0].get("head_sha") == source and matches[0].get("run_id") == run_id
+            and matches[0].get("head_sha") == producer_source and matches[0].get("run_id") == run_id
             and matches[0].get("run_attempt") == 1
             and matches[0].get("status") == "completed", "Original notarization job differs")
     job = matches[0]
@@ -383,10 +430,15 @@ def prepare_notary(run_id, root):
     with zipfile.ZipFile(root / "state.zip") as archive:
         require(len(set(archive.namelist())) == len(archive.namelist()), "Duplicate notary entries")
         context = json.loads(archive_bytes(archive, "context.json"))
-        require(context.get("schema") == "release-notary-context/v1"
+        require(context.get("schema") in ({"release-notary-context/v1", "release-notary-context/v2"} if retained is not None else {"release-notary-context/v1"})
                 and context.get("repository") == REPOSITORY and context.get("sourceSHA") == source
                 and context.get("runID") == run_id and type(context.get("buildRunID")) is int
                 and context["buildRunID"] > 0, "Notary context differs")
+        if retained is not None:
+            require(context == retained["previousNotary"]["context"], "Retained notary context changed")
+            require(context["schema"] == "release-notary-context/v1" and producer_source == source
+                    or context["schema"] == "release-notary-context/v2" and context.get("producerSourceSHA") == producer_source,
+                    "Retained notary source meaning differs")
         for name in archive.namelist():
             if name == "context.json":
                 continue
@@ -397,9 +449,14 @@ def prepare_notary(run_id, root):
                     and isinstance(value.get("submissionID"), str)
                     and re.fullmatch(r"[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}", value["submissionID"]),
                     "Notary submission binding differs")
-    write(root / "notary-binding.json", {"schema": "release-notary-binding/v1", "context": context,
-          "producer": producer, "job": job, "stateArtifact": state,
-          "dmgArtifact": selected.get("release-dmg-input-" + source)})
+    binding = {"schema": "release-notary-binding/v1", "context": context,
+               "producer": producer, "job": job, "stateArtifact": state,
+               "dmgArtifact": selected.get("release-dmg-input-" + source)}
+    if retained is not None:
+        binding.update(schema="release-notary-binding/v2", producerSourceSHA=os.environ["GITHUB_SHA"],
+                       executionRunID=int(os.environ["GITHUB_RUN_ID"]),
+                       packagingInputSHA256=os.environ["RETAINED_PACKAGING_INPUT_SHA256"])
+    write(root / "notary-binding.json", binding)
     with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
         output.write("build_run_id=" + str(context["buildRunID"]) + "\n")
 
@@ -407,8 +464,15 @@ def prepare_notary(run_id, root):
 def restore_notary(root):
     binding = json.loads((root / "notary-binding.json").read_text())
     context = binding["context"]
-    require(binding.get("schema") == "release-notary-binding/v1"
-            and context.get("sourceSHA") == os.environ["GITHUB_SHA"], "Notary binding belongs to another source")
+    retained = packaging_binding()
+    source = retained["productSourceSHA"] if retained is not None else os.environ["GITHUB_SHA"]
+    require(binding.get("schema") == ("release-notary-binding/v2" if retained is not None else "release-notary-binding/v1")
+            and context.get("sourceSHA") == source, "Notary binding belongs to another source")
+    if retained is not None:
+        require(binding.get("producerSourceSHA") == os.environ["GITHUB_SHA"]
+                and binding.get("executionRunID") == int(os.environ["GITHUB_RUN_ID"])
+                and binding.get("packagingInputSHA256") == os.environ["RETAINED_PACKAGING_INPUT_SHA256"]
+                and context == retained["previousNotary"]["context"], "Retained notary binding belongs to another execution")
     require(checksum(root / "state.zip") == binding["stateArtifact"]["digest"][7:], "Saved notary state changed")
     state = Path(os.environ["NOTARY_STATE_DIR"])
     current = json.loads((state / "context.json").read_text())
@@ -430,7 +494,8 @@ def restore_notary(root):
                     and set(archive.namelist()) == {"NexGenVideo.dmg", "plugins.tar.gz", "dmg-checkpoint.json"},
                     "Unexpected DMG checkpoint files")
             manifest = json.loads(archive_bytes(archive, "dmg-checkpoint.json"))
-            require(manifest.get("schema") == "release-dmg-checkpoint/v1"
+            expected_schema = "release-dmg-checkpoint/v2" if context["schema"] == "release-notary-context/v2" else "release-dmg-checkpoint/v1"
+            require(manifest.get("schema") == expected_schema
                     and manifest.get("context") == context, "DMG checkpoint context differs")
             for name in ("NexGenVideo.dmg", "plugins.tar.gz"):
                 expected = manifest["files"][name]
@@ -450,6 +515,9 @@ def restore_notary(root):
             finally:
                 run("hdiutil", "detach", mount)
         require(tree_digest(build / "NexGenVideo.app") == manifest["appTreeSHA256"], "Restored notarized App differs")
+        if retained is not None:
+            with Path(os.environ["GITHUB_ENV"]).open("a") as output:
+                output.write("RETAINED_PACKAGING_DMG_CHECKPOINT=" + str((payload / "dmg-checkpoint.json").resolve()) + "\n")
     with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
         output.write("dmg_present=" + str(bool(artifact)).lower() + "\n")
 

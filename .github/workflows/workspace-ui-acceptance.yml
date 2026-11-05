@@ -2,6 +2,15 @@ name: Workspace UI Acceptance
 on:
   workflow_dispatch:
     inputs:
+      packaging_producer_source_sha:
+        type: string
+        default: ''
+      packaging_provenance_artifact_id:
+        type: string
+        default: ''
+      packaging_provenance_artifact_sha256:
+        type: string
+        default: ''
       acceptance_scope:
         description: Native workspace cases to verify
         required: false
@@ -40,6 +49,15 @@ on:
         default: ''
   workflow_call:
     inputs:
+      packaging_producer_source_sha:
+        type: string
+        default: ''
+      packaging_provenance_artifact_id:
+        type: string
+        default: ''
+      packaging_provenance_artifact_sha256:
+        type: string
+        default: ''
       runtime_artifact:
         description: Exact app and pack already built in this CI batch
         type: string
@@ -81,6 +99,12 @@ concurrency:
   group: workspace-ui-acceptance-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  GH_TOKEN: ${{ github.token }}
+  PACKAGING_PRODUCER_SOURCE: ${{ inputs.packaging_producer_source_sha }}
+  PACKAGING_PROVENANCE_ARTIFACT_ID: ${{ inputs.packaging_provenance_artifact_id }}
+  PACKAGING_PROVENANCE_ARTIFACT_SHA256: ${{ inputs.packaging_provenance_artifact_sha256 }}
+
 jobs:
   source:
     runs-on: ubuntu-24.04
@@ -105,7 +129,10 @@ jobs:
         run: |
           python3 scripts/workspace_native_ci.py validate-inputs --artifact "$NGV_RUNTIME_ARTIFACT" \
             --run-id "$NGV_RUNTIME_RUN" --product-source "$NGV_PRODUCT_SOURCE" \
-            --source-run "$NGV_PR_SOURCE_RUN" --unit-filter "$NGV_UNIT_FILTER"
+            --source-run "$NGV_PR_SOURCE_RUN" --unit-filter "$NGV_UNIT_FILTER" \
+            --packaging-producer-source "$PACKAGING_PRODUCER_SOURCE" \
+            --packaging-provenance-artifact-id "$PACKAGING_PROVENANCE_ARTIFACT_ID" \
+            --packaging-provenance-artifact-sha256 "$PACKAGING_PROVENANCE_ARTIFACT_SHA256"
       - name: Bind complete original PR source checks
         id: pr_source
         if: inputs.verified_pr_run_id != ''
@@ -346,7 +373,7 @@ jobs:
               --source-run "$NGV_PR_SOURCE_RUN" --source-artifact "$NGV_SOURCE_PROOF_ARTIFACT")
           fi
           python3 scripts/workspace_native_ci.py resolve --run-id "$NGV_RUNTIME_RUN" \
-            --artifact "$NGV_RUNTIME_ARTIFACT" "${args[@]}" --identity "$RUNNER_TEMP/native-identity/identity.json"
+            --artifact "$NGV_RUNTIME_ARTIFACT" --packaging-producer-source "$PACKAGING_PRODUCER_SOURCE" --packaging-provenance-artifact-id "$PACKAGING_PROVENANCE_ARTIFACT_ID" --packaging-provenance-artifact-sha256 "$PACKAGING_PROVENANCE_ARTIFACT_SHA256" "${args[@]}" --identity "$RUNNER_TEMP/native-identity/identity.json"
       - name: Download and require the exact GitHub artifact digest
         env:
           GH_TOKEN: ${{ github.token }}
@@ -366,7 +393,7 @@ jobs:
         id: identity
         with:
           name: native-input-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/native-identity/*.json
+          path: ${{ runner.temp }}/native-identity/
           if-no-files-found: error
           retention-days: 14
 

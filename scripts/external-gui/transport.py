@@ -26,7 +26,15 @@ def project_files(root):
 
 
 def fixture_identity(project, source, expected):
-    require(expected.get('schema') == 'nexgenvideo/transport-fixture/1', 'Missing completed journey fixture binding')
+    require(expected.get('schema') in {'nexgenvideo/transport-fixture/1', 'nexgenvideo/transport-fixture/2'}, 'Missing completed journey fixture binding')
+    if expected['schema'] == 'nexgenvideo/transport-fixture/2':
+        record = journey.retained_packaging.consumer_record(expected.get('packaging'), expected['sourceSHA'], expected['journeyRunID'])
+        require(expected.get('journeyProducerSourceSHA') == record['producerSourceSHA']
+                and expected.get('dmgSHA256') == record['final']['dmgSHA256']
+                and expected.get('appTreeSHA256') == record['final']['appTreeSHA256'], 'Transport fixture lost canonical packaging identity')
+    else:
+        require('packaging' not in expected and 'journeyProducerSourceSHA' not in expected,
+                'Packaging fixture requires its explicit schema')
     require(project.is_dir() and not project.is_symlink(), 'Expected a real unchanged project directory')
     require(project_files(project) == expected.get('projectFiles')
             and journey.tree_sha256(project) == expected.get('projectTreeSHA256'), 'Transport project bytes changed')
@@ -309,6 +317,8 @@ def run(args):
     require(re.fullmatch('[a-f0-9]{64}', args.fixture_sha256)
             and journey.sha256(original / 'fixture.json') == args.fixture_sha256, 'Completed fixture handoff changed')
     fixture = journey.read_json(original / 'fixture.json')
+    packaging = journey.retained_packaging.file_binding(args)
+    require(fixture.get('packaging') == packaging, 'Transport fixture and selected packaging provenance differ')
     require(fixture.get('sourceSHA') == args.source_sha and fixture.get('dmgSHA256') == args.dmg_sha256,
             'Fixture came from another app or DMG')
     project = original / 'External GUI.ngv'; source = project / fixture['sourceRelativePath']
@@ -403,7 +413,9 @@ def validate(args):
         require(result.get(key) == journey.sha256(evidence / name), 'Transport evidence changed: ' + name)
     journey.validate_runtime(evidence)
     from verify_diagnostic_candidate import SIGNED_TRANSPORT_HARNESS_PATHS
-    revision, files = journey.test_source_identity(args.source_sha, allowed_paths=SIGNED_TRANSPORT_HARNESS_PATHS)
+    packaging = journey.retained_packaging.file_binding(args)
+    require(packaging == identity.get('packaging') == fixture.get('packaging'), 'Transport packaging selectors changed')
+    revision, files = journey.test_source_identity(args.source_sha, allowed_paths=SIGNED_TRANSPORT_HARNESS_PATHS, packaging=packaging)
     require(identity.get('testSourceSHA') == revision and identity.get('testFiles') == files, 'Transport client source changed')
     tests = test_bundle.verify_input(evidence, revision, files)
     expected = {key: tests[key] for key in ('runID', 'attempt', 'archiveSHA256', 'productsSHA256', 'xctestrun', 'xcode')}
@@ -445,6 +457,7 @@ def main():
     parser.add_argument('--scale', choices=('1.5',), default='1.5')
     parser.add_argument('--test-runtime')
     parser.add_argument('--test-producer-sha256')
+    parser.add_argument('--packaging-binding', type=Path)
     args = parser.parse_args(); args.app = None; args.app_tree_sha256 = None
     if args.mode == 'run':
         require(all((args.dmg, args.fixture, args.fixture_sha256, args.test_runtime, args.test_producer_sha256)), 'Missing exact transport execution inputs')

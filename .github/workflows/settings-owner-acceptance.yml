@@ -50,6 +50,7 @@ on:
 permissions:
   contents: read
   actions: read
+  pull-requests: read
 
 concurrency:
   group: settings-owner-acceptance-${{ github.ref }}
