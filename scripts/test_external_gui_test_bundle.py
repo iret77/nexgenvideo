@@ -401,6 +401,11 @@ class ExternalTestBundleTests(unittest.TestCase):
         original[helper] = ''.join(line for index, line in enumerate(lines) if index not in removed).encode()
         original[helper] = original[helper].replace(b'def resolve(args):\n', b'def resolve(args):\n    original_consumer = True\n', 1)
         original['scripts/external-gui/transport.py'] = original['scripts/external-gui/transport.py'].replace(b'transport_reuse=True', b'transport_reuse=False')
+        guard = 'scripts/verify_diagnostic_candidate.py'
+        original[guard] = original[guard].replace(
+            b'SIGNED_TRANSPORT_HARNESS_PATHS = SIGNED_ACCEPTANCE_EVIDENCE_PATHS | {"scripts/external-gui/test_bundle.py"}',
+            b'SIGNED_TRANSPORT_HARNESS_PATHS = SIGNED_ACCEPTANCE_EVIDENCE_PATHS')
+        self.assertNotEqual(original[guard], payloads[guard])
         workflow = (journey.REPOSITORY / '.github/workflows/external-gui-acceptance.yml').read_text()
         original['.github/workflows/external-gui-acceptance.yml'] = ''.join(line for line in workflow.splitlines(keepends=True)
             if 'NGV_TRANSPORT_TEST_BUNDLE_REUSE:' not in line).encode()
@@ -426,7 +431,7 @@ class ExternalTestBundleTests(unittest.TestCase):
         comparison = {'base_commit': {'sha': self.sha}, 'merge_base_commit': {'sha': self.sha},
             'status': 'ahead', 'total_commits': 1, 'commits': [{'sha': current}],
             'files': [{'filename': name, 'status': 'modified'} for name in ['.github/workflows/diagnostic-acceptance.yml',
-                '.github/workflows/external-gui-acceptance.yml', helper, 'scripts/external-gui/transport.py']]}
+                '.github/workflows/external-gui-acceptance.yml', helper, 'scripts/external-gui/transport.py', guard]]}
         history = copy.deepcopy(comparison)
 
         def git_output(arguments, **kwargs):
@@ -489,13 +494,20 @@ class ExternalTestBundleTests(unittest.TestCase):
         self.assertEqual(proof['producerFiles'], fixture.original_files)
         self.assertEqual(proof['consumerFiles'], fixture.files)
 
+    def assert_transport_guard_rejects(self, fixture, reason):
+        files = {name: hashlib.sha256(fixture.original[name]).hexdigest() for name in fixture.files}
+        with patch.object(journey, 'output', side_effect=fixture.git_output), self.assertRaisesRegex(ValueError, reason):
+            bundle._transport_compatibility(self.sha, files, fixture.current, fixture.files,
+                fixture.original['scripts/external-gui/test_bundle.py'].decode(),
+                fixture.original['.github/workflows/external-gui-acceptance.yml'].decode(), fixture.comparison)
+
     def test_transport_reuse_rejects_changed_native_inputs_build_recipe_imports_and_workflow(self):
         fixture = self.transport_bundle_fixture()
         for name in fixture.original_files:
-            if name in {'scripts/external-gui/test_bundle.py', 'scripts/external-gui/transport.py'}: continue
+            if name in {'scripts/external-gui/test_bundle.py', 'scripts/external-gui/transport.py', 'scripts/verify_diagnostic_candidate.py'}: continue
             original = fixture.original[name]
             fixture.original[name] = original + b'changed compilation input'
-            with self.subTest(input=name), self.assertRaises(ValueError): self.resolve_transport_fixture(fixture)
+            with self.subTest(input=name): self.assert_transport_guard_rejects(fixture, 'Compiled UI test inputs or shared build helpers changed')
             fixture.original[name] = original
         helper = 'scripts/external-gui/test_bundle.py'; original = fixture.original[helper]
         for changed in [original.replace(b"'ARCHS=arm64'", b"'ARCHS=x86_64'"), b'import unreviewed_build_tool\n' + original,
@@ -504,11 +516,23 @@ class ExternalTestBundleTests(unittest.TestCase):
                         original.replace(b'def resolve(args):', b'def resolve(args=change_module()):')]:
             self.assertNotEqual(changed, original)
             fixture.original[helper] = changed
-            with self.subTest(recipe=changed[:100]), self.assertRaises(ValueError): self.resolve_transport_fixture(fixture)
+            reason = 'Consumer declaration changes module execution' if b'@change_module' in changed else 'malformed node or string' if b'args=change_module()' in changed else 'UI test build recipe, imports or constants changed'
+            with self.subTest(recipe=changed[:100]): self.assert_transport_guard_rejects(fixture, reason)
         fixture.original[helper] = original
+        guard = 'scripts/verify_diagnostic_candidate.py'; original_guard = fixture.original[guard]
+        variants = [b'import unreviewed_guard_helper\n' + original_guard,
+            original_guard.replace(b'def verify_signed_journey(*args):\n', b'def verify_signed_journey(*args):\n    changed_build_guard = True\n'),
+            original_guard.replace(b'SIGNED_JOURNEY_BASE_HARNESS_PATHS = SIGNED_BPY_HARNESS_PATHS | {', b'SIGNED_JOURNEY_BASE_HARNESS_PATHS = set() | {'),
+            original_guard.replace(b'SIGNED_SETTINGS_HARNESS_PATHS = SIGNED_ACCEPTANCE_EVIDENCE_PATHS', b'SIGNED_SETTINGS_HARNESS_PATHS = set()'),
+            original_guard.replace(b'SIGNED_TRANSPORT_HARNESS_PATHS = SIGNED_ACCEPTANCE_EVIDENCE_PATHS', b'SIGNED_TRANSPORT_HARNESS_PATHS = SIGNED_ACCEPTANCE_EVIDENCE_PATHS | {"scripts/bundle.sh"}')]
+        for changed in variants:
+            self.assertNotEqual(changed, original_guard); fixture.original[guard] = changed
+            with self.subTest(shared_guard=changed[:100]):
+                self.assert_transport_guard_rejects(fixture, 'UI test build guard changed outside the transport declaration|Unsupported transport-only guard change')
+        fixture.original[guard] = original_guard
         key = '.github/workflows/external-gui-acceptance.yml'
         fixture.original[key] = fixture.original[key].replace(b'runs-on: macrunner', b'runs-on: other-runner', 1)
-        with self.assertRaises(ValueError): self.resolve_transport_fixture(fixture)
+        self.assert_transport_guard_rejects(fixture, 'UI test build workflow changed')
 
     def test_transport_reuse_requires_proof_explicit_context_original_attempt_and_unchanged_products(self):
         fixture = self.transport_bundle_fixture()

@@ -120,7 +120,7 @@ def require_job(job, run_id, source_sha, attempt):
             and 'macrunner' in job.get('labels', []), 'UI test build job did not finish successfully')
 
 
-def _test_builder_view(text, *, workflow=False):
+def _test_builder_view(text, *, workflow=False, shared_guard=False):
     import ast
     if workflow:
         prefix, jobs = text.split('\njobs:\n', 1)
@@ -130,6 +130,15 @@ def _test_builder_view(text, *, workflow=False):
         return prefix + '\njobs:\n' + ''.join(jobs[match.start():matches[index + 1].start() if index + 1 < len(matches) else len(jobs)]
             for index, match in enumerate(matches) if match[1] not in {'test-runtime', 'acceptance'})
     module = ast.parse(text)
+    if shared_guard:
+        assignments = [node for node in module.body if isinstance(node, ast.Assign) and len(node.targets) == 1
+                       and isinstance(node.targets[0], ast.Name) and node.targets[0].id == 'SIGNED_TRANSPORT_HARNESS_PATHS']
+        require(len(assignments) == 1, 'Unsupported transport-only guard change')
+        original = ast.parse('SIGNED_ACCEPTANCE_EVIDENCE_PATHS', mode='eval').body
+        extended = ast.parse('SIGNED_ACCEPTANCE_EVIDENCE_PATHS | {"scripts/external-gui/test_bundle.py"}', mode='eval').body
+        require(ast.dump(assignments[0].value) in {ast.dump(original), ast.dump(extended)}, 'Unsupported transport-only guard change')
+        assignments[0].value = original
+        return ast.dump(module, include_attributes=False)
     consumers = {'resolve', 'verify_input', 'consume', '_test_builder_view', '_source_snapshot', '_transport_compatibility'}
     for node in module.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in consumers:
@@ -190,8 +199,13 @@ def _transport_compatibility(producer_sha, producer_files, current_sha, current_
             'Original UI test input map differs from its Git objects')
     helper = 'scripts/external-gui/test_bundle.py'
     runtime = 'scripts/external-gui/transport.py'
-    require(all(producer_files[name] == value for name, value in current_files.items() if name not in {helper, runtime}),
+    guard = 'scripts/verify_diagnostic_candidate.py'
+    require(all(producer_files[name] == value for name, value in current_files.items() if name not in {helper, runtime, guard}),
             'Compiled UI test inputs or shared build helpers changed')
+    current_guard = (journey.REPOSITORY / guard).read_bytes()
+    require(hashlib.sha256(current_guard).hexdigest() == current_files[guard], 'Current UI test build guard bytes changed')
+    guard_recipe = _test_builder_view(original_blobs[guard].decode(), shared_guard=True)
+    require(guard_recipe == _test_builder_view(current_guard.decode(), shared_guard=True), 'UI test build guard changed outside the transport declaration')
     current_builder = Path(__file__).read_bytes().decode()
     require(hashlib.sha256(current_builder.encode()).hexdigest() == current_files[helper]
             and builder.encode() == original_blobs[helper], 'UI test build source bytes changed')
@@ -209,6 +223,7 @@ def _transport_compatibility(producer_sha, producer_files, current_sha, current_
         'producerFiles': producer_files, 'consumerFiles': current_files, 'producerBuilder': builder,
         'producerWorkflow': workflow, 'comparison': comparison,
         'buildRecipeSHA256': hashlib.sha256(recipe.encode()).hexdigest(),
+        'buildGuardSHA256': hashlib.sha256(guard_recipe.encode()).hexdigest(),
         'buildWorkflowSHA256': hashlib.sha256(workflow_recipe.encode()).hexdigest()}
 
 
