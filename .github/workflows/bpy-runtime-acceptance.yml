@@ -586,3 +586,4 @@ jobs:
           path: ${{ runner.temp }}/evidence
           if-no-files-found: error
           retention-days: 90
+          include-hidden-files: true

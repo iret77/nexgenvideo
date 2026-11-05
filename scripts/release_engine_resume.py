@@ -78,10 +78,10 @@ ENGINE_SOURCE_OBJECTS = {
 }
 
 
-REVIEWED_HARNESS_SOURCE = 'a42a092707d1a6e37b09b874d1d09278d351c585'
+REVIEWED_HARNESS_SOURCE = '55a13d86438208d9e801f243f9051f83a75e6c10'
 REVIEWED_HARNESS_OBJECTS = {
     ".github/actions/prepare-bpy-source/action.yml": "467d96269e791bebf8e15f75bb5882511fd8257f",
-    ".github/workflows/bpy-runtime-acceptance.yml": "1b6b9e75514ef8f73dc15d05e0953c61797dcc7d",
+    ".github/workflows/bpy-runtime-acceptance.yml": "49a290fb27991ef29b8e7830e674bb67e403fa31",
     ".github/workflows/chat-hang-replay.yml": "9979ecf70abf89e74efe2d95356be7b1d6e65f0a",
     ".github/workflows/private-example-analysis.yml": "de7c832cbb2e7562a18d7468c417ddda6f6481fb",
     ".github/workflows/retained-runtime-failure-diagnostic.yml": "6b92cc75f5de30de492ab8e812ea6e59f30f2af2",

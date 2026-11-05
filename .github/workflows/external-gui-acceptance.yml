@@ -426,9 +426,9 @@ jobs:
           INTERFACE_SCALE: ${{ matrix.scale }}
           TEST_PRODUCER_SHA256: ${{ needs.test-runtime.outputs.producer_sha256 }}
         run: |
-          packaging_args=()
-          if [ -n "$PACKAGING_PRODUCER_SOURCE" ]; then packaging_args+=(--packaging-binding "$RUNNER_TEMP/external-packaging/consumer.json"); fi
-          python3 scripts/external-gui/acceptance.py run "${packaging_args[@]}" \
+          set --
+          if [ -n "$PACKAGING_PRODUCER_SOURCE" ]; then set -- --packaging-binding "$RUNNER_TEMP/external-packaging/consumer.json"; fi
+          python3 scripts/external-gui/acceptance.py run "$@" \
             --dmg "$RUNNER_TEMP/external-runtime/NexGenVideo.dmg" \
             --dmg-sha256 "$EXPECTED_DMG_SHA256" --source-sha "$PRODUCT_SOURCE" \
             --scale "$INTERFACE_SCALE" --evidence "$RUNNER_TEMP/external-gui" \
@@ -446,9 +446,9 @@ jobs:
           FIXTURE_SHA256: ${{ inputs.fixture_sha256 }}
           TEST_PRODUCER_SHA256: ${{ needs.test-runtime.outputs.producer_sha256 }}
         run: |
-          packaging_args=()
-          if [ -n "$PACKAGING_PRODUCER_SOURCE" ]; then packaging_args+=(--packaging-binding "$RUNNER_TEMP/external-packaging/consumer.json"); fi
-          python3 scripts/external-gui/transport.py run "${packaging_args[@]}" --dmg "$RUNNER_TEMP/external-runtime/NexGenVideo.dmg" \
+          set --
+          if [ -n "$PACKAGING_PRODUCER_SOURCE" ]; then set -- --packaging-binding "$RUNNER_TEMP/external-packaging/consumer.json"; fi
+          python3 scripts/external-gui/transport.py run "$@" --dmg "$RUNNER_TEMP/external-runtime/NexGenVideo.dmg" \
             --dmg-sha256 "$EXPECTED_DMG_SHA256" --source-sha "$PRODUCT_SOURCE" \
             --fixture "$RUNNER_TEMP/transport-fixture" --fixture-sha256 "$FIXTURE_SHA256" \
             --scale 1.5 --evidence "$RUNNER_TEMP/external-gui" \
@@ -462,9 +462,9 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$ARTIFACT_MODE" = dmg ]; then
-            packaging_args=()
-            if [ -n "$PACKAGING_PRODUCER_SOURCE" ]; then packaging_args+=(--packaging-binding "$RUNNER_TEMP/external-packaging/consumer.json"); fi
-            python3 scripts/external-gui/acceptance.py validate "${packaging_args[@]}" \
+            set --
+            if [ -n "$PACKAGING_PRODUCER_SOURCE" ]; then set -- --packaging-binding "$RUNNER_TEMP/external-packaging/consumer.json"; fi
+            python3 scripts/external-gui/acceptance.py validate "$@" \
               --evidence "$RUNNER_TEMP/external-gui" --source-sha "$PRODUCT_SOURCE" \
               --scale "$INTERFACE_SCALE" \
               --dmg-sha256 "$EXPECTED_DMG_SHA256"
@@ -478,9 +478,9 @@ jobs:
         env:
           EXPECTED_DMG_SHA256: ${{ inputs.expected_dmg_sha256 }}
         run: |
-          packaging_args=()
-          if [ -n "$PACKAGING_PRODUCER_SOURCE" ]; then packaging_args+=(--packaging-binding "$RUNNER_TEMP/external-packaging/consumer.json"); fi
-          python3 scripts/external-gui/transport.py validate "${packaging_args[@]}" --source-sha "$PRODUCT_SOURCE" \
+          set --
+          if [ -n "$PACKAGING_PRODUCER_SOURCE" ]; then set -- --packaging-binding "$RUNNER_TEMP/external-packaging/consumer.json"; fi
+          python3 scripts/external-gui/transport.py validate "$@" --source-sha "$PRODUCT_SOURCE" \
             --dmg-sha256 "$EXPECTED_DMG_SHA256" --scale 1.5 --evidence "$RUNNER_TEMP/external-gui"
       - uses: actions/upload-artifact@v4
         if: always()
