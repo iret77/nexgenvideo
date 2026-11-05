@@ -61,6 +61,8 @@ struct SpatialSceneView: View {
         .foregroundStyle(AppTheme.Text.primaryColor)
         .background(AppTheme.Background.surfaceColor)
         .reviewAcceptanceProbe("spatial.scene", state: !session.busy, text: session.current?.manifest.revision.uuidString ?? "")
+        .reviewAcceptanceProbe("spatial.history.intent", text: session.historyIntent?.diagnosticText)
+        .reviewAcceptanceProbe("spatial.history.trace", text: session.historyTrace.diagnosticText)
         .task { session.reload() }
         .onChange(of: session.selectedObjectID) { _, _ in updateInspector() }
         .onChange(of: session.snapshot) { _, _ in updateInspector(); requestedFrame = session.frame }
@@ -120,10 +122,10 @@ struct SpatialSceneView: View {
                 .lineLimit(1)
                 .help(session.current?.manifest.name ?? "Location editor")
             Spacer(minLength: AppTheme.Spacing.sm)
-            Button("Undo") { Task { await session.undo() } }.disabled(!editingEnabled || !session.canUndo)
+            Button("Undo") { _ = session.requestUndo() }.disabled(!editingEnabled || !session.canUndo)
                 .fixedSize(horizontal: true, vertical: false)
                 .reviewAcceptanceProbe("spatial.undo", state: editingEnabled && session.canUndo)
-            Button("Redo") { Task { await session.redo() } }.disabled(!editingEnabled || !session.canRedo)
+            Button("Redo") { _ = session.requestRedo() }.disabled(!editingEnabled || !session.canRedo)
                 .fixedSize(horizontal: true, vertical: false)
                 .reviewAcceptanceProbe("spatial.redo", state: editingEnabled && session.canRedo)
             if session.busy {
@@ -188,6 +190,12 @@ struct SpatialSceneView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("spatial.error")
                 .reviewAcceptanceProbe("spatial.error", text: error)
+        }
+        if let notice = session.historyNotice {
+            Text(notice).foregroundStyle(AppTheme.Text.secondaryColor)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("spatial.history.notice")
+                .reviewAcceptanceProbe("spatial.history.notice", text: notice)
         }
     }
 

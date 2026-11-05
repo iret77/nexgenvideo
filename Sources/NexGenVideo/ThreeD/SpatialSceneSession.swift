@@ -7,6 +7,36 @@ import UniformTypeIdentifiers
 
 enum SpatialSceneCommitProgress: Equatable, Sendable { case committing, committed }
 
+struct SpatialSceneHistoryIntent: Codable, Sendable {
+    enum Action: String, Codable { case undo, redo }
+    enum Origin: String, Codable { case userInterface, awaitedCall }
+    enum Status: String, Codable { case admitted, rejectedBusy, rejectedHistory, committed, failed }
+    let id: UUID
+    let action: Action
+    let origin: Origin
+    var status: Status
+    let busyAtRequest: Bool
+    let sourceRevision: UUID?
+    let priorRevision: UUID?
+    var observedUptime: TimeInterval
+
+    var diagnosticText: String? {
+        guard let data = try? JSONEncoder().encode(self) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+}
+
+struct SpatialSceneHistoryTrace: Encodable, Sendable {
+    let schema = "nexgenvideo/spatial-history-intents/1"
+    var events: [SpatialSceneHistoryIntent] = []
+    var overflow = false
+
+    var diagnosticText: String? {
+        guard let data = try? JSONEncoder().encode(self) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+}
+
 @MainActor
 protocol SpatialSceneAuthority: AnyObject {
     func requireReadableScene() async throws
@@ -46,6 +76,8 @@ final class SpatialSceneSession {
     private var operationTask: Task<Void, Never>?
     private let commitObserver: (@MainActor (SpatialSceneCommitProgress) -> Void)?
     private var userCancellationRequested = false
+    private(set) var historyIntent: SpatialSceneHistoryIntent?
+    private(set) var historyTrace = SpatialSceneHistoryTrace()
 
     init(pipelineRoot: URL, runtime: BpyRuntimeSession, authority: any SpatialSceneAuthority,
          commitObserver: (@MainActor (SpatialSceneCommitProgress) -> Void)? = nil) {
@@ -57,12 +89,23 @@ final class SpatialSceneSession {
 
     var selectedObject: BpySpatialObject? { snapshot?.objects.first { $0.id == selectedObjectID } }
     var selectedCamera: BpySpatialCamera? { snapshot?.cameras.first { $0.id == selectedCameraID } }
-    var canUndo: Bool { !busy && !undoRevisions.isEmpty }
-    var canRedo: Bool { !busy && !redoRevisions.isEmpty }
+    var canUndo: Bool { !busy && historyTarget(undo: true) != nil }
+    var canRedo: Bool { !busy && historyTarget(undo: false) != nil }
     var canCancel: Bool { busy && commitProgress == nil && !userCancellationRequested }
+    var historyNotice: String? {
+        switch historyIntent?.status {
+        case .rejectedBusy:
+            if busy { return "Wait for the current location action before using history." }
+            let action = historyIntent?.action == .undo ? "Undo" : "Redo"
+            let available = historyIntent?.action == .undo ? canUndo : canRedo
+            return action + (available ? " was not applied. Try again." : " is no longer available.")
+        case .rejectedHistory: return "No saved location history is available."
+        default: return nil
+        }
+    }
 
     private func beginOperation() {
-        busy = true; userCancellationRequested = false; error = nil
+        busy = true; userCancellationRequested = false; error = nil; historyIntent = nil
     }
 
     private func operationFailed(_ error: any Error) {
@@ -242,6 +285,12 @@ final class SpatialSceneSession {
     func undo() async { await restore(undo: true) }
     func redo() async { await restore(undo: false) }
 
+    @discardableResult
+    func requestUndo() -> UUID? { beginHistory(undo: true, origin: .userInterface)?.id }
+
+    @discardableResult
+    func requestRedo() -> UUID? { beginHistory(undo: false, origin: .userInterface)?.id }
+
     func renderCamera() async {
         guard !busy, let current, let cameraID = selectedCameraID else { return }
         beginOperation()
@@ -278,6 +327,13 @@ final class SpatialSceneSession {
         refreshTask?.cancel()
         operationTask?.cancel()
         activeJob?.cancel()
+    }
+
+    func cancelAndWait() async {
+        let refresh = refreshTask, operation = operationTask
+        cancel()
+        await refresh?.value
+        await operation?.value
     }
 
     func nativeInvalidateActiveOperation() throws {
@@ -359,19 +415,58 @@ final class SpatialSceneSession {
     }
 
     private func restore(undo: Bool) async {
-        guard !busy else { return }
-        beginOperation()
-        let task = Task { await performRestore(undo: undo) }
-        operationTask = task
-        await task.value
-        operationTask = nil
-        busy = false
+        guard let accepted = beginHistory(undo: undo, origin: .awaitedCall) else { return }
+        await accepted.task.value
     }
 
-    private func performRestore(undo: Bool) async {
-        defer { commitProgress = nil }
+    private func historyTarget(undo: Bool) -> (prior: SpatialSceneHead, head: SpatialSceneHead)? {
         guard let current, let prior = undo ? undoRevisions.last : redoRevisions.last,
-              let head = locations.first(where: { $0.id == current.manifest.sceneID }) else { return }
+              let head = locations.first(where: { $0.id == current.manifest.sceneID }),
+              head.revision == current.manifest.revision, prior.id == head.id else { return nil }
+        return (prior, head)
+    }
+
+    private func recordHistory(_ intent: SpatialSceneHistoryIntent) {
+        historyIntent = intent
+        if ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"]?.isEmpty == false {
+            if historyTrace.events.count < 256 { historyTrace.events.append(intent) }
+            else { historyTrace.overflow = true }
+        }
+    }
+
+    private func beginHistory(undo: Bool, origin: SpatialSceneHistoryIntent.Origin) -> (id: UUID, task: Task<Void, Never>)? {
+        let target = historyTarget(undo: undo)
+        var intent = SpatialSceneHistoryIntent(id: UUID(), action: undo ? .undo : .redo, origin: origin,
+            status: .admitted, busyAtRequest: busy, sourceRevision: current?.manifest.revision,
+            priorRevision: target?.prior.revision, observedUptime: ProcessInfo.processInfo.systemUptime)
+        guard !busy else {
+            intent.status = .rejectedBusy
+            recordHistory(intent)
+            return nil
+        }
+        guard let target else {
+            intent.status = .rejectedHistory
+            recordHistory(intent)
+            return nil
+        }
+        beginOperation()
+        recordHistory(intent)
+        let admitted = intent
+        let task = Task {
+            let committed = await performRestore(undo: undo, prior: target.prior, head: target.head)
+            var completed = admitted
+            completed.status = committed ? .committed : .failed
+            completed.observedUptime = ProcessInfo.processInfo.systemUptime
+            recordHistory(completed)
+            operationTask = nil
+            busy = false
+        }
+        operationTask = task
+        return (intent.id, task)
+    }
+
+    private func performRestore(undo: Bool, prior: SpatialSceneHead, head: SpatialSceneHead) async -> Bool {
+        defer { commitProgress = nil }
         do {
             let root = pipelineRoot
             let cancellation = BpyOperationCancellation()
@@ -384,7 +479,11 @@ final class SpatialSceneSession {
             if undo { undoRevisions.removeLast(); redoRevisions.append(head) }
             else { redoRevisions.removeLast(); undoRevisions.append(head) }
             applyCommitted(committed)
-        } catch { operationFailed(error) }
+            return true
+        } catch {
+            operationFailed(error)
+            return false
+        }
     }
 
     private func load(_ head: SpatialSceneHead) async throws {
