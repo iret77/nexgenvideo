@@ -15,7 +15,7 @@ on:
       candidate_kind:
         description: Signed release verification or targeted failed CI diagnostics
         type: choice
-        options: [signed-release, signed-bpy, signed-journey, signed-transport, native-retained-failures, native-segment-geometry, native-export-color, ci-runtime, ci-bpy-open-diagnostic, ci-bpy-resource-diagnostic, ci-app-test-diagnostic, ci-app-glow-replay, ci-app-full-replay, ci-builtin-blur, ci-builtin-blur-scribble, ci-builtin-blur-floor, ci-builtin-blur-preheat, ci-glow-context]
+        options: [signed-release, signed-bpy, signed-journey, signed-transport, native-retained-failures, native-scene-history-hierarchy, native-segment-geometry, native-export-color, ci-runtime, ci-bpy-open-diagnostic, ci-bpy-resource-diagnostic, ci-app-test-diagnostic, ci-app-glow-replay, ci-app-full-replay, ci-builtin-blur, ci-builtin-blur-scribble, ci-builtin-blur-floor, ci-builtin-blur-preheat, ci-glow-context]
         default: signed-release
       run_id:
         description: "Original producer workflow run"
@@ -156,7 +156,10 @@ jobs:
                   or not re.fullmatch('[1-9][0-9]*', os.environ['VERIFIED_PR'])):
               raise ValueError('Packaging continuation needs signed mode and current exact PR source proof')
           fields = [os.environ[key] for key in ('VERIFIED_PR', 'JOURNEY_JOB', 'JOURNEY_ARTIFACT', 'JOURNEY_DIGEST')]
-          if os.environ['KIND'] == 'signed-transport':
+          if os.environ['KIND'] == 'native-scene-history-hierarchy':
+              from scene_history_hierarchy import validate_inputs
+              validate_inputs(os.environ)
+          elif os.environ['KIND'] == 'signed-transport':
               if (any(not re.fullmatch('[1-9][0-9]*', value) for value in fields[:3])
                       or not re.fullmatch('[a-f0-9]{64}', fields[3]) or os.environ['SCALE'] != '1.5'
                       or not re.fullmatch('[a-f0-9]{64}', os.environ['DMG_DIGEST'])
@@ -185,6 +188,22 @@ jobs:
           DMG_DIGEST: ${{ inputs.expected_dmg_sha256 }}
           RUNTIME_FAILURE_BINDING: ${{ inputs.runtime_failure_binding }}
         run: python3 scripts/retained_runtime_failure_diagnostic.py bind --output "$RUNNER_TEMP/runtime-failure-binding"
+      - name: Bind the exact failed History step and current Source receipt
+        if: inputs.candidate_kind == 'native-scene-history-hierarchy'
+        env:
+          VERIFIED_PR: ${{ inputs.verified_pr_run_id }}
+          SCALE: ${{ inputs.interface_scale }}
+          DMG_DIGEST: ${{ inputs.expected_dmg_sha256 }}
+          RUNTIME_FAILURE_BINDING: ${{ inputs.runtime_failure_binding }}
+        run: python3 scripts/scene_history_hierarchy.py bind --output "$RUNNER_TEMP/scene-history-source-binding"
+      - uses: actions/upload-artifact@v4
+        if: always() && inputs.candidate_kind == 'native-scene-history-hierarchy'
+        with:
+          name: scene-history-hierarchy-source-binding
+          path: ${{ runner.temp }}/scene-history-source-binding/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 90
       - uses: actions/upload-artifact@v4
         if: always() && inputs.candidate_kind == 'native-retained-failures'
         with:
@@ -335,7 +354,7 @@ jobs:
           retention-days: 90
 
       - name: Bind the successful release job and immutable artifact
-        if: inputs.candidate_kind != 'native-retained-failures' && inputs.candidate_kind != 'native-segment-geometry' && inputs.candidate_kind != 'native-export-color' && inputs.candidate_kind != 'ci-bpy-resource-diagnostic' && inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor' && inputs.candidate_kind != 'ci-builtin-blur-preheat' && inputs.candidate_kind != 'ci-glow-context'
+        if: inputs.candidate_kind != 'native-retained-failures' && inputs.candidate_kind != 'native-scene-history-hierarchy' && inputs.candidate_kind != 'native-segment-geometry' && inputs.candidate_kind != 'native-export-color' && inputs.candidate_kind != 'ci-bpy-resource-diagnostic' && inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor' && inputs.candidate_kind != 'ci-builtin-blur-preheat' && inputs.candidate_kind != 'ci-glow-context'
         env:
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_KIND: ${{ inputs.candidate_kind }}
@@ -360,7 +379,7 @@ jobs:
             --candidate-kind "$CANDIDATE_KIND" \
             --packaging-producer-source "$PACKAGING_PRODUCER_SOURCE" --packaging-provenance-artifact-id "$PACKAGING_PROVENANCE_ARTIFACT_ID" --packaging-provenance-artifact-sha256 "$PACKAGING_PROVENANCE_ARTIFACT_SHA256" "${extra[@]}"
       - uses: actions/upload-artifact@v4
-        if: inputs.candidate_kind != 'native-retained-failures' && inputs.candidate_kind != 'native-segment-geometry' && inputs.candidate_kind != 'native-export-color' && inputs.candidate_kind != 'ci-bpy-resource-diagnostic' && inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor' && inputs.candidate_kind != 'ci-builtin-blur-preheat' && inputs.candidate_kind != 'ci-glow-context'
+        if: inputs.candidate_kind != 'native-retained-failures' && inputs.candidate_kind != 'native-scene-history-hierarchy' && inputs.candidate_kind != 'native-segment-geometry' && inputs.candidate_kind != 'native-export-color' && inputs.candidate_kind != 'ci-bpy-resource-diagnostic' && inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor' && inputs.candidate_kind != 'ci-builtin-blur-preheat' && inputs.candidate_kind != 'ci-glow-context'
         with:
           name: diagnostic-candidate-identity
           path: ${{ runner.temp }}/candidate-metadata/*.json
@@ -830,6 +849,20 @@ jobs:
       evidence_artifact_id: ${{ inputs.artifact_id }}
       evidence_artifact_sha256: ${{ inputs.artifact_sha256 }}
       expected_dmg_sha256: ${{ inputs.expected_dmg_sha256 }}
+
+  native-scene-history-hierarchy:
+    needs: source
+    if: inputs.candidate_kind == 'native-scene-history-hierarchy'
+    uses: ./.github/workflows/scene-history-hierarchy-diagnostic.yml
+    with:
+      run_id: ${{ inputs.run_id }}
+      source_sha: ${{ inputs.source_sha }}
+      artifact_id: ${{ inputs.artifact_id }}
+      artifact_sha256: ${{ inputs.artifact_sha256 }}
+      failure_artifact_id: ${{ inputs.failure_artifact_id }}
+      failure_artifact_sha256: ${{ inputs.failure_artifact_sha256 }}
+      expected_dmg_sha256: ${{ inputs.expected_dmg_sha256 }}
+      verified_pr_run_id: ${{ inputs.verified_pr_run_id }}
 
   native-segment-geometry:
     needs: source
