@@ -8,6 +8,15 @@ name: Private Example Audio Analysis
 on:
   workflow_dispatch:
     inputs:
+      packaging_producer_source_sha:
+        type: string
+        default: ''
+      packaging_provenance_artifact_id:
+        type: string
+        default: ''
+      packaging_provenance_artifact_sha256:
+        type: string
+        default: ''
       dataset:
         description: "Dataset id from the private fixture manifest"
         required: true
@@ -35,6 +44,15 @@ on:
         default: ''
   workflow_call:
     inputs:
+      packaging_producer_source_sha:
+        type: string
+        default: ''
+      packaging_provenance_artifact_id:
+        type: string
+        default: ''
+      packaging_provenance_artifact_sha256:
+        type: string
+        default: ''
       dataset:
         type: string
         default: "claude_mouse"
@@ -68,6 +86,11 @@ permissions:
   pull-requests: read
 
 env:
+  GH_TOKEN: ${{ github.token }}
+  PACKAGING_PRODUCER_SOURCE: ${{ inputs.packaging_producer_source_sha }}
+  PACKAGING_PROVENANCE_ARTIFACT_ID: ${{ inputs.packaging_provenance_artifact_id }}
+  PACKAGING_PROVENANCE_ARTIFACT_SHA256: ${{ inputs.packaging_provenance_artifact_sha256 }}
+  VERIFIED_PR_RUN: ${{ inputs.verified_pr_run_id }}
   ORIGINAL_RUN: ${{ inputs.runtime_run_id }}
   ORIGINAL_SOURCE: ${{ inputs.runtime_source_sha }}
   ORIGINAL_ARTIFACT: ${{ inputs.runtime_artifact_id }}
@@ -123,12 +146,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          if [ -n "$PACKAGING_PRODUCER_SOURCE$PACKAGING_PROVENANCE_ARTIFACT_ID$PACKAGING_PROVENANCE_ARTIFACT_SHA256" ]; then
+            [[ "$VERIFIED_PR_RUN" =~ ^[1-9][0-9]*$ ]] || { echo 'Retained packaging requires complete current PR source proof'; exit 1; }
+          fi
           if [ -z "$ORIGINAL_RUN" ]; then
-            test -z "$ORIGINAL_SOURCE$ORIGINAL_ARTIFACT$ORIGINAL_DIGEST"
+            test -z "$ORIGINAL_SOURCE$ORIGINAL_ARTIFACT$ORIGINAL_DIGEST$PACKAGING_PRODUCER_SOURCE$PACKAGING_PROVENANCE_ARTIFACT_ID$PACKAGING_PROVENANCE_ARTIFACT_SHA256"
           else
-            python3 -m unittest discover -s scripts -p 'test_retained_release_runtime.py'
+            if [ -z "$VERIFIED_PR_RUN" ]; then
+              python3 -m unittest discover -s scripts -p 'test_retained_release_runtime.py'
+            fi
             python3 scripts/retained_release_runtime.py bind --run-id "$ORIGINAL_RUN" \
               --source-sha "$ORIGINAL_SOURCE" --artifact-id "$ORIGINAL_ARTIFACT" \
+              --packaging-producer-source "$PACKAGING_PRODUCER_SOURCE" --packaging-provenance-artifact-id "$PACKAGING_PROVENANCE_ARTIFACT_ID" --packaging-provenance-artifact-sha256 "$PACKAGING_PROVENANCE_ARTIFACT_SHA256" \
               --artifact-sha256 "$ORIGINAL_DIGEST" --receipt "$RUNNER_TEMP/retained-audio-input.json"
           fi
 
@@ -293,6 +322,9 @@ jobs:
         run: |
           python3 scripts/retained_release_runtime.py restore --run-id "$ORIGINAL_RUN" \
             --source-sha "$ORIGINAL_SOURCE" --artifact-id "$ORIGINAL_ARTIFACT" \
+            --packaging-producer-source "$PACKAGING_PRODUCER_SOURCE" \
+            --packaging-provenance-artifact-id "$PACKAGING_PROVENANCE_ARTIFACT_ID" \
+            --packaging-provenance-artifact-sha256 "$PACKAGING_PROVENANCE_ARTIFACT_SHA256" \
             --artifact-sha256 "$ORIGINAL_DIGEST" --destination .build \
             --receipt "$RUNNER_TEMP/analysis-runtime/execution-provenance.json"
 

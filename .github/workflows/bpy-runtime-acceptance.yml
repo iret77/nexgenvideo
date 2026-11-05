@@ -3,6 +3,15 @@ name: Managed bpy runtime acceptance
 on:
   workflow_call:
     inputs:
+      packaging_producer_source_sha:
+        type: string
+        default: ''
+      packaging_provenance_artifact_id:
+        type: string
+        default: ''
+      packaging_provenance_artifact_sha256:
+        type: string
+        default: ''
       artifact:
         type: string
         required: true
@@ -28,6 +37,13 @@ on:
 permissions:
   contents: read
   actions: read
+  pull-requests: read
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  PACKAGING_PRODUCER_SOURCE: ${{ inputs.packaging_producer_source_sha }}
+  PACKAGING_PROVENANCE_ARTIFACT_ID: ${{ inputs.packaging_provenance_artifact_id }}
+  PACKAGING_PROVENANCE_ARTIFACT_SHA256: ${{ inputs.packaging_provenance_artifact_sha256 }}
 
 jobs:
   runtime:
@@ -37,6 +53,8 @@ jobs:
       - name: Reserve time for failure diagnostics and evidence upload
         run: echo "NGV_BPY_DIAGNOSTIC_DEADLINE=$(( $(date +%s) + 27 * 60 ))" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Validate original app selectors
         env:
           ORIGINAL_RUN: ${{ inputs.runtime_run_id }}
@@ -47,7 +65,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "$ORIGINAL_RUN" ]; then
-            test -z "$ORIGINAL_SOURCE$ORIGINAL_ARTIFACT$ORIGINAL_DIGEST"
+            test -z "$ORIGINAL_SOURCE$ORIGINAL_ARTIFACT$ORIGINAL_DIGEST${PACKAGING_PRODUCER_SOURCE:-}${PACKAGING_PROVENANCE_ARTIFACT_ID:-}${PACKAGING_PROVENANCE_ARTIFACT_SHA256:-}"
           else
             [[ "$ORIGINAL_RUN" =~ ^[1-9][0-9]*$ ]]
             [[ "$ORIGINAL_SOURCE" =~ ^[0-9a-f]{40}$ ]]
@@ -62,14 +80,16 @@ jobs:
           ORIGINAL_DIGEST: ${{ inputs.app_artifact_sha256 }}
         run: |
           python3 - <<'PY'
-          import hashlib, json, os
+          import json, os, sys
           from pathlib import Path
+          sys.path.insert(0, 'scripts')
+          from retained_packaging import VERIFIER_INPUTS, committed_inputs
           output = Path(os.environ['RUNNER_TEMP']) / 'evidence'
           output.mkdir(parents=True, exist_ok=True)
           paths = ['scripts/bpy_runtime_acceptance.py', 'scripts/run_macos_tests.py',
                    'scripts/app_host_zombie_diagnostic.py', 'scripts/verify_swift_test_output.py',
                    'scripts/reuse_bpy_binary_evidence.py', 'scripts/pinned_download.py',
-                   '.github/workflows/bpy-runtime-acceptance.yml']
+                   '.github/workflows/bpy-runtime-acceptance.yml'] + list(VERIFIER_INPUTS)
           if os.environ['ORIGINAL_ARTIFACT']:
               paths.append('scripts/bpy_metal_diagnostic.py')
           value = dict(schema='nexgenvideo/bpy-execution-provenance/1',
@@ -77,7 +97,7 @@ jobs:
               producerRunID=int(os.environ['PRODUCER_RUN']), executionRunID=int(os.environ['GITHUB_RUN_ID']),
               executionAttempt=int(os.environ['GITHUB_RUN_ATTEMPT']),
               originalArtifactID=os.environ['ORIGINAL_ARTIFACT'], originalArtifactSHA256=os.environ['ORIGINAL_DIGEST'],
-              harnessFiles={p: hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in paths})
+              harnessFiles=committed_inputs(paths))
           (output / 'execution-provenance.json').write_text(json.dumps(value, sort_keys=True) + '\n')
           PY
       - uses: actions/download-artifact@v4
@@ -103,6 +123,16 @@ jobs:
           from pathlib import Path
           sys.path.insert(0, str(Path('scripts').resolve()))
           from reuse_bpy_binary_evidence import api, download
+          from retained_packaging import environment_selectors, consumer_binding, consumer_source, consumer_harness, encoded
+          from verify_diagnostic_candidate import verify_signed_bpy, SIGNED_BPY_HARNESS_PATHS
+          selected = environment_selectors()
+          binding = consumer_binding(int(os.environ['ORIGINAL_RUN']), os.environ['ORIGINAL_SOURCE'], selected,
+              archive_root=Path(os.environ['RUNNER_TEMP']) / 'evidence/packaging-provenance')
+          producer_source = consumer_source(os.environ['ORIGINAL_SOURCE'], binding)
+          if binding is not None:
+              consumer_harness(binding, os.environ['ORIGINAL_SOURCE'], SIGNED_BPY_HARNESS_PATHS)
+          if binding is not None:
+              (Path(os.environ['RUNNER_TEMP']) / 'evidence/packaging-consumer.json').write_bytes(encoded(binding))
           identifier = int(os.environ['ORIGINAL_ARTIFACT'])
           artifact = api('/actions/artifacts/' + str(identifier))
           origin = artifact.get('workflow_run', {})
@@ -110,8 +140,13 @@ jobs:
               or artifact.get('expired') is not False
               or artifact.get('digest') != 'sha256:' + os.environ['ORIGINAL_DIGEST']
               or origin.get('id') != int(os.environ['ORIGINAL_RUN'])
-              or origin.get('head_sha') != os.environ['ORIGINAL_SOURCE']):
+              or origin.get('head_sha') != producer_source):
               raise ValueError('Original App artifact identity changed before transfer')
+          if selected is not None:
+              run = api('/actions/runs/' + os.environ['ORIGINAL_RUN'])
+              jobs = api('/actions/runs/' + os.environ['ORIGINAL_RUN'] + '/attempts/1/jobs?per_page=100')
+              verify_signed_bpy(run, jobs, artifact, int(os.environ['ORIGINAL_RUN']), os.environ['ORIGINAL_SOURCE'],
+                  identifier, os.environ['ORIGINAL_DIGEST'], [], packaging=selected)
           download(artifact, Path(os.environ['RUNNER_TEMP']) / 'original-app.zip')
           PY
           ditto -x -k "$RUNNER_TEMP/original-app.zip" "$RUNNER_TEMP/download"
@@ -172,6 +207,25 @@ jobs:
           printf '#!/bin/sh\nexit 99\n' > "$RUNNER_TEMP/fake-bin/python3"
           printf '#!/bin/sh\nexit 99\n' > "$RUNNER_TEMP/fake-bin/blender"
           chmod +x "$RUNNER_TEMP/fake-bin/python3" "$RUNNER_TEMP/fake-bin/blender"
+      - name: Bind actual relocated App bytes before native execution
+        id: app_bytes_before
+        if: inputs.packaging_producer_source_sha != ''
+        env:
+          APP_SOURCE: ${{ inputs.expected_source_sha }}
+          PRODUCER_RUN: ${{ inputs.runtime_run_id }}
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          from pathlib import Path
+          sys.path.insert(0, 'scripts')
+          from retained_packaging import consumer_binding, environment_selectors, verify_app_bytes, encoded
+          root = Path(os.environ['RUNNER_TEMP'])
+          binding = consumer_binding(int(os.environ['PRODUCER_RUN']), os.environ['APP_SOURCE'], environment_selectors())
+          saved = json.loads((root / 'evidence/packaging-consumer.json').read_text())
+          if binding != saved: raise ValueError('Bpy packaging selectors changed before execution')
+          actual = verify_app_bytes(root / 'relocated/NexGenVideo.app', binding)
+          (root / 'evidence/actual-app-before.json').write_bytes(encoded(actual))
+          PY
       - name: Capture the exact scene outside the sandbox as diagnostic evidence
         if: ${{ inputs.runtime_run_id != '' && inputs.app_artifact_id != '' && !inputs.distribution }}
         timeout-minutes: 4
@@ -504,6 +558,26 @@ jobs:
         run: |
           python3 scripts/bpy_boundary_acceptance.py "$RUNNER_TEMP/relocated/NexGenVideo.app" \
             --source-sha "$EXPECTED_SOURCE" --output "$RUNNER_TEMP/evidence/boundary"
+      - name: Bind unchanged actual App bytes after native execution
+        if: ${{ !cancelled() && steps.app_bytes_before.outcome == 'success' && inputs.packaging_producer_source_sha != '' }}
+        env:
+          APP_SOURCE: ${{ inputs.expected_source_sha }}
+          PRODUCER_RUN: ${{ inputs.runtime_run_id }}
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          from pathlib import Path
+          sys.path.insert(0, 'scripts')
+          from retained_packaging import consumer_binding, environment_selectors, verify_app_bytes, encoded
+          root = Path(os.environ['RUNNER_TEMP'])
+          binding = consumer_binding(int(os.environ['PRODUCER_RUN']), os.environ['APP_SOURCE'], environment_selectors())
+          saved = json.loads((root / 'evidence/packaging-consumer.json').read_text())
+          if binding != saved: raise ValueError('Bpy packaging selectors changed after execution')
+          actual = verify_app_bytes(root / 'relocated/NexGenVideo.app', binding)
+          (root / 'evidence/actual-app-after.json').write_bytes(encoded(actual))
+          before = json.loads((root / 'evidence/actual-app-before.json').read_text())
+          if actual != before: raise ValueError('Bpy acceptance changed actual App bytes')
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:

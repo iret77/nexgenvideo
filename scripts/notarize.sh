@@ -61,8 +61,16 @@ if [ -n "${NOTARY_STATE_DIR:-}" ]; then
   ARTIFACT_SHA="$(shasum -a 256 "$ARTIFACT" | awk '{print $1}')"
   JOURNAL="$NOTARY_STATE_DIR/$ARTIFACT_SHA.json"
 fi
+NOTARY_SOURCE="${GITHUB_SHA:-}"
+if [ -n "${RETAINED_PACKAGING_ROOT:-}${RETAINED_PACKAGING_INPUT_SHA256:-}" ]; then
+  ngv_notary_binding_args=(notary-source --artifact "$ARTIFACT")
+  if [ -n "${RETAINED_PACKAGING_DMG_CHECKPOINT:-}" ]; then
+    ngv_notary_binding_args+=(--checkpoint "$RETAINED_PACKAGING_DMG_CHECKPOINT")
+  fi
+  NOTARY_SOURCE="$(python3 "$(dirname "$0")/retained_packaging.py" "${ngv_notary_binding_args[@]}")"
+fi
 if [ -n "$JOURNAL" ] && [ -f "$JOURNAL" ]; then
-  SUBMISSION_ID="$(python3 - "$JOURNAL" "$ARTIFACT_SHA" "${GITHUB_SHA:-}" <<'PY'
+  SUBMISSION_ID="$(python3 - "$JOURNAL" "$ARTIFACT_SHA" "$NOTARY_SOURCE" <<'PY'
 import json
 import sys
 receipt = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -86,7 +94,7 @@ fi
   || { echo "!! notary upload returned no valid submission ID" >&2; exit 1; }
 
 if [ -n "$JOURNAL" ]; then
-  python3 - "$JOURNAL" "$ARTIFACT_SHA" "$SUBMISSION_ID" "${GITHUB_SHA:-}" <<'PY'
+  python3 - "$JOURNAL" "$ARTIFACT_SHA" "$SUBMISSION_ID" "$NOTARY_SOURCE" <<'PY'
 import json
 import os
 from pathlib import Path

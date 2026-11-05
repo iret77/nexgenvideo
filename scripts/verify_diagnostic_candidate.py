@@ -318,10 +318,15 @@ def verify(run, jobs, artifact, run_id, source_sha, artifact_id, digest, changed
 
 
 def verify_signed_bpy(run, jobs, artifact, run_id, source_sha, artifact_id, digest, changed_paths,
-                      *, artifact_name="diagnostic-release-evidence", harness_paths=SIGNED_BPY_HARNESS_PATHS):
+                      *, artifact_name="diagnostic-release-evidence", harness_paths=SIGNED_BPY_HARNESS_PATHS,
+                      packaging=None):
+    producer_source = source_sha
+    if packaging is not None:
+        from retained_packaging import load_provenance
+        producer_source = load_provenance(run_id, source_sha, packaging)['record']['producerSourceSHA']
     if (not re.fullmatch(r"[0-9a-f]{40}", source_sha)
             or not re.fullmatch(r"[0-9a-f]{64}", digest)
-            or run.get("id") != run_id or run.get("head_sha") != source_sha
+            or run.get("id") != run_id or run.get("head_sha") != producer_source
             or run.get("path") != ".github/workflows/release.yml"
             or run.get("event") != "workflow_dispatch"
             or run.get("status") not in {"queued", "in_progress", "completed"}
@@ -334,13 +339,13 @@ def verify_signed_bpy(run, jobs, artifact, run_id, source_sha, artifact_id, dige
     if (len(releases) != 1 or releases[0].get("conclusion") != "success"
             or releases[0].get("status") != "completed"
             or releases[0].get("run_id") != run_id
-            or releases[0].get("head_sha") != source_sha
+            or releases[0].get("head_sha") != producer_source
             or releases[0].get("run_attempt") != run["run_attempt"]):
         raise ValueError("candidate release job did not succeed in the bound attempt")
     if (artifact.get("id") != artifact_id or artifact.get("name") != artifact_name
             or artifact.get("expired") is not False or artifact.get("digest") != "sha256:" + digest
             or artifact.get("workflow_run", {}).get("id") != run_id
-            or artifact.get("workflow_run", {}).get("head_sha") != source_sha):
+            or artifact.get("workflow_run", {}).get("head_sha") != producer_source):
         raise ValueError("candidate artifact provenance mismatch")
     try:
         instant = lambda value: datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -354,36 +359,37 @@ def verify_signed_bpy(run, jobs, artifact, run_id, source_sha, artifact_id, dige
         raise ValueError("application or build inputs changed; retained signed App cannot be used")
 
 
-def verify_signed_journey(*args):
-    verify_signed_bpy(*args, artifact_name="release-user-journey-input", harness_paths=SIGNED_JOURNEY_HARNESS_PATHS)
+def verify_signed_journey(*args, **kwargs):
+    verify_signed_bpy(*args, artifact_name="release-user-journey-input", harness_paths=SIGNED_JOURNEY_HARNESS_PATHS, **kwargs)
 
 
-def verify_signed_transport(*args):
-    verify_signed_bpy(*args, artifact_name="release-user-journey-input", harness_paths=SIGNED_TRANSPORT_HARNESS_PATHS)
+def verify_signed_transport(*args, **kwargs):
+    verify_signed_bpy(*args, artifact_name="release-user-journey-input", harness_paths=SIGNED_TRANSPORT_HARNESS_PATHS, **kwargs)
     release = next(job for job in args[1]["jobs"] if job["name"] == "release")
     if release.get("labels") != ["macrunner"]:
         raise ValueError("retained transport DMG must be produced on macrunner")
 
 
-def verify_signed_settings(*args):
-    verify_signed_bpy(*args, artifact_name="workspace-ui-app", harness_paths=SIGNED_SETTINGS_HARNESS_PATHS)
+def verify_signed_settings(*args, **kwargs):
+    verify_signed_bpy(*args, artifact_name="workspace-ui-app", harness_paths=SIGNED_SETTINGS_HARNESS_PATHS, **kwargs)
     release = next(job for job in args[1]["jobs"] if job["name"] == "release")
     if release.get("labels") != ["macrunner"]:
         raise ValueError("retained Settings runtime must be produced on macrunner")
 
 
-def verify_signed_workspace(*args):
-    verify_signed_bpy(*args, artifact_name="workspace-ui-app", harness_paths=SIGNED_WORKSPACE_HARNESS_PATHS)
+def verify_signed_workspace(*args, **kwargs):
+    verify_signed_bpy(*args, artifact_name="workspace-ui-app", harness_paths=SIGNED_WORKSPACE_HARNESS_PATHS, **kwargs)
 
 
-def verify_signed_desktop(*args):
-    verify_signed_bpy(*args, artifact_name="workspace-ui-app", harness_paths=SIGNED_DESKTOP_HARNESS_PATHS)
+def verify_signed_desktop(*args, **kwargs):
+    verify_signed_bpy(*args, artifact_name="workspace-ui-app", harness_paths=SIGNED_DESKTOP_HARNESS_PATHS, **kwargs)
     release = next(job for job in args[1]["jobs"] if job["name"] == "release")
     if release.get("labels") != ["macrunner"]:
         raise ValueError("retained desktop runtime must be produced on macrunner")
 
 
 def main():
+    from retained_packaging import consumer_arguments, argument_selectors, consumer_binding, consumer_source
     parser = argparse.ArgumentParser()
     parser.add_argument("run_id", type=int)
     parser.add_argument("source_sha")
@@ -392,26 +398,37 @@ def main():
     parser.add_argument("metadata", type=Path)
     parser.add_argument("--candidate-kind", choices=("signed-release", "signed-bpy", "signed-journey", "signed-transport", "ci-runtime", "ci-bpy-open-diagnostic", "ci-app-test-diagnostic"), default="signed-release")
     parser.add_argument("--crash-archive", type=Path)
+    consumer_arguments(parser)
     args = parser.parse_args()
     if (args.candidate_kind == "ci-app-test-diagnostic") != (args.crash_archive is not None):
         parser.error("only the App diagnostic requires its original crash archive")
-    subprocess.run(["git", "merge-base", "--is-ancestor", args.source_sha, "HEAD"], check=True)
+    packaging = argument_selectors(args)
+    if packaging is not None and args.candidate_kind not in {'signed-bpy', 'signed-journey', 'signed-transport'}:
+        parser.error('Packaging provenance is only valid for explicit retained signed consumers')
+    binding = consumer_binding(args.run_id, args.source_sha, packaging, archive_root=args.metadata / 'packaging-provenance')
+    producer_source = consumer_source(args.source_sha, binding)
+    subprocess.run(["git", "merge-base", "--is-ancestor", producer_source, "HEAD"], check=True)
+    subprocess.run(['git', 'diff', '--exit-code', 'HEAD', '--'], check=True, stdout=subprocess.DEVNULL)
     paths = subprocess.check_output([
-        "git", "diff", "--no-renames", "--name-only", "-z", args.source_sha, "HEAD"
+        "git", "diff", "--no-renames", "--name-only", "-z", producer_source, "HEAD"
     ]).decode().split("\0")
     verifier = {"signed-release": verify, "signed-bpy": verify_signed_bpy,
                 "signed-journey": verify_signed_journey, "signed-transport": verify_signed_transport, "ci-runtime": verify_ci,
                 "ci-bpy-open-diagnostic": verify_bpy_diagnostic,
                 "ci-app-test-diagnostic": verify_app_diagnostic}[args.candidate_kind]
     verifier(*(json.loads((args.metadata / name).read_text()) for name in ("run.json", "jobs.json", "artifact.json")),
-           args.run_id, args.source_sha, args.artifact_id, args.digest, [path for path in paths if path])
+           args.run_id, args.source_sha, args.artifact_id, args.digest, [path for path in paths if path],
+           **({'packaging': packaging} if packaging is not None else {}))
     if args.crash_archive is not None:
         verify_app_crash_archive(args.crash_archive, args.run_id, args.source_sha, args.digest)
     harness_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
-    (args.metadata / "harness.json").write_text(json.dumps({
+    record = {
         "candidateKind": args.candidate_kind, "buildSourceSHA": args.source_sha,
         "harnessSourceSHA": harness_sha, "changedPaths": sorted(path for path in paths if path),
-    }, indent=2) + "\n")
+    }
+    if binding is not None:
+        record['packaging'] = binding
+    (args.metadata / "harness.json").write_text(json.dumps(record, indent=2) + "\n")
     print(f"{args.candidate_kind} candidate provenance verified; only acceptance tooling changed.")
 
 

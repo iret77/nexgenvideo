@@ -54,6 +54,26 @@ on:
         description: Same-source failed notarization to continue from its saved payload and Apple IDs
         type: string
         default: ''
+      retained_product_source_sha:
+        description: Original signed product commit for an artifact-only packaging correction
+        type: string
+        default: ''
+      retained_product_source_pr_run_id:
+        description: Complete original product PR source proof
+        type: string
+        default: ''
+      prior_packaging_producer_source_sha:
+        description: Actual harness commit of a previous retained packaging execution
+        type: string
+        default: ''
+      prior_packaging_provenance_artifact_id:
+        description: Exact previous retained packaging provenance artifact
+        type: string
+        default: ''
+      prior_packaging_provenance_artifact_sha256:
+        description: SHA256 of the complete previous packaging provenance ZIP
+        type: string
+        default: ''
       verified_pr_run_id:
         description: Successful PR source checks for this exact merge tree
         type: string
@@ -68,11 +88,14 @@ permissions: {}
 
 jobs:
   release-gate:
+    env:
+      GH_TOKEN: ${{ github.token }}
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     outputs:
       publication-resumed: ${{ steps.publication-state.outputs.resumed }}
       restored-build-run: ${{ steps.prior-notary.outputs.build_run_id }}
+      product-source-sha: ${{ steps.retained-product.outputs.product_source_sha || github.sha }}
     permissions:
       actions: write
       contents: write
@@ -88,6 +111,13 @@ jobs:
           RELEASE_ENGINE_RUN: ${{ inputs.completed_engine_tests_run_id }}
           SIGNED_BUILD_RUN: ${{ inputs.signed_build_run_id }}
           NOTARY_PROGRESS_RUN: ${{ inputs.notary_progress_run_id }}
+          RETAINED_PRODUCT_SOURCE: ${{ inputs.retained_product_source_sha }}
+          RETAINED_PRODUCT_SOURCE_RUN: ${{ inputs.retained_product_source_pr_run_id }}
+          VERIFIED_PR_RUN: ${{ inputs.verified_pr_run_id }}
+          TEST_BUNDLE_RUN: ${{ inputs.test_bundle_run_id }}
+          PRIOR_PACKAGING_SOURCE: ${{ inputs.prior_packaging_producer_source_sha }}
+          PRIOR_PACKAGING_ARTIFACT: ${{ inputs.prior_packaging_provenance_artifact_id }}
+          PRIOR_PACKAGING_DIGEST: ${{ inputs.prior_packaging_provenance_artifact_sha256 }}
         run: |
           set -euo pipefail
           echo "$REL_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' \
@@ -112,6 +142,13 @@ jobs:
             echo "::error::artifact_only requires dry_run=true"
             exit 1
           fi
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate every retained product selector before publication or runner allocation
+        run: python3 scripts/retained_packaging.py validate-inputs
 
       - name: Require the default branch for stable publication
         if: ${{ inputs.artifact_only == false && inputs.dry_run == false }}
@@ -164,10 +201,6 @@ jobs:
           [ "$ALLOW_MERGE_COMMIT" = "true" ] \
             || { echo "::error::Release metadata requires repository merge commits"; exit 1; }
 
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          fetch-depth: 0
-
       - name: Bind exact PR source checks
         if: inputs.verified_pr_run_id != ''
         env:
@@ -176,6 +209,13 @@ jobs:
         run: |
           python3 scripts/verified_pr_source_checks.py prepare --run-id "$VERIFIED_PR_RUN" \
             --output "$RUNNER_TEMP/release-pr-source"
+
+      - name: Bind retained product packaging
+        id: retained-product
+        if: inputs.retained_product_source_sha != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/retained_packaging.py bind --root "$RUNNER_TEMP/retained-packaging"
 
       - name: Bind completed Release tests
         if: inputs.completed_release_tests_run_id != ''
@@ -673,6 +713,8 @@ jobs:
 
 
   release:
+    env:
+      GH_TOKEN: ${{ github.token }}
     needs: [release-gate, release-build]
     if: ${{ !cancelled() && needs.release-gate.result == 'success' && needs.release-gate.outputs.publication-resumed != 'true' && (needs.release-build.result == 'success' || (needs.release-build.result == 'skipped' && (inputs.signed_build_run_id != '' || inputs.notary_progress_run_id != ''))) }}
     # Xcode 27 is required to compile, sign, notarize, staple, and package the app.
@@ -680,9 +722,20 @@ jobs:
     timeout-minutes: 90
     outputs:
       dmg_sha256: ${{ steps.gui-input.outputs.dmg_sha256 }}
+      product_source_sha: ${{ needs.release-gate.outputs.product-source-sha }}
+      packaging_producer_source_sha: ${{ inputs.retained_product_source_sha != '' && github.sha || '' }}
+      packaging_provenance_artifact_id: ${{ steps.packaging-proof.outputs.artifact-id }}
+      packaging_provenance_artifact_sha256: ${{ steps.packaging-proof.outputs.artifact-digest }}
+      workspace_artifact_id: ${{ steps.workspace-artifact.outputs.artifact-id }}
+      workspace_artifact_sha256: ${{ steps.workspace-artifact.outputs.artifact-digest }}
+      journey_artifact_id: ${{ steps.journey-artifact.outputs.artifact-id }}
+      journey_artifact_sha256: ${{ steps.journey-artifact.outputs.artifact-digest }}
+      diagnostic_artifact_id: ${{ steps.diagnostic-artifact.outputs.artifact-id }}
+      diagnostic_artifact_sha256: ${{ steps.diagnostic-artifact.outputs.artifact-digest }}
     permissions:
       contents: write
       actions: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -690,6 +743,12 @@ jobs:
 
       - uses: ./.github/actions/setup-native-test-python
       - uses: ./.github/actions/setup-xcode-27
+
+      - name: Bind retained product before signing credentials
+        if: inputs.retained_product_source_sha != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/retained_packaging.py bind --root "$RUNNER_TEMP/retained-packaging"
 
       - name: Resolve version + mode
         env:
@@ -767,6 +826,30 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/release_checkpoint.py restore --root "$RUNNER_TEMP/release-signed-binding"
+
+      - name: Record immutable original-product restore
+        if: inputs.retained_product_source_sha != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/retained_packaging.py restored --root "$RUNNER_TEMP/retained-packaging" --signed-root "$RUNNER_TEMP/release-signed-binding"
+
+      - name: Retain original-product restore proof
+        if: always() && inputs.retained_product_source_sha != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-packaging-restored-proof
+          path: ${{ runner.temp }}/retained-packaging/restored
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Retain complete original parent proof archives
+        if: always() && inputs.retained_product_source_sha != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-packaging-parent-archives
+          path: ${{ runner.temp }}/retained-packaging/parents
+          if-no-files-found: ignore
+          retention-days: 90
 
       - name: Restore saved notarization and DMG
         id: restore-notary
@@ -894,13 +977,31 @@ jobs:
         run: python3 scripts/release_checkpoint.py create-dmg --root "$RUNNER_TEMP/release-dmg-input"
 
       - name: Retain DMG before notarization
+        id: saved-dmg
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: release-dmg-input-${{ github.sha }}
+          name: release-dmg-input-${{ needs.release-gate.outputs.product-source-sha }}
           path: ${{ runner.temp }}/release-dmg-input/
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
+
+      - name: Bind uploaded DMG checkpoint proof
+        if: inputs.retained_product_source_sha != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DMG_PAYLOAD_ARTIFACT: ${{ steps.saved-dmg.outputs.artifact-id }}
+          DMG_PAYLOAD_DIGEST: ${{ steps.saved-dmg.outputs.artifact-digest }}
+        run: python3 scripts/retained_packaging.py dmg-proof --root "$RUNNER_TEMP/retained-packaging" --artifact-id "$DMG_PAYLOAD_ARTIFACT" --artifact-sha256 "$DMG_PAYLOAD_DIGEST"
+
+      - name: Retain exact DMG checkpoint proof
+        if: inputs.retained_product_source_sha != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-dmg-proof-${{ needs.release-gate.outputs.product-source-sha }}
+          path: ${{ runner.temp }}/retained-packaging/dmg-proof
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Notarize and staple DMG
         timeout-minutes: 20
@@ -910,7 +1011,7 @@ jobs:
         if: always() && steps.signed-input.outcome == 'success'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: release-notary-state-${{ github.sha }}
+          name: release-notary-state-${{ needs.release-gate.outputs.product-source-sha }}
           path: ${{ runner.temp }}/release-notary-state/*.json
           if-no-files-found: error
           retention-days: 7
@@ -992,7 +1093,8 @@ jobs:
             "$INSTALL_APP" \
             "$PREVIOUS_PACK" \
             "$PACK_BUNDLE"
-          [ "$(/usr/libexec/PlistBuddy -c 'Print :NGVSourceCommit' "$INSTALL_APP/Contents/Info.plist")" = "$GITHUB_SHA" ]
+          NGV_CHECKED_PRODUCT_SOURCE="$(python3 scripts/retained_packaging.py source)"
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :NGVSourceCommit' "$INSTALL_APP/Contents/Info.plist")" = "$NGV_CHECKED_PRODUCT_SOURCE" ]
           [ "$(basename "$PACK_BUNDLE")" = musicvideo.ngvpack ]
           [ "$(python3 scripts/external-gui/acceptance.py tree-sha256 --app "$PACK_BUNDLE")" = "$NGV_RELEASE_PACK_TREE_SHA256" ]
           mkdir -p "$INSTALL_CHECK/plugins"
@@ -1021,12 +1123,15 @@ jobs:
           cp .build/bpy-source/bpy-source-receipt.json "$RUNNER_TEMP/release-workspace-transfer/"
           python3 - <<'PY'
           import json, os, pathlib, sys
+          sys.path.insert(0, str(pathlib.Path('scripts').resolve()))
           sys.path.insert(0, str(pathlib.Path('scripts/external-gui').resolve()))
           from acceptance import metadata, sha256, tree_sha256
+          from release_checkpoint import product_source
 
           root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'release-workspace-transfer'
           installed = pathlib.Path(os.environ['NGV_RELEASE_INSTALL_CHECK'])
-          app = metadata(installed / 'NexGenVideo.app', os.environ['GITHUB_SHA'])
+          product = product_source()
+          app = metadata(installed / 'NexGenVideo.app', product)
           dmg = pathlib.Path('.build/NexGenVideo.dmg')
           pack_zip = pathlib.Path(os.environ['NGV_RELEASE_PACK_ZIP'])
           if sha256(dmg) != os.environ['NGV_RELEASE_DMG_SHA256']:
@@ -1040,13 +1145,20 @@ jobs:
               or pack_tree != tree_sha256(pathlib.Path(os.environ['NGV_RELEASE_PACK_BUNDLE']))):
               raise SystemExit('Transferred pack differs from the final checked pack')
           receipt = {'schema': 'nexgenvideo/workspace-ui-input/1',
-                     'sourceSHA': os.environ['GITHUB_SHA'],
+                     'sourceSHA': product,
                      'archiveSHA256': sha256(root / 'workspace-ui.tar.gz'),
                      'appTreeSHA256': app['treeSHA256']}
+          provenance = None
+          if os.environ.get('RETAINED_PACKAGING_ROOT'):
+              from retained_packaging import record_complete
+              provenance = record_complete(pathlib.Path(os.environ['RETAINED_PACKAGING_ROOT']), app,
+                  receipt['archiveSHA256'], sha256(root / 'bpy-source-receipt.json'), pack_zip)
+              receipt.update(schema='nexgenvideo/workspace-ui-input/2', producerSourceSHA=os.environ['GITHUB_SHA'],
+                             packagingProvenanceSHA256=provenance)
           runtime_input = root / 'workspace-ui-input.json'
           runtime_input.write_text(json.dumps(receipt, sort_keys=True) + '\n')
           proof = {'schema': 'nexgenvideo/release-workspace-producer/1',
-                   'sourceSHA': os.environ['GITHUB_SHA'], 'runID': os.environ['GITHUB_RUN_ID'],
+                   'sourceSHA': product, 'runID': os.environ['GITHUB_RUN_ID'],
                    'runAttempt': os.environ['GITHUB_RUN_ATTEMPT'],
                    'dmgSHA256': sha256(dmg), 'mountedAppTreeSHA256': app['treeSHA256'],
                    'app': app, 'archiveSHA256': receipt['archiveSHA256'],
@@ -1054,9 +1166,22 @@ jobs:
                    'bpySourceReceiptSHA256': sha256(root / 'bpy-source-receipt.json'),
                    'packArchive': pack_zip.name, 'packArchiveSHA256': sha256(pack_zip),
                    'packTreeSHA256': pack_tree}
+          if provenance is not None:
+              proof.update(schema='nexgenvideo/release-workspace-producer/2', producerSourceSHA=os.environ['GITHUB_SHA'],
+                           packagingProvenanceSHA256=provenance)
           pathlib.Path('.build/release-workspace-producer.json').write_text(json.dumps(proof, indent=2) + '\n')
           PY
+      - name: Retain complete packaging provenance
+        id: packaging-proof
+        if: inputs.retained_product_source_sha != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-packaging-provenance
+          path: ${{ runner.temp }}/retained-packaging/complete
+          if-no-files-found: error
+          retention-days: 90
       - name: Upload final DMG app for selected workspace acceptance
+        id: workspace-artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: workspace-ui-app
@@ -1083,6 +1208,7 @@ jobs:
           [ "$(jq -r .dmgSHA256 .build/release-workspace-producer.json)" = "$DMG_SHA256" ]
           echo "dmg_sha256=$DMG_SHA256" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        id: journey-artifact
         with:
           name: release-user-journey-input
           path: .build/NexGenVideo.dmg
@@ -1258,7 +1384,10 @@ jobs:
           import hashlib
           import json
           import os
+          import sys
           from pathlib import Path
+          sys.path.insert(0, str(Path('scripts').resolve()))
+          from release_checkpoint import product_source
 
           root = Path(".build")
           paths = [root / "NexGenVideo.dmg", root / "bpy-source/bpy-source-receipt.json",
@@ -1293,7 +1422,7 @@ jobs:
               raise SystemExit("candidate DMG differs from the checked workspace producer")
           receipt = {
               "schema": "nexgenvideo/artifact-only-candidate/1",
-              "sourceSHA": os.environ["GITHUB_SHA"],
+              "sourceSHA": product_source(),
               "runID": os.environ["GITHUB_RUN_ID"],
               "runAttempt": os.environ["GITHUB_RUN_ATTEMPT"],
               "version": os.environ["REL_VERSION"],
@@ -1302,6 +1431,9 @@ jobs:
               "published": False,
               "assets": assets,
           }
+          if os.environ.get('RETAINED_PACKAGING_ROOT'):
+              receipt.update(schema='nexgenvideo/artifact-only-candidate/2', producerSourceSHA=os.environ['GITHUB_SHA'],
+                             packagingProvenanceSHA256=os.environ['RETAINED_PACKAGING_COMPLETE_SHA256'])
           (root / "artifact-only-candidate.json").write_text(json.dumps(receipt, indent=2) + "\n")
           PY
 
@@ -1337,6 +1469,7 @@ jobs:
           dwarfdump --uuid .build/NexGenVideo.dSYM
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        id: diagnostic-artifact
         with:
           name: diagnostic-release-evidence
           path: |
@@ -1388,11 +1521,38 @@ jobs:
     permissions:
       contents: read
       actions: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: diagnostic-release-evidence
+      - name: Rebind retained packaging before diagnostic app execution
+        if: inputs.retained_product_source_sha != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRODUCT_SOURCE: ${{ needs.release.outputs.product_source_sha }}
+          PROVENANCE_ID: ${{ needs.release.outputs.packaging_provenance_artifact_id }}
+          PROVENANCE_SHA: ${{ needs.release.outputs.packaging_provenance_artifact_sha256 }}
+          ARTIFACT_ID: ${{ needs.release.outputs.diagnostic_artifact_id }}
+          ARTIFACT_SHA: ${{ needs.release.outputs.diagnostic_artifact_sha256 }}
+        run: |
+          python3 - <<'PYCODE'
+          import os, sys
+          from pathlib import Path
+          sys.path.insert(0, 'scripts')
+          from retained_packaging import selectors, consumer_binding
+          from retained_app_test_products import api
+          from verify_diagnostic_candidate import verify_signed_bpy
+          run_id = int(os.environ['GITHUB_RUN_ID'])
+          selected = selectors(os.environ['GITHUB_SHA'], os.environ['PROVENANCE_ID'], os.environ['PROVENANCE_SHA'])
+          consumer_binding(run_id, os.environ['PRODUCT_SOURCE'], selected, archive_root=Path('evidence/packaging-provenance'))
+          run = api('actions/runs/' + str(run_id))
+          jobs = api('actions/runs/' + str(run_id) + '/attempts/1/jobs?per_page=100')
+          artifact = api('actions/artifacts/' + os.environ['ARTIFACT_ID'])
+          verify_signed_bpy(run, jobs, artifact, run_id, os.environ['PRODUCT_SOURCE'], int(os.environ['ARTIFACT_ID']),
+              os.environ['ARTIFACT_SHA'], [], packaging=selected)
+          PYCODE
       - name: Verify signed production capture and exact symbolization
         run: |
           ditto -x -k diagnostic-app.zip .
@@ -1428,10 +1588,18 @@ jobs:
     permissions:
       contents: read
       actions: read
+      pull-requests: read
     needs: release
     if: ${{ !cancelled() && needs.release.result == 'success' }}
     uses: ./.github/workflows/bpy-runtime-acceptance.yml
     with:
+      packaging_producer_source_sha: ${{ needs.release.outputs.packaging_producer_source_sha }}
+      packaging_provenance_artifact_id: ${{ needs.release.outputs.packaging_provenance_artifact_id }}
+      packaging_provenance_artifact_sha256: ${{ needs.release.outputs.packaging_provenance_artifact_sha256 }}
+      runtime_run_id: ${{ inputs.retained_product_source_sha != '' && github.run_id || '' }}
+      expected_source_sha: ${{ inputs.retained_product_source_sha != '' && needs.release.outputs.product_source_sha || '' }}
+      app_artifact_id: ${{ inputs.retained_product_source_sha != '' && needs.release.outputs.diagnostic_artifact_id || '' }}
+      app_artifact_sha256: ${{ inputs.retained_product_source_sha != '' && needs.release.outputs.diagnostic_artifact_sha256 || '' }}
       artifact: diagnostic-release-evidence
       app_zip: diagnostic-app.zip
       distribution: true
@@ -1445,6 +1613,14 @@ jobs:
       pull-requests: read
     uses: ./.github/workflows/external-gui-acceptance.yml
     with:
+      packaging_producer_source_sha: ${{ needs.release.outputs.packaging_producer_source_sha }}
+      packaging_provenance_artifact_id: ${{ needs.release.outputs.packaging_provenance_artifact_id }}
+      packaging_provenance_artifact_sha256: ${{ needs.release.outputs.packaging_provenance_artifact_sha256 }}
+      runtime_run_id: ${{ inputs.retained_product_source_sha != '' && github.run_id || '' }}
+      product_source_sha: ${{ inputs.retained_product_source_sha != '' && needs.release.outputs.product_source_sha || '' }}
+      runtime_artifact_id: ${{ inputs.retained_product_source_sha != '' && needs.release.outputs.journey_artifact_id || '' }}
+      runtime_artifact_sha256: ${{ inputs.retained_product_source_sha != '' && needs.release.outputs.journey_artifact_sha256 || '' }}
+      verified_pr_run_id: ${{ inputs.retained_product_source_sha != '' && inputs.verified_pr_run_id || '' }}
       runtime_artifact: release-user-journey-input
       artifact_mode: dmg
       expected_dmg_sha256: ${{ needs.release.outputs.dmg_sha256 }}
@@ -1457,8 +1633,17 @@ jobs:
     permissions:
       contents: read
       actions: read
+      pull-requests: read
     uses: ./.github/workflows/chat-hang-replay.yml
     with:
+      packaging_producer_source_sha: ${{ needs.release.outputs.packaging_producer_source_sha }}
+      packaging_provenance_artifact_id: ${{ needs.release.outputs.packaging_provenance_artifact_id }}
+      packaging_provenance_artifact_sha256: ${{ needs.release.outputs.packaging_provenance_artifact_sha256 }}
+      runtime_run_id: ${{ inputs.retained_product_source_sha != '' && github.run_id || '' }}
+      runtime_source_sha: ${{ inputs.retained_product_source_sha != '' && needs.release.outputs.product_source_sha || '' }}
+      runtime_artifact_id: ${{ inputs.retained_product_source_sha != '' && needs.release.outputs.workspace_artifact_id || '' }}
+      runtime_artifact_sha256: ${{ inputs.retained_product_source_sha != '' && needs.release.outputs.workspace_artifact_sha256 || '' }}
+      verified_pr_run_id: ${{ inputs.retained_product_source_sha != '' && inputs.verified_pr_run_id || '' }}
       runtime_artifact: workspace-ui-app
 
   musicvideo-analysis-acceptance:
@@ -1470,6 +1655,13 @@ jobs:
       pull-requests: read
     uses: ./.github/workflows/private-example-analysis.yml
     with:
+      packaging_producer_source_sha: ${{ needs.release.outputs.packaging_producer_source_sha }}
+      packaging_provenance_artifact_id: ${{ needs.release.outputs.packaging_provenance_artifact_id }}
+      packaging_provenance_artifact_sha256: ${{ needs.release.outputs.packaging_provenance_artifact_sha256 }}
+      runtime_run_id: ${{ inputs.retained_product_source_sha != '' && github.run_id || '' }}
+      runtime_source_sha: ${{ inputs.retained_product_source_sha != '' && needs.release.outputs.product_source_sha || '' }}
+      runtime_artifact_id: ${{ inputs.retained_product_source_sha != '' && needs.release.outputs.workspace_artifact_id || '' }}
+      runtime_artifact_sha256: ${{ inputs.retained_product_source_sha != '' && needs.release.outputs.workspace_artifact_sha256 || '' }}
       runtime_artifact: workspace-ui-app
       verified_pr_run_id: ${{ inputs.verified_pr_run_id }}
     secrets:

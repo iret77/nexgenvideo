@@ -11,6 +11,8 @@ from verify_dmg_copy import detach
 
 
 RESERVE = 128 * 1024**2
+MIN_GROWTH = 1024**2
+MAX_MEASUREMENTS = 8
 
 
 def measure(sectors):
@@ -38,15 +40,21 @@ def plan(app):
     required = payload + RESERVE
     sectors = (required + 511) // 512
     attempts = []
-    for _ in range(3):
+    for _ in range(MAX_MEASUREMENTS):
         observed = measure(sectors)
+        require(all(type(observed.get(name)) is int for name in ("freeBytes", "totalBytes", "blockBytes", "imageBytes"))
+                and observed["blockBytes"] > 0 and observed["imageBytes"] > 0
+                and 0 <= observed["freeBytes"] <= observed["totalBytes"] <= observed["imageBytes"],
+                "Invalid DMG capacity measurement")
         attempts.append(dict(observed, requestedSectors=sectors))
         print(json.dumps({"stage": "DMG capacity", "requiredFreeBytes": required, **attempts[-1]}), flush=True)
         if observed["freeBytes"] >= required:
             return {"schema": "release-dmg-capacity-plan/v1", "appPath": str(app.resolve()),
                     "capacityVerified": True, "payloadBytes": payload, "reserveBytes": RESERVE,
                     "requiredFreeBytes": required, "imageSizeSectors": sectors, "attempts": attempts}
-        sectors += (required - observed["freeBytes"] + 511) // 512
+        blocks = (max(required - observed["freeBytes"], MIN_GROWTH) + observed["blockBytes"] - 1) // observed["blockBytes"]
+        growth = blocks * observed["blockBytes"]
+        sectors += (growth + 511) // 512
     raise ValueError("DMG capacity did not reach the complete payload plus reserve: " + json.dumps(attempts))
 
 

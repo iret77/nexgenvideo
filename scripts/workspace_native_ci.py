@@ -69,7 +69,10 @@ def api(path):
         return json.load(response)
 
 
-def require_artifact(run, artifact, source_sha, run_id, name):
+def require_artifact(run, artifact, source_sha, run_id, name, *, packaging=None):
+    if packaging is not None:
+        from retained_packaging import consumer_source
+        source_sha = consumer_source(source_sha, packaging)
     if (run.get('id') != run_id or run.get('repository', {}).get('full_name') != REPOSITORY
         or run.get('head_sha') != source_sha or run.get('event') not in {'workflow_dispatch', 'workflow_call'}
         or run.get('path') not in {'.github/workflows/ci-batch.yml', '.github/workflows/ci.yml',
@@ -83,7 +86,9 @@ def require_artifact(run, artifact, source_sha, run_id, name):
         raise ValueError('Native runtime artifact has a different source, repository or producer')
 
 
-def validate_inputs(artifact, run_id, product_source, source_run, unit_filter):
+def validate_inputs(artifact, run_id, product_source, source_run, unit_filter, *, packaging=None):
+    if packaging is not None and not product_source:
+        raise ValueError('Packaging selectors require complete retained desktop inputs')
     if source_run and not re.fullmatch(r'[1-9][0-9]*', source_run):
         raise ValueError('A positive verified PR source run is required')
     if (artifact or run_id) and unit_filter:
@@ -124,7 +129,12 @@ def source_composition(directory, expected_sha, source_run):
 
 
 def execution_source(identity):
-    if identity.get('schema') == 'nexgenvideo/native-input/2':
+    if identity.get('schema') in {'nexgenvideo/native-input/2', 'nexgenvideo/native-input/3'}:
+        if identity['schema'] == 'nexgenvideo/native-input/3':
+            from retained_packaging import consumer_record
+            consumer_record(identity.get('packaging'), identity['sourceSHA'], identity['runtimeRunID'])
+        elif 'packaging' in identity:
+            raise ValueError('Packaging provenance requires its explicit identity schema')
         harness = identity.get('harnessSourceSHA', '')
         proof = identity.get('retainedRelease', {})
         source = identity.get('sourceComposition', {}).get('composition', {})
@@ -139,13 +149,13 @@ def execution_source(identity):
                 or source.get('sourceSHA') != harness):
             raise ValueError('Retained runtime product and harness identities are incomplete')
         return harness
-    if 'harnessSourceSHA' in identity or 'retainedRelease' in identity:
+    if 'harnessSourceSHA' in identity or 'retainedRelease' in identity or 'packaging' in identity:
         raise ValueError('Retained runtime requires its explicit identity schema')
     return identity['sourceSHA']
 
 
 def resolve(run_id, name, artifact_id, destination, *, product_source='', proof_directory=None,
-            proof_sha='', source_run=0, source_artifact=0):
+            proof_sha='', source_run=0, source_artifact=0, packaging=None):
     harness = os.environ['GITHUB_SHA']
     source_sha = product_source or harness
     if not re.fullmatch(r'[0-9a-f]{40}', source_sha):
@@ -173,7 +183,12 @@ def resolve(run_id, name, artifact_id, destination, *, product_source='', proof_
         if len(artifacts) != 1:
             raise ValueError('An exact, unexpired runtime artifact is required')
         artifact = artifacts[0]
-    require_artifact(run, artifact, source_sha, run_id, name)
+    from retained_packaging import consumer_binding, consumer_source
+    if packaging is not None and not product_source:
+        raise ValueError('Packaging runtime requires explicit product and current source proof')
+    packaging_binding = consumer_binding(run_id, source_sha, packaging, archive_root=destination.parent / 'packaging-provenance')
+    producer_source = consumer_source(source_sha, packaging_binding)
+    require_artifact(run, artifact, source_sha, run_id, name, packaging=packaging_binding)
     identity = {'schema': 'nexgenvideo/native-input/1', 'sourceSHA': source_sha, 'runtimeRunID': run_id,
                 'runtimeArtifactID': artifact['id'], 'runtimeArtifactDigest': artifact['digest'],
                 'runtimeArtifactName': name, 'validatorSHA256': fingerprint()}
@@ -183,18 +198,21 @@ def resolve(run_id, name, artifact_id, destination, *, product_source='', proof_
         from verify_diagnostic_candidate import verify_signed_desktop
         if name != 'workspace-ui-app':
             raise ValueError('Retained desktop requires the release workspace runtime')
-        subprocess.run(['git', 'merge-base', '--is-ancestor', source_sha, 'HEAD'], check=True, timeout=30)
+        subprocess.run(['git', 'merge-base', '--is-ancestor', producer_source, 'HEAD'], check=True, timeout=30)
         subprocess.run(['git', 'diff', '--exit-code', 'HEAD', '--'], check=True, stdout=subprocess.DEVNULL, timeout=30)
-        changed = subprocess.check_output(['git', 'diff', '--no-renames', '--name-only', '-z', source_sha, 'HEAD'], timeout=30).decode()
+        changed = subprocess.check_output(['git', 'diff', '--no-renames', '--name-only', '-z', producer_source, 'HEAD'], timeout=30).decode()
         jobs = api(f'/actions/runs/{run_id}/attempts/{run["run_attempt"]}/jobs?per_page=100')
         verify_signed_desktop(run, jobs, artifact, run_id, source_sha, artifact['id'],
-                              artifact['digest'].removeprefix('sha256:'), list(filter(None, changed.split('\0'))))
+                              artifact['digest'].removeprefix('sha256:'), list(filter(None, changed.split('\0'))),
+                              **({'packaging': packaging} if packaging is not None else {}))
         producer = next(job for job in jobs['jobs'] if job['name'] == 'release')
         identity.update(schema='nexgenvideo/native-input/2', harnessSourceSHA=harness,
             retainedRelease={'productSourceSHA': source_sha, 'harnessSourceSHA': harness,
                 'producerRunID': run_id, 'producerAttempt': run['run_attempt'], 'producerJobID': producer['id'],
                 'runtimeArtifactID': artifact['id'], 'runtimeArtifactDigest': artifact['digest'],
                 'changedHarnessPaths': sorted(filter(None, changed.split('\0')))})
+    if packaging_binding is not None:
+        identity.update(schema='nexgenvideo/native-input/3', packaging=packaging_binding)
     atomic_json(destination, identity)
     outputs({'artifact_id': str(artifact['id']), 'runtime_run_id': str(run_id)})
 
@@ -316,6 +334,12 @@ def download_runtime(identity_file, directory):
 
 def runtime_receipt(directory, identity):
     receipt = json.loads((directory / 'workspace-ui-input.json').read_text())
+    if identity.get('packaging') is not None:
+        from retained_packaging import validate_runtime_receipt
+        validate_runtime_receipt(receipt, identity['sourceSHA'], identity['packaging'])
+        if receipt['archiveSHA256'] != sha(directory / 'workspace-ui.tar.gz'):
+            raise ValueError('Packaging runtime archive bytes changed')
+        return receipt
     if (not isinstance(receipt, dict)
         or set(receipt) != {'schema', 'sourceSHA', 'archiveSHA256', 'appTreeSHA256'}
         or receipt['schema'] != 'nexgenvideo/workspace-ui-input/1'
@@ -480,7 +504,7 @@ def summarize(artifacts, output, plan_file, identity_file, expected_identity_sha
         raise ValueError('The expected qualification identity changed')
     plan = json.loads(plan_file.read_text()); identity = json.loads(identity_file.read_text())
     harness = execution_source(identity)
-    if identity.get('schema') == 'nexgenvideo/native-input/2' and (
+    if identity.get('schema') in {'nexgenvideo/native-input/2', 'nexgenvideo/native-input/3'} and (
             harness != os.environ['GITHUB_SHA'] or identity.get('validatorSHA256') != fingerprint()):
         raise ValueError('Qualification source or validator input changed')
     if sha(plan_file) != identity.get('planSHA256'):
@@ -568,6 +592,7 @@ def summarize(artifacts, output, plan_file, identity_file, expected_identity_sha
 
 
 def main():
+    from retained_packaging import consumer_arguments, argument_selectors
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command', required=True)
     plan = sub.add_parser('plan'); plan.add_argument('--scope', default='all'); plan.add_argument('--case', default='')
@@ -578,7 +603,9 @@ def main():
     resolver.add_argument('--product-source', default=''); resolver.add_argument('--source-proof', type=Path)
     resolver.add_argument('--source-proof-sha', default=''); resolver.add_argument('--source-run', type=int, default=0)
     resolver.add_argument('--source-artifact', type=int, default=0)
+    consumer_arguments(resolver)
     validate = sub.add_parser('validate-inputs')
+    consumer_arguments(validate)
     for name in ('artifact', 'run-id', 'product-source', 'source-run', 'unit-filter'):
         validate.add_argument('--' + name, default='')
     bpy = sub.add_parser('resolve-bpy-followup'); bpy.add_argument('--run-id', type=int, required=True)
@@ -594,10 +621,11 @@ def main():
     if args.command == 'plan':
         value = selection(args.scope, args.case, args.scale); atomic_json(args.output, value)
         outputs({'matrix': value['matrix'], 'native': bool(value['matrix']['include']), 'batch': value['batch']})
-    elif args.command == 'validate-inputs': validate_inputs(args.artifact, args.run_id, args.product_source, args.source_run, args.unit_filter)
+    elif args.command == 'validate-inputs': validate_inputs(args.artifact, args.run_id, args.product_source, args.source_run, args.unit_filter,
+                                                         packaging=argument_selectors(args))
     elif args.command == 'resolve': resolve(args.run_id, args.artifact, args.artifact_id, args.identity,
         product_source=args.product_source, proof_directory=args.source_proof, proof_sha=args.source_proof_sha,
-        source_run=args.source_run, source_artifact=args.source_artifact)
+        source_run=args.source_run, source_artifact=args.source_artifact, packaging=argument_selectors(args))
     elif args.command == 'resolve-bpy-followup': resolve_bpy_followup(args.run_id, args.identity)
     elif args.command == 'prepare': prepare(args.directory, args.identity)
     elif args.command == 'verify-runtime': verify_runtime(args.directory, args.identity, args.identity_sha)

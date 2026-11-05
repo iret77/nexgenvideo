@@ -3,6 +3,15 @@ name: Installed App User Journey
 on:
   workflow_dispatch:
     inputs:
+      packaging_producer_source_sha:
+        type: string
+        default: ''
+      packaging_provenance_artifact_id:
+        type: string
+        default: ''
+      packaging_provenance_artifact_sha256:
+        type: string
+        default: ''
       runtime_run_id:
         description: Run containing the already built workspace-ui-app artifact
         required: true
@@ -53,6 +62,15 @@ on:
         default: ''
   workflow_call:
     inputs:
+      packaging_producer_source_sha:
+        type: string
+        default: ''
+      packaging_provenance_artifact_id:
+        type: string
+        default: ''
+      packaging_provenance_artifact_sha256:
+        type: string
+        default: ''
       runtime_run_id:
         type: string
         default: ''
@@ -99,6 +117,10 @@ permissions:
   pull-requests: read
 
 env:
+  GH_TOKEN: ${{ github.token }}
+  PACKAGING_PRODUCER_SOURCE: ${{ inputs.packaging_producer_source_sha }}
+  PACKAGING_PROVENANCE_ARTIFACT_ID: ${{ inputs.packaging_provenance_artifact_id }}
+  PACKAGING_PROVENANCE_ARTIFACT_SHA256: ${{ inputs.packaging_provenance_artifact_sha256 }}
   PRODUCT_SOURCE: ${{ inputs.product_source_sha || github.sha }}
 
 concurrency:
@@ -132,7 +154,13 @@ jobs:
           FIXTURE_SHA: ${{ inputs.fixture_sha256 }}
         run: |
           python3 - <<'PY'
-          import json, os, re
+          import json, os, re, sys
+          sys.path.insert(0, 'scripts')
+          from retained_packaging import environment_selectors
+          packaging = environment_selectors()
+          if packaging is not None and (not os.environ['RETAINED_SOURCE']
+                  or not re.fullmatch('[1-9][0-9]*', os.environ['VERIFIED_PR_RUN'])):
+              raise ValueError('Packaging selectors require explicit retained product inputs')
           scale = os.environ['INTERFACE_SCALE']
           if scale not in {'all', '1', '1.25', '1.5'}:
               raise SystemExit('Unknown interface text size')
@@ -193,7 +221,8 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ORIGINAL_RUN/attempts/$ATTEMPT/jobs?per_page=100" > "$RUNNER_TEMP/retained-dmg/jobs.json"
           gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ORIGINAL_ARTIFACT" > "$RUNNER_TEMP/retained-dmg/artifact.json"
           python3 scripts/verify_diagnostic_candidate.py "$ORIGINAL_RUN" "$PRODUCT_SOURCE" \
-            "$ORIGINAL_ARTIFACT" "$ORIGINAL_DIGEST" "$RUNNER_TEMP/retained-dmg" --candidate-kind "$CANDIDATE_KIND"
+            "$ORIGINAL_ARTIFACT" "$ORIGINAL_DIGEST" "$RUNNER_TEMP/retained-dmg" --candidate-kind "$CANDIDATE_KIND" \
+            --packaging-producer-source "$PACKAGING_PRODUCER_SOURCE" --packaging-provenance-artifact-id "$PACKAGING_PROVENANCE_ARTIFACT_ID" --packaging-provenance-artifact-sha256 "$PACKAGING_PROVENANCE_ARTIFACT_SHA256"
       - uses: actions/upload-artifact@v4
         if: inputs.product_source_sha != ''
         with:
@@ -328,12 +357,18 @@ jobs:
           from pathlib import Path
           sys.path.insert(0, str(Path('scripts').resolve()))
           from reuse_bpy_binary_evidence import api, download
+          from retained_packaging import environment_selectors, consumer_binding, consumer_source, encoded
+          binding = consumer_binding(int(os.environ['ORIGINAL_RUN']), os.environ['PRODUCT_SOURCE'], environment_selectors(),
+              archive_root=Path(os.environ['RUNNER_TEMP']) / 'external-packaging')
+          producer_source = consumer_source(os.environ['PRODUCT_SOURCE'], binding)
+          if binding is not None:
+              (Path(os.environ['RUNNER_TEMP']) / 'external-packaging/consumer.json').write_bytes(encoded(binding))
           artifact = api('/actions/artifacts/' + os.environ['ORIGINAL_ARTIFACT'])
           if (artifact.get('id') != int(os.environ['ORIGINAL_ARTIFACT'])
               or artifact.get('name') != 'release-user-journey-input' or artifact.get('expired') is not False
               or artifact.get('digest') != 'sha256:' + os.environ['ORIGINAL_DIGEST']
               or artifact.get('workflow_run', {}).get('id') != int(os.environ['ORIGINAL_RUN'])
-              or artifact.get('workflow_run', {}).get('head_sha') != os.environ['PRODUCT_SOURCE']):
+              or artifact.get('workflow_run', {}).get('head_sha') != producer_source):
               raise ValueError('Retained signed DMG artifact identity changed')
           download(artifact, Path(os.environ['RUNNER_TEMP']) / 'retained-dmg.zip')
           PY
@@ -391,7 +426,9 @@ jobs:
           INTERFACE_SCALE: ${{ matrix.scale }}
           TEST_PRODUCER_SHA256: ${{ needs.test-runtime.outputs.producer_sha256 }}
         run: |
-          python3 scripts/external-gui/acceptance.py run \
+          packaging_args=()
+          if [ -n "$PACKAGING_PRODUCER_SOURCE" ]; then packaging_args+=(--packaging-binding "$RUNNER_TEMP/external-packaging/consumer.json"); fi
+          python3 scripts/external-gui/acceptance.py run "${packaging_args[@]}" \
             --dmg "$RUNNER_TEMP/external-runtime/NexGenVideo.dmg" \
             --dmg-sha256 "$EXPECTED_DMG_SHA256" --source-sha "$PRODUCT_SOURCE" \
             --scale "$INTERFACE_SCALE" --evidence "$RUNNER_TEMP/external-gui" \
@@ -409,7 +446,9 @@ jobs:
           FIXTURE_SHA256: ${{ inputs.fixture_sha256 }}
           TEST_PRODUCER_SHA256: ${{ needs.test-runtime.outputs.producer_sha256 }}
         run: |
-          python3 scripts/external-gui/transport.py run --dmg "$RUNNER_TEMP/external-runtime/NexGenVideo.dmg" \
+          packaging_args=()
+          if [ -n "$PACKAGING_PRODUCER_SOURCE" ]; then packaging_args+=(--packaging-binding "$RUNNER_TEMP/external-packaging/consumer.json"); fi
+          python3 scripts/external-gui/transport.py run "${packaging_args[@]}" --dmg "$RUNNER_TEMP/external-runtime/NexGenVideo.dmg" \
             --dmg-sha256 "$EXPECTED_DMG_SHA256" --source-sha "$PRODUCT_SOURCE" \
             --fixture "$RUNNER_TEMP/transport-fixture" --fixture-sha256 "$FIXTURE_SHA256" \
             --scale 1.5 --evidence "$RUNNER_TEMP/external-gui" \
@@ -423,7 +462,9 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$ARTIFACT_MODE" = dmg ]; then
-            python3 scripts/external-gui/acceptance.py validate \
+            packaging_args=()
+            if [ -n "$PACKAGING_PRODUCER_SOURCE" ]; then packaging_args+=(--packaging-binding "$RUNNER_TEMP/external-packaging/consumer.json"); fi
+            python3 scripts/external-gui/acceptance.py validate "${packaging_args[@]}" \
               --evidence "$RUNNER_TEMP/external-gui" --source-sha "$PRODUCT_SOURCE" \
               --scale "$INTERFACE_SCALE" \
               --dmg-sha256 "$EXPECTED_DMG_SHA256"
@@ -437,7 +478,9 @@ jobs:
         env:
           EXPECTED_DMG_SHA256: ${{ inputs.expected_dmg_sha256 }}
         run: |
-          python3 scripts/external-gui/transport.py validate --source-sha "$PRODUCT_SOURCE" \
+          packaging_args=()
+          if [ -n "$PACKAGING_PRODUCER_SOURCE" ]; then packaging_args+=(--packaging-binding "$RUNNER_TEMP/external-packaging/consumer.json"); fi
+          python3 scripts/external-gui/transport.py validate "${packaging_args[@]}" --source-sha "$PRODUCT_SOURCE" \
             --dmg-sha256 "$EXPECTED_DMG_SHA256" --scale 1.5 --evidence "$RUNNER_TEMP/external-gui"
       - uses: actions/upload-artifact@v4
         if: always()
