@@ -17,15 +17,49 @@ enum ProductionSpatialHistoryAcceptance {
         }
     }
 
-    private final class HistoryWindow: NSWindow {
-        var afterMouseUp: (() -> Void)?
+    @MainActor private final class HistoryAdmissionObserver {
+        weak var session: SpatialSceneSession?
+        let action: SpatialSceneHistoryIntent.Action
+        let oldID: UUID?
+        let sourceRevision: UUID
+        let priorRevision: UUID
+        let createdUptime = ProcessInfo.processInfo.systemUptime
+        private(set) var admitted: SpatialSceneHistoryIntent?
+        private(set) var rejected: SpatialSceneHistoryIntent?
+        private(set) var attemptedAt: TimeInterval?
+        private(set) var busyBeforeReload = false
+        private(set) var busyAfterReload = false
+        private(set) var errorAfterRejection: String?
+        private(set) var callbacks = 0
+        private(set) var failure: String?
 
-        override func sendEvent(_ event: NSEvent) {
-            super.sendEvent(event)
-            if event.type == .leftMouseUp, let action = afterMouseUp {
-                afterMouseUp = nil
-                action()
+        init(session: SpatialSceneSession, action: SpatialSceneHistoryIntent.Action,
+             sourceRevision: UUID, priorRevision: UUID) {
+            self.session = session
+            self.action = action
+            oldID = session.historyIntent?.id
+            self.sourceRevision = sourceRevision
+            self.priorRevision = priorRevision
+        }
+
+        func observe(_ intent: SpatialSceneHistoryIntent) {
+            guard let session else { return }
+            callbacks += 1
+            admitted = intent
+            guard intent.id != oldID, intent.action == action, intent.origin == .userInterface,
+                  intent.status == .admitted, !intent.busyAtRequest,
+                  intent.sourceRevision == sourceRevision, intent.priorRevision == priorRevision,
+                  session.busy else {
+                failure = "The actual UI callback admitted an unexpected history request."
+                return
             }
+            attemptedAt = ProcessInfo.processInfo.systemUptime
+            busyBeforeReload = session.busy
+            session.reload()
+            busyAfterReload = session.busy
+            if action == .undo { _ = session.requestRedo() } else { _ = session.requestUndo() }
+            rejected = session.historyIntent
+            errorAfterRejection = session.error
         }
     }
 
@@ -63,12 +97,13 @@ enum ProductionSpatialHistoryAcceptance {
                                         scale: SIMD3<Double>(repeating: 1), keyframe: false)
         guard session.error == nil, let edited = session.current,
               edited.snapshot.objects.first?.matrixWorld != cube.matrixWorld else { throw SpatialSceneError.changed }
-        let window = HistoryWindow(contentRect: NSRect(x: 0, y: 0, width: 960, height: 640),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 960, height: 640),
             styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: .darkAqua)
         window.contentView = NSHostingView(rootView: SpatialSceneView(session: session))
         window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
-        defer { window.afterMouseUp = nil; window.contentView = nil; window.close() }
+        defer { window.contentView = nil; window.close() }
         let driver = ProductionVisualSourcesDriver(window: window, output: output, name: "spatial-history-admission")
         do {
             try await driver.wait("real history control ready", seconds: 90) {
@@ -155,7 +190,7 @@ enum ProductionSpatialHistoryAcceptance {
                 "historyTrace": try JSONSerialization.jsonObject(with: JSONEncoder().encode(session.historyTrace))])
             return driver.result()
         } catch {
-            window.afterMouseUp = nil
+            try? session.observeHistoryAdmissionForAcceptance(nil)
             driver.failure(error)
             window.contentView = nil
             window.close()
@@ -200,45 +235,38 @@ enum ProductionSpatialHistoryAcceptance {
         return ["project": package, "manifest": manifest, "sha256": FileDigest.sha256(of: data)]
     }
 
-    private static func clickHistory(undo: Bool, session: SpatialSceneSession, window: HistoryWindow,
+    private static func clickHistory(undo: Bool, session: SpatialSceneSession, window: NSWindow,
                                      driver: ProductionVisualSourcesDriver, expected: SpatialSceneRevision,
                                      previous: SpatialSceneRevision, root: URL) async throws -> SpatialSceneRevision {
         let before = try await read(session: session, root: root)
         let action: SpatialSceneHistoryIntent.Action = undo ? .undo : .redo
         let oldID = session.historyIntent?.id
-        var admitted: SpatialSceneHistoryIntent?
-        var rejected: SpatialSceneHistoryIntent?
-        var attemptedAt: TimeInterval?
-        var busyBeforeReload = false
-        var busyAfterReload = false
-        var errorAfterRejection: String?
-        window.afterMouseUp = {
-            attemptedAt = ProcessInfo.processInfo.systemUptime
-            admitted = session.historyIntent
-            busyBeforeReload = session.busy
-            session.reload()
-            busyAfterReload = session.busy
-            if undo { _ = session.requestRedo() } else { _ = session.requestUndo() }
-            rejected = session.historyIntent
-            errorAfterRejection = session.error
+        let observer = HistoryAdmissionObserver(session: session, action: action,
+            sourceRevision: previous.manifest.revision, priorRevision: expected.manifest.revision)
+        try session.observeHistoryAdmissionForAcceptance(observer.observe)
+        defer { try? session.observeHistoryAdmissionForAcceptance(nil) }
+        do {
+            try await driver.clickButton(undo ? "spatial.undo" : "spatial.redo", title: undo ? "Undo" : "Redo", in: window)
+            try await driver.wait("real history callback and restoration", seconds: 90) {
+                observer.callbacks == 1 && !session.busy
+            }
+        } catch {
+            let failure = error
+            do { try driver.record("actual history callback failure", fields: admissionReceipt(observer, session: session)) }
+            catch { FileHandle.standardError.write(Data(("HISTORY_ADMISSION_EVIDENCE_FAIL " + error.localizedDescription + "\n").utf8)) }
+            throw failure
         }
-        try await driver.click(undo ? "spatial.undo" : "spatial.redo", in: window)
-        try await driver.wait("real history callback and restoration", seconds: 90) {
-            attemptedAt != nil && !session.busy
-        }
-        let record: [String: Any] = ["action": action.rawValue, "reloadAttemptUptime": attemptedAt as Any? ?? NSNull(),
-            "busyBeforeReload": busyBeforeReload, "busyAfterReload": busyAfterReload,
-            "errorAfterRejection": errorAfterRejection as Any? ?? NSNull(),
-            "admitted": try receipt(admitted), "concurrentRejection": try receipt(rejected),
-            "completed": try receipt(session.historyIntent)]
-        try driver.record("actual history callback reload order", fields: record)
-        guard let admitted, admitted.id != oldID, admitted.action == action, admitted.origin == .userInterface,
+        try driver.record("actual history callback reload order", fields: admissionReceipt(observer, session: session))
+        guard observer.callbacks == 1, observer.failure == nil,
+              let admitted = observer.admitted, admitted.id != oldID, admitted.action == action, admitted.origin == .userInterface,
               admitted.status == .admitted, !admitted.busyAtRequest,
               admitted.sourceRevision == previous.manifest.revision,
               admitted.priorRevision == expected.manifest.revision,
-              let attemptedAt, admitted.observedUptime <= attemptedAt, busyBeforeReload, busyAfterReload,
-              rejected?.status == .rejectedBusy, rejected?.busyAtRequest == true,
-              errorAfterRejection == nil,
+              admitted.observedUptime >= observer.createdUptime,
+              let attemptedAt = observer.attemptedAt, admitted.observedUptime <= attemptedAt,
+              observer.busyBeforeReload, observer.busyAfterReload,
+              observer.rejected?.status == .rejectedBusy, observer.rejected?.busyAtRequest == true,
+              observer.errorAfterRejection == nil,
               session.historyIntent?.id == admitted.id, session.historyIntent?.status == .committed,
               !session.historyTrace.overflow else {
             throw failed("The genuine ready history callback did not claim its restoration before the reload attempt.")
@@ -255,6 +283,18 @@ enum ProductionSpatialHistoryAcceptance {
         guard session.canUndo, session.canRedo == undo else { throw SpatialSceneError.changed }
         try driver.capture(action.rawValue + "-restored", target: window)
         return result
+    }
+
+    private static func admissionReceipt(_ observer: HistoryAdmissionObserver, session: SpatialSceneSession) throws -> [String: Any] {
+        ["action": observer.action.rawValue, "expectedSourceRevision": observer.sourceRevision.uuidString,
+            "expectedPriorRevision": observer.priorRevision.uuidString,
+            "observerCreatedUptime": observer.createdUptime,
+            "reloadAttemptUptime": observer.attemptedAt as Any? ?? NSNull(),
+            "admissionCallbacks": observer.callbacks, "admissionFailure": observer.failure as Any? ?? NSNull(),
+            "busyBeforeReload": observer.busyBeforeReload, "busyAfterReload": observer.busyAfterReload,
+            "errorAfterRejection": observer.errorAfterRejection as Any? ?? NSNull(),
+            "admitted": try receipt(observer.admitted), "concurrentRejection": try receipt(observer.rejected),
+            "completed": try receipt(session.historyIntent)]
     }
 
     private static func restored(session: SpatialSceneSession, expected: SpatialSceneRevision,

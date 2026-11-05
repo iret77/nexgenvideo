@@ -78,6 +78,7 @@ final class SpatialSceneSession {
     private var userCancellationRequested = false
     private(set) var historyIntent: SpatialSceneHistoryIntent?
     private(set) var historyTrace = SpatialSceneHistoryTrace()
+    @ObservationIgnored private var historyAdmissionObserver: (@MainActor (SpatialSceneHistoryIntent) -> Void)?
 
     init(pipelineRoot: URL, runtime: BpyRuntimeSession, authority: any SpatialSceneAuthority,
          commitObserver: (@MainActor (SpatialSceneCommitProgress) -> Void)? = nil) {
@@ -434,6 +435,12 @@ final class SpatialSceneSession {
         }
     }
 
+    func observeHistoryAdmissionForAcceptance(_ observer: (@MainActor (SpatialSceneHistoryIntent) -> Void)?) throws {
+        guard ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"]?.isEmpty == false,
+              observer == nil || historyAdmissionObserver == nil else { throw SpatialSceneError.changed }
+        historyAdmissionObserver = observer
+    }
+
     private func beginHistory(undo: Bool, origin: SpatialSceneHistoryIntent.Origin) -> (id: UUID, task: Task<Void, Never>)? {
         let target = historyTarget(undo: undo)
         var intent = SpatialSceneHistoryIntent(id: UUID(), action: undo ? .undo : .redo, origin: origin,
@@ -452,6 +459,12 @@ final class SpatialSceneSession {
         beginOperation()
         recordHistory(intent)
         let admitted = intent
+        if admitted.origin == .userInterface, admitted.status == .admitted, !admitted.busyAtRequest,
+           ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"]?.isEmpty == false,
+           let observer = historyAdmissionObserver {
+            historyAdmissionObserver = nil
+            observer(admitted)
+        }
         let task = Task {
             let committed = await performRestore(undo: undo, prior: target.prior, head: target.head)
             var completed = admitted
