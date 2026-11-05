@@ -10,10 +10,125 @@ import unittest
 from unittest.mock import Mock, mock_open, patch
 import zipfile
 
+import yaml
+
 from hang_diagnostic_acceptance import capture_helper_failure, verify_helper_recovery, verify_retained_key
 from verify_diagnostic_candidate import APP_DIAGNOSTIC_PATHS, BPY_DIAGNOSTIC_PATHS, CI_HARNESS_PATHS, HARNESS_PATHS, verify, verify_app_crash_archive, verify_app_diagnostic, verify_bpy_diagnostic, verify_ci
 from verify_diagnostic_candidate import SIGNED_BPY_HARNESS_PATHS, SIGNED_JOURNEY_HARNESS_PATHS, verify_signed_bpy, verify_signed_journey
 from verify_diagnostic_candidate import SIGNED_DESKTOP_HARNESS_PATHS, SIGNED_WORKSPACE_HARNESS_PATHS, verify_signed_desktop, verify_signed_workspace
+
+
+class DiagnosticCompiledClientRouteTests(unittest.TestCase):
+    def setUp(self):
+        self.workflow = yaml.safe_load((Path(__file__).resolve().parents[1] / '.github/workflows/diagnostic-acceptance.yml').read_text())
+        self.inputs = self.workflow.get('on', self.workflow.get(True))['workflow_dispatch']['inputs']
+        self.steps = self.workflow['jobs']['source']['steps']
+        guard = next(step for step in self.steps if step.get('name') == 'Require exact compiled UI client selectors')
+        self.code = guard['run'].split("python3 - <<'PY'\n", 1)[1].rsplit('\nPY', 1)[0]
+        self.env = dict(KIND='signed-transport', TEST_BUNDLE_RUN_ID='12', TEST_BUNDLE_ARTIFACT_ID='34',
+                        TEST_BUNDLE_ARTIFACT_SHA256='b' * 64, GITHUB_SHA='a' * 40)
+        self.fields = ('TEST_BUNDLE_RUN_ID', 'TEST_BUNDLE_ARTIFACT_ID', 'TEST_BUNDLE_ARTIFACT_SHA256')
+        with patch.object(sys, 'path', [str(Path(__file__).parent / 'external-gui'), *sys.path]):
+            import test_bundle
+        self.bundle = test_bundle
+
+    def guard(self, **changes):
+        with patch.dict(os.environ, dict(self.env, **changes), clear=True), patch.object(sys, 'path', sys.path.copy()):
+            exec(compile(self.code, '<diagnostic-client-guard>', 'exec'), {})
+
+    def test_signed_modes_accept_the_exact_tuple_without_resolving_another_artifact(self):
+        with patch.object(self.bundle, 'api') as api, patch.object(self.bundle, 'validate_client_source',
+                wraps=self.bundle.validate_client_source) as validate:
+            for kind in ('signed-journey', 'signed-transport'):
+                with self.subTest(kind=kind):
+                    self.guard(KIND=kind)
+                    validate.assert_called_with('12', '34', 'b' * 64, 'a' * 40)
+            api.assert_not_called()
+
+    def test_journey_preserves_empty_and_same_source_run_only_but_rejects_foreign_run_only(self):
+        with patch.object(self.bundle, 'api') as api:
+            self.guard(KIND='signed-journey', **dict.fromkeys(self.fields, ''))
+            api.assert_not_called()
+            api.return_value = dict(repository=dict(full_name='iret77/nexgenvideo'), head_sha='a' * 40)
+            self.guard(KIND='signed-journey', TEST_BUNDLE_ARTIFACT_ID='', TEST_BUNDLE_ARTIFACT_SHA256='')
+            api.assert_called_once_with('/actions/runs/12')
+            api.return_value['head_sha'] = 'c' * 40
+            with self.assertRaisesRegex(ValueError, 'different client source'):
+                self.guard(KIND='signed-journey', TEST_BUNDLE_ARTIFACT_ID='', TEST_BUNDLE_ARTIFACT_SHA256='')
+
+    def test_transport_rejects_every_incomplete_tuple_before_any_remote_lookup(self):
+        with patch.object(self.bundle, 'api') as api:
+            for mask in range(7):
+                changes = {key: self.env[key] if mask & (1 << index) else '' for index, key in enumerate(self.fields)}
+                with self.subTest(mask=mask), self.assertRaisesRegex(ValueError, 'exact original compiled UI client'):
+                    self.guard(**changes)
+            api.assert_not_called()
+
+    def test_signed_modes_reject_malformed_client_identity_and_consumer_source(self):
+        for kind in ('signed-journey', 'signed-transport'):
+            for field, value in (('TEST_BUNDLE_RUN_ID', '0'), ('TEST_BUNDLE_RUN_ID', ' 12'),
+                                 ('TEST_BUNDLE_ARTIFACT_ID', '-1'), ('TEST_BUNDLE_ARTIFACT_ID', '3.4'),
+                                 ('TEST_BUNDLE_ARTIFACT_SHA256', 'B' * 64), ('TEST_BUNDLE_ARTIFACT_SHA256', 'b' * 63),
+                                 ('GITHUB_SHA', 'a' * 39)):
+                with self.subTest(kind=kind, field=field, value=value), self.assertRaises(ValueError):
+                    self.guard(KIND=kind, **{field: value})
+
+    def test_other_modes_reject_each_ignored_selector_before_any_remote_lookup(self):
+        with patch.object(self.bundle, 'api') as api:
+            for kind in self.inputs['candidate_kind']['options']:
+                if kind in ('signed-journey', 'signed-transport'):
+                    continue
+                self.guard(KIND=kind, **dict.fromkeys(self.fields, ''))
+                for field in self.fields:
+                    selected = dict.fromkeys(self.fields, '')
+                    selected[field] = self.env[field]
+                    with self.subTest(kind=kind, field=field), self.assertRaisesRegex(ValueError, 'cannot be ignored'):
+                        self.guard(KIND=kind, **selected)
+            api.assert_not_called()
+
+    def test_registered_caller_exposes_and_forwards_all_three_exact_selectors(self):
+        self.assertLessEqual(len(self.inputs), 25)
+        for name in ('test_bundle_run_id', 'test_bundle_artifact_id', 'test_bundle_artifact_sha256'):
+            self.assertEqual(self.inputs[name], dict(description=self.inputs[name]['description'], type='string', default=''))
+            for kind in ('signed-journey', 'signed-transport'):
+                job = self.workflow['jobs'][kind]
+                self.assertEqual(job['needs'], ['source', 'transport-fixture'] if kind == 'signed-transport' else 'source')
+                self.assertEqual(job['uses'], './.github/workflows/external-gui-acceptance.yml')
+                self.assertEqual(job['with'][name], '${{ inputs.' + name + ' }}')
+
+    def test_original_transport_validator_keeps_native_xcode_and_pinned_media_tools(self):
+        source = self.workflow['jobs']['source']
+        self.assertEqual(source['runs-on'], 'ubuntu-24.04')
+        fixture_job = self.workflow['jobs']['transport-fixture']
+        self.assertEqual(fixture_job['needs'], 'source')
+        self.assertEqual(fixture_job['if'], "inputs.candidate_kind == 'signed-transport'")
+        self.assertEqual(fixture_job['runs-on'], 'macrunner')
+        self.assertEqual(fixture_job['timeout-minutes'], 10)
+        steps = fixture_job['steps']
+        self.assertEqual(steps[0]['uses'], 'actions/checkout@v4')
+        self.assertEqual(steps[0]['with']['fetch-depth'], 0)
+        self.assertFalse(any(step.get('id') == 'transport_fixture' for step in self.steps))
+        setup = next(step for step in steps if step.get('id') == 'fixture-media-tools')
+        self.assertEqual(setup['if'], "inputs.candidate_kind == 'signed-transport'")
+        self.assertEqual(setup['uses'], 'mamba-org/setup-micromamba@f457c30a868e4760d3a6fcea5f25dc655b8edf39')
+        self.assertEqual(setup['with']['create-args'], 'ffmpeg=9.0.2=gpl_*')
+        self.assertEqual(setup['with']['micromamba-root-path'], '${{ runner.temp }}/micromamba')
+        self.assertEqual(setup['with']['post-cleanup'], 'all')
+        inspect = next(step for step in steps if step.get('name') == 'Require independent fixture media inspection')
+        self.assertEqual(inspect['if'], setup['if'])
+        self.assertEqual(inspect['env']['MEDIA_TOOLS_BIN'], '${{ steps.fixture-media-tools.outputs.environment-path }}/bin')
+        for command in ('test "$(uname -m)" = arm64', '"$MEDIA_TOOLS_BIN/ffmpeg" -version',
+                        '"$MEDIA_TOOLS_BIN/ffprobe" -version', 'echo "$MEDIA_TOOLS_BIN" >> "$GITHUB_PATH"'):
+            self.assertIn(command, inspect['run'])
+        fixture = next(step for step in steps if step.get('id') == 'transport_fixture')
+        self.assertEqual(fixture['if'], setup['if'])
+        self.assertLess(steps.index(setup), steps.index(inspect))
+        self.assertLess(steps.index(inspect), steps.index(fixture))
+        self.assertIn('python3 scripts/external-gui/transport_fixture.py --run-id "$CANDIDATE_RUN"', fixture['run'])
+        self.assertNotIn('xcodebuild', '\n'.join(step.get('run', '') for step in self.steps + steps))
+        consumer = self.workflow['jobs']['signed-transport']['with']
+        for output in ('fixture_artifact_id', 'fixture_sha256'):
+            self.assertEqual(consumer[output], '${{ needs.transport-fixture.outputs.' + output + ' }}')
 
 
 class AppCrashCandidateTests(unittest.TestCase):
