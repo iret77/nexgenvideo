@@ -379,15 +379,17 @@ def verify_button_inventory(events):
 
 
 def verify_completed_suite(suite, source, run_id):
+    require(suite.get("schema") == 1 and suite.get("sourceSHA") == source and suite.get("completed") is True
+            and suite.get("scope") == "all" and suite.get("configuration") == "release"
+            and suite.get("filter") == "" and suite.get("reusedTestExecutions") == 896
+            and (suite.get("testExecutions"), suite.get("freshTestExecutions")) in ((4620, 3724), (4637, 3741))
+            and suite.get("combinedFrameworks", {}).get("passed") is True,
+            "Resumed Release aggregate is incomplete")
     retained = suite.get("retainedBackends", [])
     require(isinstance(retained, list) and len(retained) == 1 and isinstance(retained[0], dict),
             "Resumed Release must retain exactly the Engine backend")
     added = 17 if BUTTON_FIXTURE in retained[0].get("changedPaths", []) else 0
-    require(suite.get("schema") == 1 and suite.get("sourceSHA") == source and suite.get("completed") is True
-            and suite.get("scope") == "all" and suite.get("configuration") == "release"
-            and suite.get("filter") == "" and suite.get("testExecutions") == 4620 + added
-            and suite.get("freshTestExecutions") == 3724 + added and suite.get("reusedTestExecutions") == 896
-            and suite.get("combinedFrameworks", {}).get("passed") is True,
+    require(suite.get("testExecutions") == 4620 + added and suite.get("freshTestExecutions") == 3724 + added,
             "Resumed Release aggregate is incomplete")
     verify_receipt(retained[0], source, run_id)
     phases = suite.get("phases", [])
