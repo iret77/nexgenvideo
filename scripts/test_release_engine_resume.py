@@ -182,8 +182,9 @@ class ReleaseEngineResumeTests(unittest.TestCase):
                 return parser
             if args[:2] == ("git", "rev-parse"):
                 revision, path = args[2].split(":", 1)
-                self.assertIn(revision, (resume.SOURCE, SOURCE))
-                return "0" * 40 if (revision, path) == object_changed else resume.ENGINE_SOURCE_OBJECTS[path]
+                self.assertIn(revision, (resume.SOURCE, SOURCE, resume.REVIEWED_HARNESS_SOURCE))
+                expected = resume.ENGINE_SOURCE_OBJECTS if path in resume.ENGINE_SOURCE_OBJECTS else resume.REVIEWED_HARNESS_OBJECTS
+                return "0" * 40 if (revision, path) == object_changed else expected[path]
             self.fail("Unexpected source query: " + repr(args))
         after = parser.replace("{}", "{'changed': True}") if parser_changed else parser
         with patch.object(resume, "command", side_effect=output), patch.object(resume.subprocess, "run"), \
@@ -206,6 +207,11 @@ class ReleaseEngineResumeTests(unittest.TestCase):
 
     def test_reviewed_app_ui_and_ci_changes_require_unchanged_engine_dependency_objects(self):
         changed = [resume.FIXTURE, "Sources/NexGenVideo/ThreeD/SpatialSceneView.swift",
+                   "Sources/NexGenVideo/Resources/Changelog/changelog.json",
+                   "Sources/NexGenVideo/ThreeD/SpatialSceneSession.swift",
+                   "Sources/NexGenVideo/ThreeD/BpyRuntimeSelfTest.swift",
+                   "Sources/NexGenVideo/App/ProductionSpatialHistoryAcceptance.swift",
+                   "Sources/NexGenVideo/App/ProductionSpatialAcceptance.swift",
                    "Sources/NexGenVideo/UI/AppTheme.swift", "scripts/external-gui/transport.py",
                    "scripts/test_verified_pr_source_checks.py"]
         self.assertEqual(self.source_closure("\n".join(changed)), changed)
@@ -236,6 +242,39 @@ class ReleaseEngineResumeTests(unittest.TestCase):
             with self.assertRaises(ValueError): resume.verify_receipt(changed, SOURCE, RUN)
             changed = copy.deepcopy(receipt)
             changed["engineSourceObjects"]["Sources/NexGenVideo"] = "0" * 40
+            with self.assertRaises(ValueError): resume.verify_receipt(changed, SOURCE, RUN)
+
+    def test_retained_ci_paths_require_exact_reviewed_harness_bytes(self):
+        changed = [resume.FIXTURE, *resume.REVIEWED_HARNESS_OBJECTS]
+        self.assertEqual(self.source_closure("\n".join(changed)), changed)
+        for revision in (resume.REVIEWED_HARNESS_SOURCE, SOURCE):
+            for path in resume.REVIEWED_HARNESS_OBJECTS:
+                with self.subTest(revision=revision, path=path), self.assertRaises(ValueError):
+                    self.source_closure("\n".join(changed), object_changed=(revision, path))
+        with self.assertRaises(ValueError): self.source_closure("\n".join(changed + ["scripts/unknown.py"]))
+
+    def test_retained_ci_receipt_requires_the_complete_reviewed_harness_closure(self):
+        receipt = self.receipt()
+        receipt["changedPaths"].extend(resume.REVIEWED_HARNESS_OBJECTS)
+        receipt["engineSourceObjects"] = dict(resume.ENGINE_SOURCE_OBJECTS)
+        with self.phase_pin(receipt):
+            with self.assertRaises(ValueError): resume.verify_receipt(receipt, SOURCE, RUN)
+            receipt.update(reviewedHarnessSourceSHA=resume.REVIEWED_HARNESS_SOURCE,
+                           reviewedHarnessObjects=dict(resume.REVIEWED_HARNESS_OBJECTS))
+            resume.verify_receipt(receipt, SOURCE, RUN)
+            for path in resume.REVIEWED_HARNESS_OBJECTS:
+                for mutation in ("changed", "missing"):
+                    changed = copy.deepcopy(receipt)
+                    if mutation == "changed": changed["reviewedHarnessObjects"][path] = "0" * 40
+                    else: changed["reviewedHarnessObjects"].pop(path)
+                    with self.subTest(path=path, mutation=mutation), self.assertRaises(ValueError):
+                        resume.verify_receipt(changed, SOURCE, RUN)
+            for key in ("reviewedHarnessSourceSHA", "reviewedHarnessObjects"):
+                changed = copy.deepcopy(receipt); changed.pop(key)
+                with self.subTest(missing=key), self.assertRaises(ValueError): resume.verify_receipt(changed, SOURCE, RUN)
+            changed = copy.deepcopy(receipt); changed["reviewedHarnessSourceSHA"] = "0" * 40
+            with self.assertRaises(ValueError): resume.verify_receipt(changed, SOURCE, RUN)
+            changed = copy.deepcopy(receipt); changed["reviewedHarnessObjects"]["scripts/unknown.py"] = "0" * 40
             with self.assertRaises(ValueError): resume.verify_receipt(changed, SOURCE, RUN)
 
     def test_signed_input_cannot_disguise_retained_tests_as_fresh(self):

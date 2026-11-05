@@ -162,6 +162,8 @@ enum ProductionSceneUIAcceptance {
             "ready": driver.state("spatial.scene", in: driver.window) as Any? ?? NSNull(),
             "canUndo": driver.state("spatial.undo", in: driver.window) as Any? ?? NSNull(),
             "canRedo": driver.state("spatial.redo", in: driver.window) as Any? ?? NSNull(),
+            "historyIntent": driver.text("spatial.history.intent", in: driver.window) as Any? ?? NSNull(),
+            "historyNotice": driver.text("spatial.history.notice", in: driver.window) as Any? ?? NSNull(),
             "sceneError": driver.text("spatial.error", in: driver.window) as Any? ?? NSNull()])
         if completed {
             guard canonical["error"] == nil, canonical["revision"] == probe else {

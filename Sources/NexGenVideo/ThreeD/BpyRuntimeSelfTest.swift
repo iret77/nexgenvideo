@@ -119,7 +119,12 @@ enum BpyRuntimeSelfTest {
                     withIntermediateDirectories: true
                 )
                 outputDirectory = output
-                pendingResult = try await run(output: output)
+                if let scope = ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY_SCOPE"] {
+                    guard scope == "scene-history" else { throw GateBlocked("Unknown native bpy acceptance scope.") }
+                    pendingResult = try await runSceneHistory(output: output)
+                } else {
+                    pendingResult = try await run(output: output)
+                }
                 AppTermination.request()
             } catch {
                 recordInspectionFailureDiagnostic()
@@ -386,11 +391,28 @@ enum BpyRuntimeSelfTest {
                 to: outputDirectory.appendingPathComponent("result.json"),
                 options: .atomic
             )
-            FileHandle.standardOutput.write(Data("SELFTEST_BPY_OK\n".utf8))
+            let marker = result["scope"] as? String == "scene-history" ? "SELFTEST_BPY_HISTORY_OK\n" : "SELFTEST_BPY_OK\n"
+            FileHandle.standardOutput.write(Data(marker.utf8))
         } catch {
             let message = "SELFTEST_BPY_FAIL \(error.localizedDescription)\n"
             FileHandle.standardError.write(Data(message.utf8))
         }
+    }
+
+    private static func runSceneHistory(output: URL) async throws -> [String: Any] {
+        var opened: ProductionPlanningAcceptanceFixture.Context?
+        var history: [String: Any] = [:]
+        defer { opened?.document.close() }
+        _ = try await ProductionPlanningAcceptanceFixture.makeScript { context in
+            opened = context
+            NSDocumentController.shared.addDocument(context.document)
+            history = try await ProductionSpatialHistoryAcceptance.run(context: context, output: output)
+            guard let key = context.editor.openWorkingCopyKey else { throw SpatialSceneError.changed }
+            terminationOperation = try BpyRuntimeHost.shared.acquireOperation(document: context.document, documentID: key)
+        }
+        return ["schema": "nexgenvideo/scene-history-runtime/1", "scope": "scene-history",
+            "sourceSHA": Bundle.main.object(forInfoDictionaryKey: "NGVSourceCommit") as? String ?? "",
+            "historyAdmission": history]
     }
 
     private static func run(output: URL) async throws -> [String: Any] {

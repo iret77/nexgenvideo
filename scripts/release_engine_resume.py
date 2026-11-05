@@ -34,6 +34,11 @@ ORIGINAL_PATHS = {
     "scripts/test_release_recovery.py", "scripts/test_release_workflow.py",
 }
 PATHS = ORIGINAL_PATHS | {
+    "Sources/NexGenVideo/Resources/Changelog/changelog.json",
+    "Sources/NexGenVideo/ThreeD/SpatialSceneSession.swift",
+    "Sources/NexGenVideo/ThreeD/BpyRuntimeSelfTest.swift",
+    "Sources/NexGenVideo/App/ProductionSpatialHistoryAcceptance.swift",
+    "Sources/NexGenVideo/App/ProductionSpatialAcceptance.swift",
     "Sources/NexGenVideo/App/ProductionSceneUIAcceptance.swift",
     "Sources/NexGenVideo/App/ProductionVisualSourcesDriver.swift",
     "Sources/NexGenVideo/ThreeD/SpatialSceneView.swift", "Sources/NexGenVideo/UI/AppTheme.swift",
@@ -73,6 +78,30 @@ ENGINE_SOURCE_OBJECTS = {
 }
 
 
+REVIEWED_HARNESS_SOURCE = 'a42a092707d1a6e37b09b874d1d09278d351c585'
+REVIEWED_HARNESS_OBJECTS = {
+    ".github/actions/prepare-bpy-source/action.yml": "467d96269e791bebf8e15f75bb5882511fd8257f",
+    ".github/workflows/bpy-runtime-acceptance.yml": "1b6b9e75514ef8f73dc15d05e0953c61797dcc7d",
+    ".github/workflows/chat-hang-replay.yml": "9979ecf70abf89e74efe2d95356be7b1d6e65f0a",
+    ".github/workflows/private-example-analysis.yml": "de7c832cbb2e7562a18d7468c417ddda6f6481fb",
+    ".github/workflows/retained-runtime-failure-diagnostic.yml": "6b92cc75f5de30de492ab8e812ea6e59f30f2af2",
+    ".github/workflows/workspace-ui-acceptance.yml": "142a72ff347d0f7a0d646b0accbb7e07b6ecd9ea",
+    "scripts/app_termination_acceptance.py": "99fc7b59b031e93cf8773b558d7a64b04d94387e",
+    "scripts/notarize.sh": "9caf88403052ad45fa81dedfaab5d88cdb5d1903",
+    "scripts/plan_dmg_capacity.py": "c3069b43a1df557d67b49f778ab46e16b6953288",
+    "scripts/retained_packaging.py": "65ac9762e16b52e562112e960d7953872adb008b",
+    "scripts/retained_runtime_failure_diagnostic.py": "e0c86caf002a7d9c4907ad41b6a2b3a06a68beac",
+    "scripts/runtime_pointer_diagnostic.swift": "e3c65906f7d614505d843c4f1d64d05fde1149d6",
+    "scripts/runtime_pointer_source.py": "96a452607a2ad5b233ed6cb49d22d82131c2c516",
+    "scripts/test_app_termination_acceptance.py": "6d73f7773410aee316c3430b26cd95545a9c32c4",
+    "scripts/test_release_dmg_packaging.py": "27442c52f51ce04ae8e69e578b2865ba1dfcfc55",
+    "scripts/test_retained_packaging.py": "3f586f596b3a63f61f005ec3a520c5d2ef4de4b8",
+    "scripts/test_retained_runtime_failure_diagnostic.py": "b16fa818f049f88663d2236a61c3255bcee78ef7",
+    "scripts/workspace_native_ci.py": "75334f813fee5bd1564eb5225b7579ffd20c0465"
+}
+PATHS |= set(REVIEWED_HARNESS_OBJECTS)
+
+
 def command(*args):
     return subprocess.check_output(args, stdin=subprocess.DEVNULL, text=True, timeout=40).strip()
 
@@ -90,6 +119,15 @@ def verify_engine_source_objects(head):
                 "Retained Engine dependency object changed: " + path)
 
 
+def verify_harness_source_objects(head, changed):
+    if not set(changed).intersection(REVIEWED_HARNESS_OBJECTS):
+        return
+    for path, pinned in REVIEWED_HARNESS_OBJECTS.items():
+        require(command("git", "rev-parse", REVIEWED_HARNESS_SOURCE + ":" + path) == pinned
+                and command("git", "rev-parse", head + ":" + path) == pinned,
+                "Reviewed retained CI source object changed: " + path)
+
+
 def verify_sources(head, version_bump=False):
     require(re.fullmatch(r"[a-f0-9]{40}", head) and command("git", "rev-parse", "HEAD") == head,
             "Release Engine resume checkout differs")
@@ -102,6 +140,7 @@ def verify_sources(head, version_bump=False):
     require(set(dirty) <= ({"Sources/NexGenVideo/Resources/Info.plist"} if version_bump else set()),
             "Engine resume tracked inputs are dirty")
     verify_engine_source_objects(head)
+    verify_harness_source_objects(head, changed)
     before = command("git", "show", SOURCE + ":scripts/run_macos_tests.py")
     require(event_parser(before) == event_parser(Path("scripts/run_macos_tests.py").read_text()),
             "The retained native event verification contract changed")
@@ -211,6 +250,7 @@ def prepare(run_id, root):
                "originalSourceSHA": SOURCE, "originalRun": original, "originalJobs": jobs,
                "artifact": artifact, "artifactSHA256": DIGEST, "originalLogSHA256": LOG_DIGEST,
                "changedPaths": changed, "engineSourceObjects": ENGINE_SOURCE_OBJECTS,
+               "reviewedHarnessSourceSHA": REVIEWED_HARNESS_SOURCE, "reviewedHarnessObjects": REVIEWED_HARNESS_OBJECTS,
                "toolchain": toolchain(raw), "proof": proof,
                "acquiredAt": datetime.now(timezone.utc).isoformat()}
     verify_receipt(receipt, head, int(os.environ["GITHUB_RUN_ID"]))
@@ -252,6 +292,11 @@ def verify_receipt(receipt, source, run_id):
     else:
         require(set(receipt["changedPaths"]) <= ORIGINAL_PATHS,
                 "Extended App/CI continuation requires exact Engine dependency objects")
+    if set(receipt["changedPaths"]).intersection(REVIEWED_HARNESS_OBJECTS) or any(
+            key in receipt for key in ("reviewedHarnessSourceSHA", "reviewedHarnessObjects")):
+        require(receipt.get("reviewedHarnessSourceSHA") == REVIEWED_HARNESS_SOURCE
+                and receipt.get("reviewedHarnessObjects") == REVIEWED_HARNESS_OBJECTS,
+                "Reviewed retained CI source receipt differs")
 
 
 def verify(root, version_bump=False):

@@ -9,10 +9,12 @@ enum ProductionSpatialAcceptance {
         var nativeSceneUI: [[String: Any]] = []
         var postCommitCancellation: [String: String] = [:]
         var hashCancellation: [String: String] = [:]
+        var historyAdmission: [String: Any] = [:]
         defer { opened?.document.close() }
         let context = try await ProductionPlanningAcceptanceFixture.makeScript { value in
             opened = value
             NSDocumentController.shared.addDocument(value.document)
+            historyAdmission = try await ProductionSpatialHistoryAcceptance.run(context: value, output: output)
             let native = try await ProductionSceneUIAcceptance.run(context: value, output: output)
             selectedScene = native.0; nativeSceneUI = native.1
             postCommitCancellation = try await ProductionSpatialCommitCancellationAcceptance.run(context: value, output: output)
@@ -135,7 +137,7 @@ enum ProductionSpatialAcceptance {
             "nativeSpatialStoryboardUI": nativeSpatialStoryboardUI,
             "nativeStoryboardUI": nativeStoryboardUI, "nativeBibleUI": nativeBibleUI,
             "promotion": promotion, "referencePurpose": referencePurpose, "postCommitCancellation": postCommitCancellation,
-            "hashCancellation": hashCancellation]
+            "hashCancellation": hashCancellation, "historyAdmission": historyAdmission]
     }
 
     private static func failed(_ message: String) -> GateBlocked { GateBlocked("Spatial production acceptance: " + message) }
