@@ -1,0 +1,81 @@
+name: Observe retained scene-history accessibility
+
+on:
+  workflow_call:
+    inputs:
+      run_id:
+        type: string
+        required: true
+      source_sha:
+        type: string
+        required: true
+      artifact_id:
+        type: string
+        required: true
+      artifact_sha256:
+        type: string
+        required: true
+      failure_artifact_id:
+        type: string
+        required: true
+      failure_artifact_sha256:
+        type: string
+        required: true
+      expected_dmg_sha256:
+        type: string
+        required: true
+      verified_pr_run_id:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+
+concurrency:
+  group: scene-history-hierarchy-${{ inputs.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  measurement:
+    runs-on: macrunner
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      KIND: native-scene-history-hierarchy
+      PRODUCER_RUN: ${{ inputs.run_id }}
+      PRODUCER_SHA: ${{ inputs.source_sha }}
+      DIAGNOSTIC_ID: ${{ inputs.artifact_id }}
+      DIAGNOSTIC_DIGEST: ${{ inputs.artifact_sha256 }}
+      FAILURE_ID: ${{ inputs.failure_artifact_id }}
+      FAILURE_DIGEST: ${{ inputs.failure_artifact_sha256 }}
+      DMG_DIGEST: ${{ inputs.expected_dmg_sha256 }}
+      VERIFIED_PR: ${{ inputs.verified_pr_run_id }}
+      SCALE: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Observe only the exact retained App History scope
+        run: |
+          set -euo pipefail
+          python3 scripts/scene_history_hierarchy.py run \
+            --output "$RUNNER_TEMP/scene-history-hierarchy" </dev/null \
+            > "$RUNNER_TEMP/scene-history-wrapper.log" 2>&1
+      - name: Require unchanged diagnostic source
+        run: git diff --exit-code HEAD --
+      - name: Retain the complete one-shot observation
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-scene-history-hierarchy-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/scene-history-hierarchy/
+            ${{ runner.temp }}/scene-history-wrapper.log
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 90
