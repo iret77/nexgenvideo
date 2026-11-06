@@ -24,13 +24,27 @@ SOURCE = 'd7eb426e1d3e5ab0c6bd87f2906872bf317c7023'
 RUN, JOB, ARTIFACT = 42213973803, 127880239639, 13501418118
 DIGEST = '34224c6db872f83840acc5cb55b07b29d030e7f9bef431eff700ade974a937cb'
 RAW_DIGEST = 'bd2d78334004370d8a70a8911443de4f9631dbd6b80da03b694c71b81ffbd385'
-RESUME_RUN, RESUME_SOURCE_JOB, RESUME_JOB = 42252721451, 128011793185, 128011947696
-RESUME_SOURCE = 'aa61cedccde8ca79c6051e0cfae7d4896af26ac5'
-RESUME_TREE = 'e234ffbe9090bf502963ccdbb3c01ad78269313b'
-RESUME_ARTIFACT = 13521506821
-RESUME_DIGEST = '6891e6ead209ef3a7efe9c55506914bf4ef90014af36109bfc91a895ebd1da31'
-RESUME_BINDING_ARTIFACT = 13521696426
-RESUME_BINDING_DIGEST = '72712775bf94f792d6af1010bb690db103ab2b66e8d27a547255e3dc01ac34bb'
+LEGACY = {'run': 42252721451, 'sourceJob': 128011793185, 'nativeJob': 128011947696,
+    'source': 'aa61cedccde8ca79c6051e0cfae7d4896af26ac5', 'tree': 'e234ffbe9090bf502963ccdbb3c01ad78269313b',
+    'artifact': 13521506821, 'bytes': 77022,
+    'digest': '6891e6ead209ef3a7efe9c55506914bf4ef90014af36109bfc91a895ebd1da31',
+    'bindingArtifact': 13521696426, 'bindingBytes': 2346935,
+    'bindingDigest': '72712775bf94f792d6af1010bb690db103ab2b66e8d27a547255e3dc01ac34bb'}
+RESUME_RUN, RESUME_SOURCE_JOB, RESUME_JOB = 42269511007, 128070108626, 128070294906
+RESUME_SOURCE = 'e849d35776e94ac0c0fea272d553482cf6cfeac6'
+RESUME_TREE = 'c240b5a184c8a313a54789f2866320b5f9724558'
+RESUME_ARTIFACT = 13528492969
+RESUME_DIGEST = '6ce79cb7d9fb4d4e4b3cdffbf5bce972c4e49b23fa8f2c39a6afde4418c48266'
+RESUME_BINDING_ARTIFACT = 13529041111
+RESUME_BINDING_DIGEST = '0fc6642042fb2350770d1e83a42ad7e4649529dd44a8d2842dd56878e53c8371'
+RESUME_BYTES, RESUME_BINDING_BYTES = 3093998, 4771187
+CURRENT_RESUME = {'run': RESUME_RUN, 'sourceJob': RESUME_SOURCE_JOB, 'nativeJob': RESUME_JOB,
+    'source': RESUME_SOURCE, 'tree': RESUME_TREE, 'artifact': RESUME_ARTIFACT, 'bytes': RESUME_BYTES,
+    'digest': RESUME_DIGEST, 'bindingArtifact': RESUME_BINDING_ARTIFACT,
+    'bindingBytes': RESUME_BINDING_BYTES, 'bindingDigest': RESUME_BINDING_DIGEST}
+REUSED_RAW = {'member': 'peer-availability-raw', 'bytes': 601400,
+    'SHA256': 'bde23de0dbc52aff0a334df6d0dc1c92da6aca3dc5696cecd864229d336a9a17',
+    'uuid': '93292012aefd362fa8d0dcf3506beac2', 'machOType': 2}
 SWIFT_VERSION = 'Apple Swift version 6.4.2 (swiftlang-6.4.2.1.9 clang-2100.4.1.1)'
 SWIFT_TARGET = SWIFT_VERSION + '\nTarget: arm64-apple-macosx27.2.0'
 SUPPORT_MODULE = b'module AppKitTestHostSupport { header "AppKitTestHostSupport.h" export * }\n'
@@ -84,7 +98,7 @@ def validate_inputs(env):
     require(re.fullmatch('[1-9][0-9]*', env['VERIFIED_PR']) and env['SCALE'] == '1',
             'Current complete Source proof and normal scale required')
     require(env.get('EXTRA_FAILURE') == str(RESUME_ARTIFACT)
-            and env.get('EXTRA_FAILURE_SHA') == RESUME_DIGEST, 'Exact Native785 retained compiler pair required')
+            and env.get('EXTRA_FAILURE_SHA') == RESUME_DIGEST, 'Exact Native787 retained compiler pair required')
     require(not any(env.get(key, '') for key in ('DMG_DIGEST', 'JOURNEY_JOB', 'JOURNEY_ARTIFACT',
         'JOURNEY_DIGEST', 'EXTRA_SOURCE', 'EXTRA_PRODUCTS', 'EXTRA_PRODUCTS_SHA',
         'RUNTIME_FAILURE_BINDING', 'PACKAGING_PRODUCER_SOURCE',
@@ -139,6 +153,8 @@ def retained_product(raw, expected):
     header = struct.unpack('<8I', raw[:32])
     require(header[0] == 0xfeedfacf and header[1] == 0x0100000c and header[3] == expected['machOType'],
             'Retained compiler product Mach-O type differs')
+    if 'uuid' in expected:
+        require(macho_uuid_data(raw) == expected['uuid'], 'Retained compiler product UUID differs')
 
 
 def retained_process(receipt, command, log, parent, exit_code=0):
@@ -155,11 +171,26 @@ def retained_process(receipt, command, log, parent, exit_code=0):
             'Retained compiler recipe or process provenance differs')
 
 
-def resume_archives(folder, originals, old_template, old_harness):
+def retained_job_lifetime(process, jobs, identity):
+    selected = [job for job in jobs['jobs'] if job['id'] == identity]
+    require(len(selected) == 1, 'Retained compiler producer job missing')
+    job = selected[0]
+    start, end = (datetime.fromisoformat(job[key].replace('Z', '+00:00')).timestamp()
+                  for key in ('started_at', 'completed_at'))
+    require(start <= process['startedWall'] <= process['finishedWall'] <= end,
+            'Retained compiler lies outside its original job lifetime')
+
+
+def retained_raw_source(current, prior):
+    require(current == prior, 'Current Raw compiler input differs from the retained producer')
+    return digest(current)
+
+
+def resume_785_archives(folder, originals, old_template, old_harness, raw_archives):
     contents, inventories = [], []
-    for filename, checksum, size in [('retained-native.zip', RESUME_DIGEST, 77022),
-                                    ('retained-source.zip', RESUME_BINDING_DIGEST, 2346935)]:
-        raw = (folder / filename).read_bytes()
+    for filename, checksum, size in [('retained-native.zip', LEGACY['digest'], 77022),
+                                    ('retained-source.zip', LEGACY['bindingDigest'], 2346935)]:
+        raw = raw_archives[filename]
         require(len(raw) == size and digest(raw) == checksum, 'Exact retained archive bytes differ')
         with zipfile.ZipFile(io.BytesIO(raw)) as archive:
             names = archive.namelist()
@@ -175,8 +206,8 @@ def resume_archives(folder, originals, old_template, old_harness):
             'Retained producer archives incomplete')
     prior = json.loads(source['binding.json'])
     require(prior['schema'] == 'nexgenvideo/peer-availability-binding/1'
-            and prior['sourceSHA'] == RESUME_SOURCE and prior['treeSHA'] == RESUME_TREE
-            and prior['runID'] == str(RESUME_RUN) and prior['attempt'] == '1'
+            and prior['sourceSHA'] == LEGACY['source'] and prior['treeSHA'] == LEGACY['tree']
+            and prior['runID'] == str(LEGACY['run']) and prior['attempt'] == '1'
             and prior['sourceFiles'] == {name: digest(value) for name, value in originals.items()}
             and prior['harnessFiles'] == {name: digest(value) for name, value in old_harness.items()}
             and source['original-evidence.zip'] == (folder / 'original-evidence.zip').read_bytes()
@@ -201,8 +232,8 @@ def resume_archives(folder, originals, old_template, old_harness):
     git_command = json.loads(native['git-head.process.json'])['command']
     require(len(git_command) == 5 and git_command[:2] == ['git', '-C']
             and git_command[3:] == ['rev-parse', 'HEAD'] and Path(git_command[2]).is_absolute()
-            and native['git-head.log'].decode().strip() == RESUME_SOURCE
-            and native['git-tree.log'].decode().strip() == RESUME_TREE
+            and native['git-head.log'].decode().strip() == LEGACY['source']
+            and native['git-tree.log'].decode().strip() == LEGACY['tree']
             and not native['git-status.log'].strip(), 'Prior compiler checkout differs')
     root = Path(git_command[2])
     support_receipt = json.loads(native['compile-support.process.json'])
@@ -237,52 +268,181 @@ def resume_archives(folder, originals, old_template, old_harness):
                 and receipt['stdoutSHA256'] == digest(native[stem + '.log'])
                 and receipt['stderrSHA256'] == digest(native[stem + '.stderr']),
                 'Prior compiler toolchain identity differs')
-    return {'runID': RESUME_RUN, 'sourceSHA': RESUME_SOURCE, 'treeSHA': RESUME_TREE,
-        'nativeArtifactID': RESUME_ARTIFACT, 'nativeArtifactSHA256': RESUME_DIGEST,
-        'sourceArtifactID': RESUME_BINDING_ARTIFACT, 'sourceArtifactSHA256': RESUME_BINDING_DIGEST,
+    return {'runID': LEGACY['run'], 'sourceSHA': LEGACY['source'], 'treeSHA': LEGACY['tree'],
+        'nativeArtifactID': LEGACY['artifact'], 'nativeArtifactSHA256': LEGACY['digest'],
+        'sourceArtifactID': LEGACY['bindingArtifact'], 'sourceArtifactSHA256': LEGACY['bindingDigest'],
         'archiveMemberHashes': inventories, 'compilerReceipts': receipts, 'recipes': recipes,
         'sdkPlatform': native['sdk-platform.log'].decode().strip()}
 
 
-def resume_producer(run, jobs, artifacts):
+def resume_archives(folder, originals, old_template, old_harness, legacy_harness):
+    contents, inventories = [], []
+    for filename, checksum, size in [('retained-native.zip', RESUME_DIGEST, RESUME_BYTES),
+                                    ('retained-source.zip', RESUME_BINDING_DIGEST, RESUME_BINDING_BYTES)]:
+        raw = (folder / filename).read_bytes()
+        require(len(raw) == size and digest(raw) == checksum, 'Exact retained archive bytes differ')
+        with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+            names = archive.namelist()
+            require(len(names) == len(set(names)) and archive.testzip() is None
+                    and all(not Path(name).is_absolute() and '..' not in Path(name).parts for name in names)
+                    and sum(item.file_size for item in archive.infolist()) < 20_000_000,
+                    'Retained archive inventory or CRC differs')
+            values = {name: archive.read(name) for name in names}
+            contents.append(values)
+            inventories.append({name: digest(raw) for name, raw in values.items()})
+    native, source = contents
+    require(len(native) == 85 and set(source) == {'binding.json', 'original-evidence.zip', 'original-builder.log',
+            'retained-native.zip', 'retained-source.zip', 'prior-producer.json'}, 'Exact Native787 archive roles required')
+    binding = json.loads(source['binding.json'])
+    require(binding['schema'] == 'nexgenvideo/peer-availability-binding/1'
+            and binding['sourceSHA'] == RESUME_SOURCE and binding['treeSHA'] == RESUME_TREE
+            and binding['runID'] == str(RESUME_RUN) and binding['attempt'] == '1'
+            and binding['sourceFiles'] == {name: digest(raw) for name, raw in originals.items()}
+            and binding['harnessFiles'] == {name: digest(raw) for name, raw in old_harness.items()}
+            and source['original-evidence.zip'] == (folder / 'original-evidence.zip').read_bytes()
+            and source['original-builder.log'] == (folder / 'original-builder.log').read_bytes()
+            and digest(source['original-evidence.zip']) == DIGEST
+            and digest(source['original-builder.log']) == RAW_DIGEST,
+            'Exact Native787 source and original777 bridge required')
+    nested = {name: source[name] for name in ('retained-native.zip', 'retained-source.zip')}
+    require(all(native['prior-producer/' + name] == raw for name, raw in nested.items())
+            and native['prior-producer/prior-producer.json'] == source['prior-producer.json'],
+            'Nested Native785 archives or producer bytes differ')
+    legacy = resume_785_archives(folder, originals,
+        legacy_harness['scripts/peer_availability_diagnostic.swift'], legacy_harness, nested)
+    old_producer = json.loads(source['prior-producer.json'])
+    resume_producer(old_producer['run'], old_producer['jobs'],
+        {int(key): value for key, value in old_producer['artifacts'].items()}, legacy=True)
+    require(old_producer['provenance'] == binding['priorProducer'] == legacy, 'Nested original785 provenance differs')
+    for process in legacy['compilerReceipts'].values():
+        retained_job_lifetime(process, old_producer['jobs'], LEGACY['nativeJob'])
+    subset, ranges = source_subset(originals)
+    subset['NativeAXPeer.swift'] = originals[PEER]
+    fixture, fixture_ranges = fixture_subset(originals[FIXTURE])
+    require(old_template.count(b'// NGV_DIAGNOSTIC_FIXTURE') == 1, 'Prior diagnostic fixture marker differs')
+    subset['PeerAvailability.swift'] = old_template.replace(b'// NGV_DIAGNOSTIC_FIXTURE', fixture)
+    selected = json.loads(native['source-subsets.json'])
+    require(selected['ranges'] == json.loads(json.dumps(ranges))
+            and selected['fixtureRanges'] == [list(pair) for pair in fixture_ranges]
+            and selected['emittedHashes'] == {name: digest(raw) for name, raw in subset.items()}
+            and all(native['sources/' + name] == raw for name, raw in subset.items())
+            and native['support-module/AppKitTestHostSupport.h'] == originals[HEADER]
+            and native['support-module/module.modulemap'] == SUPPORT_MODULE,
+            'Prior787 emitted or support-module bytes differ')
+    current_checkout = json.loads(native['git-head.process.json'])['command']
+    require(len(current_checkout) == 5 and current_checkout[:2] == ['git', '-C']
+            and current_checkout[3:] == ['rev-parse', 'HEAD'] and Path(current_checkout[2]).is_absolute()
+            and native['git-head.log'].decode().strip() == RESUME_SOURCE
+            and native['git-tree.log'].decode().strip() == RESUME_TREE and not native['git-status.log'].strip(),
+            'Prior787 checkout differs')
+    products = json.loads(native['compiler-products.json'])
+    require(set(products) == {'host', 'bundle', 'raw'}, 'Prior787 product inventory differs')
+    output = Path(products['host']['path']).parent
+    require(output.is_absolute(), 'Prior787 product output root missing')
+    origins = {}
+    for role in ('support', 'host'):
+        expected = RETAINED[role]
+        raw = native[expected['member']]
+        retained_product(raw, expected)
+        process = legacy['compilerReceipts'][role]
+        origin = {'kind': 'reused-prior-product', 'sourceSHA': LEGACY['source'], 'runID': LEGACY['run'],
+            'jobID': LEGACY['nativeJob'], 'artifactID': LEGACY['artifact'], 'artifactSHA256': LEGACY['digest'],
+            'recipe': legacy['recipes'][role], 'priorCompilerReceipt': process,
+            'originalSourceHashes': binding['sourceFiles'], 'supportModuleSHA256': digest(SUPPORT_MODULE)}
+        record = json.loads(native[role + '.product.json'])
+        require(record['bytes'] == expected['bytes'] and record['SHA256'] == expected['SHA256']
+                and record['path'] == str(output / expected['member']) and record['provenance'] == origin,
+                'Retained original785 product record differs')
+        if role == 'host':
+            require(record['uuid'] == expected['uuid'] == products['host']['uuid'], 'Original Host UUID differs')
+        origins[role] = origin
+    raw_record = json.loads(native['raw.product.json'])
+    raw_process = json.loads(native['compile-raw.process.json'])
+    plugin = json.loads(native['macro-plugin.json'])
+    recipe = [plugin['compiler'], '-swift-version', '6', '-O', '-enable-testing', '-parse-as-library', '-target',
+        'arm64-apple-macos26.0', str(output / 'sources/NativeAXPeer.swift'),
+        str(output / 'sources/NativeButtonAccessibility.swift'),
+        str(Path(current_checkout[2]) / 'scripts/peer_availability_raw.swift'), '-o', str(output / REUSED_RAW['member'])]
+    original_controller = json.loads(native['git-head.process.json'])['parentPID']
+    retained_process(raw_process, recipe, native['compile-raw.log'], original_controller)
+    require(raw_process['stdoutFile'] == 'compile-raw.log', 'Original Raw compiler log path differs')
+    raw_hashes = {'NativeAXPeer.swift': digest(originals[PEER]),
+        'NativeButtonAccessibility.swift': digest(originals[QUERY]),
+        'peer_availability_raw.swift': retained_raw_source((ROOT / 'scripts/peer_availability_raw.swift').read_bytes(),
+            old_harness['scripts/peer_availability_raw.swift'])}
+    require(raw_record['provenance'] == {'kind': 'current-compilation', 'sourceSHA': RESUME_SOURCE,
+            'runID': str(RESUME_RUN), 'compilerReceipt': raw_process, 'sourceHashes': raw_hashes}
+            and raw_record['bytes'] == REUSED_RAW['bytes'] and raw_record['SHA256'] == REUSED_RAW['SHA256']
+            and raw_record['uuid'] == REUSED_RAW['uuid'] == products['raw']['uuid']
+            and raw_record['path'] == products['raw']['path'] == str(output / REUSED_RAW['member'])
+            and plugin['metadataProcess'] == json.loads(native['compiler-target-info.process.json'])
+            and plugin['targetMetadata'] == json.loads(native['compiler-target-info.log'])
+            and plugin['metadataProcess']['parentPID'] == original_controller
+            and plugin['metadataProcess']['finished'] <= raw_process['started']
+            and native['selected-compiler.log'].decode().strip() == plugin['compiler'],
+            'Original Raw compile provenance or actual compiler metadata differs')
+    retained_product(native[REUSED_RAW['member']], REUSED_RAW)
+    for name, expected in [('swift', SWIFT_TARGET), ('selected-swiftc', SWIFT_TARGET),
+                           ('xcode', 'Xcode 27.2\nBuild version 27B52'), ('os-version', '27.2'), ('os-build', '26B123')]:
+        stem = 'toolchain-' + name
+        process = json.loads(native[stem + '.process.json'])
+        require(native[stem + '.log'].decode().strip() == expected and process['exitCode'] == 0
+                and process['processReaped'] is True and process['timedOut'] is False
+                and process['parentPID'] == raw_process['parentPID'] and process['separateStderr'] is True
+                and process['stdoutSHA256'] == digest(native[stem + '.log'])
+                and process['stderrSHA256'] == digest(native[stem + '.stderr']),
+                'Original787 compiler identity differs')
+    origins['raw'] = {'kind': 'reused-prior-product', 'sourceSHA': RESUME_SOURCE, 'runID': RESUME_RUN,
+        'jobID': RESUME_JOB, 'artifactID': RESUME_ARTIFACT, 'artifactSHA256': RESUME_DIGEST,
+        'recipe': recipe, 'priorCompilerReceipt': raw_process, 'sourceHashes': raw_hashes}
+    return {'runID': RESUME_RUN, 'sourceSHA': RESUME_SOURCE, 'treeSHA': RESUME_TREE,
+        'nativeArtifactID': RESUME_ARTIFACT, 'nativeArtifactSHA256': RESUME_DIGEST,
+        'sourceArtifactID': RESUME_BINDING_ARTIFACT, 'sourceArtifactSHA256': RESUME_BINDING_DIGEST,
+        'archiveMemberHashes': inventories, 'legacyProducer': legacy, 'productOrigins': origins,
+        'sdkPlatform': native['sdk-platform.log'].decode().strip(),
+        'compilerSHA256': plugin['compilerSHA256'], 'pluginSHA256': plugin['pluginSHA256']}
+
+
+def resume_producer(run, jobs, artifacts, legacy=False):
+    spec = LEGACY if legacy else CURRENT_RESUME
     def timestamp(value):
         require(isinstance(value, str) and re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z', value),
                 'Retained producer timestamp missing or malformed')
         return datetime.strptime(value, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc)
 
-    require(run['id'] == RESUME_RUN and run['head_sha'] == RESUME_SOURCE and run['run_attempt'] == 1
+    require(run['id'] == spec['run'] and run['head_sha'] == spec['source'] and run['run_attempt'] == 1
             and run['repository']['full_name'] == 'iret77/nexgenvideo' and run['actor']['login'] == 'iret77'
             and run['workflow_id'] == 355242770 and run['path'] == '.github/workflows/diagnostic-acceptance.yml'
             and run['event'] == 'workflow_dispatch' and run['status'] == 'completed'
-            and run['conclusion'] == 'failure', 'Exact retained Native785 producer required')
+            and run['conclusion'] == 'failure', 'Exact retained Native787 producer required')
     require(jobs['total_count'] == len(jobs['jobs']), 'Retained producer jobs incomplete')
     windows = {}
     observed = datetime.now(timezone.utc)
-    for identity, name, conclusion, labels in [(RESUME_SOURCE_JOB, 'source', 'success', ['ubuntu-24.04']),
-                                               (RESUME_JOB, KIND, 'failure', ['macrunner'])]:
+    for identity, name, conclusion, labels in [(spec['sourceJob'], 'source', 'success', ['ubuntu-24.04']),
+                                               (spec['nativeJob'], KIND, 'failure', ['macrunner'])]:
         selected = [job for job in jobs['jobs'] if job['id'] == identity]
         require(len(selected) == 1, 'Retained producer job missing')
         job = selected[0]
-        require(job['run_id'] == RESUME_RUN and job['head_sha'] == RESUME_SOURCE and job['run_attempt'] == 1
+        require(job['run_id'] == spec['run'] and job['head_sha'] == spec['source'] and job['run_attempt'] == 1
                 and job['name'] == name and job['labels'] == labels and job['status'] == 'completed'
                 and job['conclusion'] == conclusion, 'Retained producer job differs')
         started, completed = timestamp(job.get('started_at')), timestamp(job.get('completed_at'))
         require(started < completed <= observed, 'Retained producer job lifetime differs')
         windows[identity] = (started, completed)
-    require(windows[RESUME_SOURCE_JOB][1] <= windows[RESUME_JOB][0], 'Retained producer job order differs')
-    require(set(artifacts) == {RESUME_ARTIFACT, RESUME_BINDING_ARTIFACT}, 'Retained artifacts incomplete')
+    require(windows[spec['sourceJob']][1] <= windows[spec['nativeJob']][0], 'Retained producer job order differs')
+    require(set(artifacts) == {spec['artifact'], spec['bindingArtifact']}, 'Retained artifacts incomplete')
     for identity, name, checksum, size in [
-            (RESUME_ARTIFACT, KIND + '-' + str(RESUME_RUN) + '-a1', RESUME_DIGEST, 77022),
-            (RESUME_BINDING_ARTIFACT, KIND + '-source-binding', RESUME_BINDING_DIGEST, 2346935)]:
+            (spec['artifact'], KIND + '-' + str(spec['run']) + '-a1', spec['digest'], spec['bytes']),
+            (spec['bindingArtifact'], KIND + '-source-binding', spec['bindingDigest'], spec['bindingBytes'])]:
         value = artifacts[identity]
         created, updated, expires = (timestamp(value.get(key)) for key in ('created_at', 'updated_at', 'expires_at'))
-        started, completed = windows[RESUME_JOB if identity == RESUME_ARTIFACT else RESUME_SOURCE_JOB]
+        started, completed = windows[spec['nativeJob'] if identity == spec['artifact'] else spec['sourceJob']]
         require(started <= created <= updated <= completed and updated < expires and expires > observed,
                 'Retained artifact lies outside its producer job lifetime')
         require(value['id'] == identity and value['name'] == name and value['digest'] == 'sha256:' + checksum
                 and value['size_in_bytes'] == size and value['expired'] is False
-                and value['workflow_run']['id'] == RESUME_RUN
-                and value['workflow_run']['head_sha'] == RESUME_SOURCE, 'Retained producer artifact differs')
+                and value['workflow_run']['id'] == spec['run']
+                and value['workflow_run']['head_sha'] == spec['source'], 'Retained producer artifact differs')
 
 
 def plugin_metadata(raw, compiler):
@@ -391,7 +551,10 @@ def bind(args):
                                (RESUME_BINDING_ARTIFACT, 'retained-source.zip')]:
         test_bundle.download(artifacts[identity], args.evidence / filename)
     old_harness = {name: git('show', RESUME_SOURCE + ':' + name) for name in HARNESS}
-    prior = resume_archives(args.evidence, files, old_harness['scripts/peer_availability_diagnostic.swift'], old_harness)
+    legacy_harness = {name: git('show', LEGACY['source'] + ':' + name) for name in HARNESS}
+    prior = resume_archives(args.evidence, files, old_harness['scripts/peer_availability_diagnostic.swift'],
+        old_harness, legacy_harness)
+    retained_job_lifetime(prior['productOrigins']['raw']['priorCompilerReceipt'], resume_jobs, RESUME_JOB)
     write(args.evidence / 'prior-producer.json', {'provenance': prior, 'run': resume_run, 'jobs': resume_jobs,
         'artifacts': {str(key): value for key, value in artifacts.items()}})
     write(args.evidence / 'binding.json', {'schema': 'nexgenvideo/peer-availability-binding/1',
@@ -445,7 +608,10 @@ def raw_window_bound(observed, request):
 
 
 def macho_uuid(path):
-    raw = path.read_bytes()
+    return macho_uuid_data(path.read_bytes())
+
+
+def macho_uuid_data(raw):
     require(len(raw) >= 32, 'Mach-O header missing')
     magic, cpu, _, _, count, size, _, _ = struct.unpack_from('<8I', raw)
     require(magic == 0xfeedfacf and cpu == 0x0100000c and 0 < count <= 4096
@@ -544,6 +710,57 @@ class Controller:
         return result
 
 
+def verify_serialization_artifacts(folder, report, source):
+    probe = folder / 'serialization-probes'
+    rejected_names = {'rejected': 'unsupported-value', 'nonfinite': 'nonfinite-number',
+        'non-string-key': 'non-string-key', 'cycle': 'container-cycle', 'depth': 'validation-budget'}
+    require({path.name for path in probe.iterdir()} == {'valid.json'} | {
+        name + '.serialization-error.json' for name in rejected_names},
+            'Exact native serializer probe evidence required')
+    valid = json.loads((probe / 'valid.json').read_text())
+    require(set(valid) == {'mode', 'absentMode'} and valid['absentMode'] is None
+            and isinstance(valid['mode'], (str, type(None))), 'Native mode/null round trip differs')
+    rejected = json.loads((probe / 'rejected.serialization-error.json').read_text())
+    require(rejected['schema'] == 'nexgenvideo/availability-json-error/1' and rejected['expectedProbe'] is True
+            and rejected['stage'] == 'rejected' and rejected['context'] == report['context']
+            and rejected['sourceSHA'] == source and rejected['PID'] == report['PID']
+            and rejected['failure']['reason'] == 'unsupported-value'
+            and rejected['failure']['path'] == [{'key': {'_0': 'nested'}}, {'index': {'_0': 0}}, {'key': {'_0': 'value'}}]
+            and isinstance(rejected['failure']['runtimeType'], str)
+            and 'AvailabilityUnsupportedProbe' in rejected['failure']['runtimeType'],
+            'Real native unsupported-value rejection differs')
+    errors = list(folder.rglob('*.serialization-error.json'))
+    require(set(errors) == {probe / (name + '.serialization-error.json') for name in rejected_names},
+            'Unexpected real serialization failure retained')
+    for name, reason in rejected_names.items():
+        item = json.loads((probe / (name + '.serialization-error.json')).read_text())
+        require(item['schema'] == 'nexgenvideo/availability-json-error/1' and item['expectedProbe'] is True
+                and item['stage'] == name and item['context'] == report['context']
+                and item['sourceSHA'] == source and item['PID'] == report['PID']
+                and item['failure']['reason'] == reason and item['failure']['path']
+                and isinstance(item['failure']['runtimeType'], str) and item['failure']['runtimeType'],
+                'Native rejection guard evidence differs: ' + name)
+    names = ['launch-owner', 'cg', 'first-peer', 'raw-background-0.15', 'raw-main-0.15', 'raw-background-1']
+    stages = folder / 'stages'
+    require({path.name for path in stages.iterdir()} == {name + '.json' for name in names},
+            'Required independent stage retention incomplete')
+    for index, name in enumerate(names):
+        stage = json.loads((stages / (name + '.json')).read_text())
+        facts = stage['facts']
+        require(stage['schema'] == 'nexgenvideo/availability-stage/1' and stage['stage'] == name
+                and stage['sourceSHA'] == source and stage['PID'] == report['PID']
+                and stage['context'] == report['context']
+                and facts['PID'] == report['PID'] and facts['context'] == report['context']
+                and all(facts[key] == report[key] for key in ('owner', 'hostImage', 'image', 'initialRequest')),
+                'Stage owner/image/window identity differs')
+        if index >= 1:
+            require(facts['preAXCGStability'] == report['preAXCGStability'], 'Retained CG stage differs')
+        if index >= 2:
+            require(facts['firstPeer'] == report['firstPeer'], 'Retained first-Peer stage differs')
+        if index >= 3:
+            require(facts['rawAfterPeer'] == report['rawAfterPeer'][:index - 2], 'Retained incremental Raw stage differs')
+
+
 def verify_collection(folder, context, execution):
     value = json.loads((folder / 'observation.json').read_text())
     require(value['schema'] == 'nexgenvideo/peer-availability-observation/1'
@@ -551,6 +768,7 @@ def verify_collection(folder, context, execution):
             and value['appAcceptance'] is False and value['originalFullAppImage'] is False
             and value['diagnosticFunctionExecutions'] == 1, 'Incomplete diagnostic collection')
     process, products, source = execution['process'], execution['products'], execution['sourceSHA']
+    verify_serialization_artifacts(folder, value, source)
     require(set(products) == {'host', 'bundle', 'raw'} and len({item['path'] for item in products.values()}) == 3
             and re.fullmatch('[a-f0-9]{40}', source), 'Actual compiler product or Source identity missing')
     require(type(process['PID']) is int and process['PID'] > 1
@@ -713,11 +931,18 @@ def observe(args):
         result = controller.run(['git', '-C', str(ROOT), 'show', RESUME_SOURCE + ':' + name],
             'prior-harness-' + str(index))
         old_harness[name] = (args.evidence / result['stdoutFile']).read_bytes()
-    prior = resume_archives(args.binding, originals, old_harness['scripts/peer_availability_diagnostic.swift'], old_harness)
+    legacy_harness = {}
+    for index, name in enumerate(sorted(HARNESS)):
+        result = controller.run(['git', '-C', str(ROOT), 'show', LEGACY['source'] + ':' + name],
+            'legacy-harness-' + str(index))
+        legacy_harness[name] = (args.evidence / result['stdoutFile']).read_bytes()
+    prior = resume_archives(args.binding, originals, old_harness['scripts/peer_availability_diagnostic.swift'],
+        old_harness, legacy_harness)
     transferred = json.loads((args.binding / 'prior-producer.json').read_text())
     resume_producer(transferred['run'], transferred['jobs'],
         {int(key): value for key, value in transferred['artifacts'].items()})
     require(transferred['provenance'] == binding['priorProducer'] == prior, 'Transferred prior producer differs')
+    retained_job_lifetime(prior['productOrigins']['raw']['priorCompilerReceipt'], transferred['jobs'], RESUME_JOB)
     prior_folder = args.evidence / 'prior-producer'
     prior_folder.mkdir()
     for name in ('retained-native.zip', 'retained-source.zip', 'prior-producer.json'):
@@ -744,17 +969,14 @@ def observe(args):
     bundle = args.evidence / 'PeerAvailability.dylib'
     raw_client = args.evidence / 'peer-availability-raw'
     with zipfile.ZipFile(args.binding / 'retained-native.zip') as archive:
-        for role, path in [('support', support), ('host', host)]:
-            path.write_bytes(archive.read(RETAINED[role]['member']))
-            retained_product(path.read_bytes(), RETAINED[role])
-            if role == 'host':
+        for role, path, expected in [('support', support, RETAINED['support']),
+                                    ('host', host, RETAINED['host']), ('raw', raw_client, REUSED_RAW)]:
+            path.write_bytes(archive.read(expected['member']))
+            retained_product(path.read_bytes(), expected)
+            if role != 'support':
                 path.chmod(0o755)
-                require(macho_uuid(path) == RETAINED[role]['uuid'], 'Reused Host UUID differs')
-            product_record(args.evidence, role, path, {'kind': 'reused-prior-product',
-                'sourceSHA': RESUME_SOURCE, 'runID': RESUME_RUN, 'jobID': RESUME_JOB,
-                'artifactID': RESUME_ARTIFACT, 'artifactSHA256': RESUME_DIGEST,
-                'recipe': prior['recipes'][role], 'priorCompilerReceipt': prior['compilerReceipts'][role],
-                'originalSourceHashes': binding['sourceFiles'], 'supportModuleSHA256': digest(SUPPORT_MODULE)})
+                require(macho_uuid(path) == expected['uuid'], 'Reused executable UUID differs')
+            product_record(args.evidence, role, path, prior['productOrigins'][role])
     require(os.uname().machine == 'arm64', 'Original native architecture differs')
     toolchain = {
         'swift': (['swift', '--version'], SWIFT_TARGET),
@@ -779,6 +1001,8 @@ def observe(args):
     metadata = controller.run([str(compiler), '-print-target-info', '-target', 'arm64-apple-macos26.0'],
         'compiler-target-info', separate_stderr=True)
     plugin = plugin_metadata((args.evidence / metadata['stdoutFile']).read_bytes(), compiler)
+    require(plugin['compilerSHA256'] == prior['compilerSHA256'] and plugin['pluginSHA256'] == prior['pluginSHA256'],
+            'Actual compiler or plugin changed; retained Raw identity cannot be reused blindly')
     plugin['metadataProcess'] = metadata
     write(args.evidence / 'macro-plugin.json', plugin)
     prefix = [str(compiler), '-swift-version', '6', '-O', '-enable-testing', '-parse-as-library', '-target', 'arm64-apple-macos26.0']
@@ -790,14 +1014,6 @@ def observe(args):
         'sourceSHA': os.environ['GITHUB_SHA'], 'runID': os.environ['GITHUB_RUN_ID'],
         'compilerReceipt': process, 'sourceHashes': {name: digest(raw) for name, raw in subset.items()},
         'macroPlugin': plugin})
-    process = controller.run([*prefix, str(sources / 'NativeAXPeer.swift'), str(sources / 'NativeButtonAccessibility.swift'),
-        str(ROOT / 'scripts/peer_availability_raw.swift'), '-o', str(raw_client)], 'compile-raw')
-    product_record(args.evidence, 'raw', raw_client, {'kind': 'current-compilation',
-        'sourceSHA': os.environ['GITHUB_SHA'], 'runID': os.environ['GITHUB_RUN_ID'], 'compilerReceipt': process,
-        'sourceHashes': {name: digest(path.read_bytes()) for name, path in [
-            ('NativeAXPeer.swift', sources / 'NativeAXPeer.swift'),
-            ('NativeButtonAccessibility.swift', sources / 'NativeButtonAccessibility.swift'),
-            ('peer_availability_raw.swift', ROOT / 'scripts/peer_availability_raw.swift')]}})
     controller.run(['xcrun', 'dwarfdump', '--uuid', str(host), str(bundle), str(raw_client)], 'binary-uuids')
     write(args.evidence / 'product-hashes.json', {path.name: digest(path.read_bytes()) for path in
         [host, bundle, raw_client, support]})
@@ -820,7 +1036,7 @@ def observe(args):
     write(args.evidence / 'receipt.json', {'schema': 'nexgenvideo/peer-availability-collection/1',
         'sourceSHA': os.environ['GITHUB_SHA'], 'runID': os.environ['GITHUB_RUN_ID'], 'attempt': '1',
         'appAcceptance': False, 'appBuilds': 0, 'nativeRegressionSuiteRepeats': 0,
-        'newCompilerInvocations': 2, 'reusedCompilerProducts': 2,
+        'newCompilerInvocations': 1, 'reusedCompilerProducts': 3,
         'diagnosticFunctionExecutions': 2, 'observations': results,
         'scope': 'Isolated original host sources with a distinct small diagnostic test image; raw calls follow the first Peer query.'})
 
