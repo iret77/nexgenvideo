@@ -180,7 +180,13 @@ jobs:
           if os.environ['KIND'] == 'native-retained-failures':
               from retained_runtime_failure_diagnostic import validate_inputs
               validate_inputs(os.environ)
-          elif os.environ['RUNTIME_FAILURE_BINDING'] and os.environ['KIND'] != 'native-button-query-crash':
+          elif os.environ['KIND'] == 'native-button-query-crash':
+              from button_query_diagnostic import crash_request
+              try:
+                  crash_request(os.environ)
+              except (ValueError, KeyError, TypeError) as error:
+                  raise ValueError('Runtime failure binding cannot be ignored by this mode; exact crash request required') from error
+          elif os.environ['RUNTIME_FAILURE_BINDING']:
               raise ValueError('Runtime failure binding cannot be ignored by another mode')
           if packaging is not None and (os.environ['KIND'] not in {'signed-bpy', 'signed-journey', 'signed-transport', 'native-retained-failures'}
                   or not re.fullmatch('[1-9][0-9]*', os.environ['VERIFIED_PR'])):
