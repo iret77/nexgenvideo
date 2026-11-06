@@ -2,7 +2,9 @@
 import argparse
 from collections import Counter
 from contextlib import ExitStack
+from datetime import datetime, timezone
 import hashlib
+import io
 import json
 import math
 import os
@@ -22,6 +24,23 @@ SOURCE = 'd7eb426e1d3e5ab0c6bd87f2906872bf317c7023'
 RUN, JOB, ARTIFACT = 42213973803, 127880239639, 13501418118
 DIGEST = '34224c6db872f83840acc5cb55b07b29d030e7f9bef431eff700ade974a937cb'
 RAW_DIGEST = 'bd2d78334004370d8a70a8911443de4f9631dbd6b80da03b694c71b81ffbd385'
+RESUME_RUN, RESUME_SOURCE_JOB, RESUME_JOB = 42252721451, 128011793185, 128011947696
+RESUME_SOURCE = 'aa61cedccde8ca79c6051e0cfae7d4896af26ac5'
+RESUME_TREE = 'e234ffbe9090bf502963ccdbb3c01ad78269313b'
+RESUME_ARTIFACT = 13521506821
+RESUME_DIGEST = '6891e6ead209ef3a7efe9c55506914bf4ef90014af36109bfc91a895ebd1da31'
+RESUME_BINDING_ARTIFACT = 13521696426
+RESUME_BINDING_DIGEST = '72712775bf94f792d6af1010bb690db103ab2b66e8d27a547255e3dc01ac34bb'
+SWIFT_VERSION = 'Apple Swift version 6.4.2 (swiftlang-6.4.2.1.9 clang-2100.4.1.1)'
+SWIFT_TARGET = SWIFT_VERSION + '\nTarget: arm64-apple-macosx27.2.0'
+SUPPORT_MODULE = b'module AppKitTestHostSupport { header "AppKitTestHostSupport.h" export * }\n'
+RETAINED = {
+    'host': {'member': 'NexGenVideoAppKitTestHost', 'bytes': 129592,
+        'SHA256': '8920c3511b809394ae79cf2f0410654b81d0dd1d2f702bbefd3e5c7ac663fc8f',
+        'uuid': 'bacb31e1a13433158a98a4de94bab0c8', 'machOType': 2},
+    'support': {'member': 'host-support.o', 'bytes': 13664,
+        'SHA256': 'c54ae21621080173356419b30f9a70ed6075bbc63815589a655e407d654714fd',
+        'machOType': 1}}
 KIND = 'native-peer-availability'
 QUERY = 'Sources/NexGenVideo/App/NativeButtonAccessibility.swift'
 PEER = 'Sources/NexGenVideo/App/NativeAXPeer.swift'
@@ -64,9 +83,11 @@ def validate_inputs(env):
             and env['CANDIDATE_DIGEST'] == DIGEST, 'Exact Native777 failure required')
     require(re.fullmatch('[1-9][0-9]*', env['VERIFIED_PR']) and env['SCALE'] == '1',
             'Current complete Source proof and normal scale required')
+    require(env.get('EXTRA_FAILURE') == str(RESUME_ARTIFACT)
+            and env.get('EXTRA_FAILURE_SHA') == RESUME_DIGEST, 'Exact Native785 retained compiler pair required')
     require(not any(env.get(key, '') for key in ('DMG_DIGEST', 'JOURNEY_JOB', 'JOURNEY_ARTIFACT',
-        'JOURNEY_DIGEST', 'EXTRA_SOURCE', 'EXTRA_PRODUCTS', 'EXTRA_PRODUCTS_SHA', 'EXTRA_FAILURE',
-        'EXTRA_FAILURE_SHA', 'RUNTIME_FAILURE_BINDING', 'PACKAGING_PRODUCER_SOURCE',
+        'JOURNEY_DIGEST', 'EXTRA_SOURCE', 'EXTRA_PRODUCTS', 'EXTRA_PRODUCTS_SHA',
+        'RUNTIME_FAILURE_BINDING', 'PACKAGING_PRODUCER_SOURCE',
         'PACKAGING_PROVENANCE_ARTIFACT_ID', 'PACKAGING_PROVENANCE_ARTIFACT_SHA256')),
         'Unused peer diagnostic selectors cannot be ignored')
 
@@ -110,6 +131,207 @@ def fixture_subset(raw):
 
 def validate_changed_paths(paths):
     require(set(paths) <= HARNESS, 'App or unrelated source changed')
+
+
+def retained_product(raw, expected):
+    require(len(raw) == expected['bytes'] and digest(raw) == expected['SHA256'] and len(raw) >= 32,
+            'Retained compiler product bytes differ')
+    header = struct.unpack('<8I', raw[:32])
+    require(header[0] == 0xfeedfacf and header[1] == 0x0100000c and header[3] == expected['machOType'],
+            'Retained compiler product Mach-O type differs')
+
+
+def retained_process(receipt, command, log, parent, exit_code=0):
+    require(receipt['command'] == command and receipt['exitCode'] == exit_code
+            and receipt['timedOut'] is False and receipt['processReaped'] is True
+            and type(receipt['PID']) is int and receipt['PID'] > 1
+            and type(parent) is int and receipt['parentPID'] == parent
+            and receipt['separateStderr'] is False and receipt['stderrFile'] is None
+            and receipt['stderrSHA256'] is None and receipt['stdoutSHA256'] == digest(log)
+            and all(type(receipt[key]) in (int, float) and math.isfinite(receipt[key])
+                    for key in ('started', 'finished', 'startedWall', 'finishedWall', 'timeout'))
+            and 0 < receipt['finished'] - receipt['started'] <= receipt['timeout'] <= 70
+            and 0 < receipt['finishedWall'] - receipt['startedWall'] <= receipt['timeout'] + 1,
+            'Retained compiler recipe or process provenance differs')
+
+
+def resume_archives(folder, originals, old_template, old_harness):
+    contents, inventories = [], []
+    for filename, checksum, size in [('retained-native.zip', RESUME_DIGEST, 77022),
+                                    ('retained-source.zip', RESUME_BINDING_DIGEST, 2346935)]:
+        raw = (folder / filename).read_bytes()
+        require(len(raw) == size and digest(raw) == checksum, 'Exact retained archive bytes differ')
+        with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+            names = archive.namelist()
+            require(len(names) == len(set(names)) and archive.testzip() is None
+                    and all(not Path(name).is_absolute() and '..' not in Path(name).parts for name in names)
+                    and sum(item.file_size for item in archive.infolist()) < 20_000_000,
+                    'Retained archive inventory or CRC differs')
+            data = {name: archive.read(name) for name in names}
+            contents.append(data)
+            inventories.append({name: digest(value) for name, value in data.items()})
+    native, source = contents
+    require(len(native) == 39 and set(source) == {'binding.json', 'original-evidence.zip', 'original-builder.log'},
+            'Retained producer archives incomplete')
+    prior = json.loads(source['binding.json'])
+    require(prior['schema'] == 'nexgenvideo/peer-availability-binding/1'
+            and prior['sourceSHA'] == RESUME_SOURCE and prior['treeSHA'] == RESUME_TREE
+            and prior['runID'] == str(RESUME_RUN) and prior['attempt'] == '1'
+            and prior['sourceFiles'] == {name: digest(value) for name, value in originals.items()}
+            and prior['harnessFiles'] == {name: digest(value) for name, value in old_harness.items()}
+            and source['original-evidence.zip'] == (folder / 'original-evidence.zip').read_bytes()
+            and source['original-builder.log'] == (folder / 'original-builder.log').read_bytes()
+            and digest(source['original-evidence.zip']) == DIGEST
+            and digest(source['original-builder.log']) == prior['originalFullLogSHA256'] == RAW_DIGEST
+            and prior['originalEvidence'] == failure_archive(io.BytesIO(source['original-evidence.zip'])),
+            'Retained producer source or original777 bridge differs')
+    subset, ranges = source_subset(originals)
+    subset['NativeAXPeer.swift'] = originals[PEER]
+    fixture, fixture_ranges = fixture_subset(originals[FIXTURE])
+    require(old_template.count(b'// NGV_DIAGNOSTIC_FIXTURE') == 1, 'Prior diagnostic fixture marker differs')
+    subset['PeerAvailability.swift'] = old_template.replace(b'// NGV_DIAGNOSTIC_FIXTURE', fixture)
+    selected = json.loads(native['source-subsets.json'])
+    require(selected['ranges'] == json.loads(json.dumps(ranges))
+            and selected['fixtureRanges'] == [list(pair) for pair in fixture_ranges]
+            and selected['emittedHashes'] == {name: digest(value) for name, value in subset.items()}
+            and all(native['sources/' + name] == value for name, value in subset.items())
+            and native['support-module/AppKitTestHostSupport.h'] == originals[HEADER]
+            and native['support-module/module.modulemap'] == SUPPORT_MODULE,
+            'Retained emitted sources, ranges or support module differ')
+    git_command = json.loads(native['git-head.process.json'])['command']
+    require(len(git_command) == 5 and git_command[:2] == ['git', '-C']
+            and git_command[3:] == ['rev-parse', 'HEAD'] and Path(git_command[2]).is_absolute()
+            and native['git-head.log'].decode().strip() == RESUME_SOURCE
+            and native['git-tree.log'].decode().strip() == RESUME_TREE
+            and not native['git-status.log'].strip(), 'Prior compiler checkout differs')
+    root = Path(git_command[2])
+    support_receipt = json.loads(native['compile-support.process.json'])
+    output = Path(support_receipt['command'][-1]).parent
+    require(output.is_absolute(), 'Prior compiler output path missing')
+    include = output / 'support-module'
+    parent = support_receipt['parentPID']
+    prefix = ['xcrun', 'swiftc', '-swift-version', '6', '-O', '-enable-testing', '-parse-as-library',
+              '-target', 'arm64-apple-macos26.0']
+    recipes = {
+        'support': ['xcrun', 'clang', '-fobjc-arc', '-target', 'arm64-apple-macos26.0', '-I', str(include),
+            '-c', str(root / SUPPORT), '-o', str(output / RETAINED['support']['member'])],
+        'host': [*prefix, '-I', str(include), str(root / HOST), str(output / RETAINED['support']['member']),
+            '-framework', 'AppKit', '-o', str(output / RETAINED['host']['member'])]}
+    receipts = {}
+    for role in ('support', 'host'):
+        receipt = json.loads(native['compile-' + role + '.process.json'])
+        retained_process(receipt, recipes[role], native['compile-' + role + '.log'], parent)
+        require(receipt['stdoutFile'] == 'compile-' + role + '.log', 'Prior compiler log path differs')
+        retained_product(native[RETAINED[role]['member']], RETAINED[role])
+        receipts[role] = receipt
+    require(receipts['support']['finished'] <= receipts['host']['started']
+            and receipts['support']['PID'] != receipts['host']['PID'], 'Prior compiler order differs')
+    for name, expected in [('swift', SWIFT_TARGET), ('xcode', 'Xcode 27.2\nBuild version 27B52'),
+                           ('os-version', '27.2'), ('os-build', '26B123')]:
+        stem = 'toolchain-' + name
+        receipt = json.loads(native[stem + '.process.json'])
+        require(native[stem + '.log'].decode().strip() == expected and receipt['exitCode'] == 0
+                and receipt['timedOut'] is False and receipt['processReaped'] is True
+                and receipt['separateStderr'] is True and receipt['parentPID'] == parent
+                and receipt['stdoutFile'] == stem + '.log' and receipt['stderrFile'] == stem + '.stderr'
+                and receipt['stdoutSHA256'] == digest(native[stem + '.log'])
+                and receipt['stderrSHA256'] == digest(native[stem + '.stderr']),
+                'Prior compiler toolchain identity differs')
+    return {'runID': RESUME_RUN, 'sourceSHA': RESUME_SOURCE, 'treeSHA': RESUME_TREE,
+        'nativeArtifactID': RESUME_ARTIFACT, 'nativeArtifactSHA256': RESUME_DIGEST,
+        'sourceArtifactID': RESUME_BINDING_ARTIFACT, 'sourceArtifactSHA256': RESUME_BINDING_DIGEST,
+        'archiveMemberHashes': inventories, 'compilerReceipts': receipts, 'recipes': recipes,
+        'sdkPlatform': native['sdk-platform.log'].decode().strip()}
+
+
+def resume_producer(run, jobs, artifacts):
+    def timestamp(value):
+        require(isinstance(value, str) and re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z', value),
+                'Retained producer timestamp missing or malformed')
+        return datetime.strptime(value, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc)
+
+    require(run['id'] == RESUME_RUN and run['head_sha'] == RESUME_SOURCE and run['run_attempt'] == 1
+            and run['repository']['full_name'] == 'iret77/nexgenvideo' and run['actor']['login'] == 'iret77'
+            and run['workflow_id'] == 355242770 and run['path'] == '.github/workflows/diagnostic-acceptance.yml'
+            and run['event'] == 'workflow_dispatch' and run['status'] == 'completed'
+            and run['conclusion'] == 'failure', 'Exact retained Native785 producer required')
+    require(jobs['total_count'] == len(jobs['jobs']), 'Retained producer jobs incomplete')
+    windows = {}
+    observed = datetime.now(timezone.utc)
+    for identity, name, conclusion, labels in [(RESUME_SOURCE_JOB, 'source', 'success', ['ubuntu-24.04']),
+                                               (RESUME_JOB, KIND, 'failure', ['macrunner'])]:
+        selected = [job for job in jobs['jobs'] if job['id'] == identity]
+        require(len(selected) == 1, 'Retained producer job missing')
+        job = selected[0]
+        require(job['run_id'] == RESUME_RUN and job['head_sha'] == RESUME_SOURCE and job['run_attempt'] == 1
+                and job['name'] == name and job['labels'] == labels and job['status'] == 'completed'
+                and job['conclusion'] == conclusion, 'Retained producer job differs')
+        started, completed = timestamp(job.get('started_at')), timestamp(job.get('completed_at'))
+        require(started < completed <= observed, 'Retained producer job lifetime differs')
+        windows[identity] = (started, completed)
+    require(windows[RESUME_SOURCE_JOB][1] <= windows[RESUME_JOB][0], 'Retained producer job order differs')
+    require(set(artifacts) == {RESUME_ARTIFACT, RESUME_BINDING_ARTIFACT}, 'Retained artifacts incomplete')
+    for identity, name, checksum, size in [
+            (RESUME_ARTIFACT, KIND + '-' + str(RESUME_RUN) + '-a1', RESUME_DIGEST, 77022),
+            (RESUME_BINDING_ARTIFACT, KIND + '-source-binding', RESUME_BINDING_DIGEST, 2346935)]:
+        value = artifacts[identity]
+        created, updated, expires = (timestamp(value.get(key)) for key in ('created_at', 'updated_at', 'expires_at'))
+        started, completed = windows[RESUME_JOB if identity == RESUME_ARTIFACT else RESUME_SOURCE_JOB]
+        require(started <= created <= updated <= completed and updated < expires and expires > observed,
+                'Retained artifact lies outside its producer job lifetime')
+        require(value['id'] == identity and value['name'] == name and value['digest'] == 'sha256:' + checksum
+                and value['size_in_bytes'] == size and value['expired'] is False
+                and value['workflow_run']['id'] == RESUME_RUN
+                and value['workflow_run']['head_sha'] == RESUME_SOURCE, 'Retained producer artifact differs')
+
+
+def plugin_metadata(raw, compiler):
+    def unique(pairs):
+        value = {}
+        for key, item in pairs:
+            require(key not in value, 'Duplicate compiler metadata field')
+            value[key] = item
+        return value
+
+    value = json.loads(raw, object_pairs_hook=unique,
+        parse_constant=lambda _: require(False, 'Nonfinite compiler metadata'))
+    require(isinstance(value, dict) and value.get('compilerVersion') == SWIFT_VERSION
+            and isinstance(value.get('target'), dict) and isinstance(value.get('paths'), dict),
+            'Compiler target metadata incomplete')
+    triple = value['target'].get('triple')
+    resource = value['paths'].get('runtimeResourcePath')
+    require(isinstance(triple, str) and re.fullmatch(r'arm64-apple-macosx?26(?:\.0){0,2}', triple)
+            and isinstance(resource, str) and resource and '\x00' not in resource,
+            'Compiler metadata target or resource path differs')
+    require(compiler.is_absolute() and compiler.name == 'swiftc' and compiler.is_file(),
+            'Selected compiler path differs')
+    bin_path = compiler.parent.resolve(strict=True)
+    resolved_compiler = compiler.resolve(strict=True)
+    require(bin_path.name == 'bin' and bin_path.parent.name == 'usr'
+            and resolved_compiler.parent == bin_path, 'Selected compiler escapes its toolchain')
+    expected = bin_path.parent / 'lib/swift'
+    path = Path(resource)
+    require(path.is_absolute() and path == expected and path.resolve(strict=True) == expected,
+            'Compiler resource path escapes selected toolchain')
+    directory = path / 'host/plugins/testing'
+    library = directory / 'libTestingMacros.dylib'
+    require(directory.is_dir() and directory.resolve(strict=True) == directory
+            and library.is_file() and library.resolve(strict=True) == library,
+            'Unique selected-toolchain TestingMacros library missing or escaped')
+    require(library.stat().st_size > 0, 'Selected TestingMacros library empty')
+    return {'compiler': str(compiler), 'resolvedCompiler': str(resolved_compiler),
+        'compilerSHA256': digest(resolved_compiler.read_bytes()), 'targetMetadata': value,
+        'pluginDirectory': str(directory), 'pluginLibrary': str(library),
+        'pluginSHA256': digest(library.read_bytes())}
+
+
+def product_record(folder, role, path, provenance):
+    value = {'path': str(path.resolve()), 'bytes': path.stat().st_size, 'SHA256': digest(path.read_bytes()),
+        'provenance': provenance}
+    if role != 'support':
+        value['uuid'] = macho_uuid(path)
+    write(folder / (role + '.product.json'), value)
+    return value
 
 
 def bind(args):
@@ -160,11 +382,24 @@ def bind(args):
     (args.evidence / 'original-builder.log').write_bytes(raw)
     files = {name: git('show', SOURCE + ':' + name) for name in FILES}
     require(all((ROOT / name).read_bytes() == raw for name, raw in files.items()), 'Original sources changed')
+    resume_run = test_bundle.api('/actions/runs/' + str(RESUME_RUN))
+    resume_jobs = test_bundle.api('/actions/runs/' + str(RESUME_RUN) + '/jobs?per_page=100')
+    artifacts = {identity: test_bundle.api('/actions/artifacts/' + str(identity))
+                 for identity in (RESUME_ARTIFACT, RESUME_BINDING_ARTIFACT)}
+    resume_producer(resume_run, resume_jobs, artifacts)
+    for identity, filename in [(RESUME_ARTIFACT, 'retained-native.zip'),
+                               (RESUME_BINDING_ARTIFACT, 'retained-source.zip')]:
+        test_bundle.download(artifacts[identity], args.evidence / filename)
+    old_harness = {name: git('show', RESUME_SOURCE + ':' + name) for name in HARNESS}
+    prior = resume_archives(args.evidence, files, old_harness['scripts/peer_availability_diagnostic.swift'], old_harness)
+    write(args.evidence / 'prior-producer.json', {'provenance': prior, 'run': resume_run, 'jobs': resume_jobs,
+        'artifacts': {str(key): value for key, value in artifacts.items()}})
     write(args.evidence / 'binding.json', {'schema': 'nexgenvideo/peer-availability-binding/1',
         'sourceSHA': env['GITHUB_SHA'], 'treeSHA': git('rev-parse', 'HEAD^{tree}').decode().strip(),
         'runID': env['GITHUB_RUN_ID'], 'attempt': '1', 'originalRun': run, 'originalJob': job,
         'originalArtifact': artifact, 'originalEvidence': observed, 'sourceProof': proof,
         'originalFullLogSHA256': RAW_DIGEST,
+        'priorProducer': prior,
         'sourceFiles': {name: digest(raw) for name, raw in files.items()},
         'harnessFiles': {name: digest((ROOT / name).read_bytes()) for name in sorted(HARNESS)},
         'appAcceptance': False, 'appBuilds': 0, 'nativeRegressionSuiteRepeats': 0,
@@ -472,9 +707,23 @@ def observe(args):
     require(binding['originalFullLogSHA256'] == RAW_DIGEST
             and digest((args.binding / 'original-builder.log').read_bytes()) == RAW_DIGEST,
             'Transferred full original builder log differs')
+    originals = {name: (ROOT / name).read_bytes() for name in FILES}
+    old_harness = {}
+    for index, name in enumerate(sorted(HARNESS)):
+        result = controller.run(['git', '-C', str(ROOT), 'show', RESUME_SOURCE + ':' + name],
+            'prior-harness-' + str(index))
+        old_harness[name] = (args.evidence / result['stdoutFile']).read_bytes()
+    prior = resume_archives(args.binding, originals, old_harness['scripts/peer_availability_diagnostic.swift'], old_harness)
+    transferred = json.loads((args.binding / 'prior-producer.json').read_text())
+    resume_producer(transferred['run'], transferred['jobs'],
+        {int(key): value for key, value in transferred['artifacts'].items()})
+    require(transferred['provenance'] == binding['priorProducer'] == prior, 'Transferred prior producer differs')
+    prior_folder = args.evidence / 'prior-producer'
+    prior_folder.mkdir()
+    for name in ('retained-native.zip', 'retained-source.zip', 'prior-producer.json'):
+        (prior_folder / name).write_bytes((args.binding / name).read_bytes())
     sources = args.evidence / 'sources'
     sources.mkdir()
-    originals = {name: (ROOT / name).read_bytes() for name in FILES}
     subset, ranges = source_subset(originals)
     subset['NativeAXPeer.swift'] = originals[PEER]
     fixture, fixture_ranges = fixture_subset(originals[FIXTURE])
@@ -489,14 +738,26 @@ def observe(args):
     include = args.evidence / 'support-module'
     include.mkdir()
     (include / 'AppKitTestHostSupport.h').write_bytes(originals[HEADER])
-    (include / 'module.modulemap').write_text('module AppKitTestHostSupport { header "AppKitTestHostSupport.h" export * }\n')
+    (include / 'module.modulemap').write_bytes(SUPPORT_MODULE)
     support = args.evidence / 'host-support.o'
     host = args.evidence / 'NexGenVideoAppKitTestHost'
     bundle = args.evidence / 'PeerAvailability.dylib'
     raw_client = args.evidence / 'peer-availability-raw'
+    with zipfile.ZipFile(args.binding / 'retained-native.zip') as archive:
+        for role, path in [('support', support), ('host', host)]:
+            path.write_bytes(archive.read(RETAINED[role]['member']))
+            retained_product(path.read_bytes(), RETAINED[role])
+            if role == 'host':
+                path.chmod(0o755)
+                require(macho_uuid(path) == RETAINED[role]['uuid'], 'Reused Host UUID differs')
+            product_record(args.evidence, role, path, {'kind': 'reused-prior-product',
+                'sourceSHA': RESUME_SOURCE, 'runID': RESUME_RUN, 'jobID': RESUME_JOB,
+                'artifactID': RESUME_ARTIFACT, 'artifactSHA256': RESUME_DIGEST,
+                'recipe': prior['recipes'][role], 'priorCompilerReceipt': prior['compilerReceipts'][role],
+                'originalSourceHashes': binding['sourceFiles'], 'supportModuleSHA256': digest(SUPPORT_MODULE)})
     require(os.uname().machine == 'arm64', 'Original native architecture differs')
     toolchain = {
-        'swift': (['swift', '--version'], 'Apple Swift version 6.4.2 (swiftlang-6.4.2.1.9 clang-2100.4.1.1)\nTarget: arm64-apple-macosx27.2.0'),
+        'swift': (['swift', '--version'], SWIFT_TARGET),
         'xcode': (['xcodebuild', '-version'], 'Xcode 27.2\nBuild version 27B52'),
         'os-version': (['sw_vers', '-productVersion'], '27.2'),
         'os-build': (['sw_vers', '-buildVersion'], '26B123')}
@@ -506,16 +767,37 @@ def observe(args):
     controller.run(['xcrun', '--sdk', 'macosx', '--show-sdk-platform-path'], 'sdk-platform')
     platform = (args.evidence / 'sdk-platform.log').read_text().strip()
     frameworks = Path(platform) / 'Developer/Library/Frameworks'
-    controller.run(['xcrun', 'clang', '-fobjc-arc', '-target', 'arm64-apple-macos26.0', '-I', str(include),
-        '-c', str(ROOT / SUPPORT), '-o', str(support)], 'compile-support')
-    prefix = ['xcrun', 'swiftc', '-swift-version', '6', '-O', '-enable-testing', '-parse-as-library', '-target', 'arm64-apple-macos26.0']
-    controller.run([*prefix, '-I', str(include), str(ROOT / HOST), str(support),
-        '-framework', 'AppKit', '-o', str(host)], 'compile-host')
-    controller.run([*prefix, '-emit-library', '-module-name', 'PeerAvailability', '-F', str(frameworks),
+    require(platform == prior['sdkPlatform'] and Path(platform).is_absolute() and frameworks.is_dir(),
+            'Selected SDK framework path differs from retained compiler producer')
+    selected = controller.run(['xcrun', '--find', 'swiftc'], 'selected-compiler', separate_stderr=True)
+    compiler_text = (args.evidence / selected['stdoutFile']).read_text().strip()
+    with zipfile.ZipFile(original) as archive:
+        original_compiler = archive.read('_temp/release-test-evidence/app-swift-testing/swiftc-path.stdout').decode().strip()
+    require(compiler_text == original_compiler, 'Selected compiler differs from original native producer')
+    compiler = Path(compiler_text)
+    controller.identity([str(compiler), '--version'], 'selected-swiftc', SWIFT_TARGET)
+    metadata = controller.run([str(compiler), '-print-target-info', '-target', 'arm64-apple-macos26.0'],
+        'compiler-target-info', separate_stderr=True)
+    plugin = plugin_metadata((args.evidence / metadata['stdoutFile']).read_bytes(), compiler)
+    plugin['metadataProcess'] = metadata
+    write(args.evidence / 'macro-plugin.json', plugin)
+    prefix = [str(compiler), '-swift-version', '6', '-O', '-enable-testing', '-parse-as-library', '-target', 'arm64-apple-macos26.0']
+    process = controller.run([*prefix, '-emit-library', '-module-name', 'PeerAvailability', '-F', str(frameworks),
         '-framework', 'Testing', '-Xlinker', '-rpath', '-Xlinker', str(frameworks),
+        '-plugin-path', plugin['pluginDirectory'],
         *[str(sources / name) for name in sorted(subset)], '-o', str(bundle)], 'compile-bundle')
-    controller.run([*prefix, str(sources / 'NativeAXPeer.swift'), str(sources / 'NativeButtonAccessibility.swift'),
+    product_record(args.evidence, 'bundle', bundle, {'kind': 'current-compilation',
+        'sourceSHA': os.environ['GITHUB_SHA'], 'runID': os.environ['GITHUB_RUN_ID'],
+        'compilerReceipt': process, 'sourceHashes': {name: digest(raw) for name, raw in subset.items()},
+        'macroPlugin': plugin})
+    process = controller.run([*prefix, str(sources / 'NativeAXPeer.swift'), str(sources / 'NativeButtonAccessibility.swift'),
         str(ROOT / 'scripts/peer_availability_raw.swift'), '-o', str(raw_client)], 'compile-raw')
+    product_record(args.evidence, 'raw', raw_client, {'kind': 'current-compilation',
+        'sourceSHA': os.environ['GITHUB_SHA'], 'runID': os.environ['GITHUB_RUN_ID'], 'compilerReceipt': process,
+        'sourceHashes': {name: digest(path.read_bytes()) for name, path in [
+            ('NativeAXPeer.swift', sources / 'NativeAXPeer.swift'),
+            ('NativeButtonAccessibility.swift', sources / 'NativeButtonAccessibility.swift'),
+            ('peer_availability_raw.swift', ROOT / 'scripts/peer_availability_raw.swift')]}})
     controller.run(['xcrun', 'dwarfdump', '--uuid', str(host), str(bundle), str(raw_client)], 'binary-uuids')
     write(args.evidence / 'product-hashes.json', {path.name: digest(path.read_bytes()) for path in
         [host, bundle, raw_client, support]})
@@ -538,6 +820,7 @@ def observe(args):
     write(args.evidence / 'receipt.json', {'schema': 'nexgenvideo/peer-availability-collection/1',
         'sourceSHA': os.environ['GITHUB_SHA'], 'runID': os.environ['GITHUB_RUN_ID'], 'attempt': '1',
         'appAcceptance': False, 'appBuilds': 0, 'nativeRegressionSuiteRepeats': 0,
+        'newCompilerInvocations': 2, 'reusedCompilerProducts': 2,
         'diagnosticFunctionExecutions': 2, 'observations': results,
         'scope': 'Isolated original host sources with a distinct small diagnostic test image; raw calls follow the first Peer query.'})
 

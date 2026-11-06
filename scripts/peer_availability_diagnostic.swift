@@ -93,7 +93,7 @@ private final class AvailabilityTrace {
         observer = CFRunLoopObserverCreateWithHandler(nil, CFRunLoopActivity.allActivities.rawValue, true, 0) { _, activity in
             state.tick("runLoop", activity: activity.rawValue)
         }
-        CFRunLoopAddObserver(CFRunLoopGetMain(), observer, kCFRunLoopCommonModes)
+        CFRunLoopAddObserver(CFRunLoopGetMain(), observer, CFRunLoopMode.commonModes)
         timer = DispatchSource.makeTimerSource(queue: .main)
         timer.schedule(deadline: .now(), repeating: .milliseconds(10))
         timer.setEventHandler { state.tick("dispatch") }
@@ -102,7 +102,7 @@ private final class AvailabilityTrace {
 
     func stop() {
         timer.cancel()
-        CFRunLoopRemoveObserver(CFRunLoopGetMain(), observer, kCFRunLoopCommonModes)
+        CFRunLoopRemoveObserver(CFRunLoopGetMain(), observer, CFRunLoopMode.commonModes)
     }
 
     func evidence() -> [String: Any] {
@@ -110,7 +110,7 @@ private final class AvailabilityTrace {
         value["installedAt"] = installedAt
         value["recordedAt"] = ProcessInfo.processInfo.systemUptime
         value["observerValid"] = CFRunLoopObserverIsValid(observer)
-        value["observerOnMainCommonModes"] = CFRunLoopContainsObserver(CFRunLoopGetMain(), observer, kCFRunLoopCommonModes)
+        value["observerOnMainCommonModes"] = CFRunLoopContainsObserver(CFRunLoopGetMain(), observer, CFRunLoopMode.commonModes)
         return value
     }
 }

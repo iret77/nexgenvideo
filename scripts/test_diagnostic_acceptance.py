@@ -141,10 +141,11 @@ class PeerAvailabilityRouteTests(unittest.TestCase):
         self.diagnostic = peer_availability_diagnostic
         self.env = dict(KIND=self.diagnostic.KIND, CANDIDATE_RUN=str(self.diagnostic.RUN),
             CANDIDATE_SOURCE=self.diagnostic.SOURCE, CANDIDATE_ARTIFACT=str(self.diagnostic.ARTIFACT),
-            CANDIDATE_DIGEST=self.diagnostic.DIGEST, VERIFIED_PR='12', SCALE='1')
+            CANDIDATE_DIGEST=self.diagnostic.DIGEST, VERIFIED_PR='12', SCALE='1',
+            EXTRA_FAILURE=str(self.diagnostic.RESUME_ARTIFACT), EXTRA_FAILURE_SHA=self.diagnostic.RESUME_DIGEST)
         for field in ('JOURNEY_JOB', 'JOURNEY_ARTIFACT', 'JOURNEY_DIGEST', 'DMG_DIGEST',
-                      'EXTRA_SOURCE', 'EXTRA_PRODUCTS', 'EXTRA_PRODUCTS_SHA', 'EXTRA_FAILURE',
-                      'EXTRA_FAILURE_SHA', 'RUNTIME_FAILURE_BINDING', 'PACKAGING_PRODUCER_SOURCE',
+                      'EXTRA_SOURCE', 'EXTRA_PRODUCTS', 'EXTRA_PRODUCTS_SHA',
+                      'RUNTIME_FAILURE_BINDING', 'PACKAGING_PRODUCER_SOURCE',
                       'PACKAGING_PROVENANCE_ARTIFACT_ID', 'PACKAGING_PROVENANCE_ARTIFACT_SHA256'):
             self.env[field] = ''
 
@@ -162,11 +163,17 @@ class PeerAvailabilityRouteTests(unittest.TestCase):
 
     def test_registered_caller_cannot_ignore_raw_reuse_journey_or_packaging_inputs(self):
         for field in ('JOURNEY_JOB', 'JOURNEY_ARTIFACT', 'JOURNEY_DIGEST', 'DMG_DIGEST',
-                      'EXTRA_SOURCE', 'EXTRA_PRODUCTS', 'EXTRA_PRODUCTS_SHA', 'EXTRA_FAILURE',
-                      'EXTRA_FAILURE_SHA', 'RUNTIME_FAILURE_BINDING', 'PACKAGING_PRODUCER_SOURCE',
+                      'EXTRA_SOURCE', 'EXTRA_PRODUCTS', 'EXTRA_PRODUCTS_SHA',
+                      'RUNTIME_FAILURE_BINDING', 'PACKAGING_PRODUCER_SOURCE',
                       'PACKAGING_PROVENANCE_ARTIFACT_ID', 'PACKAGING_PROVENANCE_ARTIFACT_SHA256'):
             with self.subTest(field=field), self.assertRaises((ValueError, SystemExit)):
                 self.guard({field: 'unexpected'})
+
+    def test_registered_caller_requires_the_complete_exact_retained_compiler_pair(self):
+        for changes in ({'EXTRA_FAILURE': '', 'EXTRA_FAILURE_SHA': ''}, {'EXTRA_FAILURE': ''},
+                        {'EXTRA_FAILURE_SHA': ''}, {'EXTRA_FAILURE': '1'}, {'EXTRA_FAILURE_SHA': 'a' * 64}):
+            with self.subTest(changes=changes), self.assertRaisesRegex(ValueError, 'Exact Native785'):
+                self.guard(changes)
 
 
 class AppCrashCandidateTests(unittest.TestCase):
