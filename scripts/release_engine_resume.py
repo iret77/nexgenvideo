@@ -39,6 +39,25 @@ BUTTON_TEST_METHODS = {
     "roleLabelAndEnabledStateAreIndependentRequirements", "theLastChildMessageUsesItsOwnRemainingTimeout",
     "unknownCGMetadataCannotHideACompetingOwnWindow",
 }
+ORIGINAL_BUTTON_TEST_METHODS = frozenset(BUTTON_TEST_METHODS)
+BUTTON_TEST_METHODS |= {
+    "actualReaderExportBindsTheLoadedAppCodeImage", "actualPreparedReaderProvesItsOwnParentImageAndTrust",
+    "missingAmbiguousAndUnreadableContentRootsRemainUnqualified", "actualWindowFrameCannotSubstituteForTheContentRoot",
+    "completedReplyCannotSurviveDeliveryCancellation", "trailingPartialDuplicateAndFailedPeerOutputCannotBecomeCleanEOF",
+    "nestedPeerFieldsCannotBeSilentlyIgnored",
+}
+APP_READER = "Sources/NexGenVideo/App/NativeAXPeer.swift"
+APP_HOST = "Tests/AppKitTestHost"
+APP_HOST_FILE = APP_HOST + "/AppKitTestHost.swift"
+APP_HOST_BLOB = "ee3f621d4d33243ad39268ef64f939797f17b929"
+APP_HOST_TREE = "04baf7ac5e107a119133859694b2b176291ac8f9"
+APP_HOST_NORMAL_SHA256 = "38f4cf2870cc763af6ac20778c0be1243f09f8a59654050dfff4155f5ae3f151"
+APP_HOST_BRANCH_SHA256 = "569026d1fee3b5ce57095e06624155dba60540f28ee0304df9ed3ad4df29bf83"
+APP_HOST_ROLE = {
+    "schema": "app-only-reader-host-role/v1", "hostTree": APP_HOST_TREE, "hostBlob": APP_HOST_BLOB,
+    "normalHostSHA256": APP_HOST_NORMAL_SHA256, "earlyReaderSHA256": APP_HOST_BRANCH_SHA256,
+    "enginePhaseSHA256": PHASE_DIGEST, "engineTestProduct": "NexGenEngineTests",
+}
 # Retain the exact App inventories from candidate N artifact 13429616466.
 APP_BASELINE_INVENTORY_HASHES = {
     "discoveredFunctionIDs": "6df708800b56cfd5a024ea069ce6c8699c8fba023a0d2a628726de6c83899cc9",
@@ -98,6 +117,13 @@ ENGINE_SOURCE_OBJECTS = {
 
 
 REVIEWED_HARNESS_SOURCE = '55a13d86438208d9e801f243f9051f83a75e6c10'
+REVIEWED_QUERY_SOURCE = '1472febfd2be2dbe6affa3a183e436ff38b9711d'
+REVIEWED_QUERY_OBJECTS = {
+    'scripts/button_query_diagnostic.py': '2140732ff99bde9d6ef03956b40ee2b1b989d618',
+    'scripts/button_query_diagnostic.swift': 'ce96ee94e0f04b85ca07e340a684657adf1235bf',
+    'scripts/test_button_query_diagnostic.py': '9c646f6d450de9436ec70dc26bae09470cf0c4ba',
+    'scripts/test_diagnostic_acceptance.py': '8e108ae3c51a5fc3558057a61abab81ab3124b6e',
+}
 REVIEWED_HARNESS_OBJECTS = {
     ".github/actions/prepare-bpy-source/action.yml": "467d96269e791bebf8e15f75bb5882511fd8257f",
     ".github/workflows/bpy-runtime-acceptance.yml": "49a290fb27991ef29b8e7830e674bb67e403fa31",
@@ -119,8 +145,10 @@ REVIEWED_HARNESS_OBJECTS = {
     "scripts/workspace_native_ci.py": "75334f813fee5bd1564eb5225b7579ffd20c0465"
 }
 PATHS |= set(REVIEWED_HARNESS_OBJECTS)
+PATHS |= set(REVIEWED_QUERY_OBJECTS)
 PATHS |= {
     BUTTON_FIXTURE, "Sources/NexGenVideo/App/NativeButtonAccessibility.swift",
+    APP_READER, APP_HOST_FILE, "Sources/NexGenVideo/App/main.swift",
     ".github/workflows/scene-history-hierarchy-diagnostic.yml", "scripts/external-gui/test_bundle.py",
     "scripts/scene_history_ax_observer.swift", "scripts/scene_history_hierarchy.py",
     "scripts/test_scene_history_hierarchy.py",
@@ -137,20 +165,46 @@ def event_parser(source):
     return ast.dump(function, include_attributes=False)
 
 
+def verify_app_host_role(before, after):
+    before, after = before.rstrip("\n") + "\n", after.rstrip("\n") + "\n"
+    marker = "    static func main() {\n"
+    require(before.count(marker) == after.count(marker) == 1, "App Host entry is ambiguous")
+    start = after.index(marker) + len(marker)
+    require(after.count("        UserDefaults.standard.register") == 1, "App Host normal entry changed")
+    end = after.index("        UserDefaults.standard.register", start)
+    require(after[:start] + after[end:] == before
+            and hashlib.sha256(before.encode()).hexdigest() == APP_HOST_NORMAL_SHA256
+            and hashlib.sha256(after[start:end].encode()).hexdigest() == APP_HOST_BRANCH_SHA256,
+            "Only the exact reviewed early App reader branch may differ")
+    return dict(APP_HOST_ROLE)
+
+
 def verify_engine_source_objects(head):
+    actual, compatibility = {}, None
     for path, pinned in ENGINE_SOURCE_OBJECTS.items():
-        require(command("git", "rev-parse", SOURCE + ":" + path) == pinned
-                and command("git", "rev-parse", head + ":" + path) == pinned,
-                "Retained Engine dependency object changed: " + path)
+        require(command("git", "rev-parse", SOURCE + ":" + path) == pinned,
+                "Original Engine dependency object changed: " + path)
+        current = command("git", "rev-parse", head + ":" + path)
+        if path == APP_HOST and current != pinned:
+            require(current == APP_HOST_TREE
+                    and command("git", "rev-parse", head + ":" + APP_HOST_FILE) == APP_HOST_BLOB,
+                    "Unreviewed App Host object changed")
+            compatibility = verify_app_host_role(command("git", "show", SOURCE + ":" + APP_HOST_FILE),
+                                                 command("git", "show", head + ":" + APP_HOST_FILE))
+        else:
+            require(current == pinned, "Retained Engine dependency object changed: " + path)
+        actual[path] = current
+    return actual, compatibility
 
 
 def verify_harness_source_objects(head, changed):
-    if not set(changed).intersection(REVIEWED_HARNESS_OBJECTS):
-        return
-    for path, pinned in REVIEWED_HARNESS_OBJECTS.items():
-        require(command("git", "rev-parse", REVIEWED_HARNESS_SOURCE + ":" + path) == pinned
-                and command("git", "rev-parse", head + ":" + path) == pinned,
-                "Reviewed retained CI source object changed: " + path)
+    for source, objects in ((REVIEWED_HARNESS_SOURCE, REVIEWED_HARNESS_OBJECTS),
+                            (REVIEWED_QUERY_SOURCE, REVIEWED_QUERY_OBJECTS)):
+        if set(changed).intersection(objects):
+            for path, pinned in objects.items():
+                require(command("git", "rev-parse", source + ":" + path) == pinned
+                        and command("git", "rev-parse", head + ":" + path) == pinned,
+                        "Reviewed retained CI source object changed: " + path)
 
 
 def verify_sources(head, version_bump=False):
@@ -274,10 +328,17 @@ def prepare(run_id, root):
                "runID": int(os.environ["GITHUB_RUN_ID"]), "attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
                "originalSourceSHA": SOURCE, "originalRun": original, "originalJobs": jobs,
                "artifact": artifact, "artifactSHA256": DIGEST, "originalLogSHA256": LOG_DIGEST,
-               "changedPaths": changed, "engineSourceObjects": ENGINE_SOURCE_OBJECTS,
+               "changedPaths": changed, "engineSourceObjects": verify_engine_source_objects(head)[0],
                "reviewedHarnessSourceSHA": REVIEWED_HARNESS_SOURCE, "reviewedHarnessObjects": REVIEWED_HARNESS_OBJECTS,
                "toolchain": toolchain(raw), "proof": proof,
                "acquiredAt": datetime.now(timezone.utc).isoformat()}
+    compatibility = verify_engine_source_objects(head)[1]
+    if compatibility:
+        receipt["engineHostCompatibility"] = compatibility
+    if APP_READER in changed:
+        receipt["nativeButtonMethods"] = sorted(BUTTON_TEST_METHODS)
+    if set(changed).intersection(REVIEWED_QUERY_OBJECTS):
+        receipt.update(reviewedQuerySourceSHA=REVIEWED_QUERY_SOURCE, reviewedQueryObjects=REVIEWED_QUERY_OBJECTS)
     verify_receipt(receipt, head, int(os.environ["GITHUB_RUN_ID"]))
     write(root / "receipt.json", receipt)
 
@@ -312,16 +373,39 @@ def verify_receipt(receipt, source, run_id):
     require(FIXTURE in receipt.get("changedPaths", []) and set(receipt["changedPaths"]) <= PATHS,
             "Engine resume source closure differs")
     if "engineSourceObjects" in receipt:
-        require(receipt["engineSourceObjects"] == ENGINE_SOURCE_OBJECTS,
-                "Retained Engine dependency receipt differs")
+        current = receipt["engineSourceObjects"]
+        if current == ENGINE_SOURCE_OBJECTS:
+            require("engineHostCompatibility" not in receipt and APP_HOST_FILE not in receipt["changedPaths"],
+                    "Missing or unnecessary Engine Host exception")
+        else:
+            expected = dict(ENGINE_SOURCE_OBJECTS, **{APP_HOST: APP_HOST_TREE})
+            require(current == expected and receipt.get("engineHostCompatibility") == APP_HOST_ROLE
+                    and APP_HOST_FILE in receipt["changedPaths"] and APP_READER in receipt["changedPaths"],
+                    "Retained Engine dependency receipt differs")
+            command = phase.get("command", [])
+            require(isinstance(command, list) and command[:2] == ["swift", "test"]
+                    and command.count("--test-product") == 1
+                    and command.index("--test-product") + 1 < len(command)
+                    and command[command.index("--test-product") + 1] == "NexGenEngineTests"
+                    and all(flag in command for flag in ("--skip-build", "--disable-xctest", "--enable-swift-testing"))
+                    and all(Path(value).name != "NexGenVideoAppKitTestHost" for value in command),
+                    "The retained Engine execution must not use the changed App Host")
     else:
         require(set(receipt["changedPaths"]) <= ORIGINAL_PATHS,
                 "Extended App/CI continuation requires exact Engine dependency objects")
+    expected_buttons = BUTTON_TEST_METHODS if APP_READER in receipt["changedPaths"] else ORIGINAL_BUTTON_TEST_METHODS
+    if APP_READER in receipt["changedPaths"] or "nativeButtonMethods" in receipt:
+        require(receipt.get("nativeButtonMethods") == sorted(expected_buttons), "Native button receipt inventory differs")
     if set(receipt["changedPaths"]).intersection(REVIEWED_HARNESS_OBJECTS) or any(
             key in receipt for key in ("reviewedHarnessSourceSHA", "reviewedHarnessObjects")):
         require(receipt.get("reviewedHarnessSourceSHA") == REVIEWED_HARNESS_SOURCE
                 and receipt.get("reviewedHarnessObjects") == REVIEWED_HARNESS_OBJECTS,
                 "Reviewed retained CI source receipt differs")
+    if set(receipt["changedPaths"]).intersection(REVIEWED_QUERY_OBJECTS) or any(
+            key in receipt for key in ("reviewedQuerySourceSHA", "reviewedQueryObjects")):
+        require(receipt.get("reviewedQuerySourceSHA") == REVIEWED_QUERY_SOURCE
+                and receipt.get("reviewedQueryObjects") == REVIEWED_QUERY_OBJECTS,
+                "Reviewed query diagnostic receipt differs")
 
 
 def verify(root, version_bump=False):
@@ -332,6 +416,9 @@ def verify(root, version_bump=False):
     verify_receipt(receipt, os.environ["GITHUB_SHA"], int(os.environ["GITHUB_RUN_ID"]))
     require(verify_sources(receipt["sourceSHA"], version_bump) == receipt["changedPaths"],
             "Current Engine source closure differs")
+    actual_objects, compatibility = verify_engine_source_objects(receipt["sourceSHA"])
+    require(receipt.get("engineSourceObjects", actual_objects) == actual_objects
+            and receipt.get("engineHostCompatibility") == compatibility, "Current Engine role proof differs")
     require(checksum(root / "original.zip") == DIGEST and checksum(root / "original-job.log") == LOG_DIGEST,
             "Retained Engine input bytes differ")
     proof = receipt["proof"]
@@ -361,7 +448,7 @@ def install(root, evidence):
     return phase, receipt
 
 
-def verify_button_inventory(events):
+def verify_button_inventory(events, methods=ORIGINAL_BUTTON_TEST_METHODS):
     prefix = "NexGenVideoTests.NativeButtonInteractionTests/"
     for key, expected_hash in APP_BASELINE_INVENTORY_HASHES.items():
         values = events.get(key)
@@ -370,7 +457,7 @@ def verify_button_inventory(events):
         added = [value for value in values if value.startswith(prefix)]
         matched = [re.fullmatch(re.escape(prefix) + r"([A-Za-z0-9_]+)\(\)/NativeButtonInteractionTests\.swift:[1-9][0-9]*:[1-9][0-9]*", value)
                    for value in added]
-        expected = set() if key == "skippedFunctionIDs" else BUTTON_TEST_METHODS
+        expected = set() if key == "skippedFunctionIDs" else methods
         require(all(matched) and len(added) == len(expected)
                 and {match[1] for match in matched} == expected, "New native button methods did not all execute exactly once")
         original = sorted(value for value in values if not value.startswith(prefix))
@@ -382,13 +469,15 @@ def verify_completed_suite(suite, source, run_id):
     require(suite.get("schema") == 1 and suite.get("sourceSHA") == source and suite.get("completed") is True
             and suite.get("scope") == "all" and suite.get("configuration") == "release"
             and suite.get("filter") == "" and suite.get("reusedTestExecutions") == 896
-            and (suite.get("testExecutions"), suite.get("freshTestExecutions")) in ((4620, 3724), (4637, 3741))
+            and (suite.get("testExecutions"), suite.get("freshTestExecutions")) in
+                ((4620, 3724), (4637, 3741), (4620 + len(BUTTON_TEST_METHODS), 3724 + len(BUTTON_TEST_METHODS)))
             and suite.get("combinedFrameworks", {}).get("passed") is True,
             "Resumed Release aggregate is incomplete")
     retained = suite.get("retainedBackends", [])
     require(isinstance(retained, list) and len(retained) == 1 and isinstance(retained[0], dict),
             "Resumed Release must retain exactly the Engine backend")
-    added = 17 if BUTTON_FIXTURE in retained[0].get("changedPaths", []) else 0
+    methods = BUTTON_TEST_METHODS if APP_READER in retained[0].get("changedPaths", []) else ORIGINAL_BUTTON_TEST_METHODS
+    added = len(methods) if BUTTON_FIXTURE in retained[0].get("changedPaths", []) else 0
     require(suite.get("testExecutions") == 4620 + added and suite.get("freshTestExecutions") == 3724 + added,
             "Resumed Release aggregate is incomplete")
     verify_receipt(retained[0], source, run_id)
@@ -411,7 +500,7 @@ def verify_completed_suite(suite, source, run_id):
             and phases[2].get("events", {}).get("functionExecutions") == 3676 + added,
             "Fresh App backend execution counts differ")
     if added:
-        verify_button_inventory(phases[2].get("events", {}))
+        verify_button_inventory(phases[2].get("events", {}), methods)
     host = phases[2].get("originalHostReceipt", {})
     require(host.get("sourceSHA") == source and all(host.get(key) is True for key in
             ("mainThread", "applicationRunningAtStart", "started", "completed", "abiSucceeded", "runReturnedAfterCompletion")),

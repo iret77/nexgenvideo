@@ -221,13 +221,27 @@ final class ProductionVisualSourcesDriver {
         let windowFrame = target.frame
         let publicWindow = NSRect(x: windowFrame.minX, y: screen.frame.maxY - windowFrame.maxY,
                                   width: windowFrame.width, height: windowFrame.height)
+        let contentScreen = target.convertToScreen(root.convert(root.bounds, to: nil))
+        let publicContent = NSRect(x: contentScreen.minX, y: screen.frame.maxY - contentScreen.maxY,
+                                   width: contentScreen.width, height: contentScreen.height)
         let request = NativeButtonAccessibility.Request(pid: getpid(), windowNumber: target.windowNumber,
-            windowFrame: .init(publicWindow))
-        let snapshot = await NativeButtonAccessibility.read(request)
+            windowFrame: .init(publicWindow), contentFrame: .init(publicContent))
+        let snapshot: NativeButtonAccessibility.Snapshot
+        do {
+            let result = try await NativeAXPeer.withSession { session in
+                await NativeButtonAccessibility.read(request, using: session)
+            }
+            snapshot = result.0
+            evidence["readerLifecycle"] = result.1.evidence
+        } catch {
+            evidence["readerFailure"] = String(describing: error)
+            return ([], evidence)
+        }
         evidence["publicAX"] = snapshot.evidence
         evidence["visited"] = snapshot.nodes.count
         evidence["truncated"] = !snapshot.complete
-        guard target.isKeyWindow, target.frame == windowFrame, view.window === target,
+        guard target.isKeyWindow, target.frame == windowFrame, target.contentView === root,
+              target.convertToScreen(root.convert(root.bounds, to: nil)) == contentScreen, view.window === target,
               probe(id, in: target) === view, fullyVisible(view, root: root) else { return ([], evidence) }
         let probeScreen = target.convertToScreen(view.convert(view.bounds, to: nil))
         let publicProbe = NSRect(x: probeScreen.minX, y: screen.frame.maxY - probeScreen.maxY,

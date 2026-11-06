@@ -182,8 +182,10 @@ class ReleaseEngineResumeTests(unittest.TestCase):
                 return parser
             if args[:2] == ("git", "rev-parse"):
                 revision, path = args[2].split(":", 1)
-                self.assertIn(revision, (resume.SOURCE, SOURCE, resume.REVIEWED_HARNESS_SOURCE))
-                expected = resume.ENGINE_SOURCE_OBJECTS if path in resume.ENGINE_SOURCE_OBJECTS else resume.REVIEWED_HARNESS_OBJECTS
+                self.assertIn(revision, (resume.SOURCE, SOURCE, resume.REVIEWED_HARNESS_SOURCE, resume.REVIEWED_QUERY_SOURCE))
+                expected = (resume.ENGINE_SOURCE_OBJECTS if path in resume.ENGINE_SOURCE_OBJECTS
+                            else resume.REVIEWED_QUERY_OBJECTS if path in resume.REVIEWED_QUERY_OBJECTS
+                            else resume.REVIEWED_HARNESS_OBJECTS)
                 return "0" * 40 if (revision, path) == object_changed else expected[path]
             self.fail("Unexpected source query: " + repr(args))
         after = parser.replace("{}", "{'changed': True}") if parser_changed else parser
@@ -277,6 +279,32 @@ class ReleaseEngineResumeTests(unittest.TestCase):
             changed = copy.deepcopy(receipt); changed["reviewedHarnessObjects"]["scripts/unknown.py"] = "0" * 40
             with self.assertRaises(ValueError): resume.verify_receipt(changed, SOURCE, RUN)
 
+    def test_retained_query_diagnostics_require_exact_reviewed_objects_and_receipt(self):
+        paths = [resume.FIXTURE, *resume.REVIEWED_QUERY_OBJECTS]
+        self.assertEqual(self.source_closure("\n".join(paths)), paths)
+        for revision in (resume.REVIEWED_QUERY_SOURCE, SOURCE):
+            for path in resume.REVIEWED_QUERY_OBJECTS:
+                with self.subTest(revision=revision, path=path), self.assertRaises(ValueError):
+                    self.source_closure("\n".join(paths), object_changed=(revision, path))
+        with self.assertRaises(ValueError): self.source_closure("\n".join(paths + ['scripts/unknown.py']))
+        receipt = self.receipt()
+        receipt.update(changedPaths=paths, engineSourceObjects=dict(resume.ENGINE_SOURCE_OBJECTS))
+        with self.phase_pin(receipt):
+            with self.assertRaises(ValueError): resume.verify_receipt(receipt, SOURCE, RUN)
+            receipt.update(reviewedQuerySourceSHA=resume.REVIEWED_QUERY_SOURCE,
+                           reviewedQueryObjects=dict(resume.REVIEWED_QUERY_OBJECTS))
+            resume.verify_receipt(receipt, SOURCE, RUN)
+            for key in ('reviewedQuerySourceSHA', 'reviewedQueryObjects'):
+                changed = copy.deepcopy(receipt); changed.pop(key)
+                with self.subTest(missing=key), self.assertRaises(ValueError): resume.verify_receipt(changed, SOURCE, RUN)
+            for path in resume.REVIEWED_QUERY_OBJECTS:
+                changed = copy.deepcopy(receipt); changed['reviewedQueryObjects'][path] = '0' * 40
+                with self.subTest(path=path), self.assertRaises(ValueError): resume.verify_receipt(changed, SOURCE, RUN)
+            changed = copy.deepcopy(receipt); changed['reviewedQueryObjects']['scripts/unknown.py'] = '0' * 40
+            with self.assertRaises(ValueError): resume.verify_receipt(changed, SOURCE, RUN)
+            changed = copy.deepcopy(receipt); changed['reviewedQuerySourceSHA'] = '0' * 40
+            with self.assertRaises(ValueError): resume.verify_receipt(changed, SOURCE, RUN)
+
     def test_signed_input_cannot_disguise_retained_tests_as_fresh(self):
         receipt = self.receipt()
         receipt["artifact"]["expires_at"] = "2026-11-11T13:09:18Z"
@@ -302,6 +330,8 @@ class ReleaseEngineResumeTests(unittest.TestCase):
     def button_suite(self):
         receipt = self.receipt()
         receipt["changedPaths"].append(resume.BUTTON_FIXTURE)
+        receipt["changedPaths"].append(resume.APP_READER)
+        receipt["nativeButtonMethods"] = sorted(resume.BUTTON_TEST_METHODS)
         receipt["engineSourceObjects"] = dict(resume.ENGINE_SOURCE_OBJECTS)
         suite = self.suite(receipt)
         original = [f"NexGenVideoTests.Existing/test{index}()/Existing.swift:1:6" for index in range(3676)]
@@ -313,8 +343,9 @@ class ReleaseEngineResumeTests(unittest.TestCase):
         fingerprints = {key: hashlib.sha256(json.dumps(sorted(values), separators=(",", ":")).encode()).hexdigest()
                         for key, values in baseline.items()}
         events = {key: values + ([] if key == "skippedFunctionIDs" else added) for key, values in baseline.items()}
-        events["functionExecutions"] = 3693
-        suite.update(testExecutions=4637, freshTestExecutions=3741)
+        events["functionExecutions"] = 3676 + len(resume.BUTTON_TEST_METHODS)
+        suite.update(testExecutions=4620 + len(resume.BUTTON_TEST_METHODS),
+                     freshTestExecutions=3724 + len(resume.BUTTON_TEST_METHODS))
         suite["phases"][2]["events"] = events
         return receipt, suite, fingerprints
 
@@ -323,7 +354,8 @@ class ReleaseEngineResumeTests(unittest.TestCase):
         with self.phase_pin(receipt), patch.object(resume, "APP_BASELINE_INVENTORY_HASHES", fingerprints):
             resume.verify_completed_suite(suite, SOURCE, RUN)
             self.assertEqual(suite["phases"][1]["events"]["functionExecutions"], 896)
-            self.assertEqual(len(suite["phases"][2]["events"]["discoveredFunctionIDs"]), 3701)
+            self.assertEqual(len(suite["phases"][2]["events"]["discoveredFunctionIDs"]),
+                             3684 + len(resume.BUTTON_TEST_METHODS))
             self.assertEqual(len(suite["phases"][2]["events"]["skippedFunctionIDs"]), 8)
             original = self.receipt()
             with self.phase_pin(original):
@@ -378,6 +410,43 @@ class ReleaseEngineResumeTests(unittest.TestCase):
                     with self.subTest(revision=revision, path=path), self.assertRaises(ValueError):
                         self.source_closure("\n".join(paths), object_changed=(revision, path))
         with self.assertRaises(ValueError): self.source_closure("\n".join(paths + ["Sources/NexGenVideo/App/Unreviewed.swift"]))
+
+    def test_app_only_reader_entry_keeps_the_entire_original_host_path_identical(self):
+        after = Path(resume.APP_HOST_FILE).read_text()
+        entry = after.index("    static func main() {\n") + len("    static func main() {\n")
+        normal = after.index('        UserDefaults.standard.register', entry)
+        before = after[:entry] + after[normal:]
+        self.assertEqual(resume.verify_app_host_role(before, after), resume.APP_HOST_ROLE)
+        mutations = [after.replace('NSApplication.shared.stop(nil)', 'NSApplication.shared.abortModal()'),
+                     after.replace('swt_abiv0_getEntryPoint', 'unreviewed_entry'),
+                     after.replace('--ngv-native-ax-reader', '--unreviewed-reader'),
+                     after.replace('NGVRunNativeAXReaderIfRequested', 'UnreviewedExport')]
+        for changed in mutations:
+            self.assertNotEqual(changed, after)
+            with self.subTest(change=hashlib.sha256(changed.encode()).hexdigest()), self.assertRaises(ValueError):
+                resume.verify_app_host_role(before, changed)
+
+    def test_changed_app_host_needs_its_exact_role_proof_and_actual_engine_product(self):
+        receipt = self.receipt()
+        receipt['changedPaths'] += [resume.APP_HOST_FILE, resume.APP_READER]
+        receipt['nativeButtonMethods'] = sorted(resume.BUTTON_TEST_METHODS)
+        receipt['engineSourceObjects'] = dict(resume.ENGINE_SOURCE_OBJECTS, **{resume.APP_HOST: resume.APP_HOST_TREE})
+        receipt['engineHostCompatibility'] = dict(resume.APP_HOST_ROLE)
+        receipt['proof']['phase']['command'] = ['swift', 'test', '--skip-build', '--test-product', 'NexGenEngineTests',
+                                              '--disable-xctest', '--enable-swift-testing']
+        with self.phase_pin(receipt): resume.verify_receipt(receipt, SOURCE, RUN)
+        for mutation in ('missing', 'extra', 'normal', 'other-pin', 'host-tree', 'host-in-engine', 'wrong-product', 'missing-path'):
+            changed = copy.deepcopy(receipt)
+            if mutation == 'missing': changed.pop('engineHostCompatibility')
+            elif mutation == 'extra': changed['engineHostCompatibility']['unreviewed'] = True
+            elif mutation == 'normal': changed['engineHostCompatibility']['normalHostSHA256'] = '0' * 64
+            elif mutation == 'other-pin': changed['engineSourceObjects']['Package.swift'] = '0' * 40
+            elif mutation == 'host-tree': changed['engineSourceObjects'][resume.APP_HOST] = '0' * 40
+            elif mutation == 'host-in-engine': changed['proof']['phase']['command'] = ['NexGenVideoAppKitTestHost']
+            elif mutation == 'wrong-product': changed['proof']['phase']['command'][4] = 'NexGenVideoTests'
+            elif mutation == 'missing-path': changed['changedPaths'].remove(resume.APP_HOST_FILE)
+            with self.subTest(mutation=mutation), self.phase_pin(changed), self.assertRaises(ValueError):
+                resume.verify_receipt(changed, SOURCE, RUN)
 
 
 if __name__ == "__main__":
