@@ -297,8 +297,11 @@ private final class ProbeApplication: NSObject, NSApplicationDelegate {
     let mode: String
     let destination: URL
     var failure = false
+    let breadcrumbs: FileHandle?
 
-    init(mode: String, destination: URL) { self.mode = mode; self.destination = destination }
+    init(mode: String, destination: URL, breadcrumbs: FileHandle? = nil) {
+        self.mode = mode; self.destination = destination; self.breadcrumbs = breadcrumbs
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Task { await observe() }
@@ -306,27 +309,49 @@ private final class ProbeApplication: NSObject, NSApplicationDelegate {
 
     private func runsOnMainThread() -> Bool { Thread.isMainThread }
 
+    private func record(_ stage: String) throws {
+        guard let breadcrumbs else { return }
+        var data = try JSONSerialization.data(withJSONObject: ["schema": "nexgenvideo/button-query-stage/1",
+            "stage": stage, "mode": mode, "pid": getpid(), "uptime": ProcessInfo.processInfo.systemUptime,
+            "wallTime": Date().timeIntervalSince1970, "mainThread": runsOnMainThread()], options: [.sortedKeys])
+        data.append(0x0a)
+        try breadcrumbs.write(contentsOf: data)
+        try breadcrumbs.synchronize()
+    }
+
     func observe() async {
         do {
+            try record("observe-entered")
+            try record("fixture-init-before")
             let fixture = QueryFixture(mode: mode)
             defer { fixture.window.contentView = nil; fixture.window.close() }
+            try record("fixture-init-after")
             let before = fixture.geometry()
+            try record("first-query-before")
             let first = await Query.read(fixture.request)
+            try record("first-query-returned")
             let after = fixture.geometry()
+            try record("CG-stability-before")
             let stability = try await fixture.settledGeometry()
+            try record("CG-stability-returned")
             let beforeWarm = fixture.geometry()
+            try record("warm-query-before")
             let warm = await Query.read(fixture.request)
+            try record("warm-query-returned")
             let afterWarm = fixture.geometry()
             var slow: [String: Any] = ["status": "not-requested"]
             if let leaf = fixture.leaf {
                 let buttons = Query.buttons(warm, title: "Undo", inside: fixture.request.windowFrame)
                 if warm.complete, buttons.count == 1 {
+                    try record("slow-arm-before")
                     leaf.armed = true
                     NSAccessibility.post(element: leaf, notification: .layoutChanged)
+                    try record("slow-armed")
                     let request = fixture.request
                     let result: Query.Snapshot
                     var observed = false
                     var cancelledAt: Double = 0
+                    try record("slow-query-before")
                     if mode == "slow-cancel" {
                         let entered = leaf.entered
                         let query = Task.detached { await Query.read(request) }
@@ -345,6 +370,7 @@ private final class ProbeApplication: NSObject, NSApplicationDelegate {
                         result = await Query.read(request, seconds: 0.2)
                         observed = leaf.enteredAt > 0
                     }
+                    try record("slow-query-returned")
                     slow = ["status": observed ? "observed-after-complete-warmup" : "not-reached-getter-entry",
                         "getterEntered": observed, "enabledUndoCount": buttons.count, "cancelRequestedAt": cancelledAt,
                         "requestedSeconds": mode == "slow-timeout" ? 0.2 : 1,
@@ -358,10 +384,14 @@ private final class ProbeApplication: NSObject, NSApplicationDelegate {
             }
             let rawRequest = fixture.request
             let beforeRaw = fixture.geometry()
+            try record("raw-attributes-before")
             let raw = try await Task.detached { try RawAttributes.capture(rawRequest) }.value
+            try record("raw-attributes-returned")
             let afterRaw = fixture.geometry()
             let beforeLast = fixture.geometry()
+            try record("last-query-before")
             let last = await Query.read(fixture.request)
+            try record("last-query-returned")
             let report: [String: Any] = ["schema": "nexgenvideo/button-query-framework-control/1",
                 "mode": mode, "pid": getpid(), "parentPID": getppid(), "mainLoopRunning": NSApp.isRunning,
                 "mainThread": runsOnMainThread(), "activationPolicy": NSApp.activationPolicy().rawValue,
@@ -375,6 +405,7 @@ private final class ProbeApplication: NSObject, NSApplicationDelegate {
                 "slowObservation": slow, "rawAttributesAfterOriginalQueries": try JSONSerialization.jsonObject(with: raw),
                 "queryAfterAdditionalAX": last.evidence, "finalGeometry": fixture.geometry()]
             try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]).write(to: destination, options: .withoutOverwriting)
+            try record("report-written")
         } catch {
             failure = true
             FileHandle.standardError.write(Data("Framework control failed: \(error)\n".utf8))
@@ -391,8 +422,18 @@ private final class ProbeApplication: NSObject, NSApplicationDelegate {
 private enum ButtonQueryProbe {
     @MainActor
     static func main() {
-        guard CommandLine.arguments.count == 3 else { exit(2) }
-        let delegate = ProbeApplication(mode: CommandLine.arguments[1], destination: URL(fileURLWithPath: CommandLine.arguments[2]))
+        let arguments = CommandLine.arguments
+        guard arguments.count == 3 || arguments.count == 5 && arguments[3] == "--breadcrumbs" else { exit(2) }
+        let destination = URL(fileURLWithPath: arguments[2])
+        var breadcrumbs: FileHandle?
+        if arguments.count == 5 {
+            let trace = URL(fileURLWithPath: arguments[4])
+            guard trace.deletingLastPathComponent().standardizedFileURL == destination.deletingLastPathComponent().standardizedFileURL,
+                  !FileManager.default.fileExists(atPath: trace.path),
+                  FileManager.default.createFile(atPath: trace.path, contents: nil) else { exit(2) }
+            do { breadcrumbs = try FileHandle(forWritingTo: trace) } catch { exit(2) }
+        }
+        let delegate = ProbeApplication(mode: arguments[1], destination: destination, breadcrumbs: breadcrumbs)
         let application = NSApplication.shared
         application.delegate = delegate
         application.run()
