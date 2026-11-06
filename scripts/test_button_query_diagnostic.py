@@ -208,6 +208,19 @@ class ButtonQueryDiagnosticTests(unittest.TestCase):
 
     def test_crash_mode_has_its_own_source_gated_mac_leaf_and_preserves_all_five_default_cases(self):
         workflow = yaml.safe_load((diagnostic.ROOT / '.github/workflows/diagnostic-acceptance.yml').read_text())
+        guard = next(step for step in workflow['jobs']['source']['steps']
+                     if step.get('name') == 'Require exact public transport continuation inputs')
+        code = guard['run'].split("python3 - <<'PY'\n", 1)[1].rsplit('\nPY', 1)[0]
+        env = dict(self.crash_env(), JOURNEY_JOB='', JOURNEY_ARTIFACT='', JOURNEY_DIGEST='',
+            PACKAGING_PRODUCER_SOURCE='', PACKAGING_PROVENANCE_ARTIFACT_ID='', PACKAGING_PROVENANCE_ARTIFACT_SHA256='')
+        with patch.dict(os.environ, env, clear=True):
+            exec(compile(code, '<complete-crash-input-guard>', 'exec'), {})
+        foreign = dict(KIND=diagnostic.CRASH_KIND, SCALE='1', VERIFIED_PR='123', CANDIDATE_RUN='456',
+            CANDIDATE_ARTIFACT='789', CANDIDATE_SOURCE='a' * 40, CANDIDATE_DIGEST='c' * 64,
+            PACKAGING_PRODUCER_SOURCE='', PACKAGING_PROVENANCE_ARTIFACT_ID='', PACKAGING_PROVENANCE_ARTIFACT_SHA256='',
+            DMG_DIGEST='e' * 64, RUNTIME_FAILURE_BINDING=json.dumps({'diagnostic': {}, 'bpy': {}}))
+        with patch.dict(os.environ, foreign, clear=True), self.assertRaisesRegex(ValueError, 'cannot be ignored'):
+            exec(compile(code, '<foreign-crash-input-guard>', 'exec'), {})
         leaf = workflow['jobs']['native-button-query-crash']
         self.assertEqual((leaf['needs'], leaf['runs-on'], leaf['timeout-minutes']), ('source', 'macrunner', 5))
         self.assertEqual(leaf['if'], "inputs.candidate_kind == 'native-button-query-crash'")
