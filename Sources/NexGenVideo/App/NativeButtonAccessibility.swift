@@ -3,7 +3,7 @@ import Darwin
 import Foundation
 
 enum NativeButtonAccessibility {
-    struct Frame: Sendable, Equatable {
+    struct Frame: Sendable, Equatable, Codable {
         let x: Double
         let y: Double
         let width: Double
@@ -24,13 +24,19 @@ enum NativeButtonAccessibility {
         }
     }
 
-    struct Request: Sendable {
+    struct Request: Sendable, Equatable, Codable {
         let pid: pid_t
         let windowNumber: Int
         let windowFrame: Frame
+        let contentFrame: Frame
+
+        init(pid: pid_t, windowNumber: Int, windowFrame: Frame, contentFrame: Frame? = nil) {
+            self.pid = pid; self.windowNumber = windowNumber; self.windowFrame = windowFrame
+            self.contentFrame = contentFrame ?? windowFrame
+        }
     }
 
-    struct Node: Sendable {
+    struct Node: Sendable, Equatable, Codable {
         let parent: Int?
         let pid: pid_t
         let role: String?
@@ -40,16 +46,18 @@ enum NativeButtonAccessibility {
         let frame: Frame?
         let statuses: [String: Int32]
         let childTypes: [UInt]
+        var scopeExclusion: String?
 
         var evidence: [String: Any] {
             ["parent": parent as Any? ?? NSNull(), "pid": pid, "role": role as Any? ?? NSNull(),
              "title": title as Any? ?? NSNull(), "label": label as Any? ?? NSNull(),
              "enabled": enabled as Any? ?? NSNull(), "publicScreenFrame": frame?.evidence as Any? ?? NSNull(),
-             "statuses": statuses, "rawChildTypes": childTypes]
+             "statuses": statuses, "rawChildTypes": childTypes,
+             "scopeExclusion": scopeExclusion as Any? ?? NSNull()]
         }
     }
 
-    struct CGWindow: Sendable {
+    struct CGWindow: Sendable, Equatable, Codable {
         let pid: pid_t?
         let number: Int?
         let frame: Frame?
@@ -61,7 +69,7 @@ enum NativeButtonAccessibility {
         }
     }
 
-    struct Snapshot: Sendable {
+    struct Snapshot: Sendable, Codable {
         let request: Request
         var nodes: [Node] = []
         var windows: [Node] = []
@@ -74,6 +82,13 @@ enum NativeButtonAccessibility {
         var started = ProcessInfo.processInfo.systemUptime
         var finished = ProcessInfo.processInfo.systemUptime
         var readOnMainThread = Thread.isMainThread
+        var contentRoots: [Node] = []
+        var contentCandidates = 0
+        var rootRivals: [Node] = []
+        var reportedRootCount = 0
+        var rootInventoryComplete = false
+        var chromeExclusions: [String: Node] = [:]
+        var readerEvidence: NativeAXPeer.Evidence?
 
         var evidence: [String: Any] {
             ["plane": "public-AX", "pid": request.pid, "window": request.windowNumber,
@@ -82,26 +97,56 @@ enum NativeButtonAccessibility {
              "startedUptime": started, "finishedUptime": finished, "readOnMainThread": readOnMainThread,
              "coordinateSystem": "global top-left points", "nodes": nodes.map(\.evidence),
              "applicationStatuses": applicationStatuses, "windows": windows.map(\.evidence),
-             "reportedWindows": reportedWindowCount, "CGWindows": cgWindows.map(\.evidence)]
+             "reportedWindows": reportedWindowCount, "CGWindows": cgWindows.map(\.evidence),
+             "scope": "whole-content-root", "contentFrame": request.contentFrame.evidence,
+             "contentCandidates": contentCandidates, "contentRoots": contentRoots.map(\.evidence),
+             "reportedRootCount": reportedRootCount, "rootInventoryComplete": rootInventoryComplete,
+             "rootRivals": rootRivals.map(\.evidence), "chromeExclusions": chromeExclusions.mapValues(\.evidence),
+             "reader": readerEvidence?.evidence as Any? ?? NSNull()]
         }
     }
 
-    static func read(_ request: Request, nodeLimit: Int = 2048, seconds: Double = 1) async -> Snapshot {
+    static func read(_ request: Request, using session: NativeAXPeer.Session? = nil,
+                     nodeLimit: Int = 2048, seconds: Double = 1) async -> Snapshot {
         if Task.isCancelled {
             var result = Snapshot(request: request)
             result.failure = "cancelled"
             return result
         }
-        let task = Task.detached(priority: .userInitiated) {
-            capture(request, nodeLimit: nodeLimit, seconds: seconds)
+        guard request.pid == getpid(), request.windowNumber > 0, request.windowFrame.valid,
+              request.contentFrame.valid, (1...2048).contains(nodeLimit), seconds.isFinite,
+              seconds > 0, seconds <= 2 else {
+            var result = Snapshot(request: request); result.failure = "invalid-owned-window-request"; return result
         }
-        return await withTaskCancellationHandler(operation: { await task.value }, onCancel: { task.cancel() })
+        guard let session else {
+            var result = Snapshot(request: request); result.failure = "reader-session-required"; return result
+        }
+        return await session.read(request, nodeLimit: nodeLimit, seconds: seconds)
     }
 
     static func buttons(_ snapshot: Snapshot, title: String, inside probe: Frame) -> [Node] {
         guard snapshot.complete, snapshot.failure == nil, snapshot.windowCandidates == 1,
               snapshot.request.pid == getpid(), snapshot.request.windowNumber > 0,
               snapshot.request.windowFrame.valid, probe.valid, !title.isEmpty,
+              snapshot.request.contentFrame.valid, snapshot.contentCandidates == 1,
+              snapshot.contentRoots.count == 1,
+              knownContent(snapshot.contentRoots[0], request: snapshot.request),
+              snapshot.rootRivals.filter({ knownContent($0, request: snapshot.request) }) == snapshot.contentRoots,
+              snapshot.rootInventoryComplete, snapshot.reportedRootCount == snapshot.rootRivals.count,
+              !snapshot.rootRivals.isEmpty,
+              snapshot.rootRivals.allSatisfy({ node in
+                  node.pid == snapshot.request.pid && node.role != nil && node.frame?.known == true
+                      && ["pid", kAXRoleAttribute, kAXPositionAttribute, kAXSizeAttribute]
+                          .allSatisfy({ node.statuses[$0] == AXError.success.rawValue })
+              }),
+              snapshot.rootRivals.allSatisfy({ node in
+                  if knownContent(node, request: snapshot.request) { return true }
+                  guard let frame = node.frame else { return false }
+                  if !frame.rect.intersects(snapshot.request.contentFrame.rect) { return true }
+                  guard let slot = node.scopeExclusion, let declared = snapshot.chromeExclusions[slot] else { return false }
+                  return declared.pid == node.pid && declared.role == node.role && declared.frame == node.frame
+                      && knownChrome(declared, slot: slot, request: snapshot.request)
+              }),
               uniqueCGWindow(snapshot.cgWindows, request: snapshot.request),
               snapshot.reportedWindowCount == snapshot.windows.count,
               snapshot.windows.allSatisfy({ knownWindow($0, pid: snapshot.request.pid) }),
@@ -165,12 +210,15 @@ enum NativeButtonAccessibility {
 
     private final class Reader {
         let deadline: Double
+        let cancelled: () -> Bool
         var failure: String?
 
-        init(seconds: Double) { deadline = ProcessInfo.processInfo.systemUptime + seconds }
+        init(deadline: Double, cancelled: @escaping () -> Bool) {
+            self.deadline = deadline; self.cancelled = cancelled
+        }
 
         func available() -> Bool {
-            if Task.isCancelled { failure = "cancelled"; return false }
+            if Task.isCancelled || cancelled() { failure = "cancelled"; return false }
             if ProcessInfo.processInfo.systemUptime >= deadline { failure = "query-deadline"; return false }
             return failure == nil
         }
@@ -227,20 +275,44 @@ enum NativeButtonAccessibility {
         }
     }
 
-    private static func capture(_ request: Request, nodeLimit: Int, seconds: Double) -> Snapshot {
-        var result = inspect(request, nodeLimit: nodeLimit, seconds: seconds)
+    static func captureForParent(_ request: Request, nodeLimit: Int, deadline: Double,
+                                 cancelled: @escaping () -> Bool) -> Snapshot {
+        var result = inspect(request, nodeLimit: nodeLimit, deadline: deadline, cancelled: cancelled)
         result.finished = ProcessInfo.processInfo.systemUptime
         return result
     }
 
-    private static func inspect(_ request: Request, nodeLimit: Int, seconds: Double) -> Snapshot {
+    private static func knownContent(_ node: Node, request: Request) -> Bool {
+        node.pid == request.pid && [kAXGroupRole, kAXSplitGroupRole, kAXScrollAreaRole].contains(node.role ?? "")
+            && node.frame?.matches(request.contentFrame) == true
+            && ["pid", kAXRoleAttribute, kAXPositionAttribute, kAXSizeAttribute]
+                .allSatisfy { node.statuses[$0] == AXError.success.rawValue }
+    }
+
+    private static func knownChrome(_ node: Node, slot: String, request: Request) -> Bool {
+        let roles = [kAXCloseButtonAttribute: kAXButtonRole, kAXMinimizeButtonAttribute: kAXButtonRole,
+            kAXZoomButtonAttribute: kAXButtonRole, kAXFullScreenButtonAttribute: kAXButtonRole,
+            kAXToolbarButtonAttribute: kAXButtonRole, kAXGrowAreaAttribute: kAXGrowAreaRole,
+            kAXTitleUIElementAttribute: kAXStaticTextRole]
+        guard let expected = roles[slot], node.pid == request.pid, node.role == expected,
+              let frame = node.frame, frame.known, request.windowFrame.rect.contains(frame.rect) else { return false }
+        return [slot, "pid", kAXRoleAttribute, kAXPositionAttribute, kAXSizeAttribute]
+            .allSatisfy { node.statuses[$0] == AXError.success.rawValue }
+    }
+
+    private static func inspect(_ request: Request, nodeLimit: Int, deadline: Double,
+                                cancelled: @escaping () -> Bool) -> Snapshot {
         var result = Snapshot(request: request)
-        guard request.pid == getpid(), (1...Int(CGWindowID.max)).contains(request.windowNumber), request.windowFrame.valid,
-              (1...2048).contains(nodeLimit), seconds.isFinite, seconds > 0, seconds <= 2 else {
+        let remaining = deadline - result.started
+        guard CommandLine.arguments.dropFirst().first == NativeAXPeer.flag, request.pid == getppid(),
+              request.pid > 1, (1...Int(CGWindowID.max)).contains(request.windowNumber),
+              request.windowFrame.valid, request.contentFrame.valid,
+              request.windowFrame.rect.insetBy(dx: -0.5, dy: -0.5).contains(request.contentFrame.rect),
+              (1...2048).contains(nodeLimit), deadline.isFinite, remaining > 0, remaining <= 2 else {
             result.failure = "invalid-owned-window-request"
             return result
         }
-        let reader = Reader(seconds: seconds)
+        let reader = Reader(deadline: deadline, cancelled: cancelled)
         guard reader.available() else {
             result.failure = reader.failure
             return result
@@ -290,7 +362,76 @@ enum NativeButtonAccessibility {
             result.failure = reader.failure ?? "non-unique-AX-window"
             return result
         }
-        var pending: [(AXUIElement, Int?)] = [(root, nil)], visited: [AXUIElement] = []
+        var rootStatuses: [String: Int32] = [:]
+        guard let rawChildren = reader.value(root, kAXChildrenAttribute, statuses: &rootStatuses),
+              CFGetTypeID(rawChildren) == CFArrayGetTypeID(), let childValues = rawChildren as? [AnyObject],
+              !childValues.isEmpty, childValues.count <= 256,
+              childValues.allSatisfy({ CFGetTypeID($0) == AXUIElementGetTypeID() }) else {
+            result.failure = reader.failure ?? "content-root-inventory-unavailable"
+            return result
+        }
+        let children = childValues.map { $0 as! AXUIElement }
+        let slots = [kAXCloseButtonAttribute, kAXMinimizeButtonAttribute, kAXZoomButtonAttribute,
+            kAXFullScreenButtonAttribute, kAXToolbarButtonAttribute, kAXGrowAreaAttribute, kAXTitleUIElementAttribute]
+        var chrome: [String: AXUIElement] = [:]
+        for slot in slots {
+            var statuses: [String: Int32] = [:]
+            guard let value = reader.value(root, slot, statuses: &statuses) else {
+                guard reader.available(), [AXError.attributeUnsupported.rawValue, AXError.noValue.rawValue]
+                    .contains(statuses[slot] ?? AXError.failure.rawValue) else {
+                    result.failure = reader.failure ?? "unknown-window-chrome"; return result
+                }
+                continue
+            }
+            guard CFGetTypeID(value) == AXUIElementGetTypeID() else {
+                result.failure = "invalid-window-chrome-type"; return result
+            }
+            let element = value as! AXUIElement
+            let pid = reader.pid(element, statuses: &statuses)
+            let role = reader.string(element, kAXRoleAttribute, statuses: &statuses)
+            let frame = reader.frame(element, statuses: &statuses)
+            let expected = slot == kAXTitleUIElementAttribute ? kAXStaticTextRole
+                : (slot == kAXGrowAreaAttribute ? kAXGrowAreaRole : kAXButtonRole)
+            guard reader.available(), pid == request.pid, role == expected, frame?.known == true else {
+                result.failure = reader.failure ?? "unknown-window-chrome-identity"; return result
+            }
+            chrome[slot] = element
+            result.chromeExclusions[slot] = Node(parent: nil, pid: pid ?? 0, role: role, title: nil,
+                label: nil, enabled: nil, frame: frame, statuses: statuses, childTypes: [])
+        }
+        var roots: [AXUIElement] = [], seenRoots: [AXUIElement] = []
+        result.reportedRootCount = children.count
+        for element in children {
+            guard !seenRoots.contains(where: { CFEqual($0, element) }) else {
+                result.failure = "duplicate-content-root-reference"; return result
+            }
+            seenRoots.append(element)
+            var statuses: [String: Int32] = [:]
+            let pid = reader.pid(element, statuses: &statuses)
+            let role = reader.string(element, kAXRoleAttribute, statuses: &statuses)
+            let frame = reader.frame(element, statuses: &statuses)
+            var observed = Node(parent: nil, pid: pid ?? 0, role: role, title: nil, label: nil,
+                enabled: nil, frame: frame, statuses: statuses, childTypes: [])
+            observed.scopeExclusion = chrome.keys.sorted().first { slot in
+                chrome[slot].map { CFEqual($0, element) } == true
+            }
+            result.rootRivals.append(observed)
+            guard reader.available(), pid == request.pid, role != nil, let frame, frame.known else {
+                result.failure = reader.failure ?? "unreadable-content-root-rival"; return result
+            }
+            if knownContent(observed, request: request) {
+                roots.append(element); result.contentRoots.append(observed)
+            } else if frame.rect.intersects(request.contentFrame.rect),
+                      observed.scopeExclusion == nil {
+                result.failure = "intersecting-unclassified-content-root-rival"; return result
+            }
+        }
+        result.contentCandidates = roots.count
+        result.rootInventoryComplete = true
+        guard roots.count == 1, let content = roots.first else {
+            result.failure = "non-unique-content-root"; return result
+        }
+        var pending: [(AXUIElement, Int?)] = [(content, nil)], visited: [AXUIElement] = []
         let leafRoles: Set<String> = [kAXButtonRole, kAXCheckBoxRole, kAXRadioButtonRole,
             kAXStaticTextRole, kAXTextFieldRole, kAXTextAreaRole, kAXImageRole,
             kAXSliderRole, kAXProgressIndicatorRole, kAXScrollBarRole, kAXPopUpButtonRole]

@@ -1,5 +1,8 @@
 import AppKit
 
+let nativeReaderStatus = NGVRunNativeAXReaderIfRequested(nil)
+if nativeReaderStatus >= 0 { exit(nativeReaderStatus) }
+
 Log.bootstrap()
 let app = NexGenVideoApplication.shared
 precondition(app is NexGenVideoApplication)

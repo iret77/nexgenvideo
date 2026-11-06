@@ -114,6 +114,25 @@ private struct HostReceipt: Encodable {
 private enum AppKitTestHost {
     @MainActor
     static func main() {
+        if CommandLine.arguments.dropFirst().contains(where: { $0.hasPrefix("--ngv-native-ax-reader") }) {
+            do {
+                guard Array(CommandLine.arguments.dropFirst()) == ["--ngv-native-ax-reader"] else {
+                    throw HostError.message("Malformed native AX reader invocation.")
+                }
+                let bundle = try path("NGV_APPKIT_TEST_BUNDLE", in: ProcessInfo.processInfo.environment)
+                guard let handle = dlopen(bundle.path, RTLD_LAZY | RTLD_LOCAL),
+                      let symbol = dlsym(handle, "NGVRunNativeAXReaderIfRequested") else {
+                    throw HostError.message("The actual App reader export is unavailable.")
+                }
+                typealias Reader = @convention(c) (UnsafeRawPointer?) -> Int32
+                let status = unsafeBitCast(symbol, to: Reader.self)(UnsafeRawPointer(symbol))
+                guard status >= 0 else { throw HostError.message("The App reader declined its early route.") }
+                exit(status)
+            } catch {
+                FileHandle.standardError.write(Data(("Native AX reader failed: \(error)\n").utf8))
+                exit(EXIT_FAILURE)
+            }
+        }
         UserDefaults.standard.register(defaults: ["NSApplicationCrashOnExceptions": true])
         do {
             let environment = ProcessInfo.processInfo.environment
