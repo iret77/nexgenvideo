@@ -615,8 +615,27 @@ def collect_crash_reports(evidence, process, executable_sha, seconds=10):
 
 def observe(args):
     args.evidence.mkdir(parents=True, exist_ok=False)
-    binding = json.loads((args.binding / 'binding.json').read_text())
     crashes = getattr(args, 'capture_crashes', False)
+    if crashes:
+        write(args.evidence / 'observer-entry.json', {'schema': 'nexgenvideo/button-query-observer-entry/1',
+            'pid': os.getpid(), 'python': {'version': sys.version, 'versionInfo': list(sys.version_info),
+                'executable': sys.executable, 'implementation': sys.implementation.name},
+            'runID': os.environ.get('GITHUB_RUN_ID'), 'attempt': os.environ.get('GITHUB_RUN_ATTEMPT'),
+            'sourceSHA': os.environ.get('GITHUB_SHA'), 'appAcceptance': False})
+    try:
+        _observe(args, crashes)
+    except Exception as error:
+        if crashes:
+            try:
+                write(args.evidence / 'observer-failure.json', {'schema': 'nexgenvideo/button-query-observer-failure/1',
+                    'exceptionType': type(error).__name__, 'message': str(error), 'appAcceptance': False})
+            except (OSError, ValueError) as evidence_error:
+                print('Cannot retain observer failure: ' + str(evidence_error), file=sys.stderr)
+        raise
+
+
+def _observe(args, crashes):
+    binding = json.loads((args.binding / 'binding.json').read_text())
     require(binding['schema'] == ('nexgenvideo/button-query-crash-binding/1' if crashes else 'nexgenvideo/button-query-binding/1')
             and binding.get('diagnosticMode', 'native-button-query') == (CRASH_KIND if crashes else 'native-button-query'),
             'Diagnostic mode and transferred binding differ')
@@ -636,9 +655,25 @@ def observe(args):
                 for path, raw in originals.items()), 'Actual framework source bytes changed')
     if crashes:
         prior = binding['priorCrashes']
-        for filename, artifact in zip(('prior-observations.zip', 'prior-source-binding.zip'), prior['artifacts'], strict=True):
+        artifacts = prior['artifacts']
+        require(isinstance(artifacts, list) and len(artifacts) == 2, 'Exactly two prior crash archives required')
+        roles = (('prior-observations.zip', f'native-button-query-{PRIOR_RUN}-a1'),
+                 ('prior-source-binding.zip', 'native-button-query-source-binding'))
+        for index, (filename, name) in enumerate(roles):
+            artifact = artifacts[index]
+            require(isinstance(artifact, dict) and type(artifact.get('id')) is int and artifact['id'] > 0
+                    and artifact.get('name') == name and artifact.get('expired') is False
+                    and isinstance(artifact.get('digest'), str) and re.fullmatch('sha256:[a-f0-9]{64}', artifact['digest'])
+                    and isinstance(artifact.get('workflow_run'), dict)
+                    and type(artifact['workflow_run'].get('id')) is int
+                    and artifact['workflow_run']['id'] == PRIOR_RUN
+                    and artifact['workflow_run'].get('head_sha') == PRIOR_SOURCE, 'Prior crash archive role or producer differs')
             require(digest((args.binding / filename).read_bytes()) == artifact['digest'].removeprefix('sha256:'),
                     'Prior crash archive changed after the source gate')
+        require(artifacts[0]['id'] != artifacts[1]['id']
+                and artifacts[1]['id'] == prior['request']['source_binding_artifact_id']
+                and artifacts[1]['digest'] == 'sha256:' + prior['request']['source_binding_artifact_sha256'],
+                'Prior source archive differs from the exact crash request')
         verified = verify_crash_payload(zip_members(args.binding / 'prior-observations.zip'),
                                         zip_members(args.binding / 'prior-source-binding.zip'), binding['sourceFiles'], original.read_bytes())
         require(all(prior[key] == value for key, value in verified.items()), 'Prior crash qualification changed after transfer')

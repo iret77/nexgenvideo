@@ -1,3 +1,5 @@
+import builtins
+from contextlib import contextmanager
 import copy
 import json
 import os
@@ -5,6 +7,7 @@ from pathlib import Path
 import signal
 import subprocess
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 import zipfile
@@ -15,6 +18,143 @@ import button_query_diagnostic as diagnostic
 
 
 class ButtonQueryDiagnosticTests(unittest.TestCase):
+    def observer_fixture(self, root):
+        binding_dir = root / 'binding'; binding_dir.mkdir()
+        toolchain = dict(xcode='Xcode 27.2', osVersion='27.2', osBuild='26B123', swift='Swift fixture toolchain')
+        template = self.archive(root)
+        original = binding_dir / 'original-evidence.zip'
+        with zipfile.ZipFile(template) as source, zipfile.ZipFile(original, 'w') as target:
+            for name in source.namelist():
+                raw = source.read(name)
+                if name.endswith('retained-engine-receipt.json'):
+                    raw = json.dumps(dict(toolchain=toolchain)).encode()
+                target.writestr(name, raw)
+        originals = {name: (diagnostic.ROOT / name).read_bytes() for name in diagnostic.FILES}
+        files = {name: dict(SHA256=diagnostic.digest(raw), gitBlob='b' * 40) for name, raw in originals.items()}
+        observations, source, _ = self.crash_payload()
+        source_binding = json.loads(source['binding.json']); source_binding['sourceFiles'] = files
+        source['binding.json'] = json.dumps(source_binding).encode()
+        source['original-evidence.zip'] = original.read_bytes()
+        receipt = json.loads(observations['receipt.json'])
+        receipt['bindingSHA256'] = diagnostic.digest(source['binding.json'])
+        observations['receipt.json'] = json.dumps(receipt).encode()
+        artifacts = []
+        for index, (filename, name, members) in enumerate((
+                ('prior-observations.zip', f'native-button-query-{diagnostic.PRIOR_RUN}-a1', observations),
+                ('prior-source-binding.zip', 'native-button-query-source-binding', source))):
+            path = binding_dir / filename
+            with zipfile.ZipFile(path, 'w') as archive:
+                for member, raw in members.items(): archive.writestr(member, raw)
+            artifacts.append(dict(id=100 + index, name=name, expired=False,
+                digest='sha256:' + diagnostic.digest(path.read_bytes()),
+                workflow_run=dict(id=diagnostic.PRIOR_RUN, head_sha=diagnostic.PRIOR_SOURCE)))
+        prior = diagnostic.verify_crash_payload(observations, source, files, original.read_bytes())
+        prior.update(artifacts=artifacts, request=dict(source_binding_artifact_id=101,
+            source_binding_artifact_sha256=artifacts[1]['digest'].removeprefix('sha256:')))
+        binding = dict(schema='nexgenvideo/button-query-crash-binding/1', diagnosticMode=diagnostic.CRASH_KIND,
+            sourceSHA='a' * 40, sourceTree='b' * 40, runID='123', attempt='1',
+            harnessFiles={name: diagnostic.digest((diagnostic.ROOT / name).read_bytes()) for name in diagnostic.HARNESS},
+            originalArtifact=dict(digest='sha256:' + diagnostic.digest(original.read_bytes())),
+            originalEvidence=diagnostic.failure_archive(original), sourceFiles=files, priorCrashes=prior)
+        (binding_dir / 'binding.json').write_text(json.dumps(binding))
+        return SimpleNamespace(binding=binding_dir, evidence=root / 'evidence', capture_crashes=True), binding, originals, toolchain
+
+    @contextmanager
+    def observer_runtime(self, originals, toolchain):
+        def git(*args):
+            if args == ('rev-parse', 'HEAD'): return ('a' * 40).encode()
+            if args == ('rev-parse', 'HEAD^{tree}'): return ('b' * 40).encode()
+            if args == ('status', '--porcelain', '--untracked-files=no'): return b''
+            if args[0] == 'show': return originals[args[1].split(':', 1)[1]]
+            raise AssertionError(args)
+        def output(command, **_):
+            values = {('uname', '-m'): 'arm64', ('xcodebuild', '-version'): toolchain['xcode'],
+                ('sw_vers', '-productVersion'): toolchain['osVersion'], ('sw_vers', '-buildVersion'): toolchain['osBuild'],
+                ('swift', '--version'): toolchain['swift']}
+            return values[tuple(command)]
+        def legacy_zip(first, second): return builtins.zip(first, second)
+        with patch.dict(os.environ, GITHUB_SHA='a' * 40, GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='1'), \
+                patch.object(diagnostic, 'git', side_effect=git), \
+                patch.object(diagnostic.subprocess, 'check_output', side_effect=output), \
+                patch.object(diagnostic, 'zip', legacy_zip, create=True), \
+                patch.object(diagnostic, 'owned_command', side_effect=RuntimeError('native compiler boundary')) as compiler:
+            yield compiler
+
+    def test_crash_observer_entry_reaches_native_boundary_without_keyword_zip(self):
+        with tempfile.TemporaryDirectory() as directory:
+            args, _, originals, toolchain = self.observer_fixture(Path(directory))
+            with self.observer_runtime(originals, toolchain) as compiler, \
+                    self.assertRaisesRegex(RuntimeError, '^native compiler boundary$'):
+                diagnostic.observe(args)
+            compiler.assert_called_once()
+            self.assertEqual(compiler.call_args.args[0][:2], ['xcrun', 'swiftc'])
+            entry = json.loads((args.evidence / 'observer-entry.json').read_text())
+            self.assertEqual(entry['python']['version'], diagnostic.sys.version)
+            self.assertEqual(entry['python']['executable'], diagnostic.sys.executable)
+            self.assertEqual(entry['python']['versionInfo'], list(diagnostic.sys.version_info))
+            self.assertFalse(entry['appAcceptance'])
+            subsets = json.loads((args.evidence / 'source-subsets.json').read_text())
+            self.assertEqual(set(subsets['originals']), set(diagnostic.FILES))
+            self.assertEqual(json.loads((args.evidence / 'toolchain.json').read_text())['actual'], toolchain)
+
+    def test_crash_observer_rejects_missing_extra_reordered_or_changed_archives_before_native(self):
+        variants = ('missing', 'extra', 'not-list', 'not-object', 'reordered', 'role', 'run', 'source', 'id',
+                    'duplicate-id', 'request-id', 'request-digest', 'digest', 'bytes', 'embedded-original')
+        for variant in variants:
+            with self.subTest(variant=variant), tempfile.TemporaryDirectory() as directory:
+                args, binding, originals, toolchain = self.observer_fixture(Path(directory))
+                prior = binding['priorCrashes']; artifacts = prior['artifacts']
+                if variant == 'missing': prior['artifacts'] = artifacts[:1]
+                elif variant == 'extra': artifacts.append(copy.deepcopy(artifacts[0]))
+                elif variant == 'not-list': prior['artifacts'] = None
+                elif variant == 'not-object': artifacts[0] = None
+                elif variant == 'reordered': artifacts.reverse()
+                elif variant == 'role': artifacts[0]['name'] = 'another-role'
+                elif variant == 'run': artifacts[0]['workflow_run']['id'] = 1
+                elif variant == 'source': artifacts[0]['workflow_run']['head_sha'] = 'c' * 40
+                elif variant == 'id': artifacts[0]['id'] = True
+                elif variant == 'duplicate-id': artifacts[0]['id'] = artifacts[1]['id']
+                elif variant == 'request-id': prior['request']['source_binding_artifact_id'] = 1
+                elif variant == 'request-digest': prior['request']['source_binding_artifact_sha256'] = 'c' * 64
+                elif variant == 'digest': artifacts[0]['digest'] = 'sha256:' + 'c' * 64
+                elif variant == 'bytes': (args.binding / 'prior-observations.zip').write_bytes(b'changed')
+                else:
+                    path = args.binding / 'prior-source-binding.zip'
+                    members = diagnostic.zip_members(path); members['original-evidence.zip'] = b'changed'
+                    with zipfile.ZipFile(path, 'w') as archive:
+                        for name, raw in members.items(): archive.writestr(name, raw)
+                    checksum = diagnostic.digest(path.read_bytes())
+                    artifacts[1]['digest'] = 'sha256:' + checksum
+                    prior['request']['source_binding_artifact_sha256'] = checksum
+                (args.binding / 'binding.json').write_text(json.dumps(binding))
+                with self.observer_runtime(originals, toolchain) as compiler, self.assertRaises(ValueError):
+                    diagnostic.observe(args)
+                compiler.assert_not_called()
+                failure = json.loads((args.evidence / 'observer-failure.json').read_text())
+                self.assertEqual(failure['exceptionType'], 'ValueError')
+                self.assertFalse(failure['appAcceptance'])
+
+    def test_crash_observer_retains_actual_interpreter_and_early_exception_without_acceptance(self):
+        for variant, expected in [('missing', FileNotFoundError), ('json', json.JSONDecodeError), ('run', ValueError)]:
+            with self.subTest(variant=variant), tempfile.TemporaryDirectory() as directory:
+                args, binding, originals, toolchain = self.observer_fixture(Path(directory))
+                if variant == 'missing': args.binding = Path(directory) / 'missing'
+                elif variant == 'json': (args.binding / 'binding.json').write_text('{')
+                else:
+                    binding['runID'] = 'another-run'
+                    (args.binding / 'binding.json').write_text(json.dumps(binding))
+                with self.observer_runtime(originals, toolchain) as compiler, self.assertRaises(expected) as raised:
+                    diagnostic.observe(args)
+                compiler.assert_not_called()
+                entry = json.loads((args.evidence / 'observer-entry.json').read_text())
+                failure = json.loads((args.evidence / 'observer-failure.json').read_text())
+                self.assertEqual(entry['python']['implementation'], diagnostic.sys.implementation.name)
+                self.assertEqual(entry['pid'], os.getpid())
+                self.assertEqual(failure['exceptionType'], type(raised.exception).__name__)
+                self.assertEqual(failure['message'], str(raised.exception))
+                self.assertFalse(entry['appAcceptance'])
+                self.assertFalse(failure['appAcceptance'])
+
     def crash_env(self):
         binding = dict(schema='nexgenvideo/button-query-crash-request/1', producer_run_id=diagnostic.PRIOR_RUN,
             producer_source_sha=diagnostic.PRIOR_SOURCE, job_id=diagnostic.PRIOR_JOB,
