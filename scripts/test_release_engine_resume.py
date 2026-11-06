@@ -6,7 +6,7 @@ from pathlib import Path
 import os
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import release_engine_resume as resume
 import release_checkpoint as checkpoint
@@ -117,6 +117,10 @@ class ReleaseEngineResumeTests(unittest.TestCase):
                       "events.jsonl": resume.EVENT_DIGEST, "console.log": resume.CONSOLE_DIGEST}
             outputs = {("swift", "--version"): "Swift fixture", ("xcodebuild", "-version"): "Xcode fixture",
                        ("sw_vers", "-productVersion"): "27.2", ("sw_vers", "-buildVersion"): "26B123"}
+            git_outputs = {("git", "rev-parse", revision + ":" + path): pinned
+                           for path, pinned in resume.ENGINE_SOURCE_OBJECTS.items()
+                           for revision in (resume.SOURCE, SOURCE)}
+            outputs.update(git_outputs)
             with patch.dict(os.environ, {"GITHUB_REPOSITORY": "iret77/nexgenvideo", "GITHUB_SHA": SOURCE,
                             "GITHUB_RUN_ID": str(RUN), "GITHUB_RUN_ATTEMPT": "1"}), \
                     patch.object(resume, "verify_sources", return_value=[resume.FIXTURE]), \
@@ -131,7 +135,7 @@ class ReleaseEngineResumeTests(unittest.TestCase):
                     with self.subTest(changedBytes=name), \
                             patch.object(resume, "checksum", side_effect=lambda path: "0" * 64 if path.name == name else hashes[path.name]):
                         with self.assertRaises(ValueError): resume.verify(root)
-                        command.assert_not_called()
+                        self.assertEqual(command.call_args_list, [call(*selector) for selector in git_outputs])
                 for selector in outputs:
                     with self.subTest(environment=selector), \
                             patch.object(resume, "command", side_effect=lambda *args: "changed" if args == selector else outputs[args]):
