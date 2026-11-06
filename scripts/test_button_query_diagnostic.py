@@ -412,6 +412,7 @@ class ButtonQueryDiagnosticTests(unittest.TestCase):
             source_binding_artifact_sha256=artifacts[1]['digest'].removeprefix('sha256:')))
         binding = dict(schema='nexgenvideo/button-query-crash-binding/1', diagnosticMode=diagnostic.CRASH_KIND,
             sourceSHA='a' * 40, sourceTree='b' * 40, runID='123', attempt='1',
+            slowFixtureVariant=diagnostic.SLOW_FIXTURE_VARIANT,
             harnessFiles={name: diagnostic.digest((diagnostic.ROOT / name).read_bytes()) for name in diagnostic.HARNESS},
             originalArtifact=dict(digest='sha256:' + diagnostic.digest(original.read_bytes())),
             originalEvidence=diagnostic.failure_archive(original), sourceFiles=files, priorCrashes=prior)
@@ -447,6 +448,7 @@ class ButtonQueryDiagnosticTests(unittest.TestCase):
                 diagnostic.observe(args)
             compiler.assert_called_once()
             self.assertEqual(compiler.call_args.args[0][:2], ['xcrun', 'swiftc'])
+            self.assertEqual(compiler.call_args.args[0][-3], str(diagnostic.ROOT / 'scripts/button_query_diagnostic.swift'))
             entry = json.loads((args.evidence / 'observer-entry.json').read_text())
             self.assertEqual(entry['python']['version'], diagnostic.sys.version)
             self.assertEqual(entry['python']['executable'], diagnostic.sys.executable)
@@ -455,6 +457,20 @@ class ButtonQueryDiagnosticTests(unittest.TestCase):
             subsets = json.loads((args.evidence / 'source-subsets.json').read_text())
             self.assertEqual(set(subsets['originals']), set(diagnostic.FILES))
             self.assertEqual(json.loads((args.evidence / 'toolchain.json').read_text())['actual'], toolchain)
+
+    def test_current_callback_variant_is_required_before_any_compiler_boundary(self):
+        for variant in (None, False, 'original-main-actor', 'unknown'):
+            with self.subTest(variant=variant), tempfile.TemporaryDirectory() as directory:
+                args, binding, originals, toolchain = self.observer_fixture(Path(directory))
+                if variant is None: binding.pop('slowFixtureVariant')
+                else: binding['slowFixtureVariant'] = variant
+                (args.binding / 'binding.json').write_text(json.dumps(binding))
+                with self.observer_runtime(originals, toolchain) as compiler, self.assertRaisesRegex(ValueError, 'variant differs'):
+                    diagnostic.observe(args)
+                compiler.assert_not_called()
+                failure = json.loads((args.evidence / 'observer-failure.json').read_text())
+                self.assertFalse(failure['appAcceptance'])
+                self.assertFalse((args.evidence / 'compiler.process.json').exists())
 
     def test_crash_observer_rejects_missing_extra_reordered_or_changed_archives_before_native(self):
         variants = ('missing', 'extra', 'not-list', 'not-object', 'reordered', 'role', 'run', 'source', 'id',
@@ -580,6 +596,9 @@ class ButtonQueryDiagnosticTests(unittest.TestCase):
             CFArrayTypeID=10, AXUIElementTypeID=99)
         return dict(schema='nexgenvideo/button-query-framework-control/1', mode=mode, pid=123,
             mainLoopRunning=True, mainThread=True, originalQueryBeforeAdditionalAX=True, appAcceptance=False,
+            slowFixtureVariant=diagnostic.SLOW_FIXTURE_VARIANT,
+            callbackState=dict(disarmed=True, quiesced=True, inFlight=0, enteredCount=1, returnedCount=1,
+                entries=[dict(enteredAt=2.05, returnedAt=2.4, enteredOnMainThread=False)]),
             sourceSubsetFrameworkFixture=True, parallelAppTestHost=False, originalFirstQuery=warm,
             originalQueryAfterCGStability=warm, queryAfterAdditionalAX=warm,
             beforeFirstQuery=geometry, beforeWarmQuery=geometry, afterWarmQuery=geometry,
@@ -587,6 +606,7 @@ class ButtonQueryDiagnosticTests(unittest.TestCase):
             rawAttributesAfterOriginalQueries=raw,
             slowObservation=dict(status='observed-after-complete-warmup', getterEntered=True, enabledUndoCount=1,
                 enteredAt=2.05, returnedAt=2.4, cancelRequestedAt=2.1 if mode == 'slow-cancel' else 0,
+                enteredOnMainThread=False,
                 requestedSeconds=1 if mode == 'slow-cancel' else 0.2, query=query))
 
     def test_crash_mode_requires_exact_failed_producer_without_ignored_selectors(self):
@@ -684,6 +704,23 @@ class ButtonQueryDiagnosticTests(unittest.TestCase):
     def test_crash_mode_normal_alternative_requires_both_original_native_contracts(self):
         for mode in diagnostic.CRASH_MODES:
             diagnostic.validate_slow_normal(self.slow_report(mode), mode, 123)
+
+    def test_current_callback_reports_reject_unknown_variants_unfinished_getters_and_mismatched_lifetimes(self):
+        cases = [('variant', None), ('variant', 'original-main-actor'), ('variant', False),
+                 ('quiesced', False), ('disarmed', False), ('inFlight', 1), ('inFlight', False),
+                 ('enteredCount', 2), ('returnedCount', 0), ('returnedCount', True),
+                 ('entries', []), ('return', 0), ('return', 2.05), ('thread', None), ('last', 2.3)]
+        for field, value in cases:
+            report = self.slow_report('slow-timeout')
+            if field == 'variant':
+                if value is None: report.pop('slowFixtureVariant')
+                else: report['slowFixtureVariant'] = value
+            elif field == 'return': report['callbackState']['entries'][0]['returnedAt'] = value
+            elif field == 'thread': report['callbackState']['entries'][0]['enteredOnMainThread'] = value
+            elif field == 'last': report['slowObservation']['returnedAt'] = value
+            else: report['callbackState'][field] = value
+            with self.subTest(field=field, value=value), self.assertRaises(ValueError):
+                diagnostic.validate_slow_normal(report, 'slow-timeout', 123)
 
     def test_not_reached_slow_observations_cannot_replace_missing_crash_evidence(self):
         for status in ('not-reached-warmup-unqualified', 'not-reached-getter-entry'):
@@ -893,6 +930,8 @@ class ButtonQueryDiagnosticTests(unittest.TestCase):
                    CFArrayTypeID=10, AXUIElementTypeID=99)
         report = dict(schema='nexgenvideo/button-query-framework-control/1', mode='slow-cancel', pid=123,
             mainLoopRunning=True, mainThread=True, originalQueryBeforeAdditionalAX=True, appAcceptance=False,
+            slowFixtureVariant=diagnostic.SLOW_FIXTURE_VARIANT,
+            callbackState=dict(disarmed=True, quiesced=True, inFlight=0, enteredCount=0, returnedCount=0, entries=[]),
             sourceSubsetFrameworkFixture=True, parallelAppTestHost=False, originalFirstQuery=query,
             originalQueryAfterCGStability=query, queryAfterAdditionalAX=query,
             beforeFirstQuery=geometry, beforeWarmQuery=geometry, afterWarmQuery=geometry,

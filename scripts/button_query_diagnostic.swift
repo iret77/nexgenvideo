@@ -2,8 +2,10 @@ import AppKit
 import ApplicationServices
 import Foundation
 import SwiftUI
+import Synchronization
 
 private typealias Query = NativeButtonAccessibility
+private let slowFixtureVariant = "synchronized-callbacks-v1"
 
 @MainActor
 private final class QueryFixture {
@@ -16,12 +18,12 @@ private final class QueryFixture {
             styleMask: slow ? [.borderless] : [.titled, .closable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         if slow {
-            let root = LastChildRoot(frame: NSRect(x: 0, y: 0, width: 600, height: 200))
             let child = SlowLeaf(frame: NSRect(x: 20, y: 20, width: 100, height: 40))
             child.setAccessibilityLabel("Bounded child")
-            root.addSubview(child)
             let button = NSButton(title: "Undo", target: nil, action: nil)
             button.frame = NSRect(x: 180, y: 20, width: 100, height: 30)
+            let root = LastChildRoot(frame: NSRect(x: 0, y: 0, width: 600, height: 200), children: [child, button])
+            root.addSubview(child)
             root.addSubview(button)
             window.setAccessibilityElement(true)
             window.setAccessibilityTitle("Native bounded AX query")
@@ -81,31 +83,78 @@ private final class QueryFixture {
 
 @MainActor
 private final class LastChildRoot: NSView {
-    override func isAccessibilityElement() -> Bool { true }
-    override func accessibilityRole() -> NSAccessibility.Role? { .group }
-    override func accessibilityChildren() -> [Any]? { subviews }
+    nonisolated let childSnapshot: [NSView]
+
+    init(frame: NSRect, children: [NSView]) {
+        childSnapshot = children
+        super.init(frame: frame)
+    }
+
+    required init?(coder: NSCoder) { return nil }
+
+    nonisolated override func isAccessibilityElement() -> Bool { true }
+    nonisolated override func accessibilityRole() -> NSAccessibility.Role? { .group }
+    nonisolated override func accessibilityChildren() -> [Any]? { childSnapshot }
+}
+
+private final class SlowCallbacks: Sendable {
+    struct Entry: Sendable {
+        let enteredAt: Double
+        let enteredOnMainThread: Bool
+        var returnedAt: Double = 0
+
+        var evidence: [String: Any] {
+            ["enteredAt": enteredAt, "returnedAt": returnedAt, "enteredOnMainThread": enteredOnMainThread]
+        }
+    }
+
+    struct State: Sendable {
+        var armed = false
+        var inFlight = 0
+        var entries: [Entry] = []
+
+        var evidence: [String: Any] {
+            ["disarmed": !armed, "quiesced": inFlight == 0, "inFlight": inFlight,
+                "enteredCount": entries.count, "returnedCount": entries.filter { $0.returnedAt > 0 }.count,
+                "entries": entries.map(\.evidence)]
+        }
+    }
+
+    private let state = Mutex(State())
+    let entered = DispatchSemaphore(value: 0)
+
+    func arm() { state.withLock { $0.armed = true } }
+    func disarm() { state.withLock { $0.armed = false } }
+    func snapshot() -> State { state.withLock { $0 } }
+
+    func children() -> [Any]? {
+        let index: Int? = state.withLock { state in
+            guard state.armed else { return nil }
+            let index = state.entries.count
+            state.entries.append(Entry(enteredAt: ProcessInfo.processInfo.systemUptime,
+                enteredOnMainThread: Thread.isMainThread))
+            state.inFlight += 1
+            return index
+        }
+        if let index {
+            entered.signal()
+            Thread.sleep(forTimeInterval: 0.35)
+            state.withLock { state in
+                state.entries[index].returnedAt = ProcessInfo.processInfo.systemUptime
+                state.inFlight -= 1
+            }
+        }
+        return []
+    }
 }
 
 @MainActor
 private final class SlowLeaf: NSView {
-    let entered = DispatchSemaphore(value: 0)
-    var armed = false
-    var enteredAt: Double = 0
-    var returnedAt: Double = 0
-    var enteredOnMainThread = false
+    nonisolated let callbacks = SlowCallbacks()
 
-    override func isAccessibilityElement() -> Bool { true }
-    override func accessibilityRole() -> NSAccessibility.Role? { .group }
-    override func accessibilityChildren() -> [Any]? {
-        if armed {
-            enteredAt = ProcessInfo.processInfo.systemUptime
-            enteredOnMainThread = Thread.isMainThread
-            entered.signal()
-            Thread.sleep(forTimeInterval: 0.35)
-            returnedAt = ProcessInfo.processInfo.systemUptime
-        }
-        return []
-    }
+    nonisolated override func isAccessibilityElement() -> Bool { true }
+    nonisolated override func accessibilityRole() -> NSAccessibility.Role? { .group }
+    nonisolated override func accessibilityChildren() -> [Any]? { callbacks.children() }
 }
 
 private enum RawAttributes {
@@ -298,6 +347,7 @@ private final class ProbeApplication: NSObject, NSApplicationDelegate {
     let destination: URL
     var failure = false
     let breadcrumbs: FileHandle?
+    var retainedFixture: QueryFixture?
 
     init(mode: String, destination: URL, breadcrumbs: FileHandle? = nil) {
         self.mode = mode; self.destination = destination; self.breadcrumbs = breadcrumbs
@@ -324,7 +374,16 @@ private final class ProbeApplication: NSObject, NSApplicationDelegate {
             try record("observe-entered")
             try record("fixture-init-before")
             let fixture = QueryFixture(mode: mode)
-            defer { fixture.window.contentView = nil; fixture.window.close() }
+            retainedFixture = fixture
+            var retainThroughExit = false
+            defer {
+                fixture.leaf?.callbacks.disarm()
+                if !retainThroughExit, (fixture.leaf?.callbacks.snapshot().inFlight ?? 0) == 0 {
+                    fixture.window.contentView = nil
+                    fixture.window.close()
+                    retainedFixture = nil
+                }
+            }
             try record("fixture-init-after")
             let before = fixture.geometry()
             try record("first-query-before")
@@ -344,7 +403,7 @@ private final class ProbeApplication: NSObject, NSApplicationDelegate {
                 let buttons = Query.buttons(warm, title: "Undo", inside: fixture.request.windowFrame)
                 if warm.complete, buttons.count == 1 {
                     try record("slow-arm-before")
-                    leaf.armed = true
+                    leaf.callbacks.arm()
                     NSAccessibility.post(element: leaf, notification: .layoutChanged)
                     try record("slow-armed")
                     let request = fixture.request
@@ -353,7 +412,7 @@ private final class ProbeApplication: NSObject, NSApplicationDelegate {
                     var cancelledAt: Double = 0
                     try record("slow-query-before")
                     if mode == "slow-cancel" {
-                        let entered = leaf.entered
+                        let entered = leaf.callbacks.entered
                         let query = Task.detached { await Query.read(request) }
                         let detection: (Bool, Double) = await withCheckedContinuation { continuation in
                             DispatchQueue.global(qos: .userInitiated).async {
@@ -368,15 +427,31 @@ private final class ProbeApplication: NSObject, NSApplicationDelegate {
                         result = await query.value
                     } else {
                         result = await Query.read(request, seconds: 0.2)
-                        observed = leaf.enteredAt > 0
+                        observed = !leaf.callbacks.snapshot().entries.isEmpty
                     }
                     try record("slow-query-returned")
+                    leaf.callbacks.disarm()
+                    let joinDeadline = ProcessInfo.processInfo.systemUptime + 2
+                    while leaf.callbacks.snapshot().inFlight > 0, ProcessInfo.processInfo.systemUptime < joinDeadline {
+                        do { try await Task.sleep(for: .milliseconds(10)) } catch { break }
+                    }
+                    let state = leaf.callbacks.snapshot()
+                    let entry = state.entries.last
                     slow = ["status": observed ? "observed-after-complete-warmup" : "not-reached-getter-entry",
                         "getterEntered": observed, "enabledUndoCount": buttons.count, "cancelRequestedAt": cancelledAt,
                         "requestedSeconds": mode == "slow-timeout" ? 0.2 : 1,
-                        "enteredAt": leaf.enteredAt, "returnedAt": leaf.returnedAt,
-                        "enteredOnMainThread": leaf.enteredOnMainThread, "query": result.evidence]
-                    leaf.armed = false
+                        "enteredAt": entry?.enteredAt ?? 0, "returnedAt": entry?.returnedAt ?? 0,
+                        "enteredOnMainThread": entry?.enteredOnMainThread ?? false, "query": result.evidence]
+                    if state.inFlight > 0 {
+                        retainThroughExit = true
+                        let report: [String: Any] = ["schema": "nexgenvideo/button-query-callback-failure/1",
+                            "mode": mode, "pid": getpid(), "appAcceptance": false,
+                            "slowFixtureVariant": slowFixtureVariant, "callbackState": state.evidence,
+                            "failure": "callback-quiescence-timeout", "slowObservation": slow]
+                        try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
+                            .write(to: destination, options: .withoutOverwriting)
+                        throw CocoaError(.coderInvalidValue)
+                    }
                 } else {
                     slow = ["status": "not-reached-warmup-unqualified", "warmup": warm.evidence,
                         "enabledUndoCount": buttons.count]
@@ -397,6 +472,8 @@ private final class ProbeApplication: NSObject, NSApplicationDelegate {
                 "mainThread": runsOnMainThread(), "activationPolicy": NSApp.activationPolicy().rawValue,
                 "appearance": NSApp.effectiveAppearance.name.rawValue, "styleMask": fixture.window.styleMask.rawValue,
                 "sourceSubsetFrameworkFixture": true, "parallelAppTestHost": false,
+                "slowFixtureVariant": slowFixtureVariant,
+                "callbackState": fixture.leaf?.callbacks.snapshot().evidence as Any? ?? NSNull(),
                 "appAcceptance": false, "originalQueryBeforeAdditionalAX": true,
                 "beforeFirstQuery": before, "originalFirstQuery": first.evidence, "afterFirstQuery": after,
                 "CGStability": stability, "originalQueryAfterCGStability": warm.evidence,
@@ -437,6 +514,6 @@ private enum ButtonQueryProbe {
         let application = NSApplication.shared
         application.delegate = delegate
         application.run()
-        exit(delegate.failure ? 1 : 0)
+        withExtendedLifetime(delegate) { exit(delegate.failure ? 1 : 0) }
     }
 }
