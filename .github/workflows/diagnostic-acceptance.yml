@@ -15,7 +15,7 @@ on:
       candidate_kind:
         description: Signed release verification or targeted failed CI diagnostics
         type: choice
-        options: [signed-release, signed-bpy, signed-journey, signed-transport, native-retained-failures, native-scene-history-hierarchy, native-segment-geometry, native-button-query, native-button-query-crash, native-button-query-crash-reuse, native-export-color, ci-runtime, ci-bpy-open-diagnostic, ci-bpy-resource-diagnostic, ci-app-test-diagnostic, ci-app-glow-replay, ci-app-full-replay, ci-builtin-blur, ci-builtin-blur-scribble, ci-builtin-blur-floor, ci-builtin-blur-preheat, ci-glow-context]
+        options: [signed-release, signed-bpy, signed-journey, signed-transport, native-retained-failures, native-scene-history-hierarchy, native-segment-geometry, native-peer-availability, native-button-query, native-button-query-crash, native-button-query-crash-reuse, native-export-color, ci-runtime, ci-bpy-open-diagnostic, ci-bpy-resource-diagnostic, ci-app-test-diagnostic, ci-app-glow-replay, ci-app-full-replay, ci-builtin-blur, ci-builtin-blur-scribble, ci-builtin-blur-floor, ci-builtin-blur-preheat, ci-glow-context]
         default: signed-release
       run_id:
         description: "Original producer workflow run"
@@ -201,6 +201,9 @@ jobs:
           if os.environ['KIND'] == 'native-scene-history-hierarchy':
               from scene_history_hierarchy import validate_inputs
               validate_inputs(os.environ)
+          elif os.environ['KIND'] == 'native-peer-availability':
+              from peer_availability_diagnostic import validate_inputs
+              validate_inputs(os.environ)
           elif os.environ['KIND'] in ('native-button-query', 'native-button-query-crash', 'native-button-query-crash-reuse'):
               from button_query_diagnostic import validate_inputs
               validate_inputs(os.environ)
@@ -214,13 +217,39 @@ jobs:
               raise SystemExit('Public transport inputs cannot be silently ignored by another mode.')
           PY
       - name: Reuse complete current merged PR source proof
-        if: inputs.candidate_kind == 'signed-transport' || inputs.candidate_kind == 'native-button-query' || inputs.candidate_kind == 'native-button-query-crash' || inputs.candidate_kind == 'native-button-query-crash-reuse' || inputs.packaging_producer_source_sha != ''
+        if: inputs.candidate_kind == 'signed-transport' || inputs.candidate_kind == 'native-button-query' || inputs.candidate_kind == 'native-button-query-crash' || inputs.candidate_kind == 'native-button-query-crash-reuse' || inputs.candidate_kind == 'native-peer-availability' || inputs.packaging_producer_source_sha != ''
         env:
           GH_TOKEN: ${{ github.token }}
           VERIFIED_PR: ${{ inputs.verified_pr_run_id }}
         run: |
           python3 scripts/verified_pr_source_checks.py prepare --run-id "$VERIFIED_PR" \
             --output "$RUNNER_TEMP/transport-source-proof"
+      - name: Bind the exact failed host and unchanged Peer sources
+        if: inputs.candidate_kind == 'native-peer-availability'
+        env:
+          KIND: ${{ inputs.candidate_kind }}
+          VERIFIED_PR: ${{ inputs.verified_pr_run_id }}
+          SCALE: ${{ inputs.interface_scale }}
+          DMG_DIGEST: ${{ inputs.expected_dmg_sha256 }}
+          JOURNEY_JOB: ${{ inputs.journey_job_id }}
+          JOURNEY_ARTIFACT: ${{ inputs.journey_artifact_id }}
+          JOURNEY_DIGEST: ${{ inputs.journey_artifact_sha256 }}
+          EXTRA_SOURCE: ${{ inputs.product_source_sha }}
+          EXTRA_PRODUCTS: ${{ inputs.products_artifact_id }}
+          EXTRA_FAILURE: ${{ inputs.failure_artifact_id }}
+          EXTRA_PRODUCTS_SHA: ${{ inputs.products_artifact_sha256 }}
+          EXTRA_FAILURE_SHA: ${{ inputs.failure_artifact_sha256 }}
+          RUNTIME_FAILURE_BINDING: ${{ inputs.runtime_failure_binding }}
+        run: |
+          python3 scripts/peer_availability_diagnostic.py bind --source-proof "$RUNNER_TEMP/transport-source-proof" \
+            --evidence "$RUNNER_TEMP/peer-availability-source-binding"
+      - uses: actions/upload-artifact@v4
+        if: always() && inputs.candidate_kind == 'native-peer-availability'
+        with:
+          name: native-peer-availability-source-binding
+          path: ${{ runner.temp }}/peer-availability-source-binding/
+          if-no-files-found: error
+          retention-days: 90
       - name: Bind the original failed button query and unchanged framework sources
         if: inputs.candidate_kind == 'native-button-query' || inputs.candidate_kind == 'native-button-query-crash' || inputs.candidate_kind == 'native-button-query-crash-reuse'
         env:
@@ -439,7 +468,7 @@ jobs:
           retention-days: 90
 
       - name: Bind the successful release job and immutable artifact
-        if: inputs.candidate_kind != 'native-retained-failures' && inputs.candidate_kind != 'native-scene-history-hierarchy' && inputs.candidate_kind != 'native-segment-geometry' && inputs.candidate_kind != 'native-button-query' && inputs.candidate_kind != 'native-button-query-crash' && inputs.candidate_kind != 'native-button-query-crash-reuse' && inputs.candidate_kind != 'native-export-color' && inputs.candidate_kind != 'ci-bpy-resource-diagnostic' && inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor' && inputs.candidate_kind != 'ci-builtin-blur-preheat' && inputs.candidate_kind != 'ci-glow-context'
+        if: inputs.candidate_kind != 'native-retained-failures' && inputs.candidate_kind != 'native-scene-history-hierarchy' && inputs.candidate_kind != 'native-segment-geometry' && inputs.candidate_kind != 'native-button-query' && inputs.candidate_kind != 'native-button-query-crash' && inputs.candidate_kind != 'native-button-query-crash-reuse' && inputs.candidate_kind != 'native-peer-availability' && inputs.candidate_kind != 'native-export-color' && inputs.candidate_kind != 'ci-bpy-resource-diagnostic' && inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor' && inputs.candidate_kind != 'ci-builtin-blur-preheat' && inputs.candidate_kind != 'ci-glow-context'
         env:
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_KIND: ${{ inputs.candidate_kind }}
@@ -464,10 +493,37 @@ jobs:
             --candidate-kind "$CANDIDATE_KIND" \
             --packaging-producer-source "$PACKAGING_PRODUCER_SOURCE" --packaging-provenance-artifact-id "$PACKAGING_PROVENANCE_ARTIFACT_ID" --packaging-provenance-artifact-sha256 "$PACKAGING_PROVENANCE_ARTIFACT_SHA256" "${extra[@]}"
       - uses: actions/upload-artifact@v4
-        if: inputs.candidate_kind != 'native-retained-failures' && inputs.candidate_kind != 'native-scene-history-hierarchy' && inputs.candidate_kind != 'native-segment-geometry' && inputs.candidate_kind != 'native-button-query' && inputs.candidate_kind != 'native-button-query-crash' && inputs.candidate_kind != 'native-button-query-crash-reuse' && inputs.candidate_kind != 'native-export-color' && inputs.candidate_kind != 'ci-bpy-resource-diagnostic' && inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor' && inputs.candidate_kind != 'ci-builtin-blur-preheat' && inputs.candidate_kind != 'ci-glow-context'
+        if: inputs.candidate_kind != 'native-retained-failures' && inputs.candidate_kind != 'native-scene-history-hierarchy' && inputs.candidate_kind != 'native-segment-geometry' && inputs.candidate_kind != 'native-button-query' && inputs.candidate_kind != 'native-button-query-crash' && inputs.candidate_kind != 'native-button-query-crash-reuse' && inputs.candidate_kind != 'native-peer-availability' && inputs.candidate_kind != 'native-export-color' && inputs.candidate_kind != 'ci-bpy-resource-diagnostic' && inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor' && inputs.candidate_kind != 'ci-builtin-blur-preheat' && inputs.candidate_kind != 'ci-glow-context'
         with:
           name: diagnostic-candidate-identity
           path: ${{ runner.temp }}/candidate-metadata/*.json
+          if-no-files-found: error
+          retention-days: 90
+
+  native-peer-availability:
+    needs: source
+    if: inputs.candidate_kind == 'native-peer-availability'
+    runs-on: macrunner
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-xcode-27
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-peer-availability-source-binding
+          path: ${{ runner.temp }}/peer-availability-source-binding
+      - name: Measure unchanged host and Peer availability without an App build
+        run: |
+          python3 scripts/peer_availability_diagnostic.py observe --binding "$RUNNER_TEMP/peer-availability-source-binding" \
+            --evidence "$RUNNER_TEMP/peer-availability-observations"
+      - name: Retain complete diagnostic observations and binaries
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-peer-availability-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/peer-availability-observations/
           if-no-files-found: error
           retention-days: 90
 
