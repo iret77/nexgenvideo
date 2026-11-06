@@ -1,6 +1,7 @@
 import builtins
 from contextlib import contextmanager
 import copy
+import datetime
 import io
 import json
 import os
@@ -19,6 +20,75 @@ import button_query_diagnostic as diagnostic
 
 
 class ButtonQueryDiagnosticTests(unittest.TestCase):
+    def test_apple_crash_timestamps_keep_explicit_offsets_and_reject_invalid_formats(self):
+        cases = [
+            ('2026-11-06 05:54:05.2221 +0000', '2026-11-06T05:54:05.222100+00:00'),
+            ('2026-11-06 05:54:05.6871 +0000', '2026-11-06T05:54:05.687100+00:00'),
+            ('2026-11-06 05:54:05.6635 +0000', '2026-11-06T05:54:05.663500+00:00'),
+            ('2026-11-06 05:54:06.0426 +0000', '2026-11-06T05:54:06.042600+00:00'),
+            ('2026-11-06 05:54:05.1 +0530', '2026-11-06T05:54:05.100000+05:30'),
+            ('2026-11-06 05:54:05.123456 -0330', '2026-11-06T05:54:05.123456-03:30'),
+            ('2026-11-06T05:54:05.221928+00:00', '2026-11-06T05:54:05.221928+00:00'),
+            ('2026-11-06T05:54:05.123Z', '2026-11-06T05:54:05.123000+00:00'),
+        ]
+        for raw, expected in cases:
+            with self.subTest(raw=raw):
+                value = diagnostic.instant(raw)
+                self.assertEqual(value.isoformat(), expected)
+                self.assertEqual(value, datetime.datetime.fromisoformat(expected))
+                self.assertIsNotNone(value.tzinfo)
+        for raw in (None, True, 0, [], '', '2026-11-06T05:54:05.123456',
+                '2026-11-06 05:54:05.6871', '2026-11-06 05:54:05.6871 +00:00',
+                '2026-11-06 05:54:05.1234567 +0000', '2026-11-06 05:54:05.6871 +2400',
+                '2026-11-06 05:54:05.6871 +0060', '2026-02-29 05:54:05.6871 +0000',
+                '2026-11-06 25:54:05.6871 +0000', '2026-11-06 05:54:05.6871 +0000junk',
+                '2026-11-06 05:54:05.6871 +0000\n', '2026/11/06 05:54:05.6871 +0000'):
+            with self.subTest(raw=raw), self.assertRaises(ValueError):
+                diagnostic.instant(raw)
+
+    def test_apple_report_lifetimes_keep_raw_ownership_and_strict_path_boundaries(self):
+        actual_times = [
+            (961, '2026-11-06T05:54:05.221928+00:00', '2026-11-06T05:54:05.660166+00:00',
+                '2026-11-06 05:54:05.2221 +0000', '2026-11-06 05:54:05.6871 +0000'),
+            (963, '2026-11-06T05:54:05.663437+00:00', '2026-11-06T05:54:06.009193+00:00',
+                '2026-11-06 05:54:05.6635 +0000', '2026-11-06 05:54:06.0426 +0000'),
+        ]
+        for pid, start, end, launch, capture in actual_times:
+            for variant in ('valid', 'path', 'stale', 'invalid', 'pid', 'name', 'uuid'):
+                with self.subTest(pid=pid, variant=variant), tempfile.TemporaryDirectory() as directory:
+                    process, report = self.ips()
+                    identity = report['usedImages'][0]['uuid']
+                    process.update(pid=pid, startedWall=start, finishedWall=end)
+                    report.update(pid=pid, procLaunch=launch, captureTime=capture)
+                    if variant == 'path': report['procPath'] = '/Users/USER/*/' + report['procName']
+                    elif variant == 'stale': report['procLaunch'] = '2025-01-01 00:00:00.0000 +0000'
+                    elif variant == 'invalid': report['procLaunch'] = 'not-a-timestamp'
+                    elif variant == 'pid': report['pid'] += 1
+                    elif variant == 'name': report['procName'] = 'another'
+                    elif variant == 'uuid': report['usedImages'][0]['uuid'] = '11111111-2222-3333-4444-555555555555'
+                    home = Path(directory)
+                    reports = home / 'Library/Logs/DiagnosticReports'; reports.mkdir(parents=True)
+                    evidence = home / 'evidence'; evidence.mkdir()
+                    path = reports / (Path(process['command'][0]).name + '-fixture.ips')
+                    raw = (json.dumps({'bug_type': '309'}) + '\n' + json.dumps(report)).encode()
+                    path.write_bytes(raw)
+                    timestamp = datetime.datetime.fromisoformat(end).timestamp(); os.utime(path, (timestamp, timestamp))
+                    with patch.object(diagnostic.Path, 'home', return_value=home):
+                        records = diagnostic.collect_reused_reports(evidence, [process], 'a' * 64, identity, seconds=0)
+                    record = records[pid]; candidate = record['candidates'][0]
+                    self.assertEqual(candidate['identityPredicates']['lifetime'], variant not in ('stale', 'invalid'))
+                    self.assertEqual(candidate['rawRetained'], variant in ('valid', 'path'))
+                    self.assertEqual(candidate['qualified'], variant == 'valid')
+                    self.assertEqual(record['qualifiedCount'], int(variant == 'valid'))
+                    retained = list(evidence.glob('*.ips'))
+                    self.assertEqual(len(retained), int(variant in ('valid', 'path')))
+                    if retained: self.assertEqual(retained[0].read_bytes(), raw)
+                    if variant == 'valid':
+                        self.assertEqual(diagnostic.validate_crash(raw, process, 'a' * 64)['pid'], pid)
+                    elif variant == 'path':
+                        self.assertFalse(candidate['pathQualified'])
+                        with self.assertRaises(ValueError): diagnostic.validate_crash(raw, process, 'a' * 64)
+
     def reuse_env(self):
         return dict(self.crash_env(), KIND=diagnostic.REUSE_KIND, EXTRA_SOURCE=diagnostic.REUSED_SOURCE,
                     EXTRA_PRODUCTS='60', EXTRA_PRODUCTS_SHA='d' * 64)
