@@ -1,5 +1,6 @@
 import copy
 import json
+import os
 from pathlib import Path
 import signal
 import subprocess
@@ -14,6 +15,208 @@ import button_query_diagnostic as diagnostic
 
 
 class ButtonQueryDiagnosticTests(unittest.TestCase):
+    def crash_env(self):
+        binding = dict(schema='nexgenvideo/button-query-crash-request/1', producer_run_id=diagnostic.PRIOR_RUN,
+            producer_source_sha=diagnostic.PRIOR_SOURCE, job_id=diagnostic.PRIOR_JOB,
+            source_binding_artifact_id=13468987097, source_binding_artifact_sha256='c' * 64)
+        return dict(self.env, KIND=diagnostic.CRASH_KIND, CANDIDATE_RUN='42121681154', CANDIDATE_ARTIFACT='13461467380',
+            CANDIDATE_DIGEST='a14ad1c9fbcc0feb712ca93ec8ea3e354591be5e7834ae2b7a94bd2bf28a73f7',
+            EXTRA_FAILURE='13469067268', EXTRA_FAILURE_SHA='d' * 64, RUNTIME_FAILURE_BINDING=json.dumps(binding))
+
+    def crash_payload(self):
+        files = {'original.swift': {'SHA256': 'a' * 64, 'gitBlob': 'b' * 40}}
+        binding = dict(schema='nexgenvideo/button-query-binding/1', sourceSHA=diagnostic.PRIOR_SOURCE,
+            sourceTree='4b944c7fd973270c072160f48b243b64f9de3567', runID=str(diagnostic.PRIOR_RUN), attempt='1',
+            originalRun=dict(id=42121681154, head_sha=diagnostic.SOURCE),
+            originalArtifact=dict(id=13461467380, digest='sha256:a14ad1c9fbcc0feb712ca93ec8ea3e354591be5e7834ae2b7a94bd2bf28a73f7'),
+            sourceFiles=files, sourceProof=dict(schema='core-pr-source-composition/v1', sourceSHA=diagnostic.PRIOR_SOURCE,
+                runID=str(diagnostic.PRIOR_RUN), attempt='1', originalRun=dict(id=42140974612)))
+        source = {'binding.json': json.dumps(binding).encode(), 'original-evidence.zip': b'fresh qualified original ZIP bytes'}
+        results, observations = [], {}
+        for index, mode in enumerate(diagnostic.MODES):
+            process = dict(pid=100 + index, exitCode=-5 if mode in diagnostic.CRASH_MODES else 0,
+                processReaped=True, timedOut=False)
+            results.append(dict(mode=mode, status='failed-observation', process=process))
+            observations[mode + '.process.json'] = json.dumps(process).encode()
+            observations[mode + '.log'] = b''
+        receipt = dict(schema='nexgenvideo/button-query-observation/1', sourceSHA=diagnostic.PRIOR_SOURCE,
+            runID=str(diagnostic.PRIOR_RUN), attempt='1', bindingSHA256=diagnostic.digest(source['binding.json']),
+            measurementComplete=False, appAcceptance=False, appBuilds=0, nativeUnitExecutions=0,
+            originalFailureResolved=False, results=results)
+        observations['receipt.json'] = json.dumps(receipt).encode()
+        return observations, source, files
+
+    def ips(self):
+        command = '/tmp/owned-123-a1/nbq0000000123'
+        process = dict(pid=77, command=[command], exitCode=-5, processReaped=True, timedOut=False,
+            executableSHA256='a' * 64, startedWall='2026-11-06T01:00:00+00:00', finishedWall='2026-11-06T01:00:02+00:00')
+        report = dict(pid=77, procName=Path(command).name, procPath='/Users/USER/private/owned-123-a1/nbq0000000123',
+            procLaunch='2026-11-06T01:00:00.100+00:00', captureTime='2026-11-06T01:00:01.900+00:00',
+            exception=dict(signal='SIGTRAP', type='EXC_BREAKPOINT'), faultingThread=0,
+            threads=[dict(frames=[dict(imageIndex=0, imageOffset=123, symbol='actual failure')])],
+            usedImages=[dict(name=Path(command).name, path=command, base=4096, size=4096, uuid='11111111-2222-4333-8444-555555555555')])
+        return process, report
+
+    def slow_report(self, mode):
+        frame = [0, 0, 600, 200]
+        geometry = dict(window=55, frame=frame, CGWindows=[dict(pid=123, number=55, frame=frame, onscreen=True)])
+        root = dict(AXRole='AXWindow', pid=123, parent=None, AXPosition=[0, 0], AXSize=[600, 200],
+            statuses=dict(attributeNames=0, AXChildren=0, pid=0, AXRole=0, AXPosition=0, AXSize=0),
+            attributeNames=['AXRole', 'AXChildren', 'AXPosition', 'AXSize'], attributeNamesType=10,
+            **{'advertised:AXChildren': True, 'type:AXChildren': 10, 'childTypes:AXChildren': [99], 'count:AXChildren': 1})
+        button = dict(AXRole='AXButton', pid=123, parent=0, AXPosition=[20, 20], AXSize=[50, 28],
+            statuses=dict(attributeNames=0, AXChildren=-25212, pid=0, AXRole=0, AXPosition=0, AXSize=0),
+            attributeNames=['AXRole', 'AXPosition', 'AXSize'], attributeNamesType=10,
+            **{'advertised:AXChildren': False, 'type:AXChildren': None, 'count:AXChildren': None})
+        node = dict(pid=123, role='AXButton', enabled=True, title=None, label='Undo', publicScreenFrame=[20, 20, 50, 28],
+            statuses=dict(pid=0, AXRole=0, AXEnabled=0, AXPosition=0, AXSize=0))
+        warm = dict(pid=123, window=55, expectedWindowFrame=frame, readOnMainThread=False, plane='public-AX',
+            truncated=False, failure=None, windowCandidates=1, nodes=[node])
+        query = dict(warm, truncated=True, failure='cancelled' if mode == 'slow-cancel' else 'AX-read-AXChildren:-25204',
+            startedUptime=2.0, finishedUptime=2.2, nodes=[dict(label='Bounded child', statuses={'AXChildren': -25204, 'timeout:AXChildren': 0})])
+        raw = dict(pid=123, window=55, requestFrame=frame, readOnMainThread=False, nodes=[root, button],
+            windows=[copy.deepcopy(root)], windowsAfter=[copy.deepcopy(root)], errors=[],
+            applicationStatuses=dict(pid=0, AXWindows=0), applicationStatusesAfter=dict(pid=0, AXWindows=0),
+            hierarchyEnumerationEnded=True, hierarchyComplete=True, targetStillPresentByCFEqual=True,
+            CFArrayTypeID=10, AXUIElementTypeID=99)
+        return dict(schema='nexgenvideo/button-query-framework-control/1', mode=mode, pid=123,
+            mainLoopRunning=True, mainThread=True, originalQueryBeforeAdditionalAX=True, appAcceptance=False,
+            sourceSubsetFrameworkFixture=True, parallelAppTestHost=False, originalFirstQuery=warm,
+            originalQueryAfterCGStability=warm, queryAfterAdditionalAX=warm,
+            beforeFirstQuery=geometry, beforeWarmQuery=geometry, afterWarmQuery=geometry,
+            beforeLastQuery=geometry, beforeRawAttributes=geometry, afterRawAttributes=geometry,
+            rawAttributesAfterOriginalQueries=raw,
+            slowObservation=dict(status='observed-after-complete-warmup', getterEntered=True, enabledUndoCount=1,
+                enteredAt=2.05, returnedAt=2.4, cancelRequestedAt=2.1 if mode == 'slow-cancel' else 0,
+                requestedSeconds=1 if mode == 'slow-cancel' else 0.2, query=query))
+
+    def test_crash_mode_requires_exact_failed_producer_without_ignored_selectors(self):
+        env = self.crash_env()
+        diagnostic.validate_inputs(env)
+        for key, value in [('EXTRA_FAILURE', ''), ('EXTRA_FAILURE_SHA', 'bad'), ('RUNTIME_FAILURE_BINDING', ''),
+                ('CANDIDATE_RUN', '12'), ('EXTRA_PRODUCTS', '99'), ('JOURNEY_JOB', '1')]:
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                diagnostic.validate_inputs(dict(env, **{key: value}))
+        for key, value in [('producer_run_id', True), ('producer_run_id', 1), ('producer_source_sha', 'a' * 40),
+                ('job_id', 1), ('source_binding_artifact_id', False), ('unexpected', 'x')]:
+            changed = json.loads(env['RUNTIME_FAILURE_BINDING']); changed[key] = value
+            with self.subTest(binding=key), self.assertRaises(ValueError):
+                diagnostic.validate_inputs(dict(env, RUNTIME_FAILURE_BINDING=json.dumps(changed)))
+
+    def test_prior_crash_payload_requires_exact_source_objects_and_binding_bytes(self):
+        observations, source, files = self.crash_payload()
+        self.assertEqual(len(diagnostic.verify_crash_payload(observations, source, files, source['original-evidence.zip'])['cases']), 2)
+        for archive in ({'binding.json': source['binding.json']}, dict(source, **{'original-evidence.zip': b'other ZIP bytes'})):
+            with self.subTest(embedded=list(archive)), self.assertRaises(ValueError):
+                diagnostic.verify_crash_payload(observations, archive, files, source['original-evidence.zip'])
+        for key, value in [('sourceFiles', {}), ('sourceTree', 'c' * 40), ('originalRun', dict(id=1, head_sha=diagnostic.SOURCE))]:
+            changed = json.loads(source['binding.json']); changed[key] = value
+            archive = dict(source, **{'binding.json': json.dumps(changed).encode()})
+            receipt = json.loads(observations['receipt.json']); receipt['bindingSHA256'] = diagnostic.digest(archive['binding.json'])
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                diagnostic.verify_crash_payload(dict(observations, **{'receipt.json': json.dumps(receipt).encode()}), archive, files, source['original-evidence.zip'])
+
+    def test_prior_slow_failures_cannot_be_substituted_by_timeouts_or_other_signals(self):
+        observations, source, files = self.crash_payload()
+        for key, value in [('exitCode', 0), ('exitCode', -6), ('timedOut', True), ('processReaped', False), ('pid', 0)]:
+            changed = copy.deepcopy(observations)
+            process = json.loads(changed['slow-cancel.process.json']); process[key] = value
+            changed['slow-cancel.process.json'] = json.dumps(process).encode()
+            receipt = json.loads(changed['receipt.json'])
+            next(item for item in receipt['results'] if item['mode'] == 'slow-cancel')['process'] = process
+            changed['receipt.json'] = json.dumps(receipt).encode()
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                diagnostic.verify_crash_payload(changed, source, files, source['original-evidence.zip'])
+
+    def test_ips_requires_two_objects_exact_pid_executable_and_owned_lifetime(self):
+        process, report = self.ips()
+        encode = lambda value: (json.dumps({'bug_type': '309'}) + '\n' + json.dumps(value)).encode()
+        self.assertEqual(diagnostic.validate_crash(encode(report), process, 'a' * 64)['pid'], 77)
+        for key, value in [('pid', 78), ('procName', 'other'), ('procPath', '/tmp/other/nbq0000000123'),
+                ('procLaunch', '2026-11-05T01:00:00+00:00'), ('captureTime', '2026-11-06T01:01:00+00:00')]:
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                diagnostic.validate_crash(encode(dict(report, **{key: value})), process, 'a' * 64)
+        for raw in [json.dumps(report).encode(), encode(report) + b'\n{}']:
+            with self.assertRaises(ValueError): diagnostic.validate_crash(raw, process, 'a' * 64)
+        for bug_type in (None, '288', 309, '', '309-other'):
+            metadata = {} if bug_type is None else {'bug_type': bug_type}
+            raw = (json.dumps(metadata) + '\n' + json.dumps(report)).encode()
+            with self.subTest(bug_type=bug_type), self.assertRaises(ValueError):
+                diagnostic.validate_crash(raw, process, 'a' * 64)
+
+    def test_ips_must_contain_the_actual_sigtrap_and_usable_faulting_stack(self):
+        process, report = self.ips()
+        for key, value in [('exception', dict(signal='SIGABRT', type='EXC_CRASH')), ('faultingThread', True),
+                ('faultingThread', 1), ('threads', [dict(frames=[])]), ('usedImages', []), ('usedImages', [None]),
+                ('usedImages', [{}])]:
+            raw = (json.dumps({'bug_type': '309'}) + '\n' + json.dumps(dict(report, **{key: value}))).encode()
+            with self.subTest(key=key), self.assertRaises(ValueError): diagnostic.validate_crash(raw, process, 'a' * 64)
+        image = report['usedImages'][0]
+        for key, value in [('base', 0), ('base', True), ('size', 0), ('size', 123), ('size', 2 ** 64),
+                ('uuid', None), ('uuid', 'unknown'), ('uuid', '00000000-0000-0000-0000-000000000000')]:
+            changed = dict(report, usedImages=[dict(image, **{key: value})])
+            raw = (json.dumps({'bug_type': '309'}) + '\n' + json.dumps(changed)).encode()
+            with self.subTest(image=key, value=value), self.assertRaises(ValueError):
+                diagnostic.validate_crash(raw, process, 'a' * 64)
+        changed = dict(report, usedImages=[dict(image, name='', path='')])
+        with self.assertRaises(ValueError):
+            diagnostic.validate_crash((json.dumps({'bug_type': '309'}) + '\n' + json.dumps(changed)).encode(), process, 'a' * 64)
+        raw = (json.dumps({'bug_type': '309'}) + '\n' + json.dumps(report)).encode()
+        self.assertEqual(diagnostic.validate_crash(raw, process, 'a' * 64)['resolvedFaultingFrames'][0]['runtimeAddress'], 4219)
+
+    def test_owned_report_acquisition_retains_raw_candidates_but_never_qualifies_wrong_pid(self):
+        process, report = self.ips()
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); reports = home / 'Library/Logs/DiagnosticReports'; reports.mkdir(parents=True)
+            evidence = home / 'evidence'; evidence.mkdir()
+            for name, pid in [('a', 78), ('b', 77)]:
+                target = reports / (report['procName'] + '-' + name + '.ips')
+                target.write_text(json.dumps({'bug_type': '309'}) + '\n' + json.dumps(dict(report, pid=pid)))
+                timestamp = diagnostic.instant(process['finishedWall']).timestamp()
+                os.utime(target, (timestamp, timestamp))
+            with patch.object(diagnostic.Path, 'home', return_value=home):
+                captured = diagnostic.collect_crash_reports(evidence, process, 'a' * 64, seconds=0)
+            self.assertEqual(captured['identity']['pid'], 77)
+            acquisition = json.loads((evidence / '77-crash-acquisition.json').read_text())
+            self.assertEqual(acquisition['qualifiedCount'], 1)
+            self.assertEqual(sum(item['qualified'] for item in acquisition['candidates']), 1)
+            self.assertEqual(len(list(evidence.glob('*.ips'))), 1)
+
+    def test_crash_mode_normal_alternative_requires_both_original_native_contracts(self):
+        for mode in diagnostic.CRASH_MODES:
+            diagnostic.validate_slow_normal(self.slow_report(mode), mode, 123)
+
+    def test_not_reached_slow_observations_cannot_replace_missing_crash_evidence(self):
+        for status in ('not-reached-warmup-unqualified', 'not-reached-getter-entry'):
+            report = self.slow_report('slow-cancel'); report['slowObservation']['status'] = status
+            diagnostic.validate_observation(report, 'slow-cancel', 123)
+            with self.subTest(status=status), self.assertRaises(ValueError):
+                diagnostic.validate_slow_normal(report, 'slow-cancel', 123)
+
+    def test_normal_slow_timing_cancellation_and_last_child_timeout_are_independent_guards(self):
+        for mode in diagnostic.CRASH_MODES:
+            for key, value in [('enteredAt', 1), ('returnedAt', 0), ('getterEntered', False), ('enabledUndoCount', True)]:
+                report = self.slow_report(mode); report['slowObservation'][key] = value
+                with self.subTest(mode=mode, key=key), self.assertRaises(ValueError): diagnostic.validate_slow_normal(report, mode, 123)
+            report = self.slow_report(mode); report['slowObservation']['query']['finishedUptime'] = 3
+            with self.assertRaises(ValueError): diagnostic.validate_slow_normal(report, mode, 123)
+        report = self.slow_report('slow-cancel'); report['slowObservation']['cancelRequestedAt'] = 0
+        with self.assertRaises(ValueError): diagnostic.validate_slow_normal(report, 'slow-cancel', 123)
+        for status in (0, None, False):
+            report = self.slow_report('slow-timeout'); report['slowObservation']['query']['nodes'][0]['statuses']['AXChildren'] = status
+            with self.subTest(status=status), self.assertRaises(ValueError): diagnostic.validate_slow_normal(report, 'slow-timeout', 123)
+
+    def test_crash_mode_has_its_own_source_gated_mac_leaf_and_preserves_all_five_default_cases(self):
+        workflow = yaml.safe_load((diagnostic.ROOT / '.github/workflows/diagnostic-acceptance.yml').read_text())
+        leaf = workflow['jobs']['native-button-query-crash']
+        self.assertEqual((leaf['needs'], leaf['runs-on'], leaf['timeout-minutes']), ('source', 'macrunner', 5))
+        self.assertEqual(leaf['if'], "inputs.candidate_kind == 'native-button-query-crash'")
+        command = next(step['run'] for step in leaf['steps'] if 'run' in step)
+        self.assertIn('--capture-crashes', command)
+        original = workflow['jobs']['native-button-query']
+        self.assertNotIn('--capture-crashes', next(step['run'] for step in original['steps'] if 'run' in step))
+        self.assertEqual(diagnostic.MODES, ('enabled', 'disabled', 'duplicate', 'slow-cancel', 'slow-timeout'))
+
     def setUp(self):
         self.env = dict(KIND='native-button-query', CANDIDATE_RUN='12', CANDIDATE_ARTIFACT='34', VERIFIED_PR='56',
                         CANDIDATE_SOURCE=diagnostic.SOURCE, CANDIDATE_DIGEST='b' * 64, SCALE='1', DMG_DIGEST='')
