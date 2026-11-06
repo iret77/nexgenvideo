@@ -1,6 +1,7 @@
 import builtins
 from contextlib import contextmanager
 import copy
+import io
 import json
 import os
 from pathlib import Path
@@ -18,6 +19,294 @@ import button_query_diagnostic as diagnostic
 
 
 class ButtonQueryDiagnosticTests(unittest.TestCase):
+    def reuse_env(self):
+        return dict(self.crash_env(), KIND=diagnostic.REUSE_KIND, EXTRA_SOURCE=diagnostic.REUSED_SOURCE,
+                    EXTRA_PRODUCTS='60', EXTRA_PRODUCTS_SHA='d' * 64)
+
+    def retained_fixture(self, root):
+        args, binding, originals, toolchain = self.observer_fixture(root)
+        toolchain['python'] = 'original engine Python fixture'
+        original = args.binding / 'original-evidence.zip'
+        members = diagnostic.zip_members(original)
+        key = '_temp/release-test-evidence/retained-engine-receipt.json'
+        members[key] = json.dumps(dict(toolchain=toolchain)).encode()
+        with zipfile.ZipFile(original, 'w') as archive:
+            for name, raw in members.items(): archive.writestr(name, raw)
+        binding['originalArtifact']['digest'] = 'sha256:' + diagnostic.digest(original.read_bytes())
+        binding['originalEvidence'] = diagnostic.failure_archive(original)
+        prior_source = diagnostic.zip_members(args.binding / 'prior-source-binding.zip')
+        prior_source['original-evidence.zip'] = original.read_bytes()
+        with zipfile.ZipFile(args.binding / 'prior-source-binding.zip', 'w') as archive:
+            for name, raw in prior_source.items(): archive.writestr(name, raw)
+        checksum = diagnostic.digest((args.binding / 'prior-source-binding.zip').read_bytes())
+        binding['priorCrashes']['artifacts'][1]['digest'] = 'sha256:' + checksum
+        binding['priorCrashes']['request']['source_binding_artifact_sha256'] = checksum
+        observations = diagnostic.zip_members(args.binding / 'prior-observations.zip')
+        binding['priorCrashes'].update(diagnostic.verify_crash_payload(observations, prior_source,
+            binding['sourceFiles'], original.read_bytes()))
+        source_binding = copy.deepcopy(binding)
+        source_binding.update(sourceSHA=diagnostic.REUSED_SOURCE, sourceTree='ab9d2dc76fbd620392d7a712bc08fc37d50909d5',
+            runID=str(diagnostic.REUSED_RUN), attempt='1', appAcceptance=False, appBuilds=0, nativeUnitExecutions=0,
+            sourceProof=dict(schema='core-pr-source-composition/v1', sourceSHA=diagnostic.REUSED_SOURCE,
+                runID=str(diagnostic.REUSED_RUN), attempt='1', originalRun=dict(id=42160256589)))
+        source = {'binding.json': json.dumps(source_binding).encode(), 'original-evidence.zip': original.read_bytes(),
+            'prior-observations.zip': (args.binding / 'prior-observations.zip').read_bytes(),
+            'prior-source-binding.zip': (args.binding / 'prior-source-binding.zip').read_bytes()}
+        selected, ranges = diagnostic.source_subset(originals)
+        native = {'compiler.log': b'', 'toolchain.json': json.dumps(dict(actual={key: toolchain[key]
+            for key in ('xcode', 'osVersion', 'osBuild', 'swift')}, original=toolchain)).encode(),
+            'source-subsets.json': json.dumps(dict(originals=binding['sourceFiles'], subsets={name: dict(
+                SHA256=diagnostic.digest(raw), bytes=len(raw), originalByteRanges=ranges[name]) for name, raw in selected.items()})).encode()}
+        native.update({'sources/' + name: raw for name, raw in selected.items()})
+        stem = f'nbq{diagnostic.REUSED_RUN % 10_000_000_000:010d}'
+        folder = f'owned-{diagnostic.REUSED_RUN}-a1/'
+        code = b'retained executable fixture bytes'
+        for suffix in ('', 'c', 't'): native[folder + stem + suffix] = code
+        native[folder + stem + '.dSYM/Contents/Info.plist'] = b'debug info fixture'
+        native[folder + stem + '.dSYM/Contents/Resources/Relocations/aarch64/' + stem + '.yml'] = b'relocations fixture'
+        native[folder + stem + '.dSYM/Contents/Resources/DWARF/' + stem] = b'DWARF fixture'
+        command = ['xcrun', 'swiftc', '-swift-version', '6', '-g', '-parse-as-library', '-target', 'arm64-apple-macos26.0',
+            *['/fixture/sources/' + name for name in selected], '/repository/scripts/button_query_diagnostic.swift',
+            '-o', '/fixture/' + folder + stem]
+        native['compiler.process.json'] = json.dumps(dict(pid=100, exitCode=0, processReaped=True, timedOut=False, command=command)).encode()
+        results = []
+        stages = ['observe-entered', 'fixture-init-before', 'fixture-init-after', 'first-query-before',
+            'first-query-returned', 'CG-stability-before', 'CG-stability-returned', 'warm-query-before']
+        for index, mode in enumerate(diagnostic.CRASH_MODES):
+            process = dict(pid=101 + index, exitCode=-5, processReaped=True, timedOut=False,
+                executableSHA256=diagnostic.digest(code), command=['/fixture/' + folder + stem + ('c' if index == 0 else 't')])
+            records = [dict(schema='nexgenvideo/button-query-stage/1', pid=process['pid'], mode=mode,
+                mainThread=True, stage=stage, uptime=10 + position) for position, stage in enumerate(stages)]
+            raw = b'\n'.join(json.dumps(item).encode() for item in records)
+            native[mode + '.stages.jsonl'] = raw
+            native[mode + '.process.json'] = json.dumps(process).encode()
+            native[mode + '.log'] = b''
+            results.append(dict(mode=mode, status='failed-observation', process=process,
+                stages=dict(SHA256=diagnostic.digest(raw), records=records)))
+        native['receipt.json'] = json.dumps(dict(schema='nexgenvideo/button-query-crash-observation/1',
+            sourceSHA=diagnostic.REUSED_SOURCE, runID=str(diagnostic.REUSED_RUN), attempt='1',
+            bindingSHA256=diagnostic.digest(source['binding.json']), measurementComplete=False,
+            appAcceptance=False, appBuilds=0, nativeUnitExecutions=0, originalFailureResolved=False, results=results)).encode()
+        return args, binding, originals, toolchain, native, source
+
+    def test_reuse_mode_requires_exact_selectors_and_preserves_all_existing_leafs(self):
+        env = self.reuse_env(); diagnostic.validate_inputs(env)
+        for key, value in [('EXTRA_SOURCE', 'c' * 40), ('EXTRA_PRODUCTS', ''), ('EXTRA_PRODUCTS_SHA', ''),
+                           ('JOURNEY_JOB', '1'), ('DMG_DIGEST', 'a' * 64), ('RUNTIME_FAILURE_BINDING', '{}')]:
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                diagnostic.validate_inputs(dict(env, **{key: value}))
+        for kind in ('native-button-query', diagnostic.CRASH_KIND):
+            with self.subTest(kind=kind), self.assertRaises(ValueError):
+                diagnostic.validate_inputs(dict(env, KIND=kind))
+        workflow = yaml.safe_load((diagnostic.ROOT / '.github/workflows/diagnostic-acceptance.yml').read_text())
+        leaf = workflow['jobs'][diagnostic.REUSE_KIND]
+        self.assertEqual((leaf['needs'], leaf['runs-on'], leaf['timeout-minutes']), ('source', 'macrunner', 5))
+        self.assertEqual(leaf['if'], "inputs.candidate_kind == 'native-button-query-crash-reuse'")
+        command = next(step['run'] for step in leaf['steps'] if 'run' in step)
+        self.assertIn('--reuse-compiler', command)
+        self.assertNotIn('swiftc', command)
+        guard = next(step for step in workflow['jobs']['source']['steps'] if step.get('name') == 'Require exact public transport continuation inputs')
+        code = guard['run'].split("python3 - <<'PY'\n", 1)[1].rsplit('\nPY', 1)[0]
+        values = dict(env, JOURNEY_JOB='', JOURNEY_ARTIFACT='', JOURNEY_DIGEST='', PACKAGING_PRODUCER_SOURCE='',
+            PACKAGING_PROVENANCE_ARTIFACT_ID='', PACKAGING_PROVENANCE_ARTIFACT_SHA256='')
+        with patch.dict(os.environ, values, clear=True): exec(compile(code, '<reuse-input-guard>', 'exec'), {})
+        for step in workflow['jobs']['source']['steps']:
+            if step.get('name') in ('Bind the original failed button query and unchanged framework sources',
+                                    'Reuse complete current merged PR source proof'):
+                self.assertIn(diagnostic.REUSE_KIND, step['if'])
+
+    def test_reuse_payload_rejects_changed_sources_flags_products_and_semantic_lineage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            args, binding, originals, _, native, source = self.retained_fixture(Path(directory))
+            verify = lambda product, archive: diagnostic.verify_retained_probe(product, archive, binding['sourceFiles'],
+                (args.binding / 'original-evidence.zip').read_bytes(), originals,
+                (diagnostic.ROOT / 'scripts/button_query_diagnostic.swift').read_bytes())
+            self.assertTrue(verify(native, source)['products'])
+            for variant in ('flags', 'exit', 'reaped', 'subset', 'ranges', 'binary', 'dsym', 'toolchain', 'receipt', 'embedded', 'program'):
+                product, archive = copy.deepcopy(native), copy.deepcopy(source)
+                if variant in ('flags', 'exit', 'reaped'):
+                    value = json.loads(product['compiler.process.json'])
+                    if variant == 'flags': value['command'].insert(2, '-Ounchecked')
+                    elif variant == 'exit': value['exitCode'] = 1
+                    else: value['processReaped'] = False
+                    product['compiler.process.json'] = json.dumps(value).encode()
+                elif variant == 'subset': product['sources/NativeButtonAccessibility.swift'] = b'changed'
+                elif variant == 'ranges':
+                    value = json.loads(product['source-subsets.json']); value['subsets']['NativeButtonAccessibility.swift']['originalByteRanges'] = []
+                    product['source-subsets.json'] = json.dumps(value).encode()
+                elif variant in ('binary', 'dsym'):
+                    key = next(name for name in product if name.endswith('.dSYM/Contents/Info.plist')) if variant == 'dsym' else next(
+                        name for name in product if name.startswith('owned-') and '.dSYM' not in name)
+                    product[key] = b''
+                elif variant == 'toolchain':
+                    value = json.loads(product['toolchain.json']); value['actual']['swift'] = 'different'
+                    product['toolchain.json'] = json.dumps(value).encode()
+                elif variant == 'receipt':
+                    value = json.loads(product['receipt.json']); value['measurementComplete'] = True
+                    product['receipt.json'] = json.dumps(value).encode()
+                elif variant == 'embedded': archive['original-evidence.zip'] = b'changed'
+                else:
+                    value = json.loads(archive['binding.json']); value['harnessFiles']['scripts/button_query_diagnostic.swift'] = 'c' * 64
+                    archive['binding.json'] = json.dumps(value).encode()
+                with self.subTest(variant=variant), self.assertRaises((ValueError, KeyError)):
+                    verify(product, archive)
+
+    def test_reuse_binding_requires_original_producer_jobs_artifacts_and_transfer_windows(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            args, binding, originals, _, native, source = self.retained_fixture(root)
+            def archive_bytes(members):
+                output = io.BytesIO()
+                with zipfile.ZipFile(output, 'w') as archive:
+                    for name, raw in members.items(): archive.writestr(name, raw)
+                return output.getvalue()
+            payloads = {60: archive_bytes(native), 61: archive_bytes(source)}
+            env = dict(self.reuse_env(), EXTRA_PRODUCTS_SHA=diagnostic.digest(payloads[60]))
+            run = dict(id=diagnostic.REUSED_RUN, head_sha=diagnostic.REUSED_SOURCE, run_attempt=1,
+                actor=dict(login='iret77'), repository=dict(full_name='iret77/nexgenvideo'),
+                path='.github/workflows/diagnostic-acceptance.yml', event='workflow_dispatch', status='completed', conclusion='failure')
+            jobs = dict(total_count=2, jobs=[dict(id=job_id, name=name, conclusion=conclusion, labels=labels,
+                run_id=diagnostic.REUSED_RUN, head_sha=diagnostic.REUSED_SOURCE, run_attempt=1, status='completed',
+                started_at='2026-11-06T00:00:00Z', completed_at='2026-11-06T02:00:00Z',
+                steps=[] if job_id == diagnostic.REUSED_SOURCE_JOB else [dict(
+                    name='Capture only the two actual Slow crashes and their owned reports', conclusion='failure')])
+                for job_id, name, conclusion, labels in ((diagnostic.REUSED_SOURCE_JOB, 'source', 'success', ['ubuntu-24.04']),
+                    (diagnostic.REUSED_NATIVE_JOB, diagnostic.CRASH_KIND, 'failure', ['macrunner']))])
+            artifacts = [dict(id=value, name=name, expired=False, size_in_bytes=len(payloads[value]),
+                digest='sha256:' + diagnostic.digest(payloads[value]), workflow_run=dict(id=diagnostic.REUSED_RUN, head_sha=diagnostic.REUSED_SOURCE),
+                created_at='2026-11-06T01:00:00Z', updated_at='2026-11-06T01:00:01Z', expires_at='2099-01-01T00:00:00Z')
+                for value, name in ((60, f'native-button-query-crash-{diagnostic.REUSED_RUN}-a1'), (61, 'native-button-query-crash-source-binding'))]
+            for index, variant in enumerate(('valid', 'actor', 'source', 'labels', 'window', 'expired', 'duplicate', 'bytes')):
+                changed_run, changed_jobs, changed_artifacts = copy.deepcopy(run), copy.deepcopy(jobs), copy.deepcopy(artifacts)
+                if variant == 'actor': changed_run['actor']['login'] = 'another'
+                elif variant == 'source': changed_run['head_sha'] = 'c' * 40
+                elif variant == 'labels': changed_jobs['jobs'][1]['labels'] = ['ubuntu-24.04']
+                elif variant == 'window': changed_artifacts[0]['created_at'] = '2026-11-05T00:00:00Z'
+                elif variant == 'expired': changed_artifacts[0]['expired'] = True
+                elif variant == 'duplicate': changed_artifacts.append(copy.deepcopy(changed_artifacts[1]))
+                def api(route):
+                    if '/attempts/1/jobs' in route: return changed_jobs
+                    if '/artifacts?per_page=' in route: return dict(total_count=len(changed_artifacts), artifacts=changed_artifacts)
+                    if route == '/actions/artifacts/60': return changed_artifacts[0]
+                    if route == '/actions/runs/' + str(diagnostic.REUSED_RUN): return changed_run
+                    raise AssertionError(route)
+                def download(artifact, path): path.write_bytes(b'changed' if variant == 'bytes' else payloads[artifact['id']])
+                target = root / ('acquisition-' + str(index)); target.mkdir()
+                with self.subTest(variant=variant):
+                    if variant == 'valid':
+                        self.assertEqual(diagnostic.bind_retained_probe(target, env, api, download, binding['sourceFiles'],
+                            (args.binding / 'original-evidence.zip').read_bytes(), originals)['producerRunID'], diagnostic.REUSED_RUN)
+                    else:
+                        with self.assertRaises(ValueError): diagnostic.bind_retained_probe(target, env, api, download,
+                            binding['sourceFiles'], (args.binding / 'original-evidence.zip').read_bytes(), originals)
+
+    def test_reuse_identity_retains_owned_unknown_path_only_as_unqualified(self):
+        process, report = self.ips(); identity = report['usedImages'][0]['uuid']
+        for variant in ('valid', 'path', 'pid', 'name', 'time', 'uuid'):
+            with self.subTest(variant=variant), tempfile.TemporaryDirectory() as directory:
+                home = Path(directory); reports = home / 'Library/Logs/DiagnosticReports'; reports.mkdir(parents=True)
+                evidence = home / 'evidence'; evidence.mkdir(); changed = copy.deepcopy(report)
+                if variant == 'path': changed['procPath'] = '/Users/USER/*/' + changed['procName']
+                elif variant == 'pid': changed['pid'] += 1
+                elif variant == 'name': changed['procName'] = 'another'
+                elif variant == 'time': changed['procLaunch'] = '2025-01-01T00:00:00+00:00'
+                elif variant == 'uuid': changed['usedImages'][0]['uuid'] = '11111111-2222-3333-4444-555555555555'
+                path = reports / (report['procName'] + '-fixture.ips')
+                path.write_text(json.dumps({'bug_type': '309'}) + '\n' + json.dumps(changed))
+                timestamp = diagnostic.instant(process['finishedWall']).timestamp(); os.utime(path, (timestamp, timestamp))
+                with patch.object(diagnostic.Path, 'home', return_value=home):
+                    records = diagnostic.collect_reused_reports(evidence, [process], 'a' * 64, identity, seconds=0)
+                record = records[process['pid']]; candidate = record['candidates'][0]
+                self.assertEqual(candidate['rawRetained'], variant in ('valid', 'path'))
+                self.assertEqual(candidate['qualified'], variant == 'valid')
+                self.assertEqual(record['qualifiedCount'], int(variant == 'valid'))
+                self.assertEqual(len(list(evidence.glob('*.ips'))), int(variant in ('valid', 'path')))
+                if variant == 'path':
+                    self.assertFalse(candidate['pathQualified'])
+                    with self.assertRaises(ValueError): diagnostic.validate_crash(path.read_bytes(), process, 'a' * 64)
+
+    def test_reuse_collector_maps_delayed_reports_to_the_correct_owned_process(self):
+        process, report = self.ips(); identity = report['usedImages'][0]['uuid']
+        processes, reports_data = [], []
+        for index, suffix in enumerate(('c', 't')):
+            owner, payload = copy.deepcopy(process), copy.deepcopy(report)
+            owner['pid'] += index; owner['command'][0] += suffix
+            payload.update(pid=owner['pid'], procName=Path(owner['command'][0]).name, procPath=owner['command'][0])
+            processes.append(owner); reports_data.append(payload)
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); reports = home / 'Library/Logs/DiagnosticReports'; reports.mkdir(parents=True)
+            evidence = home / 'evidence'; evidence.mkdir(); sequence = []
+            def delayed(_):
+                index = 1 if not sequence else 0; sequence.append(index)
+                payload = reports_data[index]; path = reports / (payload['procName'] + '-late.ips')
+                path.write_text(json.dumps({'bug_type': '309'}) + '\n' + json.dumps(payload))
+                timestamp = diagnostic.instant(processes[index]['finishedWall']).timestamp(); os.utime(path, (timestamp, timestamp))
+            with patch.object(diagnostic.Path, 'home', return_value=home), \
+                    patch.object(diagnostic.time, 'monotonic', side_effect=[0, 0, 1, 31, 31]), \
+                    patch.object(diagnostic.time, 'sleep', side_effect=delayed):
+                records = diagnostic.collect_reused_reports(evidence, processes, 'a' * 64, identity)
+            self.assertEqual(sequence, [1, 0])
+            self.assertTrue(all(records[owner['pid']]['qualifiedCount'] == 1 for owner in processes))
+            payload = reports_data[0]; duplicate = reports / (payload['procName'] + '-duplicate.ips')
+            duplicate.write_text(json.dumps({'bug_type': '309'}) + '\n' + json.dumps(payload))
+            timestamp = diagnostic.instant(processes[0]['finishedWall']).timestamp(); os.utime(duplicate, (timestamp, timestamp))
+            other = home / 'duplicate-evidence'; other.mkdir()
+            with patch.object(diagnostic.Path, 'home', return_value=home):
+                duplicate_records = diagnostic.collect_reused_reports(other, processes, 'a' * 64, identity, seconds=0)
+            self.assertEqual(duplicate_records[processes[0]['pid']]['qualifiedCount'], 2)
+
+    def test_reuse_observe_executes_only_retained_programs_and_never_a_compiler(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            args, binding, originals, toolchain, native, source = self.retained_fixture(root)
+            archives = []
+            for name, members in (('retained-debug-products.zip', native), ('retained-debug-source.zip', source)):
+                path = args.binding / name
+                with zipfile.ZipFile(path, 'w') as archive:
+                    for member, raw in members.items(): archive.writestr(member, raw)
+                archives.append(diagnostic.digest(path.read_bytes()))
+            retained = diagnostic.verify_retained_probe(native, source, binding['sourceFiles'],
+                (args.binding / 'original-evidence.zip').read_bytes(), originals,
+                (diagnostic.ROOT / 'scripts/button_query_diagnostic.swift').read_bytes())
+            retained['archiveSHA256'] = archives
+            binding.update(schema='nexgenvideo/button-query-crash-reuse-binding/1', diagnosticMode=diagnostic.REUSE_KIND,
+                retainedCompiler=retained)
+            (args.binding / 'binding.json').write_text(json.dumps(binding)); args.reuse_compiler = True
+            home = root / 'home'; reports = home / 'Library/Logs/DiagnosticReports'; reports.mkdir(parents=True)
+            _, sample = self.ips(); identity = sample['usedImages'][0]['uuid']; calls = []
+            def output(command, **_):
+                if command[:3] == ['xcrun', 'dwarfdump', '--uuid']:
+                    return 'UUID: ' + identity + ' (arm64) ' + command[-1]
+                values = {('uname', '-m'): 'arm64', ('xcodebuild', '-version'): toolchain['xcode'],
+                    ('sw_vers', '-productVersion'): toolchain['osVersion'], ('sw_vers', '-buildVersion'): toolchain['osBuild'],
+                    ('swift', '--version'): toolchain['swift']}
+                return values[tuple(command)]
+            def execute(command, log, _):
+                self.assertNotEqual(command[0], 'xcrun'); calls.append(command)
+                pid = 1000 + len(calls); mode = command[1]
+                owner, report = self.ips(); owner.update(pid=pid, command=command,
+                    executableSHA256=diagnostic.digest(Path(command[0]).read_bytes()))
+                report.update(pid=pid, procName=Path(command[0]).name, procPath=command[0])
+                log.write_bytes(b''); log.with_suffix('.process.json').write_text(json.dumps(owner))
+                records = [dict(schema='nexgenvideo/button-query-stage/1', pid=pid, mode=mode, mainThread=True,
+                    stage='observe-entered', uptime=1)]
+                Path(command[-1]).write_bytes(b'\n'.join(json.dumps(item).encode() for item in records))
+                path = reports / (report['procName'] + '-fixture.ips')
+                path.write_text(json.dumps({'bug_type': '309'}) + '\n' + json.dumps(report))
+                timestamp = diagnostic.instant(owner['finishedWall']).timestamp(); os.utime(path, (timestamp, timestamp))
+                raise ValueError('Owned framework process failed; original log retained')
+            with self.observer_runtime(originals, toolchain), patch.object(diagnostic.Path, 'home', return_value=home), \
+                    patch.object(diagnostic.subprocess, 'check_output', side_effect=output), \
+                    patch.object(diagnostic, 'owned_command', side_effect=execute):
+                diagnostic.observe(args)
+            self.assertEqual(len(calls), 2)
+            receipt = json.loads((args.evidence / 'receipt.json').read_text())
+            self.assertTrue(receipt['measurementComplete'])
+            self.assertTrue(all(item['status'] == 'captured-crash' for item in receipt['results']))
+            self.assertEqual(receipt['compilerReuse']['compilerExecutions'], 0)
+            self.assertFalse((args.evidence / 'compiler.process.json').exists())
+            self.assertFalse(receipt['appAcceptance'])
+
     def observer_fixture(self, root):
         binding_dir = root / 'binding'; binding_dir.mkdir()
         toolchain = dict(xcode='Xcode 27.2', osVersion='27.2', osBuild='26B123', swift='Swift fixture toolchain')

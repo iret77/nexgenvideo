@@ -2,6 +2,7 @@
 import argparse
 import datetime
 import hashlib
+import io
 import json
 import math
 import os
@@ -12,6 +13,7 @@ import signal
 import subprocess
 import sys
 import time
+import uuid
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,9 +32,14 @@ FAILED = {'actualSwiftUIButtonIsDiscoveredWithoutAnExternalReader', 'actualDisab
 MODES = ('enabled', 'disabled', 'duplicate', 'slow-cancel', 'slow-timeout')
 CRASH_MODES = ('slow-cancel', 'slow-timeout')
 CRASH_KIND = 'native-button-query-crash'
+REUSE_KIND = 'native-button-query-crash-reuse'
 PRIOR_RUN = 42143760159
 PRIOR_SOURCE = '82a04f37e0a11fbefae1890d91c7691b8b8b9b45'
 PRIOR_JOB = 127650280110
+REUSED_RUN = 42162333722
+REUSED_SOURCE = '0420ee7249a6c4cd9d8ce893b26034e60059483b'
+REUSED_NATIVE_JOB = 127710823865
+REUSED_SOURCE_JOB = 127710696768
 
 
 def require(value, message):
@@ -54,21 +61,34 @@ def git(*args):
 
 
 def validate_inputs(env):
-    require(env['KIND'] in ('native-button-query', CRASH_KIND), 'Incorrect button query diagnostic mode')
+    require(env['KIND'] in ('native-button-query', CRASH_KIND, REUSE_KIND), 'Incorrect button query diagnostic mode')
     for key in ('CANDIDATE_RUN', 'CANDIDATE_ARTIFACT', 'VERIFIED_PR'):
         require(re.fullmatch('[1-9][0-9]*', env[key]), 'Positive original producer and current Source IDs required')
     require(env['CANDIDATE_SOURCE'] == SOURCE and re.fullmatch('[a-f0-9]{64}', env['CANDIDATE_DIGEST']),
             'Exact failed query source and artifact digest required')
     require(env['SCALE'] == '1' and not any(env.get(key, '') for key in (
-        'DMG_DIGEST', 'JOURNEY_JOB', 'JOURNEY_ARTIFACT', 'JOURNEY_DIGEST', 'EXTRA_SOURCE', 'EXTRA_PRODUCTS',
-        'EXTRA_PRODUCTS_SHA',
+        'DMG_DIGEST', 'JOURNEY_JOB', 'JOURNEY_ARTIFACT', 'JOURNEY_DIGEST',
         'PACKAGING_PRODUCER_SOURCE', 'PACKAGING_PROVENANCE_ARTIFACT_ID', 'PACKAGING_PROVENANCE_ARTIFACT_SHA256')),
         'Unconsumed diagnostic selectors cannot be ignored')
-    if env['KIND'] == CRASH_KIND:
+    if env['KIND'] == REUSE_KIND:
+        validate_reuse_request(env)
+    else:
+        require(not any(env.get(key, '') for key in ('EXTRA_SOURCE', 'EXTRA_PRODUCTS', 'EXTRA_PRODUCTS_SHA')),
+                'Compiler reuse selectors cannot be ignored')
+    if env['KIND'] in (CRASH_KIND, REUSE_KIND):
         crash_request(env)
     else:
         require(not any(env.get(key, '') for key in ('EXTRA_FAILURE', 'EXTRA_FAILURE_SHA', 'RUNTIME_FAILURE_BINDING')),
                 'Original observations cannot ignore crash selectors')
+
+
+def validate_reuse_request(env):
+    require(env['KIND'] == REUSE_KIND, 'Incorrect compiler reuse mode')
+    crash_request(env)
+    require(env.get('EXTRA_SOURCE') == REUSED_SOURCE
+            and re.fullmatch('[1-9][0-9]*', env.get('EXTRA_PRODUCTS', ''))
+            and re.fullmatch('[a-f0-9]{64}', env.get('EXTRA_PRODUCTS_SHA', '')),
+            'Exact retained compiler source, artifact and digest required')
 
 
 def crash_request(env):
@@ -244,6 +264,156 @@ def source_subset(originals):
             for name, pieces in ranges.items()}, ranges
 
 
+def verify_retained_probe(native, source_archive, source_files, original, originals, swift_source):
+    source_raw = source_archive['binding.json']
+    source = json.loads(source_raw)
+    receipt = json.loads(native['receipt.json'])
+    require(source['schema'] == 'nexgenvideo/button-query-crash-binding/1'
+            and source['diagnosticMode'] == CRASH_KIND and source['appAcceptance'] is False
+            and type(source['appBuilds']) is int and type(source['nativeUnitExecutions']) is int
+            and source['appBuilds'] == source['nativeUnitExecutions'] == 0
+            and source['sourceSHA'] == REUSED_SOURCE and source['runID'] == str(REUSED_RUN) and source['attempt'] == '1'
+            and source['sourceTree'] == 'ab9d2dc76fbd620392d7a712bc08fc37d50909d5'
+            and source['sourceFiles'] == source_files and source_archive['original-evidence.zip'] == original
+            and source['originalEvidence'] == failure_archive(io.BytesIO(original))
+            and source['sourceProof']['schema'] == 'core-pr-source-composition/v1'
+            and source['sourceProof']['sourceSHA'] == REUSED_SOURCE
+            and source['sourceProof']['runID'] == str(REUSED_RUN) and source['sourceProof']['attempt'] == '1'
+            and source['sourceProof']['originalRun']['id'] == 42160256589,
+            'Retained compiler source binding differs')
+    prior = verify_crash_payload(zip_members(io.BytesIO(source_archive['prior-observations.zip'])),
+        zip_members(io.BytesIO(source_archive['prior-source-binding.zip'])), source_files, original)
+    require(all(source['priorCrashes'][key] == value for key, value in prior.items()),
+            'Retained compiler original failure lineage differs')
+    require(source['harnessFiles']['scripts/button_query_diagnostic.swift'] == digest(swift_source),
+            'Retained Swift diagnostic program changed')
+    require(receipt['schema'] == 'nexgenvideo/button-query-crash-observation/1'
+            and receipt['sourceSHA'] == REUSED_SOURCE and receipt['runID'] == str(REUSED_RUN) and receipt['attempt'] == '1'
+            and receipt['bindingSHA256'] == digest(source_raw) and receipt['measurementComplete'] is False
+            and receipt['appAcceptance'] is False and receipt['originalFailureResolved'] is False
+            and type(receipt['appBuilds']) is int and receipt['appBuilds'] == 0
+            and type(receipt['nativeUnitExecutions']) is int and receipt['nativeUnitExecutions'] == 0,
+            'Retained compiler receipt differs')
+    selected, ranges = source_subset(originals)
+    subsets = json.loads(native['source-subsets.json'])
+    require(subsets['originals'] == source_files and set(subsets['subsets']) == set(selected),
+            'Retained compiler source inventory differs')
+    for name, raw in selected.items():
+        require(native['sources/' + name] == raw and subsets['subsets'][name] == {
+            'SHA256': digest(raw), 'bytes': len(raw), 'originalByteRanges': [list(piece) for piece in ranges[name]]},
+            'Retained compiler subset bytes or ranges changed')
+    toolchain = json.loads(native['toolchain.json'])
+    require(toolchain['original'] == source['originalEvidence']['toolchain']
+            and set(toolchain['actual']) == {'xcode', 'osVersion', 'osBuild', 'swift'}
+            and all(value == toolchain['original'][key] for key, value in toolchain['actual'].items()),
+            'Retained compiler toolchain differs')
+    compiler = json.loads(native['compiler.process.json'])
+    require(type(compiler['pid']) is int and compiler['pid'] > 0 and type(compiler['exitCode']) is int
+            and compiler['exitCode'] == 0 and compiler['processReaped'] is True and compiler['timedOut'] is False
+            and native['compiler.log'] == b'', 'Retained compiler did not finish cleanly')
+    command = compiler['command']
+    prefix = ['xcrun', 'swiftc', '-swift-version', '6', '-g', '-parse-as-library', '-target', 'arm64-apple-macos26.0']
+    require(isinstance(command, list) and len(command) == len(prefix) + len(selected) + 3
+            and command[:len(prefix)] == prefix and command[-2] == '-o'
+            and [Path(value).name for value in command[len(prefix):-3]] == list(selected)
+            and command[-3].endswith('/scripts/button_query_diagnostic.swift'), 'Retained compiler invocation differs')
+    stem = f'nbq{REUSED_RUN % 10_000_000_000:010d}'
+    folder = f'owned-{REUSED_RUN}-a1/'
+    require(Path(command[-1]).name == stem and Path(command[-1]).parent.name == folder[:-1],
+            'Retained compiler output identity differs')
+    binary = native[folder + stem]
+    checksum = digest(binary)
+    products = [folder + stem, folder + stem + 'c', folder + stem + 't',
+        folder + stem + '.dSYM/Contents/Info.plist',
+        folder + stem + '.dSYM/Contents/Resources/Relocations/aarch64/' + stem + '.yml',
+        folder + stem + '.dSYM/Contents/Resources/DWARF/' + stem]
+    require(binary and all(native[name] for name in products)
+            and native[products[1]] == native[products[2]] == binary, 'Retained debug products differ')
+    results = receipt['results']
+    require(isinstance(results, list) and len(results) == 2
+            and {item['mode'] for item in results} == set(CRASH_MODES), 'Retained probe cases differ')
+    pids = []
+    for mode in CRASH_MODES:
+        result = next(item for item in results if item['mode'] == mode)
+        process = json.loads(native[mode + '.process.json'])
+        require(result['status'] == 'failed-observation' and result['process'] == process
+                and type(process['pid']) is int and process['pid'] > 0 and process['exitCode'] == -signal.SIGTRAP
+                and process['timedOut'] is False and process['processReaped'] is True
+                and process['executableSHA256'] == checksum and native[mode + '.log'] == b''
+                and mode + '.json' not in native
+                and Path(process['command'][0]).name == stem + ('c' if mode == 'slow-cancel' else 't'),
+                'Retained probe is not the actual unresolved Slow branch')
+        pids.append(process['pid'])
+        stages_raw = native[mode + '.stages.jsonl']
+        stages = [json.loads(line) for line in stages_raw.split(b'\n') if line]
+        require(result['stages']['SHA256'] == digest(stages_raw) and result['stages']['records'] == stages
+                and [item['stage'] for item in stages] == ['observe-entered', 'fixture-init-before', 'fixture-init-after',
+                    'first-query-before', 'first-query-returned', 'CG-stability-before', 'CG-stability-returned', 'warm-query-before']
+                and all(item['schema'] == 'nexgenvideo/button-query-stage/1' and item['pid'] == process['pid']
+                    and item['mode'] == mode and item['mainThread'] is True and type(item['uptime']) in (int, float)
+                    and math.isfinite(item['uptime']) and item['uptime'] >= 0 for item in stages)
+                and [item['uptime'] for item in stages] == sorted(item['uptime'] for item in stages),
+                'Retained probe did not stop at the recorded warm boundary')
+    require(len(set(pids)) == 2, 'Retained probe process identities are not distinct')
+    return {'producerRunID': REUSED_RUN, 'producerSourceSHA': REUSED_SOURCE, 'binarySHA256': checksum,
+        'sourceBindingSHA256': digest(source_raw), 'receiptSHA256': digest(native['receipt.json']),
+        'products': {name: digest(native[name]) for name in products}, 'stem': stem, 'toolchain': toolchain['actual']}
+
+
+def bind_retained_probe(evidence, env, api, download, source_files, original, originals):
+    validate_reuse_request(env)
+    run = api('/actions/runs/' + str(REUSED_RUN))
+    jobs = api('/actions/runs/' + str(REUSED_RUN) + '/attempts/1/jobs?per_page=100')
+    require(run['id'] == REUSED_RUN and run['head_sha'] == REUSED_SOURCE and run['run_attempt'] == 1
+            and run['actor']['login'] == 'iret77' and run['repository']['full_name'] == 'iret77/nexgenvideo'
+            and run['path'] == '.github/workflows/diagnostic-acceptance.yml' and run['event'] == 'workflow_dispatch'
+            and run['status'] == 'completed' and run['conclusion'] == 'failure'
+            and jobs['total_count'] == len(jobs['jobs']), 'Retained compiler producer differs')
+    selected_jobs = {}
+    for job_id, name, conclusion, labels in ((REUSED_SOURCE_JOB, 'source', 'success', ['ubuntu-24.04']),
+            (REUSED_NATIVE_JOB, CRASH_KIND, 'failure', ['macrunner'])):
+        matches = [job for job in jobs['jobs'] if job['id'] == job_id]
+        require(len(matches) == 1, 'Retained compiler job is ambiguous')
+        job = matches[0]
+        require(job['run_id'] == REUSED_RUN and job['head_sha'] == REUSED_SOURCE and job['run_attempt'] == 1
+                and job['status'] == 'completed' and job['name'] == name and job['conclusion'] == conclusion
+                and job['labels'] == labels, 'Retained compiler job differs')
+        selected_jobs[job_id] = job
+    require([step['name'] for step in selected_jobs[REUSED_NATIVE_JOB]['steps'] if step['conclusion'] == 'failure']
+            == ['Capture only the two actual Slow crashes and their owned reports'], 'Retained failure step differs')
+    inventory = api('/actions/runs/' + str(REUSED_RUN) + '/artifacts?per_page=100')
+    require(inventory['total_count'] == len(inventory['artifacts']), 'Retained compiler artifact inventory is incomplete')
+    matches = [item for item in inventory['artifacts'] if item['name'] == 'native-button-query-crash-source-binding']
+    require(len(matches) == 1, 'Retained compiler source archive is ambiguous')
+    artifacts = [api('/actions/artifacts/' + env['EXTRA_PRODUCTS']), matches[0]]
+    archives = []
+    for artifact, name, filename, job_id in (
+            (artifacts[0], f'native-button-query-crash-{REUSED_RUN}-a1', 'retained-debug-products.zip', REUSED_NATIVE_JOB),
+            (artifacts[1], 'native-button-query-crash-source-binding', 'retained-debug-source.zip', REUSED_SOURCE_JOB)):
+        require(artifact['name'] == name and artifact['expired'] is False and artifact['workflow_run']['id'] == REUSED_RUN
+                and artifact['workflow_run']['head_sha'] == REUSED_SOURCE
+                and isinstance(artifact['digest'], str) and re.fullmatch('sha256:[a-f0-9]{64}', artifact['digest']),
+                'Retained compiler archive identity differs')
+        if job_id == REUSED_NATIVE_JOB:
+            require(artifact['id'] == int(env['EXTRA_PRODUCTS']) and artifact['digest'] == 'sha256:' + env['EXTRA_PRODUCTS_SHA'],
+                    'Retained compiler artifact selector differs')
+        moment = lambda value: datetime.datetime.fromisoformat(value.replace('Z', '+00:00'))
+        job = selected_jobs[job_id]
+        require(moment(job['started_at']) <= moment(artifact['created_at']) <= moment(artifact['updated_at']) <= moment(job['completed_at'])
+                and moment(artifact['expires_at']) > datetime.datetime.now(datetime.timezone.utc),
+                'Retained compiler artifact job window differs')
+        path = evidence / filename
+        download(artifact, path)
+        require(path.stat().st_size == artifact['size_in_bytes']
+                and digest(path.read_bytes()) == artifact['digest'].removeprefix('sha256:'), 'Retained compiler archive bytes changed')
+        archives.append(zip_members(path))
+    verified = verify_retained_probe(*archives, source_files, original, originals,
+                                    (ROOT / 'scripts/button_query_diagnostic.swift').read_bytes())
+    verified.update(run=run, jobs=selected_jobs, artifacts=artifacts,
+        archiveSHA256=[item['digest'].removeprefix('sha256:') for item in artifacts])
+    return verified
+
+
 def bind(args):
     env = os.environ
     validate_inputs(env)
@@ -274,15 +444,20 @@ def bind(args):
     source_files = {path: {'SHA256': digest(raw), 'gitBlob': git('rev-parse', SOURCE + ':' + path).decode().strip()}
                     for path, raw in originals.items()}
     crash = bind_prior_crashes(args.evidence, env, test_bundle.api, test_bundle.download, source_files,
-                               original.read_bytes()) if env['KIND'] == CRASH_KIND else None
-    write(args.evidence / 'binding.json', {'schema': 'nexgenvideo/button-query-crash-binding/1' if crash else 'nexgenvideo/button-query-binding/1',
+                               original.read_bytes()) if env['KIND'] in (CRASH_KIND, REUSE_KIND) else None
+    retained = bind_retained_probe(args.evidence, env, test_bundle.api, test_bundle.download, source_files,
+                                  original.read_bytes(), originals) if env['KIND'] == REUSE_KIND else None
+    value = {'schema': 'nexgenvideo/button-query-crash-reuse-binding/1' if retained else
+        ('nexgenvideo/button-query-crash-binding/1' if crash else 'nexgenvideo/button-query-binding/1'),
         'sourceSHA': env['GITHUB_SHA'], 'sourceTree': git('rev-parse', 'HEAD^{tree}').decode().strip(),
         'runID': env['GITHUB_RUN_ID'], 'attempt': env['GITHUB_RUN_ATTEMPT'],
         'originalRun': run, 'originalJob': job, 'originalArtifact': artifact, 'originalEvidence': observed,
         'sourceProof': proof, 'sourceFiles': source_files,
         'harnessFiles': {path: digest((ROOT / path).read_bytes()) for path in sorted(HARNESS)},
         'diagnosticMode': env['KIND'], 'priorCrashes': crash,
-        'appAcceptance': False, 'appBuilds': 0, 'nativeUnitExecutions': 0})
+        'appAcceptance': False, 'appBuilds': 0, 'nativeUnitExecutions': 0}
+    if retained: value['retainedCompiler'] = retained
+    write(args.evidence / 'binding.json', value)
 
 
 def owned_command(command, log, timeout):
@@ -613,6 +788,127 @@ def collect_crash_reports(evidence, process, executable_sha, seconds=10):
     return qualified[0]
 
 
+def report_identity_predicates(report, process, executable_uuid):
+    binary = Path(process['command'][0])
+    predicates = {'pid': type(report.get('pid')) is int and report['pid'] == process['pid'],
+        'name': report.get('procName') == binary.name,
+        'path': isinstance(report.get('procPath'), str)
+            and tuple(Path(report['procPath']).parts[-2:]) == tuple(binary.parts[-2:]),
+        'lifetime': False, 'executableUUID': False}
+    try:
+        start, end = instant(process['startedWall']), instant(process['finishedWall'])
+        launch, capture = instant(report['procLaunch']), instant(report['captureTime'])
+        slack = datetime.timedelta(seconds=2)
+        predicates['lifetime'] = start <= end and start - slack <= launch <= capture <= end + slack and launch <= end
+    except (ValueError, KeyError, TypeError):
+        pass
+    images = report.get('usedImages')
+    if isinstance(images, list):
+        matches = []
+        for item in images:
+            try:
+                if isinstance(item, dict) and isinstance(item.get('uuid'), str) and uuid.UUID(item['uuid']) == uuid.UUID(executable_uuid):
+                    matches.append(item)
+            except (ValueError, TypeError, AttributeError):
+                continue
+        if len(matches) == 1:
+            image = matches[0]
+            predicates['executableUUID'] = (type(image.get('base')) is int and type(image.get('size')) is int
+                and image['base'] > 0 and image['size'] > 0 and image['base'] + image['size'] <= 2 ** 64)
+    return predicates
+
+
+def collect_reused_reports(evidence, processes, executable_sha, executable_uuid, seconds=30):
+    require(len({item['pid'] for item in processes}) == len(processes), 'Reused report owners are ambiguous')
+    records = {item['pid']: {'pid': item['pid'], 'candidates': [], 'qualifiedCount': 0} for item in processes}
+    roots = (Path.home() / 'Library/Logs/DiagnosticReports', Path('/Library/Logs/DiagnosticReports'))
+    deadline, seen = time.monotonic() + seconds, set()
+    while True:
+        for process in processes:
+            record = records[process['pid']]
+            for root in roots:
+                if not root.is_dir(): continue
+                for path in sorted(root.glob(Path(process['command'][0]).name + '*.ips')):
+                    try:
+                        if path.is_symlink() or not path.is_file() or path.stat().st_mtime < instant(process['startedWall']).timestamp() - 2:
+                            continue
+                        require(path.stat().st_size <= 8 * 1024 * 1024, 'Reused crash candidate exceeds the evidence budget')
+                        raw = path.read_bytes()
+                    except OSError as error:
+                        record.setdefault('readErrors', []).append(type(error).__name__)
+                        continue
+                    key = (process['pid'], str(path), digest(raw))
+                    if key in seen: continue
+                    seen.add(key)
+                    require(len(seen) <= 32, 'Too many reused owned-name crash candidates')
+                    entry = {'SHA256': digest(raw), 'qualified': False, 'rawRetained': False}
+                    try:
+                        _, report = decode_crash(raw)
+                        predicates = report_identity_predicates(report, process, executable_uuid)
+                        entry['identityPredicates'] = predicates
+                        owned = all(predicates[name] for name in ('pid', 'name', 'lifetime', 'executableUUID'))
+                        if owned:
+                            target = evidence / f"{process['pid']}-owned-candidate-{len(seen)}.ips"
+                            require(not target.exists(), 'Owned crash output already exists')
+                            target.write_bytes(raw)
+                            entry.update(file=target.name, rawRetained=True, pathQualified=predicates['path'])
+                            try:
+                                entry['identity'] = validate_crash(raw, process, executable_sha)
+                                entry['qualified'] = True
+                                record['qualifiedCount'] += 1
+                            except (ValueError, KeyError, TypeError, IndexError, UnicodeError) as error:
+                                entry['error'] = str(error)
+                        elif predicates['pid'] and predicates['name'] and predicates['executableUUID']:
+                            entry['timestampDiagnostics'] = {name: value for name in ('procLaunch', 'captureTime')
+                                if isinstance((value := report.get(name)), str) and len(value) <= 64
+                                and re.fullmatch('[0-9TZ:+. -]+', value)}
+                    except (ValueError, KeyError, TypeError, IndexError, UnicodeError) as error:
+                        entry['error'] = type(error).__name__
+                    record['candidates'].append(entry)
+        if not processes or all(record['qualifiedCount'] == 1 for record in records.values()) or time.monotonic() >= deadline:
+            break
+        time.sleep(0.2)
+    for pid, record in records.items(): write(evidence / f'{pid}-crash-acquisition.json', record)
+    return records
+
+
+def restore_retained_compiler(args, binding, originals, owned, binary):
+    retained = binding['retainedCompiler']
+    archives = []
+    require(isinstance(retained['archiveSHA256'], list) and len(retained['archiveSHA256']) == 2,
+            'Retained compiler archive inventory differs')
+    for filename, checksum in zip(('retained-debug-products.zip', 'retained-debug-source.zip'), retained['archiveSHA256']):
+        raw = (args.binding / filename).read_bytes()
+        require(digest(raw) == checksum, 'Retained compiler archive changed after the source gate')
+        archives.append(zip_members(io.BytesIO(raw)))
+    verified = verify_retained_probe(*archives, binding['sourceFiles'], (args.binding / 'original-evidence.zip').read_bytes(),
+                                    originals, (ROOT / 'scripts/button_query_diagnostic.swift').read_bytes())
+    require(all(retained[key] == value for key, value in verified.items()), 'Retained compiler qualification changed after transfer')
+    native = archives[0]
+    stem, folder = retained['stem'], f'owned-{REUSED_RUN}-a1/'
+    binary.write_bytes(native[folder + stem]); binary.chmod(0o755)
+    for name in retained['products']:
+        relative = name.removeprefix(folder)
+        if not relative.startswith(stem + '.dSYM/'): continue
+        target = owned / relative.replace(stem, 'retained', 1)
+        target.parent.mkdir(parents=True, exist_ok=True); target.write_bytes(native[name])
+    dwarf = owned / 'retained.dSYM/Contents/Resources/DWARF' / stem
+    identities = []
+    for path in (binary, dwarf):
+        output = subprocess.check_output(['xcrun', 'dwarfdump', '--uuid', str(path)], text=True,
+                                         stdin=subprocess.DEVNULL, timeout=20).strip()
+        match = re.fullmatch(r'UUID: ([a-fA-F0-9-]{36}) \(arm64\) [^\n]+', output)
+        require(match is not None and uuid.UUID(match.group(1)).int != 0, 'Retained debug product has no unique arm64 UUID')
+        identities.append(str(uuid.UUID(match.group(1))))
+    require(identities[0] == identities[1] and digest(binary.read_bytes()) == retained['binarySHA256'],
+            'Retained executable, dSYM or UUID changed')
+    result = {'producerRunID': REUSED_RUN, 'producerSourceSHA': REUSED_SOURCE,
+        'binarySHA256': retained['binarySHA256'], 'executableUUID': identities[0],
+        'products': retained['products'], 'compilerExecutions': 0, 'appAcceptance': False}
+    write(args.evidence / 'compiler-reuse.json', result)
+    return result
+
+
 def observe(args):
     args.evidence.mkdir(parents=True, exist_ok=False)
     crashes = getattr(args, 'capture_crashes', False)
@@ -635,9 +931,13 @@ def observe(args):
 
 
 def _observe(args, crashes):
+    reuse = getattr(args, 'reuse_compiler', False)
     binding = json.loads((args.binding / 'binding.json').read_text())
-    require(binding['schema'] == ('nexgenvideo/button-query-crash-binding/1' if crashes else 'nexgenvideo/button-query-binding/1')
-            and binding.get('diagnosticMode', 'native-button-query') == (CRASH_KIND if crashes else 'native-button-query'),
+    require(not reuse or crashes, 'Compiler reuse requires explicit crash observation')
+    schema = 'nexgenvideo/button-query-crash-reuse-binding/1' if reuse else (
+        'nexgenvideo/button-query-crash-binding/1' if crashes else 'nexgenvideo/button-query-binding/1')
+    mode = REUSE_KIND if reuse else (CRASH_KIND if crashes else 'native-button-query')
+    require(binding['schema'] == schema and binding.get('diagnosticMode', 'native-button-query') == mode,
             'Diagnostic mode and transferred binding differ')
     require(binding['sourceSHA'] == os.environ['GITHUB_SHA'] and binding['runID'] == os.environ['GITHUB_RUN_ID']
             and binding['attempt'] == os.environ['GITHUB_RUN_ATTEMPT'] == '1', 'Transferred binding belongs to another execution')
@@ -698,9 +998,11 @@ def _observe(args, crashes):
         binary = owned / f"nbq{int(os.environ['GITHUB_RUN_ID']) % 10_000_000_000:010d}"
     else:
         binary = args.evidence / 'button-query-probe'
-    owned_command(['xcrun', 'swiftc', '-swift-version', '6', *(['-g'] if crashes else []), '-parse-as-library', '-target', 'arm64-apple-macos26.0',
-        *[str(sources / name) for name in selected], str(ROOT / 'scripts/button_query_diagnostic.swift'), '-o', str(binary)],
-        args.evidence / 'compiler.log', 90)
+    reused = restore_retained_compiler(args, binding, originals, owned, binary) if reuse else None
+    if not reuse:
+        owned_command(['xcrun', 'swiftc', '-swift-version', '6', *(['-g'] if crashes else []), '-parse-as-library', '-target', 'arm64-apple-macos26.0',
+            *[str(sources / name) for name in selected], str(ROOT / 'scripts/button_query_diagnostic.swift'), '-o', str(binary)],
+            args.evidence / 'compiler.log', 90)
     executable_sha = digest(binary.read_bytes())
     pids, results = [], []
     modes = CRASH_MODES if crashes else MODES
@@ -735,7 +1037,7 @@ def _observe(args, crashes):
                 outcome['stages'] = validate_breadcrumbs(breadcrumbs, process, mode)
             except (ValueError, OSError, KeyError, TypeError, IndexError) as error:
                 errors.append(str(error))
-            if process['exitCode'] < 0:
+            if process['exitCode'] < 0 and not reuse:
                 try:
                     outcome['crash'] = collect_crash_reports(args.evidence, process, executable_sha)
                     if not errors:
@@ -747,12 +1049,28 @@ def _observe(args, crashes):
         pids.append(process['pid']); outcome['process'] = process
         results.append(outcome)
     require(len(set(pids)) == len(modes), 'Framework controls did not execute in fresh processes')
+    if reuse:
+        crashed = [item['process'] for item in results if item['process']['exitCode'] < 0]
+        records = collect_reused_reports(args.evidence, crashed, executable_sha, reused['executableUUID'])
+        for outcome in results:
+            if outcome['process']['exitCode'] >= 0: continue
+            record = records[outcome['process']['pid']]
+            outcome['crashAcquisition'] = record
+            qualified = [item for item in record['candidates'] if item['qualified']]
+            if len(qualified) == 1 and not outcome.get('evidenceErrors'):
+                outcome.update(status='captured-crash', crash=qualified[0])
+            else:
+                outcome['status'] = 'failed-observation'
+                outcome.setdefault('evidenceErrors', []).append('No unique strictly qualified owned crash report; unqualified raw is not success')
     complete = all(result['status'] in ('observed', 'captured-crash') for result in results)
-    write(args.evidence / 'receipt.json', {'schema': 'nexgenvideo/button-query-crash-observation/1' if crashes else 'nexgenvideo/button-query-observation/1',
+    receipt = {'schema': 'nexgenvideo/button-query-crash-reuse-observation/1' if reuse else (
+        'nexgenvideo/button-query-crash-observation/1' if crashes else 'nexgenvideo/button-query-observation/1'),
         'sourceSHA': os.environ['GITHUB_SHA'], 'runID': os.environ['GITHUB_RUN_ID'], 'attempt': os.environ['GITHUB_RUN_ATTEMPT'],
         'bindingSHA256': digest((args.binding / 'binding.json').read_bytes()), 'results': results,
         'measurementComplete': complete,
-        'appAcceptance': False, 'appBuilds': 0, 'nativeUnitExecutions': 0, 'originalFailureResolved': False})
+        'appAcceptance': False, 'appBuilds': 0, 'nativeUnitExecutions': 0, 'originalFailureResolved': False}
+    if reused: receipt['compilerReuse'] = reused
+    write(args.evidence / 'receipt.json', receipt)
     require(complete, 'Framework observations incomplete; all actual outputs retained')
 
 
@@ -763,7 +1081,10 @@ if __name__ == '__main__':
     parser.add_argument('--source-proof', type=Path)
     parser.add_argument('--binding', type=Path)
     parser.add_argument('--capture-crashes', action='store_true')
+    parser.add_argument('--reuse-compiler', action='store_true')
     args = parser.parse_args()
     if args.capture_crashes and args.action != 'observe':
         parser.error('--capture-crashes applies only to native observation')
+    if args.reuse_compiler and (args.action != 'observe' or not args.capture_crashes):
+        parser.error('--reuse-compiler requires explicit native crash observation')
     bind(args) if args.action == 'bind' else observe(args)
