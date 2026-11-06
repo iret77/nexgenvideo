@@ -16,7 +16,8 @@ class PeerAvailabilityInputTests(unittest.TestCase):
     def setUp(self):
         self.env = dict(KIND=diagnostic.KIND, CANDIDATE_RUN=str(diagnostic.RUN),
             CANDIDATE_SOURCE=diagnostic.SOURCE, CANDIDATE_ARTIFACT=str(diagnostic.ARTIFACT),
-            CANDIDATE_DIGEST=diagnostic.DIGEST, VERIFIED_PR='12', SCALE='1')
+            CANDIDATE_DIGEST=diagnostic.DIGEST, VERIFIED_PR='12', SCALE='1',
+            EXTRA_FAILURE=str(diagnostic.RESUME_ARTIFACT), EXTRA_FAILURE_SHA=diagnostic.RESUME_DIGEST)
 
     def test_exact_original_identity_is_required_field_by_field(self):
         diagnostic.validate_inputs(self.env)
@@ -26,8 +27,8 @@ class PeerAvailabilityInputTests(unittest.TestCase):
 
     def test_every_unconsumed_continuation_selector_is_rejected(self):
         for field in ('DMG_DIGEST', 'JOURNEY_JOB', 'JOURNEY_ARTIFACT', 'JOURNEY_DIGEST',
-                      'EXTRA_SOURCE', 'EXTRA_PRODUCTS', 'EXTRA_PRODUCTS_SHA', 'EXTRA_FAILURE',
-                      'EXTRA_FAILURE_SHA', 'RUNTIME_FAILURE_BINDING', 'PACKAGING_PRODUCER_SOURCE',
+                      'EXTRA_SOURCE', 'EXTRA_PRODUCTS', 'EXTRA_PRODUCTS_SHA',
+                      'RUNTIME_FAILURE_BINDING', 'PACKAGING_PRODUCER_SOURCE',
                       'PACKAGING_PROVENANCE_ARTIFACT_ID', 'PACKAGING_PROVENANCE_ARTIFACT_SHA256'):
             with self.subTest(field=field), self.assertRaisesRegex(ValueError, 'cannot be ignored'):
                 diagnostic.validate_inputs(dict(self.env, **{field: 'unexpected'}))
@@ -37,6 +38,196 @@ class PeerAvailabilityInputTests(unittest.TestCase):
                              ('VERIFIED_PR', '1.2'), ('SCALE', 'all'), ('SCALE', '1.5')]:
             with self.subTest(field=field, value=value), self.assertRaises(ValueError):
                 diagnostic.validate_inputs(dict(self.env, **{field: value}))
+
+    def test_missing_partial_or_wrong_retained_pair_cannot_repeat_passed_compilation(self):
+        for changes in ({'EXTRA_FAILURE': '', 'EXTRA_FAILURE_SHA': ''}, {'EXTRA_FAILURE': ''},
+                        {'EXTRA_FAILURE_SHA': ''}, {'EXTRA_FAILURE': '1'}, {'EXTRA_FAILURE_SHA': 'a' * 64}):
+            with self.subTest(changes=changes), self.assertRaisesRegex(ValueError, 'Exact Native785'):
+                diagnostic.validate_inputs(dict(self.env, **changes))
+        for field in ('EXTRA_FAILURE', 'EXTRA_FAILURE_SHA'):
+            missing = dict(self.env)
+            del missing[field]
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, 'Exact Native785'):
+                diagnostic.validate_inputs(missing)
+
+
+class PeerAvailabilityResumeTests(unittest.TestCase):
+    def producer(self):
+        times = {diagnostic.RESUME_SOURCE_JOB: ('2026-11-06T16:28:42Z', '2026-11-06T16:28:58Z'),
+                 diagnostic.RESUME_JOB: ('2026-11-06T16:29:17Z', '2026-11-06T16:29:52Z')}
+        run = dict(id=diagnostic.RESUME_RUN, head_sha=diagnostic.RESUME_SOURCE, run_attempt=1,
+            repository=dict(full_name='iret77/nexgenvideo'), actor=dict(login='iret77'), workflow_id=355242770,
+            path='.github/workflows/diagnostic-acceptance.yml', event='workflow_dispatch',
+            status='completed', conclusion='failure')
+        jobs = dict(total_count=2, jobs=[dict(id=identity, run_id=diagnostic.RESUME_RUN,
+            head_sha=diagnostic.RESUME_SOURCE, run_attempt=1, name=name, status='completed',
+            conclusion=conclusion, labels=labels, started_at=times[identity][0], completed_at=times[identity][1])
+            for identity, name, conclusion, labels in [
+                (diagnostic.RESUME_SOURCE_JOB, 'source', 'success', ['ubuntu-24.04']),
+                (diagnostic.RESUME_JOB, diagnostic.KIND, 'failure', ['macrunner'])]])
+        artifacts = {identity: dict(id=identity, name=name, digest='sha256:' + checksum, size_in_bytes=size,
+            expired=False, expires_at='2099-01-01T00:00:00Z',
+            created_at='2026-11-06T16:29:48Z' if identity == diagnostic.RESUME_ARTIFACT else '2026-11-06T16:28:56Z',
+            updated_at='2026-11-06T16:29:48Z' if identity == diagnostic.RESUME_ARTIFACT else '2026-11-06T16:28:56Z',
+            workflow_run=dict(id=diagnostic.RESUME_RUN, head_sha=diagnostic.RESUME_SOURCE))
+            for identity, name, checksum, size in [
+                (diagnostic.RESUME_ARTIFACT, diagnostic.KIND + '-' + str(diagnostic.RESUME_RUN) + '-a1',
+                    diagnostic.RESUME_DIGEST, 77022),
+                (diagnostic.RESUME_BINDING_ARTIFACT, diagnostic.KIND + '-source-binding',
+                    diagnostic.RESUME_BINDING_DIGEST, 2346935)]}
+        return run, jobs, artifacts
+
+    def test_retained_producer_requires_exact_run_source_jobs_artifacts_and_lifetimes(self):
+        diagnostic.resume_producer(*self.producer())
+        for key, wrong in [('id', 1), ('head_sha', 'a' * 40), ('run_attempt', 2),
+                           ('workflow_id', 1), ('path', 'other'), ('event', 'push'),
+                           ('status', 'in_progress'), ('conclusion', 'success'),
+                           ('repository', dict(full_name='other/repo')), ('actor', dict(login='other'))]:
+            run, jobs, artifacts = self.producer()
+            run[key] = wrong
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, 'Native785 producer'):
+                diagnostic.resume_producer(run, jobs, artifacts)
+        for index in (0, 1):
+            for key, wrong in [('id', 1), ('run_id', 1), ('head_sha', 'a' * 40), ('run_attempt', 2),
+                               ('name', 'other'), ('labels', ['macos-latest']),
+                               ('status', 'in_progress'), ('conclusion', 'skipped')]:
+                run, jobs, artifacts = self.producer()
+                jobs['jobs'][index][key] = wrong
+                with self.subTest(index=index, key=key), self.assertRaises(ValueError):
+                    diagnostic.resume_producer(run, jobs, artifacts)
+        for identity in (diagnostic.RESUME_ARTIFACT, diagnostic.RESUME_BINDING_ARTIFACT):
+            for key, wrong in [('id', 1), ('name', 'other'), ('digest', 'sha256:' + 'a' * 64),
+                               ('size_in_bytes', 1), ('expired', True), ('expires_at', '2000-01-01T00:00:00Z'),
+                               ('workflow_run', dict(id=1, head_sha=diagnostic.RESUME_SOURCE))]:
+                run, jobs, artifacts = self.producer()
+                artifacts[identity][key] = wrong
+                with self.subTest(identity=identity, key=key), self.assertRaises(ValueError):
+                    diagnostic.resume_producer(run, jobs, artifacts)
+        run, jobs, artifacts = self.producer()
+        jobs['total_count'] += 1
+        with self.assertRaisesRegex(ValueError, 'jobs incomplete'):
+            diagnostic.resume_producer(run, jobs, artifacts)
+        for index in (0, 1):
+            for field in ('started_at', 'completed_at'):
+                for wrong in (None, '', 'invalid', '2026-11-06T16:28:30', '2099-01-01T00:00:00Z'):
+                    run, jobs, artifacts = self.producer()
+                    jobs['jobs'][index][field] = wrong
+                    with self.subTest(index=index, field=field, wrong=wrong), self.assertRaises(ValueError):
+                        diagnostic.resume_producer(run, jobs, artifacts)
+                run, jobs, artifacts = self.producer()
+                del jobs['jobs'][index][field]
+                with self.subTest(index=index, missing=field), self.assertRaises(ValueError):
+                    diagnostic.resume_producer(run, jobs, artifacts)
+            run, jobs, artifacts = self.producer()
+            job = jobs['jobs'][index]
+            job['started_at'], job['completed_at'] = job['completed_at'], job['started_at']
+            with self.subTest(index=index, reversed=True), self.assertRaises(ValueError):
+                diagnostic.resume_producer(run, jobs, artifacts)
+        run, jobs, artifacts = self.producer()
+        jobs['jobs'][0]['completed_at'] = '2026-11-06T16:29:30Z'
+        with self.assertRaisesRegex(ValueError, 'job order'):
+            diagnostic.resume_producer(run, jobs, artifacts)
+        for identity in (diagnostic.RESUME_ARTIFACT, diagnostic.RESUME_BINDING_ARTIFACT):
+            for field in ('created_at', 'updated_at'):
+                for wrong in (None, '', 'invalid', '2026-11-06T16:28:00Z', '2026-11-06T16:30:00Z'):
+                    run, jobs, artifacts = self.producer()
+                    artifacts[identity][field] = wrong
+                    with self.subTest(identity=identity, field=field, wrong=wrong), self.assertRaises(ValueError):
+                        diagnostic.resume_producer(run, jobs, artifacts)
+                run, jobs, artifacts = self.producer()
+                del artifacts[identity][field]
+                with self.subTest(identity=identity, missing=field), self.assertRaises(ValueError):
+                    diagnostic.resume_producer(run, jobs, artifacts)
+            run, jobs, artifacts = self.producer()
+            artifacts[identity]['created_at'] = ('2026-11-06T16:29:49Z' if identity == diagnostic.RESUME_ARTIFACT
+                                               else '2026-11-06T16:28:57Z')
+            with self.subTest(identity=identity, reversed=True), self.assertRaises(ValueError):
+                diagnostic.resume_producer(run, jobs, artifacts)
+
+    def test_retained_product_hash_size_architecture_and_file_type_are_independent_requirements(self):
+        raw = struct.pack('<8I', 0xfeedfacf, 0x0100000c, 0, 1, 0, 0, 0, 0)
+        expected = dict(bytes=len(raw), SHA256=diagnostic.digest(raw), machOType=1)
+        diagnostic.retained_product(raw, expected)
+        for changed, binding in [(raw + b'x', expected), (raw, dict(expected, bytes=1)),
+                                 (raw, dict(expected, SHA256='a' * 64)), (raw, dict(expected, machOType=2))]:
+            with self.subTest(binding=binding), self.assertRaises(ValueError):
+                diagnostic.retained_product(changed, binding)
+        foreign = struct.pack('<8I', 0xfeedfacf, 0x01000007, 0, 1, 0, 0, 0, 0)
+        with self.assertRaisesRegex(ValueError, 'Mach-O type'):
+            diagnostic.retained_product(foreign, dict(expected, SHA256=diagnostic.digest(foreign)))
+
+    def test_retained_compiler_recipe_and_prior_lifetime_cannot_be_relabelled_as_current(self):
+        command, log = ['selected-prior-compiler', '-o', 'retained'], b''
+        receipt = dict(command=command, PID=7, parentPID=6, exitCode=0, timedOut=False, processReaped=True,
+            separateStderr=False, stderrFile=None, stderrSHA256=None, stdoutSHA256=diagnostic.digest(log),
+            started=1, finished=2, startedWall=100, finishedWall=101, timeout=70)
+        diagnostic.retained_process(receipt, command, log, 6)
+        for key, wrong in [('command', ['new-compiler']), ('exitCode', 1), ('timedOut', True),
+                           ('processReaped', False), ('PID', True), ('parentPID', 9), ('separateStderr', True),
+                           ('stderrFile', 'other'), ('stdoutSHA256', 'a' * 64), ('finished', 100),
+                           ('startedWall', float('nan')), ('timeout', 71)]:
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                diagnostic.retained_process(dict(receipt, **{key: wrong}), command, log, 6)
+        with self.assertRaises(ValueError):
+            diagnostic.retained_process(receipt, command, b'changed', 6)
+
+    def test_wrong_or_partial_original_archives_fail_before_any_product_is_restored(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            (folder / 'retained-native.zip').write_bytes(b'not-the-qualified-artifact')
+            with self.assertRaisesRegex(ValueError, 'Exact retained archive bytes'):
+                diagnostic.resume_archives(folder, {}, b'', {})
+            self.assertEqual(list(folder.glob('*.product.json')), [])
+
+
+class PeerAvailabilityPluginTests(unittest.TestCase):
+    def fixture(self, folder):
+        compiler = folder / 'Toolchain/usr/bin/swiftc'
+        compiler.parent.mkdir(parents=True)
+        compiler.write_bytes(b'selected compiler')
+        resource = compiler.parent.parent / 'lib/swift'
+        library = resource / 'host/plugins/testing/libTestingMacros.dylib'
+        library.parent.mkdir(parents=True)
+        library.write_bytes(b'actual plugin bytes')
+        value = dict(compilerVersion=diagnostic.SWIFT_VERSION,
+            target=dict(triple='arm64-apple-macosx26.0'), paths=dict(runtimeResourcePath=str(resource)))
+        return compiler, library, value
+
+    def test_macro_metadata_binds_selected_toolchain_and_actual_library_bytes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            compiler, library, value = self.fixture(Path(temporary))
+            result = diagnostic.plugin_metadata(json.dumps(value), compiler)
+            self.assertEqual(result['compiler'], str(compiler))
+            self.assertEqual(result['compilerSHA256'], diagnostic.digest(compiler.read_bytes()))
+            self.assertEqual(result['pluginDirectory'], str(library.parent))
+            self.assertEqual(result['pluginSHA256'], diagnostic.digest(library.read_bytes()))
+
+    def test_missing_malformed_foreign_duplicate_or_nonfinite_metadata_is_rejected(self):
+        for mutation in ('version', 'target', 'resource', 'relative', 'missing', 'empty', 'duplicate', 'nan', 'merged'):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temporary:
+                compiler, library, value = self.fixture(Path(temporary))
+                if mutation == 'version': value['compilerVersion'] = 'other'
+                elif mutation == 'target': value['target']['triple'] = 'x86_64-apple-macosx26.0'
+                elif mutation == 'resource': value['paths']['runtimeResourcePath'] = str(library.parent)
+                elif mutation == 'relative': value['paths']['runtimeResourcePath'] = 'lib/swift'
+                elif mutation == 'missing': library.rename(library.with_suffix('.retained'))
+                elif mutation == 'empty': library.write_bytes(b'')
+                raw = json.dumps(value)
+                if mutation == 'duplicate': raw = raw[:-1] + ', "paths": {}}'
+                elif mutation == 'nan': raw = raw[:-1] + ', "invalid": NaN}'
+                elif mutation == 'merged': raw = 'swift-driver version: 1.168.6\n' + raw
+                with self.assertRaises((ValueError, FileNotFoundError)):
+                    diagnostic.plugin_metadata(raw, compiler)
+
+    def test_symlinked_foreign_macro_library_cannot_escape_the_selected_toolchain(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            compiler, library, value = self.fixture(folder)
+            foreign = folder / 'foreign.dylib'
+            library.rename(foreign)
+            library.symlink_to(foreign)
+            with self.assertRaisesRegex(ValueError, 'missing or escaped'):
+                diagnostic.plugin_metadata(json.dumps(value), compiler)
 
 
 class PeerAvailabilityScopeTests(unittest.TestCase):
