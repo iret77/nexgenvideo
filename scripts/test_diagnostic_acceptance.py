@@ -131,6 +131,44 @@ class DiagnosticCompiledClientRouteTests(unittest.TestCase):
             self.assertEqual(consumer[output], '${{ needs.transport-fixture.outputs.' + output + ' }}')
 
 
+class PeerAvailabilityRouteTests(unittest.TestCase):
+    def setUp(self):
+        workflow = yaml.safe_load((Path(__file__).resolve().parents[1] / '.github/workflows/diagnostic-acceptance.yml').read_text())
+        guard = next(step for step in workflow['jobs']['source']['steps']
+                     if step.get('name') == 'Require exact public transport continuation inputs')
+        self.code = guard['run'].split("python3 - <<'PY'\n", 1)[1].rsplit('\nPY', 1)[0]
+        import peer_availability_diagnostic
+        self.diagnostic = peer_availability_diagnostic
+        self.env = dict(KIND=self.diagnostic.KIND, CANDIDATE_RUN=str(self.diagnostic.RUN),
+            CANDIDATE_SOURCE=self.diagnostic.SOURCE, CANDIDATE_ARTIFACT=str(self.diagnostic.ARTIFACT),
+            CANDIDATE_DIGEST=self.diagnostic.DIGEST, VERIFIED_PR='12', SCALE='1')
+        for field in ('JOURNEY_JOB', 'JOURNEY_ARTIFACT', 'JOURNEY_DIGEST', 'DMG_DIGEST',
+                      'EXTRA_SOURCE', 'EXTRA_PRODUCTS', 'EXTRA_PRODUCTS_SHA', 'EXTRA_FAILURE',
+                      'EXTRA_FAILURE_SHA', 'RUNTIME_FAILURE_BINDING', 'PACKAGING_PRODUCER_SOURCE',
+                      'PACKAGING_PROVENANCE_ARTIFACT_ID', 'PACKAGING_PROVENANCE_ARTIFACT_SHA256'):
+            self.env[field] = ''
+
+    def guard(self, changes):
+        with patch.dict(os.environ, dict(self.env, **changes), clear=True), patch.object(sys, 'path', sys.path.copy()):
+            exec(compile(self.code, '<peer-public-caller-guard>', 'exec'), {})
+
+    def test_registered_caller_routes_only_the_exact_failed_producer_to_peer_validation(self):
+        with patch.object(self.diagnostic, 'validate_inputs', wraps=self.diagnostic.validate_inputs) as validate:
+            self.guard({})
+            validate.assert_called_once()
+        for field in ('CANDIDATE_RUN', 'CANDIDATE_SOURCE', 'CANDIDATE_ARTIFACT', 'CANDIDATE_DIGEST'):
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, 'Exact Native777'):
+                self.guard({field: 'different'})
+
+    def test_registered_caller_cannot_ignore_raw_reuse_journey_or_packaging_inputs(self):
+        for field in ('JOURNEY_JOB', 'JOURNEY_ARTIFACT', 'JOURNEY_DIGEST', 'DMG_DIGEST',
+                      'EXTRA_SOURCE', 'EXTRA_PRODUCTS', 'EXTRA_PRODUCTS_SHA', 'EXTRA_FAILURE',
+                      'EXTRA_FAILURE_SHA', 'RUNTIME_FAILURE_BINDING', 'PACKAGING_PRODUCER_SOURCE',
+                      'PACKAGING_PROVENANCE_ARTIFACT_ID', 'PACKAGING_PROVENANCE_ARTIFACT_SHA256'):
+            with self.subTest(field=field), self.assertRaises((ValueError, SystemExit)):
+                self.guard({field: 'unexpected'})
+
+
 class AppCrashCandidateTests(unittest.TestCase):
     def setUp(self):
         self.source = "a" * 40
