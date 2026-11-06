@@ -33,6 +33,7 @@ MODES = ('enabled', 'disabled', 'duplicate', 'slow-cancel', 'slow-timeout')
 CRASH_MODES = ('slow-cancel', 'slow-timeout')
 CRASH_KIND = 'native-button-query-crash'
 REUSE_KIND = 'native-button-query-crash-reuse'
+SLOW_FIXTURE_VARIANT = 'synchronized-callbacks-v1'
 PRIOR_RUN = 42143760159
 PRIOR_SOURCE = '82a04f37e0a11fbefae1890d91c7691b8b8b9b45'
 PRIOR_JOB = 127650280110
@@ -454,7 +455,7 @@ def bind(args):
         'originalRun': run, 'originalJob': job, 'originalArtifact': artifact, 'originalEvidence': observed,
         'sourceProof': proof, 'sourceFiles': source_files,
         'harnessFiles': {path: digest((ROOT / path).read_bytes()) for path in sorted(HARNESS)},
-        'diagnosticMode': env['KIND'], 'priorCrashes': crash,
+        'diagnosticMode': env['KIND'], 'priorCrashes': crash, 'slowFixtureVariant': SLOW_FIXTURE_VARIANT,
         'appAcceptance': False, 'appBuilds': 0, 'nativeUnitExecutions': 0}
     if retained: value['retainedCompiler'] = retained
     write(args.evidence / 'binding.json', value)
@@ -539,6 +540,27 @@ def _validate_observation(result, mode, pid):
             and result['originalQueryBeforeAdditionalAX'] is True and result['appAcceptance'] is False
             and result['sourceSubsetFrameworkFixture'] is True and result['parallelAppTestHost'] is False,
             'Framework observation provenance is incomplete')
+    if mode in CRASH_MODES:
+        require(result.get('slowFixtureVariant') == SLOW_FIXTURE_VARIANT,
+                'The current Slow callback fixture variant differs')
+        state = result['callbackState']
+        require(state['disarmed'] is True and state['quiesced'] is True
+                and type(state['inFlight']) is int and state['inFlight'] == 0,
+                'The callback fixture is not safely quiescent')
+        entries = state['entries']
+        require(isinstance(entries, list) and type(state['enteredCount']) is int
+                and type(state['returnedCount']) is int
+                and state['enteredCount'] == state['returnedCount'] == len(entries),
+                'Actual callback entry and completion counts differ')
+        for entry in entries:
+            require(all(type(entry[key]) in (int, float) and math.isfinite(entry[key]) and entry[key] > 0
+                        for key in ('enteredAt', 'returnedAt'))
+                    and entry['enteredAt'] < entry['returnedAt'] and type(entry['enteredOnMainThread']) is bool,
+                    'An actual callback lifetime or thread is unknown')
+        if entries:
+            slow = result['slowObservation']
+            require(all(slow[key] == entries[-1][key] for key in ('enteredAt', 'returnedAt', 'enteredOnMainThread')),
+                    'Slow timing does not refer to the actual final callback')
     raw = result['rawAttributesAfterOriginalQueries']
     frame, window = rectangle(raw['requestFrame'], positive=True), raw['window']
     require(type(window) is int and window > 0, 'Missing actual target window number')
@@ -944,6 +966,8 @@ def _observe(args, crashes):
     mode = REUSE_KIND if reuse else (CRASH_KIND if crashes else 'native-button-query')
     require(binding['schema'] == schema and binding.get('diagnosticMode', 'native-button-query') == mode,
             'Diagnostic mode and transferred binding differ')
+    require(binding.get('slowFixtureVariant') == SLOW_FIXTURE_VARIANT,
+            'Transferred Slow callback fixture variant differs')
     require(binding['sourceSHA'] == os.environ['GITHUB_SHA'] and binding['runID'] == os.environ['GITHUB_RUN_ID']
             and binding['attempt'] == os.environ['GITHUB_RUN_ATTEMPT'] == '1', 'Transferred binding belongs to another execution')
     require(git('rev-parse', 'HEAD').decode().strip() == os.environ['GITHUB_SHA']
@@ -1072,6 +1096,7 @@ def _observe(args, crashes):
         'nexgenvideo/button-query-crash-observation/1' if crashes else 'nexgenvideo/button-query-observation/1'),
         'sourceSHA': os.environ['GITHUB_SHA'], 'runID': os.environ['GITHUB_RUN_ID'], 'attempt': os.environ['GITHUB_RUN_ATTEMPT'],
         'bindingSHA256': digest((args.binding / 'binding.json').read_bytes()), 'results': results,
+        'slowFixtureVariant': SLOW_FIXTURE_VARIANT,
         'measurementComplete': complete,
         'appAcceptance': False, 'appBuilds': 0, 'nativeUnitExecutions': 0, 'originalFailureResolved': False}
     if reused: receipt['compilerReuse'] = reused
