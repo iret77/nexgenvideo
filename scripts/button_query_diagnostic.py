@@ -663,12 +663,12 @@ def validate_slow_normal(result, mode, pid):
 
 def instant(value):
     require(isinstance(value, str), 'Crash timestamps must be explicit strings')
-    try:
-        result = datetime.datetime.fromisoformat(value.replace('Z', '+00:00'))
-    except ValueError:
+    if re.search(r'\s(?:[+-]|Z)', value):
         require(re.fullmatch(r'[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{1,6} [+-][0-9]{4}', value),
                 'Unsupported crash timestamp format')
         result = datetime.datetime.strptime(value, '%Y-%m-%d %H:%M:%S.%f %z')
+    else:
+        result = datetime.datetime.fromisoformat(value.replace('Z', '+00:00'))
     require(result.tzinfo is not None, 'Crash timestamps need an explicit timezone')
     return result
 
