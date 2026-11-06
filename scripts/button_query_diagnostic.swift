@@ -304,6 +304,8 @@ private final class ProbeApplication: NSObject, NSApplicationDelegate {
         Task { await observe() }
     }
 
+    private func runsOnMainThread() -> Bool { Thread.isMainThread }
+
     func observe() async {
         do {
             let fixture = QueryFixture(mode: mode)
@@ -362,7 +364,7 @@ private final class ProbeApplication: NSObject, NSApplicationDelegate {
             let last = await Query.read(fixture.request)
             let report: [String: Any] = ["schema": "nexgenvideo/button-query-framework-control/1",
                 "mode": mode, "pid": getpid(), "parentPID": getppid(), "mainLoopRunning": NSApp.isRunning,
-                "mainThread": Thread.isMainThread, "activationPolicy": NSApp.activationPolicy().rawValue,
+                "mainThread": runsOnMainThread(), "activationPolicy": NSApp.activationPolicy().rawValue,
                 "appearance": NSApp.effectiveAppearance.name.rawValue, "styleMask": fixture.window.styleMask.rawValue,
                 "sourceSubsetFrameworkFixture": true, "parallelAppTestHost": false,
                 "appAcceptance": false, "originalQueryBeforeAdditionalAX": true,
