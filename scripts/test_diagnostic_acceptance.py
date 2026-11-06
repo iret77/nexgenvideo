@@ -172,7 +172,7 @@ class PeerAvailabilityRouteTests(unittest.TestCase):
     def test_registered_caller_requires_the_complete_exact_retained_compiler_pair(self):
         for changes in ({'EXTRA_FAILURE': '', 'EXTRA_FAILURE_SHA': ''}, {'EXTRA_FAILURE': ''},
                         {'EXTRA_FAILURE_SHA': ''}, {'EXTRA_FAILURE': '1'}, {'EXTRA_FAILURE_SHA': 'a' * 64}):
-            with self.subTest(changes=changes), self.assertRaisesRegex(ValueError, 'Exact Native785'):
+            with self.subTest(changes=changes), self.assertRaisesRegex(ValueError, 'Exact Native787'):
                 self.guard(changes)
 
 

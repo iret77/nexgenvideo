@@ -42,39 +42,41 @@ class PeerAvailabilityInputTests(unittest.TestCase):
     def test_missing_partial_or_wrong_retained_pair_cannot_repeat_passed_compilation(self):
         for changes in ({'EXTRA_FAILURE': '', 'EXTRA_FAILURE_SHA': ''}, {'EXTRA_FAILURE': ''},
                         {'EXTRA_FAILURE_SHA': ''}, {'EXTRA_FAILURE': '1'}, {'EXTRA_FAILURE_SHA': 'a' * 64}):
-            with self.subTest(changes=changes), self.assertRaisesRegex(ValueError, 'Exact Native785'):
+            with self.subTest(changes=changes), self.assertRaisesRegex(ValueError, 'Exact Native787'):
                 diagnostic.validate_inputs(dict(self.env, **changes))
         for field in ('EXTRA_FAILURE', 'EXTRA_FAILURE_SHA'):
             missing = dict(self.env)
             del missing[field]
-            with self.subTest(field=field), self.assertRaisesRegex(ValueError, 'Exact Native785'):
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, 'Exact Native787'):
                 diagnostic.validate_inputs(missing)
 
 
 class PeerAvailabilityResumeTests(unittest.TestCase):
-    def producer(self):
-        times = {diagnostic.RESUME_SOURCE_JOB: ('2026-11-06T16:28:42Z', '2026-11-06T16:28:58Z'),
-                 diagnostic.RESUME_JOB: ('2026-11-06T16:29:17Z', '2026-11-06T16:29:52Z')}
-        run = dict(id=diagnostic.RESUME_RUN, head_sha=diagnostic.RESUME_SOURCE, run_attempt=1,
+    def producer(self, legacy=False):
+        spec = diagnostic.LEGACY if legacy else diagnostic.CURRENT_RESUME
+        times = {spec['sourceJob']: ('2026-11-06T16:28:42Z', '2026-11-06T16:28:58Z') if legacy else
+                    ('2026-11-06T18:18:38Z', '2026-11-06T18:18:56Z'),
+                 spec['nativeJob']: ('2026-11-06T16:29:17Z', '2026-11-06T16:29:52Z') if legacy else
+                    ('2026-11-06T18:19:15Z', '2026-11-06T18:19:55Z')}
+        created = {spec['artifact']: '2026-11-06T16:29:48Z' if legacy else '2026-11-06T18:19:51Z',
+                   spec['bindingArtifact']: '2026-11-06T16:28:56Z' if legacy else '2026-11-06T18:18:54Z'}
+        run = dict(id=spec['run'], head_sha=spec['source'], run_attempt=1,
             repository=dict(full_name='iret77/nexgenvideo'), actor=dict(login='iret77'), workflow_id=355242770,
             path='.github/workflows/diagnostic-acceptance.yml', event='workflow_dispatch',
             status='completed', conclusion='failure')
-        jobs = dict(total_count=2, jobs=[dict(id=identity, run_id=diagnostic.RESUME_RUN,
-            head_sha=diagnostic.RESUME_SOURCE, run_attempt=1, name=name, status='completed',
+        jobs = dict(total_count=2, jobs=[dict(id=identity, run_id=spec['run'],
+            head_sha=spec['source'], run_attempt=1, name=name, status='completed',
             conclusion=conclusion, labels=labels, started_at=times[identity][0], completed_at=times[identity][1])
             for identity, name, conclusion, labels in [
-                (diagnostic.RESUME_SOURCE_JOB, 'source', 'success', ['ubuntu-24.04']),
-                (diagnostic.RESUME_JOB, diagnostic.KIND, 'failure', ['macrunner'])]])
+                (spec['sourceJob'], 'source', 'success', ['ubuntu-24.04']),
+                (spec['nativeJob'], diagnostic.KIND, 'failure', ['macrunner'])]])
         artifacts = {identity: dict(id=identity, name=name, digest='sha256:' + checksum, size_in_bytes=size,
             expired=False, expires_at='2099-01-01T00:00:00Z',
-            created_at='2026-11-06T16:29:48Z' if identity == diagnostic.RESUME_ARTIFACT else '2026-11-06T16:28:56Z',
-            updated_at='2026-11-06T16:29:48Z' if identity == diagnostic.RESUME_ARTIFACT else '2026-11-06T16:28:56Z',
-            workflow_run=dict(id=diagnostic.RESUME_RUN, head_sha=diagnostic.RESUME_SOURCE))
+            created_at=created[identity], updated_at=created[identity],
+            workflow_run=dict(id=spec['run'], head_sha=spec['source']))
             for identity, name, checksum, size in [
-                (diagnostic.RESUME_ARTIFACT, diagnostic.KIND + '-' + str(diagnostic.RESUME_RUN) + '-a1',
-                    diagnostic.RESUME_DIGEST, 77022),
-                (diagnostic.RESUME_BINDING_ARTIFACT, diagnostic.KIND + '-source-binding',
-                    diagnostic.RESUME_BINDING_DIGEST, 2346935)]}
+                (spec['artifact'], diagnostic.KIND + '-' + str(spec['run']) + '-a1', spec['digest'], spec['bytes']),
+                (spec['bindingArtifact'], diagnostic.KIND + '-source-binding', spec['bindingDigest'], spec['bindingBytes'])]}
         return run, jobs, artifacts
 
     def test_retained_producer_requires_exact_run_source_jobs_artifacts_and_lifetimes(self):
@@ -85,7 +87,7 @@ class PeerAvailabilityResumeTests(unittest.TestCase):
                            ('repository', dict(full_name='other/repo')), ('actor', dict(login='other'))]:
             run, jobs, artifacts = self.producer()
             run[key] = wrong
-            with self.subTest(key=key), self.assertRaisesRegex(ValueError, 'Native785 producer'):
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, 'Native787 producer'):
                 diagnostic.resume_producer(run, jobs, artifacts)
         for index in (0, 1):
             for key, wrong in [('id', 1), ('run_id', 1), ('head_sha', 'a' * 40), ('run_attempt', 2),
@@ -124,12 +126,12 @@ class PeerAvailabilityResumeTests(unittest.TestCase):
             with self.subTest(index=index, reversed=True), self.assertRaises(ValueError):
                 diagnostic.resume_producer(run, jobs, artifacts)
         run, jobs, artifacts = self.producer()
-        jobs['jobs'][0]['completed_at'] = '2026-11-06T16:29:30Z'
+        jobs['jobs'][0]['completed_at'] = '2026-11-06T18:19:30Z'
         with self.assertRaisesRegex(ValueError, 'job order'):
             diagnostic.resume_producer(run, jobs, artifacts)
         for identity in (diagnostic.RESUME_ARTIFACT, diagnostic.RESUME_BINDING_ARTIFACT):
             for field in ('created_at', 'updated_at'):
-                for wrong in (None, '', 'invalid', '2026-11-06T16:28:00Z', '2026-11-06T16:30:00Z'):
+                for wrong in (None, '', 'invalid', '2026-11-06T18:18:00Z', '2026-11-06T18:20:00Z'):
                     run, jobs, artifacts = self.producer()
                     artifacts[identity][field] = wrong
                     with self.subTest(identity=identity, field=field, wrong=wrong), self.assertRaises(ValueError):
@@ -139,8 +141,8 @@ class PeerAvailabilityResumeTests(unittest.TestCase):
                 with self.subTest(identity=identity, missing=field), self.assertRaises(ValueError):
                     diagnostic.resume_producer(run, jobs, artifacts)
             run, jobs, artifacts = self.producer()
-            artifacts[identity]['created_at'] = ('2026-11-06T16:29:49Z' if identity == diagnostic.RESUME_ARTIFACT
-                                               else '2026-11-06T16:28:57Z')
+            artifacts[identity]['created_at'] = ('2026-11-06T18:19:52Z' if identity == diagnostic.RESUME_ARTIFACT
+                                               else '2026-11-06T18:18:55Z')
             with self.subTest(identity=identity, reversed=True), self.assertRaises(ValueError):
                 diagnostic.resume_producer(run, jobs, artifacts)
 
@@ -176,8 +178,35 @@ class PeerAvailabilityResumeTests(unittest.TestCase):
             folder = Path(temporary)
             (folder / 'retained-native.zip').write_bytes(b'not-the-qualified-artifact')
             with self.assertRaisesRegex(ValueError, 'Exact retained archive bytes'):
-                diagnostic.resume_archives(folder, {}, b'', {})
+                diagnostic.resume_archives(folder, {}, b'', {}, {})
             self.assertEqual(list(folder.glob('*.product.json')), [])
+
+    def test_current_and_legacy_producer_profiles_cannot_be_substituted(self):
+        current = self.producer()
+        legacy = self.producer(legacy=True)
+        diagnostic.resume_producer(*current)
+        diagnostic.resume_producer(*legacy, legacy=True)
+        with self.assertRaisesRegex(ValueError, 'producer required'):
+            diagnostic.resume_producer(*legacy)
+        with self.assertRaisesRegex(ValueError, 'producer required'):
+            diagnostic.resume_producer(*current, legacy=True)
+
+    def test_raw_compiler_cannot_be_relabelled_outside_its_actual_producer_job(self):
+        _, jobs, _ = self.producer()
+        start = diagnostic.datetime.fromisoformat('2026-11-06T18:19:20+00:00').timestamp()
+        process = dict(startedWall=start, finishedWall=start + 1)
+        diagnostic.retained_job_lifetime(process, jobs, diagnostic.RESUME_JOB)
+        for changes in (dict(startedWall=start - 100), dict(finishedWall=start + 100),
+                        dict(startedWall=start + 2)):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                diagnostic.retained_job_lifetime(dict(process, **changes), jobs, diagnostic.RESUME_JOB)
+
+    def test_retained_raw_rejects_changed_current_compiler_input_before_restoration(self):
+        prior = b'qualified Raw compiler input\n'
+        self.assertEqual(diagnostic.retained_raw_source(prior, prior), diagnostic.digest(prior))
+        for changed in (b'', prior + b'changed', prior.replace(b'Raw', b'new')):
+            with self.subTest(changed=changed), self.assertRaisesRegex(ValueError, 'Current Raw compiler input differs'):
+                diagnostic.retained_raw_source(changed, prior)
 
 
 class PeerAvailabilityPluginTests(unittest.TestCase):
@@ -417,7 +446,7 @@ class PeerAvailabilityCollectionTests(unittest.TestCase):
         report = dict(schema='nexgenvideo/peer-availability-observation/1', context='default', PID=42,
             parentPID=41, startedWall=1001, finishedWall=1009,
             collectionCompleted=True, appAcceptance=False, originalFullAppImage=False, diagnosticFunctionExecutions=1,
-            requestBefore=request, requestAfterPeer=request, firstPeer=peer, rawAfterPeer=raw,
+            initialRequest=request, requestBefore=request, requestAfterPeer=request, firstPeer=peer, rawAfterPeer=raw,
             owner=dict(PID=42, start=123, executable=products['host']['path']),
             image={**products['bundle']}, hostImage={**products['host']},
             launch=dict(**{'class': 'NGVTestRuntimeApplication'}, initialPolicy=2, actualPolicy=2,
@@ -428,7 +457,63 @@ class PeerAvailabilityCollectionTests(unittest.TestCase):
                 observerOnMainCommonModes=True, timeline=[dict(kind='dispatch', at=0.15, mainThread=True,
                     mode='kCFRunLoopDefaultMode', activity=0)]))
         (folder / 'observation.json').write_text(json.dumps(report))
+        self.serialization(folder, report, execution['sourceSHA'])
         return report, execution
+
+    def serialization(self, folder, report, source):
+        probe = folder / 'serialization-probes'
+        probe.mkdir()
+        (probe / 'valid.json').write_text(json.dumps(dict(mode='kCFRunLoopDefaultMode', absentMode=None)))
+        failures = {'rejected': 'unsupported-value', 'nonfinite': 'nonfinite-number',
+            'non-string-key': 'non-string-key', 'cycle': 'container-cycle', 'depth': 'validation-budget'}
+        for name, reason in failures.items():
+            failure = dict(path=[{'key': {'_0': 'nested'}}, {'index': {'_0': 0}}, {'key': {'_0': 'value'}}],
+                runtimeType='PeerAvailability.AvailabilityUnsupportedProbe', reason=reason)
+            (probe / (name + '.serialization-error.json')).write_text(json.dumps(dict(
+                schema='nexgenvideo/availability-json-error/1', stage=name, context=report['context'],
+                sourceSHA=source, PID=report['PID'], expectedProbe=True, failure=failure)))
+        stages = folder / 'stages'
+        stages.mkdir()
+        for index, name in enumerate(['launch-owner', 'cg', 'first-peer', 'raw-background-0.15', 'raw-main-0.15', 'raw-background-1']):
+            facts = copy.deepcopy(report)
+            if index >= 3:
+                facts['rawAfterPeer'] = report['rawAfterPeer'][:index - 2]
+            (stages / (name + '.json')).write_text(json.dumps(dict(schema='nexgenvideo/availability-stage/1',
+                stage=name, sourceSHA=source, PID=report['PID'], context=report['context'], facts=facts)))
+
+    def test_unexpected_real_serialization_errors_cannot_hide_among_expected_probes(self):
+        for mutation in ('extra-error', 'real-error', 'wrong-path', 'missing-valid'):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temporary:
+                folder = Path(temporary)
+                report, execution = self.populate(folder)
+                path = folder / 'serialization-probes/rejected.serialization-error.json'
+                value = json.loads(path.read_text())
+                if mutation == 'extra-error':
+                    (folder / 'unexpected.serialization-error.json').write_text(json.dumps(value))
+                elif mutation == 'missing-valid':
+                    (folder / 'serialization-probes/valid.json').rename(folder / 'retained-valid.json')
+                else:
+                    if mutation == 'real-error': value['expectedProbe'] = False
+                    if mutation == 'wrong-path': value['failure']['path'] = [{'key': {'_0': 'other'}}]
+                    path.write_text(json.dumps(value))
+                with self.assertRaises((ValueError, FileNotFoundError)):
+                    diagnostic.verify_serialization_artifacts(folder, report, execution['sourceSHA'])
+
+    def test_stage_source_owner_peer_and_incremental_raw_facts_are_independently_bound(self):
+        for mutation in ('source', 'owner', 'peer', 'raw', 'missing-stage'):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temporary:
+                folder = Path(temporary)
+                report, execution = self.populate(folder)
+                path = folder / 'stages/raw-background-0.15.json'
+                value = json.loads(path.read_text())
+                if mutation == 'source': value['sourceSHA'] = 'a' * 40
+                elif mutation == 'owner': value['facts']['owner']['start'] = 999
+                elif mutation == 'peer': value['facts']['firstPeer']['snapshot']['pid'] = 999
+                elif mutation == 'raw': value['facts']['rawAfterPeer'] = report['rawAfterPeer']
+                elif mutation == 'missing-stage': path.rename(folder / 'retained-stage.json')
+                if mutation != 'missing-stage': path.write_text(json.dumps(value))
+                with self.assertRaises(ValueError):
+                    diagnostic.verify_serialization_artifacts(folder, report, execution['sourceSHA'])
 
     def test_real_ax_failure_is_a_measured_result_and_untrusted_raw_is_explicitly_unqualified(self):
         with tempfile.TemporaryDirectory() as temporary:
