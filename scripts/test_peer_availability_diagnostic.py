@@ -55,11 +55,28 @@ class PeerAvailabilityScopeTests(unittest.TestCase):
     def test_missing_duplicate_or_reordered_fixture_boundaries_fail_closed(self):
         original = (diagnostic.ROOT / diagnostic.FIXTURE).read_bytes()
         marker = b'    @MainActor private final class Fixture {'
+        following = b'    @MainActor private final class LastChildRoot: NSView {'
         for bad in (original.replace(marker, b'changed', 1), original + marker,
+                    original.replace(following, b'changed', 1), original + following,
                     b'        func ready(using session: NativeAXPeer.Session)' + original.replace(
                         b'        func ready(using session: NativeAXPeer.Session)', b'changed', 1)):
             with self.subTest(data=bad[:40]), self.assertRaises(ValueError):
                 diagnostic.fixture_subset(bad)
+
+    def test_identical_sibling_close_is_excluded_but_duplicate_inside_fixture_is_rejected(self):
+        original = (diagnostic.ROOT / diagnostic.FIXTURE).read_bytes()
+        close = b'        func close() { window.contentView = nil; window.close() }\n    }'
+        following = b'    @MainActor private final class LastChildRoot: NSView {'
+        self.assertEqual(original.count(close), 2)
+        selected, ranges = diagnostic.fixture_subset(original)
+        self.assertEqual(selected.count(close), 1)
+        self.assertLessEqual(ranges[-1][1], original.index(following))
+        appended = original + b'\n    @MainActor private final class AnotherFixture {\n' + close
+        self.assertEqual(diagnostic.fixture_subset(appended), (selected, ranges))
+        split = original.index(following)
+        duplicated = original[:split] + close + original[split:]
+        with self.assertRaisesRegex(ValueError, 'Fixture ranges changed'):
+            diagnostic.fixture_subset(duplicated)
 
     def test_absolute_budget_clips_commands_and_retains_cleanup_reserve(self):
         self.assertEqual(diagnostic.command_timeout(210, 0), 70)

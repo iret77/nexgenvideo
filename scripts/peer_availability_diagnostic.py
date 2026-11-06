@@ -93,11 +93,16 @@ def failure_archive(path):
 
 def fixture_subset(raw):
     start = b'    @MainActor private final class Fixture {'
+    following = b'    @MainActor private final class LastChildRoot: NSView {'
     ready = b'        func ready(using session: NativeAXPeer.Session)'
     close = b'        func close() { window.contentView = nil; window.close() }\n    }'
-    require(all(raw.count(marker) == 1 for marker in (start, ready, close)), 'Fixture ranges changed')
-    left, middle, right = raw.index(start), raw.index(ready), raw.index(close)
-    require(left < middle < right, 'Fixture range order changed')
+    require(raw.count(start) == raw.count(following) == 1, 'Fixture class boundaries changed')
+    left, end = raw.index(start), raw.index(following)
+    require(left < end, 'Fixture class order changed')
+    fixture = raw[left:end]
+    require(fixture.count(ready) == fixture.count(close) == 1, 'Fixture ranges changed')
+    middle, right = left + fixture.index(ready), left + fixture.index(close)
+    require(left < middle < right and not raw[right + len(close):end].strip(), 'Fixture range order changed')
     ranges = [(left, middle), (right, right + len(close))]
     return b''.join(raw[a:b] for a, b in ranges), ranges
 
