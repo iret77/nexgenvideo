@@ -1,6 +1,7 @@
 """Measure the unchanged test host's external AX availability in repository CI."""
 import argparse
 from collections import Counter
+from contextlib import ExitStack
 import hashlib
 import json
 import math
@@ -254,14 +255,17 @@ class Controller:
         self.evidence = evidence
         self.deadline = time.monotonic() + 210
 
-    def run(self, command, name, env=None):
+    def run(self, command, name, env=None, *, separate_stderr=False):
         limit = command_timeout(self.deadline, time.monotonic())
         path = self.evidence / (name + '.log')
+        error_path = self.evidence / (name + '.stderr') if separate_stderr else None
         started = time.monotonic()
         started_wall = time.time()
-        with path.open('xb') as stream:
+        with ExitStack() as outputs:
+            stream = outputs.enter_context(path.open('xb'))
+            errors = outputs.enter_context(error_path.open('xb')) if error_path else None
             process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=stream,
-                stderr=subprocess.STDOUT, env=env, start_new_session=True)
+                stderr=errors if separate_stderr else subprocess.STDOUT, env=env, start_new_session=True)
             timed_out = False
             try:
                 code = process.wait(timeout=limit)
@@ -284,13 +288,25 @@ class Controller:
                         code = None
             stream.flush()
             os.fsync(stream.fileno())
+            if errors:
+                errors.flush()
+                os.fsync(errors.fileno())
         value = {'command': command, 'PID': process.pid, 'exitCode': code, 'timedOut': timed_out,
             'parentPID': os.getpid(), 'startedWall': started_wall, 'finishedWall': time.time(),
-            'processReaped': process.poll() is not None, 'started': started, 'finished': time.monotonic(), 'timeout': limit}
+            'processReaped': process.poll() is not None, 'started': started, 'finished': time.monotonic(), 'timeout': limit,
+            'separateStderr': separate_stderr, 'stdoutFile': path.name, 'stdoutSHA256': digest(path.read_bytes()),
+            'stderrFile': error_path.name if error_path else None,
+            'stderrSHA256': digest(error_path.read_bytes()) if error_path else None}
         write(self.evidence / (name + '.process.json'), value)
         require(value['processReaped'] and not timed_out and code == 0,
                 'Owned diagnostic command failed; original evidence retained')
         return value
+
+    def identity(self, command, name, expected):
+        result = self.run(command, 'toolchain-' + name, separate_stderr=True)
+        require((self.evidence / result['stdoutFile']).read_text().strip() == expected,
+                'Actual native toolchain differs from Native777: ' + name)
+        return result
 
 
 def verify_collection(folder, context, execution):
@@ -485,9 +501,7 @@ def observe(args):
         'os-version': (['sw_vers', '-productVersion'], '27.2'),
         'os-build': (['sw_vers', '-buildVersion'], '26B123')}
     for name, (command, expected) in toolchain.items():
-        controller.run(command, 'toolchain-' + name)
-        require((args.evidence / ('toolchain-' + name + '.log')).read_text().strip() == expected,
-                'Actual native toolchain differs from Native777: ' + name)
+        controller.identity(command, name, expected)
     write(args.evidence / 'python.json', {'actual': sys.version, 'exactOriginalPythonRequiredForAXMeasurement': False})
     controller.run(['xcrun', '--sdk', 'macosx', '--show-sdk-platform-path'], 'sdk-platform')
     platform = (args.evidence / 'sdk-platform.log').read_text().strip()

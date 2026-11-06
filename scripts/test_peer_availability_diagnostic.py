@@ -4,6 +4,7 @@ import json
 import signal
 import struct
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -118,6 +119,60 @@ class PeerAvailabilityScopeTests(unittest.TestCase):
             self.assertTrue(receipt['timedOut'])
             self.assertEqual(receipt['exitCode'], -9)
             self.assertEqual(spawn.call_args.kwargs['stdin'], subprocess.DEVNULL)
+
+
+class PeerAvailabilityIdentityTests(unittest.TestCase):
+    expected = 'Apple Swift version 6.4.2 (swiftlang-6.4.2.1.9 clang-2100.4.1.1)\nTarget: arm64-apple-macosx27.2.0'
+    driver = 'swift-driver version: 1.168.6 '
+
+    def command(self, stdout):
+        return [sys.executable, '-c',
+            'import sys; sys.stderr.write(' + repr(self.driver) + '); sys.stderr.flush(); '
+            'sys.stdout.write(' + repr(stdout + '\n') + '); sys.stdout.flush()']
+
+    def test_identity_compares_real_stdout_and_retains_the_separate_driver_diagnostic(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            result = diagnostic.Controller(folder).identity(self.command(self.expected), 'swift', self.expected)
+            self.assertEqual((folder / result['stdoutFile']).read_text(), self.expected + '\n')
+            self.assertEqual((folder / result['stderrFile']).read_text(), self.driver)
+            self.assertTrue(result['separateStderr'])
+            self.assertTrue(result['processReaped'])
+            for prefix in ('stdout', 'stderr'):
+                self.assertEqual(result[prefix + 'SHA256'],
+                    diagnostic.digest((folder / result[prefix + 'File']).read_bytes()))
+
+    def test_separate_driver_output_cannot_qualify_a_wrong_compiler_version_or_target(self):
+        mutations = [self.expected.replace('6.4.2', '6.4.3'), self.expected.replace('arm64', 'x86_64'),
+            self.driver + self.expected]
+        for value in mutations:
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as temporary:
+                folder = Path(temporary)
+                with self.assertRaisesRegex(ValueError, 'Actual native toolchain differs'):
+                    diagnostic.Controller(folder).identity(self.command(value), 'swift', self.expected)
+                self.assertEqual((folder / 'toolchain-swift.log').read_text(), value + '\n')
+                self.assertEqual((folder / 'toolchain-swift.stderr').read_text(), self.driver)
+
+    def test_timed_out_identity_retains_both_closed_channels_and_its_failed_process_receipt(self):
+        with tempfile.TemporaryDirectory() as temporary, patch.object(diagnostic.subprocess, 'Popen') as spawn, \
+                patch.object(diagnostic.os, 'killpg'):
+            child = spawn.return_value
+            child.pid = 77
+            child.wait.side_effect = [subprocess.TimeoutExpired('identity', 70),
+                subprocess.TimeoutExpired('identity', 2), -9]
+            child.poll.return_value = -9
+            folder = Path(temporary)
+            with self.assertRaisesRegex(ValueError, 'original evidence retained'):
+                diagnostic.Controller(folder).identity(['identity'], 'swift', self.expected)
+            result = json.loads((folder / 'toolchain-swift.process.json').read_text())
+            self.assertTrue(result['timedOut'])
+            self.assertTrue(result['processReaped'])
+            self.assertEqual(result['exitCode'], -9)
+            self.assertTrue(spawn.call_args.kwargs['stdout'].closed)
+            self.assertTrue(spawn.call_args.kwargs['stderr'].closed)
+            for prefix in ('stdout', 'stderr'):
+                self.assertEqual((folder / result[prefix + 'File']).read_bytes(), b'')
+                self.assertEqual(result[prefix + 'SHA256'], diagnostic.digest(b''))
 
 
 class PeerAvailabilityCollectionTests(unittest.TestCase):
