@@ -16,9 +16,159 @@ private func availabilityRequest(_ request: Query.Request) -> [String: Any] {
         "windowFrame": request.windowFrame.evidence, "contentFrame": request.contentFrame.evidence]
 }
 
+private enum AvailabilityJSONPath: Codable, Equatable, Sendable {
+    case key(String)
+    case index(Int)
+    case dictionaryEntry(Int)
+}
+
+private struct AvailabilityJSONFailure: Error, Codable, Sendable {
+    let path: [AvailabilityJSONPath]
+    let runtimeType: String
+    let reason: String
+}
+
+private struct AvailabilityJSONErrorRecord: Codable, Sendable {
+    let schema: String
+    let stage: String
+    let context: String
+    let sourceSHA: String
+    let PID: Int32
+    let expectedProbe: Bool
+    let failure: AvailabilityJSONFailure
+}
+
+@MainActor
+private enum AvailabilityJSON {
+    static func failure(_ value: Any) -> AvailabilityJSONFailure? {
+        var ancestors: Set<ObjectIdentifier> = []
+        var remaining = 2_000_000
+        func visit(_ value: Any, path: [AvailabilityJSONPath], depth: Int) -> AvailabilityJSONFailure? {
+            func fail(_ reason: String) -> AvailabilityJSONFailure {
+                AvailabilityJSONFailure(path: path, runtimeType: String(reflecting: type(of: value)), reason: reason)
+            }
+            remaining -= 1
+            guard remaining >= 0, depth <= 64 else { return fail("validation-budget") }
+            if value is NSNull || value is String { return nil }
+            if let number = value as? NSNumber {
+                return number.doubleValue.isFinite ? nil : fail("nonfinite-number")
+            }
+            if let dictionary = value as? NSDictionary {
+                let identity = ObjectIdentifier(dictionary)
+                guard ancestors.insert(identity).inserted else { return fail("container-cycle") }
+                defer { ancestors.remove(identity) }
+                guard dictionary.count <= remaining else { return fail("validation-budget") }
+                for (index, key) in dictionary.allKeys.enumerated() {
+                    guard let name = key as? String else {
+                        return AvailabilityJSONFailure(path: path + [.dictionaryEntry(index)],
+                            runtimeType: String(reflecting: type(of: key)), reason: "non-string-key")
+                    }
+                    guard let item = dictionary.object(forKey: key) else { return fail("missing-dictionary-value") }
+                    if let issue = visit(item, path: path + [.key(name)], depth: depth + 1) { return issue }
+                }
+                return nil
+            }
+            if let array = value as? NSArray {
+                let identity = ObjectIdentifier(array)
+                guard ancestors.insert(identity).inserted else { return fail("container-cycle") }
+                defer { ancestors.remove(identity) }
+                guard array.count <= remaining else { return fail("validation-budget") }
+                for index in 0..<array.count {
+                    if let issue = visit(array.object(at: index), path: path + [.index(index)], depth: depth + 1) { return issue }
+                }
+                return nil
+            }
+            return fail("unsupported-value")
+        }
+        return visit(value, path: [], depth: 0)
+    }
+
+    static func write(_ value: [String: Any], to file: URL, stage: String, expectedProbe: Bool = false) throws {
+        let invalid = failure(value) ?? (JSONSerialization.isValidJSONObject(value) ? nil :
+            AvailabilityJSONFailure(path: [], runtimeType: String(reflecting: type(of: value)), reason: "foundation-invalid-object"))
+        if let invalid {
+            let environment = ProcessInfo.processInfo.environment
+            let record = AvailabilityJSONErrorRecord(schema: "nexgenvideo/availability-json-error/1", stage: stage,
+                context: environment["NGV_AVAILABILITY_CONTEXT"] ?? "", sourceSHA: environment["GITHUB_SHA"] ?? "",
+                PID: getpid(), expectedProbe: expectedProbe, failure: invalid)
+            let data = try JSONEncoder().encode(record)
+            try data.write(to: file.deletingLastPathComponent().appendingPathComponent(stage + ".serialization-error.json"),
+                options: .withoutOverwriting)
+            throw invalid
+        }
+        let data = try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
+        try data.write(to: file, options: .withoutOverwriting)
+    }
+}
+
+private func availabilityMode(_ mode: CFRunLoopMode?) -> Any {
+    mode.map { String(describing: $0.rawValue) as Any } ?? NSNull()
+}
+
+@MainActor
 private func persistAvailability(_ report: [String: Any], in folder: URL) throws {
-    let data = try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys])
-    try data.write(to: folder.appendingPathComponent("observation.json"), options: .withoutOverwriting)
+    try AvailabilityJSON.write(report, to: folder.appendingPathComponent("observation.json"), stage: "final-report")
+}
+
+@MainActor
+private func availabilityStage(_ name: String, report: [String: Any], folder: URL) throws {
+    let stages = folder.appendingPathComponent("stages", isDirectory: true)
+    try FileManager.default.createDirectory(at: stages, withIntermediateDirectories: true)
+    let value: [String: Any] = ["schema": "nexgenvideo/availability-stage/1", "stage": name,
+        "sourceSHA": ProcessInfo.processInfo.environment["GITHUB_SHA"]!, "PID": getpid(),
+        "context": ProcessInfo.processInfo.environment["NGV_AVAILABILITY_CONTEXT"]!, "facts": report]
+    try AvailabilityJSON.write(value, to: stages.appendingPathComponent(name + ".json"), stage: name)
+}
+
+private struct AvailabilityUnsupportedProbe { let value: Int }
+
+@MainActor
+private func availabilitySerializationProbes(folder: URL) throws {
+    let probes = folder.appendingPathComponent("serialization-probes", isDirectory: true)
+    try FileManager.default.createDirectory(at: probes, withIntermediateDirectories: false)
+    let mode = CFRunLoopCopyCurrentMode(CFRunLoopGetMain())
+    let valid: [String: Any] = ["mode": availabilityMode(mode), "absentMode": availabilityMode(nil)]
+    let validFile = probes.appendingPathComponent("valid.json")
+    try AvailabilityJSON.write(valid, to: validFile, stage: "valid", expectedProbe: true)
+    let roundTrip = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: validFile)) as? [String: Any])
+    #expect(roundTrip["absentMode"] is NSNull)
+    if let mode { #expect(roundTrip["mode"] as? String == String(describing: mode.rawValue)) }
+    else { #expect(roundTrip["mode"] is NSNull) }
+    let unsupported = AvailabilityUnsupportedProbe(value: 1)
+    let rejected: [String: Any] = ["nested": [["value": unsupported]]]
+    let rejectedFile = probes.appendingPathComponent("rejected.json")
+    do {
+        try AvailabilityJSON.write(rejected, to: rejectedFile, stage: "rejected", expectedProbe: true)
+        Issue.record("Unsupported value reached JSON writing")
+    } catch let issue as AvailabilityJSONFailure {
+        #expect(issue.path == [.key("nested"), .index(0), .key("value")])
+        #expect(issue.reason == "unsupported-value")
+        #expect(issue.runtimeType == String(reflecting: type(of: unsupported)))
+        #expect(!FileManager.default.fileExists(atPath: rejectedFile.path))
+        let record = try JSONDecoder().decode(AvailabilityJSONErrorRecord.self,
+            from: Data(contentsOf: probes.appendingPathComponent("rejected.serialization-error.json")))
+        #expect(record.expectedProbe && record.failure.path == issue.path && record.failure.runtimeType == issue.runtimeType)
+    }
+    let cycle = NSMutableArray()
+    cycle.add(cycle)
+    var deep: Any = "leaf"
+    for _ in 0..<70 { deep = [deep] }
+    let cases: [(String, Any, String)] = [("nonfinite", Double.infinity, "nonfinite-number"),
+        ("non-string-key", NSDictionary(object: "value", forKey: NSNumber(value: 1)), "non-string-key"),
+        ("cycle", cycle, "container-cycle"), ("depth", deep, "validation-budget")]
+    for (name, value, reason) in cases {
+        let destination = probes.appendingPathComponent(name + ".json")
+        do {
+            try AvailabilityJSON.write(["value": value], to: destination, stage: name, expectedProbe: true)
+            Issue.record("Invalid JSON value reached writing: " + name)
+        } catch let issue as AvailabilityJSONFailure {
+            #expect(issue.reason == reason && !issue.path.isEmpty && !issue.runtimeType.isEmpty)
+            #expect(!FileManager.default.fileExists(atPath: destination.path))
+            let record = try JSONDecoder().decode(AvailabilityJSONErrorRecord.self,
+                from: Data(contentsOf: probes.appendingPathComponent(name + ".serialization-error.json")))
+            #expect(record.expectedProbe && record.failure.reason == reason && record.failure.path == issue.path)
+        }
+    }
 }
 
 private final class AvailabilityTraceState: @unchecked Sendable {
@@ -37,7 +187,7 @@ private final class AvailabilityTraceState: @unchecked Sendable {
         if timeline.count < 12000 {
             timeline.append(["kind": name, "activity": activity,
                 "at": ProcessInfo.processInfo.systemUptime, "mainThread": Thread.isMainThread,
-                "mode": CFRunLoopCopyCurrentMode(CFRunLoopGetCurrent()).map { String(describing: $0) } ?? ""])
+                "mode": CFRunLoopCopyCurrentMode(CFRunLoopGetCurrent()).map { String(describing: $0.rawValue) } ?? ""])
         } else { truncated = true }
     }
 
@@ -165,16 +315,13 @@ private func availabilityRaw(_ context: String, seconds: String, fixture: Fixtur
         "stdout": stdout.lastPathComponent, "stderr": stderr.lastPathComponent]
     if process.isRunning {
         withExtendedLifetime(fixture) { () -> Never in
-            if let receipt = try? JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]) {
-                try? receipt.write(to: folder.appendingPathComponent(stem + ".process.json"), options: .withoutOverwriting)
-            }
+            try? AvailabilityJSON.write(result, to: folder.appendingPathComponent(stem + ".process.json"), stage: stem)
             Darwin._exit(EXIT_FAILURE)
         }
     }
     try output.synchronize()
     try errors.synchronize()
-    let receipt = try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys])
-    try receipt.write(to: folder.appendingPathComponent(stem + ".process.json"), options: .withoutOverwriting)
+    try AvailabilityJSON.write(result, to: folder.appendingPathComponent(stem + ".process.json"), stage: stem)
     guard !timedOut, !cancelled, process.terminationStatus == 0 else {
         throw NSError(domain: "AvailabilityRawLifetime", code: 1)
     }
@@ -187,6 +334,7 @@ func collectPeerAvailability() async throws {
     let environment = ProcessInfo.processInfo.environment
     let folder = URL(fileURLWithPath: environment["NGV_AVAILABILITY_OUTPUT"]!, isDirectory: true)
     let context = environment["NGV_AVAILABILITY_CONTEXT"]!
+    try availabilitySerializationProbes(folder: folder)
     let trace = AvailabilityTrace()
     var report: [String: Any] = ["schema": "nexgenvideo/peer-availability-observation/1",
         "context": context, "PID": getpid(), "appAcceptance": false,
@@ -198,9 +346,9 @@ func collectPeerAvailability() async throws {
     report["launch"] = ["class": NSStringFromClass(type(of: NSApp!)),
         "initialPolicy": initialPolicy, "actualPolicy": NSApp.activationPolicy().rawValue,
         "isRunning": NSApp.isRunning, "isFinishedLaunching": NSRunningApplication.current.isFinishedLaunching,
-        "bundleIdentifier": Bundle.main.bundleIdentifier as Any? ?? NSNull(),
+        "bundleIdentifier": Bundle.main.bundleIdentifier.map { $0 as Any } ?? NSNull(),
         "bundleURL": Bundle.main.bundleURL.path,
-        "runLoopMode": CFRunLoopCopyCurrentMode(CFRunLoopGetMain()) as Any? ?? NSNull()]
+        "runLoopMode": availabilityMode(CFRunLoopCopyCurrentMode(CFRunLoopGetMain()))]
     let fixture = Fixture()
     defer { fixture.close() }
     report["initialRequest"] = availabilityRequest(fixture.request)
@@ -212,9 +360,11 @@ func collectPeerAvailability() async throws {
     guard hostImage.path == owner.executable else { throw NSError(domain: "AvailabilityHostImage", code: 2) }
     report["hostImage"] = ["path": hostImage.path, "uuid": hostImage.uuid, "SHA256": hostImage.SHA256]
     report["image"] = ["path": image.path, "uuid": image.uuid, "SHA256": image.SHA256]
+    try availabilityStage("launch-owner", report: report, folder: folder)
     do {
         let cg = await availabilityCG(fixture)
         report["preAXCGStability"] = cg
+        try availabilityStage("cg", report: report, folder: folder)
         guard cg["qualified"] as? Bool == true else { throw NSError(domain: "AvailabilityCGWindow", code: 1) }
         report["requestBefore"] = availabilityRequest(fixture.request)
         let before = trace.state.snapshot()
@@ -244,11 +394,14 @@ func collectPeerAvailability() async throws {
                 Darwin._exit(EXIT_FAILURE)
             }
         }
+        try availabilityStage("first-peer", report: report, folder: folder)
         guard lifecycle.clean else { throw NSError(domain: "AvailabilityPeerLifetime", code: 1) }
         report["requestAfterPeer"] = availabilityRequest(fixture.request)
         var raw: [[String: Any]] = []
         for (thread, seconds) in [("background", "0.15"), ("main", "0.15"), ("background", "1")] {
             raw.append(try await availabilityRaw(thread, seconds: seconds, fixture: fixture, trace: trace, folder: folder))
+            report["rawAfterPeer"] = raw
+            try availabilityStage("raw-" + thread + "-" + seconds, report: report, folder: folder)
         }
         report["rawAfterPeer"] = raw
         report["collectionCompleted"] = true
