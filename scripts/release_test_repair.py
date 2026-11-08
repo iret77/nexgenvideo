@@ -19,6 +19,14 @@ from retained_app_test_products import api, archive_bytes, checksum, download, r
 RUN = 42500881402
 JOB = 128793684809
 SOURCE = "849cdd32d702e0b86219ee0a44f10360f68cbfe6"
+LINKED_RUN = 42518096376
+LINKED_JOB = 128845862907
+LINKED_SOURCE = "1b005345afc65ba705fa3256d94bd1a1c93cd2c9"
+LINKED_ARTIFACT = 13631869778
+LINKED_ARCHIVE_SHA = "ae6fae1699e3a0671fc3d6aeb6d653d94c451b26376fed8ffbccb817542205a4"
+LINKED_IMAGE_SHA = "a0ccfaeb72dd1cd7ddf84f3892090571060067258b6e0ae1ebd9e3ee19904eee"
+LINKED_OBJECT_SHA = "eb9d90baad8af70cb189c9226e5aab30055514dff7e5a7b7285b49cec9fc8b95"
+LINKED_MODULE_SHA = "a9519218f4367b167dd6965740cd89daaf0b51f2a895d27ebe7874e4905a6a75"
 FIXTURE = "Tests/NexGenVideoTests/Generation/GenerationBatchTests.swift"
 PREFIX = "NexGenVideoTests.GenerationBatchTests/"
 FAILED = PREFIX + "terminalCancellationResumesOtherApprovedWorkOnlyAfterTheHostLeaseEnds()"
@@ -154,10 +162,10 @@ def verify_original(run, jobs):
 
 def prepare(root, run_id):
     inputs = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())["inputs"]
-    require(run_id == RUN and os.environ.get("GITHUB_REPOSITORY") == "iret77/nexgenvideo"
+    require(run_id in {RUN, LINKED_RUN} and os.environ.get("GITHUB_REPOSITORY") == "iret77/nexgenvideo"
             and os.environ.get("GITHUB_RUN_ATTEMPT") == "1"
             and inputs.get("version") == "1.8.0" and inputs.get("dry_run") == "true"
-            and inputs.get("artifact_only") == "true" and inputs.get("completed_release_tests_run_id") == str(RUN),
+            and inputs.get("artifact_only") == "true" and inputs.get("completed_release_tests_run_id") == str(run_id),
             "Scoped test repair requires the exact artifact-only RC")
     root.mkdir(parents=True, exist_ok=False)
     run = api(f"actions/runs/{RUN}")
@@ -191,10 +199,143 @@ def prepare(root, run_id):
                 and suite["phases"][0]["testCaseExecutions"] == 48
                 and suite["phases"][1]["events"]["functionExecutions"] == 896,
                 "Original passed backends differ")
+    binding = verify_sources(os.environ["GITHUB_SHA"], manifest)
+    linked = prepare_linked(root, binding) if run_id == LINKED_RUN else None
     write(root / "pending.json", {"schema": "release-native-scoped-repair-pending/v1",
           "sourceSHA": os.environ["GITHUB_SHA"], "originalSourceSHA": SOURCE, "originalRun": RUN,
-          "artifacts": artifacts, "sourceBinding": verify_sources(os.environ["GITHUB_SHA"], manifest),
-          "inventory": inventory})
+          "artifacts": artifacts, "sourceBinding": binding,
+          "inventory": inventory, "linkedProducer": linked})
+
+
+def linked_inputs(archive, binding):
+    prefix = "release-native/"
+    pending = json.loads(archive_bytes(archive, prefix + "pending.json"))
+    commands = json.loads(archive_bytes(archive, prefix + "repair-evidence/commands.json"))
+    require(pending["sourceSHA"] == LINKED_SOURCE and pending["originalSourceSHA"] == SOURCE
+            and pending["originalRun"] == RUN and pending["sourceBinding"]["testSources"] == binding["testSources"]
+            and pending["sourceBinding"]["sourceObjects"] == binding["sourceObjects"],
+            "Retained compiled test source identity differs")
+    require(len(commands) == 32 and all(item["exitCode"] == 0 for item in commands[:-1])
+            and [item["label"] for item in commands[-3:]] == ["compile-tests", "link-test-bundle", "sign-test-bundle"]
+            and commands[-1]["exitCode"] == 1,
+            "Retained compilation or link did not finish before the reviewed signing failure")
+    require(sha(archive_bytes(archive, prefix + "repair-evidence/sign-test-bundle.stderr"))
+            == "7d7c0a45f9f145f099bcc519f76edfadf054d66e379deadefe040e635046a9b9",
+            "Retained producer failed at another signing boundary")
+    require(sha(archive_bytes(archive, prefix + "runtime-manifest.json", 4 * 1024**2)) == MANIFEST_SHA,
+            "Retained linked tests use another runtime")
+    files = {
+        "repair-evidence/NexGenVideoTests.o": LINKED_OBJECT_SHA,
+        "repair-evidence/NexGenVideoTests.swiftmodule": LINKED_MODULE_SHA,
+        "repaired/NexGenVideoTests.xctest/Contents/MacOS/NexGenVideoTests": LINKED_IMAGE_SHA,
+    }
+    for name, expected in files.items():
+        require(sha(archive_bytes(archive, prefix + name, 256 * 1024**2)) == expected,
+                "Retained compiler product differs: " + name)
+    return {"sourceSHA": LINKED_SOURCE, "runID": LINKED_RUN, "attempt": 1,
+            "sourceBinding": pending["sourceBinding"], "commands": commands, "products": files,
+            "testingMacroInput": json.loads(archive_bytes(archive, prefix + "repair-evidence/testing-macro-input.json")),
+            "clangInputsSHA256": sha(archive_bytes(archive, prefix + "clang-inputs.json"))}
+
+
+def prepare_linked(root, binding):
+    subprocess.run(["git", "merge-base", "--is-ancestor", LINKED_SOURCE, os.environ["GITHUB_SHA"]],
+                   stdin=subprocess.DEVNULL, check=True, timeout=30)
+    run = api(f"actions/runs/{LINKED_RUN}")
+    require(run.get("id") == LINKED_RUN and run.get("head_sha") == LINKED_SOURCE and run.get("run_attempt") == 1
+            and run.get("repository", {}).get("full_name") == "iret77/nexgenvideo"
+            and run.get("actor", {}).get("login") == "iret77" and run.get("event") == "workflow_dispatch"
+            and run.get("path") == ".github/workflows/release.yml" and run.get("status") == "completed"
+            and run.get("conclusion") == "failure", "Linked compiler producer differs")
+    jobs = api(f"actions/runs/{LINKED_RUN}/attempts/1/jobs?per_page=100")
+    require(jobs["total_count"] == len(jobs["jobs"]), "Linked producer job inventory is incomplete")
+    matches = [job for job in jobs["jobs"] if job["id"] == LINKED_JOB]
+    require(len(matches) == 1, "Linked producer builder differs")
+    job = matches[0]
+    require(job["run_id"] == LINKED_RUN and job["run_attempt"] == 1 and job["head_sha"] == LINKED_SOURCE
+            and job["name"] == "release-build" and job["labels"] == ["macrunner"]
+            and job["status"] == "completed" and job["conclusion"] == "failure"
+            and [step["name"] for step in job["steps"] if step["conclusion"] in {"failure", "cancelled"}]
+            == ["Compile the changed App test module using retained products"], "Linked producer result differs")
+    artifact = api(f"actions/artifacts/{LINKED_ARTIFACT}")
+    verify_artifact(artifact, run, job, LINKED_ARTIFACT, LINKED_ARCHIVE_SHA,
+                    "release-scoped-test-evidence-42518096376-a1")
+    download(artifact, root / "linked-products.zip")
+    with zipfile.ZipFile(root / "linked-products.zip") as archive:
+        origin = linked_inputs(archive, binding)
+    origin.update(artifact=artifact, run=run, job=job)
+    verify_linked_producer(origin, binding)
+    write(root / "linked-compiler-producer.json", origin)
+    return origin
+
+
+def verify_linked_producer(origin, binding):
+    require(origin.get("sourceSHA") == LINKED_SOURCE and origin.get("runID") == LINKED_RUN
+            and origin.get("attempt") == 1 and origin.get("sourceBinding", {}).get("testSources") == binding["testSources"]
+            and origin.get("sourceBinding", {}).get("sourceObjects") == binding["sourceObjects"],
+            "Compiler origin source identity differs")
+    artifact = origin.get("artifact", {})
+    require(artifact.get("id") == LINKED_ARTIFACT and artifact.get("expired") is False
+            and artifact.get("digest") == "sha256:" + LINKED_ARCHIVE_SHA
+            and artifact.get("workflow_run", {}).get("id") == LINKED_RUN
+            and artifact.get("workflow_run", {}).get("head_sha") == LINKED_SOURCE,
+            "Compiler origin artifact differs")
+    require(origin.get("products") == {
+        "repair-evidence/NexGenVideoTests.o": LINKED_OBJECT_SHA,
+        "repair-evidence/NexGenVideoTests.swiftmodule": LINKED_MODULE_SHA,
+        "repaired/NexGenVideoTests.xctest/Contents/MacOS/NexGenVideoTests": LINKED_IMAGE_SHA},
+        "Compiler origin product identity differs")
+    commands = origin.get("commands", [])
+    require(len(commands) == 32 and all(item["exitCode"] == 0 for item in commands[:-1])
+            and [item["label"] for item in commands[-3:]] == ["compile-tests", "link-test-bundle", "sign-test-bundle"]
+            and commands[-1]["exitCode"] == 1, "Compiler origin result was reclassified")
+
+
+def restore_linked(root, binding, image, evidence):
+    require(checksum(root / "linked-products.zip") == LINKED_ARCHIVE_SHA, "Transferred linked archive differs")
+    with zipfile.ZipFile(root / "linked-products.zip") as archive:
+        origin = linked_inputs(archive, binding)
+        for name in archive.namelist():
+            base = "release-native/"
+            if name.startswith(base + "repair-evidence/") and not name.endswith("/"):
+                relative = PurePosixPath(name.removeprefix(base + "repair-evidence/"))
+                require(len(relative.parts) == 1 and str(relative) not in {".", ".."}, "Compiler evidence path differs")
+                data = archive_bytes(archive, name, 32 * 1024**2)
+                (evidence / ("origin-" + str(relative))).write_bytes(data)
+            elif name in {base + "clang-inputs.json", base + "dependency-lock.json"} or re.fullmatch(
+                    r"release-native/module-[A-Za-z_0-9]+\.modulemap", name):
+                (root / PurePosixPath(name).name).write_bytes(archive_bytes(archive, name))
+        image.write_bytes(archive_bytes(archive, "release-native/repaired/NexGenVideoTests.xctest/Contents/MacOS/NexGenVideoTests",
+                                        256 * 1024**2))
+        for name in ("NexGenVideoTests.o", "NexGenVideoTests.swiftmodule"):
+            (evidence / name).write_bytes(archive_bytes(archive, "release-native/repair-evidence/" + name, 32 * 1024**2))
+    require(checksum(image) == LINKED_IMAGE_SHA and checksum(evidence / "NexGenVideoTests.o") == LINKED_OBJECT_SHA,
+            "Restored link product differs")
+    return origin
+
+
+def sign_copied_bundle(bundle, logged):
+    real = bundle.resolve()
+    magic = {b"\xcf\xfa\xed\xfe", b"\xfe\xed\xfa\xcf", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa\xce",
+             b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca", b"\xca\xfe\xba\xbf", b"\xbf\xba\xfe\xca"}
+    images = []
+    for path in bundle.rglob("*"):
+        require(path.resolve().is_relative_to(real), "Copied test code escapes its bundle")
+        if path.is_file() and not path.is_symlink():
+            with path.open("rb") as stream:
+                if stream.read(4) in magic:
+                    images.append(path)
+    require(bundle / "Contents/MacOS/NexGenVideoTests" in images, "Copied test image is missing")
+    containers = {parent for image in images for parent in image.parents
+                  if parent != bundle and parent.is_relative_to(bundle)
+                  and parent.suffix in {".framework", ".app", ".xpc", ".bundle"}}
+    targets = sorted(images, key=lambda path: (-len(path.parts), str(path)))
+    targets += sorted(containers, key=lambda path: (-len(path.parts), str(path)))
+    targets.append(bundle)
+    for index, path in enumerate(targets):
+        logged(["codesign", "--force", "--sign", "-", str(path)], "sign-copied-code-" + str(index))
+    logged(["codesign", "--verify", "--deep", "--strict", str(bundle)], "verify-signed-test-bundle")
+    return [path.relative_to(bundle).as_posix() if path != bundle else "." for path in targets]
 
 
 def verify_runtime(binary, manifest):
@@ -396,7 +537,6 @@ def execute(root):
         json.dump({"runID": os.environ["GITHUB_RUN_ID"], "sourceSHA": os.environ["GITHUB_SHA"], "oneShot": True}, stream)
         stream.flush(); os.fsync(stream.fileno())
     binary = restore_runtime(root, manifest, logged)
-    maps = module_maps(root, binary, logged)
     sdk = logged(["xcrun", "--sdk", "macosx", "--show-sdk-path"], "sdk").strip()
     sdk_version = logged(["xcrun", "--sdk", "macosx", "--show-sdk-version"], "sdk-version").strip()
     require(sdk_version == "27.2" and Path(sdk).is_dir(), "Retained product SDK changed")
@@ -409,27 +549,36 @@ def execute(root):
     bundle = root / "repaired/NexGenVideoTests.xctest"
     shutil.copytree(binary / "NexGenVideoTests.xctest", bundle, symlinks=True)
     image = bundle / "Contents/MacOS/NexGenVideoTests"
-    flags = ["-target", "arm64-apple-macos26.0", "-sdk", sdk, "-F", str(developer_frameworks),
-             "-F", str(binary), "-I", str(binary)]
-    for item in maps:
-        flags += ["-I", item["headers"], "-Xcc", "-fmodule-map-file=" + item["moduleMap"]]
-    logged([compiler, *flags, "-plugin-path", macros["directory"], "-c", "-parse-as-library", "-module-name", "NexGenVideoTests",
-            "-package-name", "nexgenvideo", "-swift-version", "6", "-O", "-g", "-whole-module-optimization",
-            "-enable-testing", "-Xfrontend", "-enable-cross-import-overlays", "-D", "SWIFT_PACKAGE", "-emit-module", "-emit-module-path",
-            str(evidence / "NexGenVideoTests.swiftmodule"), *(str(Path.cwd() / name) for name in TEST_SOURCES),
-            "-o", str(object_path)], "compile-tests", 300)
     objects = sorted(path for path in binary.glob("*.o") if path.name not in EXCLUDED_OBJECTS)
     objects.append(binary / APP_OBJECT)
     require(len(objects) == 35 and all(checksum(path) == manifest["files"][path.relative_to(binary).as_posix()]["sha256"]
                                      for path in objects), "App static object closure differs")
-    link = [compiler, *flags, "-Xlinker", "-bundle", "-o", str(image), str(object_path), *map(str, objects),
-            "-L", str(binary), "-lNexGenEngine", "-lproc", "-lc++", "-framework", "XCTest",
-            "-framework", "Testing", "-framework", "Sparkle", "-framework", "Sentry", "-framework", "whisper",
-            "-framework", "onnxruntime", "-Xlinker", "-rpath", "-Xlinker", "@loader_path/../Frameworks",
-            "-Xlinker", "-rpath", "-Xlinker", str(binary),
-            "-Xlinker", "-weak_framework", "-Xlinker", "MusicUnderstanding", "-Xlinker", "-dead_strip"]
-    logged(link, "link-test-bundle", 180)
-    logged(["codesign", "--force", "--sign", "-", str(bundle)], "sign-test-bundle")
+    origin = None
+    if pending.get("linkedProducer"):
+        origin = restore_linked(root, pending["sourceBinding"], image, evidence)
+        verify_linked_producer(pending["linkedProducer"], pending["sourceBinding"])
+        require(all(pending["linkedProducer"][key] == value for key, value in origin.items())
+                and macros == origin["testingMacroInput"], "Retained compiler producer or current toolchain differs")
+    else:
+        maps = module_maps(root, binary, logged)
+        flags = ["-target", "arm64-apple-macos26.0", "-sdk", sdk, "-F", str(developer_frameworks),
+                 "-F", str(binary), "-I", str(binary)]
+        for item in maps:
+            flags += ["-I", item["headers"], "-Xcc", "-fmodule-map-file=" + item["moduleMap"]]
+        logged([compiler, *flags, "-plugin-path", macros["directory"], "-c", "-parse-as-library", "-module-name", "NexGenVideoTests",
+                "-package-name", "nexgenvideo", "-swift-version", "6", "-O", "-g", "-whole-module-optimization",
+                "-enable-testing", "-Xfrontend", "-enable-cross-import-overlays", "-D", "SWIFT_PACKAGE", "-emit-module", "-emit-module-path",
+                str(evidence / "NexGenVideoTests.swiftmodule"), *(str(Path.cwd() / name) for name in TEST_SOURCES),
+                "-o", str(object_path)], "compile-tests", 300)
+        link = [compiler, *flags, "-Xlinker", "-bundle", "-o", str(image), str(object_path), *map(str, objects),
+                "-L", str(binary), "-lNexGenEngine", "-lproc", "-lc++", "-framework", "XCTest",
+                "-framework", "Testing", "-framework", "Sparkle", "-framework", "Sentry", "-framework", "whisper",
+                "-framework", "onnxruntime", "-Xlinker", "-rpath", "-Xlinker", "@loader_path/../Frameworks",
+                "-Xlinker", "-rpath", "-Xlinker", str(binary),
+                "-Xlinker", "-weak_framework", "-Xlinker", "MusicUnderstanding", "-Xlinker", "-dead_strip"]
+        logged(link, "link-test-bundle", 180)
+    pre_sign_image = checksum(image)
+    signed_objects = sign_copied_bundle(bundle, logged)
     load_commands = logged(["otool", "-hvL", str(image)], "test-bundle-image")
     require("BUNDLE" in load_commands and "@rpath/libNexGenEngine.dylib" in load_commands,
             "Repaired test bundle type or dynamic Engine differs")
@@ -440,12 +589,15 @@ def execute(root):
                        "appObjectSHA256": APP_OBJECT_SHA, "staticObjects": {
                            path.relative_to(binary).as_posix(): checksum(path) for path in objects},
                        "clangInputsSHA256": checksum(root / "clang-inputs.json"),
-                       "testingMacroInput": macros}
+                       "testingMacroInput": macros, "preBundleSignImageSHA256": pre_sign_image,
+                       "compilerSourceSHA": LINKED_SOURCE if origin else os.environ["GITHUB_SHA"],
+                       "compilerProducer": pending.get("linkedProducer"), "signedCodeObjects": signed_objects}
     write(evidence / "compile-receipt.json", compile_receipt)
     logged(["/usr/bin/ditto", "-c", "-k", "--keepParent", str(bundle), str(root / "repaired-test-products.zip")],
            "archive-repaired-test-products", 180)
     write(root / "built.json", {"schema": "release-native-scoped-products/v1", "sourceSHA": os.environ["GITHUB_SHA"],
           "runID": int(os.environ["GITHUB_RUN_ID"]), "attempt": 1, "binaryRoot": str(binary), "testImage": str(image),
+          "compilerSourceSHA": compile_receipt["compilerSourceSHA"],
           "compileReceiptSHA256": checksum(evidence / "compile-receipt.json"),
           "archiveSHA256": checksum(root / "repaired-test-products.zip")})
 
@@ -489,6 +641,13 @@ def run_selected(root):
     compile_receipt = json.loads((root / "repair-evidence/compile-receipt.json").read_text())
     require(checksum(image) == compile_receipt["testBundleSHA256"] and checksum(binary / APP_OBJECT) == APP_OBJECT_SHA,
             "Scoped test image or App object changed")
+    if pending.get("linkedProducer"):
+        verify_linked_producer(compile_receipt["compilerProducer"], pending["sourceBinding"])
+        require(compile_receipt["compilerProducer"] == pending["linkedProducer"]
+                and built["compilerSourceSHA"] == compile_receipt["compilerSourceSHA"] == LINKED_SOURCE
+                and compile_receipt["preBundleSignImageSHA256"] == LINKED_IMAGE_SHA
+                and checksum(root / "repair-evidence/NexGenVideoTests.o") == LINKED_OBJECT_SHA,
+                "Signed test derivative lost its original compiler provenance")
     folder = root / "repair-evidence/app-swift-testing"
     folder.mkdir(exist_ok=False)
     host = binary / "NexGenVideoAppKitTestHost"
@@ -532,6 +691,7 @@ def run_selected(root):
               "eventSHA256": checksum(folder / "events.jsonl"), "consoleSHA256": checksum(folder / "console.log"),
               "hostReceiptSHA256": checksum(folder / "host-receipt.json"), "compileReceiptSHA256": built["compileReceiptSHA256"],
               "testBundleSHA256": checksum(image), "sourceBinding": pending["sourceBinding"], "compilerUpload": upload}
+    result.update(compilerSourceSHA=compile_receipt["compilerSourceSHA"], compilerProducer=compile_receipt["compilerProducer"])
     result["reusedAppMethodIDsSHA256"] = sha(json.dumps(pending["inventory"]["reusedAppMethodIDs"], separators=(",", ":")).encode())
     verify_receipt(result, os.environ["GITHUB_SHA"], int(os.environ["GITHUB_RUN_ID"]))
     write(root / "receipt.json", result)
@@ -567,6 +727,14 @@ def verify_receipt(receipt, source, run_id):
             and re.fullmatch("[a-f0-9]{64}", built.get("archiveSHA256", ""))
             and built.get("sourceSHA") == source and built.get("runID") == run_id and built.get("attempt") == 1
             and built.get("compileReceiptSHA256") == receipt["compileReceiptSHA256"], "Scoped compiler producer differs")
+    require(re.fullmatch("[a-f0-9]{40}", built.get("compilerSourceSHA", ""))
+            and receipt.get("compilerSourceSHA") == built["compilerSourceSHA"]
+            and (built["compilerSourceSHA"] == source or receipt.get("compilerProducer") is not None),
+            "A retained compiler origin is missing")
+    if receipt.get("compilerProducer") is not None:
+        verify_linked_producer(receipt["compilerProducer"], receipt["sourceBinding"])
+        require(receipt.get("compilerSourceSHA") == built.get("compilerSourceSHA") == LINKED_SOURCE,
+                "Signing execution cannot replace the original compiler source")
     return receipt
 
 

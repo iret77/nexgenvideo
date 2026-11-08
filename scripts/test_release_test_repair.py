@@ -18,7 +18,7 @@ def receipt():
         item.strip().split(":")[0].split()[0] + ":" for item in parameters.split(",") if item.strip()) + ")"
         for name, parameters in methods)
     source, run = "a" * 40, 123456
-    return {"schema": "release-native-scoped-repair/v1", "sourceSHA": source, "runID": run, "attempt": 1,
+    return {"schema": "release-native-scoped-repair/v1", "sourceSHA": source, "compilerSourceSHA": source, "runID": run, "attempt": 1,
             "originalSourceSHA": repair.SOURCE, "originalRun": repair.RUN, "originalEventSHA256": repair.EVENT_SHA,
             "originalRuntimeSHA256": repair.RUNTIME_SHA, "originalRuntimeTreeSHA256": repair.TREE_SHA, "passed": True,
             "hostSHA256": repair.HOST_SHA, "appObjectSHA256": repair.APP_OBJECT_SHA, "selectedMethods": selected,
@@ -29,10 +29,85 @@ def receipt():
             "compilerUpload": {"artifact": {"id": 56789, "expired": False, "name": "release-scoped-test-products-123456-a1", "digest": "sha256:" + "c" * 64,
                                "workflow_run": {"id": run, "head_sha": source}},
                                "built": {"schema": "release-native-scoped-products/v1", "archiveSHA256": "e" * 64,
-                                         "sourceSHA": source, "runID": run, "attempt": 1, "compileReceiptSHA256": "b" * 64}}}
+                                         "sourceSHA": source, "compilerSourceSHA": source, "runID": run, "attempt": 1, "compileReceiptSHA256": "b" * 64}}}
+
+
+def linked_origin():
+    return {"sourceSHA": repair.LINKED_SOURCE, "runID": repair.LINKED_RUN, "attempt": 1,
+            "sourceBinding": {"testSources": {repair.FIXTURE: "a" * 64}, "sourceObjects": {"Sources": "b" * 40}},
+            "artifact": {"id": repair.LINKED_ARTIFACT, "expired": False, "digest": "sha256:" + repair.LINKED_ARCHIVE_SHA,
+                         "workflow_run": {"id": repair.LINKED_RUN, "head_sha": repair.LINKED_SOURCE}},
+            "products": {"repair-evidence/NexGenVideoTests.o": repair.LINKED_OBJECT_SHA,
+                         "repair-evidence/NexGenVideoTests.swiftmodule": repair.LINKED_MODULE_SHA,
+                         "repaired/NexGenVideoTests.xctest/Contents/MacOS/NexGenVideoTests": repair.LINKED_IMAGE_SHA},
+            "commands": [{"label": "metadata-" + str(index), "exitCode": 0} for index in range(29)]
+                        + [{"label": name, "exitCode": code} for name, code in
+                           [("compile-tests", 0), ("link-test-bundle", 0), ("sign-test-bundle", 1)]]}
 
 
 class ScopedReleaseRepairTests(unittest.TestCase):
+    def test_retained_compiler_success_keeps_the_actual_failed_signing_result(self):
+        value = linked_origin()
+        repair.verify_linked_producer(value, value["sourceBinding"])
+        for index, code in ((29, 1), (30, 1), (31, 0)):
+            with self.subTest(index=index), self.assertRaises(ValueError):
+                altered = linked_origin()
+                altered["commands"][index]["exitCode"] = code
+                repair.verify_linked_producer(altered, altered["sourceBinding"])
+
+    def test_changed_retained_compiler_product_or_source_cannot_be_reused(self):
+        for target, key, replacement in (("products", "repair-evidence/NexGenVideoTests.o", "f" * 64),
+                                          ("products", "repaired/NexGenVideoTests.xctest/Contents/MacOS/NexGenVideoTests", "f" * 64),
+                                          ("artifact", "digest", "sha256:" + "f" * 64), ("artifact", "expired", True)):
+            with self.subTest(target=target, key=key), self.assertRaises(ValueError):
+                value = linked_origin()
+                value[target][key] = replacement
+                repair.verify_linked_producer(value, value["sourceBinding"])
+        value = linked_origin()
+        binding = json.loads(json.dumps(value["sourceBinding"]))
+        binding["testSources"][repair.FIXTURE] = "f" * 64
+        with self.assertRaises(ValueError):
+            repair.verify_linked_producer(value, binding)
+
+    def test_signed_derivative_cannot_drop_or_relabel_the_compiler_origin(self):
+        value = receipt()
+        origin = linked_origin()
+        value.update(compilerProducer=origin, compilerSourceSHA=repair.LINKED_SOURCE, sourceBinding=origin["sourceBinding"])
+        value["compilerUpload"]["built"]["compilerSourceSHA"] = repair.LINKED_SOURCE
+        repair.verify_receipt(value, value["sourceSHA"], value["runID"])
+        for key, replacement in (("compilerProducer", None), ("compilerSourceSHA", value["sourceSHA"])):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                altered = json.loads(json.dumps(value))
+                altered[key] = replacement
+                repair.verify_receipt(altered, altered["sourceSHA"], altered["runID"])
+        altered = json.loads(json.dumps(value))
+        altered.pop("compilerProducer")
+        altered.pop("compilerSourceSHA")
+        altered["compilerUpload"]["built"].pop("compilerSourceSHA")
+        with self.assertRaises(ValueError):
+            repair.verify_receipt(altered, altered["sourceSHA"], altered["runID"])
+
+    def test_copied_test_code_is_signed_inside_out_without_recursive_signing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            bundle = root / "NexGenVideoTests.xctest"
+            main = bundle / "Contents/MacOS/NexGenVideoTests"
+            framework = bundle / "Contents/Frameworks/Sparkle.framework"
+            updater = framework / "Versions/B/Updater.app"
+            leaf = updater / "Contents/MacOS/Updater"
+            for path in (main, framework / "Versions/B/Sparkle", leaf):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"\xcf\xfa\xed\xfe" + b"preserved compiler bytes")
+            (framework / "Versions/Current").symlink_to("B")
+            calls = []
+            repair.sign_copied_bundle(bundle, lambda argv, label: calls.append(argv))
+            targets = [Path(argv[-1]) for argv in calls[:-1]]
+            self.assertLess(targets.index(leaf), targets.index(updater))
+            self.assertLess(targets.index(updater), targets.index(framework))
+            self.assertLess(targets.index(framework), targets.index(bundle))
+            self.assertTrue(all(argv[:4] == ["codesign", "--force", "--sign", "-"] for argv in calls[:-1]))
+            self.assertEqual(calls[-1], ["codesign", "--verify", "--deep", "--strict", str(bundle)])
+
     def test_exact_scoped_coverage_is_accepted_without_a_fresh_aggregate_claim(self):
         value = receipt()
         self.assertIs(repair.verify_receipt(value, value["sourceSHA"], value["runID"]), value)
@@ -153,14 +228,14 @@ class ScopedReleaseRepairTests(unittest.TestCase):
 
     def test_compiler_products_are_uploaded_and_confirmed_before_any_scoped_test(self):
         workflow = (ROOT / ".github/workflows/release.yml").read_text()
-        names = ("Compile the changed App test module using retained products", "Upload repaired test products before execution",
+        names = ("Prepare the changed App test module using retained products", "Upload repaired test products before execution",
                  "Confirm repaired test product upload", "Verify the complete changed GenerationBatch test scope")
         positions = [workflow.index("      - name: " + name + "\n") for name in names]
         self.assertEqual(positions, sorted(positions))
         for position in positions:
             step = workflow[position:].split("\n      - ", 1)[0]
-            self.assertIn("if: inputs.completed_release_tests_run_id == '42500881402'", step)
-        self.assertIn("if: always() && inputs.completed_release_tests_run_id == '42500881402'", workflow)
+            self.assertIn("if: inputs.completed_release_tests_run_id == '42500881402' || inputs.completed_release_tests_run_id == '42518096376'", step)
+        self.assertIn("if: always() && (inputs.completed_release_tests_run_id == '42500881402' || inputs.completed_release_tests_run_id == '42518096376')", workflow)
 
 
 if __name__ == "__main__":

@@ -154,8 +154,8 @@ def verify_suite(archive, root):
 
 
 def prepare(run_id, root):
-    from release_test_repair import RUN as REPAIR_RUN, prepare as prepare_repair
-    if run_id == REPAIR_RUN:
+    from release_test_repair import RUN as REPAIR_RUN, LINKED_RUN, prepare as prepare_repair
+    if run_id in {REPAIR_RUN, LINKED_RUN}:
         return prepare_repair(root, run_id)
     require(run_id == RUN and os.environ["GITHUB_REPOSITORY"] == "iret77/nexgenvideo",
             "Only the pinned completed Release suite can resume")
