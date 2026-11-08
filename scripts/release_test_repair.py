@@ -345,6 +345,19 @@ def header_inputs(package, directory, headers):
     return tracked
 
 
+def testing_macro_input(compiler):
+    compiler = Path(compiler)
+    toolchain = compiler.parent.parent.resolve(strict=True)
+    directory = toolchain / "lib/swift/host/plugins/testing"
+    library = directory / "libTestingMacros.dylib"
+    require(compiler.is_absolute() and compiler.is_file() and compiler.name == "swiftc" and compiler.parent.name == "bin"
+            and compiler.resolve().is_relative_to(toolchain)
+            and library.is_file() and library.resolve().is_relative_to(toolchain),
+            "Swift Testing macro plugin is absent from the selected compiler toolchain")
+    return {"compiler": str(compiler), "compilerSHA256": checksum(compiler),
+            "directory": str(directory), "library": str(library), "librarySHA256": checksum(library)}
+
+
 def execute(root):
     require(os.environ.get("GITHUB_REPOSITORY") == "iret77/nexgenvideo" and os.environ.get("GITHUB_ACTIONS") == "true"
             and os.environ.get("GITHUB_JOB") == "release-build" and os.environ.get("GITHUB_RUN_ATTEMPT") == "1"
@@ -390,6 +403,8 @@ def execute(root):
     platform_root = Path(logged(["xcrun", "--sdk", "macosx", "--show-sdk-platform-path"], "platform").strip())
     developer_frameworks = platform_root / "Developer/Library/Frameworks"
     compiler = logged(["xcrun", "--find", "swiftc"], "swiftc").strip()
+    macros = testing_macro_input(compiler)
+    write(evidence / "testing-macro-input.json", macros)
     object_path = evidence / "NexGenVideoTests.o"
     bundle = root / "repaired/NexGenVideoTests.xctest"
     shutil.copytree(binary / "NexGenVideoTests.xctest", bundle, symlinks=True)
@@ -398,7 +413,7 @@ def execute(root):
              "-F", str(binary), "-I", str(binary)]
     for item in maps:
         flags += ["-I", item["headers"], "-Xcc", "-fmodule-map-file=" + item["moduleMap"]]
-    logged([compiler, *flags, "-c", "-parse-as-library", "-module-name", "NexGenVideoTests",
+    logged([compiler, *flags, "-plugin-path", macros["directory"], "-c", "-parse-as-library", "-module-name", "NexGenVideoTests",
             "-package-name", "nexgenvideo", "-swift-version", "6", "-O", "-g", "-whole-module-optimization",
             "-enable-testing", "-Xfrontend", "-enable-cross-import-overlays", "-D", "SWIFT_PACKAGE", "-emit-module", "-emit-module-path",
             str(evidence / "NexGenVideoTests.swiftmodule"), *(str(Path.cwd() / name) for name in TEST_SOURCES),
@@ -424,7 +439,8 @@ def execute(root):
                        "testObjectSHA256": checksum(object_path), "testBundleSHA256": checksum(image),
                        "appObjectSHA256": APP_OBJECT_SHA, "staticObjects": {
                            path.relative_to(binary).as_posix(): checksum(path) for path in objects},
-                       "clangInputsSHA256": checksum(root / "clang-inputs.json")}
+                       "clangInputsSHA256": checksum(root / "clang-inputs.json"),
+                       "testingMacroInput": macros}
     write(evidence / "compile-receipt.json", compile_receipt)
     logged(["/usr/bin/ditto", "-c", "-k", "--keepParent", str(bundle), str(root / "repaired-test-products.zip")],
            "archive-repaired-test-products", 180)

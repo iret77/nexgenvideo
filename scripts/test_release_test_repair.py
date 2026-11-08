@@ -119,6 +119,38 @@ class ScopedReleaseRepairTests(unittest.TestCase):
                 repair.execute(Path("/nonexistent/repair"))
             run.assert_not_called()
 
+    def test_testing_macros_must_belong_to_the_selected_compiler_toolchain(self):
+        for mode in ("valid", "missing", "foreign", "compiler-symlink"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary).resolve()
+                compiler = root / "toolchain/usr/bin/swiftc"
+                compiler.parent.mkdir(parents=True)
+                driver = compiler.parent / "swift-driver"
+                driver.write_bytes(b"selected compiler")
+                if mode == "compiler-symlink":
+                    compiler.symlink_to(driver)
+                else:
+                    compiler.write_bytes(b"selected compiler")
+                directory = root / "toolchain/usr/lib/swift/host/plugins/testing"
+                directory.mkdir(parents=True)
+                library = directory / "libTestingMacros.dylib"
+                if mode == "missing":
+                    with self.assertRaises(ValueError):
+                        repair.testing_macro_input(compiler)
+                    continue
+                if mode == "foreign":
+                    outside = root / "foreign-macro.dylib"
+                    outside.write_bytes(b"another toolchain")
+                    library.symlink_to(outside)
+                    with self.assertRaises(ValueError):
+                        repair.testing_macro_input(compiler)
+                    continue
+                library.write_bytes(b"selected Testing plugin")
+                value = repair.testing_macro_input(compiler)
+                self.assertEqual(value["directory"], str(directory))
+                self.assertEqual(value["compilerSHA256"], repair.sha(b"selected compiler"))
+                self.assertEqual(value["librarySHA256"], repair.sha(b"selected Testing plugin"))
+
     def test_compiler_products_are_uploaded_and_confirmed_before_any_scoped_test(self):
         workflow = (ROOT / ".github/workflows/release.yml").read_text()
         names = ("Compile the changed App test module using retained products", "Upload repaired test products before execution",
