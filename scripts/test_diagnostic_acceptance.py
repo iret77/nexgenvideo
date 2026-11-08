@@ -13,9 +13,157 @@ import zipfile
 import yaml
 
 from hang_diagnostic_acceptance import capture_helper_failure, verify_helper_recovery, verify_retained_key
-from verify_diagnostic_candidate import APP_DIAGNOSTIC_PATHS, BPY_DIAGNOSTIC_PATHS, CI_HARNESS_PATHS, HARNESS_PATHS, verify, verify_app_crash_archive, verify_app_diagnostic, verify_bpy_diagnostic, verify_ci
+from verify_diagnostic_candidate import APP_DIAGNOSTIC_PATHS, BPY_DIAGNOSTIC_PATHS, CAPTURE_HARNESS_PATHS, CI_HARNESS_PATHS, HARNESS_PATHS, verify, verify_app_crash_archive, verify_app_diagnostic, verify_bpy_diagnostic, verify_ci
 from verify_diagnostic_candidate import SIGNED_BPY_HARNESS_PATHS, SIGNED_JOURNEY_HARNESS_PATHS, verify_signed_bpy, verify_signed_journey
 from verify_diagnostic_candidate import SIGNED_DESKTOP_HARNESS_PATHS, SIGNED_WORKSPACE_HARNESS_PATHS, verify_signed_desktop, verify_signed_workspace
+
+
+class CaptureOriginalRetentionTests(unittest.TestCase):
+    def test_initial_capture_failure_preserves_original_exception_and_owned_bytes(self):
+        import hang_diagnostic_acceptance as capture
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            root = home / "Library/Logs/NexGenVideo/HangIncidents"
+            output = home / "evidence"
+            error = AssertionError("three dropped snapshots")
+
+            def fail(args):
+                folder = root / "own-recording"
+                folder.mkdir(parents=True)
+                (folder / "heartbeat.json").write_text(json.dumps({"processID": 123, "dropped": 3}))
+                (folder / "events-1.json").write_bytes(b'[{"sequence":1}]')
+                (folder / "self-1.stacks").write_bytes(b"exact original stack\x00\xff")
+                capture._capture_processes[123] = "wait"
+                raise error
+
+            with patch.object(capture.Path, "home", return_value=home), \
+                    patch.object(sys, "argv", ["capture", "App.app", "Symbols.dSYM", "--output", str(output)]), \
+                    patch.object(capture, "verify", side_effect=fail):
+                with self.assertRaises(AssertionError) as raised:
+                    capture.main()
+            self.assertIs(raised.exception, error)
+            with zipfile.ZipFile(output / "capture-recordings.zip") as archive:
+                self.assertEqual(archive.read("own-recording/self-1.stacks"), b"exact original stack\x00\xff")
+                self.assertEqual(json.loads(archive.read("own-recording/heartbeat.json"))["dropped"], 3)
+            receipt = json.loads((output / "capture-originals.json").read_text())
+            self.assertEqual(receipt["recordings"], [{"name": "own-recording", "pid": 123, "mode": "wait"}])
+            self.assertFalse(receipt["captureErrors"])
+
+    def test_capture_process_keeps_raw_output_and_closed_stdin(self):
+        import hang_diagnostic_acceptance as capture
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+
+            def spawn(command, **kwargs):
+                self.assertEqual(command, ["App.app/Contents/MacOS/NexGenVideo"])
+                self.assertEqual(kwargs["stdin"], subprocess.DEVNULL)
+                self.assertEqual(kwargs["stderr"], subprocess.STDOUT)
+                kwargs["stdout"].write(b"raw output before failure\x00\xff")
+                return SimpleNamespace(pid=123)
+
+            with patch.object(capture.subprocess, "Popen", side_effect=spawn), \
+                    patch.dict(capture._capture_processes, {}, clear=True):
+                capture.launch_capture(["App.app/Contents/MacOS/NexGenVideo"], {}, output, "wait")
+                self.assertEqual(capture._capture_processes, {123: "wait"})
+            self.assertEqual((output / "capture-wait.log").read_bytes(), b"raw output before failure\x00\xff")
+
+    def test_retention_write_failure_never_masks_original_capture_failure(self):
+        import hang_diagnostic_acceptance as capture
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            error = AssertionError("original capture failure")
+            with patch.object(capture.Path, "home", return_value=home), \
+                    patch.object(sys, "argv", ["capture", "App.app", "Symbols.dSYM", "--output", str(home / "evidence")]), \
+                    patch.object(capture, "verify", side_effect=error), \
+                    patch.object(capture, "retain_capture_recordings", side_effect=OSError), \
+                    patch.object(capture.sys, "stderr"):
+                with self.assertRaises(AssertionError) as raised:
+                    capture.main()
+            self.assertIs(raised.exception, error)
+
+    def test_retention_refuses_foreign_recordings_and_symlink_escapes(self):
+        import hang_diagnostic_acceptance as capture
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "recordings"
+            output = Path(directory) / "evidence"
+            output.mkdir()
+            for name, pid in (("foreign", 456), ("linked", 123)):
+                folder = root / name
+                folder.mkdir(parents=True)
+                (folder / "heartbeat.json").write_text(json.dumps({"processID": pid}))
+            secret = Path(directory) / "outside"
+            secret.write_bytes(b"must never be archived")
+            (root / "linked/escape").symlink_to(secret)
+            with patch.dict(capture._capture_processes, {123: "wait"}, clear=True):
+                receipt = capture.retain_capture_recordings(root, set(), output)
+            with zipfile.ZipFile(output / "capture-recordings.zip") as archive:
+                self.assertEqual(archive.namelist(), [])
+            self.assertEqual(receipt["unmatched"], [{"name": "foreign", "reason": "unowned-process"}])
+            self.assertEqual(receipt["captureErrors"], [{"name": "linked", "error": "ValueError"}])
+
+    def test_startup_and_all_four_key_children_can_use_the_recorded_launcher(self):
+        import hang_diagnostic_acceptance as capture
+        import verify_hang_startup as startup
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            process = Mock(pid=123)
+            process.poll.return_value = None
+            launch = Mock(return_value=process)
+            with patch.object(startup.Path, "home", return_value=home), \
+                    patch.object(startup.time, "monotonic", side_effect=[0, 16]):
+                result = startup.verify_startup(home / "App.app", starts=0, launch=launch)
+            self.assertTrue(result["disabledChecked"])
+            self.assertEqual(launch.call_args.args[2], "0-disabled")
+            process.terminate.assert_called_once()
+            children = [Mock(returncode=code) for code in [0, 70, 70, 0]]
+            for child in children:
+                child.poll.return_value = child.returncode
+            with patch.object(capture, "launch_capture", side_effect=children) as launch:
+                capture.verify_retained_key(home / "App.app", "hang-diagnostic-" + "a" * 8 + "-" + "b" * 4 +
+                    "-" + "c" * 4 + "-" + "d" * 4 + "-" + "e" * 12, "generated-test-key", output=home)
+            self.assertEqual([call.args[3] for call in launch.call_args_list],
+                             ["retained-key-0", "retained-key-1", "retained-key-2", "retained-key-3"])
+            for child in children:
+                child.wait.assert_called_once_with(timeout=15)
+
+    def test_rc_capture_reuses_only_exact_owned_macrunner_release_and_unchanged_app(self):
+        from copy import deepcopy
+        source, digest = "a" * 40, "b" * 64
+        run = dict(id=12, head_sha=source, path=".github/workflows/release.yml", event="workflow_dispatch",
+                   head_branch="iret77/rc-delivery-base", status="completed", run_attempt=1,
+                   repository=dict(full_name="iret77/nexgenvideo"), actor=dict(login="iret77"))
+        jobs = dict(total_count=1, jobs=[dict(name="release", status="completed", conclusion="success",
+                    run_id=12, head_sha=source, run_attempt=1, labels=["macrunner"],
+                    started_at="2026-11-08T00:00:00Z", completed_at="2026-11-08T00:10:00Z")])
+        artifact = dict(id=34, name="diagnostic-release-evidence", expired=False, digest="sha256:" + digest,
+                        workflow_run=dict(id=12, head_sha=source), created_at="2026-11-08T00:05:00Z",
+                        updated_at="2026-11-08T00:05:01Z", expires_at="2099-01-01T00:00:00Z")
+        changed = {".github/workflows/diagnostic-acceptance.yml", ".github/workflows/release.yml",
+                   "scripts/hang_diagnostic_acceptance.py", "scripts/verify_hang_startup.py",
+                   "scripts/verify_diagnostic_candidate.py", "scripts/test_diagnostic_acceptance.py"}
+        self.assertEqual(CAPTURE_HARNESS_PATHS, changed)
+        verify(run, jobs, artifact, 12, source, 34, digest, changed)
+        for field, bad in (("actor", dict(login="foreign")), ("run_attempt", 2), ("head_sha", "c" * 40)):
+            changed = deepcopy(run)
+            changed[field] = bad
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                verify(changed, jobs, artifact, 12, source, 34, digest, HARNESS_PATHS)
+        jobs["jobs"][0]["labels"] = ["macos-27"]
+        with self.assertRaisesRegex(ValueError, "macrunner"):
+            verify(run, jobs, artifact, 12, source, 34, digest, HARNESS_PATHS)
+        jobs["jobs"][0]["labels"] = ["macrunner"]
+        with self.assertRaisesRegex(ValueError, "application or build inputs"):
+            verify(run, jobs, artifact, 12, source, 34, digest, [*HARNESS_PATHS, "Sources/NexGenVideo/App/AppDelegate.swift"])
+
+    def test_both_registered_capture_callers_retain_all_logs_and_original_recordings(self):
+        root = Path(__file__).resolve().parents[1]
+        for filename, jobname in (("diagnostic-acceptance.yml", "acceptance"), ("release.yml", "diagnostic-acceptance")):
+            workflow = yaml.safe_load((root / ".github/workflows" / filename).read_text())
+            upload = next(step for step in workflow["jobs"][jobname]["steps"]
+                          if step.get("with", {}).get("name") == "diagnostic-runtime-acceptance")
+            self.assertEqual(upload["if"], "always()")
+            self.assertIn("evidence/*.log", upload["with"]["path"].splitlines())
+            self.assertIn("evidence/capture-*.zip", upload["with"]["path"].splitlines())
 
 
 class DiagnosticCompiledClientRouteTests(unittest.TestCase):

@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import time
 import uuid
@@ -14,6 +15,51 @@ import zipfile
 
 from analyze_hang_diagnostics import analyze
 from verify_hang_startup import verify_startup
+
+_capture_processes = {}
+
+
+def launch_capture(command, environment, output, name):
+    with (output / f"capture-{name}.log").open("xb") as log:
+        process = subprocess.Popen(command, env=environment, stdin=subprocess.DEVNULL,
+                                   stdout=log, stderr=subprocess.STDOUT)
+    _capture_processes[process.pid] = name
+    return process
+
+
+def retain_capture_recordings(root, before, output):
+    receipt = {"schema": "hang-capture-originals/1", "processes": _capture_processes.copy(),
+               "recordings": [], "unmatched": [], "captureErrors": []}
+    try:
+        with zipfile.ZipFile(output / "capture-recordings.zip", "x", compression=zipfile.ZIP_DEFLATED) as archive:
+            for folder in sorted(set(root.glob("*")) - before):
+                try:
+                    if folder.is_symlink() or not folder.is_dir():
+                        receipt["unmatched"].append({"name": folder.name, "reason": "not-regular-directory"})
+                        continue
+                    heartbeat = json.loads((folder / "heartbeat.json").read_text())
+                    if not isinstance(heartbeat, dict) or heartbeat.get("processID") not in _capture_processes:
+                        receipt["unmatched"].append({"name": folder.name, "reason": "unowned-process"})
+                        continue
+                    files = []
+                    for path in sorted(folder.rglob("*")):
+                        if path.is_symlink():
+                            raise ValueError("recording contains a symlink")
+                        if path.is_file():
+                            files.append(path)
+                    if len(files) > 8192 or sum(path.stat().st_size for path in files) > 1024 * 1024 * 1024:
+                        raise ValueError("recording exceeds capture bounds")
+                    receipt["recordings"].append({"name": folder.name, "pid": heartbeat["processID"],
+                                                   "mode": _capture_processes[heartbeat["processID"]]})
+                    for path in files:
+                        archive.write(path, path.relative_to(root))
+                except (OSError, ValueError, TypeError) as error:
+                    receipt["captureErrors"].append({"name": folder.name, "error": type(error).__name__})
+    except (OSError, ValueError) as error:
+        receipt["captureErrors"].append({"error": type(error).__name__})
+    finally:
+        (output / "capture-originals.json").write_text(json.dumps(receipt, indent=2) + "\n")
+    return receipt
 
 
 def main():
@@ -30,7 +76,21 @@ def main():
     else:
         if args.symbols is None:
             parser.error("symbols are required for full diagnostic acceptance")
-        verify(args)
+        root = Path.home() / "Library/Logs/NexGenVideo/HangIncidents"
+        before = set(root.glob("*"))
+        args.output.mkdir(parents=True, exist_ok=True)
+        _capture_processes.clear()
+        try:
+            verify(args)
+        except BaseException:
+            try:
+                retain_capture_recordings(root, before, args.output)
+            except Exception as error:
+                print(f"Capture retention failed: {type(error).__name__}", file=sys.stderr)
+            raise
+        else:
+            receipt = retain_capture_recordings(root, before, args.output)
+            assert not receipt["captureErrors"], receipt
 
 
 def verify(args):
@@ -48,9 +108,8 @@ def verify(args):
         test_environment = {**os.environ, "NGV_HANG_SELFTEST": mode}
         if mode == "wait":
             test_environment.update(NGV_HANG_SELFTEST_KEY=str(key_file), NGV_HANG_SELFTEST_EXPORT=str(exported))
-        process = subprocess.Popen([str(args.app / "Contents/MacOS/NexGenVideo")],
-                                   env=test_environment,
-                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        process = launch_capture([str(args.app / "Contents/MacOS/NexGenVideo")],
+                                 test_environment, args.output, mode)
         try:
             process.wait(timeout=65)
         except subprocess.TimeoutExpired:
@@ -91,17 +150,30 @@ def verify(args):
             export = exported / folder.name
             assert list(export.glob("replay-*.enc")), "encrypted replay content missing"
             assert (export / "checksums.json").is_file()
+            files = sorted(path for path in export.rglob("*") if path.is_file())
+            assert all(not path.is_symlink() for path in export.rglob("*")), "export contains a symlink"
+            assert len(files) <= 8192 and sum(path.stat().st_size for path in files) <= 1024 * 1024 * 1024
+            with zipfile.ZipFile(args.output / "capture-wait-export.zip", "x", compression=zipfile.ZIP_DEFLATED) as archive:
+                for path in files:
+                    archive.write(path, path.relative_to(export))
             summary = analyze(export)
+            (args.output / "capture-wait-analysis.json").write_text(json.dumps(summary, indent=2) + "\n")
             assert summary["eventCount"] > 0 and not summary["gaps"], summary
             replay_environment = {**os.environ, "NGV_DIAGNOSTIC_REPLAY": str(export),
                                   "NGV_DIAGNOSTIC_KEY_FILE": str(key_file)}
             command = [str(args.app / "Contents/MacOS/NexGenVideo")]
-            subprocess.run(command, env=replay_environment, check=True, timeout=65,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            replay = launch_capture(command, replay_environment, args.output, "replay")
+            try:
+                replay.wait(timeout=65)
+            finally:
+                if replay.poll() is None:
+                    replay.kill()
+                    replay.wait(timeout=5)
+            assert replay.returncode == 0, replay.returncode
             reached = Path(temporary.name) / "fault-reached"
-            fault = subprocess.Popen(command, env={**replay_environment, "NGV_DIAGNOSTIC_REPLAY_FAULT": "1",
-                                     "NGV_DIAGNOSTIC_REPLAY_FAULT_REACHED": str(reached)},
-                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            fault = launch_capture(command, {**replay_environment, "NGV_DIAGNOSTIC_REPLAY_FAULT": "1",
+                                   "NGV_DIAGNOSTIC_REPLAY_FAULT_REACHED": str(reached)},
+                                   args.output, "replay-fault")
             try:
                 fault.wait(timeout=12)
             except subprocess.TimeoutExpired:
@@ -113,8 +185,8 @@ def verify(args):
         temporary.cleanup()
         results.append({"mode": mode, "samples": len(stacks), "symbolizedMarker": marker, "passed": True})
     before = set(root.glob("*"))
-    process = subprocess.Popen([str(args.app / "Contents/MacOS/NexGenVideo")],
-        env={**os.environ, "NGV_HANG_SELFTEST": "wait"}, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    process = launch_capture([str(args.app / "Contents/MacOS/NexGenVideo")],
+        {**os.environ, "NGV_HANG_SELFTEST": "wait"}, args.output, "force-quit")
     try:
         deadline = time.monotonic() + 20
         folder = None
@@ -145,8 +217,9 @@ def verify(args):
             process.wait(timeout=5)
     retained_recordings.append(folder)
     results.append(verify_helper_recovery(args.app, output=args.output))
-    results.append(verify_startup(args.app, protected_recordings=retained_recordings))
-    verify_retained_key(args.app, replay_account, replay_key)
+    results.append(verify_startup(args.app, protected_recordings=retained_recordings,
+        launch=lambda command, env, name: launch_capture(command, env, args.output, "startup-" + name)))
+    verify_retained_key(args.app, replay_account, replay_key, output=args.output)
     results.append({"mode": "replay-key-retention", "passed": True})
     (args.output / "result.json").write_text(json.dumps(results, indent=2))
 
@@ -204,6 +277,7 @@ def verify_helper_recovery(app, *, output):
             env={**os.environ, "NGV_HANG_SELFTEST": "helper-restart"},
             stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
         )
+        _capture_processes[process.pid] = "helper-restart"
         process.wait(timeout=65)
         assert process.returncode == 0, process.returncode
         folders = set(root.glob("*")) - before
@@ -238,23 +312,33 @@ def verify_helper_recovery(app, *, output):
             resources.close()
 
 
-def verify_retained_key(app, account, key):
+def verify_retained_key(app, account, key, *, output=None):
     if not account.startswith("hang-diagnostic-"):
         raise ValueError("expected a diagnostic recording account")
     recording_id = str(uuid.UUID(account.removeprefix("hang-diagnostic-")))
     digest = hashlib.sha256(key.encode()).hexdigest()
     wrong_digest = ("0" if digest[0] != "0" else "1") + digest[1:]
-    for candidate_id, expected_digest, exit_code in (
+    for index, (candidate_id, expected_digest, exit_code) in enumerate((
         (recording_id, digest, 0),
         (recording_id, wrong_digest, 70),
         (str(uuid.uuid4()), digest, 70),
         (recording_id, digest, 0),
-    ):
+    )):
         environment = {**os.environ, "NGV_HANG_SELFTEST": "verify-retained-key",
                        "NGV_HANG_SELFTEST_RECORDING_ID": candidate_id,
                        "NGV_HANG_SELFTEST_KEY_DIGEST": expected_digest}
-        result = subprocess.run([str(app / "Contents/MacOS/NexGenVideo")], env=environment,
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
+        command = [str(app / "Contents/MacOS/NexGenVideo")]
+        if output is None:
+            result = subprocess.run(command, env=environment, stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
+        else:
+            result = launch_capture(command, environment, output, f"retained-key-{index}")
+            try:
+                result.wait(timeout=15)
+            finally:
+                if result.poll() is None:
+                    result.kill()
+                    result.wait(timeout=5)
         assert result.returncode == exit_code, "retained key verification or its negative control failed"
 
 

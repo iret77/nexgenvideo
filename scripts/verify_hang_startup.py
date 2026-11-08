@@ -7,16 +7,17 @@ import subprocess
 import time
 
 
-def verify_startup(app, *, expect_recording=True, starts=6, protected_recordings=()):
+def verify_startup(app, *, expect_recording=True, starts=6, protected_recordings=(), launch=None):
     root = Path.home() / "Library/Logs/NexGenVideo/HangIncidents"
     retained = set(protected_recordings)
     environment = {k: v for k, v in os.environ.items() if not k.startswith("NGV_")}
     modes = ["structure" if i % 2 == 0 else "replay" for i in range(starts)] + ["disabled"]
-    for mode in modes:
+    for index, mode in enumerate(modes):
         before = {p for p in root.glob("*") if p.is_dir()}
-        process = subprocess.Popen([str(app / "Contents/MacOS/NexGenVideo"),
-                                    "-hangDiagnosticMode", mode], env=environment,
-                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        command = [str(app / "Contents/MacOS/NexGenVideo"), "-hangDiagnosticMode", mode]
+        process = (launch(command, environment, f"{index}-{mode}") if launch is not None else
+                   subprocess.Popen(command, env=environment, stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
         found = None
         try:
             deadline = time.monotonic() + 15

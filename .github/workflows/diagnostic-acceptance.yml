@@ -210,11 +210,11 @@ jobs:
                       or not re.fullmatch('[a-f0-9]{64}', os.environ['DMG_DIGEST'])
                       or any(os.environ[key] for key in ('EXTRA_SOURCE', 'EXTRA_PRODUCTS', 'EXTRA_FAILURE', 'EXTRA_PRODUCTS_SHA', 'EXTRA_FAILURE_SHA'))):
                   raise SystemExit('Public transport requires one passed journey, exact DMG, current source proof and no diagnostic reuse inputs.')
-          elif any(fields[1:]) or fields[0] and packaging is None:
+          elif any(fields[1:]) or fields[0] and packaging is None and os.environ['KIND'] != 'signed-release':
               raise SystemExit('Public transport inputs cannot be silently ignored by another mode.')
           PY
       - name: Reuse complete current merged PR source proof
-        if: inputs.candidate_kind == 'signed-transport' || inputs.candidate_kind == 'native-button-query' || inputs.candidate_kind == 'native-button-query-crash' || inputs.candidate_kind == 'native-button-query-crash-reuse' || inputs.packaging_producer_source_sha != ''
+        if: inputs.candidate_kind == 'signed-transport' || inputs.candidate_kind == 'native-button-query' || inputs.candidate_kind == 'native-button-query-crash' || inputs.candidate_kind == 'native-button-query-crash-reuse' || (inputs.candidate_kind == 'signed-release' && inputs.verified_pr_run_id != '') || inputs.packaging_producer_source_sha != ''
         env:
           GH_TOKEN: ${{ github.token }}
           VERIFIED_PR: ${{ inputs.verified_pr_run_id }}
@@ -262,7 +262,7 @@ jobs:
           if-no-files-found: error
           retention-days: 90
       - name: Verify signed acceptance tooling
-        if: inputs.candidate_kind == 'signed-release'
+        if: inputs.candidate_kind == 'signed-release' && inputs.verified_pr_run_id == ''
         run: python3 -m unittest discover -s scripts -p 'test_*.py'
       - name: Bind exact retained runtime failures
         if: inputs.candidate_kind == 'native-retained-failures'
@@ -982,7 +982,8 @@ jobs:
           name: diagnostic-runtime-acceptance
           path: |
             evidence/*.json
-            evidence/helper-recovery*.log
+            evidence/*.log
+            evidence/capture-*.zip
             evidence/helper-recovery-recordings.zip
           if-no-files-found: error
           retention-days: 90
