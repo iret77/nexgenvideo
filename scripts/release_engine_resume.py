@@ -74,6 +74,7 @@ ORIGINAL_PATHS = {
     "scripts/test_release_recovery.py", "scripts/test_release_workflow.py",
 }
 PATHS = ORIGINAL_PATHS | {
+    "scripts/test_swift_test_failure_propagation.py",
     "Sources/NexGenVideo/Resources/Changelog/changelog.json",
     "Sources/NexGenVideo/ThreeD/SpatialSceneSession.swift",
     "Sources/NexGenVideo/ThreeD/BpyRuntimeSelfTest.swift",
