@@ -160,7 +160,7 @@ private func availabilitySerializationProbes(folder: URL) throws {
         let destination = probes.appendingPathComponent(name + ".json")
         do {
             try AvailabilityJSON.write(["value": value], to: destination, stage: name, expectedProbe: true)
-            Issue.record("Invalid JSON value reached writing: " + name)
+            Issue.record("Invalid JSON value reached writing: \(name)")
         } catch let issue as AvailabilityJSONFailure {
             #expect(issue.reason == reason && !issue.path.isEmpty && !issue.runtimeType.isEmpty)
             #expect(!FileManager.default.fileExists(atPath: destination.path))
