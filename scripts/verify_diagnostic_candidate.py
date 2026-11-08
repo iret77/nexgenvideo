@@ -14,6 +14,7 @@ HARNESS_PATHS = {
     "scripts/verify_diagnostic_candidate.py",
     "scripts/test_diagnostic_acceptance.py",
 }
+CAPTURE_HARNESS_PATHS = HARNESS_PATHS | {".github/workflows/release.yml", "scripts/verify_hang_startup.py"}
 CI_HARNESS_PATHS = HARNESS_PATHS | {
     ".github/workflows/ci.yml",
     ".github/workflows/bpy-runtime-acceptance.yml",
@@ -297,6 +298,13 @@ def verify_ci(run, jobs, artifact, run_id, source_sha, artifact_id, digest, chan
 
 
 def verify(run, jobs, artifact, run_id, source_sha, artifact_id, digest, changed_paths):
+    if str(run.get("head_branch", "")).startswith("iret77/rc-"):
+        verify_signed_bpy(run, jobs, artifact, run_id, source_sha, artifact_id, digest,
+                          changed_paths, harness_paths=CAPTURE_HARNESS_PATHS)
+        release = next(job for job in jobs["jobs"] if job["name"] == "release")
+        if run.get("actor", {}).get("login") != "iret77" or release.get("labels") != ["macrunner"]:
+            raise ValueError("RC capture must retain an owned macrunner release")
+        return
     if not re.fullmatch(r"[0-9a-f]{40}", source_sha) or not re.fullmatch(r"[0-9a-f]{64}", digest):
         raise ValueError("invalid candidate identity")
     if (run["id"] != run_id or run["head_sha"] != source_sha

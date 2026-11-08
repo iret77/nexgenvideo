@@ -1743,6 +1743,7 @@ jobs:
             evidence/*.json
             evidence/*.log
             evidence/*.png
+            evidence/capture-*.zip
             evidence/helper-recovery-recordings.zip
             evidence/termination/
           retention-days: 90
