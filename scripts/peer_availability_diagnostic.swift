@@ -53,6 +53,23 @@ private enum AvailabilityJSON {
             if let number = value as? NSNumber {
                 return number.doubleValue.isFinite ? nil : fail("nonfinite-number")
             }
+            // Keep native payload types intact before Foundation can box them.
+            if !(type(of: value) is AnyClass) {
+                if let dictionary = value as? [String: Any] {
+                    guard dictionary.count <= remaining else { return fail("validation-budget") }
+                    for (key, item) in dictionary {
+                        if let issue = visit(item, path: path + [.key(key)], depth: depth + 1) { return issue }
+                    }
+                    return nil
+                }
+                if let array = value as? [Any] {
+                    guard array.count <= remaining else { return fail("validation-budget") }
+                    for (index, item) in array.enumerated() {
+                        if let issue = visit(item, path: path + [.index(index)], depth: depth + 1) { return issue }
+                    }
+                    return nil
+                }
+            }
             if let dictionary = value as? NSDictionary {
                 let identity = ObjectIdentifier(dictionary)
                 guard ancestors.insert(identity).inserted else { return fail("container-cycle") }
