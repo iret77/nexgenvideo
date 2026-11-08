@@ -626,6 +626,13 @@ jobs:
           sysctl -n hw.memsize hw.logicalcpu
           echo "Release SwiftPM scheduler jobs: 1"
 
+      - name: Record native test product paths before compilation
+        if: inputs.completed_release_tests_run_id == ''
+        run: |
+          python3 scripts/release_checkpoint.py native-test-products --phase plan \
+            --root "$RUNNER_TEMP/release-test-product-checkpoints" --scratch-path "$RUNNER_TEMP/release-tests" \
+            --cache-path "$NGV_SWIFTPM_CACHE_PATH"
+
       - name: Build the exact release test configuration
         if: inputs.completed_release_tests_run_id == ''
         # Testable release objects stay isolated from the production bundle build.
@@ -635,9 +642,57 @@ jobs:
         if: inputs.completed_release_tests_run_id == ''
         run: scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist
 
+      - name: Checkpoint successful native compiler products before staging
+        if: inputs.completed_release_tests_run_id == ''
+        run: |
+          python3 scripts/release_checkpoint.py native-test-products --phase compiler \
+            --root "$RUNNER_TEMP/release-test-product-checkpoints" --scratch-path "$RUNNER_TEMP/release-tests" \
+            --cache-path "$NGV_SWIFTPM_CACHE_PATH"
+
+      - name: Upload native compiler products before staging
+        id: native_compiler_products
+        if: inputs.completed_release_tests_run_id == ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-test-compiler-products-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-test-product-checkpoints/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Confirm compiler product upload before staging
+        if: inputs.completed_release_tests_run_id == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHECKPOINT_ID: ${{ steps.native_compiler_products.outputs.artifact-id }}
+          CHECKPOINT_DIGEST: ${{ steps.native_compiler_products.outputs.artifact-digest }}
+        run: |
+          python3 scripts/release_checkpoint.py confirm-native-test-products \
+            --root "$RUNNER_TEMP/release-test-product-checkpoints" \
+            --artifact-id "$CHECKPOINT_ID" --artifact-digest "$CHECKPOINT_DIGEST"
+
       - name: Stage release test runtime inputs
         if: inputs.completed_release_tests_run_id == ''
         run: scripts/stage_test_runtime.sh release "$RUNNER_TEMP/release-tests"
+
+      - name: Retain staged runtime products before native tests
+        if: inputs.completed_release_tests_run_id == ''
+        run: |
+          python3 scripts/release_checkpoint.py native-test-products --phase runtime \
+            --root "$RUNNER_TEMP/release-test-product-checkpoints" --scratch-path "$RUNNER_TEMP/release-tests" \
+            --cache-path "$NGV_SWIFTPM_CACHE_PATH"
+
+      - name: Upload staged runtime products before native tests
+        if: inputs.completed_release_tests_run_id == ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-test-runtime-products-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/release-test-product-checkpoints/runtime-*
+            ${{ runner.temp }}/release-test-product-checkpoints/compiler-upload.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Test the exact release configuration
         if: inputs.completed_release_tests_run_id == ''
@@ -649,12 +704,42 @@ jobs:
           export SWIFT_BACKTRACE=enable=yes,interactive=no,demangle=yes,cache=no
           TEST_COMMAND=(python3 scripts/run_macos_tests.py --cache-path "$NGV_SWIFTPM_CACHE_PATH" \
             -c release --scratch-path "$RUNNER_TEMP/release-tests" --swiftc-flag=-enable-testing \
+            --serialize-app-tests \
             --evidence "$RUNNER_TEMP/release-test-evidence")
           if [ -n "${RELEASE_ENGINE_RUN:-}" ]; then
             TEST_COMMAND+=(--retained-release-engine "$RUNNER_TEMP/release-engine")
           fi
           "${TEST_COMMAND[@]}" 2>&1 | tee release-test.log
           python3 scripts/verify_swift_test_output.py --log release-test.log --swift-testing-runs 2 --xctest-runs 2
+
+      - name: Record every available native product after success or failure
+        if: always() && inputs.completed_release_tests_run_id == ''
+        run: |
+          python3 scripts/release_checkpoint.py native-test-products --phase available \
+            --root "$RUNNER_TEMP/release-test-product-checkpoints" --scratch-path "$RUNNER_TEMP/release-tests" \
+            --cache-path "$NGV_SWIFTPM_CACHE_PATH"
+
+      - name: Preserve native checkpoint records after success or failure
+        if: always() && inputs.completed_release_tests_run_id == ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-test-product-evidence-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/release-test-product-checkpoints/*.json
+            ${{ runner.temp }}/native-test-python.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Preserve every available native product after failure
+        if: always() && (failure() || cancelled()) && inputs.completed_release_tests_run_id == '' && env.NGV_RELEASE_TEST_PRODUCTS_ROOT != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-test-partial-products-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ env.NGV_RELEASE_TEST_PRODUCTS_ROOT }}/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Upload release test evidence
         if: always() && inputs.completed_release_tests_run_id == ''

@@ -89,6 +89,8 @@ enum NativeButtonAccessibility {
         var rootInventoryComplete = false
         var chromeExclusions: [String: Node] = [:]
         var readerEvidence: NativeAXPeer.Evidence?
+        var windowAttributes: [String] = []
+        var windowAttributeStatuses: [String: Int32] = [:]
 
         var evidence: [String: Any] {
             ["plane": "public-AX", "pid": request.pid, "window": request.windowNumber,
@@ -102,8 +104,49 @@ enum NativeButtonAccessibility {
              "contentCandidates": contentCandidates, "contentRoots": contentRoots.map(\.evidence),
              "reportedRootCount": reportedRootCount, "rootInventoryComplete": rootInventoryComplete,
              "rootRivals": rootRivals.map(\.evidence), "chromeExclusions": chromeExclusions.mapValues(\.evidence),
+             "windowAttributes": windowAttributes, "windowAttributeStatuses": windowAttributeStatuses,
              "reader": readerEvidence?.evidence as Any? ?? NSNull()]
         }
+    }
+
+    private static let chromeAttributes = [kAXCloseButtonAttribute, kAXMinimizeButtonAttribute,
+        kAXZoomButtonAttribute, kAXFullScreenButtonAttribute, kAXToolbarButtonAttribute,
+        kAXGrowAreaAttribute, kAXTitleUIElementAttribute]
+
+    static func validatedWindowAttributes(_ value: Any) -> [String]? {
+        guard let names = value as? [String], !names.isEmpty, names.count <= 256,
+              Set(names).count == names.count,
+              names.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 256 }) else { return nil }
+        return names
+    }
+
+    static func supportedChromeAttributes(_ names: [String]) -> [String] {
+        let available = Set(names)
+        return chromeAttributes.filter { available.contains($0) }
+    }
+
+    private static func knownWindowAttributes(_ snapshot: Snapshot) -> Bool {
+        guard validatedWindowAttributes(snapshot.windowAttributes) != nil,
+              snapshot.windowAttributeStatuses["AXAttributeNames"] == AXError.success.rawValue,
+              snapshot.windowAttributeStatuses["timeout:AXAttributeNames"] == AXError.success.rawValue,
+              Set([kAXRoleAttribute, kAXPositionAttribute, kAXSizeAttribute, kAXChildrenAttribute])
+                .isSubset(of: Set(snapshot.windowAttributes)) else { return false }
+        let supported = Set(supportedChromeAttributes(snapshot.windowAttributes))
+        let queried = Set(snapshot.windowAttributeStatuses.keys.filter { !$0.hasPrefix("timeout:") && $0 != "AXAttributeNames" })
+        let allowed = Set(["AXAttributeNames", "timeout:AXAttributeNames"] + supported.flatMap { [$0, "timeout:" + $0] })
+        return Set(snapshot.windowAttributeStatuses.keys).isSubset(of: allowed)
+            && Set(snapshot.chromeExclusions.keys).isSubset(of: queried)
+            && supported.allSatisfy { attribute in
+                let status = snapshot.windowAttributeStatuses[attribute]
+                let timeout = snapshot.windowAttributeStatuses["timeout:" + attribute]
+                if status == nil && timeout == nil { return snapshot.chromeExclusions[attribute] == nil }
+                guard timeout == AXError.success.rawValue else { return false }
+                if status == AXError.success.rawValue {
+                    return snapshot.chromeExclusions[attribute].map { knownChrome($0, slot: attribute, request: snapshot.request) } == true
+                }
+                return [AXError.attributeUnsupported.rawValue, AXError.noValue.rawValue]
+                    .contains(status ?? AXError.failure.rawValue) && snapshot.chromeExclusions[attribute] == nil
+            }
     }
 
     static func read(_ request: Request, using session: NativeAXPeer.Session? = nil,
@@ -128,7 +171,7 @@ enum NativeButtonAccessibility {
         guard snapshot.complete, snapshot.failure == nil, snapshot.windowCandidates == 1,
               snapshot.request.pid == getpid(), snapshot.request.windowNumber > 0,
               snapshot.request.windowFrame.valid, probe.valid, !title.isEmpty,
-              snapshot.request.contentFrame.valid, snapshot.contentCandidates == 1,
+              snapshot.request.contentFrame.valid, knownWindowAttributes(snapshot), snapshot.contentCandidates == 1,
               snapshot.contentRoots.count == 1,
               knownContent(snapshot.contentRoots[0], request: snapshot.request),
               snapshot.rootRivals.filter({ knownContent($0, request: snapshot.request) }) == snapshot.contentRoots,
@@ -246,6 +289,20 @@ enum NativeButtonAccessibility {
             return status == .success ? result : nil
         }
 
+        func windowAttributes(_ element: AXUIElement, statuses: inout [String: Int32]) -> [String]? {
+            guard prepare(element, attribute: "AXAttributeNames", statuses: &statuses) else { return nil }
+            var raw: CFArray?
+            let status = AXUIElementCopyAttributeNames(element, &raw)
+            statuses["AXAttributeNames"] = status.rawValue
+            guard available() else { return nil }
+            guard status == .success else { failure = "AX-window-attributes:" + String(status.rawValue); return nil }
+            guard let raw, CFGetTypeID(raw) == CFArrayGetTypeID(),
+                  let names = validatedWindowAttributes(raw) else {
+                failure = "AX-invalid-window-attributes"; return nil
+            }
+            return names
+        }
+
         func string(_ element: AXUIElement, _ attribute: String, statuses: inout [String: Int32]) -> String? {
             guard let raw = value(element, attribute, statuses: &statuses) else { return nil }
             guard let string = raw as? String else { failure = "AX-invalid-string-" + attribute; return nil }
@@ -289,12 +346,16 @@ enum NativeButtonAccessibility {
                 .allSatisfy { node.statuses[$0] == AXError.success.rawValue }
     }
 
-    private static func knownChrome(_ node: Node, slot: String, request: Request) -> Bool {
+    private static func chromeRole(_ slot: String) -> String? {
         let roles = [kAXCloseButtonAttribute: kAXButtonRole, kAXMinimizeButtonAttribute: kAXButtonRole,
             kAXZoomButtonAttribute: kAXButtonRole, kAXFullScreenButtonAttribute: kAXButtonRole,
             kAXToolbarButtonAttribute: kAXButtonRole, kAXGrowAreaAttribute: kAXGrowAreaRole,
             kAXTitleUIElementAttribute: kAXStaticTextRole]
-        guard let expected = roles[slot], node.pid == request.pid, node.role == expected,
+        return roles[slot]
+    }
+
+    private static func knownChrome(_ node: Node, slot: String, request: Request) -> Bool {
+        guard let expected = chromeRole(slot), node.pid == request.pid, node.role == expected,
               let frame = node.frame, frame.known, request.windowFrame.rect.contains(frame.rect) else { return false }
         return [slot, "pid", kAXRoleAttribute, kAXPositionAttribute, kAXSizeAttribute]
             .allSatisfy { node.statuses[$0] == AXError.success.rawValue }
@@ -371,33 +432,13 @@ enum NativeButtonAccessibility {
             return result
         }
         let children = childValues.map { $0 as! AXUIElement }
-        let slots = [kAXCloseButtonAttribute, kAXMinimizeButtonAttribute, kAXZoomButtonAttribute,
-            kAXFullScreenButtonAttribute, kAXToolbarButtonAttribute, kAXGrowAreaAttribute, kAXTitleUIElementAttribute]
-        var chrome: [String: AXUIElement] = [:]
-        for slot in slots {
-            var statuses: [String: Int32] = [:]
-            guard let value = reader.value(root, slot, statuses: &statuses) else {
-                guard reader.available(), [AXError.attributeUnsupported.rawValue, AXError.noValue.rawValue]
-                    .contains(statuses[slot] ?? AXError.failure.rawValue) else {
-                    result.failure = reader.failure ?? "unknown-window-chrome"; return result
-                }
-                continue
-            }
-            guard CFGetTypeID(value) == AXUIElementGetTypeID() else {
-                result.failure = "invalid-window-chrome-type"; return result
-            }
-            let element = value as! AXUIElement
-            let pid = reader.pid(element, statuses: &statuses)
-            let role = reader.string(element, kAXRoleAttribute, statuses: &statuses)
-            let frame = reader.frame(element, statuses: &statuses)
-            let expected = slot == kAXTitleUIElementAttribute ? kAXStaticTextRole
-                : (slot == kAXGrowAreaAttribute ? kAXGrowAreaRole : kAXButtonRole)
-            guard reader.available(), pid == request.pid, role == expected, frame?.known == true else {
-                result.failure = reader.failure ?? "unknown-window-chrome-identity"; return result
-            }
-            chrome[slot] = element
-            result.chromeExclusions[slot] = Node(parent: nil, pid: pid ?? 0, role: role, title: nil,
-                label: nil, enabled: nil, frame: frame, statuses: statuses, childTypes: [])
+        guard let attributes = reader.windowAttributes(root, statuses: &result.windowAttributeStatuses) else {
+            result.failure = reader.failure ?? "window-attributes-unavailable"; return result
+        }
+        result.windowAttributes = attributes
+        guard Set([kAXRoleAttribute, kAXPositionAttribute, kAXSizeAttribute, kAXChildrenAttribute])
+            .isSubset(of: Set(attributes)) else {
+            result.failure = "incomplete-window-attribute-inventory"; return result
         }
         var roots: [AXUIElement] = [], seenRoots: [AXUIElement] = []
         result.reportedRootCount = children.count
@@ -410,21 +451,60 @@ enum NativeButtonAccessibility {
             let pid = reader.pid(element, statuses: &statuses)
             let role = reader.string(element, kAXRoleAttribute, statuses: &statuses)
             let frame = reader.frame(element, statuses: &statuses)
-            var observed = Node(parent: nil, pid: pid ?? 0, role: role, title: nil, label: nil,
+            let observed = Node(parent: nil, pid: pid ?? 0, role: role, title: nil, label: nil,
                 enabled: nil, frame: frame, statuses: statuses, childTypes: [])
-            observed.scopeExclusion = chrome.keys.sorted().first { slot in
-                chrome[slot].map { CFEqual($0, element) } == true
-            }
             result.rootRivals.append(observed)
-            guard reader.available(), pid == request.pid, role != nil, let frame, frame.known else {
+            guard reader.available(), pid == request.pid, role != nil, frame?.known == true else {
                 result.failure = reader.failure ?? "unreadable-content-root-rival"; return result
             }
             if knownContent(observed, request: request) {
                 roots.append(element); result.contentRoots.append(observed)
-            } else if frame.rect.intersects(request.contentFrame.rect),
-                      observed.scopeExclusion == nil {
+            }
+        }
+        var chrome: [String: AXUIElement] = [:]
+        for index in result.rootRivals.indices {
+            let observed = result.rootRivals[index]
+            guard !knownContent(observed, request: request),
+                  observed.frame?.rect.intersects(request.contentFrame.rect) == true else { continue }
+            let element = children[index]
+            for slot in supportedChromeAttributes(attributes) where chromeRole(slot) == observed.role {
+                if result.windowAttributeStatuses[slot] == nil {
+                    var statuses: [String: Int32] = [:]
+                    let value = reader.value(root, slot, statuses: &statuses)
+                    result.windowAttributeStatuses[slot] = statuses[slot]
+                    result.windowAttributeStatuses["timeout:" + slot] = statuses["timeout:" + slot]
+                    guard reader.available() else { result.failure = reader.failure; return result }
+                    if let value {
+                        guard CFGetTypeID(value) == AXUIElementGetTypeID() else {
+                            result.failure = "invalid-window-chrome-type"; return result
+                        }
+                        let candidate = value as! AXUIElement
+                        let pid = reader.pid(candidate, statuses: &statuses)
+                        let role = reader.string(candidate, kAXRoleAttribute, statuses: &statuses)
+                        let frame = reader.frame(candidate, statuses: &statuses)
+                        let declared = Node(parent: nil, pid: pid ?? 0, role: role, title: nil,
+                            label: nil, enabled: nil, frame: frame, statuses: statuses, childTypes: [])
+                        guard reader.available(), knownChrome(declared, slot: slot, request: request) else {
+                            result.failure = reader.failure ?? "unknown-window-chrome-identity"; return result
+                        }
+                        chrome[slot] = candidate
+                        result.chromeExclusions[slot] = declared
+                    } else if ![AXError.attributeUnsupported.rawValue, AXError.noValue.rawValue]
+                        .contains(statuses[slot] ?? AXError.failure.rawValue) {
+                        result.failure = "unknown-window-chrome"; return result
+                    }
+                }
+            }
+            let matches = chrome.keys.filter { slot in
+                chrome[slot].map { CFEqual($0, element) } == true
+                    && result.chromeExclusions[slot]?.pid == observed.pid
+                    && result.chromeExclusions[slot]?.role == observed.role
+                    && result.chromeExclusions[slot]?.frame == observed.frame
+            }
+            guard matches.count == 1, let slot = matches.first else {
                 result.failure = "intersecting-unclassified-content-root-rival"; return result
             }
+            result.rootRivals[index].scopeExclusion = slot
         }
         result.contentCandidates = roots.count
         result.rootInventoryComplete = true

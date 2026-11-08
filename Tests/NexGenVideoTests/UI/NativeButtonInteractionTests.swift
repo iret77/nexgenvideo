@@ -142,6 +142,8 @@ struct NativeButtonInteractionTests {
         value.contentRoots = [node(role: kAXGroupRole, frame: value.request.contentFrame)]
         value.rootRivals = value.contentRoots
         value.reportedRootCount = 1; value.rootInventoryComplete = true
+        value.windowAttributes = [kAXRoleAttribute, kAXPositionAttribute, kAXSizeAttribute, kAXChildrenAttribute]
+        value.windowAttributeStatuses = ["AXAttributeNames": 0, "timeout:AXAttributeNames": 0]
         return value
     }
 
@@ -488,4 +490,59 @@ struct NativeButtonInteractionTests {
         #expect(outcome.1.clean)
     }
 
+    @Test func malformedOrAmbiguousWindowAttributeListsAreRejected() {
+        let valid = [kAXRoleAttribute, kAXChildrenAttribute]
+        #expect(Query.validatedWindowAttributes(valid) == valid)
+        let invalid: [Any] = [[String](), [kAXRoleAttribute, kAXRoleAttribute], [""], [1],
+            [String(repeating: "x", count: 257)], (0...256).map { "AX\($0)" }, ["AXRole": true]]
+        for value in invalid { #expect(Query.validatedWindowAttributes(value) == nil) }
+    }
+
+    @Test func chromeSupportNeverInventsAnUnadvertisedSlot() {
+        #expect(Query.supportedChromeAttributes([kAXChildrenAttribute, kAXCloseButtonAttribute]) == [kAXCloseButtonAttribute])
+        #expect(Query.supportedChromeAttributes([kAXGrowAreaAttribute]) == [kAXGrowAreaAttribute])
+        #expect(Query.supportedChromeAttributes([kAXChildrenAttribute]).isEmpty)
+    }
+
+    @Test func failedWindowAttributeAuthorityCannotQualifyContent() {
+        let original = snapshot([node()])
+        #expect(Query.buttons(original, title: "Undo", inside: probe).count == 1)
+        for key in ["AXAttributeNames", "timeout:AXAttributeNames"] {
+            var value = original
+            value.windowAttributeStatuses[key] = AXError.failure.rawValue
+            #expect(Query.buttons(value, title: "Undo", inside: probe).isEmpty)
+        }
+        var advertised = original
+        advertised.windowAttributes.append(kAXGrowAreaAttribute)
+        advertised.windowAttributeStatuses[kAXGrowAreaAttribute] = AXError.failure.rawValue
+        advertised.windowAttributeStatuses["timeout:" + kAXGrowAreaAttribute] = 0
+        #expect(Query.buttons(advertised, title: "Undo", inside: probe).isEmpty)
+        advertised.windowAttributeStatuses[kAXGrowAreaAttribute] = nil
+        advertised.windowAttributeStatuses["timeout:" + kAXGrowAreaAttribute] = nil
+        #expect(Query.buttons(advertised, title: "Undo", inside: probe).count == 1)
+        var unbound = advertised
+        unbound.rootRivals.append(Query.Node(parent: nil, pid: getpid(), role: kAXGrowAreaRole,
+            title: nil, label: nil, enabled: nil, frame: probe,
+            statuses: ["pid": 0, kAXRoleAttribute: 0, kAXPositionAttribute: 0, kAXSizeAttribute: 0], childTypes: []))
+        unbound.reportedRootCount += 1
+        #expect(Query.buttons(unbound, title: "Undo", inside: probe).isEmpty)
+        advertised.windowAttributeStatuses["timeout:" + kAXGrowAreaAttribute] = 0
+        advertised.windowAttributeStatuses[kAXGrowAreaAttribute] = 0
+        #expect(Query.buttons(advertised, title: "Undo", inside: probe).isEmpty)
+    }
+
+    @Test func actualWindowAttributeInventoryIsBoundToTheCompleteContent() async throws {
+        let fixture = Fixture()
+        defer { fixture.close() }
+        let outcome = try await NativeAXPeer.withSession { session in
+            let result = try await fixture.ready(using: session)
+            try #require(result.complete)
+            #expect(Query.validatedWindowAttributes(result.windowAttributes) != nil)
+            #expect(result.windowAttributeStatuses["AXAttributeNames"] == 0)
+            #expect(result.windowAttributeStatuses["timeout:AXAttributeNames"] == 0)
+            #expect(Set(result.chromeExclusions.keys).isSubset(of: Set(result.windowAttributes)))
+            #expect(Query.buttons(result, title: "Undo", inside: fixture.request.windowFrame).count == 1)
+        }
+        #expect(outcome.1.clean)
+    }
 }

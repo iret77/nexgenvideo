@@ -171,7 +171,8 @@ class SwiftTestFailurePropagationTests(unittest.TestCase):
                     expected = ["--cache-path", cache]
                     expected.extend(value.format(runtime=runtime) for value in configuration)
                     if filename == "release.yml":
-                        expected.extend(["--swiftc-flag=-enable-testing", "--evidence", runtime + "/release-test-evidence"])
+                        expected.extend(["--swiftc-flag=-enable-testing", "--serialize-app-tests",
+                                         "--evidence", runtime + "/release-test-evidence"])
                     else:
                         expected.extend(["--evidence", runtime + "/render-review-test-diagnostic/hosted-suite"])
                     self.assertEqual((root / "args").read_text().splitlines(), expected)

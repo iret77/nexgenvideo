@@ -558,6 +558,44 @@ class ReleaseWorkflowTests(unittest.TestCase):
                 if config == "release": expected += ["--jobs", "1"]
                 self.assertEqual(arguments, expected + ["-c", config])
 
+    def test_native_products_survive_staging_and_execution_failures(self):
+        steps = self.workflow()['jobs']['release-build']['steps']
+        names = [step.get('name') for step in steps]
+        by_name = {step.get('name'): step for step in steps}
+        ordered = ['Record native test product paths before compilation',
+                   'Build the exact release test configuration',
+                   'Checkpoint successful native compiler products before staging',
+                   'Upload native compiler products before staging',
+                   'Confirm compiler product upload before staging',
+                   'Stage release test runtime inputs',
+                   'Retain staged runtime products before native tests',
+                   'Upload staged runtime products before native tests',
+                   'Test the exact release configuration']
+        self.assertEqual(sorted(ordered, key=names.index), ordered)
+        for name in ordered:
+            self.assertEqual(names.count(name), 1)
+            self.assertNotIn('continue-on-error', by_name[name])
+            self.assertEqual(by_name[name]['if'], "inputs.completed_release_tests_run_id == ''")
+        confirm = by_name['Confirm compiler product upload before staging']
+        self.assertEqual(confirm['env']['GH_TOKEN'], '${{ github.token }}')
+        self.assertEqual(confirm['env']['CHECKPOINT_ID'], '${{ steps.native_compiler_products.outputs.artifact-id }}')
+        self.assertEqual(confirm['env']['CHECKPOINT_DIGEST'], '${{ steps.native_compiler_products.outputs.artifact-digest }}')
+        metadata = by_name['Preserve native checkpoint records after success or failure']
+        self.assertEqual(metadata['if'], "always() && inputs.completed_release_tests_run_id == ''")
+        self.assertNotIn('NGV_RELEASE_TEST_PRODUCTS_ROOT', metadata['with']['path'])
+        self.assertIn('*.json', metadata['with']['path'])
+        partial = by_name['Preserve every available native product after failure']
+        self.assertEqual(partial['if'], "always() && (failure() || cancelled()) && inputs.completed_release_tests_run_id == '' && env.NGV_RELEASE_TEST_PRODUCTS_ROOT != ''")
+        self.assertEqual(partial['with']['path'], '${{ env.NGV_RELEASE_TEST_PRODUCTS_ROOT }}/')
+        self.assertTrue(partial['with']['include-hidden-files'])
+        for name in ('Upload native compiler products before staging', 'Upload staged runtime products before native tests'):
+            self.assertEqual(by_name[name]['with']['if-no-files-found'], 'error')
+            self.assertTrue(by_name[name]['with']['include-hidden-files'])
+        runtime = by_name['Upload staged runtime products before native tests']['with']['path']
+        self.assertIn('runtime-*', runtime)
+        self.assertNotIn('compiler-products.zip', runtime)
+        self.assertIn('--serialize-app-tests', by_name['Test the exact release configuration']['run'])
+
     def test_engine_resume_preserves_fresh_app_commands_and_failure_propagation(self):
         workflow = self.workflow()
         steps = {step.get("name"): step for step in workflow["jobs"]["release-build"]["steps"]}
@@ -581,7 +619,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
                 calls = [json.loads(line) for line in (root / "args.jsonl").read_text().splitlines()]
                 expected = ["scripts/run_macos_tests.py", "--cache-path", environment["NGV_SWIFTPM_CACHE_PATH"],
                             "-c", "release", "--scratch-path", environment["RUNNER_TEMP"] + "/release-tests",
-                            "--swiftc-flag=-enable-testing", "--evidence",
+                            "--swiftc-flag=-enable-testing", "--serialize-app-tests", "--evidence",
                             environment["RUNNER_TEMP"] + "/release-test-evidence"]
                 if retained:
                     expected += ["--retained-release-engine", environment["RUNNER_TEMP"] + "/release-engine"]
