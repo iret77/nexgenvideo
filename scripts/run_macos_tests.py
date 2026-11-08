@@ -622,6 +622,9 @@ def run(args):
     product_source = getattr(args, "product_source_sha", None)
     retained_root = getattr(args, "bin_root", None)
     retained_engine = getattr(args, "retained_release_engine", None)
+    serial_app = getattr(args, "serialize_app_tests", False)
+    if serial_app and (args.scope != "all" or args.configuration != "release" or args.filter or profile or retained_root):
+        raise VerificationError("App serialization requires the complete normal Release selection")
     if retained_engine and (args.scope != "all" or args.configuration != "release" or args.filter
             or profile or retained_root or not args.scratch_path or args.swiftc_flag != ["-enable-testing"]):
         raise VerificationError("Retained Engine proof requires the full normal testable Release configuration")
@@ -642,7 +645,7 @@ def run(args):
         raise VerificationError("The App diagnostic requires its explicit original product source")
     args.evidence.mkdir(parents=True, exist_ok=False)
     result_path = args.evidence / "suite.json"
-    result = {"schema": 1, "sourceSHA": source_sha, "scope": args.scope,
+    result = {"schema": 1, "sourceSHA": source_sha, "scope": args.scope, "serialAppTests": serial_app,
               "filter": args.filter, "completed": False, "phases": [],
               "configuration": args.configuration, "scratchPath": args.scratch_path}
     common = ["--cache-path", args.cache_path, "-c", args.configuration]
@@ -719,6 +722,8 @@ def run(args):
                            "--event-stream-output-path", str(events_path.resolve()), *filters]
             else:
                 command = [str(host), "--event-stream-version", "0", *filters]
+                if serial_app:
+                    command.append("--no-parallel")
                 environment = app_environment(environment, binary_root, bundle, folder)
                 environment.update(NGV_APPKIT_TEST_BUNDLE=str(bundle.resolve()),
                                    NGV_APPKIT_TEST_EVENTS=str(events_path.resolve()),
@@ -835,6 +840,7 @@ def main():
     parser.add_argument("--product-source-sha")
     parser.add_argument("--bin-root", type=Path)
     parser.add_argument("--retained-release-engine", type=Path)
+    parser.add_argument("--serialize-app-tests", action="store_true")
     args = parser.parse_args()
     if args.filter and not args.filter.strip():
         parser.error("An explicit filter cannot be whitespace only")

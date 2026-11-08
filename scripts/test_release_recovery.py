@@ -29,6 +29,95 @@ UUID = "12345678-1234-1234-1234-123456789abc"
 
 
 class ReleaseRecoveryTests(unittest.TestCase):
+    def native_checkpoint_fixture(self, root):
+        scratch = root / 'scratch'
+        binary = scratch / 'arm64-apple-macosx/release'
+        binary.mkdir(parents=True)
+        for name in ('NexGenVideoAppKitTestHost', 'NexGenVideoTests.xctest/Contents/MacOS/NexGenVideoTests'):
+            path = binary / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(name.encode())
+        proof = {'passed': True, 'platform': 'darwin', 'machine': 'arm64', 'version': '3.13.9 test',
+                 'executable': checkpoint.sys.executable,
+                 'interfaces': dict.fromkeys(('waitid', 'P_PID', 'WEXITED', 'WNOHANG', 'WNOWAIT',
+                                             'CLD_EXITED', 'CLD_KILLED', 'CLD_DUMPED'), True)}
+        (root / 'native-test-python.json').write_text(json.dumps(proof))
+        environment = {'GITHUB_REPOSITORY': checkpoint.REPOSITORY, 'GITHUB_ACTIONS': 'true',
+                       'GITHUB_JOB': 'release-build', 'GITHUB_RUN_ATTEMPT': '1', 'GITHUB_RUN_ID': '123',
+                       'GITHUB_SHA': SOURCE, 'RUNNER_TEMP': str(root), 'GITHUB_ENV': str(root / 'environment')}
+        def output(command, **kwargs):
+            if command[:2] == ['xcrun', 'dwarfdump']: return 'UUID: ' + UUID
+            if command[:3] == ['git', 'diff', '--no-renames']: return 'Sources/NexGenVideo/Resources/Info.plist\n'
+            if command == ['git', 'rev-parse', 'HEAD']: return SOURCE + '\n'
+            if command[:2] == ['git', 'rev-parse']: return 'b' * 40 + '\n'
+            raise AssertionError(command)
+        return scratch, binary, proof, environment, output
+
+    def test_native_compiler_archive_precedes_runtime_and_requires_both_images(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            scratch, binary, proof, environment, output = self.native_checkpoint_fixture(root)
+            saved = root / 'checkpoints'
+            def archive(*command):
+                self.assertEqual(command[:4], ('ditto', '-c', '-k', '--keepParent'))
+                self.assertEqual(Path(command[4]), binary)
+                Path(command[5]).write_bytes(b'exact-archive')
+            query = subprocess.CompletedProcess([], 0, str(binary) + '\n', '')
+            with patch.dict(os.environ, environment), patch.object(checkpoint.sys, 'platform', 'darwin'), chdir(ROOT), \
+                    patch.object(checkpoint.subprocess, 'run', return_value=query), \
+                    patch.object(checkpoint.subprocess, 'check_output', side_effect=output), patch.object(checkpoint, 'run', side_effect=archive):
+                checkpoint.native_test_products(saved, scratch, '/cache', 'compiler')
+                manifest = json.loads((saved / 'compiler-manifest.json').read_text())
+                self.assertEqual(len(manifest['images']), 2)
+                self.assertFalse(manifest['runtimeReady'])
+                self.assertEqual(manifest['sourceSHA'], SOURCE)
+                self.assertEqual(json.loads((saved / 'compiler-archive.json').read_text())['sha256'],
+                                 checkpoint.checksum(saved / 'compiler-products.zip'))
+                with self.assertRaises(ValueError): checkpoint.native_test_products(saved, scratch, '/cache', 'runtime')
+                (saved / 'compiler-upload.json').write_text('{}')
+                checkpoint.native_test_products(saved, scratch, '/cache', 'runtime')
+                self.assertTrue(json.loads((saved / 'runtime-manifest.json').read_text())['runtimeReady'])
+                (binary / 'NexGenVideoAppKitTestHost').unlink()
+                with self.assertRaises(ValueError): checkpoint.native_test_products(saved, scratch, '/cache', 'compiler')
+
+    def test_native_checkpoint_rejects_bad_python_foreign_source_and_escaped_paths(self):
+        for change in ('python', 'source', 'path', 'attempt'):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                scratch, binary, proof, environment, output = self.native_checkpoint_fixture(root)
+                if change == 'python':
+                    proof['interfaces']['WNOWAIT'] = False
+                    (root / 'native-test-python.json').write_text(json.dumps(proof))
+                if change == 'attempt': environment['GITHUB_RUN_ATTEMPT'] = '2'
+                def changed_output(command, **kwargs):
+                    return 'c' * 40 if change == 'source' and command == ['git', 'rev-parse', 'HEAD'] else output(command, **kwargs)
+                query = subprocess.CompletedProcess([], 0, str(binary) + '\n', '')
+                with patch.dict(os.environ, environment), patch.object(checkpoint.sys, 'platform', 'darwin'), chdir(ROOT), \
+                        patch.object(checkpoint.subprocess, 'run', return_value=query), \
+                        patch.object(checkpoint.subprocess, 'check_output', side_effect=changed_output):
+                    selected = root.parent / 'foreign-checkpoint' if change == 'path' else root / 'checkpoints'
+                    with self.assertRaises(ValueError): checkpoint.native_test_products(selected, scratch, '/cache', 'plan')
+
+    def test_compiler_upload_requires_exact_execution_identity_and_digest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _, _, _, environment, _ = self.native_checkpoint_fixture(root)
+            (root / 'compiler-archive.json').write_text(json.dumps({'sourceSHA': SOURCE, 'runID': '123'}))
+            artifact = {'id': 7, 'digest': 'sha256:' + 'd' * 64, 'name': 'release-test-compiler-products-123-a1',
+                        'workflow_run': {'id': 123, 'head_sha': SOURCE}, 'expired': False}
+            for change in (None, 'digest', 'source', 'expired'):
+                changed = copy.deepcopy(artifact)
+                if change == 'digest': changed['digest'] = 'sha256:' + 'e' * 64
+                if change == 'source': changed['workflow_run']['head_sha'] = 'f' * 40
+                if change == 'expired': changed['expired'] = True
+                with self.subTest(change=change), patch.dict(os.environ, environment), \
+                        patch.object(checkpoint.sys, 'platform', 'darwin'), patch.object(checkpoint, 'api', return_value=changed):
+                    if change:
+                        with self.assertRaises(ValueError): checkpoint.confirm_native_test_products(root, '7', 'd' * 64)
+                    else:
+                        checkpoint.confirm_native_test_products(root, '7', 'd' * 64)
+                        self.assertEqual(json.loads((root / 'compiler-upload.json').read_text())['artifact'], artifact)
+
     def original(self):
         run = {"id": native.RUN, "head_sha": native.SOURCE, "repository": {"full_name": checkpoint.REPOSITORY},
                "path": ".github/workflows/release.yml", "actor": {"login": "iret77"},

@@ -185,13 +185,19 @@ enum NativeAXPeer {
         if let value = object["snapshot"] {
             let value = try shape(value, required: ["request", "nodes", "windows", "cgWindows", "reportedWindowCount",
                 "applicationStatuses", "windowCandidates", "complete", "started", "finished", "readOnMainThread",
-                "contentRoots", "contentCandidates", "rootRivals", "reportedRootCount", "rootInventoryComplete", "chromeExclusions"],
+                "contentRoots", "contentCandidates", "rootRivals", "reportedRootCount", "rootInventoryComplete", "chromeExclusions",
+                "windowAttributes", "windowAttributeStatuses"],
                 optional: ["failure"])
             try request(value["request"])
             try nodes(value["nodes"], limit: 2048); try nodes(value["windows"], limit: 128)
             try nodes(value["contentRoots"], limit: 256); try nodes(value["rootRivals"], limit: 256)
             guard let windows = value["cgWindows"] as? [Any], windows.count <= 4096,
-                  let chrome = value["chromeExclusions"] as? [String: Any], chrome.count <= 7 else {
+                  let chrome = value["chromeExclusions"] as? [String: Any], chrome.count <= 7,
+                  let attributes = value["windowAttributes"] as? [String], attributes.count <= 256,
+                  Set(attributes).count == attributes.count,
+                  attributes.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 256 }),
+                  let attributeStatuses = value["windowAttributeStatuses"] as? [String: Any],
+                  attributeStatuses.count <= 16 else {
                 throw Failure("peer-nested-window-budget")
             }
             for window in windows {

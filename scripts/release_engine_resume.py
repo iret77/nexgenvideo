@@ -45,6 +45,8 @@ BUTTON_TEST_METHODS |= {
     "missingAmbiguousAndUnreadableContentRootsRemainUnqualified", "actualWindowFrameCannotSubstituteForTheContentRoot",
     "completedReplyCannotSurviveDeliveryCancellation", "trailingPartialDuplicateAndFailedPeerOutputCannotBecomeCleanEOF",
     "nestedPeerFieldsCannotBeSilentlyIgnored",
+    "malformedOrAmbiguousWindowAttributeListsAreRejected", "chromeSupportNeverInventsAnUnadvertisedSlot",
+    "failedWindowAttributeAuthorityCannotQualifyContent", "actualWindowAttributeInventoryIsBoundToTheCompleteContent",
 }
 APP_READER = "Sources/NexGenVideo/App/NativeAXPeer.swift"
 APP_HOST = "Tests/AppKitTestHost"

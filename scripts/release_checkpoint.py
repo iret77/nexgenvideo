@@ -9,6 +9,7 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tarfile
 import tempfile
 import zipfile
@@ -50,6 +51,95 @@ def tree_digest(root):
             raise ValueError("Signed payload contains a special file")
         digest.update(json.dumps([relative, mode, value], separators=(",", ":")).encode() + b"\n")
     return digest.hexdigest()
+
+
+def native_test_products(root, scratch, cache, phase):
+    require(os.environ.get('GITHUB_REPOSITORY') == REPOSITORY and os.environ.get('GITHUB_ACTIONS') == 'true'
+            and os.environ.get('GITHUB_JOB') == 'release-build' and os.environ.get('GITHUB_RUN_ATTEMPT') == '1'
+            and sys.platform == 'darwin', 'Native test products require the owned release job')
+    temporary = Path(os.environ['RUNNER_TEMP']).resolve()
+    require(root.resolve().is_relative_to(temporary) and scratch.resolve().is_relative_to(temporary),
+            'Native checkpoint paths must remain in the owned job')
+    root.mkdir(parents=True, exist_ok=True)
+    python_proof = json.loads((temporary / 'native-test-python.json').read_text())
+    required_python = ('waitid', 'P_PID', 'WEXITED', 'WNOHANG', 'WNOWAIT', 'CLD_EXITED', 'CLD_KILLED', 'CLD_DUMPED')
+    require(python_proof.get('passed') is True and python_proof.get('platform') == 'darwin'
+            and python_proof.get('machine') == 'arm64' and python_proof.get('version', '').startswith('3.13.')
+            and all(python_proof.get('interfaces', {}).get(key) is True for key in required_python)
+            and Path(python_proof.get('executable', '')).resolve() == Path(sys.executable).resolve(),
+            'Native Python capability proof failed')
+    argv = ['swift', 'build', '--cache-path', cache, '-c', 'release', '--scratch-path', str(scratch),
+            '-Xswiftc', '-enable-testing', '--show-bin-path']
+    query = subprocess.run(argv, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60)
+    require(query.returncode == 0 and len(query.stdout.strip().splitlines()) == 1, 'Native product metadata query failed')
+    binary = Path(query.stdout.strip()).resolve()
+    require(binary.is_relative_to(scratch.resolve()), 'Native product root escapes its scratch path')
+    with Path(os.environ['GITHUB_ENV']).open('a') as environment:
+        environment.write('NGV_RELEASE_TEST_PRODUCTS_ROOT=' + str(binary) + '\n')
+    source = os.environ['GITHUB_SHA']
+    require(subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip() == source,
+            'Native compiler checkpoint source differs')
+    dirty = subprocess.check_output(['git', 'diff', '--no-renames', '--name-only'], text=True).splitlines()
+    require(set(dirty) <= {'Sources/NexGenVideo/Resources/Info.plist'}, 'Native source changed beyond the release version')
+    if phase == 'runtime':
+        require((root / 'compiler-upload.json').is_file(), 'Confirmed compiler checkpoint required before runtime staging')
+    manifest = {'schema': 'release-native-products/v1', 'phase': phase, 'sourceSHA': source,
+                'runID': os.environ['GITHUB_RUN_ID'], 'attempt': '1', 'binaryRoot': str(binary),
+                'scratchPath': str(scratch), 'configuration': 'release', 'swiftcFlags': ['-enable-testing'],
+                'binPathCommand': argv, 'binPathStderr': query.stderr, 'pythonProof': python_proof,
+                'trackedDirtyPaths': dirty, 'runtimeReady': phase == 'runtime', 'images': {}, 'files': {}}
+    manifest['sourceObjects'] = {name: subprocess.check_output(['git', 'rev-parse', 'HEAD:' + name], text=True).strip()
+        for name in ('Sources', 'Engine', 'Tests', 'Package.swift', 'Package.resolved', 'Runtime', 'Metal', 'Vendor', 'plugins')}
+    manifest['recipeHashes'] = {name: checksum(Path(name)) for name in
+        ('.github/workflows/release.yml', 'scripts/run_macos_tests.py', 'scripts/stage_test_runtime.sh',
+         'scripts/compile_metal_resources.sh', 'scripts/stage_runtime_dependencies.sh',
+         '.github/actions/setup-native-test-python/action.yml')}
+    for path in sorted(binary.rglob('*')) if binary.is_dir() else []:
+        relative = path.relative_to(binary).as_posix()
+        metadata = {'mode': stat.S_IMODE(path.lstat().st_mode)}
+        if path.is_symlink():
+            metadata.update(kind='symlink', target=os.readlink(path))
+        elif path.is_file():
+            metadata.update(kind='file', bytes=path.stat().st_size, sha256=checksum(path))
+        elif path.is_dir():
+            metadata.update(kind='directory')
+        else:
+            raise ValueError('Native product contains a special file')
+        manifest['files'][relative] = metadata
+    for name in ('NexGenVideoAppKitTestHost', 'NexGenVideoTests.xctest/Contents/MacOS/NexGenVideoTests'):
+        path = binary / name
+        if path.is_file():
+            uuid = subprocess.check_output(['xcrun', 'dwarfdump', '--uuid', str(path)], text=True, timeout=30)
+            manifest['images'][name] = {'sha256': checksum(path), 'uuidOutput': uuid}
+    if phase in ('compiler', 'runtime'):
+        require(len(manifest['images']) == 2, 'Successful native product checkpoint is incomplete')
+        manifest['treeSHA256'] = tree_digest(binary)
+    write(root / (phase + '-manifest.json'), manifest)
+    if phase in ('compiler', 'runtime'):
+        archive = root / (phase + '-products.zip')
+        require(not archive.exists(), 'Native product archive already exists; never overwrite a checkpoint')
+        run('ditto', '-c', '-k', '--keepParent', str(binary), str(archive))
+        write(root / (phase + '-archive.json'), {'schema': 'release-native-product-archive/v1',
+              'sourceSHA': source, 'runID': os.environ['GITHUB_RUN_ID'], 'attempt': '1',
+              'phase': phase, 'bytes': archive.stat().st_size, 'sha256': checksum(archive),
+              'manifestSHA256': checksum(root / (phase + '-manifest.json'))})
+
+
+def confirm_native_test_products(root, artifact_id, artifact_digest):
+    require(os.environ.get('GITHUB_REPOSITORY') == REPOSITORY and os.environ.get('GITHUB_JOB') == 'release-build'
+            and os.environ.get('GITHUB_RUN_ATTEMPT') == '1' and sys.platform == 'darwin', 'Owned native release checkpoint required')
+    require(artifact_id and artifact_id.isdecimal() and int(artifact_id) > 0
+            and re.fullmatch('[a-f0-9]{64}', artifact_digest or ''), 'Exact successful compiler upload required')
+    artifact = api('actions/artifacts/' + artifact_id)
+    require(artifact['id'] == int(artifact_id) and artifact['digest'] == 'sha256:' + artifact_digest
+            and artifact['name'] == 'release-test-compiler-products-' + os.environ['GITHUB_RUN_ID'] + '-a1'
+            and artifact['workflow_run']['id'] == int(os.environ['GITHUB_RUN_ID'])
+            and artifact['workflow_run']['head_sha'] == os.environ['GITHUB_SHA'] and not artifact['expired'],
+            'Compiler checkpoint upload belongs to a different artifact or execution')
+    saved = json.loads((root / 'compiler-archive.json').read_text())
+    require(saved['sourceSHA'] == os.environ['GITHUB_SHA'] and saved['runID'] == os.environ['GITHUB_RUN_ID'],
+            'Compiler archive source differs')
+    write(root / 'compiler-upload.json', {'artifact': artifact, 'archive': saved})
 
 
 def validate_app_zip(path):
@@ -529,11 +619,24 @@ def restore_notary(root):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(allow_abbrev=False)
     parser.add_argument("operation", choices=("create", "prepare", "restore", "create-dmg",
-                                             "prepare-notary", "restore-notary"))
+                                             "prepare-notary", "restore-notary", "native-test-products", "confirm-native-test-products"))
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--run-id", type=int)
+    parser.add_argument("--scratch-path", type=Path)
+    parser.add_argument("--cache-path")
+    parser.add_argument("--phase", choices=('plan', 'compiler', 'runtime', 'available'))
+    parser.add_argument("--artifact-id")
+    parser.add_argument("--artifact-digest")
     args = parser.parse_args()
-    if args.operation == "create":
+    if args.operation not in ('native-test-products', 'confirm-native-test-products') and any(
+            (args.scratch_path, args.cache_path, args.phase, args.artifact_id, args.artifact_digest)):
+        parser.error('Native test checkpoint inputs cannot be ignored by another operation')
+    if args.operation == 'native-test-products':
+        require(args.scratch_path is not None and args.cache_path and args.phase, 'Exact native product selection required')
+        native_test_products(args.root, args.scratch_path, args.cache_path, args.phase)
+    elif args.operation == 'confirm-native-test-products':
+        confirm_native_test_products(args.root, args.artifact_id, args.artifact_digest)
+    elif args.operation == "create":
         create(args.root)
     elif args.operation == "prepare":
         prepare(args.run_id, args.root)

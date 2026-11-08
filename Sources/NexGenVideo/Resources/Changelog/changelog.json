@@ -3,7 +3,7 @@
   "entries": [
     {
       "version": "1.8.0",
-      "date": "2026-10-19",
+      "date": "2026-11-08",
       "sections": [
         {
           "heading": "Production",
@@ -19,6 +19,7 @@
           "heading": "Editing and delivery",
           "items": [
             "Location Undo and Redo claim their history action before a background refresh can intervene. Unavailable history actions show an explicit notice.",
+            "Native accessibility discovery identifies overlapping window controls from their declared attributes and exact element identity. Unreadable or ambiguous content remains unavailable.",
             "Production instructions, model capabilities and FCPXML schemas load from the installed app without requiring a development build folder.",
             "Object context connects production sources with shots, generated media and timeline placements. Shared editing and postproduction controls remain available throughout production.",
             "Film review findings open their exact timeline range and affected clips. Changed cuts or sources require a current review before navigation.",
