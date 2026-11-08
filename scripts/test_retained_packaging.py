@@ -810,7 +810,8 @@ class RetainedPackagingTests(unittest.TestCase):
                     packaging.verify_app_bytes(app, {'productSourceSHA': self.product})
 
     def test_shared_native_verifier_fingerprints_reject_missing_or_uncommitted_dependency(self):
-        for name in ('scripts/release_engine_resume.py', 'scripts/release_native_proof.py'):
+        dependencies = ('scripts/release_engine_resume.py', 'scripts/release_native_proof.py', 'scripts/release_test_repair.py')
+        for name in dependencies:
             self.assertIn(name, packaging.VERIFIER_INPUTS)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); committed = {name: name.encode() for name in packaging.VERIFIER_INPUTS}
@@ -823,10 +824,11 @@ class RetainedPackagingTests(unittest.TestCase):
             with patch.dict(os.environ, GITHUB_SHA=self.producer), patch.object(packaging, 'git', side_effect=git):
                 result = packaging.committed_inputs(packaging.VERIFIER_INPUTS, root)
                 self.assertEqual(set(result), set(packaging.VERIFIER_INPUTS))
-                (root / 'scripts/release_engine_resume.py').write_bytes(b'different verifier')
-                with self.assertRaisesRegex(ValueError, 'differs from committed bytes'):
-                    packaging.committed_inputs(packaging.VERIFIER_INPUTS, root)
-                (root / 'scripts/release_engine_resume.py').write_bytes(committed['scripts/release_engine_resume.py'])
+                for name in dependencies:
+                    (root / name).write_bytes(b'different verifier')
+                    with self.subTest(dependency=name), self.assertRaisesRegex(ValueError, 'differs from committed bytes'):
+                        packaging.committed_inputs(packaging.VERIFIER_INPUTS, root)
+                    (root / name).write_bytes(committed[name])
                 (root / 'scripts/release_native_proof.py').rename(root / 'outside-verifier')
                 with self.assertRaisesRegex(ValueError, 'not a regular file'):
                     packaging.committed_inputs(packaging.VERIFIER_INPUTS, root)

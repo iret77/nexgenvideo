@@ -145,12 +145,29 @@ struct GenerationBatchTests {
         }
     }
 
-    private func waitUntil(_ predicate: () -> Bool) async -> Bool {
-        for _ in 0..<1000 {
+    private func waitUntil(timeout: Duration = .seconds(2), _ predicate: () -> Bool) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while clock.now < deadline {
             if predicate() { return true }
-            await Task.yield()
+            do { try await clock.sleep(until: min(deadline, clock.now.advanced(by: .milliseconds(5)))) }
+            catch { return false }
         }
         return predicate()
+    }
+
+    @Test func boundedWaitObservesDelayedStateAndRejectsMissingState() async {
+        let clock = ContinuousClock()
+        let started = clock.now
+        var ready = false
+        let completion = Task { @MainActor in
+            try? await clock.sleep(for: .milliseconds(75))
+            ready = true
+        }
+        #expect(await waitUntil { ready })
+        await completion.value
+        #expect(started.duration(to: clock.now) >= .milliseconds(75))
+        #expect(await waitUntil(timeout: .milliseconds(20)) { false } == false)
     }
 
     @Test func busyPhasePreservesApprovedQueuedItemsAndDoesNotAdvanceTheBatchQueue() async throws {

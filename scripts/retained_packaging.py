@@ -31,7 +31,7 @@ PRODUCT_OBJECTS = ("Sources", "Engine", "Tests", "Runtime", "Metal", "Vendor", "
                    "Package.swift", "Package.resolved", "assets")
 VERIFIER_INPUTS = ('scripts/retained_packaging.py', 'scripts/retained_app_test_products.py',
                    'scripts/verified_pr_source_checks.py', 'scripts/release_checkpoint.py',
-                   'scripts/release_native_proof.py', 'scripts/release_engine_resume.py',
+                   'scripts/release_native_proof.py', 'scripts/release_engine_resume.py', 'scripts/release_test_repair.py',
                    'scripts/app_host_zombie_diagnostic.py', 'scripts/run_macos_tests.py',
                    'scripts/verify_swift_test_output.py', 'scripts/verify_diagnostic_candidate.py',
                    'scripts/release_acceptance_identity.py', 'scripts/external-gui/acceptance.py')

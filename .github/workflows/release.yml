@@ -591,8 +591,59 @@ jobs:
           path: ${{ runner.temp }}/release-native
 
       - name: Validate reused Release test environment
-        if: inputs.completed_release_tests_run_id != ''
+        if: inputs.completed_release_tests_run_id != '' && inputs.completed_release_tests_run_id != '42500881402'
         run: python3 scripts/release_native_proof.py environment --root "$RUNNER_TEMP/release-native"
+
+      - name: Compile the changed App test module using retained products
+        if: inputs.completed_release_tests_run_id == '42500881402'
+        timeout-minutes: 15
+        run: python3 scripts/release_test_repair.py build --root "$RUNNER_TEMP/release-native"
+
+      - name: Upload repaired test products before execution
+        if: inputs.completed_release_tests_run_id == '42500881402'
+        id: repaired_test_products
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-scoped-test-products-${{ github.run_id }}-a1
+          path: |
+            ${{ runner.temp }}/release-native/repaired-test-products.zip
+            ${{ runner.temp }}/release-native/built.json
+            ${{ runner.temp }}/release-native/clang-inputs.json
+            ${{ runner.temp }}/release-native/repair-evidence/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Confirm repaired test product upload
+        if: inputs.completed_release_tests_run_id == '42500881402'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPAIR_ARTIFACT: ${{ steps.repaired_test_products.outputs.artifact-id }}
+          REPAIR_DIGEST: ${{ steps.repaired_test_products.outputs.artifact-digest }}
+        run: |
+          python3 scripts/release_test_repair.py confirm --root "$RUNNER_TEMP/release-native" \
+            --artifact-id "$REPAIR_ARTIFACT" --artifact-digest "$REPAIR_DIGEST"
+
+      - name: Verify the complete changed GenerationBatch test scope
+        if: inputs.completed_release_tests_run_id == '42500881402'
+        timeout-minutes: 10
+        run: python3 scripts/release_test_repair.py run --root "$RUNNER_TEMP/release-native"
+
+      - name: Preserve every scoped test product and original execution record
+        if: always() && inputs.completed_release_tests_run_id == '42500881402'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-scoped-test-evidence-${{ github.run_id }}-a1
+          path: |
+            ${{ runner.temp }}/release-native/repair-evidence/
+            ${{ runner.temp }}/release-native/repaired/
+            ${{ runner.temp }}/release-native/*.json
+            ${{ runner.temp }}/release-native/*.modulemap
+            ${{ runner.temp }}/release-native/repaired-test-products.zip
+            ${{ runner.temp }}/native-test-python.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Restore completed Release Engine proof
         if: inputs.completed_engine_tests_run_id != ''
