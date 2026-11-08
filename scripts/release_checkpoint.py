@@ -192,8 +192,12 @@ def create(root):
     native = os.environ.get("RELEASE_NATIVE_PROOF", "")
     if native:
         evidence = json.loads(Path(native).read_text())
-        require(evidence.get("schema") == "release-native-reuse/v1"
-                and evidence.get("sourceSHA") == os.environ["GITHUB_SHA"], "Native release proof differs")
+        if evidence.get("schema") == "release-native-scoped-repair/v1":
+            from release_test_repair import verify_receipt
+            verify_receipt(evidence, os.environ["GITHUB_SHA"], int(os.environ["GITHUB_RUN_ID"]))
+        else:
+            require(evidence.get("schema") == "release-native-reuse/v1"
+                    and evidence.get("sourceSHA") == os.environ["GITHUB_SHA"], "Native release proof differs")
     else:
         suite = json.loads(Path(os.environ["RELEASE_TEST_EVIDENCE"]).joinpath("suite.json").read_text())
         require(suite.get("sourceSHA") == os.environ["GITHUB_SHA"] and suite.get("completed") is True
@@ -235,7 +239,10 @@ def verify_manifest(manifest, source, run_id):
             and isinstance(manifest.get("appTreeSHA256"), str)
             and re.fullmatch(r"[a-f0-9]{64}", manifest["appTreeSHA256"]), "Invalid signed App identity")
     evidence = manifest.get("nativeEvidence", {})
-    if evidence.get("schema") == "release-native-reuse/v1":
+    if evidence.get("schema") == "release-native-scoped-repair/v1":
+        from release_test_repair import verify_receipt
+        verify_receipt(evidence, source, run_id)
+    elif evidence.get("schema") == "release-native-reuse/v1":
         from release_native_proof import SOURCE, RUN, ARTIFACT, DIGEST
         require(evidence.get("sourceSHA") == source and evidence.get("originalSourceSHA") == SOURCE
                 and evidence.get("originalRun", {}).get("id") == RUN
