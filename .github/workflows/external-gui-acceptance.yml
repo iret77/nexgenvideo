@@ -57,8 +57,16 @@ on:
       scenario:
         description: Existing normal journey or targeted public transport actions
         type: choice
-        options: [journey, transport]
+        options: [journey, transport, normal-fresh-musicvideo]
         default: journey
+      expected_catalog_sha256:
+        description: Reviewed normal catalog bytes for fresh Musicvideo installation
+        type: string
+        default: ''
+      expected_pack_sha256:
+        description: Exact published Musicvideo 0.6.0 archive SHA256
+        type: string
+        default: ''
       verified_pr_run_id:
         type: string
         default: ''
@@ -115,6 +123,12 @@ on:
       scenario:
         type: string
         default: journey
+      expected_catalog_sha256:
+        type: string
+        default: ''
+      expected_pack_sha256:
+        type: string
+        default: ''
       verified_pr_run_id:
         type: string
         default: ''
@@ -166,6 +180,8 @@ jobs:
           RETAINED_ARTIFACT: ${{ inputs.runtime_artifact_id }}
           RETAINED_DIGEST: ${{ inputs.runtime_artifact_sha256 }}
           SCENARIO: ${{ inputs.scenario || 'journey' }}
+          EXPECTED_CATALOG_SHA256: ${{ inputs.expected_catalog_sha256 }}
+          EXPECTED_PACK_SHA256: ${{ inputs.expected_pack_sha256 }}
           VERIFIED_PR_RUN: ${{ inputs.verified_pr_run_id }}
           FIXTURE_ARTIFACT: ${{ inputs.fixture_artifact_id }}
           FIXTURE_SHA: ${{ inputs.fixture_sha256 }}
@@ -187,8 +203,16 @@ jobs:
               raise SystemExit('Unknown interface text size')
           mode = os.environ['ARTIFACT_MODE']
           scenario = os.environ['SCENARIO']
-          if scenario not in {'journey', 'transport'}:
+          if scenario not in {'journey', 'transport', 'normal-fresh-musicvideo'}:
               raise SystemExit('Unknown public XCTest scenario')
+          if scenario == 'normal-fresh-musicvideo':
+              if (mode != 'dmg' or scale != '1.5' or not os.environ['RETAINED_SOURCE']
+                  or not re.fullmatch('[1-9][0-9]*', os.environ['VERIFIED_PR_RUN'])
+                  or not re.fullmatch('[a-f0-9]{64}', os.environ.get('EXPECTED_CATALOG_SHA256', ''))
+                  or not re.fullmatch('[a-f0-9]{64}', os.environ.get('EXPECTED_PACK_SHA256', ''))):
+                  raise SystemExit('Fresh Musicvideo requires the exact retained DMG, 150% size, source and published catalog/pack bytes')
+          elif os.environ.get('EXPECTED_CATALOG_SHA256') or os.environ.get('EXPECTED_PACK_SHA256'):
+              raise SystemExit('Normal catalog and pack selectors cannot be ignored by another scenario')
           if scenario == 'transport':
               if (mode != 'dmg' or scale != '1.5' or not os.environ['RETAINED_SOURCE']
                   or not re.fullmatch('[1-9][0-9]*', os.environ['VERIFIED_PR_RUN'])
@@ -339,7 +363,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Prepare job-local independent media tools
-        if: inputs.scenario != 'transport'
+        if: inputs.scenario == 'journey' || inputs.scenario == ''
         id: media-tools
         uses: mamba-org/setup-micromamba@f457c30a868e4760d3a6fcea5f25dc655b8edf39
         with:
@@ -353,7 +377,7 @@ jobs:
           cache-downloads: false
           post-cleanup: all
       - name: Require both independent media executables
-        if: inputs.scenario != 'transport'
+        if: inputs.scenario == 'journey' || inputs.scenario == ''
         env:
           MEDIA_TOOLS_BIN: ${{ steps.media-tools.outputs.environment-path }}/bin
         run: |
@@ -445,7 +469,7 @@ jobs:
             --scale "$INTERFACE_SCALE" --evidence "$RUNNER_TEMP/external-gui" \
             --test-runtime "$RUNNER_TEMP/external-tests-input" --test-producer-sha256 "$TEST_PRODUCER_SHA256"
       - name: Install and exercise the exact publication DMG
-        if: inputs.artifact_mode == 'dmg' && inputs.scenario != 'transport'
+        if: inputs.artifact_mode == 'dmg' && (inputs.scenario == 'journey' || inputs.scenario == '')
         env:
           EXPECTED_DMG_SHA256: ${{ inputs.expected_dmg_sha256 }}
           INTERFACE_SCALE: ${{ matrix.scale }}
@@ -457,6 +481,21 @@ jobs:
             --dmg "$RUNNER_TEMP/external-runtime/NexGenVideo.dmg" \
             --dmg-sha256 "$EXPECTED_DMG_SHA256" --source-sha "$PRODUCT_SOURCE" \
             --scale "$INTERFACE_SCALE" --evidence "$RUNNER_TEMP/external-gui" \
+            --test-runtime "$RUNNER_TEMP/external-tests-input" --test-producer-sha256 "$TEST_PRODUCER_SHA256"
+      - name: Install Musicvideo through the normal catalog and start a fresh project
+        if: inputs.scenario == 'normal-fresh-musicvideo'
+        env:
+          EXPECTED_DMG_SHA256: ${{ inputs.expected_dmg_sha256 }}
+          EXPECTED_CATALOG_SHA256: ${{ inputs.expected_catalog_sha256 }}
+          EXPECTED_PACK_SHA256: ${{ inputs.expected_pack_sha256 }}
+          TEST_PRODUCER_SHA256: ${{ needs.test-runtime.outputs.producer_sha256 }}
+        run: |
+          set --
+          if [ -n "$PACKAGING_PRODUCER_SOURCE" ]; then set -- --packaging-binding "$RUNNER_TEMP/external-packaging/consumer.json"; fi
+          python3 scripts/external-gui/acceptance.py run "$@" --scenario normal-fresh-musicvideo \
+            --dmg "$RUNNER_TEMP/external-runtime/NexGenVideo.dmg" --dmg-sha256 "$EXPECTED_DMG_SHA256" \
+            --source-sha "$PRODUCT_SOURCE" --scale 1.5 --evidence "$RUNNER_TEMP/external-gui" \
+            --expected-catalog-sha256 "$EXPECTED_CATALOG_SHA256" --expected-pack-sha256 "$EXPECTED_PACK_SHA256" \
             --test-runtime "$RUNNER_TEMP/external-tests-input" --test-producer-sha256 "$TEST_PRODUCER_SHA256"
       - uses: actions/download-artifact@v4
         if: inputs.scenario == 'transport'
@@ -479,7 +518,7 @@ jobs:
             --scale 1.5 --evidence "$RUNNER_TEMP/external-gui" \
             --test-runtime "$RUNNER_TEMP/external-tests-input" --test-producer-sha256 "$TEST_PRODUCER_SHA256"
       - name: Validate actual journey and exported-file evidence
-        if: inputs.scenario != 'transport'
+        if: inputs.scenario == 'journey' || inputs.scenario == ''
         env:
           ARTIFACT_MODE: ${{ inputs.artifact_mode || 'app' }}
           EXPECTED_DMG_SHA256: ${{ inputs.expected_dmg_sha256 }}
@@ -498,6 +537,19 @@ jobs:
             python3 scripts/external-gui/acceptance.py validate \
               --evidence "$RUNNER_TEMP/external-gui" --source-sha "$GITHUB_SHA" --scale "$INTERFACE_SCALE"
           fi
+      - name: Validate the normal catalog installation and fresh Track intake
+        if: inputs.scenario == 'normal-fresh-musicvideo'
+        env:
+          EXPECTED_DMG_SHA256: ${{ inputs.expected_dmg_sha256 }}
+          EXPECTED_CATALOG_SHA256: ${{ inputs.expected_catalog_sha256 }}
+          EXPECTED_PACK_SHA256: ${{ inputs.expected_pack_sha256 }}
+        run: |
+          set --
+          if [ -n "$PACKAGING_PRODUCER_SOURCE" ]; then set -- --packaging-binding "$RUNNER_TEMP/external-packaging/consumer.json"; fi
+          python3 scripts/external-gui/acceptance.py validate "$@" --scenario normal-fresh-musicvideo \
+            --evidence "$RUNNER_TEMP/external-gui" --source-sha "$PRODUCT_SOURCE" --scale 1.5 \
+            --dmg-sha256 "$EXPECTED_DMG_SHA256" --expected-catalog-sha256 "$EXPECTED_CATALOG_SHA256" \
+            --expected-pack-sha256 "$EXPECTED_PACK_SHA256"
       - name: Validate six actual public transport cursor actions
         if: inputs.scenario == 'transport'
         env:
