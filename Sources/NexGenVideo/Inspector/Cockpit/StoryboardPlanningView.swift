@@ -216,6 +216,7 @@ struct StoryboardPlanningView: View {
                         HStack {
                             Button("Shot \(index + 1)") {
                                 select(shot: shot, number: index + 1, snapshot: snapshot)
+                                editor.revealInspector()
                             }
                             .buttonStyle(InlineActionButtonStyle())
                             .accessibilityLabel("Inspect Shot \(index + 1)")

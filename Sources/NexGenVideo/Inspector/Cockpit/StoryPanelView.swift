@@ -18,6 +18,16 @@ final class StoryPanelDrafts {
     var playbackRange = PlaybackRangeDraft()
 }
 
+enum BriefPresentation {
+    static func choice(_ value: String) -> String {
+        switch value {
+        case "live_action_realistic": String(localized: "Realistic live action")
+        case "with_overlap": String(localized: "With overlap")
+        default: value.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+}
+
 struct StoryPanelView: View {
     let document: CockpitTab
     @Bindable var drafts: StoryPanelDrafts
@@ -182,18 +192,18 @@ struct StoryPanelView: View {
 
     private func creativeRows(_ brief: BriefData) -> [BriefRow] {
         var rows: [BriefRow] = []
-        Self.add(&rows, "Concept", brief.conceptType)
+        Self.add(&rows, "Concept", brief.conceptType.map(BriefPresentation.choice))
         Self.add(&rows, "Concept detail", brief.conceptTypeOther)
-        Self.add(&rows, "Medium", brief.visualMedium)
+        Self.add(&rows, "Medium", BriefPresentation.choice(brief.visualMedium))
         Self.add(&rows, "Medium detail", brief.visualMediumOther)
         Self.addProse(&rows, "Medium notes", brief.visualMediumNotes)
-        Self.add(&rows, "Tone", brief.tone.joined(separator: ", "))
+        Self.add(&rows, "Tone", brief.tone.map(BriefPresentation.choice).joined(separator: ", "))
         Self.add(&rows, "Tone detail", brief.toneOther)
         Self.add(&rows, "References", brief.styleReferences.joined(separator: ", "))
-        Self.add(&rows, "Figures", brief.figures)
+        Self.add(&rows, "Figures", brief.figures.map(BriefPresentation.choice))
         Self.add(&rows, "Figures detail", brief.figuresOther)
         Self.add(&rows, "Figure count", brief.figureCountHint)
-        Self.add(&rows, "Lyrics", brief.lyricsIntegration)
+        Self.add(&rows, "Lyrics", brief.lyricsIntegration.map(BriefPresentation.choice))
         Self.add(&rows, "Lyrics detail", brief.lyricsIntegrationOther)
         return rows
     }
@@ -205,8 +215,8 @@ struct StoryPanelView: View {
         Self.add(&rows, "Audience", brief.targetAudience)
         rows.append(.editableMenu("Aspect", $drafts.editedAspect, Self.aspectRatioOptions))
         Self.add(&rows, "Aspect detail", brief.aspectRatioOther)
-        Self.add(&rows, "Length", brief.lengthMode)
-        Self.add(&rows, "Cut handles", brief.cutHandlesMode)
+        Self.add(&rows, "Length", BriefPresentation.choice(brief.lengthMode))
+        Self.add(&rows, "Cut handles", brief.cutHandlesMode.map(BriefPresentation.choice))
         return rows
     }
 

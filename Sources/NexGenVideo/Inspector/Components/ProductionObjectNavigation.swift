@@ -273,6 +273,7 @@ struct ProductionObjectLinksView: View {
                     editor.setWorkspaceFocus(.production)
                     editor.revealCockpit(.shotlist)
                     editor.productionPlanSelection = .init(home: context.home, snapshot: current.planning, shotID: link.shotID)
+                    editor.revealInspector()
                 }
             } catch { failure = error.localizedDescription }
         }

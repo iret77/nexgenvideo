@@ -1,4 +1,6 @@
 import Foundation
+import NexGenEngine
+import struct NexGenEngine.Section
 import Testing
 @testable import NexGenVideo
 
@@ -196,6 +198,68 @@ struct WorkspaceFocusTests {
         editor.productionSelectedPhase = "render"
         editor.revealCockpit(.review)
         #expect(editor.productionSelectedPhase == "render")
+    }
+
+    @Test func explicitInspectionRevealsTheInspectorWithoutChangingWorkflow() {
+        let restoreDefaults = preservePanelDefaults()
+        defer { restoreDefaults() }
+        let editor = EditorViewModel()
+        editor.productionSelectedPhase = "storyboard"
+        editor.cockpitTab = .storyboard
+        editor.mediaPanelVisible = false
+        let maximizedPanels: [EditorViewModel.FocusedPanel?] = [nil, .preview, .project, .inspector]
+        for maximized in maximizedPanels {
+            editor.inspectorPanelVisible = false
+            editor.maximizedPanel = maximized
+            editor.showsAgentActivity = true
+            editor.revealInspector()
+            #expect(!editor.showsAgentActivity)
+            #expect(editor.isInspectorPresented)
+            #expect(!editor.mediaPanelVisible)
+            #expect(editor.workspaceFocus == .production)
+            #expect(editor.productionSelectedPhase == "storyboard")
+            #expect(editor.cockpitTab == .storyboard)
+        }
+        editor.theaterActive = true
+        editor.revealInspector()
+        #expect(!editor.theaterActive)
+        #expect(editor.isInspectorPresented)
+        editor.setWorkspaceFocus(.edit)
+        editor.inspectorPanelVisible = false
+        editor.maximizedPanel = .timeline
+        editor.revealInspector()
+        #expect(editor.workspaceFocus == .edit)
+        #expect(editor.isInspectorPresented)
+    }
+
+    @Test func storyboardRefreshKeepsActivityUntilTheUserInspectsAShot() throws {
+        let restoreDefaults = preservePanelDefaults()
+        defer { restoreDefaults() }
+        let editor = EditorViewModel()
+        editor.cockpitTab = .storyboard
+        editor.productionSelectedPhase = "storyboard"
+        let first = try Step(id: "verse1.01", function: .story, subject: "The singer leaves.", camera: "Wide")
+        let refreshed = try Step(id: "verse1.01", function: .story, subject: "The singer returns.", camera: "Close")
+        let firstSection = try Section(id: "verse1", steps: [first])
+        let refreshedSection = try Section(id: "verse1", steps: [refreshed])
+        editor.inspectStoryboardShot(first, section: firstSection)
+        editor.inspectorPanelVisible = false
+        editor.showsAgentActivity = true
+        editor.maximizedPanel = .project
+        editor.updateStoryboardSelection(refreshed, section: refreshedSection)
+        #expect(editor.storyboardSelection?.step.subject == "The singer returns.")
+        #expect(editor.showsAgentActivity)
+        #expect(!editor.inspectorPanelVisible)
+        #expect(editor.maximizedPanel == .project)
+        editor.inspectStoryboardShot(refreshed, section: refreshedSection)
+        #expect(!editor.showsAgentActivity)
+        #expect(editor.isInspectorPresented)
+        #expect(editor.storyboardSelection?.step.camera == "Close")
+    }
+
+    @Test func briefChoicesUseReadableLabels() {
+        let raw = ["live_action_realistic", "artist_only", "full_song", "with_overlap"]
+        #expect(raw.map(BriefPresentation.choice) == ["Realistic live action", "Artist Only", "Full Song", "With overlap"])
     }
 
     @Test func panelToggleExitsMaximizeAndRevealsRequestedSide() {

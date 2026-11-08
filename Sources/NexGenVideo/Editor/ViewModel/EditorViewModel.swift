@@ -1076,6 +1076,13 @@ final class EditorViewModel {
         }
     }
 
+    func revealInspector() {
+        if workspaceFocus == .production { showsAgentActivity = false }
+        theaterActive = false
+        if maximizedPanel != .inspector { maximizedPanel = nil }
+        inspectorPanelVisible = true
+    }
+
     func toggleInspectorPresentation() {
         if productionActivityVisible {
             showsAgentActivity = false
