@@ -234,10 +234,11 @@ class DiagnosticCompiledClientRouteTests(unittest.TestCase):
 
     def test_transport_rejects_every_incomplete_tuple_before_any_remote_lookup(self):
         with patch.object(self.bundle, 'api') as api:
-            for mask in range(7):
-                changes = {key: self.env[key] if mask & (1 << index) else '' for index, key in enumerate(self.fields)}
-                with self.subTest(mask=mask), self.assertRaisesRegex(ValueError, 'exact original compiled UI client'):
-                    self.guard(**changes)
+            for kind, scenario in (('signed-transport', 'journey'), ('signed-journey', 'normal-fresh-local-musicvideo')):
+                for mask in range(7):
+                    changes = {key: self.env[key] if mask & (1 << index) else '' for index, key in enumerate(self.fields)}
+                    with self.subTest(kind=kind, mask=mask), self.assertRaisesRegex(ValueError, 'exact original compiled UI client'):
+                        self.guard(KIND=kind, JOURNEY_SCENARIO=scenario, **changes)
             api.assert_not_called()
 
     def test_signed_modes_reject_malformed_client_identity_and_consumer_source(self):
@@ -305,6 +306,52 @@ class DiagnosticCompiledClientRouteTests(unittest.TestCase):
         consumer = self.workflow['jobs']['signed-transport']['with']
         for output in ('fixture_artifact_id', 'fixture_sha256'):
             self.assertEqual(consumer[output], '${{ needs.transport-fixture.outputs.' + output + ' }}')
+
+
+class DiagnosticLocalMusicvideoRouteTests(unittest.TestCase):
+    def setUp(self):
+        self.workflow = yaml.safe_load((Path(__file__).resolve().parents[1] / '.github/workflows/diagnostic-acceptance.yml').read_text())
+        self.inputs = self.workflow.get('on', self.workflow.get(True))['workflow_dispatch']['inputs']
+        self.steps = self.workflow['jobs']['source']['steps']
+        step = next(row for row in self.steps if row.get('name') == 'Require exact local Musicvideo continuation inputs')
+        self.code = step['run'].split("python3 - <<'PY'\n", 1)[1].rsplit('\nPY', 1)[0]
+        self.env = dict(KIND='signed-journey', JOURNEY_SCENARIO='normal-fresh-local-musicvideo', CATALOG_DIGEST='c' * 64,
+            SCALE='1.5', VERIFIED_PR='12', DMG_DIGEST='d' * 64, PRODUCER_RUN='34', PRODUCER_SOURCE='a' * 40,
+            RUNTIME_ARTIFACT='56', RUNTIME_DIGEST='e' * 64)
+
+    def guard(self, **changes):
+        with patch.dict(os.environ, dict(self.env, **changes), clear=True):
+            exec(compile(self.code, '<local-musicvideo-inputs>', 'exec'), {})
+
+    def test_local_case_uses_exact_dmg_catalog_client_and_current_source_through_the_registered_caller(self):
+        self.guard()
+        self.assertLessEqual(len(self.inputs), 25)
+        self.assertEqual(self.inputs['journey_scenario']['default'], 'journey')
+        self.assertEqual(self.inputs['journey_scenario']['options'], ['journey', 'normal-fresh-local-musicvideo'])
+        job = self.workflow['jobs']['signed-journey']
+        self.assertEqual(job['needs'], 'source')
+        self.assertEqual(job['uses'], './.github/workflows/external-gui-acceptance.yml')
+        self.assertEqual(job['with']['scenario'], "${{ inputs.journey_scenario || 'journey' }}")
+        self.assertEqual(job['with']['expected_catalog_sha256'], '${{ inputs.expected_catalog_sha256 }}')
+        self.assertEqual(job['with']['expected_pack_sha256'], "${{ inputs.journey_scenario == 'normal-fresh-local-musicvideo' && '37fcee05d1ac334b20eb392c61cc3b7a94af165dc3b967c61602bc79d6dc4388' || '' }}")
+        for field in ('test_bundle_run_id', 'test_bundle_artifact_id', 'test_bundle_artifact_sha256', 'verified_pr_run_id'):
+            self.assertEqual(job['with'][field], '${{ inputs.' + field + ' }}')
+        proof = next(row for row in self.steps if row.get('name') == 'Reuse complete current merged PR source proof')
+        self.assertIn("(inputs.candidate_kind == 'signed-journey' && inputs.journey_scenario == 'normal-fresh-local-musicvideo')", proof['if'])
+        for field, value in [('SCALE', '1'), ('SCALE', 'all'), ('VERIFIED_PR', ''), ('PRODUCER_RUN', '0'),
+                ('RUNTIME_ARTIFACT', '-1'), ('PRODUCER_SOURCE', 'a' * 39), ('CATALOG_DIGEST', ''),
+                ('CATALOG_DIGEST', 'C' * 64), ('DMG_DIGEST', 'd' * 63), ('RUNTIME_DIGEST', 'e' * 63)]:
+            with self.subTest(field=field, value=value), self.assertRaises(ValueError): self.guard(**{field: value})
+
+    def test_default_journey_is_neutral_but_no_other_mode_or_scenario_can_ignore_local_catalog_inputs(self):
+        for kind in self.inputs['candidate_kind']['options']:
+            with self.subTest(kind=kind):
+                self.guard(KIND=kind, JOURNEY_SCENARIO='journey', CATALOG_DIGEST='')
+                self.guard(KIND=kind, JOURNEY_SCENARIO='', CATALOG_DIGEST='')
+            if kind != 'signed-journey':
+                with self.subTest(kind=kind), self.assertRaises(ValueError): self.guard(KIND=kind)
+        for scenario in ('journey', '', 'transport', 'unknown'):
+            with self.subTest(scenario=scenario), self.assertRaises(ValueError): self.guard(JOURNEY_SCENARIO=scenario)
 
 
 class AppCrashCandidateTests(unittest.TestCase):

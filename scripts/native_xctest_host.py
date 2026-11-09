@@ -73,6 +73,16 @@ def build(folder, bundle, prepared, logged):
     return identity
 
 
+def verify_case_identity(identity):
+    require(isinstance(identity, dict) and all(isinstance(identity.get(key), str) and identity[key]
+        for key in ('name', 'reportedName', 'class', 'selector', 'image')), 'Incomplete XCTest case identity')
+    canonical = '-[' + identity['class'] + ' ' + identity['selector'] + ']'
+    short = '-[' + identity['class'].rsplit('.', 1)[-1] + ' ' + identity['selector'] + ']'
+    require(identity['name'] == canonical and identity['reportedName'] in (canonical, short),
+        'XCTest reported name differs from its actual class or invocation selector')
+    return identity
+
+
 def verify_receipt(receipt, events, expected, *, source, pid, parent, bundle, host):
     require(receipt.get('schema') == 'native-xctest-host/v1' and receipt.get('sourceSHA') == source
         and receipt.get('pid') == pid and receipt.get('parentPID') == parent
@@ -92,6 +102,7 @@ def verify_receipt(receipt, events, expected, *, source, pid, parent, bundle, ho
     leaves = receipt.get('leafClasses', [])
     require(len(leaves) == len(expected) and sorted(item['name'] for item in leaves) == sorted(expected)
         and all(item['image'] == receipt['bundleImagePath'] for item in leaves), 'XCTest class-image provenance differs')
+    identities = {item['name']: verify_case_identity(item) for item in leaves}
     before, loaded, after = (receipt.get(key, []) for key in ('runtimeImagesBefore', 'runtimeImagesAfterLoad', 'runtimeImagesAfter'))
     prefix = str((bundle / 'Contents/Frameworks').resolve()) + '/'
     require(loaded and loaded == after and len({Path(name).name for name in loaded}) == len(loaded)
@@ -106,6 +117,9 @@ def verify_receipt(receipt, events, expected, *, source, pid, parent, bundle, ho
         kind, name = event['kind'], event['name']
         require(kind in {'testCaseWillStart', 'testCaseDidFinish', 'testSuiteWillStart', 'testSuiteDidFinish',
             'testBundleWillStart', 'testBundleDidFinish'}, 'Unexpected or suppressed XCTest issue')
+        if kind in {'testCaseWillStart', 'testCaseDidFinish'}:
+            require(name in identities and event.get('detail', {}).get('caseIdentity') == identities[name],
+                'XCTest observation lost its exact discovered class and invocation')
         if kind == 'testSuiteWillStart' and event.get('root'):
             require(root_started == root_ended == 0 and not active, 'Repeated XCTest suite start')
             root_started += 1
