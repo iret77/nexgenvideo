@@ -1,8 +1,10 @@
 import copy
 import json
+import io
 import os
 from pathlib import Path
 import unittest
+import zipfile
 import tempfile
 from unittest.mock import patch
 
@@ -10,6 +12,167 @@ import native_app_target_build as build
 
 
 class NativeAppTargetBuildTests(unittest.TestCase):
+    def session_plans(self, temporary):
+        plans = {}
+        for phase in ('production', 'testable', 'tests'):
+            profile = 'production' if phase == 'production' else 'testable'
+            arena = temporary / 'app-build-plan-evidence' / profile / 'derived-data'
+            plans[phase] = {'operations': {'arena': str(arena)}, 'driver': {'argv': [
+                'swiftc', '-clang-build-session-file', str(arena / 'ModuleCache.noindex/Session.modulevalidation')]}}
+        return plans
+
+    def test_real_clang_sessions_preserve_exact_driver_paths_new_job_time_and_primary_source_format(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temporary = Path(temp); root = temporary / 'evidence'; root.mkdir()
+            plans = self.session_plans(temporary)
+            with patch.object(build.time, 'time', return_value=1234567890.25), \
+                    patch.dict(build.os.environ, {'GITHUB_SHA': 'a' * 40, 'GITHUB_RUN_ID': '101'}):
+                result = build.create_clang_sessions(root, plans, temporary)
+            self.assertEqual(set(result), {'production', 'testable'})
+            for profile, item in result.items():
+                path = Path(item['path'])
+                self.assertEqual(path.read_text(), '1234567890.25: Module build session file for module cache at ' + str(path.parent) + '\n')
+                self.assertEqual(item['sha256'], build.capture.sha(path))
+                self.assertEqual(item['mtimeNS'], path.stat().st_mtime_ns)
+                self.assertEqual(item['sourceSHA'], 'a' * 40)
+                self.assertEqual(item['runID'], 101)
+                self.assertEqual(item['driverRoles'], ['production'] if profile == 'production' else ['testable', 'tests'])
+            self.assertEqual(json.loads((root / 'clang-build-sessions.json').read_text()), result)
+            with self.assertRaisesRegex(ValueError, 'occupied'):
+                build.create_clang_sessions(root, plans, temporary)
+
+    def test_missing_ambiguous_foreign_or_aliased_clang_session_inputs_fail_before_materialization(self):
+        for changed in ('missing', 'duplicate', 'foreign', 'profile', 'arena'):
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory() as temp:
+                temporary = Path(temp); root = temporary / 'evidence'; root.mkdir()
+                plans = self.session_plans(temporary)
+                if changed == 'missing': plans['production']['driver']['argv'].pop()
+                elif changed == 'duplicate': plans['production']['driver']['argv'] += ['-clang-build-session-file', '/foreign']
+                elif changed == 'foreign': plans['production']['driver']['argv'][-1] = str(temporary / 'foreign')
+                elif changed == 'profile': plans['tests']['driver']['argv'][-1] = plans['production']['driver']['argv'][-1]
+                else: plans['production']['operations']['arena'] = str(temporary / 'foreign')
+                with self.assertRaises(ValueError):
+                    build.create_clang_sessions(root, plans, temporary)
+                self.assertFalse((temporary / 'app-build-plan-evidence').exists())
+        with tempfile.TemporaryDirectory() as temp:
+            temporary = Path(temp); root = temporary / 'evidence'; root.mkdir()
+            plans = self.session_plans(temporary)
+            path = Path(plans['testable']['driver']['argv'][-1]); path.parent.mkdir(parents=True)
+            linked = temporary / 'linked'; linked.mkdir()
+            path.symlink_to(linked / 'session')
+            with self.assertRaisesRegex(ValueError, 'occupied|linked'):
+                build.create_clang_sessions(root, plans, temporary)
+            self.assertFalse(Path(plans['production']['driver']['argv'][-1]).exists())
+
+    def test_product_archive_unwraps_only_the_actual_single_checkpoint_and_retains_original_bytes(self):
+        inner = io.BytesIO()
+        with zipfile.ZipFile(inner, 'w') as archive: archive.writestr('product-receipt.json', '{}')
+        for members, accepted in [(['production-products.zip'], True),
+                (['product-receipt.json'], False), (['production-products.zip', 'extra'], False)]:
+            with self.subTest(members=members), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp); outer = io.BytesIO()
+                with zipfile.ZipFile(outer, 'w') as archive:
+                    for name in members: archive.writestr(name, inner.getvalue())
+                raw = outer.getvalue()
+                with patch.object(build, 'download', side_effect=lambda artifact, path: path.write_bytes(raw)):
+                    if accepted:
+                        path = build.product_archive(root, 'production', {})
+                        self.assertEqual(path.read_bytes(), inner.getvalue())
+                    else:
+                        with self.assertRaisesRegex(ValueError, 'outer archive'):
+                            build.product_archive(root, 'production', {})
+                self.assertEqual((root / 'original.zip').read_bytes(), raw)
+
+    def test_partial_cache_role_is_separate_and_cannot_override_a_successful_product_or_select_an_arbitrary_failure(self):
+        item = {'runID': 11, 'sourceSHA': 'a' * 40, 'artifactID': 12,
+            'artifactSHA256': 'b' * 64, 'receiptSHA256': 'c' * 64}
+        self.assertEqual(build.resume_inputs(json.dumps({'production-cache': item})), {'production-cache': item})
+        with self.assertRaisesRegex(ValueError, 'Conflicting'):
+            build.resume_inputs(json.dumps({'production': item, 'production-cache': item}))
+        with patch.object(build, 'api') as api, self.assertRaisesRegex(ValueError, 'Unqualified partial'):
+            build.resumed_products({'production-cache': item}, {}, 'd' * 40)
+        api.assert_not_called()
+
+    def test_incomplete_cache_receipt_stays_rejected_by_the_existing_completed_product_restorer(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); arena = root / 'arena'; archive_path = root / 'partial.zip'
+            selected = {'sourceSHA': 'a' * 40, 'runID': 101, 'receiptSHA256': ''}
+            prepared = {'appSourceSHA': 'b' * 40, 'nativeSourceObjects': {}, 'compilerSHA256': 'c' * 64,
+                'plans': {'production': {'driver': {'targetGUID': 'app', 'argv': ['swiftc', '-emit-module-path', str(arena / 'objects/App.swiftmodule')]},
+                    'operations': {'arena': str(arena), 'copies': [], 'headers': [],
+                        'links': [{'targetGUID': 'app', 'output': str(arena / 'Products/Release/NexGenVideo')}]}}}}
+            receipt = {'schema': 'native-app-target-product/v1', 'phase': 'production', 'sourceSHA': selected['sourceSHA'],
+                'runID': 101, 'attempt': 1, 'appSourceSHA': prepared['appSourceSHA'], 'nativeSourceObjects': {},
+                'arena': str(arena), 'compilerSHA256': prepared['compilerSHA256'],
+                'recipeSHA256': build.recipe_identity(prepared, 'production'),
+                'state': {'compileComplete': False, 'linkComplete': False}}
+            raw = json.dumps(receipt).encode(); selected['receiptSHA256'] = build.hashlib.sha256(raw).hexdigest()
+            with zipfile.ZipFile(archive_path, 'w') as archive: archive.writestr('product-receipt.json', raw)
+            with patch.object(build, 'product_archive', return_value=archive_path), self.assertRaisesRegex(ValueError, 'successful compilation'):
+                build.restore_product(root, 'production', prepared, {'artifact': {}, 'selected': selected})
+
+    def partial_cache_fixture(self, root, changed):
+        arena = root / 'arena'; archive_path = root / 'original-fixture.zip'
+        prepared = {'sourceSHA': 'd' * 40, 'appSourceSHA': 'b' * 40, 'nativeSourceObjects': {},
+            'compilerSHA256': 'c' * 64,
+            'plans': {'production': {'driver': {'argv': ['swiftc']}, 'operations': {'arena': str(arena)}}}}
+        selected = {'sourceSHA': 'ce3f5dab418cb740159d9348d2cca4921ce81b04', 'runID': 42579228502}
+        files = {}
+        payloads = {}
+        for index in range(114):
+            name = ('ModuleCache.noindex/1U72Z291X4DNG/Module' + str(index) + '.pcm'
+                if index < 108 else 'objects/failure-evidence' + str(index))
+            if changed == 'path' and index == 0: name = 'ModuleCache.noindex/foreign/Module0.pcm'
+            raw = b'CPCH' + str(index).encode() if index < 108 else b'auxiliary'
+            if changed == 'magic' and index == 0: raw = b'NOPE'
+            files[name] = {'kind': 'file', 'sha256': build.hashlib.sha256(raw).hexdigest(), 'bytes': len(raw), 'mode': 0o644}
+            payloads[name] = raw + b'changed' if changed == 'bytes' and index == 0 else raw
+        receipt = {'schema': 'native-app-target-product/v1', 'phase': 'production', 'sourceSHA': selected['sourceSHA'],
+            'runID': selected['runID'], 'attempt': 1, 'appSourceSHA': prepared['appSourceSHA'],
+            'nativeSourceObjects': {}, 'arena': str(arena), 'compilerSHA256': prepared['compilerSHA256'],
+            'recipeSHA256': build.recipe_identity(prepared, 'production'), 'files': files,
+            'state': {'compileComplete': False, 'linkComplete': False, 'compilerExecutions': 0, 'resumed': False}}
+        if changed == 'recipe': receipt['recipeSHA256'] = 'f' * 64
+        if changed == 'source': receipt['sourceSHA'] = 'f' * 40
+        if changed == 'complete': receipt['state']['compileComplete'] = True
+        raw = json.dumps(receipt).encode(); selected['receiptSHA256'] = build.hashlib.sha256(raw).hexdigest()
+        with zipfile.ZipFile(archive_path, 'w') as archive:
+            archive.writestr('product-receipt.json', raw)
+            for name, payload in payloads.items(): archive.writestr('outputs/' + name, payload)
+        return archive_path, prepared, {'artifact': {}, 'selected': selected}
+
+    def test_actual_partial_restorer_measures_all_108_outputs_rejects_changed_inputs_and_rechecks_before_planning(self):
+        for changed in ('valid', 'recipe', 'source', 'bytes', 'path', 'magic', 'complete', 'copy'):
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp).resolve()
+                archive_path, prepared, origin = self.partial_cache_fixture(root, changed)
+                actual_sha = build.capture.sha
+                measured_sha = lambda path: ('399b9393316c96bda5d0f69af81dbf0e4fb5bad3596fa91d6644c5b8e148e6f1'
+                    if path == archive_path else actual_sha(path))
+                with patch.object(build, 'product_archive', return_value=archive_path), \
+                        patch.object(build.capture, 'sha', side_effect=measured_sha):
+                    if changed == 'copy':
+                        with patch.object(build.shutil, 'copyfileobj', side_effect=lambda source, destination, length: destination.write(b'corrupt')), \
+                                self.assertRaisesRegex(ValueError, 'Restored partial PCM'):
+                            build.restore_partial_driver_cache(root, prepared, origin)
+                    elif changed != 'valid':
+                        with self.assertRaises(ValueError):
+                            build.restore_partial_driver_cache(root, prepared, origin)
+                    else:
+                        result = build.restore_partial_driver_cache(root, prepared, origin)
+                        self.assertEqual(len(result['restoredPCMCandidates']), 108)
+                        self.assertFalse(result['successfulAppCompilationClaimed'])
+                        self.assertTrue(result['currentCompilerValidationRequired'])
+                        prepared['partialDriverCaches'] = result
+                        with patch.dict(build.os.environ, {'GITHUB_RUN_ID': '202'}):
+                            build.verify_partial_driver_cache(root, prepared)
+                            before = json.loads((root / 'partial-driver-cache-before-planning.json').read_text())
+                            self.assertEqual(before['actualFiles'], result['restoredPCMCandidates'])
+                            victim = Path(prepared['plans']['production']['operations']['arena']) / next(iter(result['restoredPCMCandidates']))
+                            victim.write_bytes(b'corrupted after restore')
+                            with self.assertRaisesRegex(ValueError, 'changed before planning'):
+                                build.verify_partial_driver_cache(root, prepared)
+
     def checkout_pins(self):
         return [{'identity': 'package' + str(i), 'kind': 'remoteSourceControl',
             'location': 'https://github.com/example/package' + str(i) + '.git',

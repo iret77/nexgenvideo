@@ -1065,6 +1065,7 @@ jobs:
         with:
           name: app-target-build-evidence
           path: |
+            ${{ runner.temp }}/app-target-build/partial-driver-cache/
             ${{ runner.temp }}/app-target-build/*.json
             ${{ runner.temp }}/app-target-build/*.stdout
             ${{ runner.temp }}/app-target-build/*.stderr

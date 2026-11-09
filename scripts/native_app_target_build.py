@@ -1,6 +1,7 @@
 import argparse
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import platform
@@ -11,6 +12,7 @@ import signal
 import stat
 import subprocess
 import sys
+import time
 import urllib.parse
 import zipfile
 
@@ -45,7 +47,9 @@ def resume_inputs(raw):
             result[key] = value
         return result
     value = json.loads(raw, object_pairs_hook=unique)
-    require(isinstance(value, dict) and set(value) <= {'production', 'testable', 'tests'}, 'Unknown resumed target role')
+    require(isinstance(value, dict) and set(value) <= {'production', 'testable', 'tests', 'production-cache'},
+        'Unknown resumed target role')
+    require(not {'production', 'production-cache'} <= set(value), 'Conflicting production product and cache roles')
     keys = {'runID', 'sourceSHA', 'artifactID', 'artifactSHA256', 'receiptSHA256'}
     for item in value.values():
         require(isinstance(item, dict) and set(item) == keys and all(type(item[key]) is int and item[key] > 0
@@ -159,6 +163,13 @@ def bank_metadata(root, selected, head):
 def resumed_products(selected, objects, head):
     result = {}
     for phase, item in selected.items():
+        cache_only = phase == 'production-cache'
+        artifact_phase = 'production' if cache_only else phase
+        if cache_only:
+            require(item == {'runID': 42579228502, 'sourceSHA': 'ce3f5dab418cb740159d9348d2cca4921ce81b04',
+                'artifactID': 13656049747, 'artifactSHA256': '78edea90be9d7701870d7c67b49dcb33660b45e5a5507e10172023eaab72457b',
+                'receiptSHA256': 'e5d37d8cb052c2f830401030b9452b83936661217c2858cc65f9a6b8debf248b'},
+                'Unqualified partial driver cache producer')
         run = api('actions/runs/' + str(item['runID']))
         jobs = api(f"actions/runs/{item['runID']}/attempts/1/jobs?per_page=100")
         require(jobs['total_count'] == len(jobs['jobs']) and run['repository']['full_name'] == 'iret77/nexgenvideo'
@@ -172,7 +183,7 @@ def resumed_products(selected, objects, head):
             and native[0]['labels'] == ['macrunner'] and native[0]['conclusion'] in {'success', 'failure'},
             'Resumed target producer jobs differ')
         artifact = api('actions/artifacts/' + str(item['artifactID']))
-        verify_artifact(artifact, run, native[0], item['artifactID'], item['artifactSHA256'], 'app-target-' + phase + '-products')
+        verify_artifact(artifact, run, native[0], item['artifactID'], item['artifactSHA256'], 'app-target-' + artifact_phase + '-products')
         require(objects == {name: capture.git('rev-parse', item['sourceSHA'] + ':' + name) for name in capture.INPUT_OBJECTS}
             and set(capture.git('diff', '--name-only', '--no-renames', item['sourceSHA'], head).splitlines()) <= PATHS,
             'Resumed target native source changed')
@@ -466,7 +477,10 @@ def prepare(root, source_binding):
         'appProductCompilerExecutions': 0, 'packageMetadataQueriesRepeated': 0, 'pinnedHeaderInputs': headers,
         'productionDescriptionQueriesRepeated': 0, 'testableDescriptionQueriesRepeated': 0}
     prepared['resumedProducts'] = {phase: restore_product(root, phase, prepared, origin)
-        for phase, origin in binding['resumedProducts'].items()}
+        for phase, origin in binding['resumedProducts'].items() if phase != 'production-cache'}
+    partial = binding['resumedProducts'].get('production-cache')
+    prepared['partialDriverCaches'] = restore_partial_driver_cache(root, prepared, partial) if partial else None
+    prepared['clangBuildSessions'] = create_clang_sessions(root, plans, temporary)
     write(root / 'prepared.json', prepared)
 
 
@@ -478,9 +492,144 @@ def recipe_identity(prepared, phase):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
+def clang_session_paths(plans, temporary):
+    require(set(plans) == {'production', 'testable', 'tests'}, 'Incomplete Clang session driver inventory')
+    paths = {}
+    for phase, plan in plans.items():
+        profile = 'production' if phase == 'production' else 'testable'
+        arena = temporary / 'app-build-plan-evidence' / profile / 'derived-data'
+        require(plan['operations']['arena'] == str(arena), 'Clang session arena differs')
+        argv = plan['driver']['argv']
+        indexes = [index for index, value in enumerate(argv) if value == '-clang-build-session-file']
+        require(len(indexes) == 1 and indexes[0] + 1 < len(argv), 'Missing or ambiguous Clang build session input')
+        path = arena / 'ModuleCache.noindex/Session.modulevalidation'
+        require(argv[indexes[0] + 1] == str(path), 'Clang build session path escapes its exact arena')
+        paths[profile] = path
+    return paths
+
+
+def create_clang_sessions(root, plans, temporary):
+    result = {}
+    paths = clang_session_paths(plans, temporary)
+    for path in paths.values():
+        require(not path.exists() and not path.is_symlink()
+            and path.parent.resolve() == path.parent and path.parent.is_relative_to(temporary),
+            'Clang build session path is occupied or linked')
+    for profile, path in paths.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        timestamp = time.time()
+        require(math.isfinite(timestamp) and timestamp > 0, 'Invalid Clang build session time')
+        raw = f'{timestamp}: Module build session file for module cache at {path.parent}\n'.encode()
+        with path.open('xb') as stream: stream.write(raw)
+        result[profile] = {'path': str(path), 'sha256': capture.sha(path), 'bytes': len(raw),
+            'mtimeNS': path.stat().st_mtime_ns, 'sessionTimestamp': timestamp,
+            'driverRoles': ['production'] if profile == 'production' else ['testable', 'tests'],
+            'sourceSHA': os.environ['GITHUB_SHA'], 'runID': int(os.environ['GITHUB_RUN_ID']), 'attempt': 1}
+    write(root / 'clang-build-sessions.json', result)
+    return result
+
+
+def product_archive(folder, phase, artifact):
+    outer = folder / 'original.zip'
+    download(artifact, outer)
+    archive_path = folder / 'product.zip'
+    with zipfile.ZipFile(outer) as archive:
+        require(archive.namelist() == [phase + '-products.zip'] and archive.testzip() is None
+            and archive.getinfo(phase + '-products.zip').file_size <= 12 * 1024**3,
+            'Target product outer archive differs')
+        with archive.open(phase + '-products.zip') as source, archive_path.open('xb') as destination:
+            shutil.copyfileobj(source, destination, 1024 * 1024)
+    return archive_path
+
+
+def restore_partial_driver_cache(root, prepared, origin):
+    folder = root / 'partial-driver-cache'; folder.mkdir()
+    path = product_archive(folder, 'production', origin['artifact'])
+    restored = {}
+    plan = prepared['plans']['production']
+    arena = Path(plan['operations']['arena'])
+    cache_root = arena / 'ModuleCache.noindex/1U72Z291X4DNG'
+    require(capture.sha(path) == '399b9393316c96bda5d0f69af81dbf0e4fb5bad3596fa91d6644c5b8e148e6f1',
+        'Actual partial driver nested archive changed')
+    with zipfile.ZipFile(path) as archive:
+        entries = archive.infolist()
+        require(len(entries) <= 200_000 and sum(item.file_size for item in entries) <= 12 * 1024**3
+            and len({item.filename.casefold() for item in entries}) == len(entries) and archive.testzip() is None,
+            'Partial driver cache archive inventory, bounds or CRC differ')
+        raw = archive_bytes(archive, 'product-receipt.json', 16 * 1024**2)
+        require(hashlib.sha256(raw).hexdigest() == origin['selected']['receiptSHA256'], 'Partial driver cache receipt changed')
+        receipt = json.loads(raw)
+        require(receipt['schema'] == 'native-app-target-product/v1' and receipt['phase'] == 'production'
+            and receipt['sourceSHA'] == origin['selected']['sourceSHA'] and receipt['runID'] == origin['selected']['runID']
+            and receipt['attempt'] == 1 and receipt['appSourceSHA'] == prepared['appSourceSHA']
+            and receipt['nativeSourceObjects'] == prepared['nativeSourceObjects'] and receipt['arena'] == str(arena)
+            and receipt['compilerSHA256'] == prepared['compilerSHA256']
+            and receipt['recipeSHA256'] == recipe_identity(prepared, 'production')
+            and receipt['state'] == {'compileComplete': False, 'linkComplete': False, 'compilerExecutions': 0, 'resumed': False},
+            'Partial driver cache cannot claim a completed App compiler product')
+        require(len(receipt['files']) == 114, 'Actual partial driver cache inventory changed')
+        for name, item in receipt['files'].items():
+            relative = Path(name)
+            require(str(relative) == name and not relative.is_absolute() and '..' not in relative.parts
+                and '\\' not in name and '\0' not in name and item['kind'] == 'file'
+                and type(item['mode']) is int and item['mode'] & ~0o777 == 0, 'Unsafe partial driver cache file')
+            member = archive.getinfo('outputs/' + name)
+            require(member.file_size == item['bytes'], 'Partial driver cache file size changed')
+            with archive.open(member) as stream:
+                require(hashlib.file_digest(stream, 'sha256').hexdigest() == item['sha256'], 'Partial driver cache bytes changed')
+            destination = arena / relative
+            if destination.suffix != '.pcm':
+                continue
+            require(destination.parent == cache_root
+                and not destination.exists() and not destination.is_symlink()
+                and destination.parent.resolve() == destination.parent, 'Partial PCM cache escapes or is occupied')
+            with archive.open(member) as stream:
+                require(stream.read(4) == b'CPCH', 'Partial cache is not a Clang PCM')
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            with archive.open(member) as source, destination.open('xb') as output:
+                shutil.copyfileobj(source, output, 1024 * 1024)
+            os.chmod(destination, item['mode'])
+            actual = {'kind': 'file', 'sha256': capture.sha(destination), 'bytes': destination.stat().st_size,
+                'mode': stat.S_IMODE(destination.stat().st_mode)}
+            require(actual == item, 'Restored partial PCM bytes, size or permissions differ')
+            restored[name] = actual
+        require(len(restored) == 108, 'Actual partial PCM candidate inventory changed')
+    result = {'schema': 'native-app-partial-driver-cache/v1', 'origin': origin,
+        'recipeSHA256': receipt['recipeSHA256'], 'restoredPCMCandidates': restored,
+        'originalNestedArchiveSHA256': capture.sha(path),
+        'successfulAppCompilationClaimed': False, 'currentCompilerValidationRequired': True}
+    write(folder / 'candidate-receipt.json', result)
+    return result
+
+
+def verify_partial_driver_cache(root, prepared):
+    cache = prepared.get('partialDriverCaches')
+    if cache is None: return
+    require(cache['schema'] == 'native-app-partial-driver-cache/v1'
+        and cache['successfulAppCompilationClaimed'] is False and cache['currentCompilerValidationRequired'] is True
+        and cache['recipeSHA256'] == recipe_identity(prepared, 'production'), 'Partial cache planning identity differs')
+    arena = Path(prepared['plans']['production']['operations']['arena'])
+    cache_root = arena / 'ModuleCache.noindex/1U72Z291X4DNG'
+    actual = {}
+    expected = cache['restoredPCMCandidates']
+    require(len(expected) == 108 and cache_root.is_dir() and not cache_root.is_symlink()
+        and {path.relative_to(arena).as_posix() for path in cache_root.iterdir()} == set(expected),
+        'Partial cache input inventory changed before planning')
+    for name, item in expected.items():
+        path = arena / name
+        require(path.parent == cache_root and path.is_file() and not path.is_symlink()
+            and path.parent.resolve() == path.parent, 'Partial cache input path changed before planning')
+        actual[name] = {'kind': 'file', 'sha256': capture.sha(path), 'bytes': path.stat().st_size,
+            'mode': stat.S_IMODE(path.stat().st_mode)}
+        require(actual[name] == item, 'Partial cache input bytes, size or permissions changed before planning')
+    write(root / 'partial-driver-cache-before-planning.json', {'schema': 'native-app-partial-cache-planning-input/v1',
+        'sourceSHA': prepared['sourceSHA'], 'runID': int(os.environ['GITHUB_RUN_ID']),
+        'recipeSHA256': cache['recipeSHA256'], 'originalProducer': cache['origin'], 'actualFiles': actual})
+
+
 def restore_product(root, phase, prepared, origin):
     folder = root / 'resumed' / phase; folder.mkdir(parents=True)
-    archive_path = folder / 'original.zip'; download(origin['artifact'], archive_path)
+    archive_path = product_archive(folder, phase, origin['artifact'])
     plan = prepared['plans'][phase]; arena = Path(plan['operations']['arena'])
     driver = plan['driver']; objects = Path(driver['argv'][driver['argv'].index('-emit-module-path') + 1]).parent
     links = [item for item in plan['operations']['links'] if item['targetGUID'] == driver['targetGUID']]
@@ -516,6 +665,7 @@ def restore_product(root, phase, prepared, origin):
             destination = arena / relative
             require(destination == output or any(destination.is_relative_to(path) for path in allowed), 'Resumed output escapes this module')
             require(type(item['mode']) is int and item['mode'] & ~0o777 == 0, 'Invalid resumed output permissions')
+            if destination == arena / 'ModuleCache.noindex/Session.modulevalidation': continue
             if not receipt['state']['linkComplete'] and destination.is_relative_to(arena / 'Products'): continue
             if item['kind'] == 'symlink':
                 target = item['target']
@@ -579,6 +729,7 @@ def checkpoint(root, phase, prepared, state):
         'runID': int(os.environ['GITHUB_RUN_ID']), 'attempt': 1, 'recipeSHA256': recipe_identity(prepared, phase),
         'compilerSHA256': prepared['compilerSHA256'], 'arena': str(arena), 'state': state, 'files': files,
         'functionalAcceptance': False, 'publicationAuthorised': False}
+    receipt['partialDriverCacheInput'] = prepared.get('partialDriverCaches') if phase == 'production' else None
     folder = root / phase
     temporary_files = {}
     for path in (folder / 'tmp').rglob('*'):
@@ -605,8 +756,9 @@ def checkpoint(root, phase, prepared, state):
                 info.create_system = 3; info.external_attr = (stat.S_IFLNK | 0o777) << 16
                 archive.writestr(info, os.readlink(path).encode())
             elif path.is_file() and path != folder / 'product-receipt.json': archive.write(path, 'evidence/' + name)
-        origin = root / 'resumed' / phase / 'original.zip'
+        origin = root / 'resumed' / phase / 'product.zip'
         if state['resumed']:
+            archive.write(root / 'resumed' / phase / 'original.zip', 'evidence/origin-original-artifact.zip')
             with zipfile.ZipFile(origin) as previous:
                 for item in previous.infolist():
                     if item.filename == 'product-receipt.json' or item.filename.startswith('evidence/'):
@@ -628,6 +780,13 @@ def execute(root, phase):
         require(previous['state']['compileComplete'] and previous['state']['linkComplete'], 'Tests require the new testable App module')
     plan = prepared['plans'][phase]
     driver, operations = plan['driver'], plan['operations']
+    profile = 'production' if phase == 'production' else 'testable'
+    session = prepared['clangBuildSessions'][profile]
+    session_path = clang_session_paths(prepared['plans'], Path(os.environ['RUNNER_TEMP']).resolve())[profile]
+    require(session['path'] == str(session_path) and session_path.is_file() and not session_path.is_symlink()
+        and capture.sha(session_path) == session['sha256'] and session_path.stat().st_mtime_ns == session['mtimeNS'],
+        'Clang build session changed after preparation')
+    if phase == 'production': verify_partial_driver_cache(root, prepared)
     require(capture.sha(Path(driver['argv'][0])) == prepared['compilerSHA256'], 'Compiler changed after preparation')
     folder = root / phase; folder.mkdir()
     state = {'compileComplete': False, 'linkComplete': False, 'compilerExecutions': 0, 'resumed': False}
