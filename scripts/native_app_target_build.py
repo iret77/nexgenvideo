@@ -24,6 +24,17 @@ from retained_app_test_products import api, archive_bytes, download, require, ve
 
 
 MODE = 'native-app-targets'
+DRIVER_INPUT_ORIGINS = {
+    'production-cache': {'selected': {'runID': 42579228502, 'sourceSHA': 'ce3f5dab418cb740159d9348d2cca4921ce81b04',
+        'artifactID': 13656049747, 'artifactSHA256': '78edea90be9d7701870d7c67b49dcb33660b45e5a5507e10172023eaab72457b',
+        'receiptSHA256': 'e5d37d8cb052c2f830401030b9452b83936661217c2858cc65f9a6b8debf248b'},
+        'nestedSHA256': '399b9393316c96bda5d0f69af81dbf0e4fb5bad3596fa91d6644c5b8e148e6f1', 'files': 114},
+    'production-plan': {'selected': {'runID': 42586326278, 'sourceSHA': 'b06b26295bca9cbd3d96d0841c4c068077984bb0',
+        'artifactID': 13659142258, 'artifactSHA256': '98e5797340b89a7bbe978f4dcfbc44db1a95c594077bae9231aa8b679f7af53c',
+        'receiptSHA256': '5bd6f9015a352a8a238cddcc09fecaf4ee095bdc93caf5ae859749d688bde17b'},
+        'nestedSHA256': 'd6f1a613f842ae6ce3ad0814ec3273bd20becb54ae37574090576461d0eb1b49', 'files': 115,
+        'stdoutSHA256': '677f693ca82d5e1c4ea3314fdf4c22e5b9d80b7b46bd4215d876237da0495d18'}
+}
 PATHS = capture.PATHS | {'scripts/native_app_target_recipe.py', 'scripts/test_native_app_target_recipe.py',
     'scripts/native_app_target_build.py', 'scripts/test_native_app_target_build.py',
     'scripts/test_diagnostic_acceptance.py'}
@@ -47,9 +58,9 @@ def resume_inputs(raw):
             result[key] = value
         return result
     value = json.loads(raw, object_pairs_hook=unique)
-    require(isinstance(value, dict) and set(value) <= {'production', 'testable', 'tests', 'production-cache'},
+    require(isinstance(value, dict) and set(value) <= {'production', 'testable', 'tests', *DRIVER_INPUT_ORIGINS},
         'Unknown resumed target role')
-    require(not {'production', 'production-cache'} <= set(value), 'Conflicting production product and cache roles')
+    require(len(set(value) & {'production', *DRIVER_INPUT_ORIGINS}) <= 1, 'Conflicting production product and cache roles')
     keys = {'runID', 'sourceSHA', 'artifactID', 'artifactSHA256', 'receiptSHA256'}
     for item in value.values():
         require(isinstance(item, dict) and set(item) == keys and all(type(item[key]) is int and item[key] > 0
@@ -163,12 +174,10 @@ def bank_metadata(root, selected, head):
 def resumed_products(selected, objects, head):
     result = {}
     for phase, item in selected.items():
-        cache_only = phase == 'production-cache'
+        cache_only = phase in DRIVER_INPUT_ORIGINS
         artifact_phase = 'production' if cache_only else phase
         if cache_only:
-            require(item == {'runID': 42579228502, 'sourceSHA': 'ce3f5dab418cb740159d9348d2cca4921ce81b04',
-                'artifactID': 13656049747, 'artifactSHA256': '78edea90be9d7701870d7c67b49dcb33660b45e5a5507e10172023eaab72457b',
-                'receiptSHA256': 'e5d37d8cb052c2f830401030b9452b83936661217c2858cc65f9a6b8debf248b'},
+            require(item == DRIVER_INPUT_ORIGINS[phase]['selected'],
                 'Unqualified partial driver cache producer')
         run = api('actions/runs/' + str(item['runID']))
         jobs = api(f"actions/runs/{item['runID']}/attempts/1/jobs?per_page=100")
@@ -477,9 +486,12 @@ def prepare(root, source_binding):
         'appProductCompilerExecutions': 0, 'packageMetadataQueriesRepeated': 0, 'pinnedHeaderInputs': headers,
         'productionDescriptionQueriesRepeated': 0, 'testableDescriptionQueriesRepeated': 0}
     prepared['resumedProducts'] = {phase: restore_product(root, phase, prepared, origin)
-        for phase, origin in binding['resumedProducts'].items() if phase != 'production-cache'}
+        for phase, origin in binding['resumedProducts'].items() if phase not in DRIVER_INPUT_ORIGINS}
     partial = binding['resumedProducts'].get('production-cache')
     prepared['partialDriverCaches'] = restore_partial_driver_cache(root, prepared, partial) if partial else None
+    printed = binding['resumedProducts'].get('production-plan')
+    prepared['retainedProductionPlanning'] = restore_printed_driver_plan(root, prepared, printed) if printed else None
+    if printed: prepared['partialDriverCaches'] = prepared['retainedProductionPlanning']['cacheInput']
     prepared['clangBuildSessions'] = create_clang_sessions(root, plans, temporary)
     write(root / 'prepared.json', prepared)
 
@@ -543,13 +555,19 @@ def product_archive(folder, phase, artifact):
 
 
 def restore_partial_driver_cache(root, prepared, origin):
+    return restore_driver_cache(root, prepared, origin, 'production-cache')
+
+
+def restore_driver_cache(root, prepared, origin, role):
+    require(role in DRIVER_INPUT_ORIGINS, 'Unknown partial driver input role')
+    specification = DRIVER_INPUT_ORIGINS[role]
     folder = root / 'partial-driver-cache'; folder.mkdir()
     path = product_archive(folder, 'production', origin['artifact'])
     restored = {}
     plan = prepared['plans']['production']
     arena = Path(plan['operations']['arena'])
     cache_root = arena / 'ModuleCache.noindex/1U72Z291X4DNG'
-    require(capture.sha(path) == '399b9393316c96bda5d0f69af81dbf0e4fb5bad3596fa91d6644c5b8e148e6f1',
+    require(capture.sha(path) == specification['nestedSHA256'],
         'Actual partial driver nested archive changed')
     with zipfile.ZipFile(path) as archive:
         entries = archive.infolist()
@@ -567,7 +585,7 @@ def restore_partial_driver_cache(root, prepared, origin):
             and receipt['recipeSHA256'] == recipe_identity(prepared, 'production')
             and receipt['state'] == {'compileComplete': False, 'linkComplete': False, 'compilerExecutions': 0, 'resumed': False},
             'Partial driver cache cannot claim a completed App compiler product')
-        require(len(receipt['files']) == 114, 'Actual partial driver cache inventory changed')
+        require(len(receipt['files']) == specification['files'], 'Actual partial driver cache inventory changed')
         for name, item in receipt['files'].items():
             relative = Path(name)
             require(str(relative) == name and not relative.is_absolute() and '..' not in relative.parts
@@ -600,6 +618,100 @@ def restore_partial_driver_cache(root, prepared, origin):
         'successfulAppCompilationClaimed': False, 'currentCompilerValidationRequired': True}
     write(folder / 'candidate-receipt.json', result)
     return result
+
+
+def restore_planning_files(archive, records, destination):
+    require(isinstance(records, dict) and len(records) == 6, 'Retained driver planning temporary inventory changed')
+    result = {}
+    for name, item in records.items():
+        relative = Path(name)
+        require(str(relative) == name and not relative.is_absolute() and '..' not in relative.parts
+            and relative.parent == Path('tmp/TemporaryDirectory.pzfKPD') and '\\' not in name and '\0' not in name
+            and item['kind'] == 'file', 'Retained planning temporary input escapes its exact namespace')
+        entry = archive.getinfo('evidence/' + name)
+        require(stat.S_ISREG(entry.external_attr >> 16) and stat.S_IMODE(entry.external_attr >> 16) == 0o644
+            and entry.file_size == item['bytes'] and item['bytes'] <= 16 * 1024**2,
+            'Retained planning temporary mode or size differs')
+        target = destination / relative
+        require(not target.exists() and not target.is_symlink() and target.parent.resolve() == target.parent,
+            'Retained planning temporary target is occupied or linked')
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with archive.open(entry) as source, target.open('xb') as output:
+            shutil.copyfileobj(source, output, 1024 * 1024)
+        os.chmod(target, 0o644)
+        actual = {'kind': 'file', 'sha256': capture.sha(target), 'bytes': target.stat().st_size,
+            'mode': stat.S_IMODE(target.stat().st_mode)}
+        require({key: actual[key] for key in item} == item and actual['mode'] == 0o644,
+            'Restored planning temporary bytes, size or mode differ')
+        result[name] = actual
+    return result
+
+
+def restore_printed_driver_plan(root, prepared, origin):
+    specification = DRIVER_INPUT_ORIGINS['production-plan']
+    require(origin['selected'] == specification['selected'], 'Unqualified retained printed driver producer')
+    cache = restore_driver_cache(root, prepared, origin, 'production-plan')
+    folder = root / 'partial-driver-cache'
+    with zipfile.ZipFile(folder / 'product.zip') as archive:
+        receipt = json.loads(archive_bytes(archive, 'product-receipt.json', 16 * 1024**2))
+        raw = archive_bytes(archive, 'evidence/driver-jobs.stdout', 16 * 1024**2)
+        require(len(raw) == 997274 and hashlib.sha256(raw).hexdigest() == specification['stdoutSHA256']
+            and archive_bytes(archive, 'evidence/driver-jobs.stderr') == b''
+            and json.loads(archive_bytes(archive, 'evidence/driver-jobs.exit.json')) == {'exitCode': 0}
+            and json.loads(archive_bytes(archive, 'evidence/driver-jobs.argv.json'))
+                == [*prepared['plans']['production']['driver']['argv'], '-driver-print-jobs'],
+            'Retained printed driver command, original exit or bytes differ')
+        jobs = [shlex.split(line) for line in raw.decode().splitlines() if line.strip()]
+        require(len(jobs) == 115 and not any('build-session-timestamp' in argument for job in jobs for argument in job),
+            'Retained printed driver graph or session timestamp boundary changed')
+        inputs = restore_planning_files(archive, receipt['temporaryFiles'], folder / 'planning-inputs')
+    (folder / 'driver-jobs-original.stdout').write_bytes(raw)
+    result = {'schema': 'native-app-retained-printed-driver-plan/v1', 'origin': origin,
+        'recipeSHA256': recipe_identity(prepared, 'production'), 'stdoutSHA256': specification['stdoutSHA256'],
+        'stdoutPath': str(folder / 'driver-jobs-original.stdout'), 'temporaryRoot': str(folder / 'planning-inputs'),
+        'temporaryFiles': inputs, 'cacheInput': cache, 'originalPlanningExitCode': 0,
+        'currentPlanningExecutions': 0, 'frontendScopeQualified': False, 'successfulAppCompilationClaimed': False}
+    write(folder / 'printed-plan-receipt.json', result)
+    return result
+
+
+def stage_printed_driver_plan(folder, prepared):
+    planning = prepared['retainedProductionPlanning']
+    require(planning['schema'] == 'native-app-retained-printed-driver-plan/v1'
+        and planning['recipeSHA256'] == recipe_identity(prepared, 'production')
+        and planning['origin']['selected'] == DRIVER_INPUT_ORIGINS['production-plan']['selected'],
+        'Retained printed driver context changed before scope validation')
+    for name, item in planning['temporaryFiles'].items():
+        relative = Path(name)
+        require(relative.parent == Path('tmp/TemporaryDirectory.pzfKPD') and str(relative) == name,
+            'Retained driver temporary namespace changed before planning')
+        source = Path(planning['temporaryRoot']) / relative
+        target = folder / relative
+        require(source.is_file() and not source.is_symlink() and source.parent.resolve() == source.parent
+            and capture.sha(source) == item['sha256'] and source.stat().st_size == item['bytes']
+            and stat.S_IMODE(source.stat().st_mode) == item['mode']
+            and not target.exists() and not target.is_symlink() and target.parent.resolve() == target.parent,
+            'Retained driver temporary input changed or target is occupied')
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target); os.chmod(target, item['mode'])
+        require(capture.sha(target) == item['sha256'] and target.stat().st_size == item['bytes']
+            and stat.S_IMODE(target.stat().st_mode) == item['mode'], 'Staged retained driver temporary bytes differ')
+    source = Path(planning['stdoutPath'])
+    require(source.is_file() and not source.is_symlink() and capture.sha(source) == planning['stdoutSHA256'],
+        'Retained printed driver bytes changed before scope validation')
+    raw = source.read_bytes()
+    (folder / 'driver-jobs.stdout').write_bytes(raw)
+    write(folder / 'driver-jobs-reused.json', {'schema': planning['schema'], 'origin': planning['origin'],
+        'stdoutSHA256': planning['stdoutSHA256'], 'temporaryFiles': planning['temporaryFiles'],
+        'originalPlanningExitCode': 0, 'currentPlanningExecutions': 0,
+        'newSession': prepared['clangBuildSessions']['production']})
+    return raw.decode()
+
+
+def driver_planning_jobs(folder, phase, prepared, driver, environment):
+    if phase == 'production' and prepared.get('retainedProductionPlanning'):
+        return stage_printed_driver_plan(folder, prepared)
+    return logged(folder, 'driver-jobs', [*driver['argv'], '-driver-print-jobs'], environment, driver['cwd'], 600)
 
 
 def verify_partial_driver_cache(root, prepared):
@@ -809,7 +921,9 @@ def execute(root, phase):
             source_lists = [value[1:] for value in argv if value.startswith('@')]
             require(len(source_lists) == 1, 'Missing unique actual Swift source list')
             sources = shlex.split(Path(source_lists[0]).read_text())
-            jobs = logged(folder, 'driver-jobs', [*argv, '-driver-print-jobs'], environment, driver['cwd'], 600)
+            jobs = driver_planning_jobs(folder, phase, prepared, driver, environment)
+            if phase == 'production' and prepared.get('retainedProductionPlanning'):
+                state['retainedDriverPlanningOrigin'] = prepared['retainedProductionPlanning']['origin']
             proof = validate_frontend_jobs(jobs, driver, sources, operations['arena'], str(Path.cwd().resolve()), str(task_temporary), prepared['pinnedHeaderInputs'])
             consumed = folder / 'consumed-inputs'; consumed.mkdir()
             for item in proof['consumedInputs']:

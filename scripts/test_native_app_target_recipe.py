@@ -21,6 +21,42 @@ def wire(value):
 
 
 class NativeAppTargetRecipeTests(unittest.TestCase):
+    def test_sdk_default_alias_must_resolve_to_the_same_directory_in_both_physical_layouts(self):
+        for default_is_link in (True, False):
+            with self.subTest(default_is_link=default_is_link), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp).resolve(); sdk = root / 'MacOSX27.2.sdk'; alias = root / 'MacOSX.sdk'
+                real, link = (sdk, alias) if default_is_link else (alias, sdk)
+                real.mkdir(); link.symlink_to(real.name, target_is_directory=True)
+                module = real / 'module.modulemap'; module.write_text('module ExactSDK {}')
+                bindings = {}
+                self.assertTrue(recipe.sdk_interface_input(recipe.canonical_path(str(alias / module.name)),
+                    recipe.canonical_path(str(sdk)), bindings))
+                item = bindings[str(alias / module.name)]
+                self.assertEqual(item['resolvedSDK'], str(real))
+                self.assertEqual(item['resolvedPath'], str(module))
+                self.assertEqual(item['sha256'], recipe.hashlib.sha256(module.read_bytes()).hexdigest())
+                self.assertEqual((item['device'], item['inode']), (real.stat().st_dev, real.stat().st_ino))
+
+    def test_sdk_alias_does_not_admit_foreign_sdks_arbitrary_aliases_or_escaping_interface_links(self):
+        for changed in ('different-sdk', 'missing', 'other-alias', 'escaping-interface'):
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp).resolve(); sdk = root / 'MacOSX27.2.sdk'; sdk.mkdir()
+                foreign = root / 'Foreign.sdk'; foreign.mkdir(); (foreign / 'module.modulemap').write_text('foreign')
+                alias = root / 'MacOSX.sdk'
+                if changed == 'missing': pass
+                elif changed == 'different-sdk': alias.symlink_to(foreign.name, target_is_directory=True)
+                elif changed == 'other-alias':
+                    alias = root / 'Unbound.sdk'; alias.symlink_to(sdk.name, target_is_directory=True)
+                else:
+                    alias.symlink_to(sdk.name, target_is_directory=True)
+                    (sdk / 'module.modulemap').symlink_to(foreign / 'module.modulemap')
+                arguments = (recipe.canonical_path(str(alias / 'module.modulemap')), recipe.canonical_path(str(sdk)), {})
+                if changed == 'other-alias':
+                    self.assertFalse(recipe.sdk_interface_input(*arguments))
+                else:
+                    with self.assertRaises((ValueError, FileNotFoundError)):
+                        recipe.sdk_interface_input(*arguments)
+
     def test_swiftbuild_uint8_discriminator_consumes_its_payload_instead_of_a_negative_fixint(self):
         reader = recipe.TaskStoreReader(b'\x93\xe0\xff\xc3\x92\xa1x\xc4\x01y')
         self.assertEqual(reader.value(), [255, True, ['x', b'y']])
