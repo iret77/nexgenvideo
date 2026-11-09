@@ -225,7 +225,31 @@ def repository_origin(value):
     return 'https://github.com' + origin.path.lower().removesuffix('.git')
 
 
-def restore_checkouts(root, scratch, cache, pins, environment):
+def checkout_locations(packages, identities, scratch, workspace):
+    require(isinstance(packages, list) and len(packages) == len(identities) + 1,
+        'Qualified package metadata inventory changed')
+    locations = {}
+    root_packages = 0
+    for package in packages:
+        require(isinstance(package, dict) and isinstance(package.get('packageKind'), dict)
+            and set(package['packageKind']) == {'root'}, 'Missing qualified package root')
+        roots = package['packageKind']['root']
+        require(isinstance(roots, list) and len(roots) == 1 and isinstance(roots[0], str), 'Ambiguous qualified package root')
+        path = Path(roots[0])
+        require(path.is_absolute() and str(path) == roots[0] and '..' not in path.parts
+            and '\\' not in roots[0] and '\0' not in roots[0], 'Unbound qualified checkout path')
+        if path == workspace:
+            root_packages += 1
+            continue
+        identity = path.name.lower()
+        require(path.parent == scratch / 'checkouts' and identity in identities and identity not in locations,
+            'Qualified checkout path does not match one pinned identity')
+        locations[identity] = path
+    require(root_packages == 1 and set(locations) == identities, 'Qualified checkout roots are incomplete')
+    return locations
+
+
+def restore_checkouts(root, scratch, cache, pins, environment, packages, workspace):
     require(isinstance(pins, list) and len(pins) == 18, 'Pinned source checkout inventory changed')
     identities = set()
     for pin in pins:
@@ -239,6 +263,7 @@ def restore_checkouts(root, scratch, cache, pins, environment):
             and re.fullmatch('[a-f0-9]{40}', pin.get('state', {}).get('revision', '')),
             'Invalid pinned source checkout identity, origin or revision')
         identities.add(identity)
+    locations = checkout_locations(packages, identities, scratch, workspace)
     destination_root = scratch / 'checkouts'
     require(not scratch.exists() and not scratch.is_symlink(), 'Source checkout scratch path is occupied')
     destination_root.mkdir(parents=True)
@@ -267,7 +292,7 @@ def restore_checkouts(root, scratch, cache, pins, environment):
             if probe.returncode == 0:
                 selected_cache, cache_origin = candidate, actual_origin
                 break
-        destination = destination_root / identity
+        destination = locations[identity]
         source = str(selected_cache) if selected_cache else pin['location']
         git = ['git', '-c', 'core.hooksPath=/dev/null', '-c', 'maintenance.autoDetach=false', '-c', 'gc.autoDetach=false']
         logged(root, identity + '-clone-source', [*git, 'clone',
@@ -376,7 +401,7 @@ def prepare(root, source_binding):
     scratch = Path(snapshot['scratch'])
     require(scratch.is_relative_to(temporary) and not scratch.exists(), 'Pinned checkout path is occupied or outside this job')
     pins = json.loads(Path('Package.resolved').read_text())['pins']
-    restore_checkouts(root, scratch, Path(snapshot['cache']), pins, environment)
+    restore_checkouts(root, scratch, Path(snapshot['cache']), pins, environment, snapshot['graph']['packages'], Path.cwd())
     checkouts = list((scratch / 'checkouts').iterdir())
     require(len(pins) == len(checkouts) == 18, 'Pinned checkout inventory changed')
     for pin in pins:

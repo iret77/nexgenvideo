@@ -15,6 +15,11 @@ class NativeAppTargetBuildTests(unittest.TestCase):
             'location': 'https://github.com/example/package' + str(i) + '.git',
             'state': {'revision': format(i + 1, '040x')}} for i in range(18)]
 
+    def checkout_packages(self, scratch, workspace):
+        names = ['Package0'] + ['package' + str(i) for i in range(1, 18)]
+        return [{'packageKind': {'root': [str(workspace)]}}] + [
+            {'packageKind': {'root': [str(scratch / 'checkouts' / name)]}} for name in names]
+
     def test_source_checkout_restore_never_resolves_or_downloads_binary_targets(self):
         for cache_status in (None, 0, 1, 'wrong-origin'):
             with self.subTest(cache_status=cache_status), tempfile.TemporaryDirectory() as temp:
@@ -33,7 +38,7 @@ class NativeAppTargetBuildTests(unittest.TestCase):
                     return build.subprocess.CompletedProcess(argv, cache_status or 0)
                 with patch.object(build, 'logged', side_effect=logged), patch.object(build.subprocess, 'run',
                         side_effect=cached_probe) as probe:
-                    build.restore_checkouts(root, scratch, cache, self.checkout_pins(), {})
+                    build.restore_checkouts(root, scratch, cache, self.checkout_pins(), {}, self.checkout_packages(scratch, root), root)
                 clones = [argv for argv in calls if 'clone' in argv]
                 self.assertEqual(len(clones), 18)
                 self.assertEqual(clones[0][-2], str(cached) if cache_status == 0 else self.checkout_pins()[0]['location'])
@@ -42,7 +47,7 @@ class NativeAppTargetBuildTests(unittest.TestCase):
                 detached = [argv[-1] for argv in calls if 'checkout' in argv and '--detach' in argv]
                 self.assertEqual(detached, [pin['state']['revision'] for pin in self.checkout_pins()])
                 self.assertEqual(sorted(p.name for p in (scratch / 'checkouts').iterdir()),
-                    sorted(pin['identity'] for pin in self.checkout_pins()))
+                    sorted(Path(package['packageKind']['root'][0]).name for package in self.checkout_packages(scratch, root)[1:]))
                 self.assertEqual(probe.call_count, 0 if cache_status is None else 1 if cache_status == 'wrong-origin' else 2)
                 receipt = json.loads((root / 'restored-source-checkouts.json').read_text())
                 self.assertEqual(receipt['checkouts'][0]['originalCacheOrigin'], self.checkout_pins()[0]['location'] if cache_status == 0 else None)
@@ -54,9 +59,30 @@ class NativeAppTargetBuildTests(unittest.TestCase):
             with self.subTest(field=field, value=value), tempfile.TemporaryDirectory() as temp:
                 root = Path(temp); pins = self.checkout_pins(); pins[0][field] = value
                 with patch.object(build, 'logged') as logged, patch.object(build.subprocess, 'run') as probe, self.assertRaises(ValueError):
-                    build.restore_checkouts(root, root / 'scratch', root / 'cache', pins, {})
+                    build.restore_checkouts(root, root / 'scratch', root / 'cache', pins, {},
+                        self.checkout_packages(root / 'scratch', root), root)
                 logged.assert_not_called(); probe.assert_not_called()
                 self.assertFalse((root / 'scratch').exists())
+
+    def test_qualified_checkout_spelling_and_strict_header_roots_are_preserved_without_aliases(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); scratch = root / 'scratch'; packages = self.checkout_packages(scratch, root)
+            identities = {pin['identity'] for pin in self.checkout_pins()}
+            locations = build.checkout_locations(packages, identities, scratch, root)
+            self.assertEqual(locations['package0'], scratch / 'checkouts/Package0')
+            self.assertNotEqual(str(locations['package0']), str(scratch / 'checkouts/package0'))
+            for changed in ('missing', 'nested', 'duplicate', 'foreign', 'root', 'parent-alias', 'backslash', 'nul'):
+                broken = copy.deepcopy(packages)
+                if changed == 'missing': broken.pop()
+                elif changed == 'nested': broken[1]['packageKind']['root'][0] += '/nested'
+                elif changed == 'duplicate': broken[2]['packageKind']['root'] = [str(scratch / 'checkouts/package0')]
+                elif changed == 'foreign': broken[1]['packageKind']['root'] = [str(root / 'foreign/Package0')]
+                elif changed == 'root': broken[0]['packageKind']['root'] = [str(root / 'other')]
+                elif changed == 'parent-alias': broken[1]['packageKind']['root'] = [str(scratch) + '/checkouts/../Package0']
+                elif changed == 'backslash': broken[1]['packageKind']['root'] = [str(scratch / 'checkouts/Package0') + '\\alias']
+                else: broken[1]['packageKind']['root'] = [str(scratch / 'checkouts/Package0') + '\0alias']
+                with self.subTest(changed=changed), self.assertRaises(ValueError):
+                    build.checkout_locations(broken, identities, scratch, root)
 
     def inputs(self):
         identifier, digest, _ = build.retained.ARTIFACTS['runtime']
