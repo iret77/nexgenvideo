@@ -13,7 +13,11 @@ final class UserJourneyTests: XCTestCase {
     private var geometrySamples: [[String: Any]] = []
     private var geometryPhases: [String: [[String: Any]]] = [:]
     private var evidenceSchema: String {
-        config["scenario"] as? String == "transport" ? "nexgenvideo/external-transport/1" : "nexgenvideo/external-gui-journey/1"
+        switch config["scenario"] as? String ?? "" {
+        case "transport": return "nexgenvideo/external-transport/1"
+        case "normal-fresh-musicvideo": return "nexgenvideo/external-fresh-musicvideo/1"
+        default: return "nexgenvideo/external-gui-journey/1"
+        }
     }
 
     private struct Failure: Error { let message: String }
@@ -160,6 +164,99 @@ final class UserJourneyTests: XCTestCase {
                 && FileManager.default.fileExists(atPath: movie.path)
         }
         try stage("export", fields: ["movieSHA256": try digest(movie)])
+    }
+
+    func testNormalFreshMusicvideoThroughInstalledApp() throws {
+        try require(config["scenario"] as? String == "normal-fresh-musicvideo", "Missing explicit fresh Musicvideo scenario")
+        let library = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/NexGenVideo/Plugins", isDirectory: true)
+        let initial = FileManager.default.fileExists(atPath: library.path)
+            ? try FileManager.default.contentsOfDirectory(at: library, includingPropertiesForKeys: nil, options: .skipsHiddenFiles)
+            : []
+        try require(initial.isEmpty, "The supposedly fresh profile already contains packs")
+        try write(["installedEntries": initial.count, "observedAt": ISO8601DateFormatter().string(from: Date())],
+                  to: output.appendingPathComponent("profile-before-launch.json"))
+        try launch()
+        try home()
+        try stage("fresh-profile", fields: ["installedEntries": initial.count])
+        try stage("home")
+        try menu("NexGenVideo", "Settings…")
+        let settings = app.windows["Settings"]
+        let pickers = settings.popUpButtons.matching(NSPredicate(format: "label == %@", "Interface text, Interface text size"))
+        try wait("unique Interface text size control") { pickers.count == 1 }
+        let picker = pickers.element(boundBy: 0)
+        let scale = try string("scaleLabel")
+        try click(picker, "Interface text size")
+        try click(app.menuItems[scale], scale)
+        try wait("selected interface text size") { String(describing: picker.value ?? "").contains(scale) }
+        try stage("settings", fields: ["scaleLabel": scale, "selectedValue": String(describing: picker.value ?? "")])
+        try click(settings.buttons[XCUIIdentifierCloseWindow], "native Settings close")
+        try wait("Settings closed") { !settings.exists }
+        try menu("File", "New")
+        let bootstrap = URL(fileURLWithPath: try string("bootstrapProject"))
+        try savePanel(name: bootstrap.deletingPathExtension().lastPathComponent, previous: "Untitled Project",
+                      directory: bootstrap.deletingLastPathComponent())
+        try editor(bootstrap)
+        try click(windowButtons["Project settings"], "Project settings")
+        try click(windowButtons["Choose Plugin…"], "Choose Plugin…")
+        try wait("normal Format Plugins catalog card", timeout: 90) {
+            self.app.staticTexts["Format Plugins"].exists && self.windowButtons["Activate"].isHittable
+        }
+        try stage("catalog-card")
+        try click(windowButtons["Activate"], "Activate Music Video")
+        let bundle = library.appendingPathComponent("musicvideo/0.6.0.ngvpack", isDirectory: true)
+        let infoURL = bundle.appendingPathComponent("Contents/Info.plist")
+        try wait("downloaded exact Musicvideo pack", timeout: 120) { FileManager.default.fileExists(atPath: infoURL.path) }
+        let info = try PropertyListSerialization.propertyList(from: Data(contentsOf: infoURL), options: [], format: nil) as? [String: Any]
+        try require(info?["NGVPackID"] as? String == "musicvideo"
+                    && info?["CFBundleShortVersionString"] as? String == "0.6.0"
+                    && info?["NGVProjectSchema"] as? String == "musicvideo/3.0.0"
+                    && info?["NGVMinAppVersion"] as? String == "1.8.0", "The public catalog installed a different pack")
+        try wait("plugin picker closed") { !self.app.staticTexts["Format Plugins"].exists }
+        try key("s", modifiers: .command)
+        try wait("activated exact project binding") {
+            guard let value = try? self.json(bootstrap.appendingPathComponent("ngv.json")) else { return false }
+            return value["activePlugin"] as? String == "musicvideo" && value["activePluginVersion"] as? String == "0.6.0"
+                && value["activePluginProjectSchema"] as? String == "musicvideo/3.0.0"
+        }
+        let bootstrapBinding = try json(bootstrap.appendingPathComponent("ngv.json"))
+        try write(bootstrapBinding, to: output.appendingPathComponent("bootstrap-binding.json"))
+        try stage("installed-and-activated", fields: ["packID": "musicvideo", "version": "0.6.0", "schema": "musicvideo/3.0.0"])
+        let window = try documentWindow(bootstrap)
+        try click(window.buttons[XCUIIdentifierCloseWindow], "native bootstrap close")
+        try wait("bootstrap closed") { !window.exists }
+        try home()
+        let newProject = windowButtons.matching(NSPredicate(format: "label == %@", "New Project"))
+        try wait("Home New Project") { newProject.count == 1 }
+        try click(newProject.element(boundBy: 0), "Home New Project")
+        try wait("normal format selection") { self.app.staticTexts["Choose a format"].exists }
+        let music = windowButtons.matching(NSPredicate(format: "label CONTAINS %@", "Music Video"))
+        try wait("unique Music Video format") { music.count == 1 && music.element(boundBy: 0).isHittable }
+        try click(music.element(boundBy: 0), "Music Video")
+        try click(windowButtons["Create"], "Create Music Video project")
+        let project = URL(fileURLWithPath: try string("project"))
+        try savePanel(name: project.deletingPathExtension().lastPathComponent, previous: "Untitled Project",
+                      directory: project.deletingLastPathComponent())
+        try editor(project)
+        try key("s", modifiers: .command)
+        let binding = try json(project.appendingPathComponent("ngv.json"))
+        try require(binding["activePlugin"] as? String == "musicvideo" && binding["activePluginVersion"] as? String == "0.6.0"
+                    && binding["activePluginProjectSchema"] as? String == "musicvideo/3.0.0", "Fresh creation did not retain the exact catalog binding")
+        try write(binding, to: output.appendingPathComponent("fresh-binding.json"))
+        try stage("new-musicvideo-project", fields: ["packID": "musicvideo", "version": "0.6.0", "schema": "musicvideo/3.0.0"])
+        try click(windowButtons["Project settings"], "Project settings")
+        try click(windowButtons["Start production"], "Start production")
+        try wait("first required Track intake", timeout: 90) {
+            self.app.staticTexts["Track"].exists && self.windowButtons["Choose…"].exists
+                && self.windowButtons["Choose…"].isEnabled && self.windowButtons["Attach track"].exists
+                && !self.windowButtons["Attach track"].isEnabled
+        }
+        try require(!windowButtons["Attach lyrics"].exists, "Track was bypassed before any assignment")
+        let audio = (try? FileManager.default.contentsOfDirectory(at: project.appendingPathComponent("audio"),
+            includingPropertiesForKeys: nil, options: .skipsHiddenFiles)) ?? []
+        try require(audio.isEmpty, "The installation check unexpectedly assigned a track")
+        try stage("track-intake", fields: ["chooseEnabled": windowButtons["Choose…"].isEnabled,
+            "attachEnabled": windowButtons["Attach track"].isEnabled, "trackUploaded": !audio.isEmpty])
     }
 
     func testTimelineTransportThroughInstalledApp() throws {

@@ -741,6 +741,93 @@ class ExternalTestBundleTests(unittest.TestCase):
         runtime = rest.split('  test-runtime:\n', 1)[1].split('  acceptance:\n', 1)[0]
         self.assertIn('fetch-depth: 0', runtime)
 
+    def test_fresh_catalog_rejects_old_ambiguous_or_rebound_pack_entries(self):
+        entry = {'id': 'musicvideo', 'displayName': 'Music Video', 'tagline': 'Music video production',
+                 'version': '0.6.0', 'minAppVersion': '1.8.0', 'projectSchema': 'musicvideo/3.0.0',
+                 'sha256': 'c' * 64, 'url': journey.CATALOG_URL.removesuffix('catalog.json') + 'musicvideo-0.6.0.ngvpack.zip'}
+        def check(entries):
+            raw = json.dumps({'schema': 'plugins/v2', 'plugins': entries}).encode()
+            return journey.fresh_catalog(raw, hashlib.sha256(raw).hexdigest(), 'c' * 64)
+        self.assertEqual(check([entry]), entry)
+        for entries in ([{**entry, 'version': '0.5.8'}], [entry, entry],
+                        [{**entry, 'projectSchema': 'musicvideo/2.0.0'}], [{**entry, 'sha256': 'd' * 64}],
+                        [{**entry, 'url': 'https://example.invalid/substitute.zip'}]):
+            with self.subTest(entries=entries), self.assertRaises(ValueError):
+                check(entries)
+        with self.assertRaises(ValueError):
+            journey.fresh_catalog(b'{"schema":"plugins/v2","plugins":[]}', '0' * 64, 'c' * 64)
+
+    def test_fresh_stage_proof_requires_order_actual_150_percent_and_unassigned_track(self):
+        screenshot, accessibility = self.root / 'screen.png', self.root / 'screen.ax'
+        screenshot.write_bytes(b'\x89PNG\r\n\x1a\nfixture')
+        accessibility.write_text('AXWindow Track Choose Attach track disabled')
+        visual = {'screenshot': screenshot.name, 'accessibility': accessibility.name,
+                  'screenshotSHA256': journey.sha256(screenshot), 'accessibilitySHA256': journey.sha256(accessibility)}
+        stages = [{'stage': name, 'evidence': visual.copy()} for name in journey.FRESH_STAGES]
+        stages[0]['installedEntries'] = 0
+        stages[2].update(scaleLabel=journey.SCALES['1.5'], selectedValue=journey.SCALES['1.5'])
+        for index in (4, 5):
+            stages[index].update(packID='musicvideo', version='0.6.0', schema='musicvideo/3.0.0')
+        stages[-1].update(chooseEnabled=True, attachEnabled=False, trackUploaded=False)
+        original = {'schema': 'nexgenvideo/external-fresh-musicvideo/1', 'stages': stages,
+                    'actions': [{'target': 'native action ' + str(index)} for index in range(12)]}
+        journey.write_json(self.root / 'profile-before-launch.json', {'installedEntries': 0})
+        for name in ('bootstrap-binding.json', 'fresh-binding.json'):
+            journey.write_json(self.root / name, {'activePlugin': 'musicvideo', 'activePluginVersion': '0.6.0',
+                                                 'activePluginProjectSchema': 'musicvideo/3.0.0'})
+        journey.write_json(self.root / 'journey.json', original)
+        self.assertEqual(journey.validate_fresh_stages(self.root), original)
+        mutations = []
+        value = copy.deepcopy(original); value['stages'][0], value['stages'][1] = value['stages'][1], value['stages'][0]; mutations.append(value)
+        value = copy.deepcopy(original); value['stages'][2]['selectedValue'] = '100%'; mutations.append(value)
+        value = copy.deepcopy(original); value['stages'][-1]['attachEnabled'] = True; mutations.append(value)
+        value = copy.deepcopy(original); value['stages'][5]['version'] = '0.5.8'; mutations.append(value)
+        value = copy.deepcopy(original); value['actions'].append({'target': 'Attach track'}); mutations.append(value)
+        value = copy.deepcopy(original); value['stages'][0]['evidence']['accessibilitySHA256'] = 'f' * 64; mutations.append(value)
+        for value in mutations:
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                journey.write_json(self.root / 'journey.json', value)
+                journey.validate_fresh_stages(self.root)
+
+    def test_downloaded_normal_pack_requires_exact_installed_files_and_rejects_escapes(self):
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, 'w') as zipped:
+            zipped.writestr('musicvideo.ngvpack/Contents/Info.plist', b'exact pinned metadata')
+        installed = self.root / 'installed-pack'
+        (installed / 'Contents').mkdir(parents=True)
+        info = installed / 'Contents/Info.plist'
+        info.write_bytes(b'exact pinned metadata')
+        self.assertRegex(journey.verify_downloaded_pack(archive.getvalue(), installed), '^[a-f0-9]{64}$')
+        info.write_bytes(b'different installed metadata')
+        with self.assertRaises(ValueError):
+            journey.verify_downloaded_pack(archive.getvalue(), installed)
+        bad = io.BytesIO()
+        with zipfile.ZipFile(bad, 'w') as zipped:
+            zipped.writestr('musicvideo.ngvpack/../outside', b'escape')
+        with self.assertRaises(ValueError):
+            journey.verify_downloaded_pack(bad.getvalue(), installed)
+
+    def test_fresh_workflow_gates_runner_on_exact_dmg_source_catalog_and_pack(self):
+        text = (journey.REPOSITORY / '.github/workflows/external-gui-acceptance.yml').read_text()
+        step = text.split('      - name: Select independent user journeys\n', 1)[1].split('      - name:', 1)[0]
+        code = step.split("          python3 - <<'PY'\n", 1)[1].split('          PY', 1)[0]
+        code = '\n'.join(line[10:] for line in code.splitlines())
+        values = {'SCENARIO': 'normal-fresh-musicvideo', 'INTERFACE_SCALE': '1.5', 'ARTIFACT_MODE': 'dmg',
+                  'EXPECTED_DMG_SHA256': '1' * 64, 'TEST_BUNDLE_RUN_ID': '', 'TEST_BUNDLE_ARTIFACT_ID': '',
+                  'TEST_BUNDLE_ARTIFACT_SHA256': '', 'RETAINED_SOURCE': self.sha, 'RETAINED_RUN': '12',
+                  'RETAINED_ARTIFACT': '34', 'RETAINED_DIGEST': '2' * 64, 'VERIFIED_PR_RUN': '56',
+                  'FIXTURE_ARTIFACT': '', 'FIXTURE_SHA': '', 'EXPECTED_CATALOG_SHA256': '3' * 64,
+                  'EXPECTED_PACK_SHA256': '4' * 64, 'GITHUB_SHA': self.sha, 'GITHUB_OUTPUT': str(self.root / 'fresh-output')}
+        variants = [({}, True), ({'INTERFACE_SCALE': 'all'}, False), ({'ARTIFACT_MODE': 'app'}, False),
+                    ({'VERIFIED_PR_RUN': ''}, False), ({'EXPECTED_CATALOG_SHA256': ''}, False),
+                    ({'EXPECTED_PACK_SHA256': ''}, False), ({'FIXTURE_ARTIFACT': '78'}, False),
+                    ({'SCENARIO': 'journey'}, False)]
+        for changes, accepted in variants:
+            with self.subTest(changes=changes):
+                result = subprocess.run([sys.executable, '-c', code], stdin=subprocess.DEVNULL, capture_output=True,
+                                        env=os.environ | values | changes, timeout=20)
+                self.assertEqual(result.returncode == 0, accepted, result.stderr.decode())
+
 
 if __name__ == '__main__':
     unittest.main()
