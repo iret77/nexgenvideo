@@ -82,7 +82,7 @@ extension EditorViewModel {
         canvasZoom = 1
         canvasOffset = .zero
         inspectedObject = .entity(image.entity)
-        inspectorPanelVisible = true
+        revealInspector()
         maximizedPanel = nil
         videoEngine?.activateTab(tab)
         pushPreviewHistory(tab.id)

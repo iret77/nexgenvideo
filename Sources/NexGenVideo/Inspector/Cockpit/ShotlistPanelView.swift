@@ -159,7 +159,10 @@ struct ShotlistPanelView: View {
                 )
         )
         .contentShape(RoundedRectangle(cornerRadius: AppTheme.Radius.md))
-        .onTapGesture { editor.inspectedObject = .shot(shot.id) }
+        .onTapGesture {
+            editor.inspectedObject = .shot(shot.id)
+            editor.revealInspector()
+        }
     }
 
     /// Compact per-row source-mode tag: SF Symbol + short label, AppTheme-styled.

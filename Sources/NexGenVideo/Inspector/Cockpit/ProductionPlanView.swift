@@ -116,6 +116,7 @@ struct ProductionPlanView: View {
                 Button("Shot \(snapshot.number(shot.id) ?? 0)") {
                     guard let home = editor.workingRoot else { return }
                     editor.productionPlanSelection = .init(home: home, snapshot: snapshot, shotID: shot.id)
+                    editor.revealInspector()
                 }
                 .buttonStyle(InlineActionButtonStyle())
                 .reviewAcceptanceProbe("production.plan.select." + shot.id)

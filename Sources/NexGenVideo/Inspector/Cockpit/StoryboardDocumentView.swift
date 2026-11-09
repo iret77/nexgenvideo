@@ -8,6 +8,18 @@ struct StoryboardShotSelection: Equatable {
     let sectionRange: String
 }
 
+extension EditorViewModel {
+    func updateStoryboardSelection(_ step: Step, section: Section) {
+        storyboardSelection = StoryboardShotSelection(step: step,
+            sectionTitle: StoryboardPresentation.sectionTitle(section), sectionRange: StoryboardPresentation.sectionRange(section))
+    }
+
+    func inspectStoryboardShot(_ step: Step, section: Section) {
+        updateStoryboardSelection(step, section: section)
+        revealInspector()
+    }
+}
+
 enum StoryboardPresentation {
     static func sectionTitle(_ section: Section) -> String {
         section.label.isEmpty ? readable(section.id) : section.label
@@ -85,13 +97,13 @@ struct StoryboardDocumentView: View {
                 editor.storyboardSelection = nil
                 return
             }
-            select(step, section: section)
+            editor.updateStoryboardSelection(step, section: section)
         }
     }
 
     private func shot(_ step: Step, section: Section) -> some View {
         let selected = editor.storyboardSelection?.step.id == step.id
-        return Button { select(step, section: section) } label: {
+        return Button { editor.inspectStoryboardShot(step, section: section) } label: {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
                 HStack {
                     Text(step.id)
@@ -130,11 +142,6 @@ struct StoryboardDocumentView: View {
         }
     }
 
-    private func select(_ step: Step, section: Section) {
-        editor.storyboardSelection = StoryboardShotSelection(step: step,
-            sectionTitle: StoryboardPresentation.sectionTitle(section), sectionRange: StoryboardPresentation.sectionRange(section))
-        editor.inspectorPanelVisible = true
-    }
 }
 
 struct StoryboardShotInspector: View {

@@ -183,7 +183,7 @@ struct BiblePanelView: View {
 
     private func inspect(_ ref: BibleEntityRef) {
         editor.inspectedObject = .entity(ref)
-        editor.inspectorPanelVisible = true
+        editor.revealInspector()
     }
 
     // MARK: - Look
@@ -220,7 +220,7 @@ struct BiblePanelView: View {
             .contentShape(RoundedRectangle(cornerRadius: AppTheme.Radius.md))
             .onTapGesture {
                 editor.inspectedObject = .look
-                editor.inspectorPanelVisible = true
+                editor.revealInspector()
             }
             .reviewAcceptanceProbe("bible.look.select")
         }

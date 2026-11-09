@@ -154,6 +154,7 @@ struct ReviewPanelView: View {
             HStack(spacing: AppTheme.Spacing.sm) {
                 Button {
                     editor.inspectedObject = .shot(shot.shotId)
+                    editor.revealInspector()
                 } label: {
                     Text(shot.shotId)
                         .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold, design: .monospaced)
