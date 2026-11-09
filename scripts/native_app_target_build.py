@@ -17,6 +17,7 @@ import urllib.parse
 import zipfile
 
 import native_app_build_plan as capture
+import native_current_cohort as cohort
 from native_app_target_recipe import module_driver, profile_operations, validate_frontend_jobs
 import release_test_repair as retained
 from release_engine_resume import verify_engine_source_objects
@@ -44,6 +45,7 @@ TESTS_PLAN_ORIGIN = {'selected': {'runID': 42603638669, 'sourceSHA': 'a27d505eac
 PATHS = capture.PATHS | {'scripts/native_app_target_recipe.py', 'scripts/test_native_app_target_recipe.py',
     'scripts/native_app_target_build.py', 'scripts/test_native_app_target_build.py',
     'scripts/test_diagnostic_acceptance.py', 'scripts/fixtures/native-test-entry-point.json'}
+CURRENT_PATHS = PATHS | cohort.CI_PATHS
 
 
 def selector(env, names, pattern):
@@ -129,12 +131,15 @@ def raw_metadata(root, selected, app):
     source_zip = root / 'raw-source-binding-original.zip'; download(current, source_zip)
     source_files = capture.archive_files(source_zip.read_bytes())
     binding = json.loads(source_files['binding.json'])
-    require(binding['schema'] == 'native-app-build-plan-binding/v1' and binding['harnessSourceSHA'] == run['head_sha']
-        and binding['nativeSourceObjects'] == app['nativeSourceObjects'], 'Metadata native source objects differ')
-    for key in ('runID', 'sourceSHA', 'artifactID', 'artifactSHA256', 'appSourceSHA'):
-        require(binding['selected'][key] == app['selected'][key], 'Original App source selector changed: ' + key)
-    require(set(capture.git('diff', '--name-only', '--no-renames', run['head_sha'], os.environ['GITHUB_SHA']).splitlines()) <= PATHS,
-        'Metadata source graph changed beyond reviewed compiler tooling')
+    if app['schema'] == 'native-current-cohort-binding/v1':
+        cohort.verify_template(binding, run, artifact, app)
+    else:
+        require(binding['schema'] == 'native-app-build-plan-binding/v1' and binding['harnessSourceSHA'] == run['head_sha']
+            and binding['nativeSourceObjects'] == app['nativeSourceObjects'], 'Metadata native source objects differ')
+        for key in ('runID', 'sourceSHA', 'artifactID', 'artifactSHA256', 'appSourceSHA'):
+            require(binding['selected'][key] == app['selected'][key], 'Original App source selector changed: ' + key)
+        require(set(capture.git('diff', '--name-only', '--no-renames', run['head_sha'], os.environ['GITHUB_SHA']).splitlines()) <= PATHS,
+            'Metadata source graph changed beyond reviewed compiler tooling')
     resume = binding['resumeCapture']
     require(resume['schema'] == 'native-app-build-plan-resume/v2', 'Unsupported metadata origin chain')
     previous_raw = source_files['prior-metadata-original.zip']
@@ -180,7 +185,8 @@ def bank_metadata(root, selected, head):
         'currentEngineSourceObjects': objects, 'appHostRole': role}
 
 
-def resumed_products(selected, objects, head):
+def resumed_products(selected, objects, head, allowed_paths=None):
+    allowed_paths = PATHS if allowed_paths is None else allowed_paths
     result = {}
     for phase, item in selected.items():
         cache_only = phase in DRIVER_INPUT_ORIGINS
@@ -206,7 +212,7 @@ def resumed_products(selected, objects, head):
         artifact = api('actions/artifacts/' + str(item['artifactID']))
         verify_artifact(artifact, run, native[0], item['artifactID'], item['artifactSHA256'], 'app-target-' + artifact_phase + '-products')
         require(objects == {name: capture.git('rev-parse', item['sourceSHA'] + ':' + name) for name in capture.INPUT_OBJECTS}
-            and set(capture.git('diff', '--name-only', '--no-renames', item['sourceSHA'], head).splitlines()) <= PATHS,
+            and set(capture.git('diff', '--name-only', '--no-renames', item['sourceSHA'], head).splitlines()) <= allowed_paths,
             'Resumed target native source changed')
         result[phase] = {'selected': item, 'artifact': artifact, 'run': run, 'job': native[0], 'sourceJob': source[0]}
     return result
@@ -217,11 +223,14 @@ def bind(root):
         and os.environ.get('GITHUB_ACTIONS') == 'true' and os.environ.get('GITHUB_RUN_ATTEMPT') == '1', 'Wrong compiler source role')
     selected = validate_inputs(os.environ)
     root.mkdir(parents=True, exist_ok=False)
-    capture.bind_sources(root / 'app-source', selected['app'], PATHS)
+    current = selected['app']['appSourceSHA'] == cohort.APP_SOURCE
+    binder = cohort.bind if current else capture.bind_sources
+    binder(root / 'app-source', selected['app'], CURRENT_PATHS if current else PATHS)
     app = json.loads((root / 'app-source/binding.json').read_text())
     metadata = raw_metadata(root, selected['metadata'], app)
     bank = bank_metadata(root, selected['bank'], os.environ['GITHUB_SHA'])
-    resumed = resumed_products(selected['resume'], app['nativeSourceObjects'], os.environ['GITHUB_SHA'])
+    resumed = resumed_products(selected['resume'], app['nativeSourceObjects'], os.environ['GITHUB_SHA'],
+        CURRENT_PATHS if current else PATHS)
     write(root / 'binding.json', {'schema': 'native-app-target-source-binding/v1', 'sourceSHA': os.environ['GITHUB_SHA'],
         'selected': selected, 'appSource': app, 'metadata': metadata, 'retainedBank': bank, 'resumedProducts': resumed,
         'appSourceSHA': selected['app']['appSourceSHA'], 'nativeSourceObjects': app['nativeSourceObjects'],
@@ -498,6 +507,9 @@ def prepare(root, source_binding):
         'bankBinary': str(binary), 'environment': environment, 'compilerSHA256': toolchain['compilerSHA256'],
         'appProductCompilerExecutions': 0, 'packageMetadataQueriesRepeated': 0, 'pinnedHeaderInputs': headers,
         'productionDescriptionQueriesRepeated': 0, 'testableDescriptionQueriesRepeated': 0}
+    if binding['appSourceSHA'] == cohort.APP_SOURCE:
+        import native_xctest_host
+        prepared['xctestHostInputs'] = native_xctest_host.inputs()
     prepared['resumedProducts'] = {phase: restore_product(root, phase, prepared, origin)
         for phase, origin in binding['resumedProducts'].items() if phase not in DRIVER_INPUT_ORIGINS and phase != 'tests-plan'}
     partial = binding['resumedProducts'].get('production-cache')
@@ -516,6 +528,8 @@ def recipe_identity(prepared, phase):
     value = {'driver': plan['driver'], 'operations': plan['operations'],
         'nativeSourceObjects': prepared['nativeSourceObjects'], 'appSourceSHA': prepared['appSourceSHA'],
         'compilerSHA256': prepared['compilerSHA256']}
+    if phase == 'tests' and prepared.get('appSourceSHA') == cohort.APP_SOURCE:
+        value['xctestHostInputs'] = prepared['xctestHostInputs']
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
@@ -1175,8 +1189,14 @@ def execute(root, phase):
         state['imageUUID'] = image_uuid
         if phase == 'tests':
             bundle = output.parents[2]
+            if prepared['appSourceSHA'] == cohort.APP_SOURCE:
+                import native_xctest_host
+                state['xctestHost'] = native_xctest_host.build(folder, bundle, prepared,
+                    lambda label, argv: logged(folder, label, argv, prepared['environment'], timeout=300))
             retained.sign_copied_bundle(bundle, lambda argv, label, timeout=180:
                 logged(folder, label, argv, prepared['environment'], timeout=timeout))
+            if 'xctestHost' in state:
+                state['xctestHost']['signedSHA256'] = capture.sha(bundle / 'Contents/Helpers' / native_xctest_host.HOST_NAME)
         if phase == 'production':
             logged(folder, 'dsym', ['xcrun', 'dsymutil', str(output), '-o', str(output) + '.dSYM'], prepared['environment'], timeout=300)
             state['dsymComplete'] = True
