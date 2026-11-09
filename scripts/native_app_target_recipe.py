@@ -361,6 +361,46 @@ def sdk_interface_input(path, sdk, bindings):
     return True
 
 
+def platform_developer_interface_input(path, driver, sdk, bindings):
+    if driver.get('module') != 'NexGenVideoTests' or driver.get('targetGUID') != 'PACKAGE-PRODUCT:nexgenvideo_NexGenVideoTests.NexGenVideoTests':
+        return False
+    developer = sdk.parent.parent
+    require(sdk.parent.name == 'SDKs' and developer.name == 'Developer' and developer.parent.name == 'MacOSX.platform',
+        'Tests SDK has no exact Platform Developer root')
+    xcode_developer = developer.parents[2]
+    require(canonical_path(driver['argv'][0]).is_relative_to(xcode_developer / 'Toolchains'),
+        'Test framework and compiler belong to different Xcode installations')
+    roots = [(developer / 'Library/Frameworks', '-F', '.framework'), (developer / 'usr/lib', '-Isystem', '.swiftmodule')]
+    for root, flag, kind in roots:
+        if not path.is_relative_to(root): continue
+        declared = [canonical_path(driver['argv'][index + 1]) for index, value in enumerate(driver['argv'][:-1]) if value == flag]
+        require(declared.count(root) == 1, 'Platform test input search root was not declared exactly once')
+        relative = path.relative_to(root)
+        require(len(relative.parts) >= 2 and PurePosixPath(relative.parts[0]).suffix == kind,
+            'Platform test input is outside its declared framework or Swift module')
+        container = Path(root / relative.parts[0])
+        file = Path(path)
+        resolved = file.resolve(strict=True)
+        resolved_container = container.resolve(strict=True)
+        xcode_app = Path(xcode_developer).parent.parent.resolve(strict=True)
+        resolved_compiler = Path(driver['argv'][0]).resolve(strict=True)
+        resolved_sdk = Path(sdk).resolve(strict=True)
+        require(xcode_app.suffix == '.app' and container.is_dir()
+            and resolved_compiler.is_relative_to(xcode_app) and resolved_sdk.is_relative_to(xcode_app)
+            and Path(sdk).is_dir() and Path(driver['argv'][0]).is_file()
+            and resolved_container.is_relative_to(xcode_app) and resolved.is_relative_to(resolved_container)
+            and file.is_file() and file.stat().st_size <= 16 * 1024**2,
+            'Platform test input escapes its exact selected Xcode framework')
+        bindings[str(path)] = {'path': str(path), 'declaredRoot': str(root), 'searchFlag': flag,
+            'resolvedContainer': str(resolved_container), 'resolvedPath': str(resolved),
+            'compilerPath': driver['argv'][0], 'resolvedCompiler': str(resolved_compiler),
+            'sdkPath': str(sdk), 'resolvedSDK': str(resolved_sdk), 'resolvedXcodeApp': str(xcode_app),
+            'bytes': file.stat().st_size, 'sha256': hashlib.sha256(file.read_bytes()).hexdigest(),
+            'mode': file.stat().st_mode & 0o777}
+        return True
+    return False
+
+
 def validate_frontend_jobs(text, driver, sources, arena, source_root, temporary_root, pinned_headers=None):
     require(isinstance(text, str) and len(text) <= 16 * 1024**2, 'Driver job output exceeds its bound')
     jobs = [shlex.split(line) for line in text.splitlines() if line.strip()]
@@ -375,6 +415,7 @@ def validate_frontend_jobs(text, driver, sources, arena, source_root, temporary_
     pinned_headers = pinned_headers or {}
     consumed = {}
     sdk_alias_inputs = {}
+    platform_developer_inputs = {}
     expanded_jobs = []
     def owned_file(value):
         path = canonical_path(value)
@@ -424,7 +465,8 @@ def validate_frontend_jobs(text, driver, sources, arena, source_root, temporary_
             require(interfaces and all(not path.is_relative_to(PurePosixPath(source_root) / 'Engine/Sources')
                 and not path.is_relative_to(PurePosixPath(source_root) / 'Sources/NexGenVideo') for path in interfaces),
                 'Dependency cache job would compile a retained host module')
-            require(all(sdk_interface_input(path, sdk, sdk_alias_inputs) or path.is_relative_to(tools.parent)
+            require(all(sdk_interface_input(path, sdk, sdk_alias_inputs)
+                or platform_developer_interface_input(path, driver, sdk, platform_developer_inputs) or path.is_relative_to(tools.parent)
                 or path.is_relative_to(arena) or str(path) in pinned_headers for path in interfaces),
                 'Dependency cache input is outside the pinned toolchain, SDK and package graph')
             for path in interfaces:
@@ -449,4 +491,5 @@ def validate_frontend_jobs(text, driver, sources, arena, source_root, temporary_
     return {'jobs': len(jobs), 'moduleSourceCount': len(compiled), 'retainedPackageSourceCompilations': 0,
         'driverOutputSHA256': hashlib.sha256(text.encode()).hexdigest(), 'expandedJobs': expanded_jobs,
         'consumedInputs': sorted(consumed.values(), key=lambda item: item['path']),
-        'sdkAliasInputs': sorted(sdk_alias_inputs.values(), key=lambda item: item['path'])}
+        'sdkAliasInputs': sorted(sdk_alias_inputs.values(), key=lambda item: item['path']),
+        'platformDeveloperInputs': sorted(platform_developer_inputs.values(), key=lambda item: item['path'])}

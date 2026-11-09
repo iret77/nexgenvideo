@@ -35,6 +35,12 @@ DRIVER_INPUT_ORIGINS = {
         'nestedSHA256': 'd6f1a613f842ae6ce3ad0814ec3273bd20becb54ae37574090576461d0eb1b49', 'files': 115,
         'stdoutSHA256': '677f693ca82d5e1c4ea3314fdf4c22e5b9d80b7b46bd4215d876237da0495d18'}
 }
+TESTS_PLAN_ORIGIN = {'selected': {'runID': 42603638669, 'sourceSHA': 'a27d505eac2236712ffe8f4b7d8d0d768d125dd5',
+    'artifactID': 13666558706, 'artifactSHA256': '2db863c858a151be0f6559aa6ce99571db51c47e0d4ace2b3ebbf299fd68b904',
+    'receiptSHA256': 'e9dca27c5a932006b90faf9a27af25a6e6aac36552399a5667e62c1d63080406'},
+    'nestedSHA256': 'fba7c9ed1f2cfcc7a5dc154f5342193013ffd7e88b617f7dde49f5c29204ba44',
+    'recipeSHA256': '52f0cceaf10eeb7dae482f17818dccd64e6139ec76c5f861f5269d13729a752c',
+    'stdoutSHA256': 'fc94c1710660a46c2f5c1ee6a4be3d894260818c0ee2b5b7eebb3851569d6eeb'}
 PATHS = capture.PATHS | {'scripts/native_app_target_recipe.py', 'scripts/test_native_app_target_recipe.py',
     'scripts/native_app_target_build.py', 'scripts/test_native_app_target_build.py',
     'scripts/test_diagnostic_acceptance.py', 'scripts/fixtures/native-test-entry-point.json'}
@@ -58,9 +64,12 @@ def resume_inputs(raw):
             result[key] = value
         return result
     value = json.loads(raw, object_pairs_hook=unique)
-    require(isinstance(value, dict) and set(value) <= {'production', 'testable', 'tests', *DRIVER_INPUT_ORIGINS},
+    require(isinstance(value, dict) and set(value) <= {'production', 'testable', 'tests', 'tests-plan', *DRIVER_INPUT_ORIGINS},
         'Unknown resumed target role')
     require(len(set(value) & {'production', *DRIVER_INPUT_ORIGINS}) <= 1, 'Conflicting production product and cache roles')
+    require(len(set(value) & {'tests', 'tests-plan'}) <= 1, 'Conflicting completed Tests product and raw planning roles')
+    if 'tests-plan' in value:
+        require({'production', 'testable'} <= set(value), 'Tests plan requires both completed App product roles')
     keys = {'runID', 'sourceSHA', 'artifactID', 'artifactSHA256', 'receiptSHA256'}
     for item in value.values():
         require(isinstance(item, dict) and set(item) == keys and all(type(item[key]) is int and item[key] > 0
@@ -175,10 +184,13 @@ def resumed_products(selected, objects, head):
     result = {}
     for phase, item in selected.items():
         cache_only = phase in DRIVER_INPUT_ORIGINS
-        artifact_phase = 'production' if cache_only else phase
+        tests_plan = phase == 'tests-plan'
+        artifact_phase = 'tests' if tests_plan else 'production' if cache_only else phase
         if cache_only:
             require(item == DRIVER_INPUT_ORIGINS[phase]['selected'],
                 'Unqualified partial driver cache producer')
+        if tests_plan:
+            require(item == TESTS_PLAN_ORIGIN['selected'], 'Unqualified printed Tests driver producer')
         run = api('actions/runs/' + str(item['runID']))
         jobs = api(f"actions/runs/{item['runID']}/attempts/1/jobs?per_page=100")
         require(jobs['total_count'] == len(jobs['jobs']) and run['repository']['full_name'] == 'iret77/nexgenvideo'
@@ -487,12 +499,14 @@ def prepare(root, source_binding):
         'appProductCompilerExecutions': 0, 'packageMetadataQueriesRepeated': 0, 'pinnedHeaderInputs': headers,
         'productionDescriptionQueriesRepeated': 0, 'testableDescriptionQueriesRepeated': 0}
     prepared['resumedProducts'] = {phase: restore_product(root, phase, prepared, origin)
-        for phase, origin in binding['resumedProducts'].items() if phase not in DRIVER_INPUT_ORIGINS}
+        for phase, origin in binding['resumedProducts'].items() if phase not in DRIVER_INPUT_ORIGINS and phase != 'tests-plan'}
     partial = binding['resumedProducts'].get('production-cache')
     prepared['partialDriverCaches'] = restore_partial_driver_cache(root, prepared, partial) if partial else None
     printed = binding['resumedProducts'].get('production-plan')
     prepared['retainedProductionPlanning'] = restore_printed_driver_plan(root, prepared, printed) if printed else None
     if printed: prepared['partialDriverCaches'] = prepared['retainedProductionPlanning']['cacheInput']
+    tests_plan = binding['resumedProducts'].get('tests-plan')
+    prepared['retainedTestsPlanning'] = restore_tests_driver_plan(root, prepared, tests_plan) if tests_plan else None
     prepared['clangBuildSessions'] = create_clang_sessions(root, plans, temporary)
     write(root / 'prepared.json', prepared)
 
@@ -621,13 +635,14 @@ def restore_driver_cache(root, prepared, origin, role):
     return result
 
 
-def restore_planning_files(archive, records, destination):
+def restore_planning_files(archive, records, destination, namespace='tmp/TemporaryDirectory.pzfKPD'):
     require(isinstance(records, dict) and len(records) == 6, 'Retained driver planning temporary inventory changed')
+    require(namespace in {'tmp/TemporaryDirectory.pzfKPD', 'tmp/TemporaryDirectory.R93c7x'}, 'Unqualified planning namespace')
     result = {}
     for name, item in records.items():
         relative = Path(name)
         require(str(relative) == name and not relative.is_absolute() and '..' not in relative.parts
-            and relative.parent == Path('tmp/TemporaryDirectory.pzfKPD') and '\\' not in name and '\0' not in name
+            and relative.parent == Path(namespace) and '\\' not in name and '\0' not in name
             and item['kind'] == 'file', 'Retained planning temporary input escapes its exact namespace')
         entry = archive.getinfo('evidence/' + name)
         require(stat.S_ISREG(entry.external_attr >> 16) and stat.S_IMODE(entry.external_attr >> 16) == 0o644
@@ -676,15 +691,129 @@ def restore_printed_driver_plan(root, prepared, origin):
     return result
 
 
-def stage_printed_driver_plan(folder, prepared):
-    planning = prepared['retainedProductionPlanning']
+def restore_tests_driver_plan(root, prepared, origin):
+    require(origin['selected'] == TESTS_PLAN_ORIGIN['selected'], 'Unqualified printed Tests plan origin')
+    folder = root / 'tests-driver-plan'; folder.mkdir()
+    path = product_archive(folder, 'tests', origin['artifact'])
+    require(capture.sha(path) == TESTS_PLAN_ORIGIN['nestedSHA256'], 'Original Tests plan archive changed')
+    plan = prepared['plans']['tests']
+    arena = Path(plan['operations']['arena'])
+    require(recipe_identity(prepared, 'tests') == TESTS_PLAN_ORIGIN['recipeSHA256'], 'Original Tests recipe changed')
+    staged = {}
+    with zipfile.ZipFile(path) as archive:
+        entries = archive.infolist()
+        require(len(entries) <= 200_000 and sum(item.file_size for item in entries) <= 12 * 1024**3
+            and len({item.filename.casefold() for item in entries}) == len(entries) and archive.testzip() is None,
+            'Original Tests plan archive inventory or CRC differs')
+        raw_receipt = archive_bytes(archive, 'product-receipt.json', 16 * 1024**2)
+        require(hashlib.sha256(raw_receipt).hexdigest() == origin['selected']['receiptSHA256'], 'Tests plan receipt changed')
+        receipt = json.loads(raw_receipt)
+        require(receipt['schema'] == 'native-app-target-product/v1' and receipt['phase'] == 'tests'
+            and receipt['sourceSHA'] == origin['selected']['sourceSHA'] and receipt['runID'] == origin['selected']['runID']
+            and receipt['attempt'] == 1 and receipt['appSourceSHA'] == prepared['appSourceSHA']
+            and receipt['nativeSourceObjects'] == prepared['nativeSourceObjects'] and receipt['arena'] == str(arena)
+            and receipt['compilerSHA256'] == prepared['compilerSHA256']
+            and receipt['recipeSHA256'] == recipe_identity(prepared, 'tests') and len(receipt['files']) == 340
+            and receipt['state'] == {'compileComplete': False, 'linkComplete': False, 'compilerExecutions': 0, 'resumed': False},
+            'Raw Tests plan cannot replace a complete compiler product')
+        stdout = archive_bytes(archive, 'evidence/driver-jobs.stdout', 16 * 1024**2)
+        jobs = [shlex.split(line) for line in stdout.decode().splitlines() if line.strip()]
+        require(len(stdout) == 1062030 and hashlib.sha256(stdout).hexdigest() == TESTS_PLAN_ORIGIN['stdoutSHA256']
+            and archive_bytes(archive, 'evidence/driver-jobs.stderr') == b''
+            and json.loads(archive_bytes(archive, 'evidence/driver-jobs.exit.json')) == {'exitCode': 0}
+            and json.loads(archive_bytes(archive, 'evidence/driver-jobs.argv.json')) == [*plan['driver']['argv'], '-driver-print-jobs']
+            and len(jobs) == 111 and not any('build-session-timestamp' in argument for job in jobs for argument in job),
+            'Original Tests planning command, output, exit or timestamp boundary differs')
+        inputs = restore_planning_files(archive, receipt['temporaryFiles'], folder / 'planning-inputs', 'tmp/TemporaryDirectory.R93c7x')
+        roots = [Path('ModuleCache.noindex'), Path('SDKExplicitPrecompiledModules'), Path('Intermediates.noindex/SwiftExplicitPrecompiledModules')]
+        for name, item in receipt['files'].items():
+            relative = Path(name)
+            require(str(relative) == name and not relative.is_absolute() and '..' not in relative.parts
+                and '\\' not in name and '\0' not in name and item['kind'] == 'file'
+                and type(item['mode']) is int and item['mode'] & ~0o777 == 0, 'Unsafe original Tests plan output')
+            entry = archive.getinfo('outputs/' + name)
+            require(stat.S_ISREG(entry.external_attr >> 16) and entry.file_size == item['bytes']
+                and stat.S_IMODE(entry.external_attr >> 16) == item['mode'], 'Original Tests output type, size or mode differs')
+            with archive.open(entry) as stream:
+                require(hashlib.file_digest(stream, 'sha256').hexdigest() == item['sha256'], 'Original Tests output bytes differ')
+            if relative.suffix not in {'.pcm', '.swiftmodule'}: continue
+            require(any(relative.is_relative_to(bound) for bound in roots), 'Tests cache output escapes its three exact roots')
+            destination = folder / 'cache-inputs' / relative
+            require(not destination.exists() and not destination.is_symlink() and destination.parent.resolve() == destination.parent,
+                'Staged Tests cache is occupied or linked')
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            with archive.open(entry) as source, destination.open('xb') as output:
+                shutil.copyfileobj(source, output, 1024 * 1024)
+            os.chmod(destination, item['mode'])
+            require(capture.sha(destination) == item['sha256'] and destination.stat().st_size == item['bytes']
+                and stat.S_IMODE(destination.stat().st_mode) == item['mode'], 'Staged Tests cache copy differs')
+            staged[name] = item
+        require(len(staged) == 333 and sum(name.endswith('.pcm') for name in staged) == 327
+            and sum(name.endswith('.swiftmodule') for name in staged) == 6, 'Original Tests cache inventory differs')
+    (folder / 'driver-jobs-original.stdout').write_bytes(stdout)
+    result = {'schema': 'native-app-retained-printed-driver-plan/v1', 'origin': origin,
+        'recipeSHA256': recipe_identity(prepared, 'tests'), 'stdoutSHA256': TESTS_PLAN_ORIGIN['stdoutSHA256'],
+        'stdoutPath': str(folder / 'driver-jobs-original.stdout'), 'temporaryRoot': str(folder / 'planning-inputs'),
+        'temporaryFiles': inputs, 'cacheRoot': str(folder / 'cache-inputs'), 'cacheFiles': staged,
+        'originalPlanningExitCode': 0, 'currentPlanningExecutions': 0,
+        'frontendScopeQualified': False, 'successfulTestsCompilationClaimed': False}
+    write(folder / 'printed-plan-receipt.json', result)
+    return result
+
+
+def stage_tests_driver_cache(folder, prepared):
+    planning = prepared['retainedTestsPlanning']
+    require(planning['origin']['selected'] == TESTS_PLAN_ORIGIN['selected']
+        and planning['recipeSHA256'] == recipe_identity(prepared, 'tests'), 'Tests cache context changed')
+    arena = Path(prepared['plans']['tests']['operations']['arena'])
+    for name, item in planning['cacheFiles'].items():
+        relative = Path(name)
+        require(str(relative) == name and not relative.is_absolute() and '..' not in relative.parts
+            and '\\' not in name and '\0' not in name and relative.suffix in {'.pcm', '.swiftmodule'}
+            and any(relative.is_relative_to(bound) for bound in (Path('ModuleCache.noindex'),
+                Path('SDKExplicitPrecompiledModules'), Path('Intermediates.noindex/SwiftExplicitPrecompiledModules'))),
+            'Tests cache candidate escapes its exact roots')
+        source = Path(planning['cacheRoot']) / name
+        destination = arena / name
+        require(source.is_file() and not source.is_symlink() and capture.sha(source) == item['sha256']
+            and source.stat().st_size == item['bytes'] and stat.S_IMODE(source.stat().st_mode) == item['mode'],
+            'Original Tests cache candidate changed before reuse')
+        require(not destination.is_symlink() and destination.parent.resolve().is_relative_to(arena.resolve()),
+            'Tests cache destination escapes its arena')
+        if destination.exists():
+            require(destination.is_file() and capture.sha(destination) == item['sha256']
+                and destination.stat().st_size == item['bytes'] and stat.S_IMODE(destination.stat().st_mode) == item['mode'],
+                'Occupied Tests cache candidate differs from the exact original')
+            continue
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, destination); os.chmod(destination, item['mode'])
+    verify_tests_driver_cache(prepared)
+    write(folder / 'cache-reuse-before-planning.json', {'origin': planning['origin'], 'actualFiles': planning['cacheFiles'],
+        'oldSessionAndModuleTimestampRestored': False, 'successfulTestsCompilationClaimed': False})
+
+
+def verify_tests_driver_cache(prepared):
+    planning = prepared['retainedTestsPlanning']
+    arena = Path(prepared['plans']['tests']['operations']['arena'])
+    for name, item in planning['cacheFiles'].items():
+        path = arena / name
+        require(path.is_file() and not path.is_symlink() and path.resolve().is_relative_to(arena.resolve())
+            and capture.sha(path) == item['sha256'] and path.stat().st_size == item['bytes']
+            and stat.S_IMODE(path.stat().st_mode) == item['mode'], 'Restored Tests cache candidate differs')
+
+
+def stage_printed_driver_plan(folder, prepared, phase='production'):
+    require(phase in {'production', 'tests'}, 'Unqualified printed driver role')
+    planning = prepared['retainedProductionPlanning'] if phase == 'production' else prepared['retainedTestsPlanning']
+    selected = DRIVER_INPUT_ORIGINS['production-plan']['selected'] if phase == 'production' else TESTS_PLAN_ORIGIN['selected']
+    namespace = 'tmp/TemporaryDirectory.pzfKPD' if phase == 'production' else 'tmp/TemporaryDirectory.R93c7x'
     require(planning['schema'] == 'native-app-retained-printed-driver-plan/v1'
-        and planning['recipeSHA256'] == recipe_identity(prepared, 'production')
-        and planning['origin']['selected'] == DRIVER_INPUT_ORIGINS['production-plan']['selected'],
+        and planning['recipeSHA256'] == recipe_identity(prepared, phase)
+        and planning['origin']['selected'] == selected,
         'Retained printed driver context changed before scope validation')
     for name, item in planning['temporaryFiles'].items():
         relative = Path(name)
-        require(relative.parent == Path('tmp/TemporaryDirectory.pzfKPD') and str(relative) == name,
+        require(relative.parent == Path(namespace) and str(relative) == name,
             'Retained driver temporary namespace changed before planning')
         source = Path(planning['temporaryRoot']) / relative
         target = folder / relative
@@ -705,13 +834,16 @@ def stage_printed_driver_plan(folder, prepared):
     write(folder / 'driver-jobs-reused.json', {'schema': planning['schema'], 'origin': planning['origin'],
         'stdoutSHA256': planning['stdoutSHA256'], 'temporaryFiles': planning['temporaryFiles'],
         'originalPlanningExitCode': 0, 'currentPlanningExecutions': 0,
-        'newSession': prepared['clangBuildSessions']['production']})
+        'newSession': prepared['clangBuildSessions']['production' if phase == 'production' else 'testable']})
     return raw.decode()
 
 
 def driver_planning_jobs(folder, phase, prepared, driver, environment):
     if phase == 'production' and prepared.get('retainedProductionPlanning'):
         return stage_printed_driver_plan(folder, prepared)
+    if phase == 'tests' and prepared.get('retainedTestsPlanning'):
+        stage_tests_driver_cache(folder, prepared)
+        return stage_printed_driver_plan(folder, prepared, 'tests')
     return logged(folder, 'driver-jobs', [*driver['argv'], '-driver-print-jobs'], environment, driver['cwd'], 600)
 
 
@@ -883,6 +1015,17 @@ def checkpoint(root, phase, prepared, state):
         'linkComplete': state['linkComplete']})
 
 
+def verify_platform_developer_inputs(proof):
+    for item in proof.get('platformDeveloperInputs', []):
+        path = Path(item['path'])
+        require(str(path.resolve(strict=True)) == item['resolvedPath']
+            and str(Path(item['compilerPath']).resolve(strict=True)) == item['resolvedCompiler']
+            and str(Path(item['sdkPath']).resolve(strict=True)) == item['resolvedSDK']
+            and capture.sha(path) == item['sha256'] and path.stat().st_size == item['bytes']
+            and stat.S_IMODE(path.stat().st_mode) == item['mode'],
+            'Platform test framework input changed before compilation')
+
+
 def materialize_test_entry_point(folder, plan, sources):
     from native_app_target_recipe import test_entry_point_source
     driver, operations = plan['driver'], plan['operations']
@@ -965,6 +1108,8 @@ def execute(root, phase):
             jobs = driver_planning_jobs(folder, phase, prepared, driver, environment)
             if phase == 'production' and prepared.get('retainedProductionPlanning'):
                 state['retainedDriverPlanningOrigin'] = prepared['retainedProductionPlanning']['origin']
+            if phase == 'tests' and prepared.get('retainedTestsPlanning'):
+                state['retainedDriverPlanningOrigin'] = prepared['retainedTestsPlanning']['origin']
             proof = validate_frontend_jobs(jobs, driver, sources, operations['arena'], str(Path.cwd().resolve()), str(task_temporary), prepared['pinnedHeaderInputs'])
             consumed = folder / 'consumed-inputs'; consumed.mkdir()
             for item in proof['consumedInputs']:
@@ -974,6 +1119,9 @@ def execute(root, phase):
                 output = consumed / item['sha256']
                 if not output.exists(): shutil.copyfile(source, output)
             write(folder / 'frontend-jobs.json', proof)
+            verify_platform_developer_inputs(proof)
+            if phase == 'tests' and prepared.get('retainedTestsPlanning'):
+                verify_tests_driver_cache(prepared)
             if entry is not None:
                 path = Path(entry['path'])
                 require(not path.is_symlink() and capture.sha(path) == entry['sha256']

@@ -12,6 +12,146 @@ import native_app_target_build as build
 
 
 class NativeAppTargetBuildTests(unittest.TestCase):
+    def test_tests_plan_is_pinned_requires_both_completed_apps_and_conflicts_only_with_completed_tests(self):
+        selected = {'production': dict(build.DRIVER_INPUT_ORIGINS['production-plan']['selected']),
+            'testable': dict(build.DRIVER_INPUT_ORIGINS['production-plan']['selected']),
+            'tests-plan': dict(build.TESTS_PLAN_ORIGIN['selected'])}
+        self.assertEqual(build.resume_inputs(json.dumps(selected)), selected)
+        for missing in ('production', 'testable'):
+            broken = {key: value for key, value in selected.items() if key != missing}
+            with self.subTest(missing=missing), self.assertRaisesRegex(ValueError, 'both completed'):
+                build.resume_inputs(json.dumps(broken))
+        with self.assertRaisesRegex(ValueError, 'Conflicting completed Tests'):
+            build.resume_inputs(json.dumps({**selected, 'tests': selected['tests-plan']}))
+        broken = copy.deepcopy(selected); broken['tests-plan']['artifactID'] += 1
+        with patch.object(build, 'api') as api, self.assertRaisesRegex(ValueError, 'Unqualified printed Tests'):
+            build.resumed_products({'tests-plan': broken['tests-plan']}, {}, 'a' * 40)
+        api.assert_not_called()
+
+    def test_retained_tests_plan_stages_cache_and_exact_tmp_with_fresh_session_without_another_print(self):
+        for changed in ('valid', 'cache-bytes', 'namespace', 'copy', 'collision'):
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary).resolve(); archive_path, records = self.planning_fixture(root)
+                renamed = {name.replace('pzfKPD', 'R93c7x'): item for name, item in records.items()}
+                with zipfile.ZipFile(archive_path) as original, zipfile.ZipFile(root / 'tests.zip', 'w') as archive:
+                    for item in original.infolist():
+                        name = item.filename.replace('pzfKPD', 'R93c7x')
+                        copied = zipfile.ZipInfo(name); copied.create_system = 3; copied.external_attr = item.external_attr
+                        archive.writestr(copied, original.read(item))
+                stored = root / 'stored'
+                with zipfile.ZipFile(root / 'tests.zip') as archive:
+                    inputs = build.restore_planning_files(archive, renamed, stored, 'tmp/TemporaryDirectory.R93c7x')
+                cache_root, arena, folder = root / 'cache', root / 'arena', root / 'tests'
+                arena.mkdir(); folder.mkdir(); candidate = cache_root / 'ModuleCache.noindex/Bucket/original.pcm'
+                candidate.parent.mkdir(parents=True); candidate.write_bytes(b'CPCH original'); candidate.chmod(0o644)
+                cache_files = {'ModuleCache.noindex/Bucket/original.pcm': {'kind': 'file', 'sha256': build.capture.sha(candidate),
+                    'bytes': candidate.stat().st_size, 'mode': 0o644}}
+                stdout = root / 'stdout'; stdout.write_text('original Tests jobs\n')
+                prepared = {'appSourceSHA': 'a' * 40, 'nativeSourceObjects': {}, 'compilerSHA256': 'b' * 64,
+                    'plans': {'tests': {'driver': {'argv': ['swiftc']}, 'operations': {'arena': str(arena)}}},
+                    'clangBuildSessions': {'testable': {'sessionTimestamp': 1234567890.5}}}
+                planning = {'schema': 'native-app-retained-printed-driver-plan/v1',
+                    'recipeSHA256': build.recipe_identity(prepared, 'tests'),
+                    'origin': {'selected': dict(build.TESTS_PLAN_ORIGIN['selected'])},
+                    'temporaryRoot': str(stored), 'temporaryFiles': inputs, 'stdoutPath': str(stdout),
+                    'stdoutSHA256': build.capture.sha(stdout), 'cacheRoot': str(cache_root), 'cacheFiles': cache_files}
+                prepared['retainedTestsPlanning'] = planning
+                if changed == 'cache-bytes': candidate.write_bytes(b'corrupt')
+                elif changed == 'namespace':
+                    name, item = planning['temporaryFiles'].popitem(); planning['temporaryFiles'][name.replace('R93c7x', 'foreign')] = item
+                elif changed == 'collision':
+                    destination = arena / next(iter(cache_files)); destination.parent.mkdir(parents=True)
+                    destination.write_bytes(b'another cached product')
+                with patch.object(build, 'logged') as logged:
+                    if changed == 'copy':
+                        with patch.object(build.shutil, 'copyfile', side_effect=lambda source, destination: destination.write_bytes(b'bad')), \
+                                self.assertRaises(ValueError):
+                            build.driver_planning_jobs(folder, 'tests', prepared, {}, {})
+                    elif changed != 'valid':
+                        with self.assertRaises(ValueError): build.driver_planning_jobs(folder, 'tests', prepared, {}, {})
+                    else:
+                        self.assertEqual(build.driver_planning_jobs(folder, 'tests', prepared, {}, {}), stdout.read_text())
+                        record = json.loads((folder / 'driver-jobs-reused.json').read_text())
+                        self.assertEqual(record['currentPlanningExecutions'], 0)
+                        self.assertEqual(record['newSession'], prepared['clangBuildSessions']['testable'])
+                        self.assertFalse((folder / 'driver-jobs.exit.json').exists())
+                        self.assertEqual((arena / next(iter(cache_files))).read_bytes(), b'CPCH original')
+                    logged.assert_not_called()
+
+    def test_platform_test_input_recheck_rejects_byte_mode_and_resolved_path_substitution(self):
+        for changed in ('valid', 'bytes', 'mode', 'path', 'compiler', 'sdk'):
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary).resolve(); path = root / 'interface'; path.write_bytes(b'original'); path.chmod(0o644)
+                compiler = root / 'compiler'; compiler.write_bytes(b'compiler')
+                sdk = root / 'SDK'; sdk.mkdir()
+                item = {'path': str(path), 'resolvedPath': str(path), 'sha256': build.capture.sha(path), 'bytes': 8, 'mode': 0o644,
+                    'compilerPath': str(compiler), 'resolvedCompiler': str(compiler), 'sdkPath': str(sdk), 'resolvedSDK': str(sdk)}
+                if changed == 'bytes': path.write_bytes(b'modified')
+                elif changed == 'mode': path.chmod(0o600)
+                elif changed == 'path': path.rename(root / 'original'); path.symlink_to('original')
+                elif changed == 'compiler': compiler.rename(root / 'original-compiler'); compiler.symlink_to('original-compiler')
+                elif changed == 'sdk': sdk.rename(root / 'original-SDK'); sdk.symlink_to('original-SDK', target_is_directory=True)
+                if changed == 'valid': build.verify_platform_developer_inputs({'platformDeveloperInputs': [item]})
+                else:
+                    with self.assertRaises(ValueError): build.verify_platform_developer_inputs({'platformDeveloperInputs': [item]})
+
+    def test_raw_tests_plan_archive_checks_all_outputs_and_keeps_cache_private_until_tests_execute(self):
+        for changed in ('valid', 'cache-bytes', 'state', 'argv'):
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary).resolve(); arena = root / 'arena'; arena.mkdir()
+                payloads = {f'ModuleCache.noindex/Bucket/cache{index}.pcm': b'CPCH' + str(index).encode() for index in range(327)}
+                payloads.update({f'SDKExplicitPrecompiledModules/Module{index}.swiftmodule': b'swiftmodule' + str(index).encode() for index in range(6)})
+                payloads.update({'ModuleCache.noindex/Session.modulevalidation': b'old session',
+                    'ModuleCache.noindex/modules.timestamp': b'', **{f'Intermediates.noindex/aux{index}.json': b'{}' for index in range(5)}})
+                files = {name: {'kind': 'file', 'bytes': len(raw), 'sha256': build.hashlib.sha256(raw).hexdigest(), 'mode': 0o644}
+                    for name, raw in payloads.items()}
+                temporary_files = {f'tmp/TemporaryDirectory.R93c7x/input{index}': b'input' + str(index).encode() for index in range(6)}
+                spec = copy.deepcopy(build.TESTS_PLAN_ORIGIN)
+                prepared = {'appSourceSHA': 'a' * 40, 'nativeSourceObjects': {'Sources': 'b' * 40},
+                    'compilerSHA256': 'c' * 64, 'plans': {'tests': {'driver': {'argv': ['swiftc']}, 'operations': {'arena': str(arena)}}}}
+                receipt = {'schema': 'native-app-target-product/v1', 'phase': 'tests',
+                    'sourceSHA': spec['selected']['sourceSHA'], 'runID': spec['selected']['runID'], 'attempt': 1,
+                    'appSourceSHA': prepared['appSourceSHA'], 'nativeSourceObjects': prepared['nativeSourceObjects'],
+                    'arena': str(arena), 'compilerSHA256': prepared['compilerSHA256'], 'recipeSHA256': spec['recipeSHA256'],
+                    'state': {'compileComplete': False, 'linkComplete': False, 'compilerExecutions': 0, 'resumed': False},
+                    'files': files, 'temporaryFiles': {name: {'kind': 'file', 'bytes': len(raw),
+                        'sha256': build.hashlib.sha256(raw).hexdigest()} for name, raw in temporary_files.items()}}
+                if changed == 'state': receipt['state']['compileComplete'] = True
+                raw_receipt = (json.dumps(receipt, indent=2) + '\n').encode()
+                spec['selected']['receiptSHA256'] = build.hashlib.sha256(raw_receipt).hexdigest()
+                lines = ['swift-frontend -frontend' for _ in range(111)]
+                stdout = '\n'.join(lines) + '\n'
+                stdout = stdout[:-1] + ' ' * (1062030 - len(stdout)) + '\n'
+                spec['stdoutSHA256'] = build.hashlib.sha256(stdout.encode()).hexdigest()
+                archive_path = root / 'original-tests.zip'
+                with zipfile.ZipFile(archive_path, 'w') as archive:
+                    def put(name, raw):
+                        entry = zipfile.ZipInfo(name); entry.create_system = 3
+                        entry.external_attr = (build.stat.S_IFREG | 0o644) << 16
+                        archive.writestr(entry, raw)
+                    put('product-receipt.json', raw_receipt)
+                    for name, raw in payloads.items():
+                        put('outputs/' + name, b'bad' if changed == 'cache-bytes' and name.endswith('cache0.pcm') else raw)
+                    for name, raw in temporary_files.items(): put('evidence/' + name, raw)
+                    put('evidence/driver-jobs.stdout', stdout.encode()); put('evidence/driver-jobs.stderr', b'')
+                    put('evidence/driver-jobs.exit.json', b'{"exitCode": 0}')
+                    put('evidence/driver-jobs.argv.json', json.dumps(['swiftc', '-driver-print-jobs']
+                        + (['--changed'] if changed == 'argv' else [])).encode())
+                spec['nestedSHA256'] = build.capture.sha(archive_path)
+                origin = {'selected': spec['selected'], 'artifact': {}}
+                with patch.object(build, 'TESTS_PLAN_ORIGIN', spec), patch.object(build, 'product_archive', return_value=archive_path), \
+                        patch.object(build, 'recipe_identity', return_value=spec['recipeSHA256']):
+                    if changed != 'valid':
+                        with self.assertRaises(ValueError): build.restore_tests_driver_plan(root, prepared, origin)
+                    else:
+                        plan = build.restore_tests_driver_plan(root, prepared, origin)
+                        self.assertEqual(len(plan['cacheFiles']), 333)
+                        self.assertEqual(len(plan['temporaryFiles']), 6)
+                        self.assertEqual(plan['currentPlanningExecutions'], 0)
+                        self.assertEqual(list(arena.iterdir()), [])
+                        self.assertNotIn('ModuleCache.noindex/Session.modulevalidation', plan['cacheFiles'])
+                        self.assertNotIn('ModuleCache.noindex/modules.timestamp', plan['cacheFiles'])
+
     def test_original_test_entry_materialization_preserves_full_source_and_rejects_role_path_or_byte_substitution(self):
         for changed in ('valid', 'module', 'cwd', 'signature', 'source-list', 'occupied', 'parent-link', 'retained-copy'):
             with self.subTest(changed=changed), tempfile.TemporaryDirectory() as temporary:

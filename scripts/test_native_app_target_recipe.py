@@ -21,6 +21,55 @@ def wire(value):
 
 
 class NativeAppTargetRecipeTests(unittest.TestCase):
+    def test_platform_developer_inputs_require_original_tests_search_flags_and_exact_xcode_containment(self):
+        for changed in ('framework', 'swift-module', 'framework-link', 'missing-flag', 'duplicate-flag',
+                'other-compiler', 'compiler-link', 'sdk-link', 'app-role', 'foreign-path', 'escaping-link'):
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary).resolve(); app = root / 'Xcode.app'
+                xcode = app / 'Contents/Developer'; developer = xcode / 'Platforms/MacOSX.platform/Developer'
+                sdk = developer / 'SDKs/MacOSX27.2.sdk'; sdk.mkdir(parents=True)
+                compiler = xcode / 'Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc'
+                compiler.parent.mkdir(parents=True)
+                (compiler.parent / 'swift-driver').write_bytes(b'measured compiler')
+                compiler.symlink_to('swift-driver')
+                frameworks, library = developer / 'Library/Frameworks', developer / 'usr/lib'
+                frameworks.mkdir(parents=True); library.mkdir(parents=True)
+                container = frameworks / 'Testing.framework'
+                if changed == 'framework-link':
+                    real = app / 'Contents/SharedFrameworks/Testing.framework'; real.mkdir(parents=True)
+                    container.symlink_to(real, target_is_directory=True)
+                file = library / 'XCTest.swiftmodule/arm64-apple-macos.swiftinterface' if changed == 'swift-module' \
+                    else container / 'Modules/Testing.swiftmodule/arm64-apple-macos.swiftinterface'
+                file.parent.mkdir(parents=True, exist_ok=True); file.write_bytes(b'original platform interface')
+                driver = {'module': 'NexGenVideoTests',
+                    'targetGUID': 'PACKAGE-PRODUCT:nexgenvideo_NexGenVideoTests.NexGenVideoTests',
+                    'argv': [str(compiler),
+                        '-F', str(frameworks), '-Isystem', str(library)]}
+                if changed == 'missing-flag': driver['argv'] = driver['argv'][:1]
+                elif changed == 'duplicate-flag': driver['argv'] += ['-F', str(frameworks)]
+                elif changed == 'other-compiler': driver['argv'][0] = str(root / 'Other.app/Contents/Developer/Toolchains/usr/bin/swiftc')
+                elif changed == 'compiler-link':
+                    outside = root / 'outside-driver'; outside.write_bytes(b'measured compiler')
+                    compiler.rename(compiler.with_suffix('.original')); compiler.symlink_to(outside)
+                elif changed == 'sdk-link':
+                    outside = root / 'outside-sdk'; outside.mkdir()
+                    sdk.rename(sdk.with_suffix('.original')); sdk.symlink_to(outside, target_is_directory=True)
+                elif changed == 'app-role': driver['module'] = 'NexGenVideo'
+                elif changed == 'foreign-path': file = xcode / 'unbounded.swiftinterface'
+                elif changed == 'escaping-link':
+                    outside = root / 'outside.swiftinterface'; outside.write_bytes(b'outside')
+                    file.rename(file.with_suffix('.original')); file.symlink_to(outside)
+                bindings = {}
+                args = (recipe.canonical_path(str(file)), driver, recipe.canonical_path(str(sdk)), bindings)
+                if changed in ('app-role', 'foreign-path'):
+                    self.assertFalse(recipe.platform_developer_interface_input(*args)); self.assertEqual(bindings, {})
+                elif changed in ('missing-flag', 'duplicate-flag', 'other-compiler', 'compiler-link', 'sdk-link', 'escaping-link'):
+                    with self.assertRaises(ValueError): recipe.platform_developer_interface_input(*args)
+                else:
+                    self.assertTrue(recipe.platform_developer_interface_input(*args))
+                    self.assertEqual(bindings[str(file)]['resolvedPath'], str(file.resolve()))
+                    self.assertEqual(bindings[str(file)]['sha256'], recipe.hashlib.sha256(b'original platform interface').hexdigest())
+
     def entry_task(self, arena, workspace):
         output = str(arena / 'Intermediates.noindex/NexGenVideo.build/Release/NexGenVideoTests-p.build/DerivedSources/test_entry_point.swift')
         task = [None] * 25
