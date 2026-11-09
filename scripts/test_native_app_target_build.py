@@ -10,6 +10,54 @@ import native_app_target_build as build
 
 
 class NativeAppTargetBuildTests(unittest.TestCase):
+    def checkout_pins(self):
+        return [{'identity': 'package' + str(i), 'kind': 'remoteSourceControl',
+            'location': 'https://github.com/example/package' + str(i) + '.git',
+            'state': {'revision': format(i + 1, '040x')}} for i in range(18)]
+
+    def test_source_checkout_restore_never_resolves_or_downloads_binary_targets(self):
+        for cache_status in (None, 0, 1, 'wrong-origin'):
+            with self.subTest(cache_status=cache_status), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp); scratch = root / 'scratch'; cache = root / 'cache'
+                cached = cache / 'repositories/package0-cached'
+                if cache_status is not None: cached.mkdir(parents=True)
+                calls = []
+                def logged(folder, label, argv, environment, **options):
+                    calls.append(argv)
+                    if 'clone' in argv: Path(argv[-1]).mkdir()
+                    return ''
+                def cached_probe(argv, **options):
+                    if 'config' in argv:
+                        origin = 'https://github.com/another/package0.git' if cache_status == 'wrong-origin' else self.checkout_pins()[0]['location']
+                        return build.subprocess.CompletedProcess(argv, 0, stdout=origin.encode())
+                    return build.subprocess.CompletedProcess(argv, cache_status or 0)
+                with patch.object(build, 'logged', side_effect=logged), patch.object(build.subprocess, 'run',
+                        side_effect=cached_probe) as probe:
+                    build.restore_checkouts(root, scratch, cache, self.checkout_pins(), {})
+                clones = [argv for argv in calls if 'clone' in argv]
+                self.assertEqual(len(clones), 18)
+                self.assertEqual(clones[0][-2], str(cached) if cache_status == 0 else self.checkout_pins()[0]['location'])
+                self.assertTrue(all(argv[0] == 'git' for argv in calls))
+                self.assertTrue(all('--no-checkout' in argv and '--no-hardlinks' in argv for argv in clones))
+                detached = [argv[-1] for argv in calls if 'checkout' in argv and '--detach' in argv]
+                self.assertEqual(detached, [pin['state']['revision'] for pin in self.checkout_pins()])
+                self.assertEqual(sorted(p.name for p in (scratch / 'checkouts').iterdir()),
+                    sorted(pin['identity'] for pin in self.checkout_pins()))
+                self.assertEqual(probe.call_count, 0 if cache_status is None else 1 if cache_status == 'wrong-origin' else 2)
+                receipt = json.loads((root / 'restored-source-checkouts.json').read_text())
+                self.assertEqual(receipt['checkouts'][0]['originalCacheOrigin'], self.checkout_pins()[0]['location'] if cache_status == 0 else None)
+
+    def test_source_checkout_restore_rejects_ambiguous_paths_origins_and_unpinned_revisions_before_any_git(self):
+        for field, value in [('identity', '../escape'), ('identity', 'package1'), ('kind', 'binaryTarget'),
+                ('location', 'http://github.com/example/package0.git'), ('location', 'https://user@github.com/example/package0'),
+                ('location', 'https://github.com/../package0'), ('state', {'revision': 'main'}), ('state', None)]:
+            with self.subTest(field=field, value=value), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp); pins = self.checkout_pins(); pins[0][field] = value
+                with patch.object(build, 'logged') as logged, patch.object(build.subprocess, 'run') as probe, self.assertRaises(ValueError):
+                    build.restore_checkouts(root, root / 'scratch', root / 'cache', pins, {})
+                logged.assert_not_called(); probe.assert_not_called()
+                self.assertFalse((root / 'scratch').exists())
+
     def inputs(self):
         identifier, digest, _ = build.retained.ARTIFACTS['runtime']
         return {'KIND': 'native-app-targets', 'SCALE': '1', 'PRODUCER_RUN': '101', 'PRODUCER_SHA': 'a' * 40,

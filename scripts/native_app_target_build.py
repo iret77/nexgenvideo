@@ -11,6 +11,7 @@ import signal
 import stat
 import subprocess
 import sys
+import urllib.parse
 import zipfile
 
 import native_app_build_plan as capture
@@ -214,6 +215,73 @@ def logged(root, label, argv, env=None, cwd=None, timeout=600):
     return (root / (label + '.stdout')).read_text()
 
 
+def repository_origin(value):
+    require(isinstance(value, str), 'Repository origin is not text')
+    origin = urllib.parse.urlsplit(value)
+    require(origin.scheme == 'https' and origin.hostname == 'github.com' and not origin.username
+        and not origin.password and origin.port is None and not origin.query and not origin.fragment
+        and re.fullmatch(r'/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', origin.path)
+        and all(part not in {'.', '..'} for part in origin.path.split('/')[1:]), 'Unreviewed repository origin')
+    return 'https://github.com' + origin.path.lower().removesuffix('.git')
+
+
+def restore_checkouts(root, scratch, cache, pins, environment):
+    require(isinstance(pins, list) and len(pins) == 18, 'Pinned source checkout inventory changed')
+    identities = set()
+    for pin in pins:
+        require(isinstance(pin, dict) and isinstance(pin.get('state'), dict)
+            and isinstance(pin.get('identity'), str) and isinstance(pin.get('location'), str)
+            and isinstance(pin['state'].get('revision'), str), 'Malformed pinned source checkout')
+        identity = pin.get('identity', '')
+        repository_origin(pin['location'])
+        require(isinstance(identity, str) and re.fullmatch('[a-z0-9][a-z0-9._-]*', identity)
+            and identity not in identities and pin.get('kind') == 'remoteSourceControl'
+            and re.fullmatch('[a-f0-9]{40}', pin.get('state', {}).get('revision', '')),
+            'Invalid pinned source checkout identity, origin or revision')
+        identities.add(identity)
+    destination_root = scratch / 'checkouts'
+    require(not scratch.exists() and not scratch.is_symlink(), 'Source checkout scratch path is occupied')
+    destination_root.mkdir(parents=True)
+    repositories = cache / 'repositories'
+    cached = sorted(repositories.iterdir()) if repositories.is_dir() else []
+    require(len(cached) <= 256, 'Dependency repository cache exceeds its bound')
+    restored = []
+    for pin in pins:
+        identity, revision = pin['identity'], pin['state']['revision']
+        selected_cache, cache_origin = None, None
+        for candidate in cached:
+            if not candidate.name.lower().startswith(identity + '-'): continue
+            require(candidate.is_dir() and not candidate.is_symlink()
+                and candidate.resolve().parent == repositories.resolve(), 'Cached source repository escapes its job')
+            origin_probe = subprocess.run(['git', '--git-dir', str(candidate), 'config', '--get', 'remote.origin.url'],
+                stdin=subprocess.DEVNULL, capture_output=True, env=environment, timeout=15)
+            if origin_probe.returncode != 0: continue
+            try:
+                actual_origin = origin_probe.stdout.decode().strip()
+                if repository_origin(actual_origin) != repository_origin(pin['location']): continue
+            except (ValueError, UnicodeError):
+                continue
+            probe = subprocess.run(['git', '--git-dir', str(candidate), 'cat-file', '-e', revision + '^{commit}'],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                env=environment, timeout=15)
+            if probe.returncode == 0:
+                selected_cache, cache_origin = candidate, actual_origin
+                break
+        destination = destination_root / identity
+        source = str(selected_cache) if selected_cache else pin['location']
+        git = ['git', '-c', 'core.hooksPath=/dev/null', '-c', 'maintenance.autoDetach=false', '-c', 'gc.autoDetach=false']
+        logged(root, identity + '-clone-source', [*git, 'clone',
+            '--no-checkout', '--no-hardlinks', source, str(destination)], environment, timeout=180)
+        logged(root, identity + '-canonical-origin', [*git, '-C', str(destination), 'remote', 'set-url',
+            'origin', pin['location']], environment)
+        logged(root, identity + '-checkout-pin', [*git, '-C', str(destination),
+            '-c', 'submodule.recurse=false', 'checkout', '--detach', revision], environment, timeout=180)
+        restored.append({'identity': identity, 'revision': revision, 'origin': pin['location'],
+            'cacheRepository': str(selected_cache) if selected_cache else None,
+            'originalCacheOrigin': cache_origin, 'checkout': str(destination)})
+    write(root / 'restored-source-checkouts.json', {'sourceOnly': True, 'binaryArtifactDownloads': 0, 'checkouts': restored})
+
+
 def native_guard(root):
     require(sys.platform == 'darwin' and platform.machine() == 'arm64'
         and os.environ.get('GITHUB_REPOSITORY') == 'iret77/nexgenvideo'
@@ -307,9 +375,8 @@ def prepare(root, source_binding):
         'The exact metadata workspace or dependency cache cannot be restored')
     scratch = Path(snapshot['scratch'])
     require(scratch.is_relative_to(temporary) and not scratch.exists(), 'Pinned checkout path is occupied or outside this job')
-    logged(root, 'restore-checkouts', ['swift', 'package', '--cache-path', snapshot['cache'],
-        '--scratch-path', str(scratch), 'resolve'], environment, timeout=300)
     pins = json.loads(Path('Package.resolved').read_text())['pins']
+    restore_checkouts(root, scratch, Path(snapshot['cache']), pins, environment)
     checkouts = list((scratch / 'checkouts').iterdir())
     require(len(pins) == len(checkouts) == 18, 'Pinned checkout inventory changed')
     for pin in pins:
