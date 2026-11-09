@@ -6,6 +6,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import io
+import urllib.request
+import zipfile
+import posixpath
 import math
 import os
 from pathlib import Path
@@ -182,6 +186,23 @@ def install(args, evidence, *, allowed_paths=None):
             source = apps[0]
             identity['app'] = metadata(source, args.source_sha)
             command(['ditto', source, installed], evidence / 'install.log', timeout=120)
+            if getattr(args, 'scenario', None) == LOCAL_MUSICVIDEO:
+                packs = list(mount.glob('*.ngvpack'))
+                require(len(packs) == 1 and packs[0].name == 'musicvideo.ngvpack'
+                        and not packs[0].is_symlink() and tree_sha256(packs[0]) == LOCAL_PACK_TREE,
+                        'The exact mounted DMG does not contain the qualified external pack')
+                guide = mount / 'Install NexGenVideo.txt'
+                require(guide.is_file() and not guide.is_symlink()
+                        and sha256(guide) == sha256(REPOSITORY / 'scripts/Install NexGenVideo.txt'),
+                        'The actual DMG installation guide differs from the reviewed guide')
+                external = evidence / 'musicvideo.ngvpack'
+                command(['ditto', packs[0], external], evidence / 'install.log', timeout=120)
+                require(tree_sha256(external) == LOCAL_PACK_TREE, 'DMG pack copy changed')
+                command(['codesign', '--verify', '--deep', '--strict', external], evidence / 'pack-source-signature.log')
+                command(['xcrun', 'stapler', 'validate', external], evidence / 'pack-source-signature.log')
+                identity['externalPack'] = {'origin': 'mounted-dmg', 'filename': external.name,
+                    'treeSHA256': LOCAL_PACK_TREE, 'dmgSHA256': args.dmg_sha256, 'guideSHA256': sha256(guide)}
+
         finally:
             if attached:
                 command(['hdiutil', 'detach', mount], evidence / 'install.log')
@@ -418,7 +439,385 @@ def validate_runtime(evidence):
             and runtime.get('xcode', '').startswith('Xcode '), 'Missing original self-hosted GUI prerequisites')
 
 
+FRESH_MUSICVIDEO = 'normal-fresh-musicvideo'
+LOCAL_MUSICVIDEO = 'normal-fresh-local-musicvideo'
+LOCAL_PACK_ZIP_SHA = '37fcee05d1ac334b20eb392c61cc3b7a94af165dc3b967c61602bc79d6dc4388'
+LOCAL_PACK_TREE = '365e9a75174191359bb36b02b429a4bfea55f0b764caa81184228bd3072c402e'
+LOCAL_STAGES = ['fresh-profile', 'home', 'settings', 'local-pack-panel', 'installed-and-activated',
+                'new-musicvideo-project', 'track-intake']
+CATALOG_URL = 'https://github.com/iret77/nexgenvideo/releases/download/plugins/catalog.json'
+FRESH_STAGES = ['fresh-profile', 'home', 'settings', 'catalog-card', 'installed-and-activated',
+                'new-musicvideo-project', 'track-intake']
+
+
+def fresh_catalog(raw, expected_catalog, expected_pack):
+    require(re.fullmatch('[a-f0-9]{64}', expected_catalog or '')
+            and re.fullmatch('[a-f0-9]{64}', expected_pack or '')
+            and hashlib.sha256(raw).hexdigest() == expected_catalog, 'The normal catalog differs from its reviewed bytes')
+    catalog = json.loads(raw)
+    require(catalog.get('schema') == 'plugins/v2' and isinstance(catalog.get('plugins'), list), 'Unsupported normal catalog')
+    matches = [item for item in catalog['plugins'] if item.get('id') == 'musicvideo' and item.get('version') == '0.6.0']
+    require(len(matches) == 1, 'Missing or ambiguous Musicvideo0.6.0 catalog entry')
+    entry = matches[0]
+    require(entry.get('minAppVersion') == '1.8.0' and entry.get('projectSchema') == 'musicvideo/3.0.0'
+            and entry.get('sha256') == expected_pack
+            and entry.get('url') == 'https://github.com/iret77/nexgenvideo/releases/download/plugins/musicvideo-0.6.0.ngvpack.zip',
+            'The normal catalog selects a different signed pack')
+    return entry
+
+
+def local_catalog(raw, expected_catalog, expected_pack):
+    require(re.fullmatch('[a-f0-9]{64}', expected_catalog or '') and expected_pack == LOCAL_PACK_ZIP_SHA
+            and hashlib.sha256(raw).hexdigest() == expected_catalog, 'Local-DMG catalog or original ZIP lineage differs')
+    value = json.loads(raw)
+    require(value.get('schema') == 'plugins/v2' and isinstance(value.get('plugins'), list), 'Unsupported actual stable catalog')
+    versions = [row.get('version') for row in value['plugins'] if row.get('id') == 'musicvideo']
+    require('0.5.8' in versions and all(isinstance(version, str) and re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version)
+            and tuple(map(int, version.split('.'))) < (0, 6, 0) for version in versions),
+            'This local-newer-than-catalog case requires the reviewed pre0.6 catalog')
+    return value
+
+
+def fetch_public_bytes(url, maximum):
+    require(url.startswith('https://github.com/iret77/nexgenvideo/releases/download/plugins/'), 'Unexpected pack channel')
+    with urllib.request.urlopen(url, timeout=90) as response:
+        require(response.status == 200 and response.url.startswith('https://'), 'Normal HTTPS retrieval failed')
+        raw = response.read(maximum + 1)
+    require(0 < len(raw) <= maximum, 'Public pack input exceeds its bound')
+    return raw
+
+
+def validate_fresh_stages(evidence):
+    journey = read_json(evidence / 'journey.json')
+    require(journey.get('schema') == 'nexgenvideo/external-fresh-musicvideo/1'
+            and [row.get('stage') for row in journey.get('stages', [])] == FRESH_STAGES,
+            'The normal Musicvideo path is incomplete or reordered')
+    require(read_json(evidence / 'profile-before-launch.json').get('installedEntries') == 0
+            and journey['stages'][0].get('installedEntries') == 0, 'The profile was not fresh')
+    for row in journey['stages']:
+        proof = row.get('evidence', {})
+        for key in ('screenshot', 'accessibility'):
+            name = proof.get(key, '')
+            require(name and Path(name).name == name and sha256(evidence / name) == proof.get(key + 'SHA256'),
+                    'Missing original screenshot or accessibility evidence')
+        require((evidence / proof['screenshot']).read_bytes().startswith(b'\x89PNG\r\n\x1a\n')
+                and (evidence / proof['accessibility']).stat().st_size > 0, 'Unreadable native visual evidence')
+    settings = journey['stages'][2]
+    require(settings.get('scaleLabel') == SCALES['1.5'] and SCALES['1.5'] in settings.get('selectedValue', ''),
+            'The normal installation did not use the actual150% setting')
+    for row in (journey['stages'][4], journey['stages'][5]):
+        require(row.get('packID') == 'musicvideo' and row.get('version') == '0.6.0'
+                and row.get('schema') == 'musicvideo/3.0.0', 'The normal path bound another pack')
+    for name in ('bootstrap-binding.json', 'fresh-binding.json'):
+        binding = read_json(evidence / name)
+        require(binding.get('activePlugin') == 'musicvideo' and binding.get('activePluginVersion') == '0.6.0'
+                and binding.get('activePluginProjectSchema') == 'musicvideo/3.0.0', 'Persisted format binding differs')
+    track = journey['stages'][-1]
+    require(track.get('chooseEnabled') is True and track.get('attachEnabled') is False
+            and track.get('trackUploaded') is False, 'Required Track intake was bypassed')
+    actions = journey.get('actions', [])
+    require(len(actions) >= 12 and all(action.get('target') not in ('Attach track', 'Attach lyrics') for action in actions),
+            'The bounded installation check performed an intake submission')
+    return journey
+
+
+def validate_local_stages(evidence):
+    journey = read_json(evidence / 'journey.json')
+    require(journey.get('schema') == 'nexgenvideo/external-local-musicvideo/1'
+            and [row.get('stage') for row in journey.get('stages', [])] == LOCAL_STAGES,
+            'The normal Musicvideo path is incomplete or reordered')
+    require(read_json(evidence / 'profile-before-launch.json').get('installedEntries') == 0
+            and journey['stages'][0].get('installedEntries') == 0, 'The profile was not fresh')
+    for row in journey['stages']:
+        proof = row.get('evidence', {})
+        for key in ('screenshot', 'accessibility'):
+            name = proof.get(key, '')
+            require(name and Path(name).name == name and sha256(evidence / name) == proof.get(key + 'SHA256'),
+                    'Missing original screenshot or accessibility evidence')
+        require((evidence / proof['screenshot']).read_bytes().startswith(b'\x89PNG\r\n\x1a\n')
+                and (evidence / proof['accessibility']).stat().st_size > 0, 'Unreadable native visual evidence')
+    panel = journey['stages'][3]
+    require(panel.get('packOrigin') == 'mounted-dmg' and panel.get('packFilename') == 'musicvideo.ngvpack',
+            'Normal local installer did not select the exact external DMG pack')
+    settings = journey['stages'][2]
+    require(settings.get('scaleLabel') == SCALES['1.5'] and SCALES['1.5'] in settings.get('selectedValue', ''),
+            'The normal installation did not use the actual150% setting')
+    for row in (journey['stages'][4], journey['stages'][5]):
+        require(row.get('packID') == 'musicvideo' and row.get('version') == '0.6.0'
+                and row.get('schema') == 'musicvideo/3.0.0', 'The normal path bound another pack')
+    for name in ('fresh-binding.json',):
+        binding = read_json(evidence / name)
+        require(binding.get('activePlugin') == 'musicvideo' and binding.get('activePluginVersion') == '0.6.0'
+                and binding.get('activePluginProjectSchema') == 'musicvideo/3.0.0', 'Persisted format binding differs')
+    track = journey['stages'][-1]
+    require(track.get('chooseEnabled') is True and track.get('attachEnabled') is False
+            and track.get('trackUploaded') is False, 'Required Track intake was bypassed')
+    actions = journey.get('actions', [])
+    require(len(actions) >= 12 and all(action.get('target') not in ('Attach track', 'Attach lyrics') for action in actions),
+            'The bounded installation check performed an intake submission')
+    return journey
+
+
+def verify_downloaded_pack(raw, bundle):
+    expected = {}
+    with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+        require(archive.testzip() is None, 'Published pack ZIP is incomplete')
+        for item in archive.infolist():
+            if item.is_dir() or item.filename.startswith('__MACOSX/'): continue
+            parts = Path(item.filename).parts
+            roots = [index for index, name in enumerate(parts) if name.endswith('.ngvpack')]
+            require(len(roots) == 1 and '..' not in parts and not item.filename.startswith('/'), 'Unexpected pack archive path')
+            relative = Path(*parts[roots[0] + 1:]).as_posix()
+            require(relative and relative not in expected, 'Duplicate pack archive member')
+            mode = item.external_attr >> 16
+            if stat.S_ISLNK(mode):
+                value = archive.read(item).decode()
+                require(not value.startswith('/') and not posixpath.normpath(posixpath.join(posixpath.dirname(relative), value)).startswith('../'),
+                        'Pack symlink escapes its bundle')
+                expected[relative] = ('symlink', value)
+            else:
+                expected[relative] = ('file', hashlib.sha256(archive.read(item)).hexdigest())
+    actual = {}
+    for path in bundle.rglob('*'):
+        if path.is_dir() and not path.is_symlink(): continue
+        relative = path.relative_to(bundle).as_posix()
+        require(path.resolve(strict=True).is_relative_to(bundle.resolve()), 'Installed pack escapes its bundle')
+        actual[relative] = ('symlink', os.readlink(path)) if path.is_symlink() else ('file', sha256(path))
+    require(actual == expected and bool(actual), 'Installed pack differs from the published exact ZIP')
+    return hashlib.sha256(json.dumps(sorted(actual.items()), separators=(',', ':')).encode()).hexdigest()
+
+
+def run_fresh_musicvideo(args):
+    import test_bundle
+    require(args.dmg and not args.app and args.scale == '1.5', 'Fresh Musicvideo requires the exact DMG at150%')
+    require(not any(name.startswith('NGV_') and ('ACCEPTANCE' in name or 'SELFTEST' in name or 'EXAMPLE' in name)
+                    for name in os.environ), 'Internal acceptance flags must not reach the normal app')
+    evidence = Path(args.evidence).resolve(); evidence.mkdir(parents=True, exist_ok=False)
+    require(not CONFIG.exists(), 'This VM already has an external GUI configuration')
+    result = {'schema': 'nexgenvideo/external-fresh-musicvideo-result/1', 'completed': False, 'sourceSHA': args.source_sha}
+    write_json(evidence / 'result.json', result)
+    try:
+        runtime_environment(evidence)
+        app, identity = install(args, evidence)
+        with (app / 'Contents/Info.plist').open('rb') as stream: info = plistlib.load(stream)
+        require(info.get('NGVPluginCatalogURL') == CATALOG_URL, 'The installed app overrides the stable catalog')
+        before = fetch_public_bytes(CATALOG_URL, 1024 * 1024)
+        entry = fresh_catalog(before, args.expected_catalog_sha256, args.expected_pack_sha256)
+        (evidence / 'catalog-before.json').write_bytes(before)
+        runtime = Path(args.test_runtime).resolve(strict=True)
+        require(re.fullmatch('[a-f0-9]{64}', args.test_producer_sha256 or '')
+                and sha256(runtime / 'tests-producer.json') == args.test_producer_sha256, 'External client producer changed')
+        for name in ('tests.tar.gz', 'tests-input.json', 'tests-producer.json'): shutil.copy2(runtime / name, evidence / name)
+        work = Path(tempfile.mkdtemp(prefix='ngv-fresh-musicvideo-'))
+        xctestrun, tests = test_bundle.consume(evidence, work / 'Products', identity['testSourceSHA'], identity['testFiles'])
+        identity['testBundle'] = {key: tests[key] for key in ('runID', 'attempt', 'archiveSHA256', 'productsSHA256', 'xctestrun', 'xcode')}
+        identity['testBundle'].update(receiptSHA256=sha256(evidence / 'tests-input.json'), producerSHA256=sha256(evidence / 'tests-producer.json'))
+        write_json(evidence / 'identity.json', identity)
+        config = {'scenario': FRESH_MUSICVIDEO, 'app': str(app), 'evidence': str(evidence),
+                  'bootstrapProject': str(evidence / 'Bootstrap.ngv'), 'project': str(evidence / 'Fresh Musicvideo.ngv'),
+                  'scaleLabel': SCALES[args.scale]}
+        with CONFIG.open('x') as stream: json.dump(config, stream)
+        write_json(evidence / 'configuration.json', config)
+        (evidence / 'test-bundle.sha256').write_text(sha256(xctestrun) + '\n')
+        code = command(['xcodebuild', 'test-without-building', '-xctestrun', xctestrun,
+                        '-only-testing:NexGenVideoExternalUITests/UserJourneyTests/testNormalFreshMusicvideoThroughInstalledApp',
+                        '-destination', 'platform=macOS,arch=arm64', '-parallel-testing-enabled', 'NO',
+                        '-resultBundlePath', evidence / 'tests.xcresult'], evidence / 'tests.log', timeout=720, check=False)
+        result['exitCode'] = code
+        command(['xcrun', 'xcresulttool', 'export', 'attachments', '--path', evidence / 'tests.xcresult',
+                 '--output-path', evidence / 'attachments'], evidence / 'results.log')
+        summary = json.loads(output(['xcrun', 'xcresulttool', 'get', 'test-results', 'summary', '--path', evidence / 'tests.xcresult']))
+        write_json(evidence / 'summary.json', summary)
+        require(code == 0 and summary.get('passedTests') == 1 and summary.get('failedTests') == 0
+                and summary.get('skippedTests') == 0, 'Exactly one normal Musicvideo test must execute and pass')
+        validate_fresh_stages(evidence)
+        after = fetch_public_bytes(CATALOG_URL, 1024 * 1024)
+        fresh_catalog(after, args.expected_catalog_sha256, args.expected_pack_sha256)
+        require(after == before, 'Normal catalog changed during installation')
+        (evidence / 'catalog-after.json').write_bytes(after)
+        raw = fetch_public_bytes(entry['url'], 512 * 1024 * 1024)
+        require(hashlib.sha256(raw).hexdigest() == args.expected_pack_sha256, 'Published pack archive changed')
+        (evidence / 'published-pack.zip').write_bytes(raw)
+        bundle = Path.home() / 'Library/Application Support/NexGenVideo/Plugins/musicvideo/0.6.0.ngvpack'
+        pack_tree = verify_downloaded_pack(raw, bundle)
+        shutil.copytree(bundle, evidence / 'installed-pack', symlinks=True)
+        require(verify_downloaded_pack(raw, evidence / 'installed-pack') == pack_tree, 'Installed pack evidence changed while copying')
+        command(['codesign', '--verify', '--deep', '--strict', bundle], evidence / 'pack-signature.log')
+        require(metadata(app, args.source_sha) == identity['app'], 'The normal app changed during installation')
+        result.update(completed=True, identitySHA256=sha256(evidence / 'identity.json'), runtimeSHA256=sha256(evidence / 'runtime.json'),
+                      journeySHA256=sha256(evidence / 'journey.json'), mode=identity['mode'], dmgSHA256=identity['dmgSHA256'],
+                      catalogSHA256=args.expected_catalog_sha256, packSHA256=args.expected_pack_sha256, packTreeSHA256=pack_tree,
+                      packSignatureLogSHA256=sha256(evidence / 'pack-signature.log'))
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
+        result['error'] = str(error); raise
+    finally:
+        try: stop_owned_app(evidence)
+        except (OSError, ValueError, subprocess.SubprocessError) as error: result.update(completed=False, cleanupError=str(error))
+        write_json(evidence / 'result.json', result)
+
+
+def run_local_musicvideo(args):
+    import test_bundle
+    require(args.dmg and not args.app and args.scale == '1.5', 'Fresh Musicvideo requires the exact DMG at150%')
+    require(not any(name.startswith('NGV_') and ('ACCEPTANCE' in name or 'SELFTEST' in name or 'EXAMPLE' in name)
+                    for name in os.environ), 'Internal acceptance flags must not reach the normal app')
+    evidence = Path(args.evidence).resolve(); evidence.mkdir(parents=True, exist_ok=False)
+    require(not CONFIG.exists(), 'This VM already has an external GUI configuration')
+    result = {'schema': 'nexgenvideo/external-local-musicvideo-result/1', 'completed': False, 'sourceSHA': args.source_sha}
+    write_json(evidence / 'result.json', result)
+    try:
+        runtime_environment(evidence)
+        app, identity = install(args, evidence)
+        with (app / 'Contents/Info.plist').open('rb') as stream: info = plistlib.load(stream)
+        require(info.get('NGVPluginCatalogURL') == CATALOG_URL, 'The installed app overrides the stable catalog')
+        before = fetch_public_bytes(CATALOG_URL, 1024 * 1024)
+        local_catalog(before, args.expected_catalog_sha256, args.expected_pack_sha256)
+        (evidence / 'catalog-before.json').write_bytes(before)
+        runtime = Path(args.test_runtime).resolve(strict=True)
+        require(re.fullmatch('[a-f0-9]{64}', args.test_producer_sha256 or '')
+                and sha256(runtime / 'tests-producer.json') == args.test_producer_sha256, 'External client producer changed')
+        for name in ('tests.tar.gz', 'tests-input.json', 'tests-producer.json'): shutil.copy2(runtime / name, evidence / name)
+        work = Path(tempfile.mkdtemp(prefix='ngv-fresh-musicvideo-'))
+        xctestrun, tests = test_bundle.consume(evidence, work / 'Products', identity['testSourceSHA'], identity['testFiles'])
+        identity['testBundle'] = {key: tests[key] for key in ('runID', 'attempt', 'archiveSHA256', 'productsSHA256', 'xctestrun', 'xcode')}
+        identity['testBundle'].update(receiptSHA256=sha256(evidence / 'tests-input.json'), producerSHA256=sha256(evidence / 'tests-producer.json'))
+        write_json(evidence / 'identity.json', identity)
+        config = {'scenario': LOCAL_MUSICVIDEO, 'app': str(app), 'evidence': str(evidence),
+                  'externalPack': str(evidence / 'musicvideo.ngvpack'), 'project': str(evidence / 'Fresh Musicvideo.ngv'),
+                  'scaleLabel': SCALES[args.scale]}
+        with CONFIG.open('x') as stream: json.dump(config, stream)
+        write_json(evidence / 'configuration.json', config)
+        (evidence / 'test-bundle.sha256').write_text(sha256(xctestrun) + '\n')
+        code = command(['xcodebuild', 'test-without-building', '-xctestrun', xctestrun,
+                        '-only-testing:NexGenVideoExternalUITests/UserJourneyTests/testNormalFreshLocalMusicvideoFromDMGThroughInstalledApp',
+                        '-destination', 'platform=macOS,arch=arm64', '-parallel-testing-enabled', 'NO',
+                        '-resultBundlePath', evidence / 'tests.xcresult'], evidence / 'tests.log', timeout=720, check=False)
+        result['exitCode'] = code
+        command(['xcrun', 'xcresulttool', 'export', 'attachments', '--path', evidence / 'tests.xcresult',
+                 '--output-path', evidence / 'attachments'], evidence / 'results.log')
+        summary = json.loads(output(['xcrun', 'xcresulttool', 'get', 'test-results', 'summary', '--path', evidence / 'tests.xcresult']))
+        write_json(evidence / 'summary.json', summary)
+        require(code == 0 and summary.get('passedTests') == 1 and summary.get('failedTests') == 0
+                and summary.get('skippedTests') == 0, 'Exactly one normal Musicvideo test must execute and pass')
+        validate_local_stages(evidence)
+        after = fetch_public_bytes(CATALOG_URL, 1024 * 1024)
+        local_catalog(after, args.expected_catalog_sha256, args.expected_pack_sha256)
+        require(after == before, 'Normal catalog changed during installation')
+        (evidence / 'catalog-after.json').write_bytes(after)
+        bundle = Path.home() / 'Library/Application Support/NexGenVideo/Plugins/musicvideo/0.6.0.ngvpack'
+        require(identity.get('externalPack', {}).get('origin') == 'mounted-dmg'
+                and identity['externalPack'].get('dmgSHA256') == args.dmg_sha256
+                and identity['externalPack'].get('treeSHA256') == LOCAL_PACK_TREE,
+                'Normal local installation lost exact mounted-DMG provenance')
+        pack_tree = tree_sha256(bundle)
+        require(pack_tree == tree_sha256(evidence / 'musicvideo.ngvpack') == LOCAL_PACK_TREE,
+                'Installed local pack differs from the actual mounted DMG payload')
+        shutil.copytree(bundle, evidence / 'installed-pack', symlinks=True)
+        require(tree_sha256(evidence / 'installed-pack') == pack_tree, 'Installed local pack evidence changed')
+        command(['codesign', '--verify', '--deep', '--strict', bundle], evidence / 'pack-signature.log')
+        command(['xcrun', 'stapler', 'validate', bundle], evidence / 'pack-signature.log')
+        require(metadata(app, args.source_sha) == identity['app'], 'The normal app changed during installation')
+        result.update(completed=True, identitySHA256=sha256(evidence / 'identity.json'), runtimeSHA256=sha256(evidence / 'runtime.json'),
+                      journeySHA256=sha256(evidence / 'journey.json'), mode=identity['mode'], dmgSHA256=identity['dmgSHA256'],
+                      catalogSHA256=args.expected_catalog_sha256, packSHA256=args.expected_pack_sha256, packTreeSHA256=pack_tree,
+                      packSignatureLogSHA256=sha256(evidence / 'pack-signature.log'))
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
+        result['error'] = str(error); raise
+    finally:
+        try: stop_owned_app(evidence)
+        except (OSError, ValueError, subprocess.SubprocessError) as error: result.update(completed=False, cleanupError=str(error))
+        write_json(evidence / 'result.json', result)
+
+
+def validate_fresh_musicvideo(args):
+    import test_bundle
+    evidence = Path(args.evidence).resolve(strict=True)
+    result, identity = read_json(evidence / 'result.json'), read_json(evidence / 'identity.json')
+    require(result.get('schema') == 'nexgenvideo/external-fresh-musicvideo-result/1' and result.get('completed') is True
+            and result.get('exitCode') == 0 and result.get('sourceSHA') == identity.get('sourceSHA') == args.source_sha,
+            'Incomplete normal Musicvideo evidence')
+    require(args.scale == '1.5' and args.dmg_sha256, 'Fresh Musicvideo needs the exact DMG at150%')
+    validate_app_identity(evidence, result, identity, args.source_sha, args.scale, args.dmg_sha256)
+    validate_runtime(evidence)
+    require(retained_packaging.file_binding(args) == identity.get('packaging'), 'Fresh Musicvideo packaging identity changed')
+    revision, files = test_source_identity(args.source_sha, packaging=identity.get('packaging'))
+    require(identity['testSourceSHA'] == revision and identity['testFiles'] == files, 'Fresh Musicvideo client source changed')
+    tests = test_bundle.verify_input(evidence, revision, files)
+    expected = {key: tests[key] for key in ('runID', 'attempt', 'archiveSHA256', 'productsSHA256', 'xctestrun', 'xcode')}
+    expected.update(receiptSHA256=sha256(evidence / 'tests-input.json'), producerSHA256=sha256(evidence / 'tests-producer.json'))
+    require(identity.get('testBundle') == expected, 'Fresh Musicvideo client provenance changed')
+    with tempfile.TemporaryDirectory(prefix='ngv-validate-fresh-tests-') as temporary:
+        xctestrun, _ = test_bundle.consume(evidence, Path(temporary) / 'Products', revision, files)
+        require((evidence / 'test-bundle.sha256').read_text().strip() == sha256(xctestrun),
+                'Fresh Musicvideo xctestrun changed')
+    for key, name in [('identitySHA256', 'identity.json'), ('runtimeSHA256', 'runtime.json'), ('journeySHA256', 'journey.json'),
+                      ('packSignatureLogSHA256', 'pack-signature.log')]:
+        require(result.get(key) == sha256(evidence / name), 'Normal Musicvideo proof bytes changed: ' + name)
+    fresh_catalog((evidence / 'catalog-before.json').read_bytes(), args.expected_catalog_sha256, args.expected_pack_sha256)
+    fresh_catalog((evidence / 'catalog-after.json').read_bytes(), args.expected_catalog_sha256, args.expected_pack_sha256)
+    require((evidence / 'catalog-before.json').read_bytes() == (evidence / 'catalog-after.json').read_bytes()
+            and sha256(evidence / 'published-pack.zip') == result['packSHA256'] == args.expected_pack_sha256
+            and result['catalogSHA256'] == args.expected_catalog_sha256, 'Normal catalog or published pack bytes changed')
+    summary = read_json(evidence / 'summary.json')
+    require(summary.get('passedTests') == 1 and summary.get('failedTests') == 0 and summary.get('skippedTests') == 0,
+            'Normal Musicvideo test did not execute exactly once')
+    require(verify_downloaded_pack((evidence / 'published-pack.zip').read_bytes(), evidence / 'installed-pack')
+            == result.get('packTreeSHA256'), 'Saved installed pack identity changed')
+    validate_fresh_stages(evidence)
+    print(json.dumps({'completed': True, 'sourceSHA': args.source_sha, 'dmgSHA256': result['dmgSHA256'],
+                      'catalogSHA256': result['catalogSHA256'], 'packSHA256': result['packSHA256']}))
+
+
+def validate_local_musicvideo(args):
+    import test_bundle
+    evidence = Path(args.evidence).resolve(strict=True)
+    result, identity = read_json(evidence / 'result.json'), read_json(evidence / 'identity.json')
+    require(result.get('schema') == 'nexgenvideo/external-local-musicvideo-result/1' and result.get('completed') is True
+            and result.get('exitCode') == 0 and result.get('sourceSHA') == identity.get('sourceSHA') == args.source_sha,
+            'Incomplete normal Musicvideo evidence')
+    require(args.scale == '1.5' and args.dmg_sha256, 'Fresh Musicvideo needs the exact DMG at150%')
+    validate_app_identity(evidence, result, identity, args.source_sha, args.scale, args.dmg_sha256)
+    validate_runtime(evidence)
+    require(retained_packaging.file_binding(args) == identity.get('packaging'), 'Fresh Musicvideo packaging identity changed')
+    revision, files = test_source_identity(args.source_sha, packaging=identity.get('packaging'))
+    require(identity['testSourceSHA'] == revision and identity['testFiles'] == files, 'Fresh Musicvideo client source changed')
+    tests = test_bundle.verify_input(evidence, revision, files)
+    expected = {key: tests[key] for key in ('runID', 'attempt', 'archiveSHA256', 'productsSHA256', 'xctestrun', 'xcode')}
+    expected.update(receiptSHA256=sha256(evidence / 'tests-input.json'), producerSHA256=sha256(evidence / 'tests-producer.json'))
+    require(identity.get('testBundle') == expected, 'Fresh Musicvideo client provenance changed')
+    with tempfile.TemporaryDirectory(prefix='ngv-validate-fresh-tests-') as temporary:
+        xctestrun, _ = test_bundle.consume(evidence, Path(temporary) / 'Products', revision, files)
+        require((evidence / 'test-bundle.sha256').read_text().strip() == sha256(xctestrun),
+                'Fresh Musicvideo xctestrun changed')
+    for key, name in [('identitySHA256', 'identity.json'), ('runtimeSHA256', 'runtime.json'), ('journeySHA256', 'journey.json'),
+                      ('packSignatureLogSHA256', 'pack-signature.log')]:
+        require(result.get(key) == sha256(evidence / name), 'Normal Musicvideo proof bytes changed: ' + name)
+    local_catalog((evidence / 'catalog-before.json').read_bytes(), args.expected_catalog_sha256, args.expected_pack_sha256)
+    local_catalog((evidence / 'catalog-after.json').read_bytes(), args.expected_catalog_sha256, args.expected_pack_sha256)
+    require((evidence / 'catalog-before.json').read_bytes() == (evidence / 'catalog-after.json').read_bytes()
+            and result['packSHA256'] == args.expected_pack_sha256 == LOCAL_PACK_ZIP_SHA
+            and result['catalogSHA256'] == args.expected_catalog_sha256, 'Normal catalog or published pack bytes changed')
+    summary = read_json(evidence / 'summary.json')
+    require(summary.get('passedTests') == 1 and summary.get('failedTests') == 0 and summary.get('skippedTests') == 0,
+            'Normal Musicvideo test did not execute exactly once')
+    require(tree_sha256(evidence / 'installed-pack') == tree_sha256(evidence / 'musicvideo.ngvpack')
+            == result.get('packTreeSHA256') == LOCAL_PACK_TREE
+            and identity.get('externalPack', {}).get('origin') == 'mounted-dmg'
+            and identity['externalPack'].get('dmgSHA256') == result['dmgSHA256']
+            and identity['externalPack'].get('treeSHA256') == LOCAL_PACK_TREE,
+            'Local installed pack is not the exact current DMG payload')
+    validate_local_stages(evidence)
+    print(json.dumps({'completed': True, 'sourceSHA': args.source_sha, 'dmgSHA256': result['dmgSHA256'],
+                      'catalogSHA256': result['catalogSHA256'], 'packSHA256': result['packSHA256']}))
+
+
 def run(args):
+    if getattr(args, 'scenario', 'journey') == LOCAL_MUSICVIDEO:
+        return run_local_musicvideo(args)
+    if getattr(args, 'scenario', 'journey') == FRESH_MUSICVIDEO:
+        return run_fresh_musicvideo(args)
+    require(not getattr(args, 'expected_catalog_sha256', None) and not getattr(args, 'expected_pack_sha256', None),
+            'Normal journey cannot ignore Musicvideo selectors')
     import test_bundle
 
     require(re.fullmatch('[a-f0-9]{40}', args.source_sha), 'Expected an exact source SHA')
@@ -520,6 +919,12 @@ def validate_app_identity(evidence, result, identity, source_sha, scale, dmg_sha
 
 
 def validate(args):
+    if getattr(args, 'scenario', 'journey') == LOCAL_MUSICVIDEO:
+        return validate_local_musicvideo(args)
+    if getattr(args, 'scenario', 'journey') == FRESH_MUSICVIDEO:
+        return validate_fresh_musicvideo(args)
+    require(not getattr(args, 'expected_catalog_sha256', None) and not getattr(args, 'expected_pack_sha256', None),
+            'Normal journey cannot ignore Musicvideo selectors')
     import test_bundle
 
     evidence = Path(args.evidence).resolve(strict=True)
@@ -584,6 +989,9 @@ def main():
     check.add_argument('--scale', choices=SCALES, required=True)
     check.add_argument('--dmg-sha256', help='Required by a publication caller; app-artifact evidence cannot satisfy it')
     for command in (execute, check):
+        command.add_argument('--scenario', choices=('journey', FRESH_MUSICVIDEO, LOCAL_MUSICVIDEO), default='journey')
+        command.add_argument('--expected-catalog-sha256')
+        command.add_argument('--expected-pack-sha256')
         command.add_argument('--packaging-binding', type=Path)
     tree = commands.add_parser('tree-sha256')
     tree.add_argument('--app', required=True)
