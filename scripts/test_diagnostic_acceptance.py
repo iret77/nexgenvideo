@@ -18,6 +18,29 @@ from verify_diagnostic_candidate import SIGNED_BPY_HARNESS_PATHS, SIGNED_JOURNEY
 from verify_diagnostic_candidate import SIGNED_DESKTOP_HARNESS_PATHS, SIGNED_WORKSPACE_HARNESS_PATHS, verify_signed_desktop, verify_signed_workspace
 
 
+class NativeAppTargetWorkflowTests(unittest.TestCase):
+    def test_registered_target_builder_uses_exact_source_binding_and_preserves_each_product_before_the_next(self):
+        workflow = yaml.safe_load((Path(__file__).resolve().parent.parent / '.github/workflows/diagnostic-acceptance.yml').read_text())
+        source = workflow['jobs']['source']
+        job = workflow['jobs']['app-target-build']
+        self.assertEqual(job['runs-on'], 'macrunner')
+        self.assertEqual(job['needs'], 'source')
+        self.assertEqual(job['if'], "inputs.candidate_kind == 'native-app-targets'")
+        self.assertEqual(job['env']['TARGET_BINDING_ARTIFACT_ID'], '${{ needs.source.outputs.target-binding-id }}')
+        self.assertEqual(job['env']['TARGET_BINDING_DIGEST'], '${{ needs.source.outputs.target-binding-digest }}')
+        steps = job['steps']; indexes = {step['id']: index for index, step in enumerate(steps) if 'id' in step}
+        for phase, next_phase in [('production', 'testable'), ('testable', 'tests'), ('tests', None)]:
+            compiled, uploaded = indexes[phase], indexes[phase + '_upload']
+            self.assertLess(compiled, uploaded)
+            if next_phase: self.assertLess(uploaded, indexes[next_phase])
+            self.assertEqual(steps[uploaded]['with']['name'], 'app-target-' + phase + '-products')
+            self.assertIn('always()', steps[uploaded]['if'])
+            self.assertEqual(steps[uploaded]['with']['if-no-files-found'], 'error')
+        self.assertFalse(any(step.get('continue-on-error') for step in steps))
+        self.assertTrue(any(step.get('with', {}).get('name') == 'app-target-retention-fallback' for step in steps))
+        self.assertEqual(source['outputs']['target-binding-id'], '${{ steps.target-binding-upload.outputs.artifact-id }}')
+
+
 class CaptureOriginalRetentionTests(unittest.TestCase):
     def test_initial_capture_failure_preserves_original_exception_and_owned_bytes(self):
         import hang_diagnostic_acceptance as capture
