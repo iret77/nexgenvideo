@@ -810,7 +810,10 @@ class RetainedPackagingTests(unittest.TestCase):
                     packaging.verify_app_bytes(app, {'productSourceSHA': self.product})
 
     def test_shared_native_verifier_fingerprints_reject_missing_or_uncommitted_dependency(self):
-        dependencies = ('scripts/release_engine_resume.py', 'scripts/release_native_proof.py', 'scripts/release_test_repair.py')
+        dependencies = ('scripts/release_engine_resume.py', 'scripts/release_native_proof.py', 'scripts/release_test_repair.py',
+            'scripts/compiled_app_release.py', 'scripts/fixtures/compiled-app-native-inventory.json',
+            'scripts/native_app_target_build.py', 'scripts/native_app_target_recipe.py', 'scripts/native_app_build_plan.py',
+            'scripts/fixtures/native-test-entry-point.json')
         for name in dependencies:
             self.assertIn(name, packaging.VERIFIER_INPUTS)
         with tempfile.TemporaryDirectory() as directory:

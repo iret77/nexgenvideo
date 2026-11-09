@@ -35,6 +35,9 @@ VERIFIER_INPUTS = ('scripts/retained_packaging.py', 'scripts/retained_app_test_p
                    'scripts/app_host_zombie_diagnostic.py', 'scripts/run_macos_tests.py',
                    'scripts/verify_swift_test_output.py', 'scripts/verify_diagnostic_candidate.py',
                    'scripts/release_acceptance_identity.py', 'scripts/external-gui/acceptance.py')
+VERIFIER_INPUTS += ('scripts/compiled_app_release.py', 'scripts/fixtures/compiled-app-native-inventory.json',
+                    'scripts/native_app_target_build.py', 'scripts/native_app_target_recipe.py',
+                    'scripts/native_app_build_plan.py', 'scripts/fixtures/native-test-entry-point.json')
 PACKAGING_PATHS = {
     "scripts/plan_dmg_capacity.py", "scripts/test_release_dmg_packaging.py",
     "scripts/retained_packaging.py", "scripts/test_retained_packaging.py",

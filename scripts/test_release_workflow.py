@@ -68,12 +68,15 @@ def matching_shell_lines(step, prefix):
     return [line.strip() for line in step.splitlines() if line.strip().startswith(prefix)]
 
 
-def condition_enabled(condition, artifact_only, dry_run, resumed=False, *, needs_results=None, ancestry_success=True):
+def condition_enabled(condition, artifact_only, dry_run, resumed=False, *, needs_results=None, ancestry_success=True, compiled_targets=""):
     expression = str(condition or "true").removeprefix("${{").removesuffix("}}").strip()
     if not ancestry_success and not re.search(r"\b(?:always|cancelled|success|failure)\(\)", expression):
         return False
     values = {
         "inputs.artifact_only": artifact_only,
+        "inputs.compiled_app_targets_json": compiled_targets,
+        "needs.bpy-source.result": "success",
+        "env.NGV_COMPILED_APP_RELEASE": "true" if compiled_targets else "",
         "inputs.dry_run": dry_run,
         "env.REL_DRY": str(dry_run).lower(),
         "needs.release-gate.outputs.publication-resumed": str(resumed).lower(),
@@ -509,9 +512,9 @@ class ReleaseWorkflowTests(unittest.TestCase):
         for name in (build_name, stage_name, test_name, bundle_name, pack_name):
             self.assertEqual(names.count(name), 1)
             if name in (build_name, stage_name, test_name):
-                self.assertIn("        if: inputs.completed_release_tests_run_id == ''", by_name[name])
+                self.assertIn("        if: inputs.completed_release_tests_run_id == '' && inputs.compiled_app_targets_json == ''", by_name[name])
             else:
-                self.assertNotRegex(by_name[name], r"(?m)^        if:")
+                self.assertEqual(re.findall(r"(?m)^        if: (.+)$", by_name[name]), ["inputs.compiled_app_targets_json == ''"])
             self.assertNotRegex(by_name[name], r"(?m)^        continue-on-error:")
         self.assertEqual(single_line_run(by_name[build_name]), build)
         self.assertEqual(single_line_run(by_name[stage_name]), stage)
@@ -575,17 +578,17 @@ class ReleaseWorkflowTests(unittest.TestCase):
         for name in ordered:
             self.assertEqual(names.count(name), 1)
             self.assertNotIn('continue-on-error', by_name[name])
-            self.assertEqual(by_name[name]['if'], "inputs.completed_release_tests_run_id == ''")
+            self.assertEqual(by_name[name]['if'], "inputs.completed_release_tests_run_id == '' && inputs.compiled_app_targets_json == ''")
         confirm = by_name['Confirm compiler product upload before staging']
         self.assertEqual(confirm['env']['GH_TOKEN'], '${{ github.token }}')
         self.assertEqual(confirm['env']['CHECKPOINT_ID'], '${{ steps.native_compiler_products.outputs.artifact-id }}')
         self.assertEqual(confirm['env']['CHECKPOINT_DIGEST'], '${{ steps.native_compiler_products.outputs.artifact-digest }}')
         metadata = by_name['Preserve native checkpoint records after success or failure']
-        self.assertEqual(metadata['if'], "always() && inputs.completed_release_tests_run_id == ''")
+        self.assertEqual(metadata['if'], "always() && inputs.completed_release_tests_run_id == '' && inputs.compiled_app_targets_json == ''")
         self.assertNotIn('NGV_RELEASE_TEST_PRODUCTS_ROOT', metadata['with']['path'])
         self.assertIn('*.json', metadata['with']['path'])
         partial = by_name['Preserve every available native product after failure']
-        self.assertEqual(partial['if'], "always() && (failure() || cancelled()) && inputs.completed_release_tests_run_id == '' && env.NGV_RELEASE_TEST_PRODUCTS_ROOT != ''")
+        self.assertEqual(partial['if'], "always() && (failure() || cancelled()) && inputs.completed_release_tests_run_id == '' && inputs.compiled_app_targets_json == '' && env.NGV_RELEASE_TEST_PRODUCTS_ROOT != ''")
         self.assertEqual(partial['with']['path'], '${{ env.NGV_RELEASE_TEST_PRODUCTS_ROOT }}/')
         self.assertTrue(partial['with']['include-hidden-files'])
         for name in ('Upload native compiler products before staging', 'Upload staged runtime products before native tests'):
@@ -595,6 +598,47 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('runtime-*', runtime)
         self.assertNotIn('compiler-products.zip', runtime)
         self.assertIn('--serialize-app-tests', by_name['Test the exact release configuration']['run'])
+
+    def test_compiled_products_skip_legacy_compilers_but_require_full_new_app_tests_and_pack_verification(self):
+        workflow = self.workflow()
+        jobs = workflow['jobs']
+        steps = {step.get('name'): step for step in jobs['release-build']['steps']}
+        legacy = ('Build the exact release test configuration', 'Stage release test runtime inputs',
+                  'Test the exact release configuration', 'Build and sign app',
+                  'Assemble format packs (.ngvpack + catalog entry)', 'Record signed build before notarization')
+        compiled = ('Restore the exact new App compiler products', 'Verify the complete new App and XCTest scope',
+                    'Assemble and sign the new App with unchanged retained components',
+                    'Record compiled App signed input without invoking a build')
+        for selected in ('', 'exact-reviewed-products'):
+            with self.subTest(selected=selected):
+                for name in legacy:
+                    self.assertEqual(condition_enabled(steps[name]['if'], True, True, compiled_targets=selected), not bool(selected))
+                for name in compiled:
+                    self.assertEqual(condition_enabled(steps[name]['if'], True, True, compiled_targets=selected), bool(selected))
+                self.assertEqual(condition_enabled(jobs['bpy-source']['if'], True, True, compiled_targets=selected), not bool(selected))
+                if selected:
+                    self.assertTrue(condition_enabled(jobs['release-build']['if'], True, True,
+                        needs_results={'bpy-source': 'skipped'}, ancestry_success=False, compiled_targets=selected))
+        names = [step.get('name') for step in jobs['release-build']['steps']]
+        self.assertLess(names.index(compiled[1]), names.index(compiled[2]))
+        self.assertNotIn('continue-on-error', steps[compiled[1]])
+        retention = steps['Record all available compiled App assembly outputs without qualifying partial products']
+        self.assertEqual(retention['if'], "always() && inputs.compiled_app_targets_json != ''")
+        self.assertLess(names.index(compiled[3]), names.index(retention['name']))
+        signing_upload = steps['Preserve original signing inputs and the complete new App assembly receipt']
+        self.assertIn('${{ runner.temp }}/release-signed-input/', signing_upload['with']['path'])
+        partial = steps['Preserve complete new App and symbols plus every partial signed archive after failure']
+        self.assertEqual(partial['if'], "always() && (failure() || cancelled()) && inputs.compiled_app_targets_json != ''")
+        for path in ('unqualified-app-products.tar', 'assembly-retention.json', 'release-signed-input/',
+                '.build/NexGenVideo.app/', '.build/NexGenVideo.dSYM/'):
+            self.assertIn(path, partial['with']['path'])
+        self.assertTrue(partial['with']['include-hidden-files'])
+        pack_steps = {step.get('name'): step for step in jobs['release']['steps']}
+        self.assertTrue(condition_enabled(pack_steps['Verify the exact retained stapled format pack']['if'],
+            True, True, compiled_targets='exact-reviewed-products'))
+        self.assertFalse(condition_enabled(pack_steps['Notarize and staple downloadable format packs']['if'],
+            True, True, compiled_targets='exact-reviewed-products'))
+        self.assertIn('NGV_SELFTEST_PACK=', pack_steps['Load-test — the SIGNED app actually loads the SIGNED pack from an EXTERNAL dir']['run'])
 
     def test_engine_resume_preserves_fresh_app_commands_and_failure_propagation(self):
         workflow = self.workflow()

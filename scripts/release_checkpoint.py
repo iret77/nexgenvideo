@@ -239,7 +239,10 @@ def verify_manifest(manifest, source, run_id):
             and isinstance(manifest.get("appTreeSHA256"), str)
             and re.fullmatch(r"[a-f0-9]{64}", manifest["appTreeSHA256"]), "Invalid signed App identity")
     evidence = manifest.get("nativeEvidence", {})
-    if evidence.get("schema") == "release-native-scoped-repair/v1":
+    if evidence.get("schema") == "release-native-compiled-app/v1":
+        from compiled_app_release import verify_receipt
+        verify_receipt(evidence, source, run_id)
+    elif evidence.get("schema") == "release-native-scoped-repair/v1":
         from release_test_repair import verify_receipt
         verify_receipt(evidence, source, run_id)
     elif evidence.get("schema") == "release-native-reuse/v1":
@@ -437,6 +440,8 @@ def restore(root):
     with Path(os.environ["GITHUB_ENV"]).open("a") as output:
         output.write("BUILD_NUMBER=" + manifest["identity"]["build"] + "\n")
         output.write("NGV_SIGNED_APP_ARCHIVE_SHA256=" + manifest["files"]["NexGenVideo.zip"]["sha256"] + "\n")
+        if manifest["nativeEvidence"].get("schema") == "release-native-compiled-app/v1":
+            output.write("NGV_COMPILED_APP_RELEASE=true\n")
     write(root / "restored.json", {"sourceSHA": binding["sourceSHA"], "producerRun": binding["producer"]["id"],
           "appTreeSHA256": manifest["appTreeSHA256"], "identity": manifest["identity"]})
     if os.environ.get("NOTARY_STATE_DIR"):
