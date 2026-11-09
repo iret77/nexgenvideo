@@ -14,14 +14,19 @@ class NativeXCTestHostTests(unittest.TestCase):
         runtime = str(bundle / 'Contents/Frameworks/XCTestCore.framework/Versions/A/XCTestCore')
         ids = ['-[NexGenVideoTests.NativeCase first]', '-[NexGenVideoTests.NativeCase second]']
         identities = {name: {'name': name, 'class': 'NexGenVideoTests.NativeCase',
-            'selector': name.split(' ', 1)[1][:-1], 'reportedName': name.replace('NexGenVideoTests.', ''),
+            'method': name.split(' ', 1)[1][:-1], 'reportedName': name.replace('NexGenVideoTests.', ''),
             'image': image} for name in ids}
+        observations = {name: {'class': row['class'], 'image': image, 'reportedName': row['reportedName'],
+            'identity': copy.deepcopy(row), 'invocationPresent': True, 'invocationSelector': row['method'],
+            'respondsToInvocationSelector': True, 'observationError': None, 'rejectionReason': None}
+            for name, row in identities.items()}
         run = {'executionCount': 1, 'skipCount': 0, 'totalFailureCount': 0, 'hasSucceeded': True}
         events = []
         def event(kind, name, *, count=None, is_root=False):
             events.append({'schema': 'native-xctest-observation/v1', 'kind': kind, 'name': name,
                 'pid': 123, 'executing': True, 'root': is_root,
-                'detail': {'caseIdentity': copy.deepcopy(identities[name])} if kind.startswith('testCase') else {},
+                'detail': {'caseIdentity': copy.deepcopy(identities[name]), 'caseObservation': copy.deepcopy(observations[name])}
+                    if kind.startswith('testCase') else {},
                 'run': dict(run, executionCount=count) if count is not None else None})
         event('testSuiteWillStart', 'root', is_root=True)
         for name in ids:
@@ -36,6 +41,7 @@ class NativeXCTestHostTests(unittest.TestCase):
             'recordingError': None, 'error': None, 'failedIDs': [], 'inventoryIDs': ids,
             'startedIDs': ids, 'endedIDs': ids, 'passedIDs': ids,
             'leafClasses': list(identities.values()),
+            'caseObservations': list(observations.values()), 'discoveredTestCaseCount': len(ids),
             'runtimeImagesBefore': [runtime], 'runtimeImagesAfterLoad': [runtime], 'runtimeImagesAfter': [runtime],
             'caseRuntimeImage': runtime, 'runtimeKinds': ['XCTestCore'], 'eventCount': len(events)}
         arguments = dict(source='a' * 40, pid=123, parent=99, bundle=bundle, host=executable)
@@ -60,7 +66,9 @@ class NativeXCTestHostTests(unittest.TestCase):
                 stream.insert(2, dict(stream[1], kind=kind, detail={'description': 'actual failure'}))
                 with self.subTest(kind=kind), self.assertRaises(ValueError):
                     host.verify_receipt(dict(receipt, eventCount=len(stream)), stream, ids, **arguments)
-            for field, value in [('executing', False), ('pid', 456), ('run', {'hasSucceeded': True})]:
+            for field, value in [('executing', False), ('pid', 456), ('root', 0), ('run', {'hasSucceeded': True}),
+                    ('run', {'executionCount': True, 'skipCount': 0, 'totalFailureCount': 0, 'hasSucceeded': True}),
+                    ('run', {'executionCount': 1, 'skipCount': 0, 'totalFailureCount': 0, 'hasSucceeded': 1})]:
                 stream = copy.deepcopy(events); stream[2][field] = value
                 with self.subTest(field=field), self.assertRaises(ValueError):
                     host.verify_receipt(receipt, stream, ids, **arguments)
@@ -71,7 +79,8 @@ class NativeXCTestHostTests(unittest.TestCase):
             variants = []
             for key, value in [('sourceSHA', 'b' * 40), ('parentPID', 12), ('hostPath', '/other/host'),
                     ('boundary', 'discovery'), ('passed', False), ('prematureExecutionCount', 1),
-                    ('inventoryIDs', ids[:-1]), ('issueCount', 1), ('recordingError', 'incomplete')]:
+                    ('inventoryIDs', ids[:-1]), ('issueCount', 1), ('recordingError', 'incomplete'),
+                    ('passed', 1), ('mainThread', 1), ('applicationRunningAtStart', 1)]:
                 variants.append(dict(receipt, **{key: value}))
             changed = copy.deepcopy(receipt); changed['leafClasses'][0]['image'] = '/foreign/current.xctest'; variants.append(changed)
             changed = copy.deepcopy(receipt); changed['runtimeImagesAfter'] += ['/foreign/XCTestCore']; variants.append(changed)
@@ -86,23 +95,28 @@ class NativeXCTestHostTests(unittest.TestCase):
             receipt, events, ids, arguments = self.fixture(Path(temporary))
             self.assertIs(host.verify_receipt(receipt, events, ids, **arguments), receipt)
             for leaf in receipt['leafClasses']: leaf['reportedName'] = leaf['name']
+            for observation in receipt['caseObservations']:
+                observation['reportedName'] = observation['identity']['name']
+                observation['identity']['reportedName'] = observation['identity']['name']
             for event in events:
                 if event['kind'].startswith('testCase'):
                     event['detail']['caseIdentity']['reportedName'] = event['name']
+                    event['detail']['caseObservation']['reportedName'] = event['name']
+                    event['detail']['caseObservation']['identity']['reportedName'] = event['name']
             self.assertIs(host.verify_receipt(receipt, events, ids, **arguments), receipt)
 
-    def test_case_class_selector_and_original_name_cannot_be_substituted_in_discovery_or_callbacks(self):
+    def test_case_class_public_method_and_original_name_cannot_be_substituted_in_discovery_or_callbacks(self):
         with tempfile.TemporaryDirectory() as temporary:
             receipt, events, ids, arguments = self.fixture(Path(temporary))
             variants = [('class', 'Foreign.NativeCase'), ('class', 'NativeCase'), ('class', ''),
-                ('selector', 'foreign'), ('selector', ''), ('reportedName', '-[Foreign.NativeCase first]'),
+                ('method', 'foreign'), ('method', ''), ('method', 'first second'), ('reportedName', '-[Foreign.NativeCase first]'),
                 ('reportedName', '-[NativeCase second]'), ('reportedName', ''), ('name', '-[NativeCase first]')]
             for field, value in variants:
                 changed = copy.deepcopy(receipt)
                 changed['leafClasses'][0][field] = value
                 with self.subTest(field=field, value=value), self.assertRaises(ValueError):
                     host.verify_receipt(changed, events, ids, **arguments)
-            for field in ('class', 'selector', 'reportedName', 'image', 'name'):
+            for field in ('class', 'method', 'reportedName', 'image', 'name'):
                 for index in (1, 2):
                     stream = copy.deepcopy(events)
                     stream[index]['detail']['caseIdentity'][field] = 'substituted'
@@ -110,6 +124,37 @@ class NativeXCTestHostTests(unittest.TestCase):
                         host.verify_receipt(receipt, stream, ids, **arguments)
             stream = copy.deepcopy(events); stream[1]['detail'] = {}
             with self.assertRaises(ValueError): host.verify_receipt(receipt, stream, ids, **arguments)
+
+    def test_public_identity_covers_throwing_async_and_absent_invocation_without_selector_mapping(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            for suffix, present, responds in [('', True, True), ('AndReturnError:', True, True),
+                    ('WithCompletionHandler:', True, True), ('opaqueImplementation:', True, False), (None, False, None)]:
+                receipt, events, ids, arguments = self.fixture(Path(temporary))
+                rows = receipt['caseObservations'] + [event['detail']['caseObservation']
+                    for event in events if event['kind'].startswith('testCase')]
+                for row in rows:
+                    row['invocationPresent'] = present
+                    row['invocationSelector'] = row['identity']['method'] + suffix if suffix is not None else None
+                    row['respondsToInvocationSelector'] = responds
+                with self.subTest(suffix=suffix):
+                    self.assertIs(host.verify_receipt(receipt, events, ids, **arguments), receipt)
+
+    def test_every_discovery_and_callback_requires_complete_unrejected_original_observations(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            receipt, events, ids, arguments = self.fixture(Path(temporary))
+            variants = [dict(receipt, caseObservations=receipt['caseObservations'][:-1]),
+                dict(receipt, caseObservations=[receipt['caseObservations'][0]] * 2),
+                dict(receipt, discoveredTestCaseCount=3)]
+            for field, value in [('class', 'Foreign.NativeCase'), ('image', '/foreign/image'), ('reportedName', '-[NativeCase other]'),
+                    ('invocationPresent', 1), ('invocationSelector', 3), ('respondsToInvocationSelector', 1),
+                    ('observationError', 'actual getter exception'), ('rejectionReason', 'actual class rejection'), ('identity', None)]:
+                changed = copy.deepcopy(receipt); changed['caseObservations'][0][field] = value; variants.append(changed)
+            for changed in variants:
+                with self.subTest(changed=changed), self.assertRaises(ValueError): host.verify_receipt(changed, events, ids, **arguments)
+            for index in (1, 2):
+                for field in ('caseObservation',):
+                    stream = copy.deepcopy(events); stream[index]['detail'].pop(field)
+                    with self.subTest(callback=index), self.assertRaises(ValueError): host.verify_receipt(receipt, stream, ids, **arguments)
 
     def test_completed_xctest_proof_is_persisted_before_a_following_app_host_failure(self):
         import hashlib
