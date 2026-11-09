@@ -1,0 +1,13 @@
+Install NexGenVideo 1.8.0 and Musicvideo 0.6.0
+
+1. Drag NexGenVideo.app to Applications.
+2. Open NexGenVideo from Applications.
+3. Choose File → Install Format Pack… and select musicvideo.ngvpack
+   from this disk image.
+4. Choose New Project in the installation confirmation to start Musicvideo.
+
+You can also open musicvideo.ngvpack directly after installing the app.
+If NexGenVideo asks to restart, restart before creating the new project.
+
+Existing projects keep their exact format-pack version. Installing Musicvideo
+0.6.0 does not upgrade or rewrite them.

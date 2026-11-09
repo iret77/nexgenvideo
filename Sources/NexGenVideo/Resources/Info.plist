@@ -20,6 +20,20 @@
 			<key>NSDocumentClass</key>
 			<string>NexGenVideo.VideoProject</string>
 		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>NexGenVideo Format Pack</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Owner</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>de.h5ventures.nexgenvideo.format-pack</string>
+			</array>
+			<key>LSTypeIsPackage</key>
+			<true/>
+		</dict>
 	</array>
 	<key>CFBundleExecutable</key>
 	<string>NexGenVideo</string>
@@ -74,6 +88,23 @@
 				<key>public.filename-extension</key>
 				<array>
 					<string>ngv</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>com.apple.package</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>NexGenVideo Format Pack</string>
+			<key>UTTypeIdentifier</key>
+			<string>de.h5ventures.nexgenvideo.format-pack</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>ngvpack</string>
 				</array>
 			</dict>
 		</dict>

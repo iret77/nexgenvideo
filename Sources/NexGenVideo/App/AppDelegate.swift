@@ -1,7 +1,7 @@
 import AppKit
 import NexGenEngine
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     func applicationDidFinishLaunching(_ notification: Notification) {
         MainThreadHangWatchdog.shared.start()
         AppRelaunchSelfTest.checkpoint("delegate-started")
@@ -97,7 +97,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let urls = filenames.map(URL.init(fileURLWithPath:))
         Task {
-            let reply = await AppState.shared.openProjectsFromSystem(urls)
+            let packs = urls.filter { $0.pathExtension == PluginPaths.bundleExtension }
+            let projects = urls.filter { $0.pathExtension != PluginPaths.bundleExtension }
+            for pack in packs {
+                guard LocalPackImport.install(pack, offerNewProject: urls.count == 1) else {
+                    sender.reply(toOpenOrPrint: .failure)
+                    return
+                }
+            }
+            let reply: NSApplication.DelegateReply
+            if projects.isEmpty { reply = .success }
+            else { reply = await AppState.shared.openProjectsFromSystem(projects) }
             sender.reply(toOpenOrPrint: reply)
         }
     }
@@ -117,6 +127,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     @objc func openProject(_ sender: Any?) {
         AppState.shared.openProjectFromPanel()
+    }
+
+    @MainActor
+    @objc func installFormatPack(_ sender: Any?) {
+        LocalPackImport.presentPanel()
+    }
+
+    @MainActor
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(installFormatPack(_:)) {
+            return !LocalPackImport.isPresenting && AppState.shared.permitsNewProjectWork
+        }
+        return true
     }
 
     @MainActor
@@ -240,5 +263,77 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         HangDiagnosticRecorder.shared.stop()
         AppRelaunchSelfTest.applicationWillTerminate()
         AppRelaunch.applicationWillTerminate()
+    }
+}
+
+@MainActor
+enum LocalPackImport {
+    private(set) static var isPresenting = false
+
+    static func presentPanel() {
+        guard !isPresenting, AppState.shared.permitsNewProjectWork else { return }
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [PluginPaths.contentType]
+        panel.canChooseDirectories = false
+        panel.treatsFilePackagesAsDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.title = "Install Format Pack"
+        panel.message = "Choose a .ngvpack bundle. Existing projects keep their installed version."
+        panel.prompt = "Install"
+        panel.identifier = NSUserInterfaceItemIdentifier("format-pack.import")
+        isPresenting = true
+        panel.begin { response in
+            isPresenting = false
+            guard response == .OK, let url = panel.url else { return }
+            _ = install(url)
+        }
+    }
+
+    @discardableResult
+    static func install(_ url: URL, offerNewProject: Bool = true) -> Bool {
+        guard AppState.shared.permitsNewProjectWork else { return false }
+        guard !isPresenting else {
+            let alert = NSAlert()
+            alert.messageText = "Finish installing the current format pack"
+            alert.informativeText = "Close the current installer, then open the next pack."
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+            return false
+        }
+        isPresenting = true
+        defer { isPresenting = false }
+        do {
+            let record = try PluginInstaller.installLocal(at: url)
+            PluginUpdateCenter.shared.refreshInstalledAttention()
+            NotificationCenter.default.post(name: .pluginInstallationChanged, object: record.id)
+            let alert = NSAlert()
+            alert.alertStyle = .informational
+            if record.isUpdatePendingRestart {
+                alert.messageText = "Restart to use \(record.displayName) \(record.version)"
+                alert.informativeText = "Your projects keep their current format versions."
+                alert.addButton(withTitle: "Restart")
+                alert.addButton(withTitle: "Later")
+                if alert.runModal() == .alertFirstButtonReturn {
+                    PluginUpdateCenter.shared.restartToApplyUpdates()
+                }
+            } else {
+                alert.messageText = "\(record.displayName) \(record.version) installed"
+                alert.informativeText = "Create a project to use this format. Existing projects keep their current version."
+                if offerNewProject { alert.addButton(withTitle: "New Project") }
+                alert.addButton(withTitle: "Done")
+                if alert.runModal() == .alertFirstButtonReturn, offerNewProject {
+                    AppState.shared.createNewProject(format: record.id)
+                }
+            }
+            return true
+        } catch {
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "Couldn't install the format pack"
+            alert.informativeText = error.localizedDescription
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+            return false
+        }
     }
 }

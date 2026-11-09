@@ -24,6 +24,7 @@ enum PluginInstaller {
         case idMismatch(expected: String, found: String)
         case versionMismatch(expected: String, found: String)
         case schemaMismatch(expected: String, found: String)
+        case versionCollision(String)
         case gate(PluginIncompatibility)
 
         var errorDescription: String? {
@@ -44,6 +45,8 @@ enum PluginInstaller {
                 return "The pack is version \(found), but the catalog listed \(expected)."
             case .schemaMismatch(let expected, let found):
                 return "The pack's project schema is \(found), but the catalog listed \(expected)."
+            case .versionCollision(let version):
+                return "Version \(version) is already installed with different contents. Install a different version."
             case .gate(let reason): return reason.reason
             }
         }
@@ -115,6 +118,7 @@ enum PluginInstaller {
         guard let unpacked = firstBundle(in: extractDir) else {
             throw InstallError.unpack("no .ngvpack inside the archive")
         }
+        let expectedTree = try localBundleFingerprint(unpacked)
         guard let info = PluginBundleInfo(bundleURL: unpacked) else {
             throw InstallError.gate(.malformedMetadata("its Info.plist is missing or unreadable"))
         }
@@ -137,8 +141,49 @@ enum PluginInstaller {
             )
         }
 
-        // Finding 3: run every non-executing gate on the STAGED copy in temp, before
-        // touching the installed pack. A failure here throws and leaves disk untouched.
+        return try installValidatedBundle(unpacked, info: info, appVersion: appVersion,
+                                          preserveVersion: false, expectedTree: expectedTree)
+    }
+
+    @discardableResult
+    static func installLocal(
+        at source: URL,
+        appVersion: String? = AppVersion.marketing
+    ) throws -> InstalledPluginRecord {
+        guard source.isFileURL, source.pathExtension == PluginPaths.bundleExtension,
+              try source.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink != true,
+              try source.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true else {
+            throw InstallError.unpack("choose a .ngvpack bundle from disk")
+        }
+        let work = FileManager.default.temporaryDirectory.appendingPathComponent("ngvpack-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: work) }
+        let staged = work.appendingPathComponent(source.lastPathComponent, isDirectory: true)
+        let expected = try localBundleFingerprint(source)
+        try FileManager.default.copyItem(at: source, to: staged)
+        guard try localBundleFingerprint(staged) == expected else {
+            throw InstallError.unpack("the pack changed while it was being copied; select it again")
+        }
+        guard let info = PluginBundleInfo(bundleURL: staged) else {
+            throw InstallError.gate(.malformedMetadata("its Info.plist is missing or unreadable"))
+        }
+        guard inFlight[info.id] == nil else {
+            throw InstallError.unpack("finish the current pack download before installing another version")
+        }
+        return try installValidatedBundle(staged, info: info, appVersion: appVersion,
+                                          preserveVersion: true, expectedTree: expected)
+    }
+
+    private static func installValidatedBundle(
+        _ unpacked: URL,
+        info: PluginBundleInfo,
+        appVersion: String?,
+        preserveVersion: Bool,
+        expectedTree: String
+    ) throws -> InstalledPluginRecord {
+        guard PluginPaths.isValidID(info.id), PluginPaths.isValidVersion(info.version) else {
+            throw InstallError.unpack("the pack id or version is invalid")
+        }
         if let reason = PluginGate.evaluate(info: info, appVersion: appVersion) {
             throw InstallError.gate(reason)
         }
@@ -161,27 +206,47 @@ enum PluginInstaller {
         if let reason = PluginSignature.verify(bundleURL: unpacked, host: PluginSignature.hostSigningState()) {
             throw InstallError.gate(reason)
         }
+        guard try localBundleFingerprint(unpacked) == expectedTree else {
+            throw InstallError.unpack("the pack changed during validation; select it again")
+        }
 
         // Capture "already resident this process" BEFORE the swap. A dylib for this id can't be
         // unloaded, so the new code can't go live until relaunch. Use RESIDENCY (was the code ever
         // mapped in?), not registration — a pack that loaded but failed to register (a broken build)
         // is still resident, so its update also needs a restart rather than re-showing "Damaged".
-        let alreadyLoaded = PluginLoader.isResident(entry.id)
+        let alreadyLoaded = PluginLoader.isResident(info.id)
 
         // All gates passed — now atomically swap the validated bundle into place.
-        try moveIntoPlace(unpacked, id: entry.id, version: entry.version)
-        let dest = PluginPaths.installURL(id: entry.id, version: entry.version)
+        _ = try installDirectoryIdentities(id: info.id, create: false)
+        let existing = preserveVersion ? PluginPaths.installedBundle(id: info.id, version: info.version) : nil
+        let dest: URL
+        if let existing {
+            try validateInstalledLocation(existing)
+            guard try localBundleFingerprint(existing) == localBundleFingerprint(unpacked) else {
+                throw InstallError.versionCollision(info.version)
+            }
+            dest = existing
+        } else {
+            try commitValidatedBundle(unpacked, id: info.id, version: info.version,
+                                      replaceExisting: !preserveVersion, expectedTree: expectedTree)
+            dest = PluginPaths.installURL(id: info.id, version: info.version)
+        }
         PluginLoader.clearRuntimeRejection(
-            id: entry.id,
-            version: entry.version
+            id: info.id,
+            version: info.version
         )
 
         if alreadyLoaded {
+            if existing != nil,
+               PluginLoader.liveBinding(id: info.id)?.version == info.version,
+               let record = PluginLoader.installed.first(where: { $0.id == info.id && $0.version == info.version }) {
+                return record
+            }
             return PluginLoader.markUpdatePendingRestart(info, bundleURL: dest)
         }
 
         guard let binding = ProjectPackBinding(
-            id: entry.id,
+            id: info.id,
             version: info.version,
             projectSchema: info.projectSchema
         ), let record = PluginLoader.activate(binding, appVersion: appVersion) else {
@@ -189,6 +254,45 @@ enum PluginInstaller {
         }
         if let reason = record.incompatibility { throw InstallError.gate(reason) }
         return record
+    }
+
+    static func localBundleFingerprint(_ root: URL) throws -> String {
+        let base = root.resolvingSymlinksInPath().standardizedFileURL.path
+        var digest = SHA256()
+        func visit(_ url: URL, relative: String) throws {
+            let resolved = url.resolvingSymlinksInPath().standardizedFileURL.path
+            guard resolved == base || resolved.hasPrefix(base + "/") else {
+                throw InstallError.unpack("the pack contains a link outside its bundle")
+            }
+            let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+            guard let type = attributes[.type] as? FileAttributeType,
+                  let mode = attributes[.posixPermissions] as? NSNumber else {
+                throw InstallError.unpack("the pack contains an unreadable file")
+            }
+            let payload: String
+            switch type {
+            case .typeDirectory: payload = ""
+            case .typeRegular:
+                let handle = try FileHandle(forReadingFrom: url)
+                defer { try? handle.close() }
+                var fileDigest = SHA256()
+                while let block = try handle.read(upToCount: 1024 * 1024), !block.isEmpty { fileDigest.update(data: block) }
+                payload = fileDigest.finalize().map { String(format: "%02x", $0) }.joined()
+            case .typeSymbolicLink:
+                payload = try FileManager.default.destinationOfSymbolicLink(atPath: url.path)
+            default: throw InstallError.unpack("the pack contains an unsupported file")
+            }
+            digest.update(data: Data([relative, type.rawValue, mode.stringValue, payload].joined(separator: "\0").utf8))
+            digest.update(data: Data([0]))
+            if type == .typeDirectory {
+                for child in try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)
+                    .sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+                    try visit(child, relative: relative + "/" + child.lastPathComponent)
+                }
+            }
+        }
+        try visit(root, relative: "")
+        return digest.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
     /// Whether `url`'s scheme is https (case-insensitive) — the only scheme a pack
@@ -300,27 +404,87 @@ enum PluginInstaller {
     }
 
     /// Atomically place an immutable version beside every other installed version.
-    private static func moveIntoPlace(
+    static func commitValidatedBundle(
         _ unpacked: URL,
         id: String,
-        version: String
+        version: String,
+        replaceExisting: Bool = true,
+        expectedTree: String
     ) throws {
+        guard PluginPaths.isValidID(id), PluginPaths.isValidVersion(version) else {
+            throw InstallError.unpack("the pack id or version is invalid")
+        }
         let directory = PluginPaths.versionDirectory(id: id)
         let dest = PluginPaths.installURL(id: id, version: version)
-        try FileManager.default.createDirectory(
-            at: directory, withIntermediateDirectories: true)
+        let identities = try installDirectoryIdentities(id: id, create: true)
         let staging = directory
             .appendingPathComponent(".staging-\(UUID().uuidString).\(PluginPaths.bundleExtension)")
         do {
+            guard try installDirectoryIdentities(id: id, create: false) == identities else {
+                throw InstallError.unpack("the installation folder changed; try again")
+            }
             try FileManager.default.copyItem(at: unpacked, to: staging)
+            guard try installDirectoryIdentities(id: id, create: false) == identities,
+                  try localBundleFingerprint(staging) == expectedTree else {
+                throw InstallError.unpack("the staged pack or installation folder changed; try again")
+            }
+            try validateInstalledLocation(staging)
             if FileManager.default.fileExists(atPath: dest.path) {
+                try validateInstalledLocation(dest)
+                guard replaceExisting else { throw InstallError.versionCollision(version) }
                 _ = try FileManager.default.replaceItemAt(dest, withItemAt: staging)
             } else {
                 try FileManager.default.moveItem(at: staging, to: dest)
             }
         } catch {
-            try? FileManager.default.removeItem(at: staging)
+            if (try? installDirectoryIdentities(id: id, create: false)) == identities {
+                try? FileManager.default.removeItem(at: staging)
+            }
+            if let error = error as? InstallError { throw error }
             throw InstallError.unpack(error.localizedDescription)
+        }
+    }
+
+    private static func installDirectoryIdentities(id: String, create: Bool) throws -> [String: String] {
+        let root = PluginPaths.installDirectory.standardizedFileURL
+        let support = root.deletingLastPathComponent().deletingLastPathComponent()
+        if create { try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true) }
+        let base = support.resolvingSymlinksInPath().standardizedFileURL.path
+        let paths = [(support, base), (root.deletingLastPathComponent(), base + "/NexGenVideo"),
+                     (root, base + "/NexGenVideo/Plugins"),
+                     (PluginPaths.versionDirectory(id: id), base + "/NexGenVideo/Plugins/" + id)]
+        var result: [String: String] = [:]
+        for (url, expected) in paths {
+            if create, !FileManager.default.fileExists(atPath: url.path) {
+                try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
+            }
+            let attributes: [FileAttributeKey: Any]
+            do { attributes = try FileManager.default.attributesOfItem(atPath: url.path) }
+            catch let error as NSError where error.domain == NSCocoaErrorDomain && error.code == NSFileReadNoSuchFileError {
+                continue
+            }
+            guard attributes[.type] as? FileAttributeType == .typeDirectory,
+                  url.resolvingSymlinksInPath().standardizedFileURL.path == expected,
+                  let volume = attributes[.systemNumber] as? NSNumber,
+                  let file = attributes[.systemFileNumber] as? NSNumber else {
+                throw InstallError.unpack("the installation folder is not a regular directory")
+            }
+            result[url.standardizedFileURL.path] = volume.stringValue + ":" + file.stringValue
+        }
+        return result
+    }
+
+    private static func validateInstalledLocation(_ url: URL) throws {
+        let root = PluginPaths.installDirectory.standardizedFileURL
+        let prefix = root.path + "/"
+        guard url.standardizedFileURL.path.hasPrefix(prefix) else {
+            throw InstallError.unpack("the installed pack is outside the plugin library")
+        }
+        let relative = String(url.standardizedFileURL.path.dropFirst(prefix.count))
+        let expected = root.resolvingSymlinksInPath().standardizedFileURL.path + "/" + relative
+        guard url.resolvingSymlinksInPath().standardizedFileURL.path == expected,
+              try FileManager.default.attributesOfItem(atPath: url.path)[.type] as? FileAttributeType == .typeDirectory else {
+            throw InstallError.unpack("the installed pack is not a regular bundle directory")
         }
     }
 }

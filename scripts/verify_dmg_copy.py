@@ -47,7 +47,7 @@ def differences(app, mounted):
             for name in sorted(source.keys() | copy.keys()) if source.get(name) != copy.get(name)][:50]
 
 
-def verify(app, dmg):
+def verify(app, dmg, pack=None, guide=None):
     durations = {}
     def run(stage, *args):
         start = time.monotonic()
@@ -60,6 +60,12 @@ def verify(app, dmg):
     run("sourceSignature", "codesign", "--verify", "--deep", "--strict", "--verbose=3", str(app))
     start = time.monotonic()
     expected = tree_digest(app)
+    require(pack is None or pack.is_dir() and not pack.is_symlink() and pack.suffix == '.ngvpack',
+            "Missing external format pack for joint DMG verification")
+    pack_expected = tree_digest(pack) if pack is not None else None
+    require((pack is None and guide is None) or (pack is not None and guide is not None
+            and guide.is_file() and not guide.is_symlink()), "Joint DMG installation guide is missing")
+    guide_expected = checksum(guide) if guide is not None else None
     durations["sourceTree"] = time.monotonic() - start
     run("imageVerify", "hdiutil", "verify", str(dmg))
     with tempfile.TemporaryDirectory() as directory:
@@ -70,6 +76,16 @@ def verify(app, dmg):
             matches = mounted.is_dir() and tree_digest(mounted) == expected
             durations["mountedTree"] = time.monotonic() - start
             require(matches, "DMG App differs: " + json.dumps(differences(app, mounted) if not matches else []))
+            if pack is not None:
+                mounted_guide = Path(directory) / guide.name
+                require(mounted_guide.is_file() and not mounted_guide.is_symlink() and checksum(mounted_guide) == guide_expected,
+                        "DMG installation guide is missing or differs from its reviewed source")
+                mounted_pack = Path(directory) / pack.name
+                require(mounted_pack.is_dir() and not mounted_pack.is_symlink()
+                        and tree_digest(mounted_pack) == pack_expected,
+                        "DMG external format pack differs from its signed source")
+                run("mountedPackSignature", "codesign", "--verify", "--strict", "--verbose=3", str(mounted_pack))
+                run("mountedPackNotarization", "xcrun", "stapler", "validate", str(mounted_pack))
             volume = Path(directory)
             inventory = [{"name": item.name, "kind": "symlink" if item.is_symlink() else
                           "file" if item.is_file() else "directory",
@@ -84,7 +100,10 @@ def verify(app, dmg):
             start = time.monotonic()
             detach(directory)
             durations["detach"] = time.monotonic() - start
-    return {"schema": "release-dmg-copy/v1", "sourceAppTreeSHA256": expected,
+    return {"schema": "release-dmg-copy/v2" if pack is not None else "release-dmg-copy/v1", "sourceAppTreeSHA256": expected,
+            "externalPackName": pack.name if pack is not None else None,
+            "installationGuideName": guide.name if guide is not None else None, "installationGuideSHA256": guide_expected,
+            "sourcePackTreeSHA256": pack_expected, "mountedPackTreeSHA256": pack_expected,
             "mountedAppTreeSHA256": expected, "deepSignaturesVerified": True,
             "volumeInventory": inventory, "volumeIconPresent": any(i["name"] == ".VolumeIcon.icns" for i in inventory),
             "phaseSeconds": durations}
@@ -94,5 +113,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(allow_abbrev=False)
     parser.add_argument("app", type=Path)
     parser.add_argument("dmg", type=Path)
+    parser.add_argument("--pack", type=Path)
+    parser.add_argument("--guide", type=Path)
     args = parser.parse_args()
-    print(json.dumps(verify(args.app, args.dmg), sort_keys=True))
+    print(json.dumps(verify(args.app, args.dmg, args.pack, args.guide), sort_keys=True))

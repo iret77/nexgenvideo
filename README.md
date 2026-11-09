@@ -49,6 +49,13 @@ upgrading uses an explicit Recovery copy. After an upgrade, story and identity
 intake offers verified material from the previous workflow for explicit reuse.
 Generic editing and export also work without a format pack or generation.
 
+The joint disk image includes Musicvideo 0.6.0 as a separate `.ngvpack` beside
+NexGenVideo. Copy the app to Applications, launch it, and choose **File → Install
+Format Pack…** to select the pack from the disk image. Opening the pack directly
+also starts installation. The installer verifies the bundle before placing its
+immutable version beside existing packs. New projects check the online catalog
+and retain a newer usable installed version; existing project pins stay unchanged.
+
 Learn how packs plug in — and how to add your own — in the
 **[format pack standard](docs/PLUGIN_STANDARD.md)**.
 
