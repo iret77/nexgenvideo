@@ -37,7 +37,7 @@ DRIVER_INPUT_ORIGINS = {
 }
 PATHS = capture.PATHS | {'scripts/native_app_target_recipe.py', 'scripts/test_native_app_target_recipe.py',
     'scripts/native_app_target_build.py', 'scripts/test_native_app_target_build.py',
-    'scripts/test_diagnostic_acceptance.py'}
+    'scripts/test_diagnostic_acceptance.py', 'scripts/fixtures/native-test-entry-point.json'}
 
 
 def selector(env, names, pattern):
@@ -444,7 +444,8 @@ def prepare(root, source_binding):
             ('testable', 'testable', 'NexGenVideo'), ('tests', 'testable', 'NexGenVideoTests')]:
         folder = metadata / profile
         driver = module_driver(folder, profile, module, snapshot['workspace'], toolchain['compiler'])
-        operations = profile_operations(folder)
+        operations = profile_operations(folder, driver['targetGUID'] if phase == 'tests' else None,
+            str(Path.cwd()) if phase == 'tests' else None)
         arena = Path(operations['arena'])
         require(arena == temporary / 'app-build-plan-evidence' / profile / 'derived-data', 'Original compiler arena changed')
         plans[phase] = {'profile': profile, 'driver': driver, 'operations': operations}
@@ -882,6 +883,45 @@ def checkpoint(root, phase, prepared, state):
         'linkComplete': state['linkComplete']})
 
 
+def materialize_test_entry_point(folder, plan, sources):
+    from native_app_target_recipe import test_entry_point_source
+    driver, operations = plan['driver'], plan['operations']
+    node = operations['testEntryPoint']
+    arena = Path(operations['arena'])
+    output = Path(node['output'])
+    expected = arena / 'Intermediates.noindex/NexGenVideo.build/Release/NexGenVideoTests-p.build/DerivedSources/test_entry_point.swift'
+    require(driver['module'] == 'NexGenVideoTests' and driver['targetGUID'] == node['targetGUID']
+        and node['targetGUID'] == 'PACKAGE-PRODUCT:nexgenvideo_NexGenVideoTests.NexGenVideoTests'
+        and output == expected and str(output) in sources
+        and node['argv'] == ['builtin-generateTestEntryPoint', '--output', str(output)]
+        and node['cwd'] == str(Path.cwd())
+        and node['taskSignature'] == '60b01ab02c84a798dd3a2e1572c272a3'
+        and node['sourceFixture'] == 'scripts/fixtures/native-test-entry-point.json',
+        'Test entry point lost its exact original task or compiler source role')
+    raw = test_entry_point_source()
+    require(len(raw) == node['sourceBytes'] and hashlib.sha256(raw).hexdigest() == node['sourceSHA256'],
+        'Test entry point source differs from its original generator')
+    require(not output.exists() and not output.is_symlink(), 'Test entry point output is occupied')
+    require(arena.is_dir() and not arena.is_symlink() and output.parent.resolve().is_relative_to(arena.resolve()),
+        'Test entry point parent escapes its arena')
+    output.parent.mkdir(parents=True, exist_ok=True)
+    require(output.parent.resolve().is_relative_to(arena.resolve()), 'Test entry point parent escapes its arena')
+    with output.open('xb') as stream: stream.write(raw)
+    os.chmod(output, 0o644)
+    measured = {'path': str(output), 'bytes': output.stat().st_size, 'sha256': capture.sha(output),
+        'mode': stat.S_IMODE(output.stat().st_mode)}
+    require(measured['sha256'] == node['sourceSHA256'] and measured['bytes'] == node['sourceBytes'],
+        'Materialized test entry point bytes differ')
+    shutil.copyfile(output, folder / 'test-entry-point.swift')
+    require(capture.sha(folder / 'test-entry-point.swift') == measured['sha256'],
+        'Retained original test entry point bytes differ')
+    write(folder / 'test-entry-point.json', {'schema': 'native-original-test-entry-point/v1',
+        'task': node, 'actualSource': measured, 'qualifiedAsTestExecution': False,
+        'materialization': 'NEW_CI_WRITE_OF_REVIEWED_ORIGINAL_GENERATOR_DEFAULTS',
+        'nativeOriginalGeneratorInvoked': False})
+    return measured
+
+
 def execute(root, phase):
     native_guard(root)
     prepared = json.loads((root / 'prepared.json').read_text())
@@ -921,6 +961,7 @@ def execute(root, phase):
             source_lists = [value[1:] for value in argv if value.startswith('@')]
             require(len(source_lists) == 1, 'Missing unique actual Swift source list')
             sources = shlex.split(Path(source_lists[0]).read_text())
+            entry = materialize_test_entry_point(folder, plan, sources) if phase == 'tests' else None
             jobs = driver_planning_jobs(folder, phase, prepared, driver, environment)
             if phase == 'production' and prepared.get('retainedProductionPlanning'):
                 state['retainedDriverPlanningOrigin'] = prepared['retainedProductionPlanning']['origin']
@@ -933,6 +974,11 @@ def execute(root, phase):
                 output = consumed / item['sha256']
                 if not output.exists(): shutil.copyfile(source, output)
             write(folder / 'frontend-jobs.json', proof)
+            if entry is not None:
+                path = Path(entry['path'])
+                require(not path.is_symlink() and capture.sha(path) == entry['sha256']
+                    and path.stat().st_size == entry['bytes'] and stat.S_IMODE(path.stat().st_mode) == entry['mode'],
+                    'Generated test entry point changed before compilation')
             state['compilerExecutions'] += 1
             logged(folder, 'compile', argv, environment, driver['cwd'], 900)
             state['compileComplete'] = True
