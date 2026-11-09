@@ -1,9 +1,14 @@
 import Foundation
 import NexGenEngine
+import UniformTypeIdentifiers
 
 /// Resolves immutable versioned installs and legacy flat bundles.
 enum PluginPaths {
     static let bundleExtension = "ngvpack"
+    static let typeIdentifier = "de.h5ventures.nexgenvideo.format-pack"
+    static var contentType: UTType {
+        UTType(typeIdentifier) ?? UTType(filenameExtension: bundleExtension, conformingTo: .package) ?? .package
+    }
 
     /// `~/Library/Application Support/NexGenVideo/Plugins`. Created on demand.
     static var installDirectory: URL {

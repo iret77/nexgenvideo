@@ -145,10 +145,16 @@ build_dmg() {
   rm -f "$DMG"
   DMG_VOLNAME="NexGenVideo"
   DMG_CAPACITY_PLAN="$DMG.capacity.json"
-  python3 "$ROOT/scripts/plan_dmg_capacity.py" "$APP" "$DMG_CAPACITY_PLAN"
-  DMG_APP="$APP" DMG_BG="$DMG_BG" DMG_VOLICON="$RESOURCES/AppIcon.icns" DMG_CAPACITY_PLAN="$DMG_CAPACITY_PLAN" \
+  DMG_PACK="$ROOT/.build/plugins/musicvideo.ngvpack"
+  DMG_GUIDE="$ROOT/scripts/Install NexGenVideo.txt"
+  [ -d "$DMG_PACK" ] && [ ! -L "$DMG_PACK" ] \
+    || { echo "!! joint DMG requires the separately signed Musicvideo pack" >&2; exit 1; }
+  codesign --verify --strict "$DMG_PACK"
+  xcrun stapler validate "$DMG_PACK"
+  python3 "$ROOT/scripts/plan_dmg_capacity.py" "$APP" "$DMG_CAPACITY_PLAN" --pack "$DMG_PACK" --guide "$DMG_GUIDE"
+  DMG_APP="$APP" DMG_PACK="$DMG_PACK" DMG_GUIDE="$DMG_GUIDE" DMG_BG="$DMG_BG" DMG_VOLICON="$RESOURCES/AppIcon.icns" DMG_CAPACITY_PLAN="$DMG_CAPACITY_PLAN" \
     "$DMGBUILD_BIN" -s "$ROOT/scripts/dmg-settings.py" "$DMG_VOLNAME" "$DMG"
-  python3 "$ROOT/scripts/verify_dmg_copy.py" "$APP" "$DMG"
+  python3 "$ROOT/scripts/verify_dmg_copy.py" "$APP" "$DMG" --pack "$DMG_PACK" --guide "$DMG_GUIDE"
 
   echo "==> Codesigning DMG"
   codesign --force --timestamp --sign "$SIGN_IDENTITY" "$DMG"

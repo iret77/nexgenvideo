@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import patch
 
 import compiled_app_release as release
+import native_xctest_host as fresh_host
 import compiled_xctest_reuse as reuse
 import run_macos_tests as native
 
@@ -112,7 +113,7 @@ class CompiledXCTestReuseTests(unittest.TestCase):
             parent[path[-1]] = value
             with self.subTest(path=path), self.assertRaises(ValueError): reuse.verify(broken, *args)
 
-    def test_continuation_executes_the_full_appkit_host_once_and_retains_completed_xctest(self):
+    def test_changed_candidate_executes_fresh_xctest_and_full_appkit_host_once_each(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             host = root / 'runtime/NexGenVideoAppKitTestHost'
@@ -125,17 +126,18 @@ class CompiledXCTestReuseTests(unittest.TestCase):
                     'output': str(image)} for phase in release.PHASES}}
             (root / 'bound.json').write_text(json.dumps(bound))
             inventory = self.inventory()
-            events = {'endedFunctionIDs': inventory['modules']['app']['exactEndedFunctionIDs'], 'functionExecutions': 3708}
+            events = {'endedFunctionIDs': inventory['modules']['app']['exactEndedFunctionIDs'], 'functionExecutions': 3712}
             observation = {'outputCapture': {'originalExitCode': 0, 'eof': True}}
             retained_engine = {'environment': {'architecture': 'arm64'}}
-            retained_xctest = {'schema': 'retained-current-candidate-xctest/v1'}
+            fresh_xctest = {'schema': 'native-xctest-host-proof/v1'}
             def checksum(path):
                 return release.retained.HOST_SHA if path == host else release.COMPILER_SHA if path == compiler else 'f' * 64
             with patch.object(release, 'native_guard'), patch.object(release, 'source_objects', return_value=bound['nativeSourceObjects']), \
                     patch.object(release.targets, 'logged') as signed, \
                     patch.object(release, 'criteria', return_value=inventory), patch.object(release, 'checksum', side_effect=checksum), \
                     patch.object(release, 'retained_engine_evidence', return_value=retained_engine), \
-                    patch.object(reuse, 'acquire', return_value=retained_xctest) as acquire, \
+                    patch.object(reuse, 'acquire') as acquire, \
+                    patch.object(fresh_host, 'run', return_value=fresh_xctest) as fresh, \
                     patch.object(native, 'app_environment', return_value={}), \
                     patch.object(native, 'prepare_post_mortem', return_value=observation), \
                     patch.object(native, 'run_process', return_value=(0, 123)) as process, \
@@ -149,13 +151,15 @@ class CompiledXCTestReuseTests(unittest.TestCase):
                 ['codesign', '--verify', '--deep', '--strict', str(image.parents[2])])
             self.assertEqual(process.call_args.args[0], [str(host), '--event-stream-version', '0', '--no-parallel'])
             self.assertEqual(process.call_args.args[2]['NGV_APPKIT_TEST_BUNDLE'], str(image.resolve()))
-            acquire.assert_called_once_with(root, bound, inventory['xctest']['exactIndividualPassedIDs'], retained_engine['environment'])
+            acquire.assert_not_called()
+            fresh.assert_called_once_with(root / 'xctest', bound, image, inventory['xctest']['exactIndividualPassedIDs'])
             receipt = json.loads((root / 'receipt.json').read_text())
-            self.assertEqual(receipt['schema'], 'release-native-compiled-app/v2')
-            self.assertEqual(receipt['counts'], {'freshApp': 3708, 'retainedCurrentXCTest': 48, 'retainedEngine': 896,
-                'executions': 4652, 'appSkips': 8, 'engineSkips': 14})
-            self.assertEqual(set(receipt['freshProofs']), {'app-swift-testing'})
-            self.assertEqual(receipt['retainedCurrentXCTest'], retained_xctest)
+            self.assertEqual(receipt['schema'], 'release-native-compiled-app/v3')
+            self.assertEqual(receipt['counts'], {'freshApp': 3712, 'freshXCTest': 48, 'retainedEngine': 896,
+                'executions': 4656, 'appSkips': 8, 'engineSkips': 14})
+            self.assertEqual(set(receipt['freshProofs']), {'app-swift-testing', 'xctest'})
+            self.assertEqual(receipt['freshProofs']['xctest'], fresh_xctest)
+            self.assertNotIn('retainedCurrentXCTest', receipt)
             self.assertFalse((root / 'xctest').exists())
             verify.assert_called_once()
 

@@ -20,7 +20,7 @@ from retained_app_test_products import api, archive_bytes, checksum, download, r
 
 
 REPOSITORY = 'iret77/nexgenvideo'
-APP_SOURCE = 'a8175982c9f2c589beffe5813e0932996f903598'
+APP_SOURCE = targets.cohort.APP_SOURCE
 COMPILER_SHA = '020a521df9efc127b6817a2ed2f1560155108f0a0ead1ee1fa98147f5944eb4f'
 CRITERIA = Path('scripts/fixtures/compiled-app-native-inventory.json')
 RETAINED_SOURCE = 'ebe2d8baf4d953d36fda2abc3835400f052da506'
@@ -142,7 +142,7 @@ def criteria():
     value = json.loads(CRITERIA.read_text())
     require(value.get('schema') == 'compiled-app-native-inventory/v1' and value.get('appSourceSHA') == APP_SOURCE
         and value.get('nativeSourceObjects') == source_objects(APP_SOURCE)
-        and value.get('expectedActualExecutions') == 4652, 'Independent native inventory differs')
+        and value.get('expectedActualExecutions') == 4656, 'Independent native inventory differs')
     for expected in value['modules'].values():
         ended, skipped = expected['exactEndedFunctionIDs'], expected['exactSkippedFunctionIDs']
         require(len(ended) == len(set(ended)) and len(skipped) == len(set(skipped))
@@ -320,8 +320,8 @@ def run_tests(root):
         json.dump({'sourceSHA': bound['sourceSHA'], 'runID': bound['runID'], 'products': bound['selected']}, stream)
         stream.flush()
         os.fsync(stream.fileno())
-    import compiled_xctest_reuse
-    retained_xctest = compiled_xctest_reuse.acquire(root, bound, expected['xctest']['exactIndividualPassedIDs'], retained_engine['environment'])
+    import native_xctest_host
+    fresh_xctest = native_xctest_host.run(root / 'xctest', bound, image, expected['xctest']['exactIndividualPassedIDs'])
     folder = root / 'app-swift-testing'
     folder.mkdir()
     environment = app_environment(dict(os.environ), runtime, image, folder)
@@ -339,21 +339,22 @@ def run_tests(root):
         and observation['outputCapture'].get('eof') is True, 'Native process failed or original output is incomplete')
     events = verify_events(folder / 'events.jsonl', expected['modules']['app'], 'NexGenVideoTests')
     require(set(expected['originalEightAppFailureIDsRequiredToEndWithoutIssues']) <= set(events['endedFunctionIDs'])
-        and events['functionExecutions'] == 3708, 'Original eight App cases or full App execution is missing')
+        and events['functionExecutions'] == 3712, 'Original eight App cases or full App execution is missing')
     proofs = {'app-swift-testing': {'pid': pid, 'parentPID': os.getpid(), 'consoleSHA256': checksum(folder / 'console.log'),
         'events': events, 'eventSHA256': checksum(folder / 'events.jsonl'),
         'hostReceipt': host_receipt(folder / 'host-receipt.json', events, pid=pid, bundle=image, host=host, source_sha=os.environ['GITHUB_SHA']),
         'hostReceiptSHA256': checksum(folder / 'host-receipt.json'), 'framework': framework_output(folder / 'console.log', 1, 0)}}
     write(folder / 'verified.json', proofs['app-swift-testing'])
-    receipt = {'schema': 'release-native-compiled-app/v2', 'sourceSHA': bound['sourceSHA'], 'runID': bound['runID'],
+    proofs['xctest'] = fresh_xctest
+    receipt = {'schema': 'release-native-compiled-app/v3', 'sourceSHA': bound['sourceSHA'], 'runID': bound['runID'],
         'attempt': 1, 'appSourceSHA': APP_SOURCE, 'nativeSourceObjects': bound['nativeSourceObjects'],
         'compilerSHA256': COMPILER_SHA, 'selected': bound['selected'],
         'products': {phase: {'receipt': bound['products'][phase]['receipt'],
             'originalArchiveSHA256': bound['products'][phase]['originalArchiveSHA256']} for phase in PHASES},
         'hostSHA256': retained.HOST_SHA, 'criteriaSHA256': checksum(CRITERIA), 'passed': True,
-        'counts': {'freshApp': 3708, 'retainedCurrentXCTest': 48, 'retainedEngine': 896, 'executions': 4652,
+        'counts': {'freshApp': 3712, 'freshXCTest': 48, 'retainedEngine': 896, 'executions': 4656,
             'appSkips': 8, 'engineSkips': 14},
-        'freshProofs': proofs, 'retainedCurrentXCTest': retained_xctest, 'retainedEngine': retained_engine}
+        'freshProofs': proofs, 'retainedEngine': retained_engine}
     verify_receipt(receipt, bound['sourceSHA'], bound['runID'])
     write(root / 'receipt.json', receipt)
 
@@ -389,15 +390,16 @@ def engine_environment(raw):
 
 
 def verify_receipt(receipt, source, run_id):
+    fresh_host = receipt.get('schema') == 'release-native-compiled-app/v3'
     continued = receipt.get('schema') == 'release-native-compiled-app/v2'
-    require(receipt.get('schema') in ('release-native-compiled-app/v1', 'release-native-compiled-app/v2') and receipt.get('sourceSHA') == source
+    require(receipt.get('schema') in ('release-native-compiled-app/v1', 'release-native-compiled-app/v2', 'release-native-compiled-app/v3') and receipt.get('sourceSHA') == source
         and receipt.get('runID') == run_id and receipt.get('attempt') == 1 and receipt.get('appSourceSHA') == APP_SOURCE
         and receipt.get('nativeSourceObjects') == source_objects(source) == source_objects(APP_SOURCE)
         and receipt.get('compilerSHA256') == COMPILER_SHA and receipt.get('hostSHA256') == retained.HOST_SHA
         and receipt.get('criteriaSHA256') == checksum(CRITERIA) and receipt.get('passed') is True,
         'Native compiled App acceptance identity differs')
-    require(receipt.get('counts') == {'freshApp': 3708, 'retainedCurrentXCTest' if continued else 'freshXCTest': 48, 'retainedEngine': 896,
-        'executions': 4652, 'appSkips': 8, 'engineSkips': 14}, 'Native compiled App acceptance counts differ')
+    require(receipt.get('counts') == {'freshApp': 3712 if fresh_host else 3708, 'retainedCurrentXCTest' if continued else 'freshXCTest': 48, 'retainedEngine': 896,
+        'executions': 4656 if fresh_host else 4652, 'appSkips': 8, 'engineSkips': 14}, 'Native compiled App acceptance counts differ')
     require(set(receipt.get('products', {})) == set(PHASES) and set(receipt.get('freshProofs', {})) == ({'app-swift-testing'} if continued else {'xctest', 'app-swift-testing'}),
         'Native compiled App acceptance roles differ')
     selected_roles = selector_identities(json.dumps(receipt.get('selected')))
@@ -429,6 +431,10 @@ def verify_receipt(receipt, source, run_id):
         require(sorted(receipt['freshProofs']['xctest'].get('individualPassedIDs', []))
             == sorted(expected['xctest']['exactIndividualPassedIDs']), 'Native acceptance exact XCTest coverage differs')
     for role, proof in receipt['freshProofs'].items():
+        if role == 'xctest' and fresh_host:
+            import native_xctest_host
+            native_xctest_host.verify_proof(proof, expected['xctest']['exactIndividualPassedIDs'], source, receipt['products']['tests']['receipt'])
+            continue
         runs = {'swiftTesting': 1, 'xctest': 0} if role == 'app-swift-testing' else {'swiftTesting': 0, 'xctest': 1}
         framework = proof.get('framework', {})
         require(framework.get('passed') is True and framework.get('expectedRuns') == runs
@@ -436,7 +442,7 @@ def verify_receipt(receipt, source, run_id):
             and re.fullmatch('[a-f0-9]{64}', proof.get('consoleSHA256', '')),
             'Native acceptance framework completion or original console identity is missing')
     host = app.get('hostReceipt', {})
-    require(app['events'].get('functionExecutions') == 3708 and app['events'].get('runStarted') == app['events'].get('runEnded') == 1
+    require(app['events'].get('functionExecutions') == (3712 if fresh_host else 3708) and app['events'].get('runStarted') == app['events'].get('runEnded') == 1
         and host.get('sourceSHA') == source and host.get('pid') == app.get('pid')
         and host.get('parentPID') == app.get('parentPID') and host.get('eventRecordCount') == app['events'].get('recordCount')
         and host.get('recordingError') is None and host.get('error') is None
@@ -485,13 +491,17 @@ def assemble(root):
     receipt = json.loads((root / 'receipt.json').read_text())
     verify_receipt(receipt, os.environ['GITHUB_SHA'], int(os.environ['GITHUB_RUN_ID']))
     component_paths = ['Engine', 'Runtime', 'Metal', 'Vendor', 'plugins', 'assets', 'Package.swift', 'Package.resolved',
-        'Sources/NexGenVideo/Resources', 'scripts/NexGenVideo.entitlements']
+        'scripts/NexGenVideo.entitlements']
     component_paths += ['Sources/' + name for name in targets.capture.git('ls-tree', '--name-only', 'HEAD:Sources').splitlines()
         if name != 'NexGenVideo']
     for name in component_paths:
         require(targets.capture.git('rev-parse', 'HEAD:' + name)
             == targets.capture.git('rev-parse', RETAINED_SOURCE + ':' + name),
             'Retained signed component source changed: ' + name)
+    resource_root = 'Sources/NexGenVideo/Resources'
+    fresh_resources = {resource_root + '/Info.plist', resource_root + '/Changelog/changelog.json'}
+    require(set(targets.capture.git('diff', '--name-only', '--no-renames', RETAINED_SOURCE, 'HEAD', '--', resource_root).splitlines())
+        == fresh_resources, 'Retained App resources changed beyond the two reviewed current resources')
     payload = retained_payload(root, 'release-build', *SIGNED_ARTIFACT)
     retained_root = root / 'signed-payload'
     retained_root.mkdir()
@@ -545,7 +555,15 @@ def assemble(root):
     shutil.copytree(Path(str(production) + '.dSYM'), original_symbols, symlinks=True)
     targets.logged(root, 'distribution-rpath', ['install_name_tool', '-add_rpath', '@executable_path/../Frameworks', str(original_image)])
     info_path = app / 'Contents/Info.plist'
-    info = plistlib.loads(info_path.read_bytes())
+    retained_info = plistlib.loads(info_path.read_bytes())
+    info = plistlib.loads(Path('Sources/NexGenVideo/Resources/Info.plist').read_bytes())
+    require(info.get('CFBundleIdentifier') == retained_info.get('CFBundleIdentifier'), 'Current App identity changed')
+    if 'SentryDSN' in retained_info:
+        info['SentryDSN'] = retained_info['SentryDSN']
+    changelog = Path('Sources/NexGenVideo/Resources/Changelog/changelog.json')
+    for destination in (app / 'Contents/Resources/Changelog/changelog.json',):
+        require(not destination.is_symlink() and destination.is_file(), 'Retained changelog destination missing or linked')
+        destination.write_bytes(changelog.read_bytes())
     info.update(NGVSourceCommit=os.environ['GITHUB_SHA'], NGVBuildConfiguration='release', NGVBuildSDK='27.2',
         CFBundleShortVersionString='1.8.0', CFBundleVersion=str(int(manifest['identity']['build']) + 1))
     require(info['NGVPluginCatalogURL'] == 'https://github.com/iret77/nexgenvideo/releases/download/plugins/catalog.json',
@@ -561,7 +579,8 @@ def assemble(root):
         'appTreeSHA256': checkpoint.tree_digest(app), 'identity': checkpoint.identity(build),
         'newCompiledImageSHA256': checksum(production), 'distributionImageSHA256': checksum(original_image),
         'retainedSourceSHA': RETAINED_SOURCE, 'retainedSignedArtifact': SIGNED_ARTIFACT,
-        'retainedFinalArtifact': FINAL_ARTIFACT, 'retainedPackSHA256': PACK_SHA, 'retainedPackTreeSHA256': PACK_TREE,
+        'retainedFinalArtifact': FINAL_ARTIFACT, 'freshResourceSHA256': {name: checksum(Path(name)) for name in sorted(fresh_resources)},
+        'retainedPackSHA256': PACK_SHA, 'retainedPackTreeSHA256': PACK_TREE,
         'unchangedSourceComponentObjects': {name: targets.capture.git('rev-parse', 'HEAD:' + name) for name in component_paths}})
 
 

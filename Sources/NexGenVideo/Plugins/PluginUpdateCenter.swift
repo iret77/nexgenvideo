@@ -233,29 +233,31 @@ final class PluginUpdateCenter {
             catalog.plugins.filter { $0.id == packID },
             appVersion: AppVersion.marketing
         )
-        guard let entry = candidates.first else {
-            return .unavailable(
-                "No compatible version of this format pack is available."
-            )
-        }
-        if PluginPaths.installedBundle(id: packID, version: entry.version) == nil {
-            do {
-                _ = try await PluginInstaller.install(entry)
-            } catch {
-                return .unavailable(
-                    (error as? LocalizedError)?.errorDescription
-                        ?? error.localizedDescription
-                )
+        let newest = PluginLoader.newestUsableInstalledInfo(id: packID)
+        let installed: (info: PluginBundleInfo, url: URL)
+        if let newest, Self.prefersInstalledVersion(newest.info.version, catalogVersion: candidates.first?.version) {
+            installed = newest
+        } else {
+            guard let entry = candidates.first else {
+                return .unavailable("No compatible version of this format pack is available.")
             }
+            if PluginPaths.installedBundle(id: packID, version: entry.version) == nil {
+                do {
+                    _ = try await PluginInstaller.install(entry)
+                } catch {
+                    return .unavailable((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+                }
+            }
+            guard let selected = PluginLoader.installedInfo(id: packID, version: entry.version),
+                  selected.info.projectSchema == entry.projectSchema,
+                  selected.info.migratesFrom == entry.migratesFrom else {
+                return .unavailable("The installed format pack metadata is invalid.")
+            }
+            installed = selected
         }
-        guard let installed = PluginLoader.installedInfo(
+        guard let binding = ProjectPackBinding(
             id: packID,
-            version: entry.version
-        ), installed.info.projectSchema == entry.projectSchema,
-           installed.info.migratesFrom == entry.migratesFrom,
-           let binding = ProjectPackBinding(
-            id: packID,
-            version: entry.version,
+            version: installed.info.version,
             projectSchema: installed.info.projectSchema
         ) else {
             return .unavailable("The installed format pack metadata is invalid.")
@@ -316,6 +318,13 @@ final class PluginUpdateCenter {
     ) -> ActivationRequirement {
         guard let live else { return .load }
         return live == target ? .ready : .restart
+    }
+
+    nonisolated static func prefersInstalledVersion(_ installed: String, catalogVersion: String?) -> Bool {
+        guard let local = SemanticVersion(installed) else { return false }
+        guard let catalogVersion else { return true }
+        guard let remote = SemanticVersion(catalogVersion) else { return false }
+        return local > remote
     }
 
     nonisolated static func attention(

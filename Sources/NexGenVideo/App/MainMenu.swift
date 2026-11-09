@@ -43,6 +43,9 @@ enum MainMenuBuilder {
         newItem.target = NSApp.delegate
         let openItem = menu.addItem(withTitle: "Open…", action: #selector(AppDelegate.openProject(_:)), keyEquivalent: "o")
         openItem.target = NSApp.delegate
+        let packItem = menu.addItem(withTitle: "Install Format Pack…", action: #selector(AppDelegate.installFormatPack(_:)), keyEquivalent: "")
+        packItem.target = NSApp.delegate
+        packItem.identifier = NSUserInterfaceItemIdentifier("file.install-format-pack")
         menu.addItem(.separator())
         menu.addItem(withTitle: "Save", action: #selector(NSDocument.save(_:)), keyEquivalent: "s")
         menu.addItem(withTitle: "Save As…", action: #selector(NSDocument.saveAs(_:)), keyEquivalent: "S")

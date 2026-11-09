@@ -1,6 +1,6 @@
 {
-  "appSourceSHA": "a8175982c9f2c589beffe5813e0932996f903598",
-  "expectedActualExecutions": 4652,
+  "appSourceSHA": "87b9a04860428b625fdf09ee8edda4c402a45bc5",
+  "expectedActualExecutions": 4656,
   "modules": {
     "engine": {
       "streamPath": "engine-swift-testing/events.jsonl",
@@ -3397,19 +3397,23 @@
         "NexGenVideoTests.PluginGateTests/reasonStringsAreUserFacing()/PluginGateTests.swift:135:6",
         "NexGenVideoTests.PluginGateTests/rejectsNonStrict()/PluginGateTests.swift:21:6",
         "NexGenVideoTests.PluginGateTests/versionedInstallURLKeepsVersionsSideBySide()/PluginGateTests.swift:193:6",
-        "NexGenVideoTests.PluginInstallSecurityTests/badChecksumLeavesPriorInstallIntact()/PluginInstallSecurityTests.swift:64:6",
-        "NexGenVideoTests.PluginInstallSecurityTests/catalogFetchRejectsNonHTTPS()/PluginInstallSecurityTests.swift:47:6",
-        "NexGenVideoTests.PluginInstallSecurityTests/installRejectsNonHTTPSBeforeDownloading()/PluginInstallSecurityTests.swift:30:6",
-        "NexGenVideoTests.PluginInstallSecurityTests/isHTTPSGuard()/PluginInstallSecurityTests.swift:21:6",
+        "NexGenVideoTests.PluginInstallSecurityTests/badChecksumLeavesPriorInstallIntact()/PluginInstallSecurityTests.swift:154:6",
+        "NexGenVideoTests.PluginInstallSecurityTests/catalogFetchRejectsNonHTTPS()/PluginInstallSecurityTests.swift:137:6",
+        "NexGenVideoTests.PluginInstallSecurityTests/installRejectsNonHTTPSBeforeDownloading()/PluginInstallSecurityTests.swift:120:6",
+        "NexGenVideoTests.PluginInstallSecurityTests/isHTTPSGuard()/PluginInstallSecurityTests.swift:111:6",
+        "NexGenVideoTests.PluginInstallSecurityTests/localCommitRejectsAliasesChangedCopiesAndVersionReplacement()/PluginInstallSecurityTests.swift:35:6",
+        "NexGenVideoTests.PluginInstallSecurityTests/localImportRejectsRemoteURLsSymlinksAndMalformedMetadata()/PluginInstallSecurityTests.swift:72:6",
+        "NexGenVideoTests.PluginInstallSecurityTests/localSnapshotBindsBytesPermissionsAndContainedLinks()/PluginInstallSecurityTests.swift:12:6",
+        "NexGenVideoTests.PluginLifecycleTests/checkedCatalogKeepsNewerInstalledVersion()/PluginLifecycleTests.swift:64:6",
         "NexGenVideoTests.PluginLifecycleTests/exactResidentVersionIsReady()/PluginLifecycleTests.swift:43:6",
-        "NexGenVideoTests.PluginLifecycleTests/liveInstallClearsRestartAttention()/PluginLifecycleTests.swift:80:6",
+        "NexGenVideoTests.PluginLifecycleTests/liveInstallClearsRestartAttention()/PluginLifecycleTests.swift:90:6",
         "NexGenVideoTests.PluginLifecycleTests/noResidentVersionMayLoad()/PluginLifecycleTests.swift:32:6",
-        "NexGenVideoTests.PluginLifecycleTests/projectAttentionRequiresDifferentTarget()/PluginLifecycleTests.swift:92:6",
-        "NexGenVideoTests.PluginLifecycleTests/restartPlanRejectsMissingState()/PluginLifecycleTests.swift:107:6",
-        "NexGenVideoTests.PluginLifecycleTests/restartPlanUsesInstalledTarget()/PluginLifecycleTests.swift:133:6",
+        "NexGenVideoTests.PluginLifecycleTests/projectAttentionRequiresDifferentTarget()/PluginLifecycleTests.swift:102:6",
+        "NexGenVideoTests.PluginLifecycleTests/restartPlanRejectsMissingState()/PluginLifecycleTests.swift:117:6",
+        "NexGenVideoTests.PluginLifecycleTests/restartPlanUsesInstalledTarget()/PluginLifecycleTests.swift:143:6",
         "NexGenVideoTests.PluginLifecycleTests/staleResidentVersionRequiresRestart()/PluginLifecycleTests.swift:19:6",
         "NexGenVideoTests.PluginLifecycleTests/startupDefaultsToNewestVersion()/PluginLifecycleTests.swift:54:6",
-        "NexGenVideoTests.PluginLifecycleTests/startupHonorsValidPinAndFallsBackFromInvalidPin()/PluginLifecycleTests.swift:64:6",
+        "NexGenVideoTests.PluginLifecycleTests/startupHonorsValidPinAndFallsBackFromInvalidPin()/PluginLifecycleTests.swift:74:6",
         "NexGenVideoTests.PluginPickerModelTests/activePackIsMarkedActive()/PluginPickerModelTests.swift:124:6",
         "NexGenVideoTests.PluginPickerModelTests/bundleInfoHeadlineBenefitDefaultEmpty()/PluginPickerModelTests.swift:224:6",
         "NexGenVideoTests.PluginPickerModelTests/bundleInfoReadsHeadlineAndBenefit()/PluginPickerModelTests.swift:209:6",
@@ -4843,9 +4847,9 @@
   ],
   "schema": "compiled-app-native-inventory/v1",
   "nativeSourceObjects": {
-    "Sources": "a6954c67f0f90aa1fe997c9829f7c55258ecc1f1",
+    "Sources": "89854eb2b969dc943758ee0f23cd6ffb2e67a859",
     "Engine": "29cfed623d13e6d84d5822a30b98e088fc123c3f",
-    "Tests": "c2510cc4aabc40e00fcd0742c8d9b59044ce1688",
+    "Tests": "447109389832857ceb96302eee2cfe01aeb574f5",
     "Package.swift": "37f605bfb8cdccc48821b39484c819ba3e5eff43",
     "Package.resolved": "530cdaed0a29a65181353d86d05cf9dc04890cc2",
     "Runtime": "910b87b08a3a8c976e0f2502580c843b0df74154",
@@ -4854,9 +4858,11 @@
     "plugins": "b75e017d3145010368ae417bc410574f3f0300c1"
   },
   "provenance": {
-    "definedAt": "2026-11-09T05:28:39.526723+00:00",
-    "originalCriteriaSHA256": "61b35dc5a83222a35e5ca657e911723d2abd3c549b74512d592e87f8cf1bb4c9",
-    "independentDesignReviewSHA256": "97d0e17b3cf59061b223ca70a03c0073587008e97d4d5303e88f3167f985161a",
-    "derivedBeforeCurrentAppExecution": true
+    "definedAt": "2026-11-09T16:13:08.435011+00:00",
+    "originalCriteriaSHA256": "4019f0b8ef90cd644ba9556ebc0db411ce0bfc377827b9fe488367cc1da1bdc2",
+    "appCandidateSHA": "87b9a04860428b625fdf09ee8edda4c402a45bc5",
+    "derivedBeforeCurrentAppExecution": true,
+    "derivation": "All prior functions retained; exact source locations rebased only in the two changed files. Four explicit new functions added. XCTest48 and Engine896 unchanged; no current native result inferred.",
+    "identifierColumnEvidence": "Original runtime IDs for byte-identical @Test attributes use token Test column6; retain that measured convention for shifted/new attributes, excluding the @ at column5."
   }
 }

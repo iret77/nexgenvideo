@@ -222,8 +222,8 @@ class CompiledAppReleaseTests(unittest.TestCase):
         value = release.criteria()
         app = value['modules']['app']
         engine = value['modules']['engine']
-        self.assertEqual(len(app['exactDiscoveredFunctionIDs']), 3716)
-        self.assertEqual(len(app['exactEndedFunctionIDs']), 3708)
+        self.assertEqual(len(app['exactDiscoveredFunctionIDs']), 3720)
+        self.assertEqual(len(app['exactEndedFunctionIDs']), 3712)
         self.assertEqual(len(app['exactSkippedFunctionIDs']), 8)
         self.assertEqual(len(engine['exactEndedFunctionIDs']), 896)
         self.assertEqual(len(engine['exactSkippedFunctionIDs']), 14)

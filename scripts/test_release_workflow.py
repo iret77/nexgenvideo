@@ -373,6 +373,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
                            NGV_RELEASE_MOUNTED_APP_TREE_SHA256=tree(app),
                            NGV_RELEASE_PACK_BUNDLE=str(original_pack),
                            NGV_RELEASE_PACK_TREE_SHA256=tree(original_pack),
+                           NGV_RELEASE_MOUNTED_PACK_TREE_SHA256=tree(original_pack),
                            NGV_RELEASE_PACK_ZIP=str(build / 'musicvideo.ngvpack.zip'),
                            NGV_RELEASE_PACK_ZIP_SHA256=hashlib.sha256((build / 'musicvideo.ngvpack.zip').read_bytes()).hexdigest())
         return root, environment
@@ -399,6 +400,9 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertLess(installed_checks.index('NGV_RELEASE_PACK_ZIP_SHA256='),
                         installed_checks.index('/usr/bin/ditto -x -k "$PACK_ZIP" "$PACK_EXTRACT"'))
         self.assertEqual(installed_checks.count('NGV_RELEASE_PACK_TREE_SHA256='), 2)
+        self.assertLess(installed_checks.index('ditto "$MOUNT_POINT/musicvideo.ngvpack"'), installed_checks.index('cleanup_mount\n'))
+        self.assertIn('PACK_BUNDLE="$INSTALL_CHECK/plugins/musicvideo.ngvpack"', installed_checks)
+        self.assertIn('"$PACK_ZIP_BUNDLE")" = "$NGV_RELEASE_MOUNTED_PACK_TREE_SHA256"', installed_checks)
         upload = by_name['Upload final DMG app for selected workspace acceptance']['with']
         self.assertEqual(upload['name'], 'workspace-ui-app')
         self.assertEqual({Path(n).name for n in upload['path'].splitlines()},
@@ -430,12 +434,14 @@ class ReleaseWorkflowTests(unittest.TestCase):
             self.assertEqual(proof['bpySourceReceiptSHA256'], hashlib.sha256((transfer / 'bpy-source-receipt.json').read_bytes()).hexdigest())
             self.assertEqual(proof['packArchiveSHA256'], environment['NGV_RELEASE_PACK_ZIP_SHA256'])
             self.assertEqual(proof['packTreeSHA256'], environment['NGV_RELEASE_PACK_TREE_SHA256'])
+            self.assertEqual(proof['mountedPackTreeSHA256'], environment['NGV_RELEASE_MOUNTED_PACK_TREE_SHA256'])
+            self.assertEqual(proof['packOrigin'], 'mounted-dmg')
             self.assertEqual((proof['runID'], proof['runAttempt']), ('77', '2'))
 
     def test_final_dmg_transfer_rejects_changed_dmg_app_pack_and_source(self):
         shell = next(s['run'] for s in self.workflow()['jobs']['release']['steps']
                      if s.get('name') == 'Transfer the verified installed DMG app for workspace acceptance')
-        for mutation in ('dmg', 'app', 'pack', 'pack-zip', 'source', 'mode', 'symlink'):
+        for mutation in ('dmg', 'app', 'pack', 'pack-zip', 'mounted-pack', 'source', 'mode', 'symlink'):
             with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as directory:
                 root, environment = self.release_transfer_fixture(directory)
                 paths = {'dmg': root / '.build/NexGenVideo.dmg',
@@ -443,6 +449,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
                          'pack': root / 'installed/plugins/musicvideo.ngvpack/pack',
                          'pack-zip': root / '.build/musicvideo.ngvpack.zip'}
                 if mutation == 'source': environment['GITHUB_SHA'] = 'b' * 40
+                elif mutation == 'mounted-pack': environment['NGV_RELEASE_MOUNTED_PACK_TREE_SHA256'] = '0' * 64
                 elif mutation == 'mode': paths['app'].chmod(0o700)
                 elif mutation == 'symlink':
                     link = root / 'installed/NexGenVideo.app/Contents/Current'

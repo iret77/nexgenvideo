@@ -1320,6 +1320,12 @@ jobs:
           NGV_RELEASE_MOUNTED_APP_TREE_SHA256="$(python3 scripts/external-gui/acceptance.py tree-sha256 --app "$MOUNT_POINT/NexGenVideo.app")"
           ditto "$MOUNT_POINT/NexGenVideo.app" "$INSTALL_APP"
           [ "$(python3 scripts/external-gui/acceptance.py tree-sha256 --app "$INSTALL_APP")" = "$NGV_RELEASE_MOUNTED_APP_TREE_SHA256" ]
+          [ -d "$MOUNT_POINT/musicvideo.ngvpack" ] && [ ! -L "$MOUNT_POINT/musicvideo.ngvpack" ] \
+            || { echo "::error::joint DMG does not contain the external Musicvideo pack"; exit 1; }
+          NGV_RELEASE_MOUNTED_PACK_TREE_SHA256="$(python3 scripts/external-gui/acceptance.py tree-sha256 --app "$MOUNT_POINT/musicvideo.ngvpack")"
+          mkdir -p "$INSTALL_CHECK/plugins"
+          ditto "$MOUNT_POINT/musicvideo.ngvpack" "$INSTALL_CHECK/plugins/musicvideo.ngvpack"
+          [ "$(python3 scripts/external-gui/acceptance.py tree-sha256 --app "$INSTALL_CHECK/plugins/musicvideo.ngvpack")" = "$NGV_RELEASE_MOUNTED_PACK_TREE_SHA256" ]
           cleanup_mount
           trap - EXIT
           codesign --verify --strict --verbose=2 "$INSTALL_APP"
@@ -1339,9 +1345,11 @@ jobs:
           NGV_RELEASE_PACK_ZIP_SHA256="$(shasum -a 256 "$PACK_ZIP" | awk '{print $1}')"
           PACK_EXTRACT="$(mktemp -d)"
           /usr/bin/ditto -x -k "$PACK_ZIP" "$PACK_EXTRACT"
-          PACK_BUNDLE="$(ls -d "$PACK_EXTRACT"/*.ngvpack 2>/dev/null | head -1 || true)"
-          [ -n "$PACK_BUNDLE" ] \
+          PACK_ZIP_BUNDLE="$(ls -d "$PACK_EXTRACT"/*.ngvpack 2>/dev/null | head -1 || true)"
+          [ -n "$PACK_ZIP_BUNDLE" ] \
             || { echo "::error::published pack ZIP does not contain an .ngvpack bundle"; exit 1; }
+          [ "$(python3 scripts/external-gui/acceptance.py tree-sha256 --app "$PACK_ZIP_BUNDLE")" = "$NGV_RELEASE_MOUNTED_PACK_TREE_SHA256" ]
+          PACK_BUNDLE="$INSTALL_CHECK/plugins/musicvideo.ngvpack"
           NGV_RELEASE_PACK_TREE_SHA256="$(python3 scripts/external-gui/acceptance.py tree-sha256 --app "$PACK_BUNDLE")"
           xcrun stapler validate "$PACK_BUNDLE"
           QUARANTINE="0083;$(printf '%x' "$(date +%s)");GitHub Actions;${{ github.server_url }}"
@@ -1368,13 +1376,12 @@ jobs:
           [ "$(/usr/libexec/PlistBuddy -c 'Print :NGVSourceCommit' "$INSTALL_APP/Contents/Info.plist")" = "$NGV_CHECKED_PRODUCT_SOURCE" ]
           [ "$(basename "$PACK_BUNDLE")" = musicvideo.ngvpack ]
           [ "$(python3 scripts/external-gui/acceptance.py tree-sha256 --app "$PACK_BUNDLE")" = "$NGV_RELEASE_PACK_TREE_SHA256" ]
-          mkdir -p "$INSTALL_CHECK/plugins"
-          ditto "$PACK_BUNDLE" "$INSTALL_CHECK/plugins/musicvideo.ngvpack"
           [ "$(python3 scripts/external-gui/acceptance.py tree-sha256 --app "$INSTALL_CHECK/plugins/musicvideo.ngvpack")" = "$NGV_RELEASE_PACK_TREE_SHA256" ]
           {
             echo "NGV_RELEASE_INSTALL_CHECK=$INSTALL_CHECK"
             echo "NGV_RELEASE_DMG_SHA256=$NGV_RELEASE_DMG_SHA256"
             echo "NGV_RELEASE_MOUNTED_APP_TREE_SHA256=$NGV_RELEASE_MOUNTED_APP_TREE_SHA256"
+            echo "NGV_RELEASE_MOUNTED_PACK_TREE_SHA256=$NGV_RELEASE_MOUNTED_PACK_TREE_SHA256"
             echo "NGV_RELEASE_PACK_BUNDLE=$PACK_BUNDLE"
             echo "NGV_RELEASE_PACK_TREE_SHA256=$NGV_RELEASE_PACK_TREE_SHA256"
             echo "NGV_RELEASE_PACK_ZIP=$PACK_ZIP"
@@ -1413,6 +1420,7 @@ jobs:
               raise SystemExit('Final pack ZIP changed after its load checks')
           pack_tree = tree_sha256(installed / 'plugins/musicvideo.ngvpack')
           if (pack_tree != os.environ['NGV_RELEASE_PACK_TREE_SHA256']
+              or pack_tree != os.environ['NGV_RELEASE_MOUNTED_PACK_TREE_SHA256']
               or pack_tree != tree_sha256(pathlib.Path(os.environ['NGV_RELEASE_PACK_BUNDLE']))):
               raise SystemExit('Transferred pack differs from the final checked pack')
           receipt = {'schema': 'nexgenvideo/workspace-ui-input/1',
@@ -1436,7 +1444,8 @@ jobs:
                    'runtimeInputSHA256': sha256(runtime_input),
                    'bpySourceReceiptSHA256': sha256(root / 'bpy-source-receipt.json'),
                    'packArchive': pack_zip.name, 'packArchiveSHA256': sha256(pack_zip),
-                   'packTreeSHA256': pack_tree}
+                   'packTreeSHA256': pack_tree,
+                   'packOrigin': 'mounted-dmg', 'mountedPackTreeSHA256': pack_tree}
           if provenance is not None:
               proof.update(schema='nexgenvideo/release-workspace-producer/2', producerSourceSHA=os.environ['GITHUB_SHA'],
                            packagingProvenanceSHA256=provenance)

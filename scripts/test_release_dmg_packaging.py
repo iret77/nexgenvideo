@@ -21,6 +21,71 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ReleaseDmgPackagingTests(unittest.TestCase):
+    def test_joint_dmg_capacity_and_layout_bind_the_external_pack_without_embedding_it_in_the_app(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            app, pack = root / 'NexGenVideo.app', root / 'musicvideo.ngvpack'
+            guide = root / 'Install NexGenVideo.txt'
+            guide.write_text('Install the app, then install the external format pack.')
+            app.mkdir(); pack.mkdir()
+            (app / 'app').write_bytes(b'app')
+            (pack / 'pack').write_bytes(b'separately signed pack')
+            geometry = {'freeBytes': 2**40, 'totalBytes': 2**40, 'blockBytes': 4096, 'imageBytes': 2**40 + 4096}
+            with patch.object(sizing, 'measure', return_value=geometry):
+                legacy = sizing.plan(app)
+                joint = sizing.plan(app, pack, guide)
+            self.assertGreater(joint['payloadBytes'], legacy['payloadBytes'])
+            self.assertEqual(joint['schema'], 'release-dmg-capacity-plan/v2')
+            self.assertEqual(joint['packPath'], str(pack.resolve()))
+            self.assertEqual(joint['packTreeSHA256'], dmg_copy.tree_digest(pack))
+            plan = root / 'capacity.json'
+            plan.write_text(json.dumps(joint))
+            with patch.dict(os.environ, DMG_APP=str(app), DMG_PACK=str(pack), DMG_GUIDE=str(guide), DMG_CAPACITY_PLAN=str(plan)):
+                settings = runpy.run_path(str(ROOT / 'scripts/dmg-settings.py'))
+                self.assertEqual(settings['files'], [str(app), str(pack), str(guide)])
+                self.assertIn(pack.name, settings['icon_locations'])
+                self.assertIn(guide.name, settings['icon_locations'])
+                for change in ({'schema': 'release-dmg-capacity-plan/v1'}, {'packPath': str(app)}, {'packTreeSHA256': 'invalid'}):
+                    plan.write_text(json.dumps({**joint, **change}))
+                    with self.assertRaises(ValueError): runpy.run_path(str(ROOT / 'scripts/dmg-settings.py'))
+            self.assertFalse(any(p.suffix == '.ngvpack' for p in app.rglob('*')))
+
+    def test_joint_dmg_rejects_missing_changed_unsigned_or_unnotarized_external_pack(self):
+        for mutation in (None, 'missing', 'bytes', 'symlink', 'signature', 'notarization', 'missing-guide', 'changed-guide'):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                app, pack, image = root / 'NexGenVideo.app', root / 'musicvideo.ngvpack', root / 'NexGenVideo.dmg'
+                guide = root / 'Install NexGenVideo.txt'
+                guide.write_text('Install the app, then install the external format pack.')
+                app.mkdir(); pack.mkdir(); image.write_bytes(b'dmg')
+                (app / 'app').write_bytes(b'app'); (pack / 'pack').write_bytes(b'original signed pack')
+                def command(*args):
+                    if args[:2] == ('hdiutil', 'attach'):
+                        mounted = Path(args[-1])
+                        shutil.copytree(app, mounted / app.name)
+                        (mounted / '.DS_Store').write_bytes(b'layout')
+                        (mounted / '.background.png').write_bytes(b'branding')
+                        (mounted / 'Applications').symlink_to('/Applications')
+                        if mutation != 'missing-guide':
+                            (mounted / guide.name).write_bytes(b'changed' if mutation == 'changed-guide' else guide.read_bytes())
+                        if mutation == 'symlink': (mounted / pack.name).symlink_to(pack, target_is_directory=True)
+                        elif mutation != 'missing':
+                            shutil.copytree(pack, mounted / pack.name)
+                            if mutation == 'bytes': (mounted / pack.name / 'pack').write_bytes(b'changed')
+                    if mutation == 'signature' and args[0] == 'codesign' and args[-1].endswith(pack.name):
+                        raise subprocess.CalledProcessError(1, args)
+                    if mutation == 'notarization' and args[:3] == ('xcrun', 'stapler', 'validate'):
+                        raise subprocess.CalledProcessError(1, args)
+                with patch.object(dmg_copy, 'command', side_effect=command):
+                    if mutation:
+                        with self.assertRaises((ValueError, subprocess.CalledProcessError)): dmg_copy.verify(app, image, pack, guide)
+                    else:
+                        result = dmg_copy.verify(app, image, pack, guide)
+                        self.assertEqual(result['schema'], 'release-dmg-copy/v2')
+                        self.assertEqual(result['sourcePackTreeSHA256'], result['mountedPackTreeSHA256'])
+                        self.assertIn(pack.name, [row['name'] for row in result['volumeInventory']])
+                        self.assertIn(guide.name, [row['name'] for row in result['volumeInventory']])
+
     def test_large_bundle_uses_apfs_and_verifies_copy_before_signing(self):
         with tempfile.TemporaryDirectory() as directory:
             plan_file = Path(directory) / "capacity.json"

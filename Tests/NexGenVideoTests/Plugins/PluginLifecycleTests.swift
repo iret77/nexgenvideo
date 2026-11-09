@@ -61,6 +61,16 @@ struct PluginLifecycleTests {
         )
     }
 
+    @Test("a checked catalog never downgrades a newer usable local pack")
+    func checkedCatalogKeepsNewerInstalledVersion() {
+        #expect(PluginUpdateCenter.prefersInstalledVersion("0.6.0", catalogVersion: "0.5.8"))
+        #expect(PluginUpdateCenter.prefersInstalledVersion("0.6.0", catalogVersion: nil))
+        #expect(!PluginUpdateCenter.prefersInstalledVersion("0.5.8", catalogVersion: "0.6.0"))
+        #expect(!PluginUpdateCenter.prefersInstalledVersion("0.6.0", catalogVersion: "0.6.0"))
+        #expect(!PluginUpdateCenter.prefersInstalledVersion("invalid", catalogVersion: "0.5.8"))
+        #expect(!PluginUpdateCenter.prefersInstalledVersion("0.6.0", catalogVersion: "invalid"))
+    }
+
     @Test("an explicit project version wins only while it remains available")
     func startupHonorsValidPinAndFallsBackFromInvalidPin() {
         #expect(
