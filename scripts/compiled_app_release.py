@@ -304,7 +304,6 @@ def acquire_products(root):
 
 def run_tests(root):
     from run_macos_tests import app_environment, framework_output, host_receipt, prepare_post_mortem, run_process
-    from verified_pr_source_checks import read_api
     native_guard(root)
     bound = json.loads((root / 'bound.json').read_text())
     require(bound['sourceSHA'] == os.environ['GITHUB_SHA'] and bound['runID'] == int(os.environ['GITHUB_RUN_ID'])
@@ -321,56 +320,40 @@ def run_tests(root):
         json.dump({'sourceSHA': bound['sourceSHA'], 'runID': bound['runID'], 'products': bound['selected']}, stream)
         stream.flush()
         os.fsync(stream.fileno())
-    proofs = {}
-    for name in ('xctest', 'app-swift-testing'):
-        folder = root / name
-        folder.mkdir()
-        environment = app_environment(dict(os.environ), runtime, image, folder)
-        require(not any(key.startswith(('NGV_ACCEPTANCE', 'NGV_APP_DIAGNOSTIC', 'NSZombie')) for key in environment),
-            'Native acceptance cannot use a diagnostic substitute')
-        if name == 'xctest':
-            tool = subprocess.check_output(['xcrun', '--find', 'xctest'], stdin=subprocess.DEVNULL, text=True, timeout=30).strip()
-            require(Path(tool).is_absolute() and Path(tool).is_file(), 'Selected XCTest tool is unavailable')
-            command = [tool, str(image.parents[2])]
-            observation = {}
-        else:
-            environment.update(NGV_APPKIT_TEST_BUNDLE=str(image.resolve()), NGV_APPKIT_TEST_EVENTS=str(folder / 'events.jsonl'),
-                NGV_APPKIT_TEST_RECEIPT=str(folder / 'host-receipt.json'),
-                NGV_APPKIT_EXCEPTION_EVIDENCE=str(folder / 'exception.jsonl'),
-                SWIFT_BACKTRACE='enable=yes,interactive=no,demangle=yes,cache=no')
-            command = [str(host), '--event-stream-version', '0', '--no-parallel']
-            observation = prepare_post_mortem(host)
-        write(folder / 'command.json', command)
-        code, pid = run_process(command, folder / 'console.log', environment, observation)
-        write(folder / 'process.json', {'exitCode': code, 'pid': pid, 'observation': observation})
-        require(code == 0 and observation.get('outputCapture', {}).get('originalExitCode') == 0
-            and observation['outputCapture'].get('eof') is True, 'Native process failed or original output is incomplete')
-        proof = {'pid': pid, 'parentPID': os.getpid(), 'consoleSHA256': checksum(folder / 'console.log')}
-        if name == 'xctest':
-            passed = re.findall(r"(?m)^Test Case '([^']+)' passed", (folder / 'console.log').read_text())
-            require(sorted(passed) == sorted(expected['xctest']['exactIndividualPassedIDs'])
-                and len(passed) == len(set(passed)) == 48, 'Native XCTest inventory differs')
-            proof['framework'] = framework_output(folder / 'console.log', 0, 1)
-            proof['individualPassedIDs'] = passed
-        else:
-            events = verify_events(folder / 'events.jsonl', expected['modules']['app'], 'NexGenVideoTests')
-            require(set(expected['originalEightAppFailureIDsRequiredToEndWithoutIssues']) <= set(events['endedFunctionIDs'])
-                and events['functionExecutions'] == 3708, 'Original eight App cases or full App execution is missing')
-            proof.update(events=events, eventSHA256=checksum(folder / 'events.jsonl'),
-                hostReceipt=host_receipt(folder / 'host-receipt.json', events, pid=pid, bundle=image, host=host,
-                    source_sha=os.environ['GITHUB_SHA']),
-                hostReceiptSHA256=checksum(folder / 'host-receipt.json'), framework=framework_output(folder / 'console.log', 1, 0))
-        proofs[name] = proof
-        write(folder / 'verified.json', proof)
-    receipt = {'schema': 'release-native-compiled-app/v1', 'sourceSHA': bound['sourceSHA'], 'runID': bound['runID'],
+    import compiled_xctest_reuse
+    retained_xctest = compiled_xctest_reuse.acquire(root, bound, expected['xctest']['exactIndividualPassedIDs'], retained_engine['environment'])
+    folder = root / 'app-swift-testing'
+    folder.mkdir()
+    environment = app_environment(dict(os.environ), runtime, image, folder)
+    require(not any(key.startswith(('NGV_ACCEPTANCE', 'NGV_APP_DIAGNOSTIC', 'NSZombie')) for key in environment),
+        'Native acceptance cannot use a diagnostic substitute')
+    environment.update(NGV_APPKIT_TEST_BUNDLE=str(image.resolve()), NGV_APPKIT_TEST_EVENTS=str(folder / 'events.jsonl'),
+        NGV_APPKIT_TEST_RECEIPT=str(folder / 'host-receipt.json'), NGV_APPKIT_EXCEPTION_EVIDENCE=str(folder / 'exception.jsonl'),
+        SWIFT_BACKTRACE='enable=yes,interactive=no,demangle=yes,cache=no')
+    command = [str(host), '--event-stream-version', '0', '--no-parallel']
+    observation = prepare_post_mortem(host)
+    write(folder / 'command.json', command)
+    code, pid = run_process(command, folder / 'console.log', environment, observation)
+    write(folder / 'process.json', {'exitCode': code, 'pid': pid, 'observation': observation})
+    require(code == 0 and observation.get('outputCapture', {}).get('originalExitCode') == 0
+        and observation['outputCapture'].get('eof') is True, 'Native process failed or original output is incomplete')
+    events = verify_events(folder / 'events.jsonl', expected['modules']['app'], 'NexGenVideoTests')
+    require(set(expected['originalEightAppFailureIDsRequiredToEndWithoutIssues']) <= set(events['endedFunctionIDs'])
+        and events['functionExecutions'] == 3708, 'Original eight App cases or full App execution is missing')
+    proofs = {'app-swift-testing': {'pid': pid, 'parentPID': os.getpid(), 'consoleSHA256': checksum(folder / 'console.log'),
+        'events': events, 'eventSHA256': checksum(folder / 'events.jsonl'),
+        'hostReceipt': host_receipt(folder / 'host-receipt.json', events, pid=pid, bundle=image, host=host, source_sha=os.environ['GITHUB_SHA']),
+        'hostReceiptSHA256': checksum(folder / 'host-receipt.json'), 'framework': framework_output(folder / 'console.log', 1, 0)}}
+    write(folder / 'verified.json', proofs['app-swift-testing'])
+    receipt = {'schema': 'release-native-compiled-app/v2', 'sourceSHA': bound['sourceSHA'], 'runID': bound['runID'],
         'attempt': 1, 'appSourceSHA': APP_SOURCE, 'nativeSourceObjects': bound['nativeSourceObjects'],
         'compilerSHA256': COMPILER_SHA, 'selected': bound['selected'],
         'products': {phase: {'receipt': bound['products'][phase]['receipt'],
             'originalArchiveSHA256': bound['products'][phase]['originalArchiveSHA256']} for phase in PHASES},
         'hostSHA256': retained.HOST_SHA, 'criteriaSHA256': checksum(CRITERIA), 'passed': True,
-        'counts': {'freshApp': 3708, 'freshXCTest': 48, 'retainedEngine': 896, 'executions': 4652,
+        'counts': {'freshApp': 3708, 'retainedCurrentXCTest': 48, 'retainedEngine': 896, 'executions': 4652,
             'appSkips': 8, 'engineSkips': 14},
-        'freshProofs': proofs, 'retainedEngine': retained_engine}
+        'freshProofs': proofs, 'retainedCurrentXCTest': retained_xctest, 'retainedEngine': retained_engine}
     verify_receipt(receipt, bound['sourceSHA'], bound['runID'])
     write(root / 'receipt.json', receipt)
 
@@ -406,15 +389,16 @@ def engine_environment(raw):
 
 
 def verify_receipt(receipt, source, run_id):
-    require(receipt.get('schema') == 'release-native-compiled-app/v1' and receipt.get('sourceSHA') == source
+    continued = receipt.get('schema') == 'release-native-compiled-app/v2'
+    require(receipt.get('schema') in ('release-native-compiled-app/v1', 'release-native-compiled-app/v2') and receipt.get('sourceSHA') == source
         and receipt.get('runID') == run_id and receipt.get('attempt') == 1 and receipt.get('appSourceSHA') == APP_SOURCE
         and receipt.get('nativeSourceObjects') == source_objects(source) == source_objects(APP_SOURCE)
         and receipt.get('compilerSHA256') == COMPILER_SHA and receipt.get('hostSHA256') == retained.HOST_SHA
         and receipt.get('criteriaSHA256') == checksum(CRITERIA) and receipt.get('passed') is True,
         'Native compiled App acceptance identity differs')
-    require(receipt.get('counts') == {'freshApp': 3708, 'freshXCTest': 48, 'retainedEngine': 896,
+    require(receipt.get('counts') == {'freshApp': 3708, 'retainedCurrentXCTest' if continued else 'freshXCTest': 48, 'retainedEngine': 896,
         'executions': 4652, 'appSkips': 8, 'engineSkips': 14}, 'Native compiled App acceptance counts differ')
-    require(set(receipt.get('products', {})) == set(PHASES) and set(receipt.get('freshProofs', {})) == {'xctest', 'app-swift-testing'},
+    require(set(receipt.get('products', {})) == set(PHASES) and set(receipt.get('freshProofs', {})) == ({'app-swift-testing'} if continued else {'xctest', 'app-swift-testing'}),
         'Native compiled App acceptance roles differ')
     selected_roles = selector_identities(json.dumps(receipt.get('selected')))
     for phase in PHASES:
@@ -437,8 +421,13 @@ def verify_receipt(receipt, source, run_id):
             ('skippedFunctionIDs', 'exactSkippedFunctionIDs')]:
         require(app.get('events', {}).get(key) == sorted(expected['modules']['app'][expected_key]),
             'Native acceptance exact App coverage differs')
-    require(sorted(receipt['freshProofs']['xctest'].get('individualPassedIDs', []))
-        == sorted(expected['xctest']['exactIndividualPassedIDs']), 'Native acceptance exact XCTest coverage differs')
+    if continued:
+        import compiled_xctest_reuse
+        compiled_xctest_reuse.verify(receipt.get('retainedCurrentXCTest', {}), expected['xctest']['exactIndividualPassedIDs'],
+            receipt['selected'], receipt['nativeSourceObjects'], receipt.get('retainedEngine', {}).get('environment', {}))
+    else:
+        require(sorted(receipt['freshProofs']['xctest'].get('individualPassedIDs', []))
+            == sorted(expected['xctest']['exactIndividualPassedIDs']), 'Native acceptance exact XCTest coverage differs')
     for role, proof in receipt['freshProofs'].items():
         runs = {'swiftTesting': 1, 'xctest': 0} if role == 'app-swift-testing' else {'swiftTesting': 0, 'xctest': 1}
         framework = proof.get('framework', {})
