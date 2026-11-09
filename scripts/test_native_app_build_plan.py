@@ -1,4 +1,6 @@
 import copy
+import hashlib
+import json
 from pathlib import Path
 import unittest
 
@@ -78,3 +80,71 @@ class NativeAppBuildPlanTests(unittest.TestCase):
     def test_profile_namespace_rejects_unreviewed_context_and_nonboolean_color(self):
         for profile, color in (('debug', False), ('production', 'YES'), ('testable', 1)):
             with self.subTest(profile=profile, color=color), self.assertRaises(ValueError): plan.settings(profile, color)
+
+    def test_actual_path_arguments_round_trip_both_complete_requests(self):
+        for profile in ('production', 'testable'):
+            with self.subTest(profile=profile):
+                request = plan.build_request(profile, 'measured-guid', Path('/owned/arena'),
+                    Path('/SDKs/MacOSX.sdk'), 'measured-toolchain', False)
+                raw = json.dumps(request, allow_nan=False)
+                decoded = json.loads(raw)
+                self.assertEqual(decoded, request)
+                self.assertEqual(decoded['parameters']['activeRunDestination']['sdk'], '/SDKs/MacOSX.sdk')
+                self.assertEqual(decoded['configuredTargets'][0]['parameters'], decoded['parameters'])
+
+    def test_resume_selectors_require_matching_complete_artifact_pair_in_both_callers(self):
+        for keys in (('EXTRA_FAILURE', 'EXTRA_FAILURE_SHA'), ('FAILURE_ID', 'FAILURE_DIGEST')):
+            values = self.inputs(); values.update({keys[0]: '701', keys[1]: 'd' * 64})
+            self.assertEqual(plan.validate_inputs(values)['resumeArtifactID'], 701)
+            self.assertEqual(plan.validate_inputs(values)['resumeArtifactSHA256'], 'd' * 64)
+            for key in keys:
+                incomplete = dict(values); incomplete[key] = ''
+                with self.subTest(missing=key), self.assertRaises(ValueError): plan.validate_inputs(incomplete)
+        conflict = self.inputs(); conflict.update(EXTRA_FAILURE='701', EXTRA_FAILURE_SHA='d' * 64,
+            FAILURE_ID='702', FAILURE_DIGEST='d' * 64)
+        with self.assertRaises(ValueError): plan.validate_inputs(conflict)
+        conflict['FAILURE_ID'] = '701'; conflict['FAILURE_DIGEST'] = 'e' * 64
+        with self.assertRaises(ValueError): plan.validate_inputs(conflict)
+
+    def test_retained_metadata_requires_complete_exact_graph_pif_and_original_context(self):
+        def raw(value): return json.dumps(value).encode()
+        packages = [{'targets': [{'type': 'regular', 'pluginUsages': []} for _ in range(146)],
+            'packageKind': {'root': ['/owned/source']}}]
+        packages += [{'targets': [{'type': 'regular', 'pluginUsages': []}]} for _ in range(18)]
+        pins = [{'identity': 'pin-' + str(i), 'revision': 'a' * 40,
+            'metadataSHA256': hashlib.sha256(raw(packages[i + 1])).hexdigest()} for i in range(18)]
+        graph = {'packages': packages, 'pins': pins, 'buildToolPlugins': 0,
+            'localEngineManifestSHA256': plan.MANIFEST_HASHES['Engine/Package.swift']}
+        pif = [{'type': 'project', 'contents': {'projectDirectory': '/owned/source'}},
+            {'type': 'target', 'contents': {'name': 'NexGenVideo-product', 'guid': 'prod'}},
+            {'type': 'target', 'contents': {'name': 'NexGenVideoTests-product', 'guid': 'tests'}}]
+        labels = ['developer', 'compiler', 'sdk', 'xcode', 'swift', 'os', 'architecture', 'sdk-version',
+            'find-swbuild', 'console-help-1', 'console-version', 'resolve', 'package-root']
+        labels += ['package-' + str(i) for i in range(18)] + ['production-pif']
+        files = {'pinned-graph.json': raw(graph), 'package-root.stdout': raw(packages[0]),
+            'production/workspace.pif': raw(pif), 'production-pif.stdout': raw(pif),
+            'resolve.argv.json': raw(['swift', 'package', '--cache-path', '/owned/cache', '--scratch-path', '/owned/prior', 'resolve']),
+            'commands.json': raw([{'label': label, 'exitCode': 72 if label == 'find-swbuild' else 0} for label in labels]),
+            'toolchain.json': raw({'developer': '/Xcode/Developer', 'compiler': '/Xcode/swiftc', 'compilerSHA256': 'a' * 64,
+                'sdk': '/Xcode/SDK', 'toolchainID': 'measured', 'console': '/Xcode/swbuild', 'consoleSHA256': 'b' * 64,
+                'NO_COLOR_present': False, 'appCompilerProducts': 0, 'printedJobsExecuted': False})}
+        files.update({'package-' + str(i) + '.stdout': raw(packages[i + 1]) for i in range(18)})
+        snapshot = plan.metadata_snapshot(files)
+        self.assertEqual(snapshot['workspace'], '/owned/source')
+        self.assertEqual(snapshot['scratch'], '/owned/prior')
+        self.assertEqual(snapshot['productionPIFSHA256'], hashlib.sha256(raw(pif)).hexdigest())
+        for name in ('production/workspace.pif', 'package-8.stdout', 'toolchain.json', 'resolve.argv.json'):
+            broken = dict(files); broken.pop(name)
+            with self.subTest(missing=name), self.assertRaises(ValueError): plan.metadata_snapshot(broken)
+        for name in ('result.json', 'production-description.argv.json', 'testable/workspace.pif'):
+            broken = dict(files); broken[name] = b'{}'
+            with self.subTest(unreviewed_stage=name), self.assertRaises(ValueError): plan.metadata_snapshot(broken)
+        for key, value in (('buildToolPlugins', 1), ('localEngineManifestSHA256', '0' * 64)):
+            broken = dict(files); changed = copy.deepcopy(graph); changed[key] = value; broken['pinned-graph.json'] = raw(changed)
+            with self.subTest(graph_field=key), self.assertRaises(ValueError): plan.metadata_snapshot(broken)
+        broken = dict(files); broken['production-pif.stdout'] = b'[]'
+        with self.assertRaises(ValueError): plan.metadata_snapshot(broken)
+        broken = dict(files); changed = copy.deepcopy(packages[0]); changed['packageKind']['root'] = ['/other/source']
+        altered = copy.deepcopy(graph); altered['packages'][0] = changed
+        broken.update({'pinned-graph.json': raw(altered), 'package-root.stdout': raw(changed)})
+        with self.assertRaises(ValueError): plan.metadata_snapshot(broken)
