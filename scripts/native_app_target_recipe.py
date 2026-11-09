@@ -353,6 +353,8 @@ def validate_frontend_jobs(text, driver, sources, arena, source_root, temporary_
         else:
             require(any(flag in argv for flag in ('-emit-module', '-emit-pcm', '-compile-module-from-interface')),
                 'Unreviewed dependency job operation')
+            require(sdk != PurePosixPath('/') and tools.parent != PurePosixPath('/'),
+                'Dependency toolchain or SDK root is unbounded')
             interface_values = [value.split('=', 1)[1] if value.startswith(('-fmodule-map-file=', '-module-map-file=')) else value
                 for value in argv if value.endswith(('.swiftinterface', '.modulemap', '.h'))]
             interfaces = [canonical_path(value) for value in interface_values]

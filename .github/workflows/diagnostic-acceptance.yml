@@ -199,7 +199,10 @@ jobs:
                   raise ValueError('Runtime failure binding cannot be ignored by this mode; exact crash request required') from error
           elif os.environ['KIND'] == 'native-app-targets':
               from native_app_target_build import validate_inputs
-              validate_inputs(os.environ)
+              try:
+                  validate_inputs(os.environ)
+              except (ValueError, KeyError, TypeError) as error:
+                  raise ValueError('Runtime failure binding cannot be ignored by this mode; exact compiler selectors required') from error
           elif os.environ['RUNTIME_FAILURE_BINDING']:
               raise ValueError('Runtime failure binding cannot be ignored by another mode')
           if packaging is not None and (os.environ['KIND'] not in {'signed-bpy', 'signed-journey', 'signed-transport', 'native-retained-failures'}
