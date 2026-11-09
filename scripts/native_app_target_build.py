@@ -533,6 +533,69 @@ def recipe_identity(prepared, phase):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
+def resumed_recipe_context(archive, receipt, prepared, phase, origin):
+    current = recipe_identity(prepared, phase)
+    if receipt['recipeSHA256'] == current:
+        return None
+    state = receipt['state']
+    require(phase == 'tests' and prepared['appSourceSHA'] == cohort.APP_SOURCE
+        and state.get('compileComplete') is True and state.get('linkerCommandSucceeded') is True
+        and state.get('linkComplete') is False and not state.get('xctestHost'),
+        'Changed recipe cannot reuse a completed or uncompiled target')
+    import native_xctest_host
+    raw = archive_bytes(archive, 'evidence/xctest-host-build-inputs.json', 1024**2)
+    previous = json.loads(raw)
+    previous_inputs = previous.get('inputs', {})
+    require(previous.get('schema') == 'native-xctest-host-build/v1'
+        and previous.get('sourceSHA') == receipt['sourceSHA'] == origin['selected']['sourceSHA']
+        and previous.get('appSourceSHA') == prepared['appSourceSHA']
+        and set(previous_inputs) == set(prepared['xctestHostInputs']) == set(native_xctest_host.INPUTS)
+        and previous.get('supportObjectSHA256') == native_xctest_host.SUPPORT_SHA,
+        'Original failed XCTest host inputs differ')
+    actual = {name: hashlib.sha256(capture.command(['git', 'show', receipt['sourceSHA'] + ':' + name])).hexdigest()
+        for name in native_xctest_host.INPUTS}
+    require(previous_inputs == actual and previous_inputs != prepared['xctestHostInputs'],
+        'Original XCTest host source binding differs')
+    original = dict(prepared, xctestHostInputs=previous_inputs)
+    require(receipt['recipeSHA256'] == recipe_identity(original, phase),
+        'Swift compiler, linker or native source recipe changed')
+    failure_raw = archive_bytes(archive, 'evidence/xctest-host-compile-link.exit.json', 1024)
+    failure = json.loads(failure_raw)
+    require(type(failure.get('exitCode')) is int and failure['exitCode'] != 0,
+        'Original XCTest host compilation did not fail')
+    plan = prepared['plans'][phase]
+    links = [item for item in plan['operations']['links'] if item['targetGUID'] == plan['driver']['targetGUID']]
+    require(len(links) == 1 and state.get('linkedOutput') == links[0]['output']
+        and isinstance(state.get('unsignedLinkSHA256'), str) and re.fullmatch('[a-f0-9]{64}', state['unsignedLinkSHA256']),
+        'Original unsigned Tests image path differs')
+    output = links[0]['output']
+    checks = {}
+    for label, argv in [('image', ['otool', '-hvL', output]), ('uuid', ['xcrun', 'dwarfdump', '--uuid', output])]:
+        records = {suffix: archive_bytes(archive, 'evidence/' + label + '.' + suffix, 1024**2)
+            for suffix in ('argv.json', 'exit.json', 'stdout', 'stderr')}
+        require(json.loads(records['argv.json']) == argv and json.loads(records['exit.json']) == {'exitCode': 0},
+            'Original unsigned image inspection command did not qualify')
+        checks[label] = {'argv': argv, 'exitCode': 0, 'stdout': records['stdout'].decode(),
+            'recordSHA256': {name: hashlib.sha256(raw).hexdigest() for name, raw in records.items()}}
+    require('ARM64' in checks['image']['stdout'] and 'BUNDLE' in checks['image']['stdout']
+        and '@rpath/libNexGenEngine.dylib' in checks['image']['stdout']
+        and state.get('imageUUID') == checks['uuid']['stdout']
+        and len(re.findall(r'UUID: [A-Fa-f0-9-]{36} \(arm64\)', checks['uuid']['stdout'])) == 1,
+        'Original unsigned image architecture, dependencies or UUID differs')
+    return {'schema': 'native-tests-unchanged-swift-host-repair/v1', 'origin': origin['selected'],
+        'originalRecipeSHA256': receipt['recipeSHA256'], 'currentRecipeSHA256': current,
+        'originalHostInputs': previous_inputs, 'currentHostInputs': prepared['xctestHostInputs'],
+        'originalHostInputRecordSHA256': hashlib.sha256(raw).hexdigest(),
+        'originalHostFailureRecordSHA256': hashlib.sha256(failure_raw).hexdigest(),
+        'originalHostExitCode': failure['exitCode'], 'qualifiedHostReused': False,
+        'retainedImageChecks': {'unsignedImageSHA256': state['unsignedLinkSHA256'], 'commands': checks,
+            'originalCallerSourceSHA': receipt['sourceSHA'], 'originalCallerPath': 'scripts/native_app_target_build.py',
+            'scope': 'Qualified original unsigned image; original caller context, no new environment qualification',
+            'newInspectionExecutions': 0},
+        'swiftCompilerExecutionsRequired': 0, 'swiftLinkerExecutionsRequired': 0,
+        'freshHostCompilationRequired': True}
+
+
 def clang_session_paths(plans, temporary):
     require(set(plans) == {'production', 'testable', 'tests'}, 'Incomplete Clang session driver inventory')
     paths = {}
@@ -907,11 +970,13 @@ def restore_product(root, phase, prepared, origin):
         raw = archive_bytes(archive, 'product-receipt.json', 16 * 1024**2)
         require(hashlib.sha256(raw).hexdigest() == origin['selected']['receiptSHA256'], 'Resumed product receipt differs')
         receipt = json.loads(raw)
+        recipe_context = resumed_recipe_context(archive, receipt, prepared, phase, origin)
         require(receipt['schema'] == 'native-app-target-product/v1' and receipt['phase'] == phase
             and receipt['sourceSHA'] == origin['selected']['sourceSHA'] and receipt['runID'] == origin['selected']['runID']
             and receipt['attempt'] == 1 and receipt['appSourceSHA'] == prepared['appSourceSHA']
             and receipt['nativeSourceObjects'] == prepared['nativeSourceObjects'] and receipt['arena'] == str(arena)
-            and receipt['compilerSHA256'] == prepared['compilerSHA256'] and receipt['recipeSHA256'] == recipe_identity(prepared, phase)
+            and receipt['compilerSHA256'] == prepared['compilerSHA256']
+            and (receipt['recipeSHA256'] == recipe_identity(prepared, phase) or recipe_context is not None)
             and receipt['state']['compileComplete'] is True, 'Resumed compiler product identity or successful compilation differs')
         expected = {'product-receipt.json'} | {'outputs/' + name for name in receipt['files']}
         require(all(item.filename in expected or item.filename.startswith('evidence/') for item in entries)
@@ -952,7 +1017,9 @@ def restore_product(root, phase, prepared, origin):
                 shutil.copyfileobj(source, target, 1024 * 1024)
             require(capture.sha(unsigned) == receipt['state']['unsignedLinkSHA256'], 'Passed unsigned linker output differs')
     write(folder / 'receipt.json', receipt)
-    return {'receipt': receipt, 'origin': origin, 'folder': str(folder)}
+    if recipe_context is not None:
+        write(folder / 'resumed-recipe-context.json', recipe_context)
+    return {'receipt': receipt, 'origin': origin, 'folder': str(folder), 'recipeContext': recipe_context}
 
 
 def checkpoint(root, phase, prepared, state):
@@ -1103,6 +1170,8 @@ def execute(root, phase):
     if resumed:
         state.update(resumed['receipt']['state'])
         state.update(compilerExecutions=0, resumed=True, resumedProducer=resumed['origin'])
+        if resumed.get('recipeContext') is not None:
+            state['resumedCompilerRecipeContext'] = resumed['recipeContext']
     environment = dict(prepared['environment'], **driver['environment'])
     task_temporary = folder / 'tmp'; task_temporary.mkdir()
     environment['TMPDIR'] = str(task_temporary)
@@ -1181,11 +1250,18 @@ def execute(root, phase):
         state['linkerCommandSucceeded'] = True
         shutil.copyfile(output, folder / 'linker-output-unsigned')
         state['unsignedLinkSHA256'] = capture.sha(folder / 'linker-output-unsigned')
-        image = logged(folder, 'image', ['otool', '-hvL', str(output)], prepared['environment'])
-        expected_type = {'production': 'EXECUTE', 'testable': 'OBJECT', 'tests': 'BUNDLE'}[phase]
-        require('ARM64' in image and expected_type in image, 'New native image architecture or type differs')
-        if phase != 'testable': require('@rpath/libNexGenEngine.dylib' in image, 'New native image lost the retained Engine binding')
-        image_uuid = logged(folder, 'uuid', ['xcrun', 'dwarfdump', '--uuid', str(output)], prepared['environment'])
+        retained_checks = state.get('resumedCompilerRecipeContext', {}).get('retainedImageChecks')
+        if retained_checks:
+            require(phase == 'tests' and retained_checks['unsignedImageSHA256'] == state['unsignedLinkSHA256'],
+                'Retained unsigned image inspections lost their exact bytes')
+            write(folder / 'unsigned-image-checks-reused.json', retained_checks)
+            image_uuid = retained_checks['commands']['uuid']['stdout']
+        else:
+            image = logged(folder, 'image', ['otool', '-hvL', str(output)], prepared['environment'])
+            expected_type = {'production': 'EXECUTE', 'testable': 'OBJECT', 'tests': 'BUNDLE'}[phase]
+            require('ARM64' in image and expected_type in image, 'New native image architecture or type differs')
+            if phase != 'testable': require('@rpath/libNexGenEngine.dylib' in image, 'New native image lost the retained Engine binding')
+            image_uuid = logged(folder, 'uuid', ['xcrun', 'dwarfdump', '--uuid', str(output)], prepared['environment'])
         state['imageUUID'] = image_uuid
         if phase == 'tests':
             bundle = output.parents[2]
