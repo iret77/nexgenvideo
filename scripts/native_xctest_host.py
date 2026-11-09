@@ -74,13 +74,38 @@ def build(folder, bundle, prepared, logged):
 
 
 def verify_case_identity(identity):
-    require(isinstance(identity, dict) and all(isinstance(identity.get(key), str) and identity[key]
-        for key in ('name', 'reportedName', 'class', 'selector', 'image')), 'Incomplete XCTest case identity')
-    canonical = '-[' + identity['class'] + ' ' + identity['selector'] + ']'
-    short = '-[' + identity['class'].rsplit('.', 1)[-1] + ' ' + identity['selector'] + ']'
-    require(identity['name'] == canonical and identity['reportedName'] in (canonical, short),
-        'XCTest reported name differs from its actual class or invocation selector')
+    require(isinstance(identity, dict) and set(identity) == {'name', 'reportedName', 'class', 'method', 'image'}
+        and all(isinstance(identity.get(key), str) and identity[key]
+        for key in ('name', 'reportedName', 'class', 'method', 'image')), 'Incomplete XCTest case identity')
+    canonical = '-[' + identity['class'] + ' ' + identity['method'] + ']'
+    short = '-[' + identity['class'].rsplit('.', 1)[-1] + ' ' + identity['method'] + ']'
+    require(not re.search(r'[\s\[\]]', identity['method'])
+        and identity['name'] == canonical and identity['reportedName'] in (canonical, short),
+        'XCTest public name differs from its actual class and logical method')
     return identity
+
+
+def verify_case_observation(observation, identity):
+    require(isinstance(observation, dict) and set(observation) == {'class', 'image', 'reportedName',
+        'invocationPresent', 'invocationSelector', 'respondsToInvocationSelector', 'observationError', 'identity', 'rejectionReason'},
+        'Incomplete original XCTest case observation')
+    require(observation['observationError'] is None and observation['rejectionReason'] is None
+        and observation['identity'] == identity and verify_case_identity(observation['identity']) == identity
+        and all(observation[key] == identity[key] for key in ('class', 'image', 'reportedName')),
+        'XCTest observation was rejected or lost its actual public identity')
+    selector, responds = observation['invocationSelector'], observation['respondsToInvocationSelector']
+    require(type(observation['invocationPresent']) is bool
+        and (selector is None or isinstance(selector, str) and selector)
+        and (responds is None if selector is None else type(responds) is bool)
+        and (observation['invocationPresent'] or selector is None), 'Malformed optional XCTest invocation observation')
+    return observation
+
+
+def verify_successful_run(run, executions):
+    require(isinstance(run, dict) and set(run) == {'executionCount', 'skipCount', 'totalFailureCount', 'hasSucceeded'}
+        and all(type(run[key]) is int for key in ('executionCount', 'skipCount', 'totalFailureCount'))
+        and run['executionCount'] == executions and run['skipCount'] == run['totalFailureCount'] == 0
+        and run['hasSucceeded'] is True, 'XCTest run failed, skipped or lacks exact typed execution counts')
 
 
 def verify_receipt(receipt, events, expected, *, source, pid, parent, bundle, host):
@@ -103,6 +128,13 @@ def verify_receipt(receipt, events, expected, *, source, pid, parent, bundle, ho
     require(len(leaves) == len(expected) and sorted(item['name'] for item in leaves) == sorted(expected)
         and all(item['image'] == receipt['bundleImagePath'] for item in leaves), 'XCTest class-image provenance differs')
     identities = {item['name']: verify_case_identity(item) for item in leaves}
+    observations = receipt.get('caseObservations', [])
+    require(receipt.get('discoveredTestCaseCount') == len(expected) and isinstance(observations, list)
+        and len(observations) == len(expected)
+        and all(isinstance(item, dict) and isinstance(item.get('identity'), dict) for item in observations)
+        and sorted(item.get('identity', {}).get('name', '') for item in observations) == sorted(expected),
+        'XCTest discovery observations do not cover every actual leaf')
+    for item in observations: verify_case_observation(item, identities[item['identity']['name']])
     before, loaded, after = (receipt.get(key, []) for key in ('runtimeImagesBefore', 'runtimeImagesAfterLoad', 'runtimeImagesAfter'))
     prefix = str((bundle / 'Contents/Frameworks').resolve()) + '/'
     require(loaded and loaded == after and len({Path(name).name for name in loaded}) == len(loaded)
@@ -113,29 +145,28 @@ def verify_receipt(receipt, events, expected, *, source, pid, parent, bundle, ho
     root_started = root_ended = 0
     for event in events:
         require(event.get('schema') == 'native-xctest-observation/v1' and event.get('pid') == pid
-            and event.get('executing') is True, 'Foreign or premature XCTest observation')
+            and event.get('executing') is True and type(event.get('root')) is bool, 'Foreign or premature XCTest observation')
         kind, name = event['kind'], event['name']
         require(kind in {'testCaseWillStart', 'testCaseDidFinish', 'testSuiteWillStart', 'testSuiteDidFinish',
             'testBundleWillStart', 'testBundleDidFinish'}, 'Unexpected or suppressed XCTest issue')
         if kind in {'testCaseWillStart', 'testCaseDidFinish'}:
             require(name in identities and event.get('detail', {}).get('caseIdentity') == identities[name],
-                'XCTest observation lost its exact discovered class and invocation')
+                'XCTest observation lost its exact discovered public identity')
+            verify_case_observation(event.get('detail', {}).get('caseObservation'), identities[name])
         if kind == 'testSuiteWillStart' and event.get('root'):
             require(root_started == root_ended == 0 and not active, 'Repeated XCTest suite start')
             root_started += 1
         elif kind == 'testSuiteDidFinish' and event.get('root'):
             require(root_started == 1 and root_ended == 0 and not active and completed == set(expected), 'Incomplete root XCTest suite')
             root_ended += 1
-            require(event.get('run') == {'executionCount': len(expected), 'skipCount': 0,
-                'totalFailureCount': 0, 'hasSucceeded': True}, 'Root XCTest aggregate differs')
+            verify_successful_run(event.get('run'), len(expected))
         elif kind == 'testCaseWillStart':
             require(root_started == 1 and root_ended == 0 and name in expected and name not in active | completed,
                 'Duplicate or out-of-order XCTest case start')
             active.add(name)
         elif kind == 'testCaseDidFinish':
             require(name in active and root_ended == 0, 'XCTest end without actual start')
-            require(event.get('run') == {'executionCount': 1, 'skipCount': 0, 'totalFailureCount': 0, 'hasSucceeded': True},
-                'Individual XCTest failed, skipped or did not execute')
+            verify_successful_run(event.get('run'), 1)
             active.remove(name); completed.add(name)
     require(not active and completed == set(expected) and root_started == root_ended == 1,
         'XCTest observation stream did not complete')
