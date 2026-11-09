@@ -42,6 +42,15 @@ on:
         type: choice
         options: ['1', '1.25', '1.5', all]
         default: '1'
+      journey_scenario:
+        description: Existing journey or fresh local Musicvideo installation from the exact DMG
+        type: choice
+        options: [journey, normal-fresh-local-musicvideo]
+        default: journey
+      expected_catalog_sha256:
+        description: Exact normal catalog bytes for the fresh local Musicvideo case
+        type: string
+        default: ''
       verified_pr_run_id:
         description: Complete current merged PR source proof for public transport
         type: string
@@ -143,6 +152,7 @@ jobs:
       - name: Require exact compiled UI client selectors
         env:
           KIND: ${{ inputs.candidate_kind }}
+          JOURNEY_SCENARIO: ${{ inputs.journey_scenario }}
           TEST_BUNDLE_RUN_ID: ${{ inputs.test_bundle_run_id }}
           TEST_BUNDLE_ARTIFACT_ID: ${{ inputs.test_bundle_artifact_id }}
           TEST_BUNDLE_ARTIFACT_SHA256: ${{ inputs.test_bundle_artifact_sha256 }}
@@ -155,11 +165,40 @@ jobs:
               if any(values):
                   raise ValueError('Compiled UI client selectors cannot be ignored by another mode')
           else:
-              if kind == 'signed-transport' and not all(values):
-                  raise ValueError('Transport requires the exact original compiled UI client run, artifact and digest')
+              local = kind == 'signed-journey' and os.environ.get('JOURNEY_SCENARIO') == 'normal-fresh-local-musicvideo'
+              if (kind == 'signed-transport' or local) and not all(values):
+                  raise ValueError('This continuation requires the exact original compiled UI client run, artifact and digest')
               sys.path.insert(0, 'scripts/external-gui')
               from test_bundle import validate_client_source
               validate_client_source(*values, os.environ['GITHUB_SHA'])
+          PY
+      - name: Require exact local Musicvideo continuation inputs
+        env:
+          KIND: ${{ inputs.candidate_kind }}
+          JOURNEY_SCENARIO: ${{ inputs.journey_scenario }}
+          CATALOG_DIGEST: ${{ inputs.expected_catalog_sha256 }}
+          SCALE: ${{ inputs.interface_scale }}
+          VERIFIED_PR: ${{ inputs.verified_pr_run_id }}
+          DMG_DIGEST: ${{ inputs.expected_dmg_sha256 }}
+          PRODUCER_RUN: ${{ inputs.run_id }}
+          PRODUCER_SOURCE: ${{ inputs.source_sha }}
+          RUNTIME_ARTIFACT: ${{ inputs.artifact_id }}
+          RUNTIME_DIGEST: ${{ inputs.artifact_sha256 }}
+        run: |
+          python3 - <<'PY'
+          import os, re
+          scenario = os.environ.get('JOURNEY_SCENARIO') or 'journey'
+          catalog = os.environ.get('CATALOG_DIGEST', '')
+          if scenario not in {'journey', 'normal-fresh-local-musicvideo'}:
+              raise ValueError('Unknown installed-app journey scenario')
+          if scenario == 'normal-fresh-local-musicvideo':
+              if (os.environ['KIND'] != 'signed-journey' or os.environ['SCALE'] != '1.5'
+                      or not all(re.fullmatch('[a-f0-9]{64}', os.environ[key]) for key in ('CATALOG_DIGEST', 'DMG_DIGEST', 'RUNTIME_DIGEST'))
+                      or not all(re.fullmatch('[1-9][0-9]*', os.environ[key]) for key in ('VERIFIED_PR', 'PRODUCER_RUN', 'RUNTIME_ARTIFACT'))
+                      or not re.fullmatch('[a-f0-9]{40}', os.environ['PRODUCER_SOURCE'])):
+                  raise ValueError('Local Musicvideo requires the exact DMG, producer, catalog, source proof and 150% scale')
+          elif catalog:
+              raise ValueError('Normal catalog identity cannot be ignored by another scenario')
           PY
       - name: Require exact public transport continuation inputs
         env:
@@ -176,6 +215,7 @@ jobs:
           EXTRA_PRODUCTS_SHA: ${{ inputs.products_artifact_sha256 }}
           EXTRA_FAILURE_SHA: ${{ inputs.failure_artifact_sha256 }}
           RUNTIME_FAILURE_BINDING: ${{ inputs.runtime_failure_binding }}
+          JOURNEY_SCENARIO: ${{ inputs.journey_scenario }}
         run: |
           python3 - <<'PY'
           import os, re, sys
@@ -227,11 +267,12 @@ jobs:
                       or not re.fullmatch('[a-f0-9]{64}', os.environ['DMG_DIGEST'])
                       or any(os.environ[key] for key in ('EXTRA_SOURCE', 'EXTRA_PRODUCTS', 'EXTRA_FAILURE', 'EXTRA_PRODUCTS_SHA', 'EXTRA_FAILURE_SHA'))):
                   raise SystemExit('Public transport requires one passed journey, exact DMG, current source proof and no diagnostic reuse inputs.')
-          elif any(fields[1:]) or fields[0] and packaging is None and os.environ['KIND'] != 'signed-release':
+          elif any(fields[1:]) or fields[0] and packaging is None and os.environ['KIND'] != 'signed-release' and not (
+                  os.environ['KIND'] == 'signed-journey' and os.environ.get('JOURNEY_SCENARIO') == 'normal-fresh-local-musicvideo'):
               raise SystemExit('Public transport inputs cannot be silently ignored by another mode.')
           PY
       - name: Reuse complete current merged PR source proof
-        if: inputs.candidate_kind == 'native-app-targets' || inputs.candidate_kind == 'native-app-build-plan' || inputs.candidate_kind == 'signed-transport' || inputs.candidate_kind == 'native-button-query' || inputs.candidate_kind == 'native-button-query-crash' || inputs.candidate_kind == 'native-button-query-crash-reuse' || (inputs.candidate_kind == 'signed-release' && inputs.verified_pr_run_id != '') || inputs.packaging_producer_source_sha != ''
+        if: inputs.candidate_kind == 'native-app-targets' || inputs.candidate_kind == 'native-app-build-plan' || inputs.candidate_kind == 'signed-transport' || inputs.candidate_kind == 'native-button-query' || inputs.candidate_kind == 'native-button-query-crash' || inputs.candidate_kind == 'native-button-query-crash-reuse' || (inputs.candidate_kind == 'signed-release' && inputs.verified_pr_run_id != '') || (inputs.candidate_kind == 'signed-journey' && inputs.journey_scenario == 'normal-fresh-local-musicvideo') || inputs.packaging_producer_source_sha != ''
         env:
           GH_TOKEN: ${{ github.token }}
           VERIFIED_PR: ${{ inputs.verified_pr_run_id }}
@@ -1287,6 +1328,9 @@ jobs:
       runtime_artifact_id: ${{ inputs.artifact_id }}
       runtime_artifact_sha256: ${{ inputs.artifact_sha256 }}
       expected_dmg_sha256: ${{ inputs.expected_dmg_sha256 }}
+      scenario: ${{ inputs.journey_scenario || 'journey' }}
+      expected_catalog_sha256: ${{ inputs.expected_catalog_sha256 }}
+      expected_pack_sha256: ${{ inputs.journey_scenario == 'normal-fresh-local-musicvideo' && '37fcee05d1ac334b20eb392c61cc3b7a94af165dc3b967c61602bc79d6dc4388' || '' }}
 
   signed-transport:
     needs: [source, transport-fixture]

@@ -13,11 +13,15 @@ class NativeXCTestHostTests(unittest.TestCase):
         image = str(bundle / 'Contents/MacOS/NexGenVideoTests')
         runtime = str(bundle / 'Contents/Frameworks/XCTestCore.framework/Versions/A/XCTestCore')
         ids = ['-[NexGenVideoTests.NativeCase first]', '-[NexGenVideoTests.NativeCase second]']
+        identities = {name: {'name': name, 'class': 'NexGenVideoTests.NativeCase',
+            'selector': name.split(' ', 1)[1][:-1], 'reportedName': name.replace('NexGenVideoTests.', ''),
+            'image': image} for name in ids}
         run = {'executionCount': 1, 'skipCount': 0, 'totalFailureCount': 0, 'hasSucceeded': True}
         events = []
         def event(kind, name, *, count=None, is_root=False):
             events.append({'schema': 'native-xctest-observation/v1', 'kind': kind, 'name': name,
                 'pid': 123, 'executing': True, 'root': is_root,
+                'detail': {'caseIdentity': copy.deepcopy(identities[name])} if kind.startswith('testCase') else {},
                 'run': dict(run, executionCount=count) if count is not None else None})
         event('testSuiteWillStart', 'root', is_root=True)
         for name in ids:
@@ -31,7 +35,7 @@ class NativeXCTestHostTests(unittest.TestCase):
             'totalFailureCount': 0, 'hasSucceeded': True, 'prematureExecutionCount': 0, 'issueCount': 0, 'expectedFailureCount': 0,
             'recordingError': None, 'error': None, 'failedIDs': [], 'inventoryIDs': ids,
             'startedIDs': ids, 'endedIDs': ids, 'passedIDs': ids,
-            'leafClasses': [{'name': name, 'class': 'NativeCase', 'image': image} for name in ids],
+            'leafClasses': list(identities.values()),
             'runtimeImagesBefore': [runtime], 'runtimeImagesAfterLoad': [runtime], 'runtimeImagesAfter': [runtime],
             'caseRuntimeImage': runtime, 'runtimeKinds': ['XCTestCore'], 'eventCount': len(events)}
         arguments = dict(source='a' * 40, pid=123, parent=99, bundle=bundle, host=executable)
@@ -76,6 +80,36 @@ class NativeXCTestHostTests(unittest.TestCase):
             changed['runtimeImagesAfterLoad'].append(duplicate); changed['runtimeImagesAfter'].append(duplicate); variants.append(changed)
             for value in variants:
                 with self.subTest(value=value), self.assertRaises(ValueError): host.verify_receipt(value, events, ids, **arguments)
+
+    def test_short_and_qualified_reported_names_keep_the_same_actual_class_and_invocation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            receipt, events, ids, arguments = self.fixture(Path(temporary))
+            self.assertIs(host.verify_receipt(receipt, events, ids, **arguments), receipt)
+            for leaf in receipt['leafClasses']: leaf['reportedName'] = leaf['name']
+            for event in events:
+                if event['kind'].startswith('testCase'):
+                    event['detail']['caseIdentity']['reportedName'] = event['name']
+            self.assertIs(host.verify_receipt(receipt, events, ids, **arguments), receipt)
+
+    def test_case_class_selector_and_original_name_cannot_be_substituted_in_discovery_or_callbacks(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            receipt, events, ids, arguments = self.fixture(Path(temporary))
+            variants = [('class', 'Foreign.NativeCase'), ('class', 'NativeCase'), ('class', ''),
+                ('selector', 'foreign'), ('selector', ''), ('reportedName', '-[Foreign.NativeCase first]'),
+                ('reportedName', '-[NativeCase second]'), ('reportedName', ''), ('name', '-[NativeCase first]')]
+            for field, value in variants:
+                changed = copy.deepcopy(receipt)
+                changed['leafClasses'][0][field] = value
+                with self.subTest(field=field, value=value), self.assertRaises(ValueError):
+                    host.verify_receipt(changed, events, ids, **arguments)
+            for field in ('class', 'selector', 'reportedName', 'image', 'name'):
+                for index in (1, 2):
+                    stream = copy.deepcopy(events)
+                    stream[index]['detail']['caseIdentity'][field] = 'substituted'
+                    with self.subTest(field=field, callback=index), self.assertRaises(ValueError):
+                        host.verify_receipt(receipt, stream, ids, **arguments)
+            stream = copy.deepcopy(events); stream[1]['detail'] = {}
+            with self.assertRaises(ValueError): host.verify_receipt(receipt, stream, ids, **arguments)
 
     def test_completed_xctest_proof_is_persisted_before_a_following_app_host_failure(self):
         import hashlib

@@ -52,13 +52,28 @@ static BOOL WriteReceipt(NSString *path, NSDictionary *value) {
     return ok;
 }
 
+static NSDictionary *CaseIdentity(XCTestCase *test) {
+    Class type = object_getClass(test);
+    NSString *className = NSStringFromClass(type);
+    SEL selector = test.invocation.selector;
+    NSString *method = selector ? NSStringFromSelector(selector) : @"";
+    if (!className.length || !method.length || ![test respondsToSelector:selector]) return nil;
+    NSString *name = [NSString stringWithFormat:@"-[%@ %@]", className, method];
+    NSString *shortName = [NSString stringWithFormat:@"-[%@ %@]", [className componentsSeparatedByString:@"."].lastObject, method];
+    NSString *reported = test.name;
+    if (![reported isEqual:name] && ![reported isEqual:shortName]) return nil;
+    const char *raw = class_getImageName(type);
+    NSString *image = raw ? @(raw).stringByResolvingSymlinksInPath : @"";
+    return @{@"name": name, @"reportedName": reported, @"class": className, @"selector": method, @"image": image};
+}
+
 static BOOL CollectLeaves(XCTest *test, NSString *image, NSMutableArray *leaves, NSMutableArray *classes) {
     if ([test isKindOfClass:XCTestCase.class]) {
-        const char *raw = class_getImageName(test.class);
-        NSString *actual = raw ? @(raw).stringByResolvingSymlinksInPath : @"";
-        [leaves addObject:test.name];
-        [classes addObject:@{@"name": test.name, @"class": NSStringFromClass(test.class), @"image": actual}];
-        return [actual isEqual:image];
+        NSDictionary *identity = CaseIdentity((XCTestCase *)test);
+        if (!identity) return NO;
+        [leaves addObject:identity[@"name"]];
+        [classes addObject:identity];
+        return [identity[@"image"] isEqual:image];
     }
     if (![test isKindOfClass:XCTestSuite.class]) return NO;
     BOOL ok = YES;
@@ -97,6 +112,7 @@ static NSDictionary *IssueDetail(XCTIssue *issue) {
 @property(nonatomic) FILE *events;
 @property(nonatomic, copy) NSString *recordingError;
 - (void)record:(NSString *)kind name:(NSString *)name run:(XCTestRun *)run detail:(NSDictionary *)detail;
+- (void)recordCase:(NSString *)kind identity:(NSDictionary *)identity run:(XCTestRun *)run detail:(NSDictionary *)detail;
 @end
 
 @implementation NativeXCTestObserver
@@ -134,17 +150,25 @@ static NSDictionary *IssueDetail(XCTIssue *issue) {
     [self record:@"testSuiteDidFinish" name:suite.name run:suite.testRun detail:nil];
 }
 - (void)testCaseWillStart:(XCTestCase *)test {
-    @synchronized(self) { [self.started addObject:test.name]; }
-    [self record:@"testCaseWillStart" name:test.name run:nil detail:nil];
+    NSDictionary *identity = CaseIdentity(test);
+    @synchronized(self) { [self.started addObject:identity[@"name"] ?: @""]; }
+    [self recordCase:@"testCaseWillStart" identity:identity run:nil detail:nil];
 }
 - (void)testCaseDidFinish:(XCTestCase *)test {
+    NSDictionary *identity = CaseIdentity(test);
     @synchronized(self) {
-        [self.ended addObject:test.name];
+        [self.ended addObject:identity[@"name"] ?: @""];
         XCTestRun *run = test.testRun;
         BOOL ok = run && run.hasSucceeded && run.executionCount == 1 && run.skipCount == 0 && run.totalFailureCount == 0;
-        [(ok ? self.passed : self.failed) addObject:test.name];
+        [(ok ? self.passed : self.failed) addObject:identity[@"name"] ?: @""];
     }
-    [self record:@"testCaseDidFinish" name:test.name run:test.testRun detail:nil];
+    [self recordCase:@"testCaseDidFinish" identity:identity run:test.testRun detail:nil];
+}
+- (void)recordCase:(NSString *)kind identity:(NSDictionary *)identity run:(XCTestRun *)run detail:(NSDictionary *)detail {
+    if (!identity) self.recordingError = @"XCTest case identity was unavailable";
+    NSMutableDictionary *value = [NSMutableDictionary dictionaryWithDictionary:detail ?: @{}];
+    value[@"caseIdentity"] = identity ?: @{};
+    [self record:kind name:identity[@"name"] ?: @"" run:run detail:value];
 }
 - (void)testBundleWillStart:(NSBundle *)bundle {
     @synchronized(self) { self.bundleStarted++; }
@@ -159,14 +183,15 @@ static NSDictionary *IssueDetail(XCTIssue *issue) {
     [self record:kind name:name run:nil detail:IssueDetail(issue)];
 }
 - (void)testCase:(XCTestCase *)test didRecordIssue:(XCTIssue *)issue {
-    [self issue:issue kind:@"testCaseIssue" name:test.name];
+    @synchronized(self) { self.issueCount++; }
+    [self recordCase:@"testCaseIssue" identity:CaseIdentity(test) run:nil detail:IssueDetail(issue)];
 }
 - (void)testSuite:(XCTestSuite *)test didRecordIssue:(XCTIssue *)issue {
     [self issue:issue kind:@"testSuiteIssue" name:test.name];
 }
 - (void)testCase:(XCTestCase *)test didRecordExpectedFailure:(XCTExpectedFailure *)failure {
     @synchronized(self) { self.expectedFailureCount++; }
-    [self record:@"testCaseExpectedFailure" name:test.name run:nil detail:@{@"failureReason": failure.failureReason ?: NSNull.null, @"issue": IssueDetail(failure.issue)}];
+    [self recordCase:@"testCaseExpectedFailure" identity:CaseIdentity(test) run:nil detail:@{@"failureReason": failure.failureReason ?: NSNull.null, @"issue": IssueDetail(failure.issue)}];
 }
 - (void)testSuite:(XCTestSuite *)test didRecordExpectedFailure:(XCTExpectedFailure *)failure {
     @synchronized(self) { self.expectedFailureCount++; }
