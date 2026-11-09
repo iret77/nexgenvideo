@@ -112,6 +112,30 @@ def failure_files():
     return files
 
 
+def deadline_failure_files():
+    files = failure_files()
+    progress = json.loads(files['spatial-history-admission.json'])
+    button = progress['interactions'][0]
+    nodes = [{'pid': 900, 'role': role, 'parent': parent} for role, parent in
+             [('AXGroup', None), ('AXSplitGroup', 0), ('AXGroup', 1), ('AXStaticText', 2), ('AXButton', 2)]]
+    nodes[-1].update(enabled=True, label='Evaluate')
+    button.update(visited=5, truncated=True, publicAX={
+        'visited': 5, 'truncated': True, 'failure': 'query-deadline', 'plane': 'public-AX',
+        'scope': 'whole-content-root', 'rootInventoryComplete': True, 'readOnMainThread': False,
+        'pid': 900, 'window': 931, 'windowCandidates': 1, 'contentCandidates': 1,
+        'expectedWindowFrame': [32, 32, 960, 672], 'contentRoots': [{'pid': 900, 'role': 'AXGroup'}],
+        'CGWindows': [{'number': 931, 'pid': 900, 'onscreen': True, 'frame': [32, 32, 960, 672]}],
+        'startedUptime': 10.21, 'finishedUptime': 11.21, 'nodes': nodes,
+        'reader': {'imageSHA256': 'e' * 64, 'AXTrusted': True, 'ownerPID': 900, 'ownerStart': 123,
+                   'readerPID': 901, 'readerStart': 124, 'startupStarted': 10, 'readyAt': 10.1,
+                   'sentAt': 10.2, 'deadline': 11.2, 'receivedAt': 11.22, 'stderr': ''}},
+        readerLifecycle={'pid': 901, 'exitStatus': 0, 'forced': False, 'processReaped': True,
+                         'protocolClean': True, 'stdoutClosed': True, 'stderrClosed': True,
+                         'stderr': '', 'finishedAt': 11.23})
+    files['spatial-history-admission.json'] = json.dumps(progress).encode()
+    return files
+
+
 def successful_files():
     files = {name: value for name, value in failure_files().items()
         if not name.endswith(('index.v1.json', 'manifest.v1.json', 'snapshot.v1.json', 'scene.blend'))
@@ -264,6 +288,49 @@ class SceneHistoryHierarchyTests(unittest.TestCase):
         changed['spatial-history-admission.json'] = json.dumps(progress).encode()
         with self.assertRaises(ValueError):
             diagnostic.expected_locator_failure(changed, 'a' * 40, 900)
+
+    def test_owned_partial_public_ax_deadline_is_measurement_only_with_exact_app_image(self):
+        files = deadline_failure_files()
+        outcome = diagnostic.expected_locator_failure(files, 'a' * 40, 900, expected_image_sha256='e' * 64)
+        self.assertEqual(outcome, {'expectedLocatorFailure': True, 'windowNumber': 931,
+                                  'appScopePassed': False, 'locatorBoundary': 'query-deadline', 'coverageComplete': False})
+        for image in (None, 'f' * 64):
+            with self.subTest(image=image), self.assertRaises(ValueError):
+                diagnostic.expected_locator_failure(files, 'a' * 40, 900, expected_image_sha256=image)
+
+    def test_partial_deadline_rejects_foreign_incomplete_unreaped_or_different_locator_evidence(self):
+        mutations = [
+            lambda b: b.update(visited=1, truncated=False),
+            lambda b: (b.update(visited=1, truncated=False), b['publicAX'].update(visited=1, truncated=False)),
+            lambda b: b['publicAX'].update(failure='some-other-failure'),
+            lambda b: b['publicAX'].update(rootInventoryComplete=False),
+            lambda b: b['publicAX'].update(windowCandidates=2),
+            lambda b: b['publicAX'].update(contentCandidates=0),
+            lambda b: b['publicAX'].update(pid=999),
+            lambda b: b['publicAX']['reader'].update(ownerPID=999),
+            lambda b: b['publicAX']['reader'].update(AXTrusted=False),
+            lambda b: b['publicAX']['reader'].update(sentAt=float('nan')),
+            lambda b: b['publicAX']['reader'].update(deadline=12),
+            lambda b: b['readerLifecycle'].update(forced=True),
+            lambda b: b['readerLifecycle'].update(processReaped=False),
+            lambda b: b['readerLifecycle'].update(exitStatus=1),
+            lambda b: b['readerLifecycle'].update(protocolClean=False),
+            lambda b: b['readerLifecycle'].update(stdoutClosed=False),
+            lambda b: b['readerLifecycle'].update(stderr='unexpected output'),
+            lambda b: b['publicAX']['nodes'][4].update(pid=999),
+            lambda b: b['publicAX']['nodes'][4].update(parent=4),
+            lambda b: b['publicAX']['nodes'][0].update(parent=0),
+            lambda b: b['publicAX']['nodes'][1].update(parent=None),
+            lambda b: b['publicAX']['nodes'][4].update(label='Undo'),
+            lambda b: b['publicAX']['CGWindows'][0].update(number=932),
+        ]
+        for index, mutate in enumerate(mutations):
+            files = deadline_failure_files()
+            progress = json.loads(files['spatial-history-admission.json'])
+            mutate(progress['interactions'][0])
+            files['spatial-history-admission.json'] = json.dumps(progress).encode()
+            with self.subTest(index=index), self.assertRaises(ValueError):
+                diagnostic.expected_locator_failure(files, 'a' * 40, 900, expected_image_sha256='e' * 64)
 
     def test_failure_identity_unknown_error_hidden_project_mutation_and_png_truncation_fail(self):
         files = failure_files()
