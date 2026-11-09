@@ -1053,6 +1053,7 @@ jobs:
         with:
           name: app-target-retention-fallback
           path: |
+            ${{ runner.temp }}/app-target-build/tests-driver-plan/
             ${{ runner.temp }}/app-build-plan-evidence/
             ${{ runner.temp }}/app-target-build/production/
             ${{ runner.temp }}/app-target-build/testable/
@@ -1065,6 +1066,7 @@ jobs:
         with:
           name: app-target-build-evidence
           path: |
+            ${{ runner.temp }}/app-target-build/tests-driver-plan/
             ${{ runner.temp }}/app-target-build/partial-driver-cache/
             ${{ runner.temp }}/app-target-build/*.json
             ${{ runner.temp }}/app-target-build/*.stdout
@@ -1078,6 +1080,7 @@ jobs:
             ${{ runner.temp }}/app-target-build/tests/*.json
             ${{ runner.temp }}/app-target-build/tests/*.stdout
             ${{ runner.temp }}/app-target-build/tests/*.stderr
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 90
 

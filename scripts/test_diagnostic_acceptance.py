@@ -38,6 +38,11 @@ class NativeAppTargetWorkflowTests(unittest.TestCase):
             self.assertEqual(steps[uploaded]['with']['if-no-files-found'], 'error')
         self.assertFalse(any(step.get('continue-on-error') for step in steps))
         self.assertTrue(any(step.get('with', {}).get('name') == 'app-target-retention-fallback' for step in steps))
+        for artifact in ('app-target-retention-fallback', 'app-target-build-evidence'):
+            upload = next(step for step in steps if step.get('with', {}).get('name') == artifact)
+            self.assertIn('always()', upload['if'])
+            self.assertIn('${{ runner.temp }}/app-target-build/tests-driver-plan/', upload['with']['path'])
+            self.assertTrue(upload['with']['include-hidden-files'])
         self.assertEqual(source['outputs']['target-binding-id'], '${{ steps.target-binding-upload.outputs.artifact-id }}')
 
 
