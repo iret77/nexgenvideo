@@ -155,12 +155,14 @@ class NativeAppBuildPlanTests(unittest.TestCase):
             ('NexGenVideo', 'NexGenVideo'), ('NexGenVideoTests', 'NexGenVideoTests-product')]
         pif = []; commands = {}
         for module, name in modules:
-            guid = 'measured-' + name
+            guid = ('PACKAGE-TARGET:NexGenVideo-0123456789ABCDEF-testable' if name == 'NexGenVideo'
+                else 'PACKAGE-PRODUCT:fixture.' + module)
+            display = guid.removeprefix('PACKAGE-TARGET:') if name == 'NexGenVideo' else module
             pif.append({'type': 'target', 'contents': {'name': name, 'guid': guid,
                 'buildConfigurations': [{'name': 'Release', 'buildSettings': {'PRODUCT_MODULE_NAME': module}}]}})
             for tool, label, phase in [('swift-driver-compilation', 'SwiftDriver Compilation', 'P0'),
                     ('swift-driver-compilation-requirement', 'SwiftDriver Compilation Requirements', 'P2')]:
-                description = label + ' ' + module + ' normal arm64 com.apple.xcode.tools.swift.compiler'
+                description = label + ' ' + display + ' normal arm64 com.apple.xcode.tools.swift.compiler'
                 key = phase + ':target-' + name + '-' + guid + '-SDKROOT:macosx27.2:SDK_VARIANT:macos:Release:' + description
                 folder = 'Sources/NexGenVideo/' if module == 'NexGenVideo' else 'Tests/NexGenVideoTests/'
                 commands[key] = {'tool': tool, 'description': description,
@@ -180,7 +182,7 @@ class NativeAppBuildPlanTests(unittest.TestCase):
                 elif changed == 'duplicate': altered['commands'][key.replace('macosx27.2', 'macosx27.3')] = copy.deepcopy(altered['commands'][key])
                 elif changed == 'foreign-source': altered['commands'][key]['inputs'] = ['/other/source/Actual.swift']
                 elif changed == 'wrong-module': altered['commands'][key]['description'] += 'Other'
-                else: altered['commands'][key.replace('measured-', 'foreign-')] = altered['commands'].pop(key)
+                else: altered['commands'][key.replace('PACKAGE-', 'FOREIGN-')] = altered['commands'].pop(key)
                 with self.subTest(profile=profile, changed=changed), self.assertRaises(ValueError):
                     plan.planned_app_tasks(altered, pif, profile, '/owned/source')
 
@@ -190,7 +192,7 @@ class NativeAppBuildPlanTests(unittest.TestCase):
         raw = lambda value: json.dumps(value).encode()
         identifier = 'a' * 32
         directory = 'production/derived-data/Intermediates.noindex/XCBuildData/' + identifier + '.xcbuilddata/'
-        request = plan.build_request('production', 'measured-NexGenVideo-product', Path('/owned/arena'),
+        request = plan.build_request('production', 'PACKAGE-PRODUCT:fixture.NexGenVideo', Path('/owned/arena'),
             Path('/SDKs/MacOSX.sdk'), 'measured-toolchain', False)
         files = {directory + 'manifest.json': raw(manifest), directory + 'task-store.msgpack': b'raw-task-store',
             directory + 'description.msgpack': b'raw-description', directory + 'build-request.json': raw(request),
@@ -232,3 +234,37 @@ class NativeAppBuildPlanTests(unittest.TestCase):
         altered = dict(files); altered['production-description.argv.json'] = raw(['/Xcode/swbuild', 'build', '--target',
             'NexGenVideo-product', '--buildRequestFile', '/owned/request.json', '/owned/workspace.pif'])
         with self.assertRaises(ValueError): plan.description_snapshot(altered, 'production', '/owned/source')
+
+    def test_transformed_executable_label_does_not_replace_its_actual_module_or_select_the_product(self):
+        targets = [
+            ('NexGenVideo', 'PACKAGE-TARGET:NexGenVideo-7B8DE44438834347-testable',
+                'NexGenVideo-7B8DE44438834347-testable', 'NexGenVideo', 'Sources/NexGenVideo/'),
+            ('NexGenVideo-product', 'PACKAGE-PRODUCT:fixture.NexGenVideo',
+                'NexGenVideo', 'NexGenVideo', 'Sources/NexGenVideo/'),
+            ('NexGenVideoTests-product', 'PACKAGE-PRODUCT:fixture.NexGenVideoTests',
+                'NexGenVideoTests', 'NexGenVideoTests', 'Tests/NexGenVideoTests/'),
+        ]
+        pif, commands = [], {}
+        for name, guid, display, module, folder in targets:
+            pif.append({'type': 'target', 'contents': {'name': name, 'guid': guid,
+                'buildConfigurations': [{'name': 'Release', 'buildSettings': {'PRODUCT_MODULE_NAME': module}}]}})
+            for phase, role, title in [('P0', 'swift-driver-compilation', 'SwiftDriver Compilation'),
+                    ('P2', 'swift-driver-compilation-requirement', 'SwiftDriver Compilation Requirements')]:
+                description = title + ' ' + display + ' normal arm64 com.apple.xcode.tools.swift.compiler'
+                key = phase + ':target-' + name + '-' + guid + '-SDKROOT:macosx27.2:SDK_VARIANT:macos:Release:' + description
+                commands[key] = {'tool': role, 'description': description,
+                    'inputs': ['/owned/source/' + folder + 'Actual.swift'], 'outputs': ['/owned/' + display + '.o']}
+        found = plan.planned_app_tasks({'commands': commands}, pif, 'testable', '/owned/source')
+        self.assertEqual(len(found), 4)
+        app = [row for row in found if row['module'] == 'NexGenVideo']
+        self.assertEqual(len(app), 2)
+        self.assertTrue(all(row['targetGUID'] == targets[0][1] for row in app))
+        self.assertTrue(all('NexGenVideo-7B8DE44438834347-testable normal arm64' in row['command']['description'] for row in app))
+        broken = copy.deepcopy(commands)
+        for key in [row['key'] for row in app]:
+            task = broken.pop(key)
+            task['description'] = task['description'].replace('NexGenVideo-7B8DE44438834347-testable', 'NexGenVideo')
+            broken[key.replace('NexGenVideo-7B8DE44438834347-testable normal', 'NexGenVideo normal')] = task
+        with self.assertRaises(ValueError): plan.planned_app_tasks({'commands': broken}, pif, 'testable', '/owned/source')
+        changed = copy.deepcopy(pif); changed[0]['contents']['buildConfigurations'][0]['buildSettings']['PRODUCT_MODULE_NAME'] = targets[0][2]
+        with self.assertRaises(ValueError): plan.planned_app_tasks({'commands': commands}, changed, 'testable', '/owned/source')

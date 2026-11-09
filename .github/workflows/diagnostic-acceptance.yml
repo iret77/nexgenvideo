@@ -15,7 +15,7 @@ on:
       candidate_kind:
         description: Signed release verification or targeted failed CI diagnostics
         type: choice
-        options: [native-app-build-plan, signed-release, signed-bpy, signed-journey, signed-transport, native-retained-failures, native-scene-history-hierarchy, native-segment-geometry, native-button-query, native-button-query-crash, native-button-query-crash-reuse, native-export-color, ci-runtime, ci-bpy-open-diagnostic, ci-bpy-resource-diagnostic, ci-app-test-diagnostic, ci-app-glow-replay, ci-app-full-replay, ci-builtin-blur, ci-builtin-blur-scribble, ci-builtin-blur-floor, ci-builtin-blur-preheat, ci-glow-context]
+        options: [native-app-targets, native-app-build-plan, signed-release, signed-bpy, signed-journey, signed-transport, native-retained-failures, native-scene-history-hierarchy, native-segment-geometry, native-button-query, native-button-query-crash, native-button-query-crash-reuse, native-export-color, ci-runtime, ci-bpy-open-diagnostic, ci-bpy-resource-diagnostic, ci-app-test-diagnostic, ci-app-glow-replay, ci-app-full-replay, ci-builtin-blur, ci-builtin-blur-scribble, ci-builtin-blur-floor, ci-builtin-blur-preheat, ci-glow-context]
         default: signed-release
       run_id:
         description: "Original producer workflow run"
@@ -131,6 +131,8 @@ jobs:
     outputs:
       plan-binding-id: ${{ steps.plan-binding-upload.outputs.artifact-id }}
       plan-binding-digest: ${{ steps.plan-binding-upload.outputs.artifact-digest }}
+      target-binding-id: ${{ steps.target-binding-upload.outputs.artifact-id }}
+      target-binding-digest: ${{ steps.target-binding-upload.outputs.artifact-digest }}
     runs-on: ubuntu-24.04
     # Signed acceptance runs the full six-minute suite; targeted diagnostic modes keep their bound.
     timeout-minutes: ${{ (inputs.candidate_kind == 'signed-release' || inputs.candidate_kind == 'signed-transport') && 10 || 5 }}
@@ -195,13 +197,19 @@ jobs:
                   crash_request(os.environ)
               except (ValueError, KeyError, TypeError) as error:
                   raise ValueError('Runtime failure binding cannot be ignored by this mode; exact crash request required') from error
+          elif os.environ['KIND'] == 'native-app-targets':
+              from native_app_target_build import validate_inputs
+              validate_inputs(os.environ)
           elif os.environ['RUNTIME_FAILURE_BINDING']:
               raise ValueError('Runtime failure binding cannot be ignored by another mode')
           if packaging is not None and (os.environ['KIND'] not in {'signed-bpy', 'signed-journey', 'signed-transport', 'native-retained-failures'}
                   or not re.fullmatch('[1-9][0-9]*', os.environ['VERIFIED_PR'])):
               raise ValueError('Packaging continuation needs signed mode and current exact PR source proof')
           fields = [os.environ[key] for key in ('VERIFIED_PR', 'JOURNEY_JOB', 'JOURNEY_ARTIFACT', 'JOURNEY_DIGEST')]
-          if os.environ['KIND'] == 'native-app-build-plan':
+          if os.environ['KIND'] == 'native-app-targets':
+              from native_app_target_build import validate_inputs
+              validate_inputs(os.environ)
+          elif os.environ['KIND'] == 'native-app-build-plan':
               from native_app_build_plan import validate_inputs
               validate_inputs(os.environ)
           elif os.environ['KIND'] == 'native-scene-history-hierarchy':
@@ -220,7 +228,7 @@ jobs:
               raise SystemExit('Public transport inputs cannot be silently ignored by another mode.')
           PY
       - name: Reuse complete current merged PR source proof
-        if: inputs.candidate_kind == 'native-app-build-plan' || inputs.candidate_kind == 'signed-transport' || inputs.candidate_kind == 'native-button-query' || inputs.candidate_kind == 'native-button-query-crash' || inputs.candidate_kind == 'native-button-query-crash-reuse' || (inputs.candidate_kind == 'signed-release' && inputs.verified_pr_run_id != '') || inputs.packaging_producer_source_sha != ''
+        if: inputs.candidate_kind == 'native-app-targets' || inputs.candidate_kind == 'native-app-build-plan' || inputs.candidate_kind == 'signed-transport' || inputs.candidate_kind == 'native-button-query' || inputs.candidate_kind == 'native-button-query-crash' || inputs.candidate_kind == 'native-button-query-crash-reuse' || (inputs.candidate_kind == 'signed-release' && inputs.verified_pr_run_id != '') || inputs.packaging_producer_source_sha != ''
         env:
           GH_TOKEN: ${{ github.token }}
           VERIFIED_PR: ${{ inputs.verified_pr_run_id }}
@@ -234,6 +242,22 @@ jobs:
           VERIFIED_PR: ${{ inputs.verified_pr_run_id }}
           SCALE: ${{ inputs.interface_scale }}
         run: python3 scripts/native_app_build_plan.py bind --output "$RUNNER_TEMP/app-build-plan-source-binding"
+      - name: Bind exact App target recipes and retained compiler products
+        if: inputs.candidate_kind == 'native-app-targets'
+        env:
+          KIND: ${{ inputs.candidate_kind }}
+          VERIFIED_PR: ${{ inputs.verified_pr_run_id }}
+          SCALE: ${{ inputs.interface_scale }}
+          RUNTIME_FAILURE_BINDING: ${{ inputs.runtime_failure_binding }}
+        run: python3 scripts/native_app_target_build.py bind --output "$RUNNER_TEMP/app-target-source-binding"
+      - uses: actions/upload-artifact@v4
+        id: target-binding-upload
+        if: always() && inputs.candidate_kind == 'native-app-targets'
+        with:
+          name: app-target-source-binding
+          path: ${{ runner.temp }}/app-target-source-binding/
+          if-no-files-found: error
+          retention-days: 90
       - uses: actions/upload-artifact@v4
         id: plan-binding-upload
         if: always() && inputs.candidate_kind == 'native-app-build-plan'
@@ -460,7 +484,7 @@ jobs:
           retention-days: 90
 
       - name: Bind the successful release job and immutable artifact
-        if: inputs.candidate_kind != 'native-app-build-plan' && inputs.candidate_kind != 'native-retained-failures' && inputs.candidate_kind != 'native-scene-history-hierarchy' && inputs.candidate_kind != 'native-segment-geometry' && inputs.candidate_kind != 'native-button-query' && inputs.candidate_kind != 'native-button-query-crash' && inputs.candidate_kind != 'native-button-query-crash-reuse' && inputs.candidate_kind != 'native-export-color' && inputs.candidate_kind != 'ci-bpy-resource-diagnostic' && inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor' && inputs.candidate_kind != 'ci-builtin-blur-preheat' && inputs.candidate_kind != 'ci-glow-context'
+        if: inputs.candidate_kind != 'native-app-targets' && inputs.candidate_kind != 'native-app-build-plan' && inputs.candidate_kind != 'native-retained-failures' && inputs.candidate_kind != 'native-scene-history-hierarchy' && inputs.candidate_kind != 'native-segment-geometry' && inputs.candidate_kind != 'native-button-query' && inputs.candidate_kind != 'native-button-query-crash' && inputs.candidate_kind != 'native-button-query-crash-reuse' && inputs.candidate_kind != 'native-export-color' && inputs.candidate_kind != 'ci-bpy-resource-diagnostic' && inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor' && inputs.candidate_kind != 'ci-builtin-blur-preheat' && inputs.candidate_kind != 'ci-glow-context'
         env:
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_KIND: ${{ inputs.candidate_kind }}
@@ -485,7 +509,7 @@ jobs:
             --candidate-kind "$CANDIDATE_KIND" \
             --packaging-producer-source "$PACKAGING_PRODUCER_SOURCE" --packaging-provenance-artifact-id "$PACKAGING_PROVENANCE_ARTIFACT_ID" --packaging-provenance-artifact-sha256 "$PACKAGING_PROVENANCE_ARTIFACT_SHA256" "${extra[@]}"
       - uses: actions/upload-artifact@v4
-        if: inputs.candidate_kind != 'native-app-build-plan' && inputs.candidate_kind != 'native-retained-failures' && inputs.candidate_kind != 'native-scene-history-hierarchy' && inputs.candidate_kind != 'native-segment-geometry' && inputs.candidate_kind != 'native-button-query' && inputs.candidate_kind != 'native-button-query-crash' && inputs.candidate_kind != 'native-button-query-crash-reuse' && inputs.candidate_kind != 'native-export-color' && inputs.candidate_kind != 'ci-bpy-resource-diagnostic' && inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor' && inputs.candidate_kind != 'ci-builtin-blur-preheat' && inputs.candidate_kind != 'ci-glow-context'
+        if: inputs.candidate_kind != 'native-app-targets' && inputs.candidate_kind != 'native-app-build-plan' && inputs.candidate_kind != 'native-retained-failures' && inputs.candidate_kind != 'native-scene-history-hierarchy' && inputs.candidate_kind != 'native-segment-geometry' && inputs.candidate_kind != 'native-button-query' && inputs.candidate_kind != 'native-button-query-crash' && inputs.candidate_kind != 'native-button-query-crash-reuse' && inputs.candidate_kind != 'native-export-color' && inputs.candidate_kind != 'ci-bpy-resource-diagnostic' && inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor' && inputs.candidate_kind != 'ci-builtin-blur-preheat' && inputs.candidate_kind != 'ci-glow-context'
         with:
           name: diagnostic-candidate-identity
           path: ${{ runner.temp }}/candidate-metadata/*.json
@@ -958,6 +982,100 @@ jobs:
           path: ${{ runner.temp }}/app-test-products.zip
           if-no-files-found: ignore
           retention-days: 7
+
+  app-target-build:
+    needs: source
+    if: inputs.candidate_kind == 'native-app-targets'
+    runs-on: macrunner
+    timeout-minutes: 50
+    env:
+      VERIFIED_PR: ${{ inputs.verified_pr_run_id }}
+      SCALE: ${{ inputs.interface_scale }}
+      RUNTIME_FAILURE_BINDING: ${{ inputs.runtime_failure_binding }}
+      TARGET_BINDING_ARTIFACT_ID: ${{ needs.source.outputs.target-binding-id }}
+      TARGET_BINDING_DIGEST: ${{ needs.source.outputs.target-binding-digest }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-xcode-27
+      - uses: ./.github/actions/setup-native-test-python
+      - uses: ./.github/actions/cache-swiftpm-dependencies
+        with:
+          restore-only: 'true'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: app-target-source-binding
+          path: ${{ runner.temp }}/app-target-source-binding
+      - name: Restore exact recipes and unchanged product bank
+        run: |
+          python3 scripts/native_app_target_build.py prepare \
+            --source-binding "$RUNNER_TEMP/app-target-source-binding/binding.json" \
+            --output "$RUNNER_TEMP/app-target-build"
+      - name: Build only the current production App target
+        id: production
+        run: python3 scripts/native_app_target_build.py production --output "$RUNNER_TEMP/app-target-build"
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.production.outcome != 'skipped'
+        id: production_upload
+        with:
+          name: app-target-production-products
+          path: ${{ runner.temp }}/app-target-build/production-products.zip
+          if-no-files-found: error
+          retention-days: 90
+      - name: Build only the current testable App target
+        id: testable
+        run: python3 scripts/native_app_target_build.py testable --output "$RUNNER_TEMP/app-target-build"
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.testable.outcome != 'skipped'
+        id: testable_upload
+        with:
+          name: app-target-testable-products
+          path: ${{ runner.temp }}/app-target-build/testable-products.zip
+          if-no-files-found: error
+          retention-days: 90
+      - name: Build only the dependent App tests target
+        id: tests
+        run: python3 scripts/native_app_target_build.py tests --output "$RUNNER_TEMP/app-target-build"
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.tests.outcome != 'skipped'
+        id: tests_upload
+        with:
+          name: app-target-tests-products
+          path: ${{ runner.temp }}/app-target-build/tests-products.zip
+          if-no-files-found: error
+          retention-days: 90
+      - uses: actions/upload-artifact@v4
+        if: always() && ((steps.production.outcome != 'skipped' && steps.production_upload.outcome != 'success') || (steps.testable.outcome != 'skipped' && steps.testable_upload.outcome != 'success') || (steps.tests.outcome != 'skipped' && steps.tests_upload.outcome != 'success'))
+        with:
+          name: app-target-retention-fallback
+          path: |
+            ${{ runner.temp }}/app-build-plan-evidence/
+            ${{ runner.temp }}/app-target-build/production/
+            ${{ runner.temp }}/app-target-build/testable/
+            ${{ runner.temp }}/app-target-build/tests/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 90
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: app-target-build-evidence
+          path: |
+            ${{ runner.temp }}/app-target-build/*.json
+            ${{ runner.temp }}/app-target-build/*.stdout
+            ${{ runner.temp }}/app-target-build/*.stderr
+            ${{ runner.temp }}/app-target-build/production/*.json
+            ${{ runner.temp }}/app-target-build/production/*.stdout
+            ${{ runner.temp }}/app-target-build/production/*.stderr
+            ${{ runner.temp }}/app-target-build/testable/*.json
+            ${{ runner.temp }}/app-target-build/testable/*.stdout
+            ${{ runner.temp }}/app-target-build/testable/*.stderr
+            ${{ runner.temp }}/app-target-build/tests/*.json
+            ${{ runner.temp }}/app-target-build/tests/*.stdout
+            ${{ runner.temp }}/app-target-build/tests/*.stderr
+          if-no-files-found: error
+          retention-days: 90
 
   app-build-plan:
     needs: source

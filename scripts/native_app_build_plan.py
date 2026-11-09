@@ -81,14 +81,18 @@ def validate_inputs(env):
 
 
 def bind(root):
+    selected = validate_inputs(os.environ)
+    bind_sources(root, selected, PATHS)
+
+
+def bind_sources(root, selected, allowed_paths):
     from verified_pr_source_checks import original_receipt, verify_run_identity, verify_steps, test_completion
     require(os.environ.get('GITHUB_REPOSITORY') == 'iret77/nexgenvideo', 'Wrong repository')
-    selected = validate_inputs(os.environ)
     head = os.environ['GITHUB_SHA']
     require(git('rev-parse', 'HEAD') == head and not git('status', '--porcelain', '--untracked-files=no'), 'Dirty source')
     subprocess.run(['git', 'merge-base', '--is-ancestor', selected['appSourceSHA'], head], check=True, timeout=30)
     changed = git('diff', '--name-only', '--no-renames', selected['appSourceSHA'], head).splitlines()
-    require(changed and set(changed) <= PATHS, 'App, package or unrelated source changed')
+    require(changed and set(changed) <= allowed_paths, 'App, package or unrelated source changed')
     objects = {name: git('rev-parse', 'HEAD:' + name) for name in INPUT_OBJECTS}
     require(objects == {name: git('rev-parse', selected['appSourceSHA'] + ':' + name) for name in INPUT_OBJECTS},
         'The native source graph differs from the reviewed App')
@@ -220,9 +224,14 @@ def planned_app_tasks(manifest, pif, profile, source_root):
         configurations = [row for row in target.get('buildConfigurations', []) if row.get('name') == 'Release']
         require(len(configurations) == 1 and configurations[0]['buildSettings'].get('PRODUCT_MODULE_NAME') == module,
             'PIF target module differs: ' + module)
+        display = module
+        if profile == 'testable' and target_name == 'NexGenVideo':
+            require(target['guid'].startswith('PACKAGE-TARGET:' + module + '-') and target['guid'].endswith('-testable'),
+                'Missing transformed executable target identity')
+            display = target['guid'].removeprefix('PACKAGE-TARGET:')
         for tool, label, phase in [('swift-driver-compilation', 'SwiftDriver Compilation', 'P0'),
                 ('swift-driver-compilation-requirement', 'SwiftDriver Compilation Requirements', 'P2')]:
-            description = label + ' ' + module + ' normal arm64 com.apple.xcode.tools.swift.compiler'
+            description = label + ' ' + display + ' normal arm64 com.apple.xcode.tools.swift.compiler'
             prefix = phase + ':target-' + target_name + '-' + target['guid'] + '-SDKROOT:'
             found = [(key, value) for key, value in planned_commands(manifest).items()
                 if value.get('tool') == tool and value.get('description') == description
