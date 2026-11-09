@@ -261,7 +261,7 @@ int main(int argc, const char *argv[]) {
                 @try {
                     receipt[@"mainThread"] = @(NSThread.isMainThread); receipt[@"applicationRunningAtStart"] = @(application.isRunning);
                     observer.executing = YES;
-                    [suite run];
+                    [suite runTest];
                     observer.executing = NO;
                     XCTestRun *run = suite.testRun;
                     receipt[@"executionCount"] = @(run.executionCount); receipt[@"skipCount"] = @(run.skipCount);

@@ -16,11 +16,14 @@ TEMPLATE_SELECTED = {'appSourceSHA': TEMPLATE_SOURCE, 'runID': 42537057754,
     'resumeArtifactID': 13645702215, 'resumeArtifactSHA256': '788177c686b1d5a8885befeae084bec447d910748e722bf7c8e12cfb56a70fb5',
     'verifiedPRRunID': 42554665357}
 TEMPLATE_METADATA = (13647433566, 'b6f5e0ef652fd5996760ce5f59f19239760563216d2504ff6ee056fa4dee74a9')
+UI_CI_PATHS = {'.github/workflows/external-gui-acceptance.yml',
+    'scripts/external-gui/NexGenVideoExternalUITests/UserJourneyTests.swift',
+    'scripts/external-gui/acceptance.py', 'scripts/test_external_gui_test_bundle.py'}
 CI_PATHS = {'scripts/native_current_cohort.py', 'scripts/test_native_current_cohort.py',
     'scripts/native_xctest_host.m', 'scripts/native_xctest_host.py', 'scripts/test_native_xctest_host.py',
     'scripts/compiled_app_release.py', 'scripts/test_compiled_app_release.py', 'scripts/release_checkpoint.py',
     'scripts/test_release_recovery.py', 'scripts/test_compiled_xctest_reuse.py', 'scripts/retained_packaging.py', 'scripts/test_retained_packaging.py',
-    'scripts/fixtures/compiled-app-native-inventory.json'}
+    'scripts/fixtures/compiled-app-native-inventory.json'} | UI_CI_PATHS
 
 
 def objects(ref):

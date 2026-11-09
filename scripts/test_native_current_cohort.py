@@ -36,6 +36,9 @@ class NativeCurrentCohortTests(unittest.TestCase):
         import native_app_target_build as targets
         self.assertNotIn('scripts/compiled_app_release.py', targets.PATHS)
         self.assertIn('scripts/compiled_app_release.py', targets.CURRENT_PATHS)
+        for name in cohort.UI_CI_PATHS:
+            self.assertNotIn(name, targets.PATHS)
+            self.assertIn(name, targets.CURRENT_PATHS)
         names = ['Sources/NexGenVideo/File%d.swift' % index for index in range(1395)]
         for current in (names[:-1], names + ['Tests/NexGenVideoTests/New.swift'], [*names[:-1], 'renamed.swift']):
             with self.subTest(current=current[-1]), patch.object(cohort, 'source_paths', side_effect=[names, current]), \
@@ -58,7 +61,9 @@ class NativeCurrentCohortTests(unittest.TestCase):
         run = {'id': 101, 'head_sha': pr_head}
         artifact = {'id': 201, 'digest': 'sha256:' + 'f' * 64, 'size_in_bytes': 123}
         receipt = {'pullRequest': 900, 'headSHA': pr_head, 'treeSHA': 'a' * 40}
-        for changed in ('valid', 'app-pin', 'missing-merge', 'different-source-run', 'different-native9', 'unreviewed-delta', 'different-pr-head', 'different-merge-tree'):
+        for changed in ('valid', *('ui:' + name for name in sorted(cohort.UI_CI_PATHS)), 'app-pin', 'missing-merge',
+                        'different-source-run', 'different-native9', 'ui-with-native9', 'unreviewed-delta',
+                        'unreviewed-ui-sibling', 'different-pr-head', 'different-merge-tree'):
             with self.subTest(changed=changed), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 current = {'schema': 'core-pr-source-composition/v1', 'sourceSHA': head,
@@ -76,7 +81,11 @@ class NativeCurrentCohortTests(unittest.TestCase):
                     if argv == ('rev-parse', cohort.APP_SOURCE + '^{tree}'): return cohort.APP_TREE
                     if argv[:2] == ('status', '--porcelain'): return ''
                     if argv[:2] == ('diff', '--name-only'):
-                        return 'Sources/NexGenVideo/New.swift' if changed == 'unreviewed-delta' else 'scripts/native_current_cohort.py'
+                        if changed == 'unreviewed-delta': return 'Sources/NexGenVideo/New.swift'
+                        if changed == 'unreviewed-ui-sibling': return 'scripts/external-gui/NexGenVideoExternalUITests/Unreviewed.swift'
+                        if changed.startswith('ui:'): return changed.removeprefix('ui:')
+                        if changed == 'ui-with-native9': return '\n'.join(sorted(cohort.UI_CI_PATHS))
+                        return 'scripts/native_current_cohort.py'
                     raise AssertionError(argv)
                 def api(route):
                     if route == 'actions/runs/101': return run
@@ -88,12 +97,12 @@ class NativeCurrentCohortTests(unittest.TestCase):
                 with patch.dict(os.environ, GITHUB_REPOSITORY='iret77/nexgenvideo', GITHUB_SHA=head, RUNNER_TEMP=str(root)), \
                         patch.object(cohort.capture, 'git', side_effect=git), patch.object(cohort.capture, 'api', side_effect=api), \
                         patch.object(cohort.capture, 'command', return_value=b'original'), patch.object(cohort.subprocess, 'run'), \
-                        patch.object(cohort, 'objects', side_effect=lambda ref: {'Sources': 'other'} if changed == 'different-native9' and ref == head else objects), \
+                        patch.object(cohort, 'objects', side_effect=lambda ref: {'Sources': 'other'} if changed in {'different-native9', 'ui-with-native9'} and ref == head else objects), \
                         patch.object(cohort, 'buildshape', return_value={'qualified': True}), \
                         patch.object(checks, 'verify_run_identity', return_value={'id': 301}), \
                         patch.object(checks, 'original_receipt', return_value=receipt), patch.object(checks, 'verify_steps', return_value={}), \
                         patch.object(checks, 'test_completion', return_value={'passed': True}):
-                    if changed == 'valid':
+                    if changed == 'valid' or changed.startswith('ui:'):
                         cohort.bind(root / 'result', incoming, set())
                         saved = json.loads((root / 'result/binding.json').read_text())
                         self.assertEqual(saved['appCandidateSHA'], cohort.APP_SOURCE)

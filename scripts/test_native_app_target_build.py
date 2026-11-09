@@ -12,6 +12,100 @@ import native_app_target_build as build
 
 
 class NativeAppTargetBuildTests(unittest.TestCase):
+    def host_repair_fixture(self):
+        import native_xctest_host
+        sources = {name: ('original ' + name).encode() for name in native_xctest_host.INPUTS}
+        previous = {name: build.hashlib.sha256(raw).hexdigest() for name, raw in sources.items()}
+        current = dict(previous, **{'scripts/native_xctest_host.m': 'a' * 64})
+        output = '/owned/Products/Release/NexGenVideoTests.xctest/Contents/MacOS/NexGenVideoTests'
+        prepared = {'appSourceSHA': build.cohort.APP_SOURCE, 'nativeSourceObjects': {'Sources': 's', 'Tests': 't'},
+            'compilerSHA256': 'c' * 64, 'xctestHostInputs': current,
+            'plans': {'tests': {'driver': {'argv': ['swiftc', '-O'], 'targetGUID': 'tests'},
+                'operations': {'arena': '/owned', 'links': [{'targetGUID': 'tests', 'output': output}]}}}}
+        original = dict(prepared, xctestHostInputs=previous)
+        receipt = {'sourceSHA': 'b' * 40, 'recipeSHA256': build.recipe_identity(original, 'tests'),
+            'state': {'compileComplete': True, 'linkerCommandSucceeded': True, 'linkComplete': False,
+                'linkedOutput': output, 'unsignedLinkSHA256': '1' * 64,
+                'imageUUID': 'UUID: 00000000-1111-2222-3333-444444444444 (arm64) ' + output + '\n'}}
+        host = {'schema': 'native-xctest-host-build/v1', 'sourceSHA': receipt['sourceSHA'],
+            'appSourceSHA': prepared['appSourceSHA'], 'inputs': previous,
+            'supportObjectSHA256': native_xctest_host.SUPPORT_SHA}
+        origin = {'selected': {'sourceSHA': receipt['sourceSHA'], 'runID': 11, 'artifactID': 12}}
+        return sources, prepared, receipt, host, origin
+
+    def host_repair_image_records(self, receipt):
+        output = receipt['state']['linkedOutput']
+        result = {}
+        for label, argv in [('image', ['otool', '-hvL', output]), ('uuid', ['xcrun', 'dwarfdump', '--uuid', output])]:
+            result[label + '.argv.json'] = json.dumps(argv).encode()
+            result[label + '.exit.json'] = json.dumps({'exitCode': 0}).encode()
+            result[label + '.stderr'] = b''
+            result[label + '.stdout'] = (b'ARM64 MH_BUNDLE\n@rpath/libNexGenEngine.dylib\n'
+                if label == 'image' else receipt['state']['imageUUID'].encode())
+        return result
+
+    def test_host_repair_preserves_the_exact_prior_swift_recipe_and_requires_a_fresh_host(self):
+        sources, prepared, receipt, host, origin = self.host_repair_fixture()
+        original_receipt = copy.deepcopy(receipt)
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, 'w') as archive:
+            archive.writestr('evidence/xctest-host-build-inputs.json', json.dumps(host))
+            archive.writestr('evidence/xctest-host-compile-link.exit.json', json.dumps({'exitCode': 1}))
+            for name, raw in self.host_repair_image_records(receipt).items(): archive.writestr('evidence/' + name, raw)
+        with zipfile.ZipFile(buffer) as archive, patch.object(build.capture, 'command',
+                side_effect=lambda argv: sources[argv[-1].split(':', 1)[1]]), patch.object(build, 'logged') as logged:
+            proof = build.resumed_recipe_context(archive, receipt, prepared, 'tests', origin)
+        logged.assert_not_called()
+        self.assertEqual(receipt, original_receipt)
+        self.assertEqual(proof['originalRecipeSHA256'], receipt['recipeSHA256'])
+        self.assertNotEqual(proof['originalRecipeSHA256'], proof['currentRecipeSHA256'])
+        self.assertEqual(proof['swiftCompilerExecutionsRequired'], 0)
+        self.assertEqual(proof['swiftLinkerExecutionsRequired'], 0)
+        self.assertTrue(proof['freshHostCompilationRequired'])
+        self.assertFalse(proof['qualifiedHostReused'])
+        self.assertEqual(proof['retainedImageChecks']['newInspectionExecutions'], 0)
+        self.assertEqual(proof['retainedImageChecks']['unsignedImageSHA256'], receipt['state']['unsignedLinkSHA256'])
+        unchanged = dict(prepared, xctestHostInputs=host['inputs'])
+        self.assertIsNone(build.resumed_recipe_context(None, receipt, unchanged, 'tests', origin))
+
+    def test_host_repair_rejects_changed_swift_inputs_and_unproven_original_host_failure(self):
+        for changed in ('phase', 'not-compiled', 'not-linked', 'completed-bundle', 'qualified-host', 'swift-source',
+                        'swift-driver', 'swift-compiler', 'swift-operations', 'host-source', 'success-host',
+                        'foreign-host-source', 'support-object', 'image-argv', 'image-exit', 'image-type',
+                        'uuid', 'unsigned-path', 'unsigned-sha'):
+            with self.subTest(changed=changed):
+                sources, prepared, receipt, host, origin = self.host_repair_fixture()
+                records = self.host_repair_image_records(receipt)
+                phase, status = 'tests', 1
+                if changed == 'phase':
+                    phase = 'production'; prepared['plans'][phase] = copy.deepcopy(prepared['plans']['tests'])
+                elif changed == 'not-compiled': receipt['state']['compileComplete'] = False
+                elif changed == 'not-linked': receipt['state']['linkerCommandSucceeded'] = False
+                elif changed == 'completed-bundle': receipt['state']['linkComplete'] = True
+                elif changed == 'qualified-host': receipt['state']['xctestHost'] = {'signedSHA256': 'd' * 64}
+                elif changed == 'swift-source': prepared['nativeSourceObjects']['Sources'] = 'changed'
+                elif changed == 'swift-driver': prepared['plans']['tests']['driver']['argv'].append('-different')
+                elif changed == 'swift-compiler': prepared['compilerSHA256'] = 'changed'
+                elif changed == 'swift-operations': prepared['plans']['tests']['operations']['arena'] = '/foreign'
+                elif changed == 'host-source': sources['scripts/native_xctest_host.m'] = b'substituted source'
+                elif changed == 'success-host': status = 0
+                elif changed == 'foreign-host-source': host['sourceSHA'] = 'e' * 40
+                elif changed == 'support-object': host['supportObjectSHA256'] = 'f' * 64
+                elif changed == 'image-argv': records['image.argv.json'] = json.dumps(['otool', '-hvL', '/foreign']).encode()
+                elif changed == 'image-exit': records['image.exit.json'] = json.dumps({'exitCode': 2}).encode()
+                elif changed == 'image-type': records['image.stdout'] = b'ARM64 MH_OBJECT\n@rpath/libNexGenEngine.dylib\n'
+                elif changed == 'uuid': records['uuid.stdout'] = b'UUID: unqualified\n'
+                elif changed == 'unsigned-path': receipt['state']['linkedOutput'] = '/foreign'
+                elif changed == 'unsigned-sha': receipt['state']['unsignedLinkSHA256'] = 'invalid'
+                buffer = io.BytesIO()
+                with zipfile.ZipFile(buffer, 'w') as archive:
+                    archive.writestr('evidence/xctest-host-build-inputs.json', json.dumps(host))
+                    archive.writestr('evidence/xctest-host-compile-link.exit.json', json.dumps({'exitCode': status}))
+                    for name, raw in records.items(): archive.writestr('evidence/' + name, raw)
+                with zipfile.ZipFile(buffer) as archive, patch.object(build.capture, 'command',
+                        side_effect=lambda argv: sources[argv[-1].split(':', 1)[1]]), self.assertRaises(ValueError):
+                    build.resumed_recipe_context(archive, receipt, prepared, phase, origin)
+
     def test_tests_plan_is_pinned_requires_both_completed_apps_and_conflicts_only_with_completed_tests(self):
         selected = {'production': dict(build.DRIVER_INPUT_ORIGINS['production-plan']['selected']),
             'testable': dict(build.DRIVER_INPUT_ORIGINS['production-plan']['selected']),
