@@ -242,7 +242,58 @@ def canonical_history(files, count):
     return ordered
 
 
-def expected_locator_failure(files, source, pid):
+def query_deadline_boundary(button, pid, image_sha256):
+    ax, lifecycle = button.get('publicAX', {}), button.get('readerLifecycle', {})
+    require(type(ax) is dict and type(lifecycle) is dict, 'Missing structured deadline ownership evidence')
+    reader = ax.get('reader', {})
+    require(type(reader) is dict, 'Missing structured deadline reader')
+    visited = button.get('visited')
+    require(type(visited) is int and 0 < visited <= 2048 and button.get('truncated') is True
+        and ax.get('visited') == visited and ax.get('truncated') is True
+        and ax.get('failure') == 'query-deadline' and ax.get('plane') == 'public-AX'
+        and ax.get('scope') == 'whole-content-root' and ax.get('rootInventoryComplete') is True
+        and ax.get('readOnMainThread') is False and ax.get('pid') == pid
+        and ax.get('window') == button['window'] and ax.get('windowCandidates') == ax.get('contentCandidates') == 1,
+        'The partial locator is not a complete-root owned public AX deadline')
+    require(isinstance(image_sha256, str) and re.fullmatch(r'[a-f0-9]{64}', image_sha256)
+        and reader.get('imageSHA256') == image_sha256 and reader.get('AXTrusted') is True
+        and reader.get('ownerPID') == pid and type(reader.get('ownerStart')) is int and reader['ownerStart'] > 0
+        and type(reader.get('readerPID')) is int and reader['readerPID'] > 0 and reader['readerPID'] != pid
+        and type(reader.get('readerStart')) is int and reader['readerStart'] > 0
+        and lifecycle.get('pid') == reader['readerPID'] and lifecycle.get('exitStatus') == 0
+        and lifecycle.get('forced') is False and lifecycle.get('processReaped') is True
+        and lifecycle.get('protocolClean') is True and lifecycle.get('stdoutClosed') is True
+        and lifecycle.get('stderrClosed') is True and reader.get('stderr') == lifecycle.get('stderr') == '',
+        'The deadline reader image, ownership, completion or pipes differ')
+    times = [reader.get(k) for k in ['startupStarted', 'readyAt', 'sentAt', 'deadline', 'receivedAt']]
+    times += [ax.get('startedUptime'), ax.get('finishedUptime'), lifecycle.get('finishedAt')]
+    require(all(type(v) in (int, float) and math.isfinite(v) and v > 0 for v in times),
+        'Missing finite monotonic deadline evidence')
+    startup, ready, sent, deadline, received, started, finished, reaped = times
+    require(startup <= ready <= sent <= started <= deadline <= finished <= received <= reaped
+        and 0.95 <= deadline - sent <= 1.05 and finished <= deadline + 0.25
+        and received <= deadline + 0.5 and reaped <= deadline + 1,
+        'The owned one-second query deadline or completion order differs')
+    nodes = ax.get('nodes', [])
+    require(type(nodes) is list and len(nodes) == visited and all(type(n) is dict
+        and n.get('pid') == pid and isinstance(n.get('role'), str)
+        and (n.get('parent') is None if index == 0
+             else type(n.get('parent')) is int and 0 <= n['parent'] < index)
+        for index, n in enumerate(nodes)), 'Foreign or malformed partial AX node topology')
+    require(not any(n.get('role') == 'AXButton' and n.get('enabled') is True
+        and 'Undo' in [n.get('label'), n.get('title')] for n in nodes),
+        'An enabled Undo was already observed; not the recorded missing-button boundary')
+    frame = ax.get('expectedWindowFrame')
+    require(type(frame) is list and len(frame) == 4
+        and all(type(v) in (int, float) and math.isfinite(v) for v in frame) and min(frame[2:]) > 0,
+        'Missing finite original window geometry')
+    windows = [w for w in ax.get('CGWindows', []) if w.get('number') == button['window']]
+    require(len(windows) == 1 and windows[0].get('pid') == pid and windows[0].get('onscreen') is True
+        and windows[0].get('frame') == frame and len(ax.get('contentRoots', [])) == 1,
+        'The deadline is not associated with the exact owned onscreen window')
+
+
+def expected_locator_failure(files, source, pid, *, expected_image_sha256=None):
     process = json.loads(files['process.json'])
     observation = json.loads(files['runtime-failure-observation.json'])
     progress = json.loads(files['spatial-history-admission.json'])
@@ -263,9 +314,17 @@ def expected_locator_failure(files, source, pid):
     require(len(buttons) == len(callbacks) == 1, 'Missing or ambiguous locator evidence')
     button, callback = buttons[0], callbacks[0]
     require(button.get('id') == 'spatial.undo' and button.get('item') == 'Undo'
-        and button.get('elements') == [] and button.get('visited') == 1
-        and button.get('truncated') is False and type(button.get('window')) is int and button['window'] > 0,
+        and button.get('elements') == [] and type(button.get('window')) is int and button['window'] > 0,
         'The current locator failure differs')
+    ax = button.get('publicAX')
+    if ax is not None:
+        require(type(ax) is dict and ax.get('visited') == button.get('visited')
+            and ax.get('truncated') is button.get('truncated') and ax.get('window') == button['window']
+            and ax.get('pid') == pid, 'Contradictory public AX locator envelope')
+    root_only = (button.get('visited') == 1 and button.get('truncated') is False
+        and ax is None and 'readerLifecycle' not in button)
+    if not root_only:
+        query_deadline_boundary(button, pid, expected_image_sha256)
     require(callback.get('admissionCallbacks') == 0 and callback.get('admitted') is None
         and callback.get('reloadAttemptUptime') is None and callback.get('admissionFailure') is None
         and callback.get('busyBeforeReload') is False and callback.get('busyAfterReload') is False,
@@ -279,7 +338,10 @@ def expected_locator_failure(files, source, pid):
     require(len(progress['screenshots']) >= 2, 'Incomplete failure screenshots')
     project_closure(files, 'failed')
     canonical_history(files, 3)
-    return {'expectedLocatorFailure': True, 'windowNumber': button['window'], 'appScopePassed': False}
+    result = {'expectedLocatorFailure': True, 'windowNumber': button['window'], 'appScopePassed': False}
+    if not root_only:
+        result.update(locatorBoundary='query-deadline', coverageComplete=False)
+    return result
 
 
 def scoped_success(files, source, pid):
@@ -378,9 +440,9 @@ def bind(root):
     failure = api('actions/artifacts/' + str(selected['failureArtifactID']))
     job = verify_failure(run, jobs, failure, selected)
     download(failure, root / 'original-failure.zip', 64 * 1024 * 1024)
+    raw_digest = download_job_log(job['id'], root / 'original-failure-job.log')
     files = read_archive(root / 'original-failure.zip')
     original_process = json.loads(files['process.json'])
-    boundary = expected_locator_failure(files, selected['sourceSHA'], original_process['pid'])
     inventory = api(f'actions/runs/{selected["runID"]}/artifacts?per_page=100')
     require(inventory['total_count'] == len(inventory['artifacts']) <= 100, 'Incomplete producer artifact inventory')
     producers = [a for a in inventory['artifacts'] if a['name'] == 'release-workspace-producer']
@@ -396,7 +458,8 @@ def bind(root):
         and producer.get('runAttempt') == '1' and producer.get('dmgSHA256') == selected['dmgSHA256']
         and producer['app']['NGVSourceCommit'] == selected['sourceSHA']
         and producer['app']['treeSHA256'] == producer['mountedAppTreeSHA256'], 'Final product byte identity differs')
-    raw_digest = download_job_log(job['id'], root / 'original-failure-job.log')
+    boundary = expected_locator_failure(files, selected['sourceSHA'], original_process['pid'],
+        expected_image_sha256=producer['app']['executableSHA256'])
     proof = {'schema': 'nexgenvideo/scene-history-hierarchy-binding/1', 'selected': selected,
         'runtimeArtifact': artifact, 'runtimeProof': runtime, 'producer': producer,
         'originalFailureJob': job, 'originalFailureArtifact': failure, 'originalBoundary': boundary,
@@ -583,16 +646,29 @@ def run(root):
         subprocess.run([sys.executable, 'scripts/consume_bpy_distributable_source.py', '--output-directory', str(source),
             '--source-sha', selected['sourceSHA'], '--receipt', str(receipt)],
             stdin=subprocess.DEVNULL, stdout=stream, stderr=subprocess.STDOUT, check=True, timeout=480)
-    observer_binary = root.parent / ('scene-history-ax-observer-' + os.environ['GITHUB_RUN_ID'])
+    observer_binary = root / 'scene-history-ax-observer'
+    compiler = Path(subprocess.check_output(['xcrun', '--find', 'swiftc'], text=True,
+        stdin=subprocess.DEVNULL, timeout=30).strip())
+    require(compiler.is_absolute() and compiler.is_file(), 'Native observer compiler is absent')
+    compile_argv = [str(compiler), '-swift-version', '6', '-parse-as-library',
+        'scripts/scene_history_ax_observer.swift', '-o', str(observer_binary)]
+    compiler_recipe = {'schema': 'scene-history-observer-compiler/v1',
+        'runID': os.environ['GITHUB_RUN_ID'], 'executionSourceSHA': os.environ['GITHUB_SHA'],
+        'productSourceSHA': selected['sourceSHA'], 'command': compile_argv,
+        'sourceSHA256': sha(Path('scripts/scene_history_ax_observer.swift')),
+        'compilerSHA256': sha(compiler), 'executable': observer_binary.name}
+    write(root / 'observer-compiler-recipe.json', compiler_recipe)
     with (root / 'observer-compile.log').open('xb') as stream:
-        subprocess.run(['xcrun', 'swiftc', '-swift-version', '6', '-parse-as-library',
-            'scripts/scene_history_ax_observer.swift', '-o', str(observer_binary)],
+        subprocess.run(compile_argv,
             stdin=subprocess.DEVNULL, stdout=stream, stderr=subprocess.STDOUT, check=True, timeout=90)
     write(root / 'environment.json', {'sourceSHA': selected['sourceSHA'],
         'os': subprocess.check_output(['sw_vers'], text=True), 'architecture': subprocess.check_output(['uname', '-m'], text=True).strip(),
         'xcode': subprocess.check_output(['xcodebuild', '-version'], text=True),
         'observerSourceSHA256': sha(Path('scripts/scene_history_ax_observer.swift')),
         'observerExecutableSHA256': sha(observer_binary), 'appBuilds': 0, 'nativeUnitRuns': 0})
+    write(root / 'observer-compiler-product.json', {**compiler_recipe,
+        'executableSHA256': sha(observer_binary), 'environmentSHA256': sha(root / 'environment.json'),
+        'compileLogSHA256': sha(root / 'observer-compile.log'), 'compiledBeforeAppStart': True})
     fake = root.parent / ('scene-history-no-ambient-' + os.environ['GITHUB_RUN_ID'])
     fake.mkdir()
     for name in ('python3', 'blender'):
@@ -643,7 +719,8 @@ def run(root):
         else:
             failure = json.loads(files['process-failure.json'])
             require(failure == {'pid': pid, 'error': supervisor_error}, 'Supervised exit1 evidence differs')
-            outcome = expected_locator_failure(files, selected['sourceSHA'], pid)
+            outcome = expected_locator_failure(files, selected['sourceSHA'], pid,
+                expected_image_sha256=producer['app']['executableSHA256'])
         observation = verify_observer(observed, selected['sourceSHA'], pid, app_binary, outcome['windowNumber'], observer.pid)
         result = {'schema': 'nexgenvideo/scene-history-hierarchy-measurement/1', 'productSourceSHA': selected['sourceSHA'],
             'harnessSourceSHA': binding['harnessSourceSHA'], 'runtimeProducerRunID': selected['runID'],
