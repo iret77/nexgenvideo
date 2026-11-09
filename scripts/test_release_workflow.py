@@ -627,6 +627,12 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertLess(names.index(compiled[3]), names.index(retention['name']))
         signing_upload = steps['Preserve original signing inputs and the complete new App assembly receipt']
         self.assertIn('${{ runner.temp }}/release-signed-input/', signing_upload['with']['path'])
+        for name in ('Preserve original signing inputs and the complete new App assembly receipt',
+                'Preserve all original compiled inputs and native execution evidence'):
+            upload = steps[name]
+            self.assertEqual(upload['if'], "always() && inputs.compiled_app_targets_json != ''")
+            self.assertIn('${{ runner.temp }}/compiled-app-release/retained-current-xctest/', upload['with']['path'])
+            self.assertTrue(upload['with']['include-hidden-files'])
         partial = steps['Preserve complete new App and symbols plus every partial signed archive after failure']
         self.assertEqual(partial['if'], "always() && (failure() || cancelled()) && inputs.compiled_app_targets_json != ''")
         for path in ('unqualified-app-products.tar', 'assembly-retention.json', 'release-signed-input/',
