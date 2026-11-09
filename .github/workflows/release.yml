@@ -82,6 +82,10 @@ on:
         description: SHA256 of the complete previous packaging provenance ZIP
         type: string
         default: ''
+      compiled_app_targets_json:
+        description: Exact reviewed compiled App target products for artifact-only RC assembly
+        type: string
+        default: ''
       verified_pr_run_id:
         description: Successful PR source checks for this exact merge tree
         type: string
@@ -157,6 +161,9 @@ jobs:
 
       - name: Validate every retained product selector before publication or runner allocation
         run: python3 scripts/retained_packaging.py validate-inputs
+
+      - name: Validate exact compiled App product selectors
+        run: python3 scripts/compiled_app_release.py validate-inputs
 
       - name: Validate exact external XCTest client selectors
         env:
@@ -519,12 +526,12 @@ jobs:
       contents: read
       actions: read
     needs: release-gate
-    if: ${{ needs.release-gate.outputs.publication-resumed != 'true' && inputs.signed_build_run_id == '' && inputs.notary_progress_run_id == '' }}
+    if: ${{ needs.release-gate.outputs.publication-resumed != 'true' && inputs.signed_build_run_id == '' && inputs.notary_progress_run_id == '' && inputs.compiled_app_targets_json == '' }}
     uses: ./.github/workflows/bpy-qualified-source.yml
 
   release-build:
     needs: [release-gate, bpy-source]
-    if: ${{ needs.release-gate.outputs.publication-resumed != 'true' && inputs.signed_build_run_id == '' && inputs.notary_progress_run_id == '' }}
+    if: ${{ !cancelled() && needs.release-gate.result == 'success' && (inputs.compiled_app_targets_json != '' || needs.bpy-source.result == 'success') && needs.release-gate.outputs.publication-resumed != 'true' && inputs.signed_build_run_id == '' && inputs.notary_progress_run_id == '' }}
     runs-on: macrunner
     timeout-minutes: 120
     permissions:
@@ -679,24 +686,58 @@ jobs:
           sysctl -n hw.memsize hw.logicalcpu
           echo "Release SwiftPM scheduler jobs: 1"
 
+      - name: Restore the exact new App compiler products
+        if: inputs.compiled_app_targets_json != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMPILED_APP_TARGETS: ${{ inputs.compiled_app_targets_json }}
+        run: python3 scripts/compiled_app_release.py acquire --root "$RUNNER_TEMP/compiled-app-release"
+
+      - name: Verify the complete new App and XCTest scope
+        if: inputs.compiled_app_targets_json != ''
+        timeout-minutes: 15
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/compiled_app_release.py test --root "$RUNNER_TEMP/compiled-app-release"
+
+      - name: Preserve all original compiled inputs and native execution evidence
+        if: always() && inputs.compiled_app_targets_json != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-compiled-app-evidence-${{ github.run_id }}-a1
+          path: |
+            ${{ runner.temp }}/compiled-app-release/*.json
+            ${{ runner.temp }}/compiled-app-release/*.stdout
+            ${{ runner.temp }}/compiled-app-release/*.stderr
+            ${{ runner.temp }}/compiled-app-release/metadata-original.zip
+            ${{ runner.temp }}/compiled-app-release/production/original.zip
+            ${{ runner.temp }}/compiled-app-release/testable/original.zip
+            ${{ runner.temp }}/compiled-app-release/tests/original.zip
+            ${{ runner.temp }}/compiled-app-release/xctest/
+            ${{ runner.temp }}/compiled-app-release/app-swift-testing/
+            ${{ runner.temp }}/compiled-app-release/retained-engine/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 90
+
       - name: Record native test product paths before compilation
-        if: inputs.completed_release_tests_run_id == ''
+        if: inputs.completed_release_tests_run_id == '' && inputs.compiled_app_targets_json == ''
         run: |
           python3 scripts/release_checkpoint.py native-test-products --phase plan \
             --root "$RUNNER_TEMP/release-test-product-checkpoints" --scratch-path "$RUNNER_TEMP/release-tests" \
             --cache-path "$NGV_SWIFTPM_CACHE_PATH"
 
       - name: Build the exact release test configuration
-        if: inputs.completed_release_tests_run_id == ''
+        if: inputs.completed_release_tests_run_id == '' && inputs.compiled_app_targets_json == ''
         # Testable release objects stay isolated from the production bundle build.
         run: swift build --jobs 1 --cache-path "$NGV_SWIFTPM_CACHE_PATH" -c release --scratch-path "$RUNNER_TEMP/release-tests" --build-tests -Xswiftc -enable-testing
 
       - name: Verify release build did not mutate tracked source
-        if: inputs.completed_release_tests_run_id == ''
+        if: inputs.completed_release_tests_run_id == '' && inputs.compiled_app_targets_json == ''
         run: scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist
 
       - name: Checkpoint successful native compiler products before staging
-        if: inputs.completed_release_tests_run_id == ''
+        if: inputs.completed_release_tests_run_id == '' && inputs.compiled_app_targets_json == ''
         run: |
           python3 scripts/release_checkpoint.py native-test-products --phase compiler \
             --root "$RUNNER_TEMP/release-test-product-checkpoints" --scratch-path "$RUNNER_TEMP/release-tests" \
@@ -704,7 +745,7 @@ jobs:
 
       - name: Upload native compiler products before staging
         id: native_compiler_products
-        if: inputs.completed_release_tests_run_id == ''
+        if: inputs.completed_release_tests_run_id == '' && inputs.compiled_app_targets_json == ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-test-compiler-products-${{ github.run_id }}-a${{ github.run_attempt }}
@@ -714,7 +755,7 @@ jobs:
           retention-days: 90
 
       - name: Confirm compiler product upload before staging
-        if: inputs.completed_release_tests_run_id == ''
+        if: inputs.completed_release_tests_run_id == '' && inputs.compiled_app_targets_json == ''
         env:
           GH_TOKEN: ${{ github.token }}
           CHECKPOINT_ID: ${{ steps.native_compiler_products.outputs.artifact-id }}
@@ -725,18 +766,18 @@ jobs:
             --artifact-id "$CHECKPOINT_ID" --artifact-digest "$CHECKPOINT_DIGEST"
 
       - name: Stage release test runtime inputs
-        if: inputs.completed_release_tests_run_id == ''
+        if: inputs.completed_release_tests_run_id == '' && inputs.compiled_app_targets_json == ''
         run: scripts/stage_test_runtime.sh release "$RUNNER_TEMP/release-tests"
 
       - name: Retain staged runtime products before native tests
-        if: inputs.completed_release_tests_run_id == ''
+        if: inputs.completed_release_tests_run_id == '' && inputs.compiled_app_targets_json == ''
         run: |
           python3 scripts/release_checkpoint.py native-test-products --phase runtime \
             --root "$RUNNER_TEMP/release-test-product-checkpoints" --scratch-path "$RUNNER_TEMP/release-tests" \
             --cache-path "$NGV_SWIFTPM_CACHE_PATH"
 
       - name: Upload staged runtime products before native tests
-        if: inputs.completed_release_tests_run_id == ''
+        if: inputs.completed_release_tests_run_id == '' && inputs.compiled_app_targets_json == ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-test-runtime-products-${{ github.run_id }}-a${{ github.run_attempt }}
@@ -748,7 +789,7 @@ jobs:
           retention-days: 90
 
       - name: Test the exact release configuration
-        if: inputs.completed_release_tests_run_id == ''
+        if: inputs.completed_release_tests_run_id == '' && inputs.compiled_app_targets_json == ''
         shell: bash
         env:
           RELEASE_ENGINE_RUN: ${{ inputs.completed_engine_tests_run_id }}
@@ -766,14 +807,14 @@ jobs:
           python3 scripts/verify_swift_test_output.py --log release-test.log --swift-testing-runs 2 --xctest-runs 2
 
       - name: Record every available native product after success or failure
-        if: always() && inputs.completed_release_tests_run_id == ''
+        if: always() && inputs.completed_release_tests_run_id == '' && inputs.compiled_app_targets_json == ''
         run: |
           python3 scripts/release_checkpoint.py native-test-products --phase available \
             --root "$RUNNER_TEMP/release-test-product-checkpoints" --scratch-path "$RUNNER_TEMP/release-tests" \
             --cache-path "$NGV_SWIFTPM_CACHE_PATH"
 
       - name: Preserve native checkpoint records after success or failure
-        if: always() && inputs.completed_release_tests_run_id == ''
+        if: always() && inputs.completed_release_tests_run_id == '' && inputs.compiled_app_targets_json == ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-test-product-evidence-${{ github.run_id }}-a${{ github.run_attempt }}
@@ -785,7 +826,7 @@ jobs:
           retention-days: 90
 
       - name: Preserve every available native product after failure
-        if: always() && (failure() || cancelled()) && inputs.completed_release_tests_run_id == '' && env.NGV_RELEASE_TEST_PRODUCTS_ROOT != ''
+        if: always() && (failure() || cancelled()) && inputs.completed_release_tests_run_id == '' && inputs.compiled_app_targets_json == '' && env.NGV_RELEASE_TEST_PRODUCTS_ROOT != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-test-partial-products-${{ github.run_id }}-a${{ github.run_attempt }}
@@ -795,7 +836,7 @@ jobs:
           retention-days: 90
 
       - name: Upload release test evidence
-        if: always() && inputs.completed_release_tests_run_id == ''
+        if: always() && inputs.completed_release_tests_run_id == '' && inputs.compiled_app_targets_json == ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-test-evidence
@@ -806,19 +847,22 @@ jobs:
           retention-days: 7
 
       - name: Verify release tests did not mutate tracked source
-        if: inputs.completed_release_tests_run_id == ''
+        if: inputs.completed_release_tests_run_id == '' && inputs.compiled_app_targets_json == ''
         run: scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: inputs.compiled_app_targets_json == ''
         with:
           name: managed-bpy-source-receipt-${{ github.sha }}
           path: .build/bpy-source
       - uses: ./.github/actions/prepare-bpy-source
+        if: inputs.compiled_app_targets_json == ''
         with:
           directory: .build/bpy-source
           receipt: .build/bpy-source/bpy-source-receipt.json
 
       - name: Stage the exact distributable bpy runtime
+        if: inputs.compiled_app_targets_json == ''
         run: |
           set -euo pipefail
           python3 scripts/verify_bpy_distributable_source.py \
@@ -827,6 +871,7 @@ jobs:
           scripts/stage_bpy_runtime.sh .build/bpy-runtime
 
       - name: Build and sign app
+        if: inputs.compiled_app_targets_json == ''
         run: |
           scripts/bundle.sh release --sign
           scripts/verify_bpy_bundle.sh .build/NexGenVideo.app --distribution
@@ -835,6 +880,7 @@ jobs:
         run: scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist
 
       - name: Assemble format packs (.ngvpack + catalog entry)
+        if: inputs.compiled_app_targets_json == ''
         run: |
           set -euo pipefail
           # Developer ID when the signing identity is present (it is on same-repo
@@ -845,7 +891,65 @@ jobs:
       - name: Verify signed input assembly did not mutate tracked source
         run: scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist
 
+      - name: Assemble and sign the new App with unchanged retained components
+        if: inputs.compiled_app_targets_json != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/compiled_app_release.py assemble --root "$RUNNER_TEMP/compiled-app-release"
+
+      - name: Record compiled App signed input without invoking a build
+        if: inputs.compiled_app_targets_json != ''
+        run: |
+          python3 scripts/compiled_app_release.py create-signed-input \
+            --root "$RUNNER_TEMP/compiled-app-release" --output "$RUNNER_TEMP/release-signed-input"
+
+      - name: Record all available compiled App assembly outputs without qualifying partial products
+        if: always() && inputs.compiled_app_targets_json != ''
+        run: |
+          python3 scripts/compiled_app_release.py retain-assembly \
+            --root "$RUNNER_TEMP/compiled-app-release" --output "$RUNNER_TEMP/release-signed-input" \
+            --job-status '${{ job.status }}'
+
+      - name: Preserve original signing inputs and the complete new App assembly receipt
+        if: always() && inputs.compiled_app_targets_json != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-compiled-app-assembly-${{ github.run_id }}-a1
+          path: |
+            ${{ runner.temp }}/release-signed-input/
+            ${{ runner.temp }}/compiled-app-release/*.json
+            ${{ runner.temp }}/compiled-app-release/*.stdout
+            ${{ runner.temp }}/compiled-app-release/*.stderr
+            ${{ runner.temp }}/compiled-app-release/metadata-original.zip
+            ${{ runner.temp }}/compiled-app-release/production/original.zip
+            ${{ runner.temp }}/compiled-app-release/testable/original.zip
+            ${{ runner.temp }}/compiled-app-release/tests/original.zip
+            ${{ runner.temp }}/compiled-app-release/xctest/
+            ${{ runner.temp }}/compiled-app-release/app-swift-testing/
+            ${{ runner.temp }}/compiled-app-release/retained-engine/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Preserve complete new App and symbols plus every partial signed archive after failure
+        if: always() && (failure() || cancelled()) && inputs.compiled_app_targets_json != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-compiled-app-partial-assembly-${{ github.run_id }}-a1
+          path: |
+            ${{ runner.temp }}/compiled-app-release/unqualified-app-products.tar
+            ${{ runner.temp }}/compiled-app-release/assembly-retention.json
+            ${{ runner.temp }}/compiled-app-release/*.stdout
+            ${{ runner.temp }}/compiled-app-release/*.stderr
+            ${{ runner.temp }}/release-signed-input/
+            .build/NexGenVideo.app/
+            .build/NexGenVideo.dSYM/
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 90
+
       - name: Record signed build before notarization
+        if: inputs.compiled_app_targets_json == ''
         env:
           RELEASE_NATIVE_PROOF: ${{ inputs.completed_release_tests_run_id != '' && format('{0}/release-native/receipt.json', runner.temp) || '' }}
           RELEASE_TEST_EVIDENCE: ${{ runner.temp }}/release-test-evidence
@@ -1024,8 +1128,12 @@ jobs:
           directory: .build/bpy-source
           receipt: .build/bpy-source/bpy-source-receipt.json
 
+      - name: Verify the exact retained stapled format pack
+        if: env.NGV_COMPILED_APP_RELEASE == 'true'
+        run: python3 scripts/compiled_app_release.py verify-pack --root .build/plugins
+
       - name: Notarize and staple downloadable format packs
-        if: steps.restore-notary.outputs.dmg_present != 'true'
+        if: steps.restore-notary.outputs.dmg_present != 'true' && env.NGV_COMPILED_APP_RELEASE != 'true'
         timeout-minutes: 20
         run: |
           set -euo pipefail

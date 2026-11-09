@@ -544,7 +544,7 @@ class ReleaseRecoveryTests(unittest.TestCase):
             self.assertIn("inputs.notary_progress_run_id == ''", condition)
         steps = {step.get("name"): step for step in jobs["release-build"]["steps"]}
         for name in ("Build the exact release test configuration", "Stage release test runtime inputs", "Test the exact release configuration"):
-            self.assertEqual(steps[name]["if"], "inputs.completed_release_tests_run_id == ''")
+            self.assertEqual(steps[name]["if"], "inputs.completed_release_tests_run_id == '' && inputs.compiled_app_targets_json == ''")
         self.assertNotIn("notarize", "\n".join(step.get("run", "") for step in steps.values()).lower())
         packaging = "\n".join(step.get("run", "") for step in jobs["release"]["steps"])
         self.assertNotIn("swift build", packaging)
@@ -661,7 +661,10 @@ class ReleaseRecoveryTests(unittest.TestCase):
                 self.assertNotRegex(json.dumps(job.get(key)), r"\$\{\{[^}]*\b(?:runner|env|steps|job)\.", key)
         build = {step.get("name"): step for step in jobs["release-build"]["steps"]}
         package = {step.get("name"): step for step in jobs["release"]["steps"]}
-        for name in ("Record signed build before notarization", "Retain signed build input", "Retain signed build proof"):
+        self.assertEqual(build['Record signed build before notarization']['if'], "inputs.compiled_app_targets_json == ''")
+        self.assertEqual(build['Record compiled App signed input without invoking a build']['if'],
+            "inputs.compiled_app_targets_json != ''")
+        for name in ("Retain signed build input", "Retain signed build proof"):
             self.assertNotIn("if", build[name])
         names = [step.get("name") for step in jobs["release"]["steps"]]
         self.assertLess(names.index("Resolve version + mode"), names.index("Restore exact signed build"))
