@@ -207,6 +207,98 @@ def planned_commands(manifest):
     return commands
 
 
+def planned_app_tasks(manifest, pif, profile, source_root):
+    require(profile in {'production', 'testable'} and Path(source_root).is_absolute(), 'Invalid raw task context')
+    modules = {'NexGenVideo': 'NexGenVideo-product'} if profile == 'production' else {
+        'NexGenVideo': 'NexGenVideo', 'NexGenVideoTests': 'NexGenVideoTests-product'}
+    result = []
+    for module, target_name in modules.items():
+        targets = [row['contents'] for row in pif if row.get('type') == 'target'
+            and row['contents'].get('name') == target_name]
+        require(len(targets) == 1, 'Missing or ambiguous exact raw target: ' + target_name)
+        target = targets[0]
+        configurations = [row for row in target.get('buildConfigurations', []) if row.get('name') == 'Release']
+        require(len(configurations) == 1 and configurations[0]['buildSettings'].get('PRODUCT_MODULE_NAME') == module,
+            'PIF target module differs: ' + module)
+        for tool, label, phase in [('swift-driver-compilation', 'SwiftDriver Compilation', 'P0'),
+                ('swift-driver-compilation-requirement', 'SwiftDriver Compilation Requirements', 'P2')]:
+            description = label + ' ' + module + ' normal arm64 com.apple.xcode.tools.swift.compiler'
+            prefix = phase + ':target-' + target_name + '-' + target['guid'] + '-SDKROOT:'
+            found = [(key, value) for key, value in planned_commands(manifest).items()
+                if value.get('tool') == tool and value.get('description') == description
+                and key.startswith(prefix) and key.endswith(':Release:' + description)]
+            require(len(found) == 1, 'Missing or ambiguous exact dynamic task: ' + description)
+            key, task = found[0]
+            folder = 'Sources/NexGenVideo/' if module == 'NexGenVideo' else 'Tests/NexGenVideoTests/'
+            require(isinstance(task.get('inputs'), list) and isinstance(task.get('outputs'), list) and task['outputs']
+                and any(isinstance(path, str) and path.startswith(source_root + '/' + folder)
+                    and path.endswith('.swift') for path in task['inputs']), 'Raw task lost its exact native source inputs')
+            result.append({'module': module, 'targetGUID': target['guid'], 'taskRole': tool,
+                'key': key, 'command': task, 'driverArgumentsExpanded': False})
+    return result
+
+
+def description_snapshot(files, profile, source_root):
+    prefix = profile + '/'
+    manifests = [name for name in files if name.startswith(prefix) and name.endswith('.xcbuilddata/manifest.json')]
+    require(len(manifests) == 1, 'Missing or ambiguous retained raw description')
+    manifest_path = manifests[0]; directory = manifest_path.rsplit('/', 1)[0]
+    identifier = directory.rsplit('/', 1)[1].removesuffix('.xcbuilddata')
+    require(re.fullmatch('[a-f0-9]{32}', identifier), 'Invalid retained description identity')
+    required = [directory + '/' + name for name in ('manifest.json', 'task-store.msgpack', 'description.msgpack',
+        'build-request.json', 'target-graph.txt')]
+    require(all(name in files and files[name] for name in required), 'Incomplete retained raw description')
+    attachments = [name for name in files if name.startswith(directory + '/attachments/')]
+    require(attachments, 'Missing retained description attachments')
+    request = json.loads(files[prefix + 'request.json'])
+    require(isinstance(request['parameters']['activeRunDestination']['sdk'], str)
+        and Path(request['parameters']['activeRunDestination']['sdk']).is_absolute()
+        and request['parameters']['activeRunDestination']['targetArchitecture'] == 'arm64', 'Invalid retained SDK request')
+    pif = json.loads(files[prefix + 'workspace.pif'])
+    target_name = 'NexGenVideo-product' if profile == 'production' else 'NexGenVideoTests-product'
+    targets = [row['contents'] for row in pif if row.get('type') == 'target' and row['contents'].get('name') == target_name]
+    require(len(targets) == 1 and request['parameters']['configurationName'] == 'Release'
+        and request['parameters']['action'] == 'build'
+        and request['configuredTargets'] == [{'guid': targets[0]['guid'], 'parameters': request['parameters']}],
+        'Retained request target or profile parameters differ')
+    def normalized(value):
+        if isinstance(value, dict): return {key: normalized(item) for key, item in value.items() if item is not None}
+        if isinstance(value, list): return [normalized(item) for item in value]
+        return value
+    effective = json.loads(files[directory + '/build-request.json'])
+    require(normalized(effective) == normalized(request), 'Actual description request differs from the reviewed input')
+    flags = request['parameters']['overrides']['synthesized']['table']['OTHER_SWIFT_FLAGS']
+    require(flags == ('$(inherited)' if profile == 'production' else '$(inherited) -enable-testing'), 'Retained profile differs')
+    stdout = files[profile + '-description.stdout'].decode()
+    messages = [json.loads(line) for line in stdout.splitlines() if line.startswith('{')]
+    require([row['buildDescriptionID'] for row in messages if row.get('kind') == 'reportBuildDescription'] == [identifier]
+        and [row.get('result') for row in messages if row.get('kind') == 'buildCompleted'] == ['ok'],
+        'Retained description was not completed by the actual console')
+    argv = json.loads(files[profile + '-description.argv.json'])
+    require(len(argv) == 7 and argv[1:3] == ['createBuildDescription', '--target']
+        and argv[3] == ('NexGenVideo-product' if profile == 'production' else 'NexGenVideoTests-product')
+        and argv[4] == '--buildRequestFile', 'Retained capture was not description-only')
+    commands = json.loads(files['commands.json'])
+    require([row['exitCode'] for row in commands if row['label'] == profile + '-description'] == [0],
+        'Retained description command did not pass')
+    pif = json.loads(files[prefix + 'workspace.pif'])
+    tasks = planned_app_tasks(json.loads(files[manifest_path]), pif, profile, source_root)
+    selected = {name: hashlib.sha256(raw).hexdigest() for name, raw in files.items() if name.startswith(prefix)}
+    return {'profile': profile, 'descriptionID': identifier, 'manifest': manifest_path,
+        'manifestSHA256': hashlib.sha256(files[manifest_path]).hexdigest(),
+        'taskStoreSHA256': hashlib.sha256(files[directory + '/task-store.msgpack']).hexdigest(),
+        'pifSHA256': hashlib.sha256(files[prefix + 'workspace.pif']).hexdigest(),
+        'requestSHA256': hashlib.sha256(files[prefix + 'request.json']).hexdigest(),
+        'fileHashes': selected, 'plannedTasks': tasks, 'driverArgumentsExpanded': False}
+
+
+def current_description_snapshot(root, profile, source_root):
+    files = {path.relative_to(root).as_posix(): path.read_bytes() for path in (root / profile).rglob('*') if path.is_file()}
+    for name in ('commands.json', profile + '-description.stdout', profile + '-description.argv.json'):
+        files[name] = (root / name).read_bytes()
+    return description_snapshot(files, profile, source_root)
+
+
 def archive_files(raw):
     from pathlib import PurePosixPath
     result = {}; seen = set()
@@ -302,7 +394,7 @@ def bind_resume(root, selected, objects, head):
             if job['labels'] == ['macrunner'] and job['conclusion'] != 'skipped'), 'Prior role differs')
     raw = command(['gh', 'api', f"repos/iret77/nexgenvideo/actions/artifacts/{artifact['id']}/zip", '--allow-escape-sequences'])
     require(len(raw) == artifact['size_in_bytes'] and hashlib.sha256(raw).hexdigest() == selected['resumeArtifactSHA256'], 'Prior metadata bytes differ')
-    files = archive_files(raw); snapshot = metadata_snapshot(files)
+    files = archive_files(raw)
     source_artifact = json.loads(files['source-binding-artifact.json'])
     actual = api('actions/artifacts/' + str(source_artifact['id']))
     require(actual['name'] == 'app-build-plan-source-binding' and not actual['expired']
@@ -313,8 +405,8 @@ def bind_resume(root, selected, objects, head):
     require(len(source_raw) == actual['size_in_bytes'] and hashlib.sha256(source_raw).hexdigest() == actual['digest'].removeprefix('sha256:'), 'Prior source binding bytes differ')
     source_files = archive_files(source_raw); prior_binding = json.loads(source_files['binding.json'])
     require(prior_binding['schema'] == 'native-app-build-plan-binding/v1'
-        and prior_binding['harnessSourceSHA'] == prior_head and prior_binding['nativeSourceObjects'] == objects
-        and not prior_binding.get('resumeCapture'), 'Prior capture origin or graph differs')
+        and prior_binding['harnessSourceSHA'] == prior_head and prior_binding['nativeSourceObjects'] == objects,
+        'Prior capture origin or graph differs')
     for key in ('runID', 'sourceSHA', 'artifactID', 'artifactSHA256', 'appSourceSHA'):
         require(prior_binding['selected'][key] == selected[key], 'Prior App source selector differs: ' + key)
     composition = prior_binding['currentSourceComposition']
@@ -322,13 +414,54 @@ def bind_resume(root, selected, objects, head):
         and composition['originalRun']['id'] == prior_binding['selected']['verifiedPRRunID']
         and composition['originalPR']['merged'] and composition['originalPR']['merge_commit_sha'] == prior_head,
         'Prior complete source composition differs')
+    captures = {}; metadata_origin = original
+    parent = prior_binding.get('resumeCapture')
+    if parent:
+        require(parent['schema'] == 'native-app-build-plan-resume/v1' and parent['priorPartialRequestReusable'] is False,
+            'Unreviewed nested capture origin')
+        require(prior_binding['selected']['resumeArtifactID'] == parent['originArtifact']['id']
+            and prior_binding['selected']['resumeArtifactSHA256'] == parent['originArtifact']['digest'].removeprefix('sha256:'),
+            'Nested metadata selector differs')
+        parent_raw = source_files['prior-metadata-original.zip']
+        require(hashlib.sha256(parent_raw).hexdigest() == parent['originArtifact']['digest'].removeprefix('sha256:'),
+            'Nested original metadata bytes differ')
+        base = archive_files(parent_raw)
+        require({name: hashlib.sha256(value).hexdigest() for name, value in base.items()} == parent['originalMetadataFiles']
+            and {name.removeprefix('prior-capture/'): value for name, value in files.items()
+                if name.startswith('prior-capture/')} == base, 'Nested metadata files changed')
+        parent_source_raw = source_files['prior-source-binding-original.zip']
+        require(hashlib.sha256(parent_source_raw).hexdigest() == parent['originSourceArtifact']['digest'].removeprefix('sha256:'),
+            'Nested original source binding bytes differ')
+        parent_binding = json.loads(archive_files(parent_source_raw)['binding.json'])
+        require(parent_binding['harnessSourceSHA'] == parent['originHarnessSHA']
+            and parent_binding['nativeSourceObjects'] == objects and not parent_binding.get('resumeCapture'),
+            'Unreviewed nested native source graph')
+        for key in ('runID', 'sourceSHA', 'artifactID', 'artifactSHA256', 'appSourceSHA'):
+            require(parent_binding['selected'][key] == selected[key], 'Nested App selector differs')
+        snapshot = metadata_snapshot(base)
+        require(snapshot == parent['snapshot'] and files['pinned-graph.json'] == base['pinned-graph.json'],
+            'Nested graph context differs')
+        metadata_origin = parent['originRun']
+        require(metadata_origin['id'] == parent['originArtifact']['workflow_run']['id']
+            and metadata_origin['head_sha'] == parent['originHarnessSHA'] and metadata_origin['run_attempt'] == 1,
+            'Nested origin run differs')
+        captures['production'] = description_snapshot(files, 'production', snapshot['workspace'])
+        require(captures['production']['pifSHA256'] == snapshot['productionPIFSHA256']
+            and json.loads(files['toolchain.json']) == snapshot['toolchain'], 'Retained production context changed')
+        reuse = json.loads(files['metadata-reuse.json'])
+        require(reuse['originRunID'] == metadata_origin['id'] and reuse['originHarnessSHA'] == parent['originHarnessSHA']
+            and reuse['packageMetadataQueriesRepeated'] == reuse['productionPIFQueriesRepeated'] == 0,
+            'Nested metadata reuse receipt differs')
+    else:
+        snapshot = metadata_snapshot(files)
     (root / 'prior-metadata-original.zip').write_bytes(raw)
     (root / 'prior-source-binding-original.zip').write_bytes(source_raw)
     log = command(['gh', 'api', f"repos/iret77/nexgenvideo/actions/jobs/{native[0]['id']}/logs", '--allow-escape-sequences'])
     (root / 'prior-native-original-job.log').write_bytes(log)
-    return {'schema': 'native-app-build-plan-resume/v1', 'originRun': original, 'originArtifact': artifact,
+    return {'schema': 'native-app-build-plan-resume/v2', 'originRun': original, 'originArtifact': artifact,
         'originSourceArtifact': actual, 'originNativeJob': native[0], 'originNativeLogSHA256': hashlib.sha256(log).hexdigest(),
-        'originHarnessSHA': prior_head, 'snapshot': snapshot,
+        'originHarnessSHA': prior_head, 'snapshot': snapshot, 'metadataOriginRun': metadata_origin,
+        'retainedProfileSnapshots': captures,
         'originalMetadataFiles': {name: hashlib.sha256(raw).hexdigest() for name, raw in files.items()},
         'productionPIFReusedVerbatim': True, 'priorPartialRequestReusable': False,
         'nativeProductCompilationAuthorised': False}
@@ -417,10 +550,10 @@ def run(root, source_binding):
         archive_path = source_binding.parent / 'prior-metadata-original.zip'
         require(sha(archive_path) == resume['originArtifact']['digest'].removeprefix('sha256:'), 'Retained metadata bytes changed')
         retained = archive_files(archive_path.read_bytes())
-        snapshot = metadata_snapshot(retained)
-        require(snapshot == resume['snapshot'] and json.loads((root / 'toolchain.json').read_text()) == snapshot['toolchain'],
+        snapshot = resume['snapshot']
+        require(sha(archive_path) == resume['originArtifact']['digest'].removeprefix('sha256:') and json.loads((root / 'toolchain.json').read_text()) == snapshot['toolchain'],
             'Prior metadata toolchain or graph context changed')
-        scratch = root.parent / ('app-build-plan-workspace-' + str(resume['originRun']['id']))
+        scratch = root.parent / ('app-build-plan-workspace-' + str(resume['metadataOriginRun']['id']))
         require(str(scratch) == snapshot['scratch'] and cache == snapshot['cache']
             and str(Path.cwd().resolve()) == snapshot['workspace'], 'Prior PIF paths cannot be reused in this context')
         prior = root / 'prior-capture'; prior.mkdir()
@@ -432,7 +565,10 @@ def run(root, source_binding):
             'originRunID': resume['originRun']['id'], 'originHarnessSHA': resume['originHarnessSHA'],
             'originArtifact': resume['originArtifact'], 'productionPIFSHA256': snapshot['productionPIFSHA256'],
             'pinnedGraphSHA256': sha(root / 'pinned-graph.json'), 'packageMetadataQueriesRepeated': 0,
-            'productionPIFQueriesRepeated': 0, 'priorPartialRequestReusable': False,
+            'productionPIFQueriesRepeated': 0, 'productionDescriptionQueriesRepeated': 0,
+            'metadataOriginRunID': resume['metadataOriginRun']['id'],
+            'productionDescriptionOriginRunID': resume['originRun']['id'] if resume['retainedProfileSnapshots'] else None,
+            'priorPartialRequestReusable': False,
             'originalScratchRestoredVerbatim': str(scratch)})
     else:
         scratch = root.parent / ('app-build-plan-workspace-' + os.environ['GITHUB_RUN_ID'])
@@ -477,6 +613,22 @@ def run(root, source_binding):
         require(sha(Path(name)) == value, 'Manifest changed during metadata evaluation')
     profiles = []
     for profile in ('production', 'testable'):
+        retained_profile = resume['retainedProfileSnapshots'].get(profile) if resume else None
+        if retained_profile:
+            actual = description_snapshot(retained, profile, snapshot['workspace'])
+            require(actual == retained_profile, 'Retained raw profile changed')
+            for name, digest in retained_profile['fileHashes'].items():
+                raw = retained[name]; require(hashlib.sha256(raw).hexdigest() == digest, 'Retained profile file changed')
+                path = root / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(raw)
+            folder = root / profile
+            write(folder / 'app-driver-tasks.json', actual['plannedTasks'])
+            profiles.append({'profile': profile, 'pifSHA256': actual['pifSHA256'], 'requestSHA256': actual['requestSHA256'],
+                'targetGUID': target_guids(json.loads(retained[profile + '/workspace.pif']))[profile],
+                'manifest': actual['manifest'], 'manifestSHA256': actual['manifestSHA256'],
+                'taskStoreSHA256': actual['taskStoreSHA256'], 'plannedAppDriverTasks': len(actual['plannedTasks']),
+                'driverJobsExecuted': False, 'driverArgumentsExpanded': False,
+                'pifOriginRunID': resume['metadataOriginRun']['id'], 'descriptionOriginRunID': resume['originRun']['id']})
+            continue
         arguments = [*package, '-c', 'release']
         if profile == 'testable': arguments += ['-Xswiftc', '-enable-testing']
         if retained and profile == 'production':
@@ -506,25 +658,22 @@ def run(root, source_binding):
         require(task_store.is_file() and attachments.is_dir() and any(attachments.iterdir()),
             'Description lost task actions or generated source attachments')
         planned = planned_commands(json.loads(manifest_path.read_text()))
-        candidates = []
-        for key, value in planned.items():
-            argv = value.get('args')
-            if isinstance(argv, list) and '-module-name' in argv:
-                index = argv.index('-module-name')
-                if index + 1 < len(argv) and argv[index + 1] in {'NexGenVideo', 'NexGenVideoTests'}:
-                    candidates.append({'key': key, 'command': value})
-        require(candidates, 'Description contains no actual App/Test driver arguments')
+        actual = current_description_snapshot(root, profile, str(Path.cwd().resolve()))
+        candidates = actual['plannedTasks']
+        write(folder / 'raw-capture.json', {'schema': 'native-app-build-plan-raw-profile/v1',
+            'executionRunID': int(os.environ['GITHUB_RUN_ID']), 'sourceSHA': os.environ['GITHUB_SHA'], **actual})
         for candidate in candidates:
-            argv = candidate['command']['args']
-            if '-emit-module-path' in argv:
-                output = Path(argv[argv.index('-emit-module-path') + 1])
-                require(not output.exists(), 'Description unexpectedly compiled an App/Test module')
+            for output in candidate['command']['outputs']:
+                path = Path(output)
+                if path.is_absolute() and path.suffix in {'.o', '.swiftmodule'}:
+                    require(not path.exists(), 'Description unexpectedly compiled an App/Test product')
         write(folder / 'app-driver-tasks.json', candidates)
         profiles.append({'profile': profile, 'pifSHA256': sha(pif_path), 'requestSHA256': sha(request_path),
             'targetGUID': targets[profile], 'manifest': manifest_path.relative_to(root).as_posix(),
             'manifestSHA256': sha(manifest_path), 'taskStoreSHA256': sha(task_store),
             'plannedAppDriverTasks': len(candidates), 'driverJobsExecuted': False,
-            'pifOriginRunID': resume['originRun']['id'] if retained and profile == 'production' else int(os.environ['GITHUB_RUN_ID'])})
+            'driverArgumentsExpanded': False, 'descriptionOriginRunID': int(os.environ['GITHUB_RUN_ID']),
+            'pifOriginRunID': resume['metadataOriginRun']['id'] if retained and profile == 'production' else int(os.environ['GITHUB_RUN_ID'])})
     require(not git('status', '--porcelain', '--untracked-files=no'), 'Planning mutated tracked source')
     inventory = []
     for path in sorted(root.rglob('*')):

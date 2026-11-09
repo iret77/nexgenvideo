@@ -1,6 +1,7 @@
 import copy
 import hashlib
 import json
+import tempfile
 from pathlib import Path
 import unittest
 
@@ -148,3 +149,86 @@ class NativeAppBuildPlanTests(unittest.TestCase):
         altered = copy.deepcopy(graph); altered['packages'][0] = changed
         broken.update({'pinned-graph.json': raw(altered), 'package-root.stdout': raw(changed)})
         with self.assertRaises(ValueError): plan.metadata_snapshot(broken)
+
+    def raw_plan_fixture(self, profile):
+        modules = [('NexGenVideo', 'NexGenVideo-product')] if profile == 'production' else [
+            ('NexGenVideo', 'NexGenVideo'), ('NexGenVideoTests', 'NexGenVideoTests-product')]
+        pif = []; commands = {}
+        for module, name in modules:
+            guid = 'measured-' + name
+            pif.append({'type': 'target', 'contents': {'name': name, 'guid': guid,
+                'buildConfigurations': [{'name': 'Release', 'buildSettings': {'PRODUCT_MODULE_NAME': module}}]}})
+            for tool, label, phase in [('swift-driver-compilation', 'SwiftDriver Compilation', 'P0'),
+                    ('swift-driver-compilation-requirement', 'SwiftDriver Compilation Requirements', 'P2')]:
+                description = label + ' ' + module + ' normal arm64 com.apple.xcode.tools.swift.compiler'
+                key = phase + ':target-' + name + '-' + guid + '-SDKROOT:macosx27.2:SDK_VARIANT:macos:Release:' + description
+                folder = 'Sources/NexGenVideo/' if module == 'NexGenVideo' else 'Tests/NexGenVideoTests/'
+                commands[key] = {'tool': tool, 'description': description,
+                    'inputs': ['/owned/source/' + folder + 'Actual.swift'], 'outputs': ['/owned/output/' + module + '.o']}
+        return pif, {'commands': commands}
+
+    def test_dynamic_raw_tasks_bind_both_pif_profiles_without_expansion_claim(self):
+        for profile, count in [('production', 2), ('testable', 4)]:
+            pif, manifest = self.raw_plan_fixture(profile)
+            tasks = plan.planned_app_tasks(manifest, pif, profile, '/owned/source')
+            self.assertEqual(len(tasks), count)
+            self.assertTrue(all(row['driverArgumentsExpanded'] is False for row in tasks))
+            self.assertTrue(all('args' not in row['command'] for row in tasks))
+            for changed in ('missing', 'duplicate', 'foreign-source', 'wrong-module', 'wrong-guid'):
+                altered = copy.deepcopy(manifest); key = next(iter(altered['commands']))
+                if changed == 'missing': altered['commands'].pop(key)
+                elif changed == 'duplicate': altered['commands'][key.replace('macosx27.2', 'macosx27.3')] = copy.deepcopy(altered['commands'][key])
+                elif changed == 'foreign-source': altered['commands'][key]['inputs'] = ['/other/source/Actual.swift']
+                elif changed == 'wrong-module': altered['commands'][key]['description'] += 'Other'
+                else: altered['commands'][key.replace('measured-', 'foreign-')] = altered['commands'].pop(key)
+                with self.subTest(profile=profile, changed=changed), self.assertRaises(ValueError):
+                    plan.planned_app_tasks(altered, pif, profile, '/owned/source')
+
+    def test_completed_raw_description_reuse_requires_actual_console_and_whole_closure(self):
+        pif, manifest = self.raw_plan_fixture('production')
+        pif.append({'type': 'target', 'contents': {'name': 'NexGenVideoTests-product', 'guid': 'tests'}})
+        raw = lambda value: json.dumps(value).encode()
+        identifier = 'a' * 32
+        directory = 'production/derived-data/Intermediates.noindex/XCBuildData/' + identifier + '.xcbuilddata/'
+        request = plan.build_request('production', 'measured-NexGenVideo-product', Path('/owned/arena'),
+            Path('/SDKs/MacOSX.sdk'), 'measured-toolchain', False)
+        files = {directory + 'manifest.json': raw(manifest), directory + 'task-store.msgpack': b'raw-task-store',
+            directory + 'description.msgpack': b'raw-description', directory + 'build-request.json': raw(request),
+            directory + 'target-graph.txt': b'actual-target-graph', directory + 'attachments/empty': b'',
+            directory + 'attachments/accessor': b'actual generated accessor bytes',
+            'production/request.json': raw(request), 'production/workspace.pif': raw(pif),
+            'production-description.stdout': raw({'kind': 'reportBuildDescription', 'buildDescriptionID': identifier}) + b'\n'
+                + raw({'kind': 'buildCompleted', 'result': 'ok'}) + b'\n',
+            'production-description.argv.json': raw(['/Xcode/swbuild', 'createBuildDescription', '--target',
+                'NexGenVideo-product', '--buildRequestFile', '/owned/request.json', '/owned/workspace.pif']),
+            'commands.json': raw([{'label': 'production-description', 'exitCode': 0}])}
+        snapshot = plan.description_snapshot(files, 'production', '/owned/source')
+        self.assertEqual(snapshot['descriptionID'], identifier)
+        self.assertFalse(snapshot['driverArgumentsExpanded'])
+        self.assertEqual(snapshot['fileHashes'][directory + 'attachments/empty'], hashlib.sha256(b'').hexdigest())
+        for missing in ('task-store.msgpack', 'description.msgpack', 'build-request.json', 'target-graph.txt'):
+            altered = dict(files); altered.pop(directory + missing)
+            with self.subTest(missing=missing), self.assertRaises(ValueError): plan.description_snapshot(altered, 'production', '/owned/source')
+        altered = {key: value for key, value in files.items() if '/attachments/' not in key}
+        with self.assertRaises(ValueError): plan.description_snapshot(altered, 'production', '/owned/source')
+        altered = dict(files); altered['production-description.stdout'] = raw({'kind': 'buildCompleted', 'result': 'failed'})
+        with self.assertRaises(ValueError): plan.description_snapshot(altered, 'production', '/owned/source')
+        altered = dict(files); altered['production/request.json'] = b'{"partial":'
+        with self.assertRaises(ValueError): plan.description_snapshot(altered, 'production', '/owned/source')
+        for field in ('configuration', 'target', 'effective'):
+            altered = dict(files); changed = copy.deepcopy(request)
+            if field == 'configuration': changed['parameters']['configurationName'] = 'Debug'
+            else: changed['configuredTargets'][0]['guid'] = 'foreign-guid'
+            altered[directory + 'build-request.json' if field == 'effective' else 'production/request.json'] = raw(changed)
+            with self.subTest(request_binding=field), self.assertRaises(ValueError):
+                plan.description_snapshot(altered, 'production', '/owned/source')
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for name, value in files.items():
+                path = root / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(value)
+            self.assertEqual(plan.current_description_snapshot(root, 'production', '/owned/source'), snapshot)
+            (root / (directory + 'build-request.json')).write_bytes(b'{}')
+            with self.assertRaises(ValueError): plan.current_description_snapshot(root, 'production', '/owned/source')
+        altered = dict(files); altered['production-description.argv.json'] = raw(['/Xcode/swbuild', 'build', '--target',
+            'NexGenVideo-product', '--buildRequestFile', '/owned/request.json', '/owned/workspace.pif'])
+        with self.assertRaises(ValueError): plan.description_snapshot(altered, 'production', '/owned/source')
