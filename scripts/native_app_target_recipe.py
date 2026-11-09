@@ -299,6 +299,26 @@ def generated_header(raw, single):
         b'\n#else\n#error unsupported Swift architecture\n#endif\n')
 
 
+def sdk_interface_input(path, sdk, bindings):
+    if path.is_relative_to(sdk):
+        return True
+    alias = sdk.parent / 'MacOSX.sdk'
+    if alias == sdk or not path.is_relative_to(alias):
+        return False
+    bound, alternate, file = Path(sdk), Path(alias), Path(path)
+    require(bound.is_dir() and alternate.is_dir() and bound.samefile(alternate),
+        'SDK alias does not identify the exact bound SDK directory')
+    resolved = file.resolve(strict=True)
+    require(file.is_file() and file.stat().st_size <= 16 * 1024**2
+        and resolved.is_relative_to(bound.resolve(strict=True)), 'SDK alias input escapes the bound physical SDK')
+    if str(path) not in bindings:
+        identity = bound.stat()
+        bindings[str(path)] = {'boundSDK': str(sdk), 'aliasSDK': str(alias), 'resolvedSDK': str(bound.resolve(strict=True)),
+            'device': identity.st_dev, 'inode': identity.st_ino, 'path': str(path), 'resolvedPath': str(resolved),
+            'bytes': file.stat().st_size, 'sha256': hashlib.sha256(file.read_bytes()).hexdigest()}
+    return True
+
+
 def validate_frontend_jobs(text, driver, sources, arena, source_root, temporary_root, pinned_headers=None):
     require(isinstance(text, str) and len(text) <= 16 * 1024**2, 'Driver job output exceeds its bound')
     jobs = [shlex.split(line) for line in text.splitlines() if line.strip()]
@@ -312,6 +332,7 @@ def validate_frontend_jobs(text, driver, sources, arena, source_root, temporary_
     temporary = canonical_path(temporary_root)
     pinned_headers = pinned_headers or {}
     consumed = {}
+    sdk_alias_inputs = {}
     expanded_jobs = []
     def owned_file(value):
         path = canonical_path(value)
@@ -361,7 +382,7 @@ def validate_frontend_jobs(text, driver, sources, arena, source_root, temporary_
             require(interfaces and all(not path.is_relative_to(PurePosixPath(source_root) / 'Engine/Sources')
                 and not path.is_relative_to(PurePosixPath(source_root) / 'Sources/NexGenVideo') for path in interfaces),
                 'Dependency cache job would compile a retained host module')
-            require(all(path.is_relative_to(sdk) or path.is_relative_to(tools.parent)
+            require(all(sdk_interface_input(path, sdk, sdk_alias_inputs) or path.is_relative_to(tools.parent)
                 or path.is_relative_to(arena) or str(path) in pinned_headers for path in interfaces),
                 'Dependency cache input is outside the pinned toolchain, SDK and package graph')
             for path in interfaces:
@@ -385,4 +406,5 @@ def validate_frontend_jobs(text, driver, sources, arena, source_root, temporary_
     require(compiled == expected, 'Frontend job graph omits actual module sources')
     return {'jobs': len(jobs), 'moduleSourceCount': len(compiled), 'retainedPackageSourceCompilations': 0,
         'driverOutputSHA256': hashlib.sha256(text.encode()).hexdigest(), 'expandedJobs': expanded_jobs,
-        'consumedInputs': sorted(consumed.values(), key=lambda item: item['path'])}
+        'consumedInputs': sorted(consumed.values(), key=lambda item: item['path']),
+        'sdkAliasInputs': sorted(sdk_alias_inputs.values(), key=lambda item: item['path'])}

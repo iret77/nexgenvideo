@@ -12,6 +12,103 @@ import native_app_target_build as build
 
 
 class NativeAppTargetBuildTests(unittest.TestCase):
+    def test_printed_plan_role_is_pinned_and_mutually_exclusive_with_completed_or_partial_production(self):
+        item = dict(build.DRIVER_INPUT_ORIGINS['production-plan']['selected'])
+        self.assertEqual(build.resume_inputs(json.dumps({'production-plan': item})), {'production-plan': item})
+        for role in ('production', 'production-cache'):
+            with self.subTest(role=role), self.assertRaisesRegex(ValueError, 'Conflicting'):
+                build.resume_inputs(json.dumps({'production-plan': item, role: item}))
+        item['artifactID'] += 1
+        with patch.object(build, 'api') as api, self.assertRaisesRegex(ValueError, 'Unqualified partial'):
+            build.resumed_products({'production-plan': item}, {}, 'a' * 40)
+        api.assert_not_called()
+
+    def planning_fixture(self, root, changed='valid'):
+        records = {}
+        path = root / 'planning.zip'
+        with zipfile.ZipFile(path, 'w') as archive:
+            for index in range(6):
+                name = 'tmp/TemporaryDirectory.pzfKPD/input' + str(index)
+                if changed == 'namespace' and index == 0: name = 'tmp/TemporaryDirectory.foreign/input0'
+                raw = ('payload' + str(index)).encode()
+                records[name] = {'kind': 'file', 'sha256': build.hashlib.sha256(raw).hexdigest(), 'bytes': len(raw)}
+                info = zipfile.ZipInfo('evidence/' + name); info.create_system = 3
+                info.external_attr = (build.stat.S_IFREG | (0o600 if changed == 'mode' and index == 0 else 0o644)) << 16
+                if changed == 'symlink' and index == 0: info.external_attr = (build.stat.S_IFLNK | 0o777) << 16
+                archive.writestr(info, b'corrupt' if changed == 'bytes' and index == 0 else raw)
+        return path, records
+
+    def test_planning_inputs_measure_original_unix_modes_and_exact_six_file_namespace_after_restore(self):
+        for changed in ('valid', 'mode', 'symlink', 'bytes', 'namespace', 'occupied', 'copy'):
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp).resolve(); archive_path, records = self.planning_fixture(root, changed)
+                destination = root / 'restored'
+                if changed == 'occupied':
+                    target = destination / next(iter(records)); target.parent.mkdir(parents=True); target.write_text('occupied')
+                with zipfile.ZipFile(archive_path) as archive:
+                    if changed == 'copy':
+                        with patch.object(build.shutil, 'copyfileobj', side_effect=lambda source, output, length: output.write(b'corrupt')), \
+                                self.assertRaisesRegex(ValueError, 'Restored planning temporary'):
+                            build.restore_planning_files(archive, records, destination)
+                    elif changed != 'valid':
+                        with self.assertRaises(ValueError):
+                            build.restore_planning_files(archive, records, destination)
+                    else:
+                        result = build.restore_planning_files(archive, records, destination)
+                        self.assertEqual(len(result), 6)
+                        for name, item in result.items():
+                            path = destination / name
+                            self.assertEqual(item['mode'], 0o644)
+                            self.assertEqual(item['sha256'], build.capture.sha(path))
+                            self.assertEqual(item['bytes'], path.stat().st_size)
+
+    def test_staged_printed_plan_rechecks_original_inputs_and_records_reuse_with_the_new_session(self):
+        for changed in ('valid', 'source-bytes', 'source-mode', 'recipe', 'stdout'):
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp).resolve(); archive_path, records = self.planning_fixture(root)
+                stored = root / 'stored'
+                with zipfile.ZipFile(archive_path) as archive:
+                    inputs = build.restore_planning_files(archive, records, stored)
+                stdout = root / 'stdout'; stdout.write_text('original successful printed jobs\n')
+                prepared = {'appSourceSHA': 'a' * 40, 'nativeSourceObjects': {}, 'compilerSHA256': 'b' * 64,
+                    'plans': {'production': {'driver': {'argv': ['swiftc']}, 'operations': {'arena': str(root / 'arena')}}},
+                    'clangBuildSessions': {'production': {'sessionTimestamp': 1234567890.5}}}
+                planning = {'schema': 'native-app-retained-printed-driver-plan/v1',
+                    'recipeSHA256': build.recipe_identity(prepared, 'production'),
+                    'origin': {'selected': dict(build.DRIVER_INPUT_ORIGINS['production-plan']['selected'])},
+                    'temporaryRoot': str(stored), 'temporaryFiles': inputs, 'stdoutPath': str(stdout),
+                    'stdoutSHA256': build.capture.sha(stdout)}
+                prepared['retainedProductionPlanning'] = planning
+                victim = stored / next(iter(inputs))
+                if changed == 'source-bytes': victim.write_bytes(b'changed')
+                elif changed == 'source-mode': victim.chmod(0o600)
+                elif changed == 'recipe': planning['recipeSHA256'] = 'f' * 64
+                elif changed == 'stdout': stdout.write_text('changed')
+                folder = root / 'production'; (folder / 'tmp').mkdir(parents=True)
+                if changed != 'valid':
+                    with self.assertRaises(ValueError): build.stage_printed_driver_plan(folder, prepared)
+                else:
+                    self.assertEqual(build.stage_printed_driver_plan(folder, prepared), stdout.read_text())
+                    receipt = json.loads((folder / 'driver-jobs-reused.json').read_text())
+                    self.assertEqual(receipt['currentPlanningExecutions'], 0)
+                    self.assertEqual(receipt['originalPlanningExitCode'], 0)
+                    self.assertEqual(receipt['newSession'], prepared['clangBuildSessions']['production'])
+                    for name, item in inputs.items():
+                        target = folder / name
+                        self.assertEqual(build.capture.sha(target), item['sha256'])
+                        self.assertEqual(build.stat.S_IMODE(target.stat().st_mode), item['mode'])
+
+    def test_retained_production_plan_does_not_execute_another_print_jobs_command_or_change_other_roles(self):
+        prepared = {'retainedProductionPlanning': {'origin': 'reviewed'}}
+        driver = {'argv': ['swiftc', '-O'], 'cwd': '/workspace'}
+        with patch.object(build, 'stage_printed_driver_plan', return_value='retained') as stage, \
+                patch.object(build, 'logged', return_value='fresh') as logged:
+            self.assertEqual(build.driver_planning_jobs(Path('/owned'), 'production', prepared, driver, {}), 'retained')
+            logged.assert_not_called()
+            stage.assert_called_once()
+            self.assertEqual(build.driver_planning_jobs(Path('/owned'), 'testable', prepared, driver, {}), 'fresh')
+            logged.assert_called_once_with(Path('/owned'), 'driver-jobs', ['swiftc', '-O', '-driver-print-jobs'], {}, '/workspace', 600)
+
     def session_plans(self, temporary):
         plans = {}
         for phase in ('production', 'testable', 'tests'):
