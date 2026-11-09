@@ -12,6 +12,47 @@ import native_app_target_build as build
 
 
 class NativeAppTargetBuildTests(unittest.TestCase):
+    def test_original_test_entry_materialization_preserves_full_source_and_rejects_role_path_or_byte_substitution(self):
+        for changed in ('valid', 'module', 'cwd', 'signature', 'source-list', 'occupied', 'parent-link', 'retained-copy'):
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary).resolve(); arena, folder = root / 'arena', root / 'evidence'
+                arena.mkdir(); folder.mkdir()
+                target = arena / 'Intermediates.noindex/NexGenVideo.build/Release/NexGenVideoTests-p.build/DerivedSources/test_entry_point.swift'
+                guid = 'PACKAGE-PRODUCT:nexgenvideo_NexGenVideoTests.NexGenVideoTests'
+                node = {'targetGUID': guid, 'output': str(target),
+                    'argv': ['builtin-generateTestEntryPoint', '--output', str(target)], 'cwd': str(Path.cwd()),
+                    'taskSignature': '60b01ab02c84a798dd3a2e1572c272a3',
+                    'sourceFixture': 'scripts/fixtures/native-test-entry-point.json', 'sourceBytes': 17932,
+                    'sourceSHA256': '7eba94b97a5454ac6bad83d7354eeef272610d96830aa07a06b607adf191af51'}
+                plan = {'driver': {'module': 'NexGenVideoTests', 'targetGUID': guid},
+                    'operations': {'arena': str(arena), 'testEntryPoint': node}}
+                sources = [str(target)]
+                if changed == 'module': plan['driver']['module'] = 'NexGenVideo'
+                elif changed == 'cwd': node['cwd'] = '/driver/instead/of/original/workspace'
+                elif changed == 'signature': node['taskSignature'] = 'different'
+                elif changed == 'source-list': sources = ['/unreviewed/Test.swift']
+                elif changed == 'occupied': target.parent.mkdir(parents=True); target.write_bytes(b'occupied')
+                elif changed == 'parent-link':
+                    outside = root / 'outside'; outside.mkdir(); (arena / 'Intermediates.noindex').symlink_to(outside)
+                if changed == 'retained-copy':
+                    with patch.object(build.shutil, 'copyfile', side_effect=lambda source, destination: destination.write_bytes(b'corrupt')), \
+                            self.assertRaisesRegex(ValueError, 'Retained original'):
+                        build.materialize_test_entry_point(folder, plan, sources)
+                elif changed != 'valid':
+                    with self.assertRaises(ValueError): build.materialize_test_entry_point(folder, plan, sources)
+                    if changed == 'parent-link': self.assertEqual(list(outside.iterdir()), [])
+                else:
+                    proof = build.materialize_test_entry_point(folder, plan, sources)
+                    self.assertEqual(proof['sha256'], node['sourceSHA256'])
+                    self.assertEqual(proof['mode'], 0o644)
+                    self.assertEqual(target.read_bytes(), (folder / 'test-entry-point.swift').read_bytes())
+                    raw = target.read_text()
+                    self.assertIn('public final class __SwiftPMXCTestObserver', raw)
+                    self.assertIn('await Testing.__swiftPMEntryPoint() as Never', raw)
+                    retained = json.loads((folder / 'test-entry-point.json').read_text())
+                    self.assertFalse(retained['nativeOriginalGeneratorInvoked'])
+                    self.assertFalse(retained['qualifiedAsTestExecution'])
+
     def test_printed_plan_role_is_pinned_and_mutually_exclusive_with_completed_or_partial_production(self):
         item = dict(build.DRIVER_INPUT_ORIGINS['production-plan']['selected'])
         self.assertEqual(build.resume_inputs(json.dumps({'production-plan': item})), {'production-plan': item})

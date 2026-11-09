@@ -228,19 +228,57 @@ def module_driver(folder, profile, module, source_root, compiler):
         'decodedTasks': len(tasks), 'decodedValues': reader.values, 'commandsExecuted': 0}
 
 
-def profile_operations(folder):
+def test_entry_point_source():
+    path = Path(__file__).parent / 'fixtures/native-test-entry-point.json'
+    raw = path.read_bytes()
+    require(hashlib.sha256(raw).hexdigest() == 'bf0ba13f904c7486e202bfe74f600c19d3952f488de4dc20568bfa1747239f8d',
+        'Original default test entry point fixture changed')
+    value = json.loads(raw)
+    source = value['source'].encode()
+    require(value['schema'] == 'swift-build-default-test-entry-point/v1'
+        and value['generatorVersion'] == 'swift-6.4.2-RELEASE'
+        and value['generatorSourceSHA256'] == '0840c0507a5c8746bb0f6fefbed7c584923f9518edc3cb407d673537c240c77f'
+        and value['options'] == {'discoverTests': False, 'enableExperimentalTestOutput': False, 'testAnchorModule': []}
+        and value['sourceSHA256'] == hashlib.sha256(source).hexdigest()
+            == '7eba94b97a5454ac6bad83d7354eeef272610d96830aa07a06b607adf191af51'
+        and len(source) == 17932, 'Unsupported original test entry point generator semantics')
+    return source
+
+
+def test_entry_point_task(task, target_guid, arena, workspace):
+    require(target_guid == 'PACKAGE-PRODUCT:nexgenvideo_NexGenVideoTests.NexGenVideoTests',
+        'Test entry point belongs to another target')
+    output = str(arena / 'Intermediates.noindex/NexGenVideo.build/Release/NexGenVideoTests-p.build/DerivedSources/test_entry_point.swift')
+    argv = arguments(task[6])
+    require(task[0] == ['', 'org.swift.test-entry-point-generator']
+        and task[4] == ['GenerateTestEntryPoint', output]
+        and argv == ['builtin-generateTestEntryPoint', '--output', output]
+        and task[5] == '' and task[9] == str(canonical_path(workspace))
+        and task[12] == [44, [b'60b01ab02c84a798dd3a2e1572c272a3']]
+        and task[17] == [] and task[18] == [output] and not environment(task, set()),
+        'Unsupported original test entry point task')
+    source = test_entry_point_source()
+    return {'targetGUID': target_guid, 'output': output, 'argv': argv, 'cwd': task[9],
+        'taskSignature': '60b01ab02c84a798dd3a2e1572c272a3',
+        'sourceFixture': 'scripts/fixtures/native-test-entry-point.json',
+        'sourceSHA256': hashlib.sha256(source).hexdigest(), 'sourceBytes': len(source)}
+
+
+def profile_operations(folder, test_entry_point_target=None, task_workspace=None):
     manifests = list(folder.glob('**/*.xcbuilddata/manifest.json'))
     require(len(manifests) == 1, 'Missing complete task store')
     directory = manifests[0].parent
     request = json.loads((folder / 'request.json').read_text())
     arena = canonical_path(request['parameters']['arenaInfo']['derivedDataPath'])
     tasks = configured_tasks(TaskStoreReader((directory / 'task-store.msgpack').read_bytes()).tasks())
-    files, copies, headers, links, caches = [], [], [], [], []
+    files, copies, headers, links, caches, entry_points = [], [], [], [], [], []
     for target, task in tasks:
         rule = task[4]
         require(isinstance(rule, list) and all(isinstance(x, str) for x in rule), 'Invalid task rule')
         if not rule: continue
         guid = target['guid'] if target else None
+        if rule[0] == 'GenerateTestEntryPoint' and test_entry_point_target is not None and guid == test_entry_point_target:
+            entry_points.append(test_entry_point_task(task, guid, arena, task_workspace))
         if task[0] == ['', 'com.apple.build-tools.write-file']:
             context = auxiliary_context(task[12])
             output, content = context['output'], context['input']
@@ -289,7 +327,11 @@ def profile_operations(folder):
                 'Unsupported SDK stat cache task')
             caches.append({'argv': argv, 'cwd': task[9], 'environment': environment(task, set())})
     require(files and len({row['output'] for row in files}) == len(files), 'Missing or duplicated auxiliary outputs')
-    return {'arena': str(arena), 'auxiliaryFiles': files, 'copies': copies, 'headers': headers, 'links': links, 'sdkStatCaches': caches}
+    result = {'arena': str(arena), 'auxiliaryFiles': files, 'copies': copies, 'headers': headers, 'links': links, 'sdkStatCaches': caches}
+    if test_entry_point_target is not None:
+        require(len(entry_points) == 1, 'Missing or duplicate original test entry point generator')
+        result['testEntryPoint'] = entry_points[0]
+    return result
 
 
 def generated_header(raw, single):

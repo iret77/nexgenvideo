@@ -21,6 +21,67 @@ def wire(value):
 
 
 class NativeAppTargetRecipeTests(unittest.TestCase):
+    def entry_task(self, arena, workspace):
+        output = str(arena / 'Intermediates.noindex/NexGenVideo.build/Release/NexGenVideoTests-p.build/DerivedSources/test_entry_point.swift')
+        task = [None] * 25
+        task[0] = ['', 'org.swift.test-entry-point-generator']
+        task[4] = ['GenerateTestEntryPoint', output]
+        task[5] = ''
+        task[6] = [[0, value.encode()] for value in ('builtin-generateTestEntryPoint', '--output', output)]
+        task[8] = [[], []]
+        task[9] = workspace
+        task[12] = [44, [b'60b01ab02c84a798dd3a2e1572c272a3']]
+        task[17], task[18] = [], [output]
+        return task
+
+    def test_original_test_entry_task_requires_exact_default_options_target_signature_and_workspace(self):
+        arena, workspace = Path('/owned/arena'), '/original/workspace'
+        guid = 'PACKAGE-PRODUCT:nexgenvideo_NexGenVideoTests.NexGenVideoTests'
+        task = self.entry_task(arena, workspace)
+        node = recipe.test_entry_point_task(task, guid, arena, workspace)
+        self.assertEqual(node['sourceBytes'], 17932)
+        self.assertEqual(node['sourceSHA256'], '7eba94b97a5454ac6bad83d7354eeef272610d96830aa07a06b607adf191af51')
+        self.assertEqual(node['cwd'], workspace)
+        changes = [(0, ['', 'another-generator']), (5, 'changed-signature-data'),
+            (6, task[6] + [[0, b'--discover-tests']]), (9, '/driver/working/directory'),
+            (12, [45, task[12][1]]), (12, [44, [b'changed-signature']]),
+            (17, ['/unreviewed/input']), (18, ['/outside/test_entry_point.swift']),
+            (8, [['CUSTOM'], ['unreviewed']])]
+        for index, value in changes:
+            broken = copy.deepcopy(task); broken[index] = value
+            with self.subTest(index=index, value=value), self.assertRaises(ValueError):
+                recipe.test_entry_point_task(broken, guid, arena, workspace)
+        with self.assertRaises(ValueError): recipe.test_entry_point_task(task, 'different-target', arena, workspace)
+
+    def test_test_entry_operation_is_opt_in_and_preserves_both_existing_app_role_operation_bytes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve(); folder = root / 'profile'; arena = root / 'arena'
+            directory = folder / 'capture/original.xcbuilddata'; attachments = directory / 'attachments'
+            attachments.mkdir(parents=True)
+            (directory / 'manifest.json').write_text('{}')
+            (folder / 'request.json').write_text(json.dumps({'parameters': {'arenaInfo': {'derivedDataPath': str(arena)}}}))
+            guid, workspace = 'PACKAGE-PRODUCT:nexgenvideo_NexGenVideoTests.NexGenVideoTests', '/original/workspace'
+            output = str(arena / 'Intermediates.noindex/original.SwiftFileList')
+            content = str(arena / 'Intermediates.noindex/XCBuildData/original.xcbuilddata/attachments/original')
+            (attachments / 'original').write_bytes(b'original auxiliary bytes')
+            auxiliary = [None] * 25
+            auxiliary[0] = ['', 'com.apple.build-tools.write-file']
+            auxiliary[3] = [0, [guid, False, 0, b'{"configuration":"Release"}']]
+            auxiliary[4] = ['WriteAuxiliaryFile', output]
+            auxiliary[12] = [1, [output, content, None, False, [], False, [b'original-signature']]]
+            auxiliary[18] = [output]
+            entry = self.entry_task(arena, workspace); entry[3] = [1, 0]
+            (directory / 'task-store.msgpack').write_bytes(wire([auxiliary, entry]))
+            original = recipe.profile_operations(folder)
+            selected = recipe.profile_operations(folder, guid, workspace)
+            self.assertNotIn('testEntryPoint', original)
+            self.assertEqual(original, {key: value for key, value in selected.items() if key != 'testEntryPoint'})
+            self.assertEqual(recipe.profile_operations(folder, None, None), original)
+            self.assertEqual(selected['testEntryPoint']['targetGUID'], guid)
+            (directory / 'task-store.msgpack').write_bytes(wire([auxiliary, entry, entry]))
+            with self.assertRaisesRegex(ValueError, 'duplicate'):
+                recipe.profile_operations(folder, guid, workspace)
+
     def test_sdk_default_alias_must_resolve_to_the_same_directory_in_both_physical_layouts(self):
         for default_is_link in (True, False):
             with self.subTest(default_is_link=default_is_link), tempfile.TemporaryDirectory() as temp:
