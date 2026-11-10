@@ -24,6 +24,110 @@ class RetainedPackagingTests(unittest.TestCase):
     product = "a" * 40
     producer = "b" * 40
 
+    def compiled_binding_fixture(self):
+        from compiled_app_release import SIGNED_RESUME, PACK_SHA, PACK_TREE
+        origin = SIGNED_RESUME
+        return {'productSourceSHA': origin['sourceSHA'], 'producerSourceSHA': self.producer, 'runID': 777,
+            'originalSignedBuildRunID': origin['runID'], 'signedInput': {'compiledProduct': {
+                'schema': 'compiled-signed-product-reuse/v1', 'original': origin, 'packArchiveSHA256': PACK_SHA,
+                'packTreeSHA256': PACK_TREE, 'appRootMode': 0o755, 'freshCompilerCoreAssemblyOrRootSignPerformed': False}},
+            'previousNotary': {'journals': {}, 'stateArtifact': {'id': origin['stateArtifactID'], 'digest': 'sha256:' + origin['stateSHA256']},
+                'context': {'schema': 'release-notary-context/v1', 'repository': packaging.REPOSITORY,
+                    'sourceSHA': origin['sourceSHA'], 'buildRunID': origin['runID'], 'runID': origin['runID']}}}
+
+    def test_compiled_resume_keeps_context_only_exception_bound_to_exact_original_state_bytes(self):
+        import compiled_app_release as compiled
+        binding = self.compiled_binding_fixture()
+        context = binding['previousNotary']['context']
+        raw = io.BytesIO()
+        with zipfile.ZipFile(raw, 'w') as archive: archive.writestr('context.json', json.dumps(context))
+        original = dict(compiled.SIGNED_RESUME, stateSHA256=hashlib.sha256(raw.getvalue()).hexdigest())
+        with patch.object(compiled, 'SIGNED_RESUME', original):
+            self.assertEqual(packaging.state_records(raw.getvalue(), original['sourceSHA'], original['sourceSHA'], original['runID']), (context, {}))
+            for product, producer, run_id in [(self.product, self.product, original['runID']),
+                    (original['sourceSHA'], self.producer, original['runID']), (original['sourceSHA'], original['sourceSHA'], 778)]:
+                with self.subTest(product=product, producer=producer, run_id=run_id), self.assertRaises(ValueError):
+                    packaging.state_records(raw.getvalue(), product, producer, run_id)
+            changed = io.BytesIO()
+            with zipfile.ZipFile(changed, 'w') as archive: archive.writestr('context.json', json.dumps(context, indent=4))
+            with self.assertRaises(ValueError):
+                packaging.state_records(changed.getvalue(), original['sourceSHA'], original['sourceSHA'], original['runID'])
+
+    def test_first_compiled_notary_requires_complete_signed_product_and_original_empty_state(self):
+        binding = self.compiled_binding_fixture()
+        self.assertTrue(packaging.compiled_first_notary(binding))
+        for section, key, value in [('previousNotary', 'journals', {'f' * 64: {}}),
+                ('previousNotary', 'stateArtifact', {'id': 123, 'digest': 'sha256:' + 'f' * 64}),
+                ('signedInput', 'compiledProduct', {})]:
+            changed = copy.deepcopy(binding); changed[section][key] = value
+            with self.subTest(section=section, key=key): self.assertFalse(packaging.compiled_first_notary(changed))
+        changed = copy.deepcopy(binding); changed['originalSignedBuildRunID'] += 1
+        self.assertFalse(packaging.compiled_signed_product(changed))
+
+    def test_empty_current_apple_state_is_allowed_only_before_the_exact_first_compiled_app_submission(self):
+        binding = self.compiled_binding_fixture()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            context = {'schema': 'release-notary-context/v2', 'repository': packaging.REPOSITORY,
+                'sourceSHA': binding['productSourceSHA'], 'producerSourceSHA': binding['producerSourceSHA'],
+                'buildRunID': binding['originalSignedBuildRunID'], 'runID': binding['runID']}
+            (root / 'context.json').write_text(json.dumps(context))
+            with patch.dict(os.environ, NOTARY_STATE_DIR=str(root)):
+                self.assertEqual(packaging.current_notary_state(binding, initial_app=True), (context, {}))
+                with self.assertRaises(ValueError): packaging.current_notary_state(binding)
+                changed = dict(context, buildRunID=123); (root / 'context.json').write_text(json.dumps(changed))
+                with self.assertRaises(ValueError): packaging.current_notary_state(binding, initial_app=True)
+
+    def test_original_compiled_pack_reuse_does_not_invent_or_require_a_new_pack_submission(self):
+        from compiled_app_release import PACK_SHA
+        binding = self.compiled_binding_fixture()
+        self.assertTrue(packaging.qualified_pack_archives({'.build/plugins/musicvideo.ngvpack.zip': PACK_SHA}, binding))
+        self.assertFalse(packaging.qualified_pack_archives({'.build/plugins/musicvideo.ngvpack.zip': 'f' * 64}, binding))
+        legacy = {'previousNotary': {'journals': {}}}
+        self.assertFalse(packaging.qualified_pack_archives({'.build/plugins/musicvideo.ngvpack.zip': PACK_SHA}, legacy))
+        legacy['previousNotary']['journals'][PACK_SHA] = {'submissionID': 'original'}
+        self.assertTrue(packaging.qualified_pack_archives({'.build/plugins/musicvideo.ngvpack.zip': PACK_SHA}, legacy))
+
+    def test_later_compiled_notary_resume_accepts_only_the_exact_new_app_journal(self):
+        from compiled_app_release import SIGNED_RESUME
+        product, app_sha = SIGNED_RESUME['sourceSHA'], SIGNED_RESUME['appArchiveSHA256']
+        for changed in ('valid', 'foreign-journal', 'legacy', 'substituted-app'):
+            with self.subTest(changed=changed):
+                record = self.compiled_binding_fixture(); record['stage'] = 'restored'
+                record['signedInput']['manifest'] = {'files': {'NexGenVideo.zip': {'sha256': app_sha}}}
+                if changed == 'legacy': record['signedInput'].pop('compiledProduct')
+                if changed == 'substituted-app': record['signedInput']['manifest']['files']['NexGenVideo.zip']['sha256'] = 'f' * 64
+                context = {'schema': 'release-notary-context/v2', 'repository': packaging.REPOSITORY, 'sourceSHA': product,
+                    'producerSourceSHA': self.producer, 'runID': 7, 'buildRunID': SIGNED_RESUME['runID']}
+                journals = {app_sha: {'schema': 'release-notary/v1', 'sha256': app_sha, 'sourceSHA': product,
+                    'submissionID': '11111111-1111-1111-1111-111111111111'}}
+                if changed == 'foreign-journal':
+                    journals['f' * 64] = dict(journals[app_sha], sha256='f' * 64)
+                stream = io.BytesIO()
+                with zipfile.ZipFile(stream, 'w') as archive:
+                    archive.writestr('context.json', json.dumps(context))
+                    for checksum, value in journals.items(): archive.writestr(checksum + '.json', json.dumps(value))
+                raw = stream.getvalue()
+                artifact = {'id': 9, 'name': 'release-notary-state-' + product, 'size_in_bytes': len(raw),
+                    'digest': 'sha256:' + hashlib.sha256(raw).hexdigest()}
+                run = {'id': 7, 'head_sha': self.producer, 'repository': {'full_name': packaging.REPOSITORY},
+                    'path': '.github/workflows/release.yml', 'event': 'workflow_dispatch', 'run_attempt': 1,
+                    'actor': {'login': 'iret77'}, 'status': 'completed', 'conclusion': 'failure'}
+                job = {'id': 8, 'name': 'release', 'run_id': 7, 'head_sha': self.producer, 'run_attempt': 1,
+                    'labels': ['macrunner'], 'status': 'completed', 'conclusion': 'failure'}
+                routes = {'actions/runs/7': run, 'actions/runs/7/attempts/1/jobs?per_page=100': {'total_count': 1, 'jobs': [job]},
+                    'actions/runs/7/artifacts?per_page=100': {'total_count': 1, 'artifacts': [artifact]}, 'actions/artifacts/9': artifact}
+                with patch.object(packaging, 'api', side_effect=routes.__getitem__), \
+                        patch.object(packaging, 'load_provenance', return_value={'record': record, 'rawProofSHA256': 'e' * 64}), \
+                        patch.object(packaging, 'verify_artifact'), patch.object(packaging, 'read_api', return_value=raw):
+                    if changed == 'valid':
+                        actual, original = packaging.prior_notary(7, product, packaging={'producerSourceSHA': self.producer})
+                        self.assertEqual(actual['journals'], journals)
+                        self.assertEqual(original, raw)
+                        self.assertIsNone(actual['dmgProof'])
+                    else:
+                        with self.assertRaises(ValueError): packaging.prior_notary(7, product, packaging={'producerSourceSHA': self.producer})
+
     def closure_fixture(self):
         comparison = {"base_commit": {"sha": self.product}, "merge_base_commit": {"sha": self.product},
                       "status": "ahead", "total_commits": 1, "commits": [{"sha": self.producer}],

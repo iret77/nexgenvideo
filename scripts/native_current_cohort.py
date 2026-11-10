@@ -26,7 +26,11 @@ CI_PATHS = {'scripts/native_current_cohort.py', 'scripts/test_native_current_coh
     'scripts/native_xctest_host.m', 'scripts/native_xctest_host.py', 'scripts/test_native_xctest_host.py',
     'scripts/compiled_app_release.py', 'scripts/test_compiled_app_release.py', 'scripts/release_checkpoint.py',
     'scripts/test_release_recovery.py', 'scripts/test_compiled_xctest_reuse.py', 'scripts/retained_packaging.py', 'scripts/test_retained_packaging.py',
-    'scripts/fixtures/compiled-app-native-inventory.json'} | UI_CI_PATHS
+    'scripts/fixtures/compiled-app-native-inventory.json',
+    '.github/actions/prepare-bpy-source/action.yml', '.github/workflows/bpy-runtime-acceptance.yml',
+    'scripts/workspace_native_ci.py', 'scripts/test_workspace_native_ci.py',
+    'scripts/release_acceptance_identity.py', 'scripts/test_release_acceptance_identity.py',
+    'scripts/retained_release_runtime.py', 'scripts/test_retained_release_runtime.py'} | UI_CI_PATHS
 
 
 def objects(ref):

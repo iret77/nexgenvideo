@@ -1132,6 +1132,19 @@ jobs:
           directory: .build/bpy-source
           receipt: .build/bpy-source/bpy-source-receipt.json
 
+      - name: Preserve compiled source handoff and signature reuse evidence
+        if: always() && inputs.retained_product_source_sha == '58644c62e3a01c03ffcc46a1969e3f69bd296942'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-compiled-source-handoff-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: |
+            .build/bpy-source/bpy-source-original-receipt.json
+            .build/bpy-source/bpy-source-receipt.json
+            .build/bpy-source/bpy-source-reuse.json
+            ${{ runner.temp }}/release-signed-binding/current-app-signature.reused.json
+          if-no-files-found: ignore
+          retention-days: 90
+
       - name: Verify the exact retained stapled format pack
         if: env.NGV_COMPILED_APP_RELEASE == 'true'
         run: python3 scripts/compiled_app_release.py verify-pack --root .build/plugins

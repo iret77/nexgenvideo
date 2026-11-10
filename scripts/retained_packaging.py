@@ -26,7 +26,8 @@ RESTORED_ARTIFACT = "release-packaging-restored-proof"
 PROOF_FILES = {"harness-source.json", "harness-source-original-proof.zip", "harness-source-original-job.log",
                "product-source.json", "product-source-original-proof.zip", "product-source-original-job.log",
                "signed-proof.zip", "prior-notary-state.zip", "original-api-evidence.zip"}
-OPTIONAL_PROOF_FILES = {"original-notary-state.zip", "submitted-dmg-proof.zip"}
+SOURCE_REUSE_FILES = {"bpy-source-original-receipt.json", "bpy-source-receipt.json", "bpy-source-reuse.json"}
+OPTIONAL_PROOF_FILES = {"original-notary-state.zip", "submitted-dmg-proof.zip", "current-app-signature.reused.json"} | SOURCE_REUSE_FILES
 PRODUCT_OBJECTS = ("Sources", "Engine", "Tests", "Runtime", "Metal", "Vendor", "plugins",
                    "Package.swift", "Package.resolved", "assets")
 VERIFIER_INPUTS = ('scripts/retained_packaging.py', 'scripts/retained_app_test_products.py',
@@ -60,6 +61,8 @@ PACKAGING_PATHS = {
     "scripts/test_ci_workflow.py",
     ".github/actions/prepare-bpy-source/action.yml",
 }
+COMPILED_PACKAGING_PATHS = {'scripts/compiled_app_release.py', 'scripts/test_compiled_app_release.py',
+    'scripts/native_current_cohort.py', 'scripts/test_native_current_cohort.py'}
 CAPTURE = ContextVar('packaging_evidence_capture', default=None)
 REPLAY = ContextVar('authenticated_packaging_evidence_replay', default=None)
 BUDGET = ContextVar('packaging_expansion_budget', default=None)
@@ -329,7 +332,9 @@ def root_objects(source):
 def source_closure(product, producer, *, local=False):
     require(product != producer, "Retained packaging requires distinct product and packaging sources")
     changed = comparison(product, producer)
-    require({entry["filename"] for entry in changed["files"]} <= PACKAGING_PATHS,
+    from compiled_app_release import SIGNED_RESUME
+    allowed = PACKAGING_PATHS | COMPILED_PACKAGING_PATHS if product == SIGNED_RESUME['sourceSHA'] else PACKAGING_PATHS
+    require({entry["filename"] for entry in changed["files"]} <= allowed,
             "Retained packaging changed product or unsupported harness inputs")
     product_tree, objects = root_objects(product)
     producer_tree, producer_objects = root_objects(producer)
@@ -446,7 +451,12 @@ def signed_input(run_id, product):
             and builder.get("run_attempt") == 1 and builder.get("labels") == ["macrunner"]
             and builder.get("status") == "completed" and builder.get("conclusion") == "success",
             "Original signed builder did not pass")
-    for name in ("Build and sign app", "Retain signed build input", "Retain signed build proof"):
+    from compiled_app_release import signed_resume_source, verify_signed_resume
+    compiled = signed_resume_source(run_id, product)
+    required_steps = ('Assemble and sign the new App with unchanged retained components',
+        'Record compiled App signed input without invoking a build', 'Retain signed build input', 'Retain signed build proof') if compiled else (
+        'Build and sign app', 'Retain signed build input', 'Retain signed build proof')
+    for name in required_steps:
         steps = [step for step in builder.get("steps", []) if step.get("name") == name]
         require(len(steps) == 1 and steps[0].get("conclusion") == "success", "Original signed stage did not pass: " + name)
     inventory = api(f"actions/runs/{run_id}/artifacts?per_page=100")
@@ -468,10 +478,11 @@ def signed_input(run_id, product):
     require(set(members) == {'manifest.json'} and len(members['manifest.json']) <= 16 * 1024**2,
             'Unexpected or oversized original signed proof entries')
     manifest = verify_manifest(json.loads(members['manifest.json']), product, run_id)
+    compiled_product = verify_signed_resume(producer, builder, artifacts[prefix], artifacts[prefix + '-proof'], members['manifest.json'], verifier=verify_artifact) if compiled else None
     original_notary, original_state = original_journals(producer, product, jobs, inventory)
     return {"producer": producer, "builder": builder, "payloadArtifact": artifacts[prefix],
             "proofArtifact": artifacts[prefix + "-proof"], "manifest": manifest,
-            "originalNotary": original_notary}, proof, original_state
+            "originalNotary": original_notary, **({"compiledProduct": compiled_product} if compiled_product else {})}, proof, original_state
 
 
 def artifact_bytes(artifact, maximum):
@@ -600,7 +611,9 @@ def state_records(raw, product, producer, run_id):
                 and re.fullmatch(r"[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}", value["submissionID"]),
                 "Saved notary payload or Apple ID differs")
         journals[name[:-5]] = value
-    require(journals, "Saved notarization has no Apple submissions")
+    from compiled_app_release import original_empty_notary
+    require(journals or set(records) == {'context.json'} and original_empty_notary(raw, product, producer, run_id),
+            'Saved notarization has no qualified Apple submission or exact compiled pre-first-notary origin')
     return context, journals
 
 
@@ -685,7 +698,12 @@ def prior_notary(run_id, product, *, packaging=None, chain=None):
         previous_known = parent["record"]["previousNotary"]["journals"]
         added = set(journals) - set(previous_known)
         allowed = {checkpoint_proof["checkpoint"]["files"]["NexGenVideo.dmg"]["sha256"]} if checkpoint_proof else set()
-        require(added <= allowed, "New Apple journal is not bound to the actual DMG checkpoint")
+        if compiled_signed_product(parent['record']):
+            from compiled_app_release import SIGNED_RESUME
+            app = parent['record']['signedInput']['manifest']['files']['NexGenVideo.zip']['sha256']
+            require(app == SIGNED_RESUME['appArchiveSHA256'], 'Parent App submission differs from its retained signed product')
+            allowed.add(app)
+        require(added <= allowed, "New Apple journal is not bound to the signed App or actual DMG checkpoint")
         if parent["record"]["stage"] == "complete":
             require(journals == parent["record"]["final"].get("notaryJournals"), "Completed parent Apple state changed")
     result = {"producer": producer, "job": job, "stateArtifact": state, "dmgArtifact": checkpoint,
@@ -769,7 +787,9 @@ def collect_original_binding(values, *, archive_root=None, chain=None):
     signed, signed_zip, original_state = signed_input(previous["context"]["buildRunID"], product)
     require(signed["manifest"]["identity"]["version"] == mode["version"], "Requested retained version differs")
     app_zip = signed["manifest"]["files"]["NexGenVideo.zip"]["sha256"]
-    require(app_zip in previous["journals"], "Previous state lost the original App Apple submission")
+    first_compiled = compiled_first_notary({'signedInput': signed, 'previousNotary': previous,
+        'originalSignedBuildRunID': previous['context']['buildRunID'], 'productSourceSHA': product})
+    require(app_zip in previous['journals'] or first_compiled, 'Previous state lost the original App Apple submission')
     if signed["originalNotary"] is not None:
         require(all(previous["journals"].get(key) == value for key, value in signed["originalNotary"]["journals"].items()),
                 "Previous state lost an original Apple SHA or submission ID")
@@ -842,6 +862,33 @@ def bind_current(root):
     return checksum
 
 
+def compiled_signed_product(record):
+    from compiled_app_release import SIGNED_RESUME, PACK_SHA, PACK_TREE
+    return (record.get('productSourceSHA') == SIGNED_RESUME['sourceSHA']
+        and record.get('originalSignedBuildRunID') == SIGNED_RESUME['runID']
+        and record.get('signedInput', {}).get('compiledProduct') == {
+            'schema': 'compiled-signed-product-reuse/v1', 'original': SIGNED_RESUME,
+            'packArchiveSHA256': PACK_SHA, 'packTreeSHA256': PACK_TREE, 'appRootMode': 0o755,
+            'freshCompilerCoreAssemblyOrRootSignPerformed': False})
+
+
+def compiled_first_notary(record):
+    from compiled_app_release import SIGNED_RESUME
+    previous = record.get('previousNotary', {})
+    return (compiled_signed_product(record) and previous.get('journals') == {}
+        and previous.get('stateArtifact', {}).get('id') == SIGNED_RESUME['stateArtifactID']
+        and previous['stateArtifact'].get('digest') == 'sha256:' + SIGNED_RESUME['stateSHA256']
+        and previous.get('context') == {'schema': 'release-notary-context/v1', 'repository': REPOSITORY,
+            'sourceSHA': SIGNED_RESUME['sourceSHA'], 'buildRunID': SIGNED_RESUME['runID'], 'runID': SIGNED_RESUME['runID']})
+
+
+def qualified_pack_archives(packs, record):
+    from compiled_app_release import PACK_SHA
+    if compiled_signed_product(record):
+        return packs == {'.build/plugins/musicvideo.ngvpack.zip': PACK_SHA}
+    return bool(packs) and all(value in record['previousNotary']['journals'] for value in packs.values())
+
+
 def record_restored(root, signed_root):
     record, files = read_stage(root, "input")
     validate_binding(record, files, execution=True)
@@ -851,9 +898,17 @@ def record_restored(root, signed_root):
                          "appTreeSHA256": manifest["appTreeSHA256"], "identity": manifest["identity"]},
             "Signed restore did not preserve the original product")
     packs = {path.as_posix(): file_checksum(path) for path in Path(".build/plugins").glob("*.ngvpack.zip")}
-    require(packs and all(value in record["previousNotary"]["journals"] for value in packs.values()),
+    require(qualified_pack_archives(packs, record),
             "Original pack archive lost its saved Apple submission")
+    if compiled_signed_product(record):
+        from compiled_app_release import verify_current_signature_reuse
+        signature = signed_root / 'current-app-signature.reused.json'
+        require(signature.is_file() and not signature.is_symlink(), 'Current App signature reuse proof is missing')
+        raw = signature.read_bytes()
+        verify_current_signature_reuse(json.loads(raw), record)
+        files = dict(files, **{signature.name: raw})
     copied = dict(record, stage="restored", restoredOriginal=restored, originalPackArchives=packs)
+    copied['files'] = {name: {'bytes': len(raw), 'sha256': digest(raw)} for name, raw in files.items()}
     directory = save_stage(root, copied, files)
     with Path(os.environ["GITHUB_ENV"]).open("a") as output:
         output.write("RETAINED_PACKAGING_RESTORED_SHA256=" + digest((directory / "packaging-provenance.json").read_bytes()) + "\n")
@@ -886,14 +941,24 @@ def record_dmg_payload(root, artifact_id, checksum):
     return proof
 
 
-def current_notary_state(binding):
+def current_notary_state(binding, *, initial_app=False):
     directory = Path(os.environ["NOTARY_STATE_DIR"])
     source = io.BytesIO()
     with zipfile.ZipFile(source, "w") as archive:
         for path in sorted(directory.glob("*.json")):
             require(path.is_file() and not path.is_symlink(), "Notary state member is not a regular file")
             archive.writestr(path.name, path.read_bytes())
-    context, journals = state_records(source.getvalue(), binding["productSourceSHA"], binding["producerSourceSHA"], binding["runID"])
+    raw = source.getvalue()
+    records = read_proof_archive(raw)
+    if initial_app and compiled_first_notary(binding) and set(records) == {'context.json'}:
+        context = json.loads(records['context.json'])
+        require(context == {'schema': 'release-notary-context/v2', 'repository': REPOSITORY,
+            'sourceSHA': binding['productSourceSHA'], 'producerSourceSHA': binding['producerSourceSHA'],
+            'buildRunID': binding['originalSignedBuildRunID'], 'runID': binding['runID']},
+            'Initial compiled App notary context differs')
+        journals = {}
+    else:
+        context, journals = state_records(raw, binding['productSourceSHA'], binding['producerSourceSHA'], binding['runID'])
     require(context["buildRunID"] == binding["originalSignedBuildRunID"]
             and all(journals.get(key) == value for key, value in binding["previousNotary"]["journals"].items()),
             "Current notary state lost or changed a known submission")
@@ -912,15 +977,17 @@ def notary_product_source(artifact, checkpoint=None):
             and restored.get("productSourceSHA") == binding["productSourceSHA"]
             and restored.get("restoredOriginal", {}).get("appTreeSHA256") == binding["signedInput"]["manifest"]["appTreeSHA256"],
             "Retained notarization has no matching signed restore")
-    context, journals = current_notary_state(binding)
     require(artifact.is_file() and not artifact.is_symlink(), "Notary artifact is not a regular file")
     checksum = file_checksum(artifact)
     relative = artifact.resolve().relative_to(Path.cwd().resolve()).as_posix()
     manifest = binding["signedInput"]["manifest"]
+    first = compiled_first_notary(binding)
+    context, journals = current_notary_state(binding, initial_app=first and relative == '.build/NexGenVideo.zip')
     if relative == ".build/NexGenVideo.zip":
         require(checksum == manifest["files"]["NexGenVideo.zip"]["sha256"]
-                and checksum in binding["previousNotary"]["journals"] and checksum in journals,
-                "Original App bytes or saved Apple ID changed")
+                and (first and (not journals or checksum in journals)
+                    or checksum in binding['previousNotary']['journals'] and checksum in journals),
+                'Original App bytes or authenticated first submission differs')
     elif relative in restored.get("originalPackArchives", {}):
         require(checksum == restored["originalPackArchives"][relative]
                 and checksum in binding["previousNotary"]["journals"] and checksum in journals,
@@ -992,6 +1059,19 @@ def record_complete(root, app, archive_sha, source_receipt_sha, pack_archive):
                 and instant(producer['created_at']) <= instant(value['created_at']) <= instant(value['updated_at']) <= now
                 and instant(value['expires_at']) > now, 'Current DMG proof or payload origin differs')
     require(instant(payload['updated_at']) <= instant(artifact['created_at']), 'DMG payload was not acquired before its proof')
+    require(manifest['files']['NexGenVideo.zip']['sha256'] in journals, 'Complete packaging lacks the actual App Apple submission')
+    if compiled_signed_product(binding):
+        from compiled_app_release import capture_source_reuse, PACK_SHA, PACK_TREE
+        source_reuse = capture_source_reuse(Path('.build/bpy-source'), binding)
+        require(source_receipt_sha == digest(source_reuse['bpy-source-receipt.json'].encode())
+            and pack == PACK_SHA and final['packTreeSHA256'] == PACK_TREE, 'Final compiled source or pack identity differs')
+        final['bpySourceReuse'] = source_reuse
+        guide = Path('scripts/Install NexGenVideo.txt')
+        require(guide.is_file() and not guide.is_symlink()
+            and guide.read_bytes() == git('show', binding['producerSourceSHA'] + ':' + guide.as_posix()),
+            'Actual reviewed installation guide changed')
+        final['guideSHA256'] = file_checksum(guide)
+        files = dict(files, **{name: raw.encode() for name, raw in source_reuse.items()})
     final.update(notaryContext=context, notaryJournals=journals, submittedDMGSHA256=submitted,
                  dmgSubmissionArtifact=artifact, dmgSubmissionPayloadArtifact=payload)
     files = dict(files, **{'submitted-dmg-proof.zip': raw})
@@ -1020,6 +1100,13 @@ def validate_binding(record, files, *, execution=False, chain=None):
             and set(files) == set(record.get("files", {}))
             and PROOF_FILES <= set(files) <= PROOF_FILES | OPTIONAL_PROOF_FILES, "Incomplete packaging provenance")
     require(('submitted-dmg-proof.zip' in files) == (record['stage'] == 'complete'), 'Packaging proof has the wrong submission stage')
+    require((set(files) & SOURCE_REUSE_FILES) == (SOURCE_REUSE_FILES if record['stage'] == 'complete' and compiled_signed_product(record) else set()),
+            'Source qualification proof has the wrong compiled stage')
+    require(('current-app-signature.reused.json' in files) == (record['stage'] in {'restored', 'complete'} and compiled_signed_product(record)),
+            'Current App signature proof has the wrong compiled stage')
+    if 'current-app-signature.reused.json' in files:
+        from compiled_app_release import verify_current_signature_reuse
+        verify_current_signature_reuse(json.loads(files['current-app-signature.reused.json']), record)
     for name, raw in files.items():
         require(record["files"][name] == {"bytes": len(raw), "sha256": digest(raw)}, "Packaging evidence bytes changed")
     product = revision(record.get("productSourceSHA"))
@@ -1065,7 +1152,9 @@ def validate_binding(record, files, *, execution=False, chain=None):
     previous_source = previous["producer"]["head_sha"]
     if previous_source not in {product, producer}:
         continuation = comparison(previous_source, producer)
-        require({entry["filename"] for entry in continuation["files"]} <= PACKAGING_PATHS,
+        from compiled_app_release import SIGNED_RESUME
+        allowed = PACKAGING_PATHS | COMPILED_PACKAGING_PATHS if product == SIGNED_RESUME['sourceSHA'] else PACKAGING_PATHS
+        require({entry["filename"] for entry in continuation["files"]} <= allowed,
                 "Packaging continuation changed unsupported inputs")
     original_build = previous["context"]["buildRunID"]
     require(original_build == record.get("originalSignedBuildRunID"), "Packaging selected another original signed build")
@@ -1085,16 +1174,18 @@ def validate_binding(record, files, *, execution=False, chain=None):
         matching_artifact(record["signedInput"]["originalNotary"]["artifact"], signed["originalNotary"]["artifact"])
         require(all(previous["journals"].get(key) == value for key, value in signed["originalNotary"]["journals"].items()),
                 "Previous state dropped or changed an original Apple submission")
-    require(signed["manifest"]["files"]["NexGenVideo.zip"]["sha256"] in previous["journals"],
+    require(signed.get('compiledProduct') == record.get('signedInput', {}).get('compiledProduct'), 'Compiled signed-product qualification changed')
+    require(signed["manifest"]["files"]["NexGenVideo.zip"]["sha256"] in previous["journals"] or compiled_first_notary(record),
             "Original App Apple submission disappeared")
     if record["stage"] != "input":
         require(record.get("restoredOriginal") == {"sourceSHA": product, "producerRun": original_build,
                 "appTreeSHA256": signed["manifest"]["appTreeSHA256"], "identity": signed["manifest"]["identity"]},
                 "Restored provenance differs from the original signed product")
         packs = record.get("originalPackArchives")
-        require(type(packs) is dict and packs and all(name.startswith(".build/plugins/") and name.endswith(".ngvpack.zip")
-                and checksum in previous["journals"] for name, checksum in packs.items()), "Restored pack provenance differs")
+        require(type(packs) is dict and packs and all(name.startswith(".build/plugins/") and name.endswith(".ngvpack.zip") for name in packs)
+                and qualified_pack_archives(packs, record), "Restored pack provenance differs")
     if record["stage"] == "complete":
+        manifest_app_sha = signed["manifest"]["files"]["NexGenVideo.zip"]["sha256"]
         final = record.get("final", {})
         app = final.get("app", {})
         require(app.get("NGVSourceCommit") == product
@@ -1109,6 +1200,19 @@ def validate_binding(record, files, *, execution=False, chain=None):
                 and type(final.get("notaryJournals")) is dict
                 and all(final["notaryJournals"].get(key) == value for key, value in previous["journals"].items())
                 and final["submittedDMGSHA256"] in final["notaryJournals"], "Complete proof lost known Apple submissions")
+        require(manifest_app_sha in final['notaryJournals'], 'Complete packaging lost the actual App Apple submission')
+        if compiled_signed_product(record):
+            from compiled_app_release import verify_source_reuse, PACK_SHA, PACK_TREE
+            source_reuse = final.get('bpySourceReuse')
+            require(type(source_reuse) is dict and set(source_reuse) == SOURCE_REUSE_FILES
+                and all(source_reuse[name].encode() == files[name] for name in SOURCE_REUSE_FILES),
+                'Complete source qualification bytes changed')
+            verify_source_reuse(source_reuse, product, producer, record['runID'])
+            require(final['bpySourceReceiptSHA256'] == digest(files['bpy-source-receipt.json'])
+                and final['packArchiveSHA256'] == PACK_SHA and final['packTreeSHA256'] == PACK_TREE,
+                'Complete compiled source or pack qualification differs')
+            require(final.get('guideSHA256') == digest(git('show', producer + ':scripts/Install NexGenVideo.txt')),
+                'Complete installation guide differs from its reviewed source')
         require('submitted-dmg-proof.zip' in files, 'Complete proof lacks the exact DMG submission payload proof')
         members = read_proof_archive(files['submitted-dmg-proof.zip'])
         require(set(members) == {'manifest.json'}, 'Unexpected submitted DMG proof members')

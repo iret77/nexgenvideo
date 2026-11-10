@@ -202,7 +202,8 @@ def install(args, evidence, *, allowed_paths=None):
                 from compiled_core_reuse import persist
                 pack_reuse = verify_pack_copy(external, 'local-dmg', dmg=dmg, evidence=evidence,
                     binding={'sourceSHA': args.source_sha, 'dmgSHA256': args.dmg_sha256,
-                        'appTreeSHA256': identity['app']['treeSHA256'], 'guideSHA256': sha256(guide)})
+                        'appTreeSHA256': identity['app']['treeSHA256'], 'guideSHA256': sha256(guide),
+                        **({'packaging': identity['packaging']} if 'packaging' in identity else {})})
                 persist(evidence / 'pack-source-signature.log', pack_reuse)
                 identity['externalPack'] = {'origin': 'mounted-dmg', 'filename': external.name,
                     'treeSHA256': LOCAL_PACK_TREE, 'dmgSHA256': args.dmg_sha256, 'guideSHA256': sha256(guide),
@@ -723,7 +724,8 @@ def run_local_musicvideo(args):
         from compiled_core_reuse import persist
         pack_reuse = verify_pack_copy(bundle, 'local-installed', dmg=Path(args.dmg), evidence=evidence,
             binding={'sourceSHA': args.source_sha, 'dmgSHA256': args.dmg_sha256,
-                'appTreeSHA256': identity['app']['treeSHA256'], 'guideSHA256': identity['externalPack']['guideSHA256']})
+                'appTreeSHA256': identity['app']['treeSHA256'], 'guideSHA256': identity['externalPack']['guideSHA256'],
+                **({'packaging': identity['packaging']} if 'packaging' in identity else {})})
         persist(evidence / 'pack-signature.log', pack_reuse)
         require(metadata(app, args.source_sha) == identity['app'], 'The normal app changed during installation')
         result.update(completed=True, identitySHA256=sha256(evidence / 'identity.json'), runtimeSHA256=sha256(evidence / 'runtime.json'),
@@ -784,7 +786,8 @@ def validate_local_pack_reuse(evidence, identity, revision, source_sha, dmg_sha2
             and identity.get('runID') == os.environ.get('GITHUB_RUN_ID') and identity.get('runAttempt') == '1'
             and revision == os.environ.get('GITHUB_SHA'), 'Local pack validator belongs to another current execution')
     binding = {'sourceSHA': source_sha, 'dmgSHA256': dmg_sha256,
-        'appTreeSHA256': identity.get('app', {}).get('treeSHA256'), 'guideSHA256': identity.get('externalPack', {}).get('guideSHA256')}
+        'appTreeSHA256': identity.get('app', {}).get('treeSHA256'), 'guideSHA256': identity.get('externalPack', {}).get('guideSHA256'),
+        **({'packaging': identity['packaging']} if 'packaging' in identity else {})}
     expected_producer = local_pack_runtime_origin(binding, expected_dmg_sha256=dmg_sha256)
     require(identity.get('externalPack', {}).get('verificationReuseSHA256') == sha256(evidence / 'pack-source-signature.log'),
             'Mounted-DMG pack admission bytes changed')

@@ -210,12 +210,22 @@ def restore(directory, expected_sha, destination):
                                       **({'packaging': binding['packaging']} if 'packaging' in binding else {}))
     require(retained == record['retainedRuntime'] and artifact == record['runtimeArtifact'], 'Original runtime or current harness changed')
     restore_runtime(artifact, retained, destination)
+    if 'packVerificationReuse' in retained:
+        record['packVerificationReuse'] = retained['packVerificationReuse']
     payload = destination.parent / (destination.name + '-retained-transfer') / 'payload'
     receipt = json.loads((payload / 'workspace-ui-input.json').read_text())
     require(digest(payload / 'workspace-ui-input.json') == record['producer']['runtimeInputSHA256']
             and digest(payload / 'bpy-source-receipt.json') == record['producer']['bpySourceReceiptSHA256'], 'Final runtime sidecar bytes changed')
     validate_producer(record['producer'], binding, receipt)
-    consume(destination / 'qualified-source', binding['sourceSHA'], payload / 'bpy-source-receipt.json')
+    from compiled_app_release import consume_packaging_source
+    reused = consume_packaging_source(destination / 'qualified-source', binding['sourceSHA'],
+        payload / 'bpy-source-receipt.json', retained.get('packaging'), context='settings-restore',
+        evidence=destination / 'bpy-source-consumer-reused.json')
+    if reused is None:
+        consume(destination / 'qualified-source', binding['sourceSHA'], payload / 'bpy-source-receipt.json')
+    else:
+        record['sourceReuse'] = reused['reuse']
+        record['sourceReuseSHA256'] = reused['evidenceSHA256']
     actual = snapshot(destination / 'NexGenVideo.app/Contents/MacOS/NexGenVideo', destination / 'plugins/musicvideo.ngvpack')
     validate_snapshot(actual, binding)
     require(gui_tools().metadata(destination / 'NexGenVideo.app', binding['sourceSHA']) == record['producer']['app'],

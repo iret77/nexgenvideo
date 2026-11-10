@@ -67,6 +67,7 @@ class NativeCurrentCohortTests(unittest.TestCase):
             'scripts/fixtures/compiled-core-reuse-886.json', '.github/workflows/release.yml', 'scripts/bundle.sh',
             'scripts/verify_dmg_copy.py', 'scripts/test_release_dmg_packaging.py', 'scripts/test_release_workflow.py'}
         for changed in ('valid', *('ui:' + name for name in sorted(cohort.UI_CI_PATHS)),
+                        *('ui:' + name for name in sorted(cohort.CI_PATHS - cohort.UI_CI_PATHS)),
                         *('ui:' + name for name in sorted(core_paths)), 'app-pin', 'missing-merge',
                         'different-source-run', 'different-native9', 'ui-with-native9', 'unreviewed-delta',
                         'unreviewed-ui-sibling', 'unreviewed-core-sibling', 'unreviewed-packaging-sibling', 'core-with-native9',
