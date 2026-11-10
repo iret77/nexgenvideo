@@ -223,6 +223,11 @@ def restore(directory, expected_sha, destination):
         evidence=destination / 'bpy-source-consumer-reused.json')
     if reused is None:
         consume(destination / 'qualified-source', binding['sourceSHA'], payload / 'bpy-source-receipt.json')
+        if (destination / 'qualified-source/bpy-source-consumer-reused.json').exists():
+            from consume_bpy_distributable_source import verify_reuse
+            proof_path = destination / 'bpy-source-consumer-reused.json'
+            record['sourceReuse'] = verify_reuse(destination / 'qualified-source', binding['sourceSHA'], proof_path)
+            record['sourceReuseSHA256'] = digest(proof_path)
     else:
         record['sourceReuse'] = reused['reuse']
         record['sourceReuseSHA256'] = reused['evidenceSHA256']

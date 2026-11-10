@@ -1,5 +1,8 @@
 import argparse
+import datetime
+import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -19,6 +22,98 @@ RECEIPT = 'bpy-source-receipt.json'
 SCHEMA = 'nexgenvideo/bpy-source-receipt/1'
 SHA = re.compile(r'[0-9a-f]{64}')
 COMMIT = re.compile(r'[0-9a-f]{40}')
+QUALIFIED_HANDOFF = {
+    'originalReceiptSHA256': 'e28a77d6f63e7c7a6a5282428c202cd5027ae1684949a60e78d9b90dec840a53',
+    'publicSourceAssetSHA256': '8e3f678144da89beccf5fbc6a379c4fec8cef25f40a2c5cbf351f7b5baed37ea',
+    'validationSHA256': 'fdbcc4dcc4e978041a799f8ce2d90cfa9475a178d37aa3714c292551438e3730'}
+
+
+def canonical_sha(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'),
+        ensure_ascii=True, allow_nan=False).encode()).hexdigest()
+
+
+def qualified_handoff(receipt, public, source_sha):
+    require_receipt(receipt, public, source_sha)
+    if (canonical_sha(public) != QUALIFIED_HANDOFF['publicSourceAssetSHA256']
+        or canonical_sha(receipt['validation']) != QUALIFIED_HANDOFF['validationSHA256']
+        or receipt['origin'] != {'kind': 'actions', 'producer': public['producer']}):
+        raise ValueError('Source receipt lacks the exact qualified original validation and producer')
+    return receipt
+
+
+def physical_directory(directory, *, create=False):
+    from compiled_app_release import source_directory_identity
+    path = directory.absolute()
+    bases = [Path(os.environ[key]).absolute() for key in ('RUNNER_TEMP', 'GITHUB_WORKSPACE')
+        if os.environ.get(key) and path.is_relative_to(Path(os.environ[key]).absolute())
+        and path != Path(os.environ[key]).absolute()]
+    if not bases:
+        raise ValueError('Source reuse directory has no owned CI root')
+    base = max(bases, key=lambda item: len(item.parts))
+    if not base.is_dir() or base.is_symlink() or '..' in path.relative_to(base).parts:
+        raise ValueError('Source reuse root is missing, linked or escaping')
+    cursor = base
+    for part in path.relative_to(base).parts:
+        cursor = cursor / part
+        if create and not cursor.exists() and not cursor.is_symlink(): cursor.mkdir()
+        if not cursor.is_dir() or cursor.is_symlink():
+            raise ValueError('Source reuse directory has a missing or linked ancestor')
+    return base, source_directory_identity(path, base)
+
+
+def persist_raw(path, raw):
+    from compiled_app_release import source_directory_identity
+    base, anchor = physical_directory(path.parent, create=True)
+    descriptor = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        info = os.fstat(descriptor)
+        if (info.st_dev, info.st_ino) != anchor[1:]:
+            raise ValueError('Source reuse output parent changed')
+        target = os.open(path.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644, dir_fd=descriptor)
+        with os.fdopen(target, 'wb') as stream:
+            stream.write(raw); stream.flush(); os.fsync(stream.fileno())
+        os.fsync(descriptor)
+    finally: os.close(descriptor)
+    source_directory_identity(path.parent, base, anchor)
+
+
+def persist(path, value):
+    persist_raw(path, (json.dumps(value, indent=2, allow_nan=False) + '\n').encode())
+
+
+def verify_reuse(directory, source_sha, evidence=None):
+    public = public_asset(json.loads(LOCK_PATH.read_text()))
+    path = directory / 'bpy-source-consumer-reused.json'
+    if path.is_symlink() or not path.is_file():
+        raise ValueError('Source reuse proof is missing or linked')
+    proof = json.loads(path.read_text())
+    receipt_path = directory / RECEIPT
+    if receipt_path.is_symlink() or not receipt_path.is_file():
+        raise ValueError('Source reuse receipt is missing or linked')
+    raw = receipt_path.read_bytes()
+    receipt = qualified_handoff(json.loads(raw), public, source_sha)
+    require_pair(directory, public)
+    if (proof.get('schema') != 'qualified-bpy-source-handoff-reuse/v1' or proof.get('state') != 'REUSED'
+        or proof.get('consumerSourceSHA') != source_sha or proof.get('qualification') != QUALIFIED_HANDOFF
+        or proof.get('validation') != receipt['validation'] or proof.get('publicSourceAsset') != public
+        or proof.get('receiptSHA256') != hashlib.sha256(raw).hexdigest()
+        or proof.get('semanticSourceValidationPerformed') is not False
+        or proof.get('runID') != os.environ.get('GITHUB_RUN_ID')
+        or proof.get('attempt') != os.environ.get('GITHUB_RUN_ATTEMPT')
+        or proof.get('job') != os.environ.get('GITHUB_JOB')
+        or proof.get('sourceDirectory') != str(directory.resolve())
+        or proof.get('freshOrigin') != receipt['origin']):
+        raise ValueError('Source reuse proof lost its original qualification or current consumer')
+    from compiled_app_release import source_directory_identity, verify_source_origin
+    base, _ = physical_directory(directory)
+    source_directory_identity(directory, base, tuple(proof.get('directoryAnchor', ())))
+    verify_source_origin(proof.get('originEvidence', {}), public, proof['acquiredAt'])
+    if evidence is not None:
+        if evidence.exists() or evidence.is_symlink():
+            raise ValueError('Source reuse evidence destination is occupied')
+        persist(evidence, proof)
+    return proof
 
 
 def public_asset(lock):
@@ -160,18 +255,63 @@ def consume(directory, source_sha, receipt_path=None):
     if not COMMIT.fullmatch(source_sha):
         raise ValueError('An exact consumer source commit is required')
     public = public_asset(json.loads(LOCK_PATH.read_text()))
+    handoff = None
     if receipt_path is not None:
-        require_receipt(json.loads(receipt_path.read_text()), public, source_sha)
-    directory.mkdir(parents=True, exist_ok=True)
+        if receipt_path.is_symlink() or not receipt_path.is_file():
+            raise ValueError('Source handoff receipt is missing or linked')
+        handoff_raw = receipt_path.read_bytes()
+        handoff = qualified_handoff(json.loads(handoff_raw), public, source_sha)
+    if handoff is not None:
+        base, anchor = physical_directory(directory, create=True)
+        output_receipt = directory / RECEIPT
+        if output_receipt.is_symlink() or (output_receipt.exists()
+                and output_receipt.absolute() != receipt_path.absolute()):
+            raise ValueError('Source handoff output receipt is occupied or linked')
+    else:
+        directory.mkdir(parents=True, exist_ok=True)
     if any((directory / public[key]).exists() for key in ('filename', 'manifestFilename')):
         raise ValueError('Source output already exists; refusing to replace or trust partial bytes')
-    release = released(public)
-    origin = copy_release(release, public, directory) if release else copy_actions(public, directory)
+    if handoff is None:
+        release = released(public)
+        origin = copy_release(release, public, directory) if release else copy_actions(public, directory)
+    else:
+        from compiled_app_release import acquire_source_pair, commit_source_pair, source_directory_identity
+        with tempfile.TemporaryDirectory(prefix='qualified-bpy-handoff-') as temporary:
+            stage = Path(temporary)
+            origin_evidence = acquire_source_pair(public, stage)
+            commit_source_pair(stage, directory, public, base, anchor)
+        source_directory_identity(directory, base, anchor)
+        origin = {'kind': 'actions', 'producer': public['producer']}
     archive, manifest = require_pair(directory, public)
-    validation = validate(archive, manifest)
+    if handoff is not None and receipt_path.read_bytes() != handoff_raw:
+        raise ValueError('Source handoff receipt changed during acquisition')
+    validation = handoff['validation'] if handoff is not None else validate(archive, manifest)
     receipt = {'schema': SCHEMA, 'sourceSHA': source_sha, 'publicSourceAsset': public,
                'origin': origin, 'validation': validation}
-    (directory / RECEIPT).write_text(json.dumps(receipt, indent=2, sort_keys=True) + '\n')
+    encoded = (json.dumps(receipt, indent=2, sort_keys=True) + '\n').encode()
+    if handoff is None:
+        (directory / RECEIPT).write_bytes(encoded)
+    else:
+        source_directory_identity(directory, base, anchor)
+        replacement = directory / 'bpy-source-handoff-current.json'
+        persist_raw(replacement, encoded)
+        if output_receipt.is_symlink():
+            raise ValueError('Source handoff output receipt became linked')
+        replacement.replace(output_receipt)
+        descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try: os.fsync(descriptor)
+        finally: os.close(descriptor)
+    if handoff is not None:
+        persist(directory / 'bpy-source-consumer-reused.json', {
+            'schema': 'qualified-bpy-source-handoff-reuse/v1', 'state': 'REUSED',
+            'consumerSourceSHA': source_sha, 'qualification': QUALIFIED_HANDOFF,
+            'inputReceiptSHA256': hashlib.sha256(handoff_raw).hexdigest(),
+            'receiptSHA256': digest(directory / RECEIPT), 'publicSourceAsset': public,
+            'validation': validation, 'freshOrigin': origin, 'semanticSourceValidationPerformed': False,
+            'originEvidence': origin_evidence, 'directoryAnchor': anchor,
+            'runID': os.environ.get('GITHUB_RUN_ID'), 'attempt': os.environ.get('GITHUB_RUN_ATTEMPT'),
+            'job': os.environ.get('GITHUB_JOB'), 'sourceDirectory': str(directory.resolve()),
+            'acquiredAt': datetime.datetime.now(datetime.timezone.utc).isoformat()})
     return receipt
 
 
@@ -180,8 +320,13 @@ def main():
     parser.add_argument('--output-directory', required=True, type=Path)
     parser.add_argument('--source-sha', required=True)
     parser.add_argument('--receipt', type=Path)
+    parser.add_argument('--verify-reuse', action='store_true')
+    parser.add_argument('--reuse-evidence', type=Path)
     args = parser.parse_args()
-    consume(args.output_directory, args.source_sha, args.receipt)
+    if args.verify_reuse:
+        verify_reuse(args.output_directory, args.source_sha, args.reuse_evidence)
+    else:
+        consume(args.output_directory, args.source_sha, args.receipt)
 
 
 if __name__ == '__main__':

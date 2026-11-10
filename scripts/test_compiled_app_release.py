@@ -689,6 +689,7 @@ class CompiledAppReleaseTests(unittest.TestCase):
                     archive.writestr('binding.json', json.dumps(binding))
                     archive.writestr('prepared.json', json.dumps(prepared))
                     if case == 'metadata-decoy': archive.writestr('bank-runtime-manifest.json', b'untrusted decoy')
+                roles['metadata']['artifactSHA256'] = hashlib.sha256(metadata_zip.read_bytes()).hexdigest()
                 manifest = {'binaryRoot': '/original/Release', 'files': {}}
                 raw_manifest = json.dumps(manifest, sort_keys=True).encode()
                 with zipfile.ZipFile(runtime_zip, 'w') as archive:

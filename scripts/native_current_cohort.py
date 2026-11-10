@@ -30,7 +30,11 @@ CI_PATHS = {'scripts/native_current_cohort.py', 'scripts/test_native_current_coh
     '.github/actions/prepare-bpy-source/action.yml', '.github/workflows/bpy-runtime-acceptance.yml',
     'scripts/workspace_native_ci.py', 'scripts/test_workspace_native_ci.py',
     'scripts/release_acceptance_identity.py', 'scripts/test_release_acceptance_identity.py',
-    'scripts/retained_release_runtime.py', 'scripts/test_retained_release_runtime.py'} | UI_CI_PATHS
+    'scripts/retained_release_runtime.py', 'scripts/test_retained_release_runtime.py',
+    'scripts/consume_bpy_distributable_source.py', 'scripts/test_consume_bpy_distributable_source.py',
+    'scripts/test_compiled_component_assembly.py',
+    'scripts/release_test_repair.py', 'scripts/test_release_test_repair.py',
+    '.github/workflows/settings-owner-acceptance.yml'} | UI_CI_PATHS
 
 
 def objects(ref):

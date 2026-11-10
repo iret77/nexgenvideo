@@ -219,9 +219,15 @@ jobs:
             scripts/verify_bpy_bundle.sh "$APP" --development
           fi
           if [ -z "${PACKAGING_PRODUCER_SOURCE:-}${PACKAGING_PROVENANCE_ARTIFACT_ID:-}${PACKAGING_PROVENANCE_ARTIFACT_SHA256:-}" ]; then
+            if [ -f "$RUNNER_TEMP/source/bpy-source-consumer-reused.json" ]; then
+              python3 scripts/consume_bpy_distributable_source.py --verify-reuse \
+                --output-directory "$RUNNER_TEMP/source" --source-sha "$EXPECTED_SOURCE" \
+                --reuse-evidence "$RUNNER_TEMP/evidence/bpy-source-consumer-reused.json"
+            else
             python3 scripts/verify_bpy_distributable_source.py \
               "$RUNNER_TEMP/source/NexGenVideo-bpy-5.2.2-corresponding-source.tar" \
               "$RUNNER_TEMP/source/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json"
+            fi
           else
           python3 - <<'PYTHON'
           import json, os, sys

@@ -363,6 +363,11 @@ def prepare(directory, identity_file):
     if reused is not None:
         identity['sourceReuse'] = reused['reuse']
         identity['sourceReuseSHA256'] = reused['evidenceSHA256']
+    elif (directory / 'qualified-source/bpy-source-consumer-reused.json').exists():
+        from consume_bpy_distributable_source import verify_reuse
+        path = identity_file.parent / 'bpy-source-consumer-reused.json'
+        identity['sourceReuse'] = verify_reuse(directory / 'qualified-source', identity['sourceSHA'], path)
+        identity['sourceReuseSHA256'] = sha(path)
     validation = qualified['validation']
     receipt = runtime_receipt(directory, identity)
     identity.update(planSHA256=sha(identity_file.parent / 'plan.json'),

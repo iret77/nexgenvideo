@@ -2,6 +2,7 @@ import copy
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -151,6 +152,127 @@ class QualifiedSourceConsumerTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'explicit source qualification rebuild'):
                 source.copy_actions(self.public, self.root)
             fetch.assert_not_called()
+
+    def handoff_fixture(self):
+        self.public['producer']['jobAttempt'] = 1
+        receipt = self.receipt()
+        receipt['validation'].update(schema='nexgenvideo/bpy-distributable-source-validation/1',
+            correspondenceComplete=True, noticeComplete=True, sources=144, notices=965)
+        encoded = (json.dumps(receipt, indent=2, sort_keys=True) + '\n').encode()
+        qualification = {'originalReceiptSHA256': hashlib.sha256(encoded).hexdigest(),
+            'publicSourceAssetSHA256': source.canonical_sha(self.public),
+            'validationSHA256': source.canonical_sha(receipt['validation'])}
+        intake = self.root / 'intake'; intake.mkdir()
+        path = intake / 'receipt.json'; path.write_bytes(encoded)
+        run, artifact, job = self.producer_metadata()
+        run['run_attempt'] = job['run_attempt'] = 1
+        artifact['expires_at'] = '2099-01-01T00:00:00Z'
+        origin = {'run': run, 'job': job, 'artifact': artifact}
+        lock = self.root / 'lock.json'; lock.write_text(json.dumps(self.lock))
+        environment = {'RUNNER_TEMP': str(self.root), 'GITHUB_WORKSPACE': str(intake),
+            'GITHUB_RUN_ID': '55', 'GITHUB_RUN_ATTEMPT': '1', 'GITHUB_JOB': 'runtime'}
+        def acquire(public, stage):
+            (stage / public['filename']).write_bytes(b'original')
+            (stage / public['manifestFilename']).write_bytes(b'{}')
+            return copy.deepcopy(origin)
+        return receipt, qualification, path, lock, environment, acquire
+
+    def test_exact_original_handoff_reuses_semantics_after_fresh_pair_and_origin_acquisition(self):
+        import compiled_app_release as release
+        receipt, pins, intake, lock, environment, acquire = self.handoff_fixture()
+        destination = self.root / 'output'
+        with patch.dict(os.environ, environment), patch.object(source, 'LOCK_PATH', lock), \
+                patch.object(source, 'QUALIFIED_HANDOFF', pins), patch.object(source, 'validate') as validate, \
+                patch.object(release, 'acquire_source_pair', side_effect=acquire) as fetch:
+            actual = source.consume(destination, self.sha, intake)
+            proof = source.verify_reuse(destination, self.sha, self.root / 'evidence/source.json')
+            self.assertEqual(actual['validation'], receipt['validation'])
+            self.assertEqual(proof['validation'], receipt['validation'])
+            self.assertEqual(proof['originEvidence']['artifact']['id'], self.public['producer']['artifactID'])
+            self.assertFalse(proof['semanticSourceValidationPerformed'])
+            self.assertEqual(proof['state'], 'REUSED')
+            self.assertEqual(intake.read_bytes(), (json.dumps(receipt, indent=2, sort_keys=True) + '\n').encode())
+            fetch.assert_called_once(); validate.assert_not_called()
+
+    def test_handoff_rejects_unqualified_semantics_or_wrong_consumer_before_acquisition(self):
+        import compiled_app_release as release
+        receipt, pins, intake, lock, environment, acquire = self.handoff_fixture()
+        changes = [('sourceSHA', 'c' * 40), ('validation', {**receipt['validation'], 'noticeComplete': False}),
+            ('validation', {**receipt['validation'], 'sources': 145}), ('origin', {'kind': 'actions', 'producer': {}})]
+        with patch.dict(os.environ, environment), patch.object(source, 'LOCK_PATH', lock), \
+                patch.object(source, 'QUALIFIED_HANDOFF', pins), patch.object(source, 'validate') as validate, \
+                patch.object(release, 'acquire_source_pair') as fetch:
+            for key, value in changes:
+                intake.write_text(json.dumps({**receipt, key: value}))
+                with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                    source.consume(self.root / 'output', self.sha, intake)
+            fetch.assert_not_called(); validate.assert_not_called()
+
+    def test_handoff_receipt_and_output_parent_links_never_write_outside_owned_directory(self):
+        import compiled_app_release as release
+        receipt, pins, intake, lock, environment, acquire = self.handoff_fixture()
+        outside = self.root / 'outside'; outside.mkdir(); sentinel = outside / 'receipt.json'; sentinel.write_bytes(b'preserve')
+        destination = self.root / 'linked-receipt'; destination.mkdir()
+        (destination / source.RECEIPT).symlink_to(sentinel)
+        parent = self.root / 'linked-parent'; parent.symlink_to(outside, target_is_directory=True)
+        with patch.dict(os.environ, environment), patch.object(source, 'LOCK_PATH', lock), \
+                patch.object(source, 'QUALIFIED_HANDOFF', pins), patch.object(release, 'acquire_source_pair') as fetch:
+            for target in (destination, parent / 'output'):
+                with self.subTest(target=target), self.assertRaises(ValueError): source.consume(target, self.sha, intake)
+            fetch.assert_not_called()
+        self.assertEqual(sentinel.read_bytes(), b'preserve')
+        self.assertFalse((outside / 'output').exists())
+
+    def test_handoff_destination_replacement_during_acquisition_fails_before_pair_commit(self):
+        import compiled_app_release as release
+        receipt, pins, intake, lock, environment, acquire = self.handoff_fixture()
+        destination = self.root / 'output'
+        def replace(public, stage):
+            result = acquire(public, stage)
+            destination.rename(self.root / 'retired-output'); destination.mkdir()
+            return result
+        with patch.dict(os.environ, environment), patch.object(source, 'LOCK_PATH', lock), \
+                patch.object(source, 'QUALIFIED_HANDOFF', pins), patch.object(source, 'validate') as validate, \
+                patch.object(release, 'acquire_source_pair', side_effect=replace):
+            with self.assertRaisesRegex(ValueError, 'replaced'): source.consume(destination, self.sha, intake)
+            validate.assert_not_called()
+        self.assertEqual(list(destination.iterdir()), [])
+        self.assertTrue(intake.is_file())
+
+    def test_reuse_verifier_rejects_changed_evidence_pair_or_linked_evidence_parent(self):
+        import compiled_app_release as release
+        receipt, pins, intake, lock, environment, acquire = self.handoff_fixture()
+        destination = self.root / 'output'
+        outside = self.root / 'outside'; outside.mkdir()
+        linked = self.root / 'linked-evidence'; linked.symlink_to(outside, target_is_directory=True)
+        with patch.dict(os.environ, environment), patch.object(source, 'LOCK_PATH', lock), \
+                patch.object(source, 'QUALIFIED_HANDOFF', pins), patch.object(source, 'validate') as validate, \
+                patch.object(release, 'acquire_source_pair', side_effect=acquire):
+            source.consume(destination, self.sha, intake)
+            path = destination / 'bpy-source-consumer-reused.json'; original = path.read_bytes(); proof = json.loads(original)
+            for key, value in [('semanticSourceValidationPerformed', True), ('runID', '56'),
+                    ('qualification', {}), ('originEvidence', {}), ('directoryAnchor', [])]:
+                path.write_text(json.dumps({**proof, key: value}))
+                with self.subTest(key=key), self.assertRaises(ValueError): source.verify_reuse(destination, self.sha)
+            path.write_bytes(original)
+            with self.assertRaises(ValueError): source.verify_reuse(destination, self.sha, linked / 'proof.json')
+            (destination / self.public['filename']).write_bytes(b'corrupt!')
+            with self.assertRaises(ValueError): source.verify_reuse(destination, self.sha)
+            validate.assert_not_called()
+        self.assertEqual(list(outside.iterdir()), [])
+
+    def test_no_handoff_still_performs_fresh_semantic_validation(self):
+        receipt, pins, intake, lock, environment, acquire = self.handoff_fixture()
+        def copy_original(public, directory):
+            acquire(public, directory)
+            return receipt['origin']
+        destination = self.root / 'output'
+        with patch.dict(os.environ, environment), patch.object(source, 'LOCK_PATH', lock), \
+                patch.object(source, 'released', return_value=None), patch.object(source, 'copy_actions', side_effect=copy_original), \
+                patch.object(source, 'validate', return_value=receipt['validation']) as validate:
+            source.consume(destination, self.sha)
+            validate.assert_called_once()
+        self.assertFalse((destination / 'bpy-source-consumer-reused.json').exists())
 
 
 if __name__ == '__main__':
