@@ -1133,7 +1133,7 @@ jobs:
           receipt: .build/bpy-source/bpy-source-receipt.json
 
       - name: Preserve compiled source handoff and signature reuse evidence
-        if: always() && (inputs.compiled_app_targets_json != '' || inputs.retained_product_source_sha == '58644c62e3a01c03ffcc46a1969e3f69bd296942')
+        if: always() && (inputs.compiled_app_targets_json != '' || inputs.retained_product_source_sha == '58644c62e3a01c03ffcc46a1969e3f69bd296942' || inputs.retained_product_source_sha == 'a1375966dbe6d2dd7b918c726f09ac5d1f4f16fb')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-compiled-source-handoff-${{ github.run_id }}-a${{ github.run_attempt }}
@@ -1143,6 +1143,7 @@ jobs:
             .build/bpy-source/bpy-source-reuse.json
             .build/bpy-source/bpy-source-consumer-reused.json
             ${{ runner.temp }}/release-signed-binding/current-app-signature.reused.json
+            ${{ runner.temp }}/release-signed-binding/component-native-checks.reused.json
           if-no-files-found: ignore
           retention-days: 90
 
@@ -1193,6 +1194,7 @@ jobs:
           done
 
       - name: Verify pack links the SHARED engine (guards the PackEntry-cast regression)
+        if: env.NGV_COMPONENT_NOTARY_CONTINUATION != 'true'
         run: |
           set -euo pipefail
           # Same Mach-O invariant ci.yml asserts on the ad-hoc pack, now on the SIGNED release pack:
@@ -1213,6 +1215,7 @@ jobs:
           echo "OK: NexGenEngine is one shared dynamic image across app + pack"
 
       - name: Load-test — the SIGNED app actually loads the SIGNED pack from an EXTERNAL dir
+        if: env.NGV_COMPONENT_NOTARY_CONTINUATION != 'true'
         run: |
           set -euo pipefail
           # This is the check that was MISSING here: release.yml published the pack the app reads
@@ -1251,6 +1254,12 @@ jobs:
           echo "loading the notarized, quarantined archive with the real signed app binary…"
           NGV_SELFTEST_PACK="$PACK_BUNDLE" .build/NexGenVideo.app/Contents/MacOS/NexGenVideo
           echo "OK: the signed app loaded the notarized pack under download quarantine"
+
+      - name: Verify retained signature, shared links and actual external pack load evidence
+        if: env.NGV_COMPONENT_NOTARY_CONTINUATION == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/compiled_component_reuse.py verify-native
 
       - name: Verify pack assembly did not mutate tracked source
         run: scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist
@@ -1306,6 +1315,15 @@ jobs:
           path: ${{ runner.temp }}/release-notary-state/*.json
           if-no-files-found: error
           retention-days: 7
+
+      - name: Retain existing App notarization observations
+        if: always() && env.NGV_COMPONENT_NOTARY_CONTINUATION == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-existing-app-notary-observations-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-notary-state/observations
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Verify the exact DMG users install
         env:

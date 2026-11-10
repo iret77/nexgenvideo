@@ -27,7 +27,7 @@ PROOF_FILES = {"harness-source.json", "harness-source-original-proof.zip", "harn
                "product-source.json", "product-source-original-proof.zip", "product-source-original-job.log",
                "signed-proof.zip", "prior-notary-state.zip", "original-api-evidence.zip"}
 SOURCE_REUSE_FILES = {"bpy-source-original-receipt.json", "bpy-source-receipt.json", "bpy-source-reuse.json"}
-OPTIONAL_PROOF_FILES = {"original-notary-state.zip", "submitted-dmg-proof.zip", "current-app-signature.reused.json"} | SOURCE_REUSE_FILES
+OPTIONAL_PROOF_FILES = {"original-notary-state.zip", "submitted-dmg-proof.zip", "current-app-signature.reused.json", "component-native-checks.reused.json", "component-notary-observations.zip"} | SOURCE_REUSE_FILES
 PRODUCT_OBJECTS = ("Sources", "Engine", "Tests", "Runtime", "Metal", "Vendor", "plugins",
                    "Package.swift", "Package.resolved", "assets")
 VERIFIER_INPUTS = ('scripts/retained_packaging.py', 'scripts/retained_app_test_products.py',
@@ -42,6 +42,7 @@ VERIFIER_INPUTS += ('scripts/native_current_cohort.py', 'scripts/native_xctest_h
                     'scripts/native_app_target_build.py', 'scripts/native_app_target_recipe.py',
                     'scripts/native_app_build_plan.py', 'scripts/fixtures/native-test-entry-point.json')
 VERIFIER_INPUTS += ('scripts/consume_bpy_distributable_source.py',)
+VERIFIER_INPUTS += ('scripts/compiled_component_reuse.py', 'scripts/notary_continuation.py')
 PACKAGING_PATHS = {
     "scripts/plan_dmg_capacity.py", "scripts/test_release_dmg_packaging.py",
     "scripts/retained_packaging.py", "scripts/test_retained_packaging.py",
@@ -334,8 +335,7 @@ def root_objects(source):
 def source_closure(product, producer, *, local=False):
     require(product != producer, "Retained packaging requires distinct product and packaging sources")
     changed = comparison(product, producer)
-    from compiled_app_release import SIGNED_RESUME
-    allowed = PACKAGING_PATHS | COMPILED_PACKAGING_PATHS if product == SIGNED_RESUME['sourceSHA'] else PACKAGING_PATHS
+    allowed = packaging_paths(product)
     require({entry["filename"] for entry in changed["files"]} <= allowed,
             "Retained packaging changed product or unsupported harness inputs")
     product_tree, objects = root_objects(product)
@@ -454,10 +454,13 @@ def signed_input(run_id, product):
             and builder.get("status") == "completed" and builder.get("conclusion") == "success",
             "Original signed builder did not pass")
     from compiled_app_release import signed_resume_source, verify_signed_resume
+    import compiled_component_reuse as component
     compiled = signed_resume_source(run_id, product)
     required_steps = ('Assemble and sign the new App with unchanged retained components',
         'Record compiled App signed input without invoking a build', 'Retain signed build input', 'Retain signed build proof') if compiled else (
         'Build and sign app', 'Retain signed build input', 'Retain signed build proof')
+    if component.matches(run_id, product):
+        required_steps = component.STEPS
     for name in required_steps:
         steps = [step for step in builder.get("steps", []) if step.get("name") == name]
         require(len(steps) == 1 and steps[0].get("conclusion") == "success", "Original signed stage did not pass: " + name)
@@ -481,10 +484,14 @@ def signed_input(run_id, product):
             'Unexpected or oversized original signed proof entries')
     manifest = verify_manifest(json.loads(members['manifest.json']), product, run_id)
     compiled_product = verify_signed_resume(producer, builder, artifacts[prefix], artifacts[prefix + '-proof'], members['manifest.json'], verifier=verify_artifact) if compiled else None
+    component_product = component.verify_origin(producer, builder, artifacts[prefix], artifacts[prefix + '-proof'], members['manifest.json'], verifier=verify_artifact) if component.matches(run_id, product) else None
+    if component_product:
+        component.verify_native_originals(producer, builder)
     original_notary, original_state = original_journals(producer, product, jobs, inventory)
     return {"producer": producer, "builder": builder, "payloadArtifact": artifacts[prefix],
             "proofArtifact": artifacts[prefix + "-proof"], "manifest": manifest,
-            "originalNotary": original_notary, **({"compiledProduct": compiled_product} if compiled_product else {})}, proof, original_state
+            "originalNotary": original_notary, **({"compiledProduct": compiled_product} if compiled_product else {}),
+            **({"componentProduct": component_product} if component_product else {})}, proof, original_state
 
 
 def artifact_bytes(artifact, maximum):
@@ -714,6 +721,27 @@ def prior_notary(run_id, product, *, packaging=None, chain=None):
         require(parent["record"]["originalSignedBuildRunID"] == context["buildRunID"], "Parent packaging proof selected another signed build")
         result["parentProvenance"] = {**packaging, "runID": run_id, "productSourceSHA": product,
                                      "rawProofSHA256": parent["rawProofSHA256"]}
+        from compiled_component_reuse import qualified
+        if checkpoint is not None and qualified(parent['record']):
+            from notary_continuation import observation_members, observation_scope, verify_observations
+            name = 'release-existing-app-notary-observations-' + str(run_id) + '-a1'
+            matches = [item for item in inventory['artifacts'] if item.get('name') == name]
+            require(len(matches) == 1, 'Saved component DMG lost its accepted App observation artifact')
+            artifact = api('actions/artifacts/' + str(matches[0]['id']))
+            checksum = artifact.get('digest', '').removeprefix('sha256:')
+            require(re.fullmatch('[a-f0-9]{64}', checksum), 'Saved App observation artifact lacks its digest')
+            verify_artifact(artifact, producer, job, artifact['id'], checksum, name)
+            observation = artifact_bytes(artifact, 512 * 1024)
+            verify_observations(observation_members(observation), parent['record'])
+            steps = {step.get('name'): step.get('conclusion') for step in job.get('steps', [])}
+            require(steps.get('Notarize and staple app') == 'success' or
+                steps.get('Notarize and staple app') == 'skipped' and steps.get('Restore saved notarization and DMG') == 'success',
+                'Saved component DMG has no successful original App notarization or authenticated restore')
+            result['acceptedAppNotary'] = {'schema': 'component-accepted-app-notary-reuse/v1', 'state': 'REUSED',
+                'artifact': artifact, 'archiveSHA256': checksum, 'archiveHex': observation.hex(),
+                'originScope': parent['record']['previousNotary']['acceptedAppNotary']['originScope']
+                    if parent['record']['previousNotary'].get('acceptedAppNotary') is not None else observation_scope(parent['record']),
+                'newAppleOperationPerformed': False}
     return result, raw
 
 
@@ -874,6 +902,19 @@ def compiled_signed_product(record):
             'freshCompilerCoreAssemblyOrRootSignPerformed': False})
 
 
+def retained_compiled_product(record):
+    from compiled_component_reuse import qualified
+    return compiled_signed_product(record) or qualified(record)
+
+
+def packaging_paths(product):
+    from compiled_app_release import SIGNED_RESUME
+    from compiled_component_reuse import ORIGIN, PATHS
+    if product == ORIGIN['sourceSHA']:
+        return set(PATHS)
+    return PACKAGING_PATHS | COMPILED_PACKAGING_PATHS if product == SIGNED_RESUME['sourceSHA'] else PACKAGING_PATHS
+
+
 def compiled_first_notary(record):
     from compiled_app_release import SIGNED_RESUME
     previous = record.get('previousNotary', {})
@@ -886,7 +927,7 @@ def compiled_first_notary(record):
 
 def qualified_pack_archives(packs, record):
     from compiled_app_release import PACK_SHA
-    if compiled_signed_product(record):
+    if retained_compiled_product(record):
         return packs == {'.build/plugins/musicvideo.ngvpack.zip': PACK_SHA}
     return bool(packs) and all(value in record['previousNotary']['journals'] for value in packs.values())
 
@@ -908,6 +949,13 @@ def record_restored(root, signed_root):
         require(signature.is_file() and not signature.is_symlink(), 'Current App signature reuse proof is missing')
         raw = signature.read_bytes()
         verify_current_signature_reuse(json.loads(raw), record)
+        files = dict(files, **{signature.name: raw})
+    from compiled_component_reuse import qualified, verify_native_record
+    if qualified(record):
+        signature = signed_root / 'component-native-checks.reused.json'
+        require(signature.is_file() and not signature.is_symlink(), 'Component native reuse proof is missing')
+        raw = signature.read_bytes()
+        verify_native_record(json.loads(raw), record)
         files = dict(files, **{signature.name: raw})
     copied = dict(record, stage="restored", restoredOriginal=restored, originalPackArchives=packs)
     copied['files'] = {name: {'bytes': len(raw), 'sha256': digest(raw)} for name, raw in files.items()}
@@ -1011,9 +1059,24 @@ def record_complete(root, app, archive_sha, source_receipt_sha, pack_archive):
     binding = current_binding()
     require(binding is not None, "Complete retained packaging requires its validated original input")
     restored, files = read_stage(root, "restored")
+    from compiled_component_reuse import qualified
+    if qualified(binding):
+        from notary_continuation import ARCHIVE, verify_observations
+        from consume_bpy_distributable_source import physical_directory
+        directory = Path(os.environ['NOTARY_STATE_DIR']) / 'observations' / ARCHIVE
+        physical_directory(directory)
+        require(all(path.is_file() and not path.is_symlink() for path in directory.iterdir()), 'App observation originals are linked or special')
+        observations = {path.name: path.read_bytes() for path in directory.iterdir()}
+        verify_observations(observations, binding)
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+            for name, raw in sorted(observations.items()): archive.writestr(name, raw)
+        observation_raw = buffer.getvalue()
     require(digest((root / "restored/packaging-provenance.json").read_bytes()) == os.environ.get("RETAINED_PACKAGING_RESTORED_SHA256"),
             "Original restore proof changed before completion")
     validate_binding(restored, files, execution=True)
+    if qualified(binding):
+        files = dict(files, **{'component-notary-observations.zip': observation_raw})
     manifest = binding["signedInput"]["manifest"]
     require(app.get("NGVSourceCommit") == binding["productSourceSHA"]
             and app.get("CFBundleShortVersionString") == manifest["identity"]["version"]
@@ -1062,7 +1125,7 @@ def record_complete(root, app, archive_sha, source_receipt_sha, pack_archive):
                 and instant(value['expires_at']) > now, 'Current DMG proof or payload origin differs')
     require(instant(payload['updated_at']) <= instant(artifact['created_at']), 'DMG payload was not acquired before its proof')
     require(manifest['files']['NexGenVideo.zip']['sha256'] in journals, 'Complete packaging lacks the actual App Apple submission')
-    if compiled_signed_product(binding):
+    if retained_compiled_product(binding):
         from compiled_app_release import capture_source_reuse, PACK_SHA, PACK_TREE
         source_reuse = capture_source_reuse(Path('.build/bpy-source'), binding)
         require(source_receipt_sha == digest(source_reuse['bpy-source-receipt.json'].encode())
@@ -1102,13 +1165,23 @@ def validate_binding(record, files, *, execution=False, chain=None):
             and set(files) == set(record.get("files", {}))
             and PROOF_FILES <= set(files) <= PROOF_FILES | OPTIONAL_PROOF_FILES, "Incomplete packaging provenance")
     require(('submitted-dmg-proof.zip' in files) == (record['stage'] == 'complete'), 'Packaging proof has the wrong submission stage')
-    require((set(files) & SOURCE_REUSE_FILES) == (SOURCE_REUSE_FILES if record['stage'] == 'complete' and compiled_signed_product(record) else set()),
+    require((set(files) & SOURCE_REUSE_FILES) == (SOURCE_REUSE_FILES if record['stage'] == 'complete' and retained_compiled_product(record) else set()),
             'Source qualification proof has the wrong compiled stage')
     require(('current-app-signature.reused.json' in files) == (record['stage'] in {'restored', 'complete'} and compiled_signed_product(record)),
             'Current App signature proof has the wrong compiled stage')
     if 'current-app-signature.reused.json' in files:
         from compiled_app_release import verify_current_signature_reuse
         verify_current_signature_reuse(json.loads(files['current-app-signature.reused.json']), record)
+    from compiled_component_reuse import qualified, verify_native_record
+    require(('component-notary-observations.zip' in files) == (record['stage'] == 'complete' and qualified(record)),
+            'Existing App notary observations have the wrong canonical stage')
+    if 'component-notary-observations.zip' in files:
+        from notary_continuation import verify_observations
+        verify_observations(read_proof_archive(files['component-notary-observations.zip']), record)
+    require(('component-native-checks.reused.json' in files) == (record['stage'] in {'restored', 'complete'} and qualified(record)),
+            'Component native reuse proof has the wrong stage')
+    if 'component-native-checks.reused.json' in files:
+        verify_native_record(json.loads(files['component-native-checks.reused.json']), record)
     for name, raw in files.items():
         require(record["files"][name] == {"bytes": len(raw), "sha256": digest(raw)}, "Packaging evidence bytes changed")
     product = revision(record.get("productSourceSHA"))
@@ -1138,6 +1211,8 @@ def validate_binding(record, files, *, execution=False, chain=None):
     require(state == files["prior-notary-state.zip"] and previous["context"] == record.get("previousNotary", {}).get("context")
             and previous["journals"] == record.get("previousNotary", {}).get("journals"), "Previous notary evidence changed")
     matching_artifact(record["previousNotary"]["stateArtifact"], previous["stateArtifact"])
+    require(record['previousNotary'].get('acceptedAppNotary') == previous.get('acceptedAppNotary'),
+            'Previous accepted App notarization provenance changed')
     if previous["dmgArtifact"] is None:
         require(record["previousNotary"].get("dmgArtifact") is None and record["previousNotary"].get("dmgProof") is None,
                 "Packaging invented a previous DMG checkpoint")
@@ -1154,8 +1229,7 @@ def validate_binding(record, files, *, execution=False, chain=None):
     previous_source = previous["producer"]["head_sha"]
     if previous_source not in {product, producer}:
         continuation = comparison(previous_source, producer)
-        from compiled_app_release import SIGNED_RESUME
-        allowed = PACKAGING_PATHS | COMPILED_PACKAGING_PATHS if product == SIGNED_RESUME['sourceSHA'] else PACKAGING_PATHS
+        allowed = packaging_paths(product)
         require({entry["filename"] for entry in continuation["files"]} <= allowed,
                 "Packaging continuation changed unsupported inputs")
     original_build = previous["context"]["buildRunID"]
@@ -1177,6 +1251,7 @@ def validate_binding(record, files, *, execution=False, chain=None):
         require(all(previous["journals"].get(key) == value for key, value in signed["originalNotary"]["journals"].items()),
                 "Previous state dropped or changed an original Apple submission")
     require(signed.get('compiledProduct') == record.get('signedInput', {}).get('compiledProduct'), 'Compiled signed-product qualification changed')
+    require(signed.get('componentProduct') == record.get('signedInput', {}).get('componentProduct'), 'Component signed-product qualification changed')
     require(signed["manifest"]["files"]["NexGenVideo.zip"]["sha256"] in previous["journals"] or compiled_first_notary(record),
             "Original App Apple submission disappeared")
     if record["stage"] != "input":
@@ -1203,7 +1278,7 @@ def validate_binding(record, files, *, execution=False, chain=None):
                 and all(final["notaryJournals"].get(key) == value for key, value in previous["journals"].items())
                 and final["submittedDMGSHA256"] in final["notaryJournals"], "Complete proof lost known Apple submissions")
         require(manifest_app_sha in final['notaryJournals'], 'Complete packaging lost the actual App Apple submission')
-        if compiled_signed_product(record):
+        if retained_compiled_product(record):
             from compiled_app_release import verify_source_reuse, PACK_SHA, PACK_TREE
             source_reuse = final.get('bpySourceReuse')
             require(type(source_reuse) is dict and set(source_reuse) == SOURCE_REUSE_FILES

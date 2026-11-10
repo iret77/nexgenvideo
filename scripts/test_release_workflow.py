@@ -68,7 +68,7 @@ def matching_shell_lines(step, prefix):
     return [line.strip() for line in step.splitlines() if line.strip().startswith(prefix)]
 
 
-def condition_enabled(condition, artifact_only, dry_run, resumed=False, *, needs_results=None, ancestry_success=True, compiled_targets=""):
+def condition_enabled(condition, artifact_only, dry_run, resumed=False, *, needs_results=None, ancestry_success=True, compiled_targets="", component_continuation=False):
     expression = str(condition or "true").removeprefix("${{").removesuffix("}}").strip()
     if not ancestry_success and not re.search(r"\b(?:always|cancelled|success|failure)\(\)", expression):
         return False
@@ -77,6 +77,7 @@ def condition_enabled(condition, artifact_only, dry_run, resumed=False, *, needs
         "inputs.compiled_app_targets_json": compiled_targets,
         "needs.bpy-source.result": "success",
         "env.NGV_COMPILED_APP_RELEASE": "true" if compiled_targets else "",
+        "env.NGV_COMPONENT_NOTARY_CONTINUATION": "true" if component_continuation else "",
         "inputs.dry_run": dry_run,
         "env.REL_DRY": str(dry_run).lower(),
         "needs.release-gate.outputs.publication-resumed": str(resumed).lower(),
@@ -315,6 +316,20 @@ xcrun() { printf 'stapler\\n' >> "$CALLS"; return "$NATIVE_RC"; }
         ):
             self.assertTrue(condition_enabled(steps[name].get("if"), True, True), name)
             self.assertFalse(steps[name].get("continue-on-error", False), name)
+        reuse = steps["Verify retained signature, shared links and actual external pack load evidence"]
+        self.assertFalse(condition_enabled(reuse.get("if"), True, True))
+        self.assertTrue(condition_enabled(reuse.get("if"), True, True, component_continuation=True))
+        self.assertEqual(reuse["run"], "python3 scripts/compiled_component_reuse.py verify-native")
+        self.assertFalse(reuse.get("continue-on-error", False))
+        for name in (
+            "Verify pack links the SHARED engine (guards the PackEntry-cast regression)",
+            "Load-test — the SIGNED app actually loads the SIGNED pack from an EXTERNAL dir",
+        ):
+            self.assertTrue(condition_enabled(steps[name].get("if"), True, True), name)
+            self.assertFalse(condition_enabled(steps[name].get("if"), True, True, component_continuation=True), name)
+        for name in ("Notarize and staple app", "Build and sign DMG", "Notarize and staple DMG",
+                     "Verify the exact DMG users install"):
+            self.assertTrue(condition_enabled(steps[name].get("if"), True, True, component_continuation=True), name)
         upload = steps["Upload unpublished candidate"]["with"]
         for path in (".build/NexGenVideo.dmg", ".build/plugins/*.ngvpack.zip",
                      ".build/plugins/*.entry.json", ".build/artifact-only-candidate.json",

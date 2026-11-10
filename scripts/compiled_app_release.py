@@ -231,6 +231,9 @@ def prepare_resumed_source(root, directory):
         and os.environ.get('GITHUB_JOB') == 'release' and os.environ.get('NGV_COMPILED_APP_RELEASE') == 'true',
         'Compiled source handoff requires the owned native release job')
     binding = packaging.current_binding()
+    from compiled_component_reuse import qualified, reuse_source
+    if qualified(binding):
+        return reuse_source(directory, binding)
     require(binding is not None and packaging.compiled_signed_product(binding), 'Unqualified compiled source handoff')
     workspace, temporary = Path(os.environ['GITHUB_WORKSPACE']).resolve(), Path(os.environ['RUNNER_TEMP']).resolve()
     require(root.resolve() == temporary / 'release-signed-binding' and root.is_dir() and not root.is_symlink()
@@ -297,6 +300,9 @@ def prepare_resumed_source(root, directory):
 
 
 def verify_source_reuse(value, product, harness, run_id):
+    from compiled_component_reuse import ORIGIN, source_record
+    if product == ORIGIN['sourceSHA']:
+        return source_record(value, product, harness, run_id)
     names = {'bpy-source-original-receipt.json', 'bpy-source-receipt.json', 'bpy-source-reuse.json'}
     require(type(value) is dict and set(value) == names and all(type(raw) is str for raw in value.values()),
         'Incomplete exact source-reuse proof')
@@ -384,9 +390,10 @@ def consume_packaging_source(directory, product, receipt_path, packaging, *, con
     if packaging is None:
         return None
     parent = retained.consumer_record(packaging, product)
-    if product != SIGNED_RESUME['sourceSHA']:
+    from compiled_component_reuse import ORIGIN
+    if product not in {SIGNED_RESUME['sourceSHA'], ORIGIN['sourceSHA']}:
         return None
-    require(retained.compiled_signed_product(parent) and parent.get('stage') == 'complete',
+    require(retained.retained_compiled_product(parent) and parent.get('stage') == 'complete',
         'Current compiled source receiver has no qualified canonical parent')
     source_receiver_context(context, parent)
     temporary = Path(os.environ['RUNNER_TEMP'])
@@ -443,9 +450,10 @@ def verify_received_source(directory, product, packaging, evidence, *, context):
     if packaging is None:
         return False
     parent = retained.consumer_record(packaging, product)
-    if product != SIGNED_RESUME['sourceSHA']:
+    from compiled_component_reuse import ORIGIN
+    if product not in {SIGNED_RESUME['sourceSHA'], ORIGIN['sourceSHA']}:
         return False
-    require(retained.compiled_signed_product(parent) and parent.get('stage') == 'complete'
+    require(retained.retained_compiled_product(parent) and parent.get('stage') == 'complete'
         and evidence.is_file() and not evidence.is_symlink(), 'Current source receiver proof is missing')
     source_receiver_context(context, parent)
     temporary = Path(os.environ['RUNNER_TEMP'])
@@ -488,14 +496,17 @@ def retained_runtime_destination(directory):
 def verify_retained_runtime_pack(directory, product, receipt, proof, identity):
     import retained_packaging as packaging
     from compiled_core_reuse import persist
-    if product != SIGNED_RESUME['sourceSHA']:
+    from compiled_component_reuse import ORIGIN
+    if product == ORIGIN['sourceSHA'] and proof.get('packaging') is None:
+        return verify_component_runtime_pack(directory, product, receipt, proof, identity)
+    if product not in {SIGNED_RESUME['sourceSHA'], ORIGIN['sourceSHA']}:
         if identity.get('CFBundleVersion') == COMPONENT_BUILD:
             return verify_component_runtime_pack(directory, product, receipt, proof, identity)
         return None
     selected = proof.get('packaging')
     require(selected is not None, 'Current runtime pack has no canonical packaging parent')
     parent = packaging.consumer_record(selected, product, proof.get('producerRunID'))
-    require(packaging.compiled_signed_product(parent) and parent.get('stage') == 'complete'
+    require(packaging.retained_compiled_product(parent) and parent.get('stage') == 'complete'
         and parent['final']['app'] == identity and parent['final']['runtimeArchiveSHA256'] == receipt['archiveSHA256']
         and receipt['appTreeSHA256'] == identity['treeSHA256']
         and parent['final']['packTreeSHA256'] == PACK_TREE and parent['final']['packArchiveSHA256'] == PACK_SHA
@@ -1574,10 +1585,10 @@ def local_pack_runtime_origin(binding, dmg=None, *, expected_dmg_sha256=None):
     producer_source = source if parent is None else parent['producerSourceSHA']
     if parent is not None:
         final = parent.get('final', {})
-        require(parent.get('stage') == 'complete' and packaging.compiled_signed_product(parent)
+        require(parent.get('stage') == 'complete' and packaging.retained_compiled_product(parent)
             and final.get('dmgSHA256') == dmg_digest and final.get('appTreeSHA256') == binding['appTreeSHA256']
             and final.get('guideSHA256') == binding['guideSHA256'], 'Local copy differs from canonical packaging')
-        packaging.consumer_harness(selected, source, packaging.PACKAGING_PATHS | packaging.COMPILED_PACKAGING_PATHS)
+        packaging.consumer_harness(selected, source, packaging.packaging_paths(source))
     require(source != SIGNED_RESUME['sourceSHA'] or parent is not None,
         'Current compiled product requires its canonical packaging provenance')
     run = api('actions/runs/' + run_id)
