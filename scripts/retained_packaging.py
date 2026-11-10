@@ -36,6 +36,7 @@ VERIFIER_INPUTS = ('scripts/retained_packaging.py', 'scripts/retained_app_test_p
                    'scripts/verify_swift_test_output.py', 'scripts/verify_diagnostic_candidate.py',
                    'scripts/release_acceptance_identity.py', 'scripts/external-gui/acceptance.py')
 VERIFIER_INPUTS += ('scripts/native_current_cohort.py', 'scripts/native_xctest_host.py', 'scripts/native_xctest_host.m',
+                    'scripts/compiled_core_reuse.py', 'scripts/fixtures/compiled-core-reuse-886.json',
                     'scripts/compiled_app_release.py', 'scripts/compiled_xctest_reuse.py', 'scripts/fixtures/compiled-app-native-inventory.json',
                     'scripts/native_app_target_build.py', 'scripts/native_app_target_recipe.py',
                     'scripts/native_app_build_plan.py', 'scripts/fixtures/native-test-entry-point.json')

@@ -158,7 +158,8 @@ def verify_events(path, expected, module):
             ('startedFunctionIDs', 'exactEndedFunctionIDs'), ('endedFunctionIDs', 'exactEndedFunctionIDs'),
             ('skippedFunctionIDs', 'exactSkippedFunctionIDs')]:
         require(parsed[key] == sorted(expected[expected_key]), 'Native function coverage differs: ' + key)
-    records = [json.loads(line) for line in path.read_text().splitlines()]
+    with path.open(encoding='utf-8') as stream:
+        records = [json.loads(line) for line in stream]
     starts, ends = Counter(), Counter()
     for row in records:
         if row.get('kind') != 'event':
@@ -303,6 +304,11 @@ def acquire_products(root):
 
 
 def run_tests(root):
+    import compiled_core_reuse
+    if APP_SOURCE == compiled_core_reuse.origin()['appSourceSHA']:
+        native_guard(root)
+        bound = json.loads((root / 'bound.json').read_text())
+        return compiled_core_reuse.acquire(root, bound, criteria(), sys.modules[__name__])
     from run_macos_tests import app_environment, framework_output, host_receipt, prepare_post_mortem, run_process
     native_guard(root)
     bound = json.loads((root / 'bound.json').read_text())
@@ -390,6 +396,17 @@ def engine_environment(raw):
 
 
 def verify_receipt(receipt, source, run_id):
+    if receipt.get('schema') == 'release-native-compiled-app/v4':
+        import compiled_core_reuse
+        require(receipt.get('sourceSHA') == source and type(receipt.get('runID')) is int and receipt['runID'] == run_id
+            and type(receipt.get('attempt')) is int and receipt['attempt'] == 1 and receipt.get('appSourceSHA') == APP_SOURCE
+            and receipt.get('nativeSourceObjects') == source_objects(source) == source_objects(APP_SOURCE)
+            and receipt.get('compilerSHA256') == COMPILER_SHA and receipt.get('hostSHA256') == retained.HOST_SHA
+            and receipt.get('criteriaSHA256') == checksum(CRITERIA) and receipt.get('passed') is True
+            and all(type(value) is int for value in receipt.get('counts', {}).values()),
+            'Retained complete native acceptance identity differs')
+        selector_identities(json.dumps(receipt.get('selected')))
+        return compiled_core_reuse.verify(receipt.get('retainedNative'), receipt, criteria(), sys.modules[__name__])
     fresh_host = receipt.get('schema') == 'release-native-compiled-app/v3'
     continued = receipt.get('schema') == 'release-native-compiled-app/v2'
     require(receipt.get('schema') in ('release-native-compiled-app/v1', 'release-native-compiled-app/v2', 'release-native-compiled-app/v3') and receipt.get('sourceSHA') == source

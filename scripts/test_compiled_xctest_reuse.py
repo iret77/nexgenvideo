@@ -119,7 +119,7 @@ class CompiledXCTestReuseTests(unittest.TestCase):
             host = root / 'runtime/NexGenVideoAppKitTestHost'
             image = root / 'tests/NexGenVideoTests.xctest/Contents/MacOS/NexGenVideoTests'
             compiler = root / 'swiftc'
-            bound = {'sourceSHA': 'b' * 40, 'runID': 999, 'nativeSourceObjects': {'Sources': 'a' * 40},
+            bound = {'sourceSHA': 'b' * 40, 'runID': 999, 'appSourceSHA': 'c' * 40, 'nativeSourceObjects': {'Sources': 'a' * 40},
                 'runtime': str(host.parent), 'selected': {'tests': 'exact selector'},
                 'prepared': {'plans': {'production': {'driver': {'argv': [str(compiler)]}}}},
                 'products': {phase: {'receipt': {}, 'originalArchiveSHA256': 'f' * 64,
@@ -132,7 +132,8 @@ class CompiledXCTestReuseTests(unittest.TestCase):
             fresh_xctest = {'schema': 'native-xctest-host-proof/v1'}
             def checksum(path):
                 return release.retained.HOST_SHA if path == host else release.COMPILER_SHA if path == compiler else 'f' * 64
-            with patch.object(release, 'native_guard'), patch.object(release, 'source_objects', return_value=bound['nativeSourceObjects']), \
+            with patch.object(release, 'APP_SOURCE', bound['appSourceSHA']), \
+                    patch.object(release, 'native_guard'), patch.object(release, 'source_objects', return_value=bound['nativeSourceObjects']), \
                     patch.object(release.targets, 'logged') as signed, \
                     patch.object(release, 'criteria', return_value=inventory), patch.object(release, 'checksum', side_effect=checksum), \
                     patch.object(release, 'retained_engine_evidence', return_value=retained_engine), \
