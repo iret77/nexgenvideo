@@ -32,7 +32,8 @@ RELEASE_STEPS = ('Verify pack links the SHARED engine (guards the PackEntry-cast
 PATHS = {'scripts/compiled_component_reuse.py', 'scripts/test_compiled_component_reuse.py',
     'scripts/notary_continuation.py', 'scripts/test_notary_continuation.py', 'scripts/bundle.sh',
     '.github/workflows/release.yml', 'scripts/notarize.sh', 'scripts/compiled_app_release.py',
-    'scripts/release_checkpoint.py', 'scripts/retained_packaging.py', 'scripts/native_current_cohort.py'}
+    'scripts/release_checkpoint.py', 'scripts/retained_packaging.py', 'scripts/native_current_cohort.py',
+    'scripts/test_release_workflow.py'}
 
 
 def matches(run, source):
