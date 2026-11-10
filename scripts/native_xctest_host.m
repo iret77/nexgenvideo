@@ -1,4 +1,5 @@
 #import <AppKit/AppKit.h>
+#import <CoreFoundation/CoreFoundation.h>
 #import <XCTest/XCTest.h>
 #import "AppKitTestHostSupport.h"
 #import <objc/runtime.h>
@@ -332,9 +333,36 @@ int main(int argc, const char *argv[]) {
                 [NSSet setWithArray:leaves].count != leaves.count || suite.testCaseCount != expectedNames.count || observer.prematureExecutionCount)
                 finish(@"discovery", @"Exact XCTest inventory or class provenance differs", NO);
             receipt[@"suiteName"] = suite.name;
-            dispatch_async(dispatch_get_main_queue(), ^{
+            NSMutableDictionary *checkpoint = [receipt mutableCopy];
+            checkpoint[@"schema"] = @"native-xctest-host-checkpoint/v1";
+            checkpoint[@"boundary"] = @"discovery-complete";
+            checkpoint[@"inventoryIDs"] = leaves; checkpoint[@"leafClasses"] = classes;
+            checkpoint[@"caseObservations"] = observations; checkpoint[@"runtimeImagesAfter"] = afterLoad;
+            NSString *checkpointPath = [receiptPath.stringByDeletingLastPathComponent stringByAppendingPathComponent:@"discovery.json"];
+            if (!WriteReceipt(checkpointPath, checkpoint)) finish(@"discovery-checkpoint", @"Discovery checkpoint could not be persisted", NO);
+            // Synchronous XCTest waits must leave the serial main dispatch queue available.
+            CFRunLoopPerformBlock(CFRunLoopGetMain(), kCFRunLoopDefaultMode, ^{
                 @try {
                     receipt[@"mainThread"] = @(NSThread.isMainThread); receipt[@"applicationRunningAtStart"] = @(application.isRunning);
+                    receipt[@"executionScheduler"] = @"main-cf-run-loop";
+                    NSTimeInterval started = NSProcessInfo.processInfo.systemUptime, deadline = started + 5;
+                    __block NSDictionary *admission = nil;
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        admission = @{@"completed": @YES, @"pid": @(getpid()), @"mainThread": @(NSThread.isMainThread),
+                            @"applicationRunning": @(application.isRunning), @"suiteExecuting": @(observer.executing),
+                            @"startedUptime": @(started), @"deadlineUptime": @(deadline),
+                            @"completedUptime": @(NSProcessInfo.processInfo.systemUptime)};
+                    });
+                    while (!admission && NSProcessInfo.processInfo.systemUptime < deadline)
+                        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.01, YES);
+                    NSTimeInterval checked = NSProcessInfo.processInfo.systemUptime;
+                    NSMutableDictionary *measured = admission ? [admission mutableCopy] : nil;
+                    measured[@"checkedUptime"] = @(checked);
+                    receipt[@"mainQueueAdmission"] = measured ?: NSNull.null;
+                    if (!admission || ![admission[@"mainThread"] boolValue] || ![admission[@"applicationRunning"] boolValue] ||
+                        [admission[@"suiteExecuting"] boolValue] || [admission[@"completedUptime"] doubleValue] < started ||
+                        [admission[@"completedUptime"] doubleValue] > deadline || checked < [admission[@"completedUptime"] doubleValue] ||
+                        checked > deadline) finish(@"main-queue-admission", @"Main queue did not progress within its deadline before XCTest execution", NO);
                     observer.executing = YES;
                     [suite runTest];
                     observer.executing = NO;
@@ -351,6 +379,7 @@ int main(int argc, const char *argv[]) {
                     finish(@"suite-returned", ok ? nil : @"XCTest execution did not qualify", ok);
                 } @catch (NSException *exception) { finish(@"suite-exception", exception.description, NO); }
             });
+            CFRunLoopWakeUp(CFRunLoopGetMain());
             [application run];
             finish(@"runloop-returned", @"AppKit run loop returned before qualification", NO);
         } @catch (NSException *exception) { finish(@"host-exception", exception.description, NO); }
