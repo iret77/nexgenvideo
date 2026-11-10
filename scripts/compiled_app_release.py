@@ -16,6 +16,7 @@ import native_app_target_build as targets
 import release_checkpoint as checkpoint
 import release_engine_resume as engine
 import release_test_repair as retained
+from release_acceptance_identity import tree_sha256 as canonical_bundle_tree
 from retained_app_test_products import api, archive_bytes, checksum, download, require, verify_artifact, write
 
 
@@ -29,6 +30,28 @@ SIGNED_ARTIFACT = (13633938906, '1b2743fb43e017a337565c3a6c046bf9d8606acd16d4394
 FINAL_ARTIFACT = (13635913556, '5a3c9eef5134b2ae7479c7af8a465c655fceb3857fbf403a090fe27871e7fcb0')
 PACK_SHA = '37fcee05d1ac334b20eb392c61cc3b7a94af165dc3b967c61602bc79d6dc4388'
 PACK_TREE = '365e9a75174191359bb36b02b429a4bfea55f0b764caa81184228bd3072c402e'
+SIGNATURE_APP_TREE = 'f2b2aa30a5a56a08341c17c22add2225ab1da63fce49e43886cbda3909f6c353'
+# These original command bytes were independently qualified from the bound artifact.
+SIGNATURE_ORIGIN = {'runID': 42752029331, 'sourceSHA': '7224319479875080119c1e916fc5d846b43405f9',
+    'jobID': 129617782305, 'artifactID': 13734666595,
+    'artifactSHA256': '27d032bb823e9375720fc178cba10d4b6168717d0daa2dee55432ea521f0af61',
+    'artifactBytes': 2871241575}
+SIGNATURE_COMMAND = {'argv': ['codesign', '--verify', '--deep', '--strict', '.build/NexGenVideo.app'],
+    'exitCode': 0, 'stdout': '', 'stderr': ''}
+SIGNATURE_RECORD_SHA256 = {'argv.json': '416d51c8c607ccf886bd87f18fe7f4f3a0529ec439d56ac7a4b7225de5d6ac21',
+    'exit.json': 'ff8ae5796bcef71911ff9c5c3eaea341819c471f669549e252b830106edd4305',
+    'stdout': 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+    'stderr': 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'}
+PACK_NATIVE_PROOF = {'jobID': 128864202422, 'artifactBytes': 3627462402,
+    'fullRawSHA256': 'd0a7c9a47356757dd2311531c479c49903ca7a1b4b283a77c12580bc3969ec77',
+    'fullRawBytes': 442029, 'workflowSHA256': 'b8ccdb85310397135dcfe8a6aecce72c8dec4b469d2d7052f983ba5395bcb2d4',
+    'steps': [{'name': 'Notarize and staple downloadable format packs', 'status': 'completed',
+        'conclusion': 'success', 'number': 19, 'started_at': '2026-11-08T21:21:32Z', 'completed_at': '2026-11-08T21:21:51Z'},
+        {'name': 'Load-test — the SIGNED app actually loads the SIGNED pack from an EXTERNAL dir',
+        'status': 'completed', 'conclusion': 'success', 'number': 21,
+        'started_at': '2026-11-08T21:21:52Z', 'completed_at': '2026-11-08T21:21:53Z'}],
+    'stepRawFragmentSHA256': {'19': '1348d49de175ec94bfc875423cb0e6c2ccbbc6e0680bbe51179bdfe66a2d3206',
+        '21': '7444c560e9e0be8b89f2b4c2327849837233407d45b3a378c0f4eb7a3bbf91b7'}}
 PHASES = ('production', 'testable', 'tests')
 SELECTOR_KEYS = {'runID', 'sourceSHA', 'artifactID', 'artifactSHA256', 'receiptSHA256'}
 
@@ -501,6 +524,52 @@ def retained_payload(root, role, identifier, digest):
     return path
 
 
+def reuse_retained_signature(root, app, manifest):
+    from compiled_core_reuse import persist
+    native_guard(root)
+    marker = root / 'verify-retained-signature.reused.json'
+    require(not marker.exists() and not marker.is_symlink(), 'Retained signature reuse was already recorded')
+    origin = SIGNATURE_ORIGIN
+    run = api('actions/runs/' + str(origin['runID']))
+    job = api('actions/jobs/' + str(origin['jobID']))
+    artifact = api('actions/artifacts/' + str(origin['artifactID']))
+    require(run.get('id') == origin['runID'] and run.get('head_sha') == origin['sourceSHA']
+        and run.get('run_attempt') == 1 and run.get('workflow_id') == 303346287
+        and run.get('path') == '.github/workflows/release.yml' and run.get('event') == 'workflow_dispatch'
+        and run.get('status') == 'completed' and run.get('conclusion') == 'failure'
+        and run.get('repository', {}).get('full_name') == REPOSITORY
+        and run.get('actor', {}).get('login') == 'iret77', 'Retained signature execution origin differs')
+    require(job.get('id') == origin['jobID'] and job.get('run_id') == origin['runID']
+        and job.get('head_sha') == origin['sourceSHA'] and job.get('run_attempt') == 1
+        and job.get('name') == 'release-build' and job.get('labels') == ['macrunner']
+        and job.get('status') == 'completed' and job.get('conclusion') == 'failure',
+        'Retained signature producer differs')
+    verify_artifact(artifact, run, job, origin['artifactID'], origin['artifactSHA256'],
+        'release-compiled-app-assembly-' + str(origin['runID']) + '-a1')
+    require(artifact.get('size_in_bytes') == origin['artifactBytes'], 'Retained signature artifact size differs')
+    records = {'argv.json': (json.dumps(SIGNATURE_COMMAND['argv'], indent=2) + '\n').encode(),
+        'exit.json': (json.dumps({'exitCode': SIGNATURE_COMMAND['exitCode']}, indent=2) + '\n').encode(),
+        'stdout': SIGNATURE_COMMAND['stdout'].encode(), 'stderr': SIGNATURE_COMMAND['stderr'].encode()}
+    require({name: hashlib.sha256(raw).hexdigest() for name, raw in records.items()} == SIGNATURE_RECORD_SHA256,
+        'Source-pinned original signature command records changed')
+    require(manifest.get('sourceSHA') == RETAINED_SOURCE and manifest.get('runID') == RETAINED_RUN
+        and manifest.get('appTreeSHA256') == SIGNATURE_APP_TREE, 'Retained signature product manifest differs')
+    record = {'schema': 'retained-app-signature-reuse/v1', 'state': 'REUSED',
+        'original': {'sourceSHA': origin['sourceSHA'], 'runID': origin['runID'], 'attempt': 1,
+            'jobID': origin['jobID'], 'artifactID': origin['artifactID'], 'artifactSHA256': origin['artifactSHA256'],
+            'productSourceSHA': RETAINED_SOURCE, 'productRunID': RETAINED_RUN, 'appTreeSHA256': SIGNATURE_APP_TREE,
+            'command': SIGNATURE_COMMAND, 'recordSHA256': SIGNATURE_RECORD_SHA256,
+            'recordBytes': {name: len(raw) for name, raw in records.items()}},
+        'currentMaterialization': {'sourceSHA': os.environ['GITHUB_SHA'], 'runID': int(os.environ['GITHUB_RUN_ID']),
+            'appPath': str(app), 'appTreeSHA256': SIGNATURE_APP_TREE, 'appRootMode': 0o755},
+        'originEvidence': {'run': run, 'job': job, 'artifact': artifact},
+        'currentNativeSignatureVerificationPerformed': False, 'freshTrustStoreOrRevocationClaimed': False}
+    require(app.is_dir() and not app.is_symlink() and stat.S_IMODE(app.lstat().st_mode) == 0o755
+        and checkpoint.tree_digest(app) == SIGNATURE_APP_TREE,
+        'Materialized App differs from the qualified original signature bytes or root')
+    persist(marker, record)
+
+
 def assemble(root):
     import plistlib
     native_guard(root)
@@ -538,8 +607,7 @@ def assemble(root):
     require(not app.exists() and not app.is_symlink(), 'New App bundle destination is occupied')
     build.mkdir(exist_ok=True)
     targets.logged(root, 'restore-signed-app', ['/usr/bin/ditto', '-x', '-k', str(retained_root / 'NexGenVideo.zip'), str(build)])
-    require(checkpoint.tree_digest(app) == manifest['appTreeSHA256'], 'Retained signed App tree differs')
-    targets.logged(root, 'verify-retained-signature', ['codesign', '--verify', '--deep', '--strict', str(app)])
+    reuse_retained_signature(root, app, manifest)
     checkpoint.extract_tar(retained_root / 'symbols.tar.gz', build, {
         'NexGenVideo.dSYM', 'NexGenVideoDiagnostics.dSYM', 'NexGenEngine.dSYM', 'MusicvideoPlugin.dSYM'})
     final = retained_payload(root, 'release', *FINAL_ARTIFACT)
@@ -560,7 +628,6 @@ def assemble(root):
         require(all(PurePosixPath(item.filename).parts[0] in ('musicvideo.ngvpack', '__MACOSX')
             for item in archive.infolist()), 'Retained pack archive escapes its bundle')
     targets.logged(root, 'restore-stapled-pack', ['/usr/bin/ditto', '-x', '-k', str(pack_root / 'musicvideo.ngvpack.zip'), str(pack_root)])
-    require(checkpoint.tree_digest(pack_root / 'musicvideo.ngvpack') == PACK_TREE, 'Retained stapled pack tree differs')
     verify_pack(pack_root)
     original_image = app / 'Contents/MacOS/NexGenVideo'
     original_symbols = build / 'NexGenVideo.dSYM'
@@ -601,13 +668,173 @@ def assemble(root):
         'unchangedSourceComponentObjects': {name: targets.capture.git('rev-parse', 'HEAD:' + name) for name in component_paths}})
 
 
+def pack_verification_origin():
+    run = api('actions/runs/' + str(RETAINED_RUN))
+    job = api('actions/jobs/' + str(PACK_NATIVE_PROOF['jobID']))
+    artifact = api('actions/artifacts/' + str(FINAL_ARTIFACT[0]))
+    require(run.get('id') == RETAINED_RUN and run.get('head_sha') == RETAINED_SOURCE
+        and run.get('run_attempt') == 1 and run.get('workflow_id') == 303346287
+        and run.get('path') == '.github/workflows/release.yml' and run.get('event') == 'workflow_dispatch'
+        and run.get('status') == 'completed' and run.get('conclusion') == 'failure'
+        and run.get('repository', {}).get('full_name') == REPOSITORY
+        and run.get('actor', {}).get('login') == 'iret77', 'Original pack verification execution differs')
+    require(job.get('id') == PACK_NATIVE_PROOF['jobID'] and job.get('run_id') == RETAINED_RUN
+        and job.get('head_sha') == RETAINED_SOURCE and job.get('run_attempt') == 1
+        and job.get('name') == 'release' and job.get('labels') == ['macrunner']
+        and job.get('status') == 'completed' and job.get('conclusion') == 'success', 'Original pack producer differs')
+    for expected in PACK_NATIVE_PROOF['steps']:
+        matches = [step for step in job.get('steps', []) if step.get('number') == expected['number']]
+        require(len(matches) == 1 and all(matches[0].get(key) == value for key, value in expected.items()),
+            'Original successful pack verification shell step differs')
+    verify_artifact(artifact, run, job, FINAL_ARTIFACT[0], FINAL_ARTIFACT[1], 'NexGenVideo-1.8.0-artifact-only')
+    require(artifact.get('size_in_bytes') == PACK_NATIVE_PROOF['artifactBytes'], 'Original pack artifact size differs')
+    return run, job, artifact
+
+
+def original_pack_proof():
+    return {'sourceSHA': RETAINED_SOURCE, 'runID': RETAINED_RUN, 'attempt': 1,
+        'jobID': PACK_NATIVE_PROOF['jobID'], 'artifactID': FINAL_ARTIFACT[0], 'artifactSHA256': FINAL_ARTIFACT[1],
+        'qualifiedShellEvidence': PACK_NATIVE_PROOF, 'packArchiveSHA256': PACK_SHA, 'packTreeSHA256': PACK_TREE,
+        'exitQualification': 'Derived from original successful set -euo pipefail shell steps; no individual command JSON records.'}
+
+
 def verify_pack(root):
-    require(checksum(root / 'musicvideo.ngvpack.zip') == PACK_SHA
-        and checkpoint.tree_digest(root / 'musicvideo.ngvpack') == PACK_TREE, 'Retained pack changed')
-    subprocess.run(['codesign', '--verify', '--strict', str(root / 'musicvideo.ngvpack')],
-        stdin=subprocess.DEVNULL, check=True, timeout=60)
-    subprocess.run(['xcrun', 'stapler', 'validate', str(root / 'musicvideo.ngvpack')],
-        stdin=subprocess.DEVNULL, check=True, timeout=60)
+    from compiled_core_reuse import persist
+    require(sys.platform == 'darwin' and os.environ.get('GITHUB_ACTIONS') == 'true'
+        and os.environ.get('GITHUB_REPOSITORY') == REPOSITORY and os.environ.get('GITHUB_RUN_ATTEMPT') == '1'
+        and os.environ.get('GITHUB_JOB') in ('release-build', 'release'), 'Pack verification requires an owned native release job')
+    marker = Path(os.environ['RUNNER_TEMP']) / 'retained-pack-verification.reused.json'
+    require(not marker.exists() and not marker.is_symlink(), 'Pack verification reuse was already recorded')
+    require(root.resolve() == Path(os.environ['GITHUB_WORKSPACE']).resolve() / '.build/plugins'
+        and root.is_dir() and not root.is_symlink(), 'Pack materialization is outside the owned build')
+    run, job, artifact = pack_verification_origin()
+    bundle, archive = root / 'musicvideo.ngvpack', root / 'musicvideo.ngvpack.zip'
+    record = {'schema': 'retained-pack-shell-verification-reuse/v1', 'state': 'REUSED',
+        'original': original_pack_proof(),
+        'currentMaterialization': {'sourceSHA': os.environ['GITHUB_SHA'], 'runID': int(os.environ['GITHUB_RUN_ID']),
+            'job': os.environ['GITHUB_JOB'], 'bundlePath': str(bundle), 'rootMode': 0o755,
+            'packArchiveSHA256': PACK_SHA, 'packTreeSHA256': PACK_TREE},
+        'originEvidence': {'runID': run['id'], 'sourceSHA': run['head_sha'], 'jobID': job['id'],
+            'jobStartedAt': job['started_at'], 'jobCompletedAt': job['completed_at'],
+            'artifactID': artifact['id'], 'artifactDigest': artifact['digest'],
+            'artifactCreatedAt': artifact['created_at'], 'artifactUpdatedAt': artifact['updated_at'],
+            'artifactExpiresAt': artifact['expires_at']},
+        'currentNativeCodesignOrStaplerPerformed': False, 'freshTrustStoreOrRevocationClaimed': False,
+        'currentPackNotarizationPerformed': False, 'newAppPackLoadQualified': False}
+    require(archive.is_file() and not archive.is_symlink() and checksum(archive) == PACK_SHA
+        and bundle.is_dir() and not bundle.is_symlink() and stat.S_IMODE(bundle.lstat().st_mode) == 0o755
+        and canonical_bundle_tree(bundle) == PACK_TREE, 'Retained pack changed')
+    persist(marker, record)
+    print('PACK_VERIFICATION_REUSED ' + json.dumps(record, sort_keys=True, separators=(',', ':')), flush=True)
+
+
+def local_pack_runtime_origin(binding, dmg=None, *, expected_dmg_sha256=None):
+    require((dmg is None) != (expected_dmg_sha256 is None), 'Exact current DMG or validated expected digest required')
+    require(dmg is None or dmg.is_file() and not dmg.is_symlink(), 'Current DMG is missing or linked')
+    dmg_digest = checksum(dmg) if dmg is not None else expected_dmg_sha256
+    require(type(dmg_digest) is str and re.fullmatch('[a-f0-9]{64}', dmg_digest), 'Current DMG digest is invalid')
+    event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text(), object_pairs_hook=unique_object)
+    inputs = event.get('inputs', {})
+    require(type(inputs) is dict and type(binding) is dict, 'Local pack reuse lacks its qualified intake')
+    local = inputs.get('candidate_kind') == 'signed-journey' and inputs.get('journey_scenario') == 'normal-fresh-local-musicvideo'
+    direct = inputs.get('scenario') == 'normal-fresh-local-musicvideo' and inputs.get('artifact_mode') == 'dmg'
+    require(local or direct, 'Local pack reuse requires the registered exact-DMG journey')
+    names = ('run_id', 'artifact_id', 'artifact_sha256', 'source_sha') if local else (
+        'runtime_run_id', 'runtime_artifact_id', 'runtime_artifact_sha256', 'product_source_sha')
+    run_id, artifact_id, digest, source = [inputs.get(name, '') for name in names]
+    if direct:
+        source = source or binding.get('sourceSHA', '')
+        if not artifact_id and not digest:
+            require(type(run_id) is str and re.fullmatch('[1-9][0-9]*', run_id), 'Local runtime run ID is missing')
+            inventory = api('actions/runs/' + run_id + '/artifacts?per_page=100')
+            require(inventory.get('total_count') == len(inventory.get('artifacts', [])), 'Incomplete local runtime inventory')
+            matches = [item for item in inventory['artifacts'] if item.get('name') == 'release-user-journey-input']
+            require(len(matches) == 1, 'Local runtime artifact is missing or ambiguous')
+            artifact_id, digest = str(matches[0]['id']), matches[0]['digest'].removeprefix('sha256:')
+    require(all(type(value) is str and re.fullmatch('[1-9][0-9]*', value) for value in (run_id, artifact_id))
+        and re.fullmatch('[a-f0-9]{64}', digest) and re.fullmatch('[a-f0-9]{40}', source),
+        'Local pack reuse lacks exact runtime selectors')
+    require(type(binding) is dict and binding.get('sourceSHA') == source
+        and binding.get('dmgSHA256') == inputs.get('expected_dmg_sha256') == dmg_digest
+        and all(re.fullmatch('[a-f0-9]{64}', binding.get(key, '')) for key in ('appTreeSHA256', 'guideSHA256')),
+        'Local pack copy lost its actual DMG, App or guide binding')
+    run = api('actions/runs/' + run_id)
+    jobs = api('actions/runs/' + run_id + '/attempts/1/jobs?per_page=100')
+    artifact = api('actions/artifacts/' + artifact_id)
+    require(run.get('id') == int(run_id) and run.get('head_sha') == source and run.get('run_attempt') == 1 and run.get('workflow_id') == 303346287
+        and run.get('path') == '.github/workflows/release.yml' and run.get('event') == 'workflow_dispatch'
+        and run.get('repository', {}).get('full_name') == REPOSITORY and run.get('actor', {}).get('login') == 'iret77'
+        and run.get('status') == 'completed' and run.get('conclusion') == 'success'
+        and jobs.get('total_count') == len(jobs.get('jobs', [])), 'Local runtime producer differs')
+    producers = [job for job in jobs['jobs'] if job.get('name') == 'release' and job.get('run_id') == int(run_id)
+        and job.get('head_sha') == source and job.get('run_attempt') == 1 and job.get('labels') == ['macrunner']
+        and job.get('status') == 'completed' and job.get('conclusion') == 'success']
+    require(len(producers) == 1, 'Local runtime requires its successful current release producer')
+    verify_artifact(artifact, run, producers[0], int(artifact_id), digest, 'release-user-journey-input')
+    return {'runID': int(run_id), 'sourceSHA': source, 'artifactID': int(artifact_id),
+        'artifactSHA256': digest, 'producerJobID': producers[0]['id'], 'intakeBinding': binding}
+
+
+def verify_pack_copy(bundle, context, archive=None, dmg=None, *, binding=None, evidence=None):
+    from compiled_core_reuse import persist
+    contexts = {'external-load': 'release', 'pre-dmg': 'release', 'dmg-copy': 'release',
+        'installed-dmg': 'release', 'local-dmg': 'acceptance', 'local-installed': 'acceptance'}
+    require(context in contexts and sys.platform == 'darwin' and os.environ.get('GITHUB_ACTIONS') == 'true'
+        and os.environ.get('GITHUB_REPOSITORY') == REPOSITORY and os.environ.get('GITHUB_RUN_ATTEMPT') == '1'
+        and os.environ.get('GITHUB_JOB') == contexts[context], 'Unknown or foreign pack-copy caller')
+    temporary = Path(os.environ['RUNNER_TEMP']).resolve()
+    local = context.startswith('local-')
+    proof_root = Path(evidence).resolve() / 'pack-reuse' if evidence is not None else temporary / 'pack-copy-reuse'
+    require(proof_root.is_relative_to(temporary), 'Pack-copy evidence escapes the owned job')
+    proof_root.mkdir(parents=True, exist_ok=True)
+    require(proof_root.is_dir() and not proof_root.is_symlink() and proof_root.resolve().is_relative_to(temporary),
+        'Pack-copy proof directory is linked or outside the owned job')
+    marker = proof_root / (context + '.json')
+    require(not marker.exists() and not marker.is_symlink(), 'Pack-copy admission was already consumed')
+    require((context not in ('external-load', 'pre-dmg') or archive is not None)
+        and (context not in ('dmg-copy', 'installed-dmg', 'local-dmg', 'local-installed') or dmg is not None),
+        'Pack-copy admission lacks its archive or actual DMG')
+    parent, parent_digest, runtime = None, None, None
+    if local:
+        require(evidence is not None and dmg.is_file() and not dmg.is_symlink(), 'Local pack lacks its current DMG evidence')
+        runtime = local_pack_runtime_origin(binding, dmg)
+    else:
+        require(binding is None and evidence is None, 'Release pack-copy cannot ignore unrelated intake selectors')
+        parent_path = temporary / 'retained-pack-verification.reused.json'
+        require(parent_path.is_file() and not parent_path.is_symlink(), 'Missing same-job pack admission parent')
+        parent_raw = parent_path.read_bytes()
+        parent_digest = hashlib.sha256(parent_raw).hexdigest()
+        parent = json.loads(parent_raw, object_pairs_hook=unique_object)
+        current = parent.get('currentMaterialization', {})
+        require(parent.get('schema') == 'retained-pack-shell-verification-reuse/v1' and parent.get('state') == 'REUSED'
+            and parent.get('original') == original_pack_proof() and parent.get('newAppPackLoadQualified') is False
+            and parent.get('currentNativeCodesignOrStaplerPerformed') is False
+            and parent.get('currentPackNotarizationPerformed') is False
+            and parent.get('freshTrustStoreOrRevocationClaimed') is False
+            and current.get('sourceSHA') == os.environ['GITHUB_SHA'] and current.get('runID') == int(os.environ['GITHUB_RUN_ID'])
+            and current.get('job') == 'release' and current.get('packTreeSHA256') == PACK_TREE
+            and current.get('packArchiveSHA256') == PACK_SHA, 'Pack-copy parent belongs to another execution or product')
+    run, job, artifact = pack_verification_origin()
+    record = {'schema': 'retained-pack-copy-reuse/v1', 'state': 'REUSED', 'context': context,
+        'original': original_pack_proof(), 'currentSourceSHA': os.environ['GITHUB_SHA'],
+        'currentRunID': int(os.environ['GITHUB_RUN_ID']), 'currentAttempt': 1, 'currentJob': os.environ['GITHUB_JOB'],
+        'bundlePath': str(bundle), 'rootMode': 0o755, 'packTreeSHA256': PACK_TREE,
+        'parentSHA256': parent_digest, 'runtimeProducer': runtime,
+        'currentArchiveSHA256': checksum(archive) if archive is not None else None,
+        'currentDMGSHA256': checksum(dmg) if dmg is not None else None,
+        'originProducer': {'runID': run['id'], 'jobID': job['id'], 'artifactID': artifact['id'], 'artifactDigest': artifact['digest']},
+        'currentNativeCodesignOrStaplerPerformed': False, 'currentPackNotarizationPerformed': False,
+        'freshTrustStoreOrRevocationClaimed': False, 'newAppPackLoadQualified': False}
+    require((parent is None or parent_path.is_file() and not parent_path.is_symlink() and checksum(parent_path) == parent_digest)
+        and (archive is None or archive.is_file() and not archive.is_symlink() and record['currentArchiveSHA256'] == PACK_SHA)
+        and (dmg is None or dmg.is_file() and not dmg.is_symlink())
+        and (runtime is None or record['currentDMGSHA256'] == runtime['intakeBinding']['dmgSHA256'])
+        and bundle.is_dir() and not bundle.is_symlink() and bundle.suffix == '.ngvpack'
+        and stat.S_IMODE(bundle.lstat().st_mode) == 0o755 and canonical_bundle_tree(bundle) == PACK_TREE,
+        'Pack copy differs from its qualified original bytes, modes or links')
+    persist(marker, record)
+    print('PACK_COPY_VERIFICATION_REUSED ' + json.dumps(record, sort_keys=True, separators=(',', ':')), flush=True)
+    return record
 
 
 def retain_assembly(root, output, job_status):
@@ -675,11 +902,16 @@ def create_signed_input(root, output):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(allow_abbrev=False)
-    parser.add_argument('action', choices=('validate-inputs', 'acquire', 'test', 'assemble', 'create-signed-input', 'verify-pack', 'retain-assembly'))
+    parser.add_argument('action', choices=('validate-inputs', 'acquire', 'test', 'assemble', 'create-signed-input', 'verify-pack', 'verify-pack-copy', 'retain-assembly'))
     parser.add_argument('--root', type=Path)
     parser.add_argument('--output', type=Path)
     parser.add_argument('--job-status', choices=('success', 'failure', 'cancelled'))
+    parser.add_argument('--copy-context', choices=('external-load', 'pre-dmg', 'dmg-copy', 'installed-dmg'))
+    parser.add_argument('--archive', type=Path)
+    parser.add_argument('--dmg', type=Path)
     args = parser.parse_args()
+    require(args.action == 'verify-pack-copy' or all(value is None for value in (args.copy_context, args.archive, args.dmg)),
+        'Copy selectors cannot be ignored by another action')
     if args.action == 'validate-inputs':
         event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
         raw = event.get('inputs', {}).get('compiled_app_targets_json', '')
@@ -690,6 +922,9 @@ if __name__ == '__main__':
     elif args.action == 'verify-pack':
         require(args.root is not None, 'Exact pack root required')
         verify_pack(args.root)
+    elif args.action == 'verify-pack-copy':
+        require(args.root is not None and args.copy_context is not None, 'Exact pack copy and caller required')
+        verify_pack_copy(args.root, args.copy_context, args.archive, args.dmg)
     else:
         require(args.root is not None, 'Exact compiled App root required')
         if args.action == 'acquire': acquire_products(args.root)

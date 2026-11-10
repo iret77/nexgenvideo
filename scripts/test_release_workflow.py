@@ -128,6 +128,39 @@ def active_publication_steps(workflow, artifact_only, dry_run, resumed=False):
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
+    def test_pack_copy_branches_reuse_only_the_closed_candidate_and_never_fallback_after_failure(self):
+        workflow = yaml.safe_load(WORKFLOW.read_text())
+        steps = {step.get('name'): step for step in workflow['jobs']['release']['steps']}
+        scripts = [steps['Load-test — the SIGNED app actually loads the SIGNED pack from an EXTERNAL dir']['run'],
+            steps['Verify the exact DMG users install']['run'], BUNDLE.read_text().split('build_dmg() {', 1)[1].split('notarize_dmg() {', 1)[0]]
+        pattern = r'if \[ "\$\{NGV_COMPILED_APP_RELEASE:-\}" = true \]; then\n.*?\n\s*fi'
+        for script in scripts:
+            blocks = re.findall(pattern, script, re.S)
+            self.assertEqual(len(blocks), 1)
+            for selected in ('', 'true'):
+                for failure in (0, 9):
+                    with self.subTest(selected=selected, failure=failure, block=blocks[0]), tempfile.TemporaryDirectory() as temporary:
+                        calls = Path(temporary) / 'calls'
+                        functions = '''python3() { printf 'bridge:%s\\n' "$#" >> "$CALLS"; return "$BRIDGE_RC"; }
+codesign() { printf 'codesign\\n' >> "$CALLS"; return "$NATIVE_RC"; }
+xcrun() { printf 'stapler\\n' >> "$CALLS"; return "$NATIVE_RC"; }
+'''
+                        env = os.environ | {'NGV_COMPILED_APP_RELEASE': selected, 'CALLS': str(calls),
+                            'BRIDGE_RC': str(failure), 'NATIVE_RC': str(failure), 'ROOT': '/qualified repo',
+                            'PACK_BUNDLE': '/qualified copy/musicvideo.ngvpack', 'DMG_PACK': '/qualified copy/musicvideo.ngvpack',
+                            'PACK_ZIP': '/qualified copy/musicvideo.ngvpack.zip'}
+                        result = subprocess.run(['bash', '-euo', 'pipefail', '-c', functions + blocks[0]],
+                            stdin=subprocess.DEVNULL, capture_output=True, env=env, timeout=10)
+                        rows = calls.read_text().splitlines()
+                        self.assertEqual(result.returncode, failure, result.stderr.decode())
+                        if selected:
+                            self.assertEqual(rows, ['bridge:10' if '--dmg' in blocks[0] else 'bridge:8'])
+                        elif failure:
+                            self.assertEqual(len(rows), 1)
+                            self.assertIn(rows[0], ('codesign', 'stapler'))
+                        else:
+                            self.assertTrue(all(row in ('codesign', 'stapler') for row in rows))
+
     def test_local_reusable_workflow_permissions_are_granted_by_every_caller(self):
         workflows = {path.name: yaml.safe_load(path.read_text()) for path in (ROOT / ".github/workflows").glob("*.yml")}
         self.assertEqual(reusable_permission_violations(workflows), [])

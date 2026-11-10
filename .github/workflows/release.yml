@@ -1220,8 +1220,12 @@ jobs:
           PACK_BUNDLE="$(ls -d "$PACK_EXTRACT"/*.ngvpack 2>/dev/null | head -1 || true)"
           [ -n "$PACK_BUNDLE" ] \
             || { echo "::error::published pack ZIP does not contain an .ngvpack bundle"; exit 1; }
-          codesign --verify --strict --verbose=2 "$PACK_BUNDLE"
-          xcrun stapler validate "$PACK_BUNDLE"
+          if [ "${NGV_COMPILED_APP_RELEASE:-}" = true ]; then
+            python3 scripts/compiled_app_release.py verify-pack-copy --root "$PACK_BUNDLE" --copy-context external-load --archive "$PACK_ZIP"
+          else
+            codesign --verify --strict --verbose=2 "$PACK_BUNDLE"
+            xcrun stapler validate "$PACK_BUNDLE"
+          fi
           PACK_BIN="$(ls "$PACK_BUNDLE"/Contents/MacOS/* 2>/dev/null | head -1 || true)"
           [ -n "$PACK_BIN" ] \
             || { echo "::error::published pack ZIP has no executable"; exit 1; }
@@ -1353,7 +1357,11 @@ jobs:
           [ "$(python3 scripts/external-gui/acceptance.py tree-sha256 --app "$PACK_ZIP_BUNDLE")" = "$NGV_RELEASE_MOUNTED_PACK_TREE_SHA256" ]
           PACK_BUNDLE="$INSTALL_CHECK/plugins/musicvideo.ngvpack"
           NGV_RELEASE_PACK_TREE_SHA256="$(python3 scripts/external-gui/acceptance.py tree-sha256 --app "$PACK_BUNDLE")"
-          xcrun stapler validate "$PACK_BUNDLE"
+          if [ "${NGV_COMPILED_APP_RELEASE:-}" = true ]; then
+            python3 scripts/compiled_app_release.py verify-pack-copy --root "$PACK_BUNDLE" --copy-context installed-dmg --archive "$PACK_ZIP" --dmg .build/NexGenVideo.dmg
+          else
+            xcrun stapler validate "$PACK_BUNDLE"
+          fi
           QUARANTINE="0083;$(printf '%x' "$(date +%s)");GitHub Actions;${{ github.server_url }}"
           /usr/bin/xattr -r -w com.apple.quarantine "$QUARANTINE" "$PACK_BUNDLE"
           NGV_SELFTEST_PACK="$PACK_BUNDLE" \

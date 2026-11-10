@@ -84,8 +84,12 @@ def verify(app, dmg, pack=None, guide=None):
                 require(mounted_pack.is_dir() and not mounted_pack.is_symlink()
                         and tree_digest(mounted_pack) == pack_expected,
                         "DMG external format pack differs from its signed source")
-                run("mountedPackSignature", "codesign", "--verify", "--strict", "--verbose=3", str(mounted_pack))
-                run("mountedPackNotarization", "xcrun", "stapler", "validate", str(mounted_pack))
+                if os.environ.get('NGV_COMPILED_APP_RELEASE') == 'true':
+                    from compiled_app_release import verify_pack_copy
+                    verify_pack_copy(mounted_pack, 'dmg-copy', dmg=dmg)
+                else:
+                    run("mountedPackSignature", "codesign", "--verify", "--strict", "--verbose=3", str(mounted_pack))
+                    run("mountedPackNotarization", "xcrun", "stapler", "validate", str(mounted_pack))
             volume = Path(directory)
             inventory = [{"name": item.name, "kind": "symlink" if item.is_symlink() else
                           "file" if item.is_file() else "directory",

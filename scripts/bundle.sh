@@ -149,8 +149,12 @@ build_dmg() {
   DMG_GUIDE="$ROOT/scripts/Install NexGenVideo.txt"
   [ -d "$DMG_PACK" ] && [ ! -L "$DMG_PACK" ] \
     || { echo "!! joint DMG requires the separately signed Musicvideo pack" >&2; exit 1; }
-  codesign --verify --strict "$DMG_PACK"
-  xcrun stapler validate "$DMG_PACK"
+  if [ "${NGV_COMPILED_APP_RELEASE:-}" = true ]; then
+    python3 "$ROOT/scripts/compiled_app_release.py" verify-pack-copy --root "$DMG_PACK" --copy-context pre-dmg --archive "$ROOT/.build/plugins/musicvideo.ngvpack.zip"
+  else
+    codesign --verify --strict "$DMG_PACK"
+    xcrun stapler validate "$DMG_PACK"
+  fi
   python3 "$ROOT/scripts/plan_dmg_capacity.py" "$APP" "$DMG_CAPACITY_PLAN" --pack "$DMG_PACK" --guide "$DMG_GUIDE"
   DMG_APP="$APP" DMG_PACK="$DMG_PACK" DMG_GUIDE="$DMG_GUIDE" DMG_BG="$DMG_BG" DMG_VOLICON="$RESOURCES/AppIcon.icns" DMG_CAPACITY_PLAN="$DMG_CAPACITY_PLAN" \
     "$DMGBUILD_BIN" -s "$ROOT/scripts/dmg-settings.py" "$DMG_VOLNAME" "$DMG"

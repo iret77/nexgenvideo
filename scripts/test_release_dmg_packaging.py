@@ -21,6 +21,44 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ReleaseDmgPackagingTests(unittest.TestCase):
+    def test_compiled_dmg_keeps_all_app_mount_checks_and_requires_exact_pack_copy_admission(self):
+        for rejected in (False, True):
+            with self.subTest(rejected=rejected), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                app, pack, dmg, guide = root / 'NexGenVideo.app', root / 'musicvideo.ngvpack', root / 'current.dmg', root / 'Install NexGenVideo.txt'
+                app.mkdir(); pack.mkdir(); dmg.write_bytes(b'dmg'); guide.write_text('Reviewed guide')
+                (app / 'app').write_bytes(b'current app'); (pack / 'pack').write_bytes(b'qualified pack')
+                calls, copies = [], []
+
+                def command(*args):
+                    calls.append(args)
+                    if args[:2] == ('hdiutil', 'attach'):
+                        mount = Path(args[-1])
+                        shutil.copytree(app, mount / app.name); shutil.copytree(pack, mount / pack.name)
+                        shutil.copy2(guide, mount / guide.name)
+                        (mount / '.DS_Store').write_bytes(b'layout'); (mount / '.background.png').write_bytes(b'branding')
+                        (mount / 'Applications').symlink_to('/Applications')
+
+                def admit(bundle, context, **kwargs):
+                    copies.append((bundle, context, kwargs))
+                    self.assertEqual(dmg_copy.tree_digest(bundle), dmg_copy.tree_digest(pack))
+                    if rejected: raise ValueError('Changed copy or missing qualified parent')
+
+                with patch.dict(os.environ, NGV_COMPILED_APP_RELEASE='true'), patch.object(dmg_copy, 'command', side_effect=command), \
+                        patch('compiled_app_release.verify_pack_copy', side_effect=admit):
+                    if rejected:
+                        with self.assertRaises(ValueError): dmg_copy.verify(app, dmg, pack, guide)
+                    else:
+                        result = dmg_copy.verify(app, dmg, pack, guide)
+                        self.assertEqual(result['sourceAppTreeSHA256'], result['mountedAppTreeSHA256'])
+                self.assertEqual(len(copies), 1)
+                self.assertEqual(copies[0][1:], ('dmg-copy', {'dmg': dmg}))
+                self.assertTrue(any(row[:2] == ('hdiutil', 'verify') for row in calls))
+                self.assertTrue(any(row[:2] == ('hdiutil', 'attach') for row in calls))
+                self.assertTrue(any(row[:2] == ('hdiutil', 'detach') for row in calls))
+                self.assertTrue(any(row[0] == 'codesign' and row[-1] == str(app) for row in calls))
+                self.assertFalse(any(row[0] in ('codesign', 'xcrun') and row[-1].endswith('.ngvpack') for row in calls))
+
     def test_joint_dmg_capacity_and_layout_bind_the_external_pack_without_embedding_it_in_the_app(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
