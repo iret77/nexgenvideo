@@ -297,14 +297,16 @@ def verify_ci(run, jobs, artifact, run_id, source_sha, artifact_id, digest, chan
         raise ValueError("application or build inputs changed; retained CI app cannot be used")
 
 
-def verify(run, jobs, artifact, run_id, source_sha, artifact_id, digest, changed_paths):
+def verify(run, jobs, artifact, run_id, source_sha, artifact_id, digest, changed_paths, *, packaging=None):
     if str(run.get("head_branch", "")).startswith("iret77/rc-"):
         verify_signed_bpy(run, jobs, artifact, run_id, source_sha, artifact_id, digest,
-                          changed_paths, harness_paths=CAPTURE_HARNESS_PATHS)
+                          changed_paths, harness_paths=CAPTURE_HARNESS_PATHS, packaging=packaging)
         release = next(job for job in jobs["jobs"] if job["name"] == "release")
         if run.get("actor", {}).get("login") != "iret77" or release.get("labels") != ["macrunner"]:
             raise ValueError("RC capture must retain an owned macrunner release")
         return
+    if packaging is not None:
+        raise ValueError('Retained capture requires an owned RC producer')
     if not re.fullmatch(r"[0-9a-f]{40}", source_sha) or not re.fullmatch(r"[0-9a-f]{64}", digest):
         raise ValueError("invalid candidate identity")
     if (run["id"] != run_id or run["head_sha"] != source_sha
@@ -330,8 +332,10 @@ def verify_signed_bpy(run, jobs, artifact, run_id, source_sha, artifact_id, dige
                       packaging=None):
     producer_source = source_sha
     if packaging is not None:
-        from retained_packaging import load_provenance
-        producer_source = load_provenance(run_id, source_sha, packaging)['record']['producerSourceSHA']
+        from retained_packaging import component_consumer_repair_paths, load_provenance
+        record = load_provenance(run_id, source_sha, packaging)['record']
+        producer_source = record['producerSourceSHA']
+        harness_paths = harness_paths | component_consumer_repair_paths(record)
     if (not re.fullmatch(r"[0-9a-f]{40}", source_sha)
             or not re.fullmatch(r"[0-9a-f]{64}", digest)
             or run.get("id") != run_id or run.get("head_sha") != producer_source
@@ -416,7 +420,7 @@ def main():
     if (args.candidate_kind == "ci-app-test-diagnostic") != (args.crash_archive is not None):
         parser.error("only the App diagnostic requires its original crash archive")
     packaging = argument_selectors(args)
-    if packaging is not None and args.candidate_kind not in {'signed-bpy', 'signed-journey', 'signed-transport'}:
+    if packaging is not None and args.candidate_kind not in {'signed-release', 'signed-bpy', 'signed-journey', 'signed-transport'}:
         parser.error('Packaging provenance is only valid for explicit retained signed consumers')
     binding = consumer_binding(args.run_id, args.source_sha, packaging, archive_root=args.metadata / 'packaging-provenance')
     producer_source = consumer_source(args.source_sha, binding)

@@ -130,6 +130,14 @@ jobs:
           with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
               stream.write("matrix=" + json.dumps(dict(include=selected)) + "\n")
           PY
+      - name: Retain separately acquired original component evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: retained-origin-settings-owner-acceptance-${{ github.job }}-${{ strategy.job-index || 0 }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/retained-packaging-supplements/
+          if-no-files-found: ignore
+          retention-days: 90
 
   acceptance:
     needs: cases
@@ -244,3 +252,11 @@ jobs:
             ${{ runner.temp }}/settings-runtime/acceptance-input.json
           if-no-files-found: warn
           retention-days: 14
+      - name: Retain separately acquired original component evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: retained-origin-settings-owner-acceptance-${{ github.job }}-${{ strategy.job-index || 0 }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/retained-packaging-supplements/
+          if-no-files-found: ignore
+          retention-days: 90

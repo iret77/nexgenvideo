@@ -215,6 +215,14 @@ jobs:
         run: |
           rm -rf "$RUNNER_TEMP/source-fixture-package" "$RUNNER_TEMP/source-fixture-data"
           rm -f "$RUNNER_TEMP/oras-auth.json"
+      - name: Retain separately acquired original component evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: retained-origin-private-example-analysis-${{ github.job }}-${{ strategy.job-index || 0 }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/retained-packaging-supplements/
+          if-no-files-found: ignore
+          retention-days: 90
 
   build-runtime-harness:
     name: Build Private Analysis Harness
@@ -441,3 +449,11 @@ jobs:
           rm -rf "$RUNNER_TEMP/fixture-package" "$RUNNER_TEMP/fixture-data" "$RUNNER_TEMP/analysis-report"
           rm -rf "$RUNNER_TEMP/runtime-harness" .build/NexGenVideo.app .build/plugins
           rm -f "$RUNNER_TEMP/oras-auth.json"
+      - name: Retain separately acquired original component evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: retained-origin-private-example-analysis-${{ github.job }}-${{ strategy.job-index || 0 }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/retained-packaging-supplements/
+          if-no-files-found: ignore
+          retention-days: 90

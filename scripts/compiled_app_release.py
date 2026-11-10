@@ -1591,13 +1591,14 @@ def local_pack_runtime_origin(binding, dmg=None, *, expected_dmg_sha256=None):
         packaging.consumer_harness(selected, source, packaging.packaging_paths(source))
     require(source != SIGNED_RESUME['sourceSHA'] or parent is not None,
         'Current compiled product requires its canonical packaging provenance')
+    conclusions = {'success', 'failure'} if parent is not None and packaging.component_consumer_repair_paths(parent) else {'success'}
     run = api('actions/runs/' + run_id)
     jobs = api('actions/runs/' + run_id + '/attempts/1/jobs?per_page=100')
     artifact = api('actions/artifacts/' + artifact_id)
     require(run.get('id') == int(run_id) and run.get('head_sha') == producer_source and run.get('run_attempt') == 1 and run.get('workflow_id') == 303346287
         and run.get('path') == '.github/workflows/release.yml' and run.get('event') == 'workflow_dispatch'
         and run.get('repository', {}).get('full_name') == REPOSITORY and run.get('actor', {}).get('login') == 'iret77'
-        and run.get('status') == 'completed' and run.get('conclusion') == 'success'
+        and run.get('status') == 'completed' and run.get('conclusion') in conclusions
         and jobs.get('total_count') == len(jobs.get('jobs', [])), 'Local runtime producer differs')
     producers = [job for job in jobs['jobs'] if job.get('name') == 'release' and job.get('run_id') == int(run_id)
         and job.get('head_sha') == producer_source and job.get('run_attempt') == 1 and job.get('labels') == ['macrunner']
