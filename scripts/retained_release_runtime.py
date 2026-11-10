@@ -74,7 +74,8 @@ def restore(artifact, proof, directory):
     if sys.platform != 'darwin' or os.environ.get('GITHUB_ACTIONS') != 'true':
         raise ValueError('Restore signed release runtime only on macrunner in GitHub Actions')
     from compiled_app_release import SIGNED_RESUME, retained_runtime_destination, source_directory_identity
-    compiled = proof['productSourceSHA'] == SIGNED_RESUME['sourceSHA']
+    compiled = (proof['productSourceSHA'] == SIGNED_RESUME['sourceSHA']
+        or proof.get('schema') == 'nexgenvideo/retained-release-runtime/1')
     if compiled:
         base = retained_runtime_destination(directory)
         if (artifact.get('id') != proof.get('runtimeArtifactID')

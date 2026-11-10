@@ -357,7 +357,7 @@ def verify_runtime(binary, manifest):
     require(tree_digest(binary) == TREE_SHA, "Retained runtime tree differs")
 
 
-def restore_runtime(root, manifest, logged):
+def restore_runtime(root, manifest, logged, *, reuse_crc=False):
     binary = Path(manifest["binaryRoot"])
     temporary = Path(os.environ["RUNNER_TEMP"]).resolve()
     require(binary == temporary / "release-tests/out/Products/Release" and not binary.exists()
@@ -366,9 +366,14 @@ def restore_runtime(root, manifest, logged):
         if parent == temporary:
             break
         require(not parent.is_symlink(), "Runtime parent is linked")
+    if reuse_crc:
+        require(checksum(root / 'runtime.zip') == ARTIFACTS['runtime'][1]
+            and checksum(root / 'bank-runtime-manifest.json') == MANIFEST_SHA
+            and json.loads((root / 'bank-runtime-manifest.json').read_text()) == manifest,
+            'Qualified runtime original archive or manifest changed')
     with zipfile.ZipFile(root / "runtime.zip") as outer:
         require(set(outer.namelist()) == {"runtime-manifest.json", "runtime-products.zip", "runtime-archive.json", "compiler-upload.json"}
-                and outer.testzip() is None, "Runtime artifact inventory or CRC differs")
+                and (reuse_crc or outer.testzip() is None), "Runtime artifact inventory or CRC differs")
         require(sha(archive_bytes(outer, "runtime-manifest.json", 4 * 1024**2)) == MANIFEST_SHA,
                 "Runtime archive manifest differs")
         with outer.open("runtime-products.zip") as source, (root / "runtime-products.zip").open("xb") as destination:
@@ -390,7 +395,7 @@ def restore_runtime(root, manifest, logged):
                 resolved = posixpath.normpath(posixpath.join(str(path.parent), target))
                 require(not target.startswith("/") and resolved.startswith("Release/")
                         and "\\" not in target, "Runtime archive link escapes")
-        require(archive.testzip() is None, "Nested runtime archive CRC failed")
+        require(reuse_crc or archive.testzip() is None, "Nested runtime archive CRC failed")
     binary.parent.mkdir(parents=True, exist_ok=True)
     logged(["/usr/bin/ditto", "-x", "-k", str(nested), str(binary.parent)], "restore-runtime", 300)
     verify_runtime(binary, manifest)

@@ -9,10 +9,12 @@ import platform
 import re
 import shutil
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
 import zipfile
+import uuid
 
 import native_app_target_build as targets
 import release_checkpoint as checkpoint
@@ -67,6 +69,20 @@ PACK_NATIVE_PROOF = {'jobID': 128864202422, 'artifactBytes': 3627462402,
         '21': '7444c560e9e0be8b89f2b4c2327849837233407d45b3a378c0f4eb7a3bbf91b7'}}
 PHASES = ('production', 'testable', 'tests')
 SELECTOR_KEYS = {'runID', 'sourceSHA', 'artifactID', 'artifactSHA256', 'receiptSHA256'}
+COMPONENT_BUILD = '107'
+LINKED_ENGINE = {'sha256': '8b4b6e0f3a8d11a7260932e64673583cbc696400094ed38d54343a6a6093ac2c',
+    'bytes': 14573720, 'uuid': 'CB1CDC7B-9591-32A1-9FC5-735183BA68E2',
+    'dsymSHA256': 'ac2b37ffb1a439c2b2e4ae10f9e93dc26abe063a3d6b37af2237ecf1933cf066',
+    'moduleSHA256': 'a5ac6db30d91f3dfc8caeaf901f2b6b47f783c50edd4e2649144232a5808fdc5',
+    'mainUnsignedSHA256': '6d26be36d9fd01fe2c5b9043d38c7eb55685077bd86cb2610bb156e74ec94eac',
+    'retiredImageSHA256': 'ac85e1ee7e43c749afe19a5bf906930d164a044d426975c7feefc5d2ff281d4e',
+    'payloadSHA256': '1353c00481ef5b65a83ecfcb8cfce67a6e6323b4ce853497db718571863f1e59',
+    'symbolsTreeSHA256': '6f59009b23267b8374f0153aaa621e913217931991da1a4c53d5e8eb46819452'}
+MAIN_PRODUCT = {'compiledImageSHA256': '6d26be36d9fd01fe2c5b9043d38c7eb55685077bd86cb2610bb156e74ec94eac',
+    'uuid': 'C1AB1815-D829-3F3E-B536-C8F3D703FEE2',
+    'payloadSHA256': '53c6f0195c5234061d4ccbb092ca3a33ea62b5d471b181eacaab138e60e8691b',
+    'symbolsTreeSHA256': '7f3ddf00eeb73d24988efca0d99f635b2c8aee661486a0243f15d8e3b9c0b187',
+    'dwarfSHA256': '6b17928c2d439a0a2c1459e6819fa4ac33c798070f7d16728add201ee38a2fb7'}
 
 
 def signed_resume_source(run_id, source):
@@ -473,6 +489,8 @@ def verify_retained_runtime_pack(directory, product, receipt, proof, identity):
     import retained_packaging as packaging
     from compiled_core_reuse import persist
     if product != SIGNED_RESUME['sourceSHA']:
+        if identity.get('CFBundleVersion') == COMPONENT_BUILD:
+            return verify_component_runtime_pack(directory, product, receipt, proof, identity)
         return None
     selected = proof.get('packaging')
     require(selected is not None, 'Current runtime pack has no canonical packaging parent')
@@ -512,6 +530,62 @@ def verify_retained_runtime_pack(directory, product, receipt, proof, identity):
         'currentPackNotarizationPerformed': False, 'newAppPackLoadQualified': False}
     persist(marker, record)
     print('RUNTIME_PACK_VERIFICATION_REUSED ' + json.dumps(record, sort_keys=True, separators=(',', ':')), flush=True)
+    return record
+
+
+def verify_component_runtime_pack(directory, product, receipt, proof, identity):
+    from compiled_core_reuse import persist
+    sealed = json.dumps([proof, receipt, identity], sort_keys=True, allow_nan=False)
+    require(proof.get('schema') == 'nexgenvideo/retained-release-runtime/1'
+        and proof.get('productSourceSHA') == product and proof.get('packaging') is None
+        and proof.get('harnessSourceSHA') == os.environ.get('GITHUB_SHA')
+        and proof.get('executionRunID') == os.environ.get('GITHUB_RUN_ID')
+        and proof.get('executionAttempt') == os.environ.get('GITHUB_RUN_ATTEMPT') == '1'
+        and identity.get('NGVSourceCommit') == product and identity.get('CFBundleVersion') == COMPONENT_BUILD
+        and identity.get('CFBundleShortVersionString') == '1.8.0'
+        and receipt.get('schema') == 'nexgenvideo/workspace-ui-input/1' and receipt.get('sourceSHA') == product
+        and receipt.get('appTreeSHA256') == identity.get('treeSHA256')
+        and all(re.fullmatch('[a-f0-9]{64}', proof.get(name, '')) for name in ('runtimeArtifactSHA256',))
+        and sys.platform == 'darwin' and os.environ.get('GITHUB_ACTIONS') == 'true'
+        and os.environ.get('GITHUB_REPOSITORY') == REPOSITORY,
+        'Corrected runtime pack lost its exact normal product receipt or execution')
+    base = retained_runtime_destination(directory)
+    anchor = source_directory_identity(directory, base)
+    producer = api('actions/runs/' + str(proof['producerRunID']))
+    job = api('actions/jobs/' + str(proof['producerJobID']))
+    artifact = api('actions/artifacts/' + str(proof['runtimeArtifactID']))
+    require(producer.get('id') == proof['producerRunID'] and producer.get('head_sha') == product
+        and producer.get('repository', {}).get('full_name') == REPOSITORY
+        and producer.get('actor', {}).get('login') == 'iret77'
+        and producer.get('run_attempt') == proof.get('producerAttempt') == 1
+        and producer.get('path') == '.github/workflows/release.yml' and producer.get('workflow_id') == 303346287
+        and producer.get('event') == 'workflow_dispatch' and producer.get('status') == 'completed'
+        and job.get('id') == proof['producerJobID'] and job.get('name') == 'release'
+        and job.get('run_id') == producer['id'] and job.get('head_sha') == product and job.get('run_attempt') == 1
+        and job.get('labels') == ['macrunner'] and job.get('conclusion') == 'success',
+        'Corrected runtime pack differs from its actual release producer')
+    verify_artifact(artifact, producer, job, proof['runtimeArtifactID'], proof['runtimeArtifactSHA256'], 'workspace-ui-app')
+    bundle, marker = directory / 'plugins/musicvideo.ngvpack', directory / 'pack-verification.reused.json'
+    require(not marker.exists() and not marker.is_symlink(), 'Corrected runtime pack admission was consumed')
+    original_run, original_job, original_artifact = pack_verification_origin()
+    require(json.dumps([proof, receipt, identity], sort_keys=True, allow_nan=False) == sealed,
+        'Corrected runtime proof changed during origin verification')
+    source_directory_identity(directory, base, anchor)
+    require(not (directory / 'plugins').is_symlink() and bundle.is_dir() and not bundle.is_symlink()
+        and stat.S_IMODE(bundle.lstat().st_mode) == 0o755 and canonical_bundle_tree(bundle) == PACK_TREE,
+        'Corrected runtime pack bytes differ from the qualified original')
+    record = {'schema': 'component-runtime-pack-copy-reuse/v1', 'state': 'REUSED',
+        'context': 'retained-release-runtime', 'original': original_pack_proof(),
+        'productSourceSHA': product, 'producerSourceSHA': product, 'producerRunID': proof['producerRunID'],
+        'runtimeArtifactID': proof['runtimeArtifactID'], 'runtimeArtifactSHA256': proof['runtimeArtifactSHA256'],
+        'runtimeArchiveSHA256': receipt['archiveSHA256'], 'app': identity,
+        'harnessSourceSHA': os.environ['GITHUB_SHA'], 'executionRunID': int(os.environ['GITHUB_RUN_ID']),
+        'attempt': 1, 'job': os.environ['GITHUB_JOB'], 'packTreeSHA256': PACK_TREE, 'rootMode': 0o755,
+        'origin': {'runID': original_run['id'], 'jobID': original_job['id'], 'artifactID': original_artifact['id'],
+            'artifactDigest': original_artifact['digest']},
+        'currentNativeCodesignOrStaplerPerformed': False, 'currentPackNotarizationPerformed': False,
+        'freshTrustStoreOrRevocationClaimed': False, 'newAppPackLoadQualified': False}
+    persist(marker, record)
     return record
 
 
@@ -583,12 +657,17 @@ def producer(selected, role):
     return {'selected': selected, 'run': run, 'job': native[0], 'sourceJob': sources[0], 'artifact': artifact}
 
 
-def verified_zip(path, limit):
+def verified_zip(path, limit, *, qualified_sha=None):
     archive = zipfile.ZipFile(path)
     entries = archive.infolist()
     require(entries and len(entries) <= 200_000 and sum(item.file_size for item in entries) <= limit
-        and len({item.filename.casefold() for item in entries}) == len(entries) and archive.testzip() is None,
+        and len({item.filename.casefold() for item in entries}) == len(entries),
         'Compiled App archive inventory, bounds or CRC differ')
+    if qualified_sha is None:
+        require(archive.testzip() is None, 'Compiled App archive CRC differs')
+    else:
+        require(re.fullmatch('[a-f0-9]{64}', qualified_sha) and checksum(path) == qualified_sha,
+            'Qualified original archive identity changed')
     for item in entries:
         name = item.filename.rstrip('/')
         path = PurePosixPath(name)
@@ -680,7 +759,7 @@ def acquire_products(root):
     selected = selectors(os.environ['COMPILED_APP_TARGETS'], json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text()))
     metadata = producer(selected['metadata'], 'metadata')
     download(metadata['artifact'], root / 'metadata-original.zip')
-    with verified_zip(root / 'metadata-original.zip', 1024**3) as archive:
+    with verified_zip(root / 'metadata-original.zip', 1024**3, qualified_sha=selected['metadata']['artifactSHA256']) as archive:
         binding = json.loads(archive_bytes(archive, 'binding.json', 32 * 1024**2))
         prepared = json.loads(archive_bytes(archive, 'prepared.json', 32 * 1024**2))
     require(binding.get('schema') == 'native-app-target-source-binding/v1'
@@ -709,7 +788,7 @@ def acquire_products(root):
     with (root / 'bank-runtime-manifest.json').open('xb') as output: output.write(raw_manifest)
     manifest = json.loads(raw_manifest)
     binary = retained.restore_runtime(root, manifest, lambda argv, label, timeout=180:
-        targets.logged(root, label, argv, timeout=timeout))
+        targets.logged(root, label, argv, timeout=timeout), reuse_crc=True)
     runtime = root / 'runtime'
     def ignored(directory, names):
         if Path(directory) == binary:
@@ -725,11 +804,12 @@ def acquire_products(root):
         folder = root / phase
         folder.mkdir()
         download(origin['artifact'], folder / 'original.zip')
-        with verified_zip(folder / 'original.zip', 12 * 1024**3) as outer:
+        with verified_zip(folder / 'original.zip', 12 * 1024**3, qualified_sha=selected[phase]['artifactSHA256']) as outer:
             require(outer.namelist() == [phase + '-products.zip'], 'Unexpected compiled App outer archive')
             with outer.open(phase + '-products.zip') as source, (folder / 'product.zip').open('xb') as destination:
                 shutil.copyfileobj(source, destination, 1024 * 1024)
-        with verified_zip(folder / 'product.zip', 12 * 1024**3) as archive:
+        inner_sha = checksum(folder / 'product.zip')
+        with verified_zip(folder / 'product.zip', 12 * 1024**3, qualified_sha=inner_sha) as archive:
             raw = archive_bytes(archive, 'product-receipt.json', 16 * 1024**2)
             require(hashlib.sha256(raw).hexdigest() == selected[phase]['receiptSHA256'], 'Compiled product receipt changed')
             receipt = verify_product(json.loads(raw), selected[phase], phase, prepared)
@@ -1029,6 +1109,273 @@ def reuse_retained_signature(root, app, manifest):
     persist(marker, record)
 
 
+def image_uuid(path, filetype):
+    raw = path.read_bytes()
+    require(len(raw) >= 32, 'Truncated component Mach-O')
+    magic, cpu, _, kind, count, size, _, _ = struct.unpack_from('<8I', raw)
+    require(magic == 0xfeedfacf and cpu == 0x100000c and kind == filetype
+        and 0 < count < 4096 and 32 + size <= len(raw), 'Component Mach-O identity differs')
+    offset, values = 32, []
+    for _ in range(count):
+        require(offset + 8 <= 32 + size, 'Truncated component load command')
+        command, length = struct.unpack_from('<II', raw, offset)
+        require(length >= 8 and offset + length <= 32 + size, 'Invalid component load command')
+        if command == 0x1b:
+            require(length == 24, 'Invalid component UUID command')
+            values.append(str(uuid.UUID(bytes=raw[offset + 8:offset + 24])).upper())
+        offset += length
+    require(offset == 32 + size and len(values) == 1, 'Component UUID is missing or ambiguous')
+    return values[0]
+
+
+def signed_payload_sha(path, filetype=6):
+    raw = bytearray(path.read_bytes())
+    require(len(raw) >= 32, 'Truncated signed Engine')
+    magic, cpu, _, kind, count, size, _, _ = struct.unpack_from('<8I', raw)
+    require(magic == 0xfeedfacf and cpu == 0x100000c and filetype in (2, 6) and kind == filetype
+        and 0 < count < 4096 and 32 + size <= len(raw), 'Signed Engine header differs')
+    offset, signatures, linkedit = 32, [], []
+    for _ in range(count):
+        require(offset + 8 <= 32 + size, 'Truncated signed Engine load command')
+        command, length = struct.unpack_from('<II', raw, offset)
+        require(length >= 8 and offset + length <= 32 + size, 'Invalid signed Engine load command')
+        if command == 0x1d:
+            require(length == 16, 'Invalid Engine signature command')
+            start, length_bytes = struct.unpack_from('<II', raw, offset + 8)
+            require(start >= 32 + size and start + length_bytes == len(raw), 'Engine signature bounds differ')
+            signatures.append(start)
+            raw[offset + 8:offset + 16] = bytes(8)
+        elif command == 0x19:
+            require(length >= 72, 'Invalid Engine segment command')
+            if bytes(raw[offset + 8:offset + 24]).rstrip(b'\0') == b'__LINKEDIT':
+                linkedit.append(offset)
+                raw[offset + 32:offset + 40] = bytes(8)
+                raw[offset + 48:offset + 56] = bytes(8)
+        offset += length
+    require(offset == 32 + size and len(signatures) == len(linkedit) == 1,
+        'Engine signature or LINKEDIT is missing or ambiguous')
+    return hashlib.sha256(raw[:signatures[0]]).hexdigest()
+
+
+def install_linked_engine(root, app, bound, sign):
+    require(type(sign) is str and (re.fullmatch('[a-fA-F0-9]{40}', sign)
+        or sign.startswith('Developer ID Application: ')), 'Linked Engine requires a Developer ID signer')
+    app_anchor = source_directory_identity(app, Path.cwd())
+    runtime = Path(bound['runtime'])
+    manifest_path = root / 'bank-runtime-manifest.json'
+    require(runtime == root / 'runtime' and runtime.is_dir() and not runtime.is_symlink()
+        and not manifest_path.is_symlink() and checksum(manifest_path) == retained.MANIFEST_SHA,
+        'Linked Engine lost its exact retained bank')
+    manifest = json.loads(manifest_path.read_text())
+    require(manifest['sourceObjects']['Engine'] == source_objects('HEAD')['Engine']
+        and manifest['configuration'] == 'release' and manifest['swiftcFlags'] == ['-enable-testing']
+        and bound['runtimeManifestSHA256'] == retained.MANIFEST_SHA,
+        'Linked Engine source or compiler configuration differs')
+    plan = bound['prepared']['plans']['production']
+    links = [item for item in plan['operations']['links'] if item['targetGUID'] == plan['driver']['targetGUID']]
+    linked_path = str(Path(plan['operations']['arena']) / 'Products/Release/libNexGenEngine.dylib')
+    require(len(links) == 1 and links[0]['argv'].count(linked_path) == 1
+        and '-lNexGenEngine' not in links[0]['argv'], 'Production App lost its exact Engine linker input')
+    engine = runtime / 'libNexGenEngine.dylib'
+    module = runtime / 'NexGenEngine.swiftmodule/arm64-apple-macos.swiftmodule'
+    symbols = runtime / 'libNexGenEngine.dylib.dSYM'
+    prefix = symbols.name
+    expected = {name.removeprefix(prefix + '/'): item for name, item in manifest['files'].items()
+        if name.startswith(prefix + '/')}
+    require(symbols.is_dir() and not symbols.is_symlink() and expected
+        and stat.S_IMODE(symbols.lstat().st_mode) == manifest['files'][prefix]['mode'] == 0o755
+        and {path.relative_to(symbols).as_posix() for path in symbols.rglob('*')} == set(expected),
+        'Linked Engine symbol bundle inventory differs')
+    for name, item in expected.items():
+        path = symbols / name
+        require(not path.is_symlink() and stat.S_IMODE(path.lstat().st_mode) == item['mode']
+            and ((item['kind'] == 'directory' and path.is_dir())
+                or (item['kind'] == 'file' and path.is_file() and path.stat().st_size == item['bytes']
+                    and checksum(path) == item['sha256'])), 'Linked Engine symbol bytes or mode differ')
+    dwarf = symbols / 'Contents/Resources/DWARF/libNexGenEngine.dylib'
+    require(engine.is_file() and not engine.is_symlink() and checksum(engine) == LINKED_ENGINE['sha256']
+        and engine.stat().st_size == LINKED_ENGINE['bytes']
+        and stat.S_IMODE(engine.lstat().st_mode) == manifest['files'][engine.name]['mode'] == 0o755
+        and manifest['files'][engine.name]['sha256'] == LINKED_ENGINE['sha256']
+        and module.is_file() and not module.is_symlink() and checksum(module) == LINKED_ENGINE['moduleSHA256']
+        and stat.S_IMODE(module.lstat().st_mode) == manifest['files'][module.relative_to(runtime).as_posix()]['mode'] == 0o644
+        and manifest['files'][module.relative_to(runtime).as_posix()]['sha256'] == LINKED_ENGINE['moduleSHA256']
+        and checksum(Path(bound['products']['production']['output'])) == LINKED_ENGINE['mainUnsignedSHA256']
+        and checksum(dwarf) == LINKED_ENGINE['dsymSHA256']
+        and image_uuid(engine, 6) == image_uuid(dwarf, 10) == LINKED_ENGINE['uuid'],
+        'Linked Engine image and matching symbols lost their original identity')
+    destination, final_symbols = app / 'Contents/Frameworks/libNexGenEngine.dylib', Path('.build/NexGenEngine.dSYM')
+    require(destination.is_file() and not destination.is_symlink() and final_symbols.is_dir()
+        and not final_symbols.is_symlink() and sign, 'Distribution Engine destinations or signer differ')
+    original_sha = checksum(destination)
+    require(original_sha == LINKED_ENGINE['retiredImageSHA256'], 'Retired distribution Engine differs')
+    source_directory_identity(destination.parent, app)
+    destination.rename(root / 'retired-original-engine-image')
+    final_symbols.rename(root / 'retired-original-engine-symbols')
+    shutil.copy2(engine, destination)
+    shutil.copytree(symbols, final_symbols)
+    require(checksum(destination) == LINKED_ENGINE['sha256']
+        and canonical_bundle_tree(final_symbols) == canonical_bundle_tree(symbols) == LINKED_ENGINE['symbolsTreeSHA256'],
+        'Copied linked Engine or symbols differ')
+    payload_sha = signed_payload_sha(engine)
+    require(payload_sha == LINKED_ENGINE['payloadSHA256'], 'Original Engine payload differs')
+    targets.logged(root, 'sign-linked-engine', ['codesign', '--force', '--options', 'runtime', '--timestamp',
+        '--sign', sign, str(destination)], timeout=180)
+    targets.logged(root, 'verify-linked-engine-signature', ['codesign', '--verify', '--strict', str(destination)])
+    source_directory_identity(app, Path.cwd(), app_anchor)
+    source_directory_identity(destination.parent, app)
+    require(signed_payload_sha(destination) == payload_sha
+        and image_uuid(destination, 6) == image_uuid(final_symbols / 'Contents/Resources/DWARF/libNexGenEngine.dylib', 10)
+        == LINKED_ENGINE['uuid'], 'Distribution Engine signature changed its image/symbol identity')
+    return {'schema': 'compiled-linked-engine-distribution/v1', 'state': 'REUSED_COMPILER_PRODUCT_NEW_DEVELOPER_ID_SIGNATURE',
+        'producerRunID': retained.RUN, 'producerSourceSHA': retained.SOURCE,
+        'artifactID': retained.ARTIFACTS['runtime'][0], 'artifactSHA256': retained.ARTIFACTS['runtime'][1],
+        'manifestSHA256': retained.MANIFEST_SHA, 'original': LINKED_ENGINE,
+        'productionLinkerInput': linked_path,
+        'retiredImageSHA256': original_sha, 'distributionImageSHA256': checksum(destination),
+        'payloadSHA256': payload_sha,
+        'symbolsTreeSHA256': canonical_bundle_tree(final_symbols),
+        'symbolBundle': 'NexGenEngine.dSYM', 'dwarfMember': 'Contents/Resources/DWARF/libNexGenEngine.dylib',
+        'compilerOrLinkerInvoked': False}
+
+
+def derive_component_source(root, directory):
+    import consume_bpy_distributable_source as source
+    from compiled_core_reuse import persist, persist_bytes, sync_directory
+    original_path = directory / source.RECEIPT
+    raw = original_path.read_bytes()
+    require(not original_path.is_symlink() and hashlib.sha256(raw).hexdigest() == SIGNED_RESUME['sourceReceiptSHA256'],
+        'Component assembly lost the original source receipt')
+    public = source.public_asset(json.loads(source.LOCK_PATH.read_text()))
+    original = source.qualified_handoff(json.loads(raw), public, RETAINED_SOURCE)
+    require(source_objects('HEAD')['Runtime'] == source_objects(RETAINED_SOURCE)['Runtime'],
+        'Component assembly changed corresponding-source Runtime pins')
+    source.require_pair(directory, public)
+    derived = dict(original, sourceSHA=os.environ['GITHUB_SHA'])
+    source.qualified_handoff(derived, public, os.environ['GITHUB_SHA'])
+    persist_bytes(root / 'component-source-original-receipt.json', raw)
+    replacement = directory / 'component-source-current-receipt.json'
+    persist_bytes(replacement, (json.dumps(derived, indent=2, sort_keys=True) + '\n').encode())
+    replacement.replace(original_path)
+    sync_directory(directory)
+    value = {'schema': 'compiled-component-source-handoff/v1', 'state': 'REUSED',
+        'originalReceipt': raw.decode(), 'originalReceiptSHA256': hashlib.sha256(raw).hexdigest(),
+        'qualification': source.QUALIFIED_HANDOFF, 'consumerSourceSHA': os.environ['GITHUB_SHA'],
+        'receiptSHA256': checksum(original_path), 'semanticSourceValidationPerformed': False}
+    persist(root / 'component-source-handoff.json', value)
+    return value
+
+
+def verify_component_assembly(value, source_sha, run_id, identity, files, native_evidence):
+    import consume_bpy_distributable_source as source
+    require(type(value) is dict and value.get('schema') == 'compiled-component-assembly/v1'
+        and value.get('sourceSHA') == source_sha and value.get('runID') == run_id
+        and value.get('attempt') == 1 and value.get('build') == identity.get('build') == COMPONENT_BUILD,
+        'Compiled component assembly lost its current product identity')
+    component, handoff, main = value.get('engine', {}), value.get('sourceHandoff', {}), value.get('main', {})
+    product = native_evidence.get('products', {}).get('production', {}).get('receipt', {})
+    linked_path = str(Path(product.get('arena', '')) / 'Products/Release/libNexGenEngine.dylib')
+    require(component.get('schema') == 'compiled-linked-engine-distribution/v1'
+        and component.get('state') == 'REUSED_COMPILER_PRODUCT_NEW_DEVELOPER_ID_SIGNATURE'
+        and component.get('original') == LINKED_ENGINE and component.get('producerRunID') == retained.RUN
+        and component.get('retiredImageSHA256') == LINKED_ENGINE['retiredImageSHA256']
+        and component.get('payloadSHA256') == LINKED_ENGINE['payloadSHA256']
+        and component.get('symbolsTreeSHA256') == LINKED_ENGINE['symbolsTreeSHA256']
+        and component.get('producerSourceSHA') == retained.SOURCE
+        and component.get('artifactID') == retained.ARTIFACTS['runtime'][0]
+        and component.get('artifactSHA256') == retained.ARTIFACTS['runtime'][1]
+        and component.get('manifestSHA256') == retained.MANIFEST_SHA
+        and component.get('symbolBundle') == 'NexGenEngine.dSYM'
+        and component.get('dwarfMember') == 'Contents/Resources/DWARF/libNexGenEngine.dylib'
+        and component.get('compilerOrLinkerInvoked') is False
+        and component.get('productionLinkerInput') == linked_path
+        and product.get('state', {}).get('unsignedLinkSHA256') == LINKED_ENGINE['mainUnsignedSHA256']
+        and all(re.fullmatch('[a-f0-9]{64}', component.get(key, '')) for key in
+            ('retiredImageSHA256', 'distributionImageSHA256', 'symbolsTreeSHA256', 'payloadSHA256')),
+        'Compiled component assembly lost its actual linked Engine')
+    require(main.get('original') == MAIN_PRODUCT
+        and re.fullmatch('[a-f0-9]{64}', main.get('distributionImageSHA256', ''))
+        and product.get('state', {}).get('unsignedLinkSHA256') == MAIN_PRODUCT['compiledImageSHA256'],
+        'Compiled component assembly lost its original Main product and symbols')
+    raw = handoff.get('originalReceipt', '').encode()
+    require(handoff.get('schema') == 'compiled-component-source-handoff/v1' and handoff.get('state') == 'REUSED'
+        and handoff.get('originalReceiptSHA256') == hashlib.sha256(raw).hexdigest() == SIGNED_RESUME['sourceReceiptSHA256']
+        and handoff.get('qualification') == source.QUALIFIED_HANDOFF and handoff.get('consumerSourceSHA') == source_sha
+        and handoff.get('semanticSourceValidationPerformed') is False,
+        'Compiled component assembly lost its original source validation')
+    public = source.public_asset(json.loads(source.LOCK_PATH.read_text()))
+    original = source.qualified_handoff(json.loads(raw), public, RETAINED_SOURCE)
+    derived = dict(original, sourceSHA=source_sha)
+    expected = hashlib.sha256((json.dumps(derived, indent=2, sort_keys=True) + '\n').encode()).hexdigest()
+    require(handoff.get('receiptSHA256') == expected == files['bpy-source-receipt.json']['sha256'],
+        'Compiled component assembly changed its exact derived receipt bytes')
+    return value
+
+
+def verify_engine_materialization(component, app, symbols):
+    image = app / 'Contents/Frameworks/libNexGenEngine.dylib'
+    dwarf = symbols / component['dwarfMember']
+    require(image.is_file() and not image.is_symlink() and stat.S_IMODE(image.lstat().st_mode) == 0o755
+        and symbols.is_dir() and not symbols.is_symlink() and stat.S_IMODE(symbols.lstat().st_mode) == 0o755
+        and all(not path.is_symlink() for path in symbols.rglob('*'))
+        and checksum(image) == component['distributionImageSHA256']
+        and signed_payload_sha(image) == component['payloadSHA256'] == LINKED_ENGINE['payloadSHA256']
+        and canonical_bundle_tree(symbols) == component['symbolsTreeSHA256'] == LINKED_ENGINE['symbolsTreeSHA256']
+        and checksum(dwarf) == LINKED_ENGINE['dsymSHA256']
+        and image_uuid(image, 6) == image_uuid(dwarf, 10) == LINKED_ENGINE['uuid'],
+        'Actual component image, code payload, mode or complete symbol bundle changed')
+
+
+def verify_main_inputs(bound):
+    image = Path(bound['products']['production']['output'])
+    symbols = Path(str(image) + '.dSYM')
+    dwarf = symbols / 'Contents/Resources/DWARF/NexGenVideo'
+    require(image.is_file() and not image.is_symlink() and stat.S_IMODE(image.lstat().st_mode) == 0o755
+        and checksum(image) == MAIN_PRODUCT['compiledImageSHA256']
+        and symbols.is_dir() and not symbols.is_symlink() and stat.S_IMODE(symbols.lstat().st_mode) == 0o755
+        and all(not path.is_symlink() for path in symbols.rglob('*'))
+        and canonical_bundle_tree(symbols) == MAIN_PRODUCT['symbolsTreeSHA256']
+        and checksum(dwarf) == MAIN_PRODUCT['dwarfSHA256']
+        and image_uuid(image, 2) == image_uuid(dwarf, 10) == MAIN_PRODUCT['uuid'],
+        'Original compiled Main or complete Main symbols changed')
+
+
+def verify_component_materialization(value, app, symbols):
+    verify_engine_materialization(value['engine'], app, symbols)
+    main = value.get('main', {})
+    image = app / 'Contents/MacOS/NexGenVideo'
+    main_symbols = symbols.parent / 'NexGenVideo.dSYM'
+    dwarf = main_symbols / 'Contents/Resources/DWARF/NexGenVideo'
+    require(main.get('original') == MAIN_PRODUCT
+        and image.is_file() and not image.is_symlink() and stat.S_IMODE(image.lstat().st_mode) == 0o755
+        and checksum(image) == main.get('distributionImageSHA256')
+        and signed_payload_sha(image, 2) == MAIN_PRODUCT['payloadSHA256']
+        and main_symbols.is_dir() and not main_symbols.is_symlink()
+        and stat.S_IMODE(main_symbols.lstat().st_mode) == 0o755
+        and all(not path.is_symlink() for path in main_symbols.rglob('*'))
+        and canonical_bundle_tree(main_symbols) == MAIN_PRODUCT['symbolsTreeSHA256']
+        and checksum(dwarf) == MAIN_PRODUCT['dwarfSHA256']
+        and image_uuid(image, 2) == image_uuid(dwarf, 10) == MAIN_PRODUCT['uuid'],
+        'Actual Main image, code payload, mode or original complete symbols changed')
+
+
+def seal_component_app(root, app, bound, sign, engine_component, source_handoff):
+    verify_main_inputs(bound)
+    image = app / 'Contents/MacOS/NexGenVideo'
+    require(signed_payload_sha(image, 2) == MAIN_PRODUCT['payloadSHA256'], 'Distribution Main payload changed before signing')
+    targets.logged(root, 'sign-new-app-root', ['codesign', '--force', '--options', 'runtime', '--timestamp',
+        '--sign', sign, '--entitlements', 'scripts/NexGenVideo.entitlements', str(app)], timeout=180)
+    targets.logged(root, 'verify-new-app-signature', ['codesign', '--verify', '--deep', '--strict', str(app)])
+    targets.logged(root, 'verify-distributable-bpy', ['bash', 'scripts/verify_bpy_bundle.sh', str(app), '--distribution'], timeout=300)
+    verify_main_inputs(bound)
+    value = {'schema': 'compiled-component-assembly/v1', 'sourceSHA': os.environ['GITHUB_SHA'],
+        'runID': int(os.environ['GITHUB_RUN_ID']), 'attempt': 1, 'build': COMPONENT_BUILD,
+        'engine': engine_component, 'sourceHandoff': source_handoff,
+        'main': {'original': MAIN_PRODUCT, 'distributionImageSHA256': checksum(image)}}
+    verify_component_materialization(value, app, Path('.build/NexGenEngine.dSYM'))
+    return value
+
+
 def assemble(root):
     import plistlib
     native_guard(root)
@@ -1050,7 +1397,7 @@ def assemble(root):
     payload = retained_payload(root, 'release-build', *SIGNED_ARTIFACT)
     retained_root = root / 'signed-payload'
     retained_root.mkdir()
-    with verified_zip(payload, 4 * 1024**3) as archive:
+    with verified_zip(payload, 4 * 1024**3, qualified_sha=SIGNED_ARTIFACT[1]) as archive:
         require(set(archive.namelist()) == set(checkpoint.FILES) | {'manifest.json'}, 'Retained signed input inventory differs')
         manifest = checkpoint.verify_manifest(json.loads(archive_bytes(archive, 'manifest.json')), RETAINED_SOURCE, RETAINED_RUN)
         write(root / 'retained-signed-manifest.json', manifest)
@@ -1060,7 +1407,6 @@ def assemble(root):
             with archive.open(name) as source, (retained_root / name).open('xb') as destination:
                 shutil.copyfileobj(source, destination, 1024 * 1024)
             require(checksum(retained_root / name) == record['sha256'], 'Retained signed payload bytes differ')
-    checkpoint.validate_app_zip(retained_root / 'NexGenVideo.zip')
     build = Path('.build')
     app = build / 'NexGenVideo.app'
     require(not app.exists() and not app.is_symlink(), 'New App bundle destination is occupied')
@@ -1074,7 +1420,7 @@ def assemble(root):
     pack_root.mkdir(exist_ok=False)
     source_root = build / 'bpy-source'
     source_root.mkdir(exist_ok=True)
-    with verified_zip(final, 6 * 1024**3) as archive:
+    with verified_zip(final, 6 * 1024**3, qualified_sha=FINAL_ARTIFACT[1]) as archive:
         for name in ('plugins/musicvideo.entry.json', 'plugins/musicvideo.ngvpack.zip', 'plugins/musicvideo.badge.png',
                 'bpy-source/bpy-source-receipt.json', 'bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.tar',
                 'bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json'):
@@ -1083,19 +1429,23 @@ def assemble(root):
     require(checksum(pack_root / 'musicvideo.ngvpack.zip') == PACK_SHA
         and checksum(source_root / 'bpy-source-receipt.json') == manifest['files']['bpy-source-receipt.json']['sha256'],
         'Retained stapled pack or distributable source receipt differs')
-    with verified_zip(pack_root / 'musicvideo.ngvpack.zip', 64 * 1024**2) as archive:
+    with verified_zip(pack_root / 'musicvideo.ngvpack.zip', 64 * 1024**2, qualified_sha=PACK_SHA) as archive:
         require(all(PurePosixPath(item.filename).parts[0] in ('musicvideo.ngvpack', '__MACOSX')
             for item in archive.infolist()), 'Retained pack archive escapes its bundle')
     targets.logged(root, 'restore-stapled-pack', ['/usr/bin/ditto', '-x', '-k', str(pack_root / 'musicvideo.ngvpack.zip'), str(pack_root)])
     verify_pack(pack_root)
+    source_handoff = derive_component_source(root, source_root)
     original_image = app / 'Contents/MacOS/NexGenVideo'
     original_symbols = build / 'NexGenVideo.dSYM'
     original_image.rename(root / 'retired-original-app-image')
     original_symbols.rename(root / 'retired-original-app-symbols')
     production = Path(bound['products']['production']['output'])
+    verify_main_inputs(bound)
     shutil.copyfile(production, original_image)
     os.chmod(original_image, 0o755)
     shutil.copytree(Path(str(production) + '.dSYM'), original_symbols, symlinks=True)
+    require(canonical_bundle_tree(original_symbols) == canonical_bundle_tree(Path(str(production) + '.dSYM')),
+        'Copied production App symbols differ')
     targets.logged(root, 'distribution-rpath', ['install_name_tool', '-add_rpath', '@executable_path/../Frameworks', str(original_image)])
     info_path = app / 'Contents/Info.plist'
     retained_info = plistlib.loads(info_path.read_bytes())
@@ -1108,22 +1458,23 @@ def assemble(root):
         require(not destination.is_symlink() and destination.is_file(), 'Retained changelog destination missing or linked')
         destination.write_bytes(changelog.read_bytes())
     info.update(NGVSourceCommit=os.environ['GITHUB_SHA'], NGVBuildConfiguration='release', NGVBuildSDK='27.2',
-        CFBundleShortVersionString='1.8.0', CFBundleVersion=str(int(manifest['identity']['build']) + 1))
+        CFBundleShortVersionString='1.8.0', CFBundleVersion=COMPONENT_BUILD)
+    require(COMPONENT_BUILD == '107' and int(COMPONENT_BUILD) > int(manifest['identity']['build']) + 1,
+        'Corrected component product must supersede the failed signed build106')
     require(info['NGVPluginCatalogURL'] == 'https://github.com/iret77/nexgenvideo/releases/download/plugins/catalog.json',
         'Compiled App cannot change its catalog channel')
     info_path.write_bytes(plistlib.dumps(info))
     sign = os.environ.get('SIGN_IDENTITY')
     require(sign, 'Developer ID identity is missing')
-    targets.logged(root, 'sign-new-app-root', ['codesign', '--force', '--options', 'runtime', '--timestamp',
-        '--sign', sign, '--entitlements', 'scripts/NexGenVideo.entitlements', str(app)], timeout=180)
-    targets.logged(root, 'verify-new-app-signature', ['codesign', '--verify', '--deep', '--strict', str(app)])
-    targets.logged(root, 'verify-distributable-bpy', ['bash', 'scripts/verify_bpy_bundle.sh', str(app), '--distribution'], timeout=300)
+    engine_component = install_linked_engine(root, app, bound, sign)
+    component_assembly = seal_component_app(root, app, bound, sign, engine_component, source_handoff)
     write(root / 'assembled.json', {'sourceSHA': os.environ['GITHUB_SHA'], 'runID': int(os.environ['GITHUB_RUN_ID']),
         'appTreeSHA256': checkpoint.tree_digest(app), 'identity': checkpoint.identity(build),
         'newCompiledImageSHA256': checksum(production), 'distributionImageSHA256': checksum(original_image),
         'retainedSourceSHA': RETAINED_SOURCE, 'retainedSignedArtifact': SIGNED_ARTIFACT,
         'retainedFinalArtifact': FINAL_ARTIFACT, 'freshResourceSHA256': {name: checksum(Path(name)) for name in sorted(fresh_resources)},
-        'retainedPackSHA256': PACK_SHA, 'retainedPackTreeSHA256': PACK_TREE,
+        'retainedPackSHA256': PACK_SHA, 'retainedPackTreeSHA256': PACK_TREE, 'componentAssembly': component_assembly,
+        'mainSymbolsTreeSHA256': canonical_bundle_tree(original_symbols),
         'unchangedSourceComponentObjects': {name: targets.capture.git('rev-parse', 'HEAD:' + name) for name in component_paths}})
 
 
@@ -1358,6 +1709,9 @@ def create_signed_input(root, output):
     require(assembled['sourceSHA'] == os.environ['GITHUB_SHA'] and assembled['runID'] == int(os.environ['GITHUB_RUN_ID'])
         and assembled['appTreeSHA256'] == checkpoint.tree_digest(build / 'NexGenVideo.app')
         and assembled['identity'] == checkpoint.identity(build), 'Assembled App changed before signed checkpoint')
+    verify_component_materialization(assembled['componentAssembly'], build / 'NexGenVideo.app', build / 'NexGenEngine.dSYM')
+    require(canonical_bundle_tree(build / 'NexGenVideo.dSYM') == assembled['mainSymbolsTreeSHA256'],
+        'Current Main symbols changed before checkpoint')
     output.mkdir(parents=True, exist_ok=False)
     targets.logged(root, 'archive-new-signed-app', ['/usr/bin/ditto', '-c', '-k', '--keepParent',
         str(build / 'NexGenVideo.app'), str(output / 'NexGenVideo.zip')], timeout=300)
@@ -1368,6 +1722,7 @@ def create_signed_input(root, output):
     manifest = {'schema': 'release-signed-input/v1', 'repository': REPOSITORY, 'sourceSHA': os.environ['GITHUB_SHA'],
         'runID': int(os.environ['GITHUB_RUN_ID']), 'attempt': 1, 'identity': assembled['identity'],
         'appTreeSHA256': assembled['appTreeSHA256'], 'nativeEvidence': receipt,
+        'componentAssembly': assembled['componentAssembly'],
         'files': {name: {'bytes': (output / name).stat().st_size, 'sha256': checksum(output / name)} for name in checkpoint.FILES}}
     checkpoint.validate_app_zip(output / 'NexGenVideo.zip')
     checkpoint.verify_manifest(manifest, os.environ['GITHUB_SHA'], int(os.environ['GITHUB_RUN_ID']))

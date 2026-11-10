@@ -242,6 +242,11 @@ def verify_manifest(manifest, source, run_id):
     if evidence.get("schema") in ("release-native-compiled-app/v1", "release-native-compiled-app/v2", "release-native-compiled-app/v3", "release-native-compiled-app/v4"):
         from compiled_app_release import verify_receipt
         verify_receipt(evidence, source, run_id)
+        if 'componentAssembly' in manifest:
+            from compiled_app_release import verify_component_assembly
+            verify_component_assembly(manifest['componentAssembly'], source, run_id, info, manifest.get('files', {}), evidence)
+        elif info.get('build') == '107':
+            raise ValueError('Corrected compiled product lacks its actual component assembly')
     elif evidence.get("schema") == "release-native-scoped-repair/v1":
         from release_test_repair import verify_receipt
         verify_receipt(evidence, source, run_id)
@@ -430,6 +435,9 @@ def restore(root):
         extract_tar(payload / name, build, allowed)
     require(tree_digest(build / "NexGenVideo.app") == manifest["appTreeSHA256"]
             and identity(build) == manifest["identity"], "Restored signed App differs")
+    if 'componentAssembly' in manifest:
+        from compiled_app_release import verify_component_materialization
+        verify_component_materialization(manifest['componentAssembly'], build / 'NexGenVideo.app', build / 'NexGenEngine.dSYM')
     require(manifest["identity"]["version"] == os.environ["REL_VERSION"], "Requested release version differs")
     require(manifest["identity"]["catalogURL"] == os.environ["PLUGIN_CATALOG_URL"],
             "Restored App belongs to another plugin channel")

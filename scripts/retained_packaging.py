@@ -41,6 +41,7 @@ VERIFIER_INPUTS += ('scripts/native_current_cohort.py', 'scripts/native_xctest_h
                     'scripts/compiled_app_release.py', 'scripts/compiled_xctest_reuse.py', 'scripts/fixtures/compiled-app-native-inventory.json',
                     'scripts/native_app_target_build.py', 'scripts/native_app_target_recipe.py',
                     'scripts/native_app_build_plan.py', 'scripts/fixtures/native-test-entry-point.json')
+VERIFIER_INPUTS += ('scripts/consume_bpy_distributable_source.py',)
 PACKAGING_PATHS = {
     "scripts/plan_dmg_capacity.py", "scripts/test_release_dmg_packaging.py",
     "scripts/retained_packaging.py", "scripts/test_retained_packaging.py",
@@ -60,6 +61,7 @@ PACKAGING_PATHS = {
     "scripts/test_release_workflow.py", "scripts/test_private_example_workflow.py",
     "scripts/test_ci_workflow.py",
     ".github/actions/prepare-bpy-source/action.yml",
+    "scripts/consume_bpy_distributable_source.py", "scripts/test_consume_bpy_distributable_source.py",
 }
 COMPILED_PACKAGING_PATHS = {'scripts/compiled_app_release.py', 'scripts/test_compiled_app_release.py',
     'scripts/native_current_cohort.py', 'scripts/test_native_current_cohort.py'}
