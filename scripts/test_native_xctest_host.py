@@ -36,6 +36,9 @@ class NativeXCTestHostTests(unittest.TestCase):
         receipt = {'schema': 'native-xctest-host/v1', 'sourceSHA': 'a' * 40, 'pid': 123, 'parentPID': 99,
             'bundlePath': str(bundle), 'hostPath': str(executable), 'loadedHostImage': str(executable), 'bundleImagePath': image,
             'passed': True, 'boundary': 'suite-returned', 'mainThread': True, 'applicationRunningAtStart': True,
+            'executionScheduler': 'main-cf-run-loop', 'mainQueueAdmission': {'completed': True, 'pid': 123,
+                'mainThread': True, 'applicationRunning': True, 'suiteExecuting': False,
+                'startedUptime': 100.0, 'deadlineUptime': 105.0, 'completedUptime': 101.0, 'checkedUptime': 101.1},
             'rootSuiteStarted': 1, 'rootSuiteCompleted': 1, 'executionCount': 2, 'skipCount': 0,
             'totalFailureCount': 0, 'hasSucceeded': True, 'prematureExecutionCount': 0, 'issueCount': 0, 'expectedFailureCount': 0,
             'recordingError': None, 'error': None, 'failedIDs': [], 'inventoryIDs': ids,
@@ -57,6 +60,26 @@ class NativeXCTestHostTests(unittest.TestCase):
                 changed = dict(receipt, eventCount=len(stream))
                 with self.subTest(stream=stream), self.assertRaises(ValueError):
                     host.verify_receipt(changed, stream, ids, **arguments)
+
+    def test_checkpoint_or_missing_main_queue_progress_cannot_qualify_execution(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            receipt, events, ids, arguments = self.fixture(Path(temporary))
+            variants = [dict(receipt, schema='native-xctest-host-checkpoint/v1', boundary='discovery-complete', passed=False),
+                dict(receipt, executionScheduler='main-dispatch-queue'), dict(receipt, mainQueueAdmission=None)]
+            for field, value in [('completed', False), ('completed', 1), ('mainThread', False), ('mainThread', 1),
+                    ('applicationRunning', False), ('applicationRunning', 1), ('suiteExecuting', True),
+                    ('suiteExecuting', 0), ('pid', 124), ('pid', True), ('completedUptime', 105.1),
+                    ('completedUptime', 99.9), ('checkedUptime', 105.1), ('checkedUptime', 100.9),
+                    ('deadlineUptime', 106.0), ('startedUptime', 0)]:
+                changed = copy.deepcopy(receipt); changed['mainQueueAdmission'][field] = value; variants.append(changed)
+            for field in ('startedUptime', 'deadlineUptime', 'completedUptime', 'checkedUptime'):
+                for value in (True, '101.0', float('nan'), float('inf'), -float('inf')):
+                    changed = copy.deepcopy(receipt); changed['mainQueueAdmission'][field] = value; variants.append(changed)
+            for field in receipt['mainQueueAdmission']:
+                changed = copy.deepcopy(receipt); del changed['mainQueueAdmission'][field]; variants.append(changed)
+            for changed in variants:
+                with self.subTest(value=changed), self.assertRaises(ValueError):
+                    host.verify_receipt(changed, events, ids, **arguments)
 
     def test_observer_rejects_suppressed_issues_discovery_execution_and_fabricated_pass_counts(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -1,5 +1,6 @@
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import platform
@@ -121,6 +122,19 @@ def verify_receipt(receipt, events, expected, *, source, pid, parent, bundle, ho
         and receipt.get('hasSucceeded') is True and receipt.get('prematureExecutionCount') == receipt.get('issueCount') == receipt.get('expectedFailureCount') == 0
         and receipt.get('recordingError') is None and receipt.get('error') is None
         and receipt.get('failedIDs') == [], 'Native XCTest host lifecycle or producer differs')
+    admission = receipt.get('mainQueueAdmission')
+    require(receipt.get('executionScheduler') == 'main-cf-run-loop' and isinstance(admission, dict)
+        and set(admission) == {'completed', 'pid', 'mainThread', 'applicationRunning', 'suiteExecuting',
+            'startedUptime', 'deadlineUptime', 'completedUptime', 'checkedUptime'}
+        and all(admission[key] is True for key in ('completed', 'mainThread', 'applicationRunning'))
+        and admission['suiteExecuting'] is False and type(admission['pid']) is int and admission['pid'] == pid,
+        'Main queue did not prove progress outside XCTest execution')
+    times = [admission[key] for key in ('startedUptime', 'deadlineUptime', 'completedUptime', 'checkedUptime')]
+    require(all(type(value) in (int, float) and math.isfinite(value) for value in times),
+        'Main queue admission lacks finite monotonic observations')
+    started, deadline, completed, checked = times
+    require(started > 0 and deadline == started + 5 and started <= completed <= checked <= deadline,
+        'Main queue admission exceeded its measured deadline')
     require(expected and len(expected) == len(set(expected)), 'Invalid independent XCTest inventory')
     for key in ('inventoryIDs', 'startedIDs', 'endedIDs', 'passedIDs'):
         require(sorted(receipt.get(key, [])) == sorted(expected), 'Native XCTest inventory differs: ' + key)
