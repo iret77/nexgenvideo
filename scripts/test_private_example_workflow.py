@@ -82,13 +82,27 @@ class PrivateExampleWorkflowTests(unittest.TestCase):
         self.assertIn("gh api /users/iret77/packages/container/nexgenvideo-analysis-reports", source_gate)
         self.assertIn('[ "$(jq -r \'.visibility\' <<<"$REPORT_PACKAGE_JSON")" = "private" ]', source_gate)
         self.assertIn('[ "$(jq -r \'.repository // empty\' <<<"$REPORT_PACKAGE_JSON")" = "" ]', source_gate)
-        self.assertNotIn("actions/upload-artifact", source_gate)
-        self.assertEqual(analyze.count("actions/upload-artifact"), 1)
+        import yaml
+        jobs = yaml.safe_load(text)['jobs']
+        supplement = '${{ runner.temp }}/retained-packaging-supplements/'
+        allowed = {'source-gate': {supplement},
+                   'build-runtime-harness': {'${{ runner.temp }}/runtime-harness.tar.gz'},
+                   'analyze': {'${{ runner.temp }}/analysis-runtime/runtime-environment.json', supplement}}
+        for name, paths in allowed.items():
+            uploads = [step for step in jobs[name]['steps'] if step.get('uses', '').startswith('actions/upload-artifact@')]
+            with self.subTest(job=name):
+                self.assertEqual(len(uploads), len(paths))
+                self.assertEqual({step['with']['path'] for step in uploads}, paths)
+                for step in uploads:
+                    if step['with']['path'] == supplement:
+                        self.assertEqual(step['if'], 'always()')
+                        self.assertTrue(step['with']['name'].startswith('retained-origin-private-example-analysis-'))
+                        self.assertEqual(step['uses'], 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02')
         upload = analyze.split("      - name: Retain actual runtime identity", 1)[1].split("      - name:", 1)[0]
         self.assertIn("uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02", upload)
         self.assertEqual([line.strip() for line in upload.splitlines() if line.strip().startswith("path:")],
                          ["path: ${{ runner.temp }}/analysis-runtime/runtime-environment.json"])
-        self.assertEqual(text.count("uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"), 2)
+        self.assertEqual(text.count("uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"), 4)
         self.assertLess(analyze.index("RUNTIME_PRODUCT_VERSION="), analyze.index("actions/download-artifact@"))
         self.assertLess(analyze.index("RUNTIME_PRODUCT_VERSION="), analyze.index("oras pull"))
         self.assertIn("path: ${{ runner.temp }}/runtime-harness.tar.gz", build)

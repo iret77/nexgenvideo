@@ -73,6 +73,27 @@ class ExternalTestBundleTests(unittest.TestCase):
         self.assertEqual(actual, revision)
         self.assertEqual(fingerprints, {name: hashlib.sha256(value).hexdigest() for name, value in payloads.items()})
 
+    def test_gui_source_guard_accepts_only_the_exact_component_evidence_repair(self):
+        packaging = journey.retained_packaging
+        record = {'producerSourceSHA': 'b' * 40, 'runID': 70}
+        gap = dict(packaging.COMPONENT_CAPTURE_GAP, recordSHA256=hashlib.sha256(packaging.encoded(record)).hexdigest())
+        for variant in ('exact', 'unrelated-proof', 'native-change', 'custom-scope', 'broken-proof'):
+            paths = ['scripts/retained_packaging.py']
+            if variant == 'native-change': paths += ['Sources/NexGenVideo/App/AppDelegate.swift']
+            revision, _, output = self.source_identity_fixture(paths)
+            parent = record | ({'runID': 71} if variant == 'unrelated-proof' else {})
+            options = {'allowed_paths': set()} if variant == 'custom-scope' else {}
+            with self.subTest(variant=variant), patch.object(journey, 'output', side_effect=output), \
+                    patch.object(packaging, 'COMPONENT_CAPTURE_GAP', gap), \
+                    patch.object(packaging, 'consumer_record', return_value=parent) as proof:
+                if variant == 'broken-proof': proof.side_effect = ValueError('Invalid canonical proof')
+                if variant in {'exact', 'custom-scope'}:
+                    self.assertEqual(journey.test_source_identity(self.sha, input_root=self.root,
+                                     packaging={'canonical': 'selectors'}, **options)[0], revision)
+                else:
+                    with self.assertRaises(ValueError):
+                        journey.test_source_identity(self.sha, input_root=self.root, packaging={'canonical': 'selectors'}, **options)
+
     def test_retained_product_rejects_product_changes_and_unrelated_history(self):
         for path in ('Sources/NexGenVideo/App/NexGenVideoApp.swift', 'Package.resolved', 'scripts/bundle.sh',
                      'musicvideo/manifest.json', '.github/workflows/release.yml'):
