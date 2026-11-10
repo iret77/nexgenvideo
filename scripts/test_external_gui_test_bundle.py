@@ -840,6 +840,52 @@ class ExternalTestBundleTests(unittest.TestCase):
                 (raw.replace(b'0.5.8', b'0.6.0'), hashlib.sha256(raw.replace(b'0.5.8', b'0.6.0')).hexdigest(), journey.LOCAL_PACK_ZIP_SHA)]:
             with self.subTest(value=value), self.assertRaises(ValueError): journey.local_catalog(value, expected, pack)
 
+    def test_local_pack_proofs_require_honest_current_reuse_records_and_their_durable_bytes(self):
+        from compiled_app_release import original_pack_proof
+        identity = {'runID': '555', 'runAttempt': '1', 'app': {'treeSHA256': 'a' * 64},
+            'externalPack': {'guideSHA256': 'b' * 64}}
+        expected_binding = {'sourceSHA': 'e' * 40, 'dmgSHA256': 'd' * 64, 'appTreeSHA256': 'a' * 64, 'guideSHA256': 'b' * 64}
+        expected_producer = {'sourceSHA': 'e' * 40, 'runID': 777, 'artifactID': 888,
+            'artifactSHA256': 'f' * 64, 'producerJobID': 999, 'intakeBinding': expected_binding}
+        for case in ('valid', 'fresh-claim', 'old-source', 'old-run', 'wrong-origin', 'wrong-dmg', 'wrong-producer',
+                'producer-run', 'producer-artifact', 'producer-digest', 'producer-job', 'intake-app', 'intake-guide',
+                'current-run', 'current-attempt', 'durable'):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / 'pack-reuse').mkdir()
+                for context, name in [('local-dmg', 'pack-source-signature.log'), ('local-installed', 'pack-signature.log')]:
+                    proof = {'schema': 'retained-pack-copy-reuse/v1', 'state': 'REUSED', 'context': context,
+                        'original': original_pack_proof(), 'currentSourceSHA': 'c' * 40, 'currentRunID': 555,
+                        'currentAttempt': 1, 'currentJob': 'acceptance', 'packTreeSHA256': journey.LOCAL_PACK_TREE,
+                        'rootMode': 0o755, 'currentDMGSHA256': 'd' * 64,
+                        'runtimeProducer': copy.deepcopy(expected_producer),
+                        'currentNativeCodesignOrStaplerPerformed': False, 'currentPackNotarizationPerformed': False,
+                        'freshTrustStoreOrRevocationClaimed': False, 'newAppPackLoadQualified': False}
+                    if case == 'fresh-claim': proof['currentNativeCodesignOrStaplerPerformed'] = True
+                    elif case == 'old-source': proof['currentSourceSHA'] = 'b' * 40
+                    elif case == 'old-run': proof['currentRunID'] = 554
+                    elif case == 'wrong-origin': proof['original']['runID'] += 1
+                    elif case == 'wrong-dmg': proof['currentDMGSHA256'] = '0' * 64
+                    elif case == 'wrong-producer': proof['runtimeProducer']['sourceSHA'] = '0' * 40
+                    elif case == 'producer-run': proof['runtimeProducer']['runID'] = 778
+                    elif case == 'producer-artifact': proof['runtimeProducer']['artifactID'] = 889
+                    elif case == 'producer-digest': proof['runtimeProducer']['artifactSHA256'] = '0' * 64
+                    elif case == 'producer-job': proof['runtimeProducer']['producerJobID'] = 998
+                    elif case == 'intake-app': proof['runtimeProducer']['intakeBinding']['appTreeSHA256'] = '0' * 64
+                    elif case == 'intake-guide': proof['runtimeProducer']['intakeBinding']['guideSHA256'] = '0' * 64
+                    journey.write_json(root / name, proof)
+                    journey.write_json(root / 'pack-reuse' / (context + '.json'), proof if case != 'durable' else {})
+                identity['externalPack']['verificationReuseSHA256'] = journey.sha256(root / 'pack-source-signature.log')
+                env = {'GITHUB_ACTIONS': 'true', 'GITHUB_REPOSITORY': 'iret77/nexgenvideo', 'GITHUB_JOB': 'acceptance',
+                    'GITHUB_RUN_ATTEMPT': '2' if case == 'current-attempt' else '1',
+                    'GITHUB_RUN_ID': '556' if case == 'current-run' else '555', 'GITHUB_SHA': 'c' * 40}
+                with patch.dict(os.environ, env), patch('compiled_app_release.local_pack_runtime_origin', return_value=expected_producer) as producer:
+                    if case == 'valid':
+                        journey.validate_local_pack_reuse(root, identity, 'c' * 40, 'e' * 40, 'd' * 64)
+                        producer.assert_called_once_with(expected_binding, expected_dmg_sha256='d' * 64)
+                    else:
+                        with self.assertRaises(ValueError): journey.validate_local_pack_reuse(root, identity, 'c' * 40, 'e' * 40, 'd' * 64)
+
     def test_local_dmg_stage_proof_requires_real_file_installer_and_exact_saved_pin(self):
         screenshot, accessibility = self.root / 'screen.png', self.root / 'screen.ax'
         screenshot.write_bytes(b'\x89PNG\r\n\x1a\nfixture'); accessibility.write_text('native Install Format Pack and Track')

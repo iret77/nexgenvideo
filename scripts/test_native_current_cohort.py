@@ -37,7 +37,8 @@ class NativeCurrentCohortTests(unittest.TestCase):
         self.assertNotIn('scripts/compiled_app_release.py', targets.PATHS)
         self.assertIn('scripts/compiled_app_release.py', targets.CURRENT_PATHS)
         for name in cohort.UI_CI_PATHS | {'scripts/compiled_core_reuse.py', 'scripts/test_compiled_core_reuse.py',
-                'scripts/fixtures/compiled-core-reuse-886.json'}:
+                'scripts/fixtures/compiled-core-reuse-886.json', '.github/workflows/release.yml', 'scripts/bundle.sh',
+                'scripts/verify_dmg_copy.py', 'scripts/test_release_dmg_packaging.py', 'scripts/test_release_workflow.py'}:
             self.assertNotIn(name, targets.PATHS)
             self.assertIn(name, targets.CURRENT_PATHS)
         names = ['Sources/NexGenVideo/File%d.swift' % index for index in range(1395)]
@@ -63,11 +64,12 @@ class NativeCurrentCohortTests(unittest.TestCase):
         artifact = {'id': 201, 'digest': 'sha256:' + 'f' * 64, 'size_in_bytes': 123}
         receipt = {'pullRequest': 900, 'headSHA': pr_head, 'treeSHA': 'a' * 40}
         core_paths = {'scripts/compiled_core_reuse.py', 'scripts/test_compiled_core_reuse.py',
-            'scripts/fixtures/compiled-core-reuse-886.json'}
+            'scripts/fixtures/compiled-core-reuse-886.json', '.github/workflows/release.yml', 'scripts/bundle.sh',
+            'scripts/verify_dmg_copy.py', 'scripts/test_release_dmg_packaging.py', 'scripts/test_release_workflow.py'}
         for changed in ('valid', *('ui:' + name for name in sorted(cohort.UI_CI_PATHS)),
                         *('ui:' + name for name in sorted(core_paths)), 'app-pin', 'missing-merge',
                         'different-source-run', 'different-native9', 'ui-with-native9', 'unreviewed-delta',
-                        'unreviewed-ui-sibling', 'unreviewed-core-sibling', 'core-with-native9',
+                        'unreviewed-ui-sibling', 'unreviewed-core-sibling', 'unreviewed-packaging-sibling', 'core-with-native9',
                         'different-pr-head', 'different-merge-tree'):
             with self.subTest(changed=changed), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
@@ -89,6 +91,7 @@ class NativeCurrentCohortTests(unittest.TestCase):
                         if changed == 'unreviewed-delta': return 'Sources/NexGenVideo/New.swift'
                         if changed == 'unreviewed-ui-sibling': return 'scripts/external-gui/NexGenVideoExternalUITests/Unreviewed.swift'
                         if changed == 'unreviewed-core-sibling': return 'scripts/compiled_core_reuse_unreviewed.py'
+                        if changed == 'unreviewed-packaging-sibling': return 'scripts/verify_dmg_copy_unreviewed.py'
                         if changed.startswith('ui:'): return changed.removeprefix('ui:')
                         if changed == 'ui-with-native9': return '\n'.join(sorted(cohort.UI_CI_PATHS))
                         if changed == 'core-with-native9': return '\n'.join(sorted(core_paths))
