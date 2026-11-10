@@ -426,6 +426,61 @@ class ReleaseRecoveryTests(unittest.TestCase):
             self.assertEqual(json.loads((root / "notary/context.json").read_text())["buildRunID"], 123)
             self.assertFalse(any(call.args[0] == "swift" for call in commands.call_args_list))
 
+    def test_complete_retained_core_survives_signed_checkpoint_restore_without_original_files(self):
+        import compiled_app_release as release
+        import compiled_core_reuse as core
+        import native_xctest_host as xhost
+        from test_compiled_core_reuse import retained_fixture
+        fixture, receipt, expected = retained_fixture(original='c' * 40, current=SOURCE)
+        receipt['runID'] = 123
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); self.signed(root)
+            build = root / '.build'; build.mkdir()
+            shutil.copytree(root / 'original/NexGenVideo.app', build / 'NexGenVideo.app')
+            (build / 'bpy-source').mkdir()
+            shutil.copyfile(root / 'original/bpy-source-receipt.json', build / 'bpy-source/bpy-source-receipt.json')
+            evidence = root / 'native-evidence'; evidence.mkdir()
+            checkpoint.write(evidence / 'receipt.json', receipt)
+            checkpoint.write(evidence / 'assembled.json', {'sourceSHA': SOURCE, 'runID': 123,
+                'appTreeSHA256': checkpoint.tree_digest(build / 'NexGenVideo.app'), 'identity': checkpoint.identity(build)})
+            originals = evidence / 'retained-core'; originals.mkdir(); (originals / 'marker').write_bytes(b'old records')
+            originals.rename(root / 'parked-original-records')
+            def archive(label, argv, timeout):
+                name = 'NexGenVideo.zip' if label == 'archive-new-signed-app' else label.removeprefix('checkpoint-')
+                destination = argv[-1] if name.endswith('.zip') else argv[2]
+                shutil.copyfile(root / 'original' / name, destination)
+            environment = dict(GITHUB_REPOSITORY=checkpoint.REPOSITORY, GITHUB_SHA=SOURCE, GITHUB_RUN_ID='123',
+                GITHUB_RUN_ATTEMPT='1', REL_VERSION='1.8.0', GITHUB_ENV=str(root / 'env'),
+                PLUGIN_CATALOG_URL='https://example.test/catalog.json')
+            output = root / 'signed-retained'
+            with chdir(root), patch.dict(os.environ, environment), patch.object(release, 'native_guard'), \
+                    patch.object(release, 'CRITERIA', ROOT / release.CRITERIA), patch.object(core, 'origin', return_value=fixture), \
+                    patch.object(release, 'criteria', return_value=expected), \
+                    patch.object(release, 'source_objects', return_value=fixture['nativeSourceObjects']), \
+                    patch.object(xhost, 'inputs', return_value=fixture['hostInputs']), patch.object(xhost, 'verify_proof'), \
+                    patch.object(core, 'api', side_effect=AssertionError('Original network forbidden')), \
+                    patch.object(core, 'download', side_effect=AssertionError('Original downloads forbidden')), \
+                    patch.object(release.targets, 'logged', side_effect=lambda folder, label, argv, timeout: archive(label, argv, timeout)):
+                release.create_signed_input(evidence, output)
+                manifest = json.loads((output / 'manifest.json').read_text())
+                checkpoint.verify_manifest(manifest, SOURCE, 123)
+                signed_zip = root / 'retained-signed.zip'
+                with zipfile.ZipFile(signed_zip, 'w') as archive_file:
+                    for name in (*checkpoint.FILES, 'manifest.json'): archive_file.write(output / name, name)
+                binding = self.restore_fixture(root, manifest, signed_zip)
+                evidence.rename(root / 'parked-evidence'); build.rename(root / 'parked-build')
+                with patch.dict(os.environ, GITHUB_RUN_ID='456'), \
+                        patch.object(checkpoint, 'run', side_effect=self.fake_mac) as commands, \
+                        patch.object(checkpoint, 'download', side_effect=lambda item, target: shutil.copyfile(signed_zip, target)):
+                    checkpoint.restore(binding)
+                self.assertEqual(manifest['nativeEvidence']['retainedNative']['app']['hostReceipt']['sourceSHA'], 'c' * 40)
+                self.assertEqual(manifest['nativeEvidence']['counts']['freshApp'], 0)
+                self.assertIn('NGV_COMPILED_APP_RELEASE=true\n', (root / 'env').read_text())
+                self.assertFalse(any(call.args[0] in {'swift', 'xctest'} for call in commands.call_args_list))
+                broken = copy.deepcopy(manifest)
+                broken['nativeEvidence']['retainedNative']['app']['hostReceipt']['sourceSHA'] = SOURCE
+                with self.assertRaises(ValueError): checkpoint.verify_manifest(broken, SOURCE, 123)
+
     def test_signed_input_rejects_foreign_source_or_producer(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

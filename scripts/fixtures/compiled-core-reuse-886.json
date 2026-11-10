@@ -1,0 +1,263 @@
+{
+  "schema": "compiled-complete-core-origin/v1",
+  "originalExecution": {
+    "runID": 42737812158,
+    "sourceSHA": "43e04c67ce679ee788b5a5c5814784c9581cfee6",
+    "artifactID": 13728272810,
+    "artifactSHA256": "20b3528f531577c975bbefbdbd322966c88dfc0b0d65f0a26038098aad0e83ee",
+    "jobID": 129571394853,
+    "fullRawSHA256": "ebcbab1d8b5c1c79d60f58dfec7436c9fcafd625bfe3e9d00bc44c2185050263"
+  },
+  "appSourceSHA": "87b9a04860428b625fdf09ee8edda4c402a45bc5",
+  "nativeSourceObjects": {
+    "Engine": "29cfed623d13e6d84d5822a30b98e088fc123c3f",
+    "Metal": "4fddc68f15d9ff70104869a2dffd8e5956e9b5d8",
+    "Package.resolved": "530cdaed0a29a65181353d86d05cf9dc04890cc2",
+    "Package.swift": "37f605bfb8cdccc48821b39484c819ba3e5eff43",
+    "Runtime": "910b87b08a3a8c976e0f2502580c843b0df74154",
+    "Sources": "89854eb2b969dc943758ee0f23cd6ffb2e67a859",
+    "Tests": "447109389832857ceb96302eee2cfe01aeb574f5",
+    "Vendor": "51e93c100e00dcd196edac0e70e1af921d52055a",
+    "plugins": "b75e017d3145010368ae417bc410574f3f0300c1"
+  },
+  "compiledSelectors": {
+    "metadata": {
+      "artifactID": 13726701643,
+      "artifactSHA256": "f8324d87bdb30b1c0ffdaf456fae686aa7f596c3aaa38cea9c15cf26a941e909",
+      "runID": 42734352650,
+      "sourceSHA": "43e04c67ce679ee788b5a5c5814784c9581cfee6"
+    },
+    "production": {
+      "artifactID": 13697468150,
+      "artifactSHA256": "478074a1a34a77932aa815a7ec1b273f7c91ecc2ad5417047b393c60e4b2d77e",
+      "receiptSHA256": "49e1ef8f42653761334c1967f8a30db6c04311439c2ba5d8951d1b76dd118ddd",
+      "runID": 42666725279,
+      "sourceSHA": "5c4d67de975a0608c7f175a9b2c7cb023bbb0466"
+    },
+    "testable": {
+      "artifactID": 13697309779,
+      "artifactSHA256": "a7173edec0c7367d03ebd745a3164c0cea48c8396461d92707c25145fb7b40a3",
+      "receiptSHA256": "1da59a5d974a6c48605d8ed3a18c4fd2fc4a60c008556a4d7a50939f8ede8dd1",
+      "runID": 42666725279,
+      "sourceSHA": "5c4d67de975a0608c7f175a9b2c7cb023bbb0466"
+    },
+    "tests": {
+      "artifactID": 13726860884,
+      "artifactSHA256": "76290f0be197c3386120234e555ccc67e211e1b82cad45f76ad3a219875afa28",
+      "receiptSHA256": "9a11408c75f2b0e9f02e1a4e3e80a473a51002a92eb358086f227849f82f9b3a",
+      "runID": 42734352650,
+      "sourceSHA": "43e04c67ce679ee788b5a5c5814784c9581cfee6"
+    }
+  },
+  "compilerSHA256": "020a521df9efc127b6817a2ed2f1560155108f0a0ead1ee1fa98147f5944eb4f",
+  "criteriaSHA256": "6956a5c338508810a22d7ee4c5ec04adc3f45172c99e329db16f8516c31ed718",
+  "members": {
+    "app-swift-testing/command.json": {
+      "bytes": 157,
+      "sha256": "49749462ccbc15d77a86bb81d071aff5addce46c9004f469618f6bdb1139ab26"
+    },
+    "app-swift-testing/console.log": {
+      "bytes": 1299874,
+      "sha256": "b27ca25e9073ea9cd3c64467fb7aee6e4c170b336976a1a5762eb4e328997017"
+    },
+    "app-swift-testing/events.jsonl": {
+      "bytes": 5707285,
+      "sha256": "bf9ea0bbec01128c7f3f1b7940c9e94ab5309bbcf40b6d5c90fc1837acd11414"
+    },
+    "app-swift-testing/exception.jsonl": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "app-swift-testing/host-receipt.json": {
+      "bytes": 909,
+      "sha256": "cf40786f773bc647d0accb93148ec6d3954c182e04f788e6f5722a90ff9007f0"
+    },
+    "app-swift-testing/platform-path.stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "app-swift-testing/loader-paths.json": {
+      "bytes": 1253,
+      "sha256": "13c9fffc52ff65428c0b5c736526eb9a5573e30ed6e358d1849c024e8799de35"
+    },
+    "app-swift-testing/platform-path.stdout": {
+      "bytes": 74,
+      "sha256": "197fce3f2334c5a53d18f1465e2ea6c785fe4efb9192586d818fcc5c0f03dfe8"
+    },
+    "app-swift-testing/process.json": {
+      "bytes": 809,
+      "sha256": "57480a0b04e6d35c7d9adaae455113fbe43373d41c68fb3d6607f55fc3814b60"
+    },
+    "app-swift-testing/swiftc-path.stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "app-swift-testing/swiftc-path.stdout": {
+      "bytes": 99,
+      "sha256": "e5f642a67aebf696758b27fbd02f5956a8ca96aa668f401d9bd084db54083210"
+    },
+    "bound.json": {
+      "bytes": 6491162,
+      "sha256": "05c6e42054d1e5fa4d63de2beaf97636606bb754c6473aabcae720aff3732e06"
+    },
+    "native-tests.STARTED.json": {
+      "bytes": 1171,
+      "sha256": "6103e47120e17ad3b122248849f90261d424187bc90853c450129ce7ffaf48f8"
+    },
+    "retained-engine/engine-swift-testing/console.log": {
+      "bytes": 176887,
+      "sha256": "a97b3156108f080b112d3ce9019985bceebed8d2a16bf7e81024b77fff9f9ac9"
+    },
+    "retained-engine/current-environment.json": {
+      "bytes": 545,
+      "sha256": "94836daa4da522eb551c6943483af87c759cc81391013fe9f026e24da96a934f"
+    },
+    "retained-engine/engine-swift-testing/events.jsonl": {
+      "bytes": 1340720,
+      "sha256": "2f872313ee84af000898df20f29be6a62154c87524cce06d8059a089d27206ed"
+    },
+    "retained-engine/original-job.log": {
+      "bytes": 3862332,
+      "sha256": "0f634eddc6ed44ed1afb4b7ad0be28e0f5e130d90f885a2c8bdd5ed6841f928f"
+    },
+    "verify-test-bundle.argv.json": {
+      "bytes": 179,
+      "sha256": "f78ffd3374ff7caafdce1d397f9668f33fcc672567d2b8f540871e676635a906"
+    },
+    "verify-test-bundle.exit.json": {
+      "bytes": 20,
+      "sha256": "ff8ae5796bcef71911ff9c5c3eaea341819c471f669549e252b830106edd4305"
+    },
+    "verify-test-bundle.stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "xctest/command.json": {
+      "bytes": 634,
+      "sha256": "9ef0ada086d5e54c7ad3d983c23b50b12a8b43e941d1dcf89cda2dbe13f71ba4"
+    },
+    "verify-test-bundle.stdout": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "xctest/console.log": {
+      "bytes": 19013,
+      "sha256": "976f4f109fe924f1dbf89abc40c68f41e22339f81bb1372360c3de77d20be771"
+    },
+    "xctest/discovery.json": {
+      "bytes": 99235,
+      "sha256": "ba82c0869069c767b4c4b61084282aa83847f153fe54b0c0ca9311ba6001230f"
+    },
+    "xctest/events.jsonl": {
+      "bytes": 189339,
+      "sha256": "24c74b18231b8c1639f842492f67f6a29b72c26609616f1b710cee9950005e09"
+    },
+    "xctest/exception.jsonl": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "xctest/expected.json": {
+      "bytes": 5487,
+      "sha256": "7bffa4db974cb49c9c51188da6b8d6162f6d3a8aa5500414748fcc5e8e07cc63"
+    },
+    "xctest/loader-paths.json": {
+      "bytes": 400,
+      "sha256": "f0742af6ba3a0103e518cc6091d1dba1339e1fd3751c5f6b9b64902bf3604a8e"
+    },
+    "xctest/process.json": {
+      "bytes": 889,
+      "sha256": "9458b3a502f8749b187ae118880ee7b54745c7016cd1839afabb7aea95af1187"
+    },
+    "xctest/receipt.json": {
+      "bytes": 115956,
+      "sha256": "f0d053610ad1f3a208eee7726886171ac6d2081e9c9b3c0b7ae1f67597205e51"
+    },
+    "xctest/verified.json": {
+      "bytes": 683402,
+      "sha256": "96db43f28d338835d9bc6429f15bb8cda2baea85d3df5bf4ac0757c75f9ef928"
+    }
+  },
+  "proofSHA256": "a4e521e40a8bba7ed6de14c9ffc37411b3882df2f6688d2baf2f7cb61349e808",
+  "engineSourceObjects": {
+    "Engine": "29cfed623d13e6d84d5822a30b98e088fc123c3f",
+    "Package.swift": "37f605bfb8cdccc48821b39484c819ba3e5eff43",
+    "Package.resolved": "530cdaed0a29a65181353d86d05cf9dc04890cc2",
+    "Tests/NexGenEngineTests": "bbb8baff2d9dcfb569f5828fc0de5c36a0589826",
+    "Sources/MusicvideoPlugin": "2eeef41c978f57342cc9534defec31ab5fba39ea",
+    "Sources/FixtureFictionPlugin": "ec63ab91074a258add456a1059049779b338cd7d",
+    "Sources/NexGenVideo/Resources/AppResources.txt": "ed934b45d5a6ee37540078228114536ea83d1c98",
+    "docs/migrations/ai-film-production-d07a1ce5.inventory.json": "89d5b2ba08800cf90ba879b824db1e7ab951bc34",
+    "Runtime": "910b87b08a3a8c976e0f2502580c843b0df74154",
+    "Metal": "4fddc68f15d9ff70104869a2dffd8e5956e9b5d8",
+    "Vendor": "51e93c100e00dcd196edac0e70e1af921d52055a",
+    "plugins": "b75e017d3145010368ae417bc410574f3f0300c1",
+    "Tests/AppKitTestHostSupport": "180f486523e826b8b462011d42bf758fdc4e1d6f",
+    "Sources/BpyRuntimeProtocol": "4bf768314bb52830a55da47d6a25ff36e9f2cf94",
+    "Sources/BpySupervisorPOSIX": "f1469002cfa83206e5d74aa6c71aba4aab365f6b",
+    "Sources/NexGenVideoBpyService": "b7d478b9196a2bc0c2eb4b4876c012f44a4045d1",
+    "Sources/NexGenVideoBpyStorage": "b9bf2fa702b820f2eb88f95591ad9eb76c7dc776",
+    "Sources/NexGenVideoBpySupervisor": "27230f5bbb93ad75eebf69bc6520c951213dc800",
+    "scripts/stage_test_runtime.sh": "7f83d8afe0c3a769c5f8d67e2ce59a041ec831dd",
+    "scripts/verify_swift_test_output.py": "5b8993b80a71ad03807b8116b2bc50fc795a90e2",
+    "Tests/AppKitTestHost": "04baf7ac5e107a119133859694b2b176291ac8f9"
+  },
+  "hostInputs": {
+    "scripts/native_xctest_host.m": "ab9cf2bb2af7bbc3f2acaa475b0691c6402aa8dedf49cca6b37ce6d17fcdbe32",
+    "scripts/native_xctest_host.py": "ee1e326569ab4a32fdf4b26fa75f5a6f0f597f5af3c7ae70eea4acda7efcda5b",
+    "Tests/AppKitTestHostSupport/AppKitTestHostSupport.m": "4d4c03b837533e75afde728d65c2189c3ef51b7c5e8f08cb87b8381ee8004459",
+    "Tests/AppKitTestHostSupport/include/AppKitTestHostSupport.h": "f963caf32840304e80c1779eae640f002ccfd6bd92c94caa734a9565cd168d6a"
+  },
+  "counts": {
+    "freshApp": 0,
+    "freshXCTest": 0,
+    "retainedApp": 3712,
+    "retainedXCTest": 48,
+    "retainedEngine": 896,
+    "executions": 4656,
+    "appSkips": 8,
+    "engineSkips": 14
+  },
+  "archiveNames": [
+    "app-swift-testing/command.json",
+    "app-swift-testing/console.log",
+    "app-swift-testing/events.jsonl",
+    "app-swift-testing/exception.jsonl",
+    "app-swift-testing/host-receipt.json",
+    "app-swift-testing/loader-paths.json",
+    "app-swift-testing/platform-path.stderr",
+    "app-swift-testing/platform-path.stdout",
+    "app-swift-testing/process.json",
+    "app-swift-testing/swiftc-path.stderr",
+    "app-swift-testing/swiftc-path.stdout",
+    "bank-runtime-manifest.json",
+    "bound.json",
+    "metadata-original.zip",
+    "native-tests.STARTED.json",
+    "production/original.zip",
+    "restore-runtime.argv.json",
+    "restore-runtime.exit.json",
+    "restore-runtime.stderr",
+    "restore-runtime.stdout",
+    "retained-engine/current-environment.json",
+    "retained-engine/engine-swift-testing/console.log",
+    "retained-engine/engine-swift-testing/events.jsonl",
+    "retained-engine/original-job.log",
+    "retained-engine/original.zip",
+    "testable/original.zip",
+    "tests/original.zip",
+    "verify-test-bundle.argv.json",
+    "verify-test-bundle.exit.json",
+    "verify-test-bundle.stderr",
+    "verify-test-bundle.stdout",
+    "xctest/command.json",
+    "xctest/console.log",
+    "xctest/discovery.json",
+    "xctest/events.jsonl",
+    "xctest/exception.jsonl",
+    "xctest/expected.json",
+    "xctest/loader-paths.json",
+    "xctest/process.json",
+    "xctest/receipt.json",
+    "xctest/verified.json"
+  ]
+}

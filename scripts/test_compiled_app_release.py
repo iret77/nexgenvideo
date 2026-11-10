@@ -14,6 +14,35 @@ import compiled_app_release as release
 
 
 class CompiledAppReleaseTests(unittest.TestCase):
+    def test_native_parameter_events_preserve_unicode_and_reject_malformed_or_extra_cases(self):
+        identity = 'NexGenVideoTests.JSONLTests/probe()/Test.swift:1:1'
+        expected = {'exactDiscoveredFunctionIDs': [identity], 'exactEndedFunctionIDs': [identity],
+            'exactSkippedFunctionIDs': [], 'expectedCaseCountsByFunction': {identity: 1}}
+        event = lambda kind: {'version': 0, 'kind': 'event', 'payload': {'kind': kind, 'testID': identity}}
+        records = [{'version': 0, 'kind': 'test', 'payload': {'kind': 'function', 'id': identity,
+            'sourceLocation': {'fileID': 'NexGenVideoTests/Test.swift'}}},
+            event('runStarted'), event('testStarted'), event('testCaseStarted'),
+            event('testCaseEnded'), event('testEnded'), event('runEnded')]
+        for separator in ('\u0085', '\u2028', '\u2029'):
+            for framing in ('\n', '\r\n'):
+                with self.subTest(separator=repr(separator), framing=repr(framing)), tempfile.TemporaryDirectory() as temporary:
+                    path = Path(temporary) / 'events.jsonl'
+                    rows = copy.deepcopy(records)
+                    rows[3]['payload']['message'] = 'before' + separator + 'after'
+                    text = framing.join(json.dumps(row, ensure_ascii=False) for row in rows) + framing
+                    path.write_bytes(text.encode('utf-8'))
+                    self.assertEqual(release.verify_events(path, expected, 'NexGenVideoTests')['recordCount'], 7)
+                    path.write_bytes(text.replace(separator, '\n').encode('utf-8'))
+                    with self.assertRaises(json.JSONDecodeError):
+                        release.verify_events(path, expected, 'NexGenVideoTests')
+                    path.write_bytes((text + '{"version":').encode('utf-8'))
+                    with self.assertRaises(json.JSONDecodeError):
+                        release.verify_events(path, expected, 'NexGenVideoTests')
+                    rows[5:5] = [event('testCaseStarted'), event('testCaseEnded')]
+                    path.write_bytes((framing.join(json.dumps(row, ensure_ascii=False) for row in rows) + framing).encode('utf-8'))
+                    with self.assertRaisesRegex(ValueError, 'parameter-case coverage'):
+                        release.verify_events(path, expected, 'NexGenVideoTests')
+
     def test_acquisition_reads_only_the_authenticated_runtime_bank_manifest_without_requiring_it_in_metadata(self):
         class RestoreReached(Exception):
             pass

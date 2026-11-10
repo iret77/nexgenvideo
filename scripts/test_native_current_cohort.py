@@ -36,7 +36,8 @@ class NativeCurrentCohortTests(unittest.TestCase):
         import native_app_target_build as targets
         self.assertNotIn('scripts/compiled_app_release.py', targets.PATHS)
         self.assertIn('scripts/compiled_app_release.py', targets.CURRENT_PATHS)
-        for name in cohort.UI_CI_PATHS:
+        for name in cohort.UI_CI_PATHS | {'scripts/compiled_core_reuse.py', 'scripts/test_compiled_core_reuse.py',
+                'scripts/fixtures/compiled-core-reuse-886.json'}:
             self.assertNotIn(name, targets.PATHS)
             self.assertIn(name, targets.CURRENT_PATHS)
         names = ['Sources/NexGenVideo/File%d.swift' % index for index in range(1395)]
@@ -61,9 +62,13 @@ class NativeCurrentCohortTests(unittest.TestCase):
         run = {'id': 101, 'head_sha': pr_head}
         artifact = {'id': 201, 'digest': 'sha256:' + 'f' * 64, 'size_in_bytes': 123}
         receipt = {'pullRequest': 900, 'headSHA': pr_head, 'treeSHA': 'a' * 40}
-        for changed in ('valid', *('ui:' + name for name in sorted(cohort.UI_CI_PATHS)), 'app-pin', 'missing-merge',
+        core_paths = {'scripts/compiled_core_reuse.py', 'scripts/test_compiled_core_reuse.py',
+            'scripts/fixtures/compiled-core-reuse-886.json'}
+        for changed in ('valid', *('ui:' + name for name in sorted(cohort.UI_CI_PATHS)),
+                        *('ui:' + name for name in sorted(core_paths)), 'app-pin', 'missing-merge',
                         'different-source-run', 'different-native9', 'ui-with-native9', 'unreviewed-delta',
-                        'unreviewed-ui-sibling', 'different-pr-head', 'different-merge-tree'):
+                        'unreviewed-ui-sibling', 'unreviewed-core-sibling', 'core-with-native9',
+                        'different-pr-head', 'different-merge-tree'):
             with self.subTest(changed=changed), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 current = {'schema': 'core-pr-source-composition/v1', 'sourceSHA': head,
@@ -83,8 +88,10 @@ class NativeCurrentCohortTests(unittest.TestCase):
                     if argv[:2] == ('diff', '--name-only'):
                         if changed == 'unreviewed-delta': return 'Sources/NexGenVideo/New.swift'
                         if changed == 'unreviewed-ui-sibling': return 'scripts/external-gui/NexGenVideoExternalUITests/Unreviewed.swift'
+                        if changed == 'unreviewed-core-sibling': return 'scripts/compiled_core_reuse_unreviewed.py'
                         if changed.startswith('ui:'): return changed.removeprefix('ui:')
                         if changed == 'ui-with-native9': return '\n'.join(sorted(cohort.UI_CI_PATHS))
+                        if changed == 'core-with-native9': return '\n'.join(sorted(core_paths))
                         return 'scripts/native_current_cohort.py'
                     raise AssertionError(argv)
                 def api(route):
@@ -97,7 +104,7 @@ class NativeCurrentCohortTests(unittest.TestCase):
                 with patch.dict(os.environ, GITHUB_REPOSITORY='iret77/nexgenvideo', GITHUB_SHA=head, RUNNER_TEMP=str(root)), \
                         patch.object(cohort.capture, 'git', side_effect=git), patch.object(cohort.capture, 'api', side_effect=api), \
                         patch.object(cohort.capture, 'command', return_value=b'original'), patch.object(cohort.subprocess, 'run'), \
-                        patch.object(cohort, 'objects', side_effect=lambda ref: {'Sources': 'other'} if changed in {'different-native9', 'ui-with-native9'} and ref == head else objects), \
+                        patch.object(cohort, 'objects', side_effect=lambda ref: {'Sources': 'other'} if changed in {'different-native9', 'ui-with-native9', 'core-with-native9'} and ref == head else objects), \
                         patch.object(cohort, 'buildshape', return_value={'qualified': True}), \
                         patch.object(checks, 'verify_run_identity', return_value={'id': 301}), \
                         patch.object(checks, 'original_receipt', return_value=receipt), patch.object(checks, 'verify_steps', return_value={}), \

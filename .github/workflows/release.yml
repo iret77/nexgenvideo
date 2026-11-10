@@ -717,6 +717,7 @@ jobs:
             ${{ runner.temp }}/compiled-app-release/app-swift-testing/
             ${{ runner.temp }}/compiled-app-release/retained-engine/
             ${{ runner.temp }}/compiled-app-release/retained-current-xctest/
+            ${{ runner.temp }}/compiled-app-release/retained-core/
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 90
@@ -929,6 +930,7 @@ jobs:
             ${{ runner.temp }}/compiled-app-release/app-swift-testing/
             ${{ runner.temp }}/compiled-app-release/retained-engine/
             ${{ runner.temp }}/compiled-app-release/retained-current-xctest/
+            ${{ runner.temp }}/compiled-app-release/retained-core/
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 90

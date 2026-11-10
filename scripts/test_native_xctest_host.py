@@ -186,6 +186,7 @@ class NativeXCTestHostTests(unittest.TestCase):
         from unittest.mock import patch
         import compiled_app_release as release
         import run_macos_tests as native
+        changed_app_source = 'c' * 40
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
             receipt, events, ids, arguments = self.fixture(root)
@@ -196,12 +197,12 @@ class NativeXCTestHostTests(unittest.TestCase):
             compiler = root / 'swiftc'; compiler.write_bytes(b'qualified compiler')
             sha = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
             product = {'state': {'xctestHost': {'schema': 'native-xctest-host-build/v1',
-                'appSourceSHA': release.APP_SOURCE, 'inputs': host.inputs(), 'supportObjectSHA256': host.SUPPORT_SHA,
+                'appSourceSHA': changed_app_source, 'inputs': host.inputs(), 'supportObjectSHA256': host.SUPPORT_SHA,
                 'signedSHA256': sha(executable)}}, 'files': {}}
             for name, path in [('Contents/MacOS/NexGenVideoTests', image), ('Contents/Helpers/' + host.HOST_NAME, executable)]:
                 product['files']['Products/Release/NexGenVideoTests.xctest/' + name] = {'kind': 'file', 'sha256': sha(path)}
             product['files']['Products/Release/NexGenVideoTests.xctest/Contents/Frameworks/XCTestCore.framework/Versions/A/XCTestCore'] = {'kind': 'file', 'sha256': 'f' * 64}
-            bound = {'sourceSHA': 'a' * 40, 'runID': 101, 'appSourceSHA': release.APP_SOURCE,
+            bound = {'sourceSHA': 'a' * 40, 'runID': 101, 'appSourceSHA': changed_app_source,
                 'nativeSourceObjects': {'Sources': 'b' * 40}, 'runtime': str(generic.parent), 'selected': {},
                 'products': {phase: {'output': str(image), 'receipt': product, 'originalArchiveSHA256': 'f' * 64}
                     for phase in release.PHASES}, 'prepared': {'plans': {'production': {'driver': {'argv': [str(compiler)]}}}}}
@@ -223,7 +224,8 @@ class NativeXCTestHostTests(unittest.TestCase):
             def checksum(path):
                 return release.retained.HOST_SHA if path == generic else release.COMPILER_SHA if path == compiler else sha(path)
             inventory = {'xctest': {'exactIndividualPassedIDs': ids}, 'modules': {'engine': {}}}
-            with patch.object(release, 'native_guard'), patch.object(release, 'source_objects', return_value=bound['nativeSourceObjects']), \
+            with patch.object(release, 'APP_SOURCE', changed_app_source), \
+                    patch.object(release, 'native_guard'), patch.object(release, 'source_objects', return_value=bound['nativeSourceObjects']), \
                     patch.object(release, 'criteria', return_value=inventory), patch.object(release, 'checksum', side_effect=checksum), \
                     patch.object(release, 'retained_engine_evidence', return_value={}), patch.object(release.targets, 'logged'), \
                     patch.object(native, 'prepare_post_mortem', side_effect=lambda *args: {'outputCapture': dict(observation['outputCapture'])}), \

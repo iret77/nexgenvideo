@@ -20,6 +20,7 @@ UI_CI_PATHS = {'.github/workflows/external-gui-acceptance.yml',
     'scripts/external-gui/NexGenVideoExternalUITests/UserJourneyTests.swift',
     'scripts/external-gui/acceptance.py', 'scripts/test_external_gui_test_bundle.py'}
 CI_PATHS = {'scripts/native_current_cohort.py', 'scripts/test_native_current_cohort.py',
+    'scripts/compiled_core_reuse.py', 'scripts/test_compiled_core_reuse.py', 'scripts/fixtures/compiled-core-reuse-886.json',
     'scripts/native_xctest_host.m', 'scripts/native_xctest_host.py', 'scripts/test_native_xctest_host.py',
     'scripts/compiled_app_release.py', 'scripts/test_compiled_app_release.py', 'scripts/release_checkpoint.py',
     'scripts/test_release_recovery.py', 'scripts/test_compiled_xctest_reuse.py', 'scripts/retained_packaging.py', 'scripts/test_retained_packaging.py',
