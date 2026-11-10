@@ -374,13 +374,21 @@ def verify_source_pair(directory, public):
         and checksum(manifest) == public['manifestSHA256'], 'Materialized qualified source pair changed')
 
 
-def source_receiver_context(context, parent):
+def source_receiver_context(context, parent, *, packaging=None):
     contexts = {'bpy-runtime': ('runtime', 'darwin'), 'workspace-source-preflight': ('runtime', 'linux'),
         'settings-restore': ('acceptance', 'darwin')}
     require(context in contexts and os.environ.get('GITHUB_ACTIONS') == 'true'
         and os.environ.get('GITHUB_REPOSITORY') == REPOSITORY and os.environ.get('GITHUB_RUN_ATTEMPT') == '1'
-        and (os.environ.get('GITHUB_JOB'), sys.platform) == contexts[context]
-        and os.environ.get('GITHUB_SHA') == parent['producerSourceSHA'], 'Unknown source receiver context')
+        and (os.environ.get('GITHUB_JOB'), sys.platform) == contexts[context], 'Unknown source receiver context')
+    harness = os.environ.get('GITHUB_SHA')
+    if harness != parent['producerSourceSHA']:
+        import retained_packaging as retained
+        require(packaging is not None and retained.component_consumer_repair_paths(parent)
+            and packaging.get('rawProofSHA256') == retained.digest(retained.encoded(parent)),
+            'Source receiver continuation has no exact qualified canonical parent')
+        require(retained.consumer_harness(packaging, parent['productSourceSHA'], set()) == harness,
+            'Source receiver continuation changed its current harness')
+    return harness
 
 
 def consume_packaging_source(directory, product, receipt_path, packaging, *, context, evidence):
@@ -395,7 +403,7 @@ def consume_packaging_source(directory, product, receipt_path, packaging, *, con
         return None
     require(retained.retained_compiled_product(parent) and parent.get('stage') == 'complete',
         'Current compiled source receiver has no qualified canonical parent')
-    source_receiver_context(context, parent)
+    source_receiver_context(context, parent, packaging=packaging)
     temporary = Path(os.environ['RUNNER_TEMP'])
     require(directory.resolve().is_relative_to(temporary.resolve()) and evidence.resolve().is_relative_to(temporary.resolve())
         and not directory.is_symlink() and not evidence.is_symlink(), 'Source receiver escaped its owned temporary root')
@@ -455,7 +463,7 @@ def verify_received_source(directory, product, packaging, evidence, *, context):
         return False
     require(retained.retained_compiled_product(parent) and parent.get('stage') == 'complete'
         and evidence.is_file() and not evidence.is_symlink(), 'Current source receiver proof is missing')
-    source_receiver_context(context, parent)
+    harness = source_receiver_context(context, parent, packaging=packaging)
     temporary = Path(os.environ['RUNNER_TEMP'])
     source_directory_identity(directory, temporary)
     source_directory_identity(evidence.parent, temporary)
@@ -465,7 +473,7 @@ def verify_received_source(directory, product, packaging, evidence, *, context):
     record = json.loads(evidence.read_bytes(), object_pairs_hook=unique_object)
     require(record.get('schema') == 'compiled-bpy-source-consumer-reuse/v1' and record.get('state') == 'REUSED'
         and record.get('context') == context and record.get('productSourceSHA') == product
-        and record.get('harnessSourceSHA') == os.environ['GITHUB_SHA'] == parent['producerSourceSHA']
+        and record.get('harnessSourceSHA') == os.environ['GITHUB_SHA'] == harness
         and record.get('executionRunID') == int(os.environ['GITHUB_RUN_ID']) and record.get('attempt') == 1
         and record.get('job') == os.environ['GITHUB_JOB'] and record.get('parent') == packaging
         and record.get('parentReceiptSHA256') == parent['final']['bpySourceReceiptSHA256']
