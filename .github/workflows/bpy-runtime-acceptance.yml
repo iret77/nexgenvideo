@@ -168,6 +168,11 @@ jobs:
           ORIGINAL_RUN: ${{ inputs.runtime_run_id || github.run_id }}
         run: |
           set -euo pipefail
+          if [ -z "${PACKAGING_PRODUCER_SOURCE:-}${PACKAGING_PROVENANCE_ARTIFACT_ID:-}${PACKAGING_PROVENANCE_ARTIFACT_SHA256:-}" ]; then
+            python3 scripts/consume_bpy_distributable_source.py \
+              --output-directory "$RUNNER_TEMP/source" --source-sha "$ORIGINAL_SOURCE" \
+              --receipt "$RUNNER_TEMP/download/bpy-source/bpy-source-receipt.json"
+          else
           python3 - <<'PYTHON'
           import json, os, sys
           from pathlib import Path
@@ -188,6 +193,7 @@ jobs:
           if reused is None:
               consume(temporary / 'source', os.environ['ORIGINAL_SOURCE'], receipt)
           PYTHON
+          fi
       - name: Relocate the exact app and prepare denied resources
         env:
           APP_ZIP: ${{ inputs.app_zip }}
@@ -212,6 +218,11 @@ jobs:
           else
             scripts/verify_bpy_bundle.sh "$APP" --development
           fi
+          if [ -z "${PACKAGING_PRODUCER_SOURCE:-}${PACKAGING_PROVENANCE_ARTIFACT_ID:-}${PACKAGING_PROVENANCE_ARTIFACT_SHA256:-}" ]; then
+            python3 scripts/verify_bpy_distributable_source.py \
+              "$RUNNER_TEMP/source/NexGenVideo-bpy-5.2.2-corresponding-source.tar" \
+              "$RUNNER_TEMP/source/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json"
+          else
           python3 - <<'PYTHON'
           import json, os, sys
           from pathlib import Path
@@ -232,6 +243,7 @@ jobs:
               validate(directory / 'NexGenVideo-bpy-5.2.2-corresponding-source.tar',
                   directory / 'NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json')
           PYTHON
+          fi
           printf 'provider-secret' > "$RUNNER_TEMP/denied/provider-secret"
           printf 'canonical-project-truth' > "$RUNNER_TEMP/denied/canonical-artifact"
           printf 'foreign-project' > "$RUNNER_TEMP/denied/foreign-project/scene.blend"
