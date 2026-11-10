@@ -128,6 +128,30 @@ def active_publication_steps(workflow, artifact_only, dry_run, resumed=False):
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
+    def test_compiled_source_handoff_routes_only_the_authenticated_singleton_and_binds_both_receivers(self):
+        action = (ROOT / '.github/actions/prepare-bpy-source/action.yml').read_text()
+        self.assertIn('if [ "${NGV_CURRENT_COMPILED_SOURCE_REUSE:-}" = true ]; then', action)
+        self.assertNotIn('if [ "${NGV_COMPILED_APP_RELEASE:-}" = true ]', action)
+        tree = ast.parse((ROOT / 'scripts/release_checkpoint.py').read_text())
+        restore = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'restore')
+        guards = [node for node in ast.walk(restore) if isinstance(node, ast.If)
+            and any(isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == 'compiled_signed_product'
+                for call in ast.walk(node.test))
+            and 'NGV_CURRENT_COMPILED_SOURCE_REUSE=true' in ast.get_source_segment(
+                (ROOT / 'scripts/release_checkpoint.py').read_text(), node)]
+        self.assertEqual(len(guards), 1)
+        self.assertIn('NGV_CURRENT_COMPILED_SOURCE_REUSE=true', ast.get_source_segment(
+            (ROOT / 'scripts/release_checkpoint.py').read_text(), guards[0]))
+        workflow = yaml.load((ROOT / '.github/workflows/bpy-runtime-acceptance.yml').read_text(), Loader=yaml.BaseLoader)
+        steps = {step.get('name'): step for step in workflow['jobs']['runtime']['steps']}
+        for name, call in [('Prepare qualified source for the original CI app', 'consume_packaging_source'),
+                ('Relocate the exact app and prepare denied resources', 'verify_received_source')]:
+            step = steps[name]
+            self.assertEqual(step['env']['ORIGINAL_RUN'], '${{ inputs.runtime_run_id || github.run_id }}')
+            self.assertIn(call + '(', step['run'])
+            self.assertIn("binding.get('selectors') != selected", step['run'])
+            self.assertIn("binding.get('producerRunID') != int(os.environ['ORIGINAL_RUN'])", step['run'])
+
     def test_pack_copy_branches_reuse_only_the_closed_candidate_and_never_fallback_after_failure(self):
         workflow = yaml.safe_load(WORKFLOW.read_text())
         steps = {step.get('name'): step for step in workflow['jobs']['release']['steps']}

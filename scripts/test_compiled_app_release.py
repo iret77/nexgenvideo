@@ -14,6 +14,320 @@ import compiled_app_release as release
 
 
 class CompiledAppReleaseTests(unittest.TestCase):
+    def source_reuse_fixture(self):
+        public = json.loads(Path('Runtime/bpy/runtime-lock.json').read_text())['distributionClosure']['publicSourceAsset']
+        original = {'schema': 'nexgenvideo/bpy-source-receipt/1', 'sourceSHA': release.RETAINED_SOURCE,
+            'publicSourceAsset': public, 'origin': {'kind': 'actions', 'producer': public['producer']},
+            'validation': {'archiveSHA256': public['sha256'], 'manifestSHA256': public['manifestSHA256'], 'sourceFiles': 123}}
+        raw = json.dumps(original, indent=2) + '\n'
+        origin = dict(release.SIGNED_RESUME, sourceReceiptSHA256=hashlib.sha256(raw.encode()).hexdigest())
+        receipt = dict(original, sourceSHA=origin['sourceSHA'])
+        derived = json.dumps(receipt, indent=2) + '\n'
+        producer = public['producer']
+        run = {'id': producer['runID'], 'head_sha': producer['sourceSHA'], 'repository': {'full_name': release.REPOSITORY},
+            'head_repository': {'full_name': release.REPOSITORY}, 'run_attempt': 1, 'status': 'completed',
+            'event': 'workflow_dispatch', 'path': producer['workflowPath']}
+        job = {'id': producer['jobID'], 'run_id': producer['runID'], 'head_sha': producer['sourceSHA'],
+            'run_attempt': 1, 'status': 'completed', 'conclusion': 'success', 'labels': ['ubuntu-24.04'],
+            'name': 'bpy-qualification / source', 'started_at': '2026-11-01T00:00:00Z', 'completed_at': '2026-11-01T01:00:00Z'}
+        artifact = {'id': producer['artifactID'], 'name': producer['artifactName'], 'digest': producer['artifactDigest'],
+            'size_in_bytes': producer['artifactSize'], 'expired': False,
+            'workflow_run': {'id': producer['runID'], 'head_sha': producer['sourceSHA']},
+            'created_at': '2026-11-01T00:30:00Z', 'updated_at': '2026-11-01T00:30:01Z', 'expires_at': '2099-01-01T00:00:00Z'}
+        reuse = {'schema': 'compiled-bpy-source-receipt-reuse/v1', 'state': 'REUSED', 'signedProduct': origin,
+            'originalReceiptSHA256': origin['sourceReceiptSHA256'], 'originalConsumerSourceSHA': release.RETAINED_SOURCE,
+            'productSourceSHA': origin['sourceSHA'], 'harnessSourceSHA': 'c' * 40, 'runID': 777, 'attempt': 1, 'job': 'release',
+            'publicSourceAsset': public, 'originalValidation': original['validation'], 'semanticSourceValidationPerformed': False,
+            'derivedReceiptSHA256': hashlib.sha256(derived.encode()).hexdigest(), 'archiveSHA256': public['sha256'],
+            'manifestSHA256': public['manifestSHA256'], 'originEvidence': {'run': run, 'job': job, 'artifact': artifact},
+            'acquiredAt': '2026-11-02T00:00:00Z'}
+        value = {'bpy-source-original-receipt.json': raw, 'bpy-source-receipt.json': derived,
+            'bpy-source-reuse.json': json.dumps(reuse)}
+        return origin, value, receipt, reuse
+
+    def test_source_receipt_derivation_preserves_original_bytes_and_semantics_without_revalidation(self):
+        import consume_bpy_distributable_source as source
+        origin, value, receipt, reuse = self.source_reuse_fixture()
+        with patch.object(release, 'SIGNED_RESUME', origin), patch.object(source, 'validate') as semantic:
+            actual, proof = release.verify_source_reuse(value, origin['sourceSHA'], 'c' * 40, 777)
+            self.assertEqual(actual, receipt)
+            self.assertEqual(proof['originalValidation'], json.loads(value['bpy-source-original-receipt.json'])['validation'])
+            source.require_receipt(actual, actual['publicSourceAsset'], origin['sourceSHA'])
+            with self.assertRaises(ValueError):
+                source.require_receipt(json.loads(value['bpy-source-original-receipt.json']), actual['publicSourceAsset'], origin['sourceSHA'])
+            semantic.assert_not_called()
+
+    def test_source_reuse_rejects_changed_original_receipt_derived_consumer_and_fresh_claim(self):
+        origin, value, receipt, reuse = self.source_reuse_fixture()
+        mutations = [('bpy-source-original-receipt.json', 'sourceSHA', 'a' * 40),
+            ('bpy-source-receipt.json', 'sourceSHA', release.RETAINED_SOURCE),
+            ('bpy-source-receipt.json', 'validation', {}), ('bpy-source-reuse.json', 'harnessSourceSHA', 'a' * 40),
+            ('bpy-source-reuse.json', 'runID', 778), ('bpy-source-reuse.json', 'semanticSourceValidationPerformed', True),
+            ('bpy-source-reuse.json', 'originalValidation', {}), ('bpy-source-reuse.json', 'signedProduct', {})]
+        with patch.object(release, 'SIGNED_RESUME', origin):
+            for name, key, changed in mutations:
+                broken = dict(value); record = json.loads(broken[name]); record[key] = changed; broken[name] = json.dumps(record)
+                with self.subTest(name=name, key=key), self.assertRaises(ValueError):
+                    release.verify_source_reuse(broken, origin['sourceSHA'], 'c' * 40, 777)
+            for name in value:
+                with self.subTest(missing=name), self.assertRaises(ValueError):
+                    release.verify_source_reuse({key: raw for key, raw in value.items() if key != name}, origin['sourceSHA'], 'c' * 40, 777)
+
+    def test_source_reuse_rejects_foreign_producer_artifact_failure_and_acquisition_chronology(self):
+        origin, value, receipt, reuse = self.source_reuse_fixture()
+        mutations = [('run', 'head_sha', 'a' * 40), ('run', 'repository', {'full_name': 'other/repo'}),
+            ('run', 'run_attempt', 2), ('job', 'name', 'unrelated'), ('job', 'conclusion', 'failure'),
+            ('job', 'labels', ['macrunner']), ('artifact', 'digest', 'sha256:' + '0' * 64),
+            ('artifact', 'expired', True), ('artifact', 'size_in_bytes', 1),
+            ('artifact', 'created_at', '2026-11-01T02:00:00Z'), ('artifact', 'expires_at', '2026-11-01T02:00:00Z')]
+        with patch.object(release, 'SIGNED_RESUME', origin):
+            for section, key, changed in mutations:
+                broken = copy.deepcopy(reuse); broken['originEvidence'][section][key] = changed
+                values = dict(value, **{'bpy-source-reuse.json': json.dumps(broken)})
+                with self.subTest(section=section, key=key), self.assertRaises(ValueError):
+                    release.verify_source_reuse(values, origin['sourceSHA'], 'c' * 40, 777)
+
+    def test_source_pair_commit_rejects_replaced_or_linked_destination_before_outside_writes(self):
+        for changed in ('valid', 'replaced', 'linked', 'occupied', 'linked-parent'):
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary); stage = root / 'stage'; stage.mkdir()
+                base = root / 'owned'; base.mkdir(); directory = base / 'sources'; directory.mkdir()
+                outside = root / 'outside'; outside.mkdir()
+                public = {'filename': 'source.tar', 'manifestFilename': 'manifest.json', 'size': 6,
+                    'sha256': hashlib.sha256(b'source').hexdigest(), 'manifestSHA256': hashlib.sha256(b'manifest').hexdigest()}
+                (stage / 'source.tar').write_bytes(b'source'); (stage / 'manifest.json').write_bytes(b'manifest')
+                anchor = release.source_directory_identity(directory, base)
+                if changed in ('replaced', 'linked'):
+                    directory.rename(base / 'original')
+                    directory.mkdir() if changed == 'replaced' else directory.symlink_to(outside, target_is_directory=True)
+                elif changed == 'occupied': (directory / 'source.tar').write_bytes(b'occupied')
+                elif changed == 'linked-parent':
+                    base.rename(root / 'retired'); base.symlink_to(outside, target_is_directory=True)
+                if changed == 'valid':
+                    release.commit_source_pair(stage, directory, public, base, anchor)
+                    self.assertEqual((directory / 'source.tar').read_bytes(), b'source')
+                else:
+                    with self.assertRaises((ValueError, FileExistsError)):
+                        release.commit_source_pair(stage, directory, public, base, anchor)
+                self.assertEqual(list(outside.iterdir()), [])
+
+    def test_source_receivers_require_their_actual_linux_or_macos_context(self):
+        parent = {'producerSourceSHA': 'c' * 40}
+        for context, job, system in [('bpy-runtime', 'runtime', 'darwin'),
+                ('workspace-source-preflight', 'runtime', 'linux'), ('settings-restore', 'acceptance', 'darwin')]:
+            env = {'GITHUB_ACTIONS': 'true', 'GITHUB_REPOSITORY': release.REPOSITORY,
+                'GITHUB_RUN_ATTEMPT': '1', 'GITHUB_JOB': job, 'GITHUB_SHA': 'c' * 40}
+            with self.subTest(context=context), patch.dict(os.environ, env), patch.object(release.sys, 'platform', system):
+                release.source_receiver_context(context, parent)
+                with patch.dict(os.environ, GITHUB_SHA='d' * 40), self.assertRaises(ValueError):
+                    release.source_receiver_context(context, parent)
+                with patch.object(release.sys, 'platform', 'other'), self.assertRaises(ValueError):
+                    release.source_receiver_context(context, parent)
+
+    def test_signature_reuse_proof_rejects_original_or_current_product_substitution(self):
+        origin = release.SIGNED_RESUME
+        binding = {'productSourceSHA': origin['sourceSHA'], 'producerSourceSHA': 'c' * 40, 'runID': 777}
+        value = {'schema': 'current-app-signature-reuse/v1', 'state': 'REUSED', 'original': origin,
+            'command': release.SIGNATURE_COMMAND, 'recordSHA256': release.SIGNATURE_RECORD_SHA256,
+            'current': {'productSourceSHA': origin['sourceSHA'], 'harnessSourceSHA': 'c' * 40,
+                'runID': 777, 'job': 'release', 'appTreeSHA256': origin['appTreeSHA256']},
+            'currentNativeSignatureVerificationPerformed': False, 'freshTrustStoreOrRevocationClaimed': False}
+        release.verify_current_signature_reuse(value, binding)
+        for section, key, changed in [('current', 'runID', 778), ('current', 'appTreeSHA256', 'f' * 64),
+                ('original', 'runID', 123), ('recordSHA256', 'exit.json', 'f' * 64)]:
+            broken = copy.deepcopy(value); broken[section][key] = changed
+            with self.subTest(section=section, key=key), self.assertRaises(ValueError):
+                release.verify_current_signature_reuse(broken, binding)
+
+    def test_signed_resume_requires_actual_compiled_builder_stages_and_exact_manifest(self):
+        for changed in ('valid', 'legacy-only', 'builder', 'actor', 'run-source', 'manifest', 'payload-size'):
+            with self.subTest(changed=changed):
+                raw = b'exact manifest'; origin = dict(release.SIGNED_RESUME, manifestSHA256=hashlib.sha256(raw).hexdigest())
+                run = {'id': origin['runID'], 'head_sha': origin['sourceSHA'], 'repository': {'full_name': release.REPOSITORY},
+                    'actor': {'login': 'iret77'}, 'run_attempt': 1, 'path': '.github/workflows/release.yml',
+                    'event': 'workflow_dispatch', 'status': 'completed', 'conclusion': 'failure'}
+                names = ['Assemble and sign the new App with unchanged retained components',
+                    'Record compiled App signed input without invoking a build', 'Retain signed build input', 'Retain signed build proof']
+                builder = {'id': origin['builderJobID'], 'run_id': origin['runID'], 'head_sha': origin['sourceSHA'],
+                    'run_attempt': 1, 'name': 'release-build', 'labels': ['macrunner'], 'status': 'completed', 'conclusion': 'success',
+                    'steps': [{'name': name, 'conclusion': 'success'} for name in names]}
+                manifest = {'nativeEvidence': {'schema': 'release-native-compiled-app/v4'},
+                    'identity': {'version': '1.8.0', 'build': '106', 'sourceSHA': origin['sourceSHA'],
+                        'catalogURL': 'https://github.com/iret77/nexgenvideo/releases/download/plugins/catalog.json'},
+                    'appTreeSHA256': origin['appTreeSHA256'], 'files': {'NexGenVideo.zip': {'sha256': origin['appArchiveSHA256']},
+                        'bpy-source-receipt.json': {'sha256': origin['sourceReceiptSHA256']}}}
+                payload = {'size_in_bytes': origin['artifactBytes']}
+                if changed == 'legacy-only': builder['steps'][0]['name'] = 'Build and sign app'
+                elif changed == 'builder': builder['id'] += 1
+                elif changed == 'actor': run['actor']['login'] = 'other'
+                elif changed == 'run-source': run['head_sha'] = 'f' * 40
+                elif changed == 'manifest': raw += b'changed'
+                elif changed == 'payload-size': payload['size_in_bytes'] += 1
+                raw_json = json.dumps(manifest).encode()
+                if changed != 'manifest': origin['manifestSHA256'] = hashlib.sha256(raw_json).hexdigest(); raw = raw_json
+                with patch.object(release, 'SIGNED_RESUME', origin), patch.object(release.checkpoint, 'verify_manifest', return_value=manifest), \
+                        patch.object(release, 'verify_artifact') as verifier:
+                    if changed == 'valid':
+                        result = release.verify_signed_resume(run, builder, payload, {}, raw, verifier=verifier)
+                        self.assertEqual(result['original'], origin)
+                        self.assertFalse(result['freshCompilerCoreAssemblyOrRootSignPerformed'])
+                        self.assertEqual(verifier.call_count, 2)
+                    else:
+                        with self.assertRaises(ValueError): release.verify_signed_resume(run, builder, payload, {}, raw, verifier=verifier)
+
+    def test_source_consumers_reuse_exact_receipt_and_pair_in_all_three_real_contexts(self):
+        import consume_bpy_distributable_source as source
+        import retained_packaging as packaging
+        for context, job, system in [('bpy-runtime', 'runtime', 'darwin'),
+                ('workspace-source-preflight', 'runtime', 'linux'), ('settings-restore', 'acceptance', 'darwin')]:
+            for changed in ('valid', 'input-receipt', 'replaced-during-acquisition'):
+                with self.subTest(context=context, changed=changed), tempfile.TemporaryDirectory() as temporary:
+                    root = Path(temporary); runner = root / 'runner'; runner.mkdir(); outside = root / 'outside'; outside.mkdir()
+                    directory, evidence = runner / 'qualified', runner / 'evidence/reused.json'
+                    public = {'filename': 'source.tar', 'manifestFilename': 'manifest.json', 'size': 6,
+                        'sha256': hashlib.sha256(b'source').hexdigest(), 'manifestSHA256': hashlib.sha256(b'manifest').hexdigest(),
+                        'producer': {'runID': 123}}
+                    receipt = {'schema': source.SCHEMA, 'sourceSHA': release.SIGNED_RESUME['sourceSHA'], 'publicSourceAsset': public,
+                        'origin': {'kind': 'actions'}, 'validation': {'archiveSHA256': public['sha256'], 'manifestSHA256': public['manifestSHA256']}}
+                    raw = json.dumps(receipt, indent=4) + '\n'
+                    value = {'bpy-source-receipt.json': raw, 'bpy-source-reuse.json': '{"state":"REUSED"}\n'}
+                    parent = {'stage': 'complete', 'producerSourceSHA': 'c' * 40, 'runID': 777,
+                        'final': {'bpySourceReuse': value, 'bpySourceReceiptSHA256': hashlib.sha256(raw.encode()).hexdigest()}}
+                    binding = {'selector': 'authenticated canonical proof'}
+                    input_receipt = runner / 'receipt.json'; input_receipt.write_text(raw if changed != 'input-receipt' else '{}')
+                    def acquire(public, stage):
+                        (stage / 'source.tar').write_bytes(b'source'); (stage / 'manifest.json').write_bytes(b'manifest')
+                        if changed == 'replaced-during-acquisition':
+                            directory.rename(runner / 'original'); directory.symlink_to(outside, target_is_directory=True)
+                        return {'run': {}, 'job': {}, 'artifact': {}}
+                    env = {'GITHUB_ACTIONS': 'true', 'GITHUB_REPOSITORY': release.REPOSITORY, 'GITHUB_RUN_ATTEMPT': '1',
+                        'GITHUB_JOB': job, 'GITHUB_SHA': 'c' * 40, 'GITHUB_RUN_ID': '888', 'RUNNER_TEMP': str(runner)}
+                    with patch.dict(os.environ, env), patch.object(release.sys, 'platform', system), \
+                            patch.object(packaging, 'consumer_record', return_value=parent), \
+                            patch.object(packaging, 'compiled_signed_product', return_value=True), \
+                            patch.object(release, 'verify_source_reuse', return_value=(receipt, {})), \
+                            patch.object(release, 'verify_source_origin'), patch.object(source, 'public_asset', return_value=public), \
+                            patch.object(release, 'acquire_source_pair', side_effect=acquire), patch.object(source, 'validate') as semantic, \
+                            patch.object(release.subprocess, 'run') as native, patch('builtins.print'):
+                        if changed == 'valid':
+                            result = release.consume_packaging_source(directory, receipt['sourceSHA'], input_receipt, binding,
+                                context=context, evidence=evidence)
+                            self.assertEqual((directory / source.RECEIPT).read_bytes(), raw.encode())
+                            self.assertEqual(result['receipt'], receipt)
+                            self.assertFalse(result['reuse']['semanticSourceValidationPerformed'])
+                            self.assertTrue(release.verify_received_source(directory, receipt['sourceSHA'], binding, evidence, context=context))
+                            (directory / 'source.tar').write_bytes(b'change')
+                            with self.assertRaises(ValueError):
+                                release.verify_received_source(directory, receipt['sourceSHA'], binding, evidence, context=context)
+                        else:
+                            with self.assertRaises(ValueError):
+                                release.consume_packaging_source(directory, receipt['sourceSHA'], input_receipt, binding,
+                                    context=context, evidence=evidence)
+                            self.assertFalse(evidence.exists())
+                        self.assertEqual(list(outside.iterdir()), [])
+                        semantic.assert_not_called(); native.assert_not_called()
+
+    def test_compiled_source_handoff_preserves_signed_input_and_derives_only_the_consumer_identity(self):
+        import consume_bpy_distributable_source as source
+        import retained_packaging as packaging
+        for changed in ('valid', 'existing-app-submission', 'receipt', 'app', 'directory-during-download', 'pair-after-app-check'):
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory() as temporary:
+                base = Path(temporary); workspace = base / 'workspace'; workspace.mkdir(); runner = base / 'runner'; runner.mkdir()
+                root = runner / 'release-signed-binding'; (root / 'payload').mkdir(parents=True)
+                directory = workspace / '.build/bpy-source'; directory.mkdir(parents=True)
+                app = workspace / '.build/NexGenVideo.app'; app.mkdir(); app.chmod(0o755)
+                outside = base / 'outside'; outside.mkdir()
+                archive = workspace / '.build/NexGenVideo.zip'; archive.write_bytes(b'signed product')
+                public = {'filename': 'source.tar', 'manifestFilename': 'manifest.json', 'size': 6,
+                    'sha256': hashlib.sha256(b'source').hexdigest(), 'manifestSHA256': hashlib.sha256(b'manifest').hexdigest(),
+                    'producer': {'runID': 123}}
+                original = {'schema': source.SCHEMA, 'sourceSHA': release.RETAINED_SOURCE, 'publicSourceAsset': public,
+                    'origin': {'kind': 'actions'}, 'validation': {'archiveSHA256': public['sha256'], 'manifestSHA256': public['manifestSHA256']}}
+                raw = json.dumps(original, indent=2).encode() + b'\n'
+                (directory / source.RECEIPT).write_bytes(raw if changed != 'receipt' else b'{}')
+                immutable = root / 'payload/bpy-source-receipt.json'; immutable.write_bytes(raw)
+                origin = dict(release.SIGNED_RESUME, sourceReceiptSHA256=hashlib.sha256(raw).hexdigest(),
+                    appArchiveSHA256=hashlib.sha256(archive.read_bytes()).hexdigest())
+                manifest = {'appTreeSHA256': origin['appTreeSHA256']}
+                parent = {'runID': 777, 'productSourceSHA': origin['sourceSHA'], 'producerSourceSHA': 'c' * 40,
+                    'signedInput': {'manifest': manifest}}
+                if changed == 'existing-app-submission': parent['previousNotary'] = {'journals': {'existing': {'submissionID': 'kept'}}}
+                signed = {'manifest': manifest, 'sourceSHA': origin['sourceSHA'], 'executionRunID': 777,
+                    'producerSourceSHA': 'c' * 40, 'packagingInputSHA256': 'd' * 64}
+                (root / 'binding.json').write_text(json.dumps(signed))
+                def acquire(public, stage):
+                    (stage / 'source.tar').write_bytes(b'source'); (stage / 'manifest.json').write_bytes(b'manifest')
+                    if changed == 'directory-during-download':
+                        directory.rename(workspace / '.build/original-source'); directory.symlink_to(outside, target_is_directory=True)
+                    return {'run': {}, 'job': {}, 'artifact': {}}
+                def app_tree(app):
+                    if changed == 'pair-after-app-check': (directory / 'source.tar').write_bytes(b'change')
+                    return 'f' * 64 if changed == 'app' else origin['appTreeSHA256']
+                env = {'GITHUB_ACTIONS': 'true', 'GITHUB_REPOSITORY': release.REPOSITORY, 'GITHUB_RUN_ATTEMPT': '1',
+                    'GITHUB_JOB': 'release', 'GITHUB_SHA': 'c' * 40, 'GITHUB_RUN_ID': '777', 'RUNNER_TEMP': str(runner),
+                    'GITHUB_WORKSPACE': str(workspace), 'NGV_COMPILED_APP_RELEASE': 'true', 'RETAINED_PACKAGING_INPUT_SHA256': 'd' * 64}
+                with patch.dict(os.environ, env), patch.object(release.sys, 'platform', 'darwin'), \
+                        patch.object(release, 'SIGNED_RESUME', origin), patch.object(packaging, 'current_binding', return_value=parent), \
+                        patch.object(packaging, 'compiled_signed_product', return_value=True), \
+                        patch.object(packaging, 'compiled_first_notary', side_effect=AssertionError('Source reuse is independent from Apple submission state')), \
+                        patch.object(release, 'verify_source_origin'), \
+                        patch.object(source, 'public_asset', return_value=public), patch.object(release.targets.capture, 'git', return_value='same-runtime'), \
+                        patch.object(release, 'acquire_source_pair', side_effect=acquire), \
+                        patch.object(release.checkpoint, 'tree_digest', side_effect=app_tree), \
+                        patch.object(source, 'validate') as semantic, patch.object(release.subprocess, 'run') as native, patch('builtins.print'):
+                    if changed in ('valid', 'existing-app-submission'):
+                        release.prepare_resumed_source(root, directory)
+                        derived = json.loads((directory / source.RECEIPT).read_bytes())
+                        self.assertEqual(derived, dict(original, sourceSHA=origin['sourceSHA']))
+                        self.assertEqual((directory / 'bpy-source-original-receipt.json').read_bytes(), raw)
+                        proof = json.loads((directory / 'bpy-source-reuse.json').read_bytes())
+                        self.assertEqual(proof['originalValidation'], original['validation'])
+                        self.assertFalse(proof['semanticSourceValidationPerformed'])
+                    else:
+                        with self.assertRaises(ValueError): release.prepare_resumed_source(root, directory)
+                        self.assertFalse((directory / 'bpy-source-reuse.json').exists())
+                    self.assertEqual(immutable.read_bytes(), raw)
+                    self.assertEqual(archive.read_bytes(), b'signed product')
+                    self.assertEqual(list(outside.iterdir()), [])
+                    semantic.assert_not_called(); native.assert_not_called()
+
+    def test_current_local_pack_binds_product_harness_runtime_and_canonical_final_bytes_separately(self):
+        import retained_packaging as packaging
+        for changed in ('valid', 'producer-source', 'app', 'guide', 'dmg', 'missing-parent'):
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary); dmg = root / 'NexGenVideo.dmg'; dmg.write_bytes(b'current DMG')
+                digest = hashlib.sha256(dmg.read_bytes()).hexdigest(); source = release.SIGNED_RESUME['sourceSHA']
+                selected = {'schema': 'authenticated-consumer'}
+                binding = {'sourceSHA': source, 'dmgSHA256': digest, 'appTreeSHA256': 'a' * 64,
+                    'guideSHA256': 'e' * 64, 'packaging': selected}
+                parent = {'stage': 'complete', 'producerSourceSHA': 'c' * 40,
+                    'final': {'dmgSHA256': digest, 'appTreeSHA256': 'a' * 64, 'guideSHA256': 'e' * 64}}
+                inputs = {'candidate_kind': 'signed-journey', 'journey_scenario': 'normal-fresh-local-musicvideo',
+                    'run_id': '777', 'artifact_id': '888', 'artifact_sha256': 'b' * 64, 'source_sha': source, 'expected_dmg_sha256': digest}
+                event = root / 'event.json'; event.write_text(json.dumps({'inputs': inputs}))
+                run = {'id': 777, 'head_sha': 'c' * 40, 'run_attempt': 1, 'workflow_id': 303346287,
+                    'path': '.github/workflows/release.yml', 'event': 'workflow_dispatch', 'repository': {'full_name': release.REPOSITORY},
+                    'actor': {'login': 'iret77'}, 'status': 'completed', 'conclusion': 'success'}
+                job = {'id': 999, 'run_id': 777, 'head_sha': 'c' * 40, 'run_attempt': 1, 'labels': ['macrunner'],
+                    'name': 'release', 'status': 'completed', 'conclusion': 'success'}
+                if changed == 'producer-source': run['head_sha'] = source
+                elif changed == 'app': parent['final']['appTreeSHA256'] = 'f' * 64
+                elif changed == 'guide': parent['final']['guideSHA256'] = 'f' * 64
+                elif changed == 'dmg': parent['final']['dmgSHA256'] = 'f' * 64
+                elif changed == 'missing-parent': binding.pop('packaging')
+                with patch.dict(os.environ, GITHUB_EVENT_PATH=str(event)), \
+                        patch.object(packaging, 'consumer_record', return_value=parent), \
+                        patch.object(packaging, 'compiled_signed_product', return_value=True), patch.object(packaging, 'consumer_harness'), \
+                        patch.object(release, 'api', side_effect=[run, {'total_count': 1, 'jobs': [job]}, {}]), \
+                        patch.object(release, 'verify_artifact'):
+                    if changed == 'valid':
+                        actual = release.local_pack_runtime_origin(binding, dmg)
+                        self.assertEqual(actual['sourceSHA'], source)
+                        self.assertEqual(actual['producerSourceSHA'], 'c' * 40)
+                        self.assertEqual(actual['packaging'], selected)
+                    else:
+                        with self.assertRaises(ValueError): release.local_pack_runtime_origin(binding, dmg)
+
     def test_pack_copies_require_same_job_parent_and_complete_current_copy_without_native_fallback(self):
         tree = '0a5115a344f565f3f3456120e67407846dcd0a4d4e93923f19ed48e90c695921'
         contexts = ('external-load', 'pre-dmg', 'dmg-copy', 'installed-dmg')

@@ -165,16 +165,35 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           ORIGINAL_SOURCE: ${{ inputs.expected_source_sha || github.sha }}
+          ORIGINAL_RUN: ${{ inputs.runtime_run_id || github.run_id }}
         run: |
           set -euo pipefail
-          python3 scripts/consume_bpy_distributable_source.py \
-            --output-directory "$RUNNER_TEMP/source" --source-sha "$ORIGINAL_SOURCE" \
-            --receipt "$RUNNER_TEMP/download/bpy-source/bpy-source-receipt.json"
+          python3 - <<'PYTHON'
+          import json, os, sys
+          from pathlib import Path
+          sys.path.insert(0, 'scripts')
+          from consume_bpy_distributable_source import consume
+          from compiled_app_release import consume_packaging_source
+          from retained_packaging import environment_selectors
+          temporary = Path(os.environ['RUNNER_TEMP'])
+          parent = temporary / 'evidence/packaging-consumer.json'
+          binding = json.loads(parent.read_text()) if parent.is_file() and not parent.is_symlink() else None
+          selected = environment_selectors()
+          if selected is not None and (binding is None or binding.get('selectors') != selected
+                  or binding.get('producerRunID') != int(os.environ['ORIGINAL_RUN'])):
+              raise ValueError('Source receiver lost its exact selected packaging parent')
+          receipt = temporary / 'download/bpy-source/bpy-source-receipt.json'
+          reused = consume_packaging_source(temporary / 'source', os.environ['ORIGINAL_SOURCE'], receipt,
+              binding, context='bpy-runtime', evidence=temporary / 'evidence/bpy-source-consumer-reused.json')
+          if reused is None:
+              consume(temporary / 'source', os.environ['ORIGINAL_SOURCE'], receipt)
+          PYTHON
       - name: Relocate the exact app and prepare denied resources
         env:
           APP_ZIP: ${{ inputs.app_zip }}
           DISTRIBUTION: ${{ inputs.distribution }}
           EXPECTED_SOURCE: ${{ inputs.expected_source_sha || github.sha }}
+          ORIGINAL_RUN: ${{ inputs.runtime_run_id || github.run_id }}
         run: |
           set -euo pipefail
           [ "$(sw_vers -productVersion | cut -d. -f1)" -ge 26 ]
@@ -193,9 +212,26 @@ jobs:
           else
             scripts/verify_bpy_bundle.sh "$APP" --development
           fi
-          python3 scripts/verify_bpy_distributable_source.py \
-            "$RUNNER_TEMP/source/NexGenVideo-bpy-5.2.2-corresponding-source.tar" \
-            "$RUNNER_TEMP/source/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json"
+          python3 - <<'PYTHON'
+          import json, os, sys
+          from pathlib import Path
+          sys.path.insert(0, 'scripts')
+          from compiled_app_release import verify_received_source
+          from verify_bpy_distributable_source import validate
+          from retained_packaging import environment_selectors
+          temporary = Path(os.environ['RUNNER_TEMP'])
+          parent = temporary / 'evidence/packaging-consumer.json'
+          binding = json.loads(parent.read_text()) if parent.is_file() and not parent.is_symlink() else None
+          selected = environment_selectors()
+          if selected is not None and (binding is None or binding.get('selectors') != selected
+                  or binding.get('producerRunID') != int(os.environ['ORIGINAL_RUN'])):
+              raise ValueError('Source verification lost its exact selected packaging parent')
+          directory = temporary / 'source'
+          if not verify_received_source(directory, os.environ['EXPECTED_SOURCE'], binding,
+                  temporary / 'evidence/bpy-source-consumer-reused.json', context='bpy-runtime'):
+              validate(directory / 'NexGenVideo-bpy-5.2.2-corresponding-source.tar',
+                  directory / 'NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json')
+          PYTHON
           printf 'provider-secret' > "$RUNNER_TEMP/denied/provider-secret"
           printf 'canonical-project-truth' > "$RUNNER_TEMP/denied/canonical-artifact"
           printf 'foreign-project' > "$RUNNER_TEMP/denied/foreign-project/scene.blend"

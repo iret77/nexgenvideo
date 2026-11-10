@@ -18,6 +18,61 @@ sys.path.pop(0)
 
 
 class RetainedReleaseRuntimeTests(unittest.TestCase):
+    def test_current_runtime_destinations_match_the_three_actual_callers(self):
+        import compiled_app_release as compiled
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); workspace = root / 'workspace'; workspace.mkdir(); runner = root / 'runner'; runner.mkdir()
+            env = {'GITHUB_ACTIONS': 'true', 'GITHUB_REPOSITORY': 'iret77/nexgenvideo',
+                'GITHUB_RUN_ATTEMPT': '1', 'GITHUB_WORKSPACE': str(workspace), 'RUNNER_TEMP': str(runner)}
+            for job, directory, base in [('analyze', workspace / '.build', workspace),
+                    ('replay', runner / 'chat-replay', runner), ('acceptance', runner / 'settings-runtime', runner)]:
+                with self.subTest(job=job), patch.dict(os.environ, env | {'GITHUB_JOB': job}), patch.object(compiled.sys, 'platform', 'darwin'):
+                    self.assertEqual(compiled.retained_runtime_destination(directory), base)
+                    with self.assertRaises(ValueError): compiled.retained_runtime_destination(base / 'unrelated')
+
+    def test_current_runtime_pack_reuse_keeps_app_native_checks_and_records_exact_parent(self):
+        import compiled_app_release as compiled
+        import retained_packaging as packaging
+        for changed in ('valid', 'pack', 'root-mode', 'parent-app', 'parent-archive', 'current-run'):
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary); runner = root / 'runner'; runner.mkdir(); workspace = root / 'workspace'; workspace.mkdir()
+                directory = runner / 'chat-replay'; pack = directory / 'plugins/musicvideo.ngvpack'; pack.mkdir(parents=True)
+                pack.chmod(0o755); (pack / 'image').write_bytes(b'qualified pack')
+                tree = compiled.canonical_bundle_tree(pack)
+                source = compiled.SIGNED_RESUME['sourceSHA']; app = {'treeSHA256': 'a' * 64, 'executableSHA256': 'e' * 64}
+                receipt = {'archiveSHA256': 'b' * 64, 'appTreeSHA256': app['treeSHA256']}
+                proof = {'productSourceSHA': source, 'packaging': {'qualified': 'parent'}, 'producerRunID': 777,
+                    'runtimeArtifactID': 888, 'runtimeArtifactSHA256': 'd' * 64,
+                    'harnessSourceSHA': 'c' * 40, 'executionRunID': '999', 'executionAttempt': '1'}
+                parent = {'stage': 'complete', 'producerSourceSHA': 'c' * 40, 'runID': 777,
+                    'final': {'app': app, 'runtimeArchiveSHA256': 'b' * 64, 'packTreeSHA256': tree, 'packArchiveSHA256': compiled.PACK_SHA}}
+                if changed == 'pack': (pack / 'image').write_bytes(b'changed pack')
+                elif changed == 'root-mode': pack.chmod(0o700)
+                elif changed == 'parent-app': parent['final']['app'] = {'treeSHA256': 'f' * 64}
+                elif changed == 'parent-archive': parent['final']['runtimeArchiveSHA256'] = 'f' * 64
+                elif changed == 'current-run': proof['executionRunID'] = '998'
+                env = {'GITHUB_ACTIONS': 'true', 'GITHUB_REPOSITORY': 'iret77/nexgenvideo', 'GITHUB_RUN_ATTEMPT': '1',
+                    'GITHUB_JOB': 'replay', 'GITHUB_SHA': 'c' * 40, 'GITHUB_RUN_ID': '999',
+                    'GITHUB_WORKSPACE': str(workspace), 'RUNNER_TEMP': str(runner)}
+                origin = ({'id': compiled.RETAINED_RUN}, {'id': compiled.PACK_NATIVE_PROOF['jobID']},
+                    {'id': compiled.FINAL_ARTIFACT[0], 'digest': 'sha256:' + compiled.FINAL_ARTIFACT[1]})
+                with patch.dict(os.environ, env), patch.object(compiled.sys, 'platform', 'darwin'), \
+                        patch.object(packaging, 'consumer_record', return_value=parent), patch.object(packaging, 'compiled_signed_product', return_value=True), \
+                        patch.object(compiled, 'PACK_TREE', tree), patch.object(compiled, 'pack_verification_origin', return_value=origin), \
+                        patch.object(journey, 'metadata', return_value=app), patch.object(runtime.subprocess, 'run') as commands, patch('builtins.print'):
+                    if changed == 'valid':
+                        self.assertEqual(runtime.validate_app(directory, source, receipt, proof=proof), app)
+                        self.assertEqual([call.args[0][0] for call in commands.call_args_list], ['codesign', 'xcrun', 'spctl'])
+                        self.assertEqual(proof['packVerificationReuse']['runtimeArtifactID'], 888)
+                        self.assertEqual(proof['packVerificationReuse']['parent'], proof['packaging'])
+                        self.assertFalse(proof['packVerificationReuse']['currentNativeCodesignOrStaplerPerformed'])
+                        self.assertTrue((directory / 'pack-verification.reused.json').is_file())
+                    else:
+                        with self.assertRaises(ValueError): runtime.validate_app(directory, source, receipt, proof=proof)
+                        self.assertNotIn('packVerificationReuse', proof)
+                        self.assertFalse((directory / 'pack-verification.reused.json').exists())
+                    self.assertFalse(any(str(pack) in call.args[0] for call in commands.call_args_list))
+
     def setUp(self):
         self.source, self.harness, self.digest = 'a' * 40, 'c' * 40, 'b' * 64
         self.run = dict(id=12, head_sha=self.source, path='.github/workflows/release.yml',

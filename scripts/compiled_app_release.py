@@ -1,5 +1,6 @@
 import argparse
 from collections import Counter
+import datetime
 import hashlib
 import json
 import os
@@ -10,6 +11,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 import zipfile
 
 import native_app_target_build as targets
@@ -30,6 +32,17 @@ SIGNED_ARTIFACT = (13633938906, '1b2743fb43e017a337565c3a6c046bf9d8606acd16d4394
 FINAL_ARTIFACT = (13635913556, '5a3c9eef5134b2ae7479c7af8a465c655fceb3857fbf403a090fe27871e7fcb0')
 PACK_SHA = '37fcee05d1ac334b20eb392c61cc3b7a94af165dc3b967c61602bc79d6dc4388'
 PACK_TREE = '365e9a75174191359bb36b02b429a4bfea55f0b764caa81184228bd3072c402e'
+SIGNED_RESUME = {'sourceSHA': '58644c62e3a01c03ffcc46a1969e3f69bd296942', 'runID': 42769966061,
+    'builderJobID': 129675318968, 'releaseJobID': 129684301297,
+    'artifactID': 13742158537, 'artifactSHA256': 'aa535d533ccf2fd28e77b28a01f2ec393926b226aa64354198d2dbc3e54bd138',
+    'artifactBytes': 1696781605, 'proofArtifactID': 13741669433,
+    'proofArtifactSHA256': 'aaac4fe7503f6acbd932fdb0ec5d7c4093dcabee7254a57992c7261c21074faf',
+    'assemblyArtifactID': 13742357738, 'assemblyArtifactSHA256': '2ba060194952846c6d6a74d7be15f2bfd125b5e78d51bed694eee3a759e95c05',
+    'manifestSHA256': 'c67f8c5e46f975c0b0284bab66c637976dc7b365c81f7c5530dbeb28924d39a0',
+    'appArchiveSHA256': 'd776b837dc2f9568df57a7e9637ae14556fd4711e7b84c70f965d9d83e3dd5f5',
+    'appTreeSHA256': '18f86445d8fe35d58ab484d7613f4280201d3c73a99574d198eed5f375057931',
+    'stateArtifactID': 13742671909, 'stateSHA256': 'f89025527630f0dc3e58c9197ca948335e6b840467a72c58e46c3c5857e6407b',
+    'sourceReceiptSHA256': 'e28a77d6f63e7c7a6a5282428c202cd5027ae1684949a60e78d9b90dec840a53'}
 SIGNATURE_APP_TREE = 'f2b2aa30a5a56a08341c17c22add2225ab1da63fce49e43886cbda3909f6c353'
 # These original command bytes were independently qualified from the bound artifact.
 SIGNATURE_ORIGIN = {'runID': 42752029331, 'sourceSHA': '7224319479875080119c1e916fc5d846b43405f9',
@@ -54,6 +67,452 @@ PACK_NATIVE_PROOF = {'jobID': 128864202422, 'artifactBytes': 3627462402,
         '21': '7444c560e9e0be8b89f2b4c2327849837233407d45b3a378c0f4eb7a3bbf91b7'}}
 PHASES = ('production', 'testable', 'tests')
 SELECTOR_KEYS = {'runID', 'sourceSHA', 'artifactID', 'artifactSHA256', 'receiptSHA256'}
+
+
+def signed_resume_source(run_id, source):
+    return (run_id, source) == (SIGNED_RESUME['runID'], SIGNED_RESUME['sourceSHA'])
+
+
+def verify_signed_resume(producer, builder, payload, proof, manifest_raw, *, verifier=verify_artifact):
+    origin = SIGNED_RESUME
+    require(signed_resume_source(producer.get('id'), producer.get('head_sha'))
+        and producer.get('repository', {}).get('full_name') == REPOSITORY
+        and producer.get('actor', {}).get('login') == 'iret77' and producer.get('run_attempt') == 1
+        and producer.get('path') == '.github/workflows/release.yml' and producer.get('event') == 'workflow_dispatch'
+        and producer.get('status') == 'completed' and producer.get('conclusion') == 'failure',
+        'Compiled signed-product origin differs')
+    require(builder.get('id') == origin['builderJobID'] and builder.get('run_id') == origin['runID']
+        and builder.get('head_sha') == origin['sourceSHA'] and builder.get('run_attempt') == 1
+        and builder.get('name') == 'release-build' and builder.get('labels') == ['macrunner']
+        and builder.get('status') == 'completed' and builder.get('conclusion') == 'success',
+        'Compiled signed-product builder differs')
+    for name in ('Assemble and sign the new App with unchanged retained components',
+            'Record compiled App signed input without invoking a build', 'Retain signed build input', 'Retain signed build proof'):
+        matches = [step for step in builder.get('steps', []) if step.get('name') == name]
+        require(len(matches) == 1 and matches[0].get('conclusion') == 'success',
+            'Compiled signed-product stage did not pass: ' + name)
+    prefix = 'release-signed-input-' + origin['sourceSHA']
+    for artifact, identifier, digest, name in (
+            (payload, origin['artifactID'], origin['artifactSHA256'], prefix),
+            (proof, origin['proofArtifactID'], origin['proofArtifactSHA256'], prefix + '-proof')):
+        verifier(artifact, producer, builder, identifier, digest, name)
+    require(payload.get('size_in_bytes') == origin['artifactBytes']
+        and hashlib.sha256(manifest_raw).hexdigest() == origin['manifestSHA256'],
+        'Compiled signed-product payload or manifest differs')
+    manifest = checkpoint.verify_manifest(json.loads(manifest_raw), origin['sourceSHA'], origin['runID'])
+    require(manifest.get('nativeEvidence', {}).get('schema') == 'release-native-compiled-app/v4'
+        and manifest['identity'] == {'version': '1.8.0', 'build': '106', 'sourceSHA': origin['sourceSHA'],
+            'catalogURL': 'https://github.com/iret77/nexgenvideo/releases/download/plugins/catalog.json'}
+        and manifest['appTreeSHA256'] == origin['appTreeSHA256']
+        and manifest['files']['NexGenVideo.zip']['sha256'] == origin['appArchiveSHA256']
+        and manifest['files']['bpy-source-receipt.json']['sha256'] == origin['sourceReceiptSHA256'],
+        'Compiled signed-product identity or native scope differs')
+    return {'schema': 'compiled-signed-product-reuse/v1', 'original': dict(origin),
+        'packArchiveSHA256': PACK_SHA, 'packTreeSHA256': PACK_TREE, 'appRootMode': 0o755,
+        'freshCompilerCoreAssemblyOrRootSignPerformed': False}
+
+
+def original_empty_notary(raw, product, producer, run_id):
+    return (product == producer == SIGNED_RESUME['sourceSHA'] and run_id == SIGNED_RESUME['runID']
+        and hashlib.sha256(raw).hexdigest() == SIGNED_RESUME['stateSHA256'])
+
+
+def verify_current_signature_reuse(value, binding):
+    require(value == {'schema': 'current-app-signature-reuse/v1', 'state': 'REUSED',
+        'original': SIGNED_RESUME, 'command': SIGNATURE_COMMAND, 'recordSHA256': SIGNATURE_RECORD_SHA256,
+        'current': {'productSourceSHA': binding['productSourceSHA'], 'harnessSourceSHA': binding['producerSourceSHA'],
+            'runID': binding['runID'], 'job': 'release', 'appTreeSHA256': SIGNED_RESUME['appTreeSHA256']},
+        'currentNativeSignatureVerificationPerformed': False, 'freshTrustStoreOrRevocationClaimed': False},
+        'Current App signature reuse proof changed its actual origin or scope')
+
+
+def reuse_current_signature(root, app, manifest, binding):
+    import retained_packaging as packaging
+    from compiled_core_reuse import persist
+    require(sys.platform == 'darwin' and os.environ.get('GITHUB_ACTIONS') == 'true'
+        and os.environ.get('GITHUB_REPOSITORY') == REPOSITORY and os.environ.get('GITHUB_JOB') == 'release'
+        and os.environ.get('GITHUB_RUN_ATTEMPT') == '1' and packaging.compiled_signed_product(binding)
+        and manifest == binding['signedInput']['manifest'], 'Unqualified current signed-product reuse')
+    origin = SIGNED_RESUME
+    temporary, workspace = Path(os.environ['RUNNER_TEMP']), Path(os.environ['GITHUB_WORKSPACE'])
+    require(root.resolve() == temporary.resolve() / 'release-signed-binding', 'Current signature proof escaped its owned root')
+    root_anchor = source_directory_identity(root, temporary)
+    app_anchor = source_directory_identity(app, workspace)
+    run, job = api('actions/runs/' + str(origin['runID'])), api('actions/jobs/' + str(origin['builderJobID']))
+    artifact = api('actions/artifacts/' + str(origin['assemblyArtifactID']))
+    verify_artifact(artifact, run, job, origin['assemblyArtifactID'], origin['assemblyArtifactSHA256'],
+        'release-compiled-app-assembly-' + str(origin['runID']) + '-a1')
+    require(run.get('head_sha') == origin['sourceSHA'] and run.get('run_attempt') == 1
+        and job.get('id') == origin['builderJobID'] and job.get('labels') == ['macrunner'] and job.get('conclusion') == 'success'
+        and app.is_dir() and not app.is_symlink() and stat.S_IMODE(app.lstat().st_mode) == 0o755
+        and checkpoint.tree_digest(app) == origin['appTreeSHA256'], 'Materialized current signed App changed')
+    source_directory_identity(root, temporary, root_anchor)
+    source_directory_identity(app, workspace, app_anchor)
+    persist(root / 'current-app-signature.reused.json', {'schema': 'current-app-signature-reuse/v1', 'state': 'REUSED',
+        'original': origin, 'command': SIGNATURE_COMMAND, 'recordSHA256': SIGNATURE_RECORD_SHA256,
+        'current': {'productSourceSHA': binding['productSourceSHA'], 'harnessSourceSHA': binding['producerSourceSHA'],
+            'runID': binding['runID'], 'job': 'release', 'appTreeSHA256': origin['appTreeSHA256']},
+        'currentNativeSignatureVerificationPerformed': False, 'freshTrustStoreOrRevocationClaimed': False})
+
+
+def source_directory_identity(directory, root, expected=None):
+    path, base = directory.absolute(), root.absolute()
+    require(path.is_relative_to(base) and path != base and path.is_dir()
+        and not path.is_symlink() and path.resolve().is_relative_to(base.resolve()), 'Source directory escaped its owned root')
+    for parent in path.parents:
+        if parent == base:
+            break
+        require(not parent.is_symlink(), 'Source directory has a linked ancestor')
+    info = path.lstat()
+    actual = (str(path.resolve()), info.st_dev, info.st_ino)
+    require(expected is None or actual == expected, 'Source directory was replaced during acquisition')
+    return actual
+
+
+def acquire_source_pair(public, stage):
+    import consume_bpy_distributable_source as source
+    producer = public['producer']
+    anchor = source_directory_identity(stage, stage.parent)
+    run = source.api(f"/actions/runs/{producer['runID']}")
+    artifacts = source.pages(f"/actions/runs/{producer['runID']}/artifacts", 'artifacts')
+    jobs = source.pages(f"/actions/runs/{producer['runID']}/jobs?filter=all", 'jobs')
+    artifact = source.require_original_producer(public, run, artifacts, jobs)
+    source_directory_identity(stage, stage.parent, anchor)
+    source.download(artifact, stage / 'original-bpy-source.zip')
+    source_directory_identity(stage, stage.parent, anchor)
+    source.extract_original(stage / 'original-bpy-source.zip', stage, public)
+    verify_source_pair(stage, public)
+    return {'run': run, 'job': next(job for job in jobs if job['id'] == producer['jobID']), 'artifact': artifact}
+
+
+def commit_source_pair(stage, directory, public, root, anchor):
+    from compiled_core_reuse import sync_directory
+    source_directory_identity(directory, root, anchor)
+    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        info = os.fstat(descriptor)
+        require((info.st_dev, info.st_ino) == anchor[1:], 'Source directory descriptor changed')
+        for name in (public['filename'], public['manifestFilename']):
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+            target = os.open(name, flags, 0o644, dir_fd=descriptor)
+            with os.fdopen(target, 'wb') as sink, (stage / name).open('rb') as stream:
+                shutil.copyfileobj(stream, sink, 1024 * 1024)
+                sink.flush(); os.fsync(sink.fileno())
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    source_directory_identity(directory, root, anchor)
+    verify_source_pair(directory, public)
+    sync_directory(directory)
+
+
+def prepare_resumed_source(root, directory):
+    import consume_bpy_distributable_source as source
+    import retained_packaging as packaging
+    from compiled_core_reuse import persist, persist_bytes
+    require(sys.platform == 'darwin' and os.environ.get('GITHUB_ACTIONS') == 'true'
+        and os.environ.get('GITHUB_REPOSITORY') == REPOSITORY and os.environ.get('GITHUB_RUN_ATTEMPT') == '1'
+        and os.environ.get('GITHUB_JOB') == 'release' and os.environ.get('NGV_COMPILED_APP_RELEASE') == 'true',
+        'Compiled source handoff requires the owned native release job')
+    binding = packaging.current_binding()
+    require(binding is not None and packaging.compiled_signed_product(binding), 'Unqualified compiled source handoff')
+    workspace, temporary = Path(os.environ['GITHUB_WORKSPACE']).resolve(), Path(os.environ['RUNNER_TEMP']).resolve()
+    require(root.resolve() == temporary / 'release-signed-binding' and root.is_dir() and not root.is_symlink()
+        and directory.resolve() == workspace / '.build/bpy-source' and directory.is_dir() and not directory.is_symlink(),
+        'Compiled source handoff escaped its owned roots')
+    directory_anchor = source_directory_identity(directory, workspace)
+    signed_raw = (root / 'binding.json').read_bytes()
+    signed = json.loads(signed_raw)
+    manifest = binding['signedInput']['manifest']
+    require(signed.get('manifest') == manifest and signed.get('sourceSHA') == SIGNED_RESUME['sourceSHA']
+        and signed.get('executionRunID') == binding['runID'] and signed.get('producerSourceSHA') == binding['producerSourceSHA']
+        and signed.get('packagingInputSHA256') == os.environ.get('RETAINED_PACKAGING_INPUT_SHA256'),
+        'Compiled source handoff lost its actual signed restore')
+    old_path, immutable = directory / source.RECEIPT, root / 'payload/bpy-source-receipt.json'
+    old = old_path.read_bytes()
+    require(not old_path.is_symlink() and not immutable.is_symlink()
+        and hashlib.sha256(old).hexdigest() == SIGNED_RESUME['sourceReceiptSHA256']
+        and immutable.read_bytes() == old, 'Original source handoff receipt changed')
+    original = json.loads(old)
+    public = source.public_asset(json.loads(source.LOCK_PATH.read_text()))
+    source.require_receipt(original, public, RETAINED_SOURCE)
+    product = binding['productSourceSHA']
+    require(targets.capture.git('rev-parse', product + ':Runtime') == targets.capture.git('rev-parse', 'HEAD:Runtime'),
+        'Source handoff changed the product Runtime pins')
+    marker, original_path = directory / 'bpy-source-reuse.json', directory / 'bpy-source-original-receipt.json'
+    require(all(not path.exists() and not path.is_symlink() for path in (marker, original_path,
+        directory / public['filename'], directory / public['manifestFilename'])), 'Source handoff was already consumed')
+    with tempfile.TemporaryDirectory(prefix='current-bpy-source-') as staging:
+        stage = Path(staging)
+        origin_evidence = acquire_source_pair(public, stage)
+        commit_source_pair(stage, directory, public, workspace, directory_anchor)
+    receipt = dict(original, sourceSHA=product)
+    source.require_receipt(receipt, public, product)
+    require(root.resolve() == temporary / 'release-signed-binding' and not root.is_symlink()
+        and directory.resolve() == workspace / '.build/bpy-source' and not directory.is_symlink()
+        and (root / 'binding.json').read_bytes() == signed_raw
+        and source.public_asset(json.loads(source.LOCK_PATH.read_text())) == public
+        and old_path.is_file() and not old_path.is_symlink() and old_path.read_bytes() == old
+        and immutable.is_file() and not immutable.is_symlink() and immutable.read_bytes() == old
+        and not (workspace / '.build/NexGenVideo.app').is_symlink()
+        and stat.S_IMODE((workspace / '.build/NexGenVideo.app').lstat().st_mode) == 0o755
+        and not (workspace / '.build/NexGenVideo.zip').is_symlink()
+        and checkpoint.tree_digest(workspace / '.build/NexGenVideo.app') == manifest['appTreeSHA256']
+        and checksum(workspace / '.build/NexGenVideo.zip') == SIGNED_RESUME['appArchiveSHA256'],
+        'Actual signed product or original receipt changed during source acquisition')
+    source_directory_identity(directory, workspace, directory_anchor)
+    verify_source_pair(directory, public)
+    record = {'schema': 'compiled-bpy-source-receipt-reuse/v1', 'state': 'REUSED',
+        'originalReceiptSHA256': SIGNED_RESUME['sourceReceiptSHA256'], 'originalConsumerSourceSHA': RETAINED_SOURCE,
+        'productSourceSHA': product, 'harnessSourceSHA': binding['producerSourceSHA'], 'runID': binding['runID'],
+        'attempt': 1, 'job': 'release', 'signedProduct': SIGNED_RESUME,
+        'publicSourceAsset': public, 'originEvidence': origin_evidence,
+        'originalValidation': original['validation'], 'semanticSourceValidationPerformed': False,
+        'archiveSHA256': public['sha256'], 'manifestSHA256': public['manifestSHA256'],
+        'acquiredAt': datetime.datetime.now(datetime.timezone.utc).isoformat()}
+    verify_source_origin(record['originEvidence'], public, record['acquiredAt'])
+    persist_bytes(original_path, old)
+    replacement = directory / 'bpy-source-current-receipt.json'
+    persist(replacement, receipt)
+    replacement.replace(old_path)
+    record['derivedReceiptSHA256'] = checksum(old_path)
+    persist(marker, record)
+    print('BPY_SOURCE_VERIFICATION_REUSED ' + json.dumps(record, sort_keys=True, separators=(',', ':')), flush=True)
+
+
+def verify_source_reuse(value, product, harness, run_id):
+    names = {'bpy-source-original-receipt.json', 'bpy-source-receipt.json', 'bpy-source-reuse.json'}
+    require(type(value) is dict and set(value) == names and all(type(raw) is str for raw in value.values()),
+        'Incomplete exact source-reuse proof')
+    raw = {name: text.encode() for name, text in value.items()}
+    original = json.loads(raw['bpy-source-original-receipt.json'], object_pairs_hook=unique_object)
+    receipt = json.loads(raw['bpy-source-receipt.json'], object_pairs_hook=unique_object)
+    reuse = json.loads(raw['bpy-source-reuse.json'], object_pairs_hook=unique_object)
+    public = json.loads(Path('Runtime/bpy/runtime-lock.json').read_text())['distributionClosure']['publicSourceAsset']
+    require(hashlib.sha256(raw['bpy-source-original-receipt.json']).hexdigest() == SIGNED_RESUME['sourceReceiptSHA256']
+        and original.get('schema') == 'nexgenvideo/bpy-source-receipt/1' and original.get('sourceSHA') == RETAINED_SOURCE
+        and original.get('publicSourceAsset') == public and receipt == dict(original, sourceSHA=product)
+        and product == SIGNED_RESUME['sourceSHA'], 'Source qualification origin, consumer or pins differ')
+    require(reuse.get('schema') == 'compiled-bpy-source-receipt-reuse/v1' and reuse.get('state') == 'REUSED'
+        and reuse.get('signedProduct') == SIGNED_RESUME
+        and reuse.get('originalReceiptSHA256') == SIGNED_RESUME['sourceReceiptSHA256']
+        and reuse.get('originalConsumerSourceSHA') == RETAINED_SOURCE and reuse.get('productSourceSHA') == product
+        and reuse.get('harnessSourceSHA') == harness and reuse.get('runID') == run_id
+        and reuse.get('attempt') == 1 and reuse.get('job') == 'release' and reuse.get('publicSourceAsset') == public
+        and reuse.get('originalValidation') == original.get('validation')
+        and reuse.get('semanticSourceValidationPerformed') is False
+        and reuse.get('derivedReceiptSHA256') == hashlib.sha256(raw['bpy-source-receipt.json']).hexdigest()
+        and reuse.get('archiveSHA256') == original['validation']['archiveSHA256'] == public['sha256']
+        and reuse.get('manifestSHA256') == original['validation']['manifestSHA256'] == public['manifestSHA256'],
+        'Source reuse changed its original semantics or current provenance')
+    verify_source_origin(reuse.get('originEvidence', {}), public, reuse['acquiredAt'])
+    return receipt, reuse
+
+
+def verify_source_origin(evidence, public, acquired_at):
+    producer = public['producer']
+    origin_run, job, artifact = (evidence.get(name, {}) for name in ('run', 'job', 'artifact'))
+    require(origin_run.get('id') == producer['runID'] and origin_run.get('head_sha') == producer['sourceSHA']
+        and origin_run.get('repository', {}).get('full_name') == REPOSITORY
+        and origin_run.get('head_repository', {}).get('full_name') == REPOSITORY
+        and origin_run.get('run_attempt') == producer['jobAttempt'] == 1
+        and origin_run.get('status') == 'completed' and origin_run.get('event') == 'workflow_dispatch'
+        and origin_run.get('path') == producer['workflowPath']
+        and job.get('name') == ('source' if producer['workflowPath'].endswith('/bpy-source-closure.yml') else 'bpy-qualification / source')
+        and job.get('id') == producer['jobID']
+        and job.get('run_id') == producer['runID'] and job.get('head_sha') == producer['sourceSHA']
+        and job.get('run_attempt') == 1 and job.get('status') == 'completed' and job.get('conclusion') == 'success'
+        and 'ubuntu-24.04' in job.get('labels', []) and artifact.get('id') == producer['artifactID']
+        and artifact.get('name') == producer['artifactName'] and artifact.get('digest') == producer['artifactDigest']
+        and artifact.get('size_in_bytes') == producer['artifactSize'] and artifact.get('expired') is False
+        and artifact.get('workflow_run', {}).get('id') == producer['runID']
+        and artifact.get('workflow_run', {}).get('head_sha') == producer['sourceSHA'], 'Original source producer differs')
+    instant = lambda text: datetime.datetime.fromisoformat(text.replace('Z', '+00:00'))
+    require(instant(job['started_at']) <= instant(artifact['created_at']) <= instant(artifact['updated_at'])
+        <= instant(job['completed_at']) <= instant(acquired_at) < instant(artifact['expires_at']),
+        'Original source acquisition chronology differs')
+
+
+def capture_source_reuse(directory, binding):
+    names = ('bpy-source-original-receipt.json', 'bpy-source-receipt.json', 'bpy-source-reuse.json')
+    require(directory.is_dir() and not directory.is_symlink()
+        and all((directory / name).is_file() and not (directory / name).is_symlink() for name in names),
+        'Source-reuse originals are absent or linked')
+    value = {name: (directory / name).read_text() for name in names}
+    receipt, reuse = verify_source_reuse(value, binding['productSourceSHA'], binding['producerSourceSHA'], binding['runID'])
+    verify_source_pair(directory, receipt['publicSourceAsset'])
+    return value
+
+
+def verify_source_pair(directory, public):
+    archive, manifest = (directory / public[name] for name in ('filename', 'manifestFilename'))
+    require(directory.is_dir() and not directory.is_symlink()
+        and archive.is_file() and not archive.is_symlink() and manifest.is_file() and not manifest.is_symlink()
+        and archive.stat().st_size == public['size'] and checksum(archive) == public['sha256']
+        and checksum(manifest) == public['manifestSHA256'], 'Materialized qualified source pair changed')
+
+
+def source_receiver_context(context, parent):
+    contexts = {'bpy-runtime': ('runtime', 'darwin'), 'workspace-source-preflight': ('runtime', 'linux'),
+        'settings-restore': ('acceptance', 'darwin')}
+    require(context in contexts and os.environ.get('GITHUB_ACTIONS') == 'true'
+        and os.environ.get('GITHUB_REPOSITORY') == REPOSITORY and os.environ.get('GITHUB_RUN_ATTEMPT') == '1'
+        and (os.environ.get('GITHUB_JOB'), sys.platform) == contexts[context]
+        and os.environ.get('GITHUB_SHA') == parent['producerSourceSHA'], 'Unknown source receiver context')
+
+
+def consume_packaging_source(directory, product, receipt_path, packaging, *, context, evidence):
+    import consume_bpy_distributable_source as source
+    import retained_packaging as retained
+    from compiled_core_reuse import persist, persist_bytes
+    if packaging is None:
+        return None
+    parent = retained.consumer_record(packaging, product)
+    if product != SIGNED_RESUME['sourceSHA']:
+        return None
+    require(retained.compiled_signed_product(parent) and parent.get('stage') == 'complete',
+        'Current compiled source receiver has no qualified canonical parent')
+    source_receiver_context(context, parent)
+    temporary = Path(os.environ['RUNNER_TEMP'])
+    require(directory.resolve().is_relative_to(temporary.resolve()) and evidence.resolve().is_relative_to(temporary.resolve())
+        and not directory.is_symlink() and not evidence.is_symlink(), 'Source receiver escaped its owned temporary root')
+    value = parent['final']['bpySourceReuse']
+    receipt, original_reuse = verify_source_reuse(value, product, parent['producerSourceSHA'], parent['runID'])
+    expected = value['bpy-source-receipt.json'].encode()
+    if receipt_path.parent.resolve() != temporary.resolve():
+        source_directory_identity(receipt_path.parent, temporary)
+    else:
+        require(not receipt_path.parent.is_symlink(), 'Runtime source receipt parent is linked')
+    require(receipt_path.is_file() and not receipt_path.is_symlink() and receipt_path.read_bytes() == expected
+        and hashlib.sha256(expected).hexdigest() == parent['final']['bpySourceReceiptSHA256'],
+        'Runtime source receipt differs from its exact final packaging parent')
+    public = source.public_asset(json.loads(source.LOCK_PATH.read_text()))
+    source.require_receipt(receipt, public, product)
+    directory.mkdir(parents=True, exist_ok=True)
+    require(directory.is_dir() and not directory.is_symlink() and directory.resolve().is_relative_to(temporary.resolve())
+        and all(not (directory / name).exists() and not (directory / name).is_symlink()
+            for name in (public['filename'], public['manifestFilename'], source.RECEIPT)), 'Source receiver destination is occupied')
+    directory_anchor = source_directory_identity(directory, temporary)
+    with tempfile.TemporaryDirectory(prefix='current-bpy-consumer-') as staging:
+        stage = Path(staging)
+        origin_evidence = acquire_source_pair(public, stage)
+        commit_source_pair(stage, directory, public, temporary, directory_anchor)
+    require(receipt_path.is_file() and not receipt_path.is_symlink() and receipt_path.read_bytes() == expected
+        and source.public_asset(json.loads(source.LOCK_PATH.read_text())) == public
+        and directory.resolve().is_relative_to(temporary.resolve()) and not directory.is_symlink(),
+        'Source receiver input or physical output changed during acquisition')
+    source_directory_identity(directory, temporary, directory_anchor)
+    persist_bytes(directory / source.RECEIPT, expected)
+    record = {'schema': 'compiled-bpy-source-consumer-reuse/v1', 'state': 'REUSED', 'context': context,
+        'productSourceSHA': product, 'harnessSourceSHA': os.environ['GITHUB_SHA'],
+        'executionRunID': int(os.environ['GITHUB_RUN_ID']), 'attempt': 1, 'job': os.environ['GITHUB_JOB'],
+        'parent': packaging, 'parentReceiptSHA256': hashlib.sha256(expected).hexdigest(),
+        'originalReuseSHA256': hashlib.sha256(value['bpy-source-reuse.json'].encode()).hexdigest(),
+        'publicSourceAsset': public, 'materializationOrigin': {'kind': 'actions', 'producer': public['producer']},
+        'originEvidence': origin_evidence, 'acquiredAt': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        'originalValidation': receipt['validation'], 'semanticSourceValidationPerformed': False}
+    verify_source_origin(record['originEvidence'], public, record['acquiredAt'])
+    evidence.parent.mkdir(parents=True, exist_ok=True)
+    require(evidence.parent.resolve().is_relative_to(temporary.resolve()) and not evidence.parent.is_symlink(),
+        'Source receiver proof parent escaped its owned root')
+    source_directory_identity(evidence.parent, temporary)
+    verify_source_pair(directory, public)
+    persist(evidence, record)
+    print('BPY_SOURCE_CONSUMER_REUSED ' + json.dumps(record, sort_keys=True, separators=(',', ':')), flush=True)
+    return {'receipt': receipt, 'reuse': record, 'evidenceSHA256': checksum(evidence)}
+
+
+def verify_received_source(directory, product, packaging, evidence, *, context):
+    import retained_packaging as retained
+    if packaging is None:
+        return False
+    parent = retained.consumer_record(packaging, product)
+    if product != SIGNED_RESUME['sourceSHA']:
+        return False
+    require(retained.compiled_signed_product(parent) and parent.get('stage') == 'complete'
+        and evidence.is_file() and not evidence.is_symlink(), 'Current source receiver proof is missing')
+    source_receiver_context(context, parent)
+    temporary = Path(os.environ['RUNNER_TEMP'])
+    source_directory_identity(directory, temporary)
+    source_directory_identity(evidence.parent, temporary)
+    require((directory / 'bpy-source-receipt.json').is_file() and not (directory / 'bpy-source-receipt.json').is_symlink(),
+        'Current source receiver receipt is absent or linked')
+    receipt, original = verify_source_reuse(parent['final']['bpySourceReuse'], product, parent['producerSourceSHA'], parent['runID'])
+    record = json.loads(evidence.read_bytes(), object_pairs_hook=unique_object)
+    require(record.get('schema') == 'compiled-bpy-source-consumer-reuse/v1' and record.get('state') == 'REUSED'
+        and record.get('context') == context and record.get('productSourceSHA') == product
+        and record.get('harnessSourceSHA') == os.environ['GITHUB_SHA'] == parent['producerSourceSHA']
+        and record.get('executionRunID') == int(os.environ['GITHUB_RUN_ID']) and record.get('attempt') == 1
+        and record.get('job') == os.environ['GITHUB_JOB'] and record.get('parent') == packaging
+        and record.get('parentReceiptSHA256') == parent['final']['bpySourceReceiptSHA256']
+        and record.get('originalReuseSHA256') == hashlib.sha256(parent['final']['bpySourceReuse']['bpy-source-reuse.json'].encode()).hexdigest()
+        and record.get('originalValidation') == receipt['validation'] and record.get('publicSourceAsset') == receipt['publicSourceAsset']
+        and record.get('materializationOrigin') == {'kind': 'actions', 'producer': receipt['publicSourceAsset']['producer']}
+        and record.get('semanticSourceValidationPerformed') is False
+        and (directory / 'bpy-source-receipt.json').read_bytes() == parent['final']['bpySourceReuse']['bpy-source-receipt.json'].encode(),
+        'Current source receiver lost its exact canonical parent or honest reused scope')
+    verify_source_origin(record.get('originEvidence', {}), receipt['publicSourceAsset'], record['acquiredAt'])
+    verify_source_pair(directory, receipt['publicSourceAsset'])
+    return True
+
+
+def retained_runtime_destination(directory):
+    require(os.environ.get('GITHUB_ACTIONS') == 'true' and os.environ.get('GITHUB_REPOSITORY') == REPOSITORY
+        and sys.platform == 'darwin' and os.environ.get('GITHUB_RUN_ATTEMPT') == '1', 'Unknown retained runtime execution')
+    temporary, workspace = Path(os.environ['RUNNER_TEMP']), Path(os.environ['GITHUB_WORKSPACE'])
+    job = os.environ.get('GITHUB_JOB')
+    expected = {'analyze': workspace / '.build', 'replay': temporary / 'chat-replay',
+        'acceptance': temporary / 'settings-runtime'}
+    require(job in expected and directory.resolve() == expected[job].resolve()
+        and not directory.is_symlink() and not expected[job].is_symlink(),
+        'Retained runtime destination differs from its actual caller')
+    return workspace if job == 'analyze' else temporary
+
+
+def verify_retained_runtime_pack(directory, product, receipt, proof, identity):
+    import retained_packaging as packaging
+    from compiled_core_reuse import persist
+    if product != SIGNED_RESUME['sourceSHA']:
+        return None
+    selected = proof.get('packaging')
+    require(selected is not None, 'Current runtime pack has no canonical packaging parent')
+    parent = packaging.consumer_record(selected, product, proof.get('producerRunID'))
+    require(packaging.compiled_signed_product(parent) and parent.get('stage') == 'complete'
+        and parent['final']['app'] == identity and parent['final']['runtimeArchiveSHA256'] == receipt['archiveSHA256']
+        and receipt['appTreeSHA256'] == identity['treeSHA256']
+        and parent['final']['packTreeSHA256'] == PACK_TREE and parent['final']['packArchiveSHA256'] == PACK_SHA
+        and proof.get('harnessSourceSHA') == os.environ.get('GITHUB_SHA')
+        and proof.get('executionRunID') == os.environ.get('GITHUB_RUN_ID')
+        and proof.get('executionAttempt') == os.environ.get('GITHUB_RUN_ATTEMPT') == '1'
+        and os.environ.get('GITHUB_ACTIONS') == 'true' and os.environ.get('GITHUB_REPOSITORY') == REPOSITORY
+        and sys.platform == 'darwin' and os.environ.get('GITHUB_JOB') in ('replay', 'analyze', 'acceptance'),
+        'Retained runtime pack lost its exact current product, archive or execution')
+    base = retained_runtime_destination(directory)
+    anchor = source_directory_identity(directory, base)
+    require(directory.is_dir() and not directory.is_symlink(),
+        'Retained runtime pack escaped its physical owned root')
+    marker = directory / 'pack-verification.reused.json'
+    require(not marker.exists() and not marker.is_symlink(), 'Retained runtime pack admission was consumed')
+    run, job, artifact = pack_verification_origin()
+    bundle = directory / 'plugins/musicvideo.ngvpack'
+    source_directory_identity(directory, base, anchor)
+    require(not (directory / 'plugins').is_symlink()
+        and not directory.is_symlink() and bundle.is_dir() and not bundle.is_symlink()
+        and stat.S_IMODE(bundle.lstat().st_mode) == 0o755 and canonical_bundle_tree(bundle) == PACK_TREE,
+        'Actual retained runtime pack differs from its qualified original')
+    record = {'schema': 'retained-runtime-pack-copy-reuse/v1', 'state': 'REUSED',
+        'context': 'retained-release-runtime', 'original': original_pack_proof(), 'parent': selected,
+        'productSourceSHA': product, 'producerSourceSHA': parent['producerSourceSHA'],
+        'producerRunID': parent['runID'], 'runtimeArtifactID': proof['runtimeArtifactID'],
+        'runtimeArtifactSHA256': proof['runtimeArtifactSHA256'], 'runtimeArchiveSHA256': receipt['archiveSHA256'],
+        'harnessSourceSHA': os.environ['GITHUB_SHA'], 'executionRunID': int(os.environ['GITHUB_RUN_ID']),
+        'attempt': 1, 'job': os.environ['GITHUB_JOB'], 'packTreeSHA256': PACK_TREE, 'rootMode': 0o755,
+        'origin': {'runID': run['id'], 'jobID': job['id'], 'artifactID': artifact['id'], 'artifactDigest': artifact['digest']},
+        'currentNativeCodesignOrStaplerPerformed': False, 'freshTrustStoreOrRevocationClaimed': False,
+        'currentPackNotarizationPerformed': False, 'newAppPackLoadQualified': False}
+    persist(marker, record)
+    print('RUNTIME_PACK_VERIFICATION_REUSED ' + json.dumps(record, sort_keys=True, separators=(',', ':')), flush=True)
+    return record
 
 
 def unique_object(items):
@@ -729,6 +1188,7 @@ def verify_pack(root):
 
 
 def local_pack_runtime_origin(binding, dmg=None, *, expected_dmg_sha256=None):
+    import retained_packaging as packaging
     require((dmg is None) != (expected_dmg_sha256 is None), 'Exact current DMG or validated expected digest required')
     require(dmg is None or dmg.is_file() and not dmg.is_symlink(), 'Current DMG is missing or linked')
     dmg_digest = checksum(dmg) if dmg is not None else expected_dmg_sha256
@@ -758,21 +1218,35 @@ def local_pack_runtime_origin(binding, dmg=None, *, expected_dmg_sha256=None):
         and binding.get('dmgSHA256') == inputs.get('expected_dmg_sha256') == dmg_digest
         and all(re.fullmatch('[a-f0-9]{64}', binding.get(key, '')) for key in ('appTreeSHA256', 'guideSHA256')),
         'Local pack copy lost its actual DMG, App or guide binding')
+    selected = binding.get('packaging')
+    parent = packaging.consumer_record(selected, source, int(run_id)) if selected is not None else None
+    producer_source = source if parent is None else parent['producerSourceSHA']
+    if parent is not None:
+        final = parent.get('final', {})
+        require(parent.get('stage') == 'complete' and packaging.compiled_signed_product(parent)
+            and final.get('dmgSHA256') == dmg_digest and final.get('appTreeSHA256') == binding['appTreeSHA256']
+            and final.get('guideSHA256') == binding['guideSHA256'], 'Local copy differs from canonical packaging')
+        packaging.consumer_harness(selected, source, packaging.PACKAGING_PATHS | packaging.COMPILED_PACKAGING_PATHS)
+    require(source != SIGNED_RESUME['sourceSHA'] or parent is not None,
+        'Current compiled product requires its canonical packaging provenance')
     run = api('actions/runs/' + run_id)
     jobs = api('actions/runs/' + run_id + '/attempts/1/jobs?per_page=100')
     artifact = api('actions/artifacts/' + artifact_id)
-    require(run.get('id') == int(run_id) and run.get('head_sha') == source and run.get('run_attempt') == 1 and run.get('workflow_id') == 303346287
+    require(run.get('id') == int(run_id) and run.get('head_sha') == producer_source and run.get('run_attempt') == 1 and run.get('workflow_id') == 303346287
         and run.get('path') == '.github/workflows/release.yml' and run.get('event') == 'workflow_dispatch'
         and run.get('repository', {}).get('full_name') == REPOSITORY and run.get('actor', {}).get('login') == 'iret77'
         and run.get('status') == 'completed' and run.get('conclusion') == 'success'
         and jobs.get('total_count') == len(jobs.get('jobs', [])), 'Local runtime producer differs')
     producers = [job for job in jobs['jobs'] if job.get('name') == 'release' and job.get('run_id') == int(run_id)
-        and job.get('head_sha') == source and job.get('run_attempt') == 1 and job.get('labels') == ['macrunner']
+        and job.get('head_sha') == producer_source and job.get('run_attempt') == 1 and job.get('labels') == ['macrunner']
         and job.get('status') == 'completed' and job.get('conclusion') == 'success']
     require(len(producers) == 1, 'Local runtime requires its successful current release producer')
     verify_artifact(artifact, run, producers[0], int(artifact_id), digest, 'release-user-journey-input')
-    return {'runID': int(run_id), 'sourceSHA': source, 'artifactID': int(artifact_id),
+    result = {'runID': int(run_id), 'sourceSHA': source, 'artifactID': int(artifact_id),
         'artifactSHA256': digest, 'producerJobID': producers[0]['id'], 'intakeBinding': binding}
+    if parent is not None:
+        result.update(producerSourceSHA=producer_source, packaging=selected)
+    return result
 
 
 def verify_pack_copy(bundle, context, archive=None, dmg=None, *, binding=None, evidence=None):
@@ -902,7 +1376,7 @@ def create_signed_input(root, output):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(allow_abbrev=False)
-    parser.add_argument('action', choices=('validate-inputs', 'acquire', 'test', 'assemble', 'create-signed-input', 'verify-pack', 'verify-pack-copy', 'retain-assembly'))
+    parser.add_argument('action', choices=('validate-inputs', 'acquire', 'test', 'assemble', 'create-signed-input', 'verify-pack', 'verify-pack-copy', 'retain-assembly', 'prepare-resumed-source'))
     parser.add_argument('--root', type=Path)
     parser.add_argument('--output', type=Path)
     parser.add_argument('--job-status', choices=('success', 'failure', 'cancelled'))
@@ -919,6 +1393,9 @@ if __name__ == '__main__':
             selected = selectors(raw, event)
             for role, value in selected.items():
                 producer(value, role)
+    elif args.action == 'prepare-resumed-source':
+        require(args.root is not None and args.output is not None, 'Exact signed binding and source destination required')
+        prepare_resumed_source(args.root, args.output)
     elif args.action == 'verify-pack':
         require(args.root is not None, 'Exact pack root required')
         verify_pack(args.root)

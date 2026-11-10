@@ -354,7 +354,15 @@ def runtime_receipt(directory, identity):
 def prepare(directory, identity_file):
     from consume_bpy_distributable_source import consume
     identity = json.loads(identity_file.read_text())
-    qualified = consume(directory / 'qualified-source', identity['sourceSHA'], directory / 'bpy-source-receipt.json')
+    from compiled_app_release import consume_packaging_source
+    reused = consume_packaging_source(directory / 'qualified-source', identity['sourceSHA'],
+        directory / 'bpy-source-receipt.json', identity.get('packaging'), context='workspace-source-preflight',
+        evidence=identity_file.parent / 'bpy-source-consumer-reused.json')
+    qualified = reused['receipt'] if reused is not None else consume(
+        directory / 'qualified-source', identity['sourceSHA'], directory / 'bpy-source-receipt.json')
+    if reused is not None:
+        identity['sourceReuse'] = reused['reuse']
+        identity['sourceReuseSHA256'] = reused['evidenceSHA256']
     validation = qualified['validation']
     receipt = runtime_receipt(directory, identity)
     identity.update(planSHA256=sha(identity_file.parent / 'plan.json'),

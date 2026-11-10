@@ -44,7 +44,7 @@ def bind(run_id, source_sha, artifact_id, digest, *, verifier=None, packaging=No
     return artifact, proof
 
 
-def validate_app(directory, source_sha, receipt):
+def validate_app(directory, source_sha, receipt, *, proof=None):
     sys.path.insert(0, str(Path(__file__).resolve().parent / 'external-gui'))
     try:
         from acceptance import metadata
@@ -59,15 +59,31 @@ def validate_app(directory, source_sha, receipt):
         raise ValueError('Original external Musicvideo pack is missing')
     for arguments in (['codesign', '--verify', '--deep', '--strict', str(app)],
                       ['xcrun', 'stapler', 'validate', str(app)],
-                      ['spctl', '-a', '-t', 'exec', str(app)],
-                      ['codesign', '--verify', '--strict', str(pack)]):
+                      ['spctl', '-a', '-t', 'exec', str(app)]):
         subprocess.run(arguments, check=True, stdin=subprocess.DEVNULL, timeout=120)
+    from compiled_app_release import verify_retained_runtime_pack
+    reuse = verify_retained_runtime_pack(directory, source_sha, receipt, proof or {}, identity)
+    if reuse is None:
+        subprocess.run(['codesign', '--verify', '--strict', str(pack)], check=True, stdin=subprocess.DEVNULL, timeout=120)
+    else:
+        proof['packVerificationReuse'] = reuse
     return identity
 
 
 def restore(artifact, proof, directory):
     if sys.platform != 'darwin' or os.environ.get('GITHUB_ACTIONS') != 'true':
         raise ValueError('Restore signed release runtime only on macrunner in GitHub Actions')
+    from compiled_app_release import SIGNED_RESUME, retained_runtime_destination, source_directory_identity
+    compiled = proof['productSourceSHA'] == SIGNED_RESUME['sourceSHA']
+    if compiled:
+        base = retained_runtime_destination(directory)
+        if (artifact.get('id') != proof.get('runtimeArtifactID')
+                or artifact.get('digest') != 'sha256:' + proof.get('runtimeArtifactSHA256', '')
+                or artifact.get('workflow_run', {}).get('id') != proof.get('producerRunID')):
+            raise ValueError('Current runtime transfer differs from its authenticated original artifact')
+        bound_proof = json.dumps(proof, sort_keys=True)
+        directory.mkdir(parents=True, exist_ok=True)
+        anchor = source_directory_identity(directory, base)
     transfer = directory.parent / (directory.name + '-retained-transfer')
     transfer.mkdir(parents=True, exist_ok=False)
     archive = transfer / 'original.zip'
@@ -79,9 +95,15 @@ def restore(artifact, proof, directory):
     directory.mkdir(parents=True, exist_ok=True)
     if (directory / 'NexGenVideo.app').exists() or (directory / 'plugins').exists():
         raise ValueError('Refusing to replace an existing runtime')
+    if compiled:
+        if json.dumps(proof, sort_keys=True) != bound_proof:
+            raise ValueError('Current runtime producer binding changed during acquisition')
+        source_directory_identity(directory, base, anchor)
     subprocess.run(['tar', '-xzf', str(payload / 'workspace-ui.tar.gz'), '-C', str(directory)],
                    check=True, stdin=subprocess.DEVNULL, timeout=180)
-    identity = validate_app(directory, proof['productSourceSHA'], receipt)
+    if compiled:
+        source_directory_identity(directory, base, anchor)
+    identity = validate_app(directory, proof['productSourceSHA'], receipt, proof=proof)
     proof.update(archiveSHA256=receipt['archiveSHA256'], appTreeSHA256=identity['treeSHA256'],
                  executableSHA256=identity['executableSHA256'],
                  runtimeInputSHA256=hashlib.sha256((payload / 'workspace-ui-input.json').read_bytes()).hexdigest())
