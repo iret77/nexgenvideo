@@ -124,6 +124,43 @@ class CompiledAppReleaseTests(unittest.TestCase):
                 with patch.object(release.sys, 'platform', 'other'), self.assertRaises(ValueError):
                     release.source_receiver_context(context, parent)
 
+    def test_source_receiver_continuation_requires_exact_parent_and_current_harness_qualification(self):
+        import retained_packaging as packaging
+        from compiled_component_reuse import ORIGIN
+        for context, job, system in [('bpy-runtime', 'runtime', 'darwin'),
+                ('workspace-source-preflight', 'runtime', 'linux'), ('settings-restore', 'acceptance', 'darwin')]:
+            for changed in ('valid', 'parent', 'binding', 'checkout', 'dirty', 'product-path', 'job', 'platform', 'attempt'):
+                with self.subTest(context=context, changed=changed):
+                    parent = {'producerSourceSHA': 'c' * 40, 'productSourceSHA': ORIGIN['sourceSHA'],
+                        'runID': 777, 'stage': 'complete'}
+                    checksum = packaging.digest(packaging.encoded(parent))
+                    binding = {'rawProofSHA256': checksum}
+                    env = {'GITHUB_ACTIONS': 'true', 'GITHUB_REPOSITORY': release.REPOSITORY,
+                        'GITHUB_RUN_ATTEMPT': '1', 'GITHUB_JOB': job, 'GITHUB_SHA': 'd' * 40}
+                    if changed == 'parent': parent['runID'] += 1
+                    elif changed == 'binding': binding['rawProofSHA256'] = 'f' * 64
+                    elif changed == 'job': env['GITHUB_JOB'] = 'other'
+                    elif changed == 'attempt': env['GITHUB_RUN_ATTEMPT'] = '2'
+                    def git(*args):
+                        if args == ('rev-parse', 'HEAD'):
+                            return (('e' if changed == 'checkout' else 'd') * 40).encode()
+                        if args == ('diff', '--name-only', 'HEAD', '--'):
+                            return b'dirty' if changed == 'dirty' else b''
+                        raise AssertionError(args)
+                    paths = ['Sources/NexGenVideo/App/NexGenVideoApp.swift'] if changed == 'product-path' else [
+                        'scripts/compiled_app_release.py', 'scripts/test_compiled_app_release.py']
+                    gap = dict(packaging.COMPONENT_CAPTURE_GAP, recordSHA256=checksum)
+                    with patch.dict(os.environ, env), patch.object(release.sys, 'platform', 'other' if changed == 'platform' else system), \
+                            patch.object(packaging, 'COMPONENT_CAPTURE_GAP', gap), \
+                            patch.object(packaging, 'consumer_record', return_value=parent), patch.object(packaging, 'git', side_effect=git), \
+                            patch.object(packaging, 'comparison', return_value={'files': [{'filename': path} for path in paths]}) as comparison:
+                        if changed == 'valid':
+                            self.assertEqual(release.source_receiver_context(context, parent, packaging=binding), 'd' * 40)
+                            comparison.assert_called_once_with('c' * 40, 'd' * 40)
+                        else:
+                            with self.assertRaises(ValueError):
+                                release.source_receiver_context(context, parent, packaging=binding)
+
     def test_signature_reuse_proof_rejects_original_or_current_product_substitution(self):
         origin = release.SIGNED_RESUME
         binding = {'productSourceSHA': origin['sourceSHA'], 'producerSourceSHA': 'c' * 40, 'runID': 777}
@@ -180,20 +217,22 @@ class CompiledAppReleaseTests(unittest.TestCase):
         import retained_packaging as packaging
         for context, job, system in [('bpy-runtime', 'runtime', 'darwin'),
                 ('workspace-source-preflight', 'runtime', 'linux'), ('settings-restore', 'acceptance', 'darwin')]:
-            for changed in ('valid', 'input-receipt', 'replaced-during-acquisition'):
+            for changed in ('valid', 'cross-harness', 'input-receipt', 'replaced-during-acquisition'):
                 with self.subTest(context=context, changed=changed), tempfile.TemporaryDirectory() as temporary:
                     root = Path(temporary); runner = root / 'runner'; runner.mkdir(); outside = root / 'outside'; outside.mkdir()
                     directory, evidence = runner / 'qualified', runner / 'evidence/reused.json'
                     public = {'filename': 'source.tar', 'manifestFilename': 'manifest.json', 'size': 6,
                         'sha256': hashlib.sha256(b'source').hexdigest(), 'manifestSHA256': hashlib.sha256(b'manifest').hexdigest(),
                         'producer': {'runID': 123}}
-                    receipt = {'schema': source.SCHEMA, 'sourceSHA': release.SIGNED_RESUME['sourceSHA'], 'publicSourceAsset': public,
+                    from compiled_component_reuse import ORIGIN
+                    product = ORIGIN['sourceSHA'] if changed == 'cross-harness' else release.SIGNED_RESUME['sourceSHA']
+                    receipt = {'schema': source.SCHEMA, 'sourceSHA': product, 'publicSourceAsset': public,
                         'origin': {'kind': 'actions'}, 'validation': {'archiveSHA256': public['sha256'], 'manifestSHA256': public['manifestSHA256']}}
                     raw = json.dumps(receipt, indent=4) + '\n'
                     value = {'bpy-source-receipt.json': raw, 'bpy-source-reuse.json': '{"state":"REUSED"}\n'}
-                    parent = {'stage': 'complete', 'producerSourceSHA': 'c' * 40, 'runID': 777,
+                    parent = {'stage': 'complete', 'producerSourceSHA': 'c' * 40, 'productSourceSHA': product, 'runID': 777,
                         'final': {'bpySourceReuse': value, 'bpySourceReceiptSHA256': hashlib.sha256(raw.encode()).hexdigest()}}
-                    binding = {'selector': 'authenticated canonical proof'}
+                    binding = {'selector': 'authenticated canonical proof', 'rawProofSHA256': packaging.digest(packaging.encoded(parent))}
                     input_receipt = runner / 'receipt.json'; input_receipt.write_text(raw if changed != 'input-receipt' else '{}')
                     def acquire(public, stage):
                         (stage / 'source.tar').write_bytes(b'source'); (stage / 'manifest.json').write_bytes(b'manifest')
@@ -201,21 +240,33 @@ class CompiledAppReleaseTests(unittest.TestCase):
                             directory.rename(runner / 'original'); directory.symlink_to(outside, target_is_directory=True)
                         return {'run': {}, 'job': {}, 'artifact': {}}
                     env = {'GITHUB_ACTIONS': 'true', 'GITHUB_REPOSITORY': release.REPOSITORY, 'GITHUB_RUN_ATTEMPT': '1',
-                        'GITHUB_JOB': job, 'GITHUB_SHA': 'c' * 40, 'GITHUB_RUN_ID': '888', 'RUNNER_TEMP': str(runner)}
+                        'GITHUB_JOB': job, 'GITHUB_SHA': ('d' if changed == 'cross-harness' else 'c') * 40,
+                        'GITHUB_RUN_ID': '888', 'RUNNER_TEMP': str(runner)}
                     with patch.dict(os.environ, env), patch.object(release.sys, 'platform', system), \
                             patch.object(packaging, 'consumer_record', return_value=parent), \
+                            patch.object(packaging, 'component_consumer_repair_paths', return_value={'scripts/compiled_app_release.py'}), \
+                            patch.object(packaging, 'consumer_harness', return_value=env['GITHUB_SHA']) as harness, \
                             patch.object(packaging, 'compiled_signed_product', return_value=True), \
                             patch.object(release, 'verify_source_reuse', return_value=(receipt, {})), \
                             patch.object(release, 'verify_source_origin'), patch.object(source, 'public_asset', return_value=public), \
                             patch.object(release, 'acquire_source_pair', side_effect=acquire), patch.object(source, 'validate') as semantic, \
                             patch.object(release.subprocess, 'run') as native, patch('builtins.print'):
-                        if changed == 'valid':
+                        if changed in ('valid', 'cross-harness'):
                             result = release.consume_packaging_source(directory, receipt['sourceSHA'], input_receipt, binding,
                                 context=context, evidence=evidence)
                             self.assertEqual((directory / source.RECEIPT).read_bytes(), raw.encode())
                             self.assertEqual(result['receipt'], receipt)
                             self.assertFalse(result['reuse']['semanticSourceValidationPerformed'])
                             self.assertTrue(release.verify_received_source(directory, receipt['sourceSHA'], binding, evidence, context=context))
+                            if changed == 'cross-harness':
+                                self.assertEqual(harness.call_count, 2)
+                                harness.assert_called_with(binding, product, set())
+                                proof = json.loads(evidence.read_text())
+                                self.assertEqual(proof['harnessSourceSHA'], env['GITHUB_SHA'])
+                                evidence.write_text(json.dumps(dict(proof, harnessSourceSHA=parent['producerSourceSHA'])))
+                                with self.assertRaises(ValueError):
+                                    release.verify_received_source(directory, receipt['sourceSHA'], binding, evidence, context=context)
+                                evidence.write_text(json.dumps(proof))
                             (directory / 'source.tar').write_bytes(b'change')
                             with self.assertRaises(ValueError):
                                 release.verify_received_source(directory, receipt['sourceSHA'], binding, evidence, context=context)
