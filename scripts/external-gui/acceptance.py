@@ -125,11 +125,15 @@ def test_source_identity(source_sha, input_root=ROOT, *, allowed_paths=None, pac
     revision = output(['git', '-C', REPOSITORY, 'rev-parse', 'HEAD']).decode().strip()
     require(re.fullmatch('[a-f0-9]{40}', source_sha) and re.fullmatch('[a-f0-9]{40}', revision),
             'Invalid product or test source SHA')
-    producer_source = retained_packaging.consumer_source(source_sha, packaging)
+    record = retained_packaging.consumer_record(packaging, source_sha) if packaging is not None else None
+    producer_source = record['producerSourceSHA'] if record is not None else source_sha
+    allowed = SIGNED_JOURNEY_HARNESS_PATHS if allowed_paths is None else allowed_paths
+    if record is not None:
+        allowed = allowed | retained_packaging.component_consumer_repair_paths(record)
     if revision != producer_source:
         output(['git', '-C', REPOSITORY, 'merge-base', '--is-ancestor', producer_source, revision])
         changed = output(['git', '-C', REPOSITORY, 'diff', '--no-renames', '--name-only', '-z', producer_source, revision])
-        require(not set(filter(None, changed.decode().split('\0'))) - (SIGNED_JOURNEY_HARNESS_PATHS if allowed_paths is None else allowed_paths),
+        require(not set(filter(None, changed.decode().split('\0'))) - allowed,
                 'Product inputs changed since the retained signed App')
     fingerprints = {}
     for name in TEST_INPUTS:

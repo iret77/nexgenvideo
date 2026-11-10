@@ -149,7 +149,7 @@ class RetainedRuntimeFailureTests(unittest.TestCase):
         from verify_diagnostic_candidate import SIGNED_WORKSPACE_HARNESS_PATHS, SIGNED_BPY_HARNESS_PATHS
         self.assertNotIn('scripts/app_termination_acceptance.py', SIGNED_WORKSPACE_HARNESS_PATHS)
         self.assertNotIn('scripts/runtime_pointer_diagnostic.swift', SIGNED_BPY_HARNESS_PATHS)
-        with patch('retained_packaging.consumer_source', return_value='b' * 40), \
+        with patch('retained_packaging.consumer_record', return_value={'producerSourceSHA': 'b' * 40}), \
                 patch('retained_packaging.git', side_effect=[b'c' * 40, b'']), \
                 patch.dict(os.environ, GITHUB_SHA='c' * 40), \
                 patch('retained_packaging.comparison', return_value={'files': [{'filename': 'Sources/NexGenVideo/App.swift'}]}):

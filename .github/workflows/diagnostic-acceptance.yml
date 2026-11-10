@@ -245,7 +245,7 @@ jobs:
                   raise ValueError('Runtime failure binding cannot be ignored by this mode; exact compiler selectors required') from error
           elif os.environ['RUNTIME_FAILURE_BINDING']:
               raise ValueError('Runtime failure binding cannot be ignored by another mode')
-          if packaging is not None and (os.environ['KIND'] not in {'signed-bpy', 'signed-journey', 'signed-transport', 'native-retained-failures'}
+          if packaging is not None and (os.environ['KIND'] not in {'signed-release', 'signed-bpy', 'signed-journey', 'signed-transport', 'native-retained-failures'}
                   or not re.fullmatch('[1-9][0-9]*', os.environ['VERIFIED_PR'])):
               raise ValueError('Packaging continuation needs signed mode and current exact PR source proof')
           fields = [os.environ[key] for key in ('VERIFIED_PR', 'JOURNEY_JOB', 'JOURNEY_ARTIFACT', 'JOURNEY_DIGEST')]
@@ -559,6 +559,14 @@ jobs:
           path: ${{ runner.temp }}/candidate-metadata/*.json
           if-no-files-found: error
           retention-days: 90
+      - name: Retain separately acquired original component evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: retained-origin-diagnostic-acceptance-${{ github.job }}-${{ strategy.job-index || 0 }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/retained-packaging-supplements/
+          if-no-files-found: ignore
+          retention-days: 90
 
   native-button-query:
     needs: source
@@ -700,6 +708,14 @@ jobs:
           path: ${{ runner.temp }}/transport-fixture/
           if-no-files-found: error
           retention-days: 14
+      - name: Retain separately acquired original component evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: retained-origin-diagnostic-acceptance-${{ github.job }}-${{ strategy.job-index || 0 }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/retained-packaging-supplements/
+          if-no-files-found: ignore
+          retention-days: 90
 
   native-retained-failures:
     needs: source
@@ -1167,6 +1183,28 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Rebind retained packaging before diagnostic app execution
+        if: inputs.packaging_producer_source_sha != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PYCODE'
+          import os, sys
+          from pathlib import Path
+          sys.path.insert(0, 'scripts')
+          from retained_packaging import consumer_binding, consumer_harness, environment_selectors
+          from retained_app_test_products import api
+          from verify_diagnostic_candidate import CAPTURE_HARNESS_PATHS, verify
+          run_id = int(os.environ['CANDIDATE_RUN'])
+          selected = environment_selectors()
+          bound = consumer_binding(run_id, os.environ['CANDIDATE_SOURCE'], selected, archive_root=Path('evidence/packaging-provenance'))
+          consumer_harness(bound, os.environ['CANDIDATE_SOURCE'], CAPTURE_HARNESS_PATHS)
+          verify(api('actions/runs/' + str(run_id)), api('actions/runs/' + str(run_id) + '/attempts/1/jobs?per_page=100'),
+              api('actions/artifacts/' + os.environ['CANDIDATE_ARTIFACT']), run_id, os.environ['CANDIDATE_SOURCE'],
+              int(os.environ['CANDIDATE_ARTIFACT']), os.environ['CANDIDATE_DIGEST'], [], packaging=selected)
+          PYCODE
       - name: Retrieve the exact signed candidate
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1186,6 +1224,15 @@ jobs:
         run: python3 scripts/hang_diagnostic_acceptance.py NexGenVideo.app diagnostic-symbols/NexGenVideo.dSYM --output evidence
       - name: Exercise native Export Cancel, Retry and Reveal actions
         run: python3 scripts/export_actions_acceptance.py NexGenVideo.app --output evidence/export-actions.json
+      - name: Verify generation batch pricing recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          NGV_SELFTEST_GENERATION_BATCH_RECOVERY=1 \
+            NexGenVideo.app/Contents/MacOS/NexGenVideo \
+            | grep -qx 'SELFTEST_GENERATION_BATCH_RECOVERY_OK'
+      - name: Verify asynchronous termination, cancellation and restart
+        run: python3 scripts/app_termination_acceptance.py NexGenVideo.app --output evidence/termination --product-source "$CANDIDATE_SOURCE"
       - name: Record candidate identity
         run: |
           python3 - <<'PY'
@@ -1207,7 +1254,17 @@ jobs:
             evidence/*.log
             evidence/capture-*.zip
             evidence/helper-recovery-recordings.zip
+            evidence/termination/
+            evidence/packaging-provenance/
           if-no-files-found: error
+          retention-days: 90
+      - name: Retain separately acquired original component evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: retained-origin-diagnostic-acceptance-${{ github.job }}-${{ strategy.job-index || 0 }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/retained-packaging-supplements/
+          if-no-files-found: ignore
           retention-days: 90
 
   ci-helper:

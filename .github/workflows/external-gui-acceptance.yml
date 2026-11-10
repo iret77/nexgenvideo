@@ -277,6 +277,14 @@ jobs:
           path: ${{ runner.temp }}/retained-dmg/*.json
           if-no-files-found: error
           retention-days: 90
+      - name: Retain separately acquired original component evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: retained-origin-external-gui-acceptance-${{ github.job }}-${{ strategy.job-index || 0 }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/retained-packaging-supplements/
+          if-no-files-found: ignore
+          retention-days: 90
 
   test-build:
     needs: cases
@@ -345,6 +353,14 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
+      - name: Retain separately acquired original component evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: retained-origin-external-gui-acceptance-${{ github.job }}-${{ strategy.job-index || 0 }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/retained-packaging-supplements/
+          if-no-files-found: ignore
+          retention-days: 90
 
   acceptance:
     needs: [cases, test-runtime]
@@ -596,3 +612,11 @@ jobs:
           path: ${{ runner.temp }}/external-gui
           if-no-files-found: warn
           retention-days: 14
+      - name: Retain separately acquired original component evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: retained-origin-external-gui-acceptance-${{ github.job }}-${{ strategy.job-index || 0 }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/retained-packaging-supplements/
+          if-no-files-found: ignore
+          retention-days: 90

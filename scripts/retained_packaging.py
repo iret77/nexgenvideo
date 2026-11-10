@@ -69,6 +69,24 @@ COMPILED_PACKAGING_PATHS = {'scripts/compiled_app_release.py', 'scripts/test_com
 CAPTURE = ContextVar('packaging_evidence_capture', default=None)
 REPLAY = ContextVar('authenticated_packaging_evidence_replay', default=None)
 BUDGET = ContextVar('packaging_expansion_budget', default=None)
+COMPONENT_CAPTURE_GAP = {
+    'runID': 42882367248, 'producerSourceSHA': 'a77d46545180d1d3dcc0bf311d307fb08f6bbed9',
+    'productSourceSHA': 'a1375966dbe6d2dd7b918c726f09ac5d1f4f16fb', 'artifactID': 13797268238,
+    'artifactSHA256': '92eb06bd223d7b40f84cdc023fb93ba44a457eea0981e35ea1a4c43c795120ad',
+    'recordSHA256': '401c05b1c90b3bbc87813e8cdcdb1d1a7809794726a397c58f33f090cd6758b5',
+    'acquisitionSHA256': '64f3060df5c33a18042149b28260c7caf0692c626060fa9d253d9b2e36079339'}
+COMPONENT_CONSUMER_REPAIR_PATHS = {
+    'scripts/retained_packaging.py', 'scripts/test_retained_packaging.py',
+    'scripts/verify_diagnostic_candidate.py', 'scripts/test_diagnostic_acceptance.py',
+    'scripts/compiled_app_release.py', 'scripts/test_compiled_app_release.py',
+    'scripts/external-gui/acceptance.py', 'scripts/test_external_gui_test_bundle.py',
+    'scripts/test_retained_runtime_failure_diagnostic.py',
+    'scripts/test_private_example_workflow.py',
+    '.github/workflows/release.yml', '.github/workflows/diagnostic-acceptance.yml',
+    '.github/workflows/bpy-runtime-acceptance.yml', '.github/workflows/external-gui-acceptance.yml',
+    '.github/workflows/workspace-ui-acceptance.yml', '.github/workflows/settings-owner-acceptance.yml',
+    '.github/workflows/chat-hang-replay.yml', '.github/workflows/private-example-analysis.yml',
+    '.github/workflows/ci-batch.yml', '.github/workflows/retained-runtime-failure-diagnostic.yml'}
 
 
 def instant(value):
@@ -134,6 +152,137 @@ def encoded_api_evidence(captured, record):
     return buffer.getvalue()
 
 
+def component_consumer_repair_paths(record):
+    return COMPONENT_CONSUMER_REPAIR_PATHS if digest(encoded(record)) == COMPONENT_CAPTURE_GAP['recordSHA256'] else set()
+
+
+def supplement_execution():
+    value = {key: os.environ.get(key, '') for key in
+             ('GITHUB_REPOSITORY', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT', 'GITHUB_JOB', 'GITHUB_SHA')}
+    require(os.environ.get('GITHUB_ACTIONS') == 'true' and value['GITHUB_REPOSITORY'] == REPOSITORY
+            and re.fullmatch('[1-9][0-9]*', value['GITHUB_RUN_ID']) and value['GITHUB_RUN_ATTEMPT'] == '1'
+            and re.fullmatch('[A-Za-z0-9_-]+', value['GITHUB_JOB'])
+            and re.fullmatch('[a-f0-9]{40}', value['GITHUB_SHA']), 'Supplement requires an actual owned Actions execution')
+    return value
+
+
+def persist_supplement_member(path, raw):
+    require(not path.exists() and not path.is_symlink(), 'Supplement destination was already consumed')
+    with path.open('xb') as stream:
+        stream.write(raw); stream.flush(); os.fsync(stream.fileno())
+    descriptor = os.open(path.parent, os.O_RDONLY)
+    try: os.fsync(descriptor)
+    finally: os.close(descriptor)
+
+
+def component_origin_supplement(raw, record, container, acquisition, originals):
+    gap = COMPONENT_CAPTURE_GAP
+    if record.get('runID') != gap['runID']:
+        return None
+    require(digest(encoded(record)) == gap['recordSHA256'] and digest(raw) == gap['acquisitionSHA256']
+            and record.get('productSourceSHA') == gap['productSourceSHA']
+            and record.get('producerSourceSHA') == gap['producerSourceSHA'] and record.get('stage') == 'complete'
+            and record.get('attempt') == 1 and container.get('id') == gap['artifactID']
+            and container.get('digest') == 'sha256:' + gap['artifactSHA256']
+            and container.get('workflow_run', {}).get('id') == gap['runID']
+            and container.get('workflow_run', {}).get('head_sha') == gap['producerSourceSHA'],
+            'Component capture gap is not the exact immutable original')
+    from compiled_component_reuse import ORIGIN
+    origin = ORIGIN['runID']
+    json_values, derivations = {}, {}
+    for kind, field, identifier in (('jobs', 'jobs', ORIGIN['releaseJobID']),
+                                     ('artifacts', 'artifacts', ORIGIN['assemblyArtifactID'])):
+        inventory_route = f'actions/runs/{origin}/' + ('attempts/1/jobs' if kind == 'jobs' else kind) + '?per_page=100'
+        inventory = acquisition['json'].get(inventory_route, {})
+        entries = inventory.get(field, [])
+        require(type(entries) is list and inventory.get('total_count') == len(entries)
+                and len({item.get('id') for item in entries}) == len(entries), 'Supplement inventory is incomplete')
+        selected = [item for item in entries if item.get('id') == identifier]
+        route = f'actions/{kind}/{identifier}'
+        require(len(selected) == 1 and route not in acquisition['json'], 'Supplement route is absent, duplicate or already recorded')
+        json_values[route] = selected[0]
+        derivations[route] = {'inventoryRoute': inventory_route, 'inventorySHA256': digest(encoded(inventory)),
+                              'valueSHA256': digest(encoded(selected[0]))}
+    logs = {f"actions/jobs/{ORIGIN[key]}/logs": ORIGIN[checksum]
+            for key, checksum in (('builderJobID', 'builderRawSHA256'), ('releaseJobID', 'releaseRawSHA256'))}
+    require(not set(logs) & set(originals), 'Supplement cannot replace acquired original bytes')
+    execution = supplement_execution()
+    root = Path(os.environ['RUNNER_TEMP'])
+    require(root.is_absolute() and root.is_dir() and not root.is_symlink(), 'Supplement temporary root is not physical')
+    for parent in root.parents:
+        require(not parent.is_symlink(), 'Supplement temporary root traverses a link')
+    directory = root / 'retained-packaging-supplements'
+    directory.mkdir(exist_ok=True)
+    require(directory.is_dir() and not directory.is_symlink(), 'Supplement evidence root is not physical')
+    import fcntl
+    lock = directory / '.acquisition.lock'
+    descriptor = os.open(lock, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    try:
+        require(stat.S_ISREG(os.fstat(descriptor).st_mode), 'Supplement lock is not regular')
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        destination = directory / (gap['recordSHA256'] + '.zip')
+        require(not destination.is_symlink(), 'Supplement archive is linked')
+        if destination.exists():
+            require(destination.is_file(), 'Supplement archive is not regular')
+            supplement = destination.read_bytes()
+        else:
+            started = {'schema': 'nexgenvideo/component-origin-supplement-start/1', 'original': gap,
+                       'execution': execution, 'startedAt': utc_now()}
+            persist_supplement_member(directory / (gap['recordSHA256'] + '.STARTED.json'), encoded(started))
+            current = live_api('actions/runs/' + execution['GITHUB_RUN_ID'])
+            require(current.get('id') == int(execution['GITHUB_RUN_ID']) and current.get('run_attempt') == 1
+                    and current.get('head_sha') == execution['GITHUB_SHA']
+                    and current.get('repository', {}).get('full_name') == REPOSITORY
+                    and current.get('actor', {}).get('login') == 'iret77'
+                    and current.get('event') == 'workflow_dispatch', 'Supplement current run differs')
+            acquired = {}
+            for route, checksum in logs.items():
+                acquired[route] = live_read_api(route, maximum=1024 * 1024)
+                persist_supplement_member(directory / (checksum + '.acquired.bin'), acquired[route])
+            require(all(digest(acquired[route]) == expected for route, expected in logs.items()),
+                    'Fresh component origin raw log differs from its immutable original')
+            metadata = {'schema': 'nexgenvideo/component-origin-supplement/1', 'original': gap,
+                        'execution': execution, 'currentRun': current, 'startedAt': started['startedAt'],
+                        'completedAt': utc_now(), 'derivedJSON': derivations,
+                        'rawLogs': {route: {'sha256': logs[route], 'bytes': len(value)} for route, value in acquired.items()},
+                        'historicalAcquisitionRewritten': False}
+            output = io.BytesIO()
+            with zipfile.ZipFile(output, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr('supplement.json', encoded(metadata))
+                for route, value in acquired.items(): archive.writestr(logs[route] + '.bin', value)
+            supplement = output.getvalue()
+            persist_supplement_member(destination, supplement)
+            sync = os.open(directory, os.O_RDONLY)
+            try: os.fsync(sync)
+            finally: os.close(sync)
+        members = read_proof_archive(supplement)
+        require(set(members) == {'supplement.json'} | {value + '.bin' for value in logs.values()},
+                'Supplement members differ')
+        metadata = json.loads(members['supplement.json'])
+        require(encoded(metadata) == members['supplement.json']
+                and set(metadata) == {'schema', 'original', 'execution', 'currentRun', 'startedAt', 'completedAt',
+                                     'derivedJSON', 'rawLogs', 'historicalAcquisitionRewritten'}
+                and metadata['schema'] == 'nexgenvideo/component-origin-supplement/1'
+                and metadata['original'] == gap and metadata['execution'] == execution
+                and metadata['derivedJSON'] == derivations and metadata['historicalAcquisitionRewritten'] is False
+                and instant(metadata['startedAt']) <= instant(metadata['completedAt']) <= instant(utc_now()),
+                'Supplement scope, execution or derivation changed')
+        current = metadata['currentRun']
+        require(current.get('id') == int(execution['GITHUB_RUN_ID']) and current.get('run_attempt') == 1
+                and current.get('head_sha') == execution['GITHUB_SHA']
+                and current.get('repository', {}).get('full_name') == REPOSITORY
+                and current.get('actor', {}).get('login') == 'iret77' and current.get('event') == 'workflow_dispatch'
+                and instant(current['created_at']) <= instant(metadata['startedAt']), 'Supplement current origin changed')
+        expected_logs = {route: {'sha256': value, 'bytes': len(members[value + '.bin'])} for route, value in logs.items()}
+        require(metadata['rawLogs'] == expected_logs
+                and all(digest(members[value + '.bin']) == value for value in logs.values()), 'Supplement original raw bytes changed')
+        acquisition['json'].update(json_values)
+        originals.update({route: members[value + '.bin'] for route, value in logs.items()})
+        return supplement
+    finally:
+        os.close(descriptor)
+
+
 @contextmanager
 def authenticated_originals(raw, record, container, producer_job):
     members = read_proof_archive(raw)
@@ -156,6 +305,7 @@ def authenticated_originals(raw, record, container, producer_job):
         require(value.get('name') == digest(raw_value) + '.bin'
                 and value.get('sha256') == digest(raw_value) and value.get('bytes') == len(raw_value), 'Historical original bytes changed')
         originals[route] = raw_value
+    supplement = component_origin_supplement(raw, record, container, acquisition, originals)
     cached = acquisition['json']
     current_run = cached.get('actions/runs/' + str(record['runID']), {})
     require(current_run.get('id') == record['runID'] and current_run.get('head_sha') == record['producerSourceSHA']
@@ -165,7 +315,7 @@ def authenticated_originals(raw, record, container, producer_job):
     cached[f"actions/runs/{record['runID']}/attempts/1/jobs?per_page=100"] = {'total_count': 1, 'jobs': [producer_job]}
     token = REPLAY.set({'json': cached, 'bytes': originals, 'legacy': acquisition['legacy'], 'asOf': anchor})
     try:
-        yield
+        yield supplement
     finally:
         REPLAY.reset(token)
 
@@ -282,7 +432,9 @@ def consumer_source(product, binding):
 
 
 def consumer_harness(binding, product, allowed_paths):
-    producer = consumer_source(product, binding)
+    record = consumer_record(binding, product)
+    producer = record['producerSourceSHA']
+    allowed_paths = allowed_paths | component_consumer_repair_paths(record)
     current = git('rev-parse', 'HEAD').decode().strip()
     require(current == os.environ['GITHUB_SHA'] and not git('diff', '--name-only', 'HEAD', '--').strip(),
             'Consumer checkout differs from its committed source')
@@ -1414,7 +1566,7 @@ def load_provenance(run_id, product, selected, *, allow_failed=False, chain=None
             restored = [step for step in job.get("steps", []) if step.get("name") == "Restore exact signed build"]
             require(len(restored) == 1 and restored[0].get("conclusion") == "success", "Parent signed restore never passed")
         require('original-api-evidence.zip' in members, 'Canonical proof lacks full original acquisition evidence')
-        with authenticated_originals(members['original-api-evidence.zip'], record, artifact, job):
+        with authenticated_originals(members['original-api-evidence.zip'], record, artifact, job) as supplement:
             validate_binding(record, members, chain=chain)
         raw_checksum = digest(encoded_record)
         if "rawProofSHA256" in selected:
@@ -1422,6 +1574,8 @@ def load_provenance(run_id, product, selected, *, allow_failed=False, chain=None
         chain["archives"][identity] = {"raw": raw, "artifact": artifact, "run": run, "job": job,
                                        "rawProofSHA256": raw_checksum,
                                        "acquiredAt": datetime.datetime.now(datetime.timezone.utc).isoformat()}
+        if supplement is not None:
+            chain["archives"][identity]["supplementSHA256"] = digest(supplement)
         return {"record": record, "files": members, "rawProofSHA256": raw_checksum,
                 "artifact": artifact, "run": run, "job": job, "archives": chain["archives"]}
     finally:
@@ -1467,4 +1621,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import retained_packaging
+    retained_packaging.main()

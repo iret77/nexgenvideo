@@ -110,6 +110,15 @@ jobs:
               --packaging-producer-source "$PACKAGING_PRODUCER_SOURCE" --packaging-provenance-artifact-id "$PACKAGING_PROVENANCE_ARTIFACT_ID" --packaging-provenance-artifact-sha256 "$PACKAGING_PROVENANCE_ARTIFACT_SHA256" \
               --artifact-sha256 "$ORIGINAL_DIGEST" --receipt "$RUNNER_TEMP/retained-chat-input.json"
           fi
+      - name: Retain separately acquired original component evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: retained-origin-chat-hang-replay-${{ github.job }}-${{ strategy.job-index || 0 }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/retained-packaging-supplements/
+          if-no-files-found: ignore
+          retention-days: 90
+
   build:
     needs: source
     if: inputs.runtime_artifact == '' && inputs.runtime_run_id == ''
@@ -179,3 +188,11 @@ jobs:
             ${{ runner.temp }}/evidence/panel-*.png
             ${{ runner.temp }}/evidence/sample.txt
           retention-days: 7
+      - name: Retain separately acquired original component evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: retained-origin-chat-hang-replay-${{ github.job }}-${{ strategy.job-index || 0 }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/retained-packaging-supplements/
+          if-no-files-found: ignore
+          retention-days: 90

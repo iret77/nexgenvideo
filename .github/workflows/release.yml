@@ -520,6 +520,14 @@ jobs:
             printf '%s\n' '{"schema":"plugins/v2","plugins":[]}' > "$CATALOG_DIR/catalog.json"
           fi
           python3 scripts/release_preflight.py "$REL_VERSION" "$CATALOG_DIR/catalog.json"
+      - name: Retain separately acquired original component evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: retained-origin-release-${{ github.job }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/retained-packaging-supplements/
+          if-no-files-found: ignore
+          retention-days: 90
 
   bpy-source:
     permissions:
@@ -1834,6 +1842,14 @@ jobs:
       - name: Clean up keychain
         if: always()
         run: security delete-keychain "${SIGN_KEYCHAIN:-}" 2>/dev/null || true
+      - name: Retain separately acquired original component evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: retained-origin-release-${{ github.job }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/retained-packaging-supplements/
+          if-no-files-found: ignore
+          retention-days: 90
 
   diagnostic-acceptance:
     needs: release
@@ -1846,6 +1862,8 @@ jobs:
       pull-requests: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: diagnostic-release-evidence
@@ -1907,6 +1925,14 @@ jobs:
             evidence/capture-*.zip
             evidence/helper-recovery-recordings.zip
             evidence/termination/
+          retention-days: 90
+      - name: Retain separately acquired original component evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: retained-origin-release-${{ github.job }}-${{ strategy.job-index || 0 }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/retained-packaging-supplements/
+          if-no-files-found: ignore
           retention-days: 90
 
   bpy-runtime:

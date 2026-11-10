@@ -248,6 +248,14 @@ jobs:
       - name: Reject a silently skipped unit filter
         if: (inputs.runtime_artifact != '' || inputs.runtime_run_id != '') && inputs.unit_test_filter != ''
         run: exit 1
+      - name: Retain separately acquired original component evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: retained-origin-workspace-ui-acceptance-${{ github.job }}-${{ strategy.job-index || 0 }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/retained-packaging-supplements/
+          if-no-files-found: ignore
+          retention-days: 90
 
   bpy-source:
     needs: source
@@ -396,6 +404,14 @@ jobs:
           path: ${{ runner.temp }}/native-identity/
           if-no-files-found: error
           retention-days: 14
+      - name: Retain separately acquired original component evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: retained-origin-workspace-ui-acceptance-${{ github.job }}-${{ strategy.job-index || 0 }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/retained-packaging-supplements/
+          if-no-files-found: ignore
+          retention-days: 90
 
   acceptance:
     needs: [source, runtime]
@@ -451,6 +467,14 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
+      - name: Retain separately acquired original component evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: retained-origin-workspace-ui-acceptance-${{ github.job }}-${{ strategy.job-index || 0 }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/retained-packaging-supplements/
+          if-no-files-found: ignore
+          retention-days: 90
 
   batch-review:
     name: Native generationbatch
@@ -487,6 +511,14 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
+      - name: Retain separately acquired original component evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: retained-origin-workspace-ui-acceptance-${{ github.job }}-${{ strategy.job-index || 0 }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/retained-packaging-supplements/
+          if-no-files-found: ignore
+          retention-days: 90
 
   qualification:
     needs: [source, runtime, acceptance, batch-review]

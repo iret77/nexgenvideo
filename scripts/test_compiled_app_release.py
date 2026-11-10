@@ -293,7 +293,8 @@ class CompiledAppReleaseTests(unittest.TestCase):
 
     def test_current_local_pack_binds_product_harness_runtime_and_canonical_final_bytes_separately(self):
         import retained_packaging as packaging
-        for changed in ('valid', 'producer-source', 'app', 'guide', 'dmg', 'missing-parent'):
+        for changed in ('valid', 'qualified-failed-workflow', 'unqualified-failed-workflow', 'failed-producer',
+                        'producer-source', 'app', 'guide', 'dmg', 'missing-parent'):
             with self.subTest(changed=changed), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary); dmg = root / 'NexGenVideo.dmg'; dmg.write_bytes(b'current DMG')
                 digest = hashlib.sha256(dmg.read_bytes()).hexdigest(); source = release.SIGNED_RESUME['sourceSHA']
@@ -310,6 +311,9 @@ class CompiledAppReleaseTests(unittest.TestCase):
                     'actor': {'login': 'iret77'}, 'status': 'completed', 'conclusion': 'success'}
                 job = {'id': 999, 'run_id': 777, 'head_sha': 'c' * 40, 'run_attempt': 1, 'labels': ['macrunner'],
                     'name': 'release', 'status': 'completed', 'conclusion': 'success'}
+                if changed in {'qualified-failed-workflow', 'unqualified-failed-workflow', 'failed-producer'}:
+                    run['conclusion'] = 'failure'
+                if changed == 'failed-producer': job['conclusion'] = 'failure'
                 if changed == 'producer-source': run['head_sha'] = source
                 elif changed == 'app': parent['final']['appTreeSHA256'] = 'f' * 64
                 elif changed == 'guide': parent['final']['guideSHA256'] = 'f' * 64
@@ -317,10 +321,12 @@ class CompiledAppReleaseTests(unittest.TestCase):
                 elif changed == 'missing-parent': binding.pop('packaging')
                 with patch.dict(os.environ, GITHUB_EVENT_PATH=str(event)), \
                         patch.object(packaging, 'consumer_record', return_value=parent), \
+                        patch.object(packaging, 'component_consumer_repair_paths', return_value=
+                            {'scripts/retained_packaging.py'} if changed in {'qualified-failed-workflow', 'failed-producer'} else set()), \
                         patch.object(packaging, 'compiled_signed_product', return_value=True), patch.object(packaging, 'consumer_harness'), \
                         patch.object(release, 'api', side_effect=[run, {'total_count': 1, 'jobs': [job]}, {}]), \
                         patch.object(release, 'verify_artifact'):
-                    if changed == 'valid':
+                    if changed in {'valid', 'qualified-failed-workflow'}:
                         actual = release.local_pack_runtime_origin(binding, dmg)
                         self.assertEqual(actual['sourceSHA'], source)
                         self.assertEqual(actual['producerSourceSHA'], 'c' * 40)

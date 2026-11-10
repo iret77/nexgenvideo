@@ -24,6 +24,169 @@ class RetainedPackagingTests(unittest.TestCase):
     product = "a" * 40
     producer = "b" * 40
 
+    def test_cli_uses_the_same_evidence_capture_as_nested_imported_verifiers(self):
+        entry = Path(__file__).resolve().parent / 'retained_packaging.py'
+        code = textwrap.dedent("""
+            import hashlib, io, pathlib, runpy, sys, zipfile, json
+            from unittest.mock import patch
+            entry = pathlib.Path(sys.argv[1]); sys.path.insert(0, str(entry.parent))
+            import retained_packaging as p
+            import compiled_component_reuse as c
+            logs = {'actions/jobs/' + str(c.ORIGIN['builderJobID']) + '/logs': b'builder',
+                    'actions/jobs/' + str(c.ORIGIN['releaseJobID']) + '/logs': b'release'}
+            origin = dict(c.ORIGIN, builderRawSHA256=hashlib.sha256(b'builder').hexdigest(),
+                          releaseRawSHA256=hashlib.sha256(b'release').hexdigest())
+            release = dict(id=origin['releaseJobID'], run_id=origin['runID'], head_sha=origin['sourceSHA'],
+                           run_attempt=1, name='release', labels=['macrunner'], status='completed', conclusion='failure',
+                           steps=[dict(name=name, conclusion='success') for name in c.RELEASE_STEPS])
+            routes = {'actions/jobs/' + str(origin['releaseJobID']): release,
+                      'actions/artifacts/' + str(origin['assemblyArtifactID']): {'id': origin['assemblyArtifactID']}}
+            def collect(*args, **kwargs):
+                c.verify_native_originals({}, {'id': origin['builderJobID']})
+                return dict(productSourceSHA=origin['sourceSHA'], producerSourceSHA='b'*40, runID=70), {}
+            def bind(root):
+                record, files = p.collect_binding({})
+                with zipfile.ZipFile(io.BytesIO(files['original-api-evidence.zip'])) as z:
+                    acquisition = json.loads(z.read('acquisition.json'))
+                assert set(acquisition['json']) == set(routes), acquisition
+                assert set(acquisition['bytes']) == set(logs), acquisition
+                assert p.CAPTURE.get() is None and p.REPLAY.get() is None and p.BUDGET.get() is None
+            sys.argv = [str(entry), 'bind', '--root', 'unused-probe-destination']
+            with patch.object(c, 'ORIGIN', origin), patch.object(p, 'collect_original_binding', side_effect=collect), \
+                    patch.object(p, 'live_api', side_effect=routes.__getitem__), \
+                    patch.object(p, 'live_read_api', side_effect=lambda route, **kwargs: logs[route]), \
+                    patch.object(p, 'live_verify_artifact'), patch.object(p, 'bind_current', side_effect=bind):
+                runpy.run_path(str(entry), run_name='__main__')
+        """)
+        environment = {key: value for key, value in os.environ.items() if key not in {'PYTHONPATH', 'GH_TOKEN'}}
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run([sys.executable, '-I', '-c', code, str(entry)], cwd=directory,
+                                    env=environment, capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_every_packaging_consumer_retains_supplement_even_after_failure(self):
+        root = Path(__file__).resolve().parents[1] / '.github/workflows'
+        callers = {'release': ['release-gate', 'release', 'diagnostic-acceptance'], 'diagnostic-acceptance': ['source', 'transport-fixture', 'acceptance'],
+                   'bpy-runtime-acceptance': ['runtime'], 'external-gui-acceptance': ['cases', 'test-runtime', 'acceptance'],
+                   'workspace-ui-acceptance': ['source', 'runtime', 'acceptance', 'batch-review'],
+                   'settings-owner-acceptance': ['cases', 'acceptance'], 'chat-hang-replay': ['source', 'replay'],
+                   'private-example-analysis': ['source-gate', 'analyze'], 'ci-batch': ['validate'],
+                   'retained-runtime-failure-diagnostic': ['measurement']}
+        for filename, jobs in callers.items():
+            workflow = yaml.safe_load((root / (filename + '.yml')).read_text())
+            for job in jobs:
+                with self.subTest(workflow=filename, job=job):
+                    uploads = [step for step in workflow['jobs'][job]['steps']
+                               if step.get('with', {}).get('path') == '${{ runner.temp }}/retained-packaging-supplements/']
+                    self.assertEqual(len(uploads), 1)
+                    self.assertEqual(uploads[0]['if'], 'always()')
+                    self.assertNotIn('continue-on-error', uploads[0])
+                    self.assertIn('${{ github.job }}', uploads[0]['with']['name'])
+        diagnostic = yaml.safe_load((root / 'release.yml').read_text())['jobs']['diagnostic-acceptance']['steps']
+        checkout = next(step for step in diagnostic if step.get('uses', '').startswith('actions/checkout@'))
+        self.assertEqual(checkout['with']['fetch-depth'], 0)
+
+    def test_component_repair_paths_require_the_exact_canonical_record(self):
+        record = {'runID': 70, 'producerSourceSHA': self.producer}
+        gap = dict(packaging.COMPONENT_CAPTURE_GAP, recordSHA256=packaging.digest(packaging.encoded(record)))
+        with patch.object(packaging, 'COMPONENT_CAPTURE_GAP', gap):
+            self.assertIn('scripts/retained_packaging.py', packaging.component_consumer_repair_paths(record))
+            self.assertFalse(packaging.component_consumer_repair_paths(record | {'runID': 71}))
+            self.assertFalse(any(path.startswith(('Sources/', 'Engine/', 'Tests/', 'plugins/'))
+                                 for path in packaging.component_consumer_repair_paths(record)))
+
+    def component_supplement_fixture(self):
+        import compiled_component_reuse as component
+        logs = {f"actions/jobs/{component.ORIGIN[key]}/logs": raw for key, raw in
+                (('builderJobID', b'original full builder'), ('releaseJobID', b'original full release'))}
+        origin = dict(component.ORIGIN, builderRawSHA256=packaging.digest(b'original full builder'),
+                      releaseRawSHA256=packaging.digest(b'original full release'))
+        producer = {'id': origin['runID'], 'head_sha': origin['sourceSHA']}
+        builder = {'id': origin['builderJobID'], 'started_at': '2026-11-04T08:00:00Z',
+                   'completed_at': '2026-11-04T09:00:00Z'}
+        release = {'id': origin['releaseJobID'], 'run_id': origin['runID'], 'head_sha': origin['sourceSHA'],
+                   'run_attempt': 1, 'name': 'release', 'labels': ['macrunner'], 'status': 'completed', 'conclusion': 'failure',
+                   'steps': [{'name': name, 'conclusion': 'success'} for name in component.RELEASE_STEPS]}
+        assembly = {'id': origin['assemblyArtifactID'], 'name': 'release-compiled-app-assembly-' + str(origin['runID']) + '-a1',
+                    'digest': 'sha256:' + origin['assemblyArtifactSHA256'], 'expired': False,
+                    'workflow_run': producer, 'created_at': '2026-11-04T08:10:00Z',
+                    'updated_at': '2026-11-04T08:11:00Z', 'expires_at': '2027-01-01T00:00:00Z'}
+        record = {'runID': 70, 'productSourceSHA': origin['sourceSHA'], 'producerSourceSHA': self.producer,
+                  'stage': 'complete', 'attempt': 1, 'ref': 'owned-base'}
+        captured = {'json': {'actions/runs/70': {'id': 70, 'head_sha': self.producer, 'head_branch': 'owned-base',
+                                              'created_at': '2026-11-04T10:00:00Z'},
+                            f"actions/runs/{origin['runID']}/attempts/1/jobs?per_page=100": {'total_count': 2, 'jobs': [builder, release]},
+                            f"actions/runs/{origin['runID']}/artifacts?per_page=100": {'total_count': 1, 'artifacts': [assembly]}},
+                    'bytes': {}, 'legacy': {}}
+        with patch.object(packaging, 'utc_now', return_value='2026-11-04T10:10:00Z'):
+            raw = packaging.encoded_api_evidence(captured, record)
+        gap = {'runID': 70, 'producerSourceSHA': self.producer, 'productSourceSHA': origin['sourceSHA'],
+               'artifactID': 701, 'artifactSHA256': '9' * 64, 'recordSHA256': packaging.digest(packaging.encoded(record)),
+               'acquisitionSHA256': packaging.digest(raw)}
+        container = {'id': 701, 'digest': 'sha256:' + '9' * 64, 'workflow_run': {'id': 70, 'head_sha': self.producer},
+                     'created_at': '2026-11-04T10:40:00Z'}
+        current = {'id': 71, 'head_sha': 'c' * 40, 'run_attempt': 1, 'repository': {'full_name': packaging.REPOSITORY},
+                   'actor': {'login': 'iret77'}, 'event': 'workflow_dispatch', 'created_at': '2026-11-04T10:50:00Z'}
+        environment = {'GITHUB_ACTIONS': 'true', 'GITHUB_REPOSITORY': packaging.REPOSITORY, 'GITHUB_RUN_ID': '71',
+                       'GITHUB_RUN_ATTEMPT': '1', 'GITHUB_JOB': 'runtime', 'GITHUB_SHA': 'c' * 40}
+        return origin, producer, builder, raw, record, gap, container, current, environment, logs
+
+    def test_exact_component_supplement_restores_full_native_origin_without_rewriting_history(self):
+        import compiled_component_reuse as component
+        origin, producer, builder, raw, record, gap, container, current, environment, logs = self.component_supplement_fixture()
+        before = bytes(raw)
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, environment | {'RUNNER_TEMP': directory}), \
+                patch.object(component, 'ORIGIN', origin), patch.object(packaging, 'COMPONENT_CAPTURE_GAP', gap), \
+                patch.object(packaging, 'live_api', return_value=current) as api, \
+                patch.object(packaging, 'live_read_api', side_effect=lambda route, **kwargs: logs[route]) as download:
+            for index in range(2):
+                with packaging.authenticated_originals(raw, record, container, {}) as supplement:
+                    component.verify_native_originals(producer, builder)
+                    with self.assertRaisesRegex(ValueError, 'Original API evidence is missing'):
+                        packaging.api('actions/jobs/999')
+                    self.assertIsNotNone(supplement)
+                self.assertIsNone(packaging.REPLAY.get())
+            self.assertEqual(api.call_count, 1)
+            self.assertEqual(download.call_count, 2)
+            self.assertEqual(raw, before)
+            saved = Path(directory) / 'retained-packaging-supplements' / (gap['recordSHA256'] + '.zip')
+            with zipfile.ZipFile(saved) as archive:
+                metadata = json.loads(archive.read('supplement.json'))
+            self.assertFalse(metadata['historicalAcquisitionRewritten'])
+            self.assertEqual(metadata['execution']['GITHUB_RUN_ID'], '71')
+            self.assertEqual(set(metadata['rawLogs']), set(logs))
+            with self.assertRaises(ValueError):
+                with packaging.authenticated_originals(raw, record | {'stage': 'restored'}, container, {}): pass
+            with self.assertRaises(ValueError):
+                with packaging.authenticated_originals(raw, record, container | {'id': 702}, {}): pass
+            with patch.dict(os.environ, GITHUB_RUN_ID='72'), self.assertRaisesRegex(ValueError, 'scope, execution'):
+                with packaging.authenticated_originals(raw, record, container, {}): pass
+            members = packaging.read_proof_archive(saved.read_bytes())
+            members[next(name for name in members if name.endswith('.bin'))] = b'changed original raw'
+            with zipfile.ZipFile(saved, 'w') as archive:
+                for name, value in members.items(): archive.writestr(name, value)
+            with self.assertRaisesRegex(ValueError, 'original raw bytes changed'):
+                with packaging.authenticated_originals(raw, record, container, {}): pass
+
+    def test_component_supplement_rejects_unpinned_history_and_never_repeats_partial_acquisition(self):
+        import compiled_component_reuse as component
+        fixture = self.component_supplement_fixture()
+        origin, producer, builder, raw, record, gap, container, current, environment, logs = fixture
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, environment | {'RUNNER_TEMP': directory}), \
+                patch.object(component, 'ORIGIN', origin), patch.object(packaging, 'COMPONENT_CAPTURE_GAP', gap), \
+                patch.object(packaging, 'live_api', return_value=current), \
+                patch.object(packaging, 'live_read_api', return_value=b'wrong original') as download:
+            with self.assertRaisesRegex(ValueError, 'Fresh component origin raw log differs'):
+                with packaging.authenticated_originals(raw, record, container, {}): pass
+            calls = download.call_count
+            with self.assertRaisesRegex(ValueError, 'already consumed'):
+                with packaging.authenticated_originals(raw, record, container, {}): pass
+            self.assertEqual(download.call_count, calls)
+        with patch.object(packaging, 'COMPONENT_CAPTURE_GAP', gap), patch.object(packaging, 'live_read_api') as download:
+            with self.assertRaisesRegex(ValueError, 'exact immutable original'):
+                with packaging.authenticated_originals(raw, record | {'attempt': 2}, container, {}): pass
+            download.assert_not_called()
+
     def compiled_binding_fixture(self):
         from compiled_app_release import SIGNED_RESUME, PACK_SHA, PACK_TREE
         origin = SIGNED_RESUME

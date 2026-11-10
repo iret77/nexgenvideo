@@ -183,6 +183,57 @@ class CaptureOriginalRetentionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "application or build inputs"):
             verify(run, jobs, artifact, 12, source, 34, digest, [*HARNESS_PATHS, "Sources/NexGenVideo/App/AppDelegate.swift"])
 
+    def test_retained_rc_capture_requires_exact_product_and_successful_owned_release(self):
+        from copy import deepcopy
+        import retained_packaging as packaging
+        source, producer, checksum = 'a' * 40, 'b' * 40, 'c' * 64
+        record = {'producerSourceSHA': producer}
+        run = {'id': 12, 'head_sha': producer, 'head_branch': 'iret77/rc-delivery-base',
+               'path': '.github/workflows/release.yml', 'event': 'workflow_dispatch', 'run_attempt': 1,
+               'status': 'completed', 'conclusion': 'failure', 'repository': {'full_name': packaging.REPOSITORY},
+               'actor': {'login': 'iret77'}}
+        job = {'name': 'release', 'run_id': 12, 'head_sha': producer, 'run_attempt': 1, 'labels': ['macrunner'],
+               'status': 'completed', 'conclusion': 'success', 'started_at': '2026-11-10T00:00:00Z',
+               'completed_at': '2026-11-10T00:10:00Z'}
+        artifact = {'id': 34, 'name': 'diagnostic-release-evidence', 'expired': False, 'digest': 'sha256:' + checksum,
+                    'workflow_run': {'id': 12, 'head_sha': producer}, 'created_at': '2026-11-10T00:05:00Z',
+                    'updated_at': '2026-11-10T00:05:01Z', 'expires_at': '2099-01-01T00:00:00Z'}
+        for variant in ('valid', 'foreign', 'failed-release', 'native-input', 'main'):
+            actual, release = deepcopy(run), deepcopy(job)
+            paths = ['scripts/retained_packaging.py']
+            if variant == 'foreign': actual['actor']['login'] = 'foreign'
+            if variant == 'failed-release': release['conclusion'] = 'failure'
+            if variant == 'native-input': paths += ['Sources/NexGenVideo/App/AppDelegate.swift']
+            if variant == 'main': actual['head_branch'] = 'main'
+            with self.subTest(variant=variant), patch.object(packaging, 'load_provenance', return_value={'record': record}), \
+                    patch.object(packaging, 'component_consumer_repair_paths', return_value={'scripts/retained_packaging.py'}):
+                args = (actual, {'total_count': 1, 'jobs': [release]}, artifact, 12, source, 34, checksum, paths)
+                if variant == 'valid': verify(*args, packaging={'exact': 'selectors'})
+                else:
+                    with self.assertRaises(ValueError): verify(*args, packaging={'exact': 'selectors'})
+
+    def test_retained_capture_rebinds_current_product_before_execution_and_keeps_all_release_cases(self):
+        root = Path(__file__).resolve().parents[1]
+        workflow = yaml.safe_load((root / '.github/workflows/diagnostic-acceptance.yml').read_text())
+        steps = workflow['jobs']['acceptance']['steps']
+        checkout = next(step for step in steps if step.get('uses', '').startswith('actions/checkout@'))
+        self.assertEqual(checkout['with']['fetch-depth'], 0)
+        positions = {step.get('name'): index for index, step in enumerate(steps)}
+        bind = next(step for step in steps if step.get('name') == 'Rebind retained packaging before diagnostic app execution')
+        self.assertLess(positions[bind['name']], positions['Retrieve the exact signed candidate'])
+        self.assertIn('consumer_harness(bound', bind['run'])
+        self.assertIn('packaging=selected', bind['run'])
+        self.assertEqual(bind['if'], "inputs.packaging_producer_source_sha != ''")
+        recovery = next(step for step in steps if step.get('name') == 'Verify generation batch pricing recovery')
+        self.assertIn('NGV_SELFTEST_GENERATION_BATCH_RECOVERY=1', recovery['run'])
+        self.assertIn("grep -qx 'SELFTEST_GENERATION_BATCH_RECOVERY_OK'", recovery['run'])
+        termination = next(step for step in steps if step.get('name') == 'Verify asynchronous termination, cancellation and restart')
+        self.assertIn('app_termination_acceptance.py NexGenVideo.app', termination['run'])
+        self.assertIn('--product-source "$CANDIDATE_SOURCE"', termination['run'])
+        upload = next(step for step in steps if step.get('with', {}).get('name') == 'diagnostic-runtime-acceptance')
+        self.assertIn('evidence/termination/', upload['with']['path'].splitlines())
+        self.assertIn('evidence/packaging-provenance/', upload['with']['path'].splitlines())
+
     def test_both_registered_capture_callers_retain_all_logs_and_original_recordings(self):
         root = Path(__file__).resolve().parents[1]
         for filename, jobname in (("diagnostic-acceptance.yml", "acceptance"), ("release.yml", "diagnostic-acceptance")):
