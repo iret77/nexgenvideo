@@ -408,6 +408,25 @@ class CompiledComponentAssemblyTests(unittest.TestCase):
                     (root / 'assembled.json').write_text(json.dumps({'sourceSHA': consumer, 'runID': 777,
                         'appTreeSHA256': release.checkpoint.tree_digest(app), 'identity': release.checkpoint.identity(base / '.build'),
                         'componentAssembly': component, 'mainSymbolsTreeSHA256': main_pins['symbolsTreeSHA256']}))
+                    assembled_raw = (root / 'assembled.json').read_bytes()
+                    missing = json.loads(assembled_raw); del missing['componentAssembly']
+                    (root / 'assembled.json').write_text(json.dumps(missing))
+                    with self.assertRaisesRegex(ValueError, 'lacks its actual component assembly'):
+                        release.create_signed_input(root, base / 'missing-component-output')
+                    self.assertFalse((base / 'missing-component-output').exists())
+                    for index, (key, changed) in enumerate([('schema', 'wrong'), ('sourceSHA', 'b' * 40),
+                            ('runID', 778), ('attempt', 2), ('sourceHandoff', {**handoff, 'receiptSHA256': 'f' * 64}),
+                            ('component-null', None)]):
+                        invalid = json.loads(assembled_raw)
+                        if key == 'component-null': invalid['componentAssembly'] = None
+                        else: invalid['componentAssembly'][key] = changed
+                        (root / 'assembled.json').write_text(json.dumps(invalid))
+                        before_calls = len(calls); refused = base / ('invalid-component-' + str(index))
+                        with self.subTest(key=key), self.assertRaises(ValueError):
+                            release.create_signed_input(root, refused)
+                        self.assertEqual(len(calls), before_calls)
+                        self.assertFalse(refused.exists())
+                    (root / 'assembled.json').write_bytes(assembled_raw)
                     output = base / 'signed-output'
                     release.create_signed_input(root, output)
                     manifest = json.loads((output / 'manifest.json').read_text())

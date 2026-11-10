@@ -1709,9 +1709,18 @@ def create_signed_input(root, output):
     require(assembled['sourceSHA'] == os.environ['GITHUB_SHA'] and assembled['runID'] == int(os.environ['GITHUB_RUN_ID'])
         and assembled['appTreeSHA256'] == checkpoint.tree_digest(build / 'NexGenVideo.app')
         and assembled['identity'] == checkpoint.identity(build), 'Assembled App changed before signed checkpoint')
-    verify_component_materialization(assembled['componentAssembly'], build / 'NexGenVideo.app', build / 'NexGenEngine.dSYM')
-    require(canonical_bundle_tree(build / 'NexGenVideo.dSYM') == assembled['mainSymbolsTreeSHA256'],
-        'Current Main symbols changed before checkpoint')
+    component = assembled.get('componentAssembly')
+    if 'componentAssembly' in assembled:
+        require(type(component) is dict and assembled['identity']['build'] == COMPONENT_BUILD,
+            'Component checkpoint type or build differs')
+        verify_component_assembly(component, os.environ['GITHUB_SHA'], int(os.environ['GITHUB_RUN_ID']),
+            assembled['identity'], {'bpy-source-receipt.json': {
+                'sha256': checksum(build / 'bpy-source/bpy-source-receipt.json')}}, receipt)
+        verify_component_materialization(component, build / 'NexGenVideo.app', build / 'NexGenEngine.dSYM')
+        require(canonical_bundle_tree(build / 'NexGenVideo.dSYM') == assembled['mainSymbolsTreeSHA256'],
+            'Current Main symbols changed before checkpoint')
+    else:
+        require(assembled['identity']['build'] != COMPONENT_BUILD, 'Corrected compiled product lacks its actual component assembly')
     output.mkdir(parents=True, exist_ok=False)
     targets.logged(root, 'archive-new-signed-app', ['/usr/bin/ditto', '-c', '-k', '--keepParent',
         str(build / 'NexGenVideo.app'), str(output / 'NexGenVideo.zip')], timeout=300)
@@ -1722,8 +1731,9 @@ def create_signed_input(root, output):
     manifest = {'schema': 'release-signed-input/v1', 'repository': REPOSITORY, 'sourceSHA': os.environ['GITHUB_SHA'],
         'runID': int(os.environ['GITHUB_RUN_ID']), 'attempt': 1, 'identity': assembled['identity'],
         'appTreeSHA256': assembled['appTreeSHA256'], 'nativeEvidence': receipt,
-        'componentAssembly': assembled['componentAssembly'],
         'files': {name: {'bytes': (output / name).stat().st_size, 'sha256': checksum(output / name)} for name in checkpoint.FILES}}
+    if component is not None:
+        manifest['componentAssembly'] = component
     checkpoint.validate_app_zip(output / 'NexGenVideo.zip')
     checkpoint.verify_manifest(manifest, os.environ['GITHUB_SHA'], int(os.environ['GITHUB_RUN_ID']))
     write(output / 'manifest.json', manifest)
