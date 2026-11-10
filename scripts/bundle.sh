@@ -208,7 +208,11 @@ fi
 
 if [ "$MODE" = "notarize-app" ] || [ "$MODE" = "build-dmg" ] || [ "$MODE" = "notarize-dmg" ]; then
   [ "$CONFIG" = "release" ] || { echo "!! packaging requires release configuration" >&2; exit 1; }
-  codesign --verify --strict --verbose=2 "$APP"
+  if [ "$MODE" = notarize-app ] && [ "${NGV_COMPONENT_NOTARY_CONTINUATION:-}" = true ]; then
+    python3 "$ROOT/scripts/compiled_component_reuse.py" verify-native
+  else
+    codesign --verify --strict --verbose=2 "$APP"
+  fi
   prepare_packaging
   case "$MODE" in
     notarize-app) notarize_app ;;

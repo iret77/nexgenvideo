@@ -442,7 +442,10 @@ def restore(root):
     require(manifest["identity"]["catalogURL"] == os.environ["PLUGIN_CATALOG_URL"],
             "Restored App belongs to another plugin channel")
     from retained_packaging import compiled_signed_product
-    if retained is not None and compiled_signed_product(retained):
+    from compiled_component_reuse import qualified, reuse_native
+    if qualified(retained):
+        reuse_native(root, build / 'NexGenVideo.app', manifest, retained)
+    elif retained is not None and compiled_signed_product(retained):
         from compiled_app_release import reuse_current_signature
         reuse_current_signature(root, build / 'NexGenVideo.app', manifest, retained)
     else:
@@ -455,8 +458,10 @@ def restore(root):
         output.write("NGV_SIGNED_APP_ARCHIVE_SHA256=" + manifest["files"]["NexGenVideo.zip"]["sha256"] + "\n")
         if manifest["nativeEvidence"].get("schema") in ("release-native-compiled-app/v1", "release-native-compiled-app/v2", "release-native-compiled-app/v3", "release-native-compiled-app/v4"):
             output.write("NGV_COMPILED_APP_RELEASE=true\n")
-        if retained is not None and compiled_signed_product(retained):
+        if retained is not None and (compiled_signed_product(retained) or qualified(retained)):
             output.write('NGV_CURRENT_COMPILED_SOURCE_REUSE=true\n')
+        if qualified(retained):
+            output.write('NGV_COMPONENT_NOTARY_CONTINUATION=true\n')
     write(root / "restored.json", {"sourceSHA": binding["sourceSHA"], "producerRun": binding["producer"]["id"],
           "appTreeSHA256": manifest["appTreeSHA256"], "identity": manifest["identity"]})
     if os.environ.get("NOTARY_STATE_DIR"):

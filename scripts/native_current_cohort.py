@@ -33,6 +33,8 @@ CI_PATHS = {'scripts/native_current_cohort.py', 'scripts/test_native_current_coh
     'scripts/retained_release_runtime.py', 'scripts/test_retained_release_runtime.py',
     'scripts/consume_bpy_distributable_source.py', 'scripts/test_consume_bpy_distributable_source.py',
     'scripts/test_compiled_component_assembly.py',
+    'scripts/compiled_component_reuse.py', 'scripts/test_compiled_component_reuse.py',
+    'scripts/notary_continuation.py', 'scripts/test_notary_continuation.py', 'scripts/notarize.sh',
     'scripts/release_test_repair.py', 'scripts/test_release_test_repair.py',
     '.github/workflows/settings-owner-acceptance.yml'} | UI_CI_PATHS
 

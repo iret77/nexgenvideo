@@ -14,6 +14,10 @@ RETRY_DELAY="${NOTARY_RETRY_DELAY_SECONDS:-5}"
 [[ "$ATTEMPTS" =~ ^[1-9][0-9]*$ ]] || { echo "!! NOTARY_ATTEMPTS must be a positive integer" >&2; exit 1; }
 [[ "$RETRY_DELAY" =~ ^[0-9]+$ ]] || { echo "!! NOTARY_RETRY_DELAY_SECONDS must be a non-negative integer" >&2; exit 1; }
 
+if [ "${NGV_COMPONENT_NOTARY_CONTINUATION:-}" = true ] && [ "$(basename "$ARTIFACT")" = NexGenVideo.zip ]; then
+  exec python3 "$(dirname "$0")/notary_continuation.py" "$ARTIFACT"
+fi
+
 OUTPUT="$(mktemp)"
 trap 'rm -f "$OUTPUT"' EXIT
 
