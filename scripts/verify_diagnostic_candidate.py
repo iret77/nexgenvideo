@@ -331,11 +331,19 @@ def verify_signed_bpy(run, jobs, artifact, run_id, source_sha, artifact_id, dige
                       *, artifact_name="diagnostic-release-evidence", harness_paths=SIGNED_BPY_HARNESS_PATHS,
                       packaging=None):
     producer_source = source_sha
+    import app_cohort_v2
+    if packaging is None and app_cohort_v2.has_manifest(source_sha):
+        import os
+        harness_paths = harness_paths | app_cohort_v2.consumer_paths(source_sha, os.environ['GITHUB_SHA'])
     if packaging is not None:
         from retained_packaging import component_consumer_repair_paths, load_provenance
         record = load_provenance(run_id, source_sha, packaging)['record']
         producer_source = record['producerSourceSHA']
         harness_paths = harness_paths | component_consumer_repair_paths(record)
+        from retained_packaging import cohort_signed_product
+        if cohort_signed_product(record):
+            import os
+            harness_paths = harness_paths | app_cohort_v2.consumer_paths(source_sha, os.environ['GITHUB_SHA'])
     if (not re.fullmatch(r"[0-9a-f]{40}", source_sha)
             or not re.fullmatch(r"[0-9a-f]{64}", digest)
             or run.get("id") != run_id or run.get("head_sha") != producer_source

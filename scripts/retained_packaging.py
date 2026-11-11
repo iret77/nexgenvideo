@@ -43,6 +43,8 @@ VERIFIER_INPUTS += ('scripts/native_current_cohort.py', 'scripts/native_xctest_h
                     'scripts/native_app_build_plan.py', 'scripts/fixtures/native-test-entry-point.json')
 VERIFIER_INPUTS += ('scripts/consume_bpy_distributable_source.py',)
 VERIFIER_INPUTS += ('scripts/compiled_component_reuse.py', 'scripts/notary_continuation.py')
+VERIFIER_INPUTS += ('scripts/app_cohort_v2.py', 'scripts/app_release_v2.py',
+                   'scripts/fixtures/app-cohort.json', 'scripts/fixtures/app-cohort-native-inventory.json')
 PACKAGING_PATHS = {
     "scripts/plan_dmg_capacity.py", "scripts/test_release_dmg_packaging.py",
     "scripts/retained_packaging.py", "scripts/test_retained_packaging.py",
@@ -436,6 +438,9 @@ def consumer_harness(binding, product, allowed_paths):
     producer = record['producerSourceSHA']
     allowed_paths = allowed_paths | component_consumer_repair_paths(record)
     current = git('rev-parse', 'HEAD').decode().strip()
+    if cohort_signed_product(record):
+        import app_cohort_v2
+        allowed_paths = allowed_paths | app_cohort_v2.consumer_paths(product, current)
     require(current == os.environ['GITHUB_SHA'] and not git('diff', '--name-only', 'HEAD', '--').strip(),
             'Consumer checkout differs from its committed source')
     if current != producer:
@@ -608,8 +613,10 @@ def signed_input(run_id, product):
     from compiled_app_release import signed_resume_source, verify_signed_resume
     import compiled_component_reuse as component
     compiled = signed_resume_source(run_id, product)
+    import app_cohort_v2
+    dynamic = app_cohort_v2.has_manifest(product)
     required_steps = ('Assemble and sign the new App with unchanged retained components',
-        'Record compiled App signed input without invoking a build', 'Retain signed build input', 'Retain signed build proof') if compiled else (
+        'Record compiled App signed input without invoking a build', 'Retain signed build input', 'Retain signed build proof') if compiled or dynamic else (
         'Build and sign app', 'Retain signed build input', 'Retain signed build proof')
     if component.matches(run_id, product):
         required_steps = component.STEPS
@@ -639,10 +646,20 @@ def signed_input(run_id, product):
     component_product = component.verify_origin(producer, builder, artifacts[prefix], artifacts[prefix + '-proof'], members['manifest.json'], verifier=verify_artifact) if component.matches(run_id, product) else None
     if component_product:
         component.verify_native_originals(producer, builder)
-    original_notary, original_state = original_journals(producer, product, jobs, inventory)
+    if dynamic:
+        from app_release_v2 import signed_product
+        require(manifest['nativeEvidence'].get('schema') == 'release-native-compiled-app/v5', 'Typed cohort lacks its actual fresh native receipt')
+        cohort_product = signed_product(manifest)
+    else:
+        cohort_product = None
+    if dynamic:
+        original_notary, original_state = original_journals(producer, product, jobs, inventory, allow_pre_submit=True)
+    else:
+        original_notary, original_state = original_journals(producer, product, jobs, inventory)
     return {"producer": producer, "builder": builder, "payloadArtifact": artifacts[prefix],
             "proofArtifact": artifacts[prefix + "-proof"], "manifest": manifest,
             "originalNotary": original_notary, **({"compiledProduct": compiled_product} if compiled_product else {}),
+            **({"cohortProduct": cohort_product} if cohort_product else {}),
             **({"componentProduct": component_product} if component_product else {})}, proof, original_state
 
 
@@ -759,7 +776,7 @@ def read_notary_intent(item, name, producer, job):
     return json.loads(members["intent.json"])
 
 
-def state_records(raw, product, producer, run_id):
+def state_records(raw, product, producer, run_id, *, pre_submit=None):
     records = read_proof_archive(raw)
     require("context.json" in records, "Missing saved notarization context")
     context = json.loads(records["context.json"])
@@ -785,12 +802,15 @@ def state_records(raw, product, producer, run_id):
                 "Saved notary payload or Apple ID differs")
         journals[name[:-5]] = value
     from compiled_app_release import original_empty_notary
-    require(journals or set(records) == {'context.json'} and original_empty_notary(raw, product, producer, run_id),
+    require(journals or set(records) == {'context.json'} and (original_empty_notary(raw, product, producer, run_id) or pre_submit is not None
+                and pre_submit == {'schema': 'release-proven-pre-submit/v1', 'sourceSHA': producer,
+                    'runID': run_id, 'jobID': pre_submit.get('jobID'), 'appleStagesAllSkipped': True}
+                and type(pre_submit.get('jobID')) is int and pre_submit['jobID'] > 0),
             'Saved notarization has no qualified Apple submission or exact compiled pre-first-notary origin')
     return context, journals
 
 
-def original_journals(producer, product, jobs, inventory):
+def original_journals(producer, product, jobs, inventory, *, allow_pre_submit=False):
     from release_checkpoint import notary_state_entry, require_notary_checkpoint, require_notary_payload_coverage
     for job in jobs["jobs"]:
         if job.get("name") == "release":
@@ -810,7 +830,9 @@ def original_journals(producer, product, jobs, inventory):
     require(isinstance(checksum, str) and re.fullmatch("sha256:[a-f0-9]{64}", checksum), "Missing original Apple state digest")
     verify_artifact(artifact, producer, job, artifact["id"], checksum[7:], name)
     raw = artifact_bytes(artifact, 4 * 1024**2)
-    context, journals = state_records(raw, product, product, producer["id"])
+    from app_release_v2 import pre_submit
+    certificate = pre_submit(producer, job) if allow_pre_submit else None
+    context, journals = state_records(raw, product, product, producer["id"], pre_submit=certificate)
     require_notary_payload_coverage(inventory["artifacts"], product, producer, job, journals,
         lambda item, name: read_notary_intent(item, name, producer, job))
     require(context["buildRunID"] == producer["id"], "Original Apple state selected another signed build")
@@ -858,7 +880,9 @@ def prior_notary(run_id, product, *, packaging=None, chain=None):
     state = notary_state_entry(list(artifacts.values()), product)
     require(state is not None, "Previous notarization state is missing")
     raw = artifact_bytes(state, 4 * 1024**2)
-    context, journals = state_records(raw, product, producer_source, run_id)
+    from app_release_v2 import pre_submit
+    certificate = pre_submit(producer, job) if producer_source == product or cohort_signed_product(parent['record']) else None
+    context, journals = state_records(raw, product, producer_source, run_id, pre_submit=certificate)
     require_notary_payload_coverage(inventory["artifacts"], product, producer, job, journals,
         lambda item, name: read_notary_intent(item, name, producer, job))
     if producer_source != product:
@@ -880,6 +904,8 @@ def prior_notary(run_id, product, *, packaging=None, chain=None):
         previous_known = parent["record"]["previousNotary"]["journals"]
         added = set(journals) - set(previous_known)
         allowed = {checkpoint_proof["checkpoint"]["files"]["NexGenVideo.dmg"]["sha256"]} if checkpoint_proof else set()
+        if cohort_signed_product(parent['record']):
+            allowed.add(parent['record']['signedInput']['manifest']['files']['NexGenVideo.zip']['sha256'])
         if compiled_signed_product(parent['record']):
             from compiled_app_release import SIGNED_RESUME
             app = parent['record']['signedInput']['manifest']['files']['NexGenVideo.zip']['sha256']
@@ -889,7 +915,8 @@ def prior_notary(run_id, product, *, packaging=None, chain=None):
         if parent["record"]["stage"] == "complete":
             require(journals == parent["record"]["final"].get("notaryJournals"), "Completed parent Apple state changed")
     result = {"producer": producer, "job": job, "stateArtifact": state, "dmgArtifact": checkpoint,
-              "context": context, "journals": journals, "dmgProof": checkpoint_proof}
+              "context": context, "journals": journals, "dmgProof": checkpoint_proof,
+              **({"preSubmit": certificate} if certificate is not None else {})}
     if producer_source != product:
         require(parent["record"]["originalSignedBuildRunID"] == context["buildRunID"], "Parent packaging proof selected another signed build")
         result["parentProvenance"] = {**packaging, "runID": run_id, "productSourceSHA": product,
@@ -1075,12 +1102,25 @@ def compiled_signed_product(record):
             'freshCompilerCoreAssemblyOrRootSignPerformed': False})
 
 
+def cohort_signed_product(record):
+    manifest = record.get('signedInput', {}).get('manifest', {})
+    if manifest.get('nativeEvidence', {}).get('schema') != 'release-native-compiled-app/v5':
+        return False
+    from app_release_v2 import signed_product
+    return (manifest.get('sourceSHA') == record.get('productSourceSHA')
+        and manifest.get('runID') == record.get('originalSignedBuildRunID')
+        and record['signedInput'].get('cohortProduct') == signed_product(manifest))
+
+
 def retained_compiled_product(record):
     from compiled_component_reuse import qualified
     return compiled_signed_product(record) or qualified(record)
 
 
 def packaging_paths(product):
+    import app_cohort_v2
+    if app_cohort_v2.has_manifest(product):
+        return set(app_cohort_v2.manifest(product)['ciPaths']) | PACKAGING_PATHS
     from compiled_app_release import SIGNED_RESUME
     from compiled_component_reuse import ORIGIN, PATHS
     if product == ORIGIN['sourceSHA']:
@@ -1089,6 +1129,11 @@ def packaging_paths(product):
 
 
 def compiled_first_notary(record):
+    if cohort_signed_product(record):
+        from app_release_v2 import pre_submit
+        previous = record.get('previousNotary', {})
+        certificate = pre_submit(previous.get('producer', {}), previous.get('job', {}))
+        return certificate is not None and previous.get('preSubmit') == certificate and previous.get('journals') == {}
     from compiled_app_release import SIGNED_RESUME
     previous = record.get('previousNotary', {})
     return (compiled_signed_product(record) and previous.get('journals') == {}
@@ -1100,7 +1145,7 @@ def compiled_first_notary(record):
 
 def qualified_pack_archives(packs, record):
     from compiled_app_release import PACK_SHA
-    if retained_compiled_product(record):
+    if retained_compiled_product(record) or cohort_signed_product(record):
         return packs == {'.build/plugins/musicvideo.ngvpack.zip': PACK_SHA}
     return bool(packs) and all(value in record['previousNotary']['journals'] for value in packs.values())
 
@@ -1298,6 +1343,12 @@ def record_complete(root, app, archive_sha, source_receipt_sha, pack_archive):
                 and instant(value['expires_at']) > now, 'Current DMG proof or payload origin differs')
     require(instant(payload['updated_at']) <= instant(artifact['created_at']), 'DMG payload was not acquired before its proof')
     require(manifest['files']['NexGenVideo.zip']['sha256'] in journals, 'Complete packaging lacks the actual App Apple submission')
+    if cohort_signed_product(binding):
+        guide = Path('scripts/Install NexGenVideo.txt')
+        require(guide.is_file() and not guide.is_symlink()
+            and guide.read_bytes() == git('show', binding['producerSourceSHA'] + ':' + guide.as_posix()),
+            'Actual reviewed installation guide changed')
+        final['guideSHA256'] = file_checksum(guide)
     if retained_compiled_product(binding):
         from compiled_app_release import capture_source_reuse, PACK_SHA, PACK_TREE
         source_reuse = capture_source_reuse(Path('.build/bpy-source'), binding)
@@ -1382,7 +1433,8 @@ def validate_binding(record, files, *, execution=False, chain=None):
                     product, original.get("sourceRef"))
     previous, state = prior_notary(mode.get("priorNotaryRunID"), product, packaging=mode.get("priorPackagingProof"), chain=chain)
     require(state == files["prior-notary-state.zip"] and previous["context"] == record.get("previousNotary", {}).get("context")
-            and previous["journals"] == record.get("previousNotary", {}).get("journals"), "Previous notary evidence changed")
+            and previous["journals"] == record.get("previousNotary", {}).get("journals")
+            and previous.get('preSubmit') == record.get('previousNotary', {}).get('preSubmit'), "Previous notary evidence changed")
     matching_artifact(record["previousNotary"]["stateArtifact"], previous["stateArtifact"])
     require(record['previousNotary'].get('acceptedAppNotary') == previous.get('acceptedAppNotary'),
             'Previous accepted App notarization provenance changed')
@@ -1424,6 +1476,7 @@ def validate_binding(record, files, *, execution=False, chain=None):
         require(all(previous["journals"].get(key) == value for key, value in signed["originalNotary"]["journals"].items()),
                 "Previous state dropped or changed an original Apple submission")
     require(signed.get('compiledProduct') == record.get('signedInput', {}).get('compiledProduct'), 'Compiled signed-product qualification changed')
+    require(signed.get('cohortProduct') == record.get('signedInput', {}).get('cohortProduct'), 'Cohort signed-product qualification changed')
     require(signed.get('componentProduct') == record.get('signedInput', {}).get('componentProduct'), 'Component signed-product qualification changed')
     require(signed["manifest"]["files"]["NexGenVideo.zip"]["sha256"] in previous["journals"] or compiled_first_notary(record),
             "Original App Apple submission disappeared")
@@ -1451,6 +1504,9 @@ def validate_binding(record, files, *, execution=False, chain=None):
                 and all(final["notaryJournals"].get(key) == value for key, value in previous["journals"].items())
                 and final["submittedDMGSHA256"] in final["notaryJournals"], "Complete proof lost known Apple submissions")
         require(manifest_app_sha in final['notaryJournals'], 'Complete packaging lost the actual App Apple submission')
+        if cohort_signed_product(record):
+            require(final.get('guideSHA256') == digest(git('show', producer + ':scripts/Install NexGenVideo.txt')),
+                'Complete installation guide differs from its reviewed source')
         if retained_compiled_product(record):
             from compiled_app_release import verify_source_reuse, PACK_SHA, PACK_TREE
             source_reuse = final.get('bpySourceReuse')
