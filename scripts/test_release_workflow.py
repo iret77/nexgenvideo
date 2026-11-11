@@ -217,6 +217,31 @@ xcrun() { printf 'stapler\\n' >> "$CALLS"; return "$NATIVE_RC"; }
     def workflow(self):
         return yaml.safe_load(WORKFLOW.read_text())
 
+    def test_every_release_mode_binds_private_analysis_to_its_actual_signed_runtime(self):
+        job = self.workflow()['jobs']['musicvideo-analysis-acceptance']
+        for index, mode in enumerate(('fresh', 'compiled', 'signed-resume', 'notary-resume', 'retained')):
+            with self.subTest(mode=mode):
+                actual = {'runtime_run_id': str(1000 + index), 'runtime_source_sha': str(index + 1) * 40,
+                    'runtime_artifact_id': str(2000 + index), 'runtime_artifact_sha256': hashlib.sha256(mode.encode()).hexdigest()}
+                values = {'github.run_id': actual['runtime_run_id'], 'github.sha': 'f' * 40,
+                    'needs.release.outputs.product_source_sha': actual['runtime_source_sha'],
+                    'needs.release.outputs.workspace_artifact_id': actual['runtime_artifact_id'],
+                    'needs.release.outputs.workspace_artifact_sha256': actual['runtime_artifact_sha256'],
+                    'inputs.retained_product_source_sha': actual['runtime_source_sha'] if mode == 'retained' else '',
+                    'inputs.compiled_app_targets_json': '{}' if mode == 'compiled' else '',
+                    'inputs.signed_build_run_id': '3000' if mode == 'signed-resume' else '',
+                    'inputs.notary_progress_run_id': '4000' if mode == 'notary-resume' else ''}
+                self.assertTrue(condition_enabled(job['if'], True, True,
+                    compiled_targets=values['inputs.compiled_app_targets_json']))
+                for field, expected in actual.items():
+                    expression = job['with'][field].removeprefix('${{').removesuffix('}}').strip()
+                    expression = re.sub(r"\b(?:inputs|github|needs)\.[\w.-]+", lambda m: repr(values[m.group()]), expression)
+                    expression = expression.replace('&&', ' and ').replace('||', ' or ')
+                    tree = ast.parse(expression, mode='eval')
+                    allowed = (ast.Expression, ast.BoolOp, ast.And, ast.Or, ast.Compare, ast.Eq, ast.NotEq, ast.Constant)
+                    self.assertTrue(all(isinstance(node, allowed) for node in ast.walk(tree)))
+                    self.assertEqual(eval(compile(tree, '<runtime producer>', 'eval'), {'__builtins__': {}}), expected)
+
     def test_artifact_only_has_no_active_publication_including_resume(self):
         workflow = self.workflow()
         inputs = workflow[True]["workflow_dispatch"]["inputs"]

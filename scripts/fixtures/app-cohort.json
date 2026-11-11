@@ -41,6 +41,7 @@
     "scripts/test_private_example_workflow.py",
     "scripts/test_production_cover_owner_evidence.py",
     "scripts/test_release_recovery.py",
+    "scripts/test_release_workflow.py",
     "scripts/test_retained_release_runtime.py",
     "scripts/test_workspace_ui_v2_owner.py",
     "scripts/verify_diagnostic_candidate.py"
