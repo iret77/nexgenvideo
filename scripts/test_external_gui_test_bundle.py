@@ -760,10 +760,13 @@ class ExternalTestBundleTests(unittest.TestCase):
             handle.writestr('tests-input.json', fixture.raw_receipt)
         fixture.artifact['digest'] = 'sha256:' + journey.sha256(fixture.transfer)
         for comparison in (fixture.comparison, fixture.history):
+            comparison['files'] = [item for item in comparison['files']
+                                   if item['filename'] != '.github/workflows/external-gui-acceptance.yml']
             for item in comparison['files']:
                 if item['filename'] == reader:item['status'] = 'modified'
             comparison['files'].extend([{'filename': 'Tests/NexGenVideoTests/UI/NativeButtonInteractionTests.swift', 'status': 'modified'},
                                         {'filename': inventory_path, 'status': 'modified'}])
+        fixture.original['.github/workflows/external-gui-acceptance.yml'] = fixture.current_workflow
         fixture.comparison['commits'].insert(0, {'sha': current['appSourceSHA']})
         fixture.comparison['total_commits'] = 2
         fixture.history['commits'] = copy.deepcopy(fixture.comparison['commits'])
