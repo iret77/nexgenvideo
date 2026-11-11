@@ -20,6 +20,17 @@ from retained_app_test_products import api, archive_bytes, checksum, download, r
 REPOSITORY = "iret77/nexgenvideo"
 FILES = ("NexGenVideo.zip", "symbols.tar.gz", "plugins.tar.gz", "bpy-source-receipt.json")
 NATIVE_TIMEOUT = 900
+SIGNED_MANIFEST_MAX_BYTES = 16 * 1024**2
+
+
+def signed_manifest_bytes(archive):
+    return archive_bytes(archive, "manifest.json", SIGNED_MANIFEST_MAX_BYTES)
+
+
+def write_signed_manifest(path, manifest):
+    raw = (json.dumps(manifest, indent=2) + "\n").encode("utf-8")
+    require(len(raw) <= SIGNED_MANIFEST_MAX_BYTES, "Signed manifest exceeds its shared byte bound")
+    Path(path).write_bytes(raw)
 
 
 def notary_state_names(source):
@@ -301,7 +312,7 @@ def create(root):
                     name: {"bytes": (root / name).stat().st_size, "sha256": checksum(root / name)}
                     for name in FILES}}
     validate_app_zip(root / "NexGenVideo.zip")
-    write(root / "manifest.json", manifest)
+    write_signed_manifest(root / "manifest.json", manifest)
 
 
 def verify_manifest(manifest, source, run_id):
@@ -466,12 +477,12 @@ def prepare(run_id, root):
         selected[name] = item
     root.mkdir(parents=True, exist_ok=False)
     proof = selected[prefix + "-proof"]
-    require(proof["size_in_bytes"] < 16 * 1024**2, "Signed input proof is oversized")
+    require(proof["size_in_bytes"] < SIGNED_MANIFEST_MAX_BYTES, "Signed input proof is oversized")
     download(proof, root / "proof.zip")
     require(checksum(root / "proof.zip") == proof["digest"][7:], "Signed proof archive changed")
     with zipfile.ZipFile(root / "proof.zip") as archive:
         require(archive.namelist() == ["manifest.json"], "Unexpected signed proof entries")
-        manifest = verify_manifest(json.loads(archive_bytes(archive, "manifest.json")), source, run_id)
+        manifest = verify_manifest(json.loads(signed_manifest_bytes(archive)), source, run_id)
     binding = {"schema": "release-signed-binding/v1", "sourceSHA": source,
                "producer": producer, "builder": builders[0], "artifact": selected[prefix], "manifest": manifest}
     if retained is not None:
@@ -503,7 +514,7 @@ def restore(root):
     with zipfile.ZipFile(root / "payload.zip") as archive:
         require(len(archive.namelist()) == len(FILES) + 1
                 and set(archive.namelist()) == set(FILES) | {"manifest.json"}, "Unexpected signed payload files")
-        require(json.loads(archive_bytes(archive, "manifest.json")) == manifest, "Signed manifests differ")
+        require(json.loads(signed_manifest_bytes(archive)) == manifest, "Signed manifests differ")
         for name in FILES:
             entry = archive.getinfo(name)
             expected = manifest["files"][name]

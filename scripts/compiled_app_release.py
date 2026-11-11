@@ -1480,7 +1480,7 @@ def assemble(root):
     retained_root.mkdir()
     with verified_zip(payload, 4 * 1024**3, qualified_sha=SIGNED_ARTIFACT[1]) as archive:
         require(set(archive.namelist()) == set(checkpoint.FILES) | {'manifest.json'}, 'Retained signed input inventory differs')
-        manifest = checkpoint.verify_manifest(json.loads(archive_bytes(archive, 'manifest.json')), RETAINED_SOURCE, RETAINED_RUN)
+        manifest = checkpoint.verify_manifest(json.loads(checkpoint.signed_manifest_bytes(archive)), RETAINED_SOURCE, RETAINED_RUN)
         write(root / 'retained-signed-manifest.json', manifest)
         for name in checkpoint.FILES:
             record = manifest['files'][name]
@@ -1824,7 +1824,7 @@ def create_signed_input(root, output):
         manifest['componentAssembly'] = component
     checkpoint.validate_app_zip(output / 'NexGenVideo.zip')
     checkpoint.verify_manifest(manifest, os.environ['GITHUB_SHA'], int(os.environ['GITHUB_RUN_ID']))
-    write(output / 'manifest.json', manifest)
+    checkpoint.write_signed_manifest(output / 'manifest.json', manifest)
 
 
 if __name__ == '__main__':

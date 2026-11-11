@@ -13,7 +13,7 @@ import zipfile
 import app_cohort_v2 as cohort
 import native_xctest_host
 from native_xctest_host import HOST_NAME, persist_proof
-from retained_app_test_products import api, archive_bytes, checksum, download, require, verify_artifact, write
+from retained_app_test_products import api, checksum, download, require, verify_artifact, write
 
 
 def verify_reused_host(build, value):
@@ -51,10 +51,10 @@ def original_signed_input(root, value):
         verify_artifact(artifact, run, job, origin[role + 'ArtifactID'], origin[role + 'ArtifactSHA256'],
             'release-signed-input-' + origin['sourceSHA'] + suffix)
         download(artifact, root / ('signed-base-' + role + '.zip'))
-    with release.verified_zip(root / 'signed-base-proof.zip', 16 * 1024**2,
+    with release.verified_zip(root / 'signed-base-proof.zip', checkpoint.SIGNED_MANIFEST_MAX_BYTES,
             qualified_sha=origin['proofArtifactSHA256']) as archive:
         require(archive.namelist() == ['manifest.json'], 'Retained signed component proof inventory changed')
-        raw = archive_bytes(archive, 'manifest.json', 16 * 1024**2)
+        raw = checkpoint.signed_manifest_bytes(archive)
     manifest = checkpoint.verify_manifest(json.loads(raw), origin['sourceSHA'], origin['runID'])
     require(manifest['appTreeSHA256'] == origin['appTreeSHA256']
         and manifest['files']['NexGenVideo.zip']['sha256'] == origin['appArchiveSHA256'],
@@ -63,7 +63,7 @@ def original_signed_input(root, value):
     with release.verified_zip(root / 'signed-base-payload.zip', 8 * 1024**3,
             qualified_sha=origin['payloadArtifactSHA256']) as archive:
         require(set(archive.namelist()) == set(checkpoint.FILES) | {'manifest.json'}
-            and archive_bytes(archive, 'manifest.json', 16 * 1024**2) == raw,
+            and checkpoint.signed_manifest_bytes(archive) == raw,
             'Retained signed payload lost its original proof')
         for name in checkpoint.FILES:
             expected = manifest['files'][name]

@@ -29,6 +29,7 @@
     "scripts/private_analysis_verification.py",
     "scripts/production_cover_owner_evidence.py",
     "scripts/release_checkpoint.py",
+    "scripts/release_dmg_probe.py",
     "scripts/retained_packaging.py",
     "scripts/test_app_cohort_v2.py",
     "scripts/test_app_release_v2.py",
@@ -42,6 +43,7 @@
     "scripts/test_production_cover_owner_evidence.py",
     "scripts/test_release_recovery.py",
     "scripts/test_release_workflow.py",
+    "scripts/test_retained_packaging.py",
     "scripts/test_retained_release_runtime.py",
     "scripts/test_workspace_ui_v2_owner.py",
     "scripts/verify_diagnostic_candidate.py"
