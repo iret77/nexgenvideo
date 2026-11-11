@@ -542,7 +542,8 @@ class ExternalTestBundleTests(unittest.TestCase):
                                for item in history['files']).encode()
             if 'show' in arguments:
                 commit, name = arguments[-1].split(':', 1)
-                if commit == current and name in {workflow, action, cohort, 'scripts/fixtures/app-cohort-native-inventory.json'}: return (journey.REPOSITORY / name).read_bytes()
+                if commit == current and name in {workflow, action, cohort, 'scripts/fixtures/app-cohort-native-inventory.json',
+                        'scripts/compiled_app_release.py'}: return (journey.REPOSITORY / name).read_bytes()
                 self.assertEqual(commit, self.sha)
                 return original[name]
             self.fail('Unexpected compiled-client command: ' + str(arguments))
@@ -646,10 +647,12 @@ class ExternalTestBundleTests(unittest.TestCase):
                         'scripts/release_engine_resume.py', 'scripts/verify_diagnostic_candidate.py',
                         'scripts/fixtures/app-cohort.json'}: continue
             original = fixture.original[name]
-            fixture.original[name] += b'\nchanged compilation input'
+            fixture.original[name] += (b'\nCHANGED_IMPORT_CONTEXT = 1\n'
+                                       if name == 'scripts/compiled_app_release.py' else b'\nchanged compilation input')
             with self.subTest(input=name):
                 reason = ('native inventory changes outside an App-only transition'
                           if name == 'scripts/fixtures/app-cohort-native-inventory.json'
+                          else 'Engine acquisition helper changes' if name == 'scripts/compiled_app_release.py'
                           else 'Compiled UI test source, project or reachable shared helper changed')
                 self.assert_compiled_guard_rejects(fixture, reason)
             fixture.original[name] = original
@@ -735,6 +738,34 @@ class ExternalTestBundleTests(unittest.TestCase):
                                                    fixture.files, fixture.original, fixture.comparison)
         self.assertNotEqual(proof['producerFiles'][name], proof['consumerFiles'][name])
         self.assertEqual(proof['originalSources'][name].encode(), fixture.original[name])
+        fixture = self.compiled_client_fixture()
+        helper = 'scripts/compiled_app_release.py'
+        import ast
+        module = ast.parse(fixture.original[helper])
+        module.body = [node for node in module.body if not isinstance(node, ast.FunctionDef)
+                       or node.name not in {'engine_carrier_origin', 'retained_engine_carrier'}]
+        for node in module.body:
+            if isinstance(node, ast.FunctionDef) and node.name == 'retained_engine_evidence':
+                node.body = [ast.Raise(exc=ast.Call(func=ast.Name(id='RuntimeError', ctx=ast.Load()),
+                    args=[ast.Constant(value='historical direct origin is expired')], keywords=[]), cause=None)]
+        fixture.original[helper] = (ast.unparse(module) + '\n').encode()
+        fixture.original_files[helper] = hashlib.sha256(fixture.original[helper]).hexdigest()
+        change = {'filename': helper, 'status': 'modified'}
+        fixture.comparison['files'].append(change)
+        fixture.history['files'].append(dict(change))
+        with patch.object(journey, 'output', side_effect=fixture.git_output):
+            proof = bundle._compiled_compatibility(self.sha, fixture.original_files, fixture.current,
+                                                   fixture.files, fixture.original, fixture.comparison)
+        self.assertNotEqual(proof['producerFiles'][helper], proof['consumerFiles'][helper])
+        self.assertTrue(proof['engineCarrierRuntimeHelper']['newRuntimeQualificationRequired'])
+        baseline = fixture.original[helper]
+        for suffix in (b'\nimport unexpected_runtime_import\n', b'\nBUILD_CONTEXT = 999\n',
+                       b'\ndef unexpected_callable():\n    return 1\n'):
+            fixture.original[helper] = baseline + suffix
+            fixture.original_files[helper] = hashlib.sha256(fixture.original[helper]).hexdigest()
+            self.assert_compiled_guard_rejects(fixture, 'Engine acquisition helper changes')
+        fixture.original[helper] = baseline
+        fixture.original_files[helper] = hashlib.sha256(baseline).hexdigest()
         fixture = self.compiled_client_fixture()
         cohort = 'scripts/fixtures/app-cohort.json'
         current = json.loads((journey.REPOSITORY / cohort).read_bytes())

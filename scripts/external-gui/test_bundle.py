@@ -252,9 +252,44 @@ def _compiled_compatibility(producer_sha, producer_files, current_sha, current_f
     helper, guard = 'scripts/external-gui/test_bundle.py', 'scripts/verify_diagnostic_candidate.py'
     cohort = 'scripts/fixtures/app-cohort.json'
     inventory_path = 'scripts/fixtures/app-cohort-native-inventory.json'
-    metadata_only = {'scripts/external-gui/transport.py', 'scripts/release_engine_resume.py', inventory_path}
+    runtime_helper = 'scripts/compiled_app_release.py'
+    metadata_only = {'scripts/external-gui/transport.py', 'scripts/release_engine_resume.py', inventory_path, runtime_helper}
     require(all(producer_files[name] == digest for name, digest in current_files.items() if name not in {helper, guard, cohort, *metadata_only}),
             'Compiled UI test source, project or reachable shared helper changed')
+    import ast
+    runtime_views = []
+    current_runtime = journey.output([*git, 'show', current_sha + ':' + runtime_helper])
+    require(current_runtime == (journey.REPOSITORY / runtime_helper).read_bytes()
+            and hashlib.sha256(current_runtime).hexdigest() == current_files[runtime_helper],
+            'Current UI test runtime helper differs from its committed receipt')
+    for raw in (originals[runtime_helper], current_runtime):
+        try:
+            module = ast.parse(raw)
+        except (SyntaxError, UnicodeDecodeError):
+            raise ValueError('UI test Engine acquisition helper is not valid Python') from None
+        carrier_names = [node.name for node in module.body if isinstance(node, ast.FunctionDef)
+                         and node.name in {'engine_carrier_origin', 'retained_engine_carrier'}]
+        require(len(carrier_names) == len(set(carrier_names)), 'Duplicate UI test carrier helper declaration')
+        kept = []
+        for node in module.body:
+            if isinstance(node, ast.FunctionDef) and node.name in {'engine_carrier_origin', 'retained_engine_carrier'}:
+                _safe_function(node)
+                expected_args = [] if node.name == 'engine_carrier_origin' else ['root']
+                require([argument.arg for argument in node.args.args] == expected_args
+                        and not node.args.posonlyargs and not node.args.kwonlyargs
+                        and node.args.vararg is None and node.args.kwarg is None
+                        and len(node.args.defaults) == len(expected_args)
+                        and all(isinstance(value, ast.Constant) and value.value is None for value in node.args.defaults),
+                        'UI test carrier helper signature changes import behavior')
+                continue
+            if isinstance(node, ast.FunctionDef) and node.name == 'retained_engine_evidence':
+                _safe_function(node)
+                node.body = [ast.Pass()]
+            kept.append(node)
+        module.body = kept
+        runtime_views.append(ast.dump(module, include_attributes=False))
+    require(runtime_views[0] == runtime_views[1],
+            'UI test Engine acquisition helper changes its build import or nonselected behavior')
     cohort_raw = journey.output([*git, 'show', current_sha + ':' + cohort])
     require(cohort_raw == (journey.REPOSITORY / cohort).read_bytes()
             and hashlib.sha256(cohort_raw).hexdigest() == current_files[cohort],
@@ -377,6 +412,11 @@ def _compiled_compatibility(producer_sha, producer_files, current_sha, current_f
         'producerSourceSHA': producer_sha, 'consumerSourceSHA': current_sha,
         'producerFiles': producer_files, 'consumerFiles': current_files,
         'originalSources': {name: raw.decode() for name, raw in originals.items()}, 'comparison': comparison,
+        'engineCarrierRuntimeHelper': {'producerSHA256': producer_files[runtime_helper],
+            'consumerSHA256': current_files[runtime_helper],
+            'importViewSHA256': hashlib.sha256(runtime_views[0].encode()).hexdigest(),
+            'allowedRuntimeFunctions': ['engine_carrier_origin', 'retained_engine_carrier', 'retained_engine_evidence'],
+            'newRuntimeQualificationRequired': True},
         'buildRecipeSHA256': hashlib.sha256(recipe.encode()).hexdigest(),
         'buildImportSHA256': hashlib.sha256(imported.encode()).hexdigest(),
         'buildWorkflowSHA256': hashlib.sha256(workflow_recipe.encode()).hexdigest(),

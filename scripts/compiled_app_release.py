@@ -981,25 +981,154 @@ def run_tests(root):
     write(root / 'receipt.json', receipt)
 
 
+def engine_carrier_origin():
+    return {'sourceSHA': '927f3b50c63a69141abca3daf590e7a9beb0bcf1',
+     'runID': 42966762592,
+     'jobID': 130345792839,
+     'artifactID': 13832390642,
+     'artifactSHA256': '7e5dde96d7ba9aa84e0d70607b7863bae9c5ac761d29626125d80a8b10d10076',
+     'artifactBytes': 2101362024,
+     'receiptSHA256': '0867554066568f54a263b968f9c97ffc8235ddb884fa5511f9f65ecc2b19f6d5',
+     'receiptBytes': 7131033,
+     'dependencies': [{'id': 13832390642,
+                       'name': 'release-compiled-app-evidence-42966762592-a1',
+                       'sha256': '7e5dde96d7ba9aa84e0d70607b7863bae9c5ac761d29626125d80a8b10d10076',
+                       'bytes': 2101362024,
+                       'runID': 42966762592,
+                       'sourceSHA': '927f3b50c63a69141abca3daf590e7a9beb0bcf1'},
+                      {'id': 13769367412,
+                       'name': 'release-signed-input-a1375966dbe6d2dd7b918c726f09ac5d1f4f16fb-proof',
+                       'sha256': '6a21867ad5474418ef37590da4d3f35b1b409089928796b4a4aeec42c6624ee0',
+                       'bytes': 821936,
+                       'runID': 42822598973,
+                       'sourceSHA': 'a1375966dbe6d2dd7b918c726f09ac5d1f4f16fb'},
+                      {'id': 13769391943,
+                       'name': 'release-signed-input-a1375966dbe6d2dd7b918c726f09ac5d1f4f16fb',
+                       'sha256': '4dd7c9afd04a08039ac8ff0c1d7381d0bd779cbd3b5d405d978e502cf446a583',
+                       'bytes': 1696850395,
+                       'runID': 42822598973,
+                       'sourceSHA': 'a1375966dbe6d2dd7b918c726f09ac5d1f4f16fb'},
+                      {'id': 13635913556,
+                       'name': 'NexGenVideo-1.8.0-artifact-only',
+                       'sha256': '5a3c9eef5134b2ae7479c7af8a465c655fceb3857fbf403a090fe27871e7fcb0',
+                       'bytes': 3627462402,
+                       'runID': 42522113496,
+                       'sourceSHA': 'ebe2d8baf4d953d36fda2abc3835400f052da506'},
+                      {'id': 13626102447,
+                       'name': 'release-test-runtime-products-42500881402-a1',
+                       'sha256': '9d9a40671b071e86cbc5daff9ca11add8d50885a1699d7552e90499c6f96f8af',
+                       'bytes': 503903061,
+                       'runID': 42500881402,
+                       'sourceSHA': '849cdd32d702e0b86219ee0a44f10360f68cbfe6'},
+                      {'id': 12209205072,
+                       'name': 'managed-bpy-source-26ad91ad98eb8d38f4e92d8f5670ff7bcc639552',
+                       'sha256': '8fd90c6cdcd274d4c28d8b1c389eaa3f067a0b8983e21c0b0ee11aee7e516a81',
+                       'bytes': 1941299819,
+                       'runID': 39295082436,
+                       'sourceSHA': '26ad91ad98eb8d38f4e92d8f5670ff7bcc639552'}]}
+
+
+def retained_engine_carrier(root=None):
+    from datetime import datetime, timezone
+    origin = engine_carrier_origin()
+    dependencies = {}
+    for selected in origin['dependencies']:
+        item = api('actions/artifacts/' + str(selected['id']))
+        require(item.get('id') == selected['id'] and item.get('name') == selected['name']
+            and item.get('digest') == 'sha256:' + selected['sha256'] and item.get('size_in_bytes') == selected['bytes']
+            and item.get('expired') is False and item.get('workflow_run', {}).get('id') == selected['runID']
+            and item['workflow_run'].get('head_sha') == selected['sourceSHA']
+            and item['workflow_run'].get('repository_id') == item['workflow_run'].get('head_repository_id') == 1280482148
+            and datetime.fromisoformat(item['expires_at'].replace('Z', '+00:00')) > datetime.now(timezone.utc),
+            'A transitive compiled App acquisition input is unavailable or changed')
+        dependencies[str(selected['id'])] = item
+    require(len(dependencies) == len(origin['dependencies']), 'Duplicate compiled App acquisition dependency')
+    run = api('actions/runs/' + str(origin['runID']))
+    jobs = api(f"actions/runs/{origin['runID']}/attempts/1/jobs?per_page=100")
+    require(run.get('repository', {}).get('full_name') == run.get('head_repository', {}).get('full_name') == REPOSITORY
+        and run.get('head_sha') == origin['sourceSHA']
+        and run.get('run_attempt') == 1 and run.get('status') == 'completed' and run.get('event') == 'workflow_dispatch'
+        and run.get('workflow_id') == 303346287 and run.get('path') == '.github/workflows/release.yml'
+        and run.get('actor', {}).get('login') == 'iret77' and jobs.get('total_count') == len(jobs.get('jobs', [])),
+        'Engine evidence carrier producer differs')
+    matched = [job for job in jobs['jobs'] if job.get('id') == origin['jobID'] and job.get('name') == 'release-build']
+    require(len(matched) == 1, 'Engine evidence carrier job is missing or ambiguous')
+    job = matched[0]
+    require(job.get('run_id') == origin['runID'] and job.get('head_sha') == origin['sourceSHA']
+        and job.get('run_attempt') == 1 and job.get('status') == 'completed' and job.get('conclusion') == 'success'
+        and job.get('labels') == ['macrunner'], 'Engine evidence carrier job did not complete')
+    artifact = dependencies[str(origin['artifactID'])]
+    verify_artifact(artifact, run, job, origin['artifactID'], origin['artifactSHA256'],
+        'release-compiled-app-evidence-' + str(origin['runID']) + '-a1')
+    require(artifact['size_in_bytes'] == origin['artifactBytes'], 'Engine evidence carrier size differs')
+    acquired = datetime.now(timezone.utc).isoformat()
+    result = {'schema': 'retained-engine-carrier-acquisition/1', 'run': run, 'job': job,
+        'artifact': artifact, 'dependencies': dependencies, 'acquiredAt': acquired}
+    if root is None:
+        return result
+    target = root / 'retained-engine'
+    target.mkdir()
+    transit = root / 'engine-carrier-download'
+    transit.mkdir()
+    archive_path = transit / 'original.zip'
+    download(artifact, archive_path)
+    with verified_zip(archive_path, 8 * 1024**3, qualified_sha=origin['artifactSHA256']) as archive:
+        records = {}
+        for name, size, digest in [('receipt.json', origin['receiptBytes'], origin['receiptSHA256']),
+                ('retained-engine/original.zip', 1717370, engine.DIGEST),
+                ('retained-engine/original-job.log', 3862332, engine.LOG_DIGEST)]:
+            require(stat.S_IFMT(archive.getinfo(name).external_attr >> 16) in (0, stat.S_IFREG),
+                'Engine carrier selected member is not a regular file')
+            raw = archive_bytes(archive, name)
+            require(len(raw) == size and hashlib.sha256(raw).hexdigest() == digest,
+                'Engine carrier selected original member differs')
+            records[name] = raw
+    receipt = json.loads(records.pop('receipt.json'))
+    require(receipt.get('sourceSHA') == origin['sourceSHA'] and receipt.get('runID') == origin['runID']
+        and receipt.get('attempt') == 1 and receipt.get('passed') is True
+        and receipt.get('counts', {}).get('retainedEngine') == 896 and receipt['counts'].get('engineSkips') == 14,
+        'Engine carrier receipt differs')
+    historical = receipt['retainedEngine']
+    engine.verify_original(historical['run'], {'total_count': 1, 'jobs': [historical['job']]})
+    old = historical['artifact']
+    when = lambda value: datetime.fromisoformat(value.replace('Z', '+00:00'))
+    require(old.get('id') == engine.ARTIFACT and old.get('name') == 'release-test-evidence'
+        and old.get('digest') == 'sha256:' + engine.DIGEST and old.get('size_in_bytes') == 1717370
+        and old.get('expired') is False and old.get('workflow_run', {}).get('id') == engine.RUN
+        and old['workflow_run'].get('head_sha') == engine.SOURCE
+        and when(historical['job']['started_at']) <= when(old['created_at']) <= when(old['updated_at'])
+        <= when(historical['job']['completed_at']) <= when(artifact['created_at']) < when(old['expires_at'])
+        and historical.get('proof', {}).get('eventsSHA256') == engine.EVENT_DIGEST
+        and historical['proof'].get('logSHA256') == engine.CONSOLE_DIGEST,
+        'Historical Engine acquisition or exact execution identity differs')
+    for name, raw in records.items():
+        (target / Path(name).name).write_bytes(raw)
+    result.update(original=historical, receiptSHA256=origin['receiptSHA256'],
+        bytesAcquiredAt=datetime.now(timezone.utc).isoformat(),
+        memberSHA256={'receipt.json': origin['receiptSHA256'],
+            'retained-engine/original.zip': engine.DIGEST, 'retained-engine/original-job.log': engine.LOG_DIGEST})
+    write(target / 'carrier-acquisition.json', result)
+    return result
+
+
 def retained_engine_evidence(root, expected):
-    from verified_pr_source_checks import read_api
     engine.verify_engine_source_objects(os.environ['GITHUB_SHA'])
     original = api('actions/runs/' + str(engine.RUN))
     jobs = api(f'actions/runs/{engine.RUN}/attempts/1/jobs?per_page=100')
     job = engine.verify_original(original, jobs)
-    artifact = api('actions/artifacts/' + str(engine.ARTIFACT))
-    verify_artifact(artifact, original, job, engine.ARTIFACT, engine.DIGEST, 'release-test-evidence')
+    carrier = retained_engine_carrier(root)
+    historical = carrier['original']
+    require(historical['run']['id'] == original['id'] and historical['run']['head_sha'] == original['head_sha']
+        and historical['job']['id'] == job['id'], 'Carried and live original Engine producer differ')
+    artifact = historical['artifact']
     retained_engine = root / 'retained-engine'
-    retained_engine.mkdir()
-    download(artifact, retained_engine / 'original.zip')
     retained_proof = engine.verify_archive(retained_engine / 'original.zip', retained_engine)
     verify_events(retained_engine / 'engine-swift-testing/events.jsonl', expected, 'NexGenEngineTests')
-    raw = read_api(f'actions/jobs/{engine.JOB}/logs', 4_000_000)
-    require(hashlib.sha256(raw).hexdigest() == engine.LOG_DIGEST, 'Original complete Engine producer log differs')
-    (retained_engine / 'original-job.log').write_bytes(raw)
+    raw = (retained_engine / 'original-job.log').read_bytes()
     environment = engine_environment(raw)
     write(retained_engine / 'current-environment.json', environment)
-    return {'run': original, 'job': job, 'artifact': artifact, 'proof': retained_proof, 'environment': environment}
+    return {'run': original, 'job': job, 'artifact': artifact, 'proof': retained_proof, 'environment': environment,
+        'acquisition': {key: value for key, value in carrier.items() if key != 'original'}}
 
 
 def engine_environment(raw):
