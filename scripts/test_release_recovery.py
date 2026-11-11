@@ -12,6 +12,7 @@ import tarfile
 import tempfile
 import unittest
 from unittest.mock import patch
+import warnings
 import zipfile
 
 import yaml
@@ -198,7 +199,7 @@ class ReleaseRecoveryTests(unittest.TestCase):
                 "created_at": "2026-11-02T11:00:00Z", "updated_at": "2026-11-02T11:00:01Z",
                 "expires_at": "2100-01-01T00:00:00Z"}
 
-    def signed(self, root):
+    def signed(self, root, proof_log_bytes=0):
         app = root / "original/NexGenVideo.app"
         (app / "Contents/MacOS").mkdir(parents=True)
         executable = app / "Contents/MacOS/NexGenVideo"
@@ -226,7 +227,9 @@ class ReleaseRecoveryTests(unittest.TestCase):
                         "completed": True, "scope": "all", "configuration": "release", "filter": ""}},
                     "files": {name: {"bytes": (payload / name).stat().st_size,
                                      "sha256": checkpoint.checksum(payload / name)} for name in checkpoint.FILES}}
-        checkpoint.write(payload / "manifest.json", manifest)
+        if proof_log_bytes:
+            manifest["nativeEvidence"]["suite"]["capturedOutput"] = "e" * proof_log_bytes
+        checkpoint.write_signed_manifest(payload / "manifest.json", manifest)
         archive_path = root / "signed.zip"
         with zipfile.ZipFile(archive_path, "w") as archive:
             for name in (*checkpoint.FILES, "manifest.json"):
@@ -411,8 +414,31 @@ class ReleaseRecoveryTests(unittest.TestCase):
     def test_signed_input_roundtrips_exact_bytes(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            manifest, archive = self.signed(root)
-            binding = self.restore_fixture(root, manifest, archive)
+            manifest, archive = self.signed(root, proof_log_bytes=9 * 1024**2)
+            manifest_path = root / "original/manifest.json"
+            self.assertGreater(manifest_path.stat().st_size, 8 * 1024**2)
+            self.assertLess(manifest_path.stat().st_size, 16 * 1024**2)
+            proof = root / "proof.zip"
+            with zipfile.ZipFile(proof, "w", compression=zipfile.ZIP_DEFLATED) as zipped:
+                zipped.write(manifest_path, "manifest.json")
+            producer = {"id": 123, "head_sha": SOURCE, "repository": {"full_name": checkpoint.REPOSITORY},
+                        "path": ".github/workflows/release.yml", "event": "workflow_dispatch", "run_attempt": 1,
+                        "actor": {"login": "iret77"}, "status": "in_progress"}
+            prefix = "release-signed-input-" + SOURCE
+            payload_item = self.artifact(producer, prefix, archive, 100)
+            proof_item = self.artifact(producer, prefix + "-proof", proof, 101)
+            builder = {"name": "release-build", "head_sha": SOURCE, "conclusion": "success", "labels": ["macrunner"],
+                       "started_at": "2026-11-02T10:00:00Z", "completed_at": "2026-11-02T12:00:00Z"}
+            responses = {"actions/runs/123": producer,
+                "actions/runs/123/attempts/1/jobs?per_page=100": {"total_count": 1, "jobs": [builder]},
+                "actions/runs/123/artifacts?per_page=100": {"total_count": 2, "artifacts": [payload_item, proof_item]},
+                "actions/artifacts/100": payload_item, "actions/artifacts/101": proof_item}
+            binding = root / "binding"
+            with patch.dict(os.environ, GITHUB_SHA=SOURCE, GITHUB_REPOSITORY=checkpoint.REPOSITORY, GITHUB_RUN_ID="123"), \
+                    patch.object(checkpoint, "api", side_effect=responses.__getitem__), \
+                    patch.object(checkpoint, "download", side_effect=lambda item, destination: shutil.copyfile(proof, destination)):
+                checkpoint.prepare(123, binding)
+            self.assertEqual(json.loads((binding / "binding.json").read_text())["manifest"], manifest)
             environment = dict(GITHUB_SHA=SOURCE, REL_VERSION="1.8.0", GITHUB_ENV=str(root / "env"),
                                PLUGIN_CATALOG_URL="https://example.test/catalog.json",
                                GITHUB_RUN_ID="456", NOTARY_STATE_DIR=str(root / "notary"))
@@ -425,6 +451,25 @@ class ReleaseRecoveryTests(unittest.TestCase):
             self.assertIn("BUILD_NUMBER=105\n", (root / "env").read_text())
             self.assertEqual(json.loads((root / "notary/context.json").read_text())["buildRunID"], 123)
             self.assertFalse(any(call.args[0] == "swift" for call in commands.call_args_list))
+
+    def test_signed_manifest_writer_and_reader_reject_oversized_or_duplicate_records(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            oversized = {"evidence": "e" * (16 * 1024**2)}
+            path = root / "manifest.json"
+            with self.assertRaises(ValueError):
+                checkpoint.write_signed_manifest(path, oversized)
+            self.assertFalse(path.exists())
+            for records in ([json.dumps(oversized)], ["{}", "{}"]):
+                with self.subTest(recordCount=len(records)), io.BytesIO() as data:
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore", UserWarning)
+                        with zipfile.ZipFile(data, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                            for raw in records:
+                                archive.writestr("manifest.json", raw)
+                    with zipfile.ZipFile(data) as archive:
+                        with self.assertRaises(ValueError):
+                            checkpoint.signed_manifest_bytes(archive)
 
     def test_complete_retained_core_survives_signed_checkpoint_restore_without_original_files(self):
         import compiled_app_release as release

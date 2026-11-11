@@ -573,8 +573,43 @@ def collect_source(run_id, target, expected_ref, *, historical=False):
     return record, proof, log
 
 
+def proof_bytes(raw):
+    budget = BUDGET.get()
+    if budget is None:
+        return raw
+    checksum = digest(raw)
+    known = budget.setdefault('expandedRecords', {})
+    if checksum in known:
+        require(known[checksum] == raw, 'Authenticated proof bytes changed')
+        return known[checksum]
+    total = budget.get('expandedBytes', 0) + len(raw)
+    require(total <= MAX_PROOF_BYTES, 'Packaging provenance chain exceeds its shared byte bound')
+    budget['expandedBytes'] = total
+    known[checksum] = raw
+    return raw
+
+
+def proof_member(archive, entry):
+    budget = BUDGET.get()
+    if budget is None or budget.get('expandedBytes', 0) + entry.file_size <= MAX_PROOF_BYTES:
+        return proof_bytes(archive.read(entry))
+    checksum = hashlib.sha256()
+    with archive.open(entry) as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b''):
+            checksum.update(block)
+    known = budget.get('expandedRecords', {}).get(checksum.hexdigest())
+    require(known is not None and len(known) == entry.file_size,
+            'Packaging provenance chain exceeds its shared byte bound')
+    return known
+
+
 def read_proof_archive(raw):
     require(0 < len(raw) <= MAX_PROOF_BYTES, "Packaging provenance archive exceeds its bound")
+    budget = BUDGET.get()
+    checksum = digest(raw)
+    cached = budget.setdefault('decodedArchives', {}).get(checksum) if budget is not None else None
+    if cached is not None:
+        return dict(cached)
     with zipfile.ZipFile(io.BytesIO(raw)) as archive:
         names = archive.namelist()
         require(names and len(names) == len(set(names)) and all("/" not in name and name not in {".", ".."} for name in names),
@@ -584,15 +619,14 @@ def read_proof_archive(raw):
         expanded = sum(entry.file_size for entry in archive.infolist())
         require(expanded <= MAX_PROOF_BYTES,
                 "Packaging provenance expands beyond its bound")
-        if BUDGET.get() is not None:
-            budget = BUDGET.get()
-            budget['expandedBytes'] = budget.get('expandedBytes', 0) + expanded
-            require(budget['expandedBytes'] <= MAX_PROOF_BYTES, 'Packaging provenance chain exceeds its shared byte bound')
-        return {name: archive.read(name) for name in names}
+        records = {entry.filename: proof_member(archive, entry) for entry in archive.infolist()}
+    if budget is not None:
+        budget['decodedArchives'][checksum] = records
+    return dict(records)
 
 
 def signed_input(run_id, product):
-    from release_checkpoint import verify_manifest
+    from release_checkpoint import SIGNED_MANIFEST_MAX_BYTES, verify_manifest
     require(type(run_id) is int and run_id > 0, "Invalid original signed producer")
     producer = api(f"actions/runs/{run_id}")
     require(producer.get("id") == run_id and producer.get("head_sha") == revision(product)
@@ -635,11 +669,11 @@ def signed_input(run_id, product):
         require(isinstance(checksum, str) and re.fullmatch("sha256:[a-f0-9]{64}", checksum), "Missing original signed digest")
         verify_artifact(artifact, producer, builder, artifact["id"], checksum[7:], name)
         artifacts[name] = artifact
-    proof = read_api("actions/artifacts/" + str(artifacts[prefix + "-proof"]["id"]) + "/zip", maximum=16 * 1024**2)
+    proof = read_api("actions/artifacts/" + str(artifacts[prefix + "-proof"]["id"]) + "/zip", maximum=SIGNED_MANIFEST_MAX_BYTES)
     require(len(proof) == artifacts[prefix + "-proof"]["size_in_bytes"]
             and "sha256:" + digest(proof) == artifacts[prefix + "-proof"]["digest"], "Original signed proof bytes differ")
     members = read_proof_archive(proof)
-    require(set(members) == {'manifest.json'} and len(members['manifest.json']) <= 16 * 1024**2,
+    require(set(members) == {'manifest.json'} and len(members['manifest.json']) <= SIGNED_MANIFEST_MAX_BYTES,
             'Unexpected or oversized original signed proof entries')
     manifest = verify_manifest(json.loads(members['manifest.json']), product, run_id)
     compiled_product = verify_signed_resume(producer, builder, artifacts[prefix], artifacts[prefix + '-proof'], members['manifest.json'], verifier=verify_artifact) if compiled else None
@@ -839,7 +873,23 @@ def original_journals(producer, product, jobs, inventory, *, allow_pre_submit=Fa
     return {"artifact": artifact, "job": job, "context": context, "journals": journals}, raw
 
 
-def prior_notary(run_id, product, *, packaging=None, chain=None):
+def previous_signed_build(previous):
+    if previous.get('schema') == 'release-pre-submit-origin/v1':
+        require(previous.get('stateArtifact') is None and previous.get('dmgArtifact') is None
+                and previous.get('journals') == {} and 'context' not in previous,
+                'Pre-submit origin invented Apple state')
+        return previous['signedBuildRunID']
+    return previous['context']['buildRunID']
+
+
+def prior_origin(mode, product, *, chain=None):
+    signed = mode.get('signedBuildRunID')
+    require(bool(signed) != bool(mode.get('priorNotaryRunID')), 'Select a signed build or a saved notary producer')
+    return prior_notary(signed or mode['priorNotaryRunID'], product,
+        packaging=mode.get('priorPackagingProof'), chain=chain, allow_pre_submit_without_state=bool(signed))
+
+
+def prior_notary(run_id, product, *, packaging=None, chain=None, allow_pre_submit_without_state=False):
     from release_checkpoint import notary_state_entry, notary_state_names, require_notary_checkpoint, require_notary_payload_coverage
     require(type(run_id) is int and run_id > 0, "Invalid previous notarization producer")
     producer = api(f"actions/runs/{run_id}")
@@ -878,6 +928,18 @@ def prior_notary(run_id, product, *, packaging=None, chain=None):
             verify_artifact(artifact, producer, job, artifact["id"], checksum[7:], name)
             artifacts[name] = artifact
     state = notary_state_entry(list(artifacts.values()), product)
+    if allow_pre_submit_without_state:
+        from app_release_v2 import pre_submit
+        certificate = pre_submit(producer, job)
+        names = [entry.get('name', '') for entry in inventory['artifacts']]
+        prefixes = ('release-notary-state-', 'release-app-notary-', 'release-dmg-notary-', 'release-dmg-input-')
+        require(producer_source == product and packaging is None and certificate is not None
+                and state is None and not artifacts
+                and all(isinstance(name, str) and not name.startswith(prefixes) for name in names),
+                'Signed build cannot discard entered or ambiguous Apple operations; use saved notarization')
+        return {'schema': 'release-pre-submit-origin/v1', 'producer': producer, 'job': job,
+                'signedBuildRunID': run_id, 'preSubmit': certificate, 'artifactInventory': inventory['artifacts'],
+                'stateArtifact': None, 'dmgArtifact': None, 'dmgProof': None, 'journals': {}}, None
     require(state is not None, "Previous notarization state is missing")
     raw = artifact_bytes(state, 4 * 1024**2)
     from app_release_v2 import pre_submit
@@ -955,17 +1017,21 @@ def mode_inputs(values):
     revision(product)
     require(product != os.environ["GITHUB_SHA"] and values.get("artifactOnly") == values.get("dryRun") == "true",
             "Retained product packaging is exclusive to artifact-only dry runs")
-    for name in ("productSourceRunID", "verifiedSourceRunID", "priorNotaryRunID"):
+    for name in ("productSourceRunID", "verifiedSourceRunID"):
         require(isinstance(values.get(name), str) and re.fullmatch("[1-9][0-9]*", values[name]),
                 "Retained packaging requires complete source and notary inputs")
-    require(not any(values.get(name) for name in ("completedReleaseTestsRunID", "completedEngineTestsRunID",
-                                                 "signedBuildRunID", "testBundleRunID")),
+    signed, notary = values.get('signedBuildRunID', ''), values.get('priorNotaryRunID', '')
+    require(bool(signed) != bool(notary) and isinstance(signed or notary, str)
+            and re.fullmatch('[1-9][0-9]*', signed or notary), 'Select one exact signed build or saved notarization')
+    require(not signed or prior is None, 'Pre-submit signed build cannot select previous packaging provenance')
+    require(not any(values.get(name) for name in ("completedReleaseTestsRunID", "completedEngineTestsRunID", "testBundleRunID")),
             "Retained packaging cannot combine native, signed or test-client selectors")
     require(isinstance(values.get("version"), str) and re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", values["version"]),
             "Invalid retained product version")
     return {"productSourceSHA": product, "productSourceRunID": int(product_run),
             "verifiedSourceRunID": int(values["verifiedSourceRunID"]),
-            "priorNotaryRunID": int(values["priorNotaryRunID"]), "priorPackagingProof": prior,
+            "priorNotaryRunID": int(notary) if notary else None, "priorPackagingProof": prior,
+            **({'signedBuildRunID': int(signed)} if signed else {}),
             "version": values["version"], "artifactOnly": True, "dryRun": True}
 
 
@@ -983,8 +1049,7 @@ def collect_binding(values, *, archive_root=None):
         record, files = collect_original_binding(values, archive_root=archive_root, chain=chain)
         raw = encoded_api_evidence(captured, record)
         files = dict(files, **{'original-api-evidence.zip': raw})
-        chain['expandedBytes'] += sum(map(len, files.values()))
-        require(chain['expandedBytes'] <= MAX_PROOF_BYTES, 'Packaging input exceeds its shared byte bound')
+        files = {name: proof_bytes(value) for name, value in files.items()}
         read_proof_archive(raw)
     finally:
         BUDGET.reset(budget_token)
@@ -1013,12 +1078,15 @@ def collect_original_binding(values, *, archive_root=None, chain=None):
     harness, harness_zip, harness_log = collect_source(mode["verifiedSourceRunID"], producer, os.environ["GITHUB_REF_NAME"])
     original, original_zip, original_log = collect_source(mode["productSourceRunID"], product, None, historical=True)
     require(chain is not None and chain['depth'] == 1, 'Fresh packaging acquisition requires its reserved current node')
-    previous, state = prior_notary(mode["priorNotaryRunID"], product, packaging=mode["priorPackagingProof"], chain=chain)
-    signed, signed_zip, original_state = signed_input(previous["context"]["buildRunID"], product)
+    previous, state = prior_origin(mode, product, chain=chain)
+    original_build = previous_signed_build(previous)
+    signed, signed_zip, original_state = signed_input(original_build, product)
+    require(not mode.get('signedBuildRunID') or signed.get('cohortProduct') is not None,
+            'Pre-submit continuation requires a fully verified typed signed App')
     require(signed["manifest"]["identity"]["version"] == mode["version"], "Requested retained version differs")
     app_zip = signed["manifest"]["files"]["NexGenVideo.zip"]["sha256"]
     first_compiled = compiled_first_notary({'signedInput': signed, 'previousNotary': previous,
-        'originalSignedBuildRunID': previous['context']['buildRunID'], 'productSourceSHA': product})
+        'originalSignedBuildRunID': original_build, 'productSourceSHA': product})
     require(app_zip in previous['journals'] or first_compiled, 'Previous state lost the original App Apple submission')
     if signed["originalNotary"] is not None:
         require(all(previous["journals"].get(key) == value for key, value in signed["originalNotary"]["journals"].items()),
@@ -1026,14 +1094,15 @@ def collect_original_binding(values, *, archive_root=None, chain=None):
     files = {"harness-source.json": encoded(harness), "harness-source-original-proof.zip": harness_zip,
              "harness-source-original-job.log": harness_log, "product-source.json": encoded(original),
              "product-source-original-proof.zip": original_zip, "product-source-original-job.log": original_log,
-             "signed-proof.zip": signed_zip, "prior-notary-state.zip": state}
+             "signed-proof.zip": signed_zip}
+    files['prior-notary-state.zip' if state is not None else 'pre-submit-origin.json'] = state if state is not None else encoded(previous)
     if original_state is not None:
         files["original-notary-state.zip"] = original_state
     record = {"schema": "nexgenvideo/retained-packaging-provenance/1", "stage": "input",
               "productSourceSHA": product, "producerSourceSHA": producer,
               "productTreeSHA": closure["productTreeSHA"], "producerTreeSHA": closure["producerTreeSHA"],
               "runID": run_id, "attempt": 1, "ref": os.environ["GITHUB_REF_NAME"],
-              "originalSignedBuildRunID": previous["context"]["buildRunID"], "mode": mode,
+              "originalSignedBuildRunID": original_build, "mode": mode,
               "closure": closure, "signedInput": signed, "previousNotary": previous,
               "files": {name: {"bytes": len(raw), "sha256": digest(raw)} for name, raw in files.items()}}
     if archive_root is not None:
@@ -1380,14 +1449,21 @@ def matching_artifact(recorded, actual):
             "Recorded packaging artifact differs from its actual original")
 
 
+def proof_files(record):
+    if record.get('previousNotary', {}).get('schema') == 'release-pre-submit-origin/v1':
+        return PROOF_FILES - {'prior-notary-state.zip'} | {'pre-submit-origin.json'}
+    return PROOF_FILES
+
+
 def validate_binding(record, files, *, execution=False, chain=None):
     if chain is None:
         chain = provenance_chain(current=True)
+    required_files = proof_files(record)
     require(record.get("schema") == "nexgenvideo/retained-packaging-provenance/1"
             and record.get("stage") in {"input", "restored", "complete"}
             and record.get("attempt") == 1 and type(record.get("runID")) is int and record["runID"] > 0
             and set(files) == set(record.get("files", {}))
-            and PROOF_FILES <= set(files) <= PROOF_FILES | OPTIONAL_PROOF_FILES, "Incomplete packaging provenance")
+            and required_files <= set(files) <= required_files | OPTIONAL_PROOF_FILES, "Incomplete packaging provenance")
     require(('submitted-dmg-proof.zip' in files) == (record['stage'] == 'complete'), 'Packaging proof has the wrong submission stage')
     require((set(files) & SOURCE_REUSE_FILES) == (SOURCE_REUSE_FILES if record['stage'] == 'complete' and retained_compiled_product(record) else set()),
             'Source qualification proof has the wrong compiled stage')
@@ -1431,11 +1507,16 @@ def validate_binding(record, files, *, execution=False, chain=None):
                     producer, run["head_branch"])
     validate_source(original, files["product-source-original-proof.zip"], files["product-source-original-job.log"],
                     product, original.get("sourceRef"))
-    previous, state = prior_notary(mode.get("priorNotaryRunID"), product, packaging=mode.get("priorPackagingProof"), chain=chain)
-    require(state == files["prior-notary-state.zip"] and previous["context"] == record.get("previousNotary", {}).get("context")
-            and previous["journals"] == record.get("previousNotary", {}).get("journals")
-            and previous.get('preSubmit') == record.get('previousNotary', {}).get('preSubmit'), "Previous notary evidence changed")
-    matching_artifact(record["previousNotary"]["stateArtifact"], previous["stateArtifact"])
+    previous, state = prior_origin(mode, product, chain=chain)
+    if state is None:
+        require(cohort_signed_product(record) and mode.get('signedBuildRunID') == previous_signed_build(previous)
+                and previous == record.get('previousNotary') and files['pre-submit-origin.json'] == encoded(previous),
+                'Pre-submit origin or its actual typed signed build changed')
+    else:
+        require(state == files["prior-notary-state.zip"] and previous["context"] == record.get("previousNotary", {}).get("context")
+                and previous["journals"] == record.get("previousNotary", {}).get("journals")
+                and previous.get('preSubmit') == record.get('previousNotary', {}).get('preSubmit'), "Previous notary evidence changed")
+        matching_artifact(record["previousNotary"]["stateArtifact"], previous["stateArtifact"])
     require(record['previousNotary'].get('acceptedAppNotary') == previous.get('acceptedAppNotary'),
             'Previous accepted App notarization provenance changed')
     if previous["dmgArtifact"] is None:
@@ -1457,7 +1538,7 @@ def validate_binding(record, files, *, execution=False, chain=None):
         allowed = packaging_paths(product)
         require({entry["filename"] for entry in continuation["files"]} <= allowed,
                 "Packaging continuation changed unsupported inputs")
-    original_build = previous["context"]["buildRunID"]
+    original_build = previous_signed_build(previous)
     require(original_build == record.get("originalSignedBuildRunID"), "Packaging selected another original signed build")
     signed, proof, original_state = signed_input(original_build, product)
     require(proof == files["signed-proof.zip"] and signed["manifest"] == record.get("signedInput", {}).get("manifest")
@@ -1552,8 +1633,9 @@ def execution_source(record):
 
 
 def save_stage(root, record, files):
+    required_files = proof_files(record)
     require(record.get("stage") in {"input", "restored", "complete"}
-            and PROOF_FILES <= set(files) <= PROOF_FILES | OPTIONAL_PROOF_FILES,
+            and required_files <= set(files) <= required_files | OPTIONAL_PROOF_FILES,
             "Invalid packaging proof snapshot")
     directory = root / record["stage"]
     directory.mkdir(parents=True, exist_ok=False)
@@ -1567,12 +1649,16 @@ def read_stage(root, stage):
     require(stage in {"input", "restored", "complete"}, "Unknown packaging proof stage")
     directory = root / stage
     require(directory.is_dir() and not directory.is_symlink(), "Packaging proof snapshot is missing")
+    metadata = directory / 'packaging-provenance.json'
+    require(metadata.is_file() and not metadata.is_symlink() and metadata.stat().st_size <= MAX_PROOF_BYTES,
+            'Packaging metadata is missing or oversized')
+    record = json.loads(metadata.read_bytes())
+    required_files = proof_files(record)
     names = {path.name for path in directory.iterdir()}
-    require(PROOF_FILES | {"packaging-provenance.json"} <= names <= PROOF_FILES | OPTIONAL_PROOF_FILES | {"packaging-provenance.json"}
+    require(required_files | {"packaging-provenance.json"} <= names <= required_files | OPTIONAL_PROOF_FILES | {"packaging-provenance.json"}
             and all(path.is_file() and not path.is_symlink() for path in directory.iterdir()), "Packaging snapshot members changed")
     files = {name: (directory / name).read_bytes() for name in names - {"packaging-provenance.json"}}
     require(sum(map(len, files.values())) <= MAX_PROOF_BYTES, "Local packaging proof exceeds its bound")
-    record = json.loads((directory / "packaging-provenance.json").read_bytes())
     require(record.get("stage") == stage, "Packaging proof changed its stage")
     return record, files
 

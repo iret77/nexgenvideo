@@ -488,3 +488,9 @@ The private workflow therefore verifies the signed input, emits its finite repor
 pointer and runs data-only report verification on the first native execution.
 Same-batch callers outside Release retain their existing interface. A later reader
 correction can reuse the original successful native report without running the App again.
+
+Signed release manifests use one 16 MiB decoded-record limit in their writers and proof/payload readers. The compressed artifact and decoded manifest have separate size checks. A valid compiled-App receipt grew to 12,049,321 bytes; the previous implicit 8 MiB generic-record limit rejected it before notarization. Checkpoint creation now rejects an unreadable manifest before upload. Continuation retains the already signed App and its qualified native tests.
+
+A typed signed App that failed before every Apple stage can continue through its exact signed-build selector. Acquisition records the completed failed producer, its complete artifact inventory and five explicitly skipped Apple stages as a new pre-submit origin. This origin contains no historical notary context, state archive or submission ID. Entered or ambiguous stages and any Apple intent/state artifact require the saved-notarization route.
+
+The shared32MiB provenance budget counts distinct authenticated decoded byte records. Repeated archives reuse their checked decode; callers receive independent dictionaries over immutable byte values. A repeated member returns the same authenticated bytes, while new content still consumes the unchanged shared budget. An oversized remaining candidate is hashed as a bounded stream before reuse or rejection. Every individual archive retains its32MiB expansion guard.

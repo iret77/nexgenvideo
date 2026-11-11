@@ -10,8 +10,8 @@ import zipfile
 import tempfile
 import platform
 
-from retained_app_test_products import api, archive_bytes, checksum, download, require, verify_artifact, write
-from release_checkpoint import NATIVE_TIMEOUT, identity, tree_digest, validate_app_zip, verify_manifest
+from retained_app_test_products import api, checksum, download, require, verify_artifact, write
+from release_checkpoint import NATIVE_TIMEOUT, identity, signed_manifest_bytes, tree_digest, validate_app_zip, verify_manifest
 from verify_dmg_copy import detach, verify
 from plan_dmg_capacity import plan
 
@@ -137,7 +137,7 @@ def inspect(root, mode="copy"):
     require(checksum(root / "signed.zip") == DIGEST, "Signed source artifact changed")
     app_zip = root / "NexGenVideo.zip"
     with zipfile.ZipFile(root / "signed.zip") as archive:
-        manifest = verify_manifest(json.loads(archive_bytes(archive, "manifest.json")), SOURCE, RUN)
+        manifest = verify_manifest(json.loads(signed_manifest_bytes(archive)), SOURCE, RUN)
         entry = archive.getinfo("NexGenVideo.zip")
         require(entry.file_size == manifest["files"]["NexGenVideo.zip"]["bytes"], "App ZIP size differs")
         with archive.open(entry) as source, app_zip.open("xb") as target:
