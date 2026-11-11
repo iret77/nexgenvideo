@@ -251,7 +251,8 @@ def _compiled_compatibility(producer_sha, producer_files, current_sha, current_f
             'Original UI test receipt differs from its actual Git objects')
     helper, guard = 'scripts/external-gui/test_bundle.py', 'scripts/verify_diagnostic_candidate.py'
     cohort = 'scripts/fixtures/app-cohort.json'
-    metadata_only = {'scripts/external-gui/transport.py', 'scripts/release_engine_resume.py'}
+    inventory_path = 'scripts/fixtures/app-cohort-native-inventory.json'
+    metadata_only = {'scripts/external-gui/transport.py', 'scripts/release_engine_resume.py', inventory_path}
     require(all(producer_files[name] == digest for name, digest in current_files.items() if name not in {helper, guard, cohort, *metadata_only}),
             'Compiled UI test source, project or reachable shared helper changed')
     cohort_raw = journey.output([*git, 'show', current_sha + ':' + cohort])
@@ -263,10 +264,90 @@ def _compiled_compatibility(producer_sha, producer_files, current_sha, current_f
             and 'ciPaths' in prior_cohort and 'ciPaths' in current_cohort,
             'UI test cohort metadata is incomplete')
     prior_paths, current_paths = prior_cohort.pop('ciPaths'), current_cohort.pop('ciPaths')
-    require(prior_cohort == current_cohort, 'UI test cohort changes native or compiler identity')
     for paths in (prior_paths, current_paths):
         require(isinstance(paths, list) and all(isinstance(name, str) for name in paths)
                 and paths == sorted(set(paths)), 'UI test cohort CI paths are not canonical')
+    app_transition = None
+    if prior_cohort != current_cohort:
+        mutable = {'appSourceSHA', 'appTreeSHA', 'build', 'nativeSourceObjects', 'roleSourceObjects', 'criteria'}
+        require(set(prior_cohort) == set(current_cohort)
+                and {name: value for name, value in prior_cohort.items() if name not in mutable}
+                    == {name: value for name, value in current_cohort.items() if name not in mutable}
+                and prior_cohort.get('schema') == 'native-app-cohort/v2'
+                and all(re.fullmatch('[1-9][0-9]*', item.get('build', ''))
+                    and all(re.fullmatch('[a-f0-9]{40}', item.get(name, '')) for name in ('appSourceSHA', 'appTreeSHA'))
+                    for item in (prior_cohort, current_cohort))
+                and int(current_cohort['build']) > int(prior_cohort['build'])
+                and prior_cohort['appSourceSHA'] != current_cohort['appSourceSHA']
+                and prior_cohort['appTreeSHA'] != current_cohort['appTreeSHA']
+                and current_cohort['appSourceSHA'] in commits,
+                'UI test cohort changes native or compiler identity outside an App-only transition')
+        prior_roots, current_roots = prior_cohort['nativeSourceObjects'], current_cohort['nativeSourceObjects']
+        require(isinstance(prior_roots, dict) and isinstance(current_roots, dict) and set(prior_roots) == set(current_roots)
+                and 'Sources' in prior_roots and prior_roots['Sources'] != current_roots['Sources']
+                and all(value == current_roots[name] for name, value in prior_roots.items() if name not in {'Sources', 'Tests'}),
+                'UI test App-only transition changes a retained component root')
+        prior_roles, current_roles = prior_cohort['roleSourceObjects'], current_cohort['roleSourceObjects']
+        require(isinstance(prior_roles, dict) and isinstance(current_roles, dict)
+                and set(prior_roles) == set(current_roles) == {'production', 'testable', 'tests'},
+                'UI test App-only transition has an incomplete compiler role inventory')
+        changed_roles = {}
+        for role, before in prior_roles.items():
+            after = current_roles[role]
+            require(isinstance(before, dict) and isinstance(after, dict) and set(before) == set(after),
+                    'UI test App-only transition changes compiler role paths')
+            changed_roles[role] = sorted(name for name in before if before[name] != after[name])
+            require(all((name.startswith(('Sources/NexGenVideo/', 'Tests/NexGenVideoTests/'))
+                            and name in local and local[name] == 'M')
+                        or (role == 'tests' and name == 'Tests/NexGenVideoTests'
+                            and any(path.startswith(name + '/') for path in local)
+                            and all(status == 'M' for path, status in local.items() if path.startswith(name + '/')))
+                        for name in changed_roles[role]),
+                    'UI test App-only transition changes a retained compiler input')
+        require(changed_roles['production'] and changed_roles['testable']
+                and all(name in current_paths or name.startswith(('Sources/NexGenVideo/', 'Tests/NexGenVideoTests/')) for name in local),
+                'UI test App-only transition has unrelated source changes')
+        import app_cohort_v2
+        for declaration in (prior_cohort, current_cohort):
+            source = declaration['appSourceSHA']
+            require(journey.output([*git, 'rev-parse', source + '^{tree}']).decode().strip() == declaration['appTreeSHA']
+                    and app_cohort_v2.objects(source, declaration['nativeSourceObjects']) == declaration['nativeSourceObjects']
+                    and app_cohort_v2.objects(source, declaration['componentSourceObjects']) == declaration['componentSourceObjects']
+                    and all(app_cohort_v2.objects(source, role) == role for role in declaration['roleSourceObjects'].values()),
+                    'UI test App-only transition differs from its actual native Git objects')
+        inventories = []
+        for source, declaration in ((producer_sha, prior_cohort), (current_sha, current_cohort)):
+            criterion = declaration['criteria']
+            require(isinstance(criterion, dict) and set(criterion) == {'path', 'sha256'}
+                    and criterion['path'] == inventory_path,
+                    'UI test App-only transition has an unknown native criterion')
+            raw = journey.output([*git, 'show', source + ':' + criterion['path']])
+            inventory = json.loads(raw)
+            files = producer_files if source == producer_sha else current_files
+            expected_raw = originals[inventory_path] if source == producer_sha else (journey.REPOSITORY / inventory_path).read_bytes()
+            require(raw == expected_raw and hashlib.sha256(raw).hexdigest() == criterion['sha256'] == files[inventory_path]
+                    and inventory.get('schema') == 'compiled-app-native-inventory/v1'
+                    and inventory.pop('appSourceSHA', None) == declaration['appSourceSHA']
+                    and inventory.pop('nativeSourceObjects', None) == declaration['nativeSourceObjects'],
+                    'UI test App-only transition has an unbound native inventory')
+            def locations(value):
+                if isinstance(value, dict):return {locations(name): locations(item) for name, item in value.items()}
+                if isinstance(value, list):return [locations(item) for item in value]
+                if isinstance(value, str):return re.sub(r'(/NativeButtonInteractionTests\.swift:)[0-9]+(:6)$', r'\1SOURCE-LINE\2', value)
+                return value
+            inventories.append(locations(inventory))
+        require(inventories[0] == inventories[1], 'UI test App-only transition changes native acceptance criteria')
+        app_transition = {'schema': 'nexgenvideo/gui-app-only-cohort-transition/1',
+            'producerAppSourceSHA': prior_cohort['appSourceSHA'], 'consumerAppSourceSHA': current_cohort['appSourceSHA'],
+            'producerAppTreeSHA': prior_cohort['appTreeSHA'], 'consumerAppTreeSHA': current_cohort['appTreeSHA'],
+            'producerBuild': prior_cohort['build'], 'consumerBuild': current_cohort['build'],
+            'changedNativeRoots': sorted(name for name in prior_roots if prior_roots[name] != current_roots[name]),
+            'changedRolePaths': changed_roles,
+            'producerCriteriaSHA256': prior_cohort['criteria']['sha256'],
+            'consumerCriteriaSHA256': current_cohort['criteria']['sha256'],
+            'newRuntimeProductProvenanceRequired': True}
+    require(producer_files[inventory_path] == current_files[inventory_path] or app_transition is not None,
+            'UI test native inventory changes outside an App-only transition')
     added_paths = sorted(set(current_paths) - set(prior_paths))
     require(set(prior_paths) <= set(current_paths)
             and all(name in local and local[name] in {'A', 'M'}
@@ -301,7 +382,8 @@ def _compiled_compatibility(producer_sha, producer_files, current_sha, current_f
         'buildWorkflowSHA256': hashlib.sha256(workflow_recipe.encode()).hexdigest(),
         'buildActionSHA256': hashlib.sha256(originals[action]).hexdigest(),
         'cohortMetadata': {'producerSHA256': producer_files[cohort],
-            'consumerSHA256': current_files[cohort], 'addedCIPaths': added_paths}}
+            'consumerSHA256': current_files[cohort], 'addedCIPaths': added_paths,
+            **({'appTransition': app_transition} if app_transition is not None else {})}}
 
 
 def validate_client_selectors(run_id, artifact_id='', digest='', require_pair=True):

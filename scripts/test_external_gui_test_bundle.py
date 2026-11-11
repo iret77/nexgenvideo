@@ -529,6 +529,11 @@ class ExternalTestBundleTests(unittest.TestCase):
         def git_output(arguments, **kwargs):
             if arguments == ['xcodebuild', '-version']: return receipt['xcode'].encode()
             if arguments[-2:] == ['rev-parse', 'HEAD']: return current.encode()
+            if 'rev-parse' in arguments and arguments[-1].endswith('^{tree}'):
+                declarations = [json.loads(original[cohort]), json.loads((journey.REPOSITORY / cohort).read_bytes())]
+                matches = [item['appTreeSHA'] for item in declarations if item['appSourceSHA'] == arguments[-1].removesuffix('^{tree}')]
+                self.assertEqual(len(matches), 1)
+                return matches[0].encode()
             if 'merge-base' in arguments: return history['merge_base_commit']['sha'].encode()
             if 'rev-list' in arguments: return '\n'.join(item['sha'] for item in history['commits']).encode()
             if 'diff' in arguments:
@@ -537,7 +542,7 @@ class ExternalTestBundleTests(unittest.TestCase):
                                for item in history['files']).encode()
             if 'show' in arguments:
                 commit, name = arguments[-1].split(':', 1)
-                if commit == current and name in {workflow, action, cohort}: return (journey.REPOSITORY / name).read_bytes()
+                if commit == current and name in {workflow, action, cohort, 'scripts/fixtures/app-cohort-native-inventory.json'}: return (journey.REPOSITORY / name).read_bytes()
                 self.assertEqual(commit, self.sha)
                 return original[name]
             self.fail('Unexpected compiled-client command: ' + str(arguments))
@@ -559,7 +564,7 @@ class ExternalTestBundleTests(unittest.TestCase):
         return SimpleNamespace(current=current, files=files, original=original, original_files=original_files,
             current_workflow=current_workflow, receipt=receipt, raw_receipt=raw_receipt, artifact=artifact,
             comparison=comparison, history=history, git_output=git_output, api=api, download=download,
-            destination=self.root / 'resolved')
+            destination=self.root / 'resolved', archive=archive, transfer=transfer)
 
     def resolve_compiled_fixture(self, fixture, *, artifact_id=34, digest=None):
         if digest is None: digest = fixture.artifact['digest'].removeprefix('sha256:')
@@ -643,7 +648,10 @@ class ExternalTestBundleTests(unittest.TestCase):
             original = fixture.original[name]
             fixture.original[name] += b'\nchanged compilation input'
             with self.subTest(input=name):
-                self.assert_compiled_guard_rejects(fixture, 'Compiled UI test source, project or reachable shared helper changed')
+                reason = ('native inventory changes outside an App-only transition'
+                          if name == 'scripts/fixtures/app-cohort-native-inventory.json'
+                          else 'Compiled UI test source, project or reachable shared helper changed')
+                self.assert_compiled_guard_rejects(fixture, reason)
             fixture.original[name] = original
         name = 'scripts/fixtures/app-cohort.json'
         original = fixture.original[name]
@@ -727,6 +735,73 @@ class ExternalTestBundleTests(unittest.TestCase):
                                                    fixture.files, fixture.original, fixture.comparison)
         self.assertNotEqual(proof['producerFiles'][name], proof['consumerFiles'][name])
         self.assertEqual(proof['originalSources'][name].encode(), fixture.original[name])
+        cohort = 'scripts/fixtures/app-cohort.json'
+        current = json.loads((journey.REPOSITORY / cohort).read_bytes())
+        prior = json.loads(fixture.original[cohort])
+        prior.update(build=str(int(current['build']) - 1), appSourceSHA='c' * 40, appTreeSHA='9' * 40)
+        prior['nativeSourceObjects']['Sources'] = '8' * 40
+        prior['nativeSourceObjects']['Tests'] = '5' * 40
+        reader = 'Sources/NexGenVideo/App/NativeButtonAccessibility.swift'
+        for role in ('production', 'testable', 'tests'):
+            self.assertIn(reader, prior['roleSourceObjects'][role])
+            prior['roleSourceObjects'][role][reader] = '7' * 40
+        prior['roleSourceObjects']['tests']['Tests/NexGenVideoTests'] = '6' * 40
+        inventory_path = 'scripts/fixtures/app-cohort-native-inventory.json'
+        inventory = json.loads(fixture.original[inventory_path])
+        inventory.update(appSourceSHA=prior['appSourceSHA'], nativeSourceObjects=prior['nativeSourceObjects'])
+        fixture.original[inventory_path] = (json.dumps(inventory, indent=2, sort_keys=True) + '\n').encode()
+        prior['criteria']['sha256'] = hashlib.sha256(fixture.original[inventory_path]).hexdigest()
+        fixture.original[cohort] = (json.dumps(prior, indent=2, sort_keys=True) + '\n').encode()
+        fixture.original_files = {name: hashlib.sha256(fixture.original[name]).hexdigest() for name in fixture.files}
+        fixture.receipt['testFiles'] = fixture.original_files
+        fixture.raw_receipt = (json.dumps(fixture.receipt, indent=2) + '\n').encode()
+        with zipfile.ZipFile(fixture.transfer, 'w') as handle:
+            handle.write(fixture.archive, 'tests.tar.gz')
+            handle.writestr('tests-input.json', fixture.raw_receipt)
+        fixture.artifact['digest'] = 'sha256:' + journey.sha256(fixture.transfer)
+        for comparison in (fixture.comparison, fixture.history):
+            for item in comparison['files']:
+                if item['filename'] == reader:item['status'] = 'modified'
+            comparison['files'].extend([{'filename': 'Tests/NexGenVideoTests/UI/NativeButtonInteractionTests.swift', 'status': 'modified'},
+                                        {'filename': inventory_path, 'status': 'modified'}])
+        fixture.comparison['commits'].insert(0, {'sha': current['appSourceSHA']})
+        fixture.comparison['total_commits'] = 2
+        fixture.history['commits'] = copy.deepcopy(fixture.comparison['commits'])
+        fixture.history['total_commits'] = 2
+        def objects(source, paths):
+            declaration = prior if source == prior['appSourceSHA'] else current
+            self.assertIn(source, (prior['appSourceSHA'], current['appSourceSHA']))
+            candidates = [declaration['nativeSourceObjects'], declaration['componentSourceObjects'], *declaration['roleSourceObjects'].values()]
+            matches = [value for value in candidates if set(value) == set(paths)]
+            self.assertTrue(matches)
+            return dict(matches[0])
+        import app_cohort_v2
+        with patch.object(app_cohort_v2, 'objects', side_effect=objects):
+            self.resolve_compiled_fixture(fixture)
+            with patch.object(journey, 'output', side_effect=fixture.git_output):
+                xctestrun, receipt = bundle.consume(fixture.destination, self.root / 'app-transition-products',
+                    fixture.current, fixture.files)
+        self.assertEqual((fixture.destination / 'tests-input.json').read_bytes(), fixture.raw_receipt)
+        self.assertEqual(bundle.products_sha256(xctestrun.parent), fixture.receipt['productsSHA256'])
+        self.assertEqual(receipt, fixture.receipt)
+        transition = journey.read_json(fixture.destination / 'tests-producer.json')['compiledCompatibility']['cohortMetadata']['appTransition']
+        self.assertEqual(transition['producerBuild'], prior['build'])
+        self.assertEqual(transition['consumerAppSourceSHA'], current['appSourceSHA'])
+        self.assertEqual(transition['changedNativeRoots'], ['Sources', 'Tests'])
+        self.assertEqual(transition['changedRolePaths']['production'], [reader])
+        self.assertEqual(transition['changedRolePaths']['tests'], [reader, 'Tests/NexGenVideoTests'])
+        self.assertEqual(transition['consumerCriteriaSHA256'], current['criteria']['sha256'])
+        self.assertTrue(transition['newRuntimeProductProvenanceRequired'])
+        for target in (prior['nativeSourceObjects'], prior['componentSourceObjects'], prior['roleSourceObjects']['tests']):
+            def changed_objects(source, paths):
+                result = objects(source, paths)
+                if source == prior['appSourceSHA'] and set(paths) == set(target):result[next(iter(result))] = '0' * 40
+                return result
+            with self.subTest(objectKeys=sorted(target)), patch.object(app_cohort_v2, 'objects', side_effect=changed_objects):
+                self.assert_compiled_guard_rejects(fixture, 'actual native Git objects')
+        fixture.original[cohort] = json.dumps({**prior,
+            'compilerSHA256': '0' * 64}).encode()
+        self.assert_compiled_guard_rejects(fixture, 'outside an App-only transition')
 
     def test_compiled_client_workflow_keeps_global_defaults_and_actual_build_job(self):
         workflow = (journey.REPOSITORY / '.github/workflows/external-gui-acceptance.yml').read_text()
