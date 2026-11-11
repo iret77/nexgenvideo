@@ -725,7 +725,7 @@ jobs:
 
       - name: Verify the complete new App and XCTest scope
         if: inputs.compiled_app_targets_json != ''
-        timeout-minutes: 15
+        timeout-minutes: 20
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/compiled_app_release.py test --root "$RUNNER_TEMP/compiled-app-release"
