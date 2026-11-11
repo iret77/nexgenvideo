@@ -492,7 +492,7 @@ def root_objects(source):
 def source_closure(product, producer, *, local=False):
     require(product != producer, "Retained packaging requires distinct product and packaging sources")
     changed = comparison(product, producer)
-    allowed = packaging_paths(product)
+    allowed = packaging_paths(product, producer)
     require({entry["filename"] for entry in changed["files"]} <= allowed,
             "Retained packaging changed product or unsupported harness inputs")
     product_tree, objects = root_objects(product)
@@ -1186,10 +1186,10 @@ def retained_compiled_product(record):
     return compiled_signed_product(record) or qualified(record)
 
 
-def packaging_paths(product):
+def packaging_paths(product, producer=None):
     import app_cohort_v2
     if app_cohort_v2.has_manifest(product):
-        return set(app_cohort_v2.manifest(product)['ciPaths']) | PACKAGING_PATHS
+        return app_cohort_v2.consumer_ci_paths(product, producer or product) | PACKAGING_PATHS
     from compiled_app_release import SIGNED_RESUME
     from compiled_component_reuse import ORIGIN, PATHS
     if product == ORIGIN['sourceSHA']:
@@ -1535,7 +1535,7 @@ def validate_binding(record, files, *, execution=False, chain=None):
     previous_source = previous["producer"]["head_sha"]
     if previous_source not in {product, producer}:
         continuation = comparison(previous_source, producer)
-        allowed = packaging_paths(product)
+        allowed = packaging_paths(product, producer)
         require({entry["filename"] for entry in continuation["files"]} <= allowed,
                 "Packaging continuation changed unsupported inputs")
     original_build = previous_signed_build(previous)

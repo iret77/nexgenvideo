@@ -362,6 +362,41 @@ class RetainedPackagingTests(unittest.TestCase):
         self.assertEqual(result["producerSourceSHA"], self.producer)
         self.assertEqual(set(result["productObjects"]), set(packaging.PRODUCT_OBJECTS))
         self.assertEqual(result["commits"], [self.producer])
+        import app_cohort_v2 as cohort
+        original = {'appSourceSHA': 'e' * 40, 'nativeSourceObjects': {'Sources': 'f' * 40},
+                    'roleSourceObjects': {'production': {'Sources/App.swift': '1' * 40}},
+                    'componentSourceObjects': {'Engine': '2' * 40}, 'ciPaths': ['scripts/retained_packaging.py']}
+        current = copy.deepcopy(original)
+        current['ciPaths'] += ['scripts/plan_dmg_capacity.py', 'scripts/release_dmg_probe.py']
+        comparison = records['compare/' + self.product + '...' + self.producer]
+        comparison['files'].append({'filename': 'scripts/release_dmg_probe.py', 'status': 'modified'})
+        local[("diff", "--no-renames", "--name-status", "-z", self.product, self.producer)] += b'M\0scripts/release_dmg_probe.py\0'
+        with patch.dict(os.environ, GITHUB_SHA=self.producer), patch.object(packaging, 'api', side_effect=records.__getitem__), \
+                patch.object(packaging, 'git', side_effect=lambda *args: local[args]), \
+                patch.object(cohort, 'has_manifest', return_value=True), \
+                patch.object(cohort, 'manifest', side_effect={self.product: original, self.producer: current}.__getitem__), \
+                patch.object(cohort, 'objects', side_effect=lambda source, paths:
+                    original['nativeSourceObjects'] if tuple(paths) == cohort.NATIVE_OBJECTS else dict(paths)), \
+                patch.object(cohort.subprocess, 'run'), \
+                patch.object(cohort, 'git', side_effect=AssertionError('Historical producer does not own the current checkout')) as local_head:
+            self.assertNotIn('scripts/release_dmg_probe.py', original['ciPaths'])
+            self.assertIn('scripts/release_dmg_probe.py', packaging.packaging_paths(self.product, self.producer))
+            self.assertEqual(packaging.source_closure(self.product, self.producer, local=True)['commits'], [self.producer])
+            self.assertEqual(packaging.source_closure(self.product, self.producer)['producerSourceSHA'], self.producer)
+            local_head.assert_not_called()
+            for field in ('roleSourceObjects', 'componentSourceObjects', 'nativeSourceObjects'):
+                with self.subTest(changed=field):
+                    saved = current[field]; current[field] = {'changed': '3' * 40}
+                    with self.assertRaises(ValueError): packaging.source_closure(self.product, self.producer)
+                    current[field] = saved
+            comparison['files'].append({'filename': 'scripts/not_in_manifest.py', 'status': 'modified'})
+            with self.assertRaises(ValueError): packaging.source_closure(self.product, self.producer)
+            comparison['files'].pop()
+            comparison['files'].append({'filename': 'Sources/App.swift', 'status': 'modified'})
+            current['ciPaths'].append('Sources/App.swift')
+            records['git/trees/' + 'd' * 40]['tree'][0]['sha'] = '4' * 40
+            with self.assertRaisesRegex(ValueError, 'native product objects'):
+                packaging.source_closure(self.product, self.producer)
 
     def test_packaging_closure_rejects_product_edits_renames_and_incomplete_history(self):
         for change in [{"files": [{"filename": "Sources/NexGenVideo/App/App.swift", "status": "modified"}]},

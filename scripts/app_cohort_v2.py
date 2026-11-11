@@ -114,22 +114,28 @@ def compatible_source(source, role):
     return previous
 
 
-def consumer_paths(product, harness):
+def consumer_ci_paths(product, harness):
     value, current = manifest(product), manifest(harness)
     require(objects(product, NATIVE_OBJECTS) == objects(harness, NATIVE_OBJECTS) == value['nativeSourceObjects'],
         'Runtime consumer has different App, test or component sources')
     require(current['appSourceSHA'] == value['appSourceSHA']
         and current['nativeSourceObjects'] == value['nativeSourceObjects']
         and current['roleSourceObjects'] == value['roleSourceObjects']
+        and current['componentSourceObjects'] == value['componentSourceObjects']
         and objects(harness, value['componentSourceObjects']) == value['componentSourceObjects'],
         'Runtime cohort changed compiled or retained component inputs')
-    require(git('rev-parse', 'HEAD') == harness == os.environ['GITHUB_SHA']
-        and not git('status', '--porcelain', '--untracked-files=no'), 'Dirty or foreign runtime harness')
     subprocess.run(['git', 'merge-base', '--is-ancestor', product, harness],
         stdin=subprocess.DEVNULL, check=True, timeout=30)
-    changed = git('diff', '--name-only', '--no-renames', product, harness).splitlines()
-    require(set(changed) <= set(current['ciPaths']), 'Runtime consumer changed outside its reviewed CI closure')
     return set(current['ciPaths'])
+
+
+def consumer_paths(product, harness):
+    allowed = consumer_ci_paths(product, harness)
+    require(git('rev-parse', 'HEAD') == harness == os.environ['GITHUB_SHA']
+        and not git('status', '--porcelain', '--untracked-files=no'), 'Dirty or foreign runtime harness')
+    changed = git('diff', '--name-only', '--no-renames', product, harness).splitlines()
+    require(set(changed) <= allowed, 'Runtime consumer changed outside its reviewed CI closure')
+    return allowed
 
 
 def verify_context(context, *, current=False):
