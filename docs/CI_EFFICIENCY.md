@@ -457,7 +457,7 @@ runtime products keep their bytes. A failure after compilation or linking resume
 from those original products; it does not invoke their compiler or linker again.
 
 
-The CI linter also runs pinned actionlint 1.7.12 with the published archive SHA-256.
+The CI linter also runs the pinned actionlint 1.7.12 library with its Go checksum lock.
 This validates GitHub Actions expression contexts and workflow grammar, beyond the
 existing policy and YAML parser. For example, `runner.temp` is valid in a step but
 invalid in job `env`; runtime paths are exported through `GITHUB_ENV` after runner
@@ -468,3 +468,14 @@ the existing policy, syntax and Python tooling checks continue unchanged.
 References: https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#context-availability,
 https://github.com/rhysd/actionlint/releases/tag/v1.7.12,
 https://github.com/rhysd/actionlint/blob/v1.7.12/docs/checks.md#availability-of-contexts-and-special-functions.
+
+
+GitHub.com now exposes `job.workflow_ref`, `job.workflow_sha`,
+`job.workflow_repository` and `job.workflow_file_path` for the defining reusable
+workflow. The 1.7.12 linter predates these documented string properties. A small
+library entrypoint adds exactly those four string fields to a copied, strict job
+type. It does not substitute caller identities or suppress expression findings.
+Two adapter regressions accept the documented fields, reject an unknown property,
+and keep `runner.temp` invalid in job `env`. The Go toolchain is pinned to 1.26.0;
+normal Go dependency, build and test caches preserve unchanged tooling work.
+App, Engine, pack and host compiler products are unaffected by this CI tool build.

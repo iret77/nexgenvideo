@@ -4,9 +4,10 @@ set -euo pipefail
 [[ "$(uname -m)" == x86_64 ]]
 actionlint_dir="$RUNNER_TEMP/ngv-actionlint-1.7.12"
 mkdir "$actionlint_dir"
-curl --fail --location --silent --show-error --max-time 60 \
-  https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
-  --output "$actionlint_dir/archive.tar.gz"
-printf '%s  %s\n' 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8 "$actionlint_dir/archive.tar.gz" | sha256sum --check
-tar -xzf "$actionlint_dir/archive.tar.gz" -C "$actionlint_dir" actionlint
+export GOTOOLCHAIN=local GOWORK=off CGO_ENABLED=0
+(
+  cd script/actionlint-tool
+  go test -mod=readonly .
+  go build -mod=readonly -trimpath -o "$actionlint_dir/actionlint" .
+)
 "$actionlint_dir/actionlint" -config-file .github/actionlint.yaml -shellcheck= -pyflakes= "$@"
