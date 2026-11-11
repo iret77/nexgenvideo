@@ -63,6 +63,33 @@ class NativeTestPythonWorkflowTests(unittest.TestCase):
             ("diagnostic-acceptance.yml", "ci-app-retained-replay"),
             ("native-acceptance-probes.yml", "owned-child"),
         })
+        packaging_callers = {
+            "release.yml": {"diagnostic-acceptance"},
+            "bpy-runtime-acceptance.yml": {"runtime"},
+            "diagnostic-acceptance.yml": {"acceptance", "transport-fixture"},
+            "workspace-ui-acceptance.yml": {"acceptance", "batch-review"},
+            "settings-owner-acceptance.yml": {"acceptance"},
+        }
+        for name, jobs in packaging_callers.items():
+            workflow = yaml.safe_load((ROOT / ".github/workflows" / name).read_text())
+            for job_name in jobs:
+                job = workflow["jobs"][job_name]
+                with self.subTest(packaging_workflow=name, job=job_name):
+                    self.assertEqual(job["runs-on"], "macrunner")
+                    steps = job["steps"]
+                    selected = [index for index, step in enumerate(steps) if step.get("uses") == SELECTION]
+                    self.assertEqual(len(selected), 1)
+                    python_calls = []
+                    for index, step in enumerate(steps):
+                        content = step.get("run", "")
+                        if step.get("uses", "").startswith("./.github/actions/") and step["uses"] != SELECTION:
+                            action = ROOT / step["uses"]
+                            content += next(action.glob("action.y*ml")).read_text()
+                        if re.search(r"\bpython3\b", content): python_calls.append(index)
+                        if index > selected[0]:
+                            self.assertFalse(step.get("uses", "").startswith("actions/setup-python@"))
+                    self.assertTrue(python_calls)
+                    self.assertLess(selected[0], min(python_calls))
 
     def test_composite_native_wait_consumers_have_an_explicit_selection_contract(self):
         for path in (ROOT / ".github/actions").glob("*/action.y*ml"):

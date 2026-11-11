@@ -485,6 +485,10 @@ class ExternalTestBundleTests(unittest.TestCase):
             if isinstance(node, ast.FunctionDef) and node.name == 'verify_scene_history_hierarchy':
                 excluded.update(range(node.lineno - 1, node.end_lineno))
         original[guard] = ''.join(line for index, line in enumerate(lines) if index not in excluded).encode()
+        cohort = 'scripts/fixtures/app-cohort.json'
+        original_cohort = json.loads(original[cohort])
+        original_cohort['ciPaths'].remove('.github/workflows/bpy-runtime-acceptance.yml')
+        original[cohort] = (json.dumps(original_cohort, indent=2, sort_keys=True) + '\n').encode()
         workflow = '.github/workflows/external-gui-acceptance.yml'
         current_workflow = (journey.REPOSITORY / workflow).read_bytes()
         action = '.github/actions/setup-xcode-27/action.yml'
@@ -516,6 +520,8 @@ class ExternalTestBundleTests(unittest.TestCase):
         comparison = {'base_commit': {'sha': self.sha}, 'merge_base_commit': {'sha': self.sha},
             'status': 'ahead', 'total_commits': 1, 'commits': [{'sha': current}],
             'files': [{'filename': helper, 'status': 'modified'}, {'filename': guard, 'status': 'modified'},
+                      {'filename': cohort, 'status': 'modified'},
+                      {'filename': '.github/workflows/bpy-runtime-acceptance.yml', 'status': 'modified'},
                       {'filename': workflow, 'status': 'modified'},
                       {'filename': 'Sources/NexGenVideo/App/NativeButtonAccessibility.swift', 'status': 'added'}]}
         history = copy.deepcopy(comparison)
@@ -531,7 +537,7 @@ class ExternalTestBundleTests(unittest.TestCase):
                                for item in history['files']).encode()
             if 'show' in arguments:
                 commit, name = arguments[-1].split(':', 1)
-                if commit == current and name in {workflow, action}: return (journey.REPOSITORY / name).read_bytes()
+                if commit == current and name in {workflow, action, cohort}: return (journey.REPOSITORY / name).read_bytes()
                 self.assertEqual(commit, self.sha)
                 return original[name]
             self.fail('Unexpected compiled-client command: ' + str(arguments))
@@ -583,6 +589,10 @@ class ExternalTestBundleTests(unittest.TestCase):
         self.assertEqual(proof['consumerSourceSHA'], fixture.current)
         self.assertEqual(proof['producerFiles'], fixture.original_files)
         self.assertEqual(proof['consumerFiles'], fixture.files)
+        cohort = 'scripts/fixtures/app-cohort.json'
+        self.assertEqual(proof['cohortMetadata'], {'producerSHA256': fixture.original_files[cohort],
+            'consumerSHA256': fixture.files[cohort],
+            'addedCIPaths': ['.github/workflows/bpy-runtime-acceptance.yml']})
         self.assertEqual(producer['run'], self.run)
         self.assertEqual(producer['job'], self.job)
         with patch.object(journey, 'output', side_effect=fixture.git_output):
@@ -628,12 +638,37 @@ class ExternalTestBundleTests(unittest.TestCase):
         fixture = self.compiled_client_fixture()
         for name in fixture.original_files:
             if name in {'scripts/external-gui/test_bundle.py', 'scripts/external-gui/transport.py',
-                        'scripts/release_engine_resume.py', 'scripts/verify_diagnostic_candidate.py'}: continue
+                        'scripts/release_engine_resume.py', 'scripts/verify_diagnostic_candidate.py',
+                        'scripts/fixtures/app-cohort.json'}: continue
             original = fixture.original[name]
             fixture.original[name] += b'\nchanged compilation input'
             with self.subTest(input=name):
                 self.assert_compiled_guard_rejects(fixture, 'Compiled UI test source, project or reachable shared helper changed')
             fixture.original[name] = original
+        name = 'scripts/fixtures/app-cohort.json'
+        original = fixture.original[name]
+        for key, changed in [('build', '999'), ('nativeSourceObjects', {'Sources': 'e' * 40}),
+                             ('compilerSHA256', 'e' * 64), ('roleSourceObjects', {})]:
+            value = json.loads(original)
+            value[key] = changed
+            fixture.original[name] = json.dumps(value).encode()
+            with self.subTest(cohort_field=key):
+                self.assert_compiled_guard_rejects(fixture, 'UI test cohort changes native or compiler identity')
+        for paths, reason in [
+                (['duplicate', 'duplicate'], 'CI paths are not canonical'),
+                (['../outside'], 'non-CI paths or removes'),
+                (None, 'CI paths are not canonical')]:
+            value = json.loads(original)
+            value['ciPaths'] = paths
+            fixture.original[name] = json.dumps(value).encode()
+            with self.subTest(ci_paths=paths): self.assert_compiled_guard_rejects(fixture, reason)
+        for removed in ['scripts/fixtures/app-cohort-native-inventory.json', '.github/workflows/release.yml']:
+            value = json.loads(original)
+            value['ciPaths'].remove(removed)
+            fixture.original[name] = json.dumps(value).encode()
+            with self.subTest(undeclared_or_non_ci_addition=removed):
+                self.assert_compiled_guard_rejects(fixture, 'non-CI paths or removes')
+        fixture.original[name] = original
 
     def test_compiled_client_reuse_rejects_changed_builder_imports_constants_and_cli(self):
         fixture = self.compiled_client_fixture()
