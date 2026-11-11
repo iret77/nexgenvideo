@@ -150,7 +150,7 @@ enum NativeButtonAccessibility {
     }
 
     static func read(_ request: Request, using session: NativeAXPeer.Session? = nil,
-                     nodeLimit: Int = 2048, seconds: Double = 1) async -> Snapshot {
+                     nodeLimit: Int = 2048, seconds: Double = 2) async -> Snapshot {
         if Task.isCancelled {
             var result = Snapshot(request: request)
             result.failure = "cancelled"
@@ -289,6 +289,23 @@ enum NativeButtonAccessibility {
             return status == .success ? result : nil
         }
 
+        func values(_ element: AXUIElement, _ attributes: [String], statuses: inout [String: Int32]) -> [String: CFTypeRef] {
+            guard prepare(element, attribute: "AXAttributes", statuses: &statuses) else { return [:] }
+            var raw: CFArray?
+            let status = AXUIElementCopyMultipleAttributeValues(element, attributes as CFArray,
+                AXCopyMultipleAttributeOptions(rawValue: 0), &raw)
+            guard available() else { return [:] }
+            guard status == .success, let raw, CFArrayGetCount(raw) == attributes.count else {
+                for attribute in attributes { statuses[attribute] = status == .success ? AXError.failure.rawValue : status.rawValue }
+                failure = "AX-batch-read:" + String(status.rawValue)
+                return [:]
+            }
+            let decoded = NativeButtonAccessibility.decodeAttributes(raw as [AnyObject], attributes: attributes)
+            statuses.merge(decoded.statuses) { _, current in current }
+            if let error = decoded.failure { failure = error }
+            return available() ? decoded.values : [:]
+        }
+
         func windowAttributes(_ element: AXUIElement, statuses: inout [String: Int32]) -> [String]? {
             guard prepare(element, attribute: "AXAttributeNames", statuses: &statuses) else { return nil }
             var raw: CFArray?
@@ -305,6 +322,11 @@ enum NativeButtonAccessibility {
 
         func string(_ element: AXUIElement, _ attribute: String, statuses: inout [String: Int32]) -> String? {
             guard let raw = value(element, attribute, statuses: &statuses) else { return nil }
+            return string(raw, attribute: attribute)
+        }
+
+        func string(_ raw: CFTypeRef?, attribute: String) -> String? {
+            guard let raw else { return nil }
             guard let string = raw as? String else { failure = "AX-invalid-string-" + attribute; return nil }
             return string
         }
@@ -312,6 +334,11 @@ enum NativeButtonAccessibility {
         func frame(_ element: AXUIElement, statuses: inout [String: Int32]) -> Frame? {
             guard let position = value(element, kAXPositionAttribute, statuses: &statuses),
                   let size = value(element, kAXSizeAttribute, statuses: &statuses) else { return nil }
+            return frame(position: position, size: size)
+        }
+
+        func frame(position: CFTypeRef?, size: CFTypeRef?) -> Frame? {
+            guard let position, let size else { return nil }
             guard CFGetTypeID(position) == AXValueGetTypeID(), CFGetTypeID(size) == AXValueGetTypeID() else {
                 failure = "AX-invalid-frame-type"; return nil
             }
@@ -330,6 +357,33 @@ enum NativeButtonAccessibility {
             guard available() else { return nil }
             return status == .success ? pid : nil
         }
+    }
+
+    static func decodeAttributes(_ raw: [AnyObject], attributes: [String])
+        -> (values: [String: CFTypeRef], statuses: [String: Int32], failure: String?) {
+        guard !attributes.isEmpty, raw.count == attributes.count, Set(attributes).count == attributes.count else {
+            return ([:], [:], "AX-invalid-batch-inventory")
+        }
+        var values: [String: CFTypeRef] = [:], statuses: [String: Int32] = [:]
+        var failure: String?
+        for (attribute, value) in zip(attributes, raw) {
+            var error = AXError.success
+            if CFGetTypeID(value) == CFNullGetTypeID() {
+                error = .noValue
+            } else if CFGetTypeID(value) == AXValueGetTypeID(), AXValueGetType(value as! AXValue) == .axError {
+                guard AXValueGetValue(value as! AXValue, .axError, &error), error != .success else {
+                    statuses[attribute] = AXError.failure.rawValue
+                    failure = "AX-invalid-attribute-error-" + attribute
+                    return ([:], statuses, failure)
+                }
+            }
+            statuses[attribute] = error.rawValue
+            if error == .success { values[attribute] = value }
+            else if error != .attributeUnsupported && error != .noValue {
+                failure = "AX-read-" + attribute + ":" + String(error.rawValue)
+            }
+        }
+        return (failure == nil ? values : [:], statuses, failure)
     }
 
     static func captureForParent(_ request: Request, nodeLimit: Int, deadline: Double,
@@ -525,14 +579,16 @@ enum NativeButtonAccessibility {
             visited.append(element)
             var statuses: [String: Int32] = [:]
             let pid = reader.pid(element, statuses: &statuses) ?? 0
-            let role = reader.string(element, kAXRoleAttribute, statuses: &statuses)
-            let title = reader.string(element, kAXTitleAttribute, statuses: &statuses)
-            let label = reader.string(element, kAXDescriptionAttribute, statuses: &statuses)
-            let rawEnabled = reader.value(element, kAXEnabledAttribute, statuses: &statuses)
+            let values = reader.values(element, [kAXRoleAttribute, kAXTitleAttribute, kAXDescriptionAttribute,
+                kAXEnabledAttribute, kAXPositionAttribute, kAXSizeAttribute, kAXChildrenAttribute], statuses: &statuses)
+            let role = reader.string(values[kAXRoleAttribute], attribute: kAXRoleAttribute)
+            let title = reader.string(values[kAXTitleAttribute], attribute: kAXTitleAttribute)
+            let label = reader.string(values[kAXDescriptionAttribute], attribute: kAXDescriptionAttribute)
+            let rawEnabled = values[kAXEnabledAttribute]
             let enabled = rawEnabled.flatMap { CFGetTypeID($0) == CFBooleanGetTypeID() ? $0 as? Bool : nil }
             if rawEnabled != nil && enabled == nil { reader.failure = "AX-invalid-enabled-value" }
-            let frame = reader.frame(element, statuses: &statuses)
-            let children = reader.value(element, kAXChildrenAttribute, statuses: &statuses)
+            let frame = reader.frame(position: values[kAXPositionAttribute], size: values[kAXSizeAttribute])
+            let children = values[kAXChildrenAttribute]
             var types: [UInt] = [], descendants: [AXUIElement] = []
             if let children {
                 if let values = children as? [AnyObject], values.count <= 2048 {

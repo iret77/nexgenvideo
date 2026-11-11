@@ -14,7 +14,7 @@ struct NativeButtonInteractionTests {
         let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 600, height: 200),
             styleMask: [.titled, .closable], backing: .buffered, defer: false)
 
-        init(disabled: Bool = false, duplicate: Bool = false, split: Bool = false) {
+        init(disabled: Bool = false, duplicate: Bool = false, split: Bool = false, rows: Int = 0) {
             window.isReleasedWhenClosed = false
             let controls = HStack {
                 Button("Undo") {}.disabled(disabled)
@@ -22,7 +22,14 @@ struct NativeButtonInteractionTests {
                 Button("Redo") {}.disabled(true)
             }.buttonStyle(.capsule())
             if split {
-                window.contentView = NSHostingView(rootView: HSplitView { controls; Text("Preview") })
+                window.setContentSize(NSSize(width: 600, height: 1000))
+                window.contentView = NSHostingView(rootView: HSplitView {
+                    VStack {
+                        controls
+                        ForEach(0..<rows, id: \.self) { index in Button("Readout \(index)") {} }
+                    }
+                    Text("Preview")
+                })
             } else {
                 window.contentView = NSHostingView(rootView: controls)
             }
@@ -292,7 +299,7 @@ struct NativeButtonInteractionTests {
     }
 
     @Test func actualSplitViewKeepsTheEnabledUndoDiscoverable() async throws {
-        let fixture = Fixture(split: true)
+        let fixture = Fixture(split: true, rows: 48)
         defer { fixture.close() }
         let outcome = try await NativeAXPeer.withSession { session in
             let value = try await fixture.ready(using: session)
@@ -300,6 +307,8 @@ struct NativeButtonInteractionTests {
             let splitter = try #require(value.nodes.first { $0.role == kAXSplitterRole })
             #expect(splitter.statuses[kAXChildrenAttribute] == AXError.noValue.rawValue)
             #expect(splitter.childTypes.isEmpty)
+            #expect(value.nodes.filter { $0.role == kAXButtonRole }.count >= 50)
+            #expect(value.nodes.allSatisfy { $0.statuses["timeout:AXAttributes"] == AXError.success.rawValue })
             #expect(Query.buttons(value, title: "Undo", inside: fixture.request.contentFrame).count == 1)
         }
         #expect(outcome.1.clean)
@@ -419,12 +428,29 @@ struct NativeButtonInteractionTests {
         #expect(Query.uniqueCGWindow(Query.ownCGWindows([target, malformed], pid: getpid()), request: value.request))
     }
 
-    @Test func roleLabelAndEnabledStateAreIndependentRequirements() {
+    @Test func roleLabelAndEnabledStateAreIndependentRequirements() throws {
         for candidate in [node(role: kAXGroupRole), node(label: "Redo"), node(label: nil),
                           node(enabled: false), node(enabled: nil)] {
             #expect(Query.buttons(snapshot([candidate]), title: "Undo", inside: probe).isEmpty)
         }
         #expect(Query.buttons(snapshot([node()]), title: "", inside: probe).isEmpty)
+        var absent = AXError.attributeUnsupported
+        let unsupported = try #require(AXValueCreate(.axError, &absent))
+        let optional = Query.decodeAttributes([NSNull(), unsupported], attributes: [kAXTitleAttribute, kAXChildrenAttribute])
+        #expect(optional.failure == nil && optional.values.isEmpty)
+        #expect(optional.statuses[kAXTitleAttribute] == AXError.noValue.rawValue)
+        #expect(optional.statuses[kAXChildrenAttribute] == AXError.attributeUnsupported.rawValue)
+        var denied = AXError.cannotComplete
+        let failed = try #require(AXValueCreate(.axError, &denied))
+        let rejected = Query.decodeAttributes(["Undo" as NSString, failed], attributes: [kAXTitleAttribute, kAXEnabledAttribute])
+        #expect(rejected.failure != nil && rejected.values.isEmpty)
+        #expect(rejected.statuses[kAXEnabledAttribute] == AXError.cannotComplete.rawValue)
+        var success = AXError.success
+        let invalid = try #require(AXValueCreate(.axError, &success))
+        #expect(Query.decodeAttributes([invalid], attributes: [kAXTitleAttribute]).failure != nil)
+        #expect(Query.decodeAttributes(["Undo" as NSString], attributes: [kAXTitleAttribute, kAXEnabledAttribute]).failure != nil)
+        #expect(Query.decodeAttributes(["Undo" as NSString, "Redo" as NSString],
+            attributes: [kAXTitleAttribute, kAXTitleAttribute]).failure != nil)
     }
 
     @Test func failedGeometryOrPIDAttributesCannotSupplyAFrame() {
@@ -502,9 +528,10 @@ struct NativeButtonInteractionTests {
             #expect(fixture.leaf.returnedAt > fixture.leaf.enteredAt)
             #expect(!result.complete)
             #expect(result.finished < fixture.leaf.returnedAt)
-            let last = try #require(result.nodes.last { $0.label == "Bounded child" })
+            let last = try #require(result.nodes.last)
             #expect(last.statuses[kAXChildrenAttribute] != AXError.success.rawValue)
-            #expect(last.statuses["timeout:" + kAXChildrenAttribute] == AXError.success.rawValue)
+            #expect(last.statuses["timeout:AXAttributes"] == AXError.success.rawValue)
+            #expect(Query.buttons(result, title: "Undo", inside: fixture.request.contentFrame).isEmpty)
         }
         #expect(outcome.1.clean)
     }
