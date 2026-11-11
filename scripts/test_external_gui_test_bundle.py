@@ -735,6 +735,7 @@ class ExternalTestBundleTests(unittest.TestCase):
                                                    fixture.files, fixture.original, fixture.comparison)
         self.assertNotEqual(proof['producerFiles'][name], proof['consumerFiles'][name])
         self.assertEqual(proof['originalSources'][name].encode(), fixture.original[name])
+        fixture = self.compiled_client_fixture()
         cohort = 'scripts/fixtures/app-cohort.json'
         current = json.loads((journey.REPOSITORY / cohort).read_bytes())
         prior = json.loads(fixture.original[cohort])
