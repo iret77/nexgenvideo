@@ -1202,7 +1202,7 @@ jobs:
           done
 
       - name: Verify pack links the SHARED engine (guards the PackEntry-cast regression)
-        if: env.NGV_COMPONENT_NOTARY_CONTINUATION != 'true'
+        if: env.NGV_COMPONENT_NOTARY_CONTINUATION != 'true' && env.NGV_COHORT_PACK_CHECKS_REUSED != 'true'
         run: |
           set -euo pipefail
           # Same Mach-O invariant ci.yml asserts on the ad-hoc pack, now on the SIGNED release pack:
@@ -1223,7 +1223,7 @@ jobs:
           echo "OK: NexGenEngine is one shared dynamic image across app + pack"
 
       - name: Load-test — the SIGNED app actually loads the SIGNED pack from an EXTERNAL dir
-        if: env.NGV_COMPONENT_NOTARY_CONTINUATION != 'true'
+        if: env.NGV_COMPONENT_NOTARY_CONTINUATION != 'true' && env.NGV_COHORT_PACK_CHECKS_REUSED != 'true'
         run: |
           set -euo pipefail
           # This is the check that was MISSING here: release.yml published the pack the app reads
@@ -1268,6 +1268,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/compiled_component_reuse.py verify-native
+
+      - name: Bind the original cohort pack checks to these exact restored bytes
+        if: env.NGV_COHORT_PACK_CHECKS_REUSED == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/retained_packaging.py verify-cohort-pack-checks
 
       - name: Verify pack assembly did not mutate tracked source
         run: scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist

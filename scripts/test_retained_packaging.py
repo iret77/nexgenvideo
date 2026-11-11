@@ -250,6 +250,64 @@ class RetainedPackagingTests(unittest.TestCase):
         self.assertFalse(packaging.qualified_pack_archives({'.build/plugins/musicvideo.ngvpack.zip': PACK_SHA}, legacy))
         legacy['previousNotary']['journals'][PACK_SHA] = {'submissionID': 'original'}
         self.assertTrue(packaging.qualified_pack_archives({'.build/plugins/musicvideo.ngvpack.zip': PACK_SHA}, legacy))
+        from compiled_app_release import PACK_TREE
+        from release_checkpoint import tree_digest
+        from release_acceptance_identity import tree_sha256
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory); app = build / 'NexGenVideo.app'; pack = build / 'plugins/musicvideo.ngvpack'
+            (app / 'Contents/MacOS').mkdir(parents=True); pack.mkdir(parents=True)
+            main = app / 'Contents/MacOS/NexGenVideo'; main.write_bytes(b'main')
+            (build / 'NexGenVideo.zip').write_bytes(b'app-zip')
+            (build / 'plugins/musicvideo.ngvpack.zip').write_bytes(b'pack-zip'); (pack / 'plugin').write_bytes(b'pack')
+            PACK_SHA, PACK_TREE = packaging.file_checksum(build / 'plugins/musicvideo.ngvpack.zip'), tree_sha256(pack)
+            manifest = {'appTreeSHA256': tree_digest(app), 'identity': {'sourceSHA': self.product},
+                'componentAssembly': {'main': {'distributionImageSHA256': packaging.file_checksum(main)}}}
+            cohort = {'appArchiveSHA256': packaging.file_checksum(build / 'NexGenVideo.zip'),
+                      'packArchiveSHA256': PACK_SHA, 'packTreeSHA256': PACK_TREE}
+            producer = {'id': 70, 'head_sha': self.producer, 'repository': {'full_name': packaging.REPOSITORY},
+                        'actor': {'login': 'iret77'}, 'run_attempt': 1, 'path': '.github/workflows/release.yml'}
+            names = ['Verify pack links the SHARED engine (guards the PackEntry-cast regression)',
+                     'Load-test — the SIGNED app actually loads the SIGNED pack from an EXTERNAL dir']
+            job = {'id': 702, 'run_id': 70, 'head_sha': self.producer, 'name': 'release', 'labels': ['macrunner'],
+                   'run_attempt': 1, 'status': 'completed', 'steps': [{'name': name, 'conclusion': 'success',
+                       'started_at': '2026-11-04T10:00:02Z', 'completed_at': '2026-11-04T10:00:02Z'} for name in names]}
+            record = {'stage': 'restored', 'runID': 70, 'producerSourceSHA': self.producer,
+                'productSourceSHA': self.product, 'originalSignedBuildRunID': 50,
+                'signedInput': {'manifest': manifest, 'cohortProduct': cohort},
+                'originalPackArchives': {'.build/plugins/musicvideo.ngvpack.zip': PACK_SHA},
+                'restoredOriginal': {'sourceSHA': self.product, 'producerRun': 50,
+                                    'appTreeSHA256': manifest['appTreeSHA256'], 'identity': manifest['identity']}}
+            raw = (b'\xef\xbb\xbf2026-11-04T10:00:00.0000000Z ##[section]Starting: release\n'
+                   b'2026-11-04T10:00:01.0000000Z ##[group]Run set -euo pipefail\n'
+                   b'2026-11-04T10:00:02.1000000Z [app] NOTICE: launch pid=2664\n'
+                   b'2026-11-04T10:00:02.5000000Z SELFTEST_PACK_OK loaded musicvideo v0.6.0\n')
+            with patch('compiled_app_release.PACK_SHA', PACK_SHA), patch('compiled_app_release.PACK_TREE', PACK_TREE), \
+                    patch.object(packaging, 'cohort_signed_product', return_value=True), \
+                    patch.object(packaging, 'read_api', return_value=raw) as original:
+                proof = packaging.cohort_pack_check_origin(record, producer, job)
+                self.assertEqual(proof['origin']['rawSHA256'], packaging.digest(raw))
+                original.assert_called_with('actions/jobs/702/logs', maximum=8 * 1024**2)
+                for changed, candidate, parent, content in [
+                        ('runner', record, dict(job, labels=['ubuntu-24.04']), raw),
+                        ('version', record, job, raw.replace(b'v0.6.0', b'v0.5.8')),
+                        ('outside-step', record, job, raw.replace(b'10:00:02.5', b'10:00:04.5')),
+                        ('restored-tree', dict(record, restoredOriginal={}), job, raw)]:
+                    with self.subTest(changed=changed), patch.object(packaging, 'read_api', return_value=content), self.assertRaises(ValueError):
+                        packaging.cohort_pack_check_origin(candidate, producer, parent)
+                skipped = [dict(step, conclusion='skipped') for step in job['steps']]
+                self.assertIsNone(packaging.cohort_pack_check_origin(record, producer, dict(job, steps=skipped)))
+                inherited = dict(record, runID=80, previousNotary={'cohortPackChecks': proof})
+                replay = dict(job, run_id=80, steps=skipped + [{'name':
+                    'Bind the original cohort pack checks to these exact restored bytes', 'conclusion': 'success'}])
+                self.assertEqual(packaging.cohort_pack_check_origin(inherited, dict(producer, id=80), replay), proof)
+                inherited['previousNotary']['cohortPackChecks'] = dict(proof, mainSHA256='0' * 64)
+                with self.assertRaises(ValueError): packaging.cohort_pack_check_origin(inherited, dict(producer, id=80), replay)
+                materialized = dict(proof, packArchiveSHA256=packaging.file_checksum(build / 'plugins/musicvideo.ngvpack.zip'),
+                                    packTreeSHA256=tree_sha256(pack))
+                current = dict(record, previousNotary={'cohortPackChecks': materialized})
+                self.assertEqual(packaging.verify_cohort_pack_checks(current, build), materialized)
+                main.write_bytes(b'changed')
+                with self.assertRaises(ValueError): packaging.verify_cohort_pack_checks(current, build)
 
     def test_later_compiled_notary_resume_accepts_only_the_exact_new_app_journal(self):
         from compiled_app_release import SIGNED_RESUME
@@ -594,26 +652,30 @@ class RetainedPackagingTests(unittest.TestCase):
         routes['actions/runs/70/attempts/1/jobs?per_page=100'] = {'total_count': 1, 'jobs': [current_release]}
         values = self.mode() | {'priorNotaryRunID': '60'}
         def publish(record, files):
+            current = routes['actions/runs/' + str(record['runID'])]
+            current_release = routes['actions/runs/' + str(record['runID']) + '/attempts/1/jobs?per_page=100']['jobs'][0]
+            identifier = record['runID'] * 10
+            hour = current_release['started_at'][11:13]
             if record['stage'] == 'complete':
                 checkpoint = {'schema': 'release-dmg-checkpoint/v2', 'context': record['final']['notaryContext'],
                               'appTreeSHA256': 'd' * 64, 'appRuntimeTreeSHA256': '7' * 64, 'files': {'NexGenVideo.dmg': {'bytes': 10, 'sha256': 'c' * 64},
                                                                'plugins.tar.gz': {'bytes': 20, 'sha256': 'd' * 64}}}
-                payload = artifact(703, 'release-dmg-input-' + self.product, current, current_release, b'actual checkpoint bytes')
-                payload.update(created_at='2026-11-04T10:05:00Z', updated_at='2026-11-04T10:06:00Z')
+                payload = artifact(identifier + 3, 'release-dmg-input-' + self.product, current, current_release, b'actual checkpoint bytes')
+                payload.update(created_at=f'2026-11-04T{hour}:05:00Z', updated_at=f'2026-11-04T{hour}:06:00Z')
                 small = archive({'manifest.json': json.dumps({'schema': 'nexgenvideo/dmg-artifact-proof/1',
-                    'sourceSHA': self.product, 'producerSourceSHA': self.producer, 'runID': 70,
+                    'sourceSHA': self.product, 'producerSourceSHA': self.producer, 'runID': record['runID'],
                     'payloadArtifact': payload, 'checkpoint': checkpoint})})
-                small_artifact = artifact(702, 'release-dmg-proof-' + self.product, current, current_release, small)
-                small_artifact.update(created_at='2026-11-04T10:10:00Z', updated_at='2026-11-04T10:11:00Z')
+                small_artifact = artifact(identifier + 2, 'release-dmg-proof-' + self.product, current, current_release, small)
+                small_artifact.update(created_at=f'2026-11-04T{hour}:10:00Z', updated_at=f'2026-11-04T{hour}:11:00Z')
                 record['final']['dmgSubmissionArtifact'] = small_artifact
                 record['final']['dmgSubmissionPayloadArtifact'] = payload
                 files['submitted-dmg-proof.zip'] = small
                 record['files'] = record['files'] | {'submitted-dmg-proof.zip': {'bytes': len(small), 'sha256': packaging.digest(small)}}
             raw = archive({**files, 'packaging-provenance.json': packaging.encoded(record)})
-            item = artifact(701, packaging.COMPLETE_ARTIFACT if record['stage'] == 'complete' else packaging.RESTORED_ARTIFACT,
+            item = artifact(identifier + 1, packaging.COMPLETE_ARTIFACT if record['stage'] == 'complete' else packaging.RESTORED_ARTIFACT,
                             current, current_release, raw)
-            item.update(created_at='2026-11-04T10:40:00Z', updated_at='2026-11-04T10:41:00Z')
-            return packaging.selectors(self.producer, '701', item['digest'][7:])
+            item.update(created_at=f'2026-11-04T{hour}:40:00Z', updated_at=f'2026-11-04T{hour}:41:00Z')
+            return packaging.selectors(self.producer, str(identifier + 1), item['digest'][7:])
         return routes, downloads, environment, values, journals, publish
 
     def complete_fixture(self, record, journals):
@@ -709,6 +771,56 @@ class RetainedPackagingTests(unittest.TestCase):
             restored.pop('final'); restored['stage'] = 'restored'
             restored['originalPackArchives'] = {'.build/plugins/musicvideo.ngvpack.zip': PACK_SHA}
             self.assertEqual(packaging.load_provenance(70, self.product, publish(restored, files), allow_failed=True)['record'], restored)
+            parent_release = routes['actions/runs/70/attempts/1/jobs?per_page=100']['jobs'][0]
+            parent_release['conclusion'] = 'failure'
+            parent_release['steps'] += [{'name': 'Submit App notarization exactly once', 'conclusion': 'success'},
+                                       {'name': 'Notarize and staple app', 'conclusion': 'failure'}]
+            app_sha = manifest['files']['NexGenVideo.zip']['sha256']
+            app_journal = {'schema': 'release-notary/v1', 'sourceSHA': self.product, 'sha256': app_sha,
+                           'submissionID': '11111111-1111-1111-1111-111111111111', 'phase': 'submitted'}
+            context = {'schema': 'release-notary-context/v2', 'repository': packaging.REPOSITORY,
+                       'sourceSHA': self.product, 'producerSourceSHA': self.producer, 'buildRunID': 50, 'runID': 70}
+            state_bytes = io.BytesIO()
+            with zipfile.ZipFile(state_bytes, 'w') as archive:
+                archive.writestr('context.json', json.dumps(context))
+                archive.writestr(app_sha + '.json', json.dumps(app_journal))
+            intent = {'schema': 'release-notary-intent/v1', 'repository': packaging.REPOSITORY,
+                      'sourceSHA': self.product, 'producerSourceSHA': self.producer, 'runID': '70', 'attempt': '1',
+                      'role': 'app', 'sha256': app_sha, 'existingSubmissionID': ''}
+            intent_bytes = io.BytesIO()
+            with zipfile.ZipFile(intent_bytes, 'w') as archive: archive.writestr('intent.json', json.dumps(intent))
+            parent_items = [routes['actions/artifacts/701']]
+            for identifier, name, raw in [(704, 'release-notary-state-' + self.product, state_bytes.getvalue()),
+                                           (705, 'release-app-notary-intent-' + self.product, intent_bytes.getvalue())]:
+                item = dict(parent_items[0], id=identifier, name=name, size_in_bytes=len(raw),
+                            digest='sha256:' + packaging.digest(raw), created_at='2026-11-04T10:50:00Z',
+                            updated_at='2026-11-04T10:51:00Z')
+                parent_items.append(item); routes['actions/artifacts/' + str(identifier)] = item
+                downloads['actions/artifacts/' + str(identifier) + '/zip'] = raw
+            routes['actions/runs/70/artifacts?per_page=100'] = {'total_count': len(parent_items), 'artifacts': parent_items}
+            routes['actions/runs/80'] = dict(routes['actions/runs/70'], id=80, created_at='2026-11-04T11:00:00Z', conclusion='success')
+            routes['actions/runs/80/attempts/1/jobs?per_page=100'] = {'total_count': 1, 'jobs': [dict(parent_release,
+                id=802, run_id=80, conclusion='success', started_at='2026-11-04T11:00:00Z', completed_at='2026-11-04T11:59:00Z',
+                steps=[{'name': 'Restore exact signed build', 'conclusion': 'success'}])]}
+            followup = values | {'signedBuildRunID': '', 'priorNotaryRunID': '70', 'priorProducerSourceSHA': self.producer,
+                                 'priorProvenanceArtifactID': '701', 'priorProvenanceArtifactSHA256': parent_items[0]['digest'][7:]}
+            with patch.dict(os.environ, GITHUB_RUN_ID='80'), patch.object(packaging, 'utc_now', return_value='2026-11-04T11:20:00Z'):
+                with patch.object(packaging, 'MAX_SHARED_PROOF_BYTES', packaging.MAX_PROOF_BYTES), \
+                        self.assertRaisesRegex(ValueError, 'shared byte bound'):
+                    packaging.collect_binding(followup)
+                continued, continued_files = packaging.collect_binding(followup)
+                self.assertEqual(continued['previousNotary']['journals'], {app_sha: app_journal})
+                self.assertEqual(continued['previousNotary']['parentProvenance']['runID'], 70)
+                with tempfile.TemporaryDirectory() as directory:
+                    packaging.save_stage(Path(directory), continued, continued_files)
+                    self.assertEqual(packaging.read_stage(Path(directory), 'input'), (continued, continued_files))
+                final = self.complete_fixture(continued, {app_sha: app_journal})
+                final['originalPackArchives'] = {'.build/plugins/musicvideo.ngvpack.zip': PACK_SHA}
+                final['final']['notaryContext']['runID'] = 80
+                final['final']['guideSHA256'] = packaging.digest(b'fixture-guide')
+                with patch.object(packaging, 'git', side_effect=lambda *args: b'fixture-guide' if args ==
+                        ('show', self.producer + ':scripts/Install NexGenVideo.txt') else self.local_git_fixture()[args]):
+                    self.assertEqual(packaging.load_provenance(80, self.product, publish(final, continued_files))['record'], final)
             for step in release['steps']:
                 with self.subTest(entered=step['name']):
                     step['conclusion'] = 'failure'
@@ -910,32 +1022,33 @@ class RetainedPackagingTests(unittest.TestCase):
             with zipfile.ZipFile(raw, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
                 archive.writestr(name, value * (20 * 1024**2))
             return raw.getvalue()
-        budget = packaging.provenance_chain()
-        token = packaging.BUDGET.set(budget)
-        try:
-            first, second = compressed('first.bin'), compressed('second.bin', b'y')
-            self.assertLess(len(first) + len(second), 100_000)
-            first_records = packaging.read_proof_archive(first)
-            original = first_records.pop('first.bin')
-            self.assertIs(packaging.read_proof_archive(first)['first.bin'], original)
-            self.assertEqual(budget['expandedBytes'], 20 * 1024**2)
-            with self.assertRaisesRegex(ValueError, 'shared byte bound'):
-                packaging.read_proof_archive(second)
-            self.assertEqual(budget['expandedBytes'], 20 * 1024**2)
-            one = io.BytesIO()
-            with zipfile.ZipFile(one, 'w') as archive: archive.writestr('one.bin', b'x')
-            budget.clear(); budget.update(packaging.provenance_chain())
-            budget['expandedBytes'] = packaging.MAX_PROOF_BYTES - 1
-            packaging.read_proof_archive(one.getvalue())
-            self.assertEqual(budget['expandedBytes'], packaging.MAX_PROOF_BYTES)
-            packaging.read_proof_archive(one.getvalue())
-            self.assertEqual(budget['expandedBytes'], packaging.MAX_PROOF_BYTES)
-            two = io.BytesIO()
-            with zipfile.ZipFile(two, 'w') as archive: archive.writestr('two.bin', b'y')
-            with self.assertRaisesRegex(ValueError, 'shared byte bound'):
-                packaging.read_proof_archive(two.getvalue())
-        finally:
-            packaging.BUDGET.reset(token)
+        with patch.object(packaging, 'MAX_SHARED_PROOF_BYTES', packaging.MAX_PROOF_BYTES):
+            budget = packaging.provenance_chain()
+            token = packaging.BUDGET.set(budget)
+            try:
+                first, second = compressed('first.bin'), compressed('second.bin', b'y')
+                self.assertLess(len(first) + len(second), 100_000)
+                first_records = packaging.read_proof_archive(first)
+                original = first_records.pop('first.bin')
+                self.assertIs(packaging.read_proof_archive(first)['first.bin'], original)
+                self.assertEqual(budget['expandedBytes'], 20 * 1024**2)
+                with self.assertRaisesRegex(ValueError, 'shared byte bound'):
+                    packaging.read_proof_archive(second)
+                self.assertEqual(budget['expandedBytes'], 20 * 1024**2)
+                one = io.BytesIO()
+                with zipfile.ZipFile(one, 'w') as archive: archive.writestr('one.bin', b'x')
+                budget.clear(); budget.update(packaging.provenance_chain())
+                budget['expandedBytes'] = packaging.MAX_SHARED_PROOF_BYTES - 1
+                packaging.read_proof_archive(one.getvalue())
+                self.assertEqual(budget['expandedBytes'], packaging.MAX_SHARED_PROOF_BYTES)
+                packaging.read_proof_archive(one.getvalue())
+                self.assertEqual(budget['expandedBytes'], packaging.MAX_SHARED_PROOF_BYTES)
+                two = io.BytesIO()
+                with zipfile.ZipFile(two, 'w') as archive: archive.writestr('two.bin', b'y')
+                with self.assertRaisesRegex(ValueError, 'shared byte bound'):
+                    packaging.read_proof_archive(two.getvalue())
+            finally:
+                packaging.BUDGET.reset(token)
 
     def test_complete_consumer_checks_the_actual_dmg_payload_descriptor(self):
         routes, downloads, environment, values, journals, publish = self.provenance_fixture()
