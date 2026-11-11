@@ -14,13 +14,18 @@ struct NativeButtonInteractionTests {
         let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 600, height: 200),
             styleMask: [.titled, .closable], backing: .buffered, defer: false)
 
-        init(disabled: Bool = false, duplicate: Bool = false) {
+        init(disabled: Bool = false, duplicate: Bool = false, split: Bool = false) {
             window.isReleasedWhenClosed = false
-            window.contentView = NSHostingView(rootView: HStack {
+            let controls = HStack {
                 Button("Undo") {}.disabled(disabled)
                 if duplicate { Button("Undo") {} }
                 Button("Redo") {}.disabled(true)
-            }.buttonStyle(.capsule()))
+            }.buttonStyle(.capsule())
+            if split {
+                window.contentView = NSHostingView(rootView: HSplitView { controls; Text("Preview") })
+            } else {
+                window.contentView = NSHostingView(rootView: controls)
+            }
             window.orderFrontRegardless()
             window.contentView?.layoutSubtreeIfNeeded()
         }
@@ -282,6 +287,20 @@ struct NativeButtonInteractionTests {
             #expect(button.enabled == true)
             #expect(button.frame?.valid == true)
             #expect(button.pid == getpid())
+        }
+        #expect(outcome.1.clean)
+    }
+
+    @Test func actualSplitViewKeepsTheEnabledUndoDiscoverable() async throws {
+        let fixture = Fixture(split: true)
+        defer { fixture.close() }
+        let outcome = try await NativeAXPeer.withSession { session in
+            let value = try await fixture.ready(using: session)
+            try #require(value.complete)
+            let splitter = try #require(value.nodes.first { $0.role == kAXSplitterRole })
+            #expect(splitter.statuses[kAXChildrenAttribute] == AXError.noValue.rawValue)
+            #expect(splitter.childTypes.isEmpty)
+            #expect(Query.buttons(value, title: "Undo", inside: fixture.request.contentFrame).count == 1)
         }
         #expect(outcome.1.clean)
     }

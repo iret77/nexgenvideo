@@ -527,6 +527,12 @@ enum ExampleAudioAnalysisSelfTest {
                     $0.element ?? "Section \($0.offset + 1)"
                 }
                 try await flow.finishPlanningIntake(sectionLabels: suppliedLabels, finalResolution: .res720p, conceptType: .abstract)
+                guard let approvedAnalysisURL = AudioProjectLayout.expectedAnalysisArtifactURL(dataRoot: flow.dataRoot) else {
+                    throw Failure("The approved analysis is missing after interpretation.")
+                }
+                let approvedAnalysis = try Data(contentsOf: approvedAnalysisURL)
+                let approvedAnalysisSHA256 = FileDigest.sha256(of: approvedAnalysis)
+                try approvedAnalysis.write(to: configuration.reportDirectory.appendingPathComponent("approved-analysis.json"), options: .atomic)
                 let encoder = JSONEncoder()
                 encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
                 try encoder.encode(flow.report()).write(to: configuration.reportDirectory.appendingPathComponent("hostflow.json"))
@@ -537,11 +543,13 @@ enum ExampleAudioAnalysisSelfTest {
                 guard owner["executionFixture"] as? String == "private_song_imported",
                       owner["allPhasesApproved"] as? Bool == true, owner["savedAndReopened"] as? Bool == true,
                       let binding = owner["privateSongBinding"] as? [String: String], binding["songSHA256"] == originalSongSHA256,
-                      binding["analysisSHA256"] == summary.sha256 else {
+                      binding["analysisSHA256"] == approvedAnalysisSHA256 else {
                     throw Failure("The V2 film did not preserve the actual private song and approved analysis.")
                 }
                 let fullflow: [String: Any] = ["complete": true,
                     "source": "private exact-file analysis through the same native V2 document",
+                    "analysisLineage": ["measured": ["path": "analysis.json", "sha256": summary.sha256],
+                        "approved": ["path": "approved-analysis.json", "sha256": approvedAnalysisSHA256]],
                     "owner": owner]
                 try JSONSerialization.data(withJSONObject: fullflow, options: [.prettyPrinted, .sortedKeys])
                     .write(to: configuration.reportDirectory.appendingPathComponent("fullflow.json"), options: .atomic)

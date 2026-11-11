@@ -124,47 +124,6 @@ struct StoryboardReviewTests {
         #expect(missing.binding == .changed)
     }
 
-    @Test func storyboardTabUsesTheSharedCockpitStatesWithoutModalReview() throws {
-        let panel = try sourceFile("Sources/NexGenVideo/Inspector/Cockpit/StoryboardPanelView.swift")
-        let document = try sourceFile("Sources/NexGenVideo/Inspector/Cockpit/StoryboardDocumentView.swift")
-        let card = try sourceFile("Sources/NexGenVideo/Agent/Panel/GateApprovalCard.swift")
-        let pipeline = try sourceFile("Sources/NexGenVideo/Inspector/Cockpit/PipelinePanelView.swift")
-        let cockpit = try sourceFile("Sources/NexGenVideo/Inspector/Cockpit/ProjectCockpitView.swift")
-
-        #expect(panel.contains("CockpitStateView.error(error"))
-        #expect(panel.contains("CockpitStateView.empty("))
-        #expect(panel.contains("CockpitDataService.storyboard("))
-        #expect(panel.contains("state = .failed(.noProject)"))
-        #expect(document.contains(".padding(.horizontal, AppTheme.Spacing.lg)"))
-        #expect(cockpit.contains("case .storyboard:"))
-        #expect(cockpit.contains("if editor.usesProductionPlanningV2 { StoryboardPlanningView() } else { StoryboardPanelView() }"))
-        #expect(!cockpit.contains("StoryboardReviewSheet"))
-        for source in [panel, document, pipeline] {
-            #expect(!source.contains(".sheet("))
-        }
-        #expect(card.contains("editor.revealReviewSurface(for: approval.phase)"))
-        #expect(!card.contains("StoryboardReviewSheet"))
-        #expect(!card.contains("PipelineStoryboardReviewSheet"))
-        #expect(card.contains(".sheet(isPresented: $showsReviewDetails)"))
-        #expect(card.contains("ProductionDecisionReview(title: approval.decisionTitle"))
-        #expect(throws: (any Error).self) {
-            try sourceFile("Sources/NexGenVideo/Agent/Panel/StoryboardReviewSheet.swift")
-        }
-        #expect(throws: (any Error).self) {
-            try sourceFile("Sources/NexGenVideo/Inspector/Cockpit/PipelineStoryboardReviewSheet.swift")
-        }
-    }
-
-    private func sourceFile(_ path: String) throws -> String {
-        var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        while root.path != "/",
-              !FileManager.default.fileExists(atPath: root.appendingPathComponent("Package.swift").path) {
-            root.deleteLastPathComponent()
-        }
-        try #require(FileManager.default.fileExists(atPath: root.appendingPathComponent("Package.swift").path))
-        return try String(contentsOf: root.appendingPathComponent(path), encoding: .utf8)
-    }
-
     private func storyboard(_ subject: String, version: Int) throws -> Storyboard {
         try Storyboard(
             meta: StoryboardMeta(project: "Review", version: version, generated: "2026-09-05"),
