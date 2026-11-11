@@ -68,12 +68,13 @@ def matching_shell_lines(step, prefix):
     return [line.strip() for line in step.splitlines() if line.strip().startswith(prefix)]
 
 
-def condition_enabled(condition, artifact_only, dry_run, resumed=False, *, needs_results=None, ancestry_success=True, compiled_targets="", component_continuation=False, cohort_pack_reuse=False):
+def condition_enabled(condition, artifact_only, dry_run, resumed=False, *, needs_results=None, ancestry_success=True, compiled_targets="", component_continuation=False, cohort_pack_reuse=False, defer_private_audio=False):
     expression = str(condition or "true").removeprefix("${{").removesuffix("}}").strip()
     if not ancestry_success and not re.search(r"\b(?:always|cancelled|success|failure)\(\)", expression):
         return False
     values = {
         "inputs.artifact_only": artifact_only,
+        "inputs.defer_private_audio": defer_private_audio,
         "inputs.compiled_app_targets_json": compiled_targets,
         "needs.bpy-source.result": "success",
         "env.NGV_COMPILED_APP_RELEASE": "true" if compiled_targets or cohort_pack_reuse else "",
@@ -97,7 +98,7 @@ def condition_enabled(condition, artifact_only, dry_run, resumed=False, *, needs
     values.update({f"needs.{name}.result": result for name, result in (needs_results or {}).items()})
     expression = re.sub(r"\b(?:inputs|env|needs|steps)\.[\w.-]+",
                         lambda match: repr(values[match.group()]), expression)
-    expression = expression.replace("!cancelled()", "true").replace("&&", " and ").replace("||", " or ")
+    expression = expression.replace("!cancelled()", "true").replace("always()", "true").replace("&&", " and ").replace("||", " or ")
     tree = ast.parse(expression, mode="eval")
     allowed = (ast.Expression, ast.BoolOp, ast.And, ast.Or, ast.Compare, ast.Eq,
                ast.NotEq, ast.Constant, ast.Name, ast.Load)
@@ -234,6 +235,8 @@ xcrun() { printf 'stapler\\n' >> "$CALLS"; return "$NATIVE_RC"; }
                     'inputs.notary_progress_run_id': '4000' if mode == 'notary-resume' else ''}
                 self.assertTrue(condition_enabled(job['if'], True, True,
                     compiled_targets=values['inputs.compiled_app_targets_json']))
+                self.assertFalse(condition_enabled(job['if'], True, True, defer_private_audio=True,
+                    compiled_targets=values['inputs.compiled_app_targets_json']))
                 for field, expected in actual.items():
                     expression = job['with'][field].removeprefix('${{').removesuffix('}}').strip()
                     expression = re.sub(r"\b(?:inputs|github|needs)\.[\w.-]+", lambda m: repr(values[m.group()]), expression)
@@ -242,6 +245,49 @@ xcrun() { printf 'stapler\\n' >> "$CALLS"; return "$NATIVE_RC"; }
                     allowed = (ast.Expression, ast.BoolOp, ast.And, ast.Or, ast.Compare, ast.Eq, ast.NotEq, ast.Constant)
                     self.assertTrue(all(isinstance(node, allowed) for node in ast.walk(tree)))
                     self.assertEqual(eval(compile(tree, '<runtime producer>', 'eval'), {'__builtins__': {}}), expected)
+        workflow = self.workflow()
+        self.assertIs(workflow[True]['workflow_dispatch']['inputs']['defer_private_audio']['default'], False)
+        pending = workflow['jobs']['private-audio-pending']
+        self.assertEqual(pending['runs-on'], 'ubuntu-24.04')
+        self.assertTrue(condition_enabled(pending['if'], True, True, defer_private_audio=True))
+        self.assertFalse(condition_enabled(pending['if'], True, True))
+        self.assertFalse(condition_enabled(pending['if'], False, True, defer_private_audio=True))
+        self.assertFalse(condition_enabled(pending['if'], True, False, defer_private_audio=True))
+        writer = next(step['run'] for step in pending['steps'] if step.get('name', '').startswith('Bind the pending'))
+        code = writer.split("<<'PY'\n", 1)[1].rsplit('\nPY', 1)[0]
+        from unittest.mock import patch
+        for ready in (True, False):
+            with self.subTest(runtimeProduced=ready), tempfile.TemporaryDirectory() as directory:
+                env = {'GITHUB_SHA': 'a' * 40, 'GITHUB_RUN_ID': '123', 'GITHUB_RUN_ATTEMPT': '1',
+                    'RUNNER_TEMP': directory, 'RELEASE_RESULT': 'success' if ready else 'failure',
+                    'VERIFIED_PR_RUN': '789',
+                    'PRODUCT_SOURCE': 'b' * 40 if ready else '', 'RUNTIME_ARTIFACT': '456' if ready else '',
+                    'RUNTIME_DIGEST': 'sha256:' + 'c' * 64 if ready else '', 'DMG_DIGEST': 'd' * 64 if ready else ''}
+                with patch.dict(os.environ, env, clear=True):exec(compile(code, '<pending scope writer>', 'exec'), {})
+                actual = json.loads((Path(directory) / 'private-audio-pending.json').read_bytes())
+                self.assertIs(actual['scopeAccepted'], False)
+                self.assertIs(actual['allFiveRuntimeScopesAccepted'], False)
+                self.assertIs(actual['deliveryAccepted'], False)
+                self.assertIs(actual['runtimeProduced'], ready)
+                if ready:
+                    self.assertEqual(actual['runtimeInputs']['runtime_run_id'], '123')
+                    self.assertEqual(actual['runtimeInputs']['verified_pr_run_id'], '789')
+                    self.assertEqual(actual['runtimeInputs']['runtime_source_sha'], 'b' * 40)
+                    self.assertEqual(actual['runtimeInputs']['runtime_artifact_id'], '456')
+                    self.assertEqual(actual['runtimeInputs']['runtime_artifact_sha256'], 'c' * 64)
+                    self.assertEqual(actual['dmgSHA256'], 'd' * 64)
+                else:self.assertIsNone(actual['runtimeInputs'])
+        with tempfile.TemporaryDirectory() as directory:
+            bad = {'GITHUB_SHA': 'a' * 40, 'GITHUB_RUN_ID': '123', 'GITHUB_RUN_ATTEMPT': '1',
+                'RUNNER_TEMP': directory, 'RELEASE_RESULT': 'success', 'PRODUCT_SOURCE': 'b' * 40,
+                'RUNTIME_ARTIFACT': '456', 'RUNTIME_DIGEST': 'mutable-tag', 'DMG_DIGEST': 'd' * 64}
+            with patch.dict(os.environ, bad, clear=True), self.assertRaises(AssertionError):
+                exec(compile(code, '<pending scope writer>', 'exec'), {})
+            self.assertFalse((Path(directory) / 'private-audio-pending.json').exists())
+        upload = next(i for i, step in enumerate(pending['steps']) if step.get('uses', '').startswith('actions/upload-artifact@'))
+        self.assertIn('exit 1', pending['steps'][-1]['run'])
+        self.assertGreater(len(pending['steps']) - 1, upload)
+        self.assertFalse(pending.get('continue-on-error', False))
 
     def test_artifact_only_has_no_active_publication_including_resume(self):
         workflow = self.workflow()
@@ -325,6 +371,13 @@ xcrun() { printf 'stapler\\n' >> "$CALLS"; return "$NATIVE_RC"; }
                     self.assertEqual(result.returncode == 0, accepted, result.stdout + result.stderr)
                     if not accepted:
                         self.assertIn("Preview channels are run-specific", result.stdout)
+        for artifact_only, dry_run in ((True, True), (True, False), (False, True), (False, False)):
+            with self.subTest(deferredAudio=True, artifact_only=artifact_only, dry_run=dry_run):
+                environment = dict(os.environ, REL_VERSION='1.8.0', ARTIFACT_ONLY=str(artifact_only).lower(),
+                    DRY_RUN=str(dry_run).lower(), DEFER_PRIVATE_AUDIO='true')
+                result = subprocess.run(['bash', '-c', validate], env=environment,
+                    capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode == 0, artifact_only and dry_run, result.stdout + result.stderr)
 
     def test_artifact_only_keeps_distribution_and_native_gates(self):
         workflow = self.workflow()

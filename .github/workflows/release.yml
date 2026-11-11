@@ -34,6 +34,10 @@ on:
         required: false
         default: false
         type: boolean
+      defer_private_audio:
+        description: "Keep private audio pending while producing an unpublished candidate; requires artifact_only and dry_run"
+        type: boolean
+        default: false
       test_bundle_run_id:
         description: Optional original producer with identical compiled XCTest client inputs
         type: string
@@ -119,6 +123,7 @@ jobs:
           REL_VERSION: ${{ inputs.version }}
           ARTIFACT_ONLY: ${{ inputs.artifact_only }}
           DRY_RUN: ${{ inputs.dry_run }}
+          DEFER_PRIVATE_AUDIO: ${{ inputs.defer_private_audio }}
           RELEASE_TEST_RUN: ${{ inputs.completed_release_tests_run_id }}
           RELEASE_ENGINE_RUN: ${{ inputs.completed_engine_tests_run_id }}
           SIGNED_BUILD_RUN: ${{ inputs.signed_build_run_id }}
@@ -152,6 +157,10 @@ jobs:
           fi
           if [ "$ARTIFACT_ONLY" = "true" ] && [ "$DRY_RUN" != "true" ]; then
             echo "::error::artifact_only requires dry_run=true"
+            exit 1
+          fi
+          if [ "${DEFER_PRIVATE_AUDIO:-false}" = "true" ] && { [ "$ARTIFACT_ONLY" != "true" ] || [ "$DRY_RUN" != "true" ]; }; then
+            echo "::error::Deferring private audio requires artifact_only=true and dry_run=true"
             exit 1
           fi
 
@@ -2071,7 +2080,7 @@ jobs:
 
   musicvideo-analysis-acceptance:
     needs: [release, diagnostic-acceptance, bpy-runtime]
-    if: ${{ !cancelled() && inputs.artifact_only && needs.release.result == 'success' && needs.diagnostic-acceptance.result == 'success' && needs.bpy-runtime.result == 'success' }}
+    if: ${{ !cancelled() && inputs.artifact_only && inputs.defer_private_audio == false && needs.release.result == 'success' && needs.diagnostic-acceptance.result == 'success' && needs.bpy-runtime.result == 'success' }}
     permissions:
       contents: read
       actions: read
@@ -2089,6 +2098,72 @@ jobs:
       verified_pr_run_id: ${{ inputs.verified_pr_run_id }}
     secrets:
       NGV_GHCR_TOKEN: ${{ secrets.NGV_GHCR_TOKEN }}
+
+  private-audio-pending:
+    needs: [release-gate, release]
+    if: ${{ always() && inputs.defer_private_audio && inputs.artifact_only && inputs.dry_run && needs.release-gate.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Bind the pending private audio scope to its actual candidate
+        env:
+          RELEASE_RESULT: ${{ needs.release.result }}
+          VERIFIED_PR_RUN: ${{ inputs.verified_pr_run_id }}
+          PRODUCT_SOURCE: ${{ needs.release.outputs.product_source_sha }}
+          RUNTIME_ARTIFACT: ${{ needs.release.outputs.workspace_artifact_id }}
+          RUNTIME_DIGEST: ${{ needs.release.outputs.workspace_artifact_sha256 }}
+          DMG_DIGEST: ${{ needs.release.outputs.dmg_sha256 }}
+          PACKAGING_SOURCE: ${{ needs.release.outputs.packaging_producer_source_sha }}
+          PACKAGING_ARTIFACT: ${{ needs.release.outputs.packaging_provenance_artifact_id }}
+          PACKAGING_DIGEST: ${{ needs.release.outputs.packaging_provenance_artifact_sha256 }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          positive = lambda value: bool(re.fullmatch('[1-9][0-9]*', value))
+          sha = lambda value, size: bool(re.fullmatch('[a-f0-9]{' + str(size) + '}', value))
+          source = os.environ['GITHUB_SHA']
+          assert sha(source, 40) and positive(os.environ['GITHUB_RUN_ID']) and positive(os.environ['GITHUB_RUN_ATTEMPT'])
+          ready = os.environ['RELEASE_RESULT'] == 'success'
+          selected = {name: os.environ.get(name, '') for name in ('PRODUCT_SOURCE', 'RUNTIME_ARTIFACT', 'RUNTIME_DIGEST', 'DMG_DIGEST', 'PACKAGING_SOURCE', 'PACKAGING_ARTIFACT', 'PACKAGING_DIGEST')}
+          for name in ('RUNTIME_DIGEST', 'PACKAGING_DIGEST'):
+              selected[name] = selected[name].removeprefix('sha256:')
+          if ready:
+              assert sha(selected['PRODUCT_SOURCE'], 40) and positive(selected['RUNTIME_ARTIFACT'])
+              assert sha(selected['RUNTIME_DIGEST'], 64) and sha(selected['DMG_DIGEST'], 64)
+              packaging = [selected[name] for name in ('PACKAGING_SOURCE', 'PACKAGING_ARTIFACT', 'PACKAGING_DIGEST')]
+              assert not any(packaging) or (sha(packaging[0], 40) and positive(packaging[1]) and sha(packaging[2], 64))
+              assert not os.environ.get('VERIFIED_PR_RUN', '') or positive(os.environ['VERIFIED_PR_RUN'])
+          value = {'schema': 'private-audio-deferred/v1', 'status': 'PENDING_PACKAGE_ACCESS',
+              'scope': 'private-audio', 'scopeAccepted': False, 'allFiveRuntimeScopesAccepted': False,
+              'releaseAccepted': False, 'deliveryAccepted': False, 'publicationAuthorised': False,
+              'harnessSourceSHA': source, 'producerRunID': int(os.environ['GITHUB_RUN_ID']),
+              'producerAttempt': int(os.environ['GITHUB_RUN_ATTEMPT']), 'runtimeProduced': ready,
+              'runtimeInputs': {'runtime_run_id': os.environ['GITHUB_RUN_ID'],
+                  'dataset': 'claude_mouse', 'verified_pr_run_id': os.environ.get('VERIFIED_PR_RUN', ''),
+                  'runtime_source_sha': selected['PRODUCT_SOURCE'], 'runtime_artifact_id': selected['RUNTIME_ARTIFACT'],
+                  'runtime_artifact_sha256': selected['RUNTIME_DIGEST'],
+                  'packaging_producer_source_sha': selected['PACKAGING_SOURCE'],
+                  'packaging_provenance_artifact_id': selected['PACKAGING_ARTIFACT'],
+                  'packaging_provenance_artifact_sha256': selected['PACKAGING_DIGEST']} if ready else None,
+              'dmgSHA256': selected['DMG_DIGEST'] if ready else None}
+          target = Path(os.environ['RUNNER_TEMP']) / 'private-audio-pending.json'
+          with target.open('x') as stream: json.dump(value, stream, indent=2, sort_keys=True); stream.write('\n')
+          PY
+      - name: Retain the unqualified private audio scope
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: private-audio-pending-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/private-audio-pending.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Keep RC acceptance incomplete until private audio passes
+        run: |
+          echo '::error::Private audio acceptance remains pending for this exact candidate.'
+          exit 1
 
   publish:
     needs: [release-gate, release, diagnostic-acceptance, bpy-runtime, external-user-acceptance]
