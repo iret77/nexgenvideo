@@ -1059,6 +1059,22 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Prepare artifact service probe
+        run: |
+          printf '{"repository":"%s","runID":"%s","attempt":"%s","sourceSHA":"%s"}\n' \
+            "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_SHA" \
+            > "$RUNNER_TEMP/app-target-artifact-probe.json"
+          cat "$RUNNER_TEMP/app-target-artifact-probe.json"
+      - name: Require working artifact service before native work
+        id: artifact_probe
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        timeout-minutes: 3
+        with:
+          name: app-target-artifact-probe
+          path: ${{ runner.temp }}/app-target-artifact-probe.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
       - uses: ./.github/actions/setup-xcode-27
       - uses: ./.github/actions/setup-native-test-python
       - uses: ./.github/actions/cache-swiftpm-dependencies
@@ -1073,54 +1089,171 @@ jobs:
           python3 scripts/native_app_target_build.py prepare \
             --source-binding "$RUNNER_TEMP/app-target-source-binding/binding.json" \
             --output "$RUNNER_TEMP/app-target-build"
+      - name: Select immutable retained product uploads
+        id: retained_products
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+
+          root = Path(os.environ['RUNNER_TEMP']) / 'app-target-build'
+          prepared = json.loads((root / 'prepared.json').read_bytes())
+          decisions = {}
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              for phase in ('production', 'testable', 'tests'):
+                  resumed = prepared['resumedProducts'].get(phase, {})
+                  state = resumed.get('receipt', {}).get('state', {})
+                  retained = state.get('compileComplete') is True and state.get('linkComplete') is True
+                  selector = None
+                  if retained:
+                      original = resumed['origin']['selected']
+                      selector = {key: original[key] for key in (
+                          'runID', 'sourceSHA', 'artifactID', 'artifactSHA256', 'receiptSHA256')}
+                  decisions[phase] = {'retained': retained, 'selector': selector}
+                  output.write(f'{phase}={str(retained).lower()}\n')
+          (root / 'upload-selection.json').write_text(json.dumps({
+              'schema': 'native-app-target-upload-selection/v1', 'roles': decisions}, indent=2) + '\n')
+          PY
       - name: Build only the current production App target
         id: production
         run: python3 scripts/native_app_target_build.py production --output "$RUNNER_TEMP/app-target-build"
-      - uses: actions/upload-artifact@v4
-        if: always() && steps.production.outcome != 'skipped'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always() && steps.production.outcome != 'skipped' && (steps.retained_products.outputs.production != 'true' || steps.production.outcome != 'success')
         id: production_upload
         with:
           name: app-target-production-products
           path: ${{ runner.temp }}/app-target-build/production-products.zip
           if-no-files-found: error
+          compression-level: 0
           retention-days: 90
       - name: Build only the current testable App target
         id: testable
         run: python3 scripts/native_app_target_build.py testable --output "$RUNNER_TEMP/app-target-build"
-      - uses: actions/upload-artifact@v4
-        if: always() && steps.testable.outcome != 'skipped'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always() && steps.testable.outcome != 'skipped' && (steps.retained_products.outputs.testable != 'true' || steps.testable.outcome != 'success')
         id: testable_upload
         with:
           name: app-target-testable-products
           path: ${{ runner.temp }}/app-target-build/testable-products.zip
           if-no-files-found: error
+          compression-level: 0
           retention-days: 90
       - name: Build only the dependent App tests target
         id: tests
         run: python3 scripts/native_app_target_build.py tests --output "$RUNNER_TEMP/app-target-build"
-      - uses: actions/upload-artifact@v4
-        if: always() && steps.tests.outcome != 'skipped'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always() && steps.tests.outcome != 'skipped' && (steps.retained_products.outputs.tests != 'true' || steps.tests.outcome != 'success')
         id: tests_upload
         with:
           name: app-target-tests-products
           path: ${{ runner.temp }}/app-target-build/tests-products.zip
           if-no-files-found: error
+          compression-level: 0
           retention-days: 90
-      - uses: actions/upload-artifact@v4
-        if: always() && ((steps.production.outcome != 'skipped' && steps.production_upload.outcome != 'success') || (steps.testable.outcome != 'skipped' && steps.testable_upload.outcome != 'success') || (steps.tests.outcome != 'skipped' && steps.tests_upload.outcome != 'success'))
+      - name: Select required fallback directories
+        id: fallback_selection
+        if: always() && steps.artifact_probe.outcome == 'success'
+        env:
+          PRODUCTION_FALLBACK: ${{ steps.production.outcome != 'skipped' && (steps.retained_products.outputs.production != 'true' || steps.production.outcome != 'success') && steps.production_upload.outcome != 'success' }}
+          TESTABLE_FALLBACK: ${{ steps.testable.outcome != 'skipped' && (steps.retained_products.outputs.testable != 'true' || steps.testable.outcome != 'success') && steps.testable_upload.outcome != 'success' }}
+          TESTS_FALLBACK: ${{ steps.tests.outcome != 'skipped' && (steps.retained_products.outputs.tests != 'true' || steps.tests.outcome != 'success') && steps.tests_upload.outcome != 'success' }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, shutil, stat
+          from pathlib import Path
+
+          temporary = Path(os.environ['RUNNER_TEMP'])
+          root = temporary / 'app-target-build'
+          root.mkdir(parents=True, exist_ok=True)
+          roles = [phase for phase in ('production', 'testable', 'tests')
+              if os.environ.get(phase.upper() + '_FALLBACK') != 'false']
+          paths = []
+          if roles:
+              prepared = json.loads((root / 'prepared.json').read_bytes())
+              references = {}
+              def remember(files, origin, prefix):
+                  for name, item in files.items():
+                      if item['kind'] == 'file':
+                          references.setdefault((item['sha256'], item['bytes']), dict(origin, member=prefix + name))
+              for phase, resumed in prepared['resumedProducts'].items():
+                  receipt = resumed['receipt']
+                  if receipt['state']['compileComplete'] is True and receipt['state']['linkComplete'] is True:
+                      remember(receipt['files'], {'kind': 'retained-role', 'role': phase,
+                          'selector': resumed['origin']['selected']}, phase + '-products.zip!/outputs/')
+              source = temporary / 'app-target-source-binding'
+              manifest_raw = (source / 'bank-runtime-manifest.json').read_bytes()
+              manifest = json.loads(manifest_raw)
+              binding = json.loads((source / 'binding.json').read_bytes())
+              bank = binding['retainedBank']['runtimeArtifact']
+              remember(manifest['files'], {'kind': 'retained-runtime-bank', 'artifactID': bank['id'],
+                  'artifactSHA256': bank['digest'].removeprefix('sha256:'),
+                  'runID': bank['workflow_run']['id'], 'sourceSHA': bank['workflow_run']['head_sha'],
+                  'manifestSHA256': hashlib.sha256(manifest_raw).hexdigest()}, 'runtime-products.zip!/Release/')
+              staging = temporary / 'app-target-fallback-stage'
+              staging.mkdir()
+              candidates = [root / 'tests-driver-plan', temporary / 'app-build-plan-evidence']
+              candidates.extend(root / phase for phase in roles)
+              candidates.extend(root / (phase + '-products.zip') for phase in roles)
+              candidates.extend(path for pattern in ('*.json', '*.stdout', '*.stderr') for path in root.glob(pattern))
+              copied, reused, links, seen = {}, {}, {}, set()
+              for candidate in candidates:
+                  entries = [candidate, *sorted(candidate.rglob('*'))] if candidate.is_dir() and not candidate.is_symlink() else [candidate]
+                  for path in entries:
+                      if not path.exists() and not path.is_symlink():
+                          continue
+                      relative = path.relative_to(temporary).as_posix()
+                      if relative in seen:
+                          continue
+                      seen.add(relative)
+                      mode = stat.S_IMODE(path.lstat().st_mode)
+                      if path.is_symlink():
+                          links[relative] = {'target': os.readlink(path), 'mode': mode}
+                          continue
+                      if not path.is_file():
+                          continue
+                      descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+                      with os.fdopen(descriptor, 'rb') as stream:
+                          before = os.fstat(stream.fileno())
+                          assert stat.S_ISREG(before.st_mode)
+                          digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+                          item = {'sha256': digest, 'bytes': before.st_size, 'mode': mode}
+                          original = references.get((digest, before.st_size))
+                          if original is not None:
+                              reused[relative] = dict(item, original=original)
+                          else:
+                              destination = staging / relative
+                              destination.parent.mkdir(parents=True, exist_ok=True)
+                              stream.seek(0)
+                              with destination.open('xb') as output:
+                                  shutil.copyfileobj(stream, output)
+                              os.chmod(destination, mode)
+                              copied[relative] = item
+                          after = os.fstat(stream.fileno())
+                          assert (before.st_size, before.st_mtime_ns) == (after.st_size, after.st_mtime_ns)
+              (staging / 'fallback-index.json').write_text(json.dumps({
+                  'schema': 'native-app-target-differential-fallback/v1', 'roles': roles,
+                  'copiedFiles': copied, 'retainedReferences': reused, 'symlinks': links}, indent=2) + '\n')
+              paths = [staging]
+          (root / 'fallback-selection.json').write_text(json.dumps({
+              'schema': 'native-app-target-fallback-selection/v1', 'roles': roles,
+              'paths': [str(path) for path in paths]}, indent=2) + '\n')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'required={str(bool(roles)).lower()}\npaths<<NGV_FALLBACK_PATHS\n')
+              output.write(''.join(str(path) + '\n' for path in paths))
+              output.write('NGV_FALLBACK_PATHS\n')
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always() && steps.artifact_probe.outcome == 'success' && steps.fallback_selection.outputs.required != 'false'
         with:
           name: app-target-retention-fallback
           path: |
-            ${{ runner.temp }}/app-target-build/tests-driver-plan/
-            ${{ runner.temp }}/app-build-plan-evidence/
-            ${{ runner.temp }}/app-target-build/production/
-            ${{ runner.temp }}/app-target-build/testable/
-            ${{ runner.temp }}/app-target-build/tests/
+            ${{ steps.fallback_selection.outputs.paths || format('{0}/app-target-build/', runner.temp) }}
+            ${{ steps.fallback_selection.outputs.paths == '' && format('{0}/app-build-plan-evidence/', runner.temp) || '' }}
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 90
-      - uses: actions/upload-artifact@v4
-        if: always()
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always() && steps.artifact_probe.outcome == 'success'
         with:
           name: app-target-build-evidence
           path: |
@@ -1138,6 +1271,7 @@ jobs:
             ${{ runner.temp }}/app-target-build/tests/*.json
             ${{ runner.temp }}/app-target-build/tests/*.stdout
             ${{ runner.temp }}/app-target-build/tests/*.stderr
+            ${{ runner.temp }}/app-target-fallback-stage/fallback-index.json
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 90
