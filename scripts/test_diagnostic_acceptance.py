@@ -1,4 +1,5 @@
 from pathlib import Path
+import hashlib
 import json
 import os
 import subprocess
@@ -19,7 +20,60 @@ from verify_diagnostic_candidate import SIGNED_DESKTOP_HARNESS_PATHS, SIGNED_WOR
 
 
 class NativeAppTargetWorkflowTests(unittest.TestCase):
-    def test_registered_target_builder_uses_exact_source_binding_and_preserves_each_product_before_the_next(self):
+    @staticmethod
+    def steps():
+        workflow = Path(__file__).resolve().parent.parent / '.github/workflows/diagnostic-acceptance.yml'
+        return yaml.safe_load(workflow.read_text())['jobs']['app-target-build']['steps']
+
+    @staticmethod
+    def guard(expression, steps):
+        class Context(SimpleNamespace):
+            def __getattr__(self, name):
+                return ''
+
+        def context(value):
+            return Context(**{key: context(item) for key, item in value.items()}) if isinstance(value, dict) else value
+
+        expression = expression.strip()
+        if expression.startswith('${{'):
+            expression = expression[3:-2].strip()
+        return bool(eval(expression.replace('&&', ' and ').replace('||', ' or '),
+            {'__builtins__': {}}, {'always': lambda: True, 'steps': context(steps)}))
+
+    @staticmethod
+    def fallback_fixture(root, phase):
+        def record(raw):
+            return {'kind': 'file', 'sha256': hashlib.sha256(raw).hexdigest(), 'bytes': len(raw), 'mode': 0o644}
+
+        def write(relative, raw):
+            path = root / relative; path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(raw)
+
+        retained = {}
+        for index, role in enumerate(('production', 'testable')):
+            raw = ('old-' + role).encode()
+            selected = {'runID': 101, 'sourceSHA': 'a' * 40, 'artifactID': 202 + index,
+                        'artifactSHA256': 'b' * 64, 'receiptSHA256': 'c' * 64}
+            retained[role] = {'receipt': {'state': {'compileComplete': True, 'linkComplete': True},
+                'files': {'Objects/Old.o': record(raw)}}, 'origin': {'selected': selected}}
+            write('app-build-plan-evidence/' + role + '/derived-data/Objects/Old.o', raw)
+            write('app-target-build/' + role + '/tmp/consumed-inputs/old-image', raw)
+        retained['testable']['receipt']['files']['SDK/changed.pcm'] = record(b'previous-cache')
+        write('app-build-plan-evidence/testable/derived-data/SDK/changed.pcm', b'new-cache')
+        write('app-build-plan-evidence/testable/derived-data/Objects/NewTests.o', b'new-tests')
+        write('app-build-plan-evidence/testable/driver.json', b'{"target":"tests"}')
+        write('app-build-plan-evidence/testable/derived-data/Products/Engine.dylib', b'old-engine')
+        write('app-target-build/' + phase + '/tmp/nested/raw.log', b'new-error-log')
+        write('app-target-build/' + phase + '-products.zip', b'exact-current-product-archive')
+        write('app-target-build/prepared.json', json.dumps({'resumedProducts': retained}).encode())
+        write('app-target-source-binding/bank-runtime-manifest.json', json.dumps({'files': {
+            'Engine.dylib': record(b'old-engine')}}).encode())
+        write('app-target-source-binding/binding.json', json.dumps({'retainedBank': {'runtimeArtifact': {
+            'id': 303, 'digest': 'sha256:' + 'd' * 64,
+            'workflow_run': {'id': 404, 'head_sha': 'e' * 40}}}}).encode())
+        link = root / 'app-target-build' / phase / 'tmp/native-link'
+        link.symlink_to('nested/raw.log')
+
+    def test_registered_target_builder_uses_exact_source_binding_and_preserves_each_new_product_before_the_next(self):
         workflow = yaml.safe_load((Path(__file__).resolve().parent.parent / '.github/workflows/diagnostic-acceptance.yml').read_text())
         source = workflow['jobs']['source']
         job = workflow['jobs']['app-target-build']
@@ -41,9 +95,129 @@ class NativeAppTargetWorkflowTests(unittest.TestCase):
         for artifact in ('app-target-retention-fallback', 'app-target-build-evidence'):
             upload = next(step for step in steps if step.get('with', {}).get('name') == artifact)
             self.assertIn('always()', upload['if'])
-            self.assertIn('${{ runner.temp }}/app-target-build/tests-driver-plan/', upload['with']['path'])
+            expected = 'steps.fallback_selection.outputs.paths' if artifact.endswith('fallback') else '${{ runner.temp }}/app-target-build/tests-driver-plan/'
+            self.assertIn(expected, upload['with']['path'])
             self.assertTrue(upload['with']['include-hidden-files'])
         self.assertEqual(source['outputs']['target-binding-id'], '${{ steps.target-binding-upload.outputs.artifact-id }}')
+
+    def test_retained_selection_preserves_original_selectors_and_requires_complete_products(self):
+        selection = next(step['run'] for step in self.steps() if step.get('id') == 'retained_products')
+        script = selection.split("<<'PY'\n", 1)[1].rsplit('\nPY', 1)[0]
+        original = {'runID': 101, 'sourceSHA': 'a' * 40, 'artifactID': 202,
+                    'artifactSHA256': 'b' * 64, 'receiptSHA256': 'c' * 64}
+        originals = {phase: dict(original, artifactID=202 + index)
+                     for index, phase in enumerate(('production', 'testable', 'tests'))}
+        records = [
+            ({'production': (True, True), 'testable': (True, True)},
+             {'production': 'true', 'testable': 'true', 'tests': 'false'}),
+            ({'production': (True, False), 'testable': (True, False), 'tests': (True, True)},
+             {'production': 'false', 'testable': 'false', 'tests': 'true'}),
+            ({},
+             {'production': 'false', 'testable': 'false', 'tests': 'false'}),
+        ]
+        for states, expected in records:
+            with self.subTest(states=states), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory); stage = root / 'app-target-build'; stage.mkdir()
+                resumed = {phase: {'receipt': {'state': {'compileComplete': flags[0], 'linkComplete': flags[1]}},
+                    'origin': {'selected': dict(originals[phase])}} for phase, flags in states.items()}
+                (stage / 'prepared.json').write_text(json.dumps({'resumedProducts': resumed}))
+                output = root / 'outputs'
+                with patch.dict(os.environ, {'RUNNER_TEMP': str(root), 'GITHUB_OUTPUT': str(output)}):
+                    exec(compile(script, 'workflow-retained-selection', 'exec'), {})
+                self.assertEqual(dict(line.split('=', 1) for line in output.read_text().splitlines()), expected)
+                receipt = json.loads((stage / 'upload-selection.json').read_bytes())
+                self.assertEqual(receipt['schema'], 'native-app-target-upload-selection/v1')
+                self.assertEqual(set(receipt['roles']), {'production', 'testable', 'tests'})
+                for phase, value in expected.items():
+                    self.assertIs(receipt['roles'][phase]['retained'], value == 'true')
+                    self.assertEqual(receipt['roles'][phase]['selector'], originals[phase] if value == 'true' else None)
+
+    def test_actual_upload_and_fallback_guards_preserve_every_required_product(self):
+        steps = self.steps()
+        uploads = {step['id']: step for step in steps if step.get('id', '').endswith('_upload')}
+        fallback = next(step for step in steps if step.get('with', {}).get('name') == 'app-target-retention-fallback')
+        selection = next(step for step in steps if step.get('id') == 'fallback_selection')
+        script = selection['run'].split("<<'PY'\n", 1)[1].rsplit('\nPY', 1)[0]
+        cases = [
+            ('true', 'success', 'skipped', False, False),
+            ('true', 'failure', 'failure', True, True),
+            ('true', 'cancelled', 'skipped', True, True),
+            ('true', '', 'success', True, False),
+            ('false', 'success', 'success', True, False),
+            ('false', 'success', 'failure', True, True),
+            (None, 'success', 'skipped', True, True),
+            ('true', 'skipped', 'failure', False, False),
+        ]
+        for phase in ('production', 'testable', 'tests'):
+            upload = uploads[phase + '_upload']
+            self.assertEqual(upload['with']['compression-level'], 0)
+            for retained, outcome, uploaded, required, preserve in cases:
+                with self.subTest(phase=phase, retained=retained, outcome=outcome, uploaded=uploaded):
+                    context = {role: {'outcome': 'skipped'} for role in ('production', 'testable', 'tests')}
+                    context.update({role + '_upload': {'outcome': 'skipped'} for role in ('production', 'testable', 'tests')})
+                    context[phase] = {'outcome': outcome}
+                    context[phase + '_upload'] = {'outcome': uploaded}
+                    context['retained_products'] = {'outputs': {phase: retained} if retained is not None else {}}
+                    self.assertIs(self.guard(upload['if'], context), required)
+                    flags = {role.upper() + '_FALLBACK': str(self.guard(selection['env'][role.upper() + '_FALLBACK'], context)).lower()
+                             for role in ('production', 'testable', 'tests')}
+                    self.assertEqual(flags, {role.upper() + '_FALLBACK': str(role == phase and preserve).lower()
+                                            for role in ('production', 'testable', 'tests')})
+                    with tempfile.TemporaryDirectory() as directory:
+                        root = Path(directory); output = root / 'outputs'
+                        self.fallback_fixture(root, phase)
+                        with patch.dict(os.environ, dict(flags, RUNNER_TEMP=str(root), GITHUB_OUTPUT=str(output))):
+                            exec(compile(script, 'workflow-fallback-selection', 'exec'), {})
+                        receipt = json.loads((root / 'app-target-build/fallback-selection.json').read_bytes())
+                        self.assertEqual(receipt['roles'], [phase] if preserve else [])
+                        staging = root / 'app-target-fallback-stage'
+                        self.assertEqual(receipt['paths'], [str(staging)] if preserve else [])
+                        if preserve:
+                            index = json.loads((staging / 'fallback-index.json').read_bytes())
+                            self.assertEqual(index['schema'], 'native-app-target-differential-fallback/v1')
+                            for role in ('production', 'testable'):
+                                relative = 'app-build-plan-evidence/' + role + '/derived-data/Objects/Old.o'
+                                self.assertFalse((staging / relative).exists())
+                                reference = index['retainedReferences'][relative]['original']
+                                self.assertEqual(reference['selector']['artifactID'], 202 if role == 'production' else 203)
+                                self.assertEqual(reference['member'], role + '-products.zip!/outputs/Objects/Old.o')
+                            engine = 'app-build-plan-evidence/testable/derived-data/Products/Engine.dylib'
+                            self.assertFalse((staging / engine).exists())
+                            self.assertEqual(index['retainedReferences'][engine]['original']['artifactID'], 303)
+                            self.assertEqual((staging / 'app-build-plan-evidence/testable/derived-data/Objects/NewTests.o').read_bytes(), b'new-tests')
+                            self.assertEqual((staging / 'app-build-plan-evidence/testable/derived-data/SDK/changed.pcm').read_bytes(), b'new-cache')
+                            self.assertEqual((staging / 'app-target-build' / phase / 'tmp/nested/raw.log').read_bytes(), b'new-error-log')
+                            self.assertEqual((staging / 'app-target-build' / (phase + '-products.zip')).read_bytes(), b'exact-current-product-archive')
+                            self.assertEqual(index['symlinks']['app-target-build/' + phase + '/tmp/native-link']['target'], 'nested/raw.log')
+                        else:
+                            self.assertFalse(staging.exists())
+                        result = output.read_text().splitlines()[0].split('=', 1)[1]
+                        self.assertEqual(result, str(preserve).lower())
+                    context['artifact_probe'] = {'outcome': 'success'}
+                    context['fallback_selection'] = {'outputs': {'required': result}}
+                    self.assertIs(self.guard(fallback['if'], context), preserve)
+        self.assertTrue(self.guard(fallback['if'], {'artifact_probe': {'outcome': 'success'},
+            'fallback_selection': {'outputs': {}}}))
+
+    def test_artifact_service_failure_stops_before_native_work_without_repeating_failed_uploads(self):
+        steps = self.steps(); probe = next(step for step in steps if step.get('id') == 'artifact_probe')
+        probe_index = steps.index(probe)
+        setup = next(index for index, step in enumerate(steps) if step.get('uses') == './.github/actions/setup-xcode-27')
+        self.assertLess(probe_index, setup)
+        self.assertEqual(probe['timeout-minutes'], 3)
+        self.assertEqual(probe['with']['if-no-files-found'], 'error')
+        self.assertEqual(probe['with']['compression-level'], 0)
+        metadata = next(step for step in steps if step.get('with', {}).get('name') == 'app-target-build-evidence')
+        fallback_selection = next(step for step in steps if step.get('id') == 'fallback_selection')
+        fallback = next(step for step in steps if step.get('with', {}).get('name') == 'app-target-retention-fallback')
+        for phase in ('production', 'testable', 'tests'):
+            self.assertNotIn('if', next(step for step in steps if step.get('id') == phase))
+        for outcome in ('success', 'failure', 'cancelled', 'skipped'):
+            with self.subTest(probe=outcome):
+                context = {'artifact_probe': {'outcome': outcome}, 'fallback_selection': {'outputs': {'required': 'true'}}}
+                self.assertIs(self.guard(metadata['if'], context), outcome == 'success')
+                self.assertIs(self.guard(fallback_selection['if'], context), outcome == 'success')
+                self.assertIs(self.guard(fallback['if'], context), outcome == 'success')
 
 
 class CaptureOriginalRetentionTests(unittest.TestCase):

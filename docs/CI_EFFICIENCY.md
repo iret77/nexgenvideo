@@ -24,6 +24,32 @@ satisfies the required check.
 
 ### Existing-artifact followups
 
+The native App-target job first uploads a small source-stamped artifact, before
+native setup, product restoration or compilation. Its three-minute timeout bounds
+an unresponsive artifact service. A failed probe stops native work; its finite
+input remains in the job log instead of triggering more uploads through the same
+failed service.
+
+After restoration authenticates the retained products, the workflow records their
+original selectors and compile/link state. Each role still executes its existing
+materialization and checkpoint checks. A fully retained role that succeeds keeps
+its original artifact rather than uploading another complete copy. Fresh selection,
+materialization and role receipts remain in the mandatory metadata artifact.
+New or partially completed products still upload before the next role. Failed
+materialization, cancelled roles and missing selection outputs preserve the strict
+upload and fallback paths, including nested diagnostic files. Already compressed
+product ZIPs use artifact compression level zero.
+
+Fallback staging preserves new or changed files and exact current product archives.
+Files identical to authenticated retained receipts or the runtime bank are recorded
+with their original artifact selectors, member paths and hashes instead of copied
+again. A separate index records these references and symlinks, and is also retained
+with the mandatory metadata.
+
+The probe proves artifact creation in that job; it does not explain an earlier
+service failure or qualify later uploads. A failed required product or metadata
+upload still fails the job and leaves the candidate unqualified.
+
 For a fresh Core build immediately after a PR merge, `verified_pr_run_id` reuses
 that PR's three successful Linux checks: AppTheme, pack contracts and the complete
 tooling suite. The producer must be the owned `pr-checks.yml` run at attempt 1,
