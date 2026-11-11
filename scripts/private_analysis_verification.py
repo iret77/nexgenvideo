@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import urllib.error
 import urllib.request
 import zipfile
 
@@ -29,7 +30,9 @@ CHECKS = ('native_origin', 'oci_descriptors', 'fixture_bytes', 'runtime_origin',
     'independent_expectations', 'measurement_lineage', 'lyrics_stems', 'native_intake', 'approved_project',
     'phase_order', 'canonical_media', 'playback_range', 'private_inventory')
 ERRORS = {'REGISTRY', 'OCI', 'ARCHIVE', 'FIXTURE', 'ORIGIN', 'RUNTIME', 'ANALYSIS', 'EXPECTATIONS',
-    'MEASUREMENT', 'INTAKE', 'PROJECT', 'PHASES', 'PLAYBACK', 'CANONICAL', 'INPUT', 'INTERNAL'}
+    'MEASUREMENT', 'INTAKE', 'PROJECT', 'PHASES', 'PLAYBACK', 'CANONICAL', 'INPUT', 'INTERNAL',
+    'REGISTRY_AUTH', 'REGISTRY_PERMISSION', 'REGISTRY_MISSING', 'REGISTRY_HTTP', 'REGISTRY_TRANSPORT',
+    'REGISTRY_RESPONSE', 'REGISTRY_SCHEMA', 'REGISTRY_OWNER'}
 PUBLIC_KEYS = {'schema', 'status', 'errorCode', 'reportDigest', 'fixtureDigest', 'privateInventorySHA256',
     'productRunID', 'productSourceSHA', 'runtimeArtifactID', 'runtimeArtifactSHA256', 'nativeRunID', 'nativeJobID',
     'nativeHarnessSourceSHA', 'verificationRunID', 'verificationHarnessSourceSHA', 'checks'}
@@ -128,14 +131,34 @@ def write_pointer(output):
     with output.open('x') as stream:json.dump(value, stream, sort_keys=True); stream.write('\n')
 
 
+def registry_metadata(path):
+    token = os.environ.get('NGV_GHCR_TOKEN', '')
+    check(bool(token), 'REGISTRY_AUTH')
+    request = urllib.request.Request('https://api.github.com' + path,
+        headers={'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28'})
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:raw = response.read(1024**2 + 1)
+    except urllib.error.HTTPError as error:
+        code = {401: 'REGISTRY_AUTH', 403: 'REGISTRY_PERMISSION', 404: 'REGISTRY_MISSING'}.get(error.code, 'REGISTRY_HTTP')
+        error.close()
+        raise VerificationError(code) from None
+    except (urllib.error.URLError, TimeoutError):
+        raise VerificationError('REGISTRY_TRANSPORT') from None
+    check(len(raw) <= 1024**2, 'REGISTRY_RESPONSE')
+    try:value = raw_json(raw)
+    except (ValueError, UnicodeError):raise VerificationError('REGISTRY_RESPONSE') from None
+    check(isinstance(value, dict), 'REGISTRY_SCHEMA')
+    return value
+
+
 def package_isolation():
-    token = os.environ['NGV_GHCR_TOKEN']
+    check(registry_metadata('/user').get('login') == 'iret77', 'REGISTRY_OWNER')
     for name in ('nexgenvideo-examples', 'nexgenvideo-analysis-reports'):
-        request = urllib.request.Request('https://api.github.com/users/iret77/packages/container/' + name,
-            headers={'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28'})
-        with urllib.request.urlopen(request, timeout=30) as response:value = json.load(response)
+        value = registry_metadata('/user/packages/container/' + name)
+        check(isinstance(value.get('owner'), dict), 'REGISTRY_SCHEMA')
         check(value.get('visibility') == 'private' and value.get('repository') is None
-            and value.get('owner', {}).get('login', 'iret77') == 'iret77', 'REGISTRY')
+            and value['owner'].get('login') == 'iret77'
+            and value.get('name') == name and value.get('package_type') == 'container', 'REGISTRY')
 
 
 def native_origin(selected, root):

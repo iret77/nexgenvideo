@@ -7,12 +7,49 @@ from pathlib import Path
 import tarfile
 import tempfile
 import unittest
+import urllib.error
 from unittest.mock import patch
 
 import private_analysis_verification as verify
 
 
 class PrivateAnalysisVerificationTests(unittest.TestCase):
+    def test_private_package_isolation_uses_authenticated_owner_and_finite_errors(self):
+        packages = [{'name': name, 'package_type': 'container', 'visibility': 'private',
+                     'repository': None, 'owner': {'login': 'iret77'}}
+                    for name in ('nexgenvideo-examples', 'nexgenvideo-analysis-reports')]
+        urls = []
+        def response(request, **kwargs):
+            urls.append(request.full_url)
+            self.assertEqual(request.get_header('Authorization'), 'Bearer fixture-token')
+            return io.BytesIO(json.dumps([{'login': 'iret77'}, *packages][len(urls) - 1]).encode())
+        with patch.dict(os.environ, {'NGV_GHCR_TOKEN': 'fixture-token'}), \
+                patch.object(verify.urllib.request, 'urlopen', side_effect=response):
+            verify.package_isolation()
+        self.assertEqual(urls, ['https://api.github.com/user',
+            'https://api.github.com/user/packages/container/nexgenvideo-examples',
+            'https://api.github.com/user/packages/container/nexgenvideo-analysis-reports'])
+        for changed in [{'visibility': 'public'}, {'repository': {'full_name': verify.REPOSITORY}},
+                        {'owner': {'login': 'foreign'}}, {'name': 'other'}, {'package_type': 'npm'}]:
+            with self.subTest(changed=changed), patch.object(verify, 'registry_metadata',
+                    side_effect=[{'login': 'iret77'}, {**packages[0], **changed}]), self.assertRaises(verify.VerificationError):
+                verify.package_isolation()
+        with patch.object(verify, 'registry_metadata', return_value={'login': 'foreign'}), \
+                self.assertRaisesRegex(verify.VerificationError, '^REGISTRY_OWNER$'):
+            verify.package_isolation()
+        for status, expected in [(401, 'REGISTRY_AUTH'), (403, 'REGISTRY_PERMISSION'),
+                                 (404, 'REGISTRY_MISSING'), (500, 'REGISTRY_HTTP')]:
+            error = urllib.error.HTTPError('https://api.github.com/user', status, 'PRIVATE-SECRET', {}, io.BytesIO(b'PRIVATE-SECRET'))
+            with self.subTest(status=status), patch.dict(os.environ, {'NGV_GHCR_TOKEN': 'fixture-token'}), \
+                    patch.object(verify.urllib.request, 'urlopen', side_effect=error), \
+                    self.assertRaisesRegex(verify.VerificationError, '^' + expected + '$'):
+                verify.registry_metadata('/user')
+        for raw, expected in [(b'PRIVATE-SECRET', 'REGISTRY_RESPONSE'), (b'[]', 'REGISTRY_SCHEMA')]:
+            with self.subTest(raw=raw), patch.dict(os.environ, {'NGV_GHCR_TOKEN': 'fixture-token'}), \
+                    patch.object(verify.urllib.request, 'urlopen', return_value=io.BytesIO(raw)), \
+                    self.assertRaisesRegex(verify.VerificationError, '^' + expected + '$'):
+                verify.registry_metadata('/user')
+
     def test_resume_selectors_are_exact_and_cannot_inject_public_content(self):
         selected = {'runID': 1, 'sourceSHA': 'a' * 40, 'jobID': 2, 'reportDigest': 'sha256:' + 'b' * 64,
             'fixtureDigest': 'sha256:' + 'c' * 64, 'pointerArtifactID': 3, 'pointerArtifactSHA256': 'd' * 64}
@@ -85,6 +122,15 @@ class PrivateAnalysisVerificationTests(unittest.TestCase):
         import yaml
         text = Path('.github/workflows/private-example-analysis.yml').read_text()
         jobs = yaml.safe_load(text)['jobs']
+        self.assertEqual(jobs['source-gate']['if'], '${{ !inputs.registry_preflight_only }}')
+        preflight = jobs['registry-preflight']
+        self.assertEqual(preflight['if'], 'inputs.registry_preflight_only')
+        self.assertEqual(preflight['runs-on'], 'ubuntu-24.04')
+        self.assertEqual([step['run'] for step in preflight['steps'] if 'run' in step],
+                         ['python3 scripts/private_analysis_verification.py isolation'])
+        self.assertEqual(jobs['build-runtime-harness']['needs'], 'source-gate')
+        self.assertIn("needs.source-gate.result == 'success'", jobs['analyze']['if'])
+        self.assertIn("needs.source-gate.result == 'success'", jobs['verify-report']['if'])
         self.assertIn("inputs.report_reuse_json == ''", jobs['analyze']['if'])
         self.assertIn("inputs.report_reuse_json == ''", jobs['build-runtime-harness']['if'])
         verifier = jobs['verify-report']

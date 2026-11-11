@@ -35,7 +35,7 @@ jobs:
 
       - name: Verify CI and fixture tooling
         id: fixture_tooling
-        run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
+        run: python3 -m unittest discover -s scripts -p 'test_*.py' -v -f
 
       - name: Record verified source checkout
         uses: ./.github/actions/record-source-checks
