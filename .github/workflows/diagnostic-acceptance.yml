@@ -1230,9 +1230,11 @@ jobs:
                               copied[relative] = item
                           after = os.fstat(stream.fileno())
                           assert (before.st_size, before.st_mtime_ns) == (after.st_size, after.st_mtime_ns)
-              (staging / 'fallback-index.json').write_text(json.dumps({
+              index = json.dumps({
                   'schema': 'native-app-target-differential-fallback/v1', 'roles': roles,
-                  'copiedFiles': copied, 'retainedReferences': reused, 'symlinks': links}, indent=2) + '\n')
+                  'copiedFiles': copied, 'retainedReferences': reused, 'symlinks': links}, indent=2) + '\n'
+              (staging / 'fallback-index.json').write_text(index)
+              (root / 'fallback-index.json').write_text(index)
               paths = [staging]
           (root / 'fallback-selection.json').write_text(json.dumps({
               'schema': 'native-app-target-fallback-selection/v1', 'roles': roles,
@@ -1271,7 +1273,6 @@ jobs:
             ${{ runner.temp }}/app-target-build/tests/*.json
             ${{ runner.temp }}/app-target-build/tests/*.stdout
             ${{ runner.temp }}/app-target-build/tests/*.stderr
-            ${{ runner.temp }}/app-target-fallback-stage/fallback-index.json
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 90

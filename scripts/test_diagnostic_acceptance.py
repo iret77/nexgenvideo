@@ -1,4 +1,4 @@
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import hashlib
 import json
 import os
@@ -99,6 +99,21 @@ class NativeAppTargetWorkflowTests(unittest.TestCase):
             self.assertIn(expected, upload['with']['path'])
             self.assertTrue(upload['with']['include-hidden-files'])
         self.assertEqual(source['outputs']['target-binding-id'], '${{ steps.target-binding-upload.outputs.artifact-id }}')
+        metadata = next(step for step in steps if step.get('with', {}).get('name') == 'app-target-build-evidence')
+        with tempfile.TemporaryDirectory() as directory:
+            roots = []
+            for pattern in metadata['with']['path'].splitlines():
+                path = pattern.strip().replace('${{ runner.temp }}', directory)
+                if not path or path.startswith('!'):
+                    continue
+                wildcard = min((path.index(char) for char in '*?[' if char in path), default=None)
+                if wildcard is not None:
+                    roots.append(path[:wildcard].rsplit('/', 1)[0])
+                else:
+                    roots.append(path.rstrip('/') if path.endswith('/') else str(PurePosixPath(path).parent))
+            ancestor = PurePosixPath(os.path.commonpath(roots))
+            target = PurePosixPath(directory) / 'app-target-build'
+            self.assertEqual(ancestor, target, 'binding.json and prepared.json must remain at the archive root')
 
     def test_retained_selection_preserves_original_selectors_and_requires_complete_products(self):
         selection = next(step['run'] for step in self.steps() if step.get('id') == 'retained_products')
@@ -175,6 +190,8 @@ class NativeAppTargetWorkflowTests(unittest.TestCase):
                         if preserve:
                             index = json.loads((staging / 'fallback-index.json').read_bytes())
                             self.assertEqual(index['schema'], 'native-app-target-differential-fallback/v1')
+                            self.assertEqual((root / 'app-target-build/fallback-index.json').read_bytes(),
+                                             (staging / 'fallback-index.json').read_bytes())
                             for role in ('production', 'testable'):
                                 relative = 'app-build-plan-evidence/' + role + '/derived-data/Objects/Old.o'
                                 self.assertFalse((staging / relative).exists())

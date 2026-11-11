@@ -46,6 +46,10 @@ with their original artifact selectors, member paths and hashes instead of copie
 again. A separate index records these references and symlinks, and is also retained
 with the mandatory metadata.
 
+Metadata upload paths stay under `app-target-build` so `binding.json` and
+`prepared.json` remain at the artifact root. The fallback index is mirrored into
+that same tree; an additional diagnostic path must not change the archive root.
+
 The probe proves artifact creation in that job; it does not explain an earlier
 service failure or qualify later uploads. A failed required product or metadata
 upload still fails the job and leaves the candidate unqualified.
