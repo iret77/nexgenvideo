@@ -22,16 +22,26 @@ struct NativeButtonInteractionTests {
                 Button("Redo") {}.disabled(true)
             }.buttonStyle(.capsule())
             if split {
-                window.setContentSize(NSSize(width: 600, height: 1000))
+                window.setContentSize(NSSize(width: 600, height: 450))
                 window.contentView = NSHostingView(rootView: HSplitView {
                     VStack {
                         controls
-                        ForEach(0..<rows, id: \.self) { index in Button("Readout \(index)") {} }
+                        ForEach(Array(stride(from: 0, to: rows, by: 6)), id: \.self) { start in
+                            HStack {
+                                ForEach(start..<min(start + 6, rows), id: \.self) { index in
+                                    Button("R\(index)") {}.accessibilityLabel("Readout \(index)")
+                                }
+                            }
+                        }
                     }
                     Text("Preview")
                 })
             } else {
                 window.contentView = NSHostingView(rootView: controls)
+            }
+            if split, let visible = window.screen?.visibleFrame ?? NSScreen.screens.first?.visibleFrame {
+                window.setFrameOrigin(NSPoint(x: visible.midX - window.frame.width / 2,
+                    y: visible.midY - window.frame.height / 2))
             }
             window.orderFrontRegardless()
             window.contentView?.layoutSubtreeIfNeeded()
@@ -63,6 +73,16 @@ struct NativeButtonInteractionTests {
         }
 
         func close() { window.contentView = nil; window.close() }
+
+        func recordGeometry(_ snapshot: Query.Snapshot) throws {
+            let geometry: [String: Any] = ["windowFrame": NSStringFromRect(window.frame),
+                "contentBounds": NSStringFromRect(window.contentView!.bounds),
+                "visibleFrame": window.screen.map { NSStringFromRect($0.visibleFrame) } as Any? ?? NSNull(),
+                "contentFittingSize": NSStringFromSize(window.contentView!.fittingSize),
+                "snapshot": snapshot.evidence]
+            let data = try JSONSerialization.data(withJSONObject: geometry, options: [.sortedKeys])
+            print("Native SplitView AX geometry: " + String(decoding: data, as: UTF8.self))
+        }
     }
 
     @MainActor private final class LastChildRoot: NSView {
@@ -309,7 +329,21 @@ struct NativeButtonInteractionTests {
             #expect(splitter.childTypes.isEmpty)
             #expect(value.nodes.filter { $0.role == kAXButtonRole }.count >= 50)
             #expect(value.nodes.allSatisfy { $0.statuses["timeout:AXAttributes"] == AXError.success.rawValue })
-            #expect(Query.buttons(value, title: "Undo", inside: fixture.request.contentFrame).count == 1)
+            let buttons = Query.buttons(value, title: "Undo", inside: fixture.request.contentFrame)
+            let visible = fixture.window.screen?.visibleFrame
+            let undo = value.nodes.filter {
+                $0.role == kAXButtonRole && [$0.title, $0.label].contains("Undo")
+            }
+            let contained = undo.count == 1 && undo[0].frame.map {
+                value.request.windowFrame.rect.contains($0.rect)
+                    && value.request.contentFrame.rect.contains($0.rect)
+            } == true
+            if buttons.count != 1 || !contained || visible?.contains(fixture.window.frame) != true {
+                try fixture.recordGeometry(value)
+            }
+            #expect(visible?.contains(fixture.window.frame) == true)
+            #expect(contained)
+            #expect(buttons.count == 1)
         }
         #expect(outcome.1.clean)
     }
