@@ -73,3 +73,41 @@ class AppleBoundaryTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class LocalProducerScopeTests(unittest.TestCase):
+    def test_failed_sibling_does_not_discard_successful_typed_release_but_failed_producer_still_blocks(self):
+        import hashlib
+        import json
+        import os
+        import compiled_app_release as current
+        for defect in ('none', 'failed-producer', 'wrong-artifact', 'wrong-dmg', 'foreign-actor'):
+            with self.subTest(defect=defect), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary); dmg = root / 'current.dmg';dmg.write_bytes(b'current')
+                sha = hashlib.sha256(b'current').hexdigest(); product = 'a' * 40
+                inputs = {'scenario': 'normal-fresh-local-musicvideo', 'artifact_mode': 'dmg', 'runtime_run_id': '10',
+                    'runtime_artifact_id': '11', 'runtime_artifact_sha256': 'b' * 64, 'product_source_sha': product, 'expected_dmg_sha256': sha}
+                event = root / 'event.json';event.write_text(json.dumps({'inputs': inputs}))
+                binding = {'sourceSHA': product, 'dmgSHA256': sha, 'appTreeSHA256': 'c' * 64, 'guideSHA256': 'd' * 64}
+                run = {'id': 10, 'head_sha': product, 'run_attempt': 1, 'workflow_id': 303346287,
+                    'path': '.github/workflows/release.yml', 'event': 'workflow_dispatch', 'repository': {'full_name': current.REPOSITORY},
+                    'actor': {'login': 'iret77'}, 'status': 'completed', 'conclusion': 'failure'}
+                job = {'id': 12, 'name': 'release', 'run_id': 10, 'head_sha': product, 'run_attempt': 1,
+                    'labels': ['macrunner'], 'status': 'completed', 'conclusion': 'success',
+                    'started_at': '2026-11-11T00:00:00Z', 'completed_at': '2026-11-11T00:10:00Z'}
+                artifact = {'id': 11, 'name': 'release-user-journey-input', 'digest': 'sha256:' + 'b' * 64,
+                    'expired': False, 'workflow_run': {'id': 10, 'head_sha': product},
+                    'created_at': '2026-11-11T00:05:00Z', 'updated_at': '2026-11-11T00:05:00Z', 'expires_at': '2099-01-01T00:00:00Z'}
+                if defect == 'failed-producer':job['conclusion'] = 'failure'
+                elif defect == 'wrong-artifact':artifact['digest'] = 'sha256:' + 'e' * 64
+                elif defect == 'wrong-dmg':binding['dmgSHA256'] = 'e' * 64
+                elif defect == 'foreign-actor':run['actor']['login'] = 'other'
+                with mock.patch.dict(os.environ, GITHUB_EVENT_PATH=str(event), GITHUB_SHA=product), \
+                        mock.patch.object(release.cohort, 'has_manifest', return_value=True), \
+                        mock.patch.object(release.cohort, 'consumer_paths') as cohort_bound, \
+                        mock.patch.object(current, 'api', side_effect=[run, {'total_count': 1, 'jobs': [job]}, artifact]):
+                    if defect == 'none':
+                        self.assertEqual(current.local_pack_runtime_origin(binding, dmg)['producerJobID'], 12)
+                        cohort_bound.assert_called_once_with(product, product)
+                    else:
+                        with self.assertRaises(ValueError):current.local_pack_runtime_origin(binding, dmg)

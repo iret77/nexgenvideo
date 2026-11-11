@@ -418,3 +418,40 @@ and exact driver/link recipe. Test-only and CI-only changes do not change the
 production recipe. Signed-component assembly checks both the donor and current
 source objects, preserves the donor Engine, pack and helper bytes, and records the
 new Main executable and matching symbols from the actual compiler receipt.
+
+### Private report verification
+
+The private analysis job records a finite public pointer only after successful native
+execution, intake verification and private report publication. For an exact retained
+release runtime, `verify-report` fetches the report and fixtures by OCI digest with the
+existing CI credential. It checks original successful native job provenance, every
+OCI descriptor and file, measured and approved analysis, the retained project,
+phase approvals, source media, playback range, native intake and exported bytes.
+Only a fixed schema of public provenance hashes and check results leaves the job.
+Media names, per-file inventories and private exception text remain private.
+
+`report_reuse_json` selects the original run, source, job, report and fixture digests,
+and the finite pointer artifact ID/digest. It skips both App execution and harness
+compilation. Reader-only corrections therefore reuse the original native result,
+even when its workflow failed in a later verification job. A failed native producer
+cannot qualify. Legacy same-batch runtime callers retain their existing native flow;
+they do not claim this retained-release report qualification.
+
+The data job runs on `macrunner` and uses Foundation JSON serialization through JXA
+for exact native alignment fingerprints; it compiles no Swift helper. The reader
+fetches immutable manifests and blobs with the pinned ORAS 1.3.3 commands documented
+at https://oras.land/docs/commands/oras_manifest_fetch/ and
+https://oras.land/docs/commands/oras_blob_fetch/.
+
+The local Musicvideo runtime follows the successful release producer job and its
+exact App, guide and DMG. An unrelated runtime child failing later does not invalidate
+those bytes. Typed cohort, artifact provenance and successful release-job checks
+remain required before that narrower workflow conclusion is accepted.
+
+The retained XCTest host also supplies its already signed Whisper framework.
+The source job transports the complete original framework as an opaque ZIP plus
+its pinned product receipt. The native job reconstructs each file, mode and relative
+link from that receipt, checks the current framework against the exact unsigned input, and installs
+the qualified signed copy before signing the new test container. The host and other
+runtime products keep their bytes. A failure after compilation or linking resumes
+from those original products; it does not invoke their compiler or linker again.

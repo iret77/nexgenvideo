@@ -8,6 +8,10 @@ name: Private Example Audio Analysis
 on:
   workflow_dispatch:
     inputs:
+      report_reuse_json:
+        description: Exact original successful native report and pointer selectors; verify data without running the app
+        type: string
+        default: ''
       packaging_producer_source_sha:
         type: string
         default: ''
@@ -44,6 +48,10 @@ on:
         default: ''
   workflow_call:
     inputs:
+      report_reuse_json:
+        description: Exact original successful native report and pointer selectors; verify data without running the app
+        type: string
+        default: ''
       packaging_producer_source_sha:
         type: string
         default: ''
@@ -86,6 +94,7 @@ permissions:
   pull-requests: read
 
 env:
+  REPORT_REUSE_JSON: ${{ inputs.report_reuse_json }}
   GH_TOKEN: ${{ github.token }}
   PACKAGING_PRODUCER_SOURCE: ${{ inputs.packaging_producer_source_sha }}
   PACKAGING_PROVENANCE_ARTIFACT_ID: ${{ inputs.packaging_provenance_artifact_id }}
@@ -125,21 +134,13 @@ jobs:
           [ -n "$NGV_GHCR_TOKEN" ] \
             || { echo "::error::NGV_GHCR_TOKEN is not configured"; exit 1; }
 
+      - name: Validate report continuation before macOS allocation
+        run: python3 scripts/private_analysis_verification.py validate-input
+
       - name: Verify private package isolation
         env:
-          GH_TOKEN: ${{ secrets.NGV_GHCR_TOKEN }}
-        run: |
-          set -euo pipefail
-          PACKAGE_JSON="$(gh api /users/iret77/packages/container/nexgenvideo-examples)"
-          [ "$(jq -r '.visibility' <<<"$PACKAGE_JSON")" = "private" ] \
-            || { echo "::error::input fixture package is not private"; exit 1; }
-          [ "$(jq -r '.repository // empty' <<<"$PACKAGE_JSON")" = "" ] \
-            || { echo "::error::input fixture package is linked to a repository"; exit 1; }
-          REPORT_PACKAGE_JSON="$(gh api /users/iret77/packages/container/nexgenvideo-analysis-reports)"
-          [ "$(jq -r '.visibility' <<<"$REPORT_PACKAGE_JSON")" = "private" ] \
-            || { echo "::error::analysis report package is not private"; exit 1; }
-          [ "$(jq -r '.repository // empty' <<<"$REPORT_PACKAGE_JSON")" = "" ] \
-            || { echo "::error::analysis report package is linked to a repository"; exit 1; }
+          NGV_GHCR_TOKEN: ${{ secrets.NGV_GHCR_TOKEN }}
+        run: python3 scripts/private_analysis_verification.py isolation
 
       - name: Bind the original signed App before macOS allocation
         env:
@@ -190,6 +191,7 @@ jobs:
             --registry-config "$RUNNER_TEMP/oras-auth.json"
 
       - name: Reject private fixture content in the repository
+        if: inputs.report_reuse_json == ''
         env:
           FIXTURE_DIGEST: ${{ vars.NGV_EXAMPLE_FIXTURE_DIGEST }}
         run: |
@@ -202,13 +204,7 @@ jobs:
             --registry-config "$RUNNER_TEMP/oras-auth.json" \
             --output "$PACKAGE_DIR" \
             "ghcr.io/iret77/nexgenvideo-examples@$FIXTURE_DIGEST"
-          python3 scripts/example_fixture_bundle.py extract \
-            --archive "$PACKAGE_DIR/examples.tar.gz" \
-            --manifest "$PACKAGE_DIR/fixtures.manifest.json" \
-            --destination "$EXTRACT_DIR"
-          python3 scripts/example_fixture_bundle.py check-repository \
-            --repository "$GITHUB_WORKSPACE" \
-            --manifest "$PACKAGE_DIR/fixtures.manifest.json"
+          python3 scripts/private_analysis_verification.py fixture-source --work "$PACKAGE_DIR" --output "$EXTRACT_DIR"
 
       - name: Remove private source-gate data and credentials
         if: ${{ always() }}
@@ -227,7 +223,7 @@ jobs:
   build-runtime-harness:
     name: Build Private Analysis Harness
     needs: source-gate
-    if: inputs.runtime_artifact == '' && inputs.runtime_run_id == ''
+    if: inputs.report_reuse_json == '' && inputs.runtime_artifact == '' && inputs.runtime_run_id == ''
     # Compilation and bundling stay on the designated Xcode 27 build runner.
     runs-on: macrunner
     timeout-minutes: 20
@@ -258,8 +254,12 @@ jobs:
 
   analyze:
     name: Analyze Private Example
+    outputs:
+      report_reference: ${{ steps.report.outputs.reference }}
+      pointer_artifact_id: ${{ steps.pointer.outputs.artifact-id }}
+      pointer_artifact_sha256: ${{ steps.pointer.outputs.artifact-digest }}
     needs: [source-gate, build-runtime-harness]
-    if: ${{ !cancelled() && needs.source-gate.result == 'success' && (needs.build-runtime-harness.result == 'success' || (needs.build-runtime-harness.result == 'skipped' && (inputs.runtime_artifact != '' || inputs.runtime_run_id != ''))) }}
+    if: ${{ !cancelled() && inputs.report_reuse_json == '' && needs.source-gate.result == 'success' && (needs.build-runtime-harness.result == 'success' || (needs.build-runtime-harness.result == 'skipped' && (inputs.runtime_artifact != '' || inputs.runtime_run_id != ''))) }}
     runs-on: macrunner
     # Bootstrap ceiling for the first measured real-file run; replace with p90 × 2 once run data exists.
     timeout-minutes: 60
@@ -365,10 +365,7 @@ jobs:
             --registry-config "$RUNNER_TEMP/oras-auth.json" \
             --output "$PACKAGE_DIR" \
             "$FIXTURE_REFERENCE"
-          python3 scripts/example_fixture_bundle.py extract \
-            --archive "$PACKAGE_DIR/examples.tar.gz" \
-            --manifest "$PACKAGE_DIR/fixtures.manifest.json" \
-            --destination "$EXTRACT_DIR"
+          python3 scripts/private_analysis_verification.py fixture-extract --work "$PACKAGE_DIR" --output "$EXTRACT_DIR"
 
       - name: Run exact-file analysis through the real app and pack
         env:
@@ -382,7 +379,7 @@ jobs:
         run: .build/NexGenVideo.app/Contents/MacOS/NexGenVideo -ApplePersistenceIgnoreState YES
 
       - name: Verify actual optional material intake
-        run: python3 scripts/musicvideo_intake_evidence.py "$RUNNER_TEMP/analysis-report"
+        run: python3 scripts/private_analysis_verification.py validate-intake --work "$RUNNER_TEMP/analysis-report"
 
       - name: Publish private analysis report
         if: ${{ always() }}
@@ -433,15 +430,25 @@ jobs:
       - name: Verify report package isolation
         if: ${{ always() && steps.report.outputs.reference != '' }}
         env:
-          GH_TOKEN: ${{ secrets.NGV_GHCR_TOKEN }}
-        run: |
-          set -euo pipefail
-          PACKAGE_JSON="$(gh api /users/iret77/packages/container/nexgenvideo-analysis-reports)"
-          [ "$(jq -r '.visibility' <<<"$PACKAGE_JSON")" = "private" ] \
-            || { echo "::error::analysis report package is not private"; exit 1; }
-          [ "$(jq -r '.repository // empty' <<<"$PACKAGE_JSON")" = "" ] \
-            || { echo "::error::analysis report package is linked to a repository"; exit 1; }
-          printf 'Private report: `%s`\n' '${{ steps.report.outputs.reference }}' >> "$GITHUB_STEP_SUMMARY"
+          NGV_GHCR_TOKEN: ${{ secrets.NGV_GHCR_TOKEN }}
+        run: python3 scripts/private_analysis_verification.py isolation
+
+      - name: Write finite private report pointer
+        if: ${{ success() && inputs.runtime_run_id != '' }}
+        env:
+          PRIVATE_REPORT_REFERENCE: ${{ steps.report.outputs.reference }}
+          FIXTURE_DIGEST: ${{ vars.NGV_EXAMPLE_FIXTURE_DIGEST }}
+        run: python3 scripts/private_analysis_verification.py write-pointer --output "$RUNNER_TEMP/private-analysis-pointer.json"
+
+      - name: Retain finite private report pointer
+        id: pointer
+        if: ${{ success() && inputs.runtime_run_id != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: private-analysis-pointer-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/private-analysis-pointer.json
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Remove private runner data and credentials
         if: ${{ always() }}
@@ -457,3 +464,61 @@ jobs:
           path: ${{ runner.temp }}/retained-packaging-supplements/
           if-no-files-found: ignore
           retention-days: 90
+
+  verify-report:
+    name: Verify Private Report Without App Execution
+    needs: [source-gate, analyze]
+    if: ${{ !cancelled() && needs.source-gate.result == 'success' && inputs.runtime_run_id != '' && (inputs.report_reuse_json != '' || needs.analyze.result == 'success') }}
+    runs-on: macrunner
+    timeout-minutes: 15
+    env:
+      NGV_GHCR_TOKEN: ${{ secrets.NGV_GHCR_TOKEN }}
+      FIXTURE_DIGEST: ${{ vars.NGV_EXAMPLE_FIXTURE_DIGEST }}
+      PRIVATE_REPORT_REFERENCE: ${{ needs.analyze.outputs.report_reference }}
+      POINTER_ARTIFACT_ID: ${{ needs.analyze.outputs.pointer_artifact_id }}
+      POINTER_ARTIFACT_SHA256: ${{ needs.analyze.outputs.pointer_artifact_sha256 }}
+      ORAS_AUTH_FILE: ${{ runner.temp }}/private-report-oras-auth.json
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13'
+          architecture: arm64
+      - name: Prepare isolated private report parser
+        run: |
+          python3 -m venv "$RUNNER_TEMP/private-report-parser"
+          "$RUNNER_TEMP/private-report-parser/bin/python" -m pip install --quiet PyYAML==6.0.3
+          echo "$RUNNER_TEMP/private-report-parser/bin" >> "$GITHUB_PATH"
+      - uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d
+        with:
+          version: 1.3.3
+      - name: Authenticate to private report and fixture packages
+        run: |
+          set -euo pipefail
+          printf '%s' "$NGV_GHCR_TOKEN" | oras login ghcr.io --username iret77 --password-stdin --registry-config "$ORAS_AUTH_FILE"
+      - name: Verify complete private originals and native provenance
+        id: verification
+        run: python3 scripts/private_analysis_verification.py verify --output "$RUNNER_TEMP/private-analysis-verification.json" --work "$RUNNER_TEMP/private-report-verification"
+      - name: Validate finite public verification receipt
+        if: ${{ always() && steps.verification.outcome != 'skipped' }}
+        id: public
+        run: python3 scripts/private_analysis_verification.py validate-public --output "$RUNNER_TEMP/private-analysis-verification.json"
+      - name: Retain finite private report verification receipt
+        if: ${{ always() && steps.public.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: private-analysis-verification-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/private-analysis-verification.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Remove private verifier data and credentials
+        if: always()
+        run: |
+          python3 - <<'PYTHON'
+          import os, pathlib, shutil
+          root = pathlib.Path(os.environ['RUNNER_TEMP'])
+          shutil.rmtree(root / 'private-report-verification', ignore_errors=True)
+          (root / 'private-report-oras-auth.json').unlink(missing_ok=True)
+          PYTHON

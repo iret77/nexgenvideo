@@ -1661,7 +1661,11 @@ def local_pack_runtime_origin(binding, dmg=None, *, expected_dmg_sha256=None):
         packaging.consumer_harness(selected, source, packaging.packaging_paths(source))
     require(source != SIGNED_RESUME['sourceSHA'] or parent is not None,
         'Current compiled product requires its canonical packaging provenance')
-    conclusions = {'success', 'failure'} if parent is not None and (packaging.component_consumer_repair_paths(parent)
+    import app_cohort_v2 as cohort
+    current_cohort = parent is None and cohort.has_manifest(source)
+    if current_cohort:
+        cohort.consumer_paths(source, os.environ['GITHUB_SHA'])
+    conclusions = {'success', 'failure'} if current_cohort or parent is not None and (packaging.component_consumer_repair_paths(parent)
         or packaging.cohort_signed_product(parent)) else {'success'}
     run = api('actions/runs/' + run_id)
     jobs = api('actions/runs/' + run_id + '/attempts/1/jobs?per_page=100')
