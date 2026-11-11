@@ -250,9 +250,29 @@ def _compiled_compatibility(producer_sha, producer_files, current_sha, current_f
             and {name: hashlib.sha256(raw).hexdigest() for name, raw in actual.items()} == producer_files,
             'Original UI test receipt differs from its actual Git objects')
     helper, guard = 'scripts/external-gui/test_bundle.py', 'scripts/verify_diagnostic_candidate.py'
+    cohort = 'scripts/fixtures/app-cohort.json'
     metadata_only = {'scripts/external-gui/transport.py', 'scripts/release_engine_resume.py'}
-    require(all(producer_files[name] == digest for name, digest in current_files.items() if name not in {helper, guard, *metadata_only}),
+    require(all(producer_files[name] == digest for name, digest in current_files.items() if name not in {helper, guard, cohort, *metadata_only}),
             'Compiled UI test source, project or reachable shared helper changed')
+    cohort_raw = journey.output([*git, 'show', current_sha + ':' + cohort])
+    require(cohort_raw == (journey.REPOSITORY / cohort).read_bytes()
+            and hashlib.sha256(cohort_raw).hexdigest() == current_files[cohort],
+            'Current UI test cohort differs from its committed receipt')
+    prior_cohort, current_cohort = json.loads(originals[cohort]), json.loads(cohort_raw)
+    require(isinstance(prior_cohort, dict) and isinstance(current_cohort, dict)
+            and 'ciPaths' in prior_cohort and 'ciPaths' in current_cohort,
+            'UI test cohort metadata is incomplete')
+    prior_paths, current_paths = prior_cohort.pop('ciPaths'), current_cohort.pop('ciPaths')
+    require(prior_cohort == current_cohort, 'UI test cohort changes native or compiler identity')
+    for paths in (prior_paths, current_paths):
+        require(isinstance(paths, list) and all(isinstance(name, str) for name in paths)
+                and paths == sorted(set(paths)), 'UI test cohort CI paths are not canonical')
+    added_paths = sorted(set(current_paths) - set(prior_paths))
+    require(set(prior_paths) <= set(current_paths)
+            and all(name in local and local[name] in {'A', 'M'}
+                    and (name == helper or re.fullmatch(r'\.github/workflows/[A-Za-z0-9_-]+\.ya?ml', name)
+                         or re.fullmatch(r'scripts/test_[A-Za-z0-9_]+\.py', name)) for name in added_paths),
+            'UI test cohort adds non-CI paths or removes prior qualification paths')
     recipe = _builder_view(originals[helper].decode())
     require(recipe == _builder_view(Path(__file__).read_text()), 'UI test build closure, imports or constants changed')
     imported = _guard_import_view(originals[guard].decode(), (journey.REPOSITORY / guard).read_text())
@@ -279,7 +299,9 @@ def _compiled_compatibility(producer_sha, producer_files, current_sha, current_f
         'buildRecipeSHA256': hashlib.sha256(recipe.encode()).hexdigest(),
         'buildImportSHA256': hashlib.sha256(imported.encode()).hexdigest(),
         'buildWorkflowSHA256': hashlib.sha256(workflow_recipe.encode()).hexdigest(),
-        'buildActionSHA256': hashlib.sha256(originals[action]).hexdigest()}
+        'buildActionSHA256': hashlib.sha256(originals[action]).hexdigest(),
+        'cohortMetadata': {'producerSHA256': producer_files[cohort],
+            'consumerSHA256': current_files[cohort], 'addedCIPaths': added_paths}}
 
 
 def validate_client_selectors(run_id, artifact_id='', digest='', require_pair=True):

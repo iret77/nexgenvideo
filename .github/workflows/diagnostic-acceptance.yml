@@ -661,6 +661,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: ./.github/actions/setup-native-test-python
       - name: Prepare job-local independent fixture media tools
         if: inputs.candidate_kind == 'signed-transport'
         id: fixture-media-tools
@@ -1185,6 +1186,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: ./.github/actions/setup-native-test-python
       - name: Rebind retained packaging before diagnostic app execution
         if: inputs.packaging_producer_source_sha != ''
         env:

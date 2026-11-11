@@ -427,6 +427,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-native-test-python
       - uses: ./.github/actions/prepare-native-runtime
         id: runtime
         with:
@@ -484,6 +485,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-native-test-python
       - uses: ./.github/actions/prepare-native-runtime
         id: runtime
         with:
