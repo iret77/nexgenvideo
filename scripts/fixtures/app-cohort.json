@@ -84,7 +84,7 @@
   },
   "criteria": {
     "path": "scripts/fixtures/app-cohort-native-inventory.json",
-    "sha256": "7ff4d89382cfa1c2c55b162be11fb5555cb17d7d55507f99129e8d10111e6fec"
+    "sha256": "3e047f1a741c0b1a943ebeba1d9a3ab6436be438949a0446a4f41f150152db17"
   },
   "nativeSourceObjects": {
     "Engine": "29cfed623d13e6d84d5822a30b98e088fc123c3f",
