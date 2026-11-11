@@ -144,6 +144,17 @@ existing DMG without repeating compilation, signing or notarization.
 
 ### Release checkpoints and notarization continuation
 
+App and DMG submissions first retain an immutable payload intent in Actions.
+Only a successful intent upload enables the Apple upload. The uploader records
+one local claim and never retries an ambiguous upload. A separate checkpoint
+retains the returned UUID before waiting; waits share a bounded 15-minute budget
+and reuse that UUID. Recovery accepts the latest complete checkpoint, or the
+earlier App/DMG submission checkpoint if the final upload was interrupted.
+Every entered submission phase must have its own intent-bound payload SHA and
+UUID journal. Missing or context-only evidence stops resubmission. Prepared local
+`.intent` files remain separate from authenticated UUID journals, so preparation
+does not make the retained-product validator reject the first real submission.
+
 The release workflow separates `release-build` from `release`, both on macrunner.
 The builder runs full Release tests in their isolated scratch directory, then builds
 and signs the production app and pack. Before any Apple wait, it retains the exact

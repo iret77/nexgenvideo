@@ -1,5 +1,6 @@
 """Synthetic parser shapes only; not native runs, model quality or OCR acceptance."""
 import base64
+from functools import lru_cache
 import json
 from pathlib import Path
 import struct
@@ -14,6 +15,7 @@ def data(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
 
 
+@lru_cache(maxsize=16)
 def png(width, height, text=False):
     def chunk(kind, value):
         return struct.pack(">I", len(value)) + kind + value + struct.pack(">I", zlib.crc32(kind + value))

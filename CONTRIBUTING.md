@@ -33,6 +33,14 @@ tests, app and external-pack loading, native UI acceptance, and real Music Video
 audio-analysis acceptance. See [CI execution and measurement](docs/CI_EFFICIENCY.md)
 for the selected checks and their evidence. Pull requests do not start macOS jobs.
 
+Keep a test only when it detects a concrete, plausible regression against an
+independent expected result. Remove checks that merely repeat implementation
+text, immutable historical facts, or another test without additional coverage.
+Record one-time verification as evidence instead of rerunning it in every suite.
+Reuse immutable fixture bytes and qualified compiler products; isolate each
+mutation so one case cannot contaminate another. Report test-count reductions
+separately from measured runtime savings.
+
 Releases, signing, notarization, and DMG assembly also run only in GitHub Actions.
 Maintainers batch release work and dispatch it only with the owner's explicit
 approval.

@@ -1272,6 +1272,39 @@ jobs:
       - name: Verify pack assembly did not mutate tracked source
         run: scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist
 
+      - name: Prepare App notarization intent
+        if: steps.restore-notary.outputs.dmg_present != 'true' && env.NGV_COMPONENT_NOTARY_CONTINUATION != 'true'
+        env:
+          NOTARY_PREPARE_ONLY: 'true'
+          NOTARY_INTENT_ROOT: ${{ runner.temp }}/notary-app-intent
+        run: scripts/notarize.sh .build/NexGenVideo.zip
+
+      - name: Retain App notarization intent before upload
+        if: steps.restore-notary.outputs.dmg_present != 'true' && env.NGV_COMPONENT_NOTARY_CONTINUATION != 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-app-notary-intent-${{ needs.release-gate.outputs.product-source-sha }}
+          path: ${{ runner.temp }}/notary-app-intent/intent.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Submit App notarization exactly once
+        id: submit-app
+        if: steps.restore-notary.outputs.dmg_present != 'true' && env.NGV_COMPONENT_NOTARY_CONTINUATION != 'true'
+        env:
+          NOTARY_SUBMIT_ONLY: 'true'
+          NOTARY_INTENT_ROOT: ${{ runner.temp }}/notary-app-intent
+        run: scripts/notarize.sh .build/NexGenVideo.zip
+
+      - name: Retain App notarization submission before waiting
+        if: always() && (steps.submit-app.outcome == 'success' || steps.submit-app.outcome == 'failure')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-app-notary-submission-${{ needs.release-gate.outputs.product-source-sha }}
+          path: ${{ runner.temp }}/release-notary-state/*.json
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Notarize and staple app
         if: steps.restore-notary.outputs.dmg_present != 'true'
         timeout-minutes: 20
@@ -1310,6 +1343,36 @@ jobs:
           path: ${{ runner.temp }}/retained-packaging/dmg-proof
           if-no-files-found: error
           retention-days: 90
+
+      - name: Prepare DMG notarization intent
+        env:
+          NOTARY_PREPARE_ONLY: 'true'
+          NOTARY_INTENT_ROOT: ${{ runner.temp }}/notary-dmg-intent
+        run: scripts/notarize.sh .build/NexGenVideo.dmg
+
+      - name: Retain DMG notarization intent before upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-dmg-notary-intent-${{ needs.release-gate.outputs.product-source-sha }}
+          path: ${{ runner.temp }}/notary-dmg-intent/intent.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Submit DMG notarization exactly once
+        id: submit-dmg
+        env:
+          NOTARY_SUBMIT_ONLY: 'true'
+          NOTARY_INTENT_ROOT: ${{ runner.temp }}/notary-dmg-intent
+        run: scripts/notarize.sh .build/NexGenVideo.dmg
+
+      - name: Retain DMG notarization submission before waiting
+        if: always() && (steps.submit-dmg.outcome == 'success' || steps.submit-dmg.outcome == 'failure')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-dmg-notary-submission-${{ needs.release-gate.outputs.product-source-sha }}
+          path: ${{ runner.temp }}/release-notary-state/*.json
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Notarize and staple DMG
         timeout-minutes: 20

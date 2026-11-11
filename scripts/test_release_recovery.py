@@ -550,6 +550,10 @@ class ReleaseRecoveryTests(unittest.TestCase):
                         else:
                             checkpoint.prepare(123, target)
                             self.assertTrue((target / "binding.json").exists())
+                            packaging["steps"] = [{"name": "Submit App notarization exactly once", "conclusion": "cancelled"}]
+                            with self.assertRaisesRegex(ValueError, "outcome is unknown"):
+                                checkpoint.prepare(123, root / "unresolved-context-only")
+                            packaging.pop("steps")
 
     def test_signed_input_rejects_modified_or_escaping_payload(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -672,6 +676,8 @@ class ReleaseRecoveryTests(unittest.TestCase):
             checkpoint.write(state / "context.json", current)
             responses, sources, job = self.notary_run(base / "first", 321, old_context,
                 manifest["appTreeSHA256"], dmg, base / "original/plugins.tar.gz")
+            state_artifact = responses["actions/artifacts/3210"]
+            state_artifact["name"] = "release-dmg-notary-submission-" + SOURCE
             def fake_mac(*args):
                 if args[:2] == ("hdiutil", "attach"):
                     shutil.copytree(base / "original/NexGenVideo.app", Path(args[-1]) / "NexGenVideo.app")
@@ -705,6 +711,63 @@ class ReleaseRecoveryTests(unittest.TestCase):
                 with self.assertRaises(ValueError): checkpoint.prepare_notary(456, base / "bad-restore")
                 (binding / "state.zip").write_bytes(b"tampered-state")
                 with self.assertRaises(ValueError): checkpoint.restore_notary(binding)
+
+    def test_notary_checkpoint_selection_preserves_final_state_and_rejects_ambiguity(self):
+        final, dmg, app = ({"id": number, "name": prefix + SOURCE} for number, prefix in enumerate((
+            "release-notary-state-", "release-dmg-notary-submission-", "release-app-notary-submission-"), 1))
+        self.assertIs(checkpoint.notary_state_entry([app], SOURCE), app)
+        self.assertIs(checkpoint.notary_state_entry([app, dmg], SOURCE), dmg)
+        self.assertIs(checkpoint.notary_state_entry([app, final, dmg], SOURCE), final)
+        self.assertIsNone(checkpoint.notary_state_entry([{"name": "release-notary-state-" + "f" * 40}], SOURCE))
+        for duplicate in (final, dmg, app):
+            with self.subTest(duplicate=duplicate["name"]), self.assertRaises(ValueError):
+                checkpoint.notary_state_entry([final, dmg, app, dict(duplicate)], SOURCE)
+
+    def test_missing_remote_submission_checkpoint_cannot_authorize_another_upload(self):
+        import retained_packaging
+        for name in ("Submit App notarization exactly once", "Submit DMG notarization exactly once",
+                     "Notarize and staple app", "Notarize and staple DMG",
+                     "Notarize and staple downloadable format packs"):
+            job = {"name": "release", "steps": [{"name": name, "conclusion": "cancelled"}]}
+            with self.subTest(name=name), patch.dict(os.environ, GITHUB_RUN_ID="999"):
+                with self.assertRaisesRegex(ValueError, "outcome is unknown"):
+                    checkpoint.require_saved_notary({"id": 123, "head_sha": SOURCE}, [job], [], Path("unused"))
+                with self.assertRaisesRegex(ValueError, "outcome is unknown"):
+                    retained_packaging.original_journals({"id": 123}, SOURCE, {"jobs": [job]}, {"artifacts": []})
+            for result in ("skipped", None):
+                job["steps"][0]["conclusion"] = result
+                checkpoint.require_notary_checkpoint([], SOURCE, job)
+            job["steps"][0]["conclusion"] = "success"
+            checkpoint.require_notary_checkpoint([{"name": "release-notary-state-" + SOURCE}], SOURCE, job)
+        job = {"steps": [{"name": "Submit DMG notarization exactly once", "status": "in_progress"}]}
+        with self.assertRaisesRegex(ValueError, "outcome is unknown"):
+            checkpoint.require_notary_checkpoint([{"name": "release-app-notary-submission-" + SOURCE}], SOURCE, job)
+
+    def test_each_entered_apple_phase_requires_its_own_intent_bound_payload_identity(self):
+        producer = {"id": 123, "head_sha": SOURCE}
+        job = {"steps": [{"name": "Submit App notarization exactly once", "conclusion": "success"},
+                         {"name": "Submit DMG notarization exactly once", "conclusion": "cancelled"}]}
+        intents = {role: {"schema": "release-notary-intent/v1", "repository": "iret77/nexgenvideo",
+            "sourceSHA": SOURCE, "producerSourceSHA": SOURCE, "runID": "123", "attempt": "1", "role": role,
+            "sha256": digit * 64, "existingSubmissionID": ""} for role, digit in (("app", "a"), ("dmg", "d"))}
+        inventory = [{"name": "release-" + role + "-notary-intent-" + SOURCE, "role": role} for role in intents]
+        journals = {value["sha256"]: {"sha256": value["sha256"], "sourceSHA": SOURCE, "submissionID": UUID}
+                    for value in intents.values()}
+        def verify():
+            checkpoint.require_notary_payload_coverage(inventory, SOURCE, producer, job, journals,
+                lambda item, name: intents[item["role"]])
+        verify()
+        dmg_sha = intents["dmg"]["sha256"]
+        original = journals.pop(dmg_sha)
+        with self.assertRaisesRegex(ValueError, "outcome is unknown"): verify()
+        journals[dmg_sha] = original
+        for key, bad in (("sha256", "f" * 64), ("producerSourceSHA", "b" * 40), ("role", "app"),
+                         ("runID", "124"), ("existingSubmissionID", "87654321-1234-1234-1234-123456789abc")):
+            before = intents["dmg"][key]; intents["dmg"][key] = bad
+            with self.subTest(key=key), self.assertRaises(ValueError): verify()
+            intents["dmg"][key] = before
+        inventory.pop()
+        with self.assertRaisesRegex(ValueError, "intent is missing"): verify()
 
     def test_release_stages_keep_all_acceptance_and_publication_guards(self):
         workflow = yaml.safe_load(WORKFLOW.read_text())

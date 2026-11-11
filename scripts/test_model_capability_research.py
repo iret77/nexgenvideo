@@ -124,20 +124,6 @@ def validate_transport() -> None:
     require('"CLAUDE_CODE_OAUTH_TOKEN"' not in text, "OAuth token entered research transport")
 
 
-def validate_html() -> None:
-    text = HTML_SPEC.read_text()
-    require('<section id="spec">' in text, "missing normative #spec")
-    require('<section id="mockups">' in text, "missing mockups")
-    require(text.index('id="spec"') < text.index('id="mockups"'), "mock precedes normative spec")
-    for phrase in (
-        "Research specs with Claude",
-        "WebSearch",
-        "WebFetch",
-        "Application Support",
-        "Accept 2 proven fields",
-        "It is no longer part of Models settings",
-    ):
-        require(phrase in text, f"HTML omits {phrase}")
 
 
 def validate_model_owner_registry() -> None:
@@ -176,8 +162,6 @@ class ModelCapabilityResearchStaticTests(unittest.TestCase):
     def test_transport_is_hermetic(self):
         validate_transport()
 
-    def test_normative_html_precedes_mockups(self):
-        validate_html()
 
     def test_model_owner_registry_covers_the_capability_corpus(self):
         validate_model_owner_registry()

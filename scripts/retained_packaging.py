@@ -46,7 +46,7 @@ VERIFIER_INPUTS += ('scripts/compiled_component_reuse.py', 'scripts/notary_conti
 PACKAGING_PATHS = {
     "scripts/plan_dmg_capacity.py", "scripts/test_release_dmg_packaging.py",
     "scripts/retained_packaging.py", "scripts/test_retained_packaging.py",
-    "scripts/release_checkpoint.py", "scripts/test_release_recovery.py", "scripts/notarize.sh",
+    "scripts/release_checkpoint.py", "scripts/test_release_recovery.py", "scripts/notarize.sh", "scripts/notary_submission.py",
     "scripts/test_notarize.py", "scripts/workspace_native_ci.py", "scripts/test_workspace_native_ci.py",
     "scripts/verify_diagnostic_candidate.py", "scripts/test_diagnostic_acceptance.py",
     "scripts/retained_release_runtime.py", "scripts/test_retained_release_runtime.py",
@@ -747,6 +747,18 @@ def legacy_dmg_proof(producer, payload, product):
     return {'artifact': payload, 'checkpoint': checkpoint, 'rawProofSHA256': digest(encoded(certificate)), 'legacyAcquisition': certificate}
 
 
+def read_notary_intent(item, name, producer, job):
+    artifact = api("actions/artifacts/" + str(item["id"]))
+    checksum = artifact.get("digest", "")
+    size = artifact.get("size_in_bytes")
+    require(isinstance(checksum, str) and re.fullmatch("sha256:[a-f0-9]{64}", checksum)
+            and type(size) is int and 0 < size <= 65536, "Invalid Apple intent artifact")
+    verify_artifact(artifact, producer, job, item["id"], checksum[7:], name)
+    members = read_proof_archive(artifact_bytes(artifact, 65536))
+    require(set(members) == {"intent.json"}, "Unexpected Apple intent archive")
+    return json.loads(members["intent.json"])
+
+
 def state_records(raw, product, producer, run_id):
     records = read_proof_archive(raw)
     require("context.json" in records, "Missing saved notarization context")
@@ -779,28 +791,34 @@ def state_records(raw, product, producer, run_id):
 
 
 def original_journals(producer, product, jobs, inventory):
-    name = "release-notary-state-" + product
-    matches = [entry for entry in inventory["artifacts"] if entry.get("name") == name]
-    require(len(matches) <= 1, "Original signed producer has ambiguous Apple state")
-    if not matches:
+    from release_checkpoint import notary_state_entry, require_notary_checkpoint, require_notary_payload_coverage
+    for job in jobs["jobs"]:
+        if job.get("name") == "release":
+            require_notary_checkpoint(inventory["artifacts"], product, job)
+    selected = notary_state_entry(inventory["artifacts"], product)
+    if selected is None:
         return None, None
+    name = selected["name"]
     packaging = [job for job in jobs["jobs"] if job.get("name") == "release"]
     require(len(packaging) == 1, "Missing original signed packaging job")
     job = packaging[0]
     require(job.get("run_id") == producer["id"] and job.get("head_sha") == product
             and job.get("run_attempt") == 1 and job.get("labels") == ["macrunner"]
             and job.get("status") == "completed", "Original Apple state job differs")
-    artifact = api("actions/artifacts/" + str(matches[0]["id"]))
+    artifact = api("actions/artifacts/" + str(selected["id"]))
     checksum = artifact.get("digest", "")
     require(isinstance(checksum, str) and re.fullmatch("sha256:[a-f0-9]{64}", checksum), "Missing original Apple state digest")
     verify_artifact(artifact, producer, job, artifact["id"], checksum[7:], name)
     raw = artifact_bytes(artifact, 4 * 1024**2)
     context, journals = state_records(raw, product, product, producer["id"])
+    require_notary_payload_coverage(inventory["artifacts"], product, producer, job, journals,
+        lambda item, name: read_notary_intent(item, name, producer, job))
     require(context["buildRunID"] == producer["id"], "Original Apple state selected another signed build")
     return {"artifact": artifact, "job": job, "context": context, "journals": journals}, raw
 
 
 def prior_notary(run_id, product, *, packaging=None, chain=None):
+    from release_checkpoint import notary_state_entry, notary_state_names, require_notary_checkpoint, require_notary_payload_coverage
     require(type(run_id) is int and run_id > 0, "Invalid previous notarization producer")
     producer = api(f"actions/runs/{run_id}")
     require(producer.get("id") == run_id and producer.get("repository", {}).get("full_name") == REPOSITORY
@@ -826,8 +844,9 @@ def prior_notary(run_id, product, *, packaging=None, chain=None):
             "Previous packaging job is not the failed part")
     inventory = api(f"actions/runs/{run_id}/artifacts?per_page=100")
     require(inventory.get("total_count") == len(inventory.get("artifacts", [])), "Incomplete previous notary artifacts")
+    require_notary_checkpoint(inventory["artifacts"], product, job)
     artifacts = {}
-    for name in ("release-notary-state-" + product, "release-dmg-input-" + product):
+    for name in (*notary_state_names(product), "release-dmg-input-" + product):
         matches = [entry for entry in inventory["artifacts"] if entry.get("name") == name]
         require(len(matches) <= 1, "Duplicate previous notary artifact")
         if matches:
@@ -836,10 +855,12 @@ def prior_notary(run_id, product, *, packaging=None, chain=None):
             require(isinstance(checksum, str) and re.fullmatch("sha256:[a-f0-9]{64}", checksum), "Missing saved notary digest")
             verify_artifact(artifact, producer, job, artifact["id"], checksum[7:], name)
             artifacts[name] = artifact
-    state = artifacts.get("release-notary-state-" + product)
+    state = notary_state_entry(list(artifacts.values()), product)
     require(state is not None, "Previous notarization state is missing")
     raw = artifact_bytes(state, 4 * 1024**2)
     context, journals = state_records(raw, product, producer_source, run_id)
+    require_notary_payload_coverage(inventory["artifacts"], product, producer, job, journals,
+        lambda item, name: read_notary_intent(item, name, producer, job))
     if producer_source != product:
         require(all(journals.get(key) == value for key, value in parent["record"]["previousNotary"]["journals"].items()),
                 "Parent notary state dropped or changed a known Apple submission")
