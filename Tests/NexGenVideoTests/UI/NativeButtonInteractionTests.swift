@@ -324,16 +324,21 @@ struct NativeButtonInteractionTests {
         let outcome = try await NativeAXPeer.withSession { session in
             let value = try await fixture.ready(using: session)
             try #require(value.complete)
-            let splitter = try #require(value.nodes.first { $0.role == kAXSplitterRole })
+            var splitterNode: Query.Node?
+            var undo: [Query.Node] = []
+            for node in value.nodes {
+                if node.role == kAXSplitterRole && splitterNode == nil { splitterNode = node }
+                if node.role == kAXButtonRole && (node.title == "Undo" || node.label == "Undo") {
+                    undo.append(node)
+                }
+            }
+            let splitter = try #require(splitterNode)
             #expect(splitter.statuses[kAXChildrenAttribute] == AXError.noValue.rawValue)
             #expect(splitter.childTypes.isEmpty)
             #expect(value.nodes.filter { $0.role == kAXButtonRole }.count >= 50)
             #expect(value.nodes.allSatisfy { $0.statuses["timeout:AXAttributes"] == AXError.success.rawValue })
             let buttons = Query.buttons(value, title: "Undo", inside: fixture.request.contentFrame)
             let visible = fixture.window.screen?.visibleFrame
-            let undo = value.nodes.filter {
-                $0.role == kAXButtonRole && [$0.title, $0.label].contains("Undo")
-            }
             let contained = undo.count == 1 && undo[0].frame.map {
                 value.request.windowFrame.rect.contains($0.rect)
                     && value.request.contentFrame.rect.contains($0.rect)
