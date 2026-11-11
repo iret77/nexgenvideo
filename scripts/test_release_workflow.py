@@ -68,7 +68,7 @@ def matching_shell_lines(step, prefix):
     return [line.strip() for line in step.splitlines() if line.strip().startswith(prefix)]
 
 
-def condition_enabled(condition, artifact_only, dry_run, resumed=False, *, needs_results=None, ancestry_success=True, compiled_targets="", component_continuation=False):
+def condition_enabled(condition, artifact_only, dry_run, resumed=False, *, needs_results=None, ancestry_success=True, compiled_targets="", component_continuation=False, cohort_pack_reuse=False):
     expression = str(condition or "true").removeprefix("${{").removesuffix("}}").strip()
     if not ancestry_success and not re.search(r"\b(?:always|cancelled|success|failure)\(\)", expression):
         return False
@@ -76,8 +76,9 @@ def condition_enabled(condition, artifact_only, dry_run, resumed=False, *, needs
         "inputs.artifact_only": artifact_only,
         "inputs.compiled_app_targets_json": compiled_targets,
         "needs.bpy-source.result": "success",
-        "env.NGV_COMPILED_APP_RELEASE": "true" if compiled_targets else "",
+        "env.NGV_COMPILED_APP_RELEASE": "true" if compiled_targets or cohort_pack_reuse else "",
         "env.NGV_COMPONENT_NOTARY_CONTINUATION": "true" if component_continuation else "",
+        "env.NGV_COHORT_PACK_CHECKS_REUSED": "true" if cohort_pack_reuse else "",
         "inputs.dry_run": dry_run,
         "env.REL_DRY": str(dry_run).lower(),
         "needs.release-gate.outputs.publication-resumed": str(resumed).lower(),
@@ -352,9 +353,18 @@ xcrun() { printf 'stapler\\n' >> "$CALLS"; return "$NATIVE_RC"; }
         ):
             self.assertTrue(condition_enabled(steps[name].get("if"), True, True), name)
             self.assertFalse(condition_enabled(steps[name].get("if"), True, True, component_continuation=True), name)
+            self.assertFalse(condition_enabled(steps[name].get("if"), True, True, cohort_pack_reuse=True), name)
+        cohort = steps['Bind the original cohort pack checks to these exact restored bytes']
+        self.assertFalse(condition_enabled(cohort.get('if'), True, True))
+        self.assertFalse(condition_enabled(cohort.get('if'), True, True, component_continuation=True))
+        self.assertTrue(condition_enabled(cohort.get('if'), True, True, cohort_pack_reuse=True))
+        self.assertFalse(condition_enabled(reuse.get('if'), True, True, cohort_pack_reuse=True))
+        self.assertEqual(cohort['run'], 'python3 scripts/retained_packaging.py verify-cohort-pack-checks')
+        self.assertFalse(cohort.get('continue-on-error', False))
         for name in ("Notarize and staple app", "Build and sign DMG", "Notarize and staple DMG",
                      "Verify the exact DMG users install"):
             self.assertTrue(condition_enabled(steps[name].get("if"), True, True, component_continuation=True), name)
+            self.assertTrue(condition_enabled(steps[name].get("if"), True, True, cohort_pack_reuse=True), name)
         upload = steps["Upload unpublished candidate"]["with"]
         for path in (".build/NexGenVideo.dmg", ".build/plugins/*.ngvpack.zip",
                      ".build/plugins/*.entry.json", ".build/artifact-only-candidate.json",

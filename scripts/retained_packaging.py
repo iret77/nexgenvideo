@@ -21,6 +21,7 @@ from verified_pr_source_checks import original_receipt, read_api as live_read_ap
 REPOSITORY = "iret77/nexgenvideo"
 MAX_PROOF_BYTES = 32 * 1024**2
 MAX_CHAIN = 8
+MAX_SHARED_PROOF_BYTES = MAX_CHAIN * MAX_PROOF_BYTES
 COMPLETE_ARTIFACT = "release-packaging-provenance"
 RESTORED_ARTIFACT = "release-packaging-restored-proof"
 PROOF_FILES = {"harness-source.json", "harness-source-original-proof.zip", "harness-source-original-job.log",
@@ -583,7 +584,7 @@ def proof_bytes(raw):
         require(known[checksum] == raw, 'Authenticated proof bytes changed')
         return known[checksum]
     total = budget.get('expandedBytes', 0) + len(raw)
-    require(total <= MAX_PROOF_BYTES, 'Packaging provenance chain exceeds its shared byte bound')
+    require(total <= MAX_SHARED_PROOF_BYTES, 'Packaging provenance chain exceeds its shared byte bound')
     budget['expandedBytes'] = total
     known[checksum] = raw
     return raw
@@ -591,7 +592,7 @@ def proof_bytes(raw):
 
 def proof_member(archive, entry):
     budget = BUDGET.get()
-    if budget is None or budget.get('expandedBytes', 0) + entry.file_size <= MAX_PROOF_BYTES:
+    if budget is None or budget.get('expandedBytes', 0) + entry.file_size <= MAX_SHARED_PROOF_BYTES:
         return proof_bytes(archive.read(entry))
     checksum = hashlib.sha256()
     with archive.open(entry) as stream:
@@ -983,6 +984,10 @@ def prior_notary(run_id, product, *, packaging=None, chain=None, allow_pre_submi
         require(parent["record"]["originalSignedBuildRunID"] == context["buildRunID"], "Parent packaging proof selected another signed build")
         result["parentProvenance"] = {**packaging, "runID": run_id, "productSourceSHA": product,
                                      "rawProofSHA256": parent["rawProofSHA256"]}
+        if checkpoint is None and cohort_signed_product(parent['record']):
+            checks = cohort_pack_check_origin(parent['record'], producer, job)
+            if checks is not None:
+                result['cohortPackChecks'] = checks
         from compiled_component_reuse import qualified
         if checkpoint is not None and qualified(parent['record']):
             from notary_continuation import observation_members, observation_scope, verify_observations
@@ -1005,6 +1010,82 @@ def prior_notary(run_id, product, *, packaging=None, chain=None, allow_pre_submi
                     if parent['record']['previousNotary'].get('acceptedAppNotary') is not None else observation_scope(parent['record']),
                 'newAppleOperationPerformed': False}
     return result, raw
+
+
+def cohort_pack_check_origin(record, producer, job):
+    names = ('Verify pack links the SHARED engine (guards the PackEntry-cast regression)',
+             'Load-test — the SIGNED app actually loads the SIGNED pack from an EXTERNAL dir')
+    selected = [[step for step in job.get('steps', []) if step.get('name') == name] for name in names]
+    fresh = all(len(steps) == 1 and steps[0].get('conclusion') == 'success' for steps in selected)
+    inherited = record.get('previousNotary', {}).get('cohortPackChecks')
+    replayed = [step for step in job.get('steps', [])
+                if step.get('name') == 'Bind the original cohort pack checks to these exact restored bytes']
+    if not fresh and not (inherited is not None and len(replayed) == 1 and replayed[0].get('conclusion') == 'success'
+            and all(len(steps) == 1 and steps[0].get('conclusion') == 'skipped' for steps in selected)):
+        return None
+    require(cohort_signed_product(record) and record.get('stage') in {'restored', 'complete'}
+            and record.get('runID') == producer.get('id') == job.get('run_id')
+            and record.get('producerSourceSHA') == producer.get('head_sha') == job.get('head_sha')
+            and producer.get('repository', {}).get('full_name') == REPOSITORY
+            and producer.get('actor', {}).get('login') == 'iret77' and producer.get('run_attempt') == 1
+            and producer.get('path') == '.github/workflows/release.yml'
+            and job.get('name') == 'release' and job.get('labels') == ['macrunner']
+            and job.get('run_attempt') == 1 and job.get('status') == 'completed',
+            'Cohort pack checks lost their actual native producer')
+    manifest, cohort = record['signedInput']['manifest'], record['signedInput']['cohortProduct']
+    from compiled_app_release import PACK_SHA, PACK_TREE
+    require(cohort.get('packArchiveSHA256') == PACK_SHA and cohort.get('packTreeSHA256') == PACK_TREE
+            and record.get('originalPackArchives') == {'.build/plugins/musicvideo.ngvpack.zip': PACK_SHA}
+            and record.get('restoredOriginal') == {'sourceSHA': record['productSourceSHA'],
+                'producerRun': record['originalSignedBuildRunID'], 'appTreeSHA256': manifest['appTreeSHA256'],
+                'identity': manifest['identity']}, 'Cohort checks belong to another restored App or pack')
+    identity = {'productSourceSHA': record['productSourceSHA'], 'signedBuildRunID': record['originalSignedBuildRunID'],
+        'appArchiveSHA256': cohort['appArchiveSHA256'], 'appTreeSHA256': manifest['appTreeSHA256'],
+        'mainSHA256': manifest['componentAssembly']['main']['distributionImageSHA256'],
+        'packArchiveSHA256': PACK_SHA, 'packTreeSHA256': PACK_TREE}
+    if not fresh:
+        require(inherited.get('schema') == 'cohort-pack-native-checks-reuse/v1'
+                and all(inherited.get(key) == value for key, value in identity.items()),
+                'Inherited cohort native checks changed their signed product')
+        return inherited
+    raw = read_api('actions/jobs/' + str(job['id']) + '/logs', maximum=8 * 1024**2)
+    lines = [line.rstrip('\r').split(' ', 1) for line in raw.decode('utf-8-sig').split('\n') if ' ' in line]
+    load = selected[1][0]
+    require(all(isinstance(load.get(key), str) for key in ('started_at', 'completed_at'))
+            and any(text == 'SELFTEST_PACK_OK loaded musicvideo v0.6.0'
+                    and instant(load['started_at']) <= instant(at) < instant(load['completed_at']) + datetime.timedelta(seconds=1)
+                    for at, text in lines),
+            'Actual cohort pack-load output is missing from its successful native step')
+    return {'schema': 'cohort-pack-native-checks-reuse/v1', 'origin': {'runID': producer['id'],
+        'sourceSHA': producer['head_sha'], 'jobID': job['id'], 'rawSHA256': digest(raw), 'rawBytes': len(raw),
+        'steps': [steps[0] for steps in selected]}, **identity,
+        'newCompilerSignatureOrPackLoadPerformed': False}
+
+
+def verify_cohort_pack_checks(record, build=Path('.build')):
+    require(cohort_signed_product(record), 'Cohort native reuse requires its typed signed product')
+    proof = record['previousNotary'].get('cohortPackChecks')
+    require(proof is not None and proof.get('schema') == 'cohort-pack-native-checks-reuse/v1',
+            'Cohort native reuse has no independently bound original checks')
+    cohort, manifest = record['signedInput']['cohortProduct'], record['signedInput']['manifest']
+    require(proof['productSourceSHA'] == record['productSourceSHA']
+            and proof['signedBuildRunID'] == record['originalSignedBuildRunID']
+            and proof['appArchiveSHA256'] == cohort['appArchiveSHA256']
+            and proof['appTreeSHA256'] == manifest['appTreeSHA256']
+            and proof['mainSHA256'] == manifest['componentAssembly']['main']['distributionImageSHA256']
+            and proof['packArchiveSHA256'] == cohort['packArchiveSHA256']
+            and proof['packTreeSHA256'] == cohort['packTreeSHA256'],
+            'Cohort reuse proof belongs to another signed product')
+    from release_checkpoint import tree_digest
+    from release_acceptance_identity import tree_sha256
+    app, pack = build / 'NexGenVideo.app', build / 'plugins/musicvideo.ngvpack'
+    require(file_checksum(build / 'NexGenVideo.zip') == proof['appArchiveSHA256']
+            and tree_digest(app) == proof['appTreeSHA256']
+            and file_checksum(app / 'Contents/MacOS/NexGenVideo') == proof['mainSHA256']
+            and file_checksum(build / 'plugins/musicvideo.ngvpack.zip') == proof['packArchiveSHA256']
+            and tree_sha256(pack) == proof['packTreeSHA256'],
+            'Materialized App or pack changed since the original cohort native checks')
+    return proof
 
 
 def mode_inputs(values):
@@ -1529,6 +1610,8 @@ def validate_binding(record, files, *, execution=False, chain=None):
                 and recorded_dmg.get("rawProofSHA256") == previous["dmgProof"]["rawProofSHA256"], "Previous DMG proof changed")
         matching_artifact(recorded_dmg.get("artifact", {}), previous["dmgProof"]["artifact"])
     require(record["previousNotary"].get("parentProvenance") == previous.get("parentProvenance"), "Parent provenance selector changed")
+    require(record['previousNotary'].get('cohortPackChecks') == previous.get('cohortPackChecks'),
+            'Original cohort native pack checks changed')
     instant = lambda value: datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
     require(instant(previous["producer"]["created_at"]) < instant(run["created_at"])
             and instant(previous["job"]["completed_at"]) <= instant(run["created_at"]), "Packaging ancestry has invalid chronology")
@@ -1758,6 +1841,7 @@ def main():
             command.add_argument('--artifact-sha256', required=True)
     commands.add_parser('source')
     commands.add_parser('validate-inputs')
+    commands.add_parser('verify-cohort-pack-checks')
     notary = commands.add_parser('notary-source')
     notary.add_argument('--artifact', required=True, type=Path)
     notary.add_argument('--checkpoint', type=Path)
@@ -1772,6 +1856,8 @@ def main():
     elif args.mode == 'dmg-proof': record_dmg_payload(args.root, args.artifact_id, args.artifact_sha256)
     elif args.mode == 'source': print(current_product_source())
     elif args.mode == 'validate-inputs': mode_inputs(event_values())
+    elif args.mode == 'verify-cohort-pack-checks':
+        print('COHORT_PACK_CHECKS_REUSED ' + json.dumps(verify_cohort_pack_checks(current_binding()), sort_keys=True))
     elif args.mode == 'notary-source': print(notary_product_source(args.artifact, args.checkpoint))
     else:
         require(os.environ.get('GITHUB_ACTIONS') == 'true' and os.environ.get('GITHUB_REPOSITORY') == REPOSITORY,

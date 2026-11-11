@@ -538,7 +538,7 @@ def restore(root):
     require(manifest["identity"]["version"] == os.environ["REL_VERSION"], "Requested release version differs")
     require(manifest["identity"]["catalogURL"] == os.environ["PLUGIN_CATALOG_URL"],
             "Restored App belongs to another plugin channel")
-    from retained_packaging import compiled_signed_product
+    from retained_packaging import compiled_signed_product, cohort_signed_product
     from compiled_component_reuse import qualified, reuse_native
     if qualified(retained):
         reuse_native(root, build / 'NexGenVideo.app', manifest, retained)
@@ -559,6 +559,8 @@ def restore(root):
             output.write('NGV_CURRENT_COMPILED_SOURCE_REUSE=true\n')
         if qualified(retained):
             output.write('NGV_COMPONENT_NOTARY_CONTINUATION=true\n')
+        if retained is not None and cohort_signed_product(retained) and retained['previousNotary'].get('cohortPackChecks'):
+            output.write('NGV_COHORT_PACK_CHECKS_REUSED=true\n')
     write(root / "restored.json", {"sourceSHA": binding["sourceSHA"], "producerRun": binding["producer"]["id"],
           "appTreeSHA256": manifest["appTreeSHA256"], "identity": manifest["identity"]})
     if os.environ.get("NOTARY_STATE_DIR"):
