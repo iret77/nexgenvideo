@@ -455,3 +455,16 @@ link from that receipt, checks the current framework against the exact unsigned 
 the qualified signed copy before signing the new test container. The host and other
 runtime products keep their bytes. A failure after compilation or linking resumes
 from those original products; it does not invoke their compiler or linker again.
+
+
+The CI linter also runs pinned actionlint 1.7.12 with the published archive SHA-256.
+This validates GitHub Actions expression contexts and workflow grammar, beyond the
+existing policy and YAML parser. For example, `runner.temp` is valid in a step but
+invalid in job `env`; runtime paths are exported through `GITHUB_ENV` after runner
+allocation. The finite runner config declares the existing `macrunner` label.
+Optional external ShellCheck/Pyflakes integrations are outside this grammar check;
+the existing policy, syntax and Python tooling checks continue unchanged.
+
+References: https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#context-availability,
+https://github.com/rhysd/actionlint/releases/tag/v1.7.12,
+https://github.com/rhysd/actionlint/blob/v1.7.12/docs/checks.md#availability-of-contexts-and-special-functions.

@@ -26,3 +26,5 @@ jobs:
         run: |
           bash script/ci-lint --tier solo --strict --visibility "$CI_LINT_VISIBILITY"
           ruby -ryaml -e 'Dir[".github/workflows/*.{yml,yaml}"].each { |path| YAML.load_file(path) }'
+      - name: Validate GitHub Actions expressions and workflow grammar
+        run: bash script/actionlint
