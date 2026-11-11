@@ -418,3 +418,64 @@ and exact driver/link recipe. Test-only and CI-only changes do not change the
 production recipe. Signed-component assembly checks both the donor and current
 source objects, preserves the donor Engine, pack and helper bytes, and records the
 new Main executable and matching symbols from the actual compiler receipt.
+
+### Private report verification
+
+The private analysis job records a finite public pointer only after successful native
+execution, intake verification and private report publication. For an exact retained
+release runtime, `verify-report` fetches the report and fixtures by OCI digest with the
+existing CI credential. It checks original successful native job provenance, every
+OCI descriptor and file, measured and approved analysis, the retained project,
+phase approvals, source media, playback range, native intake and exported bytes.
+Only a fixed schema of public provenance hashes and check results leaves the job.
+Media names, per-file inventories and private exception text remain private.
+
+`report_reuse_json` selects the original run, source, job, report and fixture digests,
+and the finite pointer artifact ID/digest. It skips both App execution and harness
+compilation. Reader-only corrections therefore reuse the original native result,
+even when its workflow failed in a later verification job. A failed native producer
+cannot qualify. Legacy same-batch runtime callers retain their existing native flow;
+they do not claim this retained-release report qualification.
+
+The data job runs on `macrunner` and uses Foundation JSON serialization through JXA
+for exact native alignment fingerprints; it compiles no Swift helper. The reader
+fetches immutable manifests and blobs with the pinned ORAS 1.3.3 commands documented
+at https://oras.land/docs/commands/oras_manifest_fetch/ and
+https://oras.land/docs/commands/oras_blob_fetch/.
+
+The local Musicvideo runtime follows the successful release producer job and its
+exact App, guide and DMG. An unrelated runtime child failing later does not invalidate
+those bytes. Typed cohort, artifact provenance and successful release-job checks
+remain required before that narrower workflow conclusion is accepted.
+
+The retained XCTest host also supplies its already signed Whisper framework.
+The source job transports the complete original framework as an opaque ZIP plus
+its pinned product receipt. The native job reconstructs each file, mode and relative
+link from that receipt, checks the current framework against the exact unsigned input, and installs
+the qualified signed copy before signing the new test container. The host and other
+runtime products keep their bytes. A failure after compilation or linking resumes
+from those original products; it does not invoke their compiler or linker again.
+
+
+The CI linter also runs the pinned actionlint 1.7.12 library with its Go checksum lock.
+This validates GitHub Actions expression contexts and workflow grammar, beyond the
+existing policy and YAML parser. For example, `runner.temp` is valid in a step but
+invalid in job `env`; runtime paths are exported through `GITHUB_ENV` after runner
+allocation. The finite runner config declares the existing `macrunner` label.
+Optional external ShellCheck/Pyflakes integrations are outside this grammar check;
+the existing policy, syntax and Python tooling checks continue unchanged.
+
+References: https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#context-availability,
+https://github.com/rhysd/actionlint/releases/tag/v1.7.12,
+https://github.com/rhysd/actionlint/blob/v1.7.12/docs/checks.md#availability-of-contexts-and-special-functions.
+
+
+GitHub.com now exposes `job.workflow_ref`, `job.workflow_sha`,
+`job.workflow_repository` and `job.workflow_file_path` for the defining reusable
+workflow. The 1.7.12 linter predates these documented string properties. A small
+library entrypoint adds exactly those four string fields to a copied, strict job
+type. It does not substitute caller identities or suppress expression findings.
+Two adapter regressions accept the documented fields, reject an unknown property,
+and keep `runner.temp` invalid in job `env`. The Go toolchain is pinned to 1.26.0;
+normal Go dependency, build and test caches preserve unchanged tooling work.
+App, Engine, pack and host compiler products are unaffected by this CI tool build.

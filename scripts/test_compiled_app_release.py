@@ -485,7 +485,8 @@ class CompiledAppReleaseTests(unittest.TestCase):
                 event = root / 'event.json'; event.write_text(json.dumps({'inputs': inputs}))
                 values = {'actions/runs/777': run, 'actions/runs/777/attempts/1/jobs?per_page=100': {'total_count': 1, 'jobs': [job]},
                     'actions/artifacts/888': artifact}
-                with patch.dict(os.environ, GITHUB_EVENT_PATH=str(event)), patch.object(release, 'api', side_effect=values.__getitem__):
+                with patch.dict(os.environ, GITHUB_EVENT_PATH=str(event)), patch('app_cohort_v2.has_manifest', return_value=False), \
+                        patch.object(release, 'api', side_effect=values.__getitem__):
                     if case == 'valid':
                         result = release.local_pack_runtime_origin(binding, dmg)
                         self.assertEqual((result['runID'], result['artifactID'], result['producerJobID']), (777, 888, 999))

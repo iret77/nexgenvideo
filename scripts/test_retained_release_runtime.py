@@ -187,7 +187,7 @@ class RetainedReleaseRuntimeTests(unittest.TestCase):
         chat = (root / '.github/workflows/chat-hang-replay.yml').read_text()
         audio = (root / '.github/workflows/private-example-analysis.yml').read_text()
         for workflow in (chat, audio):
-            self.assertIn("if: inputs.runtime_artifact == '' && inputs.runtime_run_id == ''", workflow)
+            self.assertIn("inputs.runtime_artifact == '' && inputs.runtime_run_id == ''", workflow)
             self.assertIn('retained_release_runtime.py bind', workflow)
             self.assertIn('retained_release_runtime.py restore', workflow)
             self.assertIn('--artifact-sha256 "$ORIGINAL_DIGEST"', workflow)

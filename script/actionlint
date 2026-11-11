@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "${GITHUB_ACTIONS:-}" == true && "${GITHUB_REPOSITORY:-}" == iret77/nexgenvideo && "${RUNNER_OS:-}" == Linux ]]
+[[ "$(uname -m)" == x86_64 ]]
+actionlint_dir="$RUNNER_TEMP/ngv-actionlint-1.7.12"
+mkdir "$actionlint_dir"
+export GOTOOLCHAIN=local GOWORK=off CGO_ENABLED=0
+(
+  cd script/actionlint-tool
+  go test -mod=readonly .
+  go build -mod=readonly -trimpath -o "$actionlint_dir/actionlint" .
+)
+"$actionlint_dir/actionlint" -config-file .github/actionlint.yaml -shellcheck= -pyflakes= "$@"

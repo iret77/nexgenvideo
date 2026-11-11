@@ -14,7 +14,7 @@ class PrivateExampleWorkflowTests(unittest.TestCase):
         analyze = text[text.index("  analyze:") :]
 
         self.assertIn("needs: source-gate", build)
-        self.assertIn("if: inputs.runtime_artifact == '' && inputs.runtime_run_id == ''", build)
+        self.assertIn("if: inputs.report_reuse_json == '' && inputs.runtime_artifact == '' && inputs.runtime_run_id == ''", build)
         self.assertIn("runs-on: macrunner", build)
         self.assertIn("scripts/bundle.sh debug", build)
         self.assertIn("scripts/assemble_ngvpack.sh", build)
@@ -23,7 +23,7 @@ class PrivateExampleWorkflowTests(unittest.TestCase):
         self.assertNotIn("NGV_MACOS_27_RUNNER", text)
         self.assertIn("needs: [source-gate, build-runtime-harness]", analyze)
         self.assertIn(
-            "if: ${{ !cancelled() && needs.source-gate.result == 'success' && "
+            "if: ${{ !cancelled() && inputs.report_reuse_json == '' && needs.source-gate.result == 'success' && "
             "(needs.build-runtime-harness.result == 'success' || "
             "(needs.build-runtime-harness.result == 'skipped' && (inputs.runtime_artifact != '' || inputs.runtime_run_id != ''))) }}",
             analyze,
@@ -79,15 +79,15 @@ class PrivateExampleWorkflowTests(unittest.TestCase):
         build = text.split("  build-runtime-harness:\n", 1)[1].split("  analyze:\n", 1)[0]
         analyze = text.split("  analyze:\n", 1)[1]
 
-        self.assertIn("gh api /users/iret77/packages/container/nexgenvideo-analysis-reports", source_gate)
-        self.assertIn('[ "$(jq -r \'.visibility\' <<<"$REPORT_PACKAGE_JSON")" = "private" ]', source_gate)
-        self.assertIn('[ "$(jq -r \'.repository // empty\' <<<"$REPORT_PACKAGE_JSON")" = "" ]', source_gate)
+        self.assertIn('run: python3 scripts/private_analysis_verification.py isolation', source_gate)
         import yaml
         jobs = yaml.safe_load(text)['jobs']
         supplement = '${{ runner.temp }}/retained-packaging-supplements/'
         allowed = {'source-gate': {supplement},
                    'build-runtime-harness': {'${{ runner.temp }}/runtime-harness.tar.gz'},
-                   'analyze': {'${{ runner.temp }}/analysis-runtime/runtime-environment.json', supplement}}
+                   'analyze': {'${{ runner.temp }}/analysis-runtime/runtime-environment.json', supplement,
+                       '${{ runner.temp }}/private-analysis-pointer.json'},
+                   'verify-report': {'${{ runner.temp }}/private-analysis-verification.json'}}
         for name, paths in allowed.items():
             uploads = [step for step in jobs[name]['steps'] if step.get('uses', '').startswith('actions/upload-artifact@')]
             with self.subTest(job=name):
@@ -102,7 +102,7 @@ class PrivateExampleWorkflowTests(unittest.TestCase):
         self.assertIn("uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02", upload)
         self.assertEqual([line.strip() for line in upload.splitlines() if line.strip().startswith("path:")],
                          ["path: ${{ runner.temp }}/analysis-runtime/runtime-environment.json"])
-        self.assertEqual(text.count("uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"), 4)
+        self.assertEqual(text.count("uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"), 6)
         self.assertLess(analyze.index("RUNTIME_PRODUCT_VERSION="), analyze.index("actions/download-artifact@"))
         self.assertLess(analyze.index("RUNTIME_PRODUCT_VERSION="), analyze.index("oras pull"))
         self.assertIn("path: ${{ runner.temp }}/runtime-harness.tar.gz", build)

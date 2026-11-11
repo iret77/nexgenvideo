@@ -1,0 +1,12 @@
+ObjC.import('Foundation');
+function run(argv) {
+    if (argv.length !== 3 || !['alignment', 'recognized_lyrics'].includes(argv[1])) throw Error('CANONICAL_ARGUMENTS');
+    const input = $.NSData.dataWithContentsOfFile(argv[0]);
+    if (!input) throw Error('CANONICAL_INPUT');
+    const object = $.NSJSONSerialization.JSONObjectWithDataOptionsError(input, 0, null);
+    if (!object) throw Error('CANONICAL_JSON');
+    const value = object.objectForKey(argv[1]);
+    if (!value) throw Error('CANONICAL_FIELD');
+    const data = $.NSJSONSerialization.dataWithJSONObjectOptionsError(value, 10, null);
+    if (!data || !data.writeToFileAtomically(argv[2], true)) throw Error('CANONICAL_OUTPUT');
+}

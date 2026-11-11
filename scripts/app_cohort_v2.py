@@ -2,7 +2,7 @@
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import shutil
 import stat
@@ -15,6 +15,10 @@ from retained_app_test_products import api, archive_bytes, checksum, download, r
 MANIFEST = Path('scripts/fixtures/app-cohort.json')
 ROLES = ('production', 'testable', 'tests')
 NATIVE_OBJECTS = ('Sources', 'Engine', 'Tests', 'Package.swift', 'Package.resolved', 'Runtime', 'Metal', 'Vendor', 'plugins')
+WHISPER_PREFIX = 'Products/Release/NexGenVideoTests.xctest/Contents/Frameworks/whisper.framework/'
+WHISPER_SIGNED_SHA256 = 'c99f4c1ec811dbd250e599fc7d59b929990e5602ae64fe366433766dbec80129'
+WHISPER_UNSIGNED_SHA256 = '50e9a18e22098bb673032ccb7205038de2cbd009fb67f969622bb939d0e89497'
+WHISPER_UNSIGNED_BYTES = 5501136
 
 
 def encoded(value):
@@ -291,6 +295,7 @@ def acquire_host(root):
             (folder / 'NexGenVideoXCTestHost').write_bytes(image)
             os.chmod(folder / 'NexGenVideoXCTestHost', 0o755)
             (folder / 'product-receipt.json').write_bytes(raw)
+            retain_signed_whisper(archive, receipt, folder)
     write(folder / 'origin.json', {'schema': 'retained-xctest-host-input/v1', 'selected': selected,
         'artifact': artifact, 'run': run, 'job': native[0], 'host': host, 'currentCompilerExecutions': 0})
 
@@ -315,3 +320,101 @@ def install_host(source_root, bundle, prepared):
         'Retained host origin changed during transfer')
     return {'schema': 'native-xctest-host-reuse/v1', 'original': origin['host'], 'selected': origin['selected'],
         'hostSHA256': value['sha256'], 'appSourceSHA': prepared['appSourceSHA'], 'compilerExecutions': 0}
+
+
+def framework_inventory(root):
+    result = {}
+    for path in sorted(root.rglob('*')):
+        relative = path.relative_to(root).as_posix()
+        if path.is_symlink():
+            require(path.resolve().is_relative_to(root.resolve()), 'Retained framework link escapes its root')
+            result[relative] = {'kind': 'symlink', 'target': os.readlink(path), 'mode': stat.S_IMODE(path.lstat().st_mode)}
+        elif path.is_file():
+            result[relative] = {'kind': 'file', 'sha256': checksum(path), 'bytes': path.stat().st_size,
+                'mode': stat.S_IMODE(path.stat().st_mode)}
+        else:require(path.is_dir(), 'Retained framework contains a special file')
+    return result
+
+
+def signed_whisper_files(receipt):
+    files = {name.removeprefix(WHISPER_PREFIX): item for name, item in receipt['files'].items() if name.startswith(WHISPER_PREFIX)}
+    image = files.get('Versions/A/whisper', {})
+    require(files and image.get('sha256') == WHISPER_SIGNED_SHA256 and image.get('mode') == 0o755
+        and 'Versions/A/_CodeSignature/CodeResources' in files, 'Qualified signed Whisper product differs')
+    for name, item in files.items():
+        relative = PurePosixPath(name)
+        require(str(relative) == name and not relative.is_absolute() and '..' not in relative.parts and '\\' not in name
+            and item.get('kind') in {'file', 'symlink'}, 'Invalid retained framework path')
+        if item['kind'] == 'symlink':
+            target = PurePosixPath(item['target'])
+            require(not target.is_absolute() and '..' not in target.parts,
+                'Invalid retained framework link')
+    return files
+
+
+def retain_signed_whisper(archive, receipt, folder):
+    files = signed_whisper_files(receipt)
+    with zipfile.ZipFile(folder / 'whisper-framework.zip', 'x', compression=zipfile.ZIP_DEFLATED) as transport:
+        for name, item in files.items():
+            if item['kind'] == 'symlink':raw = item['target'].encode()
+            else:
+                raw = archive_bytes(archive, 'outputs/' + WHISPER_PREFIX + name, 16 * 1024**2)
+                require(len(raw) == item['bytes'] and hashlib.sha256(raw).hexdigest() == item['sha256'], 'Retained framework bytes differ')
+            transport.writestr(name, raw)
+
+
+def restore_signed_whisper(folder, files):
+    transport = folder / 'whisper-framework.zip'
+    require(transport.is_file() and not transport.is_symlink(), 'Retained framework transport is missing or linked')
+    root = folder / 'whisper.framework'
+    if root.exists():
+        require(root.is_dir() and not root.is_symlink() and framework_inventory(root) == files,
+            'Existing native framework materialization differs')
+        return root
+    root.mkdir()
+    with zipfile.ZipFile(transport) as archive:
+        entries = archive.infolist()
+        require(len(entries) == len(files) and {entry.filename for entry in entries} == set(files)
+            and sum(entry.file_size for entry in entries) <= 16 * 1024**2, 'Retained framework transport inventory differs')
+        for name, item in files.items():
+            if item['kind'] == 'symlink':continue
+            raw = archive_bytes(archive, name, 16 * 1024**2)
+            require(len(raw) == item['bytes'] and hashlib.sha256(raw).hexdigest() == item['sha256'], 'Retained framework transfer bytes differ')
+            target = root / name;target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(raw);os.chmod(target, item['mode'])
+        for name, item in files.items():
+            if item['kind'] != 'symlink':continue
+            require(archive_bytes(archive, name, 4096) == item['target'].encode(), 'Retained framework transfer link differs')
+            target = root / name;target.parent.mkdir(parents=True, exist_ok=True);target.symlink_to(item['target'])
+    require(framework_inventory(root) == files, 'Retained framework tree differs from its qualified receipt')
+    return root
+
+
+def install_signed_whisper(source_root, bundle, prepared):
+    selected = verify_context(prepared['cohortV2'])['retainedXCTestHost']['producer']
+    folder = source_root / 'retained-xctest-host'
+    receipt_path = folder / 'product-receipt.json'
+    require(receipt_path.is_file() and not receipt_path.is_symlink() and checksum(receipt_path) == selected['receiptSHA256'],
+        'Retained framework original receipt changed')
+    receipt = json.loads(receipt_path.read_bytes())
+    require(receipt.get('sourceSHA') == selected['sourceSHA'] and receipt.get('runID') == selected['runID']
+        and receipt.get('attempt') == 1 and receipt.get('phase') == 'tests' and receipt['state'].get('linkComplete') is True,
+        'Retained framework producer differs')
+    expected = signed_whisper_files(receipt)
+    source = restore_signed_whisper(folder, expected)
+    target = bundle / 'Contents/Frameworks/whisper.framework'
+    require(target.is_dir() and not target.is_symlink() and not target.parent.is_symlink(), 'Current test framework is missing or linked')
+    current = framework_inventory(target)
+    if current != expected:
+        unsigned = {name:item for name,item in expected.items() if '/_CodeSignature/' not in name}
+        unsigned['Versions/A/whisper'] = dict(unsigned['Versions/A/whisper'], sha256=WHISPER_UNSIGNED_SHA256, bytes=WHISPER_UNSIGNED_BYTES)
+        require(current == unsigned, 'Current framework differs from the original unsigned or qualified signed product')
+        preserved = folder / 'original-unsigned-whisper.framework'
+        require(not preserved.exists() and not preserved.is_symlink(), 'Unsigned framework preservation already consumed')
+        target.rename(preserved)
+        shutil.copytree(source, target, symlinks=True)
+    require(framework_inventory(target) == expected, 'Installed signed framework differs from the original qualified bytes')
+    return {'schema': 'native-test-framework-reuse/v1', 'framework': 'whisper.framework', 'producer': selected,
+        'originalReceiptSHA256': selected['receiptSHA256'], 'imageSHA256': WHISPER_SIGNED_SHA256,
+        'filesSHA256': hashlib.sha256(encoded(expected)).hexdigest(),
+        'transportSHA256': checksum(folder / 'whisper-framework.zip'), 'compilerExecutions': 0, 'signingExecutions': 0}

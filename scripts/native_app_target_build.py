@@ -1296,10 +1296,13 @@ def execute(root, phase):
             if prepared.get('cohortV2'):
                 import app_cohort_v2
                 state['xctestHost'] = app_cohort_v2.install_host(Path(prepared['cohortSourceRoot']), bundle, prepared)
+                state['retainedTestFramework'] = app_cohort_v2.install_signed_whisper(Path(prepared['cohortSourceRoot']), bundle, prepared)
                 logged(folder, 'sign-test-bundle-retaining-host', ['codesign', '--force', '--sign', '-', str(bundle)],
                     prepared['environment'], timeout=180)
                 require(capture.sha(bundle / 'Contents/Helpers/NexGenVideoXCTestHost') == state['xctestHost']['hostSHA256'],
                     'Signing the new test container changed its retained host image')
+                logged(folder, 'verify-signed-test-bundle-retaining-host', ['codesign', '--verify', '--deep', '--strict', str(bundle)],
+                    prepared['environment'], timeout=180)
             elif prepared['appSourceSHA'] == cohort.APP_SOURCE:
                 import native_xctest_host
                 state['xctestHost'] = native_xctest_host.build(folder, bundle, prepared,
