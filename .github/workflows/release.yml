@@ -2074,10 +2074,10 @@ jobs:
       packaging_producer_source_sha: ${{ needs.release.outputs.packaging_producer_source_sha }}
       packaging_provenance_artifact_id: ${{ needs.release.outputs.packaging_provenance_artifact_id }}
       packaging_provenance_artifact_sha256: ${{ needs.release.outputs.packaging_provenance_artifact_sha256 }}
-      runtime_run_id: ${{ inputs.retained_product_source_sha != '' && github.run_id || '' }}
-      runtime_source_sha: ${{ inputs.retained_product_source_sha != '' && needs.release.outputs.product_source_sha || '' }}
-      runtime_artifact_id: ${{ inputs.retained_product_source_sha != '' && needs.release.outputs.workspace_artifact_id || '' }}
-      runtime_artifact_sha256: ${{ inputs.retained_product_source_sha != '' && needs.release.outputs.workspace_artifact_sha256 || '' }}
+      runtime_run_id: ${{ github.run_id }}
+      runtime_source_sha: ${{ needs.release.outputs.product_source_sha }}
+      runtime_artifact_id: ${{ needs.release.outputs.workspace_artifact_id }}
+      runtime_artifact_sha256: ${{ needs.release.outputs.workspace_artifact_sha256 }}
       runtime_artifact: workspace-ui-app
       verified_pr_run_id: ${{ inputs.verified_pr_run_id }}
     secrets:

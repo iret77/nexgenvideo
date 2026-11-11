@@ -479,3 +479,12 @@ Two adapter regressions accept the documented fields, reject an unknown property
 and keep `runner.temp` invalid in job `env`. The Go toolchain is pinned to 1.26.0;
 normal Go dependency, build and test caches preserve unchanged tooling work.
 App, Engine, pack and host compiler products are unaffected by this CI tool build.
+
+
+The Release private-analysis caller always passes its actual successful release
+producer, product source and exact workspace artifact ID/digest. This applies to
+fresh compiled targets and signed/notary continuations as well as retained packaging.
+The private workflow therefore verifies the signed input, emits its finite report
+pointer and runs data-only report verification on the first native execution.
+Same-batch callers outside Release retain their existing interface. A later reader
+correction can reuse the original successful native report without running the App again.
