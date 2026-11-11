@@ -8,6 +8,18 @@ import app_release_v2 as release
 
 
 class AppleBoundaryTests(unittest.TestCase):
+    def test_main_and_dsym_match_by_uuid_with_their_distinct_original_paths(self):
+        identifier = 'C1AB1815-D829-3F3E-B536-C8F3D703FEE2'
+        main = {'compiledImageSHA256': 'a' * 64, 'uuid': identifier}
+        state = {'unsignedLinkSHA256': 'a' * 64,
+            'imageUUID': 'UUID: ' + identifier + ' (arm64) /original/NexGenVideo\n',
+            'dsymUUID': 'UUID: ' + identifier + ' (arm64) /original/NexGenVideo.dSYM/Contents/Resources/DWARF/NexGenVideo\n'}
+        release.verify_main_symbol_identity({'state': state}, main)
+        for key, value in [('unsignedLinkSHA256', 'b' * 64), ('dsymUUID', 'missing'),
+                ('imageUUID', state['imageUUID'] * 2), ('dsymUUID', state['dsymUUID'].replace(identifier, 'D' * 36))]:
+            with self.subTest(changed=key, value=value), self.assertRaises(ValueError):
+                release.verify_main_symbol_identity({'state': dict(state, **{key: value})}, main)
+
     def setUp(self):
         self.producer = {'id': 101, 'head_sha': 'a' * 40}
         self.names = ['Submit App notarization exactly once', 'Notarize and staple app',

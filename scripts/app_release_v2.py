@@ -209,6 +209,14 @@ def assemble(root):
         'mainSymbolsTreeSHA256': main['symbolsTreeSHA256'], 'componentAssembly': component})
 
 
+def verify_main_symbol_identity(product, main):
+    state = product.get('state', {})
+    uuids = lambda text: re.findall(r'UUID: ([A-Fa-f0-9-]{36}) \(arm64\)', text)
+    require(main.get('compiledImageSHA256') == state.get('unsignedLinkSHA256')
+        and uuids(state.get('imageUUID', '')) == uuids(state.get('dsymUUID', '')) == [main.get('uuid')],
+        'Fresh Main image and symbols lost their actual compiler identity')
+
+
 def verify_assembly(value, source_sha, run_id, identity, files, native):
     import consume_bpy_distributable_source as source
     candidate = cohort.verify_context(native.get('cohortV2'))
@@ -220,10 +228,8 @@ def verify_assembly(value, source_sha, run_id, identity, files, native):
         and value.get('unchangedSignedComponents'), 'Fresh App component assembly identity changed')
     product = native['products']['production']['receipt']
     main = value.get('main', {}).get('original', {})
-    require(main.get('compiledImageSHA256') == product['state']['unsignedLinkSHA256']
-        and product['state']['imageUUID'] == product['state']['dsymUUID']
-        and re.findall(r'UUID: ([A-Fa-f0-9-]{36}) \(arm64\)', product['state']['imageUUID']) == [main.get('uuid')]
-        and all(re.fullmatch('[a-f0-9]{64}', main.get(key, '')) for key in
+    verify_main_symbol_identity(product, main)
+    require(all(re.fullmatch('[a-f0-9]{64}', main.get(key, '')) for key in
             ('compiledImageSHA256', 'payloadSHA256', 'symbolsTreeSHA256', 'dwarfSHA256'))
         and all(re.fullmatch('[a-f0-9]{64}', value['main'].get(key, '')) for key in ('distributionImageSHA256', 'payloadSHA256')),
         'Fresh Main provenance or symbols differ')

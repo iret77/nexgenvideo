@@ -907,7 +907,7 @@ def acquire_products(root):
 def run_tests(root):
     import compiled_core_reuse
     bound = json.loads((root / 'bound.json').read_text())
-    dynamic = bool(bound['prepared'].get('cohortV2'))
+    dynamic = bool(bound.get('prepared', {}).get('cohortV2'))
     if not dynamic and APP_SOURCE == compiled_core_reuse.origin()['appSourceSHA']:
         native_guard(root)
         bound = json.loads((root / 'bound.json').read_text())
