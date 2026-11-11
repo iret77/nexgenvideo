@@ -662,19 +662,32 @@ class ReleaseRecoveryTests(unittest.TestCase):
             needs = jobs[name].get("needs", [])
             if isinstance(needs, str): needs = [needs]
             return set(needs).union(*(ancestors(parent) for parent in needs))
+        self.assertEqual({name for name in jobs if "release" in ancestors(name)}, {
+            "diagnostic-acceptance", "bpy-runtime", "external-user-acceptance", "chat-hang-replay",
+            "musicvideo-analysis-acceptance", "private-audio-pending", "publish",
+        })
         for name, job in jobs.items():
             if "release" not in ancestors(name):
                 continue
             direct = job["needs"] if isinstance(job["needs"], list) else [job["needs"]]
             for artifact_only in (True, False):
-                expected = artifact_only if name in ("chat-hang-replay", "musicvideo-analysis-acceptance") else not artifact_only if name == "publish" else True
-                with self.subTest(job=name, artifact_only=artifact_only):
-                    self.assertEqual(condition_enabled(job.get("if"), artifact_only, artifact_only,
-                                                      ancestry_success=False), expected)
-                    if expected:
-                        for failed in direct:
-                            self.assertFalse(condition_enabled(job.get("if"), artifact_only, artifact_only,
-                                ancestry_success=False, needs_results={failed: "failure"}), (name, failed))
+                for deferred in ((False, True) if artifact_only else (False,)):
+                    if name == 'private-audio-pending':expected = artifact_only and deferred
+                    elif name == 'musicvideo-analysis-acceptance':expected = artifact_only and not deferred
+                    elif name == 'chat-hang-replay':expected = artifact_only
+                    elif name == 'publish':expected = not artifact_only
+                    else:
+                        self.assertIn(name, ('diagnostic-acceptance', 'bpy-runtime', 'external-user-acceptance'))
+                        expected = True
+                    with self.subTest(job=name, artifact_only=artifact_only, deferred=deferred):
+                        self.assertEqual(condition_enabled(job.get('if'), artifact_only, artifact_only,
+                            ancestry_success=False, defer_private_audio=deferred), expected)
+                        if expected:
+                            for failed in direct:
+                                remains_pending = name == 'private-audio-pending' and failed == 'release'
+                                self.assertEqual(condition_enabled(job.get('if'), artifact_only, artifact_only,
+                                    ancestry_success=False, needs_results={failed: 'failure'},
+                                    defer_private_audio=deferred), remains_pending, (name, failed, deferred))
 
     def test_notary_journal_binds_payload_and_submission(self):
         with tempfile.TemporaryDirectory() as directory:
