@@ -818,6 +818,76 @@ class CompiledAppReleaseTests(unittest.TestCase):
             self.assertEqual(image.read_bytes(), b'new signed executable')
             self.assertEqual(partial.read_bytes(), b'incomplete zip, not a qualified product')
 
+    def test_carried_engine_proof_survives_original_artifact_expiry_and_rejects_rebinding(self):
+        import io
+        original_zip, original_log = b'a' * 1717370, b'b' * 3862332
+        original_digest, log_digest = (hashlib.sha256(value).hexdigest() for value in (original_zip, original_log))
+        base = release.engine_carrier_origin()
+        old_job = {'id': release.engine.JOB, 'started_at': '2020-01-01T00:00:00Z',
+            'completed_at': '2020-01-01T01:00:00Z'}
+        historical = {'run': {'id': release.engine.RUN, 'head_sha': release.engine.SOURCE}, 'job': old_job,
+            'artifact': {'id': release.engine.ARTIFACT, 'name': 'release-test-evidence',
+                'digest': 'sha256:' + original_digest, 'size_in_bytes': len(original_zip), 'expired': False,
+                'workflow_run': {'id': release.engine.RUN, 'head_sha': release.engine.SOURCE},
+                'created_at': '2020-01-01T00:30:00Z', 'updated_at': '2020-01-01T00:30:00Z',
+                'expires_at': '2020-01-03T00:00:00Z'},
+            'proof': {'eventsSHA256': release.engine.EVENT_DIGEST, 'logSHA256': release.engine.CONSOLE_DIGEST}}
+        parent = {'sourceSHA': base['sourceSHA'], 'runID': base['runID'], 'attempt': 1, 'passed': True,
+            'counts': {'retainedEngine': 896, 'engineSkips': 14}, 'retainedEngine': historical}
+        for changed in (None, 'archive', 'raw', 'receipt', 'historical-id', 'historical-expiry', 'duplicate', 'carrier-expired', 'carrier-job'):
+            origin, receipt = copy.deepcopy(base), copy.deepcopy(parent)
+            if changed == 'historical-id': receipt['retainedEngine']['artifact']['id'] += 1
+            if changed == 'historical-expiry': receipt['retainedEngine']['artifact']['expires_at'] = '2020-01-01T00:00:00Z'
+            receipt_bytes = json.dumps(receipt, sort_keys=True).encode()
+            origin.update(receiptSHA256=hashlib.sha256(receipt_bytes).hexdigest(), receiptBytes=len(receipt_bytes))
+            payload = io.BytesIO()
+            with zipfile.ZipFile(payload, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr('receipt.json', receipt_bytes + (b' ' if changed == 'receipt' else b''))
+                archive.writestr('retained-engine/original.zip', original_zip + (b'x' if changed == 'archive' else b''))
+                archive.writestr('retained-engine/original-job.log', original_log + (b'x' if changed == 'raw' else b''))
+                if changed == 'duplicate': archive.writestr('retained-engine/original.zip', original_zip)
+            payload = payload.getvalue()
+            origin.update(artifactSHA256=hashlib.sha256(payload).hexdigest(), artifactBytes=len(payload))
+            for selected in origin['dependencies']:
+                if selected['id'] == origin['artifactID']:
+                    selected.update(sha256=origin['artifactSHA256'], bytes=len(payload))
+            artifacts = {item['id']: {'id': item['id'], 'name': item['name'], 'digest': 'sha256:' + item['sha256'],
+                'size_in_bytes': item['bytes'], 'expired': changed == 'carrier-expired' and item['id'] == origin['artifactID'],
+                'workflow_run': {'id': item['runID'], 'head_sha': item['sourceSHA'],
+                    'repository_id': 1280482148, 'head_repository_id': 1280482148},
+                'created_at': '2020-01-02T00:30:00Z', 'updated_at': '2020-01-02T00:30:00Z',
+                'expires_at': '2099-01-01T00:00:00Z'} for item in origin['dependencies']}
+            run = {'id': origin['runID'], 'head_sha': origin['sourceSHA'], 'repository': {'full_name': release.REPOSITORY},
+                'head_repository': {'full_name': release.REPOSITORY}, 'run_attempt': 1, 'status': 'completed',
+                'event': 'workflow_dispatch', 'workflow_id': 303346287, 'path': '.github/workflows/release.yml',
+                'actor': {'login': 'iret77'}}
+            job = {'id': origin['jobID'], 'name': 'release-build', 'run_id': origin['runID'],
+                'head_sha': origin['sourceSHA'], 'run_attempt': 1, 'status': 'completed',
+                'conclusion': 'failure' if changed == 'carrier-job' else 'success', 'labels': ['macrunner'],
+                'started_at': '2020-01-02T00:00:00Z', 'completed_at': '2020-01-02T01:00:00Z'}
+            routes = {'actions/runs/' + str(origin['runID']): run,
+                f"actions/runs/{origin['runID']}/attempts/1/jobs?per_page=100": {'total_count': 1, 'jobs': [job]},
+                **{'actions/artifacts/' + str(key): value for key, value in artifacts.items()}}
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory() as directory, \
+                    patch.object(release, 'engine_carrier_origin', return_value=origin), \
+                    patch.object(release, 'api', side_effect=lambda route: copy.deepcopy(routes[route])) as requests, \
+                    patch.object(release, 'download', side_effect=lambda item, dest: dest.write_bytes(payload)) as download, \
+                    patch.object(release.engine, 'DIGEST', original_digest), \
+                    patch.object(release.engine, 'LOG_DIGEST', log_digest), \
+                    patch.object(release.engine, 'verify_original', return_value=old_job):
+                if changed is not None:
+                    with self.assertRaises(ValueError): release.retained_engine_carrier(Path(directory))
+                    continue
+                release.retained_engine_carrier()
+                download.assert_not_called()
+                actual = release.retained_engine_carrier(Path(directory))
+                self.assertEqual(actual['original'], historical)
+                self.assertEqual(actual['artifact']['id'], origin['artifactID'])
+                self.assertEqual((Path(directory) / 'retained-engine/original.zip').read_bytes(), original_zip)
+                self.assertEqual((Path(directory) / 'retained-engine/original-job.log').read_bytes(), original_log)
+                self.assertGreater(actual['acquiredAt'], historical['artifact']['expires_at'])
+                self.assertNotIn('actions/artifacts/' + str(release.engine.ARTIFACT), [call.args[0] for call in requests.call_args_list])
+
     def test_retained_engine_environment_requires_all_original_context_fields_and_arm64(self):
         original = {'swift': 'measured Swift', 'xcode': 'measured Xcode', 'python': '3.13.17',
             'osVersion': '27.2', 'osBuild': 'measured build'}
