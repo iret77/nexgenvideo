@@ -505,6 +505,9 @@ def verify_retained_runtime_pack(directory, product, receipt, proof, identity):
     import retained_packaging as packaging
     from compiled_core_reuse import persist
     from compiled_component_reuse import ORIGIN
+    import app_cohort_v2
+    if app_cohort_v2.has_manifest(product) and proof.get('packaging') is None:
+        return verify_component_runtime_pack(directory, product, receipt, proof, identity)
     if product == ORIGIN['sourceSHA'] and proof.get('packaging') is None:
         return verify_component_runtime_pack(directory, product, receipt, proof, identity)
     if product not in {SIGNED_RESUME['sourceSHA'], ORIGIN['sourceSHA']}:
@@ -514,7 +517,7 @@ def verify_retained_runtime_pack(directory, product, receipt, proof, identity):
     selected = proof.get('packaging')
     require(selected is not None, 'Current runtime pack has no canonical packaging parent')
     parent = packaging.consumer_record(selected, product, proof.get('producerRunID'))
-    require(packaging.retained_compiled_product(parent) and parent.get('stage') == 'complete'
+    require((packaging.retained_compiled_product(parent) or packaging.cohort_signed_product(parent)) and parent.get('stage') == 'complete'
         and parent['final']['app'] == identity and parent['final']['runtimeArchiveSHA256'] == receipt['archiveSHA256']
         and receipt['appTreeSHA256'] == identity['treeSHA256']
         and parent['final']['packTreeSHA256'] == PACK_TREE and parent['final']['packArchiveSHA256'] == PACK_SHA
@@ -554,14 +557,17 @@ def verify_retained_runtime_pack(directory, product, receipt, proof, identity):
 
 def verify_component_runtime_pack(directory, product, receipt, proof, identity):
     from compiled_core_reuse import persist
+    import app_cohort_v2
+    value = app_cohort_v2.manifest(product) if app_cohort_v2.has_manifest(product) else None
+    expected_build, expected_version = (value['build'], value['version']) if value else (COMPONENT_BUILD, '1.8.0')
     sealed = json.dumps([proof, receipt, identity], sort_keys=True, allow_nan=False)
     require(proof.get('schema') == 'nexgenvideo/retained-release-runtime/1'
         and proof.get('productSourceSHA') == product and proof.get('packaging') is None
         and proof.get('harnessSourceSHA') == os.environ.get('GITHUB_SHA')
         and proof.get('executionRunID') == os.environ.get('GITHUB_RUN_ID')
         and proof.get('executionAttempt') == os.environ.get('GITHUB_RUN_ATTEMPT') == '1'
-        and identity.get('NGVSourceCommit') == product and identity.get('CFBundleVersion') == COMPONENT_BUILD
-        and identity.get('CFBundleShortVersionString') == '1.8.0'
+        and identity.get('NGVSourceCommit') == product and identity.get('CFBundleVersion') == expected_build
+        and identity.get('CFBundleShortVersionString') == expected_version
         and receipt.get('schema') == 'nexgenvideo/workspace-ui-input/1' and receipt.get('sourceSHA') == product
         and receipt.get('appTreeSHA256') == identity.get('treeSHA256')
         and all(re.fullmatch('[a-f0-9]{64}', proof.get(name, '')) for name in ('runtimeArtifactSHA256',))
@@ -671,8 +677,12 @@ def producer(selected, role):
     artifact = api('actions/artifacts/' + str(selected['artifactID']))
     name = 'app-target-build-evidence' if role == 'metadata' else 'app-target-' + role + '-products'
     verify_artifact(artifact, run, native[0], selected['artifactID'], selected['artifactSHA256'], name)
-    require(source_objects(selected['sourceSHA']) == source_objects(APP_SOURCE) == source_objects('HEAD'),
-        'Compiled App producer and current native sources differ')
+    import app_cohort_v2
+    if app_cohort_v2.has_manifest(selected['sourceSHA']):
+        app_cohort_v2.compatible_source(selected['sourceSHA'], role)
+    else:
+        require(source_objects(selected['sourceSHA']) == source_objects(APP_SOURCE) == source_objects('HEAD'),
+            'Compiled App producer and current native sources differ')
     return {'selected': selected, 'run': run, 'job': native[0], 'sourceJob': sources[0], 'artifact': artifact}
 
 
@@ -698,10 +708,14 @@ def verified_zip(path, limit, *, qualified_sha=None):
 
 
 def verify_product(receipt, selected, phase, prepared):
+    dynamic = bool(prepared.get('cohortV2'))
+    if dynamic:
+        import app_cohort_v2
+        app_cohort_v2.compatible_product(receipt, prepared, phase)
     require(receipt.get('schema') == 'native-app-target-product/v1' and receipt.get('phase') == phase
         and receipt.get('sourceSHA') == selected['sourceSHA'] and receipt.get('runID') == selected['runID']
-        and receipt.get('attempt') == 1 and receipt.get('appSourceSHA') == APP_SOURCE
-        and receipt.get('nativeSourceObjects') == source_objects(APP_SOURCE)
+        and receipt.get('attempt') == 1 and (dynamic or (receipt.get('appSourceSHA') == APP_SOURCE
+        and receipt.get('nativeSourceObjects') == source_objects(APP_SOURCE)))
         and receipt.get('compilerSHA256') == COMPILER_SHA
         and receipt.get('recipeSHA256') == targets.recipe_identity(prepared, phase)
         and receipt.get('arena') == prepared['plans'][phase]['operations']['arena'],
@@ -781,11 +795,17 @@ def acquire_products(root):
     with verified_zip(root / 'metadata-original.zip', 1024**3, qualified_sha=selected['metadata']['artifactSHA256']) as archive:
         binding = json.loads(archive_bytes(archive, 'binding.json', 32 * 1024**2))
         prepared = json.loads(archive_bytes(archive, 'prepared.json', 32 * 1024**2))
+    dynamic = bool(prepared.get('cohortV2'))
+    if dynamic:
+        import app_cohort_v2
+        value = app_cohort_v2.verify_context(prepared['cohortV2'])
+        require(source_objects('HEAD') == value['nativeSourceObjects'], 'Release App inputs differ from the compiler candidate')
+    app_source = value['appSourceSHA'] if dynamic else APP_SOURCE
     require(binding.get('schema') == 'native-app-target-source-binding/v1'
         and prepared.get('schema') == 'native-app-target-prepared/v1'
         and prepared.get('sourceSHA') == binding.get('sourceSHA') == selected['metadata']['sourceSHA']
-        and prepared.get('appSourceSHA') == binding.get('appSourceSHA') == APP_SOURCE
-        and prepared.get('nativeSourceObjects') == binding.get('nativeSourceObjects') == source_objects(APP_SOURCE)
+        and prepared.get('appSourceSHA') == binding.get('appSourceSHA') == app_source
+        and prepared.get('nativeSourceObjects') == binding.get('nativeSourceObjects') == source_objects(app_source)
         and prepared.get('compilerSHA256') == COMPILER_SHA
         and binding['metadata']['artifact']['id'] == 13647433566
         and binding['metadata']['artifact']['digest'] == 'sha256:b6f5e0ef652fd5996760ce5f59f19239760563216d2504ff6ee056fa4dee74a9',
@@ -877,7 +897,7 @@ def acquire_products(root):
     require(checksum(runtime / 'NexGenVideoAppKitTestHost') == retained.HOST_SHA,
         'Retained AppKit host changed during runtime materialization')
     write(root / 'bound.json', {'schema': 'compiled-app-release-binding/v1', 'sourceSHA': os.environ['GITHUB_SHA'],
-        'runID': int(os.environ['GITHUB_RUN_ID']), 'appSourceSHA': APP_SOURCE, 'nativeSourceObjects': source_objects(APP_SOURCE),
+        'runID': int(os.environ['GITHUB_RUN_ID']), 'appSourceSHA': app_source, 'nativeSourceObjects': source_objects(app_source),
         'selected': selected, 'products': products, 'metadataProducer': metadata, 'prepared': prepared,
         'runtime': str(runtime), 'runtimeManifestSHA256': retained.MANIFEST_SHA,
         'runtimeManifestOrigin': {'artifactID': bank['id'], 'artifactSHA256': bank['digest'].removeprefix('sha256:'),
@@ -886,7 +906,9 @@ def acquire_products(root):
 
 def run_tests(root):
     import compiled_core_reuse
-    if APP_SOURCE == compiled_core_reuse.origin()['appSourceSHA']:
+    bound = json.loads((root / 'bound.json').read_text())
+    dynamic = bool(bound.get('prepared', {}).get('cohortV2'))
+    if not dynamic and APP_SOURCE == compiled_core_reuse.origin()['appSourceSHA']:
         native_guard(root)
         bound = json.loads((root / 'bound.json').read_text())
         return compiled_core_reuse.acquire(root, bound, criteria(), sys.modules[__name__])
@@ -895,7 +917,11 @@ def run_tests(root):
     bound = json.loads((root / 'bound.json').read_text())
     require(bound['sourceSHA'] == os.environ['GITHUB_SHA'] and bound['runID'] == int(os.environ['GITHUB_RUN_ID'])
         and bound['nativeSourceObjects'] == source_objects('HEAD'), 'Compiled App test source changed')
-    expected = criteria()
+    if dynamic:
+        import app_cohort_v2
+        expected = app_cohort_v2.criteria()
+    else:
+        expected = criteria()
     retained_engine = retained_engine_evidence(root, expected['modules']['engine'])
     runtime = Path(bound['runtime'])
     host = runtime / 'NexGenVideoAppKitTestHost'
@@ -908,7 +934,11 @@ def run_tests(root):
         stream.flush()
         os.fsync(stream.fileno())
     import native_xctest_host
-    fresh_xctest = native_xctest_host.run(root / 'xctest', bound, image, expected['xctest']['exactIndividualPassedIDs'])
+    if dynamic:
+        from app_release_v2 import run_xctest
+        fresh_xctest = run_xctest(root / 'xctest', bound, image, expected['xctest']['exactIndividualPassedIDs'])
+    else:
+        fresh_xctest = native_xctest_host.run(root / 'xctest', bound, image, expected['xctest']['exactIndividualPassedIDs'])
     folder = root / 'app-swift-testing'
     folder.mkdir()
     environment = app_environment(dict(os.environ), runtime, image, folder)
@@ -926,22 +956,27 @@ def run_tests(root):
         and observation['outputCapture'].get('eof') is True, 'Native process failed or original output is incomplete')
     events = verify_events(folder / 'events.jsonl', expected['modules']['app'], 'NexGenVideoTests')
     require(set(expected['originalEightAppFailureIDsRequiredToEndWithoutIssues']) <= set(events['endedFunctionIDs'])
-        and events['functionExecutions'] == 3712, 'Original eight App cases or full App execution is missing')
+        and events['functionExecutions'] == len(expected['modules']['app']['exactEndedFunctionIDs']),
+        'Original eight App cases or full App execution is missing')
     proofs = {'app-swift-testing': {'pid': pid, 'parentPID': os.getpid(), 'consoleSHA256': checksum(folder / 'console.log'),
         'events': events, 'eventSHA256': checksum(folder / 'events.jsonl'),
         'hostReceipt': host_receipt(folder / 'host-receipt.json', events, pid=pid, bundle=image, host=host, source_sha=os.environ['GITHUB_SHA']),
         'hostReceiptSHA256': checksum(folder / 'host-receipt.json'), 'framework': framework_output(folder / 'console.log', 1, 0)}}
     write(folder / 'verified.json', proofs['app-swift-testing'])
     proofs['xctest'] = fresh_xctest
-    receipt = {'schema': 'release-native-compiled-app/v3', 'sourceSHA': bound['sourceSHA'], 'runID': bound['runID'],
-        'attempt': 1, 'appSourceSHA': APP_SOURCE, 'nativeSourceObjects': bound['nativeSourceObjects'],
+    receipt = {'schema': 'release-native-compiled-app/v5' if dynamic else 'release-native-compiled-app/v3',
+        'sourceSHA': bound['sourceSHA'], 'runID': bound['runID'],
+        'attempt': 1, 'appSourceSHA': bound['appSourceSHA'], 'nativeSourceObjects': bound['nativeSourceObjects'],
         'compilerSHA256': COMPILER_SHA, 'selected': bound['selected'],
         'products': {phase: {'receipt': bound['products'][phase]['receipt'],
             'originalArchiveSHA256': bound['products'][phase]['originalArchiveSHA256']} for phase in PHASES},
-        'hostSHA256': retained.HOST_SHA, 'criteriaSHA256': checksum(CRITERIA), 'passed': True,
-        'counts': {'freshApp': 3712, 'freshXCTest': 48, 'retainedEngine': 896, 'executions': 4656,
+        'hostSHA256': retained.HOST_SHA, 'criteriaSHA256': (app_cohort_v2.manifest()['criteria']['sha256'] if dynamic else checksum(CRITERIA)), 'passed': True,
+        'counts': {'freshApp': len(expected['modules']['app']['exactEndedFunctionIDs']), 'freshXCTest': 48,
+            'retainedEngine': 896, 'executions': expected['expectedActualExecutions'],
             'appSkips': 8, 'engineSkips': 14},
         'freshProofs': proofs, 'retainedEngine': retained_engine}
+    if dynamic:
+        receipt['cohortV2'] = bound['prepared']['cohortV2']
     verify_receipt(receipt, bound['sourceSHA'], bound['runID'])
     write(root / 'receipt.json', receipt)
 
@@ -977,6 +1012,14 @@ def engine_environment(raw):
 
 
 def verify_receipt(receipt, source, run_id):
+    dynamic = receipt.get('schema') == 'release-native-compiled-app/v5'
+    if dynamic:
+        import app_cohort_v2
+        value = app_cohort_v2.verify_context(receipt.get('cohortV2'))
+        expected = app_cohort_v2.criteria(receipt['cohortV2']['harnessSourceSHA'])
+    app_source = value['appSourceSHA'] if dynamic else APP_SOURCE
+    source_inputs = value['nativeSourceObjects'] if dynamic else source_objects(APP_SOURCE)
+    criterion_sha = value['criteria']['sha256'] if dynamic else checksum(CRITERIA)
     if receipt.get('schema') == 'release-native-compiled-app/v4':
         import compiled_core_reuse
         require(receipt.get('sourceSHA') == source and type(receipt.get('runID')) is int and receipt['runID'] == run_id
@@ -988,16 +1031,17 @@ def verify_receipt(receipt, source, run_id):
             'Retained complete native acceptance identity differs')
         selector_identities(json.dumps(receipt.get('selected')))
         return compiled_core_reuse.verify(receipt.get('retainedNative'), receipt, criteria(), sys.modules[__name__])
-    fresh_host = receipt.get('schema') == 'release-native-compiled-app/v3'
+    fresh_host = dynamic or receipt.get('schema') == 'release-native-compiled-app/v3'
     continued = receipt.get('schema') == 'release-native-compiled-app/v2'
-    require(receipt.get('schema') in ('release-native-compiled-app/v1', 'release-native-compiled-app/v2', 'release-native-compiled-app/v3') and receipt.get('sourceSHA') == source
-        and receipt.get('runID') == run_id and receipt.get('attempt') == 1 and receipt.get('appSourceSHA') == APP_SOURCE
-        and receipt.get('nativeSourceObjects') == source_objects(source) == source_objects(APP_SOURCE)
+    require(receipt.get('schema') in ('release-native-compiled-app/v1', 'release-native-compiled-app/v2', 'release-native-compiled-app/v3', 'release-native-compiled-app/v5') and receipt.get('sourceSHA') == source
+        and receipt.get('runID') == run_id and receipt.get('attempt') == 1 and receipt.get('appSourceSHA') == app_source
+        and receipt.get('nativeSourceObjects') == source_objects(source) == source_inputs
         and receipt.get('compilerSHA256') == COMPILER_SHA and receipt.get('hostSHA256') == retained.HOST_SHA
-        and receipt.get('criteriaSHA256') == checksum(CRITERIA) and receipt.get('passed') is True,
+        and receipt.get('criteriaSHA256') == criterion_sha and receipt.get('passed') is True,
         'Native compiled App acceptance identity differs')
-    require(receipt.get('counts') == {'freshApp': 3712 if fresh_host else 3708, 'retainedCurrentXCTest' if continued else 'freshXCTest': 48, 'retainedEngine': 896,
-        'executions': 4656 if fresh_host else 4652, 'appSkips': 8, 'engineSkips': 14}, 'Native compiled App acceptance counts differ')
+    app_count = len(expected['modules']['app']['exactEndedFunctionIDs']) if dynamic else (3712 if fresh_host else 3708)
+    require(receipt.get('counts') == {'freshApp': app_count, 'retainedCurrentXCTest' if continued else 'freshXCTest': 48, 'retainedEngine': 896,
+        'executions': app_count + 48 + 896, 'appSkips': 8, 'engineSkips': 14}, 'Native compiled App acceptance counts differ')
     require(set(receipt.get('products', {})) == set(PHASES) and set(receipt.get('freshProofs', {})) == ({'app-swift-testing'} if continued else {'xctest', 'app-swift-testing'}),
         'Native compiled App acceptance roles differ')
     selected_roles = selector_identities(json.dumps(receipt.get('selected')))
@@ -1005,16 +1049,20 @@ def verify_receipt(receipt, source, run_id):
         selected = selected_roles[phase]
         product = receipt['products'][phase]['receipt']
         raw = (json.dumps(product, indent=2) + '\n').encode()
+        if dynamic:
+            app_cohort_v2.compatible_product(product, {'cohortV2': receipt['cohortV2'],
+                'compilerSHA256': receipt['compilerSHA256'], 'plans': product.get('recipePlan', {})}, phase)
         require(hashlib.sha256(raw).hexdigest() == selected['receiptSHA256']
             and product.get('schema') == 'native-app-target-product/v1'
             and product.get('sourceSHA') == selected['sourceSHA'] and product.get('runID') == selected['runID']
-            and product.get('phase') == phase and product.get('appSourceSHA') == APP_SOURCE
+            and product.get('phase') == phase and (dynamic or product.get('appSourceSHA') == APP_SOURCE)
             and product.get('compilerSHA256') == COMPILER_SHA and product.get('attempt') == 1
-            and product.get('nativeSourceObjects') == receipt['nativeSourceObjects']
+            and (dynamic or product.get('nativeSourceObjects') == receipt['nativeSourceObjects'])
             and product.get('state', {}).get('compileComplete') is True and product['state'].get('linkComplete') is True
             and receipt['products'][phase]['originalArchiveSHA256'] == selected['artifactSHA256'],
             'Native acceptance compiler product differs')
-    expected = criteria()
+    if not dynamic:
+        expected = criteria()
     app = receipt['freshProofs']['app-swift-testing']
     for key, expected_key in [('discoveredFunctionIDs', 'exactDiscoveredFunctionIDs'),
             ('startedFunctionIDs', 'exactEndedFunctionIDs'), ('endedFunctionIDs', 'exactEndedFunctionIDs'),
@@ -1030,8 +1078,13 @@ def verify_receipt(receipt, source, run_id):
             == sorted(expected['xctest']['exactIndividualPassedIDs']), 'Native acceptance exact XCTest coverage differs')
     for role, proof in receipt['freshProofs'].items():
         if role == 'xctest' and fresh_host:
-            import native_xctest_host
-            native_xctest_host.verify_proof(proof, expected['xctest']['exactIndividualPassedIDs'], source, receipt['products']['tests']['receipt'])
+            if dynamic:
+                from app_release_v2 import verify_xctest
+                verify_xctest(proof, expected['xctest']['exactIndividualPassedIDs'], source,
+                    receipt['products']['tests']['receipt'], value)
+            else:
+                import native_xctest_host
+                native_xctest_host.verify_proof(proof, expected['xctest']['exactIndividualPassedIDs'], source, receipt['products']['tests']['receipt'])
             continue
         runs = {'swiftTesting': 1, 'xctest': 0} if role == 'app-swift-testing' else {'swiftTesting': 0, 'xctest': 1}
         framework = proof.get('framework', {})
@@ -1040,7 +1093,7 @@ def verify_receipt(receipt, source, run_id):
             and re.fullmatch('[a-f0-9]{64}', proof.get('consoleSHA256', '')),
             'Native acceptance framework completion or original console identity is missing')
     host = app.get('hostReceipt', {})
-    require(app['events'].get('functionExecutions') == (3712 if fresh_host else 3708) and app['events'].get('runStarted') == app['events'].get('runEnded') == 1
+    require(app['events'].get('functionExecutions') == app_count and app['events'].get('runStarted') == app['events'].get('runEnded') == 1
         and host.get('sourceSHA') == source and host.get('pid') == app.get('pid')
         and host.get('parentPID') == app.get('parentPID') and host.get('eventRecordCount') == app['events'].get('recordCount')
         and host.get('recordingError') is None and host.get('error') is None
@@ -1286,6 +1339,9 @@ def derive_component_source(root, directory):
 
 
 def verify_component_assembly(value, source_sha, run_id, identity, files, native_evidence):
+    if native_evidence.get('schema') == 'release-native-compiled-app/v5':
+        from app_release_v2 import verify_assembly
+        return verify_assembly(value, source_sha, run_id, identity, files, native_evidence)
     import consume_bpy_distributable_source as source
     require(type(value) is dict and value.get('schema') == 'compiled-component-assembly/v1'
         and value.get('sourceSHA') == source_sha and value.get('runID') == run_id
@@ -1360,6 +1416,9 @@ def verify_main_inputs(bound):
 
 
 def verify_component_materialization(value, app, symbols):
+    if value.get('schema') == 'compiled-component-assembly/v2':
+        from app_release_v2 import verify_materialization
+        return verify_materialization(value, app, symbols)
     verify_engine_materialization(value['engine'], app, symbols)
     main = value.get('main', {})
     image = app / 'Contents/MacOS/NexGenVideo'
@@ -1396,6 +1455,9 @@ def seal_component_app(root, app, bound, sign, engine_component, source_handoff)
 
 
 def assemble(root):
+    if json.loads((root / 'receipt.json').read_bytes()).get('schema') == 'release-native-compiled-app/v5':
+        from app_release_v2 import assemble as assemble_current
+        return assemble_current(root)
     import plistlib
     native_guard(root)
     bound = json.loads((root / 'bound.json').read_text())
@@ -1593,13 +1655,14 @@ def local_pack_runtime_origin(binding, dmg=None, *, expected_dmg_sha256=None):
     producer_source = source if parent is None else parent['producerSourceSHA']
     if parent is not None:
         final = parent.get('final', {})
-        require(parent.get('stage') == 'complete' and packaging.retained_compiled_product(parent)
+        require(parent.get('stage') == 'complete' and (packaging.retained_compiled_product(parent) or packaging.cohort_signed_product(parent))
             and final.get('dmgSHA256') == dmg_digest and final.get('appTreeSHA256') == binding['appTreeSHA256']
             and final.get('guideSHA256') == binding['guideSHA256'], 'Local copy differs from canonical packaging')
         packaging.consumer_harness(selected, source, packaging.packaging_paths(source))
     require(source != SIGNED_RESUME['sourceSHA'] or parent is not None,
         'Current compiled product requires its canonical packaging provenance')
-    conclusions = {'success', 'failure'} if parent is not None and packaging.component_consumer_repair_paths(parent) else {'success'}
+    conclusions = {'success', 'failure'} if parent is not None and (packaging.component_consumer_repair_paths(parent)
+        or packaging.cohort_signed_product(parent)) else {'success'}
     run = api('actions/runs/' + run_id)
     jobs = api('actions/runs/' + run_id + '/attempts/1/jobs?per_page=100')
     artifact = api('actions/artifacts/' + artifact_id)
@@ -1706,7 +1769,8 @@ def retain_assembly(root, output, job_status):
     archives = {name: {'bytes': (output / name).stat().st_size, 'sha256': checksum(output / name)}
         for name in (*checkpoint.FILES, 'manifest.json') if (output / name).is_file()}
     state = {'schema': 'compiled-app-assembly-retention/v1', 'sourceSHA': os.environ['GITHUB_SHA'],
-        'runID': int(os.environ['GITHUB_RUN_ID']), 'attempt': 1, 'appSourceSHA': APP_SOURCE,
+        'runID': int(os.environ['GITHUB_RUN_ID']), 'attempt': 1,
+        'appSourceSHA': json.loads((root / 'bound.json').read_bytes())['appSourceSHA'] if (root / 'bound.json').is_file() else None,
         'jobStatusAtRetention': job_status, 'products': products, 'signedInputFiles': archives,
         'status': 'RETAINED_UNQUALIFIED_BYTES', 'functionalRCAccepted': False,
         'partialArchivesRequireIndependentQualification': True}
@@ -1731,7 +1795,7 @@ def create_signed_input(root, output):
         and assembled['identity'] == checkpoint.identity(build), 'Assembled App changed before signed checkpoint')
     component = assembled.get('componentAssembly')
     if 'componentAssembly' in assembled:
-        require(type(component) is dict and assembled['identity']['build'] == COMPONENT_BUILD,
+        require(type(component) is dict and (receipt.get('schema') == 'release-native-compiled-app/v5' or assembled['identity']['build'] == COMPONENT_BUILD),
             'Component checkpoint type or build differs')
         verify_component_assembly(component, os.environ['GITHUB_SHA'], int(os.environ['GITHUB_RUN_ID']),
             assembled['identity'], {'bpy-source-receipt.json': {

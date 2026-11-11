@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import app_cohort_v2
 from unittest.mock import patch
 import zipfile
 
@@ -59,7 +60,8 @@ class RetainedReleaseRuntimeTests(unittest.TestCase):
                 with patch.dict(os.environ, env), patch.object(compiled.sys, 'platform', 'darwin'), \
                         patch.object(packaging, 'consumer_record', return_value=parent), patch.object(packaging, 'compiled_signed_product', return_value=True), \
                         patch.object(compiled, 'PACK_TREE', tree), patch.object(compiled, 'pack_verification_origin', return_value=origin), \
-                        patch.object(journey, 'metadata', return_value=app), patch.object(runtime.subprocess, 'run') as commands, patch('builtins.print'):
+                        patch.object(journey, 'metadata', return_value=app), patch.object(app_cohort_v2, 'has_manifest', return_value=False), \
+                        patch.object(runtime.subprocess, 'run') as commands, patch('builtins.print'):
                     if changed == 'valid':
                         self.assertEqual(runtime.validate_app(directory, source, receipt, proof=proof), app)
                         self.assertEqual([call.args[0][0] for call in commands.call_args_list], ['codesign', 'xcrun', 'spctl'])
@@ -90,6 +92,7 @@ class RetainedReleaseRuntimeTests(unittest.TestCase):
 
     def bind(self, changed='scripts/retained_release_runtime.py\0'):
         with patch.object(runtime, 'api', side_effect=[self.run, self.jobs, self.artifact]), \
+             patch.object(app_cohort_v2, 'has_manifest', return_value=False), \
              patch.object(runtime.subprocess, 'run') as command, \
              patch.object(runtime.subprocess, 'check_output', side_effect=[changed.encode(), self.harness]):
             artifact, proof = runtime.bind(12, self.source, 34, self.digest)

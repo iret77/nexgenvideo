@@ -3,6 +3,7 @@ import binascii
 import copy
 import json
 from pathlib import Path
+import shutil
 import struct
 import tempfile
 import unittest
@@ -116,18 +117,44 @@ def checkpoint(output, value):
 
 
 class RenderedOutputEvidenceTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.baseline = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls.baseline.cleanup)
+        cls.baseline_root = Path(cls.baseline.name)
+        cls.baseline_value = rendered_fixture(cls.baseline_root)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
-        self.output = Path(self.temp.name); self.value = rendered_fixture(self.output)
+        self.output = Path(self.temp.name) / "case"
+        shutil.copytree(self.baseline_root, self.output)
+        self.value = copy.deepcopy(self.baseline_value)
 
     def test_complete_synthetic_shape_and_pixels(self):
         self.assertTrue(validate(self.value, self.output, 1.5)[0])
 
     def test_missing_native_action_or_case_is_rejected(self):
-        for index, row in enumerate(self.value["interactions"]):
-            if row["kind"] not in ("text", "drag", "segment-accessibility", "keyboard", "file-panel", "pointer"): continue
-            changed = copy.deepcopy(self.value); changed["interactions"].pop(index); checkpoint(self.output, changed)
-            self.assertFalse(validate(changed, self.output, 1.5)[0], index)
+        rows = self.value["interactions"]
+        targets = [("source", "file-panel", "Foreground.png"), ("source", "pointer", "source.overwrite.foreground"),
+            ("color.exposure", "pointer", "inspector.adjust.value.color.exposure.ev"), ("color.exposure", "text", "inspector.adjust.value.color.exposure.ev"),
+            ("wheel-lift", "drag", "inspector.wheel.Lift"), ("level-lift", "pointer", "inspector.wheel.level.Lift"),
+            ("curve-R", "segment-accessibility", "inspector.curve.channel"), ("curve-R", "pointer", "inspector.curve.channel"),
+            ("curve-R", "drag", "inspector.curve.canvas"), ("hue-curve-Sat", "segment-accessibility", "inspector.hue-curve.channel"),
+            ("hue-curve-Sat", "pointer", "inspector.hue-curve.channel"), ("hue-curve-Sat", "drag", "inspector.hue-curve.canvas")]
+        indexes = []
+        for case, kind, identifier in targets:
+            stop = next(i for i, row in enumerate(rows) if row.get("label") == "rendered adjustment before undo"
+                and (case == "source" or row["evidence"]["case"] == case))
+            start = -1 if case == "source" else max(i for i, row in enumerate(rows[:stop])
+                if row.get("label") in ("rendered adjustments begin", "rendered adjustment restored"))
+            indexes.append(next(i for i in range(start + 1, stop) if rows[i]["kind"] == kind
+                and rows[i].get("id", rows[i].get("path", rows[i].get("field", {}).get("id"))) == identifier))
+        undo_indexes = [i for i, row in enumerate(rows) if row["kind"] == "keyboard"]
+        indexes += [undo_indexes[0], undo_indexes[-1]]
+        for index in indexes:
+            with self.subTest(index=index):
+                changed = copy.deepcopy(self.value); changed["interactions"].pop(index); checkpoint(self.output, changed)
+                self.assertFalse(validate(changed, self.output, 1.5)[0])
 
     def test_checkpoint_and_measured_scale_are_required(self):
         for key, bad in (("effectiveScale", 1), ("backingScale", True), ("viewport", [1440, 960]), ("cases", CASES[:-1]), ("screenshots", self.value["screenshots"][:-1])):
@@ -188,38 +215,6 @@ class RenderedOutputEvidenceTests(unittest.TestCase):
         selection = next(r for r in changed["interactions"] if r["kind"] == "segment-accessibility")
         selection["item"] = "R"; checkpoint(self.output, changed)
         self.assertFalse(validate(changed, self.output, 1.5)[0])
-
-    def test_bounded_png_rejects_wrong_size_and_trailing_bytes(self):
-        data = (self.output / self.value["directory"] / "baseline.png").read_bytes()
-        self.assertEqual(len(png_pixels(data)), 320 * 180 * 4)
-        for bad in (data + b"tail", data[:100], b"not png"):
-            with self.assertRaises(ValueError): png_pixels(bad)
-
-    def test_all_png_filters_and_rgb_channels_decode_exact_pixels(self):
-        pixels = (self.output / self.value["directory"] / "baseline.rgba").read_bytes()
-        for channels in (3, 4):
-            for mode in range(5):
-                self.assertEqual(png_pixels(png(pixels, channels=channels, mode=mode)), pixels, (channels, mode))
-        with self.assertRaisesRegex(ValueError, "dimensions"):
-            png_pixels(png(b"".join(pixels[y * 1280:y * 1280 + 319 * 4] for y in range(180)), width=319))
-
-    def test_png_filters_match_independently_constructed_constant_rgb_vectors(self):
-        def chunk(kind, data):
-            return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", binascii.crc32(kind + data) & 0xffffffff)
-        rgb, half, zero = bytes([7, 29, 83]), bytes([4, 15, 42]), bytes(3)
-        header = chunk(b"IHDR", struct.pack(">IIBBBBB", 320, 180, 8, 2, 0, 0, 0))
-        vectors = [(rgb * 320, rgb * 320), (rgb + zero * 319, rgb + zero * 319),
-                   (rgb * 320, zero * 320), (rgb + half * 319, half + zero * 319), (rgb + zero * 319, zero * 320)]
-        for mode, (first, later) in enumerate(vectors):
-            data = b"\x89PNG\r\n\x1a\n" + header + chunk(b"IDAT", zlib.compress(bytes([mode]) + first + (bytes([mode]) + later) * 179)) + chunk(b"IEND", b"")
-            self.assertEqual(png_pixels(data), bytes([7, 29, 83, 255]) * (320 * 180), mode)
-
-    def test_png_header_must_precede_other_chunks(self):
-        data = (self.output / self.value["directory"] / "baseline.png").read_bytes()
-        kind, payload = b"tEXt", b"label\x00fixture"
-        ancillary = struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", binascii.crc32(kind + payload) & 0xffffffff)
-        with self.assertRaisesRegex(ValueError, "header must be first"):
-            png_pixels(data[:8] + ancillary + data[8:])
 
     def test_intermediate_composition_snapshot_is_rejected_after_hash_rebind(self):
         directory = self.output / self.value["directory"]
@@ -334,15 +329,36 @@ class RenderedOutputEvidenceTests(unittest.TestCase):
             self.replace_timeline(label, before)
 
     def test_each_input_family_rejects_extra_mutating_pointer_and_unknown_scroll(self):
-        for label in ("color.exposure", "wheel-lift", "level-gain", "curve-R", "hue-curve-Sat"):
-            for event in ({"kind": "pointer", "id": "inspector.wheel.level.Gain"},
-                          {"kind": "pointer", "id": "inspector.curve.channel"},
-                          {"kind": "pointer", "id": "inspector.hue-curve.channel"},
-                          {"kind": "wheel", "id": "foreign", "delta": 100, "before": [0, 0], "after": [0, 100]}):
+        cases = [('color.exposure', {'kind': 'pointer', 'id': 'inspector.wheel.level.Gain'}),
+            ('wheel-lift', {'kind': 'pointer', 'id': 'inspector.wheel.level.Gain'}),
+            ('level-gain', {'kind': 'pointer', 'id': 'inspector.curve.channel'}),
+            ('curve-R', {'kind': 'pointer', 'id': 'inspector.wheel.level.Gain'}),
+            ('hue-curve-Sat', {'kind': 'pointer', 'id': 'inspector.wheel.level.Gain'}),
+            ('color.exposure', {'kind': 'wheel', 'id': 'foreign', 'delta': 100, 'before': [0, 0], 'after': [0, 100]}),
+            ('level-gain', {'kind': 'pointer', 'id': 'inspector.wheel.level.Gain'}),
+            ('curve-R', {'kind': 'pointer', 'id': 'inspector.curve.channel'}),
+            ('hue-curve-Sat', {'kind': 'pointer', 'id': 'inspector.hue-curve.channel'}),
+            ('color.exposure', {'kind': 'pointer', 'id': 'inspector.adjust.value.color.exposure.ev'}),
+            ('color.exposure', {'kind': 'visible-group', 'ids': ['foreign']}),
+            ('color.exposure', {'kind': 'visible-group', 'ids': []}),
+            ('color.exposure', {'kind': 'wheel', 'id': 'inspector.section.Basic Correction', 'delta': 0, 'before': [0, 0], 'after': [0, 100]}),
+            ('color.exposure', {'kind': 'wheel', 'id': 'inspector.section.Basic Correction', 'delta': True, 'before': [0, 0], 'after': [0, 100]}),
+            ('color.exposure', {'kind': 'wheel', 'id': 'inspector.section.Basic Correction', 'delta': 100, 'before': [0, 0], 'after': [0, 0]}),
+            ('color.exposure', {'kind': 'unexpected-input'})]
+        for label, event in cases:
+            with self.subTest(label=label, event=event):
                 changed = copy.deepcopy(self.value)
                 before = next(i for i, row in enumerate(changed["interactions"]) if row.get("label") == "rendered adjustment before undo" and row["evidence"]["case"] == label)
                 changed["interactions"].insert(before, event); checkpoint(self.output, changed)
-                self.assertFalse(validate(changed, self.output, 1.5)[0], (label, event))
+                self.assertFalse(validate(changed, self.output, 1.5)[0])
+
+    def test_a_real_section_scroll_remains_valid(self):
+        changed = copy.deepcopy(self.value)
+        before = next(i for i, row in enumerate(changed["interactions"]) if row.get("label") == "rendered adjustment before undo")
+        changed["interactions"].insert(before, {"kind": "wheel", "id": "inspector.section.Basic Correction",
+            "delta": 100, "before": [0, 0], "after": [0, 100]})
+        checkpoint(self.output, changed)
+        self.assertTrue(validate(changed, self.output, 1.5)[0])
 
     def test_level_pointer_must_hit_eighty_percent_of_the_actual_frame(self):
         changed = copy.deepcopy(self.value)
@@ -367,6 +383,45 @@ class RenderedOutputEvidenceTests(unittest.TestCase):
         for index in range(4):
             changed = copy.deepcopy(self.value); changed["screenshots"].pop(index); checkpoint(self.output, changed)
             self.assertFalse(validate(changed, self.output, 1.5)[0], index)
+
+
+class PngPixelsTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.pixels = bytes(value for y in range(180) for x in range(320)
+            for value in (x % 256, y, (x + y) % 256, 255))
+
+    def test_bounded_png_rejects_wrong_size_and_trailing_bytes(self):
+        data = png(self.pixels)
+        self.assertEqual(len(png_pixels(data)), 320 * 180 * 4)
+        for bad in (data + b"tail", data[:100], b"not png"):
+            with self.assertRaises(ValueError): png_pixels(bad)
+
+    def test_all_png_filters_and_rgb_channels_decode_exact_pixels(self):
+        pixels = self.pixels
+        for channels in (3, 4):
+            for mode in range(5):
+                self.assertEqual(png_pixels(png(pixels, channels=channels, mode=mode)), pixels, (channels, mode))
+        with self.assertRaisesRegex(ValueError, "dimensions"):
+            png_pixels(png(b"".join(pixels[y * 1280:y * 1280 + 319 * 4] for y in range(180)), width=319))
+
+    def test_png_filters_match_independently_constructed_constant_rgb_vectors(self):
+        def chunk(kind, data):
+            return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", binascii.crc32(kind + data) & 0xffffffff)
+        rgb, half, zero = bytes([7, 29, 83]), bytes([4, 15, 42]), bytes(3)
+        header = chunk(b"IHDR", struct.pack(">IIBBBBB", 320, 180, 8, 2, 0, 0, 0))
+        vectors = [(rgb * 320, rgb * 320), (rgb + zero * 319, rgb + zero * 319),
+                   (rgb * 320, zero * 320), (rgb + half * 319, half + zero * 319), (rgb + zero * 319, zero * 320)]
+        for mode, (first, later) in enumerate(vectors):
+            data = b"\x89PNG\r\n\x1a\n" + header + chunk(b"IDAT", zlib.compress(bytes([mode]) + first + (bytes([mode]) + later) * 179)) + chunk(b"IEND", b"")
+            self.assertEqual(png_pixels(data), bytes([7, 29, 83, 255]) * (320 * 180), mode)
+
+    def test_png_header_must_precede_other_chunks(self):
+        data = png(self.pixels)
+        kind, payload = b"tEXt", b"label\x00fixture"
+        ancillary = struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", binascii.crc32(kind + payload) & 0xffffffff)
+        with self.assertRaisesRegex(ValueError, "header must be first"):
+            png_pixels(data[:8] + ancillary + data[8:])
 
 
 if __name__ == "__main__": unittest.main()

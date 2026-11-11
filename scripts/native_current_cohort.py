@@ -48,7 +48,7 @@ def source_paths(ref):
         'Sources/NexGenVideo', 'Tests/NexGenVideoTests').splitlines() if name.endswith('.swift'))
 
 
-def buildshape(head):
+def buildshape(head, *, app_source=None):
     previous, current = source_paths(TEMPLATE_SOURCE), source_paths(head)
     capture.require(previous == current and len(current) == 1395, 'Template source-file inventory changed')
     old_objects, new_objects = objects(TEMPLATE_SOURCE), objects(head)
@@ -65,10 +65,14 @@ def buildshape(head):
             raw = capture.command(['git', 'show', ref + ':' + name]).decode()
             values.update(re.findall(r'^\s*(?:@\w+(?:\([^\n]*\))?\s+)*import\s+(?:class\s+|struct\s+|enum\s+|func\s+|var\s+|let\s+|typealias\s+|protocol\s+)?([A-Za-z_][A-Za-z_0-9]*)', raw, re.M))
         return sorted(values)
-    old_imports, new_imports = imports(TEMPLATE_SOURCE), imports(head)
+    if app_source is not None:
+        import app_cohort_v2
+        old_imports, new_imports = (app_cohort_v2.lexical_imports(ref, previous) for ref in (TEMPLATE_SOURCE, head))
+    else:
+        old_imports, new_imports = imports(TEMPLATE_SOURCE), imports(head)
     capture.require(old_imports == new_imports, 'Template lexical import roots changed; fresh description required')
     return {'schema': 'native-current-cohort-buildshape/v1', 'templateAppSourceSHA': TEMPLATE_SOURCE,
-        'currentAppSourceSHA': APP_SOURCE, 'sourceSHA': head, 'sourcePaths': current,
+        'currentAppSourceSHA': app_source or APP_SOURCE, 'sourceSHA': head, 'sourcePaths': current,
         'sourcePathsSHA256': hashlib.sha256(json.dumps(current, separators=(',', ':')).encode()).hexdigest(),
         'lexicalImports': new_imports, 'compilerDependencyScanReused': False,
         'sourceObjects': new_objects, 'templateSourceObjects': old_objects}
@@ -130,6 +134,9 @@ def bind(root, selected, allowed_paths):
 
 
 def verify_template(binding, run, artifact, current):
+    if current.get('schema') == 'native-current-cohort-binding/v2':
+        import app_cohort_v2
+        return app_cohort_v2.verify_template(binding, run, artifact, current)
     capture.require((artifact['id'], artifact['digest'].removeprefix('sha256:')) == TEMPLATE_METADATA
         and run['id'] == 42556707333 and run['head_sha'] == 'e238d854cdeeebd22391d5c820674c6bf9d046e2'
         and binding['schema'] == 'native-app-build-plan-binding/v1' and binding['harnessSourceSHA'] == run['head_sha']

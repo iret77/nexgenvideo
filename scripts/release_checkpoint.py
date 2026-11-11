@@ -22,6 +22,84 @@ FILES = ("NexGenVideo.zip", "symbols.tar.gz", "plugins.tar.gz", "bpy-source-rece
 NATIVE_TIMEOUT = 900
 
 
+def notary_state_names(source):
+    return tuple(prefix + source for prefix in (
+        "release-notary-state-", "release-dmg-notary-submission-", "release-app-notary-submission-"))
+
+
+def notary_state_entry(inventory, source):
+    selected = None
+    for name in notary_state_names(source):
+        matches = [entry for entry in inventory if entry.get("name") == name]
+        require(len(matches) <= 1, "Notary checkpoint is ambiguous: " + name)
+        if selected is None and matches:
+            selected = matches[0]
+    return selected
+
+
+def require_notary_checkpoint(inventory, source, job, *, payload_count=None):
+    final, dmg, app = notary_state_names(source)
+    present = {item.get("name") for item in inventory}
+    checkpoints = {
+        "Submit App notarization exactly once": {final, app},
+        "Notarize and staple app": {final, app},
+        "Submit DMG notarization exactly once": {final, dmg},
+        "Notarize and staple DMG": {final, dmg},
+        "Notarize and staple downloadable format packs": {final, app, dmg},
+    }
+    for step in job.get("steps", []):
+        if step.get("name") in checkpoints and step.get("conclusion") != "skipped" and (
+                step.get("started_at") or step.get("status") == "in_progress"
+                or step.get("conclusion") in {"success", "failure", "cancelled", "timed_out"}):
+            require(bool(present & checkpoints[step["name"]]),
+                    "Apple submission outcome is unknown; reconcile the original job before any resubmission")
+            require(payload_count != 0,
+                    "Apple submission outcome is unknown; the saved checkpoint has no payload journal")
+
+
+def require_notary_payload_coverage(inventory, source, producer, job, journals, acquire):
+    for role, step_name in (("app", "Submit App notarization exactly once"), ("dmg", "Submit DMG notarization exactly once")):
+        steps = [step for step in job.get("steps", []) if step.get("name") == step_name]
+        require(len(steps) <= 1, "Ambiguous Apple submission stage")
+        if not steps or steps[0].get("conclusion") == "skipped" or not (
+                steps[0].get("started_at") or steps[0].get("status") == "in_progress"
+                or steps[0].get("conclusion") in {"success", "failure", "cancelled", "timed_out"}):
+            continue
+        name = "release-" + role + "-notary-intent-" + source
+        matches = [item for item in inventory if item.get("name") == name]
+        require(len(matches) == 1, "Apple submission outcome is unknown; its pre-upload intent is missing or ambiguous")
+        intent = acquire(matches[0], name)
+        require(isinstance(intent, dict) and set(intent) == {"schema", "repository", "sourceSHA", "producerSourceSHA",
+            "runID", "attempt", "role", "sha256", "existingSubmissionID"}
+            and intent.get("schema") == "release-notary-intent/v1" and intent.get("repository") == REPOSITORY
+            and intent.get("sourceSHA") == source and intent.get("producerSourceSHA") == producer["head_sha"]
+            and intent.get("runID") == str(producer["id"]) and intent.get("attempt") == "1"
+            and intent.get("role") == role and isinstance(intent.get("sha256"), str)
+            and re.fullmatch(r"[a-f0-9]{64}", intent["sha256"]), "Apple intent belongs to another payload or execution")
+        journal = journals.get(intent["sha256"], {})
+        identifier = journal.get("submissionID")
+        require(journal.get("sha256") == intent["sha256"] and journal.get("sourceSHA") == source
+                and isinstance(identifier, str) and re.fullmatch(r"[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}", identifier)
+                and intent.get("existingSubmissionID") in ("", identifier),
+                "Apple submission outcome is unknown for its exact payload; no resubmission")
+
+
+def read_notary_intent(item, name, producer, job, root):
+    artifact = api(f"actions/artifacts/{item['id']}")
+    digest = artifact.get("digest", "")
+    size = artifact.get("size_in_bytes")
+    require(isinstance(digest, str) and re.fullmatch(r"sha256:[a-f0-9]{64}", digest)
+            and type(size) is int and 0 < size <= 65536, "Invalid Apple intent artifact")
+    verify_artifact(artifact, producer, job, item["id"], digest[7:], name)
+    with tempfile.TemporaryDirectory(dir=root.parent) as directory:
+        path = Path(directory) / "intent.zip"
+        download(artifact, path)
+        require(checksum(path) == digest[7:] and path.stat().st_size == artifact["size_in_bytes"], "Apple intent archive changed")
+        with zipfile.ZipFile(path) as archive:
+            require(archive.namelist() == ["intent.json"], "Unexpected Apple intent archive")
+            return json.loads(archive_bytes(archive, "intent.json"))
+
+
 def packaging_binding():
     if not os.environ.get("RETAINED_PACKAGING_ROOT") and not os.environ.get("RETAINED_PACKAGING_INPUT_SHA256"):
         return None
@@ -239,13 +317,13 @@ def verify_manifest(manifest, source, run_id):
             and isinstance(manifest.get("appTreeSHA256"), str)
             and re.fullmatch(r"[a-f0-9]{64}", manifest["appTreeSHA256"]), "Invalid signed App identity")
     evidence = manifest.get("nativeEvidence", {})
-    if evidence.get("schema") in ("release-native-compiled-app/v1", "release-native-compiled-app/v2", "release-native-compiled-app/v3", "release-native-compiled-app/v4"):
+    if evidence.get("schema") in ("release-native-compiled-app/v1", "release-native-compiled-app/v2", "release-native-compiled-app/v3", "release-native-compiled-app/v4", "release-native-compiled-app/v5"):
         from compiled_app_release import verify_receipt
         verify_receipt(evidence, source, run_id)
         if 'componentAssembly' in manifest:
             from compiled_app_release import verify_component_assembly
             verify_component_assembly(manifest['componentAssembly'], source, run_id, info, manifest.get('files', {}), evidence)
-        elif info.get('build') == '107':
+        elif info.get('build') == '107' or evidence.get('schema') == 'release-native-compiled-app/v5':
             raise ValueError('Corrected compiled product lacks its actual component assembly')
     elif evidence.get("schema") == "release-native-scoped-repair/v1":
         from release_test_repair import verify_receipt
@@ -306,15 +384,17 @@ def extract_tar(path, build, allowed):
 def require_saved_notary(producer, jobs, inventory, root, *, retained=None):
     if producer["id"] == int(os.environ["GITHUB_RUN_ID"]):
         return
-    name = "release-notary-state-" + producer["head_sha"]
-    matches = [item for item in inventory if item.get("name") == name]
-    require(len(matches) <= 1, "Original notary state is ambiguous")
-    if not matches:
+    selected = notary_state_entry(inventory, producer["head_sha"])
+    for job in jobs:
+        if job.get("name") == "release":
+            require_notary_checkpoint(inventory, producer["head_sha"], job)
+    if selected is None:
         return
+    name = selected["name"]
     packaging = [job for job in jobs if job.get("name") == "release"]
     require(len(packaging) == 1 and packaging[0].get("head_sha") == producer["head_sha"]
             and packaging[0].get("labels") == ["macrunner"], "Original notary job differs")
-    artifact = api(f"actions/artifacts/{matches[0]['id']}")
+    artifact = api(f"actions/artifacts/{selected['id']}")
     digest = artifact.get("digest", "")
     require(re.fullmatch(r"sha256:[a-f0-9]{64}", digest) and artifact["size_in_bytes"] < 4 * 1024**2,
             "Invalid original notary state")
@@ -325,7 +405,13 @@ def require_saved_notary(producer, jobs, inventory, root, *, retained=None):
         require(checksum(path) == digest[7:], "Original notary state changed")
         with zipfile.ZipFile(path) as archive:
             journals = [name for name in archive.namelist() if re.fullmatch(r"[a-f0-9]{64}\.json", name)]
+            require_notary_payload_coverage(inventory, producer["head_sha"], producer, packaging[0],
+                {name[:-5]: json.loads(archive_bytes(archive, name)) for name in journals},
+                lambda item, name: read_notary_intent(item, name, producer, packaging[0], root))
             if not journals:
+                from compiled_app_release import original_empty_notary
+                if not original_empty_notary(path.read_bytes(), producer["head_sha"], producer["head_sha"], producer["id"]):
+                    require_notary_checkpoint(inventory, producer["head_sha"], packaging[0], payload_count=0)
                 return
             notary_root = os.environ.get("RELEASE_NOTARY_BINDING", "")
             require(notary_root, "Original build has Apple submissions; use notary_progress_run_id")
@@ -456,7 +542,7 @@ def restore(root):
     with Path(os.environ["GITHUB_ENV"]).open("a") as output:
         output.write("BUILD_NUMBER=" + manifest["identity"]["build"] + "\n")
         output.write("NGV_SIGNED_APP_ARCHIVE_SHA256=" + manifest["files"]["NexGenVideo.zip"]["sha256"] + "\n")
-        if manifest["nativeEvidence"].get("schema") in ("release-native-compiled-app/v1", "release-native-compiled-app/v2", "release-native-compiled-app/v3", "release-native-compiled-app/v4"):
+        if manifest["nativeEvidence"].get("schema") in ("release-native-compiled-app/v1", "release-native-compiled-app/v2", "release-native-compiled-app/v3", "release-native-compiled-app/v4", "release-native-compiled-app/v5"):
             output.write("NGV_COMPILED_APP_RELEASE=true\n")
         if retained is not None and (compiled_signed_product(retained) or qualified(retained)):
             output.write('NGV_CURRENT_COMPILED_SOURCE_REUSE=true\n')
@@ -527,8 +613,9 @@ def prepare_notary(run_id, root):
     job = matches[0]
     inventory = api(f"actions/runs/{run_id}/artifacts?per_page=100")
     require(inventory.get("total_count") == len(inventory.get("artifacts", [])), "Incomplete notary artifacts")
+    require_notary_checkpoint(inventory["artifacts"], source, job)
     selected = {}
-    for name in ("release-notary-state-" + source, "release-dmg-input-" + source):
+    for name in (*notary_state_names(source), "release-dmg-input-" + source):
         values = [item for item in inventory["artifacts"] if item.get("name") == name]
         require(len(values) <= 1, "Notary artifact is ambiguous")
         if not values:
@@ -538,7 +625,7 @@ def prepare_notary(run_id, root):
                 "Notary artifact has no digest")
         verify_artifact(item, producer, job, item["id"], item["digest"][7:], name)
         selected[name] = item
-    state = selected.get("release-notary-state-" + source)
+    state = notary_state_entry(list(selected.values()), source)
     require(state and state["size_in_bytes"] < 4 * 1024**2, "Notary state is missing or oversized")
     if selected.get("release-dmg-input-" + source):
         for name in ("Record DMG before notarization", "Retain DMG before notarization"):
@@ -565,6 +652,7 @@ def prepare_notary(run_id, root):
             require(context["schema"] == "release-notary-context/v1" and producer_source == source
                     or context["schema"] == "release-notary-context/v2" and context.get("producerSourceSHA") == producer_source,
                     "Retained notary source meaning differs")
+        journals = {}
         for name in archive.namelist():
             if name == "context.json":
                 continue
@@ -575,6 +663,14 @@ def prepare_notary(run_id, root):
                     and isinstance(value.get("submissionID"), str)
                     and re.fullmatch(r"[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}", value["submissionID"]),
                     "Notary submission binding differs")
+            journals[name[:-5]] = value
+        payload_count = sum(name != "context.json" for name in archive.namelist())
+        if payload_count == 0:
+            from compiled_app_release import original_empty_notary
+            if not original_empty_notary((root / "state.zip").read_bytes(), source, producer_source, run_id):
+                require_notary_checkpoint(inventory["artifacts"], source, job, payload_count=0)
+    require_notary_payload_coverage(inventory["artifacts"], source, producer, job, journals,
+        lambda item, name: read_notary_intent(item, name, producer, job, root))
     binding = {"schema": "release-notary-binding/v1", "context": context,
                "producer": producer, "job": job, "stateArtifact": state,
                "dmgArtifact": selected.get("release-dmg-input-" + source)}

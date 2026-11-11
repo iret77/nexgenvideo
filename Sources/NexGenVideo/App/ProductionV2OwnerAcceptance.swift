@@ -206,7 +206,7 @@ enum ProductionV2OwnerAcceptance {
                 row["screenshots"] = gate.screenshots.map { (mixed ? "startup/" : "") + $0 }
                 return row
             } ?? []
-            let result: [String: Any] = ["workflow": kind.rawValue, "phases": expectedPhases,
+            var result: [String: Any] = ["workflow": kind.rawValue, "phases": expectedPhases,
                 "nativeGateApprovals": startupGates + coreGates + nativeGates, "allPhasesApproved": true,
                 "viewport": viewport, "executionFixture": mixed ? "mixed_generated_imported" : "private_song_imported",
                 "privateSongBinding": privateBinding, "nativeScriptEdit": true, "nativeMultipleMoments": true,
@@ -219,6 +219,19 @@ enum ProductionV2OwnerAcceptance {
                 "patternEvidenceDirectory": kind == .musicvideo && mixed ? "patterns" as Any : NSNull(),
                 "coreStartup": kind == .core ? "core-enrollment-result.json" as Any : NSNull(),
                 "startup": try startup.map { try ProductionPlanningAcceptanceFixture.object($0.report()) } ?? NSNull()]
+            if privateSongSHA256 != nil {
+                let retained = output.appendingPathComponent("approved-project.ngv", isDirectory: true)
+                try FileManager.default.copyItem(at: context.packageURL, to: retained)
+                guard let root = DataRootResolver.dataRoot(of: retained) else {
+                    throw GateBlocked("The retained private project has no canonical data root.")
+                }
+                for (path, sha256) in before {
+                    guard try FileDigest.sha256(of: ProjectLocalFile.resolve(path, dataRoot: root)) == sha256 else {
+                        throw GateBlocked("The retained private project differs from the reopened film.")
+                    }
+                }
+                result["retainedProject"] = "approved-project.ngv"
+            }
             try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys])
                 .write(to: output.appendingPathComponent("owner-v2-result.json"), options: .atomic)
             return result

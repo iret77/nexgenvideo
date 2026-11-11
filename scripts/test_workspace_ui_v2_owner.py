@@ -2,6 +2,7 @@ import copy
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import tempfile
 import unittest
 
@@ -192,15 +193,35 @@ def picture_finishing_fixture(directory, row):
 
 
 class V2OwnerEvidenceTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.baseline = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls.baseline.cleanup)
+        cls.baseline_root = Path(cls.baseline.name)
+        cls.fixtures = {}
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.output = Path(self.directory.name)
+        self.case_root = self.output
+        self.case_number = 0
+
+    def fixture(self, scale=1.0, kind="musicvideo"):
+        key = (scale, kind)
+        baseline = self.baseline_root / (str(scale) + "-" + kind)
+        if key not in self.fixtures:
+            baseline.mkdir()
+            self.fixtures[key] = owner_fixture(baseline, scale, kind)
+        self.case_number += 1
+        self.output = self.case_root / str(self.case_number)
+        shutil.copytree(baseline, self.output)
+        return copy.deepcopy(self.fixtures[key])
 
     def test_actual_v2_cases_and_core_bootstrap_are_distinguished(self):
         for kind in ("core", "musicvideo"):
             for scale in (1.0, 1.25, 1.5):
-                rows = owner_fixture(self.output, scale, kind)
+                rows = self.fixture(scale, kind)
                 self.assertTrue(owner_evidence(rows, self.output, scale, kind)[0], (kind, scale))
                 for index in range(len(rows[0]["nativeGateApprovals"])):
                     changed = copy.deepcopy(rows)
@@ -210,7 +231,7 @@ class V2OwnerEvidenceTests(unittest.TestCase):
     def test_sketch_approval_cannot_be_preceded_by_an_unrelated_generation(self):
         for kind in ("core", "musicvideo"):
             with self.subTest(kind=kind):
-                rows = owner_fixture(self.output, kind=kind)
+                rows = self.fixture(kind=kind)
                 self.assertTrue(owner_evidence(rows, self.output, 1.0, kind)[0])
                 native = rows[0]["nativeEvidence"]
                 native["interactions"].insert(0, {"kind": "pointer", "id": "generation-batch.approve"})
@@ -219,7 +240,7 @@ class V2OwnerEvidenceTests(unittest.TestCase):
                 self.assertFalse(owner_evidence(rows, self.output, 1.0, kind)[0])
 
     def test_cover_completion_cannot_include_an_empty_placeholder(self):
-        rows = owner_fixture(self.output)
+        rows = self.fixture()
         self.assertTrue(owner_evidence(rows, self.output, 1.0, "musicvideo")[0])
         native = rows[0]["nativeEvidence"]
         native["interactions"].insert(0, {"kind": "verified-state", "label": "native optional cover completed", "evidence": {}})
@@ -230,7 +251,7 @@ class V2OwnerEvidenceTests(unittest.TestCase):
     def test_real_intake_is_required_for_musicvideo_owner_acceptance(self):
         for fault in ("intake", "reanalysis", "current-analysis-gate", "missing-prefix", "foreign-prefix", "traversal", "wrong-image"):
             with self.subTest(fault=fault):
-                rows = owner_fixture(self.output)
+                rows = self.fixture()
                 original_gates = copy.deepcopy(rows[0]["nativeGateApprovals"])
                 self.assertTrue(owner_evidence(rows, self.output, 1.0, "musicvideo")[0])
                 self.assertEqual(rows[0]["nativeGateApprovals"], original_gates)
@@ -250,17 +271,17 @@ class V2OwnerEvidenceTests(unittest.TestCase):
                 self.assertFalse(owner_evidence(rows, self.output, 1.0, "musicvideo")[0])
 
     def test_programmatic_musicvideo_scaffold_is_not_native_new(self):
-        rows = owner_fixture(self.output)
+        rows = self.fixture()
         rows[0]["startup"].pop("nativeProjectCreation")
         self.assertFalse(owner_evidence(rows, self.output, 1.0, "musicvideo")[0])
 
     def test_object_navigation_cannot_be_omitted_from_owner_acceptance(self):
-        rows = owner_fixture(self.output)
+        rows = self.fixture()
         rows[0]["objectContext"] = []
         self.assertFalse(owner_evidence(rows, self.output, 1.0, "musicvideo")[0])
 
     def test_no_owner_flags_replace_input_playback_or_reading(self):
-        rows = owner_fixture(self.output)
+        rows = self.fixture()
         def action(row):
             return (row.get("kind"), row.get("id"), row.get("label"), row.get("field", {}).get("id"))
         for key in {action(row) for row in rows[0]["nativeEvidence"]["interactions"]}:
@@ -274,7 +295,7 @@ class V2OwnerEvidenceTests(unittest.TestCase):
 
     def test_submission_keeps_the_exact_inspected_direction_and_review(self):
         for key in ("promptSHA256", "reviewFingerprint"):
-            rows = owner_fixture(self.output)
+            rows = self.fixture()
             state = next(item["evidence"] for item in rows[0]["nativeEvidence"]["interactions"]
                          if item.get("label") == "inspected direction bound to submission")
             state[key] = "9" * 64
@@ -282,19 +303,19 @@ class V2OwnerEvidenceTests(unittest.TestCase):
 
     def test_movie_poster_receipt_and_review_are_bound_to_actual_bytes(self):
         for name in ("owner-v2-film.mp4", "owner-v2-film.poster.png", "owner-v2-delivery.json", "owner-v2-film-review.json"):
-            rows = owner_fixture(self.output)
+            rows = self.fixture()
             (self.output / rows[0]["evidenceDirectory"] / name).write_bytes(b"changed")
             self.assertFalse(owner_evidence(rows, self.output, 1.0, "musicvideo")[0])
         for key, value in (("status", "failed"), ("output_byte_count", 1), ("finished_timeline_sha256", "a" * 64),
                            ("sequence_review_sha256", "a" * 64), ("probe_qc", {"passed": False})):
-            rows = owner_fixture(self.output)
+            rows = self.fixture()
             path = self.output / rows[0]["evidenceDirectory"] / "owner-v2-delivery.json"
             receipt = json.loads(path.read_text()); receipt[key] = value; path.write_text(json.dumps(receipt))
             self.assertFalse(owner_evidence(rows, self.output, 1.0, "musicvideo")[0])
 
     def test_screenshot_and_progress_paths_cannot_escape_the_case_directory(self):
         for value in ("../other.png", "/tmp/other.png"):
-            rows = owner_fixture(self.output)
+            rows = self.fixture()
             rows[0]["nativeEvidence"]["screenshots"] = [value]
             self.assertFalse(owner_evidence(rows, self.output, 1.0, "musicvideo")[0])
 
@@ -306,13 +327,13 @@ class V2OwnerEvidenceTests(unittest.TestCase):
                 ("rebuildRestoredPlan", False), ("gatesUnchanged", False), ("rebuiltClipIDs", ["same", "same"])]}
         for label, changes in cases.items():
             for key, value in changes:
-                rows = owner_fixture(self.output)
+                rows = self.fixture()
                 state = next(item["evidence"] for item in rows[0]["nativeEvidence"]["interactions"] if item.get("label") == label)
                 state[key] = value
                 self.assertFalse(owner_evidence(rows, self.output, 1.0, "musicvideo")[0], (label, key))
 
     def test_core_late_gate_requires_ordered_retained_native_click(self):
-        rows = owner_fixture(self.output, kind="core")
+        rows = self.fixture(kind="core")
         directory = self.output / rows[0]["evidenceDirectory"]
         from core_startup_owner_evidence import validate as validate_core
         validate_core(directory, rows[0], 1)
@@ -324,7 +345,7 @@ class V2OwnerEvidenceTests(unittest.TestCase):
             validate_core(directory, rows[0], 1)
 
     def test_musicvideo_retains_native_picture_correction_in_current_review_and_export(self):
-        rows = owner_fixture(self.output)
+        rows = self.fixture()
         self.assertTrue(owner_evidence(rows, self.output, 1.0, "musicvideo")[0])
         for key, value in (("asymmetricFrames", 0), ("minimumOriginalDifference", 0.005), ("mirroredClipID", "other-clip")):
             changed = copy.deepcopy(rows)

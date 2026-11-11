@@ -130,6 +130,9 @@ def test_source_identity(source_sha, input_root=ROOT, *, allowed_paths=None, pac
     allowed = SIGNED_JOURNEY_HARNESS_PATHS if allowed_paths is None else allowed_paths
     if record is not None:
         allowed = allowed | retained_packaging.component_consumer_repair_paths(record)
+    import app_cohort_v2
+    if app_cohort_v2.has_manifest(source_sha):
+        allowed = allowed | app_cohort_v2.consumer_paths(source_sha, revision)
     if revision != producer_source:
         output(['git', '-C', REPOSITORY, 'merge-base', '--is-ancestor', producer_source, revision])
         changed = output(['git', '-C', REPOSITORY, 'diff', '--no-renames', '--name-only', '-z', producer_source, revision])

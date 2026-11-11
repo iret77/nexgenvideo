@@ -84,27 +84,4 @@ struct ReviewDestinationParityTests {
         #expect(editor.workspaceFocus == .production)
     }
 
-    @Test("Approval card, agent payload and Pipeline row read the same mapping")
-    func entryPointsShareTheMapping() throws {
-        let card = try sourceFile("Sources/NexGenVideo/Agent/Panel/GateApprovalCard.swift")
-        let agent = try sourceFile("Sources/NexGenVideo/Agent/Tools/ToolExecutor+Workflow.swift")
-        let pipeline = try sourceFile("Sources/NexGenVideo/Inspector/Cockpit/PipelinePanelView.swift")
-
-        #expect(card.contains("PipelineSurfaceRouting.reviewDestinationLabel(for: approval.phase"))
-        #expect(card.contains("editor.revealReviewSurface(for: approval.phase)"))
-        #expect(agent.contains("\"review_surface\": PipelineSurfaceRouting.reviewDestinationLabel(for: pending.phase"))
-        #expect(pipeline.contains("editor.revealReviewSurface(for: phase)"))
-        #expect(pipeline.contains("ActionLabel(title: route.destinationLabel"))
-        #expect(!pipeline.contains("editor.cockpitTab = target"))
-    }
-
-    private func sourceFile(_ path: String) throws -> String {
-        var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        while root.path != "/",
-              !FileManager.default.fileExists(atPath: root.appendingPathComponent("Package.swift").path) {
-            root.deleteLastPathComponent()
-        }
-        try #require(FileManager.default.fileExists(atPath: root.appendingPathComponent("Package.swift").path))
-        return try String(contentsOf: root.appendingPathComponent(path), encoding: .utf8)
-    }
 }

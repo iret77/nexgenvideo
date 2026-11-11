@@ -10,6 +10,7 @@ import struct
 import tarfile
 import tempfile
 import unittest
+import app_cohort_v2
 from unittest.mock import patch
 import uuid
 import zipfile
@@ -270,6 +271,7 @@ class CompiledComponentAssemblyTests(unittest.TestCase):
                 patch.object(release, 'api', side_effect=lambda route: rows[route]), \
                 patch.object(release, 'pack_verification_origin', return_value=origin), \
                 patch.object(release, 'canonical_bundle_tree', return_value=release.PACK_TREE), \
+                patch.object(app_cohort_v2, 'has_manifest', return_value=False), \
                 patch.object(release.subprocess, 'run', side_effect=AssertionError('old native pack check repeated')):
             return release.verify_component_runtime_pack(directory, product, receipt, proof, identity)
 

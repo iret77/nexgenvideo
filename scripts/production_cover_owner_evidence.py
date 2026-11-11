@@ -92,7 +92,7 @@ def raster(data):
         if mode > 4:
             raise ValueError("Invalid PNG filter")
         row = bytearray(raw[y * (stride + 1) + 1:(y + 1) * (stride + 1)])
-        for i in range(stride):
+        for i in (range(stride) if mode else ()):
             left = row[i - channels] if i >= channels else 0
             above, corner = previous[i], previous[i - channels] if i >= channels else 0
             p = left + above - corner

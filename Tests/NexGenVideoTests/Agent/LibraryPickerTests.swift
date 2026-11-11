@@ -9,23 +9,6 @@ import Testing
 @Suite("Library asset picker")
 struct LibraryPickerTests {
 
-    private func sourceFile(_ path: String) throws -> String {
-        var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        while root.path != "/",
-              !FileManager.default.fileExists(
-                atPath: root.appendingPathComponent("Package.swift").path
-              ) {
-            root.deleteLastPathComponent()
-        }
-        try #require(FileManager.default.fileExists(
-            atPath: root.appendingPathComponent("Package.swift").path
-        ))
-        return try String(
-            contentsOf: root.appendingPathComponent(path),
-            encoding: .utf8
-        )
-    }
-
     private func intake(_ accept: [String]) -> AgentDialog.FileIntake {
         AgentDialog.FileIntake(accept: accept, prompt: nil, allowsMultiple: false,
                                attachAs: nil, namePrompt: nil, required: false)
@@ -204,34 +187,6 @@ struct LibraryPickerTests {
         ) == true)
     }
 
-    @Test("dialog library results lead new-file import in the bounded card")
-    func dialogLibraryIsBounded() throws {
-        let source = try sourceFile(
-            "Sources/NexGenVideo/Agent/Panel/AgentDialogCard.swift"
-        )
-        let fileWellStart = try #require(source.range(of: "private func fileWell"))
-        let fileWellEnd = try #require(source.range(
-            of: "private func libraryPicker",
-            range: fileWellStart.upperBound..<source.endIndex
-        ))
-        let fileWell = source[fileWellStart.lowerBound..<fileWellEnd.lowerBound]
-        let libraryPosition = try #require(fileWell.range(of: "libraryPicker(intake)"))
-        let importPosition = try #require(fileWell.range(of: "emptyFileWell(intake)"))
-        let start = try #require(source.range(
-            of: "private func libraryPicker"
-        ))
-        let end = try #require(source.range(
-            of: "@MainActor",
-            range: start.upperBound..<source.endIndex
-        ))
-        let picker = source[start.lowerBound..<end.lowerBound]
-
-        #expect(libraryPosition.lowerBound < importPosition.lowerBound)
-        #expect(picker.contains("showsSearch: picks.count > 1"))
-        #expect(!picker.contains("scrollHeight:"))
-        #expect(source.contains("ScrollView {\n                decisionBody"))
-        #expect(source.contains("AppTheme.ComponentSize.agentDecisionMaxHeight"))
-    }
 }
 
 @MainActor

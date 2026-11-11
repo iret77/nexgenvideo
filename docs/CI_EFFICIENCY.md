@@ -144,6 +144,17 @@ existing DMG without repeating compilation, signing or notarization.
 
 ### Release checkpoints and notarization continuation
 
+App and DMG submissions first retain an immutable payload intent in Actions.
+Only a successful intent upload enables the Apple upload. The uploader records
+one local claim and never retries an ambiguous upload. A separate checkpoint
+retains the returned UUID before waiting; waits share a bounded 15-minute budget
+and reuse that UUID. Recovery accepts the latest complete checkpoint, or the
+earlier App/DMG submission checkpoint if the final upload was interrupted.
+Every entered submission phase must have its own intent-bound payload SHA and
+UUID journal. Missing or context-only evidence stops resubmission. Prepared local
+`.intent` files remain separate from authenticated UUID journals, so preparation
+does not make the retained-product validator reject the first real submission.
+
 The release workflow separates `release-build` from `release`, both on macrunner.
 The builder runs full Release tests in their isolated scratch directory, then builds
 and signs the production app and pack. Before any Apple wait, it retains the exact
@@ -381,3 +392,29 @@ Actions used by jobs that read signing, private-fixture or provider credentials
 are pinned to full commits, including the dependency-cache composite they call.
 The pins resolve the same existing major-version tags; no action major upgrade
 or additional credential use is introduced.
+
+## RC pipeline repair, 2026-11-11
+
+[Source run 42936871181](https://github.com/iret77/nexgenvideo/actions/runs/42936871181)
+executed 1,994 Python methods: 1,990 passed with the same four signing exceptions.
+The suite took 221.978 seconds against the preceding 410.008-second baseline,
+a 45.86% runtime reduction. Immutable rendered fixtures are shared; each mutation
+uses its own copied files and metadata. All 29 positive effect cases remain.
+Redundant negative combinations dropped from 112 to 30; method count rose by six
+because the Apple submission repair adds distinct failure cases. These are
+separate measurements, not a 45.86% reduction in test count.
+
+The new App source removes 21 implementation-text-only native checks and adds
+one real splitter regression. Its independently derived expected App inventory
+is 3,692 functions, down from 3,712 (0.54%). Including 48 XCTest functions and the
+896 unchanged Engine functions gives 4,636 instead of 4,656 (0.43%). Native
+execution of that new inventory is pending; the old App evidence retains its
+original identity.
+
+The typed App cohort records production, testable and test-module compiler inputs
+separately from the CI harness and retained signed components. A retained role is
+matched against its original committed manifest, actual source objects, compiler
+and exact driver/link recipe. Test-only and CI-only changes do not change the
+production recipe. Signed-component assembly checks both the donor and current
+source objects, preserves the donor Engine, pack and helper bytes, and records the
+new Main executable and matching symbols from the actual compiler receipt.
