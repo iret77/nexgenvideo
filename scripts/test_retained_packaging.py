@@ -302,6 +302,33 @@ class RetainedPackagingTests(unittest.TestCase):
                 self.assertEqual(packaging.cohort_pack_check_origin(inherited, dict(producer, id=80), replay), proof)
                 inherited['previousNotary']['cohortPackChecks'] = dict(proof, mainSHA256='0' * 64)
                 with self.assertRaises(ValueError): packaging.cohort_pack_check_origin(inherited, dict(producer, id=80), replay)
+                first_producer = dict(producer, id=50, head_sha=self.product, status='completed')
+                first_job = dict(job, run_id=50, head_sha=self.product, steps=[
+                    {'name': name, 'conclusion': 'success'} for name in
+                    ('Bind signed build input', 'Restore exact signed build')] + job['steps'])
+                first = {'producer': first_producer, 'job': first_job, 'dmgArtifact': None,
+                         'journals': {cohort['appArchiveSHA256']: {'submissionID': 'saved-app'}}}
+                signed = {'cohortProduct': cohort, 'manifest': dict(manifest, sourceSHA=self.product, runID=50,
+                    files={'NexGenVideo.zip': {'sha256': cohort['appArchiveSHA256']}})}
+                mode = {'reuseOriginalPackChecks': True}
+                rebound = packaging.original_cohort_pack_checks(mode, first, signed, self.product, 50)
+                self.assertEqual(rebound['journals'], first['journals'])
+                self.assertNotIn('stage', rebound)
+                self.assertEqual(rebound['cohortPackChecks'], dict(proof,
+                    origin=dict(proof['origin'], runID=50, sourceSHA=self.product)))
+                with patch.object(packaging, 'read_api', side_effect=AssertionError('Historical capture must not grow')):
+                    self.assertIs(packaging.original_cohort_pack_checks({}, first, signed, self.product, 50), first)
+                    empty = dict(first, journals={})
+                    self.assertIs(packaging.original_cohort_pack_checks(mode, empty, signed, self.product, 50), empty)
+                for change, altered, payload in [
+                        ('source', dict(first, job=dict(first_job, head_sha=self.producer)), raw),
+                        ('runner', dict(first, job=dict(first_job, labels=['ubuntu-24.04'])), raw),
+                        ('missing-restore', dict(first, job=dict(first_job, steps=job['steps'])), raw),
+                        ('failed-load', dict(first, job=dict(first_job, steps=[dict(step, conclusion='failure')
+                            if step['name'] == names[-1] else step for step in first_job['steps']])), raw),
+                        ('outside-step', first, raw.replace(b'10:00:02.5', b'10:00:04.5'))]:
+                    with self.subTest(change=change), patch.object(packaging, 'read_api', return_value=payload), self.assertRaises(ValueError):
+                        packaging.original_cohort_pack_checks(mode, altered, signed, self.product, 50)
                 materialized = dict(proof, packArchiveSHA256=packaging.file_checksum(build / 'plugins/musicvideo.ngvpack.zip'),
                                     packTreeSHA256=tree_sha256(pack))
                 current = dict(record, previousNotary={'cohortPackChecks': materialized})
@@ -409,6 +436,13 @@ class RetainedPackagingTests(unittest.TestCase):
             for key in ("priorProducerSourceSHA", "priorProvenanceArtifactID", "priorProvenanceArtifactSHA256"):
                 with self.subTest(key=key), self.assertRaises(ValueError):
                     packaging.mode_inputs(self.mode() | {key: "e" * 40 if key.endswith("SourceSHA") else "44"})
+            client = {'testBundleRunID': '44', 'testBundleArtifactID': '55', 'testBundleArtifactSHA256': 'a' * 64}
+            self.assertEqual(packaging.mode_inputs(self.mode() | client), packaging.mode_inputs(self.mode()))
+            for key, values in [('testBundleRunID', ('', '0', 44)), ('testBundleArtifactID', ('', '-1', 55)),
+                                ('testBundleArtifactSHA256', ('', 'a' * 63, 'A' * 64))]:
+                for value in values:
+                    with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                        packaging.mode_inputs(self.mode() | client | {key: value})
 
     def test_packaging_closure_rebinds_all_native_objects_and_complete_local_graph(self):
         records, _ = self.closure_fixture()

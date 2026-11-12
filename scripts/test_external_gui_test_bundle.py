@@ -470,7 +470,8 @@ class ExternalTestBundleTests(unittest.TestCase):
         original = dict(payloads)
         helper = 'scripts/external-gui/test_bundle.py'
         added = {'_safe_function', '_builder_view', '_workflow_build_view', '_guard_import_view',
-                 '_source_snapshot', '_compiled_compatibility', 'validate_client_selectors', 'validate_client_source'}
+                 '_source_snapshot', '_compiled_compatibility', 'validate_client_selectors', 'validate_client_source',
+                 '_packaging_import_view'}
         lines = original[helper].decode().splitlines(keepends=True)
         excluded = set()
         for node in ast.parse(original[helper]).body:
@@ -543,7 +544,7 @@ class ExternalTestBundleTests(unittest.TestCase):
             if 'show' in arguments:
                 commit, name = arguments[-1].split(':', 1)
                 if commit == current and name in {workflow, action, cohort, 'scripts/fixtures/app-cohort-native-inventory.json',
-                        'scripts/compiled_app_release.py'}: return (journey.REPOSITORY / name).read_bytes()
+                        'scripts/compiled_app_release.py', 'scripts/retained_packaging.py'}: return (journey.REPOSITORY / name).read_bytes()
                 self.assertEqual(commit, self.sha)
                 return original[name]
             self.fail('Unexpected compiled-client command: ' + str(arguments))
@@ -719,6 +720,49 @@ class ExternalTestBundleTests(unittest.TestCase):
                         original + 'def __dir__():\n    return []\n']:
             with self.subTest(changed=changed), self.assertRaises(ValueError):
                 bundle._guard_import_view(original, changed)
+
+    def test_packaging_client_compatibility_preserves_all_reachable_guards(self):
+        current = (journey.REPOSITORY / 'scripts/retained_packaging.py').read_text()
+        module = ast.parse(current)
+        module.body = [node for node in module.body if not isinstance(node, ast.FunctionDef)
+                       or node.name != 'original_cohort_pack_checks']
+        for node in module.body:
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            if node.name in {'mode_inputs', 'event_values', 'collect_original_binding'}:
+                node.body = [ast.Raise(exc=ast.Call(func=ast.Name(id='RuntimeError', ctx=ast.Load()),
+                    args=[ast.Constant(value='original producer')], keywords=[]), cause=None)]
+            if node.name == 'validate_binding':
+                node.body = [statement for statement in node.body if not (
+                    isinstance(statement, ast.Assign) and isinstance(statement.value, ast.Call)
+                    and isinstance(statement.value.func, ast.Name) and statement.value.func.id == 'original_cohort_pack_checks')]
+        original = ast.unparse(module)
+        self.assertEqual(bundle._packaging_import_view(original), bundle._packaging_import_view(current))
+        fixture = self.compiled_client_fixture()
+        name = 'scripts/retained_packaging.py'
+        fixture.original[name] = original.encode()
+        fixture.original_files[name] = hashlib.sha256(fixture.original[name]).hexdigest()
+        change = {'filename': name, 'status': 'modified'}
+        fixture.comparison['files'].append(change); fixture.history['files'].append(dict(change))
+        with patch.object(journey, 'output', side_effect=fixture.git_output):
+            proof = bundle._compiled_compatibility(self.sha, fixture.original_files, fixture.current,
+                                                   fixture.files, fixture.original, fixture.comparison)
+        self.assertTrue(proof['packagingRuntimeHelper']['newRuntimeQualificationRequired'])
+        self.assertNotEqual(proof['producerFiles'][name], proof['consumerFiles'][name])
+        for changed in [current.replace('"Previous notary evidence changed"', '"Changed guard"'),
+                        current.replace('previous["journals"] == record.get("previousNotary", {}).get("journals")', 'True'),
+                        current.replace('record.get("attempt") == 1', 'True'),
+                        current.replace('MAX_CHAIN = 8', 'MAX_CHAIN = 9'), current + '\nimport unexpected\n',
+                        current.replace('def original_cohort_pack_checks(mode,', 'def original_cohort_pack_checks(mode: execute(),'),
+                        current.replace('def mode_inputs(values):', 'def mode_inputs(values=execute()):'),
+                        current.replace('def validate_binding(record, files,', 'def validate_binding(record, files=None,')]:
+            self.assertNotEqual(changed, current)
+            with self.subTest(changed=changed[-100:]):
+                try:
+                    observed = bundle._packaging_import_view(changed)
+                except ValueError:
+                    continue
+                self.assertNotEqual(bundle._packaging_import_view(original), observed)
 
     def test_compiled_client_reuse_rejects_changed_local_xcode_action(self):
         fixture = self.compiled_client_fixture()
