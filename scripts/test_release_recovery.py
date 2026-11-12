@@ -695,7 +695,7 @@ class ReleaseRecoveryTests(unittest.TestCase):
             tool = root / "notarytool"
             tool.write_text('#!/bin/bash\nprintf "%s\\n" "$1" >> "$CALLS"\n'
                             f'if [ "$1" = submit ]; then echo \'{{"id":"{UUID}"}}\'; '
-                            'elif [ "$1" = wait ]; then echo \'{"status":"Accepted"}\'; fi\n')
+                            f'elif [ "$1" = info ]; then echo \'{{"id":"{UUID}","status":"Accepted"}}\'; fi\n')
             tool.chmod(0o755)
             artifact = root / "artifact.zip"
             artifact.write_bytes(b"signed-input")
@@ -709,7 +709,7 @@ class ReleaseRecoveryTests(unittest.TestCase):
                                       stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
             self.assertEqual(execute().returncode, 0)
             self.assertEqual(execute().returncode, 0)
-            self.assertEqual(calls.read_text().splitlines(), ["submit", "wait", "wait"])
+            self.assertEqual(calls.read_text().splitlines(), ["submit", "info", "info"])
             journal = state / (checkpoint.checksum(artifact) + ".json")
             receipt = json.loads(journal.read_text())
             self.assertEqual(receipt["submissionID"], UUID)
@@ -719,7 +719,7 @@ class ReleaseRecoveryTests(unittest.TestCase):
             checkpoint.write(journal, receipt)
             artifact.write_bytes(b"new-payload")
             self.assertEqual(execute().returncode, 0)
-            self.assertEqual(calls.read_text().splitlines(), ["submit", "wait", "wait", "submit", "wait"])
+            self.assertEqual(calls.read_text().splitlines(), ["submit", "info", "info", "submit", "info"])
             base = root / "chain"
             base.mkdir()
             manifest, _ = self.signed(base)
@@ -855,7 +855,10 @@ class ReleaseRecoveryTests(unittest.TestCase):
         self.assertEqual(package["Retain notarization submissions"]["if"], "always() && steps.signed-input.outcome == 'success'")
         self.assertTrue(package["Retain notarization submissions"]["with"]["path"].endswith("/*.json"))
         for name in ("Notarize and staple downloadable format packs", "Notarize and staple app", "Notarize and staple DMG"):
-            self.assertEqual(package[name]["timeout-minutes"], 20)
+            import notary_submission
+            self.assertGreater(package[name]["timeout-minutes"] * 60, notary_submission.WAIT_BUDGET_SECONDS + 300)
+        self.assertGreater(jobs['release']['timeout-minutes'], sum(package[name]['timeout-minutes'] for name in
+            ("Notarize and staple downloadable format packs", "Notarize and staple app", "Notarize and staple DMG")))
         for name in ("Verify the exact DMG users install", "Transfer the verified installed DMG app for workspace acceptance",
                      "Bind the exact DMG for the external user journey", "Notarize and staple DMG"):
             self.assertNotIn("if", package[name])
