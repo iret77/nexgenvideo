@@ -137,7 +137,8 @@ def _builder_view(text):
     module = ast.parse(text)
     consumers = {'resolve', 'verify_input', 'consume', '_safe_function', '_builder_view',
                  '_workflow_build_view', '_guard_import_view', '_source_snapshot', '_compiled_compatibility',
-                 'validate_client_selectors', 'validate_client_source', '_packaging_import_view', '_metadata_api_import_view'}
+                 'validate_client_selectors', 'validate_client_source', '_packaging_import_view', '_metadata_api_import_view',
+                 '_native_inventory_additions'}
     for node in module.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in consumers:
             _safe_function(node)
@@ -275,6 +276,24 @@ def _source_snapshot(source_sha, paths):
                 'Original UI test input is not a regular file')
         values[name] = base64.b64decode(entry['content'], validate=False)
     return values
+
+
+def _native_inventory_additions(before, after):
+    if before == after:return []
+    expected = {'NexGenVideoTests.NativeButtonInteractionTests/' + name
+                + '()/NativeButtonInteractionTests.swift:SOURCE-LINE:6' for name in (
+                    'actualLegacyScrollersKeepTheEnabledUndoDiscoverable',
+                    'zeroAreaButtonsWithAbsentEnabledNeverBecomeTargetsOrHideDuplicates',
+                    'absentEnabledRequiresProvenZeroAreaAndReadableIdentity')}
+    prior = before['modules']['app']['exactEndedFunctionIDs']
+    current = after['modules']['app']['exactEndedFunctionIDs']
+    require(len(current) == len(set(current)) and set(current) - set(prior) == expected
+            and set(prior) <= set(current), 'UI test App transition has unknown or removed native tests')
+    retained = json.loads(json.dumps(after))
+    retained['modules']['app']['exactEndedFunctionIDs'] = [item for item in current if item not in expected]
+    retained['expectedActualExecutions'] -= len(expected)
+    require(retained == before, 'UI test App transition changes existing native acceptance criteria')
+    return sorted(expected)
 
 
 def _compiled_compatibility(producer_sha, producer_files, current_sha, current_files, originals, comparison):
@@ -444,7 +463,7 @@ def _compiled_compatibility(producer_sha, producer_files, current_sha, current_f
                 if isinstance(value, str):return re.sub(r'(/NativeButtonInteractionTests\.swift:)[0-9]+(:6)$', r'\1SOURCE-LINE\2', value)
                 return value
             inventories.append(locations(inventory))
-        require(inventories[0] == inventories[1], 'UI test App-only transition changes native acceptance criteria')
+        additions = _native_inventory_additions(*inventories)
         app_transition = {'schema': 'nexgenvideo/gui-app-only-cohort-transition/1',
             'producerAppSourceSHA': prior_cohort['appSourceSHA'], 'consumerAppSourceSHA': current_cohort['appSourceSHA'],
             'producerAppTreeSHA': prior_cohort['appTreeSHA'], 'consumerAppTreeSHA': current_cohort['appTreeSHA'],
@@ -453,6 +472,7 @@ def _compiled_compatibility(producer_sha, producer_files, current_sha, current_f
             'changedRolePaths': changed_roles,
             'producerCriteriaSHA256': prior_cohort['criteria']['sha256'],
             'consumerCriteriaSHA256': current_cohort['criteria']['sha256'],
+            'additionalNativeAppTests': additions,
             'newRuntimeProductProvenanceRequired': True}
     require(producer_files[inventory_path] == current_files[inventory_path] or app_transition is not None,
             'UI test native inventory changes outside an App-only transition')

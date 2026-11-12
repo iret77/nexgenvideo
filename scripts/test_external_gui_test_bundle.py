@@ -847,6 +847,14 @@ class ExternalTestBundleTests(unittest.TestCase):
         inventory_path = 'scripts/fixtures/app-cohort-native-inventory.json'
         inventory = json.loads(fixture.original[inventory_path])
         inventory.update(appSourceSHA=prior['appSourceSHA'], nativeSourceObjects=prior['nativeSourceObjects'])
+        additions = {'actualLegacyScrollersKeepTheEnabledUndoDiscoverable',
+                     'zeroAreaButtonsWithAbsentEnabledNeverBecomeTargetsOrHideDuplicates',
+                     'absentEnabledRequiresProvenZeroAreaAndReadableIdentity'}
+        ended = inventory['modules']['app']['exactEndedFunctionIDs']
+        inventory['modules']['app']['exactEndedFunctionIDs'] = [item for item in ended
+            if not any('/' + name + '()/' in item for name in additions)]
+        self.assertEqual(len(ended) - len(inventory['modules']['app']['exactEndedFunctionIDs']), 3)
+        inventory['expectedActualExecutions'] -= 3
         fixture.original[inventory_path] = (json.dumps(inventory, indent=2, sort_keys=True) + '\n').encode()
         prior['criteria']['sha256'] = hashlib.sha256(fixture.original[inventory_path]).hexdigest()
         fixture.original[cohort] = (json.dumps(prior, indent=2, sort_keys=True) + '\n').encode()
@@ -893,6 +901,7 @@ class ExternalTestBundleTests(unittest.TestCase):
         self.assertEqual(transition['changedRolePaths']['tests'], [reader, 'Tests/NexGenVideoTests'])
         self.assertEqual(transition['consumerCriteriaSHA256'], current['criteria']['sha256'])
         self.assertTrue(transition['newRuntimeProductProvenanceRequired'])
+        self.assertEqual(len(transition['additionalNativeAppTests']), 3)
         for target in (prior['nativeSourceObjects'], prior['componentSourceObjects'], prior['roleSourceObjects']['tests']):
             def changed_objects(source, paths):
                 result = objects(source, paths)
@@ -903,6 +912,34 @@ class ExternalTestBundleTests(unittest.TestCase):
         fixture.original[cohort] = json.dumps({**prior,
             'compilerSHA256': '0' * 64}).encode()
         self.assert_compiled_guard_rejects(fixture, 'outside an App-only transition')
+
+    def test_compiled_client_native_additions_preserve_every_existing_criterion(self):
+        names = ['actualLegacyScrollersKeepTheEnabledUndoDiscoverable',
+                 'zeroAreaButtonsWithAbsentEnabledNeverBecomeTargetsOrHideDuplicates',
+                 'absentEnabledRequiresProvenZeroAreaAndReadableIdentity']
+        additions = ['NexGenVideoTests.NativeButtonInteractionTests/' + name
+                     + '()/NativeButtonInteractionTests.swift:SOURCE-LINE:6' for name in names]
+        before = {'expectedActualExecutions': 2, 'modules': {'app': {'exactEndedFunctionIDs': ['original'],
+                  'exactSkippedFunctionIDs': ['skipped'], 'issuesExpected': 0},
+                  'engine': {'exactEndedFunctionIDs': ['engine']}}, 'xctest': ['host']}
+        after = copy.deepcopy(before)
+        after['expectedActualExecutions'] += 3
+        after['modules']['app']['exactEndedFunctionIDs'] += additions
+        self.assertEqual(bundle._native_inventory_additions(before, before), [])
+        self.assertEqual(bundle._native_inventory_additions(before, after), sorted(additions))
+        mutations = [lambda x: x.update(expectedActualExecutions=4),
+                     lambda x: x['modules']['app']['exactEndedFunctionIDs'].append('unknown'),
+                     lambda x: x['modules']['app']['exactEndedFunctionIDs'].append(additions[0]),
+                     lambda x: x['modules']['app']['exactEndedFunctionIDs'].remove('original'),
+                     lambda x: x['modules']['app']['exactSkippedFunctionIDs'].clear(),
+                     lambda x: x['modules']['app'].update(issuesExpected=1),
+                     lambda x: x['modules']['engine']['exactEndedFunctionIDs'].clear(),
+                     lambda x: x['xctest'].clear()]
+        for mutate in mutations:
+            changed = copy.deepcopy(after)
+            mutate(changed)
+            with self.assertRaises(ValueError):bundle._native_inventory_additions(before, changed)
+        with self.assertRaises(ValueError):bundle._native_inventory_additions(after, before)
 
     def test_compiled_client_workflow_keeps_global_defaults_and_actual_build_job(self):
         workflow = (journey.REPOSITORY / '.github/workflows/external-gui-acceptance.yml').read_text()
