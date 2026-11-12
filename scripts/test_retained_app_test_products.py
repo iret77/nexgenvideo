@@ -46,6 +46,57 @@ def metadata_bytes():
 
 
 class RetainedProductsTests(unittest.TestCase):
+    def test_metadata_get_recovers_from_temporary_service_failure(self):
+        response = Mock(status=200)
+        response.read.return_value = b'{"id": 42}'
+        context = Mock()
+        context.__enter__ = Mock(return_value=response)
+        context.__exit__ = Mock(return_value=False)
+        for code in (502, 503, 504):
+            with self.subTest(code=code):
+                unavailable = urllib.error.HTTPError("https://api.github.com/fixture", code, "Unavailable", {}, None)
+                opener = Mock()
+                opener.open.side_effect = [unavailable, context]
+                with patch.dict(os.environ, GH_TOKEN="fixture"), \
+                        patch.object(replay.urllib.request, "build_opener", return_value=opener), \
+                        patch.object(replay.time, "sleep") as sleep:
+                    self.assertEqual(replay.api("pulls/899"), {"id": 42})
+                self.assertEqual(opener.open.call_count, 2)
+                for call in opener.open.call_args_list:
+                    self.assertEqual(call.args[0].get_method(), "GET")
+                    self.assertEqual(call.args[0].full_url, "https://api.github.com/repos/iret77/nexgenvideo/pulls/899")
+                    self.assertEqual(call.kwargs, {"timeout": 40})
+                sleep.assert_called_once_with(1)
+
+    def test_metadata_get_stops_after_bounded_service_retries(self):
+        failures = [urllib.error.HTTPError("https://api.github.com/fixture", 503, "Unavailable", {}, None)
+                    for _ in range(3)]
+        opener = Mock()
+        opener.open.side_effect = failures
+        with patch.dict(os.environ, GH_TOKEN="fixture"), \
+                patch.object(replay.urllib.request, "build_opener", return_value=opener), \
+                patch.object(replay.time, "sleep") as sleep:
+            with self.assertRaises(urllib.error.HTTPError) as raised:
+                replay.api("pulls/899")
+        self.assertIs(raised.exception, failures[-1])
+        self.assertEqual(opener.open.call_count, 3)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1, 2])
+
+    def test_metadata_get_does_not_retry_redirects_or_permanent_errors(self):
+        for code in (302, 401, 403, 404, 429, 500):
+            with self.subTest(code=code):
+                failure = urllib.error.HTTPError("https://api.github.com/fixture", code, "Rejected", {}, None)
+                opener = Mock()
+                opener.open.side_effect = failure
+                with patch.dict(os.environ, GH_TOKEN="fixture"), \
+                        patch.object(replay.urllib.request, "build_opener", return_value=opener), \
+                        patch.object(replay.time, "sleep") as sleep:
+                    with self.assertRaises(urllib.error.HTTPError) as raised:
+                        replay.api("pulls/899")
+                self.assertIs(raised.exception, failure)
+                self.assertEqual(opener.open.call_count, 1)
+                sleep.assert_not_called()
+
     def test_shared_loader_records_stop_permanently_at_the_first_ambiguous_write(self):
         root = "dyld[42]: <" + IMAGE_UUID + "> /root\n"
         child = "dyld[43]: <" + IMAGE_UUID + "> /child\n"

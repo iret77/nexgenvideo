@@ -48,10 +48,10 @@ env:
 jobs:
   runtime:
     runs-on: macrunner
-    timeout-minutes: 43
+    timeout-minutes: 65
     steps:
       - name: Reserve time for failure diagnostics and evidence upload
-        run: echo "NGV_BPY_DIAGNOSTIC_DEADLINE=$(( $(date +%s) + 27 * 60 ))" >> "$GITHUB_ENV"
+        run: echo "NGV_BPY_DIAGNOSTIC_DEADLINE=$(( $(date +%s) + 49 * 60 ))" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0

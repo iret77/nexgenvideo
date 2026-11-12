@@ -471,7 +471,7 @@ class ExternalTestBundleTests(unittest.TestCase):
         helper = 'scripts/external-gui/test_bundle.py'
         added = {'_safe_function', '_builder_view', '_workflow_build_view', '_guard_import_view',
                  '_source_snapshot', '_compiled_compatibility', 'validate_client_selectors', 'validate_client_source',
-                 '_packaging_import_view'}
+                 '_packaging_import_view', '_metadata_api_import_view'}
         lines = original[helper].decode().splitlines(keepends=True)
         excluded = set()
         for node in ast.parse(original[helper]).body:
@@ -544,7 +544,7 @@ class ExternalTestBundleTests(unittest.TestCase):
             if 'show' in arguments:
                 commit, name = arguments[-1].split(':', 1)
                 if commit == current and name in {workflow, action, cohort, 'scripts/fixtures/app-cohort-native-inventory.json',
-                        'scripts/compiled_app_release.py', 'scripts/retained_packaging.py'}: return (journey.REPOSITORY / name).read_bytes()
+                        'scripts/compiled_app_release.py', 'scripts/retained_packaging.py', 'scripts/retained_app_test_products.py'}: return (journey.REPOSITORY / name).read_bytes()
                 self.assertEqual(commit, self.sha)
                 return original[name]
             self.fail('Unexpected compiled-client command: ' + str(arguments))
@@ -585,6 +585,22 @@ class ExternalTestBundleTests(unittest.TestCase):
         with patch.object(journey, 'output', side_effect=fixture.git_output), self.assertRaisesRegex(ValueError, reason):
             bundle._compiled_compatibility(self.sha, files, fixture.current, fixture.files,
                                             fixture.original, fixture.comparison)
+
+    def test_metadata_retry_compatibility_preserves_exact_request_and_guards(self):
+        current = (journey.REPOSITORY / 'scripts/retained_app_test_products.py').read_text()
+        module = ast.parse(current)
+        legacy = ast.parse('def api(path):\n    with urllib.request.build_opener(NoRedirect()).open(github_request(path), timeout=40) as response:\n        require(response.status == 200, "GitHub metadata request did not succeed")\n        data = response.read(16 * 1024 * 1024 + 1)\n        require(len(data) <= 16 * 1024 * 1024, "GitHub metadata exceeds its bound")\n        return json.loads(data)').body[0]
+        module.body = [legacy if isinstance(node, ast.FunctionDef) and node.name == 'api' else node
+                       for node in module.body if not (isinstance(node, ast.Import) and node.names[0].name == 'time')]
+        original = ast.unparse(module)
+        self.assertEqual(bundle._metadata_api_import_view(original), bundle._metadata_api_import_view(current))
+        for before, after in [('range(3)', 'range(4)'), ('{502, 503, 504}', '{401, 502, 503, 504}'),
+                              ('timeout=40', 'timeout=400'), ('response.status == 200', 'True'),
+                              ('return json.loads(data)', 'return {}'), ('import time', 'import time as clock')]:
+            with self.subTest(change=after), self.assertRaises(ValueError):
+                bundle._metadata_api_import_view(current.replace(before, after, 1))
+        changed_guard = current.replace('return None', 'return request', 1)
+        self.assertNotEqual(bundle._metadata_api_import_view(original), bundle._metadata_api_import_view(changed_guard))
 
     def test_compiled_client_reuse_preserves_original_receipt_products_and_producer(self):
         fixture = self.compiled_client_fixture()
@@ -655,6 +671,7 @@ class ExternalTestBundleTests(unittest.TestCase):
                           if name == 'scripts/fixtures/app-cohort-native-inventory.json'
                           else 'Engine acquisition helper changes' if name == 'scripts/compiled_app_release.py'
                           else 'Packaging verifier is not valid Python' if name == 'scripts/retained_packaging.py'
+                          else 'Metadata transport is not valid Python' if name == 'scripts/retained_app_test_products.py'
                           else 'Compiled UI test source, project or reachable shared helper changed')
                 self.assert_compiled_guard_rejects(fixture, reason)
             fixture.original[name] = original

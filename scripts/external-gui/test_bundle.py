@@ -137,7 +137,7 @@ def _builder_view(text):
     module = ast.parse(text)
     consumers = {'resolve', 'verify_input', 'consume', '_safe_function', '_builder_view',
                  '_workflow_build_view', '_guard_import_view', '_source_snapshot', '_compiled_compatibility',
-                 'validate_client_selectors', 'validate_client_source', '_packaging_import_view'}
+                 'validate_client_selectors', 'validate_client_source', '_packaging_import_view', '_metadata_api_import_view'}
     for node in module.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in consumers:
             _safe_function(node)
@@ -243,6 +243,28 @@ def _packaging_import_view(text):
     return ast.dump(module, include_attributes=False)
 
 
+def _metadata_api_import_view(raw):
+    import ast
+    try:
+        module = ast.parse(raw)
+    except (SyntaxError, UnicodeDecodeError):
+        raise ValueError('Metadata transport is not valid Python') from None
+    functions = [node for node in module.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == 'api']
+    require(len(functions) == 1, 'Metadata transport has an ambiguous API declaration')
+    legacy = ast.parse('def api(path):\n    with urllib.request.build_opener(NoRedirect()).open(github_request(path), timeout=40) as response:\n        require(response.status == 200, "GitHub metadata request did not succeed")\n        data = response.read(16 * 1024 * 1024 + 1)\n        require(len(data) <= 16 * 1024 * 1024, "GitHub metadata exceeds its bound")\n        return json.loads(data)').body[0]
+    retried = ast.parse('def api(path):\n    for attempt in range(3):\n        try:\n            with urllib.request.build_opener(NoRedirect()).open(github_request(path), timeout=40) as response:\n                require(response.status == 200, "GitHub metadata request did not succeed")\n                data = response.read(16 * 1024 * 1024 + 1)\n                require(len(data) <= 16 * 1024 * 1024, "GitHub metadata exceeds its bound")\n                return json.loads(data)\n        except urllib.error.HTTPError as error:\n            if error.code not in {502, 503, 504} or attempt == 2:\n                raise\n            error.close()\n            print(f"GitHub metadata GET retry {attempt + 1}/2 after HTTP {error.code}", file=sys.stderr)\n            time.sleep(attempt + 1)').body[0]
+    actual = ast.dump(functions[0], include_attributes=False)
+    original_view = ast.dump(legacy, include_attributes=False)
+    retry_view = ast.dump(retried, include_attributes=False)
+    require(actual in {original_view, retry_view}, 'Metadata transport changes outside the exact GET retry')
+    imports = [node for node in module.body if isinstance(node, ast.Import) and any(item.name == 'time' for item in node.names)]
+    require(len(imports) == (1 if actual == retry_view else 0)
+            and all(len(node.names) == 1 and node.names[0].asname is None for node in imports),
+            'Metadata retry changes its time import')
+    module.body = [legacy if node is functions[0] else node for node in module.body if node not in imports]
+    return ast.dump(module, include_attributes=False)
+
+
 def _source_snapshot(source_sha, paths):
     import base64
     require(re.fullmatch('[a-f0-9]{40}', source_sha), 'Invalid original UI test source')
@@ -291,9 +313,16 @@ def _compiled_compatibility(producer_sha, producer_files, current_sha, current_f
     inventory_path = 'scripts/fixtures/app-cohort-native-inventory.json'
     runtime_helper = 'scripts/compiled_app_release.py'
     packaging_helper = 'scripts/retained_packaging.py'
-    metadata_only = {'scripts/external-gui/transport.py', 'scripts/release_engine_resume.py', inventory_path, runtime_helper, packaging_helper}
+    metadata_helper = 'scripts/retained_app_test_products.py'
+    metadata_only = {'scripts/external-gui/transport.py', 'scripts/release_engine_resume.py', inventory_path, runtime_helper, packaging_helper, metadata_helper}
     require(all(producer_files[name] == digest for name, digest in current_files.items() if name not in {helper, guard, cohort, *metadata_only}),
             'Compiled UI test source, project or reachable shared helper changed')
+    current_metadata = journey.output([*git, 'show', current_sha + ':' + metadata_helper])
+    require(current_metadata == (journey.REPOSITORY / metadata_helper).read_bytes()
+            and hashlib.sha256(current_metadata).hexdigest() == current_files[metadata_helper],
+            'Current metadata transport differs from its committed receipt')
+    require(_metadata_api_import_view(originals[metadata_helper]) == _metadata_api_import_view(current_metadata),
+            'Metadata transport changed a reachable guard or its import')
     import ast
     current_packaging = journey.output([*git, 'show', current_sha + ':' + packaging_helper])
     require(current_packaging == (journey.REPOSITORY / packaging_helper).read_bytes()
@@ -430,7 +459,7 @@ def _compiled_compatibility(producer_sha, producer_files, current_sha, current_f
     added_paths = sorted(set(current_paths) - set(prior_paths))
     require(set(prior_paths) <= set(current_paths)
             and all(name in local and local[name] in {'A', 'M'}
-                    and (name == helper or re.fullmatch(r'\.github/workflows/[A-Za-z0-9_-]+\.ya?ml', name)
+                    and (name in {helper, metadata_helper} or re.fullmatch(r'\.github/workflows/[A-Za-z0-9_-]+\.ya?ml', name)
                          or re.fullmatch(r'scripts/test_[A-Za-z0-9_]+\.py', name)) for name in added_paths),
             'UI test cohort adds non-CI paths or removes prior qualification paths')
     recipe = _builder_view(originals[helper].decode())
