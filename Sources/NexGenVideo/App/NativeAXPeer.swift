@@ -293,6 +293,12 @@ enum NativeAXPeer {
         func contains(_ nonce: String) -> Bool { state.withLock { $0.cancelled.contains(nonce) } }
     }
 
+    private final class ExitReceipt: Sendable {
+        private let value = Mutex<Int32?>(nil)
+        func record(_ status: Int32) { value.withLock { $0 = status } }
+        var status: Int32? { value.withLock { $0 } }
+    }
+
     actor Session {
         private let owner: Identity
         private let image: Image
@@ -310,6 +316,7 @@ enum NativeAXPeer {
         private var closed = false
         private var requests = 0
         private var lifecycle: Lifecycle?
+        private let exitReceipt = ExitReceipt()
 
         private init(owner: Identity, image: Image, started: Double) {
             self.owner = owner; self.image = image; startupStarted = started
@@ -327,6 +334,7 @@ enum NativeAXPeer {
             child.executableURL = URL(fileURLWithPath: owner.executable)
             child.arguments = [flag]; child.standardInput = incoming
             child.standardOutput = outgoing; child.standardError = diagnostics
+            child.terminationHandler = { [exitReceipt] child in exitReceipt.record(child.terminationStatus) }
             process = child
             try child.run()
             try? incoming.fileHandleForReading.close()
@@ -457,13 +465,13 @@ enum NativeAXPeer {
             while process.isRunning && now < terminate { await pause() }
             if process.isRunning { Darwin.kill(process.processIdentifier, SIGKILL) }
             let reaping = now + 2
-            while process.isRunning && now < reaping { await pause() }
-            if !process.isRunning { process.waitUntilExit() }
+            while (process.isRunning || exitReceipt.status == nil) && now < reaping { await pause() }
             let draining = now + 0.5
             while (!output.done || !errors.done) && now < draining { await pause() }
             if output.done && errors.done { for drain in drains { await drain.value } }
-            let result = Lifecycle(pid: process.processIdentifier, reaped: !process.isRunning,
-                exitStatus: process.isRunning ? nil : process.terminationStatus, stdoutClosed: output.done,
+            let exitStatus = exitReceipt.status
+            let result = Lifecycle(pid: process.processIdentifier, reaped: !process.isRunning && exitStatus != nil,
+                exitStatus: exitStatus, stdoutClosed: output.done,
                 stderrClosed: errors.done, forced: forced,
                 protocolClean: output.successful && output.consumed && errors.successful,
                 stderr: errors.text, finishedAt: now)
