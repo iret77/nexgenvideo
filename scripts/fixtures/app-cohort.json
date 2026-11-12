@@ -5,6 +5,7 @@
   "ciPaths": [
     ".github/actionlint.yaml",
     ".github/workflows/bpy-runtime-acceptance.yml",
+    ".github/workflows/chat-hang-replay.yml",
     ".github/workflows/ci-lint.yml",
     ".github/workflows/ci.yml",
     ".github/workflows/diagnostic-acceptance.yml",
