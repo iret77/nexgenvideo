@@ -12,6 +12,7 @@ import stat
 import struct
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -84,11 +85,19 @@ def github_request(path):
 
 
 def api(path):
-    with urllib.request.build_opener(NoRedirect()).open(github_request(path), timeout=40) as response:
-        require(response.status == 200, "GitHub metadata request did not succeed")
-        data = response.read(16 * 1024 * 1024 + 1)
-        require(len(data) <= 16 * 1024 * 1024, "GitHub metadata exceeds its bound")
-        return json.loads(data)
+    for attempt in range(3):
+        try:
+            with urllib.request.build_opener(NoRedirect()).open(github_request(path), timeout=40) as response:
+                require(response.status == 200, "GitHub metadata request did not succeed")
+                data = response.read(16 * 1024 * 1024 + 1)
+                require(len(data) <= 16 * 1024 * 1024, "GitHub metadata exceeds its bound")
+                return json.loads(data)
+        except urllib.error.HTTPError as error:
+            if error.code not in {502, 503, 504} or attempt == 2:
+                raise
+            error.close()
+            print(f"GitHub metadata GET retry {attempt + 1}/2 after HTTP {error.code}", file=sys.stderr)
+            time.sleep(attempt + 1)
 
 
 def archive_bytes(archive, name, limit=8 * 1024 * 1024):
