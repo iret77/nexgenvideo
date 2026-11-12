@@ -1088,6 +1088,52 @@ def verify_cohort_pack_checks(record, build=Path('.build')):
     return proof
 
 
+def original_cohort_pack_checks(mode, previous, signed, product, original_build):
+    require(mode.get('reuseOriginalPackChecks') is None or mode.get('reuseOriginalPackChecks') is True,
+            'Invalid original pack-check mode')
+    if not mode.get('reuseOriginalPackChecks') or previous['producer']['head_sha'] != product \
+            or previous['producer']['id'] != original_build or previous.get('dmgArtifact') is not None \
+            or not previous.get('journals') or signed.get('cohortProduct') is None:
+        return previous
+    producer, job = previous['producer'], previous['job']
+    manifest, cohort = signed['manifest'], signed['cohortProduct']
+    require(cohort_signed_product({'productSourceSHA': product, 'originalSignedBuildRunID': original_build,
+                'signedInput': signed}) and manifest['sourceSHA'] == product and manifest['runID'] == original_build
+            and producer.get('repository', {}).get('full_name') == REPOSITORY
+            and producer.get('actor', {}).get('login') == 'iret77' and producer.get('run_attempt') == 1
+            and producer.get('path') == '.github/workflows/release.yml'
+            and producer.get('status') == 'completed' and job.get('run_id') == original_build
+            and job.get('head_sha') == product and job.get('name') == 'release'
+            and job.get('labels') == ['macrunner'] and job.get('run_attempt') == 1
+            and job.get('status') == 'completed', 'Original pack checks lost their signed native producer')
+    names = ('Bind signed build input', 'Restore exact signed build',
+             'Verify pack links the SHARED engine (guards the PackEntry-cast regression)',
+             'Load-test — the SIGNED app actually loads the SIGNED pack from an EXTERNAL dir')
+    steps = [[step for step in job.get('steps', []) if step.get('name') == name] for name in names]
+    require(all(len(items) == 1 and items[0].get('conclusion') == 'success' for items in steps),
+            'Original signed restore or pack checks did not pass')
+    from compiled_app_release import PACK_SHA, PACK_TREE
+    require(cohort.get('packArchiveSHA256') == PACK_SHA and cohort.get('packTreeSHA256') == PACK_TREE
+            and manifest['files']['NexGenVideo.zip']['sha256'] == cohort['appArchiveSHA256'],
+            'Original pack checks belong to another signed App or pack')
+    raw = read_api('actions/jobs/' + str(job['id']) + '/logs', maximum=8 * 1024**2)
+    lines = [line.rstrip('\r').split(' ', 1) for line in raw.decode('utf-8-sig').split('\n') if ' ' in line]
+    load = steps[-1][0]
+    require(all(isinstance(load.get(key), str) for key in ('started_at', 'completed_at'))
+            and any(text == 'SELFTEST_PACK_OK loaded musicvideo v0.6.0'
+                    and instant(load['started_at']) <= instant(at) < instant(load['completed_at']) + datetime.timedelta(seconds=1)
+                    for at, text in lines), 'Original pack load has no successful in-step raw result')
+    proof = {'schema': 'cohort-pack-native-checks-reuse/v1', 'origin': {'runID': original_build,
+        'sourceSHA': product, 'jobID': job['id'], 'rawSHA256': digest(raw), 'rawBytes': len(raw),
+        'steps': [items[0] for items in steps[-2:]]}, 'productSourceSHA': product,
+        'signedBuildRunID': original_build, 'appArchiveSHA256': cohort['appArchiveSHA256'],
+        'appTreeSHA256': manifest['appTreeSHA256'],
+        'mainSHA256': manifest['componentAssembly']['main']['distributionImageSHA256'],
+        'packArchiveSHA256': PACK_SHA, 'packTreeSHA256': PACK_TREE,
+        'newCompilerSignatureOrPackLoadPerformed': False}
+    return dict(previous, cohortPackChecks=proof)
+
+
 def mode_inputs(values):
     product = values.get("productSourceSHA", "")
     product_run = values.get("productSourceRunID", "")
@@ -1105,15 +1151,20 @@ def mode_inputs(values):
     require(bool(signed) != bool(notary) and isinstance(signed or notary, str)
             and re.fullmatch('[1-9][0-9]*', signed or notary), 'Select one exact signed build or saved notarization')
     require(not signed or prior is None, 'Pre-submit signed build cannot select previous packaging provenance')
-    require(not any(values.get(name) for name in ("completedReleaseTestsRunID", "completedEngineTestsRunID", "testBundleRunID")),
-            "Retained packaging cannot combine native, signed or test-client selectors")
+    require(not any(values.get(name) for name in ("completedReleaseTestsRunID", "completedEngineTestsRunID")),
+            "Retained packaging cannot combine native test selectors")
+    client = [values.get(name, '') for name in ('testBundleRunID', 'testBundleArtifactID', 'testBundleArtifactSHA256')]
+    require(all(isinstance(value, str) for value in client) and (not any(client) or
+            all(re.fullmatch(pattern, value) for pattern, value in zip(
+                ('[1-9][0-9]*', '[1-9][0-9]*', '[a-f0-9]{64}'), client))),
+            'Retained GUI client selectors must be complete and exact')
     require(isinstance(values.get("version"), str) and re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", values["version"]),
             "Invalid retained product version")
     return {"productSourceSHA": product, "productSourceRunID": int(product_run),
             "verifiedSourceRunID": int(values["verifiedSourceRunID"]),
             "priorNotaryRunID": int(notary) if notary else None, "priorPackagingProof": prior,
             **({'signedBuildRunID': int(signed)} if signed else {}),
-            "version": values["version"], "artifactOnly": True, "dryRun": True}
+            "version": values["version"], "artifactOnly": True, "dryRun": True, "reuseOriginalPackChecks": True}
 
 
 def encoded(value):
@@ -1162,6 +1213,7 @@ def collect_original_binding(values, *, archive_root=None, chain=None):
     previous, state = prior_origin(mode, product, chain=chain)
     original_build = previous_signed_build(previous)
     signed, signed_zip, original_state = signed_input(original_build, product)
+    previous = original_cohort_pack_checks(mode, previous, signed, product, original_build)
     require(not mode.get('signedBuildRunID') or signed.get('cohortProduct') is not None,
             'Pre-submit continuation requires a fully verified typed signed App')
     require(signed["manifest"]["identity"]["version"] == mode["version"], "Requested retained version differs")
@@ -1220,7 +1272,8 @@ def event_values():
              "artifactOnly": "artifact_only", "dryRun": "dry_run", "version": "version",
              "completedReleaseTestsRunID": "completed_release_tests_run_id",
              "completedEngineTestsRunID": "completed_engine_tests_run_id", "signedBuildRunID": "signed_build_run_id",
-             "testBundleRunID": "test_bundle_run_id"}
+             "testBundleRunID": "test_bundle_run_id", "testBundleArtifactID": "test_bundle_artifact_id",
+             "testBundleArtifactSHA256": "test_bundle_artifact_sha256"}
     result = {}
     for key, name in names.items():
         original = value.get(name, "")
@@ -1610,6 +1663,7 @@ def validate_binding(record, files, *, execution=False, chain=None):
                 and recorded_dmg.get("rawProofSHA256") == previous["dmgProof"]["rawProofSHA256"], "Previous DMG proof changed")
         matching_artifact(recorded_dmg.get("artifact", {}), previous["dmgProof"]["artifact"])
     require(record["previousNotary"].get("parentProvenance") == previous.get("parentProvenance"), "Parent provenance selector changed")
+    previous = original_cohort_pack_checks(mode, previous, record['signedInput'], product, previous_signed_build(previous))
     require(record['previousNotary'].get('cohortPackChecks') == previous.get('cohortPackChecks'),
             'Original cohort native pack checks changed')
     instant = lambda value: datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))

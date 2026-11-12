@@ -529,6 +529,10 @@ Typed retained packaging uses the exact producer commit’s finite CI path decla
 
 Typed App continuations bind the original successful shared-engine and quarantined pack-load steps, complete raw output, signed App/archive/main and exact pack identities into their canonical parent provenance. A separate cohort flag reuses those checks only after current byte checks. It never enables the older component/notary continuation flag. A changed DMG App identity or missing original checks retains the required native execution.
 
+The first continuation can acquire those checks directly from the original signed product run. Its explicit acquisition mode preserves historical receipts without requesting raw evidence they never captured. Replay independently derives the original check record and retains every existing signed-product and notarization guard.
+
+Retained packaging accepts an explicit, complete GUI client run/artifact/SHA selector. The client resolver still verifies its actual producer, archive, receipt and compiler inputs. Packaging-only producer changes and the precise additive original-check validation are distinguished from the client compiler recipe; all other reachable packaging guards and module initialization stay identical. The current packaging verifier remains subject to fresh runtime qualification.
+
 Apple status queries use the saved submission ID with a 60-second command deadline.
 An `In Progress` response does not consume the consecutive transport-failure budget.
 Each response has a payload/source/run-bound observation, retained after either success

@@ -137,7 +137,7 @@ def _builder_view(text):
     module = ast.parse(text)
     consumers = {'resolve', 'verify_input', 'consume', '_safe_function', '_builder_view',
                  '_workflow_build_view', '_guard_import_view', '_source_snapshot', '_compiled_compatibility',
-                 'validate_client_selectors', 'validate_client_source'}
+                 'validate_client_selectors', 'validate_client_source', '_packaging_import_view'}
     for node in module.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in consumers:
             _safe_function(node)
@@ -206,6 +206,43 @@ def _guard_import_view(original, current):
     return ast.dump(ast.Module(body=retained, type_ignores=[]), include_attributes=False)
 
 
+def _packaging_import_view(text):
+    import ast
+    try:
+        module = ast.parse(text)
+    except (SyntaxError, UnicodeDecodeError):
+        raise ValueError('Packaging verifier is not valid Python') from None
+    producers = {'mode_inputs', 'event_values', 'collect_original_binding'}
+    addition = ast.parse("previous = original_cohort_pack_checks(mode, previous, record['signedInput'], product, previous_signed_build(previous))").body[0]
+    following = ast.parse("require(record['previousNotary'].get('cohortPackChecks') == previous.get('cohortPackChecks'), 'Original cohort native pack checks changed')").body[0]
+    declarations = [node.name for node in module.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    require(len(declarations) == len(set(declarations)), 'Duplicate packaging verifier declarations')
+    kept = []
+    for node in module.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in producers | {'original_cohort_pack_checks', 'validate_binding'}:
+            _safe_function(node)
+            if node.name == 'original_cohort_pack_checks':
+                require(ast.dump(node.args, include_attributes=False) == ast.dump(
+                    ast.parse('def expected(mode, previous, signed, product, original_build): pass').body[0].args,
+                    include_attributes=False), 'Original pack verifier changes its import signature')
+                continue
+            if node.name in producers:
+                node.body = [ast.Pass()]
+            else:
+                matches = [index for index, statement in enumerate(node.body)
+                           if ast.dump(statement, include_attributes=False) == ast.dump(addition, include_attributes=False)]
+                require(len(matches) == (1 if 'original_cohort_pack_checks' in declarations else 0),
+                        'Original pack validator and its additive guard differ')
+                if matches:
+                    index = matches[0]
+                    require(index + 1 < len(node.body) and ast.dump(node.body[index + 1], include_attributes=False)
+                            == ast.dump(following, include_attributes=False), 'Original pack validation moved outside its guard')
+                    node.body.pop(index)
+        kept.append(node)
+    module.body = kept
+    return ast.dump(module, include_attributes=False)
+
+
 def _source_snapshot(source_sha, paths):
     import base64
     require(re.fullmatch('[a-f0-9]{40}', source_sha), 'Invalid original UI test source')
@@ -253,10 +290,17 @@ def _compiled_compatibility(producer_sha, producer_files, current_sha, current_f
     cohort = 'scripts/fixtures/app-cohort.json'
     inventory_path = 'scripts/fixtures/app-cohort-native-inventory.json'
     runtime_helper = 'scripts/compiled_app_release.py'
-    metadata_only = {'scripts/external-gui/transport.py', 'scripts/release_engine_resume.py', inventory_path, runtime_helper}
+    packaging_helper = 'scripts/retained_packaging.py'
+    metadata_only = {'scripts/external-gui/transport.py', 'scripts/release_engine_resume.py', inventory_path, runtime_helper, packaging_helper}
     require(all(producer_files[name] == digest for name, digest in current_files.items() if name not in {helper, guard, cohort, *metadata_only}),
             'Compiled UI test source, project or reachable shared helper changed')
     import ast
+    current_packaging = journey.output([*git, 'show', current_sha + ':' + packaging_helper])
+    require(current_packaging == (journey.REPOSITORY / packaging_helper).read_bytes()
+            and hashlib.sha256(current_packaging).hexdigest() == current_files[packaging_helper],
+            'Current packaging verifier differs from its committed receipt')
+    require(_packaging_import_view(originals[packaging_helper]) == _packaging_import_view(current_packaging),
+            'Packaging verifier changed a reachable guard or its build import')
     runtime_views = []
     current_runtime = journey.output([*git, 'show', current_sha + ':' + runtime_helper])
     require(current_runtime == (journey.REPOSITORY / runtime_helper).read_bytes()
@@ -412,6 +456,10 @@ def _compiled_compatibility(producer_sha, producer_files, current_sha, current_f
         'producerSourceSHA': producer_sha, 'consumerSourceSHA': current_sha,
         'producerFiles': producer_files, 'consumerFiles': current_files,
         'originalSources': {name: raw.decode() for name, raw in originals.items()}, 'comparison': comparison,
+        'packagingRuntimeHelper': {'producerSHA256': producer_files[packaging_helper],
+            'consumerSHA256': current_files[packaging_helper],
+            'importViewSHA256': hashlib.sha256(_packaging_import_view(current_packaging).encode()).hexdigest(),
+            'newRuntimeQualificationRequired': True},
         'engineCarrierRuntimeHelper': {'producerSHA256': producer_files[runtime_helper],
             'consumerSHA256': current_files[runtime_helper],
             'importViewSHA256': hashlib.sha256(runtime_views[0].encode()).hexdigest(),
