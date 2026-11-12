@@ -14,14 +14,20 @@ struct NativeButtonInteractionTests {
         let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 600, height: 200),
             styleMask: [.titled, .closable], backing: .buffered, defer: false)
 
-        init(disabled: Bool = false, duplicate: Bool = false, split: Bool = false, rows: Int = 0) {
+        init(disabled: Bool = false, duplicate: Bool = false, split: Bool = false, rows: Int = 0,
+             scroll: Bool = false) {
             window.isReleasedWhenClosed = false
             let controls = HStack {
                 Button("Undo") {}.disabled(disabled)
                 if duplicate { Button("Undo") {} }
                 Button("Redo") {}.disabled(true)
             }.buttonStyle(.capsule())
-            if split {
+            if scroll {
+                window.contentView = NSHostingView(rootView: VStack {
+                    controls
+                    LegacyScrollView()
+                })
+            } else if split {
                 window.setContentSize(NSSize(width: 600, height: 450))
                 window.contentView = NSHostingView(rootView: HSplitView {
                     VStack {
@@ -83,6 +89,20 @@ struct NativeButtonInteractionTests {
             let data = try JSONSerialization.data(withJSONObject: geometry, options: [.sortedKeys])
             print("Native SplitView AX geometry: " + String(decoding: data, as: UTF8.self))
         }
+    }
+
+    private struct LegacyScrollView: NSViewRepresentable {
+        func makeNSView(context: Context) -> NSScrollView {
+            let scroll = NSScrollView()
+            scroll.hasVerticalScroller = true
+            scroll.hasHorizontalScroller = true
+            scroll.autohidesScrollers = false
+            scroll.scrollerStyle = .legacy
+            scroll.documentView = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 900))
+            return scroll
+        }
+
+        func updateNSView(_ view: NSScrollView, context: Context) {}
     }
 
     @MainActor private final class LastChildRoot: NSView {
@@ -432,6 +452,60 @@ struct NativeButtonInteractionTests {
             #expect(Query.buttons(value, title: "Undo", inside: probe).isEmpty)
         }
         #expect(Query.buttons(snapshot([node(), node(enabled: nil)]), title: "Undo", inside: probe).isEmpty)
+    }
+
+    @Test func actualLegacyScrollersKeepTheEnabledUndoDiscoverable() async throws {
+        let fixture = Fixture(scroll: true)
+        defer { fixture.close() }
+        let outcome = try await NativeAXPeer.withSession { session in
+            let value = try await fixture.ready(using: session)
+            try #require(value.complete)
+            #expect(value.nodes.contains { $0.role == kAXScrollBarRole })
+            #expect(value.nodes.contains {
+                $0.role == kAXButtonRole && $0.frame?.known == true
+                    && ($0.frame?.width == 0 || $0.frame?.height == 0) && $0.enabled == nil
+            })
+            #expect(Query.buttons(value, title: "Undo", inside: fixture.request.contentFrame).count == 1)
+        }
+        #expect(outcome.1.clean)
+    }
+
+    private func absentEnabledNode(_ frame: Query.Frame?, status: AXError = .noValue,
+                                   failure: String? = nil, pid: pid_t? = nil) -> Query.Node {
+        let base = node(enabled: nil, failure: failure, pid: pid)
+        var statuses = base.statuses
+        statuses[kAXEnabledAttribute] = status.rawValue
+        return Query.Node(parent: 0, pid: base.pid, role: base.role, title: base.title, label: base.label,
+            enabled: nil, frame: frame, statuses: statuses, childTypes: [])
+    }
+
+    @Test func zeroAreaButtonsWithAbsentEnabledNeverBecomeTargetsOrHideDuplicates() {
+        for status in [AXError.noValue, .attributeUnsupported] {
+            for size in [CGSize(width: 0, height: 28), CGSize(width: 50, height: 0), .zero] {
+                let empty = absentEnabledNode(.init(CGRect(origin: CGPoint(x: 20, y: 20), size: size)), status: status)
+                #expect(Query.buttons(snapshot([empty]), title: "Undo", inside: probe).isEmpty)
+                #expect(Query.buttons(snapshot([node(), empty]), title: "Undo", inside: probe).count == 1)
+                #expect(Query.buttons(snapshot([node(), empty, node()]), title: "Undo", inside: probe).count == 2)
+            }
+        }
+    }
+
+    @Test func absentEnabledRequiresProvenZeroAreaAndReadableIdentity() {
+        let zero = Query.Frame(CGRect(x: 20, y: 20, width: 50, height: 0))
+        for invalid in [nil, frame, Query.Frame(CGRect(x: Double.nan, y: 20, width: 50, height: 0))] {
+            #expect(Query.buttons(snapshot([node(), absentEnabledNode(invalid)]), title: "Undo", inside: probe).isEmpty)
+        }
+        for status in [AXError.success, .cannotComplete, .failure] {
+            #expect(Query.buttons(snapshot([node(), absentEnabledNode(zero, status: status)]),
+                title: "Undo", inside: probe).isEmpty)
+        }
+        for attribute in ["pid", kAXRoleAttribute, kAXTitleAttribute, kAXDescriptionAttribute,
+                          kAXPositionAttribute, kAXSizeAttribute] {
+            #expect(Query.buttons(snapshot([node(), absentEnabledNode(zero, failure: attribute)]),
+                title: "Undo", inside: probe).isEmpty)
+        }
+        #expect(Query.buttons(snapshot([node(), absentEnabledNode(zero, pid: getpid() + 1)]),
+            title: "Undo", inside: probe).isEmpty)
     }
 
     @Test func aSecondOwnCGWindowAtTheSameFramePreventsWindowBinding() {

@@ -246,9 +246,13 @@ enum NativeButtonAccessibility {
             if node.statuses[attribute] == AXError.success.rawValue { return value != nil }
             return absent.contains(node.statuses[attribute] ?? AXError.failure.rawValue)
         }
-        return namesKnown && node.enabled != nil && node.frame?.known == true
-            && [kAXEnabledAttribute, kAXPositionAttribute, kAXSizeAttribute]
-                .allSatisfy { node.statuses[$0] == AXError.success.rawValue }
+        guard namesKnown, let frame = node.frame, frame.known,
+              [kAXPositionAttribute, kAXSizeAttribute]
+                .allSatisfy({ node.statuses[$0] == AXError.success.rawValue }) else { return false }
+        if node.enabled != nil && node.statuses[kAXEnabledAttribute] == AXError.success.rawValue { return true }
+        // AppKit exposes zero-area scroller buttons without an enabled attribute.
+        return (frame.width == 0 || frame.height == 0) && node.enabled == nil
+            && absent.contains(node.statuses[kAXEnabledAttribute] ?? AXError.failure.rawValue)
     }
 
     private final class Reader {
