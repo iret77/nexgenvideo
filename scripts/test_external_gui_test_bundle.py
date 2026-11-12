@@ -654,6 +654,7 @@ class ExternalTestBundleTests(unittest.TestCase):
                 reason = ('native inventory changes outside an App-only transition'
                           if name == 'scripts/fixtures/app-cohort-native-inventory.json'
                           else 'Engine acquisition helper changes' if name == 'scripts/compiled_app_release.py'
+                          else 'Packaging verifier is not valid Python' if name == 'scripts/retained_packaging.py'
                           else 'Compiled UI test source, project or reachable shared helper changed')
                 self.assert_compiled_guard_rejects(fixture, reason)
             fixture.original[name] = original

@@ -208,7 +208,10 @@ def _guard_import_view(original, current):
 
 def _packaging_import_view(text):
     import ast
-    module = ast.parse(text)
+    try:
+        module = ast.parse(text)
+    except (SyntaxError, UnicodeDecodeError):
+        raise ValueError('Packaging verifier is not valid Python') from None
     producers = {'mode_inputs', 'event_values', 'collect_original_binding'}
     addition = ast.parse("previous = original_cohort_pack_checks(mode, previous, record['signedInput'], product, previous_signed_build(previous))").body[0]
     following = ast.parse("require(record['previousNotary'].get('cohortPackChecks') == previous.get('cohortPackChecks'), 'Original cohort native pack checks changed')").body[0]
