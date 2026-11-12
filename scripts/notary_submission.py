@@ -1,4 +1,5 @@
 """Checkpoint an Apple request before upload and resume only its saved identity."""
+import datetime
 import hashlib
 import json
 import os
@@ -9,6 +10,8 @@ import sys
 import time
 
 UUID = re.compile(r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}')
+WAIT_BUDGET_SECONDS = 3600
+QUERY_TIMEOUT_SECONDS = 60
 
 
 def require(condition, message):
@@ -47,7 +50,11 @@ def invoke(command, timeout):
     sys.stdout.buffer.write(result.stdout); sys.stdout.buffer.flush()
     sys.stderr.buffer.write(result.stderr); sys.stderr.buffer.flush()
     try:
-        value = json.loads(result.stdout)
+        def unique(pairs):
+            value = dict(pairs)
+            require(len(value) == len(pairs), 'Duplicate Apple response keys')
+            return value
+        value = json.loads(result.stdout, object_pairs_hook=unique)
     except (ValueError, UnicodeError):
         value = {}
     return result.returncode, value if isinstance(value, dict) else {}
@@ -59,10 +66,12 @@ def execute(artifact, env):
     require(all(credentials), 'NOTARY_KEY_FILE, NOTARY_KEY_ID and NOTARY_ISSUER are required')
     attempts = env.get('NOTARY_ATTEMPTS', '3')
     delay = env.get('NOTARY_RETRY_DELAY_SECONDS', '5')
-    budget = env.get('NOTARY_WAIT_BUDGET_SECONDS', '900')
+    budget = env.get('NOTARY_WAIT_BUDGET_SECONDS', str(WAIT_BUDGET_SECONDS))
+    interval = env.get('NOTARY_POLL_INTERVAL_SECONDS', '30')
     require(re.fullmatch(r'[1-9][0-9]*', attempts) is not None, 'NOTARY_ATTEMPTS must be a positive integer')
     require(re.fullmatch(r'[0-9]+', delay) is not None, 'NOTARY_RETRY_DELAY_SECONDS must be non-negative')
     require(re.fullmatch(r'[1-9][0-9]*', budget) is not None, 'NOTARY_WAIT_BUDGET_SECONDS must be a positive integer')
+    require(re.fullmatch(r'[0-9]+', interval) is not None, 'NOTARY_POLL_INTERVAL_SECONDS must be non-negative')
     source = env.get('GITHUB_SHA', '')
     if env.get('RETAINED_PACKAGING_ROOT') or env.get('RETAINED_PACKAGING_INPUT_SHA256'):
         from retained_packaging import notary_product_source
@@ -128,21 +137,36 @@ def execute(artifact, env):
         print('Saved notarization submission: ' + submission, flush=True)
         return
     deadline = time.monotonic() + int(budget)
-    for attempt in range(int(attempts)):
+    failures = 0
+    query = 0
+    apple_status = None
+    while True:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
-        status, reply = invoke(tool + ['wait', submission, *auth], min(300, remaining))
-        if status == 0:
-            if reply.get('status') == 'Accepted':
-                print('Notarization accepted: ' + submission, flush=True)
-                return
+        query += 1
+        status, reply = invoke(tool + ['info', submission, *auth], min(QUERY_TIMEOUT_SECONDS, remaining))
+        apple_status = reply.get('status') if status == 0 and reply.get('id') == submission else None
+        if not isinstance(apple_status, str) or apple_status not in {'Accepted', 'In Progress', 'Invalid', 'Rejected'}:
+            apple_status = None
+        observation = {'schema': 'release-notary-status-observation/v1', 'sha256': sha256,
+                       'sourceSHA': source, 'producerSourceSHA': env.get('GITHUB_SHA', ''),
+                       'runID': env.get('GITHUB_RUN_ID', ''), 'attempt': env.get('GITHUB_RUN_ATTEMPT', ''),
+                       'submissionID': submission, 'role': role, 'query': query, 'exitCode': status,
+                       'appleStatus': apple_status, 'at': datetime.datetime.now(datetime.timezone.utc).isoformat()}
+        persist(state / 'status-observations' / (sha256 + '-' + str(time.time_ns()) + '.json'), observation, exclusive=True)
+        if apple_status == 'Accepted':
+            print('Notarization accepted: ' + submission, flush=True)
+            return
+        if apple_status in {'Invalid', 'Rejected'}:
             invoke(tool + ['log', submission, *auth], 30)
-            raise ValueError('Notarization ' + submission + ' finished with status: ' + str(reply.get('status', 'unknown')))
-        if attempt + 1 < int(attempts):
-            time.sleep(min(int(delay) * (attempt + 1), max(0, deadline - time.monotonic())))
-    invoke(tool + ['log', submission, *auth], 30)
-    raise ValueError('Apple wait did not complete within its budget; resume saved submission ' + submission)
+            raise ValueError('Notarization ' + submission + ' finished with status: ' + apple_status)
+        failures = 0 if apple_status == 'In Progress' else failures + 1
+        require(failures < int(attempts), 'Apple status query failed; resume saved submission ' + submission)
+        time.sleep(min(int(interval) if apple_status else int(delay) * failures,
+                       max(0, deadline - time.monotonic())))
+    state_name = 'still In Progress' if apple_status == 'In Progress' else 'status unknown'
+    raise ValueError('Apple processing ' + state_name + '; resume saved submission ' + submission)
 
 
 if __name__ == '__main__':

@@ -528,3 +528,18 @@ Each proof archive retains its 32 MiB compressed/expanded bounds. The bounded ch
 Typed retained packaging uses the exact producer commit’s finite CI path declaration after checking identical logical App source, native objects, role inputs, component declarations and actual component objects. Historical replay uses that producer commit independently of the current checkout; active runtime execution still requires the declared checkout and a clean tree. GitHub and local diffs plus native root objects remain independently checked.
 
 Typed App continuations bind the original successful shared-engine and quarantined pack-load steps, complete raw output, signed App/archive/main and exact pack identities into their canonical parent provenance. A separate cohort flag reuses those checks only after current byte checks. It never enables the older component/notary continuation flag. A changed DMG App identity or missing original checks retains the required native execution.
+
+Apple status queries use the saved submission ID with a 60-second command deadline.
+An `In Progress` response does not consume the consecutive transport-failure budget.
+Each response has a payload/source/run-bound observation, retained after either success
+or failure alongside the complete job output. Only the matching ID with `Accepted`
+permits stapling; rejection fetches the Apple log. A missing or malformed status is
+recorded as unknown rather than inferred from an unavailable submission log.
+
+The default processing window is one hour, polled every 30 seconds. Apple documents
+that processing typically takes less than an hour, although most requests finish
+sooner: [custom notarization workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow).
+The enclosing 70-minute step and 240-minute packaging job protect against hangs while
+covering the three possible pack/App/DMG windows. Exhausting the processing window
+preserves the same signed checkpoint and submission; it never repeats compilation,
+Core tests, signing or upload. The pending checkpoint remains unqualified for delivery.

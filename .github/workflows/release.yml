@@ -1018,7 +1018,7 @@ jobs:
     if: ${{ !cancelled() && needs.release-gate.result == 'success' && needs.release-gate.outputs.publication-resumed != 'true' && (needs.release-build.result == 'success' || (needs.release-build.result == 'skipped' && (inputs.signed_build_run_id != '' || inputs.notary_progress_run_id != ''))) }}
     # Xcode 27 is required to compile, sign, notarize, staple, and package the app.
     runs-on: macrunner
-    timeout-minutes: 90
+    timeout-minutes: 240
     outputs:
       dmg_sha256: ${{ steps.gui-input.outputs.dmg_sha256 }}
       product_source_sha: ${{ needs.release-gate.outputs.product-source-sha }}
@@ -1183,7 +1183,7 @@ jobs:
 
       - name: Notarize and staple downloadable format packs
         if: steps.restore-notary.outputs.dmg_present != 'true' && env.NGV_COMPILED_APP_RELEASE != 'true'
-        timeout-minutes: 20
+        timeout-minutes: 70
         run: |
           set -euo pipefail
           for PACK_ZIP in .build/plugins/*.ngvpack.zip; do
@@ -1335,7 +1335,7 @@ jobs:
 
       - name: Notarize and staple app
         if: steps.restore-notary.outputs.dmg_present != 'true'
-        timeout-minutes: 20
+        timeout-minutes: 70
         run: scripts/bundle.sh release --notarize-app
 
       - name: Build and sign DMG
@@ -1403,7 +1403,7 @@ jobs:
           retention-days: 7
 
       - name: Notarize and staple DMG
-        timeout-minutes: 20
+        timeout-minutes: 70
         run: scripts/bundle.sh release --notarize-dmg
 
       - name: Retain notarization submissions
@@ -1422,6 +1422,15 @@ jobs:
           name: release-existing-app-notary-observations-${{ github.run_id }}-a${{ github.run_attempt }}
           path: ${{ runner.temp }}/release-notary-state/observations
           if-no-files-found: error
+          retention-days: 90
+
+      - name: Retain notarization status observations
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-notary-status-observations-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-notary-state/status-observations
+          if-no-files-found: ignore
           retention-days: 90
 
       - name: Verify the exact DMG users install
