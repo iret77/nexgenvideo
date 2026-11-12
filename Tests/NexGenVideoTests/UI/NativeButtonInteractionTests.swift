@@ -472,7 +472,7 @@ struct NativeButtonInteractionTests {
 
     private func absentEnabledNode(_ frame: Query.Frame?, status: AXError = .noValue,
                                    failure: String? = nil, pid: pid_t? = nil) -> Query.Node {
-        let base = node(enabled: nil, failure: failure, pid: pid)
+        let base = node(enabled: nil, pid: pid, failure: failure)
         var statuses = base.statuses
         statuses[kAXEnabledAttribute] = status.rawValue
         return Query.Node(parent: 0, pid: base.pid, role: base.role, title: base.title, label: base.label,
