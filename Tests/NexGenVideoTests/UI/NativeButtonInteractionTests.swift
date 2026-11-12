@@ -462,6 +462,10 @@ struct NativeButtonInteractionTests {
             try #require(value.complete)
             #expect(value.nodes.contains { $0.role == kAXScrollBarRole })
             #expect(value.nodes.contains {
+                $0.role == kAXButtonRole && $0.frame?.valid == true
+                    && $0.title == nil && $0.label == nil && $0.enabled == nil
+            })
+            #expect(value.nodes.contains {
                 $0.role == kAXButtonRole && $0.frame?.known == true
                     && ($0.frame?.width == 0 || $0.frame?.height == 0) && $0.enabled == nil
             })
@@ -703,5 +707,45 @@ struct NativeButtonInteractionTests {
             #expect(Query.buttons(result, title: "Undo", inside: fixture.request.windowFrame).count == 1)
         }
         #expect(outcome.1.clean)
+    }
+
+    @Test func unnamedButtonsRequireKnownNamesAndCannotHideNamedTargets() {
+        func unnamed(title: String? = nil, label: String? = nil,
+                     overrides: [String: Int32] = [:], pid: pid_t? = nil,
+                     frame: Query.Frame? = nil) -> Query.Node {
+            var statuses: [String: Int32] = ["pid": 0, kAXRoleAttribute: 0,
+                kAXPositionAttribute: 0, kAXSizeAttribute: 0,
+                kAXEnabledAttribute: AXError.attributeUnsupported.rawValue,
+                kAXTitleAttribute: title == nil ? AXError.noValue.rawValue : 0,
+                kAXDescriptionAttribute: label == nil ? AXError.attributeUnsupported.rawValue : 0]
+            statuses.merge(overrides) { _, replacement in replacement }
+            return Query.Node(parent: 0, pid: pid ?? getpid(), role: kAXButtonRole,
+                title: title, label: label, enabled: nil, frame: frame ?? self.frame,
+                statuses: statuses, childTypes: [])
+        }
+        for name in [nil, ""] as [String?] {
+            let empty = unnamed(title: name, label: name)
+            #expect(Query.buttons(snapshot([empty]), title: "Undo", inside: probe).isEmpty)
+            #expect(Query.buttons(snapshot([empty]), title: "", inside: probe).isEmpty)
+            #expect(Query.buttons(snapshot([node(), empty]), title: "Undo", inside: probe).count == 1)
+            #expect(Query.buttons(snapshot([node(), empty, node()]), title: "Undo", inside: probe).count == 2)
+        }
+        for attribute in ["pid", kAXRoleAttribute, kAXPositionAttribute, kAXSizeAttribute,
+                          kAXTitleAttribute, kAXDescriptionAttribute, kAXEnabledAttribute] {
+            #expect(Query.buttons(snapshot([node(), unnamed(overrides: [attribute: AXError.cannotComplete.rawValue])]),
+                title: "Undo", inside: probe).isEmpty)
+        }
+        for attribute in [kAXTitleAttribute, kAXDescriptionAttribute, kAXEnabledAttribute] {
+            #expect(Query.buttons(snapshot([node(), unnamed(overrides: [attribute: AXError.success.rawValue])]),
+                title: "Undo", inside: probe).isEmpty)
+        }
+        for named in [unnamed(title: "Undo"), unnamed(label: "Undo"),
+                      unnamed(title: "Undo", overrides: [kAXTitleAttribute: AXError.noValue.rawValue]),
+                      unnamed(label: "Undo", overrides: [kAXDescriptionAttribute: AXError.attributeUnsupported.rawValue])] {
+            #expect(Query.buttons(snapshot([node(), named]), title: "Undo", inside: probe).isEmpty)
+        }
+        #expect(Query.buttons(snapshot([node(), unnamed(pid: getpid() + 1)]), title: "Undo", inside: probe).isEmpty)
+        #expect(Query.buttons(snapshot([node(), unnamed(frame: .init(CGRect(x: Double.nan, y: 20, width: 50, height: 28)))]),
+            title: "Undo", inside: probe).isEmpty)
     }
 }

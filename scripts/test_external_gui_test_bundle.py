@@ -849,12 +849,13 @@ class ExternalTestBundleTests(unittest.TestCase):
         inventory.update(appSourceSHA=prior['appSourceSHA'], nativeSourceObjects=prior['nativeSourceObjects'])
         additions = {'actualLegacyScrollersKeepTheEnabledUndoDiscoverable',
                      'zeroAreaButtonsWithAbsentEnabledNeverBecomeTargetsOrHideDuplicates',
-                     'absentEnabledRequiresProvenZeroAreaAndReadableIdentity'}
+                     'absentEnabledRequiresProvenZeroAreaAndReadableIdentity',
+                     'unnamedButtonsRequireKnownNamesAndCannotHideNamedTargets'}
         ended = inventory['modules']['app']['exactEndedFunctionIDs']
         inventory['modules']['app']['exactEndedFunctionIDs'] = [item for item in ended
             if not any('/' + name + '()/' in item for name in additions)]
-        self.assertEqual(len(ended) - len(inventory['modules']['app']['exactEndedFunctionIDs']), 3)
-        inventory['expectedActualExecutions'] -= 3
+        self.assertEqual(len(ended) - len(inventory['modules']['app']['exactEndedFunctionIDs']), 4)
+        inventory['expectedActualExecutions'] -= 4
         fixture.original[inventory_path] = (json.dumps(inventory, indent=2, sort_keys=True) + '\n').encode()
         prior['criteria']['sha256'] = hashlib.sha256(fixture.original[inventory_path]).hexdigest()
         fixture.original[cohort] = (json.dumps(prior, indent=2, sort_keys=True) + '\n').encode()
@@ -901,7 +902,7 @@ class ExternalTestBundleTests(unittest.TestCase):
         self.assertEqual(transition['changedRolePaths']['tests'], [reader, 'Tests/NexGenVideoTests'])
         self.assertEqual(transition['consumerCriteriaSHA256'], current['criteria']['sha256'])
         self.assertTrue(transition['newRuntimeProductProvenanceRequired'])
-        self.assertEqual(len(transition['additionalNativeAppTests']), 3)
+        self.assertEqual(len(transition['additionalNativeAppTests']), 4)
         for target in (prior['nativeSourceObjects'], prior['componentSourceObjects'], prior['roleSourceObjects']['tests']):
             def changed_objects(source, paths):
                 result = objects(source, paths)
@@ -916,14 +917,15 @@ class ExternalTestBundleTests(unittest.TestCase):
     def test_compiled_client_native_additions_preserve_every_existing_criterion(self):
         names = ['actualLegacyScrollersKeepTheEnabledUndoDiscoverable',
                  'zeroAreaButtonsWithAbsentEnabledNeverBecomeTargetsOrHideDuplicates',
-                 'absentEnabledRequiresProvenZeroAreaAndReadableIdentity']
+                 'absentEnabledRequiresProvenZeroAreaAndReadableIdentity',
+                 'unnamedButtonsRequireKnownNamesAndCannotHideNamedTargets']
         additions = ['NexGenVideoTests.NativeButtonInteractionTests/' + name
                      + '()/NativeButtonInteractionTests.swift:SOURCE-LINE:6' for name in names]
         before = {'expectedActualExecutions': 2, 'modules': {'app': {'exactEndedFunctionIDs': ['original'],
                   'exactSkippedFunctionIDs': ['skipped'], 'issuesExpected': 0},
                   'engine': {'exactEndedFunctionIDs': ['engine']}}, 'xctest': ['host']}
         after = copy.deepcopy(before)
-        after['expectedActualExecutions'] += 3
+        after['expectedActualExecutions'] += 4
         after['modules']['app']['exactEndedFunctionIDs'] += additions
         self.assertEqual(bundle._native_inventory_additions(before, before), [])
         self.assertEqual(bundle._native_inventory_additions(before, after), sorted(additions))

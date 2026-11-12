@@ -244,14 +244,15 @@ enum NativeButtonAccessibility {
         let namesKnown = [(kAXTitleAttribute, node.title), (kAXDescriptionAttribute, node.label)].allSatisfy { pair in
             let (attribute, value) = pair
             if node.statuses[attribute] == AXError.success.rawValue { return value != nil }
-            return absent.contains(node.statuses[attribute] ?? AXError.failure.rawValue)
+            return value == nil && absent.contains(node.statuses[attribute] ?? AXError.failure.rawValue)
         }
         guard namesKnown, let frame = node.frame, frame.known,
               [kAXPositionAttribute, kAXSizeAttribute]
                 .allSatisfy({ node.statuses[$0] == AXError.success.rawValue }) else { return false }
         if node.enabled != nil && node.statuses[kAXEnabledAttribute] == AXError.success.rawValue { return true }
-        // AppKit exposes zero-area scroller buttons without an enabled attribute.
-        return (frame.width == 0 || frame.height == 0) && node.enabled == nil
+        // Unnamed or zero-area scroller buttons cannot match a named, visible target.
+        let unnamed = [node.title, node.label].allSatisfy { $0 == nil || $0 == "" }
+        return (frame.width == 0 || frame.height == 0 || unnamed) && node.enabled == nil
             && absent.contains(node.statuses[kAXEnabledAttribute] ?? AXError.failure.rawValue)
     }
 
