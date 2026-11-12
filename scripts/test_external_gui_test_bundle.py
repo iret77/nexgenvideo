@@ -589,6 +589,8 @@ class ExternalTestBundleTests(unittest.TestCase):
     def test_metadata_retry_compatibility_preserves_exact_request_and_guards(self):
         current = (journey.REPOSITORY / 'scripts/retained_app_test_products.py').read_text()
         module = ast.parse(current)
+        api_source = ast.get_source_segment(current, next(node for node in module.body
+                                            if isinstance(node, ast.FunctionDef) and node.name == 'api'))
         legacy = ast.parse('def api(path):\n    with urllib.request.build_opener(NoRedirect()).open(github_request(path), timeout=40) as response:\n        require(response.status == 200, "GitHub metadata request did not succeed")\n        data = response.read(16 * 1024 * 1024 + 1)\n        require(len(data) <= 16 * 1024 * 1024, "GitHub metadata exceeds its bound")\n        return json.loads(data)').body[0]
         module.body = [legacy if isinstance(node, ast.FunctionDef) and node.name == 'api' else node
                        for node in module.body if not (isinstance(node, ast.Import) and node.names[0].name == 'time')]
@@ -598,7 +600,9 @@ class ExternalTestBundleTests(unittest.TestCase):
                               ('timeout=40', 'timeout=400'), ('response.status == 200', 'True'),
                               ('return json.loads(data)', 'return {}'), ('import time', 'import time as clock')]:
             with self.subTest(change=after), self.assertRaises(ValueError):
-                bundle._metadata_api_import_view(current.replace(before, after, 1))
+                changed = current.replace(before, after, 1) if before == 'import time' else current.replace(
+                    api_source, api_source.replace(before, after, 1), 1)
+                bundle._metadata_api_import_view(changed)
         changed_guard = current.replace('return None', 'return request', 1)
         self.assertNotEqual(bundle._metadata_api_import_view(original), bundle._metadata_api_import_view(changed_guard))
 
