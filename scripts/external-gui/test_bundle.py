@@ -284,7 +284,8 @@ def _native_inventory_additions(before, after):
                 + '()/NativeButtonInteractionTests.swift:SOURCE-LINE:6' for name in (
                     'actualLegacyScrollersKeepTheEnabledUndoDiscoverable',
                     'zeroAreaButtonsWithAbsentEnabledNeverBecomeTargetsOrHideDuplicates',
-                    'absentEnabledRequiresProvenZeroAreaAndReadableIdentity')}
+                    'absentEnabledRequiresProvenZeroAreaAndReadableIdentity',
+                    'unnamedButtonsRequireKnownNamesAndCannotHideNamedTargets')}
     prior = before['modules']['app']['exactEndedFunctionIDs']
     current = after['modules']['app']['exactEndedFunctionIDs']
     require(len(current) == len(set(current)) and set(current) - set(prior) == expected
