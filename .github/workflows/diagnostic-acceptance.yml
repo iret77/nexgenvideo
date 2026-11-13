@@ -1508,6 +1508,9 @@ jobs:
       failure_artifact_sha256: ${{ inputs.failure_artifact_sha256 }}
       expected_dmg_sha256: ${{ inputs.expected_dmg_sha256 }}
       verified_pr_run_id: ${{ inputs.verified_pr_run_id }}
+      observer_source_sha: ${{ inputs.product_source_sha }}
+      observer_artifact_id: ${{ inputs.products_artifact_id }}
+      observer_artifact_sha256: ${{ inputs.products_artifact_sha256 }}
 
   native-segment-geometry:
     needs: source

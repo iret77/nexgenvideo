@@ -1,11 +1,18 @@
 import copy
+import base64
 import hashlib
 import json
 from pathlib import Path
 import subprocess
+import struct
 import tempfile
 import unittest
+import zipfile
+import re
+import shutil
+import yaml
 from unittest.mock import Mock, patch
+from contextlib import contextmanager, ExitStack
 
 import scene_pointer_delivery as diagnostic
 
@@ -36,6 +43,72 @@ def original():
 
 
 class PointerBoundaryTests(unittest.TestCase):
+    def test_source_and_native_workflows_resolve_identical_observer_selectors(self):
+        root = Path(__file__).resolve().parents[1]
+        workflow = yaml.safe_load((root / '.github/workflows/diagnostic-acceptance.yml').read_text())
+        reusable = yaml.safe_load((root / '.github/workflows/scene-pointer-delivery-diagnostic.yml').read_text())
+        inputs = {'candidate_kind': 'native-scene-pointer-delivery', 'run_id': '100', 'source_sha': 'a' * 40,
+            'artifact_id': '200', 'artifact_sha256': 'b' * 64, 'failure_artifact_id': '300',
+            'failure_artifact_sha256': 'c' * 64, 'expected_dmg_sha256': 'd' * 64,
+            'verified_pr_run_id': '400', 'interface_scale': '1', 'product_source_sha': 'e' * 40,
+            'products_artifact_id': '500', 'products_artifact_sha256': 'f' * 64}
+        def resolve(values, selected):
+            result = {}
+            for key, value in values.items():
+                match = re.fullmatch(r'\$\{\{ inputs\.([a-z0-9_]+) \}\}', value)
+                result[key] = selected.get(match[1], '') if match else value
+            return result
+        binding = next(step for step in workflow['jobs']['source']['steps']
+            if step.get('run', '').startswith('python3 scripts/scene_pointer_delivery.py bind'))
+        source_env = resolve({**workflow['env'], **binding['env']}, inputs)
+        forwarded = resolve(workflow['jobs']['native-scene-pointer-delivery']['with'], inputs)
+        native_env = resolve(reusable['jobs']['measurement']['env'], forwarded)
+        self.assertEqual(diagnostic.validate_inputs(source_env), diagnostic.validate_inputs(native_env))
+        self.assertEqual(diagnostic.validate_inputs(native_env)['observerArtifactID'], 500)
+
+    def test_observer_archive_rejects_symlink_or_directory_executable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for mode in (0o100755, 0o120777, 0o40755):
+                path = Path(directory) / str(mode)
+                with zipfile.ZipFile(path, 'w') as archive:
+                    item = zipfile.ZipInfo('scene-pointer-delivery/observer-executable')
+                    item.create_system = 3; item.external_attr = mode << 16
+                    archive.writestr(item, b'bytes')
+                if mode == 0o100755:
+                    self.assertEqual(diagnostic.observer_archive(path)[item.filename], b'bytes')
+                else:
+                    with self.subTest(mode=mode), self.assertRaises(ValueError):
+                        diagnostic.observer_archive(path)
+
+    def test_observer_selectors_are_all_or_none(self):
+        reuse = {'PRODUCT_SHA': 'e' * 40, 'PRODUCTS_ID': '500', 'PRODUCTS_DIGEST': 'f' * 64}
+        self.assertNotIn('observerArtifactID', diagnostic.validate_inputs(environment()))
+        self.assertEqual(diagnostic.validate_inputs({**environment(), **reuse})['observerArtifactID'], 500)
+        for key in reuse:
+            for value in ('', 'invalid', True):
+                with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                    diagnostic.validate_inputs({**environment(), **reuse, key: value})
+
+    def test_observer_requires_thin_arm64_macos_executable(self):
+        header = [0xFEEDFACF, 0x100000C, 0, 2, 1, 24, 0, 0]
+        command = [0x32, 24, 1, 0x1B0200, 0x1B0200, 0]
+        raw = struct.pack('<8I6I', *header, *command)
+        self.assertEqual(diagnostic.observer_macho(raw)['minimumOS'], 0x1B0200)
+        for offset, value in ((0, 0xCAFEBABE), (4, 0x1000007), (12, 6), (16, 2),
+                              (20, 25), (36, 16), (40, 2), (52, 1)):
+            changed = bytearray(raw); struct.pack_into('<I', changed, offset, value)
+            with self.subTest(offset=offset), self.assertRaises(ValueError):
+                diagnostic.observer_macho(changed)
+        with self.assertRaises(ValueError):
+            diagnostic.observer_macho(raw[:20])
+
+    def test_observer_compile_recipe_tracks_flags_and_rejects_ambiguity(self):
+        source = "subprocess.run(['xcrun', 'swiftc', '-swift-version', '6', '-o', str(observer_binary)], check=True, timeout=90)"
+        self.assertNotEqual(diagnostic.compile_recipe(source), diagnostic.compile_recipe(source.replace("'6'", "'5'")))
+        for changed in ('pass', source + '\n' + source):
+            with self.subTest(source=changed), self.assertRaises(ValueError):
+                diagnostic.compile_recipe(changed)
+
     def test_exact_input_selection(self):
         selected = diagnostic.validate_inputs(environment())
         self.assertEqual(selected['failureArtifactID'], 300)
@@ -268,6 +341,69 @@ class PointerOutcomeTests(unittest.TestCase):
 
 
 class PointerPreflightTests(unittest.TestCase):
+    def test_invalid_observer_reuse_never_falls_back_to_compile_or_restore(self):
+        import retained_release_runtime
+        with patch.object(diagnostic.sys, 'platform', 'darwin'), \
+                patch.dict(diagnostic.os.environ, {'GITHUB_ACTIONS': 'true', 'RUNNER_OS': 'macOS'}), \
+                patch.object(diagnostic, 'bind', return_value=({}, {}, {'selected': {'sourceSHA': 'a' * 40},
+                    'producer': {}, 'observerReuse': {'executableSHA256': 'b' * 64, 'deployment': {}}})), \
+                patch.object(diagnostic, 'observer_archive', return_value={'scene-pointer-delivery/observer-executable': b'tampered'}), \
+                patch.object(diagnostic.subprocess, 'run') as compile_call, \
+                patch.object(retained_release_runtime, 'restore') as restore, self.assertRaises(ValueError):
+            diagnostic.run(self.root / 'measurement')
+        compile_call.assert_not_called(); restore.assert_not_called()
+
+    def test_actual_run_scopes_capture_and_preserves_startup_and_cleanup_failures(self):
+        import bpy_runtime_acceptance
+        import retained_release_runtime
+        for mode in ('app-exit1', 'capture-start', 'capture-cleanup', 'capture-early-death'):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
+                root = Path(directory); output = root / 'measurement'; order = []
+                app = root / 'scene-pointer-workspace-999/NexGenVideo.app/Contents/MacOS/NexGenVideo'
+                app.parent.mkdir(parents=True); app.write_bytes(b'app')
+                observer = Mock(pid=901, returncode=1); observer.poll.return_value = 1
+                @contextmanager
+                def capture(path):
+                    order.append('capture-enter')
+                    if mode == 'capture-start':
+                        raise AssertionError('capture-start')
+                    try:
+                        yield
+                    finally:
+                        order.append('capture-exit')
+                        if mode.startswith('capture-'):
+                            raise AssertionError(mode)
+                def supervise(binary, native, *_):
+                    order.append('app')
+                    (native / 'process.json').write_text('{"pid":902}')
+                    raise AssertionError('bpy runtime exited with status 1')
+                def command(args, **_):
+                    if args[0] == 'xcrun':
+                        Path(args[-1]).write_bytes(b'observer')
+                stack.enter_context(patch.object(diagnostic.sys, 'platform', 'darwin'))
+                stack.enter_context(patch.dict(diagnostic.os.environ,
+                    {'GITHUB_ACTIONS': 'true', 'RUNNER_OS': 'macOS', 'GITHUB_RUN_ID': '999'}))
+                stack.enter_context(patch.object(diagnostic, 'bind', return_value=({}, {},
+                    {'selected': {'sourceSHA': 'a' * 40}, 'producer': {}})))
+                stack.enter_context(patch.object(diagnostic.subprocess, 'run', side_effect=command))
+                stack.enter_context(patch.object(diagnostic.subprocess, 'check_output', return_value='native'))
+                stack.enter_context(patch.object(diagnostic.subprocess, 'Popen', return_value=observer))
+                stack.enter_context(patch.object(retained_release_runtime, 'restore'))
+                stack.enter_context(patch.object(diagnostic, 'product_bytes', return_value={'executableSHA256': 'e' * 64}))
+                stack.enter_context(patch.object(diagnostic, 'prepare_fixtures', return_value={}))
+                stack.enter_context(patch.object(diagnostic, 'wait_observer_ready'))
+                stack.enter_context(patch.object(diagnostic, 'verify_open_capture', return_value={}))
+                stack.enter_context(patch.object(bpy_runtime_acceptance, 'capture_open_logs', side_effect=capture))
+                stack.enter_context(patch.object(bpy_runtime_acceptance, 'supervise', side_effect=supervise))
+                stack.enter_context(patch.object(bpy_runtime_acceptance.WorkerReader, 'identity', return_value=None))
+                expected = 'Observer incomplete' if mode == 'app-exit1' else mode
+                with self.assertRaisesRegex((ValueError, AssertionError), expected):
+                    diagnostic.run(output)
+                self.assertEqual(order, ['capture-enter'] if mode == 'capture-start'
+                    else ['capture-enter', 'app', 'capture-exit'])
+                self.assertTrue(json.loads((output / 'cleanup.json').read_text())['observerReaped'])
+                observer.wait.assert_called_once()
+
     def test_failed_observer_compile_stops_before_runtime_acquisition_or_app_start(self):
         import retained_release_runtime
         output = self.root / 'measurement'
@@ -322,6 +458,204 @@ class PointerPreflightTests(unittest.TestCase):
             (self.root / 'ready.json').write_text(json.dumps({**self.ready, key: value}))
             with self.subTest(key=key), self.assertRaises(ValueError):
                 self.wait()
+
+
+class PointerObserverBindingTests(unittest.TestCase):
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory(); self.addCleanup(folder.cleanup)
+        self.root = Path(folder.name)
+        repo = Path(__file__).resolve().parents[1]
+        self.sources = {name: (repo / name).read_bytes() for name in diagnostic.PATHS}
+        self.selected = diagnostic.validate_inputs({**environment(), 'PRODUCT_SHA': 'e' * 40,
+            'PRODUCTS_ID': '500', 'PRODUCTS_DIGEST': 'f' * 64})
+        self.producer = {'app': {'NGVSourceCommit': 'a' * 40, 'executableSHA256': '1' * 64},
+            'mountedAppTreeSHA256': '2' * 64, 'packTreeSHA256': '3' * 64}
+        product = {'appTreeSHA256': '2' * 64, 'executableSHA256': '1' * 64, 'packTreeSHA256': '3' * 64}
+        self.raw = struct.pack('<8I6I', 0xFEEDFACF, 0x100000C, 0, 2, 1, 24, 0, 0,
+            0x32, 24, 1, 0x1B0200, 0x1B0200, 0)
+        self.records = {
+            'binding/binding.json': {'harnessSourceSHA': 'e' * 40, 'executionRunID': '123',
+                'selected': diagnostic.validate_inputs(environment()), 'producer': self.producer,
+                'sourceFiles': {name: hashlib.sha256(raw).hexdigest() for name, raw in self.sources.items()}},
+            'environment.json': {'observerSourceSHA256': hashlib.sha256(self.sources['scripts/scene_pointer_observer.swift']).hexdigest(),
+                'observerExecutableSHA256': hashlib.sha256(self.raw).hexdigest(), 'architecture': 'arm64',
+                'sourceSHA': 'a' * 40, 'appBuilds': 0, 'nativeUnitRuns': 0},
+            'actual-app-pack-before.json': copy.deepcopy(product),
+            'actual-app-pack-after.json': copy.deepcopy(product),
+            'observer/ready.json': {'schema': 'nexgenvideo/scene-pointer-observer-ready/1',
+                'executableSHA256': '1' * 64, 'sourceSHA': 'a' * 40, 'observerPID': 2009,
+                'AXTrusted': True, 'postEventAccess': True, 'executable': '/fixture/NexGenVideo'},
+            'observer/attachment.json': {'executableSHA256': '1' * 64, 'sourceSHA': 'a' * 40,
+                'observerPID': 2009, 'processIdentity': {'pid': 2010, 'startAbsoluteTime': 42,
+                    'executable': '/fixture/NexGenVideo'}},
+            'cleanup.json': {'observerPID': 2009, 'appPID': 2010, 'ownedAppGone': True,
+                'observerReaped': True, 'beforeAfterAppPackExact': True, 'observerExitCode': 1},
+            'native/process.json': {'pid': 2010, 'sourceSHA': 'a' * 40, 'mode': 'runtime'},
+            'native/runtime-failure-observation.json': {'hostPID': 2010, 'sourceSHA': 'a' * 40,
+                'error': 'invalid open request'},
+            'native/process-failure.json': {'pid': 2010, 'error': 'bpy runtime exited with status 1'},
+        }
+        self.run = {'id': 123, 'head_sha': 'e' * 40, 'workflow_id': 355242770, 'run_attempt': 1,
+            'repository': {'full_name': 'iret77/nexgenvideo'}, 'path': '.github/workflows/diagnostic-acceptance.yml',
+            'event': 'workflow_dispatch', 'actor': {'login': 'iret77'}, 'head_branch': 'iret77/rc-delivery-base-795',
+            'status': 'completed', 'conclusion': 'failure'}
+        self.job = {'id': 789, 'name': 'native-scene-pointer-delivery / measurement', 'run_id': 123,
+            'head_sha': 'e' * 40, 'run_attempt': 1, 'labels': ['macrunner'], 'status': 'completed',
+            'conclusion': 'failure', 'started_at': '2026-01-01T00:00:00Z', 'completed_at': '2026-01-01T00:03:00Z',
+            'steps': [{'name': 'Measure one HID intervention during the retained full bpy harness', 'conclusion': 'failure'},
+                {'name': 'Retain the complete one-shot observation', 'conclusion': 'success'}]}
+        self.artifact_changes = {}
+
+    def bind(self):
+        archive = self.root / 'fixture.zip'
+        with zipfile.ZipFile(archive, 'w') as zipped:
+            contents = {name: json.dumps(value).encode() for name, value in self.records.items()}
+            contents.update({'observer-executable': self.raw, 'observer-compile.log': b''})
+            for name, raw in contents.items():
+                item = zipfile.ZipInfo('scene-pointer-delivery/' + name)
+                item.create_system = 3; item.external_attr = 0o100755 << 16
+                zipped.writestr(item, raw)
+        selected = {**self.selected, 'observerArtifactSHA256': diagnostic.sha(archive)}
+        artifact = {'id': 500, 'name': 'native-scene-pointer-delivery-123', 'expired': False,
+            'workflow_run': {'id': 123, 'head_sha': 'e' * 40}, 'digest': 'sha256:' + diagnostic.sha(archive),
+            'size_in_bytes': archive.stat().st_size, 'created_at': '2026-01-01T00:01:00Z',
+            'updated_at': '2026-01-01T00:02:00Z', 'expires_at': '2099-01-01T00:00:00Z', **self.artifact_changes}
+        replies = {'actions/artifacts/500': artifact, 'actions/runs/123': self.run,
+            'actions/runs/123/attempts/1/jobs?per_page=100': {'total_count': 1, 'jobs': [self.job]},
+            'actions/runs/123/artifacts?per_page=100': {'total_count': 1, 'artifacts': [artifact]}}
+        with tempfile.TemporaryDirectory(dir=self.root) as destination, \
+                patch.object(diagnostic, 'api', side_effect=lambda route: copy.deepcopy(replies[route])), \
+                patch.object(diagnostic, 'download', side_effect=lambda _, target, maximum: shutil.copyfile(archive, target)), \
+                patch.object(diagnostic, 'download_job_log', return_value='4' * 64), \
+                patch.object(diagnostic.subprocess, 'check_output', side_effect=lambda args, **_: self.sources[args[2].split(':', 1)[1]]):
+            return diagnostic.bind_observer(Path(destination), selected, self.producer)
+
+    def test_original_failed_run_yields_only_its_executed_observer_product(self):
+        proof = self.bind()
+        self.assertEqual(proof['executableSHA256'], hashlib.sha256(self.raw).hexdigest())
+        self.assertEqual(proof['sourceSHA'], 'e' * 40)
+        self.assertEqual(proof['compileEnvironment']['sourceSHA'], 'a' * 40)
+        self.assertEqual(proof['run']['conclusion'], 'failure')
+
+    def test_foreign_or_tampered_observer_provenance_is_rejected(self):
+        cases = [
+            (self.run, 'run_attempt', 2), (self.run, 'head_sha', 'f' * 40),
+            (self.run, 'repository', {'full_name': 'other/repo'}), (self.run, 'conclusion', 'success'),
+            (self.job, 'labels', ['macos-15']), (self.job, 'run_id', 124),
+            (self.artifact_changes, 'digest', 'sha256:' + '0' * 64),
+            (self.artifact_changes, 'expired', True),
+            (self.records['binding/binding.json'], 'harnessSourceSHA', 'f' * 40),
+            (self.records['environment.json'], 'observerExecutableSHA256', '0' * 64),
+            (self.records['environment.json'], 'observerSourceSHA256', '0' * 64),
+            (self.records['observer/ready.json'], 'AXTrusted', False),
+            (self.records['observer/ready.json'], 'executableSHA256', '0' * 64),
+            (self.records['observer/attachment.json']['processIdentity'], 'pid', 999),
+            (self.records['cleanup.json'], 'ownedAppGone', False),
+            (self.records['cleanup.json'], 'observerReaped', False),
+            (self.records['native/runtime-failure-observation.json'], 'error', 'different failure'),
+            (self.records['actual-app-pack-after.json'], 'packTreeSHA256', '0' * 64),
+        ]
+        missing = object()
+        for target, key, changed in cases:
+            prior = target.get(key, missing); target[key] = changed
+            try:
+                with self.subTest(key=key, changed=changed), self.assertRaises(ValueError):
+                    self.bind()
+            finally:
+                if prior is missing:
+                    target.pop(key)
+                else:
+                    target[key] = prior
+        name = 'scripts/scene_pointer_delivery.py'
+        self.sources[name] = self.sources[name].replace(b"'-swift-version', '6'", b"'-swift-version', '5'")
+        self.records['binding/binding.json']['sourceFiles'][name] = hashlib.sha256(self.sources[name]).hexdigest()
+        with self.assertRaisesRegex(ValueError, 'compile recipe changed'):
+            self.bind()
+
+
+class PointerOpenCaptureTests(unittest.TestCase):
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory(); self.addCleanup(folder.cleanup)
+        self.root = Path(folder.name); self.native = self.root / 'native'; self.native.mkdir()
+        self.observed = self.root / 'observer'; self.observed.mkdir()
+        self.binary = self.root / 'NexGenVideo.app/Contents/MacOS/NexGenVideo'
+        self.binary.parent.mkdir(parents=True); self.binary.write_bytes(b'app')
+        self.source = 'a' * 40
+        self.receipt = {'reaped': True, 'stoppedEarly': False, 'cancelled': [], 'cleanupErrors': [], 'returncode': -15}
+        self.put(self.native / 'process.json', {'pid': 100, 'sourceSHA': self.source})
+        self.put(self.observed / 'attachment.json', {'sourceSHA': self.source,
+            'executableSHA256': diagnostic.sha(self.binary),
+            'processIdentity': {'pid': 100, 'startAbsoluteTime': 10, 'executable': str(self.binary)}})
+        service = str(self.binary.parent.parent / 'XPCServices/NexGenVideoBpyService0.xpc/Contents/MacOS/NexGenVideoBpyService')
+        self.events = [
+            {'processID': 200, 'processImagePath': service, 'machTimestamp': 30,
+             'subsystem': 'de.h5ventures.nexgenvideo.bpy-service', 'category': 'open-diagnostic',
+             'timestamp': '2026-11-13 00:00:01+0000',
+             'eventMessage': 'open.prepared session=session owner=owner pid=200 start=20'},
+            {'processID': 100, 'processImagePath': str(self.binary), 'machTimestamp': 40,
+             'subsystem': 'de.h5ventures.nexgenvideo', 'category': 'bpy-open',
+             'timestamp': '2026-11-13 00:00:02+0000',
+             'eventMessage': 'open.preparation session=session servicePID=200 serviceStart=20'},
+            {'processID': 200, 'processImagePath': service, 'machTimestamp': 50,
+             'subsystem': 'de.h5ventures.nexgenvideo.bpy-service', 'category': 'open-diagnostic',
+             'timestamp': '2026-11-13 00:00:03+0000',
+             'eventMessage': 'open.fail session=session owner=owner pid=200 start=20 stage=reserve domain=NSCocoaErrorDomain code=513'},
+        ]
+        self.started = diagnostic.datetime(2026, 11, 13, tzinfo=diagnostic.timezone.utc).timestamp()
+
+    def put(self, path, value):
+        path.write_text(json.dumps(value))
+
+    def check(self):
+        self.put(self.native / 'open-capture.json', self.receipt)
+        (self.native / 'open-events.ndjson').write_text('\n'.join(json.dumps(row) for row in self.events))
+        return diagnostic.verify_open_capture(self.native, self.observed, self.binary,
+            self.source, self.started, self.started + 10)
+
+    def test_owned_failure_discriminator_and_intentional_stream_term_are_retained(self):
+        result = self.check()
+        self.assertEqual(result['sessions'][0]['failures'][0]['fields']['stage'], 'reserve')
+        self.assertEqual(result['hostIdentity']['pid'], 100)
+
+    def test_incomplete_capture_receipt_never_qualifies(self):
+        for key, value in (('reaped', False), ('stoppedEarly', True), ('cancelled', [15]),
+                           ('cleanupErrors', ['failure']), ('returncode', None)):
+            original = self.receipt.copy(); self.receipt[key] = value
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                self.check()
+            self.receipt = original
+
+    def test_foreign_missing_or_reused_service_events_are_rejected(self):
+        original = copy.deepcopy(self.events)
+        for index, key, value in ((0, 'processID', 201), (0, 'processImagePath', '/other'),
+                (0, 'machTimestamp', 19), (1, 'timestamp', '2026-11-12 00:00:00+0000'),
+                (2, 'eventMessage', 'open.fail session=session owner=owner pid=200 start=21 stage=reserve domain=D code=1')):
+            self.events = copy.deepcopy(original); self.events[index][key] = value
+            with self.subTest(index=index, key=key, value=value), self.assertRaises(ValueError):
+                self.check()
+        self.events = original[1:]
+        with self.assertRaises(ValueError):
+            self.check()
+
+    def test_same_service_session_foreign_owner_remains_explicit_not_a_matched_request(self):
+        self.events[2]['eventMessage'] = self.events[2]['eventMessage'].replace('owner=owner', 'owner=foreign')
+        failure = self.check()['sessions'][0]['failures'][0]
+        self.assertFalse(failure['ownerMatchesPreparation'])
+        self.assertEqual(failure['fields']['owner'], 'foreign')
+
+    def test_generic_app_failure_requires_its_own_service_discriminator(self):
+        self.put(self.native / 'runtime-failure-observation.json', {'error': 'invalid open request'})
+        response = b'{"ok":false,"message":"invalid open request"}'
+        failure = {'hostPID': 100, 'sourceSHA': self.source, 'sessionID': 'other-session',
+            'response': base64.b64encode(response).decode(), 'responseSHA256': hashlib.sha256(response).hexdigest()}
+        self.put(self.native / 'open-failure-one.json', failure)
+        with self.assertRaises(ValueError):
+            self.check()
+        failure['sessionID'] = 'session'; self.put(self.native / 'open-failure-one.json', failure)
+        self.assertEqual(len(self.check()['sessions'][0]['failures']), 1)
+        self.events[2]['eventMessage'] = self.events[2]['eventMessage'].replace('owner=owner', 'owner=foreign')
+        with self.assertRaises(ValueError):
+            self.check()
 
 
 if __name__ == '__main__':

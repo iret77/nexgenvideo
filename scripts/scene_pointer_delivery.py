@@ -1,4 +1,7 @@
 import argparse
+import ast
+import base64
+from datetime import datetime, timezone
 import hashlib
 import json
 import math
@@ -6,9 +9,12 @@ import os
 from pathlib import Path
 import re
 import signal
+import stat
+import struct
 import subprocess
 import sys
 import time
+import zipfile
 
 from scene_history_hierarchy import (api, download, download_job_log, product_bytes,
     read_archive, require, sha, verify_failure, write)
@@ -42,7 +48,15 @@ def validate_inputs(env):
         require(isinstance(value, str) and re.fullmatch(pattern, value), 'Missing or invalid ' + key)
         result[name] = int(value) if name.endswith('ID') else value
     require(env.get('SCALE') == '1', 'Pointer measurement requires standard scale')
-    unrelated = ['PRODUCT_SHA', 'PRODUCTS_ID', 'PRODUCTS_DIGEST', 'RUNTIME_FAILURE_BINDING',
+    reuse = {'observerSourceSHA': ('PRODUCT_SHA', r'[a-f0-9]{40}'),
+        'observerArtifactID': ('PRODUCTS_ID', r'[1-9][0-9]*'),
+        'observerArtifactSHA256': ('PRODUCTS_DIGEST', r'[a-f0-9]{64}')}
+    if any(env.get(key) for key, _ in reuse.values()):
+        for name, (key, pattern) in reuse.items():
+            value = env.get(key, '')
+            require(isinstance(value, str) and re.fullmatch(pattern, value), 'Incomplete observer selector: ' + key)
+            result[name] = int(value) if name.endswith('ID') else value
+    unrelated = ['RUNTIME_FAILURE_BINDING',
         'JOURNEY_JOB', 'JOURNEY_ARTIFACT', 'JOURNEY_DIGEST', 'PACKAGING_PRODUCER_SOURCE',
         'PACKAGING_PROVENANCE_ARTIFACT_ID', 'PACKAGING_PROVENANCE_ARTIFACT_SHA256']
     require(not any(env.get(key) for key in unrelated), 'Unrelated inputs cannot be ignored')
@@ -109,6 +123,144 @@ def verifier(*args, **kwargs):
     verify_scene_pointer_delivery(*args, **kwargs)
 
 
+def compile_recipe(source):
+    calls = [node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == 'subprocess' and node.func.attr == 'run' and node.args
+        and isinstance(node.args[0], ast.List) and len(node.args[0].elts) >= 2
+        and all(isinstance(value, ast.Constant) for value in node.args[0].elts[:2])
+        and [value.value for value in node.args[0].elts[:2]] == ['xcrun', 'swiftc']]
+    require(len(calls) == 1, 'Observer compiler recipe is ambiguous')
+    return ast.dump(calls[0], include_attributes=False)
+
+
+def observer_macho(raw):
+    require(len(raw) >= 32, 'Truncated observer executable')
+    magic, cpu, subtype, kind, count, size, _, reserved = struct.unpack_from('<8I', raw)
+    require((magic, cpu, subtype, kind, reserved) == (0xFEEDFACF, 0x100000C, 0, 2, 0)
+        and 0 < count <= 256 and 0 < size <= len(raw) - 32, 'Observer must be a thin arm64 executable')
+    offset, builds = 32, []
+    for _ in range(count):
+        require(offset + 8 <= 32 + size, 'Truncated observer load command')
+        command, length = struct.unpack_from('<II', raw, offset)
+        require(length >= 8 and length % 8 == 0 and offset + length <= 32 + size,
+            'Invalid observer load command')
+        if command == 0x32:
+            require(length >= 24, 'Truncated observer deployment command')
+            _, _, platform, minimum, sdk, tools = struct.unpack_from('<6I', raw, offset)
+            require(length == 24 + tools * 8, 'Invalid observer tool commands')
+            builds.append({'platform': platform, 'minimumOS': minimum, 'sdk': sdk})
+        offset += length
+    require(offset == 32 + size and len(builds) == 1 and builds[0]['platform'] == 1,
+        'Observer macOS deployment identity differs')
+    return builds[0]
+
+
+def observer_archive(path):
+    files = read_archive(path)
+    with zipfile.ZipFile(path) as archive:
+        item = archive.getinfo('scene-pointer-delivery/observer-executable')
+        require(stat.S_ISREG(item.external_attr >> 16) and 0 < item.file_size <= 16 * 1024 * 1024,
+            'Observer member is not a bounded regular file')
+    return files
+
+
+def bind_observer(root, selected, producer):
+    artifact = api('actions/artifacts/' + str(selected['observerArtifactID']))
+    run_id = artifact['workflow_run']['id']
+    source = selected['observerSourceSHA']
+    run = api('actions/runs/' + str(run_id))
+    require(type(run_id) is int and run_id > 0 and run.get('id') == run_id and run.get('head_sha') == source
+        and run.get('workflow_id') == 355242770 and run.get('run_attempt') == 1
+        and run.get('repository', {}).get('full_name') == 'iret77/nexgenvideo'
+        and run.get('path') == '.github/workflows/diagnostic-acceptance.yml'
+        and run.get('event') == 'workflow_dispatch' and run.get('actor', {}).get('login') == 'iret77'
+        and run.get('head_branch') == 'iret77/rc-delivery-base-795'
+        and run.get('status') == 'completed' and run.get('conclusion') == 'failure', 'Observer producer differs')
+    jobs = api(f'actions/runs/{run_id}/attempts/1/jobs?per_page=100')
+    inventory = api(f'actions/runs/{run_id}/artifacts?per_page=100')
+    require(jobs['total_count'] == len(jobs['jobs']) <= 100
+        and inventory['total_count'] == len(inventory['artifacts']) <= 100, 'Incomplete observer inventory')
+    matches = [j for j in jobs['jobs'] if j['name'] == 'native-scene-pointer-delivery / measurement']
+    require(len(matches) == 1, 'Ambiguous observer producer job')
+    job = matches[0]
+    require(job.get('run_id') == run_id and job.get('head_sha') == source and job.get('run_attempt') == 1
+        and job.get('labels') == ['macrunner'] and job.get('status') == 'completed'
+        and job.get('conclusion') == 'failure', 'Observer job identity differs')
+    failures = [s['name'] for s in job['steps'] if s.get('conclusion') == 'failure']
+    uploads = [s for s in job['steps'] if s['name'] == 'Retain the complete one-shot observation']
+    require(failures == ['Measure one HID intervention during the retained full bpy harness']
+        and len(uploads) == 1 and uploads[0].get('conclusion') == 'success', 'Observer failure boundary differs')
+    matches = [a for a in inventory['artifacts'] if a['name'] == f'native-scene-pointer-delivery-{run_id}']
+    require(len(matches) == 1 and matches[0] == artifact
+        and artifact['id'] == selected['observerArtifactID'] and artifact['workflow_run']['head_sha'] == source
+        and artifact.get('expired') is False
+        and artifact['digest'] == 'sha256:' + selected['observerArtifactSHA256'], 'Observer artifact differs')
+    instant = lambda value: datetime.fromisoformat(value.replace('Z', '+00:00'))
+    require(instant(job['started_at']) <= instant(artifact['created_at']) <= instant(artifact['updated_at'])
+        <= instant(job['completed_at']) and instant(artifact['expires_at']) > datetime.now(timezone.utc),
+        'Observer artifact attempt time differs')
+    archive = root / 'original-observer.zip'
+    download(artifact, archive, 64 * 1024 * 1024)
+    files = observer_archive(archive)
+    prefix = 'scene-pointer-delivery/'
+    get = lambda name: json.loads(files[prefix + name])
+    binding, environment = get('binding/binding.json'), get('environment.json')
+    require(binding['harnessSourceSHA'] == source and binding['executionRunID'] == str(run_id),
+        'Observer original source binding differs')
+    require(binding['producer'] == producer, 'Observer retained product identity differs')
+    for key in ('runID', 'sourceSHA', 'artifactID', 'artifactSHA256', 'failureArtifactID',
+                'failureArtifactSHA256', 'dmgSHA256'):
+        require(binding['selected'][key] == selected[key], 'Observer product/failure selector differs: ' + key)
+    def original(path):
+        raw = subprocess.check_output(['git', 'show', source + ':' + path], stdin=subprocess.DEVNULL, timeout=30)
+        require(hashlib.sha256(raw).hexdigest() == binding['sourceFiles'][path], 'Observer source hash differs')
+        return raw
+    require(set(binding['sourceFiles']) == PATHS, 'Observer original source closure differs')
+    for path in sorted(PATHS):
+        original(path)
+    require(hashlib.sha256(original('scripts/scene_pointer_observer.swift')).hexdigest()
+        == environment['observerSourceSHA256'] == sha(Path('scripts/scene_pointer_observer.swift')),
+        'Observer implementation changed')
+    require(compile_recipe(original('scripts/scene_pointer_delivery.py'))
+        == compile_recipe(Path('scripts/scene_pointer_delivery.py').read_bytes()), 'Observer compile recipe changed')
+    raw = files[prefix + 'observer-executable']
+    digest = hashlib.sha256(raw).hexdigest()
+    deployment = observer_macho(raw)
+    require(digest == environment['observerExecutableSHA256'] and environment['architecture'] == 'arm64'
+        and environment['sourceSHA'] == selected['sourceSHA'] and environment['appBuilds'] == 0
+        and environment['nativeUnitRuns'] == 0 and files[prefix + 'observer-compile.log'] == b'',
+        'Observer compiler evidence differs')
+    before, after = get('actual-app-pack-before.json'), get('actual-app-pack-after.json')
+    ready, attachment, cleanup = get('observer/ready.json'), get('observer/attachment.json'), get('cleanup.json')
+    process, failure = get('native/process.json'), get('native/runtime-failure-observation.json')
+    expected_app = binding['producer']['app']
+    require(before == after and before['appTreeSHA256'] == binding['producer']['mountedAppTreeSHA256']
+        and before['packTreeSHA256'] == binding['producer']['packTreeSHA256']
+        and before['executableSHA256'] == expected_app['executableSHA256'] == ready['executableSHA256'] == attachment['executableSHA256']
+        and expected_app['NGVSourceCommit'] == selected['sourceSHA'], 'Observer original App bytes differ')
+    require(ready['schema'] == 'nexgenvideo/scene-pointer-observer-ready/1'
+        and ready['AXTrusted'] is True and ready['postEventAccess'] is True
+        and ready['sourceSHA'] == attachment['sourceSHA'] == failure['sourceSHA'] == process['sourceSHA'] == selected['sourceSHA']
+        and ready['observerPID'] == attachment['observerPID'] == cleanup['observerPID']
+        and type(ready['observerPID']) is int and ready['observerPID'] > 1
+        and attachment['processIdentity']['pid'] == process['pid'] == cleanup['appPID'] == failure['hostPID']
+        and type(process['pid']) is int and process['pid'] > 1 and process['pid'] != ready['observerPID']
+        and attachment['processIdentity']['startAbsoluteTime'] > 0
+        and attachment['processIdentity']['executable'] == ready['executable']
+        and process['mode'] == 'runtime', 'Observer original execution identity differs')
+    require(cleanup['ownedAppGone'] is True and cleanup['observerReaped'] is True
+        and cleanup['beforeAfterAppPackExact'] is True and cleanup['observerExitCode'] == 1
+        and failure['error'] == 'invalid open request'
+        and get('native/process-failure.json') == {'pid': process['pid'], 'error': 'bpy runtime exited with status 1'}
+        and prefix + 'measurement.json' not in files and prefix + 'observer/INTERVENTION-STARTED.json' not in files
+        and prefix + 'observer/posting.json' not in files,
+        'Observer negative producer or cleanup differs')
+    raw_digest = download_job_log(job['id'], root / 'original-observer-job.log')
+    return {'artifact': artifact, 'run': run, 'job': job, 'rawSHA256': raw_digest,
+        'sourceSHA': source, 'executableSHA256': digest, 'compileEnvironment': environment, 'deployment': deployment}
+
+
 def bind(root):
     selected = validate_inputs(os.environ)
     require(os.environ.get('GITHUB_REPOSITORY') == 'iret77/nexgenvideo'
@@ -154,6 +306,8 @@ def bind(root):
         'originalFailureJob': job, 'originalFailureArtifact': failure, 'originalBoundary': boundary,
         'originalRawSHA256': raw_digest, 'sourceFiles': {name: sha(Path(name)) for name in sorted(PATHS)},
         'harnessSourceSHA': os.environ['GITHUB_SHA'], 'executionRunID': os.environ['GITHUB_RUN_ID']}
+    if 'observerArtifactID' in selected:
+        proof['observerReuse'] = bind_observer(root, selected, producer)
     write(root / 'binding.json', proof)
     return artifact, runtime, proof
 
@@ -348,6 +502,100 @@ def wait_observer_ready(observer, output, source, binary, executable_hash):
         time.sleep(0.05)
 
 
+def supervise_with_open_capture(binary, native, source):
+    from bpy_runtime_acceptance import capture_open_logs, supervise
+    failure = None
+    with capture_open_logs(native):
+        try:
+            supervise(binary, native, 'runtime', source, 900)
+        except AssertionError as error:
+            if str(error) != 'bpy runtime exited with status 1':
+                raise
+            failure = str(error)
+    return failure
+
+
+def verify_open_capture(native, observed, binary, source, started, ended):
+    receipt = json.loads((native / 'open-capture.json').read_bytes())
+    require(receipt.get('reaped') is True and receipt.get('stoppedEarly') is False
+        and receipt.get('cancelled') == [] and receipt.get('cleanupErrors') == []
+        and type(receipt.get('returncode')) is int, 'Open capture was incomplete')
+    process = json.loads((native / 'process.json').read_bytes())
+    attachment = json.loads((observed / 'attachment.json').read_bytes())
+    identity = attachment['processIdentity']
+    require(process['sourceSHA'] == attachment['sourceSHA'] == source and process['pid'] == identity['pid']
+        and identity['executable'] == str(binary) and identity['startAbsoluteTime'] > 0
+        and attachment['executableSHA256'] == sha(binary), 'Open capture host binding differs')
+    records = []
+    for line in (native / 'open-events.ndjson').read_text().splitlines():
+        if not line.strip() or line.startswith('Filtering the log data using '):
+            continue
+        event = json.loads(line)
+        message = event.get('eventMessage', '')
+        if not message.startswith(('open.preparation ', 'open.prepared ', 'open.fail ')):
+            continue
+        parts = message.split()
+        fields = dict(value.split('=', 1) for value in parts[1:])
+        require(len(fields) == len(parts) - 1, 'Duplicate open log fields')
+        records.append((parts[0], fields, event))
+    host = [entry for entry in records if entry[0] == 'open.preparation'
+        and entry[2].get('processID') == process['pid']]
+    require(host, 'No owned host open event captured')
+    sessions = []
+    def origin(event, pid, image, subsystem, category):
+        require(event.get('processID') == pid and event.get('processImagePath') == image
+            and event.get('subsystem') == subsystem and event.get('category') == category,
+            'Foreign open log event')
+        stamp = datetime.fromisoformat(event['timestamp'].replace('Z', '+00:00'))
+        require(stamp.tzinfo is not None and started - 1 <= stamp.timestamp() <= ended + 1
+            and type(event.get('machTimestamp')) is int and event['machTimestamp'] > 0,
+            'Open log timestamp outside owned capture')
+    for _, fields, event in host:
+        origin(event, process['pid'], str(binary), 'de.h5ventures.nexgenvideo', 'bpy-open')
+        require(event['machTimestamp'] >= identity['startAbsoluteTime'], 'Open event predates host process')
+        session, pid, start = fields['session'], int(fields['servicePID']), int(fields['serviceStart'])
+        require(pid > 1 and pid != process['pid'] and start > 0, 'Invalid open service identity')
+        prepared = [entry for entry in records if entry[0] == 'open.prepared' and entry[1].get('session') == session]
+        require(len(prepared) == 1, 'Missing or ambiguous owned service preparation')
+        _, prepared_fields, prepared_event = prepared[0]
+        image = prepared_event.get('processImagePath', '')
+        require(re.fullmatch(re.escape(str(binary.parent.parent))
+            + r'/XPCServices/NexGenVideoBpyService[01]\.xpc/Contents/MacOS/NexGenVideoBpyService', image),
+            'Foreign service image')
+        origin(prepared_event, pid, image, 'de.h5ventures.nexgenvideo.bpy-service', 'open-diagnostic')
+        require(prepared_fields.get('pid') == str(pid) and prepared_fields.get('start') == str(start)
+            and start <= prepared_event['machTimestamp'] <= event['machTimestamp'], 'Service preparation identity/order differs')
+        failures = []
+        for _, failed, logged in [entry for entry in records if entry[0] == 'open.fail' and entry[1].get('session') == session]:
+            origin(logged, pid, image, 'de.h5ventures.nexgenvideo.bpy-service', 'open-diagnostic')
+            require(failed.get('pid') == str(pid) and failed.get('start') == str(start)
+                and failed.get('owner') and failed.get('stage')
+                and failed.get('domain') and re.fullmatch(r'-?[0-9]+', failed.get('code', ''))
+                and logged['machTimestamp'] >= event['machTimestamp'], 'Incomplete open failure discriminator')
+            failures.append({'fields': failed, 'event': logged,
+                'ownerMatchesPreparation': failed['owner'] == prepared_fields['owner']})
+        sessions.append({'sessionID': session, 'servicePID': pid, 'serviceStart': start,
+            'hostPreparation': event, 'servicePreparation': prepared_event, 'failures': failures})
+    observation = native / 'runtime-failure-observation.json'
+    if observation.is_file() and json.loads(observation.read_bytes()).get('error') == 'invalid open request':
+        failed_sessions = []
+        for path in native.glob('open-failure-*.json'):
+            record = json.loads(path.read_bytes())
+            require(record.get('hostPID') == process['pid'] and record.get('sourceSHA') == source,
+                'Foreign failed open receipt')
+            raw = base64.b64decode(record['response'], validate=True)
+            require(hashlib.sha256(raw).hexdigest() == record['responseSHA256'], 'Failed open response digest differs')
+            response = json.loads(raw)
+            if response.get('ok') is False and response.get('message') == 'invalid open request':
+                failed_sessions.append(record['sessionID'])
+        require(failed_sessions and all(any(row['sessionID'] == session
+            and any(failure['ownerMatchesPreparation'] for failure in row['failures']) for row in sessions)
+            for session in failed_sessions), 'Actual invalid-open service discriminator is absent')
+    return {'schema': 'nexgenvideo/pointer-open-capture/1', 'sourceSHA': source,
+        'hostIdentity': identity, 'started': started, 'ended': ended, 'sessions': sessions,
+        'rawSHA256': sha(native / 'open-events.ndjson'), 'diagnosticOnly': True}
+
+
 def run(root):
     require(sys.platform == 'darwin' and os.environ.get('GITHUB_ACTIONS') == 'true'
         and os.environ.get('RUNNER_OS') == 'macOS', 'Native execution requires macrunner Actions')
@@ -355,17 +603,32 @@ def run(root):
     artifact, runtime, binding = bind(root / 'binding')
     selected, producer = binding['selected'], binding['producer']
     observer_binary = root / 'observer-executable'
-    with (root / 'observer-compile.log').open('xb') as stream:
-        subprocess.run(['xcrun', 'swiftc', '-swift-version', '6', '-parse-as-library',
-            'scripts/scene_pointer_observer.swift', '-o', str(observer_binary)], stdin=subprocess.DEVNULL,
-            stdout=stream, stderr=subprocess.STDOUT, check=True, timeout=90)
-    write(root / 'environment.json', {'sourceSHA': selected['sourceSHA'],
+    reuse = binding.get('observerReuse')
+    if reuse is not None:
+        raw = observer_archive(root / 'binding/original-observer.zip')['scene-pointer-delivery/observer-executable']
+        require(hashlib.sha256(raw).hexdigest() == reuse['executableSHA256']
+            and observer_macho(raw) == reuse['deployment'], 'Bound observer bytes changed')
+        with observer_binary.open('xb') as stream:
+            stream.write(raw)
+        observer_binary.chmod(0o700)
+        write(root / 'observer-reuse.json', reuse)
+    else:
+        with (root / 'observer-compile.log').open('xb') as stream:
+            subprocess.run(['xcrun', 'swiftc', '-swift-version', '6', '-parse-as-library',
+                'scripts/scene_pointer_observer.swift', '-o', str(observer_binary)], stdin=subprocess.DEVNULL,
+                stdout=stream, stderr=subprocess.STDOUT, check=True, timeout=90)
+    current_environment = {'sourceSHA': selected['sourceSHA'],
         'os': subprocess.check_output(['sw_vers'], text=True, timeout=10),
         'architecture': subprocess.check_output(['uname', '-m'], text=True, timeout=10).strip(),
         'xcode': subprocess.check_output(['xcodebuild', '-version'], text=True, timeout=30),
         'observerSourceSHA256': sha(Path('scripts/scene_pointer_observer.swift')),
         'observerExecutable': str(observer_binary),
-        'observerExecutableSHA256': sha(observer_binary), 'appBuilds': 0, 'nativeUnitRuns': 0})
+        'observerExecutableSHA256': sha(observer_binary), 'appBuilds': 0, 'nativeUnitRuns': 0,
+        'observerCompiles': 0 if reuse is not None else 1}
+    if reuse is not None:
+        require(all(current_environment[key] == reuse['compileEnvironment'][key] for key in ('os', 'architecture', 'xcode')),
+            'Observer native environment changed')
+    write(root / 'environment.json', current_environment)
     workspace = root.parent / ('scene-pointer-workspace-' + os.environ['GITHUB_RUN_ID'])
     from retained_release_runtime import restore
     restore(artifact, runtime, workspace)
@@ -402,13 +665,9 @@ def run(root):
                 before['executableSHA256'], str(observed), str(done)], stdin=subprocess.DEVNULL,
                 stdout=log, stderr=subprocess.STDOUT, env=environment)
             wait_observer_ready(observer, observed, selected['sourceSHA'], binary, before['executableSHA256'])
+            capture_started = time.time()
             try:
-                from bpy_runtime_acceptance import supervise
-                supervise(binary, native, 'runtime', selected['sourceSHA'], 900)
-            except AssertionError as error:
-                if str(error) != 'bpy runtime exited with status 1':
-                    raise
-                supervisor_error = str(error)
+                supervisor_error = supervise_with_open_capture(binary, native, selected['sourceSHA'])
             finally:
                 if (native / 'process.json').is_file():
                     pid = json.loads((native / 'process.json').read_text())['pid']
@@ -422,6 +681,8 @@ def run(root):
                     except subprocess.TimeoutExpired:
                         observer.kill(); observer.wait(timeout=3)
                     raise ValueError('Owned observer needed forced cleanup')
+            write(root / 'open-capture-proof.json', verify_open_capture(native, observed, binary,
+                selected['sourceSHA'], capture_started, time.time()))
             require(observer.returncode == 0, 'Observer incomplete; retain evidence without a diagnostic conclusion')
         outcome = observation_result(observed, native, selected['sourceSHA'], binary, observer.pid)
     finally:
