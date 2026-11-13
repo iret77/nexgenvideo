@@ -573,7 +573,8 @@ enum NativeButtonAccessibility {
         var pending: [(AXUIElement, Int?)] = [(content, nil)], visited: [AXUIElement] = []
         let leafRoles: Set<String> = [kAXButtonRole, kAXCheckBoxRole, kAXRadioButtonRole,
             kAXStaticTextRole, kAXTextFieldRole, kAXTextAreaRole, kAXImageRole,
-            kAXSliderRole, kAXProgressIndicatorRole, kAXScrollBarRole, kAXPopUpButtonRole, kAXSplitterRole]
+            kAXSliderRole, kAXProgressIndicatorRole, kAXValueIndicatorRole,
+            kAXScrollBarRole, kAXPopUpButtonRole, kAXSplitterRole]
         while !pending.isEmpty {
             guard reader.available(), visited.count < nodeLimit else {
                 result.failure = reader.failure ?? "AX-node-budget"
