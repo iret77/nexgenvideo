@@ -337,4 +337,36 @@ struct BpyCleanupAdmissionTests {
         #expect(fixture.allocations == 0)
         #expect(fixture.gate.pendingCount == 0)
     }
+
+    @Test func cleanupOwnerSurvivesRegistryReplacementUntilAdmissionSettles() async throws {
+        final class Owner { var occupied = true }
+        var registry: Owner? = Owner()
+        weak var previous = registry
+        let gate = BpyCleanupAdmission(), attempt = UUID(), result = UUID()
+        let ready = AsyncStream<Void>.makeStream()
+        var available = false
+        var request: Task<UUID, any Error>? = Task {
+            try await gate.admit(id: UUID(), validate: {}, acquire: { available ? result : nil }, cleanup: {
+                guard let owner = registry else { return nil }
+                return .retaining(attempt: attempt, owner: owner, isPending: {
+                    ready.continuation.yield(())
+                    return true
+                }, occupiesSlot: { $0.occupied }, failure: { _ in "The original owner is occupied." })
+            })
+        }
+        defer { request?.cancel() }
+        var iterator = ready.stream.makeAsyncIterator()
+        _ = await iterator.next()
+        registry = Owner()
+        try #require(previous != nil)
+        previous?.occupied = false
+        available = true
+        gate.complete(attempt: attempt, success: true)
+        let actual = try await request?.value
+        request = nil
+        #expect(actual == result)
+        #expect(registry?.occupied == true)
+        #expect(previous == nil)
+    }
+
 }

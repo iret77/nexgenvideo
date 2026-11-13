@@ -3104,11 +3104,11 @@ final class BpyRuntimeHost {
             acquire: { self.session(for: document).map(admitted) }, cleanup: {
                 let pending = self.cleanupTasks.filter { self.retiring[$0.key]?.occupiesHostSlot == true
                     && self.retirementContexts[$0.key]?.document === document }
-                guard let cleanup = pending.sorted(by: { $0.value.id.uuidString < $1.value.id.uuidString }).first else { return nil }
-                return BpyCleanupAdmission.Cleanup(attempt: cleanup.value.id,
+                guard let cleanup = pending.sorted(by: { $0.value.id.uuidString < $1.value.id.uuidString }).first,
+                      let retiredSession = self.retiring[cleanup.key] else { return nil }
+                return BpyCleanupAdmission.Cleanup.retaining(attempt: cleanup.value.id, owner: retiredSession,
                     isPending: { self.cleanupTasks[cleanup.key]?.id == cleanup.value.id },
-                    occupiesSlot: { self.retiring[cleanup.key]?.occupiesHostSlot == true },
-                    failure: { self.retiring[cleanup.key]?.cleanupFailure })
+                    occupiesSlot: { $0.occupiesHostSlot }, failure: { $0.cleanupFailure })
             })
     }
 
@@ -3301,6 +3301,14 @@ final class BpyCleanupAdmission {
         let isPending: @MainActor () -> Bool
         let occupiesSlot: @MainActor () -> Bool
         let failure: @MainActor () -> String?
+
+        @MainActor static func retaining<Owner: AnyObject>(attempt: UUID, owner: Owner,
+                isPending: @escaping @MainActor () -> Bool,
+                occupiesSlot: @escaping @MainActor (Owner) -> Bool,
+                failure: @escaping @MainActor (Owner) -> String?) -> Self {
+            Self(attempt: attempt, isPending: isPending,
+                occupiesSlot: { occupiesSlot(owner) }, failure: { failure(owner) })
+        }
     }
 
     private struct Waiter {
