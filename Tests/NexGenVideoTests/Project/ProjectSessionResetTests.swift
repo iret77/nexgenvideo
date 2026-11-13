@@ -325,6 +325,34 @@ struct ProjectSessionResetTests {
         #expect(try fixture.stagingCopies().isEmpty)
     }
 
+    @Test("A replacement generation registers before the cancelled location admission unwinds")
+    func locationAdmissionGenerationReplacement() throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let document = VideoProject(), host = BpyRuntimeHost()
+        let editor = document.editorViewModel
+        editor.projectURL = fixture.package
+        defer { editor.releaseWorkingCopy() }
+        let previous = try #require(host.register(document: document, documentID: fixture.key))
+        let oldRequest = UUID()
+        try host.beginAdmission(document: document, request: oldRequest)
+        host.releasePresentation(previous)
+        let replacement = try ProjectWorkingCopy.open(key: fixture.key, packageURL: fixture.package)
+        editor.adoptWorkingCopy(replacement, key: fixture.key, packageURL: fixture.package)
+        let current = try #require(host.register(document: document, documentID: fixture.key))
+        let newRequest = UUID()
+        try host.beginAdmission(document: document, request: newRequest)
+        #expect(throws: (any Error).self) {
+            try host.validateAdmission(document: document, documentID: fixture.key, request: oldRequest, presentation: previous)
+        }
+        host.finishAdmission(document: document, request: oldRequest)
+        host.releasePresentation(previous)
+        try host.validateAdmission(document: document, documentID: fixture.key, request: newRequest, presentation: current)
+        host.finishAdmission(document: document, request: newRequest)
+        host.releasePresentation(current)
+        host.unregister(document: document)
+    }
+
     private struct Fixture: Sendable {
         let root: URL
         let package: URL

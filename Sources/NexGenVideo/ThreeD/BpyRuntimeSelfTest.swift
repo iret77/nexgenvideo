@@ -408,7 +408,7 @@ enum BpyRuntimeSelfTest {
             NSDocumentController.shared.addDocument(context.document)
             history = try await ProductionSpatialHistoryAcceptance.run(context: context, output: output)
             guard let key = context.editor.openWorkingCopyKey else { throw SpatialSceneError.changed }
-            terminationOperation = try BpyRuntimeHost.shared.acquireOperation(document: context.document, documentID: key)
+            terminationOperation = try await BpyRuntimeHost.shared.acquireOperation(document: context.document, documentID: key)
         }
         return ["schema": "nexgenvideo/scene-history-runtime/1", "scope": "scene-history",
             "sourceSHA": Bundle.main.object(forInfoDictionaryKey: "NGVSourceCommit") as? String ?? "",
@@ -513,8 +513,8 @@ enum BpyRuntimeSelfTest {
             throw BpyRuntimeError.invalidOutput("Two documents shared a bpy service identity.")
         }
 
-        let operation = try BpyRuntimeHost.shared.acquireOperation(document: projectA, documentID: documentA)
-        let joinedOperation = try BpyRuntimeHost.shared.acquireOperation(document: projectA, documentID: documentA)
+        let operation = try await BpyRuntimeHost.shared.acquireOperation(document: projectA, documentID: documentA)
+        let joinedOperation = try await BpyRuntimeHost.shared.acquireOperation(document: projectA, documentID: documentA)
         BpyRuntimeHost.shared.releasePresentation(presentationA)
         guard BpyRuntimeHost.shared.isOperationActive(operation),
               BpyRuntimeHost.shared.isOperationActive(joinedOperation),
@@ -1148,13 +1148,13 @@ enum BpyRuntimeSelfTest {
         try assertRecovered(afterServiceKill, label: "service-kill")
 
         let originalSlot = sessionA.serviceName
-        let closingOperation = try BpyRuntimeHost.shared.acquireOperation(document: projectA, documentID: documentA)
+        let closingOperation = try await BpyRuntimeHost.shared.acquireOperation(document: projectA, documentID: documentA)
         projectA.close()
         guard !BpyRuntimeHost.shared.isOperationActive(closingOperation), !sessionA.isAvailable else {
             throw BpyRuntimeError.invalidOutput("Closing the document retained an active operation.")
         }
         do {
-            _ = try BpyRuntimeHost.shared.acquireOperation(document: projectA, documentID: documentA)
+            _ = try await BpyRuntimeHost.shared.acquireOperation(document: projectA, documentID: documentA)
             throw BpyRuntimeError.invalidOutput("A closed document acquired a new operation.")
         } catch let error as BpyRuntimeError {
             guard case .unavailable(_) = error else { throw error }
@@ -1162,7 +1162,7 @@ enum BpyRuntimeSelfTest {
         BpyRuntimeHost.shared.releaseOperation(closingOperation)
         try waitUntilReleased(sessionA)
         BpyRuntimeHost.shared.releasePresentation(presentationC)
-        let operationOnly = try BpyRuntimeHost.shared.acquireOperation(document: projectC, documentID: documentC)
+        let operationOnly = try await BpyRuntimeHost.shared.acquireOperation(document: projectC, documentID: documentC)
         _ = try operationOnly.session.ready()
         BpyRuntimeHost.shared.releaseOperation(operationOnly)
         guard !BpyRuntimeHost.shared.isOperationActive(operationOnly), !operationOnly.session.isAvailable else {
@@ -1571,7 +1571,7 @@ enum BpyRuntimeSelfTest {
         let productionSpatial = try await ProductionSpatialAcceptance.run(output: output)
         let storageRecovery = try await BpyStorageRecoveryAcceptance.run(output: output)
 
-        terminationOperation = try BpyRuntimeHost.shared.acquireOperation(document: projectB, documentID: documentB)
+        terminationOperation = try await BpyRuntimeHost.shared.acquireOperation(document: projectB, documentID: documentB)
         BpyRuntimeHost.shared.releasePresentation(presentationB)
         let shutdownJobID = UUID()
         DispatchQueue.global(qos: .userInitiated).async {

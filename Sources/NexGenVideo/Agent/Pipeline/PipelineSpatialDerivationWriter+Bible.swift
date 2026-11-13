@@ -59,8 +59,13 @@ extension PipelineSpatialDerivationWriter {
             throw GateBlocked("Finish the current production action before rendering this location view.")
         }
         defer { editor.pipelinePhaseRunCoordinator.endMutation(projectRoot: root, id: lease) }
-        let operation = try BpyRuntimeHost.shared.acquireOperation(document: document, documentID: key)
+        let operation = try await BpyRuntimeHost.shared.acquireOperation(document: document, documentID: key)
         defer { BpyRuntimeHost.shared.releaseOperation(operation) }
+        try Task.checkCancellation()
+        guard editor.workingRoot == home, editor.openWorkingCopyKey == key,
+              editor.openWorkingCopyGeneration == generation,
+              editor.pipelinePhaseRunCoordinator.holdsMutation(projectRoot: root, id: lease),
+              BpyRuntimeHost.shared.isOperationActive(operation) else { throw bibleViewChanged() }
         let runtime = operation.session
         let declaration = ProjectPackGate.MutationDeclaration(packName: editor.declaredPluginName,
             binding: editor.declaredPluginBinding, productionContract: editor.declaredProductionContract)

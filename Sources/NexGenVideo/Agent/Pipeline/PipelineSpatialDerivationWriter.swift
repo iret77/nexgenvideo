@@ -67,7 +67,7 @@ enum PipelineSpatialDerivationWriter {
         let cancellation = BpyOperationCancellation()
         return try await withTaskCancellationHandler {
         try PipelineStoryboardEditor.requireAvailable(editor: editor)
-        guard let home = editor.workingRoot, let key = editor.openWorkingCopyKey,
+        guard let home = editor.workingRoot, let key = editor.openWorkingCopyKey, let generation = editor.openWorkingCopyGeneration,
               let root = DataRootResolver.dataRoot(of: home),
               !editor.agentService.isStreaming, !editor.agentService.isComposerBlocked,
               let document = NSDocumentController.shared.documents.compactMap({ $0 as? VideoProject })
@@ -77,8 +77,13 @@ enum PipelineSpatialDerivationWriter {
         }
         var holdsLease = true
         defer { if holdsLease { editor.pipelinePhaseRunCoordinator.endMutation(projectRoot: root, id: lease) } }
-        let operation = try BpyRuntimeHost.shared.acquireOperation(document: document, documentID: key)
+        let operation = try await BpyRuntimeHost.shared.acquireOperation(document: document, documentID: key)
         defer { BpyRuntimeHost.shared.releaseOperation(operation) }
+        try Task.checkCancellation()
+        guard editor.workingRoot == home, editor.openWorkingCopyKey == key,
+              editor.openWorkingCopyGeneration == generation,
+              editor.pipelinePhaseRunCoordinator.holdsMutation(projectRoot: root, id: lease),
+              BpyRuntimeHost.shared.isOperationActive(operation) else { throw changed() }
         let runtime = operation.session
         let declaration = ProjectPackGate.MutationDeclaration(packName: editor.declaredPluginName,
             binding: editor.declaredPluginBinding, productionContract: editor.declaredProductionContract)
