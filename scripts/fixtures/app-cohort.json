@@ -1,6 +1,6 @@
 {
-  "appSourceSHA": "f9d7d87ab337da9a7c86c8563ae753c0279ffd5f",
-  "appTreeSHA": "e701dc012990883fe8b616a3331f365b29a9895c",
+  "appSourceSHA": "2112dad03ebad01b5c0a683337311cc3f2cd7915",
+  "appTreeSHA": "e88cc9dc1c83ce780726355168753f452dfc5ceb",
   "build": "109",
   "ciPaths": [
     ".github/actionlint.yaml",
@@ -88,7 +88,7 @@
   },
   "criteria": {
     "path": "scripts/fixtures/app-cohort-native-inventory.json",
-    "sha256": "f7afa06b24e5514f124886313379b6922c190771ef58b81ef1550c54e81289c8"
+    "sha256": "b02e58e990afe3f0a625ebdad3017d1aa26650c2028cc8fdfee6aa724301d010"
   },
   "nativeSourceObjects": {
     "Engine": "29cfed623d13e6d84d5822a30b98e088fc123c3f",
@@ -96,8 +96,8 @@
     "Package.resolved": "530cdaed0a29a65181353d86d05cf9dc04890cc2",
     "Package.swift": "37f605bfb8cdccc48821b39484c819ba3e5eff43",
     "Runtime": "910b87b08a3a8c976e0f2502580c843b0df74154",
-    "Sources": "a8fab6aca365f88cbffb586a3b9ff3192537d957",
-    "Tests": "dc3c8c810cdb9969740aa508eea336993f3a0c04",
+    "Sources": "9d630abf6b8f5c1db7e6f97adc9caf1e6a7b49ca",
+    "Tests": "48c6d7c1f80910b49c54b55ac982ae91d560590e",
     "Vendor": "51e93c100e00dcd196edac0e70e1af921d52055a",
     "plugins": "b75e017d3145010368ae417bc410574f3f0300c1"
   },
@@ -415,7 +415,7 @@
       "Sources/NexGenVideo/App/MusicvideoHostFlowAcceptance.swift": "6fe9f26db25dc68670fffc5ba0d19686bc2cf33b",
       "Sources/NexGenVideo/App/MusicvideoNativeAcceptance.swift": "c73e1f560e6eacebe4986828b56979dabef82881",
       "Sources/NexGenVideo/App/NativeAXPeer.swift": "cc6aed34a5fc60b47f16c6599bc72e3e949223ea",
-      "Sources/NexGenVideo/App/NativeButtonAccessibility.swift": "befb98d2c824208ae04eefac864160604ce57961",
+      "Sources/NexGenVideo/App/NativeButtonAccessibility.swift": "68df307b079d0b47b2d4285629d5463f4f851b24",
       "Sources/NexGenVideo/App/NativeEditingOwnerAcceptance.swift": "99fdc663918c0203d07cb742149e3c9bd5a26ffb",
       "Sources/NexGenVideo/App/NativeLUTAcceptance.swift": "2c7de0664b30a87df105b00df030d64d4e6c8765",
       "Sources/NexGenVideo/App/NativeLUTRecoveryAcceptance.swift": "bf14e70edd0f69c424ab3a37274d9023460593a8",
@@ -1344,7 +1344,7 @@
       "Sources/NexGenVideo/App/MusicvideoHostFlowAcceptance.swift": "6fe9f26db25dc68670fffc5ba0d19686bc2cf33b",
       "Sources/NexGenVideo/App/MusicvideoNativeAcceptance.swift": "c73e1f560e6eacebe4986828b56979dabef82881",
       "Sources/NexGenVideo/App/NativeAXPeer.swift": "cc6aed34a5fc60b47f16c6599bc72e3e949223ea",
-      "Sources/NexGenVideo/App/NativeButtonAccessibility.swift": "befb98d2c824208ae04eefac864160604ce57961",
+      "Sources/NexGenVideo/App/NativeButtonAccessibility.swift": "68df307b079d0b47b2d4285629d5463f4f851b24",
       "Sources/NexGenVideo/App/NativeEditingOwnerAcceptance.swift": "99fdc663918c0203d07cb742149e3c9bd5a26ffb",
       "Sources/NexGenVideo/App/NativeLUTAcceptance.swift": "2c7de0664b30a87df105b00df030d64d4e6c8765",
       "Sources/NexGenVideo/App/NativeLUTRecoveryAcceptance.swift": "bf14e70edd0f69c424ab3a37274d9023460593a8",
@@ -2273,7 +2273,7 @@
       "Sources/NexGenVideo/App/MusicvideoHostFlowAcceptance.swift": "6fe9f26db25dc68670fffc5ba0d19686bc2cf33b",
       "Sources/NexGenVideo/App/MusicvideoNativeAcceptance.swift": "c73e1f560e6eacebe4986828b56979dabef82881",
       "Sources/NexGenVideo/App/NativeAXPeer.swift": "cc6aed34a5fc60b47f16c6599bc72e3e949223ea",
-      "Sources/NexGenVideo/App/NativeButtonAccessibility.swift": "befb98d2c824208ae04eefac864160604ce57961",
+      "Sources/NexGenVideo/App/NativeButtonAccessibility.swift": "68df307b079d0b47b2d4285629d5463f4f851b24",
       "Sources/NexGenVideo/App/NativeEditingOwnerAcceptance.swift": "99fdc663918c0203d07cb742149e3c9bd5a26ffb",
       "Sources/NexGenVideo/App/NativeLUTAcceptance.swift": "2c7de0664b30a87df105b00df030d64d4e6c8765",
       "Sources/NexGenVideo/App/NativeLUTRecoveryAcceptance.swift": "bf14e70edd0f69c424ab3a37274d9023460593a8",
@@ -2910,7 +2910,7 @@
       "Sources/NexGenVideo/Utilities/SourceTiming.swift": "15247fa32564207dee3a5a01065d5a4fc8389f9f",
       "Sources/NexGenVideo/Utilities/TimeFormatting.swift": "4c10a4554812031a08ecbe3e10d39cce76e1719e",
       "Tests/AppKitTestHostSupport": "180f486523e826b8b462011d42bf758fdc4e1d6f",
-      "Tests/NexGenVideoTests": "493fd68aaad003eee8541e3e613946c50bfa29d1"
+      "Tests/NexGenVideoTests": "e970a84a0635f4b045fde6bf21ecae1001dca559"
     }
   },
   "schema": "native-app-cohort/v2",
