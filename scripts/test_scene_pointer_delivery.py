@@ -2,6 +2,7 @@ import copy
 import hashlib
 import json
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
@@ -267,6 +268,27 @@ class PointerOutcomeTests(unittest.TestCase):
 
 
 class PointerPreflightTests(unittest.TestCase):
+    def test_failed_observer_compile_stops_before_runtime_acquisition_or_app_start(self):
+        import retained_release_runtime
+        output = self.root / 'measurement'
+        binding = {'selected': {'sourceSHA': 'a' * 40}, 'producer': {}}
+        with patch.object(diagnostic.sys, 'platform', 'darwin'), \
+                patch.dict(diagnostic.os.environ, {'GITHUB_ACTIONS': 'true', 'RUNNER_OS': 'macOS'}), \
+                patch.object(diagnostic, 'bind', return_value=({}, {}, binding)), \
+                patch.object(diagnostic.subprocess, 'run', side_effect=subprocess.CalledProcessError(1, ['swiftc'])) as compile_call, \
+                patch.object(retained_release_runtime, 'restore') as restore, \
+                patch.object(diagnostic, 'product_bytes') as product, \
+                patch.object(diagnostic.subprocess, 'Popen') as launch, \
+                self.assertRaises(subprocess.CalledProcessError):
+            diagnostic.run(output)
+        compile_call.assert_called_once()
+        self.assertEqual(compile_call.call_args.args[0], ['xcrun', 'swiftc', '-swift-version', '6', '-parse-as-library',
+            'scripts/scene_pointer_observer.swift', '-o', str(output / 'observer-executable')])
+        self.assertTrue(compile_call.call_args.kwargs['check'])
+        self.assertEqual(compile_call.call_args.kwargs['timeout'], 90)
+        self.assertTrue((output / 'observer-compile.log').is_file())
+        restore.assert_not_called(); product.assert_not_called(); launch.assert_not_called()
+
     def setUp(self):
         directory = tempfile.TemporaryDirectory(); self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
