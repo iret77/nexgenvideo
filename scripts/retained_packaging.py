@@ -46,6 +46,7 @@ VERIFIER_INPUTS += ('scripts/consume_bpy_distributable_source.py',)
 VERIFIER_INPUTS += ('scripts/compiled_component_reuse.py', 'scripts/notary_continuation.py')
 VERIFIER_INPUTS += ('scripts/app_cohort_v2.py', 'scripts/app_release_v2.py',
                    'scripts/fixtures/app-cohort.json', 'scripts/fixtures/app-cohort-native-inventory.json')
+VERIFIER_INPUTS += ('scripts/compiled_current_core_reuse.py', 'scripts/fixtures/compiled-current-core-reuse-1047.json')
 PACKAGING_PATHS = {
     "scripts/plan_dmg_capacity.py", "scripts/test_release_dmg_packaging.py",
     "scripts/retained_packaging.py", "scripts/test_retained_packaging.py",
@@ -683,7 +684,8 @@ def signed_input(run_id, product):
         component.verify_native_originals(producer, builder)
     if dynamic:
         from app_release_v2 import signed_product
-        require(manifest['nativeEvidence'].get('schema') == 'release-native-compiled-app/v5', 'Typed cohort lacks its actual fresh native receipt')
+        require(manifest['nativeEvidence'].get('schema') in ('release-native-compiled-app/v5', 'release-native-compiled-app/v6'),
+            'Typed cohort lacks its qualified native receipt')
         cohort_product = signed_product(manifest)
     else:
         cohort_product = None
@@ -1307,7 +1309,7 @@ def compiled_signed_product(record):
 
 def cohort_signed_product(record):
     manifest = record.get('signedInput', {}).get('manifest', {})
-    if manifest.get('nativeEvidence', {}).get('schema') != 'release-native-compiled-app/v5':
+    if manifest.get('nativeEvidence', {}).get('schema') not in ('release-native-compiled-app/v5', 'release-native-compiled-app/v6'):
         return False
     from app_release_v2 import signed_product
     return (manifest.get('sourceSHA') == record.get('productSourceSHA')

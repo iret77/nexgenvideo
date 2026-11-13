@@ -328,13 +328,13 @@ def verify_manifest(manifest, source, run_id):
             and isinstance(manifest.get("appTreeSHA256"), str)
             and re.fullmatch(r"[a-f0-9]{64}", manifest["appTreeSHA256"]), "Invalid signed App identity")
     evidence = manifest.get("nativeEvidence", {})
-    if evidence.get("schema") in ("release-native-compiled-app/v1", "release-native-compiled-app/v2", "release-native-compiled-app/v3", "release-native-compiled-app/v4", "release-native-compiled-app/v5"):
+    if evidence.get("schema") in ("release-native-compiled-app/v1", "release-native-compiled-app/v2", "release-native-compiled-app/v3", "release-native-compiled-app/v4", "release-native-compiled-app/v5", "release-native-compiled-app/v6"):
         from compiled_app_release import verify_receipt
         verify_receipt(evidence, source, run_id)
         if 'componentAssembly' in manifest:
             from compiled_app_release import verify_component_assembly
             verify_component_assembly(manifest['componentAssembly'], source, run_id, info, manifest.get('files', {}), evidence)
-        elif info.get('build') == '107' or evidence.get('schema') == 'release-native-compiled-app/v5':
+        elif info.get('build') == '107' or evidence.get('schema') in ('release-native-compiled-app/v5', 'release-native-compiled-app/v6'):
             raise ValueError('Corrected compiled product lacks its actual component assembly')
     elif evidence.get("schema") == "release-native-scoped-repair/v1":
         from release_test_repair import verify_receipt
@@ -553,7 +553,7 @@ def restore(root):
     with Path(os.environ["GITHUB_ENV"]).open("a") as output:
         output.write("BUILD_NUMBER=" + manifest["identity"]["build"] + "\n")
         output.write("NGV_SIGNED_APP_ARCHIVE_SHA256=" + manifest["files"]["NexGenVideo.zip"]["sha256"] + "\n")
-        if manifest["nativeEvidence"].get("schema") in ("release-native-compiled-app/v1", "release-native-compiled-app/v2", "release-native-compiled-app/v3", "release-native-compiled-app/v4", "release-native-compiled-app/v5"):
+        if manifest["nativeEvidence"].get("schema") in ("release-native-compiled-app/v1", "release-native-compiled-app/v2", "release-native-compiled-app/v3", "release-native-compiled-app/v4", "release-native-compiled-app/v5", "release-native-compiled-app/v6"):
             output.write("NGV_COMPILED_APP_RELEASE=true\n")
         if retained is not None and (compiled_signed_product(retained) or qualified(retained)):
             output.write('NGV_CURRENT_COMPILED_SOURCE_REUSE=true\n')

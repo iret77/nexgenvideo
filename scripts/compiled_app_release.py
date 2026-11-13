@@ -647,6 +647,9 @@ def selectors(raw, event):
         'prior_packaging_provenance_artifact_sha256')
     require(not any(inputs.get(name) for name in conflicts) and inputs.get('verified_pr_run_id'),
         'Compiled App selectors conflict with another continuation')
+    import app_cohort_v2
+    if app_cohort_v2.MANIFEST.is_file():
+        app_cohort_v2.criteria()
     return value
 
 
@@ -908,6 +911,10 @@ def run_tests(root):
     import compiled_core_reuse
     bound = json.loads((root / 'bound.json').read_text())
     dynamic = bool(bound.get('prepared', {}).get('cohortV2'))
+    if dynamic:
+        import compiled_current_core_reuse
+        if compiled_current_core_reuse.matches(bound):
+            return compiled_current_core_reuse.acquire(root, bound, sys.modules[__name__])
     if not dynamic and APP_SOURCE == compiled_core_reuse.origin()['appSourceSHA']:
         native_guard(root)
         bound = json.loads((root / 'bound.json').read_text())
@@ -1141,7 +1148,7 @@ def engine_environment(raw):
 
 
 def verify_receipt(receipt, source, run_id):
-    dynamic = receipt.get('schema') == 'release-native-compiled-app/v5'
+    dynamic = receipt.get('schema') in ('release-native-compiled-app/v5', 'release-native-compiled-app/v6')
     if dynamic:
         import app_cohort_v2
         value = app_cohort_v2.verify_context(receipt.get('cohortV2'))
@@ -1149,6 +1156,17 @@ def verify_receipt(receipt, source, run_id):
     app_source = value['appSourceSHA'] if dynamic else APP_SOURCE
     source_inputs = value['nativeSourceObjects'] if dynamic else source_objects(APP_SOURCE)
     criterion_sha = value['criteria']['sha256'] if dynamic else checksum(CRITERIA)
+    if receipt.get('schema') == 'release-native-compiled-app/v6':
+        import compiled_current_core_reuse
+        require(receipt.get('sourceSHA') == source == receipt['cohortV2']['harnessSourceSHA']
+            and type(receipt.get('runID')) is int and receipt['runID'] == run_id
+            and type(receipt.get('attempt')) is int and receipt['attempt'] == 1
+            and receipt.get('nativeSourceObjects') == source_objects(source) == source_inputs
+            and receipt.get('appSourceSHA') == app_source and receipt.get('compilerSHA256') == COMPILER_SHA
+            and receipt.get('hostSHA256') == retained.HOST_SHA and receipt.get('criteriaSHA256') == criterion_sha
+            and receipt.get('passed') is True and all(type(count) is int for count in receipt.get('counts', {}).values()),
+            'Current retained native acceptance identity differs')
+        return compiled_current_core_reuse.verify(receipt.get('retainedNative'), receipt, sys.modules[__name__])
     if receipt.get('schema') == 'release-native-compiled-app/v4':
         import compiled_core_reuse
         require(receipt.get('sourceSHA') == source and type(receipt.get('runID')) is int and receipt['runID'] == run_id
@@ -1468,7 +1486,7 @@ def derive_component_source(root, directory):
 
 
 def verify_component_assembly(value, source_sha, run_id, identity, files, native_evidence):
-    if native_evidence.get('schema') == 'release-native-compiled-app/v5':
+    if native_evidence.get('schema') in ('release-native-compiled-app/v5', 'release-native-compiled-app/v6'):
         from app_release_v2 import verify_assembly
         return verify_assembly(value, source_sha, run_id, identity, files, native_evidence)
     import consume_bpy_distributable_source as source
@@ -1584,7 +1602,7 @@ def seal_component_app(root, app, bound, sign, engine_component, source_handoff)
 
 
 def assemble(root):
-    if json.loads((root / 'receipt.json').read_bytes()).get('schema') == 'release-native-compiled-app/v5':
+    if json.loads((root / 'receipt.json').read_bytes()).get('schema') in ('release-native-compiled-app/v5', 'release-native-compiled-app/v6'):
         from app_release_v2 import assemble as assemble_current
         return assemble_current(root)
     import plistlib
@@ -1928,7 +1946,7 @@ def create_signed_input(root, output):
         and assembled['identity'] == checkpoint.identity(build), 'Assembled App changed before signed checkpoint')
     component = assembled.get('componentAssembly')
     if 'componentAssembly' in assembled:
-        require(type(component) is dict and (receipt.get('schema') == 'release-native-compiled-app/v5' or assembled['identity']['build'] == COMPONENT_BUILD),
+        require(type(component) is dict and (receipt.get('schema') in ('release-native-compiled-app/v5', 'release-native-compiled-app/v6') or assembled['identity']['build'] == COMPONENT_BUILD),
             'Component checkpoint type or build differs')
         verify_component_assembly(component, os.environ['GITHUB_SHA'], int(os.environ['GITHUB_RUN_ID']),
             assembled['identity'], {'bpy-source-receipt.json': {

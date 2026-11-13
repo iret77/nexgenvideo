@@ -25,10 +25,12 @@
     "scripts/app_release_v2.py",
     "scripts/canonical_analysis.jxa",
     "scripts/compiled_app_release.py",
+    "scripts/compiled_current_core_reuse.py",
     "scripts/external-gui/acceptance.py",
     "scripts/external-gui/test_bundle.py",
     "scripts/fixtures/app-cohort-native-inventory.json",
     "scripts/fixtures/app-cohort.json",
+    "scripts/fixtures/compiled-current-core-reuse-1047.json",
     "scripts/native_app_target_build.py",
     "scripts/native_current_cohort.py",
     "scripts/notarize.sh",
@@ -43,6 +45,7 @@
     "scripts/test_app_release_v2.py",
     "scripts/test_compiled_app_release.py",
     "scripts/test_compiled_component_assembly.py",
+    "scripts/test_compiled_current_core_reuse.py",
     "scripts/test_diagnostic_acceptance.py",
     "scripts/test_external_gui_test_bundle.py",
     "scripts/test_model_capability_research.py",
@@ -88,7 +91,7 @@
   },
   "criteria": {
     "path": "scripts/fixtures/app-cohort-native-inventory.json",
-    "sha256": "b02e58e990afe3f0a625ebdad3017d1aa26650c2028cc8fdfee6aa724301d010"
+    "sha256": "17b0de11cf4efc7c0daef5a241362848e94b3e078fed67536ae4cc9d37996cd6"
   },
   "nativeSourceObjects": {
     "Engine": "29cfed623d13e6d84d5822a30b98e088fc123c3f",
