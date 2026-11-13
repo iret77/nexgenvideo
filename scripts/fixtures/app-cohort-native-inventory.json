@@ -1,6 +1,6 @@
 {
-  "appSourceSHA": "aef5fc3378657abc8a208a6e07a376187e8a7d4e",
-  "expectedActualExecutions": 4651,
+  "appSourceSHA": "28d6cb21ba268ede53d9e48ffbdcfd256eb12741",
+  "expectedActualExecutions": 4652,
   "modules": {
     "app": {
       "duplicateExecutionsPermitted": false,
@@ -365,6 +365,7 @@
         "NexGenVideoTests.BpyCleanupAdmissionTests/changedDocumentIdentityAfterCleanupPreventsLateAllocation()/BpyHostMonitorTests.swift:255:6",
         "NexGenVideoTests.BpyCleanupAdmissionTests/cleanupCompletedBeforeWaitRegistrationIsNotLost()/BpyHostMonitorTests.swift:317:6",
         "NexGenVideoTests.BpyCleanupAdmissionTests/cleanupMustSucceedAndActuallyReleaseItsSlot(success:)/BpyHostMonitorTests.swift:243:6",
+        "NexGenVideoTests.BpyCleanupAdmissionTests/cleanupOwnerSurvivesRegistryReplacementUntilAdmissionSettles()/BpyHostMonitorTests.swift:341:6",
         "NexGenVideoTests.BpyCleanupAdmissionTests/concurrentPresentationsJoinCleanupThenShareOneSession()/BpyHostMonitorTests.swift:266:6",
         "NexGenVideoTests.BpyCleanupAdmissionTests/ownClosingSlotWaitsForItsActualCompletionAndAllocatesOnce()/BpyHostMonitorTests.swift:220:6",
         "NexGenVideoTests.BpyCleanupAdmissionTests/presentationCloseAndShutdownCancelWaitersWithoutReleasingSlots()/BpyHostMonitorTests.swift:325:6",
@@ -4783,8 +4784,8 @@
     "Package.resolved": "530cdaed0a29a65181353d86d05cf9dc04890cc2",
     "Package.swift": "37f605bfb8cdccc48821b39484c819ba3e5eff43",
     "Runtime": "910b87b08a3a8c976e0f2502580c843b0df74154",
-    "Sources": "f4f1f4b34fb1149d85820150f5681719db491b9f",
-    "Tests": "5d146106802f71ab981821d6957bb373f5001509",
+    "Sources": "0a9d46c9372714dff0271170a0fea143498dfeff",
+    "Tests": "43c47c826e9fcf2d7bab61b8e58daaf5fb67db16",
     "Vendor": "51e93c100e00dcd196edac0e70e1af921d52055a",
     "plugins": "b75e017d3145010368ae417bc410574f3f0300c1"
   },

@@ -1186,28 +1186,29 @@ class ExternalTestBundleTests(unittest.TestCase):
                   'exactSkippedFunctionIDs': ['skipped'], 'issuesExpected': 0,
                   'expectedCaseCountsByFunction': {'original': 3}},
                   'engine': {'exactEndedFunctionIDs': ['engine']}}, 'xctest': ['host']}
-        after = copy.deepcopy(before)
-        after['expectedActualExecutions'] += 11
-        after['modules']['app']['exactEndedFunctionIDs'] += additions
-        after['modules']['app']['expectedCaseCountsByFunction'][parameter] = 2
-        self.assertEqual(bundle._native_inventory_additions(before, after), sorted(additions))
-        mutations = [lambda x: x.update(expectedActualExecutions=12),
-                     lambda x: x['modules']['app']['exactEndedFunctionIDs'].append('unknown'),
-                     lambda x: x['modules']['app']['exactEndedFunctionIDs'].append(additions[0]),
-                     lambda x: x['modules']['app']['exactEndedFunctionIDs'].remove(additions[0]),
-                     lambda x: x['modules']['app']['exactEndedFunctionIDs'].remove('original'),
-                     lambda x: x['modules']['app']['exactSkippedFunctionIDs'].clear(),
-                     lambda x: x['modules']['app']['expectedCaseCountsByFunction'].pop(parameter),
-                     lambda x: x['modules']['app']['expectedCaseCountsByFunction'].update({parameter: 1}),
-                     lambda x: x['modules']['app']['expectedCaseCountsByFunction'].update({'original': 2}),
-                     lambda x: x['modules']['app'].update(issuesExpected=1),
-                     lambda x: x['modules']['engine']['exactEndedFunctionIDs'].clear(),
-                     lambda x: x['xctest'].clear()]
-        for mutate in mutations:
-            changed = copy.deepcopy(after)
-            mutate(changed)
-            with self.assertRaises(ValueError): bundle._native_inventory_additions(before, changed)
-        with self.assertRaises(ValueError): bundle._native_inventory_additions(after, before)
+        for selected in (additions, additions + ['NexGenVideoTests.BpyCleanupAdmissionTests/cleanupOwnerSurvivesRegistryReplacementUntilAdmissionSettles()/BpyHostMonitorTests.swift:341:6']):
+            after = copy.deepcopy(before)
+            after['expectedActualExecutions'] += len(selected)
+            after['modules']['app']['exactEndedFunctionIDs'] += selected
+            after['modules']['app']['expectedCaseCountsByFunction'][parameter] = 2
+            self.assertEqual(bundle._native_inventory_additions(before, after), sorted(selected))
+            mutations = [lambda x: x.update(expectedActualExecutions=12),
+                         lambda x: x['modules']['app']['exactEndedFunctionIDs'].append('unknown'),
+                         lambda x: x['modules']['app']['exactEndedFunctionIDs'].append(additions[0]),
+                         lambda x: x['modules']['app']['exactEndedFunctionIDs'].remove(additions[0]),
+                         lambda x: x['modules']['app']['exactEndedFunctionIDs'].remove('original'),
+                         lambda x: x['modules']['app']['exactSkippedFunctionIDs'].clear(),
+                         lambda x: x['modules']['app']['expectedCaseCountsByFunction'].pop(parameter),
+                         lambda x: x['modules']['app']['expectedCaseCountsByFunction'].update({parameter: 1}),
+                         lambda x: x['modules']['app']['expectedCaseCountsByFunction'].update({'original': 2}),
+                         lambda x: x['modules']['app'].update(issuesExpected=1),
+                         lambda x: x['modules']['engine']['exactEndedFunctionIDs'].clear(),
+                         lambda x: x['xctest'].clear()]
+            for mutate in mutations:
+                changed = copy.deepcopy(after)
+                mutate(changed)
+                with self.assertRaises(ValueError): bundle._native_inventory_additions(before, changed)
+            with self.assertRaises(ValueError): bundle._native_inventory_additions(after, before)
 
     def test_compiled_client_workflow_keeps_global_defaults_and_actual_build_job(self):
         workflow = (journey.REPOSITORY / '.github/workflows/external-gui-acceptance.yml').read_text()

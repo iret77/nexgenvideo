@@ -1,6 +1,6 @@
 {
-  "appSourceSHA": "aef5fc3378657abc8a208a6e07a376187e8a7d4e",
-  "appTreeSHA": "77042dc5d756f4391a78ea03507bc720862792f0",
+  "appSourceSHA": "28d6cb21ba268ede53d9e48ffbdcfd256eb12741",
+  "appTreeSHA": "00205a33793916657aea445f94f18012692a6bd0",
   "build": "110",
   "ciPaths": [
     ".github/actionlint.yaml",
@@ -91,7 +91,7 @@
   },
   "criteria": {
     "path": "scripts/fixtures/app-cohort-native-inventory.json",
-    "sha256": "3c529d20ce121ffee644b9bac2728094c06dd4ca96c53a7e4dfba2833560dc55"
+    "sha256": "c696eb1f9891cc0a14b98dd82cd7f5da4b4c2e5a1c97477afafe6a5bace35128"
   },
   "nativeSourceObjects": {
     "Engine": "29cfed623d13e6d84d5822a30b98e088fc123c3f",
@@ -99,8 +99,8 @@
     "Package.resolved": "530cdaed0a29a65181353d86d05cf9dc04890cc2",
     "Package.swift": "37f605bfb8cdccc48821b39484c819ba3e5eff43",
     "Runtime": "910b87b08a3a8c976e0f2502580c843b0df74154",
-    "Sources": "f4f1f4b34fb1149d85820150f5681719db491b9f",
-    "Tests": "5d146106802f71ab981821d6957bb373f5001509",
+    "Sources": "0a9d46c9372714dff0271170a0fea143498dfeff",
+    "Tests": "43c47c826e9fcf2d7bab61b8e58daaf5fb67db16",
     "Vendor": "51e93c100e00dcd196edac0e70e1af921d52055a",
     "plugins": "b75e017d3145010368ae417bc410574f3f0300c1"
   },
@@ -974,7 +974,7 @@
       "Sources/NexGenVideo/ThreeD/BpyRetentionLedger.swift": "e63ffa4a908f100ba0380163cbac051849d0c2fa",
       "Sources/NexGenVideo/ThreeD/BpyRetiredLaunch.swift": "1ab6db7cbfc9c6a81138051f7e2a2631914eac6a",
       "Sources/NexGenVideo/ThreeD/BpyRoleLockAcceptance.swift": "0401935fd64a5555748262f8fadac7fe6c9621bf",
-      "Sources/NexGenVideo/ThreeD/BpyRuntimeClient.swift": "45e1639ce0f957e51420f6b219f291def23bbc89",
+      "Sources/NexGenVideo/ThreeD/BpyRuntimeClient.swift": "5f94843a22274773f2c15c9a5ec85a29e7828fda",
       "Sources/NexGenVideo/ThreeD/BpyRuntimeObservation.swift": "294a32cd9c62671dc9a5ee9bcaaad28533f0dee2",
       "Sources/NexGenVideo/ThreeD/BpyRuntimeResultLease.swift": "1ed3c58e7838127361caaa9fbf5961b2519e5e28",
       "Sources/NexGenVideo/ThreeD/BpyRuntimeSelfTest.swift": "881a0e8489708f9f72f3a89ff0e028a8730481ec",
@@ -1903,7 +1903,7 @@
       "Sources/NexGenVideo/ThreeD/BpyRetentionLedger.swift": "e63ffa4a908f100ba0380163cbac051849d0c2fa",
       "Sources/NexGenVideo/ThreeD/BpyRetiredLaunch.swift": "1ab6db7cbfc9c6a81138051f7e2a2631914eac6a",
       "Sources/NexGenVideo/ThreeD/BpyRoleLockAcceptance.swift": "0401935fd64a5555748262f8fadac7fe6c9621bf",
-      "Sources/NexGenVideo/ThreeD/BpyRuntimeClient.swift": "45e1639ce0f957e51420f6b219f291def23bbc89",
+      "Sources/NexGenVideo/ThreeD/BpyRuntimeClient.swift": "5f94843a22274773f2c15c9a5ec85a29e7828fda",
       "Sources/NexGenVideo/ThreeD/BpyRuntimeObservation.swift": "294a32cd9c62671dc9a5ee9bcaaad28533f0dee2",
       "Sources/NexGenVideo/ThreeD/BpyRuntimeResultLease.swift": "1ed3c58e7838127361caaa9fbf5961b2519e5e28",
       "Sources/NexGenVideo/ThreeD/BpyRuntimeSelfTest.swift": "881a0e8489708f9f72f3a89ff0e028a8730481ec",
@@ -2832,7 +2832,7 @@
       "Sources/NexGenVideo/ThreeD/BpyRetentionLedger.swift": "e63ffa4a908f100ba0380163cbac051849d0c2fa",
       "Sources/NexGenVideo/ThreeD/BpyRetiredLaunch.swift": "1ab6db7cbfc9c6a81138051f7e2a2631914eac6a",
       "Sources/NexGenVideo/ThreeD/BpyRoleLockAcceptance.swift": "0401935fd64a5555748262f8fadac7fe6c9621bf",
-      "Sources/NexGenVideo/ThreeD/BpyRuntimeClient.swift": "45e1639ce0f957e51420f6b219f291def23bbc89",
+      "Sources/NexGenVideo/ThreeD/BpyRuntimeClient.swift": "5f94843a22274773f2c15c9a5ec85a29e7828fda",
       "Sources/NexGenVideo/ThreeD/BpyRuntimeObservation.swift": "294a32cd9c62671dc9a5ee9bcaaad28533f0dee2",
       "Sources/NexGenVideo/ThreeD/BpyRuntimeResultLease.swift": "1ed3c58e7838127361caaa9fbf5961b2519e5e28",
       "Sources/NexGenVideo/ThreeD/BpyRuntimeSelfTest.swift": "881a0e8489708f9f72f3a89ff0e028a8730481ec",
@@ -2913,7 +2913,7 @@
       "Sources/NexGenVideo/Utilities/SourceTiming.swift": "15247fa32564207dee3a5a01065d5a4fc8389f9f",
       "Sources/NexGenVideo/Utilities/TimeFormatting.swift": "4c10a4554812031a08ecbe3e10d39cce76e1719e",
       "Tests/AppKitTestHostSupport": "180f486523e826b8b462011d42bf758fdc4e1d6f",
-      "Tests/NexGenVideoTests": "0bb516d18f78cd40870a1bad003797ce249414b2"
+      "Tests/NexGenVideoTests": "7b8ce851d33388f0ca5c103e09428cd899fbec02"
     }
   },
   "schema": "native-app-cohort/v2",
