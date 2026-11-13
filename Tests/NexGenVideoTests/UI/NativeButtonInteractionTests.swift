@@ -462,6 +462,10 @@ struct NativeButtonInteractionTests {
             try #require(value.complete)
             #expect(value.nodes.contains { $0.role == kAXScrollBarRole })
             #expect(value.nodes.contains {
+                $0.role == kAXValueIndicatorRole && $0.frame?.valid == true
+                    && $0.statuses[kAXChildrenAttribute] == AXError.noValue.rawValue
+            })
+            #expect(value.nodes.contains {
                 $0.role == kAXButtonRole && $0.frame?.valid == true
                     && $0.title == nil && $0.label == nil && $0.enabled == nil
             })
