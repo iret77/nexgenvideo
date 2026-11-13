@@ -1225,8 +1225,17 @@ def resolve(args):
     receipt = journey.read_json(destination / 'tests-input.json')
     compatibility = None
     if original_source != source_sha:
-        originals = _source_snapshot(original_source, source_files)
-        compatibility = _compiled_compatibility(original_source, receipt.get('testFiles', {}), source_sha,
+        producer_files = receipt.get('testFiles')
+        added_verifiers = {'scripts/compiled_current_core_reuse.py',
+                          'scripts/fixtures/compiled-current-core-reuse-1047.json'}
+        require(isinstance(producer_files, dict) and bool(producer_files)
+                and set(producer_files) in (set(source_files), set(source_files) - added_verifiers)
+                and all(isinstance(value, str) and re.fullmatch('[a-f0-9]{64}', value)
+                        for value in producer_files.values()), 'Invalid original UI test source map')
+        require_receipt(receipt, original_source, producer_files)
+        require(receipt['runID'] == args.run_id, 'UI test receipt has another producer')
+        originals = _source_snapshot(original_source, producer_files)
+        compatibility = _compiled_compatibility(original_source, producer_files, source_sha,
             source_files, originals, api('/compare/' + original_source + '...' + source_sha))
     require_receipt(receipt, original_source, receipt.get('testFiles') if compatibility else source_files)
     require(receipt['runID'] == args.run_id, 'UI test receipt has another producer')
