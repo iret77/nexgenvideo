@@ -395,7 +395,8 @@ class PointerPreflightTests(unittest.TestCase):
                 stack.enter_context(patch.object(diagnostic, 'verify_open_capture', return_value={}))
                 stack.enter_context(patch.object(bpy_runtime_acceptance, 'capture_open_logs', side_effect=capture))
                 stack.enter_context(patch.object(bpy_runtime_acceptance, 'supervise', side_effect=supervise))
-                stack.enter_context(patch.object(bpy_runtime_acceptance.WorkerReader, 'identity', return_value=None))
+                reader = Mock(); reader.identity.return_value = None
+                reader_factory = stack.enter_context(patch.object(bpy_runtime_acceptance, 'WorkerReader', return_value=reader))
                 expected = 'Observer incomplete' if mode == 'app-exit1' else mode
                 with self.assertRaisesRegex((ValueError, AssertionError), expected):
                     diagnostic.run(output)
@@ -403,6 +404,10 @@ class PointerPreflightTests(unittest.TestCase):
                     else ['capture-enter', 'app', 'capture-exit'])
                 self.assertTrue(json.loads((output / 'cleanup.json').read_text())['observerReaped'])
                 observer.wait.assert_called_once()
+                if mode == 'capture-start':
+                    reader_factory.assert_not_called(); reader.identity.assert_not_called()
+                else:
+                    reader_factory.assert_called_once_with(); reader.identity.assert_called_once_with(902)
 
     def test_failed_observer_compile_stops_before_runtime_acquisition_or_app_start(self):
         import retained_release_runtime
