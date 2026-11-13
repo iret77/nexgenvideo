@@ -286,11 +286,32 @@ def _native_inventory_additions(before, after):
                     'zeroAreaButtonsWithAbsentEnabledNeverBecomeTargetsOrHideDuplicates',
                     'absentEnabledRequiresProvenZeroAreaAndReadableIdentity',
                     'unnamedButtonsRequireKnownNamesAndCannotHideNamedTargets')}
+    admission = {
+        'NexGenVideoTests.BpyCleanupAdmissionTests/ownClosingSlotWaitsForItsActualCompletionAndAllocatesOnce()/BpyHostMonitorTests.swift:220:6',
+        'NexGenVideoTests.BpyCleanupAdmissionTests/anotherDocumentsActiveSlotDoesNotBecomeAnOwnedCleanupWait()/BpyHostMonitorTests.swift:234:6',
+        'NexGenVideoTests.BpyCleanupAdmissionTests/cleanupMustSucceedAndActuallyReleaseItsSlot(success:)/BpyHostMonitorTests.swift:243:6',
+        'NexGenVideoTests.BpyCleanupAdmissionTests/changedDocumentIdentityAfterCleanupPreventsLateAllocation()/BpyHostMonitorTests.swift:255:6',
+        'NexGenVideoTests.BpyCleanupAdmissionTests/concurrentPresentationsJoinCleanupThenShareOneSession()/BpyHostMonitorTests.swift:266:6',
+        'NexGenVideoTests.BpyCleanupAdmissionTests/cancellationUnregistersOnlyItsWaiterWithoutCompletingCleanup()/BpyHostMonitorTests.swift:278:6',
+        'NexGenVideoTests.BpyCleanupAdmissionTests/cancellationBeforeAdmissionDoesNotAllocateOrRegister()/BpyHostMonitorTests.swift:293:6',
+        'NexGenVideoTests.BpyCleanupAdmissionTests/timeoutLeavesCleanupAndSlotOwnedAndIgnoresLateCompletion()/BpyHostMonitorTests.swift:305:6',
+        'NexGenVideoTests.BpyCleanupAdmissionTests/cleanupCompletedBeforeWaitRegistrationIsNotLost()/BpyHostMonitorTests.swift:317:6',
+        'NexGenVideoTests.BpyCleanupAdmissionTests/presentationCloseAndShutdownCancelWaitersWithoutReleasingSlots()/BpyHostMonitorTests.swift:325:6',
+        'NexGenVideoTests.ProjectSessionResetTests/locationAdmissionGenerationReplacement()/ProjectSessionResetTests.swift:328:6',
+    }
     prior = before['modules']['app']['exactEndedFunctionIDs']
     current = after['modules']['app']['exactEndedFunctionIDs']
-    require(len(current) == len(set(current)) and set(current) - set(prior) == expected
-            and set(prior) <= set(current), 'UI test App transition has unknown or removed native tests')
+    added = set(current) - set(prior)
+    require(added in (expected, admission, expected | admission)
+            and len(current) == len(set(current)) and set(prior) <= set(current),
+            'UI test App transition has unknown or removed native tests')
+    expected = added
     retained = json.loads(json.dumps(after))
+    if admission <= added:
+        parameter = 'NexGenVideoTests.BpyCleanupAdmissionTests/cleanupMustSucceedAndActuallyReleaseItsSlot(success:)/BpyHostMonitorTests.swift:243:6'
+        cases = retained['modules']['app'].get('expectedCaseCountsByFunction', {})
+        require(cases.pop(parameter, None) == 2,
+                'UI test App transition changes cleanup admission parameter coverage')
     retained['modules']['app']['exactEndedFunctionIDs'] = [item for item in current if item not in expected]
     retained['expectedActualExecutions'] -= len(expected)
     require(retained == before, 'UI test App transition changes existing native acceptance criteria')
