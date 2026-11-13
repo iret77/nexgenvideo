@@ -241,8 +241,9 @@ class CompiledComponentAssemblyTests(unittest.TestCase):
                 broken = copy.deepcopy(actual); del broken['componentAssembly']
                 with self.assertRaises(ValueError): release.checkpoint.verify_manifest(broken, consumer, 777)
 
-    def normal_runtime(self, base, mutation=None):
-        directory = base / 'chat-replay'; bundle = directory / 'plugins/musicvideo.ngvpack'; bundle.mkdir(parents=True)
+    def normal_runtime(self, base, mutation=None, caller='replay'):
+        directory = base / ('scene-pointer-workspace-55' if caller == 'measurement' else 'chat-replay')
+        bundle = directory / 'plugins/musicvideo.ngvpack'; bundle.mkdir(parents=True)
         product, harness = 'a' * 40, 'b' * 40
         identity = {'CFBundleVersion': '107', 'CFBundleShortVersionString': '1.8.0', 'NGVSourceCommit': product,
             'treeSHA256': 'c' * 64, 'executableSHA256': 'd' * 64}
@@ -266,7 +267,7 @@ class CompiledComponentAssemblyTests(unittest.TestCase):
         if mutation: mutation(proof, receipt, identity, artifact, job)
         environment = {'RUNNER_TEMP': str(base), 'GITHUB_WORKSPACE': str(base), 'GITHUB_ACTIONS': 'true',
             'GITHUB_REPOSITORY': release.REPOSITORY, 'GITHUB_SHA': harness, 'GITHUB_RUN_ID': '55',
-            'GITHUB_RUN_ATTEMPT': '1', 'GITHUB_JOB': 'replay'}
+            'GITHUB_RUN_ATTEMPT': '1', 'GITHUB_JOB': caller, 'KIND': 'native-scene-pointer-delivery'}
         with patch.dict(os.environ, environment), patch.object(release.sys, 'platform', 'darwin'), \
                 patch.object(release, 'api', side_effect=lambda route: rows[route]), \
                 patch.object(release, 'pack_verification_origin', return_value=origin), \
@@ -285,6 +286,29 @@ class CompiledComponentAssemblyTests(unittest.TestCase):
             self.assertFalse(actual['currentNativeCodesignOrStaplerPerformed'])
             self.assertFalse(actual['newAppPackLoadQualified'])
             self.assertTrue((Path(temporary) / 'chat-replay/pack-verification.reused.json').is_file())
+
+    def test_pointer_measurement_keeps_exact_pack_producer_and_consumer_guards(self):
+        for changed in ('valid', 'artifact', 'job', 'build', 'harness', 'attempt', 'receipt'):
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory() as temporary:
+                def mutate(proof, receipt, identity, artifact, job):
+                    if changed == 'artifact': artifact['digest'] = 'sha256:' + '0' * 64
+                    elif changed == 'job': job['labels'] = ['macos-latest']
+                    elif changed == 'build': identity['CFBundleVersion'] = '106'
+                    elif changed == 'harness': proof['harnessSourceSHA'] = '0' * 40
+                    elif changed == 'attempt': proof['executionAttempt'] = '2'
+                    elif changed == 'receipt': receipt['appTreeSHA256'] = '0' * 64
+                root = Path(temporary)
+                marker = root / 'scene-pointer-workspace-55/pack-verification.reused.json'
+                if changed == 'valid':
+                    actual = self.normal_runtime(root, mutate, caller='measurement')
+                    self.assertEqual(actual['job'], 'measurement')
+                    self.assertEqual(actual['executionRunID'], 55)
+                    self.assertEqual(actual['producerRunID'], 777)
+                    self.assertFalse(actual['newAppPackLoadQualified'])
+                    self.assertEqual(json.loads(marker.read_bytes()), actual)
+                else:
+                    with self.assertRaises(ValueError): self.normal_runtime(root, mutate, caller='measurement')
+                    self.assertFalse(marker.exists())
 
     def test_new_normal_runtime_pack_refuses_foreign_artifact_job_or_consumer(self):
         for changed in ('artifact', 'job', 'build', 'harness', 'attempt', 'receipt'):

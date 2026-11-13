@@ -788,6 +788,21 @@ class ExternalTestBundleTests(unittest.TestCase):
             with self.subTest(mode=mode), self.assertRaises(ValueError):
                 bundle._current_core_import_view(ast.unparse(module), path, current=True)
 
+    def test_pointer_destination_transition_cannot_hide_changed_guards_or_import_execution(self):
+        path = 'scripts/compiled_app_release.py'
+        current = (journey.REPOSITORY / path).read_text()
+        for old, new in [("os.environ.get('KIND') == 'native-scene-pointer-delivery'", 'True'),
+                ("re.fullmatch(r'[1-9][0-9]*', run_id)", 'True'),
+                ("temporary / ('scene-pointer-workspace-' + run_id)", "workspace / 'unrelated'"),
+                ('directory.resolve() == expected[job].resolve()', 'True'),
+                ('not directory.is_symlink()', 'True'),
+                ('def retained_runtime_destination(directory):', '@execute()\ndef retained_runtime_destination(directory):'),
+                ('def retained_runtime_destination(directory):', 'def retained_runtime_destination(directory=execute()):')]:
+            changed = current.replace(old, new)
+            self.assertNotEqual(changed, current)
+            with self.subTest(change=old), self.assertRaises(ValueError):
+                bundle._current_core_import_view(changed, path, current=True)
+
     def test_compiled_client_rejects_unknown_added_or_removed_verifier(self):
         fixture = self.compiled_client_fixture()
         for files in ({**fixture.files, 'scripts/unknown_verifier.py': 'e' * 64},
