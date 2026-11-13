@@ -4783,8 +4783,8 @@
     "NexGenVideoTests.NativeButtonInteractionTests/actualSwiftUIButtonIsDiscoveredWithoutAnExternalReader()/NativeButtonInteractionTests.swift:323:6",
     "NexGenVideoTests.NativeButtonInteractionTests/actualTraversalBudgetCannotQualifyAPartialTree()/NativeButtonInteractionTests.swift:399:6",
     "NexGenVideoTests.NativeButtonInteractionTests/actualWindowFrameCannotSubstituteForTheContentRoot()/NativeButtonInteractionTests.swift:259:6",
-    "NexGenVideoTests.NativeButtonInteractionTests/cancellationDuringTheLastChildMessageCannotQualifyATree()/NativeButtonInteractionTests.swift:602:6",
-    "NexGenVideoTests.NativeButtonInteractionTests/theLastChildMessageUsesItsOwnRemainingTimeout()/NativeButtonInteractionTests.swift:630:6"
+    "NexGenVideoTests.NativeButtonInteractionTests/cancellationDuringTheLastChildMessageCannotQualifyATree()/NativeButtonInteractionTests.swift:610:6",
+    "NexGenVideoTests.NativeButtonInteractionTests/theLastChildMessageUsesItsOwnRemainingTimeout()/NativeButtonInteractionTests.swift:638:6"
   ],
   "schema": "compiled-app-native-inventory/v1",
   "xctest": {

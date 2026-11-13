@@ -19,6 +19,16 @@ WHISPER_PREFIX = 'Products/Release/NexGenVideoTests.xctest/Contents/Frameworks/w
 WHISPER_SIGNED_SHA256 = 'c99f4c1ec811dbd250e599fc7d59b929990e5602ae64fe366433766dbec80129'
 WHISPER_UNSIGNED_SHA256 = '50e9a18e22098bb673032ccb7205038de2cbd009fb67f969622bb939d0e89497'
 WHISPER_UNSIGNED_BYTES = 5501136
+ORIGINAL_NATIVE_REGRESSIONS = frozenset({
+    'NexGenVideoTests.NativeButtonInteractionTests/actualDisabledSwiftUIButtonIsExcluded()',
+    'NexGenVideoTests.NativeButtonInteractionTests/actualDuplicateButtonsCannotBecomeAUniqueTarget()',
+    'NexGenVideoTests.NativeButtonInteractionTests/actualPreparedReaderProvesItsOwnParentImageAndTrust()',
+    'NexGenVideoTests.NativeButtonInteractionTests/actualSwiftUIButtonIsDiscoveredWithoutAnExternalReader()',
+    'NexGenVideoTests.NativeButtonInteractionTests/actualTraversalBudgetCannotQualifyAPartialTree()',
+    'NexGenVideoTests.NativeButtonInteractionTests/actualWindowFrameCannotSubstituteForTheContentRoot()',
+    'NexGenVideoTests.NativeButtonInteractionTests/cancellationDuringTheLastChildMessageCannotQualifyATree()',
+    'NexGenVideoTests.NativeButtonInteractionTests/theLastChildMessageUsesItsOwnRemainingTimeout()',
+})
 
 
 def encoded(value):
@@ -255,6 +265,13 @@ def criteria(source=None):
         require(len(set(ended)) == len(ended) and len(set(skipped)) == len(skipped)
             and not set(ended) & set(skipped), 'Native inventory has duplicate or overlapping roles')
         module['exactDiscoveredFunctionIDs'] = sorted(set(ended) | set(skipped))
+    regressions = expected.get('originalEightAppFailureIDsRequiredToEndWithoutIssues')
+    require(isinstance(regressions, list) and len(regressions) == len(ORIGINAL_NATIVE_REGRESSIONS)
+        and all(isinstance(identity, str) for identity in regressions)
+        and len(set(regressions)) == len(regressions)
+        and {identity.rsplit('/', 1)[0] for identity in regressions} == ORIGINAL_NATIVE_REGRESSIONS
+        and set(regressions) <= set(expected['modules']['app']['exactEndedFunctionIDs']),
+        'Original native regressions must name exact current App execution IDs')
     require(expected['expectedActualExecutions'] == sum(len(module['exactEndedFunctionIDs']) for module in expected['modules'].values())
         + len(expected['xctest']['exactIndividualPassedIDs']), 'Native expected count differs from independent IDs')
     return expected

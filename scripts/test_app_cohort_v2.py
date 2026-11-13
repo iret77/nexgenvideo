@@ -1,10 +1,64 @@
 import copy
 import hashlib
 import json
+from pathlib import Path
 import unittest
 from unittest import mock
 
 import app_cohort_v2 as cohort
+
+
+class NativeRegressionInventoryTests(unittest.TestCase):
+    def setUp(self):
+        self.manifest = cohort.manifest()
+        self.expected = json.loads(Path(self.manifest['criteria']['path']).read_bytes())
+
+    def check(self, expected):
+        with mock.patch.object(cohort, 'manifest', return_value=self.manifest), \
+                mock.patch.object(cohort.Path, 'read_bytes', return_value=json.dumps(expected).encode()):
+            return cohort.criteria()
+
+    def test_current_dynamic_inventory_preserves_all_original_regressions(self):
+        expected = cohort.criteria()
+        self.assertEqual(len(expected['modules']['app']['exactEndedFunctionIDs']), 3696)
+        self.assertEqual({identity.rsplit('/', 1)[0] for identity in
+            expected['originalEightAppFailureIDsRequiredToEndWithoutIssues']}, cohort.ORIGINAL_NATIVE_REGRESSIONS)
+
+    def test_stale_duplicate_missing_and_substituted_regressions_are_rejected(self):
+        key = 'originalEightAppFailureIDsRequiredToEndWithoutIssues'
+        for defect in ('stale', 'duplicate', 'missing', 'substitute', 'skipped', 'not-string'):
+            changed = copy.deepcopy(self.expected)
+            required = changed[key]
+            if defect == 'stale':
+                required[-1] = required[-1].replace(':638:6', ':630:6')
+            elif defect == 'duplicate':
+                required[-1] = required[0]
+            elif defect == 'missing':
+                required.pop()
+            elif defect == 'substitute':
+                required[-1] = next(identity for identity in changed['modules']['app']['exactEndedFunctionIDs']
+                    if identity not in required)
+            elif defect == 'skipped':
+                changed['modules']['app']['exactEndedFunctionIDs'].remove(required[-1])
+                changed['modules']['app']['exactSkippedFunctionIDs'].append(required[-1])
+            else:
+                required[-1] = None
+            with self.subTest(defect=defect), self.assertRaisesRegex(ValueError, 'Original native regressions'):
+                self.check(changed)
+
+    def test_release_selectors_reject_stale_inventory_before_producer_access(self):
+        import compiled_app_release as release
+        event = {'inputs': {'artifact_only': True, 'dry_run': True, 'version': '1.8.0', 'verified_pr_run_id': '1'}}
+        changed = copy.deepcopy(self.expected)
+        changed['originalEightAppFailureIDsRequiredToEndWithoutIssues'][-1] = \
+            changed['originalEightAppFailureIDsRequiredToEndWithoutIssues'][-1].replace(':638:6', ':630:6')
+        with mock.patch.object(release, 'selector_identities', return_value={}), \
+                mock.patch.object(release, 'producer') as producer, \
+                mock.patch.object(cohort, 'manifest', return_value=self.manifest), \
+                mock.patch.object(cohort.Path, 'read_bytes', return_value=json.dumps(changed).encode()):
+            with self.assertRaisesRegex(ValueError, 'Original native regressions'):
+                release.selectors('{}', event)
+            producer.assert_not_called()
 
 
 class RoleReuseTests(unittest.TestCase):
