@@ -495,6 +495,11 @@ def retained_runtime_destination(directory):
     job = os.environ.get('GITHUB_JOB')
     expected = {'analyze': workspace / '.build', 'replay': temporary / 'chat-replay',
         'acceptance': temporary / 'settings-runtime'}
+    if job == 'measurement':
+        run_id = os.environ.get('GITHUB_RUN_ID', '')
+        require(os.environ.get('KIND') == 'native-scene-pointer-delivery'
+            and re.fullmatch(r'[1-9][0-9]*', run_id), 'Unknown retained pointer measurement')
+        expected[job] = temporary / ('scene-pointer-workspace-' + run_id)
     require(job in expected and directory.resolve() == expected[job].resolve()
         and not directory.is_symlink() and not expected[job].is_symlink(),
         'Retained runtime destination differs from its actual caller')

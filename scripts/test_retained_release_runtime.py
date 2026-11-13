@@ -19,6 +19,47 @@ sys.path.pop(0)
 
 
 class RetainedReleaseRuntimeTests(unittest.TestCase):
+    def test_pointer_measurement_destination_requires_exact_caller_run_and_unlinked_path(self):
+        import compiled_app_release as compiled
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); workspace = root / 'workspace'; workspace.mkdir(); runner = root / 'runner'; runner.mkdir()
+            destination = runner / 'scene-pointer-workspace-55'
+            env = {'GITHUB_ACTIONS': 'true', 'GITHUB_REPOSITORY': 'iret77/nexgenvideo',
+                'GITHUB_RUN_ATTEMPT': '1', 'GITHUB_WORKSPACE': str(workspace), 'RUNNER_TEMP': str(runner),
+                'GITHUB_JOB': 'measurement', 'GITHUB_RUN_ID': '55', 'KIND': 'native-scene-pointer-delivery'}
+            with patch.dict(os.environ, env, clear=True), patch.object(compiled.sys, 'platform', 'darwin'):
+                self.assertEqual(compiled.retained_runtime_destination(destination), runner)
+                for key, value in [('KIND', ''), ('KIND', 'native-scene-history-hierarchy'),
+                        ('GITHUB_JOB', 'acceptance'), ('GITHUB_RUN_ID', '56'), ('GITHUB_RUN_ID', '../55'),
+                        ('GITHUB_RUN_ID', '0'), ('GITHUB_RUN_ID', '055'), ('GITHUB_RUN_ATTEMPT', '2'),
+                        ('GITHUB_REPOSITORY', 'other/repo')]:
+                    with self.subTest(key=key, value=value), patch.dict(os.environ, {key: value}), self.assertRaises(ValueError):
+                        compiled.retained_runtime_destination(destination)
+                for path in (workspace / destination.name, runner / 'chat-replay', runner / 'scene-pointer-workspace-56'):
+                    with self.subTest(path=path), self.assertRaises(ValueError):
+                        compiled.retained_runtime_destination(path)
+                destination.symlink_to(workspace, target_is_directory=True)
+                with self.assertRaises(ValueError): compiled.retained_runtime_destination(destination)
+
+    def test_pointer_restore_reaches_app_validation_through_real_destination_guard(self):
+        destination = self.root / 'scene-pointer-workspace-55'
+        proof = {'schema': 'nexgenvideo/retained-release-runtime/1', 'productSourceSHA': self.source,
+            'runtimeArtifactID': 34, 'runtimeArtifactSHA256': self.digest, 'producerRunID': 12}
+        identity = {'treeSHA256': 'd' * 64, 'executableSHA256': 'e' * 64}
+        env = {'GITHUB_ACTIONS': 'true', 'GITHUB_REPOSITORY': 'iret77/nexgenvideo',
+            'GITHUB_RUN_ATTEMPT': '1', 'GITHUB_WORKSPACE': str(self.root), 'RUNNER_TEMP': str(self.root),
+            'GITHUB_JOB': 'measurement', 'GITHUB_RUN_ID': '55', 'KIND': 'native-scene-pointer-delivery'}
+        with patch.dict(os.environ, env, clear=True), patch.object(runtime.sys, 'platform', 'darwin'), \
+                patch.object(runtime, 'download', side_effect=lambda artifact, archive: self.transfer(archive)) as download, \
+                patch.object(runtime.subprocess, 'run') as commands, \
+                patch.object(runtime, 'validate_app', return_value=identity) as validate:
+            runtime.restore(self.artifact, proof, destination)
+        download.assert_called_once()
+        validate.assert_called_once()
+        self.assertEqual(validate.call_args.args[0], destination)
+        self.assertEqual(commands.call_args.args[0][-2:], ['-C', str(destination)])
+        self.assertEqual(proof['appTreeSHA256'], identity['treeSHA256'])
+
     def test_current_runtime_destinations_match_the_three_actual_callers(self):
         import compiled_app_release as compiled
         with tempfile.TemporaryDirectory() as temporary:

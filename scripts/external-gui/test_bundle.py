@@ -377,7 +377,19 @@ def _current_core_import_view(raw, path, *, current=False):
                                                              "len(expected['xctest']['exactIndividualPassedIDs']), "
                                                              "'Native expected count differs from independent "
                                                              "IDs')"}]},
-     'scripts/compiled_app_release.py': {'selectors': [{'before': '',
+     'scripts/compiled_app_release.py': {'retained_runtime_destination': [{'before': '',
+  'after': "if job == 'measurement':\n"
+           "    run_id = os.environ.get('GITHUB_RUN_ID', '')\n"
+           "    require(os.environ.get('KIND') == 'native-scene-pointer-delivery'\n"
+           "        and re.fullmatch(r'[1-9][0-9]*', run_id), 'Unknown retained pointer "
+           "measurement')\n"
+           "    expected[job] = temporary / ('scene-pointer-workspace-' + run_id)",
+  'previous': "expected = {'analyze': workspace / '.build', 'replay': temporary / 'chat-replay', "
+              "'acceptance': temporary / 'settings-runtime'}",
+  'following': 'require(job in expected and directory.resolve() == expected[job].resolve() and not '
+               "directory.is_symlink() and not expected[job].is_symlink(), 'Retained runtime "
+               "destination differs from its actual caller')"}],
+                                         'selectors': [{'before': '',
                                                         'after': 'import app_cohort_v2\n'
                                                                  'if app_cohort_v2.MANIFEST.is_file():\n'
                                                                  '    app_cohort_v2.criteria()',
