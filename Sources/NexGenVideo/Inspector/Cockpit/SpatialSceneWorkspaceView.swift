@@ -3,12 +3,21 @@ import NexGenEngine
 import SwiftUI
 
 struct SpatialSceneWorkspaceView: View {
+    private struct OpenRequest: Equatable {
+        let home: URL?
+        let key: String?
+        let generation: UUID?
+        let retry: UUID
+    }
+
     @Environment(EditorViewModel.self) private var editor
     @State private var session: SpatialSceneSession?
     @State private var sessionHome: URL?
     @State private var failure: String?
     @State private var runtimePresentation: BpyRuntimePresentation?
     @State private var reloadPending = false
+    @State private var retry = UUID()
+    @State private var openingID: UUID?
 
     private var editingEnabled: Bool {
         guard editor.projectState?.nextPhaseName == "production_design", !editor.agentService.isStreaming,
@@ -31,14 +40,15 @@ struct SpatialSceneWorkspaceView: View {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
                     Text(failure).foregroundStyle(AppTheme.Status.errorColor)
                         .reviewAcceptanceProbe("spatial.workspace.error", text: failure)
-                    Button("Open location editor") { open() }.buttonStyle(InlineActionButtonStyle())
+                    Button("Open location editor") { retry = UUID() }.buttonStyle(InlineActionButtonStyle())
                 }.padding(AppTheme.Spacing.lg)
             } else {
                 ProgressView("Opening location editor…").padding(AppTheme.Spacing.lg)
             }
         }
         .interfaceFont(size: AppTheme.Typography.ui)
-        .task(id: editor.workingRoot) { open() }
+        .task(id: OpenRequest(home: editor.workingRoot, key: editor.openWorkingCopyKey,
+            generation: editor.openWorkingCopyGeneration, retry: retry)) { await open() }
         .onChange(of: editor.engineStateRevision) { _, _ in
             guard sessionHome == editor.workingRoot, let session else { return }
             if session.busy { reloadPending = true }
@@ -51,6 +61,7 @@ struct SpatialSceneWorkspaceView: View {
             }
         }
         .onDisappear {
+            openingID = nil
             session?.cancel()
             if let runtimePresentation { BpyRuntimeHost.shared.releasePresentation(runtimePresentation) }
             runtimePresentation = nil
@@ -58,12 +69,14 @@ struct SpatialSceneWorkspaceView: View {
         }
     }
 
-    private func open() {
+    @MainActor private func open() async {
+        let request = UUID()
+        openingID = request
         session?.cancel(); session = nil; sessionHome = nil; failure = nil; reloadPending = false
         if let runtimePresentation { BpyRuntimeHost.shared.releasePresentation(runtimePresentation) }
         runtimePresentation = nil
         guard let home = editor.workingRoot, let root = DataRootResolver.dataRoot(of: home),
-              let key = editor.openWorkingCopyKey,
+              let key = editor.openWorkingCopyKey, let generation = editor.openWorkingCopyGeneration,
               let document = NSDocumentController.shared.documents.compactMap({ $0 as? VideoProject })
                 .first(where: { $0.editorViewModel === editor }) else {
             failure = "Open a production project before editing locations."
@@ -73,21 +86,30 @@ struct SpatialSceneWorkspaceView: View {
             failure = "The location runtime is unavailable for this project."
             return
         }
-        do {
-            guard let runtime = BpyRuntimeHost.shared.session(for: document) else {
+        runtimePresentation = presentation
+        var retained = false
+        defer {
+            if !retained, runtimePresentation == presentation {
                 BpyRuntimeHost.shared.releasePresentation(presentation)
-                failure = "The location runtime is busy with other projects. Close an unused location editor, then open this one again."
-                return
+                runtimePresentation = nil
             }
+        }
+        do {
+            let runtime = try await BpyRuntimeHost.shared.session(for: document, presentation: presentation)
+            try Task.checkCancellation()
+            guard openingID == request, runtimePresentation == presentation,
+                  editor.workingRoot == home, editor.openWorkingCopyKey == key,
+                  editor.openWorkingCopyGeneration == generation else { return }
             let authority = try PipelineSpatialSceneAuthority(editor: editor, runtime: runtime)
             let value = SpatialSceneSession(pipelineRoot: root, runtime: runtime, authority: authority)
             value.reload()
             sessionHome = home
             session = value
             runtimePresentation = presentation
+            retained = true
+        } catch is CancellationError {
         } catch {
-            BpyRuntimeHost.shared.releasePresentation(presentation)
-            failure = error.localizedDescription
+            if openingID == request, !Task.isCancelled { failure = error.localizedDescription }
         }
     }
 }

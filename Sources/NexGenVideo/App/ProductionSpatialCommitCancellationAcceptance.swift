@@ -22,7 +22,7 @@ enum ProductionSpatialCommitCancellationAcceptance {
     static func run(context: ProductionPlanningAcceptanceFixture.Context, output: URL) async throws -> [String: String] {
         guard ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"]?.isEmpty == false,
               let key = context.editor.openWorkingCopyKey else { throw SpatialSceneError.changed }
-        let operation = try BpyRuntimeHost.shared.acquireOperation(document: context.document, documentID: key)
+        let operation = try await BpyRuntimeHost.shared.acquireOperation(document: context.document, documentID: key)
         defer { BpyRuntimeHost.shared.releaseOperation(operation) }
         let authority = try PipelineSpatialSceneAuthority(editor: context.editor, runtime: operation.session)
         let observer = Observer()

@@ -165,3 +165,208 @@ struct BpyHostMonitorTests {
         #expect(try observation.sample().ended.map(\.start) == [supervisor.start, worker.start])
     }
 }
+
+@MainActor
+struct BpyCleanupAdmissionTests {
+    @MainActor private final class Fixture {
+        let gate = BpyCleanupAdmission()
+        let attempt = UUID()
+        let ready = AsyncStream<Void>.makeStream()
+        var occupied = true
+        var pending = true
+        var owned = true
+        var valid = true
+        var finishBeforeRegistration = false
+        var validations = 0
+        var allocations = 0
+        var session: UUID?
+
+        func validate() throws {
+            validations += 1
+            if !valid { throw BpyRuntimeError.unavailable("The document generation changed.") }
+            if finishBeforeRegistration, validations == 2 { finish(success: true) }
+        }
+
+        func acquire() -> UUID? {
+            guard !occupied else { return nil }
+            if session == nil { session = UUID(); allocations += 1 }
+            return session
+        }
+
+        func cleanup() -> BpyCleanupAdmission.Cleanup? {
+            guard owned else { return nil }
+            return .init(attempt: attempt, isPending: {
+                self.ready.continuation.yield(())
+                return self.pending
+            }, occupiesSlot: { self.occupied }, failure: { "Owned cleanup did not release its slot." })
+        }
+
+        func start(id: UUID = UUID(), timeout: Duration = .seconds(5)) -> Task<UUID, any Error> {
+            Task { try await gate.admit(id: id, timeout: timeout, validate: validate, acquire: acquire, cleanup: cleanup) }
+        }
+
+        func registered() async {
+            var iterator = ready.stream.makeAsyncIterator()
+            _ = await iterator.next()
+        }
+
+        func finish(success: Bool) {
+            pending = false
+            if success { occupied = false }
+            gate.complete(attempt: attempt, success: success)
+        }
+    }
+
+    @Test func ownClosingSlotWaitsForItsActualCompletionAndAllocatesOnce() async throws {
+        let fixture = Fixture(), request = fixture.start()
+        await fixture.registered()
+        #expect(fixture.gate.pendingCount == 1)
+        #expect(fixture.allocations == 0)
+        fixture.gate.complete(attempt: UUID(), success: true)
+        #expect(fixture.gate.pendingCount == 1)
+        fixture.finish(success: true)
+        let session = try await request.value
+        #expect(session == fixture.session)
+        #expect(fixture.allocations == 1)
+        #expect(fixture.gate.pendingCount == 0)
+    }
+
+    @Test func anotherDocumentsActiveSlotDoesNotBecomeAnOwnedCleanupWait() async {
+        let fixture = Fixture()
+        fixture.owned = false
+        do { _ = try await fixture.start().value; Issue.record("A foreign slot was admitted.") }
+        catch { #expect(error.localizedDescription.contains("other projects")) }
+        #expect(fixture.gate.pendingCount == 0)
+        #expect(fixture.allocations == 0)
+    }
+
+    @Test(arguments: [false, true]) func cleanupMustSucceedAndActuallyReleaseItsSlot(success: Bool) async {
+        let fixture = Fixture(), request = fixture.start()
+        await fixture.registered()
+        fixture.pending = false
+        fixture.gate.complete(attempt: fixture.attempt, success: success)
+        do { _ = try await request.value; Issue.record("A reserved slot was reused.") }
+        catch { #expect(error.localizedDescription.contains("did not release")) }
+        #expect(fixture.allocations == 0)
+        #expect(fixture.occupied)
+        #expect(fixture.gate.pendingCount == 0)
+    }
+
+    @Test func changedDocumentIdentityAfterCleanupPreventsLateAllocation() async {
+        let fixture = Fixture(), request = fixture.start()
+        await fixture.registered()
+        fixture.valid = false
+        fixture.finish(success: true)
+        do { _ = try await request.value; Issue.record("A stale document acquired a session.") }
+        catch { #expect(error.localizedDescription.contains("generation changed")) }
+        #expect(fixture.allocations == 0)
+        #expect(fixture.gate.pendingCount == 0)
+    }
+
+    @Test func concurrentPresentationsJoinCleanupThenShareOneSession() async throws {
+        let fixture = Fixture(), first = fixture.start(), second = fixture.start()
+        await fixture.registered()
+        await fixture.registered()
+        #expect(fixture.gate.pendingCount == 2)
+        fixture.finish(success: true)
+        let firstSession = try await first.value, secondSession = try await second.value
+        #expect(firstSession == secondSession)
+        #expect(fixture.allocations == 1)
+        #expect(fixture.gate.pendingCount == 0)
+    }
+
+    @Test func cancellationUnregistersOnlyItsWaiterWithoutCompletingCleanup() async throws {
+        let fixture = Fixture(), first = fixture.start(), second = fixture.start()
+        await fixture.registered()
+        await fixture.registered()
+        first.cancel()
+        do { _ = try await first.value; Issue.record("A cancelled request acquired a session.") }
+        catch is CancellationError {} catch { Issue.record(error) }
+        #expect(fixture.pending && fixture.occupied)
+        #expect(fixture.gate.pendingCount == 1)
+        fixture.finish(success: true)
+        _ = try await second.value
+        #expect(fixture.allocations == 1)
+        #expect(fixture.gate.pendingCount == 0)
+    }
+
+    @Test func cancellationBeforeAdmissionDoesNotAllocateOrRegister() async {
+        let fixture = Fixture()
+        fixture.occupied = false
+        let request = fixture.start()
+        request.cancel()
+        do { _ = try await request.value; Issue.record("An already cancelled request was admitted.") }
+        catch is CancellationError {} catch { Issue.record(error) }
+        #expect(fixture.validations == 0)
+        #expect(fixture.allocations == 0)
+        #expect(fixture.gate.pendingCount == 0)
+    }
+
+    @Test func timeoutLeavesCleanupAndSlotOwnedAndIgnoresLateCompletion() async {
+        let fixture = Fixture(), request = fixture.start(timeout: .milliseconds(10))
+        await fixture.registered()
+        do { _ = try await request.value; Issue.record("A timed out request acquired a session.") }
+        catch { #expect(error.localizedDescription.contains("still closing")) }
+        #expect(fixture.pending && fixture.occupied)
+        #expect(fixture.allocations == 0)
+        #expect(fixture.gate.pendingCount == 0)
+        fixture.finish(success: true)
+        #expect(fixture.allocations == 0)
+    }
+
+    @Test func cleanupCompletedBeforeWaitRegistrationIsNotLost() async throws {
+        let fixture = Fixture()
+        fixture.finishBeforeRegistration = true
+        _ = try await fixture.start().value
+        #expect(fixture.allocations == 1)
+        #expect(fixture.gate.pendingCount == 0)
+    }
+
+    @Test func presentationCloseAndShutdownCancelWaitersWithoutReleasingSlots() async {
+        let fixture = Fixture(), id = UUID()
+        let first = fixture.start(id: id), second = fixture.start()
+        await fixture.registered()
+        await fixture.registered()
+        fixture.gate.cancel(id: id)
+        fixture.gate.cancelAll()
+        for request in [first, second] {
+            do { _ = try await request.value; Issue.record("A closed presentation acquired a session.") }
+            catch is CancellationError {} catch { Issue.record(error) }
+        }
+        #expect(fixture.pending && fixture.occupied)
+        #expect(fixture.allocations == 0)
+        #expect(fixture.gate.pendingCount == 0)
+    }
+
+    @Test func cleanupOwnerSurvivesRegistryReplacementUntilAdmissionSettles() async throws {
+        final class Owner { var occupied = true }
+        var registry: Owner? = Owner()
+        weak var previous = registry
+        let gate = BpyCleanupAdmission(), attempt = UUID(), result = UUID()
+        let ready = AsyncStream<Void>.makeStream()
+        var available = false
+        var request: Task<UUID, any Error>? = Task {
+            try await gate.admit(id: UUID(), validate: {}, acquire: { available ? result : nil }, cleanup: {
+                guard let owner = registry else { return nil }
+                return .retaining(attempt: attempt, owner: owner, isPending: {
+                    ready.continuation.yield(())
+                    return true
+                }, occupiesSlot: { $0.occupied }, failure: { _ in "The original owner is occupied." })
+            })
+        }
+        defer { request?.cancel() }
+        var iterator = ready.stream.makeAsyncIterator()
+        _ = await iterator.next()
+        registry = Owner()
+        try #require(previous != nil)
+        previous?.occupied = false
+        available = true
+        gate.complete(attempt: attempt, success: true)
+        let actual = try await request?.value
+        request = nil
+        #expect(actual == result)
+        #expect(registry?.occupied == true)
+        #expect(previous == nil)
+    }
+
+}

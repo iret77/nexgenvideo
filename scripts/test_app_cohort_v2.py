@@ -20,7 +20,7 @@ class NativeRegressionInventoryTests(unittest.TestCase):
 
     def test_current_dynamic_inventory_preserves_all_original_regressions(self):
         expected = cohort.criteria()
-        self.assertEqual(len(expected['modules']['app']['exactEndedFunctionIDs']), 3696)
+        self.assertEqual(len(expected['modules']['app']['exactEndedFunctionIDs']), 3708)
         self.assertEqual({identity.rsplit('/', 1)[0] for identity in
             expected['originalEightAppFailureIDsRequiredToEndWithoutIssues']}, cohort.ORIGINAL_NATIVE_REGRESSIONS)
 

@@ -2965,7 +2965,7 @@ private final class BpyNativeRestoreProbe {
     var exchanges: [BpyNativeProtocolExchange] = []
 }
 
-struct BpyRuntimePresentation: Sendable {
+struct BpyRuntimePresentation: Sendable, Equatable {
     fileprivate let id: UUID
 }
 
@@ -2978,12 +2978,37 @@ struct BpyRuntimeOperation: Sendable {
 final class BpyRuntimeHost {
     static let shared = BpyRuntimeHost()
 
+    @MainActor private struct DocumentContext {
+        weak var document: VideoProject?
+        let documentID: String
+        let home: URL?
+        let key: String?
+        let generation: UUID?
+
+        init(document: VideoProject, documentID: String) {
+            self.document = document
+            self.documentID = documentID
+            home = document.editorViewModel.workingRoot
+            key = document.editorViewModel.openWorkingCopyKey
+            generation = document.editorViewModel.openWorkingCopyGeneration
+        }
+
+        func matches(_ document: VideoProject, documentID: String) -> Bool {
+            self.document === document && self.documentID == documentID
+                && home == document.editorViewModel.workingRoot
+                && key == document.editorViewModel.openWorkingCopyKey
+                && generation == document.editorViewModel.openWorkingCopyGeneration
+        }
+    }
+
     private struct Entry {
         weak var document: VideoProject?
         let documentID: String
         var session: BpyRuntimeSession?
         var presentationIDs: Set<UUID> = []
         var operationIDs: Set<UUID> = []
+        let context: DocumentContext
+        var pendingAdmissionIDs: Set<UUID> = []
     }
 
     private struct CleanupAttempt {
@@ -2996,8 +3021,10 @@ final class BpyRuntimeHost {
     private var cleanupTasks: [ObjectIdentifier: CleanupAttempt] = [:]
     private var shuttingDown = false
     private let closedDocuments = NSHashTable<VideoProject>(options: [.weakMemory, .objectPointerPersonality])
+    private var retirementContexts: [ObjectIdentifier: DocumentContext] = [:]
+    private let admissions = BpyCleanupAdmission()
 
-    private init() {}
+    init() {}
 
     var cleanupFailure: String? {
         retiring.values.compactMap(\.cleanupFailure).sorted().first
@@ -3011,6 +3038,7 @@ final class BpyRuntimeHost {
     func confirmQuitWithReservedStorage() -> Bool {
         guard canQuitWithReservedStorage else { return false }
         shuttingDown = true
+        admissions.cancelAll()
         return true
     }
 
@@ -3023,37 +3051,103 @@ final class BpyRuntimeHost {
         removeExpiredDocuments()
         let key = ObjectIdentifier(document)
         guard !shuttingDown, !closedDocuments.contains(document) else { return nil }
+        replaceStaleEntry(document: document, documentID: documentID)
         if entries[key] == nil {
-            entries[key] = Entry(document: document, documentID: documentID, session: nil)
+            entries[key] = Entry(document: document, documentID: documentID, session: nil,
+                context: DocumentContext(document: document, documentID: documentID))
         }
-        guard entries[key]?.documentID == documentID else { return nil }
+        guard entries[key]?.context.matches(document, documentID: documentID) == true else { return nil }
         let id = UUID()
         entries[key]?.presentationIDs.insert(id)
         return BpyRuntimePresentation(id: id)
     }
 
-    func acquireOperation(document: VideoProject, documentID: String) throws -> BpyRuntimeOperation {
+    func acquireOperation(document: VideoProject, documentID: String) async throws -> BpyRuntimeOperation {
         removeExpiredDocuments()
         let key = ObjectIdentifier(document)
         guard !shuttingDown, !closedDocuments.contains(document) else {
             throw BpyRuntimeError.unavailable("The location document is closing.")
         }
+        replaceStaleEntry(document: document, documentID: documentID)
         if entries[key] == nil {
-            entries[key] = Entry(document: document, documentID: documentID, session: nil)
+            entries[key] = Entry(document: document, documentID: documentID, session: nil,
+                context: DocumentContext(document: document, documentID: documentID))
         }
         guard entries[key]?.documentID == documentID else {
             throw BpyRuntimeError.unavailable("The production project changed. Reopen its location editor.")
         }
-        guard let session = self.session(for: document) else {
-            if entries[key]?.presentationIDs.isEmpty == true, entries[key]?.operationIDs.isEmpty == true {
-                entries.removeValue(forKey: key)
-            }
-            throw BpyRuntimeError.unavailable(cleanupFailure
-                ?? "The location runtime is busy. Close an unused location editor, then retry.")
-        }
         let id = UUID()
-        entries[key]?.operationIDs.insert(id)
+        let session = try await admittedSession(document: document, documentID: documentID, request: id)
         return BpyRuntimeOperation(id: id, session: session)
+    }
+
+    func session(for document: VideoProject, presentation: BpyRuntimePresentation) async throws -> BpyRuntimeSession {
+        guard let entry = entries[ObjectIdentifier(document)], entry.presentationIDs.contains(presentation.id) else {
+            throw BpyRuntimeError.unavailable("The location editor is no longer open.")
+        }
+        return try await admittedSession(document: document, documentID: entry.documentID,
+            request: presentation.id, presentation: presentation)
+    }
+
+    private func admittedSession(document: VideoProject, documentID: String, request: UUID,
+                                 presentation: BpyRuntimePresentation? = nil) async throws -> BpyRuntimeSession {
+        try beginAdmission(document: document, request: request)
+        defer { finishAdmission(document: document, request: request) }
+        func validate() throws {
+            try validateAdmission(document: document, documentID: documentID, request: request, presentation: presentation)
+        }
+        func admitted(_ session: BpyRuntimeSession) -> BpyRuntimeSession {
+            if presentation == nil { entries[ObjectIdentifier(document)]?.operationIDs.insert(request) }
+            return session
+        }
+        return try await admissions.admit(id: request, validate: validate,
+            acquire: { self.session(for: document).map(admitted) }, cleanup: {
+                let pending = self.cleanupTasks.filter { self.retiring[$0.key]?.occupiesHostSlot == true
+                    && self.retirementContexts[$0.key]?.document === document }
+                guard let cleanup = pending.sorted(by: { $0.value.id.uuidString < $1.value.id.uuidString }).first,
+                      let retiredSession = self.retiring[cleanup.key] else { return nil }
+                return BpyCleanupAdmission.Cleanup.retaining(attempt: cleanup.value.id, owner: retiredSession,
+                    isPending: { self.cleanupTasks[cleanup.key]?.id == cleanup.value.id },
+                    occupiesSlot: { $0.occupiesHostSlot }, failure: { $0.cleanupFailure })
+            })
+    }
+
+    private func replaceStaleEntry(document: VideoProject, documentID: String) {
+        let key = ObjectIdentifier(document)
+        guard let entry = entries[key], !entry.context.matches(document, documentID: documentID) else { return }
+        entries.removeValue(forKey: key)
+        for id in entry.pendingAdmissionIDs { admissions.cancel(id: id) }
+        if let session = entry.session { retire(session, context: entry.context) }
+    }
+
+    func beginAdmission(document: VideoProject, request: UUID) throws {
+        let key = ObjectIdentifier(document)
+        guard entries[key]?.pendingAdmissionIDs.contains(request) == false else {
+            throw BpyRuntimeError.unavailable("The location request is already waiting or its editor closed.")
+        }
+        entries[key]?.pendingAdmissionIDs.insert(request)
+    }
+
+    func finishAdmission(document: VideoProject, request: UUID) {
+        let key = ObjectIdentifier(document)
+        entries[key]?.pendingAdmissionIDs.remove(request)
+        retireIfUnused(key)
+    }
+
+    func validateAdmission(document: VideoProject, documentID: String, request: UUID,
+                           presentation: BpyRuntimePresentation? = nil) throws {
+        try Task.checkCancellation()
+        guard !shuttingDown, !closedDocuments.contains(document), let entry = entries[ObjectIdentifier(document)],
+              entry.context.matches(document, documentID: documentID), entry.pendingAdmissionIDs.contains(request),
+              presentation.map({ entry.presentationIDs.contains($0.id) }) ?? true else {
+            throw BpyRuntimeError.unavailable("The production project changed or its location editor closed.")
+        }
+        let failed = retiring.filter { $0.value.occupiesHostSlot && cleanupTasks[$0.key] == nil
+            && retirementContexts[$0.key]?.document === document }
+        guard failed.isEmpty else {
+            throw BpyRuntimeError.unavailable(failed.values.compactMap(\.cleanupFailure).sorted().first
+                ?? "The location runtime could not finish closing. Save your project, then quit NexGenVideo to retry cleanup.")
+        }
     }
 
     func isOperationActive(_ operation: BpyRuntimeOperation) -> Bool {
@@ -3072,13 +3166,15 @@ final class BpyRuntimeHost {
     func releasePresentation(_ presentation: BpyRuntimePresentation) {
         guard let key = entries.first(where: { $0.value.presentationIDs.contains(presentation.id) })?.key else { return }
         entries[key]?.presentationIDs.remove(presentation.id)
+        admissions.cancel(id: presentation.id)
         retireIfUnused(key)
     }
 
     private func retireIfUnused(_ key: ObjectIdentifier) {
-        guard let entry = entries[key], entry.presentationIDs.isEmpty, entry.operationIDs.isEmpty else { return }
+        guard let entry = entries[key], entry.presentationIDs.isEmpty, entry.operationIDs.isEmpty,
+              entry.pendingAdmissionIDs.isEmpty else { return }
         entries.removeValue(forKey: key)
-        if let session = entry.session { retire(session) }
+        if let session = entry.session { retire(session, context: entry.context) }
     }
 
     func session(
@@ -3087,11 +3183,11 @@ final class BpyRuntimeHost {
     ) -> BpyRuntimeSession? {
         removeExpiredDocuments()
         let key = ObjectIdentifier(document)
-        guard !shuttingDown, var entry = entries[key] else { return nil }
+        guard !shuttingDown, var entry = entries[key], entry.context.matches(document, documentID: entry.documentID) else { return nil }
         if let session = entry.session, session.isAvailable { return session }
         guard entry.operationIDs.isEmpty else { return nil }
         if let session = entry.session, session.occupiesHostSlot {
-            retire(session)
+            retire(session, context: entry.context)
         }
         entry.session = nil
         entries[key] = entry
@@ -3112,12 +3208,14 @@ final class BpyRuntimeHost {
 
     func unregister(document: VideoProject) {
         closedDocuments.add(document)
-        guard let session = entries.removeValue(forKey: ObjectIdentifier(document))?.session else { return }
-        retire(session)
+        guard let entry = entries.removeValue(forKey: ObjectIdentifier(document)) else { return }
+        for id in entry.pendingAdmissionIDs { admissions.cancel(id: id) }
+        if let session = entry.session { retire(session, context: entry.context) }
     }
 
     func shutdown() async -> Bool {
         shuttingDown = true
+        admissions.cancelAll()
         let sessions = entries.values.compactMap(\.session)
         for key in Array(entries.keys) {
             entries[key]?.session = nil
@@ -3147,18 +3245,23 @@ final class BpyRuntimeHost {
 
     private func removeExpiredDocuments() {
         for key in Array(entries.keys) where entries[key]?.document == nil {
-            if let session = entries.removeValue(forKey: key)?.session { retire(session) }
+            guard let entry = entries.removeValue(forKey: key) else { continue }
+            for id in entry.pendingAdmissionIDs { admissions.cancel(id: id) }
+            if let session = entry.session { retire(session) }
         }
         retiring = retiring.filter { $0.value.occupiesHostSlot }
+        retirementContexts = retirementContexts.filter { retiring[$0.key] != nil }
     }
 
-    private func retire(_ session: BpyRuntimeSession, presentFailure: Bool = true) {
+    private func retire(_ session: BpyRuntimeSession, presentFailure: Bool = true, context: DocumentContext? = nil) {
         let key = ObjectIdentifier(session)
         guard session.occupiesHostSlot else {
             retiring.removeValue(forKey: key)
+            retirementContexts.removeValue(forKey: key)
             return
         }
         retiring[key] = session
+        if let context { retirementContexts[key] = context }
         guard cleanupTasks[key] == nil else { return }
         session.beginClose()
         let attempt = CleanupAttempt(task: Task.detached(priority: .userInitiated) { session.close() })
@@ -3175,9 +3278,11 @@ final class BpyRuntimeHost {
         cleanupTasks.removeValue(forKey: key)
         if success {
             retiring.removeValue(forKey: key)
+            retirementContexts.removeValue(forKey: key)
         } else if presentFailure && !shuttingDown {
             NSApplication.shared.presentError(Self.cleanupError(reason: retiring[key]?.cleanupFailure))
         }
+        admissions.complete(attempt: attempt, success: success)
     }
 
     static func cleanupError(reason: String?) -> NSError {
@@ -3186,5 +3291,97 @@ final class BpyRuntimeHost {
             NSLocalizedFailureReasonErrorKey: reason ?? "The runtime storage is still in use.",
             NSLocalizedRecoverySuggestionErrorKey: "Save your project, then choose Quit NexGenVideo to retry cleanup."
         ])
+    }
+}
+
+@MainActor
+final class BpyCleanupAdmission {
+    struct Cleanup {
+        let attempt: UUID
+        let isPending: @MainActor () -> Bool
+        let occupiesSlot: @MainActor () -> Bool
+        let failure: @MainActor () -> String?
+
+        @MainActor static func retaining<Owner: AnyObject>(attempt: UUID, owner: Owner,
+                isPending: @escaping @MainActor () -> Bool,
+                occupiesSlot: @escaping @MainActor (Owner) -> Bool,
+                failure: @escaping @MainActor (Owner) -> String?) -> Self {
+            Self(attempt: attempt, isPending: isPending,
+                occupiesSlot: { occupiesSlot(owner) }, failure: { failure(owner) })
+        }
+    }
+
+    private struct Waiter {
+        let attempt: UUID
+        let continuation: CheckedContinuation<Bool, any Error>
+        let timeout: Task<Void, Never>
+    }
+
+    private var waiters: [UUID: Waiter] = [:]
+
+    var pendingCount: Int { waiters.count }
+
+    func admit<Value: Sendable>(id: UUID, timeout: Duration = .seconds(30),
+                               validate: () throws -> Void, acquire: () -> Value?,
+                               cleanup: () throws -> Cleanup?) async throws -> Value {
+        try Task.checkCancellation()
+        try validate()
+        if let value = acquire() { return value }
+        guard let cleanup = try cleanup() else { throw busy() }
+        let success = try await wait(id: id, attempt: cleanup.attempt, timeout: timeout,
+            validate: validate, isPending: cleanup.isPending)
+        try Task.checkCancellation()
+        try validate()
+        guard success, !cleanup.occupiesSlot() else {
+            throw BpyRuntimeError.unavailable(cleanup.failure()
+                ?? "The location runtime could not finish closing. Save your project, then quit NexGenVideo to retry cleanup.")
+        }
+        guard let value = acquire() else { throw busy() }
+        return value
+    }
+
+    func wait(id: UUID, attempt: UUID, timeout: Duration = .seconds(30),
+              validate: () throws -> Void, isPending: () -> Bool) async throws -> Bool {
+        try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { continuation in
+                do {
+                    try Task.checkCancellation()
+                    try validate()
+                    guard isPending() else { continuation.resume(returning: true); return }
+                    guard waiters[id] == nil else { throw BpyRuntimeError.unavailable("The location request is already waiting.") }
+                    let timer = Task { [weak self] in
+                        do { try await Task.sleep(for: timeout) } catch { return }
+                        self?.finish(id: id, result: .failure(BpyRuntimeError.unavailable(
+                            "The location runtime is still closing. Wait for cleanup to finish, then open it again.")))
+                    }
+                    waiters[id] = Waiter(attempt: attempt, continuation: continuation, timeout: timer)
+                } catch { continuation.resume(throwing: error) }
+            }
+        } onCancel: {
+            Task { @MainActor in self.cancel(id: id) }
+        }
+    }
+
+    func complete(attempt: UUID, success: Bool) {
+        for id in waiters.keys.filter({ waiters[$0]?.attempt == attempt }) {
+            finish(id: id, result: .success(success))
+        }
+    }
+
+    func cancel(id: UUID) { finish(id: id, result: .failure(CancellationError())) }
+
+    func cancelAll() {
+        for id in Array(waiters.keys) { cancel(id: id) }
+    }
+
+    private func finish(id: UUID, result: Result<Bool, any Error>) {
+        guard let waiter = waiters.removeValue(forKey: id) else { return }
+        waiter.timeout.cancel()
+        waiter.continuation.resume(with: result)
+    }
+
+    private func busy() -> BpyRuntimeError {
+        .unavailable("The location runtime is busy with other projects. Close an unused location editor, then open this one again.")
     }
 }

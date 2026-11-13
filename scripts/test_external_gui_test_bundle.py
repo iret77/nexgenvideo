@@ -1167,6 +1167,49 @@ class ExternalTestBundleTests(unittest.TestCase):
             with self.assertRaises(ValueError):bundle._native_inventory_additions(before, changed)
         with self.assertRaises(ValueError):bundle._native_inventory_additions(after, before)
 
+    def test_cleanup_admission_inventory_transition_preserves_parameter_and_prior_coverage(self):
+        additions = [
+            'NexGenVideoTests.BpyCleanupAdmissionTests/ownClosingSlotWaitsForItsActualCompletionAndAllocatesOnce()/BpyHostMonitorTests.swift:220:6',
+            'NexGenVideoTests.BpyCleanupAdmissionTests/anotherDocumentsActiveSlotDoesNotBecomeAnOwnedCleanupWait()/BpyHostMonitorTests.swift:234:6',
+            'NexGenVideoTests.BpyCleanupAdmissionTests/cleanupMustSucceedAndActuallyReleaseItsSlot(success:)/BpyHostMonitorTests.swift:243:6',
+            'NexGenVideoTests.BpyCleanupAdmissionTests/changedDocumentIdentityAfterCleanupPreventsLateAllocation()/BpyHostMonitorTests.swift:255:6',
+            'NexGenVideoTests.BpyCleanupAdmissionTests/concurrentPresentationsJoinCleanupThenShareOneSession()/BpyHostMonitorTests.swift:266:6',
+            'NexGenVideoTests.BpyCleanupAdmissionTests/cancellationUnregistersOnlyItsWaiterWithoutCompletingCleanup()/BpyHostMonitorTests.swift:278:6',
+            'NexGenVideoTests.BpyCleanupAdmissionTests/cancellationBeforeAdmissionDoesNotAllocateOrRegister()/BpyHostMonitorTests.swift:293:6',
+            'NexGenVideoTests.BpyCleanupAdmissionTests/timeoutLeavesCleanupAndSlotOwnedAndIgnoresLateCompletion()/BpyHostMonitorTests.swift:305:6',
+            'NexGenVideoTests.BpyCleanupAdmissionTests/cleanupCompletedBeforeWaitRegistrationIsNotLost()/BpyHostMonitorTests.swift:317:6',
+            'NexGenVideoTests.BpyCleanupAdmissionTests/presentationCloseAndShutdownCancelWaitersWithoutReleasingSlots()/BpyHostMonitorTests.swift:325:6',
+            'NexGenVideoTests.ProjectSessionResetTests/locationAdmissionGenerationReplacement()/ProjectSessionResetTests.swift:328:6',
+        ]
+        parameter = next(identity for identity in additions if '(success:)' in identity)
+        before = {'expectedActualExecutions': 2, 'modules': {'app': {'exactEndedFunctionIDs': ['original'],
+                  'exactSkippedFunctionIDs': ['skipped'], 'issuesExpected': 0,
+                  'expectedCaseCountsByFunction': {'original': 3}},
+                  'engine': {'exactEndedFunctionIDs': ['engine']}}, 'xctest': ['host']}
+        for selected in (additions, additions + ['NexGenVideoTests.BpyCleanupAdmissionTests/cleanupOwnerSurvivesRegistryReplacementUntilAdmissionSettles()/BpyHostMonitorTests.swift:341:6']):
+            after = copy.deepcopy(before)
+            after['expectedActualExecutions'] += len(selected)
+            after['modules']['app']['exactEndedFunctionIDs'] += selected
+            after['modules']['app']['expectedCaseCountsByFunction'][parameter] = 2
+            self.assertEqual(bundle._native_inventory_additions(before, after), sorted(selected))
+            mutations = [lambda x: x.update(expectedActualExecutions=12),
+                         lambda x: x['modules']['app']['exactEndedFunctionIDs'].append('unknown'),
+                         lambda x: x['modules']['app']['exactEndedFunctionIDs'].append(additions[0]),
+                         lambda x: x['modules']['app']['exactEndedFunctionIDs'].remove(additions[0]),
+                         lambda x: x['modules']['app']['exactEndedFunctionIDs'].remove('original'),
+                         lambda x: x['modules']['app']['exactSkippedFunctionIDs'].clear(),
+                         lambda x: x['modules']['app']['expectedCaseCountsByFunction'].pop(parameter),
+                         lambda x: x['modules']['app']['expectedCaseCountsByFunction'].update({parameter: 1}),
+                         lambda x: x['modules']['app']['expectedCaseCountsByFunction'].update({'original': 2}),
+                         lambda x: x['modules']['app'].update(issuesExpected=1),
+                         lambda x: x['modules']['engine']['exactEndedFunctionIDs'].clear(),
+                         lambda x: x['xctest'].clear()]
+            for mutate in mutations:
+                changed = copy.deepcopy(after)
+                mutate(changed)
+                with self.assertRaises(ValueError): bundle._native_inventory_additions(before, changed)
+            with self.assertRaises(ValueError): bundle._native_inventory_additions(after, before)
+
     def test_compiled_client_workflow_keeps_global_defaults_and_actual_build_job(self):
         workflow = (journey.REPOSITORY / '.github/workflows/external-gui-acceptance.yml').read_text()
         before = re.sub(r'(?m)^      test_bundle_artifact_(?:id|sha256):\n(?:        [^\n]+\n)+', '', workflow)

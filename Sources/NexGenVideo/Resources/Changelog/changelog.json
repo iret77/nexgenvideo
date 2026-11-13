@@ -19,6 +19,7 @@
         {
           "heading": "Editing and delivery",
           "items": [
+            "Reopening a location editor waits for its previous runtime to finish closing. Changing projects or canceling the request prevents late work from attaching to the new view.",
             "Location Undo and Redo claim their history action before a background refresh can intervene. Unavailable history actions show an explicit notice.",
             "Native accessibility discovery identifies overlapping window controls from their declared attributes and exact element identity. Unreadable or ambiguous content remains unavailable.",
             "Production instructions, model capabilities and FCPXML schemas load from the installed app without requiring a development build folder.",

@@ -138,9 +138,13 @@ enum PipelineNativeBlockoutStore {
             guard let key = editor.openWorkingCopyKey,
                   let document = NSDocumentController.shared.documents.compactMap({ $0 as? VideoProject })
                     .first(where: { $0.editorViewModel === editor }) else { throw changed() }
-            operation = try BpyRuntimeHost.shared.acquireOperation(document: document, documentID: key)
+            operation = try await BpyRuntimeHost.shared.acquireOperation(document: document, documentID: key)
         } else { operation = nil }
         defer { if let operation { BpyRuntimeHost.shared.releaseOperation(operation) } }
+        try Task.checkCancellation()
+        try access.requireCurrent(editor: editor)
+        guard editor.openWorkingCopyGeneration == generation,
+              operation.map({ BpyRuntimeHost.shared.isOperationActive($0) }) ?? true else { throw changed() }
         let preparation = Task.detached(priority: .userInitiated) {
             let live = try PipelinePlanningWriteAccess(dataRoot: access.root, declaration: access.declaration, phase: "shot_planning")
             let board = try PlanningWriterIO.storyboard(dataRoot: access.root)
