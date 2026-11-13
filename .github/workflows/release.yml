@@ -696,6 +696,7 @@ jobs:
         run: python3 scripts/release_engine_resume.py verify --root "$RUNNER_TEMP/release-engine"
 
       - name: Bump version
+        if: inputs.compiled_app_targets_json == ''
         run: |
           set -euo pipefail
           PLIST="Sources/NexGenVideo/Resources/Info.plist"
@@ -715,6 +716,13 @@ jobs:
           sw_vers
           sysctl -n hw.memsize hw.logicalcpu
           echo "Release SwiftPM scheduler jobs: 1"
+
+      - name: Require pristine source before compiled product restoration
+        if: inputs.compiled_app_targets_json != ''
+        run: |
+          set -euo pipefail
+          CHANGES="$(git status --porcelain --untracked-files=no)"
+          [ -z "$CHANGES" ] || { printf '%s\n' "$CHANGES"; exit 1; }
 
       - name: Restore the exact new App compiler products
         if: inputs.compiled_app_targets_json != ''
@@ -909,7 +917,14 @@ jobs:
           scripts/verify_bpy_bundle.sh .build/NexGenVideo.app --distribution
 
       - name: Verify app bundling did not mutate tracked source
-        run: scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.compiled_app_targets_json != '' }}" = "true" ]; then
+            CHANGES="$(git status --porcelain --untracked-files=no)"
+            [ -z "$CHANGES" ] || { printf '%s\n' "$CHANGES"; exit 1; }
+          else
+            scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist
+          fi
 
       - name: Assemble format packs (.ngvpack + catalog entry)
         if: inputs.compiled_app_targets_json == ''
@@ -921,7 +936,14 @@ jobs:
           ls -la .build/plugins
 
       - name: Verify signed input assembly did not mutate tracked source
-        run: scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.compiled_app_targets_json != '' }}" = "true" ]; then
+            CHANGES="$(git status --porcelain --untracked-files=no)"
+            [ -z "$CHANGES" ] || { printf '%s\n' "$CHANGES"; exit 1; }
+          else
+            scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist
+          fi
 
       - name: Assemble and sign the new App with unchanged retained components
         if: inputs.compiled_app_targets_json != ''
@@ -934,6 +956,13 @@ jobs:
         run: |
           python3 scripts/compiled_app_release.py create-signed-input \
             --root "$RUNNER_TEMP/compiled-app-release" --output "$RUNNER_TEMP/release-signed-input"
+
+      - name: Require pristine source after compiled signed input
+        if: inputs.compiled_app_targets_json != ''
+        run: |
+          set -euo pipefail
+          CHANGES="$(git status --porcelain --untracked-files=no)"
+          [ -z "$CHANGES" ] || { printf '%s\n' "$CHANGES"; exit 1; }
 
       - name: Record all available compiled App assembly outputs without qualifying partial products
         if: always() && inputs.compiled_app_targets_json != ''
@@ -1094,6 +1123,7 @@ jobs:
         run: bash scripts/release_signing_environment.sh validate
 
       - name: Bump version
+        if: inputs.compiled_app_targets_json == ''
         run: |
           set -euo pipefail
           PLIST="Sources/NexGenVideo/Resources/Info.plist"
@@ -1113,6 +1143,13 @@ jobs:
           NOTARY_PROGRESS_RUN: ${{ inputs.notary_progress_run_id }}
         run: python3 scripts/release_checkpoint.py prepare-notary --run-id "$NOTARY_PROGRESS_RUN" --root "$RUNNER_TEMP/release-notary-binding"
 
+      - name: Require pristine source before compiled signed input binding
+        if: inputs.compiled_app_targets_json != ''
+        run: |
+          set -euo pipefail
+          CHANGES="$(git status --porcelain --untracked-files=no)"
+          [ -z "$CHANGES" ] || { printf '%s\n' "$CHANGES"; exit 1; }
+
       - name: Bind signed build input
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1125,6 +1162,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/release_checkpoint.py restore --root "$RUNNER_TEMP/release-signed-binding"
+
+      - name: Require pristine source after compiled signed input restoration
+        if: inputs.compiled_app_targets_json != ''
+        run: |
+          set -euo pipefail
+          CHANGES="$(git status --porcelain --untracked-files=no)"
+          [ -z "$CHANGES" ] || { printf '%s\n' "$CHANGES"; exit 1; }
 
       - name: Record immutable original-product restore
         if: inputs.retained_product_source_sha != ''
@@ -1298,7 +1342,14 @@ jobs:
         run: python3 scripts/retained_packaging.py verify-cohort-pack-checks
 
       - name: Verify pack assembly did not mutate tracked source
-        run: scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.compiled_app_targets_json != '' }}" = "true" ]; then
+            CHANGES="$(git status --porcelain --untracked-files=no)"
+            [ -z "$CHANGES" ] || { printf '%s\n' "$CHANGES"; exit 1; }
+          else
+            scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist
+          fi
 
       - name: Prepare App notarization intent
         if: steps.restore-notary.outputs.dmg_present != 'true' && env.NGV_COMPONENT_NOTARY_CONTINUATION != 'true'
@@ -1540,7 +1591,14 @@ jobs:
           echo "OK: mounted DMG layout, copied app, Gatekeeper assessment, and quarantined pack load"
 
       - name: Verify DMG checks did not mutate tracked source
-        run: scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.compiled_app_targets_json != '' }}" = "true" ]; then
+            CHANGES="$(git status --porcelain --untracked-files=no)"
+            [ -z "$CHANGES" ] || { printf '%s\n' "$CHANGES"; exit 1; }
+          else
+            scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist
+          fi
 
       - name: Transfer the verified installed DMG app for workspace acceptance
         run: |
@@ -1691,7 +1749,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist
+          if [ "${{ inputs.compiled_app_targets_json != '' }}" = "true" ]; then
+            CHANGES="$(git status --porcelain --untracked-files=no)"
+            [ -z "$CHANGES" ] || { printf '%s\n' "$CHANGES"; exit 1; }
+          else
+            scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist
+          fi
           BASE="${{ github.server_url }}/${{ github.repository }}/releases/download/plugins"
           PUBLICATION_DIR=".build/publication"
           PENDING_ASSET="catalog-${REL_VERSION}.pending.json"

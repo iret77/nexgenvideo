@@ -654,6 +654,82 @@ xcrun() { printf 'stapler\\n' >> "$CALLS"; return "$NATIVE_RC"; }
                 if changed:
                     self.assertIn('candidate DMG differs from the checked workspace producer', result.stderr)
 
+    def test_compiled_release_routes_keep_both_checkouts_pristine(self):
+        jobs = yaml.safe_load(WORKFLOW.read_text())['jobs']
+        orders = {
+            'release-build': ['Require pristine source before compiled product restoration',
+                'Restore the exact new App compiler products', 'Verify the complete new App and XCTest scope',
+                'Assemble and sign the new App with unchanged retained components',
+                'Record compiled App signed input without invoking a build',
+                'Require pristine source after compiled signed input'],
+            'release': ['Require pristine source before compiled signed input binding', 'Bind signed build input',
+                'Restore exact signed build', 'Require pristine source after compiled signed input restoration',
+                'Verify pack assembly did not mutate tracked source', 'Verify DMG checks did not mutate tracked source',
+                'Stage stable plugin publication transaction']}
+        for job, order in orders.items():
+            steps = jobs[job]['steps']; names = [step.get('name') for step in steps]
+            by_name = {step.get('name'): step for step in steps}
+            indices = [names.index(name) for name in order]
+            self.assertEqual(indices, sorted(indices))
+            self.assertEqual(by_name['Bump version']['if'], "inputs.compiled_app_targets_json == ''")
+            for selected in ('', '{}'):
+                self.assertEqual(condition_enabled(by_name['Bump version']['if'], True, True,
+                    compiled_targets=selected), not bool(selected))
+                for name in order:
+                    if not name.startswith('Require pristine source'):
+                        continue
+                    step = by_name[name]
+                    self.assertEqual(condition_enabled(step.get('if'), True, True,
+                        compiled_targets=selected), bool(selected))
+                    self.assertIn('git status --porcelain --untracked-files=no', step['run'])
+                    self.assertNotIn('continue-on-error', step)
+            for step in steps:
+                run = step.get('run', '')
+                if 'verify_tracked_source_state.sh' in run and 'compiled_app_targets_json' not in step.get('if', ''):
+                    self.assertIn("${{ inputs.compiled_app_targets_json != '' }}", run)
+                    self.assertIn('git status --porcelain --untracked-files=no', run)
+                    self.assertIn('scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist', run)
+        self.assertIn("CFBundleVersion=value['build']", (ROOT / 'scripts/app_release_v2.py').read_text())
+        self.assertIn('manifest["identity"]["build"]', (ROOT / 'scripts/release_checkpoint.py').read_text())
+
+    def test_compiled_release_guards_reject_staged_and_unstaged_source_changes(self):
+        jobs = yaml.safe_load(WORKFLOW.read_text())['jobs']
+        guards = []
+        for job in ('release-build', 'release'):
+            for step in jobs[job]['steps']:
+                run = step.get('run', '')
+                if 'git status --porcelain --untracked-files=no' in run:
+                    guards.append((step['name'], run.split('          BASE=', 1)[0].split('BASE=', 1)[0]))
+        self.assertEqual(len(guards), 9)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            files = {'Sources/NexGenVideo/Resources/Info.plist': b'original plist', 'other.txt': b'original source',
+                     'scripts/verify_tracked_source_state.sh': (ROOT / 'scripts/verify_tracked_source_state.sh').read_bytes()}
+            for name, raw in files.items():
+                target = root / name; target.parent.mkdir(parents=True, exist_ok=True); target.write_bytes(raw)
+            (root / 'scripts/verify_tracked_source_state.sh').chmod(0o755)
+            def git(*args):
+                return subprocess.run(['git', *args], cwd=root, capture_output=True, text=True, check=True)
+            git('init', '--quiet'); git('add', '.')
+            git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '--quiet', '-m', 'fixture')
+            for name, command in guards:
+                for changed, staged in ((None, False), ('Sources/NexGenVideo/Resources/Info.plist', False),
+                        ('Sources/NexGenVideo/Resources/Info.plist', True), ('other.txt', False), ('other.txt', True)):
+                    for path, raw in files.items(): (root / path).write_bytes(raw)
+                    git('add', '.')
+                    if changed:
+                        (root / changed).write_bytes(b'changed')
+                        if staged: git('add', changed)
+                    expression = "${{ inputs.compiled_app_targets_json != '' }}"
+                    for mode in (('true', 'false') if expression in command else ('true',)):
+                        shell = command.replace(expression, mode)
+                        result = subprocess.run(['bash', '-euo', 'pipefail', '-c', shell], cwd=root,
+                                                capture_output=True, text=True, timeout=10)
+                        expected = changed is None if mode == 'true' else (
+                            changed == 'Sources/NexGenVideo/Resources/Info.plist' and not staged)
+                        with self.subTest(guard=name, changed=changed, staged=staged, mode=mode):
+                            self.assertEqual(result.returncode == 0, expected, result.stdout + result.stderr)
+
     def test_staged_release_tests_share_the_testable_build_configuration(self):
         text = WORKFLOW.read_text()
         steps = named_release_steps(text)
