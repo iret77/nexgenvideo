@@ -15,7 +15,7 @@ on:
       candidate_kind:
         description: Signed release verification or targeted failed CI diagnostics
         type: choice
-        options: [native-app-targets, native-app-build-plan, signed-release, signed-bpy, signed-journey, signed-transport, native-retained-failures, native-scene-history-hierarchy, native-segment-geometry, native-button-query, native-button-query-crash, native-button-query-crash-reuse, native-export-color, ci-runtime, ci-bpy-open-diagnostic, ci-bpy-resource-diagnostic, ci-app-test-diagnostic, ci-app-glow-replay, ci-app-full-replay, ci-builtin-blur, ci-builtin-blur-scribble, ci-builtin-blur-floor, ci-builtin-blur-preheat, ci-glow-context]
+        options: [native-app-targets, native-app-build-plan, signed-release, signed-bpy, signed-journey, signed-transport, native-retained-failures, native-scene-history-hierarchy, native-scene-pointer-delivery, native-segment-geometry, native-button-query, native-button-query-crash, native-button-query-crash-reuse, native-export-color, ci-runtime, ci-bpy-open-diagnostic, ci-bpy-resource-diagnostic, ci-app-test-diagnostic, ci-app-glow-replay, ci-app-full-replay, ci-builtin-blur, ci-builtin-blur-scribble, ci-builtin-blur-floor, ci-builtin-blur-preheat, ci-glow-context]
         default: signed-release
       run_id:
         description: "Original producer workflow run"
@@ -255,6 +255,9 @@ jobs:
           elif os.environ['KIND'] == 'native-app-build-plan':
               from native_app_build_plan import validate_inputs
               validate_inputs(os.environ)
+          elif os.environ['KIND'] == 'native-scene-pointer-delivery':
+              from scene_pointer_delivery import validate_inputs
+              validate_inputs(os.environ)
           elif os.environ['KIND'] == 'native-scene-history-hierarchy':
               from scene_history_hierarchy import validate_inputs
               validate_inputs(os.environ)
@@ -375,6 +378,22 @@ jobs:
         with:
           name: scene-history-hierarchy-source-binding
           path: ${{ runner.temp }}/scene-history-source-binding/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 90
+      - name: Bind the exact failed compact Undo step and current Source receipt
+        if: inputs.candidate_kind == 'native-scene-pointer-delivery'
+        env:
+          VERIFIED_PR: ${{ inputs.verified_pr_run_id }}
+          SCALE: ${{ inputs.interface_scale }}
+          DMG_DIGEST: ${{ inputs.expected_dmg_sha256 }}
+          RUNTIME_FAILURE_BINDING: ${{ inputs.runtime_failure_binding }}
+        run: python3 scripts/scene_pointer_delivery.py bind --output "$RUNNER_TEMP/scene-pointer-source-binding"
+      - uses: actions/upload-artifact@v4
+        if: always() && inputs.candidate_kind == 'native-scene-pointer-delivery'
+        with:
+          name: scene-pointer-source-binding
+          path: ${{ runner.temp }}/scene-pointer-source-binding/
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 90
@@ -528,7 +547,7 @@ jobs:
           retention-days: 90
 
       - name: Bind the successful release job and immutable artifact
-        if: inputs.candidate_kind != 'native-app-targets' && inputs.candidate_kind != 'native-app-build-plan' && inputs.candidate_kind != 'native-retained-failures' && inputs.candidate_kind != 'native-scene-history-hierarchy' && inputs.candidate_kind != 'native-segment-geometry' && inputs.candidate_kind != 'native-button-query' && inputs.candidate_kind != 'native-button-query-crash' && inputs.candidate_kind != 'native-button-query-crash-reuse' && inputs.candidate_kind != 'native-export-color' && inputs.candidate_kind != 'ci-bpy-resource-diagnostic' && inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor' && inputs.candidate_kind != 'ci-builtin-blur-preheat' && inputs.candidate_kind != 'ci-glow-context'
+        if: inputs.candidate_kind != 'native-app-targets' && inputs.candidate_kind != 'native-app-build-plan' && inputs.candidate_kind != 'native-retained-failures' && inputs.candidate_kind != 'native-scene-history-hierarchy' && inputs.candidate_kind != 'native-scene-pointer-delivery' && inputs.candidate_kind != 'native-segment-geometry' && inputs.candidate_kind != 'native-button-query' && inputs.candidate_kind != 'native-button-query-crash' && inputs.candidate_kind != 'native-button-query-crash-reuse' && inputs.candidate_kind != 'native-export-color' && inputs.candidate_kind != 'ci-bpy-resource-diagnostic' && inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor' && inputs.candidate_kind != 'ci-builtin-blur-preheat' && inputs.candidate_kind != 'ci-glow-context'
         env:
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_KIND: ${{ inputs.candidate_kind }}
@@ -553,7 +572,7 @@ jobs:
             --candidate-kind "$CANDIDATE_KIND" \
             --packaging-producer-source "$PACKAGING_PRODUCER_SOURCE" --packaging-provenance-artifact-id "$PACKAGING_PROVENANCE_ARTIFACT_ID" --packaging-provenance-artifact-sha256 "$PACKAGING_PROVENANCE_ARTIFACT_SHA256" "${extra[@]}"
       - uses: actions/upload-artifact@v4
-        if: inputs.candidate_kind != 'native-app-targets' && inputs.candidate_kind != 'native-app-build-plan' && inputs.candidate_kind != 'native-retained-failures' && inputs.candidate_kind != 'native-scene-history-hierarchy' && inputs.candidate_kind != 'native-segment-geometry' && inputs.candidate_kind != 'native-button-query' && inputs.candidate_kind != 'native-button-query-crash' && inputs.candidate_kind != 'native-button-query-crash-reuse' && inputs.candidate_kind != 'native-export-color' && inputs.candidate_kind != 'ci-bpy-resource-diagnostic' && inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor' && inputs.candidate_kind != 'ci-builtin-blur-preheat' && inputs.candidate_kind != 'ci-glow-context'
+        if: inputs.candidate_kind != 'native-app-targets' && inputs.candidate_kind != 'native-app-build-plan' && inputs.candidate_kind != 'native-retained-failures' && inputs.candidate_kind != 'native-scene-history-hierarchy' && inputs.candidate_kind != 'native-scene-pointer-delivery' && inputs.candidate_kind != 'native-segment-geometry' && inputs.candidate_kind != 'native-button-query' && inputs.candidate_kind != 'native-button-query-crash' && inputs.candidate_kind != 'native-button-query-crash-reuse' && inputs.candidate_kind != 'native-export-color' && inputs.candidate_kind != 'ci-bpy-resource-diagnostic' && inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor' && inputs.candidate_kind != 'ci-builtin-blur-preheat' && inputs.candidate_kind != 'ci-glow-context'
         with:
           name: diagnostic-candidate-identity
           path: ${{ runner.temp }}/candidate-metadata/*.json
@@ -1466,6 +1485,20 @@ jobs:
     needs: source
     if: inputs.candidate_kind == 'native-scene-history-hierarchy'
     uses: ./.github/workflows/scene-history-hierarchy-diagnostic.yml
+    with:
+      run_id: ${{ inputs.run_id }}
+      source_sha: ${{ inputs.source_sha }}
+      artifact_id: ${{ inputs.artifact_id }}
+      artifact_sha256: ${{ inputs.artifact_sha256 }}
+      failure_artifact_id: ${{ inputs.failure_artifact_id }}
+      failure_artifact_sha256: ${{ inputs.failure_artifact_sha256 }}
+      expected_dmg_sha256: ${{ inputs.expected_dmg_sha256 }}
+      verified_pr_run_id: ${{ inputs.verified_pr_run_id }}
+
+  native-scene-pointer-delivery:
+    needs: source
+    if: inputs.candidate_kind == 'native-scene-pointer-delivery'
+    uses: ./.github/workflows/scene-pointer-delivery-diagnostic.yml
     with:
       run_id: ${{ inputs.run_id }}
       source_sha: ${{ inputs.source_sha }}
