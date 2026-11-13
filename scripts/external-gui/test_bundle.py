@@ -138,7 +138,7 @@ def _builder_view(text):
     consumers = {'resolve', 'verify_input', 'consume', '_safe_function', '_builder_view',
                  '_workflow_build_view', '_guard_import_view', '_source_snapshot', '_compiled_compatibility',
                  'validate_client_selectors', 'validate_client_source', '_packaging_import_view', '_metadata_api_import_view',
-                 '_native_inventory_additions'}
+                 '_native_inventory_additions', '_current_core_import_view', '_current_native_regression_ids'}
     for node in module.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in consumers:
             _safe_function(node)
@@ -297,9 +297,625 @@ def _native_inventory_additions(before, after):
     return sorted(expected)
 
 
+def _current_native_regression_ids(inventory):
+    import app_cohort_v2
+    regressions = inventory.get('originalEightAppFailureIDsRequiredToEndWithoutIssues')
+    require(isinstance(regressions, list) and len(regressions) == 8
+            and all(isinstance(identity, str) for identity in regressions)
+            and len(set(regressions)) == 8
+            and {identity.rsplit('/', 1)[0] for identity in regressions}
+                == app_cohort_v2.ORIGINAL_NATIVE_REGRESSIONS
+            and set(regressions) <= set(inventory['modules']['app']['exactEndedFunctionIDs']),
+            'Current GUI cohort has stale or substituted native regression IDs')
+
+
+def _current_core_import_view(raw, path, *, current=False):
+    import ast
+    transitions = {'scripts/app_cohort_v2.py': {'<module>': [{'before': '',
+                                                'after': 'ORIGINAL_NATIVE_REGRESSIONS = '
+                                                         "frozenset({'NexGenVideoTests.NativeButtonInteractionTests/actualDisabledSwiftUIButtonIsExcluded()', "
+                                                         "'NexGenVideoTests.NativeButtonInteractionTests/actualDuplicateButtonsCannotBecomeAUniqueTarget()', "
+                                                         "'NexGenVideoTests.NativeButtonInteractionTests/actualPreparedReaderProvesItsOwnParentImageAndTrust()', "
+                                                         "'NexGenVideoTests.NativeButtonInteractionTests/actualSwiftUIButtonIsDiscoveredWithoutAnExternalReader()', "
+                                                         "'NexGenVideoTests.NativeButtonInteractionTests/actualTraversalBudgetCannotQualifyAPartialTree()', "
+                                                         "'NexGenVideoTests.NativeButtonInteractionTests/actualWindowFrameCannotSubstituteForTheContentRoot()', "
+                                                         "'NexGenVideoTests.NativeButtonInteractionTests/cancellationDuringTheLastChildMessageCannotQualifyATree()', "
+                                                         "'NexGenVideoTests.NativeButtonInteractionTests/theLastChildMessageUsesItsOwnRemainingTimeout()'})",
+                                                'previous': 'WHISPER_UNSIGNED_BYTES = 5501136',
+                                                'following': 'def encoded(value):\n'
+                                                             '    return (json.dumps(value, sort_keys=True, '
+                                                             "separators=(',', ':')) + '\\n').encode()"}],
+                                  'criteria': [{'before': '',
+                                                'after': 'regressions = '
+                                                         "expected.get('originalEightAppFailureIDsRequiredToEndWithoutIssues')\n"
+                                                         'require(isinstance(regressions, list) and '
+                                                         'len(regressions) == len(ORIGINAL_NATIVE_REGRESSIONS) '
+                                                         'and all((isinstance(identity, str) for identity in '
+                                                         'regressions)) and (len(set(regressions)) == '
+                                                         "len(regressions)) and ({identity.rsplit('/', 1)[0] for "
+                                                         'identity in regressions} == '
+                                                         'ORIGINAL_NATIVE_REGRESSIONS) and (set(regressions) <= '
+                                                         "set(expected['modules']['app']['exactEndedFunctionIDs'])), "
+                                                         "'Original native regressions must name exact current "
+                                                         "App execution IDs')",
+                                                'previous': "for module in expected['modules'].values():\n"
+                                                            '    ended, skipped = '
+                                                            "(module['exactEndedFunctionIDs'], "
+                                                            "module['exactSkippedFunctionIDs'])\n"
+                                                            '    require(len(set(ended)) == len(ended) and '
+                                                            'len(set(skipped)) == len(skipped) and (not '
+                                                            "set(ended) & set(skipped)), 'Native inventory has "
+                                                            "duplicate or overlapping roles')\n"
+                                                            "    module['exactDiscoveredFunctionIDs'] = "
+                                                            'sorted(set(ended) | set(skipped))',
+                                                'following': "require(expected['expectedActualExecutions'] == "
+                                                             "sum((len(module['exactEndedFunctionIDs']) for "
+                                                             "module in expected['modules'].values())) + "
+                                                             "len(expected['xctest']['exactIndividualPassedIDs']), "
+                                                             "'Native expected count differs from independent "
+                                                             "IDs')"}]},
+     'scripts/compiled_app_release.py': {'selectors': [{'before': '',
+                                                        'after': 'import app_cohort_v2\n'
+                                                                 'if app_cohort_v2.MANIFEST.is_file():\n'
+                                                                 '    app_cohort_v2.criteria()',
+                                                        'previous': 'require(not any((inputs.get(name) for name '
+                                                                    'in conflicts)) and '
+                                                                    "inputs.get('verified_pr_run_id'), 'Compiled "
+                                                                    'App selectors conflict with another '
+                                                                    "continuation')",
+                                                        'following': 'return value'}],
+                                         'run_tests': [{'before': '',
+                                                        'after': 'if dynamic:\n'
+                                                                 '    import compiled_current_core_reuse\n'
+                                                                 '    if '
+                                                                 'compiled_current_core_reuse.matches(bound):\n'
+                                                                 '        return '
+                                                                 'compiled_current_core_reuse.acquire(root, '
+                                                                 'bound, sys.modules[__name__])',
+                                                        'previous': "dynamic = bool(bound.get('prepared', "
+                                                                    "{}).get('cohortV2'))",
+                                                        'following': 'if not dynamic and APP_SOURCE == '
+                                                                     "compiled_core_reuse.origin()['appSourceSHA']:\n"
+                                                                     '    native_guard(root)\n'
+                                                                     '    bound = json.loads((root / '
+                                                                     "'bound.json').read_text())\n"
+                                                                     '    return '
+                                                                     'compiled_core_reuse.acquire(root, bound, '
+                                                                     'criteria(), sys.modules[__name__])'}],
+                                         'verify_receipt': [{'before': "dynamic = receipt.get('schema') == "
+                                                                       "'release-native-compiled-app/v5'",
+                                                             'after': "dynamic = receipt.get('schema') in "
+                                                                      "('release-native-compiled-app/v5', "
+                                                                      "'release-native-compiled-app/v6')",
+                                                             'previous': None,
+                                                             'following': 'if dynamic:\n'
+                                                                          '    import app_cohort_v2\n'
+                                                                          '    value = '
+                                                                          "app_cohort_v2.verify_context(receipt.get('cohortV2'))\n"
+                                                                          '    expected = '
+                                                                          "app_cohort_v2.criteria(receipt['cohortV2']['harnessSourceSHA'])"},
+                                                            {'before': '',
+                                                             'after': "if receipt.get('schema') == "
+                                                                      "'release-native-compiled-app/v6':\n"
+                                                                      '    import compiled_current_core_reuse\n'
+                                                                      "    require(receipt.get('sourceSHA') == "
+                                                                      'source == '
+                                                                      "receipt['cohortV2']['harnessSourceSHA'] "
+                                                                      "and type(receipt.get('runID')) is int and "
+                                                                      "(receipt['runID'] == run_id) and "
+                                                                      "(type(receipt.get('attempt')) is int) and "
+                                                                      "(receipt['attempt'] == 1) and "
+                                                                      "(receipt.get('nativeSourceObjects') == "
+                                                                      'source_objects(source) == source_inputs) '
+                                                                      "and (receipt.get('appSourceSHA') == "
+                                                                      'app_source) and '
+                                                                      "(receipt.get('compilerSHA256') == "
+                                                                      'COMPILER_SHA) and '
+                                                                      "(receipt.get('hostSHA256') == "
+                                                                      'retained.HOST_SHA) and '
+                                                                      "(receipt.get('criteriaSHA256') == "
+                                                                      "criterion_sha) and (receipt.get('passed') "
+                                                                      'is True) and all((type(count) is int for '
+                                                                      "count in receipt.get('counts', "
+                                                                      "{}).values())), 'Current retained native "
+                                                                      "acceptance identity differs')\n"
+                                                                      '    return '
+                                                                      "compiled_current_core_reuse.verify(receipt.get('retainedNative'), "
+                                                                      'receipt, sys.modules[__name__])',
+                                                             'previous': 'criterion_sha = '
+                                                                         "value['criteria']['sha256'] if dynamic "
+                                                                         'else checksum(CRITERIA)',
+                                                             'following': "if receipt.get('schema') == "
+                                                                          "'release-native-compiled-app/v4':\n"
+                                                                          '    import compiled_core_reuse\n'
+                                                                          "    require(receipt.get('sourceSHA') "
+                                                                          '== source and '
+                                                                          "type(receipt.get('runID')) is int and "
+                                                                          "(receipt['runID'] == run_id) and "
+                                                                          "(type(receipt.get('attempt')) is int) "
+                                                                          "and (receipt['attempt'] == 1) and "
+                                                                          "(receipt.get('appSourceSHA') == "
+                                                                          'APP_SOURCE) and '
+                                                                          "(receipt.get('nativeSourceObjects') "
+                                                                          '== source_objects(source) == '
+                                                                          'source_objects(APP_SOURCE)) and '
+                                                                          "(receipt.get('compilerSHA256') == "
+                                                                          'COMPILER_SHA) and '
+                                                                          "(receipt.get('hostSHA256') == "
+                                                                          'retained.HOST_SHA) and '
+                                                                          "(receipt.get('criteriaSHA256') == "
+                                                                          'checksum(CRITERIA)) and '
+                                                                          "(receipt.get('passed') is True) and "
+                                                                          'all((type(value) is int for value in '
+                                                                          "receipt.get('counts', {}).values())), "
+                                                                          "'Retained complete native acceptance "
+                                                                          "identity differs')\n"
+                                                                          '    '
+                                                                          "selector_identities(json.dumps(receipt.get('selected')))\n"
+                                                                          '    return '
+                                                                          "compiled_core_reuse.verify(receipt.get('retainedNative'), "
+                                                                          'receipt, criteria(), '
+                                                                          'sys.modules[__name__])'}],
+                                         'verify_component_assembly': [{'before': 'if '
+                                                                                  "native_evidence.get('schema') "
+                                                                                  '== '
+                                                                                  "'release-native-compiled-app/v5':\n"
+                                                                                  '    from app_release_v2 '
+                                                                                  'import verify_assembly\n'
+                                                                                  '    return '
+                                                                                  'verify_assembly(value, '
+                                                                                  'source_sha, run_id, identity, '
+                                                                                  'files, native_evidence)',
+                                                                        'after': 'if '
+                                                                                 "native_evidence.get('schema') "
+                                                                                 'in '
+                                                                                 "('release-native-compiled-app/v5', "
+                                                                                 "'release-native-compiled-app/v6'):\n"
+                                                                                 '    from app_release_v2 import '
+                                                                                 'verify_assembly\n'
+                                                                                 '    return '
+                                                                                 'verify_assembly(value, '
+                                                                                 'source_sha, run_id, identity, '
+                                                                                 'files, native_evidence)',
+                                                                        'previous': None,
+                                                                        'following': 'import '
+                                                                                     'consume_bpy_distributable_source '
+                                                                                     'as source'}],
+                                         'assemble': [{'before': 'if json.loads((root / '
+                                                                 "'receipt.json').read_bytes()).get('schema') == "
+                                                                 "'release-native-compiled-app/v5':\n"
+                                                                 '    from app_release_v2 import assemble as '
+                                                                 'assemble_current\n'
+                                                                 '    return assemble_current(root)',
+                                                       'after': 'if json.loads((root / '
+                                                                "'receipt.json').read_bytes()).get('schema') in "
+                                                                "('release-native-compiled-app/v5', "
+                                                                "'release-native-compiled-app/v6'):\n"
+                                                                '    from app_release_v2 import assemble as '
+                                                                'assemble_current\n'
+                                                                '    return assemble_current(root)',
+                                                       'previous': None,
+                                                       'following': 'import plistlib'}],
+                                         'create_signed_input': [{'before': "if 'componentAssembly' in "
+                                                                            'assembled:\n'
+                                                                            '    require(type(component) is dict '
+                                                                            "and (receipt.get('schema') == "
+                                                                            "'release-native-compiled-app/v5' or "
+                                                                            "assembled['identity']['build'] == "
+                                                                            "COMPONENT_BUILD), 'Component "
+                                                                            "checkpoint type or build differs')\n"
+                                                                            '    '
+                                                                            'verify_component_assembly(component, '
+                                                                            "os.environ['GITHUB_SHA'], "
+                                                                            "int(os.environ['GITHUB_RUN_ID']), "
+                                                                            "assembled['identity'], "
+                                                                            "{'bpy-source-receipt.json': "
+                                                                            "{'sha256': checksum(build / "
+                                                                            "'bpy-source/bpy-source-receipt.json')}}, "
+                                                                            'receipt)\n'
+                                                                            '    '
+                                                                            'verify_component_materialization(component, '
+                                                                            "build / 'NexGenVideo.app', build / "
+                                                                            "'NexGenEngine.dSYM')\n"
+                                                                            '    '
+                                                                            'require(canonical_bundle_tree(build '
+                                                                            "/ 'NexGenVideo.dSYM') == "
+                                                                            "assembled['mainSymbolsTreeSHA256'], "
+                                                                            "'Current Main symbols changed "
+                                                                            "before checkpoint')\n"
+                                                                            'else:\n'
+                                                                            '    '
+                                                                            "require(assembled['identity']['build'] "
+                                                                            "!= COMPONENT_BUILD, 'Corrected "
+                                                                            'compiled product lacks its actual '
+                                                                            "component assembly')",
+                                                                  'after': "if 'componentAssembly' in "
+                                                                           'assembled:\n'
+                                                                           '    require(type(component) is dict '
+                                                                           "and (receipt.get('schema') in "
+                                                                           "('release-native-compiled-app/v5', "
+                                                                           "'release-native-compiled-app/v6') or "
+                                                                           "assembled['identity']['build'] == "
+                                                                           "COMPONENT_BUILD), 'Component "
+                                                                           "checkpoint type or build differs')\n"
+                                                                           '    '
+                                                                           'verify_component_assembly(component, '
+                                                                           "os.environ['GITHUB_SHA'], "
+                                                                           "int(os.environ['GITHUB_RUN_ID']), "
+                                                                           "assembled['identity'], "
+                                                                           "{'bpy-source-receipt.json': "
+                                                                           "{'sha256': checksum(build / "
+                                                                           "'bpy-source/bpy-source-receipt.json')}}, "
+                                                                           'receipt)\n'
+                                                                           '    '
+                                                                           'verify_component_materialization(component, '
+                                                                           "build / 'NexGenVideo.app', build / "
+                                                                           "'NexGenEngine.dSYM')\n"
+                                                                           '    '
+                                                                           'require(canonical_bundle_tree(build '
+                                                                           "/ 'NexGenVideo.dSYM') == "
+                                                                           "assembled['mainSymbolsTreeSHA256'], "
+                                                                           "'Current Main symbols changed before "
+                                                                           "checkpoint')\n"
+                                                                           'else:\n'
+                                                                           '    '
+                                                                           "require(assembled['identity']['build'] "
+                                                                           "!= COMPONENT_BUILD, 'Corrected "
+                                                                           'compiled product lacks its actual '
+                                                                           "component assembly')",
+                                                                  'previous': 'component = '
+                                                                              "assembled.get('componentAssembly')",
+                                                                  'following': 'output.mkdir(parents=True, '
+                                                                               'exist_ok=False)'}]},
+     'scripts/release_checkpoint.py': {'verify_manifest': [{'before': "if evidence.get('schema') in "
+                                                                      "('release-native-compiled-app/v1', "
+                                                                      "'release-native-compiled-app/v2', "
+                                                                      "'release-native-compiled-app/v3', "
+                                                                      "'release-native-compiled-app/v4', "
+                                                                      "'release-native-compiled-app/v5'):\n"
+                                                                      '    from compiled_app_release import '
+                                                                      'verify_receipt\n'
+                                                                      '    verify_receipt(evidence, source, '
+                                                                      'run_id)\n'
+                                                                      "    if 'componentAssembly' in manifest:\n"
+                                                                      '        from compiled_app_release import '
+                                                                      'verify_component_assembly\n'
+                                                                      '        '
+                                                                      "verify_component_assembly(manifest['componentAssembly'], "
+                                                                      'source, run_id, info, '
+                                                                      "manifest.get('files', {}), evidence)\n"
+                                                                      "    elif info.get('build') == '107' or "
+                                                                      "evidence.get('schema') == "
+                                                                      "'release-native-compiled-app/v5':\n"
+                                                                      "        raise ValueError('Corrected "
+                                                                      'compiled product lacks its actual '
+                                                                      "component assembly')\n"
+                                                                      "elif evidence.get('schema') == "
+                                                                      "'release-native-scoped-repair/v1':\n"
+                                                                      '    from release_test_repair import '
+                                                                      'verify_receipt\n'
+                                                                      '    verify_receipt(evidence, source, '
+                                                                      'run_id)\n'
+                                                                      "elif evidence.get('schema') == "
+                                                                      "'release-native-reuse/v1':\n"
+                                                                      '    from release_native_proof import '
+                                                                      'SOURCE, RUN, ARTIFACT, DIGEST\n'
+                                                                      "    require(evidence.get('sourceSHA') == "
+                                                                      'source and '
+                                                                      "evidence.get('originalSourceSHA') == "
+                                                                      "SOURCE and (evidence.get('originalRun', "
+                                                                      "{}).get('id') == RUN) and "
+                                                                      "(evidence.get('artifact', {}).get('id') "
+                                                                      '== ARTIFACT) and '
+                                                                      "(evidence.get('artifactSHA256') == "
+                                                                      "DIGEST) and (evidence.get('proof', "
+                                                                      "{}).get('executions') == 4607), 'Reused "
+                                                                      "native test evidence differs')\n"
+                                                                      "elif evidence.get('schema') == "
+                                                                      "'resumed-release-tests/v1':\n"
+                                                                      '    from release_engine_resume import '
+                                                                      'verify_completed_suite\n'
+                                                                      '    '
+                                                                      "verify_completed_suite(evidence.get('suite', "
+                                                                      '{}), source, run_id)\n'
+                                                                      'else:\n'
+                                                                      "    suite = evidence.get('suite', {})\n"
+                                                                      "    require(evidence.get('schema') == "
+                                                                      "'fresh-release-tests/v1' and "
+                                                                      "suite.get('sourceSHA') == source and "
+                                                                      "(suite.get('completed') is True) and "
+                                                                      "(suite.get('configuration') == 'release') "
+                                                                      "and (suite.get('scope') == 'all') and "
+                                                                      "(suite.get('filter') == '') and (not "
+                                                                      'any((key in suite for key in '
+                                                                      "('retainedBackends', "
+                                                                      "'freshTestExecutions', "
+                                                                      "'reusedTestExecutions')))) and "
+                                                                      "all(('reusedFrom' not in phase for phase "
+                                                                      "in suite.get('phases', []))), 'Signed "
+                                                                      'input lacks completed fresh Release '
+                                                                      "tests')",
+                                                            'after': "if evidence.get('schema') in "
+                                                                     "('release-native-compiled-app/v1', "
+                                                                     "'release-native-compiled-app/v2', "
+                                                                     "'release-native-compiled-app/v3', "
+                                                                     "'release-native-compiled-app/v4', "
+                                                                     "'release-native-compiled-app/v5', "
+                                                                     "'release-native-compiled-app/v6'):\n"
+                                                                     '    from compiled_app_release import '
+                                                                     'verify_receipt\n'
+                                                                     '    verify_receipt(evidence, source, '
+                                                                     'run_id)\n'
+                                                                     "    if 'componentAssembly' in manifest:\n"
+                                                                     '        from compiled_app_release import '
+                                                                     'verify_component_assembly\n'
+                                                                     '        '
+                                                                     "verify_component_assembly(manifest['componentAssembly'], "
+                                                                     'source, run_id, info, '
+                                                                     "manifest.get('files', {}), evidence)\n"
+                                                                     "    elif info.get('build') == '107' or "
+                                                                     "evidence.get('schema') in "
+                                                                     "('release-native-compiled-app/v5', "
+                                                                     "'release-native-compiled-app/v6'):\n"
+                                                                     "        raise ValueError('Corrected "
+                                                                     'compiled product lacks its actual '
+                                                                     "component assembly')\n"
+                                                                     "elif evidence.get('schema') == "
+                                                                     "'release-native-scoped-repair/v1':\n"
+                                                                     '    from release_test_repair import '
+                                                                     'verify_receipt\n'
+                                                                     '    verify_receipt(evidence, source, '
+                                                                     'run_id)\n'
+                                                                     "elif evidence.get('schema') == "
+                                                                     "'release-native-reuse/v1':\n"
+                                                                     '    from release_native_proof import '
+                                                                     'SOURCE, RUN, ARTIFACT, DIGEST\n'
+                                                                     "    require(evidence.get('sourceSHA') == "
+                                                                     'source and '
+                                                                     "evidence.get('originalSourceSHA') == "
+                                                                     "SOURCE and (evidence.get('originalRun', "
+                                                                     "{}).get('id') == RUN) and "
+                                                                     "(evidence.get('artifact', {}).get('id') == "
+                                                                     'ARTIFACT) and '
+                                                                     "(evidence.get('artifactSHA256') == DIGEST) "
+                                                                     "and (evidence.get('proof', "
+                                                                     "{}).get('executions') == 4607), 'Reused "
+                                                                     "native test evidence differs')\n"
+                                                                     "elif evidence.get('schema') == "
+                                                                     "'resumed-release-tests/v1':\n"
+                                                                     '    from release_engine_resume import '
+                                                                     'verify_completed_suite\n'
+                                                                     '    '
+                                                                     "verify_completed_suite(evidence.get('suite', "
+                                                                     '{}), source, run_id)\n'
+                                                                     'else:\n'
+                                                                     "    suite = evidence.get('suite', {})\n"
+                                                                     "    require(evidence.get('schema') == "
+                                                                     "'fresh-release-tests/v1' and "
+                                                                     "suite.get('sourceSHA') == source and "
+                                                                     "(suite.get('completed') is True) and "
+                                                                     "(suite.get('configuration') == 'release') "
+                                                                     "and (suite.get('scope') == 'all') and "
+                                                                     "(suite.get('filter') == '') and (not "
+                                                                     'any((key in suite for key in '
+                                                                     "('retainedBackends', "
+                                                                     "'freshTestExecutions', "
+                                                                     "'reusedTestExecutions')))) and "
+                                                                     "all(('reusedFrom' not in phase for phase "
+                                                                     "in suite.get('phases', []))), 'Signed "
+                                                                     'input lacks completed fresh Release '
+                                                                     "tests')",
+                                                            'previous': 'evidence = '
+                                                                        "manifest.get('nativeEvidence', {})",
+                                                            'following': "require(set(manifest.get('files', {})) "
+                                                                         "== set(FILES), 'Signed input file "
+                                                                         "inventory differs')"}],
+                                       'restore': [{'before': "with Path(os.environ['GITHUB_ENV']).open('a') as "
+                                                              'output:\n'
+                                                              "    output.write('BUILD_NUMBER=' + "
+                                                              "manifest['identity']['build'] + '\\n')\n"
+                                                              "    output.write('NGV_SIGNED_APP_ARCHIVE_SHA256=' "
+                                                              "+ manifest['files']['NexGenVideo.zip']['sha256'] "
+                                                              "+ '\\n')\n"
+                                                              "    if manifest['nativeEvidence'].get('schema') "
+                                                              "in ('release-native-compiled-app/v1', "
+                                                              "'release-native-compiled-app/v2', "
+                                                              "'release-native-compiled-app/v3', "
+                                                              "'release-native-compiled-app/v4', "
+                                                              "'release-native-compiled-app/v5'):\n"
+                                                              '        '
+                                                              "output.write('NGV_COMPILED_APP_RELEASE=true\\n')\n"
+                                                              '    if retained is not None and '
+                                                              '(compiled_signed_product(retained) or '
+                                                              'qualified(retained)):\n'
+                                                              '        '
+                                                              "output.write('NGV_CURRENT_COMPILED_SOURCE_REUSE=true\\n')\n"
+                                                              '    if qualified(retained):\n'
+                                                              '        '
+                                                              "output.write('NGV_COMPONENT_NOTARY_CONTINUATION=true\\n')\n"
+                                                              '    if retained is not None and '
+                                                              'cohort_signed_product(retained) and '
+                                                              "retained['previousNotary'].get('cohortPackChecks'):\n"
+                                                              '        '
+                                                              "output.write('NGV_COHORT_PACK_CHECKS_REUSED=true\\n')",
+                                                    'after': "with Path(os.environ['GITHUB_ENV']).open('a') as "
+                                                             'output:\n'
+                                                             "    output.write('BUILD_NUMBER=' + "
+                                                             "manifest['identity']['build'] + '\\n')\n"
+                                                             "    output.write('NGV_SIGNED_APP_ARCHIVE_SHA256=' "
+                                                             "+ manifest['files']['NexGenVideo.zip']['sha256'] + "
+                                                             "'\\n')\n"
+                                                             "    if manifest['nativeEvidence'].get('schema') in "
+                                                             "('release-native-compiled-app/v1', "
+                                                             "'release-native-compiled-app/v2', "
+                                                             "'release-native-compiled-app/v3', "
+                                                             "'release-native-compiled-app/v4', "
+                                                             "'release-native-compiled-app/v5', "
+                                                             "'release-native-compiled-app/v6'):\n"
+                                                             '        '
+                                                             "output.write('NGV_COMPILED_APP_RELEASE=true\\n')\n"
+                                                             '    if retained is not None and '
+                                                             '(compiled_signed_product(retained) or '
+                                                             'qualified(retained)):\n'
+                                                             '        '
+                                                             "output.write('NGV_CURRENT_COMPILED_SOURCE_REUSE=true\\n')\n"
+                                                             '    if qualified(retained):\n'
+                                                             '        '
+                                                             "output.write('NGV_COMPONENT_NOTARY_CONTINUATION=true\\n')\n"
+                                                             '    if retained is not None and '
+                                                             'cohort_signed_product(retained) and '
+                                                             "retained['previousNotary'].get('cohortPackChecks'):\n"
+                                                             '        '
+                                                             "output.write('NGV_COHORT_PACK_CHECKS_REUSED=true\\n')",
+                                                    'previous': 'shutil.copyfile(payload / '
+                                                                "'bpy-source-receipt.json', build / "
+                                                                "'bpy-source/bpy-source-receipt.json')",
+                                                    'following': "write(root / 'restored.json', {'sourceSHA': "
+                                                                 "binding['sourceSHA'], 'producerRun': "
+                                                                 "binding['producer']['id'], 'appTreeSHA256': "
+                                                                 "manifest['appTreeSHA256'], 'identity': "
+                                                                 "manifest['identity']})"}]},
+     'scripts/retained_packaging.py': {'<module>': [{'before': '',
+                                                     'after': 'VERIFIER_INPUTS += '
+                                                              "('scripts/compiled_current_core_reuse.py', "
+                                                              "'scripts/fixtures/compiled-current-core-reuse-1047.json')",
+                                                     'previous': 'VERIFIER_INPUTS += '
+                                                                 "('scripts/app_cohort_v2.py', "
+                                                                 "'scripts/app_release_v2.py', "
+                                                                 "'scripts/fixtures/app-cohort.json', "
+                                                                 "'scripts/fixtures/app-cohort-native-inventory.json')",
+                                                     'following': 'PACKAGING_PATHS = '
+                                                                  "{'scripts/plan_dmg_capacity.py', "
+                                                                  "'scripts/test_release_dmg_packaging.py', "
+                                                                  "'scripts/retained_packaging.py', "
+                                                                  "'scripts/test_retained_packaging.py', "
+                                                                  "'scripts/release_checkpoint.py', "
+                                                                  "'scripts/test_release_recovery.py', "
+                                                                  "'scripts/notarize.sh', "
+                                                                  "'scripts/notary_submission.py', "
+                                                                  "'scripts/test_notarize.py', "
+                                                                  "'scripts/workspace_native_ci.py', "
+                                                                  "'scripts/test_workspace_native_ci.py', "
+                                                                  "'scripts/verify_diagnostic_candidate.py', "
+                                                                  "'scripts/test_diagnostic_acceptance.py', "
+                                                                  "'scripts/retained_release_runtime.py', "
+                                                                  "'scripts/test_retained_release_runtime.py', "
+                                                                  "'scripts/release_acceptance_identity.py', "
+                                                                  "'scripts/test_release_acceptance_identity.py', "
+                                                                  "'scripts/external-gui/acceptance.py', "
+                                                                  "'scripts/external-gui/test_bundle.py', "
+                                                                  "'scripts/external-gui/transport.py', "
+                                                                  "'scripts/external-gui/transport_fixture.py', "
+                                                                  "'scripts/test_external_gui_test_bundle.py', "
+                                                                  "'scripts/test_external_transport.py', "
+                                                                  "'scripts/chat_hang_replay.py', "
+                                                                  "'.github/workflows/release.yml', "
+                                                                  "'.github/workflows/bpy-runtime-acceptance.yml', "
+                                                                  "'.github/workflows/external-gui-acceptance.yml', "
+                                                                  "'.github/workflows/chat-hang-replay.yml', "
+                                                                  "'.github/workflows/private-example-analysis.yml', "
+                                                                  "'.github/workflows/workspace-ui-acceptance.yml', "
+                                                                  "'.github/workflows/settings-owner-acceptance.yml', "
+                                                                  "'.github/workflows/ci-batch.yml', "
+                                                                  "'.github/workflows/diagnostic-acceptance.yml', "
+                                                                  "'scripts/test_release_workflow.py', "
+                                                                  "'scripts/test_private_example_workflow.py', "
+                                                                  "'scripts/test_ci_workflow.py', "
+                                                                  "'.github/actions/prepare-bpy-source/action.yml', "
+                                                                  "'scripts/consume_bpy_distributable_source.py', "
+                                                                  "'scripts/test_consume_bpy_distributable_source.py'}"}],
+                                       'signed_input': [{'before': 'if dynamic:\n'
+                                                                   '    from app_release_v2 import '
+                                                                   'signed_product\n'
+                                                                   '    '
+                                                                   "require(manifest['nativeEvidence'].get('schema') "
+                                                                   "== 'release-native-compiled-app/v5', 'Typed "
+                                                                   'cohort lacks its actual fresh native '
+                                                                   "receipt')\n"
+                                                                   '    cohort_product = '
+                                                                   'signed_product(manifest)\n'
+                                                                   'else:\n'
+                                                                   '    cohort_product = None',
+                                                         'after': 'if dynamic:\n'
+                                                                  '    from app_release_v2 import '
+                                                                  'signed_product\n'
+                                                                  '    '
+                                                                  "require(manifest['nativeEvidence'].get('schema') "
+                                                                  "in ('release-native-compiled-app/v5', "
+                                                                  "'release-native-compiled-app/v6'), 'Typed "
+                                                                  "cohort lacks its qualified native receipt')\n"
+                                                                  '    cohort_product = '
+                                                                  'signed_product(manifest)\n'
+                                                                  'else:\n'
+                                                                  '    cohort_product = None',
+                                                         'previous': 'if component_product:\n'
+                                                                     '    '
+                                                                     'component.verify_native_originals(producer, '
+                                                                     'builder)',
+                                                         'following': 'if dynamic:\n'
+                                                                      '    original_notary, original_state = '
+                                                                      'original_journals(producer, product, '
+                                                                      'jobs, inventory, allow_pre_submit=True)\n'
+                                                                      'else:\n'
+                                                                      '    original_notary, original_state = '
+                                                                      'original_journals(producer, product, '
+                                                                      'jobs, inventory)'}],
+                                       'cohort_signed_product': [{'before': "if manifest.get('nativeEvidence', "
+                                                                            "{}).get('schema') != "
+                                                                            "'release-native-compiled-app/v5':\n"
+                                                                            '    return False',
+                                                                  'after': "if manifest.get('nativeEvidence', "
+                                                                           "{}).get('schema') not in "
+                                                                           "('release-native-compiled-app/v5', "
+                                                                           "'release-native-compiled-app/v6'):\n"
+                                                                           '    return False',
+                                                                  'previous': 'manifest = '
+                                                                              "record.get('signedInput', "
+                                                                              "{}).get('manifest', {})",
+                                                                  'following': 'from app_release_v2 import '
+                                                                               'signed_product'}]}}
+    try:
+        module = ast.parse(raw)
+    except (SyntaxError, UnicodeDecodeError):
+        label = ('Packaging verifier' if path == 'scripts/retained_packaging.py' else
+                 'UI test Engine acquisition helper' if path == 'scripts/compiled_app_release.py' else
+                 'Receipt verifier')
+        raise ValueError(label + ' is not valid Python') from None
+    declarations = [node.name for node in module.body if isinstance(node, ast.FunctionDef)]
+    require(len(declarations) == len(set(declarations)), 'Duplicate receipt verifier declaration')
+    observed = []
+    for name, edits in transitions.get(path, {}).items():
+        owner = module if name == '<module>' else next(
+            (node for node in module.body if isinstance(node, ast.FunctionDef) and node.name == name), None)
+        require(owner is not None, 'Missing receipt verifier declaration')
+        if owner is not module:
+            _safe_function(owner)
+        for edit in edits:
+            expected = ast.parse(edit['after']).body
+            replacement = ast.parse(edit['before']).body
+            signature = [ast.dump(node, include_attributes=False) for node in expected]
+            matches = [index for index in range(len(owner.body) - len(expected) + 1)
+                       if [ast.dump(node, include_attributes=False)
+                           for node in owner.body[index:index + len(expected)]] == signature]
+            require(len(matches) <= 1, 'Ambiguous receipt verifier transition')
+            observed.append(bool(matches))
+            if matches:
+                index = matches[0]
+                for anchor, position in (('previous', index - 1), ('following', index + len(expected))):
+                    actual = owner.body[position] if 0 <= position < len(owner.body) else None
+                    expected_anchor = ast.parse(edit[anchor]).body[0] if edit[anchor] is not None else None
+                    require((actual is None and expected_anchor is None) or
+                            (actual is not None and expected_anchor is not None and
+                             ast.dump(actual, include_attributes=False) == ast.dump(expected_anchor, include_attributes=False)),
+                            'Receipt verifier transition moved outside its exact boundary')
+                owner.body[index:index + len(expected)] = replacement
+    require(not any(observed) and not current or all(observed), 'Incomplete current receipt verifier transition')
+    return ast.unparse(module)
+
+
 def _compiled_compatibility(producer_sha, producer_files, current_sha, current_files, originals, comparison):
     require(re.fullmatch('[a-f0-9]{40}', producer_sha) and producer_sha != current_sha
-            and set(producer_files) == set(current_files), 'Incomplete original UI test qualification inputs')
+            and set(producer_files) <= set(current_files), 'Incomplete original UI test qualification inputs')
     require(comparison.get('base_commit', {}).get('sha') == producer_sha
             and comparison.get('merge_base_commit', {}).get('sha') == producer_sha
             and comparison.get('status') == 'ahead'
@@ -328,15 +944,51 @@ def _compiled_compatibility(producer_sha, producer_files, current_sha, current_f
     require(actual == {name: originals[name] for name in producer_files}
             and {name: hashlib.sha256(raw).hexdigest() for name, raw in actual.items()} == producer_files,
             'Original UI test receipt differs from its actual Git objects')
+    added_verifiers = {'scripts/compiled_current_core_reuse.py',
+                      'scripts/fixtures/compiled-current-core-reuse-1047.json'}
+    expected_inputs = {(journey.ROOT / name).relative_to(journey.REPOSITORY).as_posix()
+                       for name in journey.TEST_INPUTS} | set(journey.SHARED_INPUTS)
+    require(set(current_files) == expected_inputs and added_verifiers <= expected_inputs,
+            'Current UI test receipt omits or adds declared qualification inputs')
+    fixture_path = 'scripts/fixtures/compiled-current-core-reuse-1047.json'
+    require(current_files[fixture_path] == '4c837a106bb3340f61efebe86b62ed7dbfe1296ccfd682972cb0407b4b76ab06',
+            'Current UI test receipt changed the qualified native origin')
+    import ast
+    core_path = 'scripts/compiled_current_core_reuse.py'
+    core_raw = journey.output([*git, 'show', current_sha + ':' + core_path])
+    require(core_raw == (journey.REPOSITORY / core_path).read_bytes()
+            and hashlib.sha256(core_raw).hexdigest() == current_files[core_path],
+            'Current core verifier differs from its committed receipt')
+    fixture_constants = [node.value for node in ast.parse(core_raw).body if isinstance(node, ast.Assign)
+                         and any(isinstance(target, ast.Name) and target.id == 'FIXTURE_SHA' for target in node.targets)]
+    require(len(fixture_constants) == 1 and isinstance(fixture_constants[0], ast.Constant)
+            and fixture_constants[0].value == current_files[fixture_path],
+            'Current core verifier no longer binds the original native fixture')
+    added_inputs = set(current_files) - set(producer_files)
+    require(not added_inputs or added_inputs == added_verifiers
+            and all(local.get(name) == 'A' for name in added_inputs),
+            'UI test receipt has unknown added verifier inputs')
+    for name in added_inputs:
+        raw = journey.output([*git, 'show', current_sha + ':' + name])
+        require(raw == (journey.REPOSITORY / name).read_bytes()
+                and hashlib.sha256(raw).hexdigest() == current_files[name],
+                'Added UI test verifier differs from its committed receipt')
     helper, guard = 'scripts/external-gui/test_bundle.py', 'scripts/verify_diagnostic_candidate.py'
     cohort = 'scripts/fixtures/app-cohort.json'
     inventory_path = 'scripts/fixtures/app-cohort-native-inventory.json'
     runtime_helper = 'scripts/compiled_app_release.py'
     packaging_helper = 'scripts/retained_packaging.py'
     metadata_helper = 'scripts/retained_app_test_products.py'
-    metadata_only = {'scripts/external-gui/transport.py', 'scripts/release_engine_resume.py', inventory_path, runtime_helper, packaging_helper, metadata_helper}
+    metadata_only = {'scripts/external-gui/transport.py', 'scripts/release_engine_resume.py', inventory_path, runtime_helper, packaging_helper, metadata_helper, 'scripts/app_cohort_v2.py', 'scripts/release_checkpoint.py', *added_inputs}
     require(all(producer_files[name] == digest for name, digest in current_files.items() if name not in {helper, guard, cohort, *metadata_only}),
             'Compiled UI test source, project or reachable shared helper changed')
+    for name in ('scripts/app_cohort_v2.py', 'scripts/release_checkpoint.py'):
+        raw = journey.output([*git, 'show', current_sha + ':' + name])
+        require(raw == (journey.REPOSITORY / name).read_bytes()
+                and hashlib.sha256(raw).hexdigest() == current_files[name],
+                'Current receipt verifier differs from its committed receipt')
+        require(_current_core_import_view(originals[name], name) == _current_core_import_view(raw, name, current=True),
+                'Receipt verifier changes outside the exact current-core transition')
     current_metadata = journey.output([*git, 'show', current_sha + ':' + metadata_helper])
     require(current_metadata == (journey.REPOSITORY / metadata_helper).read_bytes()
             and hashlib.sha256(current_metadata).hexdigest() == current_files[metadata_helper],
@@ -348,7 +1000,8 @@ def _compiled_compatibility(producer_sha, producer_files, current_sha, current_f
     require(current_packaging == (journey.REPOSITORY / packaging_helper).read_bytes()
             and hashlib.sha256(current_packaging).hexdigest() == current_files[packaging_helper],
             'Current packaging verifier differs from its committed receipt')
-    require(_packaging_import_view(originals[packaging_helper]) == _packaging_import_view(current_packaging),
+    require(_packaging_import_view(_current_core_import_view(originals[packaging_helper], packaging_helper))
+            == _packaging_import_view(_current_core_import_view(current_packaging, packaging_helper, current=True)),
             'Packaging verifier changed a reachable guard or its build import')
     runtime_views = []
     current_runtime = journey.output([*git, 'show', current_sha + ':' + runtime_helper])
@@ -357,7 +1010,7 @@ def _compiled_compatibility(producer_sha, producer_files, current_sha, current_f
             'Current UI test runtime helper differs from its committed receipt')
     for raw in (originals[runtime_helper], current_runtime):
         try:
-            module = ast.parse(raw)
+            module = ast.parse(_current_core_import_view(raw, runtime_helper, current=raw is current_runtime))
         except (SyntaxError, UnicodeDecodeError):
             raise ValueError('UI test Engine acquisition helper is not valid Python') from None
         carrier_names = [node.name for node in module.body if isinstance(node, ast.FunctionDef)
@@ -458,6 +1111,8 @@ def _compiled_compatibility(producer_sha, producer_files, current_sha, current_f
                     and inventory.pop('appSourceSHA', None) == declaration['appSourceSHA']
                     and inventory.pop('nativeSourceObjects', None) == declaration['nativeSourceObjects'],
                     'UI test App-only transition has an unbound native inventory')
+            if source == current_sha:
+                _current_native_regression_ids(inventory)
             def locations(value):
                 if isinstance(value, dict):return {locations(name): locations(item) for name, item in value.items()}
                 if isinstance(value, list):return [locations(item) for item in value]
@@ -480,7 +1135,7 @@ def _compiled_compatibility(producer_sha, producer_files, current_sha, current_f
     added_paths = sorted(set(current_paths) - set(prior_paths))
     require(set(prior_paths) <= set(current_paths)
             and all(name in local and local[name] in {'A', 'M'}
-                    and (name in {helper, metadata_helper} or re.fullmatch(r'\.github/workflows/[A-Za-z0-9_-]+\.ya?ml', name)
+                    and (name in {helper, metadata_helper, *added_verifiers} or re.fullmatch(r'\.github/workflows/[A-Za-z0-9_-]+\.ya?ml', name)
                          or re.fullmatch(r'scripts/test_[A-Za-z0-9_]+\.py', name)) for name in added_paths),
             'UI test cohort adds non-CI paths or removes prior qualification paths')
     recipe = _builder_view(originals[helper].decode())
