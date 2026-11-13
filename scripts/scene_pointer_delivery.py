@@ -354,6 +354,18 @@ def run(root):
     root.mkdir(parents=True, exist_ok=False)
     artifact, runtime, binding = bind(root / 'binding')
     selected, producer = binding['selected'], binding['producer']
+    observer_binary = root / 'observer-executable'
+    with (root / 'observer-compile.log').open('xb') as stream:
+        subprocess.run(['xcrun', 'swiftc', '-swift-version', '6', '-parse-as-library',
+            'scripts/scene_pointer_observer.swift', '-o', str(observer_binary)], stdin=subprocess.DEVNULL,
+            stdout=stream, stderr=subprocess.STDOUT, check=True, timeout=90)
+    write(root / 'environment.json', {'sourceSHA': selected['sourceSHA'],
+        'os': subprocess.check_output(['sw_vers'], text=True, timeout=10),
+        'architecture': subprocess.check_output(['uname', '-m'], text=True, timeout=10).strip(),
+        'xcode': subprocess.check_output(['xcodebuild', '-version'], text=True, timeout=30),
+        'observerSourceSHA256': sha(Path('scripts/scene_pointer_observer.swift')),
+        'observerExecutable': str(observer_binary),
+        'observerExecutableSHA256': sha(observer_binary), 'appBuilds': 0, 'nativeUnitRuns': 0})
     workspace = root.parent / ('scene-pointer-workspace-' + os.environ['GITHUB_RUN_ID'])
     from retained_release_runtime import restore
     restore(artifact, runtime, workspace)
@@ -367,17 +379,6 @@ def run(root):
         subprocess.run([sys.executable, 'scripts/consume_bpy_distributable_source.py', '--output-directory', str(source),
             '--source-sha', selected['sourceSHA'], '--receipt', str(receipt)], stdin=subprocess.DEVNULL,
             stdout=stream, stderr=subprocess.STDOUT, check=True, timeout=480)
-    observer_binary = root.parent / ('scene-pointer-observer-' + os.environ['GITHUB_RUN_ID'])
-    with (root / 'observer-compile.log').open('xb') as stream:
-        subprocess.run(['xcrun', 'swiftc', '-swift-version', '6', '-parse-as-library',
-            'scripts/scene_pointer_observer.swift', '-o', str(observer_binary)], stdin=subprocess.DEVNULL,
-            stdout=stream, stderr=subprocess.STDOUT, check=True, timeout=90)
-    write(root / 'environment.json', {'sourceSHA': selected['sourceSHA'],
-        'os': subprocess.check_output(['sw_vers'], text=True, timeout=10),
-        'architecture': subprocess.check_output(['uname', '-m'], text=True, timeout=10).strip(),
-        'xcode': subprocess.check_output(['xcodebuild', '-version'], text=True, timeout=30),
-        'observerSourceSHA256': sha(Path('scripts/scene_pointer_observer.swift')),
-        'observerExecutableSHA256': sha(observer_binary), 'appBuilds': 0, 'nativeUnitRuns': 0})
     fake = root.parent / ('scene-pointer-no-ambient-' + os.environ['GITHUB_RUN_ID'])
     fake.mkdir()
     for name in ('python3', 'blender'):

@@ -305,8 +305,8 @@ private func snapshot(pid: Int32, window: Int, frame: CGRect, output: URL) throw
     let all = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
     let cg = all.filter { ($0[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid
         && ($0[kCGWindowNumber as String] as? NSNumber)?.intValue == window }
-    guard cg.count == 1, let bounds = cg[0][kCGWindowBounds as String] as? CFDictionary,
-          let fullFrame = CGRect(dictionaryRepresentation: bounds) else {
+    guard cg.count == 1, let bounds = cg[0][kCGWindowBounds as String] as? [String: Any],
+          let fullFrame = CGRect(dictionaryRepresentation: bounds as CFDictionary) else {
         throw ObservationError(message: "Original CG window unavailable")
     }
     try require(abs(fullFrame.width - 960) < 0.5 && fullFrame.height >= 640 && fullFrame.height <= 740,
