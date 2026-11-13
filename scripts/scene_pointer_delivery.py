@@ -20,6 +20,7 @@ PATHS = {
     'scripts/scene_pointer_delivery.py', 'scripts/scene_pointer_observer.swift',
     'scripts/test_scene_pointer_delivery.py', 'scripts/verify_diagnostic_candidate.py',
     'scripts/fixtures/app-cohort.json',
+    'scripts/external-gui/test_bundle.py', 'scripts/test_external_gui_test_bundle.py',
 }
 NEW_PATHS = {'.github/workflows/scene-pointer-delivery-diagnostic.yml',
     'scripts/scene_pointer_delivery.py', 'scripts/scene_pointer_observer.swift',

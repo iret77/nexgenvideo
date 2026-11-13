@@ -138,7 +138,8 @@ def _builder_view(text):
     consumers = {'resolve', 'verify_input', 'consume', '_safe_function', '_builder_view',
                  '_workflow_build_view', '_guard_import_view', '_source_snapshot', '_compiled_compatibility',
                  'validate_client_selectors', 'validate_client_source', '_packaging_import_view', '_metadata_api_import_view',
-                 '_native_inventory_additions', '_current_core_import_view', '_current_native_regression_ids'}
+                 '_native_inventory_additions', '_current_core_import_view', '_current_native_regression_ids',
+                 '_cohort_ci_additions'}
     for node in module.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in consumers:
             _safe_function(node)
@@ -935,6 +936,18 @@ def _current_core_import_view(raw, path, *, current=False):
     return ast.unparse(module)
 
 
+def _cohort_ci_additions(prior, current, changes, known_helpers, client_inputs):
+    diagnostic = {'scripts/scene_pointer_delivery.py', 'scripts/scene_pointer_observer.swift'}
+    added = sorted(set(current) - set(prior))
+    require(set(prior) <= set(current)
+            and all(changes.get(name) in {'A', 'M'}
+                    and (name in known_helpers or name in diagnostic and name not in client_inputs
+                         or re.fullmatch(r'\.github/workflows/[A-Za-z0-9_-]+\.ya?ml', name)
+                         or re.fullmatch(r'scripts/test_[A-Za-z0-9_]+\.py', name)) for name in added),
+            'UI test cohort adds non-CI paths or removes prior qualification paths')
+    return added
+
+
 def _compiled_compatibility(producer_sha, producer_files, current_sha, current_files, originals, comparison):
     require(re.fullmatch('[a-f0-9]{40}', producer_sha) and producer_sha != current_sha
             and set(producer_files) <= set(current_files), 'Incomplete original UI test qualification inputs')
@@ -1154,12 +1167,8 @@ def _compiled_compatibility(producer_sha, producer_files, current_sha, current_f
             'newRuntimeProductProvenanceRequired': True}
     require(producer_files[inventory_path] == current_files[inventory_path] or app_transition is not None,
             'UI test native inventory changes outside an App-only transition')
-    added_paths = sorted(set(current_paths) - set(prior_paths))
-    require(set(prior_paths) <= set(current_paths)
-            and all(name in local and local[name] in {'A', 'M'}
-                    and (name in {helper, metadata_helper, *added_verifiers} or re.fullmatch(r'\.github/workflows/[A-Za-z0-9_-]+\.ya?ml', name)
-                         or re.fullmatch(r'scripts/test_[A-Za-z0-9_]+\.py', name)) for name in added_paths),
-            'UI test cohort adds non-CI paths or removes prior qualification paths')
+    added_paths = _cohort_ci_additions(prior_paths, current_paths, local,
+        {helper, metadata_helper, *added_verifiers}, current_files)
     recipe = _builder_view(originals[helper].decode())
     require(recipe == _builder_view(Path(__file__).read_text()), 'UI test build closure, imports or constants changed')
     imported = _guard_import_view(originals[guard].decode(), (journey.REPOSITORY / guard).read_text())

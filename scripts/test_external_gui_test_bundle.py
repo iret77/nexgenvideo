@@ -73,6 +73,23 @@ class ExternalTestBundleTests(unittest.TestCase):
         self.assertEqual(actual, revision)
         self.assertEqual(fingerprints, {name: hashlib.sha256(value).hexdigest() for name, value in payloads.items()})
 
+    def test_cohort_diagnostic_paths_remain_outside_compiled_client_inputs(self):
+        prior = ['scripts/previous.py']
+        additions = ['scripts/scene_pointer_delivery.py', 'scripts/scene_pointer_observer.swift']
+        changes = dict.fromkeys(additions, 'A')
+        self.assertEqual(bundle._cohort_ci_additions(prior, prior + additions, changes, set(), {}), additions)
+        for name in additions:
+            with self.subTest(compiled=name), self.assertRaises(ValueError):
+                bundle._cohort_ci_additions(prior, prior + additions, changes, set(), {name: 'a' * 64})
+        for name in ['scripts/other_diagnostic.py', 'scripts/other_observer.swift', 'Sources/NexGenVideo/App/AppDelegate.swift']:
+            with self.subTest(unreviewed=name), self.assertRaises(ValueError):
+                bundle._cohort_ci_additions(prior, prior + [name], {name: 'A'}, set(), {})
+        with self.assertRaises(ValueError):
+            bundle._cohort_ci_additions(prior, additions, changes, set(), {})
+        for status in ('D', 'R100'):
+            with self.subTest(status=status), self.assertRaises(ValueError):
+                bundle._cohort_ci_additions(prior, prior + additions, dict.fromkeys(additions, status), set(), {})
+
     def test_gui_source_guard_accepts_only_the_exact_component_evidence_repair(self):
         packaging = journey.retained_packaging
         record = {'producerSourceSHA': 'b' * 40, 'runID': 70}
@@ -471,7 +488,7 @@ class ExternalTestBundleTests(unittest.TestCase):
         helper = 'scripts/external-gui/test_bundle.py'
         added = {'_safe_function', '_builder_view', '_workflow_build_view', '_guard_import_view',
                  '_source_snapshot', '_compiled_compatibility', 'validate_client_selectors', 'validate_client_source',
-                 '_packaging_import_view', '_metadata_api_import_view'}
+                 '_packaging_import_view', '_metadata_api_import_view', '_cohort_ci_additions'}
         lines = original[helper].decode().splitlines(keepends=True)
         excluded = set()
         for node in ast.parse(original[helper]).body:
@@ -951,6 +968,12 @@ class ExternalTestBundleTests(unittest.TestCase):
             self.assertNotEqual(fixture.original[helper], original)
             self.assert_compiled_guard_rejects(fixture, 'Compatibility (declaration|default|annotation)')
         fixture.original[helper] = original
+        current = Path(bundle.__file__).read_text()
+        declaration = 'def _cohort_ci_additions(prior, current, changes, known_helpers, client_inputs):'
+        for changed in ('@change_module\n' + declaration,
+                        declaration.replace('client_inputs):', 'client_inputs=change_module()):')):
+            with self.subTest(declaration=changed), self.assertRaisesRegex(ValueError, 'Compatibility (declaration|default)'):
+                bundle._builder_view(current.replace(declaration, changed))
 
     def test_shared_builder_import_allows_only_unused_lazy_function_additions(self):
         original = 'import os as platform\nVALUE = 1\ndef build():\n    return VALUE\n'
