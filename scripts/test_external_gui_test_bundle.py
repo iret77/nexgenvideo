@@ -665,6 +665,67 @@ class ExternalTestBundleTests(unittest.TestCase):
                           'scripts/fixtures/compiled-current-core-reuse-1047.json'})
         self.assertTrue(proof['cohortMetadata']['appTransition']['newRuntimeProductProvenanceRequired'])
 
+        archive = self.archive([('original-client', 'file', b'opaque retained client test fixture')])
+        input_receipt = receipt | {'archiveSHA256': journey.sha256(archive)}
+        raw_receipt = (json.dumps(input_receipt, indent=2) + '\n').encode()
+        transfer = self.root / 'historical-transfer.zip'
+        with zipfile.ZipFile(transfer, 'w') as handle:
+            handle.write(archive, 'tests.tar.gz')
+            handle.writestr('tests-input.json', raw_receipt)
+        run = self.run | {'id': receipt['runID'], 'head_sha': producer}
+        artifact = self.artifact | {'digest': 'sha256:' + journey.sha256(transfer),
+            'workflow_run': {'id': receipt['runID'], 'head_sha': producer}}
+        job = self.job | {'run_id': receipt['runID'], 'head_sha': producer}
+        requested = []
+
+        def api(route):
+            if route == '/actions/runs/' + str(receipt['runID']): return run
+            if route == '/actions/artifacts/34': return artifact
+            if route == '/compare/' + producer + '...' + current: return comparison
+            if route.startswith('/contents/'):
+                name, ref = route.removeprefix('/contents/').split('?ref=')
+                self.assertEqual(ref, producer)
+                self.assertIn(name, originals, 'Historical source does not contain this current verifier')
+                requested.append(name)
+                return {'type': 'file', 'encoding': 'base64',
+                        'content': base64.b64encode(originals[name]).decode()}
+            self.fail('Unexpected historical-client API route: ' + route)
+
+        destination = self.root / 'historical-resolved'
+        with patch.dict(os.environ, {'GITHUB_SHA': current, 'GITHUB_RUN_ID': '78',
+                                    'GITHUB_OUTPUT': str(self.root / 'output')}), \
+                patch.object(bundle, 'api', side_effect=api), \
+                patch.object(bundle, 'items', return_value=[job]), \
+                patch.object(bundle, 'download', side_effect=lambda item, path: path.write_bytes(transfer.read_bytes())):
+            bundle.resolve(SimpleNamespace(run_id=receipt['runID'], artifact_id=34,
+                artifact_sha256=artifact['digest'].removeprefix('sha256:'), destination=str(destination)))
+        self.assertEqual(set(requested), set(originals))
+        self.assertEqual(len(requested), 39)
+        self.assertEqual((destination / 'tests-input.json').read_bytes(), raw_receipt)
+        self.assertEqual((destination / 'tests.tar.gz').read_bytes(), archive.read_bytes())
+        self.assertEqual(journey.read_json(destination / 'tests-producer.json')['compiledCompatibility'], proof)
+        self.assertEqual(bundle.verify_input(destination, current, files), input_receipt)
+
+    def test_resolve_rejects_invalid_historical_receipt_before_source_requests(self):
+        fixture = self.compiled_client_fixture()
+        invalid = [fixture.receipt | {key: value} for key, value in (
+            ('sourceSHA', 'f' * 40), ('runID', 13), ('attempt', 0), ('archiveSHA256', 'invalid'),
+            ('testFiles', None), ('testFiles', {}), ('testFiles', []),
+            ('testFiles', fixture.original_files | {'../outside': 'a' * 64}),
+            ('testFiles', fixture.original_files | {'scripts/external-gui/test_bundle.py': 'invalid'}),
+            ('testFiles', {name: value for name, value in fixture.original_files.items()
+                           if name != 'scripts/external-gui/project.yml'}))]
+        for index, receipt in enumerate(invalid):
+            requests = []
+            original_api = fixture.api
+            def api(route):
+                requests.append(route)
+                return original_api(route)
+            case = SimpleNamespace(**(vars(fixture) | {'api': api, 'destination': self.root / ('invalid-' + str(index))}))
+            with self.subTest(index=index), patch.object(journey, 'read_json', return_value=receipt), self.assertRaises(ValueError):
+                self.resolve_compiled_fixture(case)
+            self.assertFalse(any(route.startswith('/contents/') for route in requests))
+
     def test_current_core_projection_preserves_build_reachable_code_and_imports(self):
         for name in ('scripts/app_cohort_v2.py', 'scripts/compiled_app_release.py',
                      'scripts/release_checkpoint.py', 'scripts/retained_packaging.py'):
