@@ -379,6 +379,11 @@ def verify_signed_bpy(run, jobs, artifact, run_id, source_sha, artifact_id, dige
         raise ValueError("application or build inputs changed; retained signed App cannot be used")
 
 
+def verify_scene_pointer_delivery(*args, **kwargs):
+    from scene_pointer_delivery import PATHS
+    verify_signed_bpy(*args, artifact_name='workspace-ui-app', harness_paths=PATHS, **kwargs)
+
+
 def verify_scene_history_hierarchy(*args, **kwargs):
     from scene_history_hierarchy import PATHS
     verify_signed_bpy(*args, artifact_name='workspace-ui-app', harness_paths=PATHS, **kwargs)
