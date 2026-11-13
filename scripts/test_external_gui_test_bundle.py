@@ -544,7 +544,8 @@ class ExternalTestBundleTests(unittest.TestCase):
             if 'show' in arguments:
                 commit, name = arguments[-1].split(':', 1)
                 if commit == current and name in {workflow, action, cohort, 'scripts/fixtures/app-cohort-native-inventory.json',
-                        'scripts/compiled_app_release.py', 'scripts/retained_packaging.py', 'scripts/retained_app_test_products.py'}: return (journey.REPOSITORY / name).read_bytes()
+                        'scripts/compiled_app_release.py', 'scripts/retained_packaging.py', 'scripts/retained_app_test_products.py',
+                        'scripts/app_cohort_v2.py', 'scripts/release_checkpoint.py', 'scripts/compiled_current_core_reuse.py'}: return (journey.REPOSITORY / name).read_bytes()
                 self.assertEqual(commit, self.sha)
                 return original[name]
             self.fail('Unexpected compiled-client command: ' + str(arguments))
@@ -585,6 +586,167 @@ class ExternalTestBundleTests(unittest.TestCase):
         with patch.object(journey, 'output', side_effect=fixture.git_output), self.assertRaisesRegex(ValueError, reason):
             bundle._compiled_compatibility(self.sha, files, fixture.current, fixture.files,
                                             fixture.original, fixture.comparison)
+
+    def test_real_gui968_receipt_accepts_complete_current_verifier_closure(self):
+        receipt = {'architecture': 'arm64',
+         'archiveSHA256': '6ca373fd9df6bc478d15dfa5be6588cc1a05edd0fdf2b86e517fdaf1361f4663',
+         'attempt': 1,
+         'deploymentTarget': '26.0',
+         'productsSHA256': '25a48374f86f2fcb070cdd4cea71c53cafb40b7d61ec1ba63fa08bd2e62b6540',
+         'runID': 42997728675,
+         'schema': 'nexgenvideo/external-tests-input/1',
+         'sourceSHA': 'a5e000031bcdedcf6df8053e1fc7356a6329e399',
+         'testFiles': {'scripts/app_cohort_v2.py': 'd7d45f3ea2e83f2f57c51925db68d613d0b41b3b883662629bc12336947a0e6e',
+                       'scripts/app_host_zombie_diagnostic.py': '44836e759a5cbb246debd67888e2ca4c09516da401be8f8d866d63ad1d6072c5',
+                       'scripts/app_release_v2.py': '7f8036d85363cdccd7d2c851df8ceb319878083126d7e62abc8511a0747024c5',
+                       'scripts/compiled_app_release.py': '3c62229573b4a9bad3960d67c6b9edf2bd1aeab02f2b6bfcb507444879f0dfa2',
+                       'scripts/compiled_component_reuse.py': '1310cfc9835de4dde40806c4d2fa38500fdc70116357b6d50b6484df2049a32a',
+                       'scripts/compiled_core_reuse.py': '77111b3998be66d1b7944607a8da2667dfe6f44ff136adf5fa089527528a01e6',
+                       'scripts/compiled_xctest_reuse.py': '3615f1f6946f54f6a5a937d2a8b21c7e63c2bc09571b17fea4983c998c44c429',
+                       'scripts/consume_bpy_distributable_source.py': '1da85daacb99a196a0badbdbbb7c85ea2708beebf4b926a3a637485f0a383619',
+                       'scripts/export_color_diagnostic.swift': 'b169fb1f8593348a9237896cf3e77a76eb674291206e2d65ecb91e3ab199f1a5',
+                       'scripts/external-gui/NexGenVideoExternalUITests/UserJourneyTests.swift': '91ca32e8cc2b2938917e715fe790c290711f4d60d5144b9c8b927b4f93eaea1a',
+                       'scripts/external-gui/acceptance.py': '9b04413c4c238d59868121d57d963159c27951df2bbee3abd4811f3c7b760a42',
+                       'scripts/external-gui/project.yml': '2844e486bf846aa8a1d90b303fb381811393ed056b71ae06a9cf8def8af61993',
+                       'scripts/external-gui/test_bundle.py': '4d1baa2c7c6fd50af19bb81ccfabd583c45d27b8037b6ca71c8fc7db66c6d1f4',
+                       'scripts/external-gui/transport.py': 'b0b4d8718343f63a110c7d11ed0f822a21f010255eb90e1249dcbf6dde1753ec',
+                       'scripts/fixtures/app-cohort-native-inventory.json': '1fdbbeb8cc06ffb6f78b34d77384c3db364cc322c1cf08e0046268f3cb9dfd86',
+                       'scripts/fixtures/app-cohort.json': '2537b36eda679ca02c538590d5ce8029af2e4415047d808b5ee0d62b55fffe30',
+                       'scripts/fixtures/compiled-app-native-inventory.json': '6956a5c338508810a22d7ee4c5ec04adc3f45172c99e329db16f8516c31ed718',
+                       'scripts/fixtures/compiled-core-reuse-886.json': 'e8d290a0be18ce7a4fe3527439cfa537f30b951ec197df974844e119c921fe5a',
+                       'scripts/fixtures/native-test-entry-point.json': 'bf0ba13f904c7486e202bfe74f600c19d3952f488de4dc20568bfa1747239f8d',
+                       'scripts/native_app_build_plan.py': '4e89c8a78b21641a5158a78910fdac7ca0c268329b13db528e1abc4bba9d4085',
+                       'scripts/native_app_target_build.py': '92841ec6f76ee02cbf64c9b0be526756b478ed349255fee764a726d95fb7ea78',
+                       'scripts/native_app_target_recipe.py': '6a15a75e99d40ec2363f157d0a04a9a0ae01dab902338c6b9e3b18e6cc16c7ac',
+                       'scripts/native_current_cohort.py': '5677bd5e91c46e9beffb079173038fa04752efad6df6d2bb7f16bc7ec84f9532',
+                       'scripts/native_xctest_host.m': 'ab9cf2bb2af7bbc3f2acaa475b0691c6402aa8dedf49cca6b37ce6d17fcdbe32',
+                       'scripts/native_xctest_host.py': 'ee1e326569ab4a32fdf4b26fa75f5a6f0f597f5af3c7ae70eea4acda7efcda5b',
+                       'scripts/notary_continuation.py': '2a29d1fbfc924379c41642e1f7631ff71a8801fbf1dddb9575db6a50fac6cc8b',
+                       'scripts/release_acceptance_identity.py': 'fae86f57919724997330bd6290f41d605ad72fa1a8243d0324a70d3684da8dbb',
+                       'scripts/release_checkpoint.py': '1dfbebcc878e52cce86ff0a7f27c7e659be3a3dac9cea639cf377a39d2d93131',
+                       'scripts/release_engine_resume.py': '9a8f414e1500b691530eebdb6b43efdb13183bae47cf0b81240bf321e9ada868',
+                       'scripts/release_native_proof.py': '8d3760e821819baa8df62f1a6c4767be652e8207cffed4c3842a883a1894cf89',
+                       'scripts/release_test_repair.py': 'dea4fc68ec90deb21c40fe91b720cd62ec1a5efd6054ff235aceabe2d4aa8465',
+                       'scripts/retained_app_test_products.py': '1dee490749badfbdc3e4539dd7eee8ad52e2f1f2a8e08bc646c935b9ec9e1326',
+                       'scripts/retained_packaging.py': 'd50289efd7eb8ad044afc03b9e54a2dcb6ea3dbc8fb5aaecb657c5cfc3b2fc8c',
+                       'scripts/run_macos_tests.py': '50266510da3cc8f81509291a7b1b7065b5cc908732157069d6cc1e0401afe69e',
+                       'scripts/verified_pr_source_checks.py': '380ab90d18f9ba8c8f4b338051017515c5ffcbf141375b189a94147978cb7f61',
+                       'scripts/verify_diagnostic_candidate.py': '56fe0390e9548296f2cadfb6acf3a3ce52b4fc987f5e0903c95108d9e6df0f7d',
+                       'scripts/verify_swift_test_output.py': '8e7106ff980ea72829bc42c36e790e0418071297142d1314c65d631ecfa5382a'},
+         'xcode': 'Xcode 27.2\nBuild version 27B52',
+         'xctestrun': 'NexGenVideoExternalGUI_macosx27.2-arm64.xctestrun'}
+        producer = receipt['sourceSHA']
+        git = ['git', '-C', str(journey.REPOSITORY)]
+        def output(*args):
+            return subprocess.check_output([*git, *args], stdin=subprocess.DEVNULL, timeout=30)
+        current = output('rev-parse', 'HEAD').decode().strip()
+        originals = {name: output('show', producer + ':' + name) for name in receipt['testFiles']}
+        for name in ('.github/workflows/external-gui-acceptance.yml', '.github/actions/setup-xcode-27/action.yml'):
+            originals[name] = output('show', producer + ':' + name)
+        self.assertEqual({name: hashlib.sha256(originals[name]).hexdigest() for name in receipt['testFiles']},
+                         receipt['testFiles'])
+        commits = output('rev-list', '--reverse', producer + '..' + current).decode().splitlines()
+        changes = output('diff', '--no-renames', '--name-status', '-z', producer, current).decode().split('\0')
+        statuses = {'A': 'added', 'M': 'modified', 'D': 'removed'}
+        comparison = {'base_commit': {'sha': producer},
+            'merge_base_commit': {'sha': output('merge-base', producer, current).decode().strip()},
+            'status': 'ahead', 'commits': [{'sha': commit} for commit in commits], 'total_commits': len(commits),
+            'files': [{'filename': name, 'status': statuses[status]}
+                      for status, name in zip(changes[:-1:2], changes[1:-1:2])]}
+        with patch.dict(os.environ, {'GITHUB_SHA': current}):
+            _, files = journey.test_source_identity(current)
+            proof = bundle._compiled_compatibility(producer, receipt['testFiles'], current, files,
+                                                   originals, comparison)
+        self.assertEqual(len(proof['producerFiles']), 37)
+        self.assertEqual(len(proof['consumerFiles']), 39)
+        self.assertEqual(proof['producerFiles'], receipt['testFiles'])
+        self.assertEqual(set(proof['consumerFiles']) - set(proof['producerFiles']),
+                         {'scripts/compiled_current_core_reuse.py',
+                          'scripts/fixtures/compiled-current-core-reuse-1047.json'})
+        self.assertTrue(proof['cohortMetadata']['appTransition']['newRuntimeProductProvenanceRequired'])
+
+    def test_current_core_projection_preserves_build_reachable_code_and_imports(self):
+        for name in ('scripts/app_cohort_v2.py', 'scripts/compiled_app_release.py',
+                     'scripts/release_checkpoint.py', 'scripts/retained_packaging.py'):
+            current = (journey.REPOSITORY / name).read_text()
+            baseline = bundle._current_core_import_view(current, name)
+            for altered in (current + '\nimport compiled_current_core_reuse\n',
+                            current + '\nexecute_at_import()\n',
+                            current + '\ndef __getattr__(name):\n    return execute()\n'):
+                with self.subTest(path=name, change=altered[-70:]):
+                    self.assertNotEqual(bundle._current_core_import_view(altered, name), baseline)
+        path = 'scripts/app_cohort_v2.py'
+        current = (journey.REPOSITORY / path).read_text()
+        altered = current.replace('def manifest(source=None):',
+                                  'def manifest(source=None):\n    import compiled_current_core_reuse')
+        self.assertNotEqual(current, altered)
+        self.assertNotEqual(bundle._current_core_import_view(current, path),
+                            bundle._current_core_import_view(altered, path))
+
+    def test_current_core_projection_rejects_executable_declarations_and_changed_v6_guard(self):
+        path = 'scripts/compiled_app_release.py'
+        current = (journey.REPOSITORY / path).read_text()
+        for altered in (current.replace('def run_tests(root):', '@execute()\ndef run_tests(root):'),
+                        current.replace('def run_tests(root):', 'def run_tests(root=execute()):'),
+                        current.replace('def run_tests(root):', 'def run_tests(root: execute()):')):
+            with self.subTest(change=altered[-50:]), self.assertRaises(ValueError):
+                bundle._current_core_import_view(altered, path)
+        altered = current.replace("type(receipt.get('attempt')) is int and receipt['attempt'] == 1", 'True')
+        self.assertNotEqual(current, altered)
+        with self.assertRaises(ValueError):
+            bundle._current_core_import_view(altered, path, current=True)
+
+    def test_current_core_projection_rejects_missing_and_moved_native_guards(self):
+        path = 'scripts/compiled_app_release.py'
+        current = (journey.REPOSITORY / path).read_text()
+        for mode in ('missing', 'moved'):
+            module = ast.parse(current)
+            function = next(node for node in module.body if isinstance(node, ast.FunctionDef) and node.name == 'run_tests')
+            index = next(index for index, node in enumerate(function.body)
+                         if isinstance(node, ast.If) and isinstance(node.test, ast.Name) and node.test.id == 'dynamic')
+            guard = function.body.pop(index)
+            if mode == 'moved':
+                function.body.insert(0, guard)
+            with self.subTest(mode=mode), self.assertRaises(ValueError):
+                bundle._current_core_import_view(ast.unparse(module), path, current=True)
+
+    def test_compiled_client_rejects_unknown_added_or_removed_verifier(self):
+        fixture = self.compiled_client_fixture()
+        for files in ({**fixture.files, 'scripts/unknown_verifier.py': 'e' * 64},
+                      {name: value for name, value in fixture.files.items() if name != 'scripts/release_checkpoint.py'}):
+            with patch.object(journey, 'output', side_effect=fixture.git_output), self.assertRaises(ValueError):
+                bundle._compiled_compatibility(self.sha, fixture.original_files, fixture.current,
+                                               files, fixture.original, fixture.comparison)
+
+    def test_compiled_client_rejects_changed_current_native_origin(self):
+        fixture = self.compiled_client_fixture()
+        files = dict(fixture.files)
+        files['scripts/fixtures/compiled-current-core-reuse-1047.json'] = 'e' * 64
+        with patch.object(journey, 'output', side_effect=fixture.git_output), self.assertRaisesRegex(
+                ValueError, 'changed the qualified native origin'):
+            bundle._compiled_compatibility(self.sha, fixture.original_files, fixture.current,
+                                           files, fixture.original, fixture.comparison)
+
+    def test_gui_native_regressions_reject_stale_duplicate_missing_and_substituted_ids(self):
+        inventory = json.loads((journey.REPOSITORY / 'scripts/fixtures/app-cohort-native-inventory.json').read_bytes())
+        bundle._current_native_regression_ids(inventory)
+        key = 'originalEightAppFailureIDsRequiredToEndWithoutIssues'
+        for mode in ('stale', 'duplicate', 'missing', 'substituted', 'skipped'):
+            altered = copy.deepcopy(inventory)
+            if mode == 'stale':
+                altered[key][0] = re.sub(r':\d+:6$', ':1:6', altered[key][0])
+            elif mode == 'duplicate':
+                altered[key][-1] = altered[key][0]
+            elif mode == 'missing':
+                altered[key].pop()
+            elif mode == 'substituted':
+                altered[key][0] = next(identity for identity in altered['modules']['app']['exactEndedFunctionIDs']
+                                       if identity not in altered[key])
+            else:
+                altered['modules']['app']['exactEndedFunctionIDs'].remove(altered[key][0])
+                altered['modules']['app']['exactSkippedFunctionIDs'].append(altered[key][0])
+            with self.subTest(mode=mode), self.assertRaises(ValueError):
+                bundle._current_native_regression_ids(altered)
 
     def test_metadata_retry_compatibility_preserves_exact_request_and_guards(self):
         current = (journey.REPOSITORY / 'scripts/retained_app_test_products.py').read_text()
@@ -674,6 +836,7 @@ class ExternalTestBundleTests(unittest.TestCase):
                 reason = ('native inventory changes outside an App-only transition'
                           if name == 'scripts/fixtures/app-cohort-native-inventory.json'
                           else 'Engine acquisition helper changes' if name == 'scripts/compiled_app_release.py'
+                          else 'Receipt verifier is not valid Python' if name in {'scripts/app_cohort_v2.py', 'scripts/release_checkpoint.py'}
                           else 'Packaging verifier is not valid Python' if name == 'scripts/retained_packaging.py'
                           else 'Metadata transport is not valid Python' if name == 'scripts/retained_app_test_products.py'
                           else 'Compiled UI test source, project or reachable shared helper changed')
