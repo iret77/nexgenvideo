@@ -23,6 +23,14 @@ def environment():
         'FAILURE_DIGEST': 'c' * 64, 'DMG_DIGEST': 'd' * 64, 'VERIFIED_PR': '400', 'SCALE': '1'}
 
 
+def geometry_receipt(command):
+    return {'schema': 'nexgenvideo/observer-geometry-selfcheck/1', 'sourceSHA256': command[3],
+        'executableSHA256': command[4], 'nonce': command[5], 'pid': 123, 'passed': True,
+        'windowConsumer': True, 'buttonConsumer': True, 'screenConsumers': True, 'invalidRejected': True,
+        'oldCGFloatArrayCastsToDouble': False, 'position': [-12.5, 25.25], 'size': [960, 640],
+        'screen': {'screenFrame': [-12.5, 25.25, 50, 28], 'screenPoint': [12.5, 39.25]}}
+
+
 def original():
     error = 'Native visual sources: native scene revision committed after undo; unchanged revision'
     state = {'canonical': {'sceneID': 'scene', 'revision': 'transform', 'manifestSHA256': 'e' * 64},
@@ -380,6 +388,9 @@ class PointerPreflightTests(unittest.TestCase):
                 def command(args, **_):
                     if args[0] == 'xcrun':
                         Path(args[-1]).write_bytes(b'observer')
+                    elif '--self-check-geometry' in args:
+                        order.append('geometry')
+                        Path(args[2]).write_text(json.dumps(geometry_receipt(args)))
                 stack.enter_context(patch.object(diagnostic.sys, 'platform', 'darwin'))
                 stack.enter_context(patch.dict(diagnostic.os.environ,
                     {'GITHUB_ACTIONS': 'true', 'RUNNER_OS': 'macOS', 'GITHUB_RUN_ID': '999'}))
@@ -400,14 +411,69 @@ class PointerPreflightTests(unittest.TestCase):
                 expected = 'Observer incomplete' if mode == 'app-exit1' else mode
                 with self.assertRaisesRegex((ValueError, AssertionError), expected):
                     diagnostic.run(output)
-                self.assertEqual(order, ['capture-enter'] if mode == 'capture-start'
-                    else ['capture-enter', 'app', 'capture-exit'])
+                self.assertEqual(order, ['geometry', 'capture-enter'] if mode == 'capture-start'
+                    else ['geometry', 'capture-enter', 'app', 'capture-exit'])
                 self.assertTrue(json.loads((output / 'cleanup.json').read_text())['observerReaped'])
                 observer.wait.assert_called_once()
                 if mode == 'capture-start':
                     reader_factory.assert_not_called(); reader.identity.assert_not_called()
                 else:
                     reader_factory.assert_called_once_with(); reader.identity.assert_called_once_with(902)
+
+    def test_native_geometry_receipt_rejects_foreign_incomplete_or_changed_results(self):
+        mutations = [('schema', 'wrong'), ('nonce', 'foreign'), ('sourceSHA256', '0' * 64),
+            ('executableSHA256', '0' * 64), ('pid', True), ('pid', 0), ('passed', False),
+            ('windowConsumer', False), ('buttonConsumer', False), ('screenConsumers', False),
+            ('invalidRejected', False), ('position', [12.5, 25.25]), ('size', [960, 641]),
+            ('screen', {'screenFrame': [-12.5, 25.25, 50, 28], 'screenPoint': [12.5, 39]}),
+            ('oldCGFloatArrayCastsToDouble', None)]
+        for mutation in [None, ('oldCGFloatArrayCastsToDouble', True), *mutations]:
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                def command(args, **kwargs):
+                    self.assertEqual(kwargs['timeout'], 15)
+                    self.assertTrue(kwargs['check'])
+                    self.assertEqual(kwargs['stdin'], subprocess.DEVNULL)
+                    value = geometry_receipt(args)
+                    if mutation: value[mutation[0]] = mutation[1]
+                    Path(args[2]).write_text(json.dumps(value))
+                with patch.object(diagnostic.subprocess, 'run', side_effect=command):
+                    if mutation in (None, ('oldCGFloatArrayCastsToDouble', True)):
+                        diagnostic.check_observer_geometry(root, root / 'observer',
+                            {'observerSourceSHA256': 'a' * 64, 'observerExecutableSHA256': 'b' * 64})
+                        self.assertTrue((root / 'observer-geometry-verified.json').is_file())
+                    else:
+                        with self.assertRaises(ValueError):
+                            diagnostic.check_observer_geometry(root, root / 'observer',
+                                {'observerSourceSHA256': 'a' * 64, 'observerExecutableSHA256': 'b' * 64})
+                        self.assertFalse((root / 'observer-geometry-verified.json').exists())
+
+    def test_geometry_selfcheck_failures_stop_before_restore_or_app_start(self):
+        import retained_release_runtime
+        for mode in ('nonzero', 'timeout', 'missing', 'malformed'):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory); calls = []
+                def command(args, **_):
+                    calls.append(args)
+                    if args[0] == 'xcrun': Path(args[-1]).write_bytes(b'observer')
+                    elif '--self-check-geometry' in args:
+                        if mode == 'nonzero': raise subprocess.CalledProcessError(1, args)
+                        if mode == 'timeout': raise subprocess.TimeoutExpired(args, 15)
+                        if mode == 'malformed': Path(args[2]).write_text('not-json')
+                with patch.object(diagnostic.sys, 'platform', 'darwin'), \
+                        patch.dict(diagnostic.os.environ, {'GITHUB_ACTIONS': 'true', 'RUNNER_OS': 'macOS'}), \
+                        patch.object(diagnostic, 'bind', return_value=({}, {},
+                            {'selected': {'sourceSHA': 'a' * 40}, 'producer': {}})), \
+                        patch.object(diagnostic.subprocess, 'run', side_effect=command), \
+                        patch.object(diagnostic.subprocess, 'check_output', return_value='native'), \
+                        patch.object(retained_release_runtime, 'restore') as restore, \
+                        patch.object(diagnostic, 'product_bytes') as product, \
+                        patch.object(diagnostic.subprocess, 'Popen') as launch, \
+                        self.assertRaises((ValueError, subprocess.CalledProcessError, subprocess.TimeoutExpired)):
+                    diagnostic.run(root / 'measurement')
+                self.assertEqual(len(calls), 2)
+                self.assertEqual(calls[1][1], '--self-check-geometry')
+                restore.assert_not_called(); product.assert_not_called(); launch.assert_not_called()
 
     def test_failed_observer_compile_stops_before_runtime_acquisition_or_app_start(self):
         import retained_release_runtime

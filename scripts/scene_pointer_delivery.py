@@ -596,6 +596,31 @@ def verify_open_capture(native, observed, binary, source, started, ended):
         'rawSHA256': sha(native / 'open-events.ndjson'), 'diagnosticOnly': True}
 
 
+def check_observer_geometry(root, binary, environment):
+    receipt = root / 'observer-geometry-selfcheck.json'
+    require(not receipt.exists() and not receipt.is_symlink(), 'Stale observer geometry receipt')
+    nonce = os.urandom(16).hex()
+    with (root / 'observer-geometry-selfcheck.log').open('xb') as stream:
+        subprocess.run([str(binary), '--self-check-geometry', str(receipt),
+            environment['observerSourceSHA256'], environment['observerExecutableSHA256'], nonce],
+            stdin=subprocess.DEVNULL, stdout=stream, stderr=subprocess.STDOUT, check=True, timeout=15)
+    require(receipt.is_file() and not receipt.is_symlink() and receipt.stat().st_size <= 65536,
+        'Missing or invalid observer geometry receipt')
+    value = json.loads(receipt.read_bytes())
+    require(isinstance(value, dict) and value.get('schema') == 'nexgenvideo/observer-geometry-selfcheck/1'
+        and value.get('nonce') == nonce and value.get('sourceSHA256') == environment['observerSourceSHA256']
+        and value.get('executableSHA256') == environment['observerExecutableSHA256']
+        and type(value.get('pid')) is int and value['pid'] > 0
+        and all(value.get(key) is True for key in ('passed', 'windowConsumer', 'buttonConsumer', 'screenConsumers', 'invalidRejected'))
+        and type(value.get('oldCGFloatArrayCastsToDouble')) is bool,
+        'Foreign or incomplete observer geometry receipt')
+    require(value.get('position') == [-12.5, 25.25] and value.get('size') == [960, 640]
+        and value.get('screen') == {'screenFrame': [-12.5, 25.25, 50, 28], 'screenPoint': [12.5, 39.25]},
+        'Observer geometry numeric contract differs')
+    write(root / 'observer-geometry-verified.json', {'receiptSHA256': sha(receipt), 'environment': environment,
+        'nonce': nonce, 'nativeGeometryQualified': True, 'appStarted': False})
+
+
 def run(root):
     require(sys.platform == 'darwin' and os.environ.get('GITHUB_ACTIONS') == 'true'
         and os.environ.get('RUNNER_OS') == 'macOS', 'Native execution requires macrunner Actions')
@@ -629,6 +654,7 @@ def run(root):
         require(all(current_environment[key] == reuse['compileEnvironment'][key] for key in ('os', 'architecture', 'xcode')),
             'Observer native environment changed')
     write(root / 'environment.json', current_environment)
+    check_observer_geometry(root, observer_binary, current_environment)
     workspace = root.parent / ('scene-pointer-workspace-' + os.environ['GITHUB_RUN_ID'])
     from retained_release_runtime import restore
     restore(artifact, runtime, workspace)
