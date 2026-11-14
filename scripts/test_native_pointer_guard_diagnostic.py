@@ -1,5 +1,8 @@
 """Reject incomplete or foreign instrumentation before interpreting pointer guards."""
 import copy
+import hashlib
+import io
+import zipfile
 import json
 from pathlib import Path
 import plistlib
@@ -30,14 +33,14 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaises(ValueError): diagnostic.validate_inputs(changed)
 
     def test_signature_preflight_never_weakens_original_hardened_policy(self):
-        self.assertFalse(diagnostic.parse_signature('flags=0x2(adhoc)', '')['hardenedRuntime'])
+        self.assertFalse(diagnostic.parse_signature('CodeDirectory v=20400 size=1234 flags=0x2(adhoc) hashes=35+0 location=embedded\nExecutable Segment flags=0x1', '')['hardenedRuntime'])
         allowed = {key: True for key in ['com.apple.security.cs.allow-dyld-environment-variables',
             'com.apple.security.cs.disable-library-validation']}
         encoded = lambda value: plistlib.dumps(value).decode()
-        self.assertTrue(diagnostic.parse_signature('flags=0x10002(adhoc,runtime)', encoded(allowed))['hardenedRuntime'])
+        self.assertTrue(diagnostic.parse_signature('CodeDirectory v=20400 size=1234 flags=0x10002(adhoc,runtime) hashes=35+0 location=embedded\nExecutable Segment flags=0x1', encoded(allowed))['hardenedRuntime'])
         for values in [{}, dict(allowed, **{'com.apple.security.cs.disable-library-validation': False})]:
-            with self.assertRaises(ValueError): diagnostic.parse_signature('flags=0x10002(runtime)', encoded(values))
-        for description, entitlements in [('unknown', ''), ('flags=0x2 flags=0x2', ''), ('flags=0x2', 'garbage')]:
+            with self.assertRaises(ValueError): diagnostic.parse_signature('CodeDirectory v=20400 size=1234 flags=0x10002(runtime) hashes=35+0 location=embedded\nExecutable Segment flags=0x1', encoded(values))
+        for description, entitlements in [('unknown', ''), ('Executable Segment flags=0x2', ''), ('CodeDirectory v=20400 size=1234 flags=0x2\nCodeDirectory v=20400 size=1234 flags=0x2', ''), ('CodeDirectory v=20400 size=1234 flags=0x2', 'garbage')]:
             with self.assertRaises(ValueError): diagnostic.parse_signature(description, entitlements)
 
     def test_preflight_reads_codesign_flags_from_the_actual_stderr_log(self):
@@ -45,13 +48,52 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
             evidence = Path(temporary)
             def logged(folder, label, argv):
                 (folder / (label + '.stdout')).write_text('')
-                (folder / (label + '.stderr')).write_text('Executable=/host\nflags=0x2(adhoc)\n'
+                (folder / (label + '.stderr')).write_text('Executable=/host\nCodeDirectory v=20400 size=1234 flags=0x20002(adhoc,linker-signed) hashes=35+0 location=embedded\nExecutable Segment flags=0x1\n'
                     if label.endswith('-signature') else 'Executable=/host\n')
                 return ''
             with mock.patch.object(diagnostic.targets, 'logged', side_effect=logged):
                 result = diagnostic.signature_preflight(Path('/host'), evidence, 'host')
             self.assertFalse(result['hardenedRuntime'])
-            self.assertEqual(result['flags'], 2)
+            self.assertEqual(result['flags'], 0x20002)
+
+    def retained_binding(self):
+        value = diagnostic.fixture()
+        return dict(schema='native-pointer-guard-binding/v1', sourceSHA=diagnostic.RETAINED_SOURCE,
+            runID=diagnostic.RETAINED_RUN, attempt=1, fixtureSHA256=diagnostic.FIXTURE_SHA,
+            nativeExecution=False, fullReleaseAcceptance=False,
+            members={name: value[key] for name, (_, key) in diagnostic.MEMBERS.items()},
+            sourceFiles={name: diagnostic.checksum(Path(name)) for name in diagnostic.SOURCE_FILES})
+
+    def test_retained_original_members_reject_foreign_producers_or_different_C_source(self):
+        valid = self.retained_binding()
+        diagnostic.verify_retained_binding(valid, diagnostic.fixture())
+        for key, value in [('sourceSHA', 'a' * 40), ('runID', 1), ('attempt', 2), ('fixtureSHA256', 'a' * 64),
+                ('nativeExecution', True), ('members', {}), ('sourceFiles', {})]:
+            changed = copy.deepcopy(valid); changed[key] = value
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                diagnostic.verify_retained_binding(changed, diagnostic.fixture())
+        changed = copy.deepcopy(valid); changed['sourceFiles']['scripts/native_pointer_guard_snapshot.m'] = 'a' * 64
+        with self.assertRaises(ValueError): diagnostic.verify_retained_binding(changed, diagnostic.fixture())
+
+    def test_retained_inspector_requires_exact_bytes_and_all_three_passed_commands(self):
+        image = b'qualified-observation-image'
+        digest = hashlib.sha256(image).hexdigest()
+        def archive(failure=None, changed=False):
+            data = io.BytesIO()
+            with zipfile.ZipFile(data, 'w') as zipped:
+                zipped.writestr('native-pointer-guard-source/binding.json', json.dumps(self.retained_binding()))
+                for stage in ('compile-inspector-only', 'sign-inspector-only', 'verify-inspector-only'):
+                    zipped.writestr(diagnostic.INSPECTOR_PREFIX + stage + '.exit.json',
+                        json.dumps({'exitCode': 1 if stage == failure else 0}))
+                zipped.writestr(diagnostic.INSPECTOR_PREFIX + 'pointer-guard-snapshot.dylib', image + (b'changed' if changed else b''))
+            data.seek(0); return zipfile.ZipFile(data)
+        with mock.patch.object(diagnostic, 'INSPECTOR_SHA', digest), mock.patch.object(diagnostic, 'INSPECTOR_BYTES', len(image)):
+            with archive() as zipped: self.assertEqual(diagnostic.inspector_bytes(zipped, diagnostic.fixture()), image)
+            for stage in ('compile-inspector-only', 'sign-inspector-only', 'verify-inspector-only'):
+                with self.subTest(stage=stage), archive(stage) as zipped, self.assertRaises(ValueError):
+                    diagnostic.inspector_bytes(zipped, diagnostic.fixture())
+            with archive(changed=True) as zipped, self.assertRaises(ValueError):
+                diagnostic.inspector_bytes(zipped, diagnostic.fixture())
 
     def rows(self):
         root = dict(root='0x1', window=123, windowIdentity='0x2')

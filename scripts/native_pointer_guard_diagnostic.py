@@ -22,6 +22,16 @@ from native_app_failure_diagnostic import measure, scope_filter, verify_failure_
 KIND = 'native-pointer-guard-snapshot'
 FIXTURE = Path(__file__).with_name('fixtures') / 'native-app-failure-1099.json'
 FIXTURE_SHA = '63d9340373d7ed61645880d1c30508320577c851682d8f4097682c5127b0d0f4'
+RETAINED_RUN = 43629283870
+RETAINED_SOURCE = '0b43415624ab9188c81f2f98cd7cd7ed9e5cfb37'
+RETAINED_ARTIFACTS = {
+    'source': (14127930309, '3be74906858bccdf3b60d2f4038803deb9bfa2812f3594899508ceb41ee62e4f', 1733042,
+        'native-pointer-guard-source-binding-43629283870-a1'),
+    'inspector': (14127441715, 'cbfc182ef5384875f3cdf728f8848bbcc6b20fd3be4701d0063bac63c3f77c5b', 1999945,
+        'native-pointer-guard-measurement-43629283870-a1')}
+INSPECTOR_SHA = '731100a5cda360b9d58b2d471638db2de4d1a991396575c3af33de70377613b3'
+INSPECTOR_BYTES = 91696
+INSPECTOR_PREFIX = 'native-pointer-guard-diagnostic/evidence/'
 SOURCE_FILES = {'scripts/native_pointer_guard_diagnostic.py', 'scripts/native_pointer_guard_snapshot.m',
     'scripts/native_app_failure_diagnostic.py', 'scripts/fixtures/native-app-failure-1099.json'}
 MEMBERS = {'failure-bound.json': ('bound.json', 'boundSHA256'),
@@ -48,6 +58,81 @@ def validate_inputs(event):
     return value
 
 
+
+def retained_origin(role):
+    require(role in RETAINED_ARTIFACTS, 'Unknown retained diagnostic role')
+    run = api('actions/runs/' + str(RETAINED_RUN))
+    jobs = api(f'actions/runs/{RETAINED_RUN}/attempts/1/jobs?per_page=100')
+    require(run.get('id') == RETAINED_RUN and run.get('head_sha') == RETAINED_SOURCE
+        and run.get('run_attempt') == 1 and run.get('status') == 'completed' and run.get('conclusion') == 'failure'
+        and run.get('workflow_id') == 355242770 and run.get('path') == '.github/workflows/diagnostic-acceptance.yml'
+        and run.get('actor', {}).get('login') == 'iret77' and run.get('event') == 'workflow_dispatch'
+        and run.get('repository', {}).get('full_name') == 'iret77/nexgenvideo'
+        and jobs.get('total_count') == len(jobs.get('jobs', [])) == 30
+        and len({job['id'] for job in jobs['jobs']}) == 30
+        and all(job.get('run_id') == RETAINED_RUN and job.get('head_sha') == RETAINED_SOURCE
+            and job.get('run_attempt') == 1 for job in jobs['jobs']), 'Retained diagnostic producer differs')
+    expected = {'source': 132552072033, 'pointer-guard-snapshot': 132552434059}
+    selected = {job['name']: job for job in jobs['jobs'] if job['name'] in expected}
+    require(set(selected) == set(expected) and len([job for job in jobs['jobs'] if job['name'] in expected]) == 2,
+        'Retained diagnostic jobs are ambiguous')
+    for name, identity in expected.items():
+        job = selected[name]
+        require(job.get('id') == identity and job.get('run_id') == RETAINED_RUN
+            and job.get('run_attempt') == 1 and job.get('head_sha') == RETAINED_SOURCE
+            and job.get('status') == 'completed' and job.get('conclusion') == ('success' if name == 'source' else 'failure'),
+            'Retained diagnostic job differs')
+    require('macrunner' in selected['pointer-guard-snapshot'].get('labels', [])
+        and [step['name'] for step in selected['pointer-guard-snapshot'].get('steps', []) if step.get('conclusion') == 'failure']
+            == ['Observe one original failed pointer guard without compiling App or tests']
+        and all(job.get('status') == 'completed' and job.get('conclusion') == 'skipped'
+            for job in jobs['jobs'] if job['name'] not in expected), 'Retained failure phase differs')
+    identity, digest, size, name = RETAINED_ARTIFACTS[role]
+    artifact = api('actions/artifacts/' + str(identity))
+    release.verify_artifact(artifact, run, selected['source' if role == 'source' else 'pointer-guard-snapshot'],
+        identity, digest, name)
+    require(artifact.get('size_in_bytes') == size, 'Retained diagnostic artifact size differs')
+    cohort.consumer_paths(RETAINED_SOURCE, os.environ['GITHUB_SHA'])
+    return artifact
+
+
+def verify_retained_binding(binding, value):
+    require(binding.get('schema') == 'native-pointer-guard-binding/v1'
+        and binding.get('sourceSHA') == RETAINED_SOURCE and binding.get('runID') == RETAINED_RUN
+        and binding.get('attempt') == 1 and binding.get('fixtureSHA256') == FIXTURE_SHA
+        and binding.get('nativeExecution') is False and binding.get('fullReleaseAcceptance') is False
+        and binding.get('members') == {name: value[key] for name, (_, key) in MEMBERS.items()}
+        and set(binding.get('sourceFiles', {})) == SOURCE_FILES
+        and binding['sourceFiles']['scripts/native_pointer_guard_snapshot.m']
+            == checksum(Path('scripts/native_pointer_guard_snapshot.m')), 'Retained input or inspector C source differs')
+
+
+def inspector_bytes(archive, value):
+    binding = json.loads(archive_bytes(archive, 'native-pointer-guard-source/binding.json', 4 * 1024**2))
+    verify_retained_binding(binding, value)
+    for stage in ('compile-inspector-only', 'sign-inspector-only', 'verify-inspector-only'):
+        require(json.loads(archive_bytes(archive, INSPECTOR_PREFIX + stage + '.exit.json', 1024)) == {'exitCode': 0},
+            'Retained inspector did not complete compilation, signing and verification')
+    raw = archive_bytes(archive, INSPECTOR_PREFIX + 'pointer-guard-snapshot.dylib', 1024**2)
+    require(len(raw) == INSPECTOR_BYTES and hashlib.sha256(raw).hexdigest() == INSPECTOR_SHA,
+        'Retained inspector image changed')
+    return raw
+
+
+def restore_inspector(inspector, evidence, value):
+    artifact = retained_origin('inspector')
+    original = evidence / 'original-inspector-producer.zip'; download(artifact, original)
+    require(checksum(original) == RETAINED_ARTIFACTS['inspector'][1], 'Retained inspector producer ZIP changed')
+    with release.verified_zip(original, 64 * 1024**2) as archive:
+        raw = inspector_bytes(archive, value)
+    with inspector.open('xb') as stream: stream.write(raw); stream.flush(); os.fsync(stream.fileno())
+    targets.logged(evidence, 'verify-restored-inspector-only', ['codesign', '--verify', '--strict', str(inspector)])
+    write(evidence / 'retained-inspector.json', {'artifact': artifact, 'sourceSHA': RETAINED_SOURCE,
+        'runID': RETAINED_RUN, 'sha256': checksum(inspector), 'bytes': len(raw),
+        'sameCSourceSHA256': checksum(Path('scripts/native_pointer_guard_snapshot.m')),
+        'compilationReused': True, 'signingReused': True, 'fullReleaseAcceptance': False})
+
+
 def bind(output):
     value = validate_inputs(json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_bytes()))
     require(os.environ.get('GITHUB_JOB') == 'source' and os.environ.get('GITHUB_RUN_ATTEMPT') == '1', 'Wrong source binding context')
@@ -56,12 +141,14 @@ def bind(output):
     jobs = api(f"actions/runs/{value['failureRunID']}/attempts/1/jobs?per_page=100")
     artifact = api('actions/artifacts/' + str(value['failureArtifactID']))
     verify_failure_origin(value, run, jobs, artifact)
-    original = output.parent / 'original-pointer-guard-failure.zip'; download(artifact, original)
-    require(checksum(original) == value['failureArtifactSHA256'], 'Original failure bytes differ')
+    retained_source = retained_origin('source')
+    original = output.parent / 'retained-pointer-source.zip'; download(retained_source, original)
+    require(checksum(original) == RETAINED_ARTIFACTS['source'][1], 'Retained source ZIP changed')
     hashes = {}
-    with release.verified_zip(original, 4 * 1024**3) as archive:
-        for name, (member, digest_key) in MEMBERS.items():
-            raw = archive_bytes(archive, member, 32 * 1024**2)
+    with release.verified_zip(original, 64 * 1024**2) as archive:
+        verify_retained_binding(json.loads(archive_bytes(archive, 'binding.json', 4 * 1024**2)), value)
+        for name, (_, digest_key) in MEMBERS.items():
+            raw = archive_bytes(archive, name, 32 * 1024**2)
             require(hashlib.sha256(raw).hexdigest() == value[digest_key], 'Original failure member changed')
             (output / name).write_bytes(raw); hashes[name] = value[digest_key]
     bound = json.loads((output / 'failure-bound.json').read_bytes()); verify_bound(bound, value)
@@ -79,6 +166,7 @@ def bind(output):
         'sourceSHA': os.environ['GITHUB_SHA'], 'runID': int(os.environ['GITHUB_RUN_ID']), 'attempt': 1,
         'fixtureSHA256': FIXTURE_SHA, 'originalRun': run, 'originalJobs': jobs, 'originalArtifact': artifact,
         'members': hashes, 'sourceComposition': composition, 'originalMeasurement': measured,
+        'retainedOriginalMemberProducer': retained_source,
         'sourceFiles': {name: checksum(Path(name)) for name in SOURCE_FILES},
         'nativeExecution': False, 'fullReleaseAcceptance': False})
 
@@ -120,7 +208,7 @@ def acquire_source(source):
 
 
 def parse_signature(description, entitlements):
-    flags = re.findall(r'flags=0x([a-fA-F0-9]+)', description)
+    flags = re.findall(r'^CodeDirectory v=[a-fA-F0-9]+ size=[0-9]+ flags=0x([a-fA-F0-9]+)(?:[ (]|$)', description, re.MULTILINE)
     require(len(flags) == 1, 'Native code signature flags are ambiguous')
     hardened = bool(int(flags[0], 16) & 0x10000)
     if '<plist' in entitlements:
@@ -222,11 +310,7 @@ def execute(source, root):
         and not arena.is_symlink() and arena.parent.resolve().is_relative_to(temporary), 'Foreign or occupied original test arena')
     root.mkdir(); evidence = root / 'evidence'; evidence.mkdir()
     inspector = evidence / 'pointer-guard-snapshot.dylib'
-    targets.logged(evidence, 'compile-inspector-only', ['xcrun', 'clang', '-dynamiclib', '-fobjc-arc', '-fblocks',
-        '-Wall', '-Wextra', '-Werror=implicit-function-declaration', '-framework', 'AppKit',
-        'scripts/native_pointer_guard_snapshot.m', '-o', str(inspector)])
-    targets.logged(evidence, 'sign-inspector-only', ['codesign', '--sign', '-', str(inspector)])
-    targets.logged(evidence, 'verify-inspector-only', ['codesign', '--verify', '--strict', str(inspector)])
+    restore_inspector(inspector, evidence, value)
     origins = {role: release.producer(selected, role) for role, selected in value['selected'].items()}
     restored = targets.restore_product(root, 'tests', prepared, origins['tests'])
     receipt = release.verify_product(restored['receipt'], value['selected']['tests'], 'tests', prepared)
