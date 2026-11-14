@@ -110,6 +110,19 @@ class ExternalTestBundleTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             bundle._cohort_ci_additions(prior, additions, changes, set(), {})
 
+    def test_pointer_guard_diagnostic_additions_cannot_replace_gui_client_inputs(self):
+        prior = ['scripts/previous.py']
+        additions = ['scripts/fixtures/native-app-failure-1099.json', 'scripts/native_pointer_guard_diagnostic.py',
+                     'scripts/native_pointer_guard_snapshot.m']
+        changes = dict.fromkeys(additions, 'A')
+        self.assertEqual(bundle._cohort_ci_additions(prior, prior + additions, changes, set(), {}), additions)
+        for name in additions:
+            with self.subTest(compiled=name), self.assertRaises(ValueError):
+                bundle._cohort_ci_additions(prior, prior + additions, changes, set(), {name: 'a' * 64})
+        for name in ('scripts/other_guard.m', 'scripts/native_pointer_foreign.py', 'scripts/fixtures/native-app-failure-9999.json'):
+            with self.subTest(foreign=name), self.assertRaises(ValueError):
+                bundle._cohort_ci_additions(prior, prior + [name], {name: 'A'}, set(), {})
+
     def test_gui_source_guard_accepts_only_the_exact_component_evidence_repair(self):
         packaging = journey.retained_packaging
         record = {'producerSourceSHA': 'b' * 40, 'runID': 70}

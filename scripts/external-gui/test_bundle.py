@@ -966,7 +966,9 @@ def _current_core_import_view(raw, path, *, current=False):
 def _cohort_ci_additions(prior, current, changes, known_helpers, client_inputs):
     diagnostic = {'scripts/scene_pointer_delivery.py', 'scripts/scene_pointer_observer.swift',
                   'scripts/workspace_native_evidence.py', 'scripts/native_app_failure_diagnostic.py',
-                  'scripts/native_app_window_sampler.swift', 'scripts/fixtures/native-app-failure-1087.json'}
+                  'scripts/native_app_window_sampler.swift', 'scripts/fixtures/native-app-failure-1087.json',
+                  'scripts/native_pointer_guard_diagnostic.py', 'scripts/native_pointer_guard_snapshot.m',
+                  'scripts/fixtures/native-app-failure-1099.json'}
     added = sorted(set(current) - set(prior))
     require(set(prior) <= set(current)
             and all(changes.get(name) in {'A', 'M'}
