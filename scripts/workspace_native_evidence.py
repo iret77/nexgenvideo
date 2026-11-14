@@ -141,12 +141,23 @@ def legacy_case(case, rows, output, scale):
     else:
         row = one("storyboard-review"); production = one("production-workbench"); utility = one("agent-activity")
         cards = production.get("storyboardCards", [])
+        expected_cards = [
+            ("verse1.01", "The singer stops at the platform edge."),
+            ("verse1.02", "A train passes the empty platform."),
+            ("chorus1.01", "The singer turns toward the morning light."),
+        ]
+        cards_valid = (isinstance(cards, list) and len(cards) == len(expected_cards)
+            and all(isinstance(card, dict) and card.get("shotID") == shot and card.get("subject") == subject
+                and flags(card, ("fullyVisible", "renderedDescription", "rawFieldsAbsent"))
+                and isinstance(card.get("screenshot"), str)
+                for card, (shot, subject) in zip(cards, expected_cards))
+            and len({card["screenshot"] for card in cards}) == len(expected_cards))
         activity_valid, activity_images = checks.activity_evidence(rows, output, scale)
         valid = (row.get("cardDestination") == "Storyboard" and row.get("pipelineDestination") == "Storyboard"
             and flags(row, ("openedTabWithoutModal", "tabRoundTrip", "pipelineActionSameTarget", "approvalControlsUsable",
                 "shownBytesMatchApproval", "changeMarked", "declinedFromStoryboard", "gatesUnchanged", "savedProjectUnchanged"))
             and len(row.get("screenshots", [])) == 2 and checks.valid_production_workbench(production)
-            and len(cards) == 2 and utility.get("complete") is True and len(utility.get("screenshots", [])) == 3
+            and cards_valid and utility.get("complete") is True and len(utility.get("screenshots", [])) == 3
             and activity_valid)
         images = (row.get("screenshots", []) + production.get("screenshots", []) + utility.get("screenshots", [])
                   + [card.get("screenshot") for card in cards] + activity_images)
