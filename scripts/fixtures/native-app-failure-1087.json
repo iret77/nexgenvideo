@@ -1,0 +1,65 @@
+{
+  "appSourceSHA": "61525329f374a3a68200035ce98c70c22ec8944a",
+  "boundSHA256": "aba41221ea10d3afcef9f52c08e52c692b2d09d1d080b6036e3b8ff4e5bdfb3e",
+  "eventSHA256": "778f56c9ae3ab77520cf4e83155fa32f2e15e26998a4d9c871820f579db4cc1f",
+  "expectedOriginalIssues": 13,
+  "failedFunctionIDs": [
+    "NexGenVideoTests.AgentServiceRuntimeContractTests/gateContinuationReplacesHistoricalTaskPhase()/AgentServiceRuntimeContractTests.swift:66:6",
+    "NexGenVideoTests.NativePointerInteractionTests/aLostUpGetsOnlyOneReleaseCleanup()/NativeButtonInteractionTests.swift:1212:6",
+    "NexGenVideoTests.NativePointerInteractionTests/actualCompactButtonsUseOneTaggedSystemClickEach()/NativeButtonInteractionTests.swift:1002:6",
+    "NexGenVideoTests.NativePointerInteractionTests/actualNativeControlAndMenuTrackingKeepTheirCallbacks()/NativeButtonInteractionTests.swift:1124:6",
+    "NexGenVideoTests.NativePointerInteractionTests/changedAccessibilityHitCannotBorrowTheOriginalGeometry()/NativeButtonInteractionTests.swift:1141:6",
+    "NexGenVideoTests.NativePointerInteractionTests/concurrentButtonPreparationCannotMoveTheOwnedPointer()/NativeButtonInteractionTests.swift:1288:6",
+    "NexGenVideoTests.NativePointerInteractionTests/coveredForeignAndInvalidTargetsNeverPostDown()/NativeButtonInteractionTests.swift:1058:6",
+    "NexGenVideoTests.NativePointerInteractionTests/gestureSurfacesAndSmallCardMarkersRemainUsable()/NativeButtonInteractionTests.swift:1111:6",
+    "NexGenVideoTests.NativePointerInteractionTests/ownedDownIsReleasedWhenTheTaskIsCancelled()/NativeButtonInteractionTests.swift:1260:6",
+    "NexGenVideoTests.NativePointerInteractionTests/unselectedAndDisabledTargetsKeepDifferentMeaning()/NativeButtonInteractionTests.swift:1035:6"
+  ],
+  "failureArtifactBytes": 973536365,
+  "failureArtifactID": 14118130213,
+  "failureArtifactSHA256": "1e2e3d43c9cb6746e957167bbf9b2cfbbbdfcbb8c0218e3f79dc99bad80277f4",
+  "failureAttempt": 1,
+  "failureJobID": 132470394321,
+  "failureRunID": 43602563627,
+  "failureSourceSHA": "155ec3de1e9730e632586a6c7d94b40a79012837",
+  "hostReceiptSHA256": "7cbf8c30b15a7aebc227aecf41bba78a0846df396aa9c2a14f8e03cf5f0cf51a",
+  "originalHostSHA256": "70330e80bf88fa7e23032d80b9b2df2b855e9baaa00c87c1195a5093edc333f5",
+  "originalHostUUID": "f590711f-f616-3965-bf42-0f283720b59b",
+  "schema": "native-app-original-failure-scope/v1",
+  "selected": {
+    "metadata": {
+      "artifactID": 14116072381,
+      "artifactSHA256": "e743a4b22c5db5cc34d1b20659bb573f69a199df8125046de5808c4d34e42a78",
+      "runID": 43597688311,
+      "sourceSHA": "155ec3de1e9730e632586a6c7d94b40a79012837"
+    },
+    "production": {
+      "artifactID": 14115184777,
+      "artifactSHA256": "e547b07411cdec38eda64176032ccd2b16f2a70a730445009e8eb505fd35896e",
+      "receiptSHA256": "0e40b1c913b86e607f2055154e07b48201ff8fb0c62128a186f9faf5da5ab491",
+      "runID": 43597688311,
+      "sourceSHA": "155ec3de1e9730e632586a6c7d94b40a79012837"
+    },
+    "testable": {
+      "artifactID": 14115328409,
+      "artifactSHA256": "34f037463da2ba7daee3eade4d87bce0994fba1e4dd7e1e9a1d0b98d9da82053",
+      "receiptSHA256": "8b9b84040b6a57530987654a3134bf495b7e570ee4d9c8aa8418a8c26cb2e7d8",
+      "runID": 43597688311,
+      "sourceSHA": "155ec3de1e9730e632586a6c7d94b40a79012837"
+    },
+    "tests": {
+      "artifactID": 14116092307,
+      "artifactSHA256": "4f67bc5939188a44fd969b433a9c873e0a0295636c2452cf6a8f594f34d50445",
+      "receiptSHA256": "21bba52ad3224268f82bd927819a063854c4bec272ddf51f00b90a85ffd9b1a2",
+      "runID": 43597688311,
+      "sourceSHA": "155ec3de1e9730e632586a6c7d94b40a79012837"
+    }
+  },
+  "testImage": {
+    "UUIDs": [
+      "CCEC6869-BFC4-3A89-B382-AD8104494BAB"
+    ],
+    "bytes": 269381488,
+    "sha256": "befbec70f62834db6cd32915713954938eaf46f99b3f9dee33674a35c31437ba"
+  }
+}

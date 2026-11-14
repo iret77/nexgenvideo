@@ -92,12 +92,16 @@ class ExternalTestBundleTests(unittest.TestCase):
 
     def test_storyboard_evidence_closure_cannot_change_compiled_client_inputs(self):
         prior = ['scripts/previous.py']
-        additions = ['scripts/test_workspace_native_ci.py', 'scripts/workspace_native_evidence.py']
+        additions = ['scripts/fixtures/native-app-failure-1087.json', 'scripts/native_app_failure_diagnostic.py',
+                     'scripts/native_app_window_sampler.swift', 'scripts/test_workspace_native_ci.py',
+                     'scripts/workspace_native_evidence.py']
         changes = dict.fromkeys(additions, 'M')
         self.assertEqual(bundle._cohort_ci_additions(prior, prior + additions, changes, set(), {}), additions)
-        with self.assertRaises(ValueError):
-            bundle._cohort_ci_additions(prior, prior + additions, changes, set(), {additions[1]: 'a' * 64})
-        for name in ('scripts/workspace_other_evidence.py', 'Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift'):
+        for name in (item for item in additions if not Path(item).name.startswith('test_')):
+            with self.subTest(compiled=name), self.assertRaises(ValueError):
+                bundle._cohort_ci_additions(prior, prior + additions, changes, set(), {name: 'a' * 64})
+        for name in ('scripts/workspace_other_evidence.py', 'scripts/native_other_diagnostic.py',
+                     'scripts/fixtures/native-app-foreign.json', 'Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift'):
             with self.subTest(path=name), self.assertRaises(ValueError):
                 bundle._cohort_ci_additions(prior, prior + [name], {name: 'M'}, set(), {})
         for invalid in ({}, dict.fromkeys(additions, 'D'), dict.fromkeys(additions, 'R100')):
