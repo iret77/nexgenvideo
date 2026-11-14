@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import NexGenEngine
+import SwiftUI
 
 @MainActor
 final class ProductionVisualSourcesDriver {
@@ -130,6 +131,16 @@ final class ProductionVisualSourcesDriver {
     }
 
     func click(_ id: String, in target: NSWindow, enabled: Bool = true, fraction: NSPoint = .init(x: 0.5, y: 0.5)) async throws {
+        let transaction = try NativeAcceptancePointer.claim()
+        defer { NativeAcceptancePointer.release(transaction) }
+        try await click(id, in: target, enabled: enabled, fraction: fraction, transaction: transaction)
+    }
+
+    private func click(_ id: String, in target: NSWindow, enabled: Bool = true,
+                       fraction: NSPoint = .init(x: 0.5, y: 0.5), transaction: UUID) async throws {
+        guard [fraction.x, fraction.y].allSatisfy({ $0.isFinite && (0...1).contains($0) }) else {
+            throw GateBlocked("The native pointer fraction is invalid: " + id)
+        }
         stage = "click " + id
         try await reveal(id, in: target)
         try visible([id], in: target)
@@ -140,42 +151,38 @@ final class ProductionVisualSourcesDriver {
         let point = view.convert(NSPoint(x: view.bounds.minX + view.bounds.width * fraction.x,
                                         y: view.bounds.minY + view.bounds.height * fraction.y), to: root)
         let hit = root.hitTest(root.convert(point, to: root.superview))
-        let windowPoint = root.convert(point, to: nil), windowNumber = target.windowNumber
-        @MainActor final class Delivery {
-            var down = false
-            var up = false
-            var events: [[String: Any]] = []
-        }
-        let delivery = Delivery()
-        let monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp]) { event in
-            let number = event.windowNumber, location = event.locationInWindow, type = event.type
-            MainActor.assumeIsolated {
-                guard number == windowNumber, location == windowPoint else { return }
-                if type == .leftMouseDown { delivery.down = true }
-                if type == .leftMouseUp { delivery.up = true }
-                let local = root.convert(location, from: nil)
-                let actual = root.hitTest(root.convert(local, to: root.superview))
-                delivery.events.append(["type": type.rawValue, "window": number,
-                    "point": [location.x, location.y], "hitClass": actual.map { String(describing: Swift.type(of: $0)) } ?? "none"])
-            }
-            return event
-        }
-        defer { if let monitor { NSEvent.removeMonitor(monitor) } }
-        guard hit != nil, WorkspaceUIAcceptance.click(identifier: id, in: target, fraction: fraction) == nil else {
+        let windowPoint = root.convert(point, to: nil)
+        guard hit != nil else {
             throw GateBlocked("The actual pointer target is unavailable: " + id)
         }
         let index = interactions.count
         interactions.append(["kind": "pointer", "id": id, "window": target.windowNumber,
             "frame": rect(frame), "point": [point.x, point.y], "hitClass": String(describing: type(of: hit!)),
             "windowPoint": [windowPoint.x, windowPoint.y]])
-        try await Task.sleep(for: .milliseconds(50))
-        interactions[index]["localMonitorEvents"] = delivery.events
-        interactions[index]["localMonitorDownObserved"] = delivery.down
-        interactions[index]["localMonitorUpObserved"] = delivery.up
+        do {
+            try await NativeAcceptancePointer.click(view, window: target, fraction: fraction, token: transaction) { evidence in
+                self.interactions[index]["nativeInput"] = evidence
+                self.interactions[index]["localMonitorEvents"] = (evidence["received"] as? [[String: Any]])?.filter {
+                    [NSEvent.EventType.leftMouseDown.rawValue, NSEvent.EventType.leftMouseUp.rawValue].contains($0["type"] as? UInt ?? 0)
+                }
+                self.interactions[index]["localMonitorDownObserved"] = evidence["localMonitorDownObserved"]
+                self.interactions[index]["localMonitorUpObserved"] = evidence["localMonitorUpObserved"]
+                try self.persist()
+            }
+        } catch {
+            if interactions[index]["nativeInput"] == nil {
+                interactions[index]["nativeInput"] = ["status": "refused: " + String(describing: error),
+                    "posted": [], "received": [], "ownedDownPosted": false, "ownedUpPosted": false]
+            }
+            try persist()
+            throw error
+        }
         try persist()
     }
 
     func clickButton(_ id: String, title: String, in target: NSWindow) async throws {
+        let transaction = try NativeAcceptancePointer.claim()
+        defer { NativeAcceptancePointer.release(transaction) }
         try await reveal(id, in: target)
         var match: (frames: [NSRect], evidence: [String: Any]) = ([], [:])
         stage = "actual enabled button " + title
@@ -206,11 +213,13 @@ final class ProductionVisualSourcesDriver {
         let fraction = NSPoint(x: (frame.midX - view.bounds.minX) / view.bounds.width,
                                y: (frame.midY - view.bounds.minY) / view.bounds.height)
         let before = interactions.count
-        try await click(id, in: target, fraction: fraction)
+        try await click(id, in: target, fraction: fraction, transaction: transaction)
         let pointer = interactions.dropFirst(before).last { ($0["kind"] as? String) == "pointer" && ($0["id"] as? String) == id }
+        let native = pointer?["nativeInput"] as? [String: Any]
         guard pointer?["localMonitorDownObserved"] as? Bool == true,
-              pointer?["localMonitorUpObserved"] as? Bool == true else {
-            throw GateBlocked("The actual button did not receive both pointer events: " + title)
+              native?["buttonDownObserved"] as? Bool == true,
+              native?["buttonReleased"] as? Bool == true else {
+            throw GateBlocked("The actual button lacks a verified native pointer lifecycle: " + title)
         }
     }
 
@@ -849,4 +858,419 @@ final class ProductionVisualSourcesDriver {
             NSApp.postEvent(event, atStart: false)
         }
     }
+}
+
+@MainActor
+private protocol NativeAcceptanceHostingSurface: AnyObject {
+    func accessibilityHitTest(_ point: NSPoint) -> Any?
+}
+
+extension NSHostingView: NativeAcceptanceHostingSurface {}
+
+final class NativePointerPoster: @unchecked Sendable {
+    private let source: CGEventSource
+    private let down: CGEvent
+    private let up: CGEvent
+    private let point: CGPoint
+    private let window: Int
+    private let tag: Int64
+    private let windowBounds: CGRect
+    private let deliver: @Sendable (CGEvent) -> Void
+    private let lock = NSLock()
+    private var cancelled = false
+    private var downSeen = false
+    private var state: [String: Any] = ["posted": [[String: Any]](), "ownedDownPosted": false,
+        "ownedUpPosted": false, "buttonDownObserved": false, "buttonReleased": true, "cleanupUpPosted": false]
+
+    init(source: CGEventSource, down: CGEvent, up: CGEvent, point: CGPoint, window: Int,
+         windowBounds: CGRect, tag: Int64,
+         deliver: @escaping @Sendable (CGEvent) -> Void = { $0.post(tap: .cghidEventTap) }) {
+        self.source = source; self.down = down; self.up = up; self.point = point; self.window = window; self.tag = tag
+        self.windowBounds = windowBounds; self.deliver = deliver
+    }
+
+    func cancel() { lock.lock(); cancelled = true; lock.unlock() }
+    func observedDown() { lock.lock(); downSeen = true; lock.unlock() }
+    func snapshot() -> [String: Any] { lock.lock(); defer { lock.unlock() }; return state }
+
+    private func stopped() -> Bool { lock.lock(); defer { lock.unlock() }; return cancelled }
+    private func observed() -> Bool { lock.lock(); defer { lock.unlock() }; return downSeen }
+    private func put(_ key: String, _ value: Any) { lock.lock(); state[key] = value; lock.unlock() }
+
+    private func post(_ event: CGEvent, type: CGEventType, cleanup: Bool = false) {
+        lock.lock()
+        var events = state["posted"] as! [[String: Any]]
+        events.append(["type": type.rawValue, "point": [point.x, point.y], "tag": tag,
+                       "postedUptime": ProcessInfo.processInfo.systemUptime, "cleanup": cleanup])
+        state["posted"] = events
+        state[type == .leftMouseDown ? "ownedDownPosted" : "ownedUpPosted"] = true
+        if cleanup { state["cleanupUpPosted"] = true }
+        lock.unlock()
+        deliver(event)
+    }
+
+    private func awaitRelease() {
+        let deadline = ProcessInfo.processInfo.systemUptime + 2
+        while CGEventSource.buttonState(.combinedSessionState, button: .left)
+                && ProcessInfo.processInfo.systemUptime < deadline { Thread.sleep(forTimeInterval: 0.002) }
+    }
+
+    func run() {
+        guard !stopped(), !CGEventSource.buttonState(.combinedSessionState, button: .left),
+              let actual = CGEvent(source: nil)?.location,
+              abs(actual.x - point.x) < 0.5, abs(actual.y - point.y) < 0.5 else {
+            put("error", "The system pointer or button changed before Down.")
+            put("buttonReleased", !CGEventSource.buttonState(.combinedSessionState, button: .left))
+            return
+        }
+        let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+            as? [[String: Any]] ?? []
+        let top = windows.first { value in
+            guard ((value[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 0) > 0,
+                  let raw = value[kCGWindowBounds as String] as? [String: Any],
+                  let bounds = CGRect(dictionaryRepresentation: raw as CFDictionary) else { return false }
+            return bounds.contains(point)
+        }
+        guard (top?[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == getpid(),
+              (top?[kCGWindowNumber as String] as? NSNumber)?.intValue == window,
+              let rawBounds = top?[kCGWindowBounds as String] as? [String: Any],
+              CGRect(dictionaryRepresentation: rawBounds as CFDictionary) == windowBounds else {
+            put("error", "The original native window changed before Down.")
+            return
+        }
+        post(down, type: .leftMouseDown)
+        let deadline = ProcessInfo.processInfo.systemUptime + 2
+        while !observed() && !stopped() && ProcessInfo.processInfo.systemUptime < deadline {
+            Thread.sleep(forTimeInterval: 0.002)
+        }
+        let downObserved = observed() && CGEventSource.buttonState(.combinedSessionState, button: .left)
+        put("buttonDownObserved", downObserved)
+        if !downObserved { put("error", "Tagged local Down and OS Down were not both observed.") }
+        let releaseAt = ProcessInfo.processInfo.systemUptime + 0.03
+        while !stopped() && ProcessInfo.processInfo.systemUptime < releaseAt { Thread.sleep(forTimeInterval: 0.002) }
+        post(up, type: .leftMouseUp)
+        awaitRelease()
+        if CGEventSource.buttonState(.combinedSessionState, button: .left) {
+            put("error", "The original Up did not release the OS button.")
+            post(up, type: .leftMouseUp, cleanup: true)
+            awaitRelease()
+        }
+        let released = !CGEventSource.buttonState(.combinedSessionState, button: .left)
+        put("buttonReleased", released)
+        if !released { put("error", "Owned Up cleanup could not release the OS button.") }
+        withExtendedLifetime(source) {}
+    }
+}
+
+@MainActor
+enum NativeAcceptancePointer {
+    static func claim() throws -> UUID {
+        if let cleanupFailure { throw GateBlocked(cleanupFailure) }
+        guard owner == nil else { throw GateBlocked("A native pointer transaction is already active.") }
+        let token = UUID()
+        owner = token
+        return token
+    }
+
+    static func release(_ token: UUID) {
+        if owner == token { owner = nil }
+    }
+
+    private struct Target {
+        let window: NSWindow
+        let root: NSView
+        let probe: NSView
+        let hit: NSView
+        let windowFrame: NSRect
+        let probeFrame: NSRect
+        let point: NSPoint
+        let screenPoint: NSPoint
+        let quartzPoint: CGPoint
+        let cgFrame: CGRect
+        let accessibility: AnyObject
+        let accessibilityRole: NSAccessibility.Role
+        let accessibilityFrame: NSRect
+        let kind: String
+    }
+
+    private static func target(_ probe: NSView, window: NSWindow, fraction: NSPoint) throws -> Target {
+        guard NSApp.isActive, window.isVisible, window.isKeyWindow, !window.ignoresMouseEvents,
+              let root = window.contentView, probe.window === window,
+              !probe.isHiddenOrHasHiddenAncestor,
+              [fraction.x, fraction.y].allSatisfy({ $0.isFinite && (0...1).contains($0) }),
+              let screen = NSScreen.screens.first else {
+            throw GateBlocked("The original native pointer target is unavailable.")
+        }
+        let frame = probe.convert(probe.bounds, to: root)
+        guard [frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite),
+              frame.width > 0, frame.height > 0, root.bounds.contains(frame) else {
+            throw GateBlocked("The native pointer target has no complete finite frame.")
+        }
+        var parent = probe.superview
+        while let view = parent {
+            if let clip = view as? NSClipView,
+               !clip.bounds.contains(probe.convert(probe.bounds, to: clip)) {
+                throw GateBlocked("The native pointer target is clipped.")
+            }
+            parent = view.superview
+        }
+        let local = NSPoint(x: probe.bounds.minX + probe.bounds.width * fraction.x,
+                            y: probe.bounds.minY + probe.bounds.height * fraction.y)
+        let point = probe.convert(local, to: nil)
+        guard let hit = root.hitTest(probe.convert(local, to: root.superview)) else {
+            throw GateBlocked("The native pointer target cannot receive input.")
+        }
+        let appKitPoint = window.convertPoint(toScreen: point)
+        let quartzPoint = CGPoint(x: appKitPoint.x, y: screen.frame.maxY - appKitPoint.y)
+        let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+            as? [[String: Any]] ?? []
+        let covering = windows.first { item in
+            guard ((item[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 0) > 0,
+                  let bounds = item[kCGWindowBounds as String] as? [String: Any],
+                  let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary) else { return false }
+            return rect.contains(quartzPoint)
+        }
+        guard (covering?[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == getpid(),
+              (covering?[kCGWindowNumber as String] as? NSNumber)?.intValue == window.windowNumber,
+              let rawBounds = covering?[kCGWindowBounds as String] as? [String: Any],
+              let cgFrame = CGRect(dictionaryRepresentation: rawBounds as CFDictionary) else {
+            throw GateBlocked("The original native window is covered at the pointer target.")
+        }
+        let accessible: AnyObject
+        let role: NSAccessibility.Role
+        let accessibleFrame: NSRect
+        let kind: String
+        if let surface = hit as? any NativeAcceptanceHostingSurface, probe.isDescendant(of: hit) {
+            guard let leaf = surface.accessibilityHitTest(appKitPoint) as? any NSAccessibilityProtocol else {
+                throw GateBlocked("The SwiftUI pointer target has no known accessibility hit.")
+            }
+            var element: (any NSAccessibilityProtocol)? = leaf
+            var control: (AnyObject, NSAccessibility.Role, NSRect)?
+            var visited = Set<ObjectIdentifier>()
+            var originalWindow = false
+            let roles: Set<String> = [kAXButtonRole, kAXCheckBoxRole, kAXRadioButtonRole, kAXTextFieldRole,
+                kAXTextAreaRole, kAXPopUpButtonRole, kAXMenuButtonRole, kAXMenuItemRole, kAXComboBoxRole,
+                kAXSliderRole, kAXDisclosureTriangleRole, kAXIncrementorRole, kAXColorWellRole]
+            let surfaces: Set<String> = [kAXGroupRole, kAXStaticTextRole, kAXImageRole, kAXScrollAreaRole,
+                kAXSplitGroupRole, kAXListRole, kAXRowRole, kAXCellRole, kAXTableRole, kAXColumnRole,
+                kAXOutlineRole, kAXToolbarRole, kAXHeadingRole, kAXTabGroupRole, kAXRadioGroupRole,
+                kAXLayoutAreaRole, kAXLayoutItemRole, kAXValueIndicatorRole, kAXSplitterRole]
+            for _ in 0..<32 {
+                guard let current = element, visited.insert(ObjectIdentifier(current)).inserted else { break }
+                if let actualWindow = current as? NSWindow {
+                    originalWindow = actualWindow === window
+                    break
+                }
+                guard let currentRole = current.accessibilityRole(),
+                      roles.contains(currentRole.rawValue) || surfaces.contains(currentRole.rawValue) else {
+                    throw GateBlocked("The pointer accessibility ancestry has an unknown role.")
+                }
+                if roles.contains(currentRole.rawValue) {
+                    let bounds = current.accessibilityFrame()
+                    guard [bounds.minX, bounds.minY, bounds.width, bounds.height].allSatisfy(\.isFinite),
+                          bounds.width > 0, bounds.height > 0, bounds.contains(appKitPoint),
+                          current.isAccessibilityEnabled() else {
+                        throw GateBlocked("The actual pointer control is disabled or has changed geometry.")
+                    }
+                    if control == nil { control = (current, currentRole, bounds) }
+                }
+                element = current.accessibilityParent() as? any NSAccessibilityProtocol
+            }
+            guard originalWindow else { throw GateBlocked("The pointer accessibility ancestry does not prove the original window.") }
+            if let control {
+                (accessible, role, accessibleFrame) = control
+                kind = "accessibility-control"
+            } else {
+                guard let leafRole = leaf.accessibilityRole() else { throw GateBlocked("The gesture target has no known role.") }
+                accessible = leaf
+                role = leafRole
+                accessibleFrame = leaf.accessibilityFrame()
+                guard [accessibleFrame.minX, accessibleFrame.minY, accessibleFrame.width, accessibleFrame.height].allSatisfy(\.isFinite),
+                      accessibleFrame.width > 0, accessibleFrame.height > 0, accessibleFrame.contains(appKitPoint) else {
+                    throw GateBlocked("The gesture accessibility target has no finite visible frame.")
+                }
+                kind = "gesture-surface"
+            }
+        } else {
+            let bounds = hit.convert(hit.bounds, to: root)
+            guard (hit is NSControl || hit is NSTextView),
+                  !hit.isHiddenOrHasHiddenAncestor, !hit.visibleRect.isEmpty,
+                  frame.insetBy(dx: -1, dy: -1).contains(bounds),
+                  hit.visibleRect.contains(hit.convert(point, from: nil)),
+                  hit.isAccessibilityEnabled(), let nativeRole = hit.accessibilityRole(),
+                  !nativeRole.rawValue.isEmpty, nativeRole.rawValue != kAXUnknownRole else {
+                throw GateBlocked("A disabled or different native view covers the pointer control.")
+            }
+            accessible = hit
+            role = nativeRole
+            accessibleFrame = hit.accessibilityFrame()
+            kind = "native-control"
+        }
+        return Target(window: window, root: root, probe: probe, hit: hit, windowFrame: window.frame,
+                      probeFrame: frame, point: point, screenPoint: appKitPoint, quartzPoint: quartzPoint, cgFrame: cgFrame,
+                      accessibility: accessible, accessibilityRole: role, accessibilityFrame: accessibleFrame, kind: kind)
+    }
+
+    private static func same(_ first: Target, _ next: Target) -> Bool {
+        first.window === next.window && first.root === next.root && first.probe === next.probe
+            && first.hit === next.hit && first.windowFrame == next.windowFrame
+            && first.probeFrame == next.probeFrame && first.point == next.point
+            && first.cgFrame == next.cgFrame
+            && first.accessibility === next.accessibility && first.accessibilityRole == next.accessibilityRole
+            && first.accessibilityFrame == next.accessibilityFrame && first.kind == next.kind
+    }
+
+    private static func pause() async {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) { continuation.resume() }
+        }
+    }
+
+    static func click(_ probe: NSView, window: NSWindow, fraction: NSPoint,
+                      token: UUID, record: ([String: Any]) throws -> Void) async throws {
+        guard owner == token, CGPreflightPostEventAccess(),
+              !CGEventSource.buttonState(.combinedSessionState, button: .left) else {
+            throw GateBlocked("Native pointer input is unavailable or a mouse button is already held.")
+        }
+        let original = try target(probe, window: window, fraction: fraction)
+        let tag = Int64.random(in: 1...Int64.max)
+        guard let source = CGEventSource(stateID: .combinedSessionState),
+              let down = CGEvent(mouseEventSource: source, mouseType: .leftMouseDown,
+                                 mouseCursorPosition: original.quartzPoint, mouseButton: .left),
+              let up = CGEvent(mouseEventSource: source, mouseType: .leftMouseUp,
+                               mouseCursorPosition: original.quartzPoint, mouseButton: .left) else {
+            throw GateBlocked("The complete native pointer sequence could not be created.")
+        }
+        for event in [down, up] {
+            event.setIntegerValueField(.eventSourceUserData, value: tag)
+            event.setIntegerValueField(.mouseEventClickState, value: 1)
+        }
+        @MainActor final class Delivery {
+            var events: [[String: Any]] = []
+            var down = false
+            var up = false
+            var moves: [NSPoint] = []
+        }
+        let poster = NativePointerPoster(source: source, down: down, up: up, point: original.quartzPoint,
+                                         window: window.windowNumber, windowBounds: original.cgFrame, tag: tag)
+        let delivery = Delivery(), number = window.windowNumber, point = original.point
+        let acceptedMoves = window.acceptsMouseMovedEvents
+        window.acceptsMouseMovedEvents = true
+        let monitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDown, .leftMouseUp]) { event in
+            let observedTag = event.cgEvent?.getIntegerValueField(.eventSourceUserData)
+            let location = event.locationInWindow, observedWindow = event.windowNumber, type = event.type
+            let pressed = CGEventSource.buttonState(.combinedSessionState, button: .left)
+            let global = NSEvent.mouseLocation
+            MainActor.assumeIsolated {
+                guard observedTag == tag else { return }
+                let root = original.root
+                let local = root.convert(location, from: nil)
+                let hit = root.hitTest(root.convert(local, to: root.superview))
+                delivery.events.append(["type": type.rawValue, "window": observedWindow,
+                    "point": [location.x, location.y], "screenPoint": [global.x, global.y],
+                    "tag": tag, "buttonDown": pressed, "observedUptime": ProcessInfo.processInfo.systemUptime,
+                    "hitClass": hit.map { String(describing: Swift.type(of: $0)) } ?? "none"])
+                if type == .mouseMoved && observedWindow == number { delivery.moves.append(location) }
+                guard observedWindow == number, abs(location.x - point.x) < 0.5,
+                      abs(location.y - point.y) < 0.5 else { return }
+                if type == .leftMouseDown && pressed {
+                    delivery.down = true
+                    poster.observedDown()
+                }
+                if type == .leftMouseUp && !pressed { delivery.up = true }
+            }
+            return event
+        }
+        defer {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            window.acceptsMouseMovedEvents = acceptedMoves
+        }
+        var posted: [[String: Any]] = []
+        func emit(_ event: CGEvent, type: CGEventType) {
+            event.post(tap: .cghidEventTap)
+            posted.append(["type": type.rawValue, "point": [event.location.x, event.location.y],
+                           "tag": tag, "postedUptime": ProcessInfo.processInfo.systemUptime])
+        }
+        func evidence(_ status: String) -> [String: Any] {
+            var value = poster.snapshot()
+            value.merge(["kind": "native-pointer", "transaction": token.uuidString, "tag": tag, "status": status,
+                "window": number, "point": [point.x, point.y],
+                "screenPoint": [original.screenPoint.x, original.screenPoint.y], "targetKind": original.kind,
+                "accessibilityRole": original.accessibilityRole.rawValue,
+                "accessibilityFrame": [original.accessibilityFrame.minX, original.accessibilityFrame.minY,
+                                       original.accessibilityFrame.width, original.accessibilityFrame.height],
+                "posted": posted + (value["posted"] as? [[String: Any]] ?? []), "received": delivery.events,
+                "localMonitorDownObserved": delivery.down, "localMonitorUpObserved": delivery.up,
+                "upDeliveryAcknowledged": false]) { _, new in new }
+            return value
+        }
+
+        func wait(_ predicate: () -> Bool) async throws {
+            let deadline = ProcessInfo.processInfo.systemUptime + 2
+            while !predicate() && ProcessInfo.processInfo.systemUptime < deadline {
+                try Task.checkCancellation()
+                await pause()
+            }
+            try Task.checkCancellation()
+            guard predicate() else { throw GateBlocked("The native pointer event was not observed at its original target.") }
+        }
+        do {
+            try Task.checkCancellation()
+            let current = NSEvent.mouseLocation
+            var positions: [CGPoint] = []
+            if abs(current.x - original.screenPoint.x) < 0.5 && abs(current.y - original.screenPoint.y) < 0.5 {
+                let delta: CGFloat = original.point.x + 2 < window.contentView!.bounds.maxX ? 2 : -2
+                positions.append(CGPoint(x: original.quartzPoint.x + delta, y: original.quartzPoint.y))
+            }
+            positions.append(original.quartzPoint)
+            for position in positions {
+                guard same(original, try target(probe, window: window, fraction: fraction)),
+                      let move = CGEvent(mouseEventSource: source, mouseType: .mouseMoved,
+                                         mouseCursorPosition: position, mouseButton: .left) else {
+                    throw GateBlocked("The original native pointer target changed before movement.")
+                }
+                move.setIntegerValueField(.eventSourceUserData, value: tag)
+                let expected = window.convertPoint(fromScreen: NSPoint(x: position.x,
+                    y: original.screenPoint.y - (position.y - original.quartzPoint.y)))
+                let before = delivery.moves.count
+                emit(move, type: .mouseMoved)
+                try await wait {
+                    delivery.moves.dropFirst(before).contains { abs($0.x - expected.x) < 0.5 && abs($0.y - expected.y) < 0.5 }
+                }
+            }
+            let actual = NSEvent.mouseLocation
+            guard abs(actual.x - original.screenPoint.x) < 0.5,
+                  abs(actual.y - original.screenPoint.y) < 0.5,
+                  !CGEventSource.buttonState(.combinedSessionState, button: .left),
+                  same(original, try target(probe, window: window, fraction: fraction)) else {
+                throw GateBlocked("The actual system pointer or original control changed before Down.")
+            }
+            try record(evidence("prepared"))
+            try Task.checkCancellation()
+            let worker = Task.detached { poster.run() }
+            await withTaskCancellationHandler {
+                await worker.value
+            } onCancel: {
+                poster.cancel()
+            }
+            let state = poster.snapshot()
+            if state["ownedDownPosted"] as? Bool == true && state["buttonReleased"] as? Bool != true {
+                cleanupFailure = "The owned native mouse button could not be released."
+                throw GateBlocked(cleanupFailure!)
+            }
+            try Task.checkCancellation()
+            guard state["buttonDownObserved"] as? Bool == true,
+                  state["buttonReleased"] as? Bool == true,
+                  state["error"] == nil, delivery.down else {
+                throw GateBlocked("The native pointer transaction lacks a verified OS button lifecycle.")
+            }
+            try record(evidence("delivered"))
+        } catch {
+            try record(evidence("failed: " + String(describing: error)))
+            throw error
+        }
+    }
+
+    private static var owner: UUID?
+    private static var cleanupFailure: String?
 }

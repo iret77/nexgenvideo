@@ -753,3 +753,566 @@ struct NativeButtonInteractionTests {
             title: "Undo", inside: probe).isEmpty)
     }
 }
+
+@Suite("Native system pointer delivery", .serialized)
+@MainActor
+struct NativePointerInteractionTests {
+    @MainActor private final class Capture {
+        var callbacks: [[String: Any]] = []
+
+        func clicked(_ name: String) {
+            let point = NSEvent.mouseLocation
+            callbacks.append(["name": name, "point": [point.x, point.y],
+                "eventType": NSApp.currentEvent?.type.rawValue as Any? ?? NSNull(),
+                "tag": NSApp.currentEvent?.cgEvent?.getIntegerValueField(.eventSourceUserData) as Any? ?? NSNull(),
+                "buttonDown": CGEventSource.buttonState(.combinedSessionState, button: .left)])
+        }
+
+        func count(_ name: String) -> Int { callbacks.filter { $0["name"] as? String == name }.count }
+    }
+
+    @MainActor private struct Controls: View {
+        let capture: Capture
+        @State private var text = "0"
+
+        private func button(_ title: String, disabled: Bool = false, selected: Bool = true) -> some View {
+            Button(title) { capture.clicked(title) }
+                .disabled(disabled)
+                .background {
+                    AppRelaunchClickProbe(identifier: "pointer." + title, acceptanceState: selected)
+                        .allowsHitTesting(false)
+                }
+        }
+
+        var body: some View {
+            VStack(spacing: AppTheme.Spacing.sm) {
+                HStack(spacing: AppTheme.Spacing.sm) {
+                    Text("Pale room")
+                    Spacer()
+                    button("Undo")
+                    button("Redo")
+                }
+                ScrollView {
+                    VStack(spacing: AppTheme.Spacing.sm) {
+                        TextField("Position", text: $text)
+                            .background {
+                                AppRelaunchClickProbe(identifier: "pointer.field", acceptanceState: true, acceptanceText: text)
+                                    .allowsHitTesting(false)
+                            }
+                        HStack {
+                            button("Unselected", selected: false)
+                            button("Disabled", disabled: true)
+                        }
+                        VStack {
+                            Text("Identity card")
+                            Text("Character ID")
+                                .background {
+                                    AppRelaunchClickProbe(identifier: "pointer.Card", acceptanceState: true)
+                                        .allowsHitTesting(false)
+                                }
+                        }
+                        .padding(AppTheme.Spacing.sm)
+                        .contentShape(Rectangle())
+                        .onTapGesture { capture.clicked("Card") }
+                        GeometryReader { _ in
+                            Capsule().fill(AppTheme.Background.prominentColor)
+                                .contentShape(Rectangle())
+                                .gesture(DragGesture(minimumDistance: 0).onEnded { _ in capture.clicked("Scrubber") })
+                        }
+                        .frame(height: AppTheme.Control.regularHeight)
+                        .background {
+                            AppRelaunchClickProbe(identifier: "pointer.Scrubber", acceptanceState: true)
+                                .allowsHitTesting(false)
+                        }
+                        NativeControl(capture: capture, popup: false)
+                            .frame(height: AppTheme.Control.regularHeight)
+                            .background {
+                                AppRelaunchClickProbe(identifier: "pointer.Native", acceptanceState: true)
+                                    .allowsHitTesting(false)
+                            }
+                        NativeControl(capture: capture, popup: true)
+                            .frame(height: AppTheme.Control.regularHeight)
+                            .background {
+                                AppRelaunchClickProbe(identifier: "pointer.Choice", acceptanceState: true)
+                                    .allowsHitTesting(false)
+                            }
+                        ForEach(0..<40, id: \.self) { index in Text("Scene property \(index)") }
+                        button("Later")
+                    }
+                }
+                DisabledSibling()
+            }
+            .buttonStyle(.capsule())
+            .padding(AppTheme.Spacing.md)
+        }
+    }
+
+    @MainActor private struct NativeControl: NSViewRepresentable {
+        let capture: Capture
+        let popup: Bool
+
+        @MainActor final class Coordinator: NSObject {
+            let capture: Capture
+            init(_ capture: Capture) { self.capture = capture }
+            @objc func selected(_ sender: NSControl) {
+                capture.clicked((sender as? NSPopUpButton)?.titleOfSelectedItem ?? "Native")
+            }
+        }
+
+        func makeCoordinator() -> Coordinator { Coordinator(capture) }
+        func makeNSView(context: Context) -> NSControl {
+            let view: NSControl
+            if popup {
+                let button = NSPopUpButton(frame: .zero, pullsDown: false)
+                button.addItems(withTitles: ["First", "Second"])
+                view = button
+            } else { view = NSButton(title: "Native", target: nil, action: nil) }
+            view.target = context.coordinator
+            view.action = #selector(Coordinator.selected(_:))
+            return view
+        }
+
+        func updateNSView(_ view: NSControl, context: Context) {}
+    }
+
+    @MainActor private final class Hosting: NSHostingView<Controls> {
+        var substitutedHit: Any?
+        override func accessibilityHitTest(_ point: NSPoint) -> Any? {
+            substitutedHit ?? super.accessibilityHitTest(point)
+        }
+    }
+
+    @MainActor private final class ReplacementHit: NSAccessibilityElement {
+        let window: NSWindow
+        let frame: NSRect
+        let role: NSAccessibility.Role
+        init(window: NSWindow, frame: NSRect, role: NSAccessibility.Role = .button) {
+            self.window = window; self.frame = frame; self.role = role; super.init()
+        }
+        override func accessibilityRole() -> NSAccessibility.Role? { role }
+        override func accessibilityFrame() -> NSRect { frame }
+        override func accessibilityParent() -> Any? { window }
+        override func isAccessibilityEnabled() -> Bool { true }
+    }
+
+    private struct DisabledSibling: NSViewRepresentable {
+        func makeNSView(context: Context) -> NSButton {
+            let button = NSButton(title: "Unrelated disabled control", target: nil, action: nil)
+            button.isEnabled = false
+            return button
+        }
+
+        func updateNSView(_ view: NSButton, context: Context) {}
+    }
+
+    @MainActor private final class Fixture {
+        let capture: Capture
+        let window: NSWindow
+        let output: URL
+        let driver: ProductionVisualSourcesDriver
+        private let activation: NSApplication.ActivationPolicy
+
+        init(_ name: String) throws {
+            try #require(ProcessInfo.processInfo.arguments.contains("--no-parallel"))
+            let events = try #require(ProcessInfo.processInfo.environment["NGV_APPKIT_TEST_EVENTS"])
+            let folder = URL(fileURLWithPath: events).deletingLastPathComponent()
+                .appendingPathComponent("native-pointer-" + name + "-" + UUID().uuidString, isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+            let created = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 390, height: 640),
+                                   styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            let captured = Capture()
+            capture = captured
+            window = created
+            output = folder
+            activation = NSApp.activationPolicy()
+            driver = ProductionVisualSourcesDriver(window: created, output: folder, name: name)
+            window.isReleasedWhenClosed = false
+            window.contentView = Hosting(rootView: Controls(capture: capture))
+            NSApp.setActivationPolicy(.regular)
+            window.center()
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            window.contentView?.layoutSubtreeIfNeeded()
+        }
+
+        func ready() async throws {
+            try await driver.wait("exclusive native pointer fixture") {
+                NSApp.isActive && self.window.isKeyWindow && self.probe("Undo") != nil
+            }
+            try await driver.fill("pointer.field", value: "0.5", in: window)
+            try #require(window.firstResponder is NSTextView)
+        }
+
+        func probe(_ title: String) -> NSView? {
+            window.contentView.flatMap { WorkspaceUIAcceptance.findProbe(in: $0, identifier: "pointer." + title) }
+        }
+
+        func point(_ title: String) throws -> NSPoint {
+            let probe = try #require(probe(title))
+            return window.convertPoint(toScreen: probe.convert(NSPoint(x: probe.bounds.midX, y: probe.bounds.midY), to: nil))
+        }
+
+        func moveAway() async throws {
+            let screen = try #require(NSScreen.screens.first)
+            let point = window.convertPoint(toScreen: NSPoint(x: 4, y: 4))
+            try await ProductionNativeReadingAcceptance.movePointer(to: CGPoint(x: point.x, y: screen.frame.maxY - point.y),
+                                                                    window: window, driver: driver)
+        }
+
+        func input(_ title: String) throws -> [String: Any] {
+            let pointer = try #require(driver.interactions.last { $0["id"] as? String == "pointer." + title && $0["kind"] as? String == "pointer" })
+            return try #require(pointer["nativeInput"] as? [String: Any])
+        }
+
+        func record(_ name: String, _ value: [String: Any]) throws {
+            try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
+                .write(to: output.appendingPathComponent(name + ".json"), options: .atomic)
+        }
+
+        func close() {
+            window.contentView = nil
+            window.close()
+            NSApp.setActivationPolicy(activation)
+        }
+    }
+
+    private func delivered(_ title: String, in fixture: Fixture, movements: Int = 1) throws {
+        let input = try fixture.input(title)
+        let posted = try #require(input["posted"] as? [[String: Any]])
+        let received = try #require(input["received"] as? [[String: Any]])
+        #expect(input["status"] as? String == "delivered")
+        #expect(posted.filter { $0["type"] as? UInt32 == CGEventType.mouseMoved.rawValue }.count == movements)
+        #expect(posted.filter { $0["type"] as? UInt32 == CGEventType.leftMouseDown.rawValue }.count == 1)
+        #expect(posted.filter { $0["type"] as? UInt32 == CGEventType.leftMouseUp.rawValue }.count == 1)
+        #expect(received.filter { $0["type"] as? UInt == NSEvent.EventType.mouseMoved.rawValue }.count == movements)
+        #expect(received.filter { $0["type"] as? UInt == NSEvent.EventType.leftMouseDown.rawValue }.count == 1)
+        let localUps = received.filter { $0["type"] as? UInt == NSEvent.EventType.leftMouseUp.rawValue }.count
+        #expect(localUps <= 1)
+        #expect(input["localMonitorDownObserved"] as? Bool == true)
+        #expect(input["localMonitorUpObserved"] as? Bool == (localUps == 1))
+        #expect(input["buttonDownObserved"] as? Bool == true)
+        #expect(input["buttonReleased"] as? Bool == true)
+        let expected = try fixture.point(title)
+        let callback = try #require(fixture.capture.callbacks.last { $0["name"] as? String == title })
+        let point = try #require(callback["point"] as? [CGFloat])
+        #expect(abs(point[0] - expected.x) < 0.5 && abs(point[1] - expected.y) < 0.5)
+        #expect(callback["tag"] as? Int64 == input["tag"] as? Int64)
+    }
+
+    @Test func actualCompactButtonsUseOneTaggedSystemClickEach() async throws {
+        let legacy = try Fixture("legacy-observation")
+        do {
+            try await legacy.ready()
+            try await legacy.moveAway()
+            let before = NSEvent.mouseLocation
+            try #require(WorkspaceUIAcceptance.click(identifier: "pointer.Undo", in: legacy.window) == nil)
+            try await Task.sleep(for: .milliseconds(100))
+            let after = NSEvent.mouseLocation
+            try legacy.record("legacy-observation", ["before": [before.x, before.y], "after": [after.x, after.y],
+                "target": [try legacy.point("Undo").x, try legacy.point("Undo").y], "callbacks": legacy.capture.callbacks,
+                "observationOnly": true])
+        } catch { legacy.close(); throw error }
+        legacy.close()
+        let fixture = try Fixture("adjacent-buttons")
+        defer { fixture.close() }
+        try await fixture.ready()
+        try await fixture.moveAway()
+        try await fixture.driver.click("pointer.Undo", in: fixture.window)
+        try await fixture.driver.wait("Undo callback") { fixture.capture.count("Undo") == 1 }
+        try delivered("Undo", in: fixture)
+        try await fixture.driver.click("pointer.Redo", in: fixture.window)
+        try await fixture.driver.wait("Redo callback") { fixture.capture.count("Redo") == 1 }
+        try delivered("Redo", in: fixture)
+        #expect(fixture.capture.count("Undo") == 1)
+        try await fixture.driver.click("pointer.Redo", in: fixture.window)
+        try await fixture.driver.wait("second deliberate Redo callback") { fixture.capture.count("Redo") == 2 }
+        try delivered("Redo", in: fixture, movements: 2)
+        #expect(fixture.capture.count("Undo") == 1)
+        try fixture.driver.capture("native-adjacent-buttons", target: fixture.window)
+        try fixture.record("callbacks", ["callbacks": fixture.capture.callbacks])
+    }
+
+    @Test func unselectedAndDisabledTargetsKeepDifferentMeaning() async throws {
+        let fixture = try Fixture("selection-disabled")
+        defer { fixture.close() }
+        try await fixture.ready()
+        try await fixture.driver.click("pointer.Unselected", in: fixture.window, enabled: false)
+        try await fixture.driver.wait("unselected enabled callback") { fixture.capture.count("Unselected") == 1 }
+        try delivered("Unselected", in: fixture)
+        let counter = DownCounter()
+        defer { counter.close() }
+        do {
+            try await fixture.driver.click("pointer.Disabled", in: fixture.window, enabled: false)
+            Issue.record("A disabled SwiftUI control accepted a native Down.")
+        } catch {
+            #expect(!CGEventSource.buttonState(.combinedSessionState, button: .left))
+        }
+        #expect(fixture.capture.count("Disabled") == 0)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(counter.count == 0)
+        let input = try fixture.input("Disabled")
+        #expect((input["posted"] as? [Any])?.isEmpty == true)
+        #expect(input["ownedDownPosted"] as? Bool == false)
+    }
+
+    @Test func coveredForeignAndInvalidTargetsNeverPostDown() async throws {
+        let fixture = try Fixture("refused-targets")
+        defer { fixture.close() }
+        try await fixture.ready()
+        let counter = DownCounter()
+        defer { counter.close() }
+        let root = try #require(fixture.window.contentView)
+        let probe = try #require(fixture.probe("Undo"))
+        let cover = NSView(frame: probe.convert(probe.bounds, to: root))
+        root.addSubview(cover)
+        do {
+            try await fixture.driver.click("pointer.Undo", in: fixture.window)
+            Issue.record("An unrelated native cover accepted pointer input.")
+        } catch {}
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(counter.count == 0)
+        #expect(fixture.capture.count("Undo") == 0)
+        #expect((try fixture.input("Undo")["posted"] as? [Any])?.isEmpty == true)
+        cover.removeFromSuperview()
+        for fraction in [NSPoint(x: .nan, y: 0.5), NSPoint(x: 1.1, y: 0.5)] {
+            do {
+                try await fixture.driver.click("pointer.Undo", in: fixture.window, fraction: fraction)
+                Issue.record("An invalid pointer fraction was accepted.")
+            } catch {}
+            try await Task.sleep(for: .milliseconds(100))
+            #expect(counter.count == 0)
+        }
+        let foreign = NSWindow(contentRect: fixture.window.frame, styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        foreign.isReleasedWhenClosed = false
+        foreign.makeKeyAndOrderFront(nil)
+        defer { foreign.close() }
+        do {
+            try await fixture.driver.click("pointer.Undo", in: fixture.window)
+            Issue.record("A foreign key window did not prevent pointer input.")
+        } catch {}
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(counter.count == 0)
+        #expect(fixture.capture.count("Undo") == 0)
+        #expect(!CGEventSource.buttonState(.combinedSessionState, button: .left))
+    }
+
+    @MainActor private final class DownCounter {
+        var count = 0
+        private var monitor: Any?
+        init() {
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
+                MainActor.assumeIsolated { self.count += 1 }
+                return event
+            }
+        }
+        func close() { if let monitor { NSEvent.removeMonitor(monitor) }; monitor = nil }
+    }
+
+    @Test func gestureSurfacesAndSmallCardMarkersRemainUsable() async throws {
+        let fixture = try Fixture("gesture-surfaces")
+        defer { fixture.close() }
+        try await fixture.ready()
+        for title in ["Card", "Scrubber"] {
+            try await fixture.moveAway()
+            try await fixture.driver.click("pointer." + title, in: fixture.window)
+            try await fixture.driver.wait("gesture callback " + title) { fixture.capture.count(title) == 1 }
+            try delivered(title, in: fixture)
+        }
+        try fixture.record("callbacks", ["callbacks": fixture.capture.callbacks])
+    }
+
+    @Test func actualNativeControlAndMenuTrackingKeepTheirCallbacks() async throws {
+        let fixture = try Fixture("native-tracking")
+        defer { fixture.close() }
+        try await fixture.ready()
+        try await fixture.moveAway()
+        try await fixture.driver.click("pointer.Native", in: fixture.window)
+        try await fixture.driver.wait("actual NSButton callback") { fixture.capture.count("Native") == 1 }
+        try delivered("Native", in: fixture)
+        try await fixture.driver.menu("pointer.Choice", title: "Second", in: fixture.window)
+        try await fixture.driver.wait("actual popup menu selection") { fixture.capture.count("Second") == 1 }
+        let input = try fixture.input("Choice")
+        #expect(input["buttonDownObserved"] as? Bool == true)
+        #expect(input["buttonReleased"] as? Bool == true)
+        #expect(fixture.capture.count("Native") == 1)
+        try fixture.record("callbacks", ["callbacks": fixture.capture.callbacks])
+    }
+
+    @Test func changedAccessibilityHitCannotBorrowTheOriginalGeometry() async throws {
+        let fixture = try Fixture("changed-accessibility-target")
+        defer { fixture.close() }
+        try await fixture.ready()
+        try await fixture.moveAway()
+        let root = try #require(fixture.window.contentView as? Hosting)
+        let probe = try #require(fixture.probe("Undo"))
+        let frame = fixture.window.convertToScreen(probe.convert(probe.bounds, to: nil))
+        let replacement = ReplacementHit(window: fixture.window, frame: frame)
+        let counter = DownCounter()
+        defer { counter.close() }
+        for role in [NSAccessibility.Role(rawValue: kAXUnknownRole), NSAccessibility.Role(rawValue: "AXUnrecognizedFixtureRole")] {
+            root.substitutedHit = ReplacementHit(window: fixture.window, frame: frame, role: role)
+            do {
+                try await fixture.driver.click("pointer.Undo", in: fixture.window)
+                Issue.record("An unknown accessibility role qualified a gesture target.")
+            } catch {}
+            try await Task.sleep(for: .milliseconds(100))
+            #expect(counter.count == 0)
+            #expect(fixture.capture.count("Undo") == 0)
+        }
+        root.substitutedHit = nil
+        let number = fixture.window.windowNumber
+        let monitor = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved) { event in
+            let owned = event.windowNumber == number && (event.cgEvent?.getIntegerValueField(.eventSourceUserData) ?? 0) > 0
+            MainActor.assumeIsolated { if owned { root.substitutedHit = replacement } }
+            return event
+        }
+        defer { if let monitor { NSEvent.removeMonitor(monitor) } }
+        do {
+            try await fixture.driver.click("pointer.Undo", in: fixture.window)
+            Issue.record("A different accessibility target borrowed the original hosting surface and geometry.")
+        } catch {}
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(counter.count == 0)
+        #expect(fixture.capture.count("Undo") == 0)
+        #expect(try #require(fixture.probe("Undo")) === probe)
+        #expect(fixture.window.convertToScreen(probe.convert(probe.bounds, to: nil)) == frame)
+    }
+
+    @MainActor private final class TaskBox {
+        var task: Task<Void, Error>?
+        var competitor: Task<Void, Never>?
+        var competitorRefused = false
+    }
+
+    private final class DropFirstUp: @unchecked Sendable {
+        private let lock = NSLock()
+        private var dropped = false
+        private var actualDowns = 0
+        private var actualUps = 0
+
+        func send(_ event: CGEvent) {
+            lock.lock()
+            if event.type == .leftMouseUp && !dropped {
+                dropped = true
+                lock.unlock()
+                return
+            }
+            if event.type == .leftMouseDown { actualDowns += 1 }
+            if event.type == .leftMouseUp { actualUps += 1 }
+            lock.unlock()
+            event.post(tap: .cghidEventTap)
+        }
+
+        var evidence: [String: Any] {
+            lock.lock(); defer { lock.unlock() }
+            return ["firstUpDeliberatelyDropped": dropped, "actualDownPosts": actualDowns, "actualUpPosts": actualUps]
+        }
+    }
+
+    @Test func aLostUpGetsOnlyOneReleaseCleanup() async throws {
+        let fixture = try Fixture("lost-up-cleanup")
+        defer { fixture.close() }
+        try await fixture.ready()
+        let token = try NativeAcceptancePointer.claim()
+        defer { NativeAcceptancePointer.release(token) }
+        let appKitPoint = try fixture.point("Undo")
+        let screen = try #require(NSScreen.screens.first)
+        let point = CGPoint(x: appKitPoint.x, y: screen.frame.maxY - appKitPoint.y)
+        try await ProductionNativeReadingAcceptance.movePointer(to: point, window: fixture.window, driver: fixture.driver)
+        let source = try #require(CGEventSource(stateID: .combinedSessionState))
+        let down = try #require(CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left))
+        let up = try #require(CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left))
+        let tag = Int64.random(in: 1...Int64.max)
+        for event in [down, up] {
+            event.setIntegerValueField(.eventSourceUserData, value: tag)
+            event.setIntegerValueField(.mouseEventClickState, value: 1)
+        }
+        defer { if CGEventSource.buttonState(.combinedSessionState, button: .left) { up.post(tap: .cghidEventTap) } }
+        let windows = try #require(CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]])
+        let original = try #require(windows.first { ($0[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == getpid()
+            && ($0[kCGWindowNumber as String] as? NSNumber)?.intValue == fixture.window.windowNumber })
+        let rawBounds = try #require(original[kCGWindowBounds as String] as? [String: Any])
+        let bounds = try #require(CGRect(dictionaryRepresentation: rawBounds as CFDictionary))
+        let dropped = DropFirstUp()
+        let poster = NativePointerPoster(source: source, down: down, up: up, point: point,
+            window: fixture.window.windowNumber, windowBounds: bounds, tag: tag, deliver: { dropped.send($0) })
+        let number = fixture.window.windowNumber
+        let monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
+            if event.windowNumber == number, event.cgEvent?.getIntegerValueField(.eventSourceUserData) == tag,
+               CGEventSource.buttonState(.combinedSessionState, button: .left) { poster.observedDown() }
+            return event
+        }
+        defer { if let monitor { NSEvent.removeMonitor(monitor) } }
+        await Task.detached { poster.run() }.value
+        let state = poster.snapshot(), actual = dropped.evidence
+        #expect(state["buttonDownObserved"] as? Bool == true)
+        #expect(state["cleanupUpPosted"] as? Bool == true)
+        #expect(state["buttonReleased"] as? Bool == true)
+        #expect(state["error"] as? String == "The original Up did not release the OS button.")
+        #expect(actual["firstUpDeliberatelyDropped"] as? Bool == true)
+        #expect(actual["actualDownPosts"] as? Int == 1)
+        #expect(actual["actualUpPosts"] as? Int == 1)
+        #expect(!CGEventSource.buttonState(.combinedSessionState, button: .left))
+        #expect(fixture.capture.count("Undo") <= 1)
+        try fixture.record("release-control", ["transportFaultInjected": true, "poster": state, "actualTransport": actual])
+    }
+
+    @Test func ownedDownIsReleasedWhenTheTaskIsCancelled() async throws {
+        let fixture = try Fixture("cancelled-down")
+        defer { fixture.close() }
+        try await fixture.ready()
+        let box = TaskBox(), number = fixture.window.windowNumber
+        let monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
+            let owned = event.windowNumber == number && (event.cgEvent?.getIntegerValueField(.eventSourceUserData) ?? 0) > 0
+            MainActor.assumeIsolated { if owned { box.task?.cancel() } }
+            return event
+        }
+        defer { if let monitor { NSEvent.removeMonitor(monitor) } }
+        box.task = Task { try await fixture.driver.click("pointer.Undo", in: fixture.window) }
+        do {
+            try await box.task!.value
+            Issue.record("The cancelled pointer transaction reported delivery success.")
+        } catch { #expect(error is CancellationError) }
+        let input = try fixture.input("Undo")
+        let posted = try #require(input["posted"] as? [[String: Any]])
+        #expect(posted.filter { $0["type"] as? UInt32 == CGEventType.leftMouseDown.rawValue }.count == 1)
+        #expect(posted.filter { $0["type"] as? UInt32 == CGEventType.leftMouseUp.rawValue }.count == 1)
+        #expect(input["ownedUpPosted"] as? Bool == true)
+        #expect(input["buttonReleased"] as? Bool == true)
+        #expect(fixture.capture.count("Undo") <= 1)
+        #expect(!CGEventSource.buttonState(.combinedSessionState, button: .left))
+        let next = try NativeAcceptancePointer.claim()
+        NativeAcceptancePointer.release(next)
+    }
+
+    @Test func concurrentButtonPreparationCannotMoveTheOwnedPointer() async throws {
+        let fixture = try Fixture("concurrent-preparation")
+        defer { fixture.close() }
+        try await fixture.ready()
+        try await fixture.moveAway()
+        let box = TaskBox(), number = fixture.window.windowNumber
+        let monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
+            let owned = event.windowNumber == number && (event.cgEvent?.getIntegerValueField(.eventSourceUserData) ?? 0) > 0
+            MainActor.assumeIsolated {
+                guard owned, box.competitor == nil else { return }
+                box.competitor = Task {
+                    let before = NSEvent.mouseLocation
+                    do {
+                        try await fixture.driver.clickButton("pointer.Later", title: "Later", in: fixture.window)
+                        Issue.record("Competing button preparation entered the owned pointer transaction.")
+                    } catch { box.competitorRefused = true }
+                    #expect(NSEvent.mouseLocation == before)
+                }
+            }
+            return event
+        }
+        defer { if let monitor { NSEvent.removeMonitor(monitor) } }
+        try await fixture.driver.click("pointer.Undo", in: fixture.window)
+        let competitor = try #require(box.competitor)
+        await competitor.value
+        #expect(box.competitorRefused)
+        try await fixture.driver.wait("single unperturbed callback") { fixture.capture.count("Undo") == 1 }
+        #expect(fixture.capture.count("Later") == 0)
+        try delivered("Undo", in: fixture)
+    }
+}
