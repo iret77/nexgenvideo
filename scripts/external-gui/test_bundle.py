@@ -301,10 +301,22 @@ def _native_inventory_additions(before, after):
         'NexGenVideoTests.ProjectSessionResetTests/locationAdmissionGenerationReplacement()/ProjectSessionResetTests.swift:328:6',
     }
     lifetime = {'NexGenVideoTests.BpyCleanupAdmissionTests/cleanupOwnerSurvivesRegistryReplacementUntilAdmissionSettles()/BpyHostMonitorTests.swift:341:6'}
+    pointer = {'NexGenVideoTests.NativePointerInteractionTests/' + name
+               + '()/NativeButtonInteractionTests.swift:SOURCE-LINE:6' for name in (
+                   'actualCompactButtonsUseOneTaggedSystemClickEach',
+                   'unselectedAndDisabledTargetsKeepDifferentMeaning',
+                   'coveredForeignAndInvalidTargetsNeverPostDown',
+                   'gestureSurfacesAndSmallCardMarkersRemainUsable',
+                   'actualNativeControlAndMenuTrackingKeepTheirCallbacks',
+                   'changedAccessibilityHitCannotBorrowTheOriginalGeometry',
+                   'aLostUpGetsOnlyOneReleaseCleanup',
+                   'ownedDownIsReleasedWhenTheTaskIsCancelled',
+                   'concurrentButtonPreparationCannotMoveTheOwnedPointer')}
     prior = before['modules']['app']['exactEndedFunctionIDs']
     current = after['modules']['app']['exactEndedFunctionIDs']
     added = set(current) - set(prior)
-    require(added in (expected, admission, expected | admission, admission | lifetime, expected | admission | lifetime)
+    historical = (expected, admission, expected | admission, admission | lifetime, expected | admission | lifetime)
+    require(added in historical + (pointer,) + tuple(previous | pointer for previous in historical)
             and len(current) == len(set(current)) and set(prior) <= set(current),
             'UI test App transition has unknown or removed native tests')
     expected = added
