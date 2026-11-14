@@ -27,6 +27,18 @@ on:
       verified_pr_run_id:
         type: string
         required: true
+      observer_source_sha:
+        type: string
+        required: false
+        default: ''
+      observer_artifact_id:
+        type: string
+        required: false
+        default: ''
+      observer_artifact_sha256:
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -52,6 +64,9 @@ jobs:
       FAILURE_DIGEST: ${{ inputs.failure_artifact_sha256 }}
       DMG_DIGEST: ${{ inputs.expected_dmg_sha256 }}
       VERIFIED_PR: ${{ inputs.verified_pr_run_id }}
+      PRODUCT_SHA: ${{ inputs.observer_source_sha }}
+      PRODUCTS_ID: ${{ inputs.observer_artifact_id }}
+      PRODUCTS_DIGEST: ${{ inputs.observer_artifact_sha256 }}
       SCALE: '1'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
