@@ -64,8 +64,10 @@
     "scripts/test_retained_packaging.py",
     "scripts/test_retained_release_runtime.py",
     "scripts/test_scene_pointer_delivery.py",
+    "scripts/test_workspace_native_ci.py",
     "scripts/test_workspace_ui_v2_owner.py",
-    "scripts/verify_diagnostic_candidate.py"
+    "scripts/verify_diagnostic_candidate.py",
+    "scripts/workspace_native_evidence.py"
   ],
   "compilerSHA256": "020a521df9efc127b6817a2ed2f1560155108f0a0ead1ee1fa98147f5944eb4f",
   "componentSourceObjects": {

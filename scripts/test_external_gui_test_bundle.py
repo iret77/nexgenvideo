@@ -90,6 +90,22 @@ class ExternalTestBundleTests(unittest.TestCase):
             with self.subTest(status=status), self.assertRaises(ValueError):
                 bundle._cohort_ci_additions(prior, prior + additions, dict.fromkeys(additions, status), set(), {})
 
+    def test_storyboard_evidence_closure_cannot_change_compiled_client_inputs(self):
+        prior = ['scripts/previous.py']
+        additions = ['scripts/test_workspace_native_ci.py', 'scripts/workspace_native_evidence.py']
+        changes = dict.fromkeys(additions, 'M')
+        self.assertEqual(bundle._cohort_ci_additions(prior, prior + additions, changes, set(), {}), additions)
+        with self.assertRaises(ValueError):
+            bundle._cohort_ci_additions(prior, prior + additions, changes, set(), {additions[1]: 'a' * 64})
+        for name in ('scripts/workspace_other_evidence.py', 'Sources/NexGenVideo/App/WorkspaceUIAcceptance.swift'):
+            with self.subTest(path=name), self.assertRaises(ValueError):
+                bundle._cohort_ci_additions(prior, prior + [name], {name: 'M'}, set(), {})
+        for invalid in ({}, dict.fromkeys(additions, 'D'), dict.fromkeys(additions, 'R100')):
+            with self.subTest(changes=invalid), self.assertRaises(ValueError):
+                bundle._cohort_ci_additions(prior, prior + additions, invalid, set(), {})
+        with self.assertRaises(ValueError):
+            bundle._cohort_ci_additions(prior, additions, changes, set(), {})
+
     def test_gui_source_guard_accepts_only_the_exact_component_evidence_repair(self):
         packaging = journey.retained_packaging
         record = {'producerSourceSHA': 'b' * 40, 'runID': 70}

@@ -31,6 +31,77 @@ class NativeQualificationTests(unittest.TestCase):
     def tearDown(self):
         self.environment.stop(); self.temp.cleanup()
 
+    def storyboard_fixture(self):
+        from test_workspace_ui_film_review import ActivityEvidenceTests
+        activity = ActivityEvidenceTests()
+        activity.setUp()
+        self.addCleanup(activity.doCleanups)
+        for image in activity.output.iterdir():
+            (self.root / image.name).write_bytes(b"\x89PNG\r\n\x1a\n" + b"fixture" * 200)
+        production = {"event": "production-workbench", "screenshots": ["init.png", "brief.png", "storyboard.png"],
+            **dict.fromkeys(("threeColumns", "noTimelineOrEmptyPreview", "shotInspectorBound",
+                            "twoStoryboardSections", "statusVisible"), True)}
+        fields = [
+            ("verse1.01", [("Section", "Verse 1"), ("Section timing", "0.0–12.0 s"), ("Camera", "Slow dolly"),
+                           ("Framing", "Wide"), ("Angle", "Frontal"), ("Height", "Eye Level")]),
+            ("chorus1.01", [("Section", "Chorus 1"), ("Section timing", "12.0–24.0 s"), ("Camera", "Slow push in"),
+                            ("Framing", "Medium"), ("Angle", "Frontal"), ("Lens Hint", "Wide"), ("Location view", "Wide · Noon")]),
+        ]
+        production["shotInspectorSelections"] = [
+            {"shotID": shot, "controlID": "storyboard.shot." + shot, "rawFieldsAbsent": True,
+             "previousSelectionAbsent": True, "renderedFields": [{"label": key, "value": value} for key, value in values]}
+            for shot, values in fields]
+        production["storyboardCards"] = [
+            {"shotID": shot, "subject": subject, "screenshot": shot + ".png",
+             "fullyVisible": True, "renderedDescription": True, "rawFieldsAbsent": True}
+            for shot, subject in [("verse1.01", "The singer stops at the platform edge."),
+                                  ("verse1.02", "A train passes the empty platform."),
+                                  ("chorus1.01", "The singer turns toward the morning light.")]]
+        review = {"event": "storyboard-review", "cardDestination": "Storyboard", "pipelineDestination": "Storyboard",
+            "screenshots": ["review.png", "decline.png"], **dict.fromkeys(("openedTabWithoutModal", "tabRoundTrip",
+                "pipelineActionSameTarget", "approvalControlsUsable", "shownBytesMatchApproval", "changeMarked",
+                "declinedFromStoryboard", "gatesUnchanged", "savedProjectUnchanged"), True)}
+        utility = {"event": "agent-activity", "complete": True, "screenshots": ["agent1.png", "agent2.png", "agent3.png"]}
+        for name in (production["screenshots"] + review["screenshots"] + utility["screenshots"]
+                     + [card["screenshot"] for card in production["storyboardCards"]]):
+            (self.root / name).write_bytes(b"\x89PNG\r\n\x1a\n" + b"fixture" * 200)
+        return [review, production, utility, activity.row, {"event": "completed", "case": "storyboard", "scale": 1.5}]
+
+    def test_storyboard_join_requires_all_three_readable_native_shot_cards(self):
+        rows = self.storyboard_fixture()
+        valid, images = validate_case("storyboard", rows, self.root, 1.5)
+        self.assertTrue(valid)
+        self.assertEqual(len(rows[1]["shotInspectorSelections"]), 2)
+        self.assertTrue({"verse1.01.png", "verse1.02.png", "chorus1.01.png"} <= set(images))
+        for defect in ("missing", "duplicate", "foreign", "subject", "visibility", "description", "raw", "shared-image"):
+            changed = copy.deepcopy(rows)
+            cards = changed[1]["storyboardCards"]
+            if defect == "missing": cards.pop(1)
+            elif defect == "duplicate": cards[1] = copy.deepcopy(cards[0])
+            elif defect == "foreign": cards[1]["shotID"] = "foreign.01"
+            elif defect == "subject": cards[1]["subject"] = "Another shot."
+            elif defect == "shared-image": cards[1]["screenshot"] = cards[0]["screenshot"]
+            else: cards[1][{"visibility": "fullyVisible", "description": "renderedDescription", "raw": "rawFieldsAbsent"}[defect]] = False
+            with self.subTest(defect=defect):
+                self.assertFalse(validate_case("storyboard", changed, self.root, 1.5)[0])
+
+    def test_storyboard_join_preserves_original_native_activity_images_and_success_requirements(self):
+        rows = self.storyboard_fixture()
+        for defect in ("missing-workbench", "missing-activity", "failed-native", "missing-image", "corrupt-image",
+                       "wrong-scale", "missing-inspector", "changed-gates"):
+            changed = copy.deepcopy(rows)
+            if defect == "missing-workbench": changed.pop(1)
+            elif defect == "missing-activity": changed.pop(3)
+            elif defect == "failed-native": changed.append({"event": "failed"})
+            elif defect in {"missing-image", "corrupt-image"}:
+                changed[1]["storyboardCards"][1]["screenshot"] = "unavailable.png"
+                if defect == "corrupt-image": (self.root / "unavailable.png").write_bytes(b"invalid" * 200)
+            elif defect == "wrong-scale": changed[-1]["scale"] = 1
+            elif defect == "missing-inspector": changed[1]["shotInspectorSelections"].pop()
+            else: changed[0]["gatesUnchanged"] = False
+            with self.subTest(defect=defect):
+                self.assertFalse(validate_case("storyboard", changed, self.root, 1.5)[0])
+
     def source_proof(self):
         from test_verified_pr_source_checks import fixtures, MERGE, TREE
         from verified_pr_source_checks import CHECKS, test_completion
