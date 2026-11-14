@@ -1055,6 +1055,50 @@ struct NativePointerInteractionTests {
         #expect(input["ownedDownPosted"] as? Bool == false)
     }
 
+    @Test func mouseIgnoringWindowAllowsOneClickAndInputCatchingWindowRefusesIt() async throws {
+        let fixture = try Fixture("window-input-hit")
+        defer { fixture.close() }
+        try await fixture.ready()
+        let overlay = NSWindow(contentRect: fixture.window.frame, styleMask: .borderless,
+                               backing: .buffered, defer: false)
+        overlay.isReleasedWhenClosed = false
+        overlay.backgroundColor = .windowBackgroundColor
+        overlay.ignoresMouseEvents = true
+        overlay.order(.above, relativeTo: fixture.window.windowNumber)
+        defer { overlay.close() }
+        try #require(NSApp.isActive && fixture.window.isKeyWindow && overlay.isVisible)
+        let windows = try #require(CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]])
+        let overlayIndex = try #require(windows.firstIndex { ($0[kCGWindowNumber as String] as? NSNumber)?.intValue == overlay.windowNumber })
+        let originalIndex = try #require(windows.firstIndex { ($0[kCGWindowNumber as String] as? NSNumber)?.intValue == fixture.window.windowNumber })
+        try #require(overlayIndex < originalIndex)
+        let row = windows[overlayIndex]
+        try #require((row[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 0 > 0)
+        let bounds = try #require(row[kCGWindowBounds as String] as? [String: Any])
+        let rect = try #require(CGRect(dictionaryRepresentation: bounds as CFDictionary))
+        let screen = try #require(NSScreen.screens.first)
+        let point = try fixture.point("Undo")
+        try #require(rect.contains(CGPoint(x: point.x, y: screen.frame.maxY - point.y)))
+        try await fixture.moveAway()
+        try await fixture.driver.click("pointer.Undo", in: fixture.window)
+        try await fixture.driver.wait("click through mouse-ignoring window") { fixture.capture.count("Undo") == 1 }
+        try delivered("Undo", in: fixture)
+        let counter = DownCounter()
+        defer { counter.close() }
+        overlay.ignoresMouseEvents = false
+        try #require(NSApp.isActive && fixture.window.isKeyWindow && overlay.isVisible)
+        try #require(NSWindow.windowNumber(at: point, belowWindowWithWindowNumber: 0) == overlay.windowNumber)
+        do {
+            try await fixture.driver.click("pointer.Undo", in: fixture.window)
+            Issue.record("An input-catching window accepted a click through to the original window.")
+        } catch {}
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(counter.count == 0)
+        #expect(fixture.capture.count("Undo") == 1)
+        #expect((try fixture.input("Undo")["posted"] as? [Any])?.isEmpty == true)
+        #expect(!CGEventSource.buttonState(.combinedSessionState, button: .left))
+        try fixture.record("window-input-hit", ["callbacks": fixture.capture.callbacks, "refusedDownCount": counter.count])
+    }
+
     @Test func coveredForeignAndInvalidTargetsNeverPostDown() async throws {
         let fixture = try Fixture("refused-targets")
         defer { fixture.close() }
@@ -1235,7 +1279,8 @@ struct NativePointerInteractionTests {
         let bounds = try #require(CGRect(dictionaryRepresentation: rawBounds as CFDictionary))
         let dropped = DropFirstUp()
         let poster = NativePointerPoster(source: source, down: down, up: up, point: point,
-            window: fixture.window.windowNumber, windowBounds: bounds, tag: tag, deliver: { dropped.send($0) })
+            window: fixture.window.windowNumber, windowBounds: bounds, screenPoint: appKitPoint,
+            tag: tag, deliver: { dropped.send($0) })
         let number = fixture.window.windowNumber
         let monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
             if event.windowNumber == number, event.cgEvent?.getIntegerValueField(.eventSourceUserData) == tag,
@@ -1243,7 +1288,7 @@ struct NativePointerInteractionTests {
             return event
         }
         defer { if let monitor { NSEvent.removeMonitor(monitor) } }
-        await Task.detached { poster.run() }.value
+        await Task.detached { await poster.run() }.value
         let state = poster.snapshot(), actual = dropped.evidence
         #expect(state["buttonDownObserved"] as? Bool == true)
         #expect(state["cleanupUpPosted"] as? Bool == true)

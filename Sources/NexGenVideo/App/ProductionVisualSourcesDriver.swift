@@ -881,12 +881,14 @@ final class NativePointerPoster: @unchecked Sendable {
     private var downSeen = false
     private var state: [String: Any] = ["posted": [[String: Any]](), "ownedDownPosted": false,
         "ownedUpPosted": false, "buttonDownObserved": false, "buttonReleased": true, "cleanupUpPosted": false]
+    private let screenPoint: NSPoint
 
     init(source: CGEventSource, down: CGEvent, up: CGEvent, point: CGPoint, window: Int,
-         windowBounds: CGRect, tag: Int64,
+         windowBounds: CGRect, screenPoint: NSPoint, tag: Int64,
          deliver: @escaping @Sendable (CGEvent) -> Void = { $0.post(tap: .cghidEventTap) }) {
         self.source = source; self.down = down; self.up = up; self.point = point; self.window = window; self.tag = tag
         self.windowBounds = windowBounds; self.deliver = deliver
+        self.screenPoint = screenPoint
     }
 
     func cancel() { lock.lock(); cancelled = true; lock.unlock() }
@@ -915,8 +917,17 @@ final class NativePointerPoster: @unchecked Sendable {
                 && ProcessInfo.processInfo.systemUptime < deadline { Thread.sleep(forTimeInterval: 0.002) }
     }
 
-    func run() {
-        guard !stopped(), !CGEventSource.buttonState(.combinedSessionState, button: .left),
+    func run() async {
+        let screenPoint = screenPoint
+        let hitWindow = await MainActor.run {
+            NSWindow.windowNumber(at: screenPoint, belowWindowWithWindowNumber: 0)
+        }
+        postSequence(hitWindow: hitWindow)
+    }
+
+    private func postSequence(hitWindow: Int) {
+        put("hitWindowBeforeDown", hitWindow)
+        guard hitWindow == window, !stopped(), !CGEventSource.buttonState(.combinedSessionState, button: .left),
               let actual = CGEvent(source: nil)?.location,
               abs(actual.x - point.x) < 0.5, abs(actual.y - point.y) < 0.5 else {
             put("error", "The system pointer or button changed before Down.")
@@ -925,15 +936,12 @@ final class NativePointerPoster: @unchecked Sendable {
         }
         let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
             as? [[String: Any]] ?? []
-        let top = windows.first { value in
-            guard ((value[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 0) > 0,
-                  let raw = value[kCGWindowBounds as String] as? [String: Any],
-                  let bounds = CGRect(dictionaryRepresentation: raw as CFDictionary) else { return false }
-            return bounds.contains(point)
+        let matches = windows.filter { value in
+            (value[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == getpid()
+                && (value[kCGWindowNumber as String] as? NSNumber)?.intValue == window
         }
-        guard (top?[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == getpid(),
-              (top?[kCGWindowNumber as String] as? NSNumber)?.intValue == window,
-              let rawBounds = top?[kCGWindowBounds as String] as? [String: Any],
+        guard matches.count == 1, let top = matches.first,
+              let rawBounds = top[kCGWindowBounds as String] as? [String: Any],
               CGRect(dictionaryRepresentation: rawBounds as CFDictionary) == windowBounds else {
             put("error", "The original native window changed before Down.")
             return
@@ -1024,16 +1032,16 @@ enum NativeAcceptancePointer {
         let quartzPoint = CGPoint(x: appKitPoint.x, y: screen.frame.maxY - appKitPoint.y)
         let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
             as? [[String: Any]] ?? []
-        let covering = windows.first { item in
-            guard ((item[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 0) > 0,
-                  let bounds = item[kCGWindowBounds as String] as? [String: Any],
-                  let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary) else { return false }
-            return rect.contains(quartzPoint)
+        let matches = windows.filter { item in
+            (item[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == getpid()
+                && (item[kCGWindowNumber as String] as? NSNumber)?.intValue == window.windowNumber
         }
-        guard (covering?[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == getpid(),
-              (covering?[kCGWindowNumber as String] as? NSNumber)?.intValue == window.windowNumber,
-              let rawBounds = covering?[kCGWindowBounds as String] as? [String: Any],
-              let cgFrame = CGRect(dictionaryRepresentation: rawBounds as CFDictionary) else {
+        guard NSWindow.windowNumber(at: appKitPoint, belowWindowWithWindowNumber: 0) == window.windowNumber,
+              matches.count == 1, let covering = matches.first,
+              let rawBounds = covering[kCGWindowBounds as String] as? [String: Any],
+              let cgFrame = CGRect(dictionaryRepresentation: rawBounds as CFDictionary),
+              [cgFrame.minX, cgFrame.minY, cgFrame.width, cgFrame.height].allSatisfy(\.isFinite),
+              cgFrame.width > 0, cgFrame.height > 0, cgFrame.contains(quartzPoint) else {
             throw GateBlocked("The original native window is covered at the pointer target.")
         }
         let accessible: AnyObject
@@ -1152,7 +1160,8 @@ enum NativeAcceptancePointer {
             var moves: [NSPoint] = []
         }
         let poster = NativePointerPoster(source: source, down: down, up: up, point: original.quartzPoint,
-                                         window: window.windowNumber, windowBounds: original.cgFrame, tag: tag)
+                                         window: window.windowNumber, windowBounds: original.cgFrame,
+                                         screenPoint: original.screenPoint, tag: tag)
         let delivery = Delivery(), number = window.windowNumber, point = original.point
         let acceptedMoves = window.acceptsMouseMovedEvents
         window.acceptsMouseMovedEvents = true
@@ -1247,7 +1256,7 @@ enum NativeAcceptancePointer {
             }
             try record(evidence("prepared"))
             try Task.checkCancellation()
-            let worker = Task.detached { poster.run() }
+            let worker = Task.detached { await poster.run() }
             await withTaskCancellationHandler {
                 await worker.value
             } onCancel: {
