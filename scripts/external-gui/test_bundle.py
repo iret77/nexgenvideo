@@ -315,8 +315,11 @@ def _native_inventory_additions(before, after):
     prior = before['modules']['app']['exactEndedFunctionIDs']
     current = after['modules']['app']['exactEndedFunctionIDs']
     added = set(current) - set(prior)
+    window_hit = {'NexGenVideoTests.NativePointerInteractionTests/mouseIgnoringWindowAllowsOneClickAndInputCatchingWindowRefusesIt()'
+                  + '/NativeButtonInteractionTests.swift:SOURCE-LINE:6'}
     historical = (expected, admission, expected | admission, admission | lifetime, expected | admission | lifetime)
-    require(added in historical + (pointer,) + tuple(previous | pointer for previous in historical)
+    pointer_families = (pointer, window_hit, pointer | window_hit)
+    require(added in historical + pointer_families + tuple(previous | family for previous in historical for family in pointer_families)
             and len(current) == len(set(current)) and set(prior) <= set(current),
             'UI test App transition has unknown or removed native tests')
     expected = added
