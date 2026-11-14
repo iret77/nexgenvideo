@@ -225,6 +225,8 @@ jobs:
           from retained_packaging import environment_selectors
           packaging = environment_selectors()
           if os.environ['KIND'] == 'native-app-native-failure-diagnostic':
+              if os.environ['RUNTIME_FAILURE_BINDING']:
+                  raise ValueError('Runtime failure binding cannot be ignored by this mode')
               import json
               from pathlib import Path
               from native_app_failure_diagnostic import validate_inputs

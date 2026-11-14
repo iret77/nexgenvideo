@@ -37,6 +37,10 @@ class OriginalNativeFailureDiagnosticTests(unittest.TestCase):
         self.assertFalse(result['fullReleaseAcceptance'])
         self.assertEqual(result['failedFunctionIDs'], identities[:1])
         self.assertEqual(result['issues'][0]['messages'], [{'text': 'Actual refusal.'}])
+        rows[4:4] = [{'kind': 'event', 'payload': {'kind': kind, 'testID': identities[0]}}
+                     for kind in ('testCaseStarted', 'testCaseEnded')]
+        measured = diagnostic.measure(self.encode(rows), identities, expected_cases={identities[0]: 1})
+        self.assertEqual(measured['parameterCases'], {identities[0]: 1})
 
     def test_missing_extra_duplicate_cancelled_and_unfinished_native_measurements_reject(self):
         identities, rows = self.rows()
@@ -58,7 +62,8 @@ class OriginalNativeFailureDiagnosticTests(unittest.TestCase):
             raw = self.encode(changed)
             if defect == 'truncated': raw = raw[:-1]
             with self.subTest(defect=defect), self.assertRaises(ValueError):
-                diagnostic.measure(raw, identities_for_check if defect == 'extra' else identities, expected_cases={})
+                diagnostic.measure(raw, identities_for_check if defect == 'extra' else identities,
+                    expected_cases={identities[0]: 1} if defect == 'case-end-before-start' else {})
 
     def inputs(self):
         value = diagnostic.fixture()
