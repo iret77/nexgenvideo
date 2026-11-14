@@ -86,11 +86,17 @@ private final class Observer {
             let item = value as! AXValue
             if AXValueGetType(item) == .cgPoint {
                 var point = CGPoint.zero
-                if AXValueGetValue(item, .cgPoint, &point), point.x.isFinite, point.y.isFinite { return [point.x, point.y] }
+                if AXValueGetValue(item, .cgPoint, &point) {
+                    guard point.x.isFinite, point.y.isFinite else { return ["invalidPoint": [String(describing: point.x), String(describing: point.y)]] }
+                    return [Double(point.x), Double(point.y)]
+                }
             }
             if AXValueGetType(item) == .cgSize {
                 var size = CGSize.zero
-                if AXValueGetValue(item, .cgSize, &size), size.width.isFinite, size.height.isFinite { return [size.width, size.height] }
+                if AXValueGetValue(item, .cgSize, &size) {
+                    guard size.width.isFinite, size.height.isFinite else { return ["invalidSize": [String(describing: size.width), String(describing: size.height)]] }
+                    return [Double(size.width), Double(size.height)]
+                }
             }
         }
         return ["unsupportedCFTypeID": CFGetTypeID(value)]
@@ -294,17 +300,65 @@ private func canonical(_ expected: [String: Any], output: URL) throws -> [String
     return matches[0]
 }
 
+private func screenGeometry(_ frame: CGRect) -> [String: Any] {
+    ["screenFrame": [Double(frame.minX), Double(frame.minY), Double(frame.width), Double(frame.height)],
+     "screenPoint": [Double(frame.midX), Double(frame.midY)]]
+}
+
+private func geometryPair(_ value: Any?) -> [Double]? {
+    guard let values = value as? [Double], values.count == 2, values.allSatisfy(\.isFinite) else { return nil }
+    return values
+}
+
+private func geometrySelfCheck(output: URL, source: String, executableHash: String, nonce: String) throws {
+    let executable = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
+    try require(digest(Data(contentsOf: executable)) == executableHash, "Selfcheck executable differs")
+    let observer = Observer(output: output.deletingLastPathComponent(), deadline: ProcessInfo.processInfo.systemUptime + 5, pid: getpid())
+    var point = CGPoint(x: -12.5, y: 25.25), size = CGSize(width: 960, height: 640)
+    guard let rawPoint = AXValueCreate(.cgPoint, &point), let rawSize = AXValueCreate(.cgSize, &size) else {
+        throw ObservationError(message: "Native AX geometry fixture unavailable")
+    }
+    let position = observer.scalar(rawPoint), extent = observer.scalar(rawSize)
+    try require(geometryPair(position) == [-12.5, 25.25] && geometryPair(extent) == [960, 640], "Window geometry consumer failed")
+    let node: [String: Any] = [kAXPositionAttribute: position, kAXSizeAttribute: extent]
+    try require(geometryPair(node[kAXPositionAttribute]) == [-12.5, 25.25]
+        && geometryPair(node[kAXSizeAttribute]) == [960, 640], "Button geometry consumer failed")
+    let screen = screenGeometry(CGRect(x: -12.5, y: 25.25, width: 50, height: 28))
+    try require(geometryPair(screen["screenPoint"]) == [12.5, 39.25]
+        && sameRect(try finiteRect(screen["screenFrame"]), CGRect(x: -12.5, y: 25.25, width: 50, height: 28)), "Screen geometry consumer failed")
+    var badPoint = CGPoint(x: CGFloat.nan, y: 1), badSize = CGSize(width: 1, height: CGFloat.infinity)
+    guard let rawBadPoint = AXValueCreate(.cgPoint, &badPoint), let rawBadSize = AXValueCreate(.cgSize, &badSize) else {
+        throw ObservationError(message: "Native invalid geometry fixture unavailable")
+    }
+    let invalid = [observer.scalar(rawBadPoint), observer.scalar(rawBadSize), observer.scalar("wrong" as CFString), observer.scalar(nil)]
+    try require(invalid.allSatisfy { geometryPair($0) == nil }
+        && geometryPair([1.0]) == nil && geometryPair([1.0, 2.0, 3.0]) == nil
+        && geometryPair([Double.nan, 1.0]) == nil, "Invalid geometry accepted")
+    let oldPoint: Any = [point.x, point.y]
+    try observer.write(["schema": "nexgenvideo/observer-geometry-selfcheck/1", "sourceSHA256": source,
+        "executableSHA256": executableHash, "nonce": nonce, "pid": getpid(), "passed": true,
+        "windowConsumer": true, "buttonConsumer": true, "screenConsumers": true, "invalidRejected": true,
+        "oldCGFloatArrayCastsToDouble": oldPoint is [Double], "invalidValues": invalid,
+        "position": position, "size": extent, "screen": screen], to: output)
+}
+
 private func snapshot(pid: Int32, window: Int, frame: CGRect, output: URL) throws -> [String: Any] {
     let observer = Observer(output: output, deadline: ProcessInfo.processInfo.systemUptime + 8, pid: pid)
     let application = AXUIElementCreateApplication(pid)
     try require(AXUIElementSetMessagingTimeout(application, 0.2) == .success, "Cannot bound AX application query")
     let (status, raw) = try observer.copy(application, kAXWindowsAttribute)
+    let journal = output.appendingPathComponent("window-geometry-" + UUID().uuidString + ".json")
+    var inventory: [String: Any] = ["pid": pid, "window": window, "AXWindowsStatus": status.rawValue,
+        "AXWindowsCFType": raw.map { CFGetTypeID($0) } as Any? ?? NSNull(), "windows": []]
+    try observer.write(inventory, to: journal)
     guard status == .success, let windows = raw as? [AXUIElement], windows.count <= 32 else {
         throw ObservationError(message: "Complete AX window inventory unavailable")
     }
     let all = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
     let cg = all.filter { ($0[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid
         && ($0[kCGWindowNumber as String] as? NSNumber)?.intValue == window }
+    inventory["CGTarget"] = cg
+    try observer.write(inventory, to: journal)
     guard cg.count == 1, let bounds = cg[0][kCGWindowBounds as String] as? [String: Any],
           let fullFrame = CGRect(dictionaryRepresentation: bounds as CFDictionary) else {
         throw ObservationError(message: "Original CG window unavailable")
@@ -313,12 +367,28 @@ private func snapshot(pid: Int32, window: Int, frame: CGRect, output: URL) throw
         "Compact viewport geometry changed")
     let expected = frame.offsetBy(dx: fullFrame.minX, dy: fullFrame.maxY - 640)
     var trees: [[String: Any]] = [], buttons: [[String: Any]] = []
+    var geometry: [[String: Any]] = []
     for candidate in windows {
         let (positionStatus, positionValue) = try observer.copy(candidate, kAXPositionAttribute)
         let (sizeStatus, sizeValue) = try observer.copy(candidate, kAXSizeAttribute)
+        func record(_ status: AXError, _ raw: CFTypeRef?) -> [String: Any] {
+            var value: [String: Any] = ["status": status.rawValue, "value": observer.scalar(raw),
+                "doubleArray": observer.scalar(raw) is [Double]]
+            if let raw {
+                value["CFType"] = CFGetTypeID(raw)
+                if CFGetTypeID(raw) == AXValueGetTypeID() { value["AXValueType"] = AXValueGetType(raw as! AXValue).rawValue }
+            }
+            return value
+        }
+        var candidatePID: Int32 = 0
+        let pidStatus = AXUIElementGetPid(candidate, &candidatePID)
+        geometry.append(["identity": CFHash(candidate), "pid": candidatePID, "pidStatus": pidStatus.rawValue,
+            "position": record(positionStatus, positionValue), "size": record(sizeStatus, sizeValue)])
+        inventory["windows"] = geometry
+        try observer.write(inventory, to: journal)
         guard positionStatus == .success, sizeStatus == .success,
-              let position = observer.scalar(positionValue) as? [Double], position.count == 2,
-              let size = observer.scalar(sizeValue) as? [Double], size.count == 2 else {
+              let position = geometryPair(observer.scalar(positionValue)),
+              let size = geometryPair(observer.scalar(sizeValue)) else {
             throw ObservationError(message: "Incomplete AX window geometry inventory")
         }
         let actual = CGRect(x: position[0], y: position[1], width: size[0], height: size[1])
@@ -337,8 +407,8 @@ private func snapshot(pid: Int32, window: Int, frame: CGRect, output: URL) throw
             guard let a = node["attributes"] as? [String: Any], a[kAXRoleAttribute] as? String == kAXButtonRole,
                   a[kAXDescriptionAttribute] as? String == "Undo" || a[kAXTitleAttribute] as? String == "Undo",
                   a[kAXEnabledAttribute] as? Bool == true,
-                  let p = a[kAXPositionAttribute] as? [Double], p.count == 2,
-                  let s = a[kAXSizeAttribute] as? [Double], s.count == 2 else { continue }
+                  let p = geometryPair(a[kAXPositionAttribute]),
+                  let s = geometryPair(a[kAXSizeAttribute]) else { continue }
             try require([kAXEnabledAttribute, kAXPositionAttribute, kAXSizeAttribute].allSatisfy { statuses[$0] == 0 },
                 "Undo query failed")
             let button = CGRect(x: p[0], y: p[1], width: s[0], height: s[1])
@@ -371,10 +441,11 @@ private func snapshot(pid: Int32, window: Int, frame: CGRect, output: URL) throw
     try require(matched, "Original Undo is occluded or no longer the system pointer target")
     let cgIdentity = Dictionary(uniqueKeysWithValues: [kCGWindowOwnerPID, kCGWindowNumber, kCGWindowBounds,
         kCGWindowLayer, kCGWindowIsOnscreen].map { ($0 as String, cg[0][$0 as String] ?? NSNull()) })
-    return ["window": window, "pid": pid, "CGWindow": cgIdentity, "AXTree": trees[0], "button": buttons[0],
+    var result: [String: Any] = ["window": window, "pid": pid, "CGWindow": cgIdentity, "AXTree": trees[0], "button": buttons[0],
         "systemHitStatus": hitStatus.rawValue, "systemHitPath": hitPath,
-        "screenFrame": [expected.minX, expected.minY, expected.width, expected.height],
-        "screenPoint": [expected.midX, expected.midY], "observedUptime": ProcessInfo.processInfo.systemUptime]
+        "observedUptime": ProcessInfo.processInfo.systemUptime]
+    result.merge(screenGeometry(expected)) { _, new in new }
+    return result
 }
 
 private func exclusive(_ value: [String: Any], at url: URL) throws {
@@ -469,6 +540,11 @@ private enum ScenePointerObserver {
     }
 
     static func run() throws {
+        if CommandLine.arguments.count == 6 && CommandLine.arguments[1] == "--self-check-geometry" {
+            try geometrySelfCheck(output: URL(fileURLWithPath: CommandLine.arguments[2]),
+                source: CommandLine.arguments[3], executableHash: CommandLine.arguments[4], nonce: CommandLine.arguments[5])
+            return
+        }
         try require(CommandLine.arguments.count == 7, "Expected native/App/source/hash/output/done arguments")
         let native = URL(fileURLWithPath: CommandLine.arguments[1]).resolvingSymlinksInPath()
         let executable = URL(fileURLWithPath: CommandLine.arguments[2]).resolvingSymlinksInPath()
@@ -539,7 +615,7 @@ private enum ScenePointerObserver {
         let finalAX = try snapshot(pid: pid, window: window, frame: frame, output: output)
         try sameTarget(first, finalAX)
         try check(original: original, before: before, progress: progressFile, native: native, done: done, deadline: deadline)
-        guard let point = finalAX["screenPoint"] as? [Double], point.count == 2 else {
+        guard let point = geometryPair(finalAX["screenPoint"]) else {
             throw ObservationError(message: "Missing final pointer location")
         }
         try require(!CGEventSource.buttonState(.combinedSessionState, button: .left), "Mouse button already held")
