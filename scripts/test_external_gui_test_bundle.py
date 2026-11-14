@@ -113,7 +113,7 @@ class ExternalTestBundleTests(unittest.TestCase):
     def test_pointer_guard_diagnostic_additions_cannot_replace_gui_client_inputs(self):
         prior = ['scripts/previous.py']
         additions = ['scripts/fixtures/native-app-failure-1099.json', 'scripts/native_pointer_guard_diagnostic.py',
-                     'scripts/native_pointer_guard_snapshot.m']
+                     'scripts/native_pointer_guard_selftest.swift', 'scripts/native_pointer_guard_snapshot.m']
         changes = dict.fromkeys(additions, 'A')
         self.assertEqual(bundle._cohort_ci_additions(prior, prior + additions, changes, set(), {}), additions)
         for name in additions:
