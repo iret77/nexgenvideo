@@ -15,7 +15,7 @@ on:
       candidate_kind:
         description: Signed release verification or targeted failed CI diagnostics
         type: choice
-        options: [native-app-native-failure-diagnostic, native-app-targets, native-app-build-plan, signed-release, signed-bpy, signed-journey, signed-transport, native-retained-failures, native-scene-history-hierarchy, native-scene-pointer-delivery, native-segment-geometry, native-button-query, native-button-query-crash, native-button-query-crash-reuse, native-export-color, ci-runtime, ci-bpy-open-diagnostic, ci-bpy-resource-diagnostic, ci-app-test-diagnostic, ci-app-glow-replay, ci-app-full-replay, ci-builtin-blur, ci-builtin-blur-scribble, ci-builtin-blur-floor, ci-builtin-blur-preheat, ci-glow-context]
+        options: [native-pointer-guard-snapshot, native-app-native-failure-diagnostic, native-app-targets, native-app-build-plan, signed-release, signed-bpy, signed-journey, signed-transport, native-retained-failures, native-scene-history-hierarchy, native-scene-pointer-delivery, native-segment-geometry, native-button-query, native-button-query-crash, native-button-query-crash-reuse, native-export-color, ci-runtime, ci-bpy-open-diagnostic, ci-bpy-resource-diagnostic, ci-app-test-diagnostic, ci-app-glow-replay, ci-app-full-replay, ci-builtin-blur, ci-builtin-blur-scribble, ci-builtin-blur-floor, ci-builtin-blur-preheat, ci-glow-context]
         default: signed-release
       run_id:
         description: "Original producer workflow run"
@@ -138,6 +138,8 @@ env:
 jobs:
   source:
     outputs:
+      pointer-guard-binding-id: ${{ steps.pointer-guard-binding-upload.outputs.artifact-id }}
+      pointer-guard-binding-digest: ${{ steps.pointer-guard-binding-upload.outputs.artifact-digest }}
       native-failure-binding-id: ${{ steps.native-failure-binding-upload.outputs.artifact-id }}
       native-failure-binding-digest: ${{ steps.native-failure-binding-upload.outputs.artifact-digest }}
       plan-binding-id: ${{ steps.plan-binding-upload.outputs.artifact-id }}
@@ -224,7 +226,14 @@ jobs:
           sys.path.insert(0, 'scripts')
           from retained_packaging import environment_selectors
           packaging = environment_selectors()
-          if os.environ['KIND'] == 'native-app-native-failure-diagnostic':
+          if os.environ['KIND'] == 'native-pointer-guard-snapshot':
+              if os.environ['RUNTIME_FAILURE_BINDING']:
+                  raise ValueError('Runtime failure binding cannot be ignored by this mode')
+              import json
+              from pathlib import Path
+              from native_pointer_guard_diagnostic import validate_inputs
+              validate_inputs(json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_bytes()))
+          elif os.environ['KIND'] == 'native-app-native-failure-diagnostic':
               if os.environ['RUNTIME_FAILURE_BINDING']:
                   raise ValueError('Runtime failure binding cannot be ignored by this mode')
               import json
@@ -258,7 +267,7 @@ jobs:
                   or not re.fullmatch('[1-9][0-9]*', os.environ['VERIFIED_PR'])):
               raise ValueError('Packaging continuation needs signed mode and current exact PR source proof')
           fields = [os.environ[key] for key in ('VERIFIED_PR', 'JOURNEY_JOB', 'JOURNEY_ARTIFACT', 'JOURNEY_DIGEST')]
-          if os.environ['KIND'] == 'native-app-native-failure-diagnostic':
+          if os.environ['KIND'] in {'native-pointer-guard-snapshot', 'native-app-native-failure-diagnostic'}:
               pass
           elif os.environ['KIND'] == 'native-app-targets':
               from native_app_target_build import validate_inputs
@@ -286,13 +295,24 @@ jobs:
               raise SystemExit('Public transport inputs cannot be silently ignored by another mode.')
           PY
       - name: Reuse complete current merged PR source proof
-        if: inputs.candidate_kind == 'native-app-native-failure-diagnostic' || inputs.candidate_kind == 'native-app-targets' || inputs.candidate_kind == 'native-app-build-plan' || inputs.candidate_kind == 'signed-transport' || inputs.candidate_kind == 'native-button-query' || inputs.candidate_kind == 'native-button-query-crash' || inputs.candidate_kind == 'native-button-query-crash-reuse' || (inputs.candidate_kind == 'signed-release' && inputs.verified_pr_run_id != '') || (inputs.candidate_kind == 'signed-journey' && inputs.journey_scenario == 'normal-fresh-local-musicvideo') || inputs.packaging_producer_source_sha != ''
+        if: inputs.candidate_kind == 'native-pointer-guard-snapshot' || inputs.candidate_kind == 'native-app-native-failure-diagnostic' || inputs.candidate_kind == 'native-app-targets' || inputs.candidate_kind == 'native-app-build-plan' || inputs.candidate_kind == 'signed-transport' || inputs.candidate_kind == 'native-button-query' || inputs.candidate_kind == 'native-button-query-crash' || inputs.candidate_kind == 'native-button-query-crash-reuse' || (inputs.candidate_kind == 'signed-release' && inputs.verified_pr_run_id != '') || (inputs.candidate_kind == 'signed-journey' && inputs.journey_scenario == 'normal-fresh-local-musicvideo') || inputs.packaging_producer_source_sha != ''
         env:
           GH_TOKEN: ${{ github.token }}
           VERIFIED_PR: ${{ inputs.verified_pr_run_id }}
         run: |
           python3 scripts/verified_pr_source_checks.py prepare --run-id "$VERIFIED_PR" \
             --output "$RUNNER_TEMP/transport-source-proof"
+      - name: Bind one original failed pointer method for guard observation
+        if: inputs.candidate_kind == 'native-pointer-guard-snapshot'
+        run: python3 scripts/native_pointer_guard_diagnostic.py bind --output "$RUNNER_TEMP/native-pointer-guard-source"
+      - uses: actions/upload-artifact@v4
+        id: pointer-guard-binding-upload
+        if: inputs.candidate_kind == 'native-pointer-guard-snapshot'
+        with:
+          name: native-pointer-guard-source-binding-${{ github.run_id }}-a1
+          path: ${{ runner.temp }}/native-pointer-guard-source
+          if-no-files-found: error
+          retention-days: 90
       - name: Bind the exact original failed App methods
         if: inputs.candidate_kind == 'native-app-native-failure-diagnostic'
         run: python3 scripts/native_app_failure_diagnostic.py bind --output "$RUNNER_TEMP/native-app-failure-source"
@@ -569,7 +589,7 @@ jobs:
           retention-days: 90
 
       - name: Bind the successful release job and immutable artifact
-        if: inputs.candidate_kind != 'native-app-native-failure-diagnostic' && inputs.candidate_kind != 'native-app-targets' && inputs.candidate_kind != 'native-app-build-plan' && inputs.candidate_kind != 'native-retained-failures' && inputs.candidate_kind != 'native-scene-history-hierarchy' && inputs.candidate_kind != 'native-scene-pointer-delivery' && inputs.candidate_kind != 'native-segment-geometry' && inputs.candidate_kind != 'native-button-query' && inputs.candidate_kind != 'native-button-query-crash' && inputs.candidate_kind != 'native-button-query-crash-reuse' && inputs.candidate_kind != 'native-export-color' && inputs.candidate_kind != 'ci-bpy-resource-diagnostic' && inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor' && inputs.candidate_kind != 'ci-builtin-blur-preheat' && inputs.candidate_kind != 'ci-glow-context'
+        if: inputs.candidate_kind != 'native-pointer-guard-snapshot' && inputs.candidate_kind != 'native-app-native-failure-diagnostic' && inputs.candidate_kind != 'native-app-targets' && inputs.candidate_kind != 'native-app-build-plan' && inputs.candidate_kind != 'native-retained-failures' && inputs.candidate_kind != 'native-scene-history-hierarchy' && inputs.candidate_kind != 'native-scene-pointer-delivery' && inputs.candidate_kind != 'native-segment-geometry' && inputs.candidate_kind != 'native-button-query' && inputs.candidate_kind != 'native-button-query-crash' && inputs.candidate_kind != 'native-button-query-crash-reuse' && inputs.candidate_kind != 'native-export-color' && inputs.candidate_kind != 'ci-bpy-resource-diagnostic' && inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor' && inputs.candidate_kind != 'ci-builtin-blur-preheat' && inputs.candidate_kind != 'ci-glow-context'
         env:
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_KIND: ${{ inputs.candidate_kind }}
@@ -594,7 +614,7 @@ jobs:
             --candidate-kind "$CANDIDATE_KIND" \
             --packaging-producer-source "$PACKAGING_PRODUCER_SOURCE" --packaging-provenance-artifact-id "$PACKAGING_PROVENANCE_ARTIFACT_ID" --packaging-provenance-artifact-sha256 "$PACKAGING_PROVENANCE_ARTIFACT_SHA256" "${extra[@]}"
       - uses: actions/upload-artifact@v4
-        if: inputs.candidate_kind != 'native-app-native-failure-diagnostic' && inputs.candidate_kind != 'native-app-targets' && inputs.candidate_kind != 'native-app-build-plan' && inputs.candidate_kind != 'native-retained-failures' && inputs.candidate_kind != 'native-scene-history-hierarchy' && inputs.candidate_kind != 'native-scene-pointer-delivery' && inputs.candidate_kind != 'native-segment-geometry' && inputs.candidate_kind != 'native-button-query' && inputs.candidate_kind != 'native-button-query-crash' && inputs.candidate_kind != 'native-button-query-crash-reuse' && inputs.candidate_kind != 'native-export-color' && inputs.candidate_kind != 'ci-bpy-resource-diagnostic' && inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor' && inputs.candidate_kind != 'ci-builtin-blur-preheat' && inputs.candidate_kind != 'ci-glow-context'
+        if: inputs.candidate_kind != 'native-pointer-guard-snapshot' && inputs.candidate_kind != 'native-app-native-failure-diagnostic' && inputs.candidate_kind != 'native-app-targets' && inputs.candidate_kind != 'native-app-build-plan' && inputs.candidate_kind != 'native-retained-failures' && inputs.candidate_kind != 'native-scene-history-hierarchy' && inputs.candidate_kind != 'native-scene-pointer-delivery' && inputs.candidate_kind != 'native-segment-geometry' && inputs.candidate_kind != 'native-button-query' && inputs.candidate_kind != 'native-button-query-crash' && inputs.candidate_kind != 'native-button-query-crash-reuse' && inputs.candidate_kind != 'native-export-color' && inputs.candidate_kind != 'ci-bpy-resource-diagnostic' && inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor' && inputs.candidate_kind != 'ci-builtin-blur-preheat' && inputs.candidate_kind != 'ci-glow-context'
         with:
           name: diagnostic-candidate-identity
           path: ${{ runner.temp }}/candidate-metadata/*.json
@@ -607,6 +627,50 @@ jobs:
           name: retained-origin-diagnostic-acceptance-${{ github.job }}-${{ strategy.job-index || 0 }}-a${{ github.run_attempt }}
           path: ${{ runner.temp }}/retained-packaging-supplements/
           if-no-files-found: ignore
+          retention-days: 90
+
+  pointer-guard-snapshot:
+    needs: source
+    if: inputs.candidate_kind == 'native-pointer-guard-snapshot'
+    runs-on: macrunner
+    timeout-minutes: 20
+    env:
+      POINTER_GUARD_BINDING_ID: ${{ needs.source.outputs.pointer-guard-binding-id }}
+      POINTER_GUARD_BINDING_DIGEST: ${{ needs.source.outputs.pointer-guard-binding-digest }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-xcode-27
+      - uses: ./.github/actions/setup-native-test-python
+      - name: Probe original-evidence retention before native acquisition
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          target = Path(os.environ['RUNNER_TEMP']) / 'pointer-guard-artifact-probe.json'
+          target.write_text(json.dumps({'runID': os.environ['GITHUB_RUN_ID'], 'scope': 'one-original-pointer-guard-with-injected-inspector'}))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pointer-guard-artifact-probe-${{ github.run_id }}-a1
+          path: ${{ runner.temp }}/pointer-guard-artifact-probe.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Observe one original failed pointer guard without compiling App or tests
+        run: |
+          python3 scripts/native_pointer_guard_diagnostic.py run \
+            --source "$RUNNER_TEMP/native-pointer-guard-source" \
+            --output "$RUNNER_TEMP/native-pointer-guard-diagnostic"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-pointer-guard-measurement-${{ github.run_id }}-a1
+          path: |
+            ${{ runner.temp }}/native-pointer-guard-diagnostic/evidence
+            ${{ runner.temp }}/native-pointer-guard-source
+            ${{ runner.temp }}/native-pointer-guard-diagnostic/resumed/tests/receipt.json
+          if-no-files-found: error
           retention-days: 90
 
   app-native-failure-diagnostic:

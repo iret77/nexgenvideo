@@ -1,0 +1,67 @@
+{
+  "appSourceSHA": "56712108d3e0a93dc52623a6517f2052971f0976",
+  "boundSHA256": "5a1b585c635326ea7a7f22ea73183291ca6914037e5fac3aedf79781f6e44709",
+  "diagnosticFunctionIDs": [
+    "NexGenVideoTests.NativePointerInteractionTests/unselectedAndDisabledTargetsKeepDifferentMeaning()/NativeButtonInteractionTests.swift:1035:6"
+  ],
+  "eventSHA256": "eb58a99bb9c974e8b3411eb35c612c6fdccdaaf7290091e9da8483702897b220",
+  "expectedOriginalIssues": 10,
+  "failedFunctionIDs": [
+    "NexGenVideoTests.NativePointerInteractionTests/aLostUpGetsOnlyOneReleaseCleanup()/NativeButtonInteractionTests.swift:1256:6",
+    "NexGenVideoTests.NativePointerInteractionTests/actualCompactButtonsUseOneTaggedSystemClickEach()/NativeButtonInteractionTests.swift:1002:6",
+    "NexGenVideoTests.NativePointerInteractionTests/actualNativeControlAndMenuTrackingKeepTheirCallbacks()/NativeButtonInteractionTests.swift:1168:6",
+    "NexGenVideoTests.NativePointerInteractionTests/changedAccessibilityHitCannotBorrowTheOriginalGeometry()/NativeButtonInteractionTests.swift:1185:6",
+    "NexGenVideoTests.NativePointerInteractionTests/concurrentButtonPreparationCannotMoveTheOwnedPointer()/NativeButtonInteractionTests.swift:1333:6",
+    "NexGenVideoTests.NativePointerInteractionTests/coveredForeignAndInvalidTargetsNeverPostDown()/NativeButtonInteractionTests.swift:1102:6",
+    "NexGenVideoTests.NativePointerInteractionTests/gestureSurfacesAndSmallCardMarkersRemainUsable()/NativeButtonInteractionTests.swift:1155:6",
+    "NexGenVideoTests.NativePointerInteractionTests/mouseIgnoringWindowAllowsOneClickAndInputCatchingWindowRefusesIt()/NativeButtonInteractionTests.swift:1058:6",
+    "NexGenVideoTests.NativePointerInteractionTests/ownedDownIsReleasedWhenTheTaskIsCancelled()/NativeButtonInteractionTests.swift:1305:6",
+    "NexGenVideoTests.NativePointerInteractionTests/unselectedAndDisabledTargetsKeepDifferentMeaning()/NativeButtonInteractionTests.swift:1035:6"
+  ],
+  "failureArtifactBytes": 973591653,
+  "failureArtifactID": 14124728457,
+  "failureArtifactSHA256": "ab2e8e28eb9ad736f531ed77bff7ba6862adf5b9e36f4dcbb90ee473dd25f0aa",
+  "failureAttempt": 1,
+  "failureJobID": 132532004427,
+  "failureRunID": 43622754512,
+  "failureSourceSHA": "7e1b83ed584a9a272ee3824a0cd20e6ee5505cc7",
+  "hostReceiptSHA256": "43c0c9da37b0881e100e72422eb3695fd8155723753789c9a2d6480389146094",
+  "originalHostSHA256": "70330e80bf88fa7e23032d80b9b2df2b855e9baaa00c87c1195a5093edc333f5",
+  "originalHostUUID": "f590711f-f616-3965-bf42-0f283720b59b",
+  "schema": "native-pointer-guard-original-scope/v1",
+  "selected": {
+    "metadata": {
+      "artifactID": 14123989170,
+      "artifactSHA256": "5af6ddf9532a566e87c1688b6daaf342eae72240d51b46f8c0b7eb4a208e484d",
+      "runID": 43616301210,
+      "sourceSHA": "7e1b83ed584a9a272ee3824a0cd20e6ee5505cc7"
+    },
+    "production": {
+      "artifactID": 14123847382,
+      "artifactSHA256": "044cca431fd9f7bf9eaa8a2554087d11f4f90cfd5c9fe8ecfdaed40950de237c",
+      "receiptSHA256": "2eaad70c0c69fa3a2575c64f09bcc720bb07e0b331aea1b2944c8e7cd245cb47",
+      "runID": 43616301210,
+      "sourceSHA": "7e1b83ed584a9a272ee3824a0cd20e6ee5505cc7"
+    },
+    "testable": {
+      "artifactID": 14122849995,
+      "artifactSHA256": "3fae3f84261c3956588132242c899da5c777412f627f92c352698a4b83885f05",
+      "receiptSHA256": "a51bb670aa46996f1ed9117b6b3d3613c93b66db035b3306c1d0b668e5843d25",
+      "runID": 43616301210,
+      "sourceSHA": "7e1b83ed584a9a272ee3824a0cd20e6ee5505cc7"
+    },
+    "tests": {
+      "artifactID": 14124545181,
+      "artifactSHA256": "5ae9f5e3930a6e0ead608115faba4e28d5c8d45989226c72b06fb90ae912f2ab",
+      "receiptSHA256": "847309327a02607dee145988c5963a58b4778021cbdd47eca7a4c60aa4d252ca",
+      "runID": 43616301210,
+      "sourceSHA": "7e1b83ed584a9a272ee3824a0cd20e6ee5505cc7"
+    }
+  },
+  "testImage": {
+    "UUIDs": [
+      "C2C32530-2E03-34A7-BC1E-D1B1B5C49A85"
+    ],
+    "sha256": "5372927deccc9f6d112d1d184593bd0d4a2b6a102a82f6956bfa0ece8fa393f0"
+  }
+}
