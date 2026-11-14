@@ -94,7 +94,7 @@ struct AgentServiceRuntimeContractTests {
         let result = await service.resolveGate(.approved, approvalID: service.pendingGateApproval?.id ?? "missing")
         #expect(result?.isError == false)
         #expect(try YAMLArtifactStore(dataRoot: liveRoot).load(Gates.self, at: PipelineLayout.gatesFile).get("bible").approved)
-        await editor.refreshProjectState()
+        await editor.refreshEngineState()
         #expect(editor.projectState?.nextPhaseName == "shotlist")
         service.isStreaming = false
         service.noteRevisionRequest(origin: origin)

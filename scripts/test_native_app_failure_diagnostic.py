@@ -7,6 +7,7 @@ import re
 import sys
 import tempfile
 import unittest
+from unittest import mock
 import yaml
 
 import native_app_failure_diagnostic as diagnostic
@@ -126,12 +127,39 @@ class OriginalNativeFailureDiagnosticTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             for code in (0, 1):
                 log = Path(temporary) / str(code)
-                result = diagnostic.run_owned([sys.executable, '-c', f'print("complete"); raise SystemExit({code})'], log, dict(os.environ))
+                with mock.patch.object(diagnostic.os, 'killpg', side_effect=PermissionError(1, 'Operation not permitted')) as kill:
+                    result = diagnostic.run_owned([sys.executable, '-c', f'print("complete"); raise SystemExit({code})'], log, dict(os.environ))
+                kill.assert_not_called()
                 self.assertEqual(result['exitCode'], code)
                 self.assertTrue(result['eof'])
                 self.assertTrue(result['processReaped'])
                 self.assertIsNone(result['stoppedReason'])
                 self.assertEqual(log.read_bytes().strip(), b'complete')
+                self.assertTrue(result['exitObservedBeforeCleanup'])
+                self.assertEqual(json.loads(log.with_name(log.name + '.process.json').read_bytes()), result)
+
+    def test_signal_permission_error_still_reaps_and_preserves_the_failure_receipt(self):
+        killpg = os.killpg
+        def signal_group(pid, sig):
+            if sig == diagnostic.signal.SIGTERM: raise PermissionError(1, 'Operation not permitted')
+            killpg(pid, sig)
+        with tempfile.TemporaryDirectory() as temporary:
+            log = Path(temporary) / 'permission-error'
+            with mock.patch.object(diagnostic.os, 'killpg', side_effect=signal_group):
+                result = diagnostic.run_owned([sys.executable, '-c', 'import time; time.sleep(60)'],
+                    log, dict(os.environ), timeout=0.1)
+            self.assertTrue(result['processReaped'])
+            self.assertEqual(result['stoppedReason'], 'timeout')
+            self.assertEqual(result['cleanupSignalErrors'], [{'signal': int(diagnostic.signal.SIGTERM), 'errno': 1}])
+            self.assertNotEqual(result['exitCode'], 0)
+            self.assertEqual(json.loads(log.with_name(log.name + '.process.json').read_bytes()), result)
+            log = Path(temporary) / 'sync-error'
+            with mock.patch.object(diagnostic.os, 'fsync', side_effect=OSError(5, 'Input/output error')):
+                result = diagnostic.run_owned([sys.executable, '-c', 'print("complete")'], log, dict(os.environ))
+            self.assertTrue(result['processReaped'])
+            self.assertEqual(result['stoppedReason'], 'cleanup-log-error')
+            self.assertEqual(result['logFinalizationErrors'], [{'operation': 'sync-log', 'errno': 5}])
+            self.assertEqual(json.loads(log.with_name(log.name + '.process.json').read_bytes()), result)
 
     def test_bounded_owned_process_stops_its_child_on_deadline_or_output_cap(self):
         with tempfile.TemporaryDirectory() as temporary:

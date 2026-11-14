@@ -1237,6 +1237,8 @@ class ExternalTestBundleTests(unittest.TestCase):
                  'concurrentButtonPreparationCannotMoveTheOwnedPointer']
         pointers = ['NexGenVideoTests.NativePointerInteractionTests/' + name
                     + '()/NativeButtonInteractionTests.swift:SOURCE-LINE:6' for name in names]
+        window_hit = ['NexGenVideoTests.NativePointerInteractionTests/mouseIgnoringWindowAllowsOneClickAndInputCatchingWindowRefusesIt()'
+                      + '/NativeButtonInteractionTests.swift:SOURCE-LINE:6']
         previous = ['NexGenVideoTests.NativeButtonInteractionTests/' + name
                     + '()/NativeButtonInteractionTests.swift:SOURCE-LINE:6' for name in (
                         'actualLegacyScrollersKeepTheEnabledUndoDiscoverable',
@@ -1247,7 +1249,11 @@ class ExternalTestBundleTests(unittest.TestCase):
                   'exactSkippedFunctionIDs': ['skipped'], 'issuesExpected': 0,
                   'expectedCaseCountsByFunction': {'original': 3}},
                   'engine': {'exactEndedFunctionIDs': ['engine']}}, 'xctest': ['host']}
-        for additions in [pointers, previous + pointers]:
+        only_window = copy.deepcopy(before)
+        only_window['expectedActualExecutions'] += 1
+        only_window['modules']['app']['exactEndedFunctionIDs'] += window_hit
+        self.assertEqual(bundle._native_inventory_additions(before, only_window), window_hit)
+        for additions in [pointers, previous + pointers, pointers + window_hit, previous + pointers + window_hit]:
             after = copy.deepcopy(before)
             after['expectedActualExecutions'] += len(additions)
             after['modules']['app']['exactEndedFunctionIDs'] += additions

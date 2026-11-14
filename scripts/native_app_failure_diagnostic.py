@@ -180,7 +180,8 @@ def bind(output):
 
 
 def run_owned(command, log, env, timeout=120, byte_limit=64 * 1024**2):
-    started = time.time(); reason = None; eof = False; size = 0
+    started = time.time(); reason = None; eof = False; size = 0; exited = False
+    signal_errors = []; code = None; reaped = False
     with log.open('xb') as stream:
         process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, env=env, start_new_session=True)
@@ -204,25 +205,42 @@ def run_owned(command, log, env, timeout=120, byte_limit=64 * 1024**2):
                         stream.write(block); size += len(block)
                     if reason: break
         finally:
-            try: os.killpg(process.pid, signal.SIGTERM)
-            except ProcessLookupError: pass
-            deadline = time.monotonic() + 2
-            while time.monotonic() < deadline:
-                status = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
-                if status is not None and status.si_pid == process.pid: break
-                time.sleep(0.02)
-            try: os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError: pass
-            try: code = process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                write(log.with_name(log.name + '.unreaped.json'), {'pid': process.pid, 'processReaped': False,
-                    'stoppedReason': reason or 'cleanup-reap-timeout', 'fullReleaseAcceptance': False})
-                raise ValueError('Owned native child could not be reaped within the cleanup bound') from None
+            try:
+                if not (exited and eof):
+                    for sig in (signal.SIGTERM, signal.SIGKILL):
+                        try: os.killpg(process.pid, sig)
+                        except ProcessLookupError: pass
+                        except OSError as error:
+                            signal_errors.append({'signal': int(sig), 'errno': error.errno})
+                        if sig == signal.SIGTERM:
+                            deadline = time.monotonic() + 2
+                            while time.monotonic() < deadline:
+                                try: status = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+                                except OSError as error:
+                                    signal_errors.append({'operation': 'observe-exit', 'errno': error.errno}); break
+                                if status is not None and status.si_pid == process.pid: break
+                                time.sleep(0.02)
+                try:
+                    code = process.wait(timeout=2); reaped = True
+                except subprocess.TimeoutExpired:
+                    reason = reason or 'cleanup-reap-timeout'
+                except OSError as error:
+                    signal_errors.append({'operation': 'reap', 'errno': error.errno})
             finally:
-                process.stdout.close(); stream.flush(); os.fsync(stream.fileno())
-    return {'pid': process.pid, 'parentPID': os.getpid(), 'command': command, 'exitCode': code,
-        'launchBefore': started, 'endAfter': time.time(), 'eof': eof, 'stoppedReason': reason,
-        'bytes': size, 'processReaped': True, 'fullReleaseAcceptance': False}
+                finalization_errors = []
+                for operation, action in [('close-pipe', process.stdout.close), ('flush-log', stream.flush),
+                                          ('sync-log', lambda: os.fsync(stream.fileno()))]:
+                    try: action()
+                    except OSError as error: finalization_errors.append({'operation': operation, 'errno': error.errno})
+                result = {'pid': process.pid, 'parentPID': os.getpid(), 'command': command, 'exitCode': code,
+                    'launchBefore': started, 'endAfter': time.time(), 'eof': eof,
+                    'exitObservedBeforeCleanup': exited, 'stoppedReason': reason or ('cleanup-signal-error' if signal_errors
+                        else 'cleanup-log-error' if finalization_errors else None),
+                    'cleanupSignalErrors': signal_errors, 'logFinalizationErrors': finalization_errors,
+                    'bytes': size, 'processReaped': reaped, 'fullReleaseAcceptance': False}
+                write(log.with_name(log.name + '.process.json'), result)
+    require(reaped, 'Owned native child could not be reaped within the cleanup bound')
+    return result
 
 
 def acquire_source(source):
