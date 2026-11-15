@@ -1,0 +1,86 @@
+{
+  "actualOriginalAppResults": {
+    "XCTestPassed": 48,
+    "failed": 8,
+    "passed": 3714,
+    "retainedEnginePassed": 896,
+    "retainedEngineSkipped": 14,
+    "skipped": 8
+  },
+  "appSourceSHA": "a2c12af56364670cf4e103ce232695cdd582c806",
+  "boundSHA256": "170799b90f228a1d180654cfa90d7662c9beae3c7b44a14399f71834b13fe5f0",
+  "diagnosticFunctionIDs": [
+    "NexGenVideoTests.NativePointerInteractionTests/unselectedAndDisabledTargetsKeepDifferentMeaning()/NativeButtonInteractionTests.swift:1035:6",
+    "NexGenVideoTests.NativePointerInteractionTests/mouseIgnoringWindowAllowsOneClickAndInputCatchingWindowRefusesIt()/NativeButtonInteractionTests.swift:1058:6",
+    "NexGenVideoTests.NativePointerInteractionTests/gestureSurfacesAndSmallCardMarkersRemainUsable()/NativeButtonInteractionTests.swift:1155:6",
+    "NexGenVideoTests.NativePointerInteractionTests/ownedDownIsReleasedWhenTheTaskIsCancelled()/NativeButtonInteractionTests.swift:1305:6",
+    "NexGenVideoTests.NativePointerInteractionTests/concurrentButtonPreparationCannotMoveTheOwnedPointer()/NativeButtonInteractionTests.swift:1333:6"
+  ],
+  "diagnosticReasons": {
+    "NexGenVideoTests.NativePointerInteractionTests/concurrentButtonPreparationCannotMoveTheOwnedPointer()/NativeButtonInteractionTests.swift:1333:6": "current-original-hit-AX-return-and-first-native-admission-operand",
+    "NexGenVideoTests.NativePointerInteractionTests/gestureSurfacesAndSmallCardMarkersRemainUsable()/NativeButtonInteractionTests.swift:1155:6": "current-original-hit-AX-return-and-first-native-admission-operand",
+    "NexGenVideoTests.NativePointerInteractionTests/mouseIgnoringWindowAllowsOneClickAndInputCatchingWindowRefusesIt()/NativeButtonInteractionTests.swift:1058:6": "current-original-hit-AX-return-and-first-native-admission-operand",
+    "NexGenVideoTests.NativePointerInteractionTests/ownedDownIsReleasedWhenTheTaskIsCancelled()/NativeButtonInteractionTests.swift:1305:6": "current-original-hit-AX-return-and-first-native-admission-operand",
+    "NexGenVideoTests.NativePointerInteractionTests/unselectedAndDisabledTargetsKeepDifferentMeaning()/NativeButtonInteractionTests.swift:1035:6": "current-original-hit-AX-return-and-first-native-admission-operand"
+  },
+  "eventSHA256": "70dc91934f31d617114da57ecd4428d21f8e99ac007dc6398e29b1da29dd91b6",
+  "expectedOriginalIssues": 12,
+  "failedFunctionIDs": [
+    "NexGenVideoTests.NativePointerInteractionTests/actualCompactButtonsUseOneTaggedSystemClickEach()/NativeButtonInteractionTests.swift:1002:6",
+    "NexGenVideoTests.NativePointerInteractionTests/changedAccessibilityHitCannotBorrowTheOriginalGeometry()/NativeButtonInteractionTests.swift:1185:6",
+    "NexGenVideoTests.NativePointerInteractionTests/concurrentButtonPreparationCannotMoveTheOwnedPointer()/NativeButtonInteractionTests.swift:1333:6",
+    "NexGenVideoTests.NativePointerInteractionTests/gestureSurfacesAndSmallCardMarkersRemainUsable()/NativeButtonInteractionTests.swift:1155:6",
+    "NexGenVideoTests.NativePointerInteractionTests/mouseIgnoringWindowAllowsOneClickAndInputCatchingWindowRefusesIt()/NativeButtonInteractionTests.swift:1058:6",
+    "NexGenVideoTests.NativePointerInteractionTests/ownedDownIsReleasedWhenTheTaskIsCancelled()/NativeButtonInteractionTests.swift:1305:6",
+    "NexGenVideoTests.NativePointerInteractionTests/unselectedAndDisabledTargetsKeepDifferentMeaning()/NativeButtonInteractionTests.swift:1035:6",
+    "NexGenVideoTests.NativePointerInteractionTests/viewportWidthPreservesFieldAndNativeWheelAcrossScrollerStyles()/NativeButtonInteractionTests.swift:1364:6"
+  ],
+  "failureArtifactBytes": 975316183,
+  "failureArtifactID": 14176210360,
+  "failureArtifactSHA256": "8cb9f2cfe62a4c0be60eb5a7330a465956e18f66a4bbcbf07f4949b42a130b95",
+  "failureAttempt": 1,
+  "failureJobID": 132916949903,
+  "failureRunID": 43748442165,
+  "failureSourceSHA": "277fec69e9f4c02d78c07222248e3d9e7b644ba3",
+  "fullActualCompilerReviewSHA256": "18afba0fbaba465c2347eda70226779f0211a78b94f38683303ed5248942b235",
+  "fullActualFailureReviewSHA256": "d4432f620c5fa0458233ae0a0e4098b61b08390f67cdc268f60569f84e71c366",
+  "hostReceiptSHA256": "62090a949accdd475aa78fed132d13a509d2fa1490a79dcea653997340571c25",
+  "originalHostSHA256": "70330e80bf88fa7e23032d80b9b2df2b855e9baaa00c87c1195a5093edc333f5",
+  "originalHostUUID": "f590711f-f616-3965-bf42-0f283720b59b",
+  "schema": "native-pointer-guard-original-scope/v1",
+  "selected": {
+    "metadata": {
+      "artifactID": 14173842315,
+      "artifactSHA256": "dfc2d25d0fb7a16d65197a4fd4611db3816eff26af411ba472c18a8fd3f2f43e",
+      "runID": 43744730453,
+      "sourceSHA": "277fec69e9f4c02d78c07222248e3d9e7b644ba3"
+    },
+    "production": {
+      "artifactID": 14147974358,
+      "artifactSHA256": "df3a14fc041783b26f3ded4c0172d6562d0f1624120bfbca2f888d3bb36d6609",
+      "receiptSHA256": "cc4188b15091277044b0dd325684e7c667e448ceb3b7c58037f8ac9f6616b241",
+      "runID": 43681267351,
+      "sourceSHA": "92ad87cd28da4a536f3e0f2e0f1237e201ae14c2"
+    },
+    "testable": {
+      "artifactID": 14149530768,
+      "artifactSHA256": "5796dd4ad1f09b646b01a2a2bd4c73394586a8c65aeeef37d54cc9c47493f11e",
+      "receiptSHA256": "98bbcc948762ae6692a05d43a918116ca31c4bec9f8a3955a66bcea7f68ad4a1",
+      "runID": 43681267351,
+      "sourceSHA": "92ad87cd28da4a536f3e0f2e0f1237e201ae14c2"
+    },
+    "tests": {
+      "artifactID": 14174590563,
+      "artifactSHA256": "20d7421e446654ab9af387dc9ca0d617a86b8af46b8a3b4fc9076cbd5b9ff0a2",
+      "receiptSHA256": "90715c7d00d45228dc09f96a154197cb199fe198b9a0e29fe9f9ff10ecc93831",
+      "runID": 43744730453,
+      "sourceSHA": "277fec69e9f4c02d78c07222248e3d9e7b644ba3"
+    }
+  },
+  "testImage": {
+    "UUIDs": [
+      "29E93028-BA72-34FB-9168-6A531639DBDA"
+    ],
+    "sha256": "aaf84c362a647bc1a24b4855d7482298eb850b05b00e6c44b248930316a6d53d"
+  }
+}

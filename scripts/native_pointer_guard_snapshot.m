@@ -251,15 +251,78 @@ static NSArray *clipStates(NSView *marker) {
     return result;
 }
 
+static BOOL originalTargetMode;
+static NSUInteger originalTargetCalls, originalTargetReturns;
+static IMP originalDescendant;
+static _Thread_local const void *originalLatestHitIdentity;
+static _Thread_local NSUInteger originalLatestRootCall;
+static BOOL traceCaller(void);
 static NSView *snapshotHit(id receiver, SEL selector, NSPoint location);
+
+static NSUInteger originalTargetBegin(NSString *method, id receiver, NSPoint location) {
+    NSUInteger call = ++originalTargetCalls;
+    atomic_fetch_add(&activeObservations, 1);
+    record(@{@"kind": @"original-target-call", @"call": @(call), @"method": method,
+        @"receiver": identity(receiver), @"point": point(location), @"stack": stackTrace(),
+        @"rootCall": @(originalLatestRootCall),
+        @"queryOrigin": @"ORIGINAL_EXECUTION"}, NO);
+    return call;
+}
+
+static void originalTargetEnd(NSUInteger call, NSString *method, id returned) {
+    NSDictionary *raw = @{@"identity": identity(returned), @"nil": wireBool(returned == nil),
+        @"class": returned ? NSStringFromClass(object_getClass(returned)) : @"nil"};
+    BOOL previous = inspecting; inspecting = YES;
+    @try {
+        NSMutableDictionary *context = [@{@"queryOrigin": @"ADDITIONAL_RETURN_METADATA",
+            @"classes": classes(returned), @"NSControl": wireBool([returned isKindOfClass:NSControl.class]),
+            @"NSTextView": wireBool([returned isKindOfClass:NSTextView.class]),
+            @"NSAccessibilityProtocol": wireBool([returned conformsToProtocol:@protocol(NSAccessibility)])} mutableCopy];
+        if ([returned isKindOfClass:NSView.class]) {
+            context[@"ancestry"] = ancestry(returned);
+            context[@"window"] = identity([(NSView *)returned window]);
+        }
+        originalTargetReturns++;
+        record(@{@"kind": @"original-target-return", @"call": @(call), @"method": method,
+            @"returned": raw,
+            @"queryOrigin": @"ORIGINAL_EXECUTION", @"additionalMetadata": context}, NO);
+    } @catch (NSException *exception) { outputErrors++; }
+    @finally { inspecting = previous; atomic_fetch_sub(&activeObservations, 1); }
+}
+
+static id snapshotOriginalAX(id receiver, SEL selector, NSPoint location) {
+    BOOL observe = NSThread.isMainThread && (__bridge const void *)receiver == originalLatestHitIdentity && traceCaller();
+    NSUInteger call = observe ? originalTargetBegin(@"hosting.accessibilityHitTest:", receiver, location) : 0;
+    id returned = ((id (*)(id, SEL, NSPoint))boundAX)(receiver, selector, location);
+    if (observe) originalTargetEnd(call, @"hosting.accessibilityHitTest:", returned);
+    return returned;
+}
+
+static BOOL snapshotOriginalDescendant(id receiver, SEL selector, NSView *ancestor) {
+    BOOL observe = NSThread.isMainThread && (__bridge const void *)ancestor == originalLatestHitIdentity && traceCaller();
+    NSUInteger call = observe ? ++originalTargetCalls : 0;
+    if (observe) atomic_fetch_add(&activeObservations, 1);
+    if (observe) record(@{@"kind": @"original-target-call", @"call": @(call),
+        @"method": @"isDescendantOf:", @"receiver": identity(receiver), @"ancestor": identity(ancestor),
+        @"rootCall": @(originalLatestRootCall),
+        @"stack": stackTrace(), @"queryOrigin": @"ORIGINAL_EXECUTION"}, NO);
+    BOOL returned = ((BOOL (*)(id, SEL, NSView *))originalDescendant)(receiver, selector, ancestor);
+    if (observe) {
+        originalTargetReturns++;
+        record(@{@"kind": @"original-target-return", @"call": @(call), @"method": @"isDescendantOf:",
+            @"returned": wireBool(returned), @"queryOrigin": @"ORIGINAL_EXECUTION"}, NO);
+        atomic_fetch_sub(&activeObservations, 1);
+    }
+    return returned;
+}
 
 static BOOL boundClassMatches(void) {
     const char *image = class_getImageName(hostingClass);
     return [boundRoot class] == hostingClass && object_getClass(boundRoot) == runtimeHostingClass
         && image && sameImage(@(image))
         && privateLineage(runtimeHostingClass, hostingClass)
-        && implementation(hostingClass, @selector(accessibilityHitTest:)) == boundAX
-        && implementation(runtimeHostingClass, @selector(accessibilityHitTest:)) == boundAX
+        && implementation(hostingClass, @selector(accessibilityHitTest:)) == (originalTargetMode ? (IMP)snapshotOriginalAX : boundAX)
+        && implementation(runtimeHostingClass, @selector(accessibilityHitTest:)) == (originalTargetMode ? (IMP)snapshotOriginalAX : boundAX)
         && implementation(hostingClass, @selector(hitTest:)) == (IMP)snapshotHit
         && implementation(runtimeHostingClass, @selector(hitTest:)) == (IMP)snapshotHit;
 }
@@ -314,6 +377,12 @@ static BOOL bindProbe(NSView *marker) {
     originalHit = (HitFunction)method_getImplementation(hit); hostingClass = type; runtimeHostingClass = runtime;
     boundAX = method_getImplementation(ax);
     boundRoot = root; boundWindow = window; boundProbe = marker;
+    if (originalTargetMode) {
+        if (!abi(ax, @encode(id), @[@(@encode(id)), @(@encode(SEL)), @(@encode(NSPoint))])) {
+            outputErrors++; return NO;
+        }
+        method_setImplementation(ax, (IMP)snapshotOriginalAX);
+    }
     BOOL added = class_addMethod(type, @selector(hitTest:), (IMP)snapshotHit, method_getTypeEncoding(hit));
     if (added && !boundClassMatches()) { outputErrors++; added = NO; }
     hookTime = NSDate.date.timeIntervalSince1970;
@@ -323,6 +392,9 @@ static BOOL bindProbe(NSView *marker) {
         @"rootClass": NSStringFromClass(type), @"runtimeRootClass": NSStringFromClass(runtime),
         @"runtimeLineageMatches": wireBool(lineage), @"effectiveAXMatches": wireBool(effectiveAX), @"declaredOwnAX": @YES,
         @"originalAXIMP": [NSString stringWithFormat:@"%p", (void *)boundAX],
+        @"originalAXTypeEncoding": @(method_getTypeEncoding(ax)),
+        @"originalTargetMode": wireBool(originalTargetMode),
+        @"originalAXWrapperInstalled": wireBool(originalTargetMode && implementation(type, @selector(accessibilityHitTest:)) == (IMP)snapshotOriginalAX),
         @"rootClassImage": classImage ? @(classImage) : @"nil", @"rootAXImageIdentity": fileIdentity(@(axInfo.dli_fname)),
         @"rootDeclaredImageIdentity": classImage ? fileIdentity(@(classImage)) : @{},
         @"expectedImageIdentity": fileIdentity(expectedImage), @"typeEncoding": @(method_getTypeEncoding(hit)),
@@ -396,6 +468,16 @@ static void discover(NSString *reason, NSWindow *window) {
 }
 
 static NSView *snapshotHit(id receiver, SEL selector, NSPoint location) {
+    if (originalTargetMode) {
+        BOOL observe = NSThread.isMainThread && receiver == boundRoot && traceCaller();
+        NSUInteger call = observe ? originalTargetBegin(@"root.hitTest:", receiver, location) : 0;
+        NSView *returned = originalHit(receiver, selector, location);
+        if (observe) {
+            originalTargetEnd(call, @"root.hitTest:", returned);
+            originalLatestHitIdentity = (__bridge const void *)returned; originalLatestRootCall = call;
+        }
+        return returned;
+    }
     if (!NSThread.isMainThread || atomic_load(&stopping)) return originalHit(receiver, selector, location);
     if (receiver != boundRoot && ((NSView *)receiver).window != boundWindow) return originalHit(receiver, selector, location);
     if (inspecting) {
@@ -484,12 +566,24 @@ __attribute__((constructor)) static void initializeSnapshot(void) {
         NSDictionary *environment = NSProcessInfo.processInfo.environment;
         NSString *folder = environment[@"NGV_POINTER_GUARD_SNAPSHOT_DIR"];
         expectedImage = environment[@"NGV_POINTER_GUARD_EXPECTED_IMAGE"];
+        originalTargetMode = [environment[@"NGV_POINTER_ORIGINAL_TARGETS"] isEqualToString:@"1"];
         if (!folder.isAbsolutePath || !expectedImage.isAbsolutePath) return;
         output = open([[folder stringByAppendingPathComponent:@"snapshots.jsonl"] fileSystemRepresentation],
             O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
         if (output < 0) return;
         record(@{@"kind": @"loaded", @"parentPID": @(getppid()), @"expectedImageIdentity": fileIdentity(expectedImage)}, NO);
         traceInitialize(environment, folder);
+        if (originalTargetMode) {
+            Method method = class_getInstanceMethod(NSView.class, @selector(isDescendantOf:));
+            if (abi(method, @encode(BOOL), @[@(@encode(id)), @(@encode(SEL)), @(@encode(id))])) {
+                originalDescendant = method_getImplementation(method);
+                method_setImplementation(method, (IMP)snapshotOriginalDescendant);
+                record(@{@"kind": @"original-descendant-hook", @"installed": wireBool(originalDescendant != NULL),
+                    @"typeEncoding": @(method_getTypeEncoding(method)), @"class": @"NSView",
+                    @"originalIMP": [NSString stringWithFormat:@"%p", (void *)originalDescendant],
+                    @"replacementIMP": [NSString stringWithFormat:@"%p", (void *)snapshotOriginalDescendant]}, NO);
+            } else outputErrors++;
+        }
         NSMutableArray *tokens = [NSMutableArray array];
         for (NSString *name in @[NSWindowDidBecomeKeyNotification, NSWindowDidBecomeMainNotification,
                                 NSWindowDidUpdateNotification, NSWindowWillCloseNotification,
@@ -520,6 +614,8 @@ __attribute__((destructor)) static void finishSnapshot(void) {
         traceFinish();
         BOOL persisted = record(@{@"kind": @"finished", @"samples": @(samples), @"rectSamples": @(rectSamples),
             @"originalCalls": @(originalCalls), @"transparentReturns": @(transparentReturns),
+            @"originalTargetMode": wireBool(originalTargetMode), @"originalTargetCalls": @(originalTargetCalls),
+            @"originalTargetReturns": @(originalTargetReturns),
             @"rectCalls": @(rectCalls), @"rectReturns": @(rectReturns), @"recursiveCalls": @(recursiveCalls),
             @"hookTime": @(hookTime), @"firstHitTime": @(firstHitTime), @"discoveryCount": @(discoveryCount),
             @"discoverySuppressed": @(discoverySuppressed), @"outputErrors": @(outputErrors), @"rejectedRecords": @(rejectedRecords)}, YES);

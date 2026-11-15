@@ -452,16 +452,59 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
         event = self.event()
         value = diagnostic.validate_inputs(event)
         self.assertEqual([identity.rsplit('/', 1)[1] for identity in value['diagnosticFunctionIDs']],
-            ['NativeButtonInteractionTests.swift:' + str(line) + ':6' for line in (1002, 1035, 1256, 1525, 1579, 1675)])
+            ['NativeButtonInteractionTests.swift:' + str(line) + ':6' for line in (1035, 1058, 1155, 1305, 1333)])
         self.assertEqual(len(set(value['diagnosticFunctionIDs']) & set(value['failedFunctionIDs'])), 5)
-        self.assertEqual(len(value['failedFunctionIDs']), 13)
-        self.assertEqual(value['actualOriginalAppResults'], dict(passed=3709, failed=13, skipped=8,
+        self.assertEqual(len(value['failedFunctionIDs']), 8)
+        self.assertEqual(value['actualOriginalAppResults'], dict(passed=3714, failed=8, skipped=8,
             XCTestPassed=48, retainedEnginePassed=896, retainedEngineSkipped=14))
         for key, change in [('run_id', '1'), ('source_sha', 'a' * 40), ('artifact_id', '1'),
                 ('artifact_sha256', 'a' * 64), ('verified_pr_run_id', ''), ('interface_scale', '1.5'),
                 ('runtime_failure_binding', '{}'), ('test_bundle_run_id', '1'), ('expected_dmg_sha256', 'b' * 64)]:
             changed = copy.deepcopy(event); changed['inputs'][key] = change
             with self.subTest(key=key), self.assertRaises(ValueError): diagnostic.validate_inputs(changed)
+
+    def test_original_target_returns_reject_nil_class_ancestry_and_borrowed_pair_corruption(self):
+        process = dict(pid=123, parentPID=20, launchBefore=0, endAfter=20)
+        image_identity = dict(path='/tests', device=1, inode=2)
+        common = dict(pid=123, diagnosticOnly=True, wallTime=1)
+        rows = [dict(common, kind='loaded', parentPID=20, expectedImageIdentity=image_identity),
+            dict(common, kind='hook-ready', installed=True, expectedImageIdentity=image_identity,
+                root='0x1', probe='0x2', windowIdentity='0x3', window=3, originalIMP='0x4', originalAXIMP='0x5',
+                mainThread=True, runtimeLineageMatches=True, effectiveAXMatches=True, declaredOwnAX=True,
+                originalTargetMode=True, originalAXWrapperInstalled=True, rootClass='Hosting', runtimeRootClass='Hosting',
+                rootAXImageIdentity=image_identity, rootDeclaredImageIdentity=image_identity, inspectorImage='/inspector',
+                typeEncoding='@32@0:8{CGPoint=dd}16', originalAXTypeEncoding='@32@0:8{CGPoint=dd}16'),
+            dict(common, kind='original-descendant-hook', installed=True, typeEncoding='B24@0:8@16',
+                **{'class': 'NSView'}, originalIMP='0x6', replacementIMP='0x7')]
+        for call, method in enumerate(('root.hitTest:', 'isDescendantOf:', 'hosting.accessibilityHitTest:'), 1):
+            arguments = dict(ancestor='0x1') if call == 2 else dict(point=[10, 20])
+            rows.append(dict(common, kind='original-target-call', call=call, method=method,
+                receiver='0x1', rootCall=1, queryOrigin='ORIGINAL_EXECUTION', stack=[dict(image='/tests')], **arguments))
+            result = dict(identity='0x1', **{'nil': False, 'class': 'Hosting'}) if call == 1 else dict(identity='nil', **{'nil': True, 'class': 'nil'})
+            returned = dict(common, kind='original-target-return', call=call, method=method,
+                returned=True if call == 2 else result, queryOrigin='ORIGINAL_EXECUTION')
+            if call != 2:
+                returned['additionalMetadata'] = dict(queryOrigin='ADDITIONAL_RETURN_METADATA',
+                    classes=['Hosting'] if call == 1 else [], NSControl=False, NSTextView=False, NSAccessibilityProtocol=call == 1)
+            rows.append(returned)
+        rows.append(dict(common, kind='finished', originalTargetMode=True, outputErrors=0,
+            rejectedRecords=0, originalTargetCalls=3, originalTargetReturns=3))
+        def read(value):
+            return diagnostic.verify_original_targets((''.join(json.dumps(row) + '\n' for row in value)).encode(), process, Path('/tests'), Path('/inspector'), image_identity)
+        self.assertEqual(read(rows)['originalCallReturnPairs'], 3)
+        self.assertFalse(read(rows)['additionalMetadataIsActualSwiftPredicateEvaluation'])
+        mutations = [lambda r: r[8]['returned'].update(identity='0x2'),
+            lambda r: r[8]['returned'].update(**{'class': 'NSView'}),
+            lambda r: r[5].update(rootCall=9), lambda r: r[6].update(returned=1), lambda r: r[8].update(call=1),
+            lambda r: r[4]['additionalMetadata'].update(queryOrigin='ORIGINAL_EXECUTION'),
+            lambda r: r[3]['stack'][0].update(image='/foreign'),
+            lambda r: r[1].update(typeEncoding='v32@0:8{CGPoint=dd}16'),
+            lambda r: r[2].update(typeEncoding='c24@0:8@16'), lambda r: r[3].update(receiver='0x99'),
+            lambda r: r[3].update(point=[float('nan'), 20]), lambda r: r[1].update(originalAXIMP='nil'),
+            lambda r: r[2].update(kind='unknown'), lambda r: r[-1].update(originalTargetCalls=4), lambda r: r[-1].update(rejectedRecords=1)]
+        for mutate in mutations:
+            corrupted = copy.deepcopy(rows); mutate(corrupted)
+            with self.assertRaises(ValueError): read(corrupted)
 
     def test_signature_preflight_never_weakens_original_hardened_policy(self):
         self.assertFalse(diagnostic.parse_signature('CodeDirectory v=20400 size=1234 flags=0x2(adhoc) hashes=35+0 location=embedded\nExecutable Segment flags=0x1', '')['hardenedRuntime'])
@@ -739,7 +782,7 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
                     else:
                         acquired = diagnostic.collect_selections(value, evidence, root / 'runtime', image, host, root / 'inspector')
                         self.assertEqual(list(acquired), value['diagnosticFunctionIDs'])
-                        self.assertEqual(len(calls), 6)
+                        self.assertEqual(len(calls), 5)
                         for index, identity in enumerate(value['diagnosticFunctionIDs'], 1):
                             self.assertEqual(calls[index - 1][-1], diagnostic.scope_filter([identity]))
                             self.assertTrue((evidence / ('selection-' + str(index)) / 'host.STARTED.json').is_file())

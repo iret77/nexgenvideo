@@ -20,8 +20,8 @@ from retained_app_test_products import api, archive_bytes, checksum, download, r
 from native_app_failure_diagnostic import measure, scope_filter, verify_failure_origin, verify_bound, run_owned
 
 KIND = 'native-pointer-guard-snapshot'
-FIXTURE = Path(__file__).with_name('fixtures') / 'native-app-failure-1120.json'
-FIXTURE_SHA = '09b410793dd823b0e2757efeb211b5ba52682315372566b04edee617b45b5253'
+FIXTURE = Path(__file__).with_name('fixtures') / 'native-app-failure-1135.json'
+FIXTURE_SHA = 'eab1530d4d68ec2215ec7aac0eff144e5160dac904ad97ad477e327fd6f4ea52'
 LEGACY_FIXTURE = FIXTURE.with_name('native-app-failure-1099.json')
 LEGACY_FIXTURE_SHA = '63d9340373d7ed61645880d1c30508320577c851682d8f4097682c5127b0d0f4'
 RETAINED_RUN = 43629283870
@@ -38,7 +38,8 @@ HISTORICAL_C_SHA = 'b7413fbf5849efa42b8563ec04d74f7a012ae343878610d0150e194a5fb4
 HISTORICAL_SOURCE_FILES = {'scripts/native_pointer_guard_diagnostic.py', 'scripts/native_pointer_guard_snapshot.m',
     'scripts/native_app_failure_diagnostic.py', 'scripts/fixtures/native-app-failure-1099.json'}
 SOURCE_FILES = HISTORICAL_SOURCE_FILES | {'scripts/native_pointer_guard_selftest.swift',
-    'scripts/fixtures/native-app-failure-1110.json', 'scripts/fixtures/native-app-failure-1120.json'}
+    'scripts/fixtures/native-app-failure-1110.json', 'scripts/fixtures/native-app-failure-1120.json',
+    'scripts/fixtures/native-app-failure-1135.json'}
 SELFTEST_SOURCE_SHA = '32ab7da761fc1dd7745964cbad6e91918c5d2a71e7568a1bfb2283648e71e8cb'
 SELFTEST_TOOL_SHA = '8d5d8c7734614b186e92a96026630af2573bbbd25cd6d6a8b905c7725cfd2bd1'
 SELFTEST_TOOL_BYTES = 134736
@@ -953,6 +954,127 @@ def observer_selftest(evidence, inspector):
     write(evidence / 'observer-selftest.json', {'results': results, 'complete': True, 'fullReleaseAcceptance': False})
 
 
+def verify_original_targets(raw, result, image, inspector, expected_identity=None):
+    require(raw.endswith(b'\n') and len(raw) <= 1024 * 1024, 'Original target stream has no complete EOF or exceeds its bound')
+    expected_identity = image_identity(image) if expected_identity is None else expected_identity
+    rows = [json.loads(line) for line in raw.splitlines()]
+    require(rows and rows[0].get('kind') == 'loaded' and rows[-1].get('kind') == 'finished'
+        and all(row.get('pid') == result['pid'] and row.get('diagnosticOnly') is True
+            and row.get('kind') in {'loaded', 'finished', 'probe-hook-ready', 'eligibility', 'discovery',
+                'hook-ready', 'viewport-convert', 'original-descendant-hook', 'original-target-call', 'original-target-return'}
+            for row in rows) and sum(row['kind'] == 'loaded' for row in rows) == sum(row['kind'] == 'finished' for row in rows) == 1,
+        'Original target process identity or finalization differs')
+    require(rows[0]['expectedImageIdentity'] == expected_identity
+        and rows[0].get('parentPID') == result['parentPID'], 'Foreign current target image or parent')
+    times = [row.get('wallTime') for row in rows]
+    require(all(type(t) in (int, float) and math.isfinite(t) for t in times)
+        and times == sorted(times) and result['launchBefore'] <= times[0] <= times[-1] <= result['endAfter'],
+        'Original target records escape actual process lifetime')
+    finished = rows[-1]
+    require(finished.get('originalTargetMode') is True
+        and finished.get('outputErrors') == finished.get('rejectedRecords') == 0,
+        'Original target observation is incomplete or lossy')
+    ready = [row for row in rows if row['kind'] == 'hook-ready']
+    require(len(ready) == 1 and ready[0].get('installed') is True
+        and ready[0].get('expectedImageIdentity') == rows[0]['expectedImageIdentity'],
+        'Current hosting root hook is absent or foreign')
+    hook = ready[0]
+    pointer = lambda value: isinstance(value, str) and re.fullmatch(r'0x[1-9a-fA-F][0-9a-fA-F]*', value) is not None
+    require(all(pointer(hook.get(k)) for k in ('root', 'probe', 'windowIdentity', 'originalIMP', 'originalAXIMP'))
+        and type(hook.get('window')) is int and hook['window'] > 0
+        and all(hook.get(k) is True for k in ('mainThread', 'runtimeLineageMatches', 'effectiveAXMatches',
+            'declaredOwnAX', 'originalTargetMode', 'originalAXWrapperInstalled'))
+        and all(isinstance(hook.get(k), str) and hook[k] != 'nil' and hook[k] for k in ('rootClass', 'runtimeRootClass'))
+        and hook.get('rootAXImageIdentity') == hook.get('rootDeclaredImageIdentity') == expected_identity
+        and hook.get('inspectorImage') == str(inspector)
+        and hook.get('typeEncoding') == hook.get('originalAXTypeEncoding') == '@32@0:8{CGPoint=dd}16',
+        'Original hosting root receiver, implementation, image or typed ABI is unqualified')
+    descendant = [row for row in rows if row['kind'] == 'original-descendant-hook']
+    require(len(descendant) == 1 and descendant[0].get('installed') is True
+        and descendant[0].get('typeEncoding') == 'B24@0:8@16' and descendant[0].get('class') == 'NSView'
+        and pointer(descendant[0].get('originalIMP')) and pointer(descendant[0].get('replacementIMP'))
+        and descendant[0]['originalIMP'] != descendant[0]['replacementIMP'], 'Original ancestry BOOL ABI hook is missing')
+    calls, returned = {}, {}
+    methods = {'root.hitTest:', 'hosting.accessibilityHitTest:', 'isDescendantOf:'}
+    for row in rows:
+        if row['kind'] not in {'original-target-call', 'original-target-return'}: continue
+        call = row.get('call'); method = row.get('method')
+        require(type(call) is int and call > 0 and method in methods
+            and row.get('queryOrigin') == 'ORIGINAL_EXECUTION', 'Invalid original target call provenance')
+        if row['kind'] == 'original-target-call':
+            require(call not in calls and row.get('receiver') not in (None, 'nil')
+                and any(frame.get('image') == str(image) for frame in row.get('stack', [])),
+                'Duplicate or foreign original target caller')
+            if method != 'isDescendantOf:':
+                require(pointer(row['receiver']) and (method != 'root.hitTest:' or row['receiver'] == hook['root']),
+                    'Foreign root or invalid hosting AX receiver')
+                require(isinstance(row.get('point'), list) and len(row['point']) == 2
+                    and all(type(v) in (int, float) and math.isfinite(v) for v in row['point']),
+                    'Original target point is missing or nonfinite')
+            else: require(isinstance(row.get('ancestor'), str), 'Original ancestry argument is missing')
+            calls[call] = row
+        else:
+            require(call in calls and call not in returned and calls[call]['method'] == method,
+                'Original target return is unpaired, duplicated or borrowed')
+            value = row.get('returned')
+            if method != 'root.hitTest:':
+                root_call = calls[call].get('rootCall')
+                require(type(root_call) is int and root_call in returned
+                    and calls[root_call]['method'] == 'root.hitTest:'
+                    and returned[root_call]['returned']['identity'] == calls[call].get(
+                        'ancestor' if method == 'isDescendantOf:' else 'receiver'),
+                    'Original AX or ancestry argument is not the actual earlier original root hit')
+            if method == 'isDescendantOf:':
+                require(type(value) is bool, 'Original ancestry BOOL is not native JSON boolean')
+            else:
+                require(isinstance(value, dict) and type(value.get('nil')) is bool
+                    and isinstance(value.get('identity'), str) and isinstance(value.get('class'), str)
+                    and value['nil'] == (value['identity'] == 'nil') == (value['class'] == 'nil'),
+                    'Original nil/class/identity tuple is inconsistent')
+                context = row.get('additionalMetadata', {})
+                require(context.get('queryOrigin') == 'ADDITIONAL_RETURN_METADATA'
+                    and all(type(context.get(k)) is bool for k in ('NSControl', 'NSTextView', 'NSAccessibilityProtocol'))
+                    and isinstance(context.get('classes'), list)
+                    and (not context['classes'] if value['nil'] else bool(context['classes']) and context['classes'][0] == value['class']),
+                    'Additional return metadata is missing or mislabeled as an original operand')
+            returned[call] = row
+    require(calls and calls.keys() == returned.keys()
+        and len(calls) == finished.get('originalTargetCalls') == finished.get('originalTargetReturns')
+        and sorted(calls) == list(range(1, len(calls) + 1)), 'Original target call/return coverage is incomplete')
+    pairs = [{'call': calls[key], 'return': returned[key]} for key in sorted(calls)]
+    require(any(pair['call']['method'] == 'root.hitTest:' for pair in pairs), 'No original root hit was measured')
+    return {'originalPairs': pairs, 'originalCallReturnPairs': len(pairs), 'losslessOriginalReturns': True,
+        'allOriginalAcquisitionPairsVerified': True, 'targetGuardQualified': False,
+        'hostingAXReceiverMustMatchActualOriginalHitDuringIndependentReview': True,
+        'additionalMetadataIsActualSwiftPredicateEvaluation': False,
+        'exactTargetBranchAndFirstFalseOperandRequireIndependentCurrentSourceStackAndOutcomeReview': True,
+        'fullReleaseAcceptance': False}
+
+
+def symbolize_original_targets(snapshot, image, evidence):
+    groups = {}
+    for pair in snapshot['originalPairs']:
+        for frame in pair['call']['stack']:
+            if frame.get('image') != str(image): continue
+            address, base = frame.get('address'), frame.get('imageBase')
+            require(all(isinstance(v, str) and re.fullmatch(r'0x[0-9a-fA-F]+', v) for v in (address, base))
+                and int(address, 16) >= int(base, 16), 'Original caller address is not symbolizable')
+            groups.setdefault(base, set()).add(address)
+    require(1 <= len(groups) <= 8 and sum(map(len, groups.values())) <= 2048,
+        'Current original caller symbolication is empty or excessive')
+    result = []
+    for index, (base, values) in enumerate(sorted(groups.items()), 1):
+        addresses = sorted(values, key=lambda value: int(value, 16))
+        output = targets.logged(evidence, 'original-target-symbols-' + str(index),
+            ['atos', '-arch', 'arm64', '-o', str(image), '-l', base, *addresses])
+        symbols = output.splitlines()
+        require(len(symbols) == len(addresses), 'Original caller symbolication dropped an address')
+        result.extend(dict(address=address, imageBase=base, symbol=symbol) for address, symbol in zip(addresses, symbols))
+    write(evidence / 'original-target-symbolication.json', {'image': str(image), 'symbols': result,
+        'sourceCallsiteAndTargetGuardQualified': False, 'independentCurrentSourceReviewRequired': True})
+    return result
+
+
 def collect_selections(value, evidence, runtime, image, host, inspector):
     from run_macos_tests import app_environment
     collected = {}
@@ -967,7 +1089,8 @@ def collect_selections(value, evidence, runtime, image, host, inspector):
         environment.update(NGV_APPKIT_TEST_BUNDLE=str(image), NGV_APPKIT_TEST_EVENTS=str(folder / 'events.jsonl'),
             NGV_APPKIT_TEST_RECEIPT=str(folder / 'host-receipt.json'), NGV_APPKIT_EXCEPTION_EVIDENCE=str(folder / 'exception.jsonl'),
             DYLD_INSERT_LIBRARIES=str(inspector), NGV_POINTER_GUARD_SNAPSHOT_DIR=str(snapshots),
-            NGV_POINTER_GUARD_EXPECTED_IMAGE=str(image), NGV_POINTER_EVENT_TRACE='1', NGV_POINTER_TRACE_EXPECTED_HOST=str(host))
+            NGV_POINTER_GUARD_EXPECTED_IMAGE=str(image), NGV_POINTER_EVENT_TRACE='1', NGV_POINTER_TRACE_EXPECTED_HOST=str(host),
+            NGV_POINTER_ORIGINAL_TARGETS='1')
         require('NGV_POINTER_TRACE_SELFTEST' not in environment, 'Real original selection cannot enter observer selftest mode')
         command = [str(host), '--event-stream-version', '0', '--no-parallel', '--filter', scope_filter([identity])]
         with (selection / 'host.STARTED.json').open('x') as marker:
@@ -1066,14 +1189,12 @@ def execute(source, root):
                 and (folder / 'exception.jsonl').stat().st_size == 0, 'Original native host did not complete the measured selection')
             require(checksum(host) == value['originalHostSHA256'] and checksum(image) == value['testImage']['sha256'],
                 'Original native images changed during diagnosis')
-            canonical = '/canonicalNativeAccessibility' in identity
-            mixed = '/canonicalNativeAccessibilityHitKeepsSystemInputAndRealFieldFocus()/' in identity
-            snapshot = verify_snapshots((snapshots / 'snapshots.jsonl').read_bytes(), result, inspector, image,
-                no_probe=canonical and not mixed, optional_probe=mixed)
-            require(canonical or snapshot['samples'] > 0, 'Current field guard operands were not observed')
+            snapshot = verify_original_targets((snapshots / 'snapshots.jsonl').read_bytes(), result, image, inspector)
+            snapshot['currentImageCallerSymbolication'] = symbolize_original_targets(snapshot, image, selection)
             trace = verify_event_trace((snapshots / 'event-trace.jsonl').read_bytes(), result, image, host)
             selections[identity] = {'measurement': measurement, 'process': result, 'hostReceipt': host_receipt, 'snapshot': snapshot,
-                'eventTrace': trace, 'qualificationComplete': True, 'standalonePassDoesNotQualifyMutationCoverageOrCause': True}
+                'eventTrace': trace, 'qualificationComplete': True, 'originalAcquisitionComplete': True,
+                'targetGuardQualified': False, 'standalonePassDoesNotQualifyMutationCoverageOrCause': True}
             write(selection / 'measurement.json', dict(selections[identity], fullReleaseAcceptance=False))
         except (ValueError, KeyError, TypeError, OSError, json.JSONDecodeError) as error:
             selections[identity] = {'qualificationComplete': False, 'process': acquired['process'],
