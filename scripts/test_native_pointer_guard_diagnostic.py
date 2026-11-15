@@ -15,45 +15,117 @@ import native_pointer_guard_diagnostic as diagnostic
 
 class NativePointerGuardDiagnosticTests(unittest.TestCase):
     def trace_rows(self, selftest=False):
-        image, host = dict(path='/tests', device=1, inode=2), dict(path='/host', device=3, inode=4)
+        image = dict(path='/tests', device=1, inode=2)
+        host = copy.deepcopy(image) if selftest else dict(path='/host', device=3, inode=4)
         rows = [dict(kind='loaded', expectedImageIdentity=image, expectedHostIdentity=host,
-            actualHostIdentity=host, selftestMode=selftest)]
+            actualHostIdentity=host, selftestMode=selftest, observerImageIdentity=dict(path='/observer', device=1, inode=5))]
         methods = ['windowNumberAtPoint:belowWindowWithWindowNumber:', 'windowNumber', 'CGWindowListCopyWindowInfo',
             'postEvent:atStart:', 'sendEvent:', 'sendAction:to:from:', 'keyDown:', 'selectAll:',
-            'window.performKeyEquivalent:', 'menu.performKeyEquivalent:', 'selectedRange', 'selectedRange']
+            'doCommandBySelector:', 'window.performKeyEquivalent:', 'menu.performKeyEquivalent:', 'selectedRange', 'selectedRange']
         for method in sorted(set(methods)):
             equivalent = method in ('window.performKeyEquivalent:', 'menu.performKeyEquivalent:')
             rows.append(dict(kind='hook', selector='performKeyEquivalent:' if equivalent else method, installed=True,
                 **{'class': 'NSWindow' if method.startswith('window.') else 'NSMenu' if equivalent else 'NSApplication'},
                 typeEncoding='{_NSRange=QQ}16@0:8' if method == 'selectedRange' else 'v24@0:8@16'))
         context = dict(queryOrigin='ADDITIONAL_CONTEXT', contextOrdinal=1,
+            keyWindowIdentity='0x40' if selftest else 'nil', keyWindow=40 if selftest else 0,
             additionalQueryCounts=dict(CGWindowListCopyWindowInfo=1))
         event = dict(identity='0xa', type=10, timestamp=2.0, timestampUnits='seconds-since-startup',
             flags=0, keyCode=7, characters='x', charactersIgnoringModifiers='x', getterOrigin='ADDITIONAL_OBSERVATION')
+        equivalent = dict(event, identity='0xb', timestamp=2.36, characters='a', charactersIgnoringModifiers='a', flags=1 << 20, keyCode=0)
+        foreign_equivalent = dict(equivalent, identity='0xc', timestamp=4.18)
         counts = {}
         for index, method in enumerate(methods, 1):
+            if method == 'keyDown:': continue
             arguments = dict(event=copy.deepcopy(event)) if method in ('postEvent:atStart:', 'sendEvent:') else {}
+            if method == 'sendEvent:': arguments['selftestPumpDispatch'] = selftest
             if method in ('window.performKeyEquivalent:', 'menu.performKeyEquivalent:'):
-                arguments = dict(event=dict(event, characters='a', charactersIgnoringModifiers='a', flags=1 << 20, keyCode=0))
+                arguments = dict(receiver='0x43' if method.startswith('window.') else '0x42', event=copy.deepcopy(equivalent))
             if method == 'windowNumberAtPoint:belowWindowWithWindowNumber:': arguments = dict(point=[1, 2], below=0)
+            if method == 'sendAction:to:from:': arguments = dict(action='selectAll:', target='0x41', sender='nil')
+            if method == 'doCommandBySelector:': arguments = dict(command='selectAll:', receiver='0x41')
+            if method in ('sendAction:to:from:', 'window.performKeyEquivalent:', 'menu.performKeyEquivalent:'):
+                arguments['scope'] = dict(queryOrigin='ADDITIONAL_SCOPE_OBSERVATION', ownedCaller=not selftest,
+                    ownedKeyWindow=selftest, ownedTargetWindow=False, ownedEventWindow=False,
+                    actualKeyWindowIdentity='0x40' if selftest else 'nil', targetWindowIdentity='nil', eventWindowIdentity='nil')
+                if selftest and method == 'sendAction:to:from:': arguments['scope'].update(ownedTargetWindow=True, targetWindowIdentity='0x40')
+                if selftest and method in ('window.performKeyEquivalent:', 'menu.performKeyEquivalent:'):
+                    arguments['scope'].update(ownedEventWindow=True, eventWindowIdentity='0x40')
+                    if method.startswith('window.'): arguments['scope']['targetWindowIdentity'] = '0x43'
             returned = [0, 2] if index == len(methods) else [1, 0] if method == 'selectedRange' else True
             if method == 'window.performKeyEquivalent:': returned = False
+            if method == 'doCommandBySelector:': returned = dict(range=dict(selection=[0, 2]))
             rows.append(dict(kind='call', call=index, method=method, arguments=arguments,
                 context=copy.deepcopy(context), queryOrigin='ORIGINAL_EXECUTION',
                 stack=[dict(image='/tests', address='0x20', imageBase='0x10')]))
+            if method == 'sendEvent:':
+                rows.append(dict(kind='receive', event=copy.deepcopy(event)))
+                rows.append(dict(kind='call', call=80, method='keyDown:',
+                    arguments=dict(receiver='0x41', argument=copy.deepcopy(event)), context=copy.deepcopy(context),
+                    queryOrigin='ORIGINAL_EXECUTION', stack=[dict(image='/tests', address='0x20', imageBase='0x10')], fixtureUptime=2.132))
+                rows.append(dict(kind='return', call=80, method='keyDown:',
+                    returned=dict(receiver='0x41', range=dict(selection=[1, 0])), context=copy.deepcopy(context),
+                    queryOrigin='ORIGINAL_EXECUTION', fixtureUptime=2.135))
+                counts['keyDown:'] = 1
             rows.append(dict(kind='return', call=index, method=method, returned=returned,
                 context=copy.deepcopy(context), queryOrigin='ORIGINAL_EXECUTION'))
             counts[method] = counts.get(method, 0) + 1
         if selftest:
-            rows.append(dict(kind='selftest', complete=True, queueIdentityUnchanged=True, inserted='xb',
+            nil_context = dict(context, keyWindowIdentity='nil', keyWindow=0)
+            for number, method in enumerate(('sendAction:to:from:', 'menu.performKeyEquivalent:'), 90):
+                arguments = dict(action='selectAll:', target='0x41', sender='nil') if number == 90 else dict(receiver='0x42', event=copy.deepcopy(equivalent))
+                arguments['scope'] = dict(queryOrigin='ADDITIONAL_SCOPE_OBSERVATION', ownedCaller=False,
+                    ownedKeyWindow=False, ownedTargetWindow=number == 90, ownedEventWindow=number == 91,
+                    actualKeyWindowIdentity='nil', targetWindowIdentity='0x40' if number == 90 else 'nil',
+                    eventWindowIdentity='0x40' if number == 91 else 'nil')
+                rows.append(dict(kind='call', call=number, method=method, arguments=arguments, context=copy.deepcopy(nil_context),
+                    queryOrigin='ORIGINAL_EXECUTION', stack=[dict(image='/tests', address='0x20', imageBase='0x10')], fixtureUptime=3.2 + (number - 90) * 0.1))
+                rows.append(dict(kind='return', call=number, method=method, returned=True, context=copy.deepcopy(nil_context),
+                    queryOrigin='ORIGINAL_EXECUTION', fixtureUptime=3.25 + (number - 90) * 0.1))
+                counts[method] += 1
+            for number, method in enumerate(('sendAction:to:from:', 'menu.performKeyEquivalent:'), 1):
+                arguments = dict(action='selectAll:', target='0x51', sender='nil') if number == 1 else dict(receiver='0x52', event=copy.deepcopy(foreign_equivalent))
+                scope = dict(queryOrigin='ADDITIONAL_SCOPE_OBSERVATION', ownedCaller=False, ownedKeyWindow=False,
+                    ownedTargetWindow=False, ownedEventWindow=False, actualKeyWindowIdentity='nil',
+                    targetWindowIdentity='0x50' if number == 1 else 'nil', eventWindowIdentity='0x50' if number == 2 else 'nil')
+                rows.append(dict(kind='selftest-scope-call', call=number, method=method, arguments=arguments, scope=scope,
+                    queryOrigin='SELFTEST_ONLY_SCOPE_REFUSAL', fixtureUptime=4.0 + number * 0.1))
+                rows.append(dict(kind='selftest-scope-return', call=number, method=method, returned=True,
+                    queryOrigin='SELFTEST_ONLY_SCOPE_REFUSAL', fixtureUptime=4.05 + number * 0.1))
+            ready = dict(queryOrigin='SELFTEST_ONLY', active=True, visible=True, key=True,
+                keyWindowIdentity='0x40', windowIdentity='0x40', responderIdentity='0x41', textIdentity='0x41',
+                acceptsFirstResponder=True, makeFirstResponderReturn=True)
+            rows.append(dict(kind='selftest', ready=True, readiness=copy.deepcopy(ready), readinessStart=1.0,
+                readinessDeadline=3.0, readinessEnd=1.1, readinessEvents=[], queueStart=2.0, queueDeadline=4.0, queueEnd=2.2,
+                dequeueMask=1 << 10, dequeueMode='kCFRunLoopDefaultMode', dequeue=True, queueResult='IDENTICAL_EVENT',
+                postedEvent=copy.deepcopy(event), createdEvent=copy.deepcopy(event), posted=True,
+                timeUnits='seconds-since-startup', expirationUnits='seconds-since-Unix-epoch', cleanupComplete=True, selectionAfterCommand=[0, 2],
+                selftestOwner=dict(windowIdentity='0x40', textIdentity='0x41', **{'class': 'NGVTraceSelftestTextView'},
+                    classImageIdentity=dict(path='/observer', device=1, inode=5)),
+                nilKeyStart=3.0, nilKeyDeadline=5.0, nilKeyEnd=3.1, nilKeyWindow=True, nilKeyAfterForeign=True,
+                nilActionReturn=True, nilMenuReturn=True, nilActionSelection=[0, 2], nilMenuSelection=[0, 2],
+                foreignActionReturn=True, foreignMenuReturn=True, foreignActionSelection=[0, 2], foreignMenuSelection=[0, 2],
+                ownedTextIdentity='0x41', ownedMenuIdentity='0x42', foreignTextIdentity='0x51', foreignMenuIdentity='0x52',
+                emptyWindowIdentity='0x43', equivalentEvent=copy.deepcopy(equivalent), foreignEquivalentEvent=copy.deepcopy(foreign_equivalent),
+                phases=dict(normalAction=[2.30, 2.33], normalWindow=[2.365, 2.385], normalMenu=[2.385, 2.415],
+                    nilAction=[3.19, 3.26], nilMenu=[3.29, 3.36], foreignAction=[4.09, 4.16], foreignMenu=[4.19, 4.255]),
+                dequeues=[dict(event=copy.deepcopy(event), dequeuedAt=2.1, expiration=100.0,
+                    readiness=copy.deepcopy(ready), requestedAt=2.05, sameIdentity=True, dispatched=True)], complete=True, queueIdentityUnchanged=True, inserted='xb',
                 selectionAfterKey=[1, 0], selectionAfterAction=[0, 2], actionReturn=True,
                 windowEquivalentReturn=False, menuEquivalentReturn=True, selectionAfterMenu=[0, 2]))
         rows.append(dict(kind='finished', calls=counts, returns=copy.deepcopy(counts), errors=0,
             selftestMode=selftest, selftestCompleted=selftest, contextCount=20,
-            additionalGetterQueryCounts=dict(CGWindowListCopyWindowInfo=20)))
+            additionalGetterQueryCounts=dict(CGWindowListCopyWindowInfo=20, **{'scope.evaluation': 12})))
+        clock = 0.0
         for index, row in enumerate(rows, 1):
+            if row.get('method') == 'postEvent:atStart:': clock = 2.01 if row['kind'] == 'call' else 2.02
+            elif row.get('method') == 'sendEvent:': clock = 2.12 if row['kind'] == 'call' else 2.14
+            elif row['kind'] == 'receive': clock = 2.13
+            elif clock >= 2.14: clock = max(clock, 2.3) + 0.01
+            else: clock += 0.01
+            clock = row.pop('fixtureUptime', clock)
             row.update(sequence=index, pid=10, parentPID=20, mainThread=True, wallTime=index,
-                uptime=index, diagnosticOnly=True)
+                uptime=clock, diagnosticOnly=True)
         return rows, (image, host)
 
     def trace_verify(self, rows, identities, selftest=False):
@@ -64,7 +136,7 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
     def test_event_trace_requires_every_original_return_and_true_operand_provenance(self):
         rows, identities = self.trace_rows()
         self.assertTrue(self.trace_verify(rows, identities)['allOriginalCallsReturnedOnce'])
-        for defect in ('lost-return', 'foreign-stack', 'wrong-process', 'context-as-original', 'bool-counter', 'missing-ABI', 'numeric-installed', 'wrong-host'):
+        for defect in ('lost-return', 'foreign-stack', 'wrong-process', 'context-as-original', 'bool-counter', 'missing-ABI', 'numeric-installed', 'wrong-host', 'scope-unowned', 'scope-numeric', 'scope-false-window', 'scope-substitution'):
             changed = copy.deepcopy(rows)
             call = next(row for row in changed if row['kind'] == 'call')
             if defect == 'lost-return':
@@ -77,6 +149,13 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
             elif defect == 'missing-ABI': next(row for row in changed if row['kind'] == 'hook')['installed'] = False
             elif defect == 'numeric-installed': next(row for row in changed if row['kind'] == 'hook')['installed'] = 1
             elif defect == 'wrong-host': changed[0]['actualHostIdentity'] = identities[0]
+            elif defect.startswith('scope-'):
+                route = next(row for row in changed if row.get('method') == 'sendAction:to:from:' and row['kind'] == 'call')
+                scope = route['arguments']['scope']
+                if defect == 'scope-unowned': scope['ownedCaller'] = False
+                elif defect == 'scope-numeric': scope['ownedCaller'] = 1
+                elif defect == 'scope-false-window': scope.update(ownedCaller=False, ownedTargetWindow=True)
+                elif defect == 'scope-substitution': scope['actualKeyWindowIdentity'] = '0x40'
             with self.subTest(defect=defect), self.assertRaises(ValueError): self.trace_verify(changed, identities)
 
     def test_app_authored_keys_do_not_need_quartz_and_unsigned_range_corruption_is_rejected(self):
@@ -96,7 +175,27 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
     def test_native_key_range_witness_requires_identical_event_and_actual_range_returns(self):
         rows, identities = self.trace_rows(selftest=True)
         self.assertTrue(self.trace_verify(rows, identities, selftest=True)['selftest'])
-        for defect in ('changed-characters', 'wrong-selection', 'missing-range-return', 'unknown-range-ABI', 'wrong-menu-return', 'numeric-queue-identity', 'numeric-complete', 'selftest-in-original-child'):
+        witness = next(row for row in rows if row['kind'] == 'selftest')
+        for phase, method, foreign in (
+                ('normalAction', 'sendAction:to:from:', False), ('normalWindow', 'window.performKeyEquivalent:', False),
+                ('normalMenu', 'menu.performKeyEquivalent:', False), ('nilAction', 'sendAction:to:from:', False),
+                ('nilMenu', 'menu.performKeyEquivalent:', False), ('foreignAction', 'sendAction:to:from:', True),
+                ('foreignMenu', 'menu.performKeyEquivalent:', True)):
+            changed = copy.deepcopy(rows); bounds = witness['phases'][phase]
+            kind = 'selftest-scope-call' if foreign else 'call'
+            matches = [row for row in changed if row['kind'] == kind and row.get('method') == method
+                and bounds[0] <= row['uptime'] <= bounds[1]]
+            self.assertEqual(len(matches), 1)
+            actual_return = next(row for row in changed if row['kind'] == ('selftest-scope-return' if foreign else 'return')
+                and row.get('call') == matches[0]['call'])
+            actual_return['returned'] = not actual_return['returned']
+            with self.subTest(individual_corrupt_BOOL=phase), self.assertRaises(ValueError):
+                self.trace_verify(changed, identities, selftest=True)
+        for defect in ('changed-characters', 'wrong-selection', 'missing-range-return', 'unknown-range-ABI', 'wrong-menu-return', 'numeric-queue-identity', 'numeric-complete', 'selftest-in-original-child', 'inactive', 'wrong-responder', 'ready-numeric',
+                'readiness-expired', 'dequeue-nil', 'dequeue-foreign', 'dequeue-expired', 'missing-receive',
+                'missing-command', 'wrong-command-return', 'cleanup-failed', 'post-before-start', 'nonfinite-uptime',
+                'reordered-uptime', 'wrong-expiration-unit', 'key-receiver', 'key-event', 'key-range', 'key-outside-send', 'missing-native-nil', 'foreign-scope-admitted', 'missing-foreign-return', 'wrong-owner-image', 'wrong-menu-receiver', 'wrong-menu-event', 'wrong-action-target',
+                'wrong-action-sender', 'swapped-phases', 'duplicate-normal-menu', 'borrowed-nil-menu', 'wrong-foreign-event'):
             changed = copy.deepcopy(rows)
             if defect == 'changed-characters': next(row for row in changed if row['kind'] == 'call' and row['method'] == 'sendEvent:')['arguments']['event']['characters'] = 'y'
             elif defect == 'wrong-selection': next(row for row in changed if row['kind'] == 'selftest')['selectionAfterAction'] = [1, 0]
@@ -107,6 +206,74 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
             elif defect == 'wrong-menu-return': next(row for row in changed if row['kind'] == 'return' and row['method'] == 'menu.performKeyEquivalent:')['returned'] = False
             elif defect == 'numeric-queue-identity': next(row for row in changed if row['kind'] == 'selftest')['queueIdentityUnchanged'] = 1
             elif defect == 'numeric-complete': next(row for row in changed if row['kind'] == 'selftest')['complete'] = 1
+            elif defect in ('inactive', 'wrong-responder', 'ready-numeric', 'readiness-expired',
+                    'dequeue-nil', 'dequeue-foreign', 'dequeue-expired', 'cleanup-failed'):
+                witness = next(row for row in changed if row['kind'] == 'selftest')
+                if defect == 'inactive': witness['readiness']['active'] = False
+                elif defect == 'wrong-responder': witness['readiness']['responderIdentity'] = '0x42'
+                elif defect == 'ready-numeric': witness['ready'] = 1
+                elif defect == 'readiness-expired': witness['readinessEnd'] = 3.1
+                elif defect == 'dequeue-nil': witness['dequeues'][0]['event'] = None
+                elif defect == 'dequeue-foreign': witness['dequeues'][0]['event']['identity'] = '0xb'
+                elif defect == 'dequeue-expired': witness['dequeues'][0]['dequeuedAt'] = 4.1; witness['queueEnd'] = 4.2
+                elif defect == 'cleanup-failed': witness['cleanupComplete'] = False
+            elif defect == 'missing-receive': next(row for row in changed if row['kind'] == 'receive')['event']['identity'] = '0xb'
+            elif defect == 'post-before-start':
+                for row in changed:
+                    if row.get('method') == 'postEvent:atStart:': row['uptime'] = 1.9
+            elif defect == 'nonfinite-uptime': changed[0]['uptime'] = float('nan')
+            elif defect == 'reordered-uptime': changed[-1]['uptime'] = 0.0
+            elif defect == 'wrong-expiration-unit': next(row for row in changed if row['kind'] == 'selftest')['expirationUnits'] = 'seconds-since-startup'
+            elif defect == 'missing-native-nil':
+                for row in changed:
+                    if row['kind'] == 'call' and row.get('call') in (90, 91):
+                        row['context']['keyWindowIdentity'] = '0x40'; row['arguments']['scope']['actualKeyWindowIdentity'] = '0x40'
+            elif defect == 'foreign-scope-admitted': next(row for row in changed if row['kind'] == 'selftest-scope-call')['scope']['ownedTargetWindow'] = True
+            elif defect == 'missing-foreign-return':
+                changed.pop(next(i for i, row in enumerate(changed) if row['kind'] == 'selftest-scope-return'))
+                for index, row in enumerate(changed, 1): row['sequence'] = index
+            elif defect in ('key-receiver', 'key-event', 'key-range', 'key-outside-send'):
+                key_call = next(row for row in changed if row['kind'] == 'call' and row.get('method') == 'keyDown:')
+                key_return = next(row for row in changed if row['kind'] == 'return' and row.get('method') == 'keyDown:')
+                if defect == 'key-receiver': key_call['arguments']['receiver'] = '0x51'
+                elif defect == 'key-event': key_call['arguments']['argument']['characters'] = 'q'
+                elif defect == 'key-range': key_return['returned']['range']['selection'] = [0, 1]
+                elif defect == 'key-outside-send':
+                    changed.remove(key_call); changed.remove(key_return)
+                    index = next(i for i, row in enumerate(changed) if row['kind'] == 'return' and row.get('method') == 'sendEvent:') + 1
+                    key_call['uptime'] = 2.141; key_return['uptime'] = 2.142
+                    changed[index:index] = [key_call, key_return]
+                    for index, row in enumerate(changed, 1): row['sequence'] = index
+            elif defect in ('wrong-menu-receiver', 'wrong-menu-event', 'wrong-action-target', 'wrong-action-sender',
+                    'swapped-phases', 'duplicate-normal-menu', 'borrowed-nil-menu', 'wrong-foreign-event'):
+                menu_call = next(row for row in changed if row['kind'] == 'call' and row.get('method') == 'menu.performKeyEquivalent:')
+                action_call = next(row for row in changed if row['kind'] == 'call' and row.get('method') == 'sendAction:to:from:')
+                if defect == 'wrong-menu-receiver': menu_call['arguments']['receiver'] = '0x52'
+                elif defect == 'wrong-menu-event': menu_call['arguments']['event']['identity'] = '0xa'
+                elif defect == 'wrong-action-target': action_call['arguments']['target'] = '0x51'
+                elif defect == 'wrong-action-sender': action_call['arguments']['sender'] = '0x42'
+                elif defect == 'swapped-phases':
+                    phases = next(row for row in changed if row['kind'] == 'selftest')['phases']
+                    phases['normalMenu'], phases['nilMenu'] = phases['nilMenu'], phases['normalMenu']
+                elif defect == 'wrong-foreign-event':
+                    next(row for row in changed if row['kind'] == 'selftest-scope-call'
+                        and row['method'] == 'menu.performKeyEquivalent:')['arguments']['event']['identity'] = '0xb'
+                else:
+                    menu_return = next(row for row in changed if row['kind'] == 'return' and row.get('call') == menu_call['call'])
+                    if defect == 'duplicate-normal-menu':
+                        duplicate, returned = copy.deepcopy(menu_call), copy.deepcopy(menu_return)
+                        duplicate.update(call=200, uptime=2.405); returned.update(call=200, uptime=2.406)
+                        index = changed.index(menu_return) + 1; changed[index:index] = [duplicate, returned]
+                        increment = 1
+                    else:
+                        changed.remove(menu_call); changed.remove(menu_return); increment = -1
+                    for row in changed:
+                        if row['kind'] == 'finished':
+                            for key in ('calls', 'returns'): row[key]['menu.performKeyEquivalent:'] += increment
+                    for index, row in enumerate(changed, 1): row['sequence'] = row['wallTime'] = index
+            elif defect == 'wrong-owner-image': next(row for row in changed if row['kind'] == 'selftest')['selftestOwner']['classImageIdentity']['inode'] = 6
+            elif defect == 'wrong-command-return': next(row for row in changed if row['kind'] == 'return' and row.get('method') == 'doCommandBySelector:')['returned']['range']['selection'] = [0, 1]
+            elif defect == 'missing-command': next(row for row in changed if row['kind'] == 'call' and row.get('method') == 'doCommandBySelector:')['arguments']['command'] = 'deleteBackward:'
             with self.subTest(defect=defect), self.assertRaises(ValueError): self.trace_verify(changed, identities, selftest=defect != 'selftest-in-original-child')
 
     def test_canonical_only_trace_and_standalone_pass_never_qualify_mutation_refusal(self):
