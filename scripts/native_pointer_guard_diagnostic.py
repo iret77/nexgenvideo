@@ -525,6 +525,24 @@ def verify_snapshots(raw, process, inspector, image, expected_identity=None, neg
             for row in samples]}
 
 
+def key_event_fields(event):
+    keys = {'identity', 'type', 'timestamp', 'timestampUnits', 'window', 'windowIdentity', 'flags',
+        'getterOrigin', 'keyCode', 'characters', 'charactersIgnoringModifiers', 'isARepeat'}
+    require(isinstance(event, dict) and set(event) == keys, 'Key correlation requires the complete exact Cocoa event schema')
+    require(all(isinstance(event[key], str) and re.fullmatch('0x[0-9a-fA-F]+', event[key])
+        and int(event[key], 16) > 0 for key in ('identity', 'windowIdentity')),
+        'Key correlation lacks its raw event and window identities')
+    require(type(event['type']) is int and event['type'] in (10, 11)
+        and type(event['timestamp']) in (int, float) and math.isfinite(event['timestamp']) and event['timestamp'] >= 0
+        and event['timestampUnits'] == 'seconds-since-startup' and event['getterOrigin'] == 'ADDITIONAL_OBSERVATION'
+        and type(event['window']) is int and 0 < event['window'] <= 2**63 - 1
+        and type(event['flags']) is int and 0 <= event['flags'] <= 2**64 - 1
+        and type(event['keyCode']) is int and 0 <= event['keyCode'] <= 65535
+        and isinstance(event['characters'], str) and isinstance(event['charactersIgnoringModifiers'], str)
+        and type(event['isARepeat']) is bool, 'Key correlation has untyped or nonfinite Cocoa event fields')
+    return {key: value for key, value in event.items() if key != 'identity'}
+
+
 def verify_event_trace(raw, process, image, host, *, selftest=False, identities=None):
     require(raw.endswith(b'\n') and len(raw) <= 32 * 1024**2, 'Event trace is truncated or oversized')
     rows = [json.loads(line) for line in raw.splitlines()]
@@ -630,6 +648,10 @@ def verify_event_trace(raw, process, image, host, *, selftest=False, identities=
                     'Original call lost, duplicated or changed its return')
                 returns[identity] = row
                 observed_returns[method] = observed_returns.get(method, 0) + 1
+                if method in {'postEvent:atStart:', 'sendEvent:'}:
+                    require(isinstance(row.get('returned'), dict)
+                        and row['returned'].get('eventIdentity') == calls[identity]['arguments']['event'].get('identity'),
+                        'Original event pointer changed inside its own post/send wrapper')
                 if method == 'selectedRange':
                     require(isinstance(row.get('returned'), list) and len(row['returned']) == 2
                         and all(type(value) is int and 0 <= value <= 2**64 - 1 for value in row['returned']),
@@ -644,7 +666,8 @@ def verify_event_trace(raw, process, image, host, *, selftest=False, identities=
                 'Event identity or original timestamp is unavailable')
             if event['type'] in (10, 11, 12):
                 require(not {'CGPosition', 'CGTimestamp', 'tag'} & set(event)
-                    and type(event.get('flags')) is int and type(event.get('keyCode')) is int,
+                    and type(event.get('flags')) is int and type(event.get('keyCode')) is int
+                    and (event['type'] == 12 or type(event.get('isARepeat')) is bool),
                     'Queued key observation converted the event to Quartz or lost its actual fields')
     require(set(calls) == set(returns) and observed_calls == observed_returns == finished.get('calls') == finished.get('returns'),
         'Original calls and returns are not one-to-one')
@@ -704,10 +727,10 @@ def verify_event_trace(raw, process, image, host, *, selftest=False, identities=
             and witness.get('cleanupComplete') is True, 'Native witness readiness, deadline or cleanup is unqualified')
         require(witness.get('dequeueMask') == 1 << 10 and witness.get('dequeueMode') == 'kCFRunLoopDefaultMode'
             and witness.get('dequeue') is True and witness.get('posted') is True
-            and witness.get('queueResult') == 'IDENTICAL_EVENT',
+            and witness.get('queueResult') == 'CORRELATED_KEY_EVENT' and witness.get('queueCorrelationMatched') is True,
             'Native witness changed its actual dequeue contract')
         dequeues = witness.get('dequeues'); readiness_events = witness.get('readinessEvents')
-        require(isinstance(dequeues, list) and 1 <= len(dequeues) <= 128
+        require(isinstance(dequeues, list) and len(dequeues) == 1
             and isinstance(readiness_events, list) and len(readiness_events) <= 128,
             'Native witness dequeue or readiness ledger is incomplete')
         previous_ready = times[0]
@@ -725,26 +748,33 @@ def verify_event_trace(raw, process, image, host, *, selftest=False, identities=
         posted = witness.get('postedEvent')
         require(isinstance(posted, dict) and posted == witness.get('createdEvent') and posted.get('type') == 10 and posted.get('characters') == 'x'
             and posted.get('charactersIgnoringModifiers') == 'x' and posted.get('keyCode') == 7
-            and posted.get('flags') == 0 and not {'CGPosition', 'CGTimestamp', 'tag'} & set(posted),
+            and posted.get('flags') == 0 and posted.get('isARepeat') is False and not {'CGPosition', 'CGTimestamp', 'tag'} & set(posted),
             'Native witness posted event fields are missing or converted')
+        posted_fields = key_event_fields(posted)
+        require(posted['windowIdentity'] == witness['readiness']['windowIdentity'],
+            'Posted key does not belong to the ready owned witness window')
+        delivered = witness.get('dequeuedEvent'); delivered_fields = key_event_fields(delivered)
+        require(type(witness.get('queueIdentityUnchanged')) is bool
+            and witness['queueIdentityUnchanged'] == (posted['identity'] == delivered['identity'])
+            and delivered_fields == posted_fields, 'Queue correlation or observed A/B identity metric is false')
         previous = times[3]
         for index, entry in enumerate(dequeues):
             instant = entry.get('dequeuedAt'); requested = entry.get('requestedAt'); event = entry.get('event')
             require(type(instant) in (int, float) and math.isfinite(instant) and previous <= instant <= times[5]
                 and type(requested) in (int, float) and math.isfinite(requested) and previous <= requested <= instant
-                and type(entry.get('sameIdentity')) is bool and type(entry.get('dispatched')) is bool
+                and type(entry.get('sameIdentity')) is bool and type(entry.get('correlationMatched')) is bool
+                and type(entry.get('dispatched')) is bool
                 and type(entry.get('expiration')) in (int, float) and math.isfinite(entry['expiration']), 'Native dequeue diagnostics lost actual operands')
             require(event is not None and entry['dispatched'] is True and isinstance(event, dict)
                 and entry['sameIdentity'] == (event.get('identity') == posted.get('identity')),
                 'Native witness dequeued nil or concealed a foreign event')
             if index == len(dequeues) - 1:
-                require(entry['sameIdentity'] is True and event == posted and instant <= times[4]
-                    and ready(entry.get('readiness')), 'Native witness did not dispatch the ready identical queued event')
-            else:
-                require(entry['sameIdentity'] is False, 'Native witness dequeued its posted event repeatedly')
+                require(event == delivered and entry['correlationMatched'] is True
+                    and key_event_fields(event) == posted_fields and instant <= times[4]
+                    and ready(entry.get('readiness')), 'Native witness did not dispatch the ready fully correlated queued event')
             previous = instant
         require(len(witnesses) == 1 and witnesses[0].get('complete') is True
-            and witnesses[0].get('queueIdentityUnchanged') is True and witnesses[0].get('inserted') == 'xb'
+            and witnesses[0].get('queueCorrelationMatched') is True and witnesses[0].get('inserted') == 'xb'
             and witnesses[0].get('selectionAfterKey') == [1, 0]
             and witnesses[0].get('selectionAfterAction') == [0, 2] and witnesses[0].get('actionReturn') is True
             and witnesses[0].get('windowEquivalentReturn') is False and witnesses[0].get('menuEquivalentReturn') is True
@@ -756,13 +786,13 @@ def verify_event_trace(raw, process, image, host, *, selftest=False, identities=
             require(observed_calls.get(method, 0) > 0, 'New native hook was not exercised: ' + method)
         posts = [row for row in calls.values() if row['method'] == 'postEvent:atStart:']
         sent = [row for row in calls.values() if row['method'] == 'sendEvent:']
-        require(any(post['arguments']['event'] == send['arguments']['event']
-            and post['arguments']['event'].get('characters') == 'x'
-            and post['arguments']['event'].get('keyCode') == 7
-            and post['arguments']['event'].get('flags') == 0 for post in posts for send in sent),
-            'Native witness did not forward the identical event fields')
         matching_posts = [row for row in posts if row['arguments'].get('event') == posted]
-        matching_sends = [row for row in sent if row['arguments'].get('event') == posted]
+        matching_sends = [row for row in sent if row['arguments'].get('event') == delivered]
+        require(len(posts) == len(matching_posts) == 1
+            and matching_posts[0]['arguments'].get('atStart') is True
+            and sum(key_event_fields(row['arguments']['event']) == posted_fields for row in sent
+                if row['arguments']['event'].get('type') in (10, 11)) == 1,
+            'Native witness lacks exactly one original post and one fully correlated delivery')
         forwarded = set()
         for entry in [entry for entry in readiness_events if entry['event'] is not None] + dequeues:
             matching = [row for row in sent if row['call'] not in forwarded
@@ -775,7 +805,7 @@ def verify_event_trace(raw, process, image, host, *, selftest=False, identities=
             and times[3] <= matching_posts[0]['uptime'] <= returns[matching_posts[0]['call']]['uptime']
                 <= dequeues[0]['requestedAt'] <= dequeues[-1]['dequeuedAt'] <= matching_sends[0]['uptime']
                 <= returns[matching_sends[0]['call']]['uptime'] <= times[5] <= nil_times[0]
-            and any(row['kind'] == 'receive' and row.get('event') == posted
+            and any(row['kind'] == 'receive' and row.get('event') == delivered
                 and matching_sends[0]['sequence'] < row['sequence'] < returns[matching_sends[0]['call']]['sequence'] for row in rows)
             and any(row['method'] == 'doCommandBySelector:' and row['arguments'].get('command') == 'selectAll:'
                 and row['arguments'].get('receiver') == witness['readiness']['textIdentity']
@@ -785,14 +815,16 @@ def verify_event_trace(raw, process, image, host, *, selftest=False, identities=
         key_downs = [row for row in calls.values() if row['method'] == 'keyDown:']
         matching_key_downs = [row for row in key_downs
             if row['arguments'].get('receiver') == witness['readiness']['textIdentity']
-            and row['arguments'].get('argument') == posted]
-        require(len(matching_key_downs) == 1, 'Native keyDown receiver or actual event is not the owned queued input')
+            and row['arguments'].get('argument') == delivered]
+        require(len(key_downs) == len(matching_key_downs) == 1, 'Native keyDown receiver or actual event is not the owned queued input')
+        matching_receives = [row for row in rows if row['kind'] == 'receive' and row.get('event') == delivered]
+        require(len(matching_receives) == 1, 'Native witness has missing or repeated correlated receive')
         key_down = matching_key_downs[0]; key_return = returns[key_down['call']]
         require(matching_sends[0]['sequence'] < key_down['sequence'] < key_return['sequence']
                 < returns[matching_sends[0]['call']]['sequence']
             and matching_sends[0]['uptime'] <= key_down['uptime'] <= key_return['uptime']
                 <= returns[matching_sends[0]['call']]['uptime']
-            and any(row['kind'] == 'receive' and row.get('event') == posted
+            and any(row['kind'] == 'receive' and row.get('event') == delivered
                 and matching_sends[0]['sequence'] < row['sequence'] < key_down['sequence'] for row in rows)
             and isinstance(key_return.get('returned'), dict)
             and key_return['returned'].get('receiver') == witness['readiness']['textIdentity']

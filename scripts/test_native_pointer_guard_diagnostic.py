@@ -14,7 +14,7 @@ import native_pointer_guard_diagnostic as diagnostic
 
 
 class NativePointerGuardDiagnosticTests(unittest.TestCase):
-    def trace_rows(self, selftest=False):
+    def trace_rows(self, selftest=False, distinct_queue=False):
         image = dict(path='/tests', device=1, inode=2)
         host = copy.deepcopy(image) if selftest else dict(path='/host', device=3, inode=4)
         rows = [dict(kind='loaded', expectedImageIdentity=image, expectedHostIdentity=host,
@@ -31,14 +31,17 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
             keyWindowIdentity='0x40' if selftest else 'nil', keyWindow=40 if selftest else 0,
             additionalQueryCounts=dict(CGWindowListCopyWindowInfo=1))
         event = dict(identity='0xa', type=10, timestamp=2.0, timestampUnits='seconds-since-startup',
-            flags=0, keyCode=7, characters='x', charactersIgnoringModifiers='x', getterOrigin='ADDITIONAL_OBSERVATION')
+            flags=0, keyCode=7, characters='x', charactersIgnoringModifiers='x', getterOrigin='ADDITIONAL_OBSERVATION',
+            window=40, windowIdentity='0x40', isARepeat=False)
+        delivered = dict(event, identity='0xd' if distinct_queue else event['identity'])
         equivalent = dict(event, identity='0xb', timestamp=2.36, characters='a', charactersIgnoringModifiers='a', flags=1 << 20, keyCode=0)
-        foreign_equivalent = dict(equivalent, identity='0xc', timestamp=4.18)
+        foreign_equivalent = dict(equivalent, identity='0xc', timestamp=4.18, window=50, windowIdentity='0x50')
         counts = {}
         for index, method in enumerate(methods, 1):
             if method == 'keyDown:': continue
             arguments = dict(event=copy.deepcopy(event)) if method in ('postEvent:atStart:', 'sendEvent:') else {}
-            if method == 'sendEvent:': arguments['selftestPumpDispatch'] = selftest
+            if method == 'postEvent:atStart:': arguments['atStart'] = True
+            if method == 'sendEvent:': arguments.update(event=copy.deepcopy(delivered), selftestPumpDispatch=selftest)
             if method in ('window.performKeyEquivalent:', 'menu.performKeyEquivalent:'):
                 arguments = dict(receiver='0x43' if method.startswith('window.') else '0x42', event=copy.deepcopy(equivalent))
             if method == 'windowNumberAtPoint:belowWindowWithWindowNumber:': arguments = dict(point=[1, 2], below=0)
@@ -53,15 +56,16 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
                     arguments['scope'].update(ownedEventWindow=True, eventWindowIdentity='0x40')
                     if method.startswith('window.'): arguments['scope']['targetWindowIdentity'] = '0x43'
             returned = [0, 2] if index == len(methods) else [1, 0] if method == 'selectedRange' else True
+            if method in ('postEvent:atStart:', 'sendEvent:'): returned = dict(eventIdentity=arguments['event']['identity'])
             if method == 'window.performKeyEquivalent:': returned = False
             if method == 'doCommandBySelector:': returned = dict(range=dict(selection=[0, 2]))
             rows.append(dict(kind='call', call=index, method=method, arguments=arguments,
                 context=copy.deepcopy(context), queryOrigin='ORIGINAL_EXECUTION',
                 stack=[dict(image='/tests', address='0x20', imageBase='0x10')]))
             if method == 'sendEvent:':
-                rows.append(dict(kind='receive', event=copy.deepcopy(event)))
+                rows.append(dict(kind='receive', event=copy.deepcopy(delivered)))
                 rows.append(dict(kind='call', call=80, method='keyDown:',
-                    arguments=dict(receiver='0x41', argument=copy.deepcopy(event)), context=copy.deepcopy(context),
+                    arguments=dict(receiver='0x41', argument=copy.deepcopy(delivered)), context=copy.deepcopy(context),
                     queryOrigin='ORIGINAL_EXECUTION', stack=[dict(image='/tests', address='0x20', imageBase='0x10')], fixtureUptime=2.132))
                 rows.append(dict(kind='return', call=80, method='keyDown:',
                     returned=dict(receiver='0x41', range=dict(selection=[1, 0])), context=copy.deepcopy(context),
@@ -97,8 +101,8 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
                 acceptsFirstResponder=True, makeFirstResponderReturn=True)
             rows.append(dict(kind='selftest', ready=True, readiness=copy.deepcopy(ready), readinessStart=1.0,
                 readinessDeadline=3.0, readinessEnd=1.1, readinessEvents=[], queueStart=2.0, queueDeadline=4.0, queueEnd=2.2,
-                dequeueMask=1 << 10, dequeueMode='kCFRunLoopDefaultMode', dequeue=True, queueResult='IDENTICAL_EVENT',
-                postedEvent=copy.deepcopy(event), createdEvent=copy.deepcopy(event), posted=True,
+                dequeueMask=1 << 10, dequeueMode='kCFRunLoopDefaultMode', dequeue=True, queueResult='CORRELATED_KEY_EVENT', queueCorrelationMatched=True,
+                postedEvent=copy.deepcopy(event), createdEvent=copy.deepcopy(event), dequeuedEvent=copy.deepcopy(delivered), posted=True,
                 timeUnits='seconds-since-startup', expirationUnits='seconds-since-Unix-epoch', cleanupComplete=True, selectionAfterCommand=[0, 2],
                 selftestOwner=dict(windowIdentity='0x40', textIdentity='0x41', **{'class': 'NGVTraceSelftestTextView'},
                     classImageIdentity=dict(path='/observer', device=1, inode=5)),
@@ -109,8 +113,8 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
                 emptyWindowIdentity='0x43', equivalentEvent=copy.deepcopy(equivalent), foreignEquivalentEvent=copy.deepcopy(foreign_equivalent),
                 phases=dict(normalAction=[2.30, 2.33], normalWindow=[2.365, 2.385], normalMenu=[2.385, 2.415],
                     nilAction=[3.19, 3.26], nilMenu=[3.29, 3.36], foreignAction=[4.09, 4.16], foreignMenu=[4.19, 4.255]),
-                dequeues=[dict(event=copy.deepcopy(event), dequeuedAt=2.1, expiration=100.0,
-                    readiness=copy.deepcopy(ready), requestedAt=2.05, sameIdentity=True, dispatched=True)], complete=True, queueIdentityUnchanged=True, inserted='xb',
+                dequeues=[dict(event=copy.deepcopy(delivered), dequeuedAt=2.1, expiration=100.0,
+                    readiness=copy.deepcopy(ready), requestedAt=2.05, sameIdentity=not distinct_queue, correlationMatched=True, dispatched=True)], complete=True, queueIdentityUnchanged=not distinct_queue, inserted='xb',
                 selectionAfterKey=[1, 0], selectionAfterAction=[0, 2], actionReturn=True,
                 windowEquivalentReturn=False, menuEquivalentReturn=True, selectionAfterMenu=[0, 2]))
         rows.append(dict(kind='finished', calls=counts, returns=copy.deepcopy(counts), errors=0,
@@ -173,8 +177,79 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
             with self.subTest(defect=defect), self.assertRaises(ValueError): self.trace_verify(changed, identities)
 
     def test_native_key_range_witness_requires_identical_event_and_actual_range_returns(self):
-        rows, identities = self.trace_rows(selftest=True)
+        rows, identities = self.trace_rows(selftest=True, distinct_queue=True)
         self.assertTrue(self.trace_verify(rows, identities, selftest=True)['selftest'])
+        self.assertFalse(next(row for row in rows if row['kind'] == 'selftest')['queueIdentityUnchanged'])
+        same_rows, same_identities = self.trace_rows(selftest=True, distinct_queue=False)
+        self.assertTrue(self.trace_verify(same_rows, same_identities, selftest=True)['selftest'])
+        self.assertTrue(next(row for row in same_rows if row['kind'] == 'selftest')['queueIdentityUnchanged'])
+        def delivered_snapshots(changed):
+            witness = next(row for row in changed if row['kind'] == 'selftest')
+            return [witness['dequeuedEvent'], witness['dequeues'][0]['event'],
+                next(row for row in changed if row['kind'] == 'call' and row.get('method') == 'sendEvent:')['arguments']['event'],
+                next(row for row in changed if row['kind'] == 'receive')['event'],
+                next(row for row in changed if row['kind'] == 'call' and row.get('method') == 'keyDown:')['arguments']['argument']]
+        for field, wrong in dict(type=11, timestamp=2.001, timestampUnits='nanoseconds-since-startup',
+                window=41, windowIdentity='0x50', flags=1, keyCode=8, characters='q', charactersIgnoringModifiers='q',
+                isARepeat=True, getterOrigin='ORIGINAL_EXECUTION').items():
+            changed = copy.deepcopy(rows)
+            for snapshot in delivered_snapshots(changed): snapshot[field] = wrong
+            with self.subTest(corrupt_complete_key_tuple=field), self.assertRaises(ValueError):
+                self.trace_verify(changed, identities, selftest=True)
+        for defect in ('missing-post', 'duplicate-post', 'missing-delivery', 'duplicate-delivery', 'duplicate-receive',
+                'false-queue-identity', 'false-dequeue-identity', 'numeric-correlation', 'numeric-entry-correlation',
+                'post-return-pointer', 'send-return-pointer', 'dequeue-pointer-substitution', 'post-atStart',
+                'unknown-key-field', 'missing-repeat'):
+            changed = copy.deepcopy(rows); witness = next(row for row in changed if row['kind'] == 'selftest')
+            post = next(row for row in changed if row['kind'] == 'call' and row.get('method') == 'postEvent:atStart:')
+            sent = next(row for row in changed if row['kind'] == 'call' and row.get('method') == 'sendEvent:')
+            finished = changed[-1]
+            if defect in ('missing-post', 'duplicate-post'):
+                returned = next(row for row in changed if row['kind'] == 'return' and row.get('call') == post['call'])
+                if defect == 'missing-post':
+                    changed.remove(post); changed.remove(returned)
+                    for key in ('calls', 'returns'): del finished[key]['postEvent:atStart:']
+                else:
+                    duplicate, duplicate_return = copy.deepcopy(post), copy.deepcopy(returned)
+                    duplicate.update(call=200, uptime=2.03); duplicate_return.update(call=200, uptime=2.04)
+                    index = changed.index(returned) + 1; changed[index:index] = [duplicate, duplicate_return]
+                    for key in ('calls', 'returns'): finished[key]['postEvent:atStart:'] += 1
+            elif defect in ('missing-delivery', 'duplicate-delivery'):
+                returned = next(row for row in changed if row['kind'] == 'return' and row.get('call') == sent['call'])
+                start, end = changed.index(sent), changed.index(returned) + 1
+                if defect == 'missing-delivery':
+                    del changed[start:end]
+                    for key in ('calls', 'returns'):
+                        del finished[key]['sendEvent:']; del finished[key]['keyDown:']
+                else:
+                    duplicate = copy.deepcopy(changed[start:end])
+                    for index, row in enumerate(duplicate):
+                        if row.get('call') == sent['call']: row['call'] = 200
+                        elif row.get('method') == 'keyDown:': row['call'] = 201
+                        row['uptime'] = 2.15 + index * 0.01
+                    changed[end:end] = duplicate
+                    for key in ('calls', 'returns'):
+                        finished[key]['sendEvent:'] += 1; finished[key]['keyDown:'] += 1
+            elif defect == 'duplicate-receive':
+                received = next(row for row in changed if row['kind'] == 'receive')
+                duplicate = copy.deepcopy(received); duplicate['uptime'] = 2.131
+                index = changed.index(received) + 1; changed[index:index] = [duplicate]
+            elif defect == 'false-queue-identity': witness['queueIdentityUnchanged'] = True
+            elif defect == 'false-dequeue-identity': witness['dequeues'][0]['sameIdentity'] = True
+            elif defect == 'numeric-correlation': witness['queueCorrelationMatched'] = 1
+            elif defect == 'numeric-entry-correlation': witness['dequeues'][0]['correlationMatched'] = 1
+            elif defect in ('post-return-pointer', 'send-return-pointer'):
+                call = post if defect == 'post-return-pointer' else sent
+                next(row for row in changed if row['kind'] == 'return' and row.get('call') == call['call'])['returned']['eventIdentity'] = '0xe'
+            elif defect == 'dequeue-pointer-substitution': witness['dequeues'][0]['event']['identity'] = '0xe'
+            elif defect == 'post-atStart': post['arguments']['atStart'] = False
+            elif defect == 'unknown-key-field':
+                for snapshot in delivered_snapshots(changed): snapshot['unknown'] = 1
+            elif defect == 'missing-repeat':
+                for snapshot in delivered_snapshots(changed): del snapshot['isARepeat']
+            for index, row in enumerate(changed, 1): row['sequence'] = row['wallTime'] = index
+            with self.subTest(corrupt_queue_transport=defect), self.assertRaises(ValueError):
+                self.trace_verify(changed, identities, selftest=True)
         witness = next(row for row in rows if row['kind'] == 'selftest')
         for phase, method, foreign in (
                 ('normalAction', 'sendAction:to:from:', False), ('normalWindow', 'window.performKeyEquivalent:', False),
@@ -214,7 +289,7 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
                 elif defect == 'ready-numeric': witness['ready'] = 1
                 elif defect == 'readiness-expired': witness['readinessEnd'] = 3.1
                 elif defect == 'dequeue-nil': witness['dequeues'][0]['event'] = None
-                elif defect == 'dequeue-foreign': witness['dequeues'][0]['event']['identity'] = '0xb'
+                elif defect == 'dequeue-foreign': witness['dequeues'][0]['event']['characters'] = 'q'
                 elif defect == 'dequeue-expired': witness['dequeues'][0]['dequeuedAt'] = 4.1; witness['queueEnd'] = 4.2
                 elif defect == 'cleanup-failed': witness['cleanupComplete'] = False
             elif defect == 'missing-receive': next(row for row in changed if row['kind'] == 'receive')['event']['identity'] = '0xb'
