@@ -779,7 +779,7 @@ static BOOL tracedAction(id receiver, SEL selector, SEL action, id target, id se
             observe = traceAdmitted(scope);
             if (observe) call = traceBegin(@"sendAction:to:from:", @{@"action": action ? NSStringFromSelector(action) : @"nil",
                 @"target": identity(target), @"sender": identity(sender), @"scope": scope}, window);
-            else refused = traceRefusal(@"sendAction:to:from:", @{@"target": identity(target), @"action": action ? NSStringFromSelector(action) : @"nil"}, scope);
+            else refused = traceRefusal(@"sendAction:to:from:", @{@"target": identity(target), @"sender": identity(sender), @"action": action ? NSStringFromSelector(action) : @"nil"}, scope);
         }
     } @catch (NSException *exception) { traceErrors++; observe = NO; }
     BOOL result = ((BOOL (*)(id, SEL, SEL, id, id))traceOriginal(receiver, selector))(receiver, selector, action, target, sender);
@@ -1034,6 +1034,7 @@ static void traceSelftest(void) {
     NSMutableArray *restoreWindows = [NSMutableArray array];
     for (NSWindow *existing in NSApp.windows) if (existing.isVisible) [restoreWindows addObject:existing];
     NSMutableDictionary *witness = [@{@"kind": @"selftest", @"complete": @NO, @"queryOrigin": @"SELFTEST_ONLY", @"timeUnits": @"seconds-since-startup", @"expirationUnits": @"seconds-since-Unix-epoch"} mutableCopy];
+    NSMutableDictionary *phases = [NSMutableDictionary new]; witness[@"phases"] = phases;
     @try {
         window = [[NSWindow alloc] initWithContentRect:NSMakeRect(30, 30, 160, 100) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
         window.releasedWhenClosed = NO;
@@ -1092,17 +1093,24 @@ static void traceSelftest(void) {
             (dequeues.count && dequeues.lastObject[@"event"] == NSNull.null ? @"DEQUEUE_NIL" :
             (dequeues.count >= 128 ? @"DEQUEUE_LIMIT" : @"DEADLINE_EXPIRED")));
         NSString *inserted = [text.string copy]; NSRange after = text.selectedRange;
-        BOOL action = [NSApp sendAction:@selector(selectAll:) to:text from:nil]; NSRange selected = text.selectedRange;
+        NSTimeInterval phaseStart = NSProcessInfo.processInfo.systemUptime;
+        BOOL action = [NSApp sendAction:@selector(selectAll:) to:text from:nil];
+        phases[@"normalAction"] = @[@(phaseStart), @(NSProcessInfo.processInfo.systemUptime)]; NSRange selected = text.selectedRange;
         text.selectedRange = NSMakeRange(0, 1); [text doCommandBySelector:@selector(selectAll:)]; NSRange commanded = text.selectedRange;
         NSEvent *equivalent = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:NSEventModifierFlagCommand timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:window.windowNumber context:nil characters:@"a" charactersIgnoringModifiers:@"a" isARepeat:NO keyCode:0];
         empty = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 40, 40) styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
         empty.releasedWhenClosed = NO; empty.contentView = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 40, 40)];
+        witness[@"emptyWindowIdentity"] = identity(empty); witness[@"equivalentEvent"] = traceEvent(equivalent);
+        phaseStart = NSProcessInfo.processInfo.systemUptime;
         BOOL windowEquivalent = [empty performKeyEquivalent:equivalent];
+        phases[@"normalWindow"] = @[@(phaseStart), @(NSProcessInfo.processInfo.systemUptime)];
         NSMenu *menu = [[NSMenu alloc] initWithTitle:@"Trace witness"];
         NSMenuItem *item = [menu addItemWithTitle:@"Select All" action:@selector(selectAll:) keyEquivalent:@"a"];
         item.target = text; item.keyEquivalentModifierMask = NSEventModifierFlagCommand;
         text.selectedRange = NSMakeRange(0, 1);
-        BOOL menuEquivalent = [menu performKeyEquivalent:equivalent]; NSRange menuSelection = text.selectedRange;
+        phaseStart = NSProcessInfo.processInfo.systemUptime;
+        BOOL menuEquivalent = [menu performKeyEquivalent:equivalent];
+        phases[@"normalMenu"] = @[@(phaseStart), @(NSProcessInfo.processInfo.systemUptime)]; NSRange menuSelection = text.selectedRange;
         for (NSWindow *existing in NSApp.windows) if (existing.isVisible) [existing orderOut:nil];
         NSTimeInterval nilStart = NSProcessInfo.processInfo.systemUptime, nilLimit = nilStart + 2;
         while (NSApp.keyWindow && NSProcessInfo.processInfo.systemUptime < nilLimit)
@@ -1111,20 +1119,29 @@ static void traceSelftest(void) {
         witness[@"nilKeyWindow"] = wireBool(nilKey); witness[@"nilKeyStart"] = @(nilStart);
         witness[@"nilKeyDeadline"] = @(nilLimit); witness[@"nilKeyEnd"] = @(NSProcessInfo.processInfo.systemUptime);
         text.selectedRange = NSMakeRange(0, 1);
-        BOOL nilAction = [NSApp sendAction:@selector(selectAll:) to:text from:nil]; NSRange nilActionSelection = text.selectedRange;
+        phaseStart = NSProcessInfo.processInfo.systemUptime;
+        BOOL nilAction = [NSApp sendAction:@selector(selectAll:) to:text from:nil];
+        phases[@"nilAction"] = @[@(phaseStart), @(NSProcessInfo.processInfo.systemUptime)]; NSRange nilActionSelection = text.selectedRange;
         text.selectedRange = NSMakeRange(0, 1);
-        BOOL nilMenu = [menu performKeyEquivalent:equivalent]; NSRange nilMenuSelection = text.selectedRange;
+        phaseStart = NSProcessInfo.processInfo.systemUptime;
+        BOOL nilMenu = [menu performKeyEquivalent:equivalent];
+        phases[@"nilMenu"] = @[@(phaseStart), @(NSProcessInfo.processInfo.systemUptime)]; NSRange nilMenuSelection = text.selectedRange;
         foreign = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 80, 40) styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
         foreign.releasedWhenClosed = NO;
         NSTextView *foreignText = [[NSTextView alloc] initWithFrame:NSMakeRect(0, 0, 80, 40)]; foreignText.string = @"ab"; foreign.contentView = foreignText;
         foreignText.selectedRange = NSMakeRange(0, 1);
-        BOOL foreignAction = [NSApp sendAction:@selector(selectAll:) to:foreignText from:nil]; NSRange foreignActionSelection = foreignText.selectedRange;
+        phaseStart = NSProcessInfo.processInfo.systemUptime;
+        BOOL foreignAction = [NSApp sendAction:@selector(selectAll:) to:foreignText from:nil];
+        phases[@"foreignAction"] = @[@(phaseStart), @(NSProcessInfo.processInfo.systemUptime)]; NSRange foreignActionSelection = foreignText.selectedRange;
         NSMenu *foreignMenu = [[NSMenu alloc] initWithTitle:@"Foreign witness"];
         NSMenuItem *foreignItem = [foreignMenu addItemWithTitle:@"Select All" action:@selector(selectAll:) keyEquivalent:@"a"];
         foreignItem.target = foreignText; foreignItem.keyEquivalentModifierMask = NSEventModifierFlagCommand;
         NSEvent *foreignEvent = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:NSEventModifierFlagCommand timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:foreign.windowNumber context:nil characters:@"a" charactersIgnoringModifiers:@"a" isARepeat:NO keyCode:0];
         foreignText.selectedRange = NSMakeRange(0, 1);
-        BOOL foreignMenuResult = [foreignMenu performKeyEquivalent:foreignEvent]; NSRange foreignMenuSelection = foreignText.selectedRange;
+        witness[@"foreignEquivalentEvent"] = traceEvent(foreignEvent);
+        phaseStart = NSProcessInfo.processInfo.systemUptime;
+        BOOL foreignMenuResult = [foreignMenu performKeyEquivalent:foreignEvent];
+        phases[@"foreignMenu"] = @[@(phaseStart), @(NSProcessInfo.processInfo.systemUptime)]; NSRange foreignMenuSelection = foreignText.selectedRange;
         witness[@"nilActionReturn"] = wireBool(nilAction); witness[@"nilMenuReturn"] = wireBool(nilMenu);
         witness[@"nilActionSelection"] = @[@(nilActionSelection.location), @(nilActionSelection.length)];
         witness[@"nilMenuSelection"] = @[@(nilMenuSelection.location), @(nilMenuSelection.length)];
