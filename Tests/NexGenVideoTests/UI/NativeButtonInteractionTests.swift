@@ -4,7 +4,7 @@ import Darwin
 import SwiftUI
 import Testing
 @testable import NexGenVideo
-
+import NexGenEngine
 @Suite("Native SwiftUI button discovery", .serialized)
 @MainActor
 struct NativeButtonInteractionTests {
@@ -910,25 +910,25 @@ struct NativePointerInteractionTests {
         let window: NSWindow
         let output: URL
         let driver: ProductionVisualSourcesDriver
-        private let activation: NSApplication.ActivationPolicy
+        private let application: NativePointerApplicationLease
         let context: NativePointerFixtureContext
-        init(_ name: String) throws {
+        init(_ name: String) async throws {
             try #require(ProcessInfo.processInfo.arguments.contains("--no-parallel"))
             let events = try #require(ProcessInfo.processInfo.environment["NGV_APPKIT_TEST_EVENTS"])
             let folder = URL(fileURLWithPath: events).deletingLastPathComponent()
                 .appendingPathComponent("native-pointer-" + name + "-" + UUID().uuidString, isDirectory: true)
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
-            let created = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 390, height: 640),
+            application = try await NativePointerApplicationLease.acquire(); let created = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 390, height: 640),
                                    styleMask: [.titled, .closable], backing: .buffered, defer: false)
             let captured = Capture()
             capture = captured
             window = created
             output = folder
-            activation = NSApp.activationPolicy()
-            driver = ProductionVisualSourcesDriver(window: created, output: folder, name: name); context = try NativePointerFixtureContext.owned(window: created, output: folder)
+
+            driver = ProductionVisualSourcesDriver(window: created, output: folder, name: name); context = try NativePointerFixtureContext.owned(window: created, application: application, output: folder)
             window.isReleasedWhenClosed = false
             window.contentView = Hosting(rootView: Controls(capture: capture))
-            NSApp.setActivationPolicy(.regular)
+
             window.center()
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
@@ -972,7 +972,7 @@ struct NativePointerInteractionTests {
         func close() {
             context.close(); window.contentView = nil
             window.close()
-            NSApp.setActivationPolicy(activation)
+            application.close(); context.applicationRestored()
         }
     }
 
@@ -1000,7 +1000,7 @@ struct NativePointerInteractionTests {
     }
 
     @Test func actualCompactButtonsUseOneTaggedSystemClickEach() async throws {
-        let legacy = try Fixture("legacy-observation")
+        let legacy = try await Fixture("legacy-observation")
         do {
             try await legacy.ready()
             try await legacy.moveAway()
@@ -1013,7 +1013,7 @@ struct NativePointerInteractionTests {
                 "observationOnly": true])
         } catch { legacy.close(); throw error }
         legacy.close()
-        let fixture = try Fixture("adjacent-buttons")
+        let fixture = try await Fixture("adjacent-buttons")
         defer { fixture.close() }
         try await fixture.ready()
         try await fixture.moveAway()
@@ -1033,7 +1033,7 @@ struct NativePointerInteractionTests {
     }
 
     @Test func unselectedAndDisabledTargetsKeepDifferentMeaning() async throws {
-        let fixture = try Fixture("selection-disabled")
+        let fixture = try await Fixture("selection-disabled")
         defer { fixture.close() }
         try await fixture.ready()
         try await fixture.driver.click("pointer.Unselected", in: fixture.window, enabled: false)
@@ -1056,7 +1056,7 @@ struct NativePointerInteractionTests {
     }
 
     @Test func mouseIgnoringWindowAllowsOneClickAndInputCatchingWindowRefusesIt() async throws {
-        let fixture = try Fixture("window-input-hit")
+        let fixture = try await Fixture("window-input-hit")
         defer { fixture.close() }
         try await fixture.ready()
         let overlay = NSWindow(contentRect: fixture.window.frame, styleMask: .borderless,
@@ -1084,7 +1084,7 @@ struct NativePointerInteractionTests {
         try delivered("Undo", in: fixture)
         let counter = DownCounter()
         defer { counter.close() }
-        overlay.ignoresMouseEvents = false
+        overlay.ignoresMouseEvents = false; overlay.order(.above, relativeTo: fixture.window.windowNumber)
         try await fixture.driver.wait("input-catching overlay presentation") { nativePointerOverlayPresented(overlay, above: fixture.window, at: point, receiver: overlay) }
         try #require(NSWindow.windowNumber(at: point, belowWindowWithWindowNumber: 0) == overlay.windowNumber)
         do {
@@ -1100,14 +1100,14 @@ struct NativePointerInteractionTests {
     }
 
     @Test func coveredForeignAndInvalidTargetsNeverPostDown() async throws {
-        let fixture = try Fixture("refused-targets")
+        let fixture = try await Fixture("refused-targets")
         defer { fixture.close() }
         try await fixture.ready()
         let counter = DownCounter()
         defer { counter.close() }
         let root = try #require(fixture.window.contentView)
         let probe = try #require(fixture.probe("Undo"))
-        let cover = NSView(frame: probe.convert(probe.bounds, to: root))
+        try nativePointerOwnedHostingAdmissionAssertions(window: fixture.window); let cover = NSView(frame: probe.convert(probe.bounds, to: root))
         root.addSubview(cover)
         do {
             try await fixture.driver.click("pointer.Undo", in: fixture.window)
@@ -1153,7 +1153,7 @@ struct NativePointerInteractionTests {
     }
 
     @Test func gestureSurfacesAndSmallCardMarkersRemainUsable() async throws {
-        let fixture = try Fixture("gesture-surfaces")
+        let fixture = try await Fixture("gesture-surfaces")
         defer { fixture.close() }
         try await fixture.ready()
         for title in ["Card", "Scrubber"] {
@@ -1166,7 +1166,7 @@ struct NativePointerInteractionTests {
     }
 
     @Test func actualNativeControlAndMenuTrackingKeepTheirCallbacks() async throws {
-        let fixture = try Fixture("native-tracking")
+        let fixture = try await Fixture("native-tracking")
         defer { fixture.close() }
         try await fixture.ready()
         try await fixture.moveAway()
@@ -1183,7 +1183,7 @@ struct NativePointerInteractionTests {
     }
 
     @Test func changedAccessibilityHitCannotBorrowTheOriginalGeometry() async throws {
-        let fixture = try Fixture("changed-accessibility-target")
+        let fixture = try await Fixture("changed-accessibility-target")
         defer { fixture.close() }
         try await fixture.ready()
         try await fixture.moveAway()
@@ -1254,7 +1254,7 @@ struct NativePointerInteractionTests {
     }
 
     @Test func aLostUpGetsOnlyOneReleaseCleanup() async throws {
-        let fixture = try Fixture("lost-up-cleanup")
+        let fixture = try await Fixture("lost-up-cleanup")
         defer { fixture.close() }
         try await fixture.ready()
         let token = try NativeAcceptancePointer.claim()
@@ -1303,7 +1303,7 @@ struct NativePointerInteractionTests {
     }
 
     @Test func ownedDownIsReleasedWhenTheTaskIsCancelled() async throws {
-        let fixture = try Fixture("cancelled-down")
+        let fixture = try await Fixture("cancelled-down")
         defer { fixture.close() }
         try await fixture.ready()
         let box = TaskBox(), number = fixture.window.windowNumber
@@ -1331,7 +1331,7 @@ struct NativePointerInteractionTests {
     }
 
     @Test func concurrentButtonPreparationCannotMoveTheOwnedPointer() async throws {
-        let fixture = try Fixture("concurrent-preparation")
+        let fixture = try await Fixture("concurrent-preparation")
         defer { fixture.close() }
         try await fixture.ready()
         try await fixture.moveAway()
@@ -1363,7 +1363,7 @@ struct NativePointerInteractionTests {
 
     @Test func viewportWidthPreservesFieldAndNativeWheelAcrossScrollerStyles() async throws {
         for style in [NSScroller.Style.legacy, .overlay] {
-            let fixture = try Fixture("viewport-" + String(style.rawValue))
+            let fixture = try await Fixture("viewport-" + String(style.rawValue))
             defer { fixture.close() }
             try await fixture.context.wait("native viewport fixture", driver: fixture.driver, clauses: ["active", "key", "field-probe"]) {
                 fixture.context.operand("active", NSApp.isActive) && fixture.context.operand("key", fixture.window.isKeyWindow) && fixture.context.operand("field-probe", fixture.probe("field") != nil)
@@ -1454,15 +1454,15 @@ struct NativePointerInteractionTests {
         let driver: ProductionVisualSourcesDriver
         let output: URL
         var input: [String: Any]?
-        private let activation: NSApplication.ActivationPolicy
+        private let application: NativePointerApplicationLease
         let context: NativePointerFixtureContext
-        init(_ name: String) throws {
+        init(_ name: String) async throws {
             try #require(ProcessInfo.processInfo.arguments.contains("--no-parallel"))
             let events = try #require(ProcessInfo.processInfo.environment["NGV_APPKIT_TEST_EVENTS"])
             let folder = URL(fileURLWithPath: events).deletingLastPathComponent()
                 .appendingPathComponent("native-pointer-canonical-" + name + "-" + UUID().uuidString, isDirectory: true)
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
-            let created = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 260, height: 140),
+            application = try await NativePointerApplicationLease.acquire(); let created = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 260, height: 140),
                                    styleMask: [.titled, .closable], backing: .buffered, defer: false)
             let root = NSView(frame: NSRect(x: 0, y: 0, width: 260, height: 140))
             let native = CanonicalNativeControl(frame: NSRect(x: 30, y: 40, width: 180, height: 36))
@@ -1475,9 +1475,9 @@ struct NativePointerInteractionTests {
             control = native
             leaf = canonical
             output = folder
-            driver = ProductionVisualSourcesDriver(window: created, output: folder, name: name); context = try NativePointerFixtureContext.owned(window: created, output: folder)
-            activation = NSApp.activationPolicy()
-            NSApp.setActivationPolicy(.regular)
+            driver = ProductionVisualSourcesDriver(window: created, output: folder, name: name); context = try NativePointerFixtureContext.owned(window: created, application: application, output: folder)
+
+
             window.center()
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
@@ -1518,12 +1518,12 @@ struct NativePointerInteractionTests {
             control.canonicalHit = nil
             window.contentView = nil
             window.close()
-            NSApp.setActivationPolicy(activation)
+            application.close(); context.applicationRestored()
         }
     }
 
     @Test func canonicalNativeAccessibilityHitKeepsSystemInputAndRealFieldFocus() async throws {
-        let fixture = try CanonicalNativeFixture("input")
+        let fixture = try await CanonicalNativeFixture("input")
         defer { fixture.close() }
         try await fixture.ready()
         #expect(fixture.control.accessibilityRole()?.rawValue == kAXUnknownRole)
@@ -1567,7 +1567,7 @@ struct NativePointerInteractionTests {
         #expect(input["buttonDownObserved"] as? Bool == true)
         #expect(input["buttonReleased"] as? Bool == true)
         try fixture.record("canonical-input", input)
-        let real = try Fixture("canonical-real-field")
+        let real = try await Fixture("canonical-real-field")
         defer { real.close() }
         try await real.ready()
         let field = try real.input("field")
@@ -1577,7 +1577,7 @@ struct NativePointerInteractionTests {
     }
 
     @Test func canonicalNativeAccessibilityFailuresNeverPostDown() async throws {
-        let fixture = try CanonicalNativeFixture("refused")
+        let fixture = try await CanonicalNativeFixture("refused")
         defer { fixture.close() }
         try await fixture.ready()
         let counter = DownCounter()
@@ -1673,7 +1673,7 @@ struct NativePointerInteractionTests {
     }
 
     @Test func canonicalNativeAccessibilityIdentityAndGeometryAreRevalidatedBeforeDown() async throws {
-        let fixture = try CanonicalNativeFixture("revalidation")
+        let fixture = try await CanonicalNativeFixture("revalidation")
         defer { fixture.close() }
         try await fixture.ready()
         let counter = DownCounter()
@@ -1859,6 +1859,7 @@ struct NativePointerInteractionTests {
     private let output: URL
     private let previousMenu: NSMenu?
     private let menu: NSMenu
+    private let application: NativePointerApplicationLease
     private var monitor: Any?
     private var closed = false
     private var keyEvents: [[String: Any]] = []
@@ -1869,19 +1870,16 @@ struct NativePointerInteractionTests {
     private var clauses: [[String: Any]] = []
     private var evaluations = 0
 
-    static func owned(window: NSWindow, output: URL) throws -> NativePointerFixtureContext {
+    static func owned(window: NSWindow, application: NativePointerApplicationLease, output: URL) throws -> NativePointerFixtureContext {
         window.isReleasedWhenClosed = false
-        do { return try NativePointerFixtureContext(window: window, output: output) }
-        catch { window.contentView = nil; window.close(); throw error }
+        do { return try NativePointerFixtureContext(window: window, application: application, output: output) }
+        catch { window.contentView = nil; window.close(); application.close(); throw error }
     }
 
-    private init(window: NSWindow, output: URL) throws {
+    private init(window: NSWindow, application: NativePointerApplicationLease, output: URL) throws {
         self.window = window; self.output = output.appendingPathComponent("fixture-context.json")
-        previousMenu = NSApp.mainMenu
-        let installed = NSMenu(), application = NSMenuItem()
-        application.submenu = NSMenu(title: "NexGenVideo")
-        installed.addItem(application); installed.addItem(MainMenuBuilder.editMenu()); menu = installed
-        NSApp.mainMenu = installed
+        previousMenu = application.previousMenu
+        menu = application.menu; self.application = application
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self] event in
             let type = event.type.rawValue, number = event.windowNumber, code = event.keyCode
             let flags = event.modifierFlags.rawValue, timestamp = event.timestamp
@@ -1897,7 +1895,7 @@ struct NativePointerInteractionTests {
             try persist("menu-installed")
         } catch {
             if let monitor { NSEvent.removeMonitor(monitor) }; monitor = nil
-            if NSApp.mainMenu === menu { NSApp.mainMenu = previousMenu }
+
             closed = true
             throw error
         }
@@ -2021,7 +2019,9 @@ struct NativePointerInteractionTests {
         let value: [String: Any] = ["schema": "native-pointer-fixture-context/v1", "snapshots": snapshots,
             "keyEvents": keyEvents, "droppedKeyEvents": droppedKeyEvents, "droppedSnapshots": droppedSnapshots,
             "keyMonitorReturnsOriginalEvent": true, "boundedDiagnosticQueriesAreAdditional": true,
-            "closed": closed, "menuRestored": closed && NSApp.mainMenu === previousMenu]
+            "closed": closed, "menuRestored": closed && NSApp.mainMenu === previousMenu,
+            "policyRestored": closed && NSApp.activationPolicy() == application.previousPolicy,
+            "originalPolicy": application.previousPolicy.rawValue]
         try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]).write(to: output, options: .atomic)
     }
 
@@ -2030,13 +2030,118 @@ struct NativePointerInteractionTests {
         catch { Issue.record("Native fixture evidence failed: \(error.localizedDescription)") }
     }
 
+    func applicationRestored() {
+        do { try persist("application-restored-after-window-close") } catch { Issue.record("Native fixture evidence failed: \(error.localizedDescription)") }
+    }
+
     func close() {
         guard !closed else { return }
         do { try persist("cleanup-before-window-close") } catch { Issue.record("Native fixture evidence failed: \(error.localizedDescription)") }
         if let monitor { NSEvent.removeMonitor(monitor) }; monitor = nil
         let owned = NSApp.mainMenu === menu
-        if owned { NSApp.mainMenu = previousMenu }; closed = true
+        closed = true
         if !owned { Issue.record("The native fixture lost its owned main-menu context before cleanup.") }
-        do { try persist("menu-restored") } catch { Issue.record("Native fixture evidence failed: \(error.localizedDescription)") }
+        do { try persist("menu-released-before-window-close") } catch { Issue.record("Native fixture evidence failed: \(error.localizedDescription)") }
     }
+}
+
+@MainActor private final class NativePointerApplicationLease {
+    private static var current: NativePointerApplicationLease?
+    let previousMenu: NSMenu?
+    let previousPolicy: NSApplication.ActivationPolicy
+    let menu: NSMenu
+    private let previousOwner: NativePointerApplicationLease?
+    private var closed = false
+
+    static func acquire() async throws -> NativePointerApplicationLease {
+        let owner = current
+        let deadline = ProcessInfo.processInfo.systemUptime + 10
+        while NSApp.activationPolicy() == .prohibited && NSApp.isActive {
+            guard ProcessInfo.processInfo.systemUptime < deadline else { throw GateBlocked("The previous native fixture has not finished deactivating.") }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        guard current === owner else { throw GateBlocked("The native fixture application owner changed during preparation.") }
+        let policy = NSApp.activationPolicy(), previousMenu = NSApp.mainMenu
+        guard owner == nil || (NSApp.mainMenu === owner?.menu && policy == .regular) else { throw GateBlocked("The outer native fixture no longer owns its application context.") }
+        if policy != .regular {
+            guard NSApp.setActivationPolicy(.regular) else { throw GateBlocked("The native fixture could not acquire regular application policy.") }
+        }
+        let transitionMenu = NSApp.mainMenu
+        do {
+            while NSApp.activationPolicy() != .regular {
+                guard ProcessInfo.processInfo.systemUptime < deadline else { throw GateBlocked("Regular native fixture policy did not become ready.") }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            guard current === owner, NSApp.mainMenu === transitionMenu, NSApp.activationPolicy() == .regular else { throw GateBlocked("The native fixture application context changed before menu construction.") }
+            let lease = NativePointerApplicationLease(menu: previousMenu, policy: policy, owner: owner)
+            current = lease
+            return lease
+        } catch {
+            if current === owner && NSApp.mainMenu === transitionMenu && NSApp.activationPolicy() == .regular {
+                if !NSApp.setActivationPolicy(policy) { Issue.record("The native fixture could not restore application policy after preparation failed.") }
+                NSApp.mainMenu = previousMenu
+            }
+            throw error
+        }
+    }
+
+    private init(menu previous: NSMenu?, policy: NSApplication.ActivationPolicy, owner: NativePointerApplicationLease?) {
+        previousMenu = previous; previousPolicy = policy; previousOwner = owner
+        let installed = NSMenu(), application = NSMenuItem()
+        application.submenu = NSMenu(title: "NexGenVideo")
+        installed.addItem(application); installed.addItem(MainMenuBuilder.editMenu()); menu = installed
+        NSApp.mainMenu = installed
+    }
+
+    func close() {
+        guard !closed else { return }; closed = true
+        guard Self.current === self, NSApp.mainMenu === menu, NSApp.activationPolicy() == .regular else {
+            Issue.record("The native fixture lost application policy or menu ownership before cleanup."); return
+        }
+        if previousPolicy != .regular && !NSApp.setActivationPolicy(previousPolicy) {
+            Issue.record("The native fixture could not restore its original application policy."); return
+        }
+        NSApp.mainMenu = previousMenu
+        Self.current = previousOwner
+        if NSApp.activationPolicy() != previousPolicy || NSApp.mainMenu !== previousMenu {
+            Issue.record("The native fixture did not restore its exact original application policy and menu.")
+        }
+    }
+}
+
+@MainActor private func nativePointerOwnedHostingAdmissionAssertions(window: NSWindow) throws {
+    let root = try #require(window.contentView)
+    let wrapper = NSView(frame: NSRect(x: 4, y: 4, width: 80, height: 60))
+    let marker = NSView(frame: NSRect(x: 10, y: 10, width: 20, height: 20))
+    wrapper.addSubview(marker); root.addSubview(wrapper)
+    defer { wrapper.removeFromSuperview() }
+    let point = marker.convert(NSPoint(x: marker.bounds.midX, y: marker.bounds.midY), to: nil)
+    func owner(_ hit: NSView, original: NSView? = nil, at location: NSPoint? = nil) -> NSView? {
+        NativeAcceptancePointer.ownedHostingView(for: hit, probe: marker, root: original ?? root, window: window, point: location ?? point)
+    }
+    #expect(owner(wrapper) === root)
+    let sibling = NSView(frame: wrapper.frame); root.addSubview(sibling)
+    defer { sibling.removeFromSuperview() }
+    #expect(owner(sibling) == nil)
+    #expect(owner(wrapper, original: sibling) == nil)
+    #expect(owner(wrapper, at: NSPoint(x: -10000, y: -10000)) == nil)
+    wrapper.isHidden = true; #expect(owner(wrapper) == nil); wrapper.isHidden = false
+    let frame = marker.frame
+    marker.setFrameOrigin(NSPoint(x: -1, y: 10)); #expect(owner(wrapper) == nil); marker.frame = frame
+    let button = NSButton(frame: wrapper.bounds); wrapper.addSubview(button)
+    button.addSubview(marker); marker.frame = frame
+    #expect(owner(button) == nil)
+    let child = NSView(frame: button.bounds); button.addSubview(child)
+    marker.removeFromSuperview(); child.addSubview(marker); marker.frame = frame
+    #expect(owner(child) == nil)
+    button.isEnabled = false; #expect(owner(child) == nil)
+    marker.removeFromSuperview(); wrapper.addSubview(marker); marker.frame = frame
+    button.removeFromSuperview()
+    let text = NSTextView(frame: wrapper.bounds), textChild = NSView(frame: wrapper.bounds)
+    wrapper.addSubview(text); text.addSubview(textChild)
+    marker.removeFromSuperview(); textChild.addSubview(marker); marker.frame = frame
+    #expect(owner(textChild) == nil)
+    marker.removeFromSuperview(); wrapper.addSubview(marker); marker.frame = frame
+    text.removeFromSuperview()
+    marker.removeFromSuperview(); #expect(owner(wrapper) == nil)
 }
