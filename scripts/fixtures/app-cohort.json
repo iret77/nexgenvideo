@@ -1,7 +1,7 @@
 {
-  "appSourceSHA": "a2c12af56364670cf4e103ce232695cdd582c806",
-  "appTreeSHA": "5967bc7d32c378d25ecb18e4f106eaac14ea16f0",
-  "build": "113",
+  "appSourceSHA": "5af4d63395911913155d5a4a594812695bb48c9c",
+  "appTreeSHA": "855cbb1b56e8c79592bedd4d1f7569be116819db",
+  "build": "114",
   "ciPaths": [
     ".github/actionlint.yaml",
     ".github/workflows/bpy-runtime-acceptance.yml",
@@ -109,7 +109,7 @@
   },
   "criteria": {
     "path": "scripts/fixtures/app-cohort-native-inventory.json",
-    "sha256": "63767544b04c88183d50b9f4afd41056ccccfa122069f11de2a9371d9f49c8b7"
+    "sha256": "97b6385752cc440125ebeb424589516e53c3e203cfdbe99bff8f5d2f25d46204"
   },
   "nativeSourceObjects": {
     "Engine": "29cfed623d13e6d84d5822a30b98e088fc123c3f",
@@ -117,8 +117,8 @@
     "Package.resolved": "530cdaed0a29a65181353d86d05cf9dc04890cc2",
     "Package.swift": "37f605bfb8cdccc48821b39484c819ba3e5eff43",
     "Runtime": "910b87b08a3a8c976e0f2502580c843b0df74154",
-    "Sources": "31bf00cb7c15023366a407a92d7eb6764ee2e3d0",
-    "Tests": "6d8c48a9b6298dafd8221a4f98fda2fcee8da6e3",
+    "Sources": "90825352e1fc17e4d5a8b89173d106ec6144ad9c",
+    "Tests": "fbf959265d1d206d16479d893b24e3ad980a29b2",
     "Vendor": "51e93c100e00dcd196edac0e70e1af921d52055a",
     "plugins": "b75e017d3145010368ae417bc410574f3f0300c1"
   },
@@ -499,7 +499,7 @@
       "Sources/NexGenVideo/App/ProductionV2RecordingRuntime.swift": "d0fce19728d59c065458760cc41ae08a4ed41d76",
       "Sources/NexGenVideo/App/ProductionV2TakeAcceptance.swift": "716f776bc16fb895e193feeb9cd6443d6ed3ee80",
       "Sources/NexGenVideo/App/ProductionVisualSourcesAcceptance.swift": "c196d62bded392962d59704c07915f63dab18287",
-      "Sources/NexGenVideo/App/ProductionVisualSourcesDriver.swift": "dd8c15ba3d3a22068d768d987adde2f02c491e23",
+      "Sources/NexGenVideo/App/ProductionVisualSourcesDriver.swift": "68da64c34ba830a6376fce96f59162db44a27170",
       "Sources/NexGenVideo/App/ProjectOpenAdmission.swift": "766682fc10359a912282809a318135fa6020a774",
       "Sources/NexGenVideo/App/SettingsOwnerAcceptance.swift": "f61357e970c9c9686bccb4331c8758820987b993",
       "Sources/NexGenVideo/App/SmartSearchOwnerAcceptance.swift": "0a11a0dd34bc8bb9a7e8daf240a37811a69cbce2",
@@ -1428,7 +1428,7 @@
       "Sources/NexGenVideo/App/ProductionV2RecordingRuntime.swift": "d0fce19728d59c065458760cc41ae08a4ed41d76",
       "Sources/NexGenVideo/App/ProductionV2TakeAcceptance.swift": "716f776bc16fb895e193feeb9cd6443d6ed3ee80",
       "Sources/NexGenVideo/App/ProductionVisualSourcesAcceptance.swift": "c196d62bded392962d59704c07915f63dab18287",
-      "Sources/NexGenVideo/App/ProductionVisualSourcesDriver.swift": "dd8c15ba3d3a22068d768d987adde2f02c491e23",
+      "Sources/NexGenVideo/App/ProductionVisualSourcesDriver.swift": "68da64c34ba830a6376fce96f59162db44a27170",
       "Sources/NexGenVideo/App/ProjectOpenAdmission.swift": "766682fc10359a912282809a318135fa6020a774",
       "Sources/NexGenVideo/App/SettingsOwnerAcceptance.swift": "f61357e970c9c9686bccb4331c8758820987b993",
       "Sources/NexGenVideo/App/SmartSearchOwnerAcceptance.swift": "0a11a0dd34bc8bb9a7e8daf240a37811a69cbce2",
@@ -2357,7 +2357,7 @@
       "Sources/NexGenVideo/App/ProductionV2RecordingRuntime.swift": "d0fce19728d59c065458760cc41ae08a4ed41d76",
       "Sources/NexGenVideo/App/ProductionV2TakeAcceptance.swift": "716f776bc16fb895e193feeb9cd6443d6ed3ee80",
       "Sources/NexGenVideo/App/ProductionVisualSourcesAcceptance.swift": "c196d62bded392962d59704c07915f63dab18287",
-      "Sources/NexGenVideo/App/ProductionVisualSourcesDriver.swift": "dd8c15ba3d3a22068d768d987adde2f02c491e23",
+      "Sources/NexGenVideo/App/ProductionVisualSourcesDriver.swift": "68da64c34ba830a6376fce96f59162db44a27170",
       "Sources/NexGenVideo/App/ProjectOpenAdmission.swift": "766682fc10359a912282809a318135fa6020a774",
       "Sources/NexGenVideo/App/SettingsOwnerAcceptance.swift": "f61357e970c9c9686bccb4331c8758820987b993",
       "Sources/NexGenVideo/App/SmartSearchOwnerAcceptance.swift": "0a11a0dd34bc8bb9a7e8daf240a37811a69cbce2",
@@ -2931,7 +2931,7 @@
       "Sources/NexGenVideo/Utilities/SourceTiming.swift": "15247fa32564207dee3a5a01065d5a4fc8389f9f",
       "Sources/NexGenVideo/Utilities/TimeFormatting.swift": "4c10a4554812031a08ecbe3e10d39cce76e1719e",
       "Tests/AppKitTestHostSupport": "180f486523e826b8b462011d42bf758fdc4e1d6f",
-      "Tests/NexGenVideoTests": "258cfa99c3db5633578eec59dbf5d271ac6e9922"
+      "Tests/NexGenVideoTests": "122d3d8281f8c2ac76add540c3d31c8026bf09b8"
     }
   },
   "schema": "native-app-cohort/v2",
