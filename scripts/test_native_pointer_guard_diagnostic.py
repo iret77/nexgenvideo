@@ -129,6 +129,9 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             diagnostic.verify_snapshots(b''.join((json.dumps(row) + '\n').encode() for row in partial), process,
                 Path('/inspector'), Path('/tests'), expected_identity=self.file_identity, optional_probe=True)
+        with self.assertRaises(ValueError):
+            diagnostic.verify_snapshots(b''.join((json.dumps(row) + '\n').encode() for row in partial), process,
+                Path('/inspector'), Path('/tests'), expected_identity=self.file_identity, no_probe=True)
         full = b''.join((json.dumps(row) + '\n').encode() for row in self.rows())
         self.assertEqual(diagnostic.verify_snapshots(full, process, Path('/inspector'), Path('/tests'),
             expected_identity=self.file_identity, optional_probe=True)['samples'], 1)
@@ -322,6 +325,8 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
             return [rows[0], rows[1], eligibility, dict(rows[-1], samples=0, rectSamples=0,
                 originalCalls=0, transparentReturns=0)]
         self.assertTrue(self.verify(duplicate(self.rows()), negative='duplicate-probe')['duplicateProbeRefused'])
+        unexercised = duplicate(self.rows()); unexercised[-1].update(rectCalls=0, rectReturns=0)
+        with self.assertRaises(ValueError): self.verify(unexercised, negative='duplicate-probe')
         for key in ('runtimeLineageMatches', 'effectiveAXMatches', 'declaredOwnAX'):
             for value in (None, False, 1):
                 rows = self.rows()

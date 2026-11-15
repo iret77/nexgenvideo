@@ -430,10 +430,11 @@ def verify_snapshots(raw, process, inspector, image, expected_identity=None, neg
         'Inspector counters differ from complete records')
     if negative:
         require(not groups['hook-ready'] and not geometry and not samples
-            and finished['originalCalls'] == finished['transparentReturns'] == finished['rectCalls'] == finished['rectReturns'] == 0,
+            and finished['originalCalls'] == finished['transparentReturns'] == 0,
             'Refused selftest installed a root hook or observed a foreign scope')
         if negative == 'duplicate-probe':
             require(len(groups['probe-hook-ready']) == 1 and groups['probe-hook-ready'][0].get('installed') is True
+                and finished['rectCalls'] == finished['rectReturns'] >= 1
                 and groups['probe-hook-ready'][0].get('classImageIdentity') == expected_identity
                 and groups['eligibility'] and any(row.get('uniqueProbeMatches') is False and row.get('eligible') is False
                     and row.get('classImageMatches') is True and row.get('ownAXImageMatches') is True
@@ -448,7 +449,7 @@ def verify_snapshots(raw, process, inspector, image, expected_identity=None, neg
         return {'negativeImageRefused': True, 'records': len(rows), 'diagnosticOnly': True}
     if no_probe:
         require(not groups['hook-ready'] and not geometry and not samples
-            and finished['originalCalls'] == finished['transparentReturns'] == 0,
+            and finished['originalCalls'] == finished['transparentReturns'] == finished['rectCalls'] == finished['rectReturns'] == 0,
             'Canonical-only selection unexpectedly used a hosting probe')
         require(len(groups['probe-hook-ready']) <= 1 and all(row.get('installed') is True
             and row.get('classImageIdentity') == row.get('expectedImageIdentity') == expected_identity
