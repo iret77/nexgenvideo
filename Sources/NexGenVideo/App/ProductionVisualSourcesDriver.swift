@@ -1001,6 +1001,44 @@ enum NativeAcceptancePointer {
         let kind: String
     }
 
+    private static func accessibilityControl(from leaf: any NSAccessibilityProtocol,
+                                             window: NSWindow, point: NSPoint) throws -> (AnyObject, NSAccessibility.Role, NSRect)? {
+        var element: (any NSAccessibilityProtocol)? = leaf
+        var control: (AnyObject, NSAccessibility.Role, NSRect)?
+        var visited = Set<ObjectIdentifier>()
+        var originalWindow = false
+        let roles: Set<String> = [kAXButtonRole, kAXCheckBoxRole, kAXRadioButtonRole, kAXTextFieldRole,
+            kAXTextAreaRole, kAXPopUpButtonRole, kAXMenuButtonRole, kAXMenuItemRole, kAXComboBoxRole,
+            kAXSliderRole, kAXDisclosureTriangleRole, kAXIncrementorRole, kAXColorWellRole]
+        let surfaces: Set<String> = [kAXGroupRole, kAXStaticTextRole, kAXImageRole, kAXScrollAreaRole,
+            kAXSplitGroupRole, kAXListRole, kAXRowRole, kAXCellRole, kAXTableRole, kAXColumnRole,
+            kAXOutlineRole, kAXToolbarRole, kAXHeadingRole, kAXTabGroupRole, kAXRadioGroupRole,
+            kAXLayoutAreaRole, kAXLayoutItemRole, kAXValueIndicatorRole, kAXSplitterRole]
+        for _ in 0..<32 {
+            guard let current = element, visited.insert(ObjectIdentifier(current)).inserted else { break }
+            if let actualWindow = current as? NSWindow {
+                originalWindow = actualWindow === window
+                break
+            }
+            guard let currentRole = current.accessibilityRole(),
+                  roles.contains(currentRole.rawValue) || surfaces.contains(currentRole.rawValue) else {
+                throw GateBlocked("The pointer accessibility ancestry has an unknown role.")
+            }
+            if roles.contains(currentRole.rawValue) {
+                let bounds = current.accessibilityFrame()
+                guard [bounds.minX, bounds.minY, bounds.width, bounds.height].allSatisfy(\.isFinite),
+                      bounds.width > 0, bounds.height > 0, bounds.contains(point),
+                      current.isAccessibilityEnabled() else {
+                    throw GateBlocked("The actual pointer control is disabled or has changed geometry.")
+                }
+                if control == nil { control = (current, currentRole, bounds) }
+            }
+            element = current.accessibilityParent() as? any NSAccessibilityProtocol
+        }
+        guard originalWindow else { throw GateBlocked("The pointer accessibility ancestry does not prove the original window.") }
+        return control
+    }
+
     private static func target(_ probe: NSView, window: NSWindow, fraction: NSPoint) throws -> Target {
         guard NSApp.isActive, window.isVisible, window.isKeyWindow, !window.ignoresMouseEvents,
               let root = window.contentView, probe.window === window,
@@ -1052,39 +1090,7 @@ enum NativeAcceptancePointer {
             guard let leaf = surface.accessibilityHitTest(appKitPoint) as? any NSAccessibilityProtocol else {
                 throw GateBlocked("The SwiftUI pointer target has no known accessibility hit.")
             }
-            var element: (any NSAccessibilityProtocol)? = leaf
-            var control: (AnyObject, NSAccessibility.Role, NSRect)?
-            var visited = Set<ObjectIdentifier>()
-            var originalWindow = false
-            let roles: Set<String> = [kAXButtonRole, kAXCheckBoxRole, kAXRadioButtonRole, kAXTextFieldRole,
-                kAXTextAreaRole, kAXPopUpButtonRole, kAXMenuButtonRole, kAXMenuItemRole, kAXComboBoxRole,
-                kAXSliderRole, kAXDisclosureTriangleRole, kAXIncrementorRole, kAXColorWellRole]
-            let surfaces: Set<String> = [kAXGroupRole, kAXStaticTextRole, kAXImageRole, kAXScrollAreaRole,
-                kAXSplitGroupRole, kAXListRole, kAXRowRole, kAXCellRole, kAXTableRole, kAXColumnRole,
-                kAXOutlineRole, kAXToolbarRole, kAXHeadingRole, kAXTabGroupRole, kAXRadioGroupRole,
-                kAXLayoutAreaRole, kAXLayoutItemRole, kAXValueIndicatorRole, kAXSplitterRole]
-            for _ in 0..<32 {
-                guard let current = element, visited.insert(ObjectIdentifier(current)).inserted else { break }
-                if let actualWindow = current as? NSWindow {
-                    originalWindow = actualWindow === window
-                    break
-                }
-                guard let currentRole = current.accessibilityRole(),
-                      roles.contains(currentRole.rawValue) || surfaces.contains(currentRole.rawValue) else {
-                    throw GateBlocked("The pointer accessibility ancestry has an unknown role.")
-                }
-                if roles.contains(currentRole.rawValue) {
-                    let bounds = current.accessibilityFrame()
-                    guard [bounds.minX, bounds.minY, bounds.width, bounds.height].allSatisfy(\.isFinite),
-                          bounds.width > 0, bounds.height > 0, bounds.contains(appKitPoint),
-                          current.isAccessibilityEnabled() else {
-                        throw GateBlocked("The actual pointer control is disabled or has changed geometry.")
-                    }
-                    if control == nil { control = (current, currentRole, bounds) }
-                }
-                element = current.accessibilityParent() as? any NSAccessibilityProtocol
-            }
-            guard originalWindow else { throw GateBlocked("The pointer accessibility ancestry does not prove the original window.") }
+            let control = try accessibilityControl(from: leaf, window: window, point: appKitPoint)
             if let control {
                 (accessible, role, accessibleFrame) = control
                 kind = "accessibility-control"
@@ -1105,13 +1111,27 @@ enum NativeAcceptancePointer {
                   !hit.isHiddenOrHasHiddenAncestor, !hit.visibleRect.isEmpty,
                   frame.insetBy(dx: -1, dy: -1).contains(bounds),
                   hit.visibleRect.contains(hit.convert(point, from: nil)),
-                  hit.isAccessibilityEnabled(), let nativeRole = hit.accessibilityRole(),
-                  !nativeRole.rawValue.isEmpty, nativeRole.rawValue != kAXUnknownRole else {
+                  hit.isAccessibilityEnabled() else {
                 throw GateBlocked("A disabled or different native view covers the pointer control.")
             }
-            accessible = hit
+            guard let leaf = hit.accessibilityHitTest(appKitPoint) as? any NSAccessibilityProtocol,
+                  let control = try accessibilityControl(from: leaf, window: window, point: appKitPoint) else {
+                throw GateBlocked("The native pointer target has no enabled canonical accessibility control.")
+            }
+            let (nativeControl, nativeRole, nativeFrame) = control
+            let probeScreen = window.convertToScreen(probe.convert(probe.bounds, to: nil))
+            let hitScreen = window.convertToScreen(hit.convert(hit.bounds, to: nil))
+            guard [nativeFrame.minX, nativeFrame.minY, nativeFrame.width, nativeFrame.height,
+                   probeScreen.minX, probeScreen.minY, probeScreen.width, probeScreen.height,
+                   hitScreen.minX, hitScreen.minY, hitScreen.width, hitScreen.height].allSatisfy(\.isFinite),
+                  nativeFrame.width > 0, nativeFrame.height > 0, nativeFrame.contains(appKitPoint),
+                  probeScreen.insetBy(dx: -1, dy: -1).contains(nativeFrame),
+                  hitScreen.insetBy(dx: -1, dy: -1).contains(nativeFrame) else {
+                throw GateBlocked("The canonical native pointer control has changed geometry.")
+            }
+            accessible = nativeControl
             role = nativeRole
-            accessibleFrame = hit.accessibilityFrame()
+            accessibleFrame = nativeFrame
             kind = "native-control"
         }
         return Target(window: window, root: root, probe: probe, hit: hit, windowFrame: window.frame,
