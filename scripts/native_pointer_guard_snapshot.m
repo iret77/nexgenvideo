@@ -537,7 +537,7 @@ static NSString *expectedHost;
 static BOOL traceEnabled, selftestMode, selftestRunning, selftestDone, canonicalImageIsHost;
 static NSWindow *selftestWindow;
 static NSTextView *selftestText;
-static _Thread_local NSEvent *selftestPumpEvent;
+static _Thread_local const void *selftestPumpEventIdentity;
 static NSUInteger selftestRefusalSequence;
 static _Thread_local unsigned traceDepth;
 static NSUInteger traceSequence, traceCallSequence, traceContextSequence, traceBytes, traceErrors;
@@ -719,7 +719,7 @@ static void tracedPost(id receiver, SEL selector, NSEvent *event, BOOL atStart) 
 static void tracedSend(id receiver, SEL selector, NSEvent *event) {
     BOOL observe = NO; NSUInteger call = 0;
     @try {
-        BOOL pump = selftestMode && selftestRunning && event && event == selftestPumpEvent;
+        BOOL pump = selftestMode && selftestRunning && event && (__bridge const void *)event == selftestPumpEventIdentity;
         observe = !traceDepth && !atomic_load(&stopping) && (pump || traceWindow(event.window));
         if (observe) traceFieldHooks(event.window.firstResponder);
         if (observe) call = traceBegin(@"sendEvent:", @{@"event": traceEvent(event), @"selftestPumpDispatch": wireBool(pump)}, event.window);
@@ -1006,8 +1006,10 @@ __attribute__((used, section("__DATA,__interpose"))) static const struct { const
 @implementation NGVTraceSelftestTextView @end
 
 static void tracePumpSend(NSEvent *event) {
-    NSEvent *previous = selftestPumpEvent; selftestPumpEvent = event;
-    @try { [NSApp sendEvent:event]; } @finally { selftestPumpEvent = previous; }
+    const void *previous = selftestPumpEventIdentity;
+    NSEvent * __attribute__((objc_precise_lifetime)) ownedEvent = event;
+    selftestPumpEventIdentity = (__bridge const void *)ownedEvent;
+    @try { [NSApp sendEvent:ownedEvent]; } @finally { selftestPumpEventIdentity = previous; }
 }
 
 static NSDictionary *traceReadiness(NSWindow *window, NSTextView *text, BOOL accepted) {
