@@ -918,14 +918,14 @@ struct NativePointerInteractionTests {
             let folder = URL(fileURLWithPath: events).deletingLastPathComponent()
                 .appendingPathComponent("native-pointer-" + name + "-" + UUID().uuidString, isDirectory: true)
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
-            application = try await NativePointerApplicationLease.acquire(); let created = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 390, height: 640),
+            let acquiredApplication = try await NativePointerApplicationLease.acquire(); application = acquiredApplication; let created = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 390, height: 640),
                                    styleMask: [.titled, .closable], backing: .buffered, defer: false)
             let captured = Capture()
             capture = captured
             window = created
             output = folder
 
-            driver = ProductionVisualSourcesDriver(window: created, output: folder, name: name); context = try NativePointerFixtureContext.owned(window: created, application: application, output: folder)
+            driver = ProductionVisualSourcesDriver(window: created, output: folder, name: name); context = try NativePointerFixtureContext.owned(window: created, application: acquiredApplication, output: folder)
             window.isReleasedWhenClosed = false
             window.contentView = Hosting(rootView: Controls(capture: capture))
 
@@ -1462,7 +1462,7 @@ struct NativePointerInteractionTests {
             let folder = URL(fileURLWithPath: events).deletingLastPathComponent()
                 .appendingPathComponent("native-pointer-canonical-" + name + "-" + UUID().uuidString, isDirectory: true)
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
-            application = try await NativePointerApplicationLease.acquire(); let created = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 260, height: 140),
+            let acquiredApplication = try await NativePointerApplicationLease.acquire(); application = acquiredApplication; let created = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 260, height: 140),
                                    styleMask: [.titled, .closable], backing: .buffered, defer: false)
             let root = NSView(frame: NSRect(x: 0, y: 0, width: 260, height: 140))
             let native = CanonicalNativeControl(frame: NSRect(x: 30, y: 40, width: 180, height: 36))
@@ -1475,7 +1475,7 @@ struct NativePointerInteractionTests {
             control = native
             leaf = canonical
             output = folder
-            driver = ProductionVisualSourcesDriver(window: created, output: folder, name: name); context = try NativePointerFixtureContext.owned(window: created, application: application, output: folder)
+            driver = ProductionVisualSourcesDriver(window: created, output: folder, name: name); context = try NativePointerFixtureContext.owned(window: created, application: acquiredApplication, output: folder)
 
 
             window.center()
