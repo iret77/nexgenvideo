@@ -1413,7 +1413,7 @@ struct NativePointerInteractionTests {
         var roleValue: NSAccessibility.Role? = .textField
         var enabled = true
         var measuredFrame: NSRect
-        var parentElement: AnyObject?
+        var parentElement: (any AnyObject & Sendable)?
 
         init(window: NSWindow, frame: NSRect) {
             measuredFrame = frame
@@ -1421,20 +1421,20 @@ struct NativePointerInteractionTests {
             super.init()
         }
 
-        override func accessibilityRole() -> NSAccessibility.Role? { roleValue }
-        override func accessibilityFrame() -> NSRect { measuredFrame }
-        override func accessibilityParent() -> Any? { parentElement }
-        override func isAccessibilityEnabled() -> Bool { enabled }
+        override func accessibilityRole() -> NSAccessibility.Role? { MainActor.assumeIsolated { roleValue?.rawValue }.map { NSAccessibility.Role(rawValue: $0) } }
+        override func accessibilityFrame() -> NSRect { MainActor.assumeIsolated { measuredFrame } }
+        override func accessibilityParent() -> Any? { MainActor.assumeIsolated { () -> (any AnyObject & Sendable)? in parentElement } }
+        override func isAccessibilityEnabled() -> Bool { MainActor.assumeIsolated { enabled } }
     }
 
     @MainActor private final class CanonicalNativeControl: NSControl {
-        var canonicalHit: Any?
+        var canonicalHit: (any Sendable)?
         var downTags: [Int64] = []
         var downWasPressed = false
         var upCount = 0
 
         override func accessibilityRole() -> NSAccessibility.Role? { .init(rawValue: kAXUnknownRole) }
-        override func accessibilityHitTest(_ point: NSPoint) -> Any? { canonicalHit }
+        override func accessibilityHitTest(_ point: NSPoint) -> Any? { MainActor.assumeIsolated { () -> (any Sendable)? in canonicalHit } }
         override func isAccessibilityEnabled() -> Bool { isEnabled }
         override func mouseDown(with event: NSEvent) {
             downTags.append(event.cgEvent?.getIntegerValueField(.eventSourceUserData) ?? 0)
@@ -1592,7 +1592,7 @@ struct NativePointerInteractionTests {
             fixture.reset()
             switch invalid {
             case "nil": fixture.control.canonicalHit = nil
-            case "nonaccessibility": fixture.control.canonicalHit = NSObject()
+            case "nonaccessibility": fixture.control.canonicalHit = "not-accessibility"
             case "absent-role": fixture.leaf.roleValue = nil
             case "unknown-role": fixture.leaf.roleValue = .init(rawValue: kAXUnknownRole)
             case "unrecognized-role": fixture.leaf.roleValue = .init(rawValue: "AXUnrecognizedFixtureRole")
@@ -1616,7 +1616,7 @@ struct NativePointerInteractionTests {
             }
             do {
                 try await fixture.click()
-                Issue.record("An invalid canonical native accessibility target posted input: " + invalid)
+                Issue.record("An invalid canonical native accessibility target posted input: \(invalid)")
             } catch {}
             try await Task.sleep(for: .milliseconds(50))
             #expect(counter.count == 0)
@@ -1699,7 +1699,7 @@ struct NativePointerInteractionTests {
             defer { if let monitor { NSEvent.removeMonitor(monitor) } }
             do {
                 try await fixture.click()
-                Issue.record("A changed canonical native accessibility target accepted Down: " + change)
+                Issue.record("A changed canonical native accessibility target accepted Down: \(change)")
             } catch {}
             #expect(witness.switched)
             try await Task.sleep(for: .milliseconds(50))
