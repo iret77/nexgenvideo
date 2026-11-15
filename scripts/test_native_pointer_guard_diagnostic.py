@@ -183,6 +183,38 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
         same_rows, same_identities = self.trace_rows(selftest=True, distinct_queue=False)
         self.assertTrue(self.trace_verify(same_rows, same_identities, selftest=True)['selftest'])
         self.assertTrue(next(row for row in same_rows if row['kind'] == 'selftest')['queueIdentityUnchanged'])
+        readiness_rows = copy.deepcopy(rows)
+        readiness_witness = next(row for row in readiness_rows if row['kind'] == 'selftest')
+        readiness_event = dict(readiness_witness['postedEvent'], identity='0x70', timestamp=0.9,
+            window=0, windowIdentity='nil', characters='z', charactersIgnoringModifiers='z', keyCode=6)
+        readiness_witness['readinessEvents'] = [dict(event=copy.deepcopy(readiness_event), requestedAt=1.02,
+            dequeuedAt=1.03, expiration=100.0, mask=2**64 - 1, mode='kCFRunLoopDefaultMode', dequeue=True, dispatched=True)]
+        readiness_context = copy.deepcopy(next(row for row in readiness_rows if row['kind'] == 'call')['context'])
+        readiness_context.update(keyWindow=0, keyWindowIdentity='nil')
+        readiness_call = dict(kind='call', call=300, method='sendEvent:',
+            arguments=dict(event=copy.deepcopy(readiness_event), selftestPumpDispatch=True),
+            context=copy.deepcopy(readiness_context), queryOrigin='ORIGINAL_EXECUTION',
+            stack=[dict(image='/tests', address='0x20', imageBase='0x10')], uptime=1.04)
+        readiness_return = dict(kind='return', call=300, method='sendEvent:', returned=dict(eventIdentity='0x70'),
+            context=copy.deepcopy(readiness_context), queryOrigin='ORIGINAL_EXECUTION', uptime=1.05)
+        index = next(index for index, row in enumerate(readiness_rows)
+            if row['kind'] == 'call' and row.get('method') == 'postEvent:atStart:')
+        readiness_rows[index:index] = [readiness_call, readiness_return]
+        for key in ('calls', 'returns'): readiness_rows[-1][key]['sendEvent:'] += 1
+        for index, row in enumerate(readiness_rows, 1):
+            row.update(sequence=index, wallTime=index, pid=10, parentPID=20, mainThread=True, diagnosticOnly=True)
+        self.assertTrue(self.trace_verify(readiness_rows, identities, selftest=True)['selftest'])
+        extra_key = copy.deepcopy(readiness_rows)
+        key_call = copy.deepcopy(next(row for row in extra_key if row['kind'] == 'call' and row.get('method') == 'keyDown:'))
+        key_return = copy.deepcopy(next(row for row in extra_key if row['kind'] == 'return' and row.get('method') == 'keyDown:'))
+        key_call.update(call=301, uptime=1.042); key_call['arguments']['argument'] = copy.deepcopy(readiness_event)
+        key_return.update(call=301, uptime=1.045)
+        index = next(index for index, row in enumerate(extra_key) if row['kind'] == 'return' and row.get('call') == 300)
+        extra_key[index:index] = [key_call, key_return]
+        for key in ('calls', 'returns'): extra_key[-1][key]['keyDown:'] += 1
+        for index, row in enumerate(extra_key, 1): row['sequence'] = row['wallTime'] = index
+        with self.subTest(readiness_key_reached_owned_text=True), self.assertRaises(ValueError):
+            self.trace_verify(extra_key, identities, selftest=True)
         def delivered_snapshots(changed):
             witness = next(row for row in changed if row['kind'] == 'selftest')
             return [witness['dequeuedEvent'], witness['dequeues'][0]['event'],

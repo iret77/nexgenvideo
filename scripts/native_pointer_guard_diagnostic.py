@@ -790,8 +790,8 @@ def verify_event_trace(raw, process, image, host, *, selftest=False, identities=
         matching_sends = [row for row in sent if row['arguments'].get('event') == delivered]
         require(len(posts) == len(matching_posts) == 1
             and matching_posts[0]['arguments'].get('atStart') is True
-            and sum(key_event_fields(row['arguments']['event']) == posted_fields for row in sent
-                if row['arguments']['event'].get('type') in (10, 11)) == 1,
+            and sum({key: value for key, value in row['arguments']['event'].items() if key != 'identity'} == posted_fields
+                for row in sent) == 1,
             'Native witness lacks exactly one original post and one fully correlated delivery')
         forwarded = set()
         for entry in [entry for entry in readiness_events if entry['event'] is not None] + dequeues:
