@@ -1252,6 +1252,8 @@ class ExternalTestBundleTests(unittest.TestCase):
                     + '()/NativeButtonInteractionTests.swift:SOURCE-LINE:6' for name in names]
         window_hit = ['NexGenVideoTests.NativePointerInteractionTests/mouseIgnoringWindowAllowsOneClickAndInputCatchingWindowRefusesIt()'
                       + '/NativeButtonInteractionTests.swift:SOURCE-LINE:6']
+        viewport = ['NexGenVideoTests.NativePointerInteractionTests/viewportWidthPreservesFieldAndNativeWheelAcrossScrollerStyles()'
+                    + '/NativeButtonInteractionTests.swift:SOURCE-LINE:6']
         previous = ['NexGenVideoTests.NativeButtonInteractionTests/' + name
                     + '()/NativeButtonInteractionTests.swift:SOURCE-LINE:6' for name in (
                         'actualLegacyScrollersKeepTheEnabledUndoDiscoverable',
@@ -1266,14 +1268,16 @@ class ExternalTestBundleTests(unittest.TestCase):
         only_window['expectedActualExecutions'] += 1
         only_window['modules']['app']['exactEndedFunctionIDs'] += window_hit
         self.assertEqual(bundle._native_inventory_additions(before, only_window), window_hit)
-        for additions in [pointers, previous + pointers, pointers + window_hit, previous + pointers + window_hit]:
+        families = [pointers, previous + pointers, pointers + window_hit, previous + pointers + window_hit]
+        for additions in families + [viewport, window_hit + viewport, previous + viewport,
+                                     previous + window_hit + viewport] + [family + viewport for family in families]:
             after = copy.deepcopy(before)
             after['expectedActualExecutions'] += len(additions)
             after['modules']['app']['exactEndedFunctionIDs'] += additions
             self.assertEqual(bundle._native_inventory_additions(before, after), sorted(additions))
             mutations = [lambda x: x.update(expectedActualExecutions=2),
                          lambda x: x['modules']['app']['exactEndedFunctionIDs'].append('unknown'),
-                         lambda x: x['modules']['app']['exactEndedFunctionIDs'].append(pointers[0]),
+                         lambda x: x['modules']['app']['exactEndedFunctionIDs'].append(additions[0]),
                          lambda x: x['modules']['app']['exactEndedFunctionIDs'].remove('original'),
                          lambda x: x['modules']['app']['exactSkippedFunctionIDs'].clear(),
                          lambda x: x['modules']['app']['expectedCaseCountsByFunction'].update(original=1),
@@ -1284,17 +1288,25 @@ class ExternalTestBundleTests(unittest.TestCase):
                 mutate(changed)
                 with self.subTest(additions=len(additions), mutate=mutate), self.assertRaises(ValueError):
                     bundle._native_inventory_additions(before, changed)
-            missing = copy.deepcopy(after)
-            missing['modules']['app']['exactEndedFunctionIDs'].remove(pointers[-1])
-            missing['expectedActualExecutions'] -= 1
-            with self.assertRaisesRegex(ValueError, 'unknown or removed native tests'):
-                bundle._native_inventory_additions(before, missing)
+            if set(pointers) <= set(additions):
+                missing = copy.deepcopy(after)
+                missing['modules']['app']['exactEndedFunctionIDs'].remove(pointers[-1])
+                missing['expectedActualExecutions'] -= 1
+                with self.assertRaisesRegex(ValueError, 'unknown or removed native tests'):
+                    bundle._native_inventory_additions(before, missing)
             wrong_file = copy.deepcopy(after)
-            index = wrong_file['modules']['app']['exactEndedFunctionIDs'].index(pointers[0])
-            wrong_file['modules']['app']['exactEndedFunctionIDs'][index] = pointers[0].replace('NativeButtonInteractionTests.swift', 'Other.swift')
+            index = wrong_file['modules']['app']['exactEndedFunctionIDs'].index(additions[0])
+            wrong_file['modules']['app']['exactEndedFunctionIDs'][index] = additions[0].replace('NativeButtonInteractionTests.swift', 'Other.swift')
             with self.assertRaisesRegex(ValueError, 'unknown or removed native tests'):
                 bundle._native_inventory_additions(before, wrong_file)
             with self.assertRaises(ValueError):bundle._native_inventory_additions(after, before)
+        current = copy.deepcopy(before)
+        current['modules']['app']['exactEndedFunctionIDs'] += pointers + window_hit
+        current['expectedActualExecutions'] += len(pointers + window_hit)
+        with_viewport = copy.deepcopy(current)
+        with_viewport['modules']['app']['exactEndedFunctionIDs'] += viewport
+        with_viewport['expectedActualExecutions'] += 1
+        self.assertEqual(bundle._native_inventory_additions(current, with_viewport), viewport)
 
     def test_cleanup_admission_inventory_transition_preserves_parameter_and_prior_coverage(self):
         additions = [
