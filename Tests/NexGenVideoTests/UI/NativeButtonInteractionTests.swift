@@ -911,7 +911,7 @@ struct NativePointerInteractionTests {
         let output: URL
         let driver: ProductionVisualSourcesDriver
         private let activation: NSApplication.ActivationPolicy
-
+        let context: NativePointerFixtureContext
         init(_ name: String) throws {
             try #require(ProcessInfo.processInfo.arguments.contains("--no-parallel"))
             let events = try #require(ProcessInfo.processInfo.environment["NGV_APPKIT_TEST_EVENTS"])
@@ -925,7 +925,7 @@ struct NativePointerInteractionTests {
             window = created
             output = folder
             activation = NSApp.activationPolicy()
-            driver = ProductionVisualSourcesDriver(window: created, output: folder, name: name)
+            driver = ProductionVisualSourcesDriver(window: created, output: folder, name: name); context = try NativePointerFixtureContext.owned(window: created, output: folder)
             window.isReleasedWhenClosed = false
             window.contentView = Hosting(rootView: Controls(capture: capture))
             NSApp.setActivationPolicy(.regular)
@@ -936,10 +936,10 @@ struct NativePointerInteractionTests {
         }
 
         func ready() async throws {
-            try await driver.wait("exclusive native pointer fixture") {
-                NSApp.isActive && self.window.isKeyWindow && nativePointerWindowPresented(self.window) && self.probe("Undo") != nil && nativePointerViewportReady(in: self.window)
+            try await context.wait("exclusive native pointer fixture", driver: driver, clauses: ["active", "key", "presentation", "probe", "viewport"]) {
+                self.context.operand("active", NSApp.isActive) && self.context.operand("key", self.window.isKeyWindow) && self.context.operand("presentation", nativePointerWindowPresented(self.window)) && self.context.operand("probe", self.probe("Undo") != nil) && self.context.operand("viewport", nativePointerViewportReady(in: self.window))
             }
-            try await driver.fill("pointer.field", value: "0.5", in: window)
+            try await context.fill("pointer.field", value: "0.5", driver: driver)
             try #require(window.firstResponder is NSTextView)
         }
 
@@ -970,7 +970,7 @@ struct NativePointerInteractionTests {
         }
 
         func close() {
-            window.contentView = nil
+            context.close(); window.contentView = nil
             window.close()
             NSApp.setActivationPolicy(activation)
         }
@@ -1365,8 +1365,8 @@ struct NativePointerInteractionTests {
         for style in [NSScroller.Style.legacy, .overlay] {
             let fixture = try Fixture("viewport-" + String(style.rawValue))
             defer { fixture.close() }
-            try await fixture.driver.wait("native viewport fixture") {
-                NSApp.isActive && fixture.window.isKeyWindow && fixture.probe("field") != nil
+            try await fixture.context.wait("native viewport fixture", driver: fixture.driver, clauses: ["active", "key", "field-probe"]) {
+                fixture.context.operand("active", NSApp.isActive) && fixture.context.operand("key", fixture.window.isKeyWindow) && fixture.context.operand("field-probe", fixture.probe("field") != nil)
             }
             let field = try #require(fixture.probe("field"))
             let scroll = try #require(field.enclosingScrollView)
@@ -1455,7 +1455,7 @@ struct NativePointerInteractionTests {
         let output: URL
         var input: [String: Any]?
         private let activation: NSApplication.ActivationPolicy
-
+        let context: NativePointerFixtureContext
         init(_ name: String) throws {
             try #require(ProcessInfo.processInfo.arguments.contains("--no-parallel"))
             let events = try #require(ProcessInfo.processInfo.environment["NGV_APPKIT_TEST_EVENTS"])
@@ -1475,7 +1475,7 @@ struct NativePointerInteractionTests {
             control = native
             leaf = canonical
             output = folder
-            driver = ProductionVisualSourcesDriver(window: created, output: folder, name: name)
+            driver = ProductionVisualSourcesDriver(window: created, output: folder, name: name); context = try NativePointerFixtureContext.owned(window: created, output: folder)
             activation = NSApp.activationPolicy()
             NSApp.setActivationPolicy(.regular)
             window.center()
@@ -1485,8 +1485,8 @@ struct NativePointerInteractionTests {
         }
 
         func ready() async throws {
-            try await driver.wait("canonical native fixture") {
-                NSApp.isActive && self.window.isKeyWindow && nativePointerWindowPresented(self.window) && self.control.window === self.window
+            try await context.wait("canonical native fixture", driver: driver, clauses: ["active", "key", "presentation", "control-window"]) {
+                self.context.operand("active", NSApp.isActive) && self.context.operand("key", self.window.isKeyWindow) && self.context.operand("presentation", nativePointerWindowPresented(self.window)) && self.context.operand("control-window", self.control.window === self.window)
             }
             reset()
         }
@@ -1514,7 +1514,7 @@ struct NativePointerInteractionTests {
         }
 
         func close() {
-            leaf.parentElement = nil
+            context.close(); leaf.parentElement = nil
             control.canonicalHit = nil
             window.contentView = nil
             window.close()
@@ -1852,4 +1852,191 @@ struct NativePointerInteractionTests {
     guard let point, point.x.isFinite, point.y.isFinite else { return false }
     return NSApp.isActive && original.isKeyWindow && nativePointerWindowPresented(overlay, above: original)
         && NSWindow.windowNumber(at: point, belowWindowWithWindowNumber: 0) == receiver.windowNumber
+}
+
+@MainActor private final class NativePointerFixtureContext {
+    private let window: NSWindow
+    private let output: URL
+    private let previousMenu: NSMenu?
+    private let menu: NSMenu
+    private var monitor: Any?
+    private var closed = false
+    private var keyEvents: [[String: Any]] = []
+    private var droppedKeyEvents = 0
+    private var snapshots: [[String: Any]] = []
+    private var droppedSnapshots = 0
+    private var readiness: [String: Any] = [:]
+    private var clauses: [[String: Any]] = []
+    private var evaluations = 0
+
+    static func owned(window: NSWindow, output: URL) throws -> NativePointerFixtureContext {
+        window.isReleasedWhenClosed = false
+        do { return try NativePointerFixtureContext(window: window, output: output) }
+        catch { window.contentView = nil; window.close(); throw error }
+    }
+
+    private init(window: NSWindow, output: URL) throws {
+        self.window = window; self.output = output.appendingPathComponent("fixture-context.json")
+        previousMenu = NSApp.mainMenu
+        let installed = NSMenu(), application = NSMenuItem()
+        application.submenu = NSMenu(title: "NexGenVideo")
+        installed.addItem(application); installed.addItem(MainMenuBuilder.editMenu()); menu = installed
+        NSApp.mainMenu = installed
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self] event in
+            let type = event.type.rawValue, number = event.windowNumber, code = event.keyCode
+            let flags = event.modifierFlags.rawValue, timestamp = event.timestamp
+            let characters = event.characters ?? "", ignoring = event.charactersIgnoringModifiers ?? ""
+            MainActor.assumeIsolated { () -> Void in
+                self?.receive(type: type, number: number, code: code, flags: flags, timestamp: timestamp,
+                              characters: characters, ignoring: ignoring)
+            }
+            return event
+        }
+        do {
+            guard monitor != nil else { throw CocoaError(.featureUnsupported) }
+            try persist("menu-installed")
+        } catch {
+            if let monitor { NSEvent.removeMonitor(monitor) }; monitor = nil
+            if NSApp.mainMenu === menu { NSApp.mainMenu = previousMenu }
+            closed = true
+            throw error
+        }
+    }
+
+    func wait(_ label: String, driver: ProductionVisualSourcesDriver, clauses names: [String], _ ready: () -> Bool) async throws {
+        evaluations = 0; readiness = ["label": label, "origin": "ORIGINAL_READINESS_PREDICATE"]
+        try persist("readiness-entry-additional")
+        do {
+            try await driver.wait(label) {
+                self.evaluations += 1
+                self.clauses = names.map { ["name": $0, "status": "NOT_EVALUATED"] }
+                let result = ready()
+                self.readiness["clauses"] = self.clauses; self.readiness["result"] = result
+                self.readiness["evaluations"] = self.evaluations
+                self.readiness["evaluatedAtUptime"] = ProcessInfo.processInfo.systemUptime
+                return result
+            }
+        } catch {
+            recordFailure("readiness-terminal-failure", error: error)
+            throw error
+        }
+        try persist("readiness-success")
+    }
+
+    func operand(_ name: String, _ read: @autoclosure () -> Bool) -> Bool {
+        let result = read()
+        if let index = clauses.firstIndex(where: { $0["name"] as? String == name }) {
+            clauses[index]["status"] = result ? "PASS" : "FAIL"
+            clauses[index]["value"] = result
+        }
+        return result
+    }
+
+    func fill(_ id: String, value: String, driver: ProductionVisualSourcesDriver) async throws {
+        try persist("fill-entry")
+        do { try await driver.fill(id, value: value, in: window) }
+        catch { recordFailure("fill-terminal-failure", error: error); throw error }
+        try persist("fill-success")
+    }
+
+    private func receive(type: UInt, number: Int, code: UInt16, flags: UInt, timestamp: Double,
+                         characters: String, ignoring: String) {
+        guard !closed else { return }
+        guard keyEvents.count < 128 else { droppedKeyEvents += 1; return }
+        keyEvents.append(["origin": "LOCAL_KEY_MONITOR_PASS_THROUGH", "actualDispatchObserved": false,
+            "type": type, "window": number, "matchesFixtureWindow": number == window.windowNumber,
+            "keyCode": code, "modifiers": flags, "timestamp": timestamp,
+            "characters": String(characters.prefix(64)), "charactersIgnoringModifiers": String(ignoring.prefix(64)),
+            "charactersUTF16Length": (characters as NSString).length, "charactersTruncated": characters.count > 64 || ignoring.count > 64,
+            "menuOwnedAtReceipt": NSApp.mainMenu === menu, "additionalFieldSnapshot": fieldSnapshot()])
+    }
+
+    private func identity(_ object: AnyObject?) -> [String: String] {
+        guard let object else { return ["class": "nil", "identity": "nil"] }
+        return ["class": String(describing: type(of: object)), "identity": String(describing: Unmanaged.passUnretained(object).toOpaque())]
+    }
+
+    private func fieldSnapshot() -> [String: Any] {
+        let editor = window.firstResponder as? NSTextView
+        var pending = window.contentView.map { [$0] } ?? [], owners: [[String: Any]] = [], visited = 0, ownerCount = 0
+        var truncated = false
+        while visited < 4096, let view = pending.popLast() {
+            visited += 1
+            if let editor, (view as? NSTextField)?.currentEditor() === editor || (view === editor && !editor.isFieldEditor) {
+                ownerCount += 1
+                if owners.count < 8 { owners.append(["object": identity(view), "currentEditor": identity((view as? NSTextField)?.currentEditor()),
+                    "window": view.window?.windowNumber ?? -1]) }
+            }
+            let children = view.subviews, remaining = max(0, 4096 - visited - pending.count)
+            truncated = truncated || children.count > remaining
+            pending.append(contentsOf: children.prefix(remaining))
+        }
+        let selection = editor?.selectedRange()
+        return ["origin": "ADDITIONAL_FIELD_OBSERVATION", "firstResponder": identity(window.firstResponder),
+            "editor": identity(editor), "editorText": String((editor?.string ?? "").prefix(128)),
+            "expectedSelectAllUTF16Length": editor.map { ($0.string as NSString).length } as Any? ?? NSNull(),
+            "actualSelectedRange": selection.map { [$0.location, $0.length] } as Any? ?? NSNull(),
+            "isEditable": editor?.isEditable as Any? ?? NSNull(), "isFieldEditor": editor?.isFieldEditor as Any? ?? NSNull(),
+            "editorStillFirstResponder": editor.map { window.firstResponder === $0 } as Any? ?? NSNull(),
+            "owners": owners, "ownerCount": ownerCount, "ownerLimitReached": ownerCount > 8,
+            "viewLimitReached": truncated || !pending.isEmpty]
+    }
+
+    private func menuSnapshot() -> [String: Any] {
+        let selectAll = #selector(NSText.selectAll(_:))
+        let items = (NSApp.mainMenu?.items ?? []).flatMap { $0.submenu?.items ?? [] }.filter { $0.action == selectAll }
+        let actions: [[String: Any]] = items.prefix(64).map { item in
+            let resolved = NSApp.target(forAction: selectAll, to: item.target, from: item).map { $0 as AnyObject }
+            return ["action": NSStringFromSelector(selectAll), "keyEquivalent": item.keyEquivalent,
+                "modifiers": item.keyEquivalentModifierMask.rawValue, "enabled": item.isEnabled,
+                "declaredTarget": identity(item.target), "additionalResolvedTarget": identity(resolved)]
+        }
+        return ["origin": "ADDITIONAL_MENU_AND_TARGET_QUERY_NOT_ACTUAL_DISPATCH", "actualDispatchObserved": false,
+            "installedMenu": identity(menu), "actualMenu": identity(NSApp.mainMenu), "owned": NSApp.mainMenu === menu,
+            "selectAllMatches": items.count, "selectAllItems": actions, "itemLimitReached": items.count > 64]
+    }
+
+    private func snapshot(_ stage: String, error: String?) -> [String: Any] {
+        let rows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        let matches = rows.filter { ($0[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == getpid()
+            && ($0[kCGWindowNumber as String] as? NSNumber)?.intValue == window.windowNumber }
+        let cg: [[String: Any]] = matches.prefix(16).map { row in
+            ["number": row[kCGWindowNumber as String] ?? NSNull(), "bounds": row[kCGWindowBounds as String] ?? NSNull(),
+             "alpha": row[kCGWindowAlpha as String] ?? NSNull(), "onscreen": row[kCGWindowIsOnscreen as String] ?? NSNull()]
+        }
+        let undo = window.contentView.flatMap { WorkspaceUIAcceptance.findProbe(in: $0, identifier: "pointer.Undo") }
+        return ["stage": stage, "error": error.map { String($0.prefix(2048)) } as Any? ?? NSNull(), "uptime": ProcessInfo.processInfo.systemUptime,
+            "additionalObservationOrigin": "ADDITIONAL_TERMINAL_OR_PHASE_SNAPSHOT_NOT_PREDICATE_REEVALUATION",
+            "active": NSApp.isActive, "activationPolicy": NSApp.activationPolicy().rawValue,
+            "primaryScreenFrame": NSScreen.screens.first.map { NSStringFromRect($0.frame) } as Any? ?? NSNull(),
+            "key": window.isKeyWindow, "keyWindow": NSApp.keyWindow?.windowNumber ?? -1,
+            "fixtureWindow": window.windowNumber, "visible": window.isVisible, "windowFrame": NSStringFromRect(window.frame),
+            "CGMatchCount": matches.count, "CGWindows": cg, "CGWindowLimitReached": matches.count > 16,
+            "undoProbe": identity(undo), "viewportReadyAdditional": nativePointerViewportReady(in: window),
+            "field": fieldSnapshot(), "menu": menuSnapshot(), "lastOriginalReadinessEvaluation": readiness]
+    }
+
+    private func persist(_ stage: String, error: String? = nil) throws {
+        if snapshots.count < 32 { snapshots.append(snapshot(stage, error: error)) } else { droppedSnapshots += 1 }
+        let value: [String: Any] = ["schema": "native-pointer-fixture-context/v1", "snapshots": snapshots,
+            "keyEvents": keyEvents, "droppedKeyEvents": droppedKeyEvents, "droppedSnapshots": droppedSnapshots,
+            "keyMonitorReturnsOriginalEvent": true, "boundedDiagnosticQueriesAreAdditional": true,
+            "closed": closed, "menuRestored": closed && NSApp.mainMenu === previousMenu]
+        try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]).write(to: output, options: .atomic)
+    }
+
+    private func recordFailure(_ stage: String, error: Error) {
+        do { try persist(stage, error: error.localizedDescription) }
+        catch { Issue.record("Native fixture evidence failed: \(error.localizedDescription)") }
+    }
+
+    func close() {
+        guard !closed else { return }
+        do { try persist("cleanup-before-window-close") } catch { Issue.record("Native fixture evidence failed: \(error.localizedDescription)") }
+        if let monitor { NSEvent.removeMonitor(monitor) }; monitor = nil
+        let owned = NSApp.mainMenu === menu
+        if owned { NSApp.mainMenu = previousMenu }; closed = true
+        if !owned { Issue.record("The native fixture lost its owned main-menu context before cleanup.") }
+        do { try persist("menu-restored") } catch { Issue.record("Native fixture evidence failed: \(error.localizedDescription)") }
+    }
 }
