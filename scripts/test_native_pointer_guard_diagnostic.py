@@ -30,7 +30,7 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
         context = dict(queryOrigin='ADDITIONAL_CONTEXT', contextOrdinal=1,
             keyWindowIdentity='0x40' if selftest else 'nil', keyWindow=40 if selftest else 0,
             additionalQueryCounts=dict(CGWindowListCopyWindowInfo=1))
-        event = dict(identity='0xa', type=10, timestamp=2.0, timestampUnits='seconds-since-startup',
+        event = dict(identity='0xa', type=10, timestamp=1.5 if selftest else 2.0, timestampUnits='seconds-since-startup',
             flags=0, keyCode=7, characters='x', charactersIgnoringModifiers='x', getterOrigin='ADDITIONAL_OBSERVATION',
             window=40, windowIdentity='0x40', isARepeat=False)
         delivered = dict(event, identity='0xd' if distinct_queue else event['identity'])
@@ -103,6 +103,8 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
                 readinessDeadline=3.0, readinessEnd=1.1, readinessEvents=[], queueStart=2.0, queueDeadline=4.0, queueEnd=2.2,
                 dequeueMask=1 << 10, dequeueMode='kCFRunLoopDefaultMode', dequeue=True, queueResult='CORRELATED_KEY_EVENT', queueCorrelationMatched=True,
                 postedEvent=copy.deepcopy(event), createdEvent=copy.deepcopy(event), dequeuedEvent=copy.deepcopy(delivered), posted=True,
+                timestampInput=dict(scope='ISOLATED_SELFTEST_ONLY', policy='latest-half-second-at-or-before-request',
+                    requestUptime=1.999999999, selectedTimestamp=1.5, units='seconds-since-startup'),
                 timeUnits='seconds-since-startup', expirationUnits='seconds-since-Unix-epoch', cleanupComplete=True, selectionAfterCommand=[0, 2],
                 selftestOwner=dict(windowIdentity='0x40', textIdentity='0x41', **{'class': 'NGVTraceSelftestTextView'},
                     classImageIdentity=dict(path='/observer', device=1, inode=5)),
@@ -183,6 +185,29 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
         same_rows, same_identities = self.trace_rows(selftest=True, distinct_queue=False)
         self.assertTrue(self.trace_verify(same_rows, same_identities, selftest=True)['selftest'])
         self.assertTrue(next(row for row in same_rows if row['kind'] == 'selftest')['queueIdentityUnchanged'])
+        for defect in ('missing', 'unknown-field', 'scope', 'policy', 'units', 'numeric-request', 'numeric-input',
+                'nonfinite-request', 'nonfinite-input', 'before-readiness', 'after-queue-start',
+                'future-input', 'stale-input', 'non-half-second', 'fractional-nanosecond', 'different-posted-input'):
+            changed = copy.deepcopy(rows)
+            timestamp = next(row for row in changed if row['kind'] == 'selftest')['timestampInput']
+            if defect == 'missing': del next(row for row in changed if row['kind'] == 'selftest')['timestampInput']
+            elif defect == 'unknown-field': timestamp['epsilon'] = 1e-9
+            elif defect == 'scope': timestamp['scope'] = 'ALL_EVENTS'
+            elif defect == 'policy': timestamp['policy'] = 'arbitrary-uptime'
+            elif defect == 'units': timestamp['units'] = 'nanoseconds-since-startup'
+            elif defect == 'numeric-request': timestamp['requestUptime'] = True
+            elif defect == 'numeric-input': timestamp['selectedTimestamp'] = True
+            elif defect == 'nonfinite-request': timestamp['requestUptime'] = float('nan')
+            elif defect == 'nonfinite-input': timestamp['selectedTimestamp'] = float('inf')
+            elif defect == 'before-readiness': timestamp['requestUptime'] = 1.0
+            elif defect == 'after-queue-start': timestamp['requestUptime'] = 2.01
+            elif defect == 'future-input': timestamp['selectedTimestamp'] = 2.0
+            elif defect == 'stale-input': timestamp['requestUptime'] = 2.0
+            elif defect == 'non-half-second': timestamp['selectedTimestamp'] = 1.75
+            elif defect == 'fractional-nanosecond': timestamp['selectedTimestamp'] = 1.50000000033334
+            elif defect == 'different-posted-input': timestamp.update(requestUptime=1.4, selectedTimestamp=1.0)
+            with self.subTest(timestamp_input=defect), self.assertRaises(ValueError):
+                self.trace_verify(changed, identities, selftest=True)
         readiness_rows = copy.deepcopy(rows)
         readiness_witness = next(row for row in readiness_rows if row['kind'] == 'selftest')
         readiness_event = dict(readiness_witness['postedEvent'], identity='0x70', timestamp=0.9,
@@ -221,7 +246,7 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
                 next(row for row in changed if row['kind'] == 'call' and row.get('method') == 'sendEvent:')['arguments']['event'],
                 next(row for row in changed if row['kind'] == 'receive')['event'],
                 next(row for row in changed if row['kind'] == 'call' and row.get('method') == 'keyDown:')['arguments']['argument']]
-        for field, wrong in dict(type=11, timestamp=2.001, timestampUnits='nanoseconds-since-startup',
+        for field, wrong in dict(type=11, timestamp=1.50000000033334, timestampUnits='nanoseconds-since-startup',
                 window=41, windowIdentity='0x50', flags=1, keyCode=8, characters='q', charactersIgnoringModifiers='q',
                 isARepeat=True, getterOrigin='ORIGINAL_EXECUTION').items():
             changed = copy.deepcopy(rows)

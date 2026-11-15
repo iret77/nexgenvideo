@@ -1071,7 +1071,11 @@ static void traceSelftest(void) {
         witness[@"readinessEnd"] = @(NSProcessInfo.processInfo.systemUptime);
         BOOL wasReady = traceReady(ready) && NSProcessInfo.processInfo.systemUptime <= readyLimit; witness[@"ready"] = wireBool(wasReady);
         text.selectedRange = NSMakeRange(0, 1);
-        NSEvent * __attribute__((objc_precise_lifetime)) event = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:0 timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:window.windowNumber context:nil characters:@"x" charactersIgnoringModifiers:@"x" isARepeat:NO keyCode:7];
+        NSTimeInterval requestClock = NSProcessInfo.processInfo.systemUptime;
+        NSTimeInterval inputTimestamp = floor(requestClock * 2) / 2;
+        witness[@"timestampInput"] = @{@"scope": @"ISOLATED_SELFTEST_ONLY", @"policy": @"latest-half-second-at-or-before-request",
+            @"requestUptime": @(requestClock), @"selectedTimestamp": @(inputTimestamp), @"units": @"seconds-since-startup"};
+        NSEvent * __attribute__((objc_precise_lifetime)) event = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:0 timestamp:inputTimestamp windowNumber:window.windowNumber context:nil characters:@"x" charactersIgnoringModifiers:@"x" isARepeat:NO keyCode:7];
         witness[@"createdEvent"] = traceEvent(event); witness[@"posted"] = wireBool(wasReady);
         NSTimeInterval queueStart = NSProcessInfo.processInfo.systemUptime, queueLimit = queueStart + 2;
         witness[@"queueStart"] = @(queueStart); witness[@"queueDeadline"] = @(queueLimit);
