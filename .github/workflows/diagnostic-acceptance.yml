@@ -649,7 +649,7 @@ jobs:
           import json, os
           from pathlib import Path
           target = Path(os.environ['RUNNER_TEMP']) / 'pointer-guard-artifact-probe.json'
-          target.write_text(json.dumps({'runID': os.environ['GITHUB_RUN_ID'], 'scope': 'one-original-pointer-guard-with-injected-inspector'}))
+          target.write_text(json.dumps({'runID': os.environ['GITHUB_RUN_ID'], 'scope': 'six-original-pointer-window-key-cases-with-passive-inspector'}))
           PY
       - uses: actions/upload-artifact@v4
         with:
@@ -657,7 +657,7 @@ jobs:
           path: ${{ runner.temp }}/pointer-guard-artifact-probe.json
           if-no-files-found: error
           retention-days: 7
-      - name: Observe one original failed pointer guard without compiling App or tests
+      - name: Observe six original pointer window and key cases without compiling App or tests
         run: |
           python3 scripts/native_pointer_guard_diagnostic.py run \
             --source "$RUNNER_TEMP/native-pointer-guard-source" \

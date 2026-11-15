@@ -12,6 +12,7 @@
 #import <limits.h>
 #import <stdlib.h>
 #import <stdatomic.h>
+#import <mach-o/dyld.h>
 
 typedef NSView *(*HitFunction)(id, SEL, NSPoint);
 static HitFunction originalHit;
@@ -34,6 +35,10 @@ static atomic_uint activeObservations;
 static NSUInteger samples, originalCalls, transparentReturns, recursiveCalls, bytesWritten;
 static NSUInteger outputErrors, rejectedRecords;
 static NSTimeInterval hookTime, firstHitTime;
+static void traceInitialize(NSDictionary *environment, NSString *folder);
+static void traceFinish(void);
+static void traceSelftest(void);
+static void traceLifecycle(NSString *reason, NSWindow *window);
 
 static NSArray *rect(NSRect value) {
     if (!isfinite(value.origin.x) || !isfinite(value.origin.y)
@@ -469,6 +474,7 @@ static NSView *snapshotHit(id receiver, SEL selector, NSPoint location) {
         inspecting = NO;
     }
     transparentReturns++;
+    traceSelftest();
     atomic_fetch_sub(&activeObservations, 1);
     return hit;
 }
@@ -483,11 +489,14 @@ __attribute__((constructor)) static void initializeSnapshot(void) {
             O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
         if (output < 0) return;
         record(@{@"kind": @"loaded", @"parentPID": @(getppid()), @"expectedImageIdentity": fileIdentity(expectedImage)}, NO);
+        traceInitialize(environment, folder);
         NSMutableArray *tokens = [NSMutableArray array];
         for (NSString *name in @[NSWindowDidBecomeKeyNotification, NSWindowDidBecomeMainNotification,
-                                NSWindowDidUpdateNotification, NSWindowWillCloseNotification]) {
+                                NSWindowDidUpdateNotification, NSWindowWillCloseNotification,
+                                NSWindowDidMoveNotification, NSWindowDidResizeNotification,
+                                NSWindowDidChangeScreenNotification, NSWindowDidChangeOcclusionStateNotification]) {
             [tokens addObject:[NSNotificationCenter.defaultCenter addObserverForName:name object:nil queue:nil
-                usingBlock:^(NSNotification *notification) { discover(name, notification.object); }]];
+                usingBlock:^(NSNotification *notification) { traceLifecycle(name, notification.object); discover(name, notification.object); }]];
         }
         notificationTokens = tokens;
         dispatch_async(dispatch_get_main_queue(), ^{ discover(@"initial-main-queue", nil); });
@@ -508,6 +517,7 @@ __attribute__((destructor)) static void finishSnapshot(void) {
             const char *message = "NGV_POINTER_INSPECTOR_FINALIZATION_FAILED\n";
             write(STDERR_FILENO, message, strlen(message)); return;
         }
+        traceFinish();
         BOOL persisted = record(@{@"kind": @"finished", @"samples": @(samples), @"rectSamples": @(rectSamples),
             @"originalCalls": @(originalCalls), @"transparentReturns": @(transparentReturns),
             @"rectCalls": @(rectCalls), @"rectReturns": @(rectReturns), @"recursiveCalls": @(recursiveCalls),
@@ -519,4 +529,469 @@ __attribute__((destructor)) static void finishSnapshot(void) {
             write(STDERR_FILENO, message, strlen(message));
         }
     }
+}
+
+static int traceFD = -1;
+static NSRecursiveLock *traceLock;
+static NSString *expectedHost;
+static BOOL traceEnabled, selftestMode, selftestRunning, selftestDone;
+static _Thread_local unsigned traceDepth;
+static NSUInteger traceSequence, traceCallSequence, traceContextSequence, traceBytes, traceErrors;
+static NSMutableDictionary<NSString *, NSNumber *> *traceCalls, *traceReturns, *traceAdditionalQueries;
+static NSMutableArray<NSDictionary *> *traceHooks;
+static id traceMonitor;
+
+static void traceWrite(NSDictionary *value) {
+    if (traceFD < 0) return;
+    [traceLock lock];
+    @try {
+        NSMutableDictionary *row = [value mutableCopy];
+        row[@"sequence"] = @(++traceSequence); row[@"pid"] = @(getpid()); row[@"parentPID"] = @(getppid());
+        row[@"wallTime"] = @(NSDate.date.timeIntervalSince1970);
+        row[@"uptime"] = @(NSProcessInfo.processInfo.systemUptime); row[@"mainThread"] = @(NSThread.isMainThread);
+        row[@"diagnosticOnly"] = @YES;
+        NSData *data = [NSJSONSerialization dataWithJSONObject:row options:NSJSONWritingSortedKeys error:NULL];
+        if (!data || data.length > 256 * 1024 || traceBytes + data.length + 1 > 32 * 1024 * 1024) { traceErrors++; return; }
+        const uint8_t *bytes = data.bytes; NSUInteger remaining = data.length;
+        while (remaining) {
+            ssize_t n = write(traceFD, bytes, remaining);
+            if (n < 0 && errno == EINTR) continue;
+            if (n <= 0) { traceErrors++; return; }
+            remaining -= n; bytes += n;
+        }
+        if (write(traceFD, "\n", 1) != 1 || fsync(traceFD) != 0) traceErrors++;
+        traceBytes += data.length + 1;
+    } @catch (NSException *exception) { traceErrors++; }
+    @finally { [traceLock unlock]; }
+}
+
+static BOOL traceCaller(void) {
+    if (!traceEnabled || traceDepth || (NSThread.isMainThread && inspecting) || atomic_load(&stopping)) return NO;
+    if (selftestRunning) return YES;
+    void *frames[64]; int count = backtrace(frames, 64);
+    for (int index = 0; index < count; index++) {
+        Dl_info info = {0};
+        if (dladdr(frames[index], &info) && info.dli_fname && sameImage(@(info.dli_fname))) return YES;
+    }
+    return NO;
+}
+
+static void traceAdditional(NSString *method) {
+    if (!traceEnabled || !(traceDepth || (NSThread.isMainThread && inspecting))) return;
+    [traceLock lock]; traceAdditionalQueries[method] = @([traceAdditionalQueries[method] unsignedIntegerValue] + 1); [traceLock unlock];
+}
+
+static BOOL traceWindow(NSWindow *window) {
+    if (!traceEnabled || !NSThread.isMainThread || !window) return NO;
+    if (selftestRunning) return YES;
+    NSMutableArray *pending = [NSMutableArray array];
+    if (window.contentView) [pending addObject:window.contentView];
+    for (NSUInteger count = 0; pending.count && count < 4096; count++) {
+        NSView *view = pending.lastObject; [pending removeLastObject];
+        const char *image = class_getImageName([view class]);
+        if (image && sameImage(@(image))) return YES;
+        [pending addObjectsFromArray:view.subviews];
+    }
+    return NO;
+}
+
+static NSDictionary *traceRange(NSResponder *responder) {
+    traceDepth++;
+    @try {
+    if (![responder isKindOfClass:NSTextView.class]) return @{@"available": @NO, @"identity": identity(responder)};
+    NSTextView *text = (NSTextView *)responder; NSRange range = text.selectedRange;
+    return @{@"available": @YES, @"identity": identity(text), @"class": NSStringFromClass(text.class),
+        @"selection": @[@(range.location), @(range.length)], @"UTF16Length": @((text.string ?: @"").length),
+        @"text": text.string ?: @"", @"editable": @(text.isEditable), @"fieldEditor": @(text.isFieldEditor)};
+    } @finally { traceDepth--; }
+}
+
+static NSArray *traceMenu(NSMenu *menu, NSUInteger depth) {
+    if (!menu || depth > 4) return @[];
+    NSMutableArray *values = [NSMutableArray array];
+    for (NSMenuItem *item in menu.itemArray) {
+        if (values.count >= 128) break;
+        [values addObject:@{@"title": item.title ?: @"", @"key": item.keyEquivalent ?: @"",
+            @"modifiers": @(item.keyEquivalentModifierMask), @"action": item.action ? NSStringFromSelector(item.action) : @"nil",
+            @"target": identity(item.target), @"enabledWithoutValidation": @(item.isEnabled),
+            @"children": traceMenu(item.submenu, depth + 1)}];
+    }
+    return values;
+}
+
+static NSDictionary *traceContext(NSWindow *window) {
+    if (!NSThread.isMainThread) return @{@"queryOrigin": @"ADDITIONAL_CONTEXT", @"AppKitNotQueriedOffMainThread": @YES};
+    [traceLock lock]; NSUInteger contextNumber = ++traceContextSequence; [traceLock unlock];
+    NSMutableDictionary *value = [@{@"queryOrigin": @"ADDITIONAL_CONTEXT", @"contextOrdinal": @(contextNumber), @"active": @(NSApp.isActive),
+        @"keyWindow": @(NSApp.keyWindow.windowNumber), @"firstResponder": traceRange(window.firstResponder),
+        @"mainMenuPresent": @(NSApp.mainMenu != nil), @"mainMenu": traceMenu(NSApp.mainMenu, 0),
+        @"currentGlobalMouse": point(NSEvent.mouseLocation), @"currentRunLoopMode": NSRunLoop.currentRunLoop.currentMode ?: @"nil"} mutableCopy];
+    NSMutableArray *screens = [NSMutableArray array];
+    for (NSScreen *screen in NSScreen.screens) [screens addObject:@{@"frame": rect(screen.frame), @"visibleFrame": rect(screen.visibleFrame), @"backingScale": @(screen.backingScaleFactor)}];
+    value[@"screens"] = screens;
+    if (window) {
+        value[@"window"] = @(window.windowNumber); value[@"windowIdentity"] = identity(window);
+        value[@"modelFrame"] = rect(window.frame); value[@"visible"] = @(window.isVisible);
+        value[@"key"] = @(window.isKeyWindow); value[@"ignoresMouseEvents"] = @(window.ignoresMouseEvents);
+        value[@"animationBehavior"] = @(window.animationBehavior); value[@"occlusionState"] = @(window.occlusionState);
+        value[@"screenFrame"] = window.screen ? rect(window.screen.frame) : @[];
+        value[@"modelGlobalFromCurrentMouse"] = point([window convertPointFromScreen:NSEvent.mouseLocation]);
+    }
+    NSArray *windows = CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID));
+    value[@"onScreenWindows"] = windows ?: @[];
+    value[@"additionalQueryCounts"] = @{@"CGWindowListCopyWindowInfo": @1, @"screenObjects": @(screens.count), @"windowObjects": @(window != nil)};
+    return value;
+}
+
+static NSDictionary *traceEvent(NSEvent *event) {
+    traceDepth++;
+    @try {
+    if (!event) return @{};
+    NSMutableDictionary *value = [@{@"identity": identity(event), @"type": @(event.type), @"timestamp": @(event.timestamp),
+        @"timestampUnits": @"seconds-since-startup",
+        @"window": @(event.windowNumber), @"windowIdentity": identity(event.window), @"flags": @(event.modifierFlags)} mutableCopy];
+    value[@"getterOrigin"] = @"ADDITIONAL_OBSERVATION";
+    if (event.type == NSEventTypeKeyDown || event.type == NSEventTypeKeyUp || event.type == NSEventTypeFlagsChanged) {
+        value[@"keyCode"] = @(event.keyCode);
+        if (event.type != NSEventTypeFlagsChanged) { value[@"characters"] = event.characters ?: @""; value[@"charactersIgnoringModifiers"] = event.charactersIgnoringModifiers ?: @""; }
+    } else if (event.type == NSEventTypeMouseMoved || event.type == NSEventTypeLeftMouseDown || event.type == NSEventTypeLeftMouseUp) {
+        CGEventRef cg = event.CGEvent;
+        if (cg) { value[@"CGPosition"] = point(CGEventGetLocation(cg)); value[@"CGTimestamp"] = @(CGEventGetTimestamp(cg)); value[@"CGTimestampUnits"] = @"nanoseconds-since-startup"; value[@"tag"] = @(CGEventGetIntegerValueField(cg, kCGEventSourceUserData)); }
+        value[@"localPosition"] = point(event.locationInWindow);
+        value[@"eventGlobalThroughModel"] = event.window ? point([event.window convertPointToScreen:event.locationInWindow]) : @[];
+    }
+    return value;
+    } @finally { traceDepth--; }
+}
+
+static NSUInteger traceBegin(NSString *method, NSDictionary *arguments, NSWindow *window) {
+    NSUInteger call;
+    atomic_fetch_add(&activeObservations, 1);
+    [traceLock lock]; call = ++traceCallSequence; traceCalls[method] = @([traceCalls[method] unsignedIntegerValue] + 1); [traceLock unlock];
+    traceDepth++;
+    @try { traceWrite(@{@"kind": @"call", @"call": @(call), @"method": method, @"arguments": arguments,
+        @"context": traceContext(window), @"stack": stackTrace(), @"queryOrigin": @"ORIGINAL_EXECUTION"}); }
+    @catch (NSException *exception) { traceErrors++; }
+    @finally { traceDepth--; }
+    return call;
+}
+
+static void traceEnd(NSString *method, NSUInteger call, id returned, NSWindow *window) {
+    traceDepth++;
+    @try {
+        [traceLock lock]; traceReturns[method] = @([traceReturns[method] unsignedIntegerValue] + 1); [traceLock unlock];
+        traceWrite(@{@"kind": @"return", @"call": @(call), @"method": method, @"returned": returned ?: NSNull.null,
+            @"context": traceContext(window), @"queryOrigin": @"ORIGINAL_EXECUTION"});
+    } @catch (NSException *exception) { traceErrors++; }
+    @finally { traceDepth--; atomic_fetch_sub(&activeObservations, 1); }
+}
+
+static IMP traceOriginal(id receiver, SEL selector) {
+    Class type = object_getClass(receiver);
+    [traceLock lock]; NSArray *entries = [traceHooks copy]; [traceLock unlock];
+    for (; type; type = class_getSuperclass(type))
+        for (NSDictionary *entry in entries)
+            if ([entry[@"class"] pointerValue] == (__bridge const void *)type && [entry[@"selector"] pointerValue] == selector)
+                return (IMP)[entry[@"original"] pointerValue];
+    abort();
+}
+
+static void traceFieldHooks(NSResponder *responder);
+static void tracedPost(id receiver, SEL selector, NSEvent *event, BOOL atStart) {
+    BOOL observe = NO; NSUInteger call = 0;
+    @try {
+        observe = traceCaller() || (!traceDepth && !atomic_load(&stopping) && traceWindow(event.window));
+        if (NSThread.isMainThread && observe) traceFieldHooks(event.window.firstResponder);
+        if (observe) call = traceBegin(@"postEvent:atStart:", @{@"event": traceEvent(event), @"atStart": @(atStart)}, event.window);
+    } @catch (NSException *exception) { traceErrors++; observe = NO; }
+    ((void (*)(id, SEL, NSEvent *, BOOL))traceOriginal(receiver, selector))(receiver, selector, event, atStart);
+    if (observe) traceEnd(@"postEvent:atStart:", call, @{@"eventIdentity": identity(event)}, event.window);
+}
+
+static void tracedSend(id receiver, SEL selector, NSEvent *event) {
+    BOOL observe = NO; NSUInteger call = 0;
+    @try {
+        observe = !traceDepth && !atomic_load(&stopping) && traceWindow(event.window);
+        if (observe) traceFieldHooks(event.window.firstResponder);
+        if (observe) call = traceBegin(@"sendEvent:", @{@"event": traceEvent(event)}, event.window);
+    } @catch (NSException *exception) { traceErrors++; observe = NO; }
+    ((void (*)(id, SEL, NSEvent *))traceOriginal(receiver, selector))(receiver, selector, event);
+    if (observe) traceEnd(@"sendEvent:", call, @{@"eventIdentity": identity(event)}, event.window);
+}
+
+static BOOL tracedAction(id receiver, SEL selector, SEL action, id target, id sender) {
+    NSWindow *window = NSThread.isMainThread ? NSApp.keyWindow : nil;
+    BOOL observe = NO; NSUInteger call = 0;
+    @try {
+        observe = !traceDepth && !atomic_load(&stopping) && traceWindow(window);
+        if (observe) call = traceBegin(@"sendAction:to:from:", @{@"action": action ? NSStringFromSelector(action) : @"nil", @"target": identity(target), @"sender": identity(sender)}, window);
+    } @catch (NSException *exception) { traceErrors++; observe = NO; }
+    BOOL result = ((BOOL (*)(id, SEL, SEL, id, id))traceOriginal(receiver, selector))(receiver, selector, action, target, sender);
+    if (observe) traceEnd(@"sendAction:to:from:", call, @(result), window);
+    return result;
+}
+
+static NSInteger tracedWindowAt(id receiver, SEL selector, NSPoint location, NSInteger below) {
+    traceAdditional(@"windowNumberAtPoint:belowWindowWithWindowNumber:");
+    BOOL observe = NO; NSUInteger call = 0;
+    @try {
+        observe = traceCaller();
+        if (observe) call = traceBegin(@"windowNumberAtPoint:belowWindowWithWindowNumber:", @{@"point": point(location), @"below": @(below)}, NSThread.isMainThread ? NSApp.keyWindow : nil);
+    } @catch (NSException *exception) { traceErrors++; observe = NO; }
+    NSInteger result = ((NSInteger (*)(id, SEL, NSPoint, NSInteger))traceOriginal(receiver, selector))(receiver, selector, location, below);
+    if (observe) traceEnd(@"windowNumberAtPoint:belowWindowWithWindowNumber:", call, @(result), NSThread.isMainThread ? NSApp.keyWindow : nil);
+    return result;
+}
+
+static NSInteger tracedWindowNumber(id receiver, SEL selector) {
+    traceAdditional(@"windowNumber");
+    BOOL observe = traceCaller();
+    NSUInteger call = observe ? traceBegin(@"windowNumber", @{@"receiver": identity(receiver)}, nil) : 0;
+    NSInteger result = ((NSInteger (*)(id, SEL))traceOriginal(receiver, selector))(receiver, selector);
+    if (observe) traceEnd(@"windowNumber", call, @(result), nil);
+    return result;
+}
+
+static void tracedTextEvent(id receiver, SEL selector, id argument) {
+    NSTextView *text = receiver; NSWindow *window = text.window;
+    NSString *name = NSStringFromSelector(selector);
+    BOOL observe = NO; NSUInteger call = 0;
+    @try {
+        observe = !traceDepth && !atomic_load(&stopping) && traceWindow(window);
+        NSDictionary *argumentValue = [argument isKindOfClass:NSEvent.class] ? traceEvent(argument) : @{@"identity": identity(argument)};
+        if (observe) call = traceBegin(name, @{@"receiver": identity(receiver), @"argument": argumentValue}, window);
+    } @catch (NSException *exception) { traceErrors++; observe = NO; }
+    ((void (*)(id, SEL, id))traceOriginal(receiver, selector))(receiver, selector, argument);
+    if (observe) traceEnd(name, call, @{@"receiver": identity(receiver), @"range": traceRange(text)}, window);
+}
+
+static void tracedCommand(id receiver, SEL selector, SEL command) {
+    NSTextView *text = receiver; BOOL observe = NO; NSUInteger call = 0;
+    @try {
+        observe = !traceDepth && !atomic_load(&stopping) && traceWindow(text.window);
+        if (observe) call = traceBegin(@"doCommandBySelector:", @{@"receiver": identity(text), @"command": command ? NSStringFromSelector(command) : @"nil"}, text.window);
+    } @catch (NSException *exception) { traceErrors++; observe = NO; }
+    ((void (*)(id, SEL, SEL))traceOriginal(receiver, selector))(receiver, selector, command);
+    if (observe) traceEnd(@"doCommandBySelector:", call, @{@"range": traceRange(text)}, text.window);
+}
+
+static void traceAXHooks(id element);
+static id tracedAXHit(id receiver, SEL selector, NSPoint location) {
+    BOOL observe = NO; NSUInteger call = 0;
+    @try {
+        observe = traceCaller();
+        if (observe) call = traceBegin(@"accessibilityHitTest:", @{@"receiver": identity(receiver), @"point": point(location)}, nil);
+    } @catch (NSException *exception) { traceErrors++; observe = NO; }
+    id returned = ((id (*)(id, SEL, NSPoint))traceOriginal(receiver, selector))(receiver, selector, location);
+    if (observe) {
+        @try { traceAXHooks(returned); traceEnd(@"accessibilityHitTest:", call, @{@"identity": identity(returned), @"class": returned ? NSStringFromClass([returned class]) : @"nil"}, nil); }
+        @catch (NSException *exception) { traceErrors++; }
+    }
+    return returned;
+}
+
+static id tracedAXObject(id receiver, SEL selector) {
+    BOOL observe = traceCaller(); NSString *name = NSStringFromSelector(selector);
+    NSUInteger call = observe ? traceBegin(name, @{@"receiver": identity(receiver)}, nil) : 0;
+    id returned = ((id (*)(id, SEL))traceOriginal(receiver, selector))(receiver, selector);
+    if (observe) {
+        @try { traceEnd(name, call, @{@"identity": identity(returned), @"class": returned ? NSStringFromClass([returned class]) : @"nil",
+            @"value": [returned isKindOfClass:NSString.class] ? returned : NSNull.null}, nil); }
+        @catch (NSException *exception) { traceErrors++; }
+    }
+    return returned;
+}
+
+static BOOL tracedAXEnabled(id receiver, SEL selector) {
+    BOOL observe = traceCaller(); NSUInteger call = observe ? traceBegin(@"isAccessibilityEnabled", @{@"receiver": identity(receiver)}, nil) : 0;
+    BOOL returned = ((BOOL (*)(id, SEL))traceOriginal(receiver, selector))(receiver, selector);
+    if (observe) traceEnd(@"isAccessibilityEnabled", call, @(returned), nil);
+    return returned;
+}
+
+static NSRect tracedAXFrame(id receiver, SEL selector) {
+    BOOL observe = traceCaller(); NSUInteger call = observe ? traceBegin(@"accessibilityFrame", @{@"receiver": identity(receiver)}, nil) : 0;
+    NSRect returned = ((NSRect (*)(id, SEL))traceOriginal(receiver, selector))(receiver, selector);
+    if (observe) traceEnd(@"accessibilityFrame", call, @{@"finiteRect": rect(returned), @"raw": NSStringFromRect(returned),
+        @"components": @[windowCoordinate(@(returned.origin.x)), windowCoordinate(@(returned.origin.y)),
+            windowCoordinate(@(returned.size.width)), windowCoordinate(@(returned.size.height))]}, nil);
+    return returned;
+}
+
+static NSRange tracedRange(id receiver, SEL selector) {
+    traceAdditional(@"selectedRange");
+    BOOL observe = traceCaller(); NSUInteger call = observe ? traceBegin(@"selectedRange", @{@"receiver": identity(receiver)}, nil) : 0;
+    NSRange returned = ((NSRange (*)(id, SEL))traceOriginal(receiver, selector))(receiver, selector);
+    if (observe) traceEnd(@"selectedRange", call, @[@(returned.location), @(returned.length)], nil);
+    return returned;
+}
+
+static BOOL traceInstall(Class type, SEL selector, IMP replacement, const char *result, NSArray *arguments) {
+    [traceLock lock];
+    @try {
+    for (NSDictionary *entry in traceHooks) if ([entry[@"class"] pointerValue] == (__bridge const void *)type && [entry[@"selector"] pointerValue] == selector) return YES;
+    Method method = class_getInstanceMethod(type, selector);
+    if (!abi(method, result, arguments)) { traceErrors++; return NO; }
+    IMP original = method_getImplementation(method);
+    for (NSDictionary *entry in traceHooks) if ([entry[@"replacement"] pointerValue] == original) { traceErrors++; return NO; }
+    [traceHooks addObject:@{@"class": [NSValue valueWithPointer:(__bridge const void *)type], @"selector": [NSValue valueWithPointer:selector],
+        @"original": [NSValue valueWithPointer:(const void *)original], @"replacement": [NSValue valueWithPointer:(const void *)replacement]}];
+    if (!class_addMethod(type, selector, replacement, method_getTypeEncoding(method))) method_setImplementation(class_getInstanceMethod(type, selector), replacement);
+    traceWrite(@{@"kind": @"hook", @"class": NSStringFromClass(type), @"selector": NSStringFromSelector(selector),
+        @"installed": @(method_getImplementation(class_getInstanceMethod(type, selector)) == replacement),
+        @"typeEncoding": @(method_getTypeEncoding(method)), @"original": [NSString stringWithFormat:@"%p", (void *)original], @"replacement": [NSString stringWithFormat:@"%p", (void *)replacement]});
+    return YES;
+    } @finally { [traceLock unlock]; }
+}
+
+static void traceFieldHooks(NSResponder *responder) {
+    if (![responder isKindOfClass:NSTextView.class]) return;
+    Class type = object_getClass(responder);
+    traceInstall(type, @selector(keyDown:), (IMP)tracedTextEvent, @encode(void), @[@(@encode(id)), @(@encode(SEL)), @(@encode(id))]);
+    traceInstall(type, @selector(selectAll:), (IMP)tracedTextEvent, @encode(void), @[@(@encode(id)), @(@encode(SEL)), @(@encode(id))]);
+    traceInstall(type, @selector(doCommandBySelector:), (IMP)tracedCommand, @encode(void), @[@(@encode(id)), @(@encode(SEL)), @(@encode(SEL))]);
+    traceInstall(type, @selector(selectedRange), (IMP)tracedRange, @encode(NSRange), @[@(@encode(id)), @(@encode(SEL))]);
+}
+
+static void traceAXHooks(id element) {
+    if (!element || !NSThread.isMainThread) return;
+    Class type = [element class], runtime = object_getClass(element); const char *image = class_getImageName(type);
+    if (!image || !sameImage(@(image)) || ![element conformsToProtocol:@protocol(NSAccessibility)]) return;
+    NSArray *objectArguments = @[@(@encode(id)), @(@encode(SEL))];
+    for (NSString *name in @[@"accessibilityRole", @"accessibilityParent", @"accessibilityFrame", @"isAccessibilityEnabled"])
+        if (owns(type, NSSelectorFromString(name)) && implementation(runtime, NSSelectorFromString(name)) != implementation(type, NSSelectorFromString(name))) { traceErrors++; return; }
+    for (NSString *name in @[@"accessibilityRole", @"accessibilityParent"])
+        if (owns(type, NSSelectorFromString(name))) traceInstall(type, NSSelectorFromString(name), (IMP)tracedAXObject, @encode(id), objectArguments);
+    if (owns(type, @selector(accessibilityFrame))) traceInstall(type, @selector(accessibilityFrame), (IMP)tracedAXFrame, @encode(NSRect), objectArguments);
+    if (owns(type, @selector(isAccessibilityEnabled))) traceInstall(type, @selector(isAccessibilityEnabled), (IMP)tracedAXEnabled, @encode(BOOL), objectArguments);
+}
+
+static void traceWindowHooks(NSWindow *window) {
+    if (!traceWindow(window)) return;
+    NSMutableArray *pending = [NSMutableArray array]; if (window.contentView) [pending addObject:window.contentView];
+    for (NSUInteger count = 0; pending.count && count < 4096; count++) {
+        NSView *view = pending.lastObject; [pending removeLastObject];
+        Class type = [view class], runtime = object_getClass(view); const char *image = class_getImageName(type);
+        if ([view isKindOfClass:NSControl.class] && image && sameImage(@(image)) && owns(type, @selector(accessibilityHitTest:))) {
+            if (implementation(runtime, @selector(accessibilityHitTest:)) != implementation(type, @selector(accessibilityHitTest:))) { traceErrors++; continue; }
+            traceInstall(type, @selector(accessibilityHitTest:), (IMP)tracedAXHit, @encode(id), @[@(@encode(id)), @(@encode(SEL)), @(@encode(NSPoint))]);
+            traceAXHooks(view);
+        }
+        [pending addObjectsFromArray:view.subviews];
+    }
+}
+
+static void traceLifecycle(NSString *reason, NSWindow *window) {
+    if (traceDepth || atomic_load(&stopping) || !traceEnabled) return;
+    @try {
+        if (!traceWindow(window)) return;
+        traceWindowHooks(window);
+        traceDepth++;
+        @try { traceWrite(@{@"kind": @"lifecycle", @"reason": reason, @"context": traceContext(window), @"stack": stackTrace()}); }
+        @finally { traceDepth--; }
+    } @catch (NSException *exception) { traceErrors++; }
+}
+
+static CFArrayRef tracedWindows(CGWindowListOption options, CGWindowID relative) {
+    traceAdditional(@"CGWindowListCopyWindowInfo");
+    BOOL observe = NO; NSUInteger call = 0;
+    @try {
+        observe = traceCaller();
+        if (observe) call = traceBegin(@"CGWindowListCopyWindowInfo", @{@"options": @(options), @"relative": @(relative)}, nil);
+    } @catch (NSException *exception) { traceErrors++; observe = NO; }
+    CFArrayRef result = CGWindowListCopyWindowInfo(options, relative);
+    if (observe) traceEnd(@"CGWindowListCopyWindowInfo", call, result ? (__bridge NSArray *)result : NSNull.null, nil);
+    return result;
+}
+
+static void tracedCGPost(CGEventTapLocation tap, CGEventRef event) {
+    BOOL observe = NO; NSUInteger call = 0;
+    @try {
+        observe = traceCaller();
+        if (observe) call = traceBegin(@"CGEventPost", @{@"tap": @(tap), @"eventIdentity": [NSString stringWithFormat:@"%p", event],
+            @"eventGetterOrigin": @"ADDITIONAL_OBSERVATION_OF_ORIGINAL_ARGUMENT", @"type": @(CGEventGetType(event)),
+            @"position": point(CGEventGetLocation(event)), @"timestamp": @(CGEventGetTimestamp(event)),
+            @"timestampUnits": @"nanoseconds-since-startup",
+            @"tag": @(CGEventGetIntegerValueField(event, kCGEventSourceUserData))}, nil);
+    } @catch (NSException *exception) { traceErrors++; observe = NO; }
+    CGEventPost(tap, event);
+    if (observe) traceEnd(@"CGEventPost", call, NSNull.null, nil);
+}
+
+__attribute__((used, section("__DATA,__interpose"))) static const struct { const void *replacement, *original; } traceInterpose[] = {
+    {(const void *)tracedWindows, (const void *)CGWindowListCopyWindowInfo},
+    {(const void *)tracedCGPost, (const void *)CGEventPost}
+};
+
+@interface NGVTraceSelftestTextView : NSTextView @end
+@implementation NGVTraceSelftestTextView @end
+
+static void traceSelftest(void) {
+    if (!selftestMode || selftestDone || !boundRoot || !NSThread.isMainThread) return;
+    selftestDone = YES; selftestRunning = YES;
+    NSWindow *previous = NSApp.keyWindow; NSWindow *window = nil;
+    @try {
+        window = [[NSWindow alloc] initWithContentRect:NSMakeRect(30, 30, 160, 100) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
+        window.releasedWhenClosed = NO;
+        NGVTraceSelftestTextView *text = [[NGVTraceSelftestTextView alloc] initWithFrame:NSMakeRect(0, 0, 160, 100)];
+        text.string = @"ab"; window.contentView = text; [window makeKeyAndOrderFront:nil]; [window makeFirstResponder:text];
+        text.selectedRange = NSMakeRange(0, 1); traceFieldHooks(text);
+        NSEvent *event = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:0 timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:window.windowNumber context:nil characters:@"x" charactersIgnoringModifiers:@"x" isARepeat:NO keyCode:7];
+        [NSApp postEvent:event atStart:YES];
+        NSEvent *queued = [NSApp nextEventMatchingMask:NSEventMaskKeyDown untilDate:NSDate.date inMode:NSDefaultRunLoopMode dequeue:YES];
+        if (queued == event) [NSApp sendEvent:queued];
+        NSString *inserted = [text.string copy]; NSRange after = text.selectedRange;
+        BOOL action = [NSApp sendAction:@selector(selectAll:) to:text from:nil];
+        NSRange selected = text.selectedRange;
+        traceWrite(@{@"kind": @"selftest", @"queueIdentityUnchanged": @(queued == event), @"inserted": inserted,
+            @"selectionAfterKey": @[@(after.location), @(after.length)], @"actionReturn": @(action),
+            @"selectionAfterAction": @[@(selected.location), @(selected.length)], @"expectedInserted": @"xb",
+            @"expectedSelectionAfterKey": @[@1, @0], @"expectedSelectionAfterAction": @[@0, @2],
+            @"complete": @(queued == event && [inserted isEqual:@"xb"] && after.location == 1 && after.length == 0 && action && selected.location == 0 && selected.length == 2)});
+    } @catch (NSException *exception) { traceErrors++; traceWrite(@{@"kind": @"selftest", @"complete": @NO, @"exception": exception.name}); }
+    @finally { [window close]; [previous makeKeyWindow]; selftestRunning = NO; }
+}
+
+static void traceInitialize(NSDictionary *environment, NSString *folder) {
+    expectedHost = environment[@"NGV_POINTER_TRACE_EXPECTED_HOST"];
+    if (![environment[@"NGV_POINTER_EVENT_TRACE"] isEqual:@"1"]) return;
+    NSString *actualHost = NSProcessInfo.processInfo.arguments.firstObject;
+    if (!expectedHost.isAbsolutePath || !fileIdentity(actualHost).count || ![fileIdentity(actualHost) isEqual:fileIdentity(expectedHost)]) return;
+    traceLock = [NSRecursiveLock new]; traceCalls = [NSMutableDictionary new]; traceReturns = [NSMutableDictionary new]; traceAdditionalQueries = [NSMutableDictionary new]; traceHooks = [NSMutableArray new];
+    traceFD = open([[folder stringByAppendingPathComponent:@"event-trace.jsonl"] fileSystemRepresentation], O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
+    if (traceFD < 0) { outputErrors++; return; }
+    traceEnabled = YES; selftestMode = [environment[@"NGV_POINTER_TRACE_SELFTEST"] isEqual:@"1"];
+    traceWrite(@{@"kind": @"loaded", @"expectedImageIdentity": fileIdentity(expectedImage), @"expectedHostIdentity": fileIdentity(expectedHost), @"actualHostIdentity": fileIdentity(actualHost), @"selftestMode": @(selftestMode)});
+    NSArray *objectEvent = @[@(@encode(id)), @(@encode(SEL)), @(@encode(id))];
+    Class applicationClass = objc_getClass("NSApplication"), windowClass = objc_getClass("NSWindow");
+    traceInstall(applicationClass, @selector(postEvent:atStart:), (IMP)tracedPost, @encode(void), @[@(@encode(id)), @(@encode(SEL)), @(@encode(id)), @(@encode(BOOL))]);
+    traceInstall(applicationClass, @selector(sendEvent:), (IMP)tracedSend, @encode(void), objectEvent);
+    traceInstall(applicationClass, @selector(sendAction:to:from:), (IMP)tracedAction, @encode(BOOL), @[@(@encode(id)), @(@encode(SEL)), @(@encode(SEL)), @(@encode(id)), @(@encode(id))]);
+    traceInstall(object_getClass(windowClass), @selector(windowNumberAtPoint:belowWindowWithWindowNumber:), (IMP)tracedWindowAt, @encode(NSInteger), @[@(@encode(id)), @(@encode(SEL)), @(@encode(NSPoint)), @(@encode(NSInteger))]);
+    traceInstall(windowClass, @selector(windowNumber), (IMP)tracedWindowNumber, @encode(NSInteger), @[@(@encode(id)), @(@encode(SEL))]);
+    dispatch_async(dispatch_get_main_queue(), ^{
+        traceMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskMouseMoved | NSEventMaskLeftMouseDown | NSEventMaskLeftMouseUp | NSEventMaskKeyDown | NSEventMaskKeyUp | NSEventMaskFlagsChanged handler:^NSEvent *(NSEvent *event) {
+            if (!traceDepth && !atomic_load(&stopping) && traceWindow(event.window)) {
+                traceDepth++;
+                @try { traceWrite(@{@"kind": @"receive", @"event": traceEvent(event), @"context": traceContext(event.window), @"stack": stackTrace()}); }
+                @catch (NSException *exception) { traceErrors++; }
+                @finally { traceDepth--; }
+            }
+            return event;
+        }];
+    });
+}
+
+static void traceFinish(void) {
+    if (!traceEnabled) return;
+    if (traceMonitor) [NSEvent removeMonitor:traceMonitor];
+    traceWrite(@{@"kind": @"finished", @"calls": traceCalls, @"returns": traceReturns, @"additionalGetterQueryCounts": traceAdditionalQueries,
+        @"contextCount": @(traceContextSequence), @"errors": @(traceErrors), @"selftestMode": @(selftestMode), @"selftestCompleted": @(selftestDone)});
+    for (NSDictionary *entry in traceHooks.reverseObjectEnumerator) {
+        Class type = (__bridge Class)[entry[@"class"] pointerValue]; SEL selector = [entry[@"selector"] pointerValue];
+        Method method = class_getInstanceMethod(type, selector);
+        if (method_getImplementation(method) == (IMP)[entry[@"replacement"] pointerValue]) method_setImplementation(method, (IMP)[entry[@"original"] pointerValue]);
+    }
+    if (close(traceFD) != 0 || traceErrors) { const char *message = "NGV_POINTER_INSPECTOR_FINALIZATION_FAILED\n"; write(STDERR_FILENO, message, strlen(message)); }
+    traceFD = -1; traceEnabled = NO;
 }

@@ -978,7 +978,8 @@ def _cohort_ci_additions(prior, current, changes, known_helpers, client_inputs):
                   'scripts/native_app_window_sampler.swift', 'scripts/fixtures/native-app-failure-1087.json',
                   'scripts/native_pointer_guard_diagnostic.py', 'scripts/native_pointer_guard_snapshot.m',
                   'scripts/native_pointer_guard_selftest.swift',
-                  'scripts/fixtures/native-app-failure-1099.json', 'scripts/fixtures/native-app-failure-1110.json'}
+                  'scripts/fixtures/native-app-failure-1099.json', 'scripts/fixtures/native-app-failure-1110.json',
+                  'scripts/fixtures/native-app-failure-1120.json'}
     added = sorted(set(current) - set(prior))
     require(set(prior) <= set(current)
             and all(changes.get(name) in {'A', 'M'}
