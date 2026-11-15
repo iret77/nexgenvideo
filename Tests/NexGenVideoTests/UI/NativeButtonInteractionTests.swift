@@ -793,7 +793,7 @@ struct NativePointerInteractionTests {
                     button("Redo")
                 }
                 ScrollView {
-                    VStack(spacing: AppTheme.Spacing.sm) {
+                    NativePointerViewportStack {
                         TextField("Position", text: $text)
                             .background {
                                 AppRelaunchClickProbe(identifier: "pointer.field", acceptanceState: true, acceptanceText: text)
@@ -937,7 +937,7 @@ struct NativePointerInteractionTests {
 
         func ready() async throws {
             try await driver.wait("exclusive native pointer fixture") {
-                NSApp.isActive && self.window.isKeyWindow && self.probe("Undo") != nil
+                NSApp.isActive && self.window.isKeyWindow && self.probe("Undo") != nil && nativePointerViewportReady(in: self.window)
             }
             try await driver.fill("pointer.field", value: "0.5", in: window)
             try #require(window.firstResponder is NSTextView)
@@ -1359,5 +1359,161 @@ struct NativePointerInteractionTests {
         try await fixture.driver.wait("single unperturbed callback") { fixture.capture.count("Undo") == 1 }
         #expect(fixture.capture.count("Later") == 0)
         try delivered("Undo", in: fixture)
+    }
+
+    @Test func viewportWidthPreservesFieldAndNativeWheelAcrossScrollerStyles() async throws {
+        for style in [NSScroller.Style.legacy, .overlay] {
+            let fixture = try Fixture("viewport-" + String(style.rawValue))
+            defer { fixture.close() }
+            try await fixture.driver.wait("native viewport fixture") {
+                NSApp.isActive && fixture.window.isKeyWindow && fixture.probe("field") != nil
+            }
+            let field = try #require(fixture.probe("field"))
+            let scroll = try #require(field.enclosingScrollView)
+            scroll.scrollerStyle = style
+            try await fixture.ready()
+            #expect(scroll.scrollerStyle == style)
+            let clip = scroll.contentView
+            let fieldFrame = field.convert(field.bounds, to: clip)
+            #expect(clip.bounds.contains(fieldFrame))
+            let document = try #require(scroll.documentView)
+            #expect(document.bounds.height > clip.bounds.height)
+            let later = try #require(fixture.probe("Later"))
+            let initiallyOutside = !clip.bounds.contains(later.convert(later.bounds, to: clip))
+            #expect(initiallyOutside)
+            let before = clip.bounds.origin
+            try await fixture.moveAway()
+            let interactionStart = fixture.driver.interactions.count
+            try await fixture.driver.click("pointer.Later", in: fixture.window)
+            try await fixture.driver.wait("Later callback after native wheel") { fixture.capture.count("Later") == 1 }
+            #expect(field.enclosingScrollView === scroll && later.enclosingScrollView === scroll)
+            #expect(scroll.contentView === clip && scroll.scrollerStyle == style)
+            #expect(clip.bounds.contains(later.convert(later.bounds, to: clip)))
+            #expect(field.convert(field.bounds, to: clip).width <= clip.bounds.width)
+            #expect(clip.bounds.origin != before)
+            let wheels = fixture.driver.interactions.dropFirst(interactionStart).filter {
+                $0["kind"] as? String == "wheel" && $0["id"] as? String == "pointer.Later"
+            }
+            #expect(wheels.contains { wheel in
+                guard let start = wheel["before"] as? [CGFloat], let end = wheel["after"] as? [CGFloat],
+                      start.count == 2, end.count == 2 else { return false }
+                return (start + end).allSatisfy(\.isFinite) && start != end
+            })
+            #expect(fixture.capture.count("Later") == 1)
+            try delivered("Later", in: fixture)
+            try fixture.record("viewport", ["style": style.rawValue, "fieldFrame": NSStringFromRect(fieldFrame),
+                "viewport": NSStringFromRect(clip.bounds), "before": [before.x, before.y],
+                "after": [clip.bounds.origin.x, clip.bounds.origin.y], "laterInitiallyOutside": initiallyOutside,
+                "wheels": Array(wheels), "callbacks": fixture.capture.callbacks])
+        }
+    }
+
+}
+
+@MainActor private func nativePointerViewportReady(in window: NSWindow) -> Bool {
+    guard let root = window.contentView,
+          let field = WorkspaceUIAcceptance.findProbe(in: root, identifier: "pointer.field"),
+          let clip = field.enclosingScrollView?.contentView else { return false }
+    let frame = field.convert(field.bounds, to: clip)
+    return [frame.minX, frame.minY, frame.width, frame.height, clip.bounds.width, clip.bounds.height].allSatisfy(\.isFinite)
+        && frame.width > 0 && frame.height > 0 && clip.bounds.contains(frame)
+}
+
+@MainActor private struct NativePointerViewportStack<Content: View>: View {
+    let content: Content
+    @State private var width: CGFloat?
+
+    init(@ViewBuilder content: () -> Content) { self.content = content() }
+
+    var body: some View {
+        VStack(spacing: AppTheme.Spacing.sm) { content }
+            .frame(width: width)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background {
+                NativePointerViewportReader { measured in
+                    if width != measured { width = measured }
+                }
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+            }
+    }
+}
+
+@MainActor private struct NativePointerViewportReader: NSViewRepresentable {
+    let onWidth: (CGFloat) -> Void
+
+    func makeNSView(context: Context) -> NativePointerViewportProbe {
+        let view = NativePointerViewportProbe()
+        view.configure(onWidth)
+        return view
+    }
+
+    func updateNSView(_ view: NativePointerViewportProbe, context: Context) { view.configure(onWidth) }
+    static func dismantleNSView(_ view: NativePointerViewportProbe, coordinator: ()) { view.stop() }
+}
+
+@MainActor private final class NativePointerViewportProbe: NSView {
+    private weak var clip: NSClipView?
+    private weak var ownerWindow: NSWindow?
+    private var tokens: [NSObjectProtocol] = []
+    private var callback: ((CGFloat) -> Void)?
+    private var generation: UInt = 0
+    private var scheduled = false
+    private var lastWidth: CGFloat?
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func isAccessibilityElement() -> Bool { false }
+    override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); connect() }
+    override func viewDidMoveToSuperview() { super.viewDidMoveToSuperview(); connect() }
+    override func layout() { super.layout(); connect() }
+
+    func configure(_ callback: @escaping (CGFloat) -> Void) {
+        generation &+= 1; scheduled = false; lastWidth = nil
+        self.callback = callback
+        connect()
+    }
+
+    func stop() {
+        disconnect()
+        callback = nil
+    }
+
+    private func disconnect() {
+        generation &+= 1; scheduled = false; lastWidth = nil
+        for token in tokens { NotificationCenter.default.removeObserver(token) }
+        tokens = []; clip = nil; ownerWindow = nil
+    }
+
+    private func connect() {
+        guard callback != nil else { return }
+        guard let window, let current = enclosingScrollView?.contentView else { disconnect(); return }
+        if current !== clip || window !== ownerWindow {
+            disconnect()
+            clip = current; ownerWindow = window
+            for name in [NSView.boundsDidChangeNotification, NSView.frameDidChangeNotification] {
+                tokens.append(NotificationCenter.default.addObserver(forName: name, object: current, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.publish() }
+                })
+            }
+            current.postsBoundsChangedNotifications = true
+            current.postsFrameChangedNotifications = true
+        }
+        publish()
+    }
+
+    private func publish() {
+        guard callback != nil, !scheduled, let clip, let window = ownerWindow else { return }
+        scheduled = true
+        let currentGeneration = generation
+        DispatchQueue.main.async { [weak self, weak clip, weak window] in
+            guard let self, self.generation == currentGeneration else { return }
+            self.scheduled = false
+            guard self.callback != nil, let clip, let window, self.clip === clip, self.ownerWindow === window,
+                  self.window === window, clip.window === window, self.enclosingScrollView?.contentView === clip else { return }
+            let width = clip.bounds.width
+            guard width.isFinite, width > 0, width != self.lastWidth else { return }
+            self.lastWidth = width
+            self.callback?(width)
+        }
     }
 }
