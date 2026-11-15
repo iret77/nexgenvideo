@@ -36,6 +36,17 @@ HISTORICAL_C_SHA = 'b7413fbf5849efa42b8563ec04d74f7a012ae343878610d0150e194a5fb4
 HISTORICAL_SOURCE_FILES = {'scripts/native_pointer_guard_diagnostic.py', 'scripts/native_pointer_guard_snapshot.m',
     'scripts/native_app_failure_diagnostic.py', 'scripts/fixtures/native-app-failure-1099.json'}
 SOURCE_FILES = HISTORICAL_SOURCE_FILES | {'scripts/native_pointer_guard_selftest.swift'}
+SELFTEST_SOURCE_SHA = '32ab7da761fc1dd7745964cbad6e91918c5d2a71e7568a1bfb2283648e71e8cb'
+SELFTEST_TOOL_SHA = '8d5d8c7734614b186e92a96026630af2573bbbd25cd6d6a8b905c7725cfd2bd1'
+SELFTEST_TOOL_BYTES = 134736
+SELFTEST_PRODUCER = (43657087733, '535eac81fd0b3e2ea1f6b83ba0e1e39dbc86f1db', 132637995947)
+SELFTEST_ARTIFACT = (14137979075, 'ce6157c3ba80ab47be907bcb9e845638fad424ea52d3530dd36d830bb4dfbd29', 1807030)
+SELFTEST_PRODUCER_FILES = {
+    'scripts/native_pointer_guard_selftest.swift': SELFTEST_SOURCE_SHA,
+    'scripts/native_pointer_guard_snapshot.m': '4938f09f942cd8694f7cbddb3d3fe710986983972d8698efa74fecc5037f1f6e',
+    'scripts/native_pointer_guard_diagnostic.py': 'd95211ca087f675f5a03888fff2264a33bd3250b69f6f25974e872b1500a47d9',
+    'scripts/native_app_failure_diagnostic.py': '40a7143c57b994cecb429a8e8927015962e2aa9b6580f64562e3dfa1a7f7a278',
+    'scripts/fixtures/native-app-failure-1099.json': FIXTURE_SHA}
 MEMBERS = {'failure-bound.json': ('bound.json', 'boundSHA256'),
            'failure-events.jsonl': ('app-swift-testing/events.jsonl', 'eventSHA256'),
            'failure-host-receipt.json': ('app-swift-testing/host-receipt.json', 'hostReceiptSHA256')}
@@ -127,6 +138,66 @@ def build_inspector(inspector, evidence):
         'scripts/native_pointer_guard_snapshot.m', '-o', str(inspector)])
     targets.logged(evidence, 'sign-current-inspector-only', ['codesign', '--sign', '-', str(inspector)])
     targets.logged(evidence, 'verify-current-inspector-only', ['codesign', '--verify', '--strict', str(inspector)])
+
+
+def selftest_tool_bytes(archive):
+    binding = json.loads(archive_bytes(archive, 'native-pointer-guard-source/binding.json', 4 * 1024**2))
+    require(binding.get('schema') == 'native-pointer-guard-binding/v1'
+        and binding.get('runID') == SELFTEST_PRODUCER[0] and binding.get('sourceSHA') == SELFTEST_PRODUCER[1]
+        and binding.get('attempt') == 1 and binding.get('sourceFiles') == SELFTEST_PRODUCER_FILES
+        and binding.get('fixtureSHA256') == FIXTURE_SHA and binding.get('nativeExecution') is False
+        and binding.get('fullReleaseAcceptance') is False,
+        'Retained selftest tool source differs')
+    for stage in ('compile-observer-selftest-tool', 'sign-observer-selftest-tool', 'verify-observer-selftest-tool'):
+        require(json.loads(archive_bytes(archive, INSPECTOR_PREFIX + stage + '.exit.json', 1024)) == {'exitCode': 0},
+            'Retained selftest tool preparation is incomplete')
+    raw = archive_bytes(archive, INSPECTOR_PREFIX + 'pointer-observer-selftest', 1024**2)
+    require(len(raw) == SELFTEST_TOOL_BYTES and hashlib.sha256(raw).hexdigest() == SELFTEST_TOOL_SHA,
+        'Retained selftest tool image changed')
+    return raw
+
+
+def restore_selftest_tool(tool, evidence):
+    require(checksum(Path('scripts/native_pointer_guard_selftest.swift')) == SELFTEST_SOURCE_SHA,
+        'Selftest source changed; retained tool cannot be substituted')
+    version = platform.mac_ver()[0]
+    require(re.fullmatch(r'[0-9]+\.[0-9]+(?:\.[0-9]+)?', version) is not None
+        and tuple((list(map(int, version.split('.'))) + [0, 0, 0])[:3]) >= (27, 2, 0),
+        'Retained selftest tool requires macOS 27.2 or newer')
+    run_id, source_sha, job_id = SELFTEST_PRODUCER
+    run = api('actions/runs/' + str(run_id))
+    jobs = api(f'actions/runs/{run_id}/attempts/1/jobs?per_page=100')
+    require(run.get('id') == run_id and run.get('head_sha') == source_sha and run.get('run_attempt') == 1
+        and run.get('workflow_id') == 355242770 and run.get('path') == '.github/workflows/diagnostic-acceptance.yml'
+        and run.get('event') == 'workflow_dispatch' and run.get('actor', {}).get('login') == 'iret77'
+        and run.get('repository', {}).get('full_name') == 'iret77/nexgenvideo'
+        and run.get('status') == 'completed' and run.get('conclusion') == 'failure'
+        and jobs.get('total_count') == len(jobs.get('jobs', [])) == 30
+        and len({job['id'] for job in jobs['jobs']}) == 30
+        and all(job.get('run_id') == run_id and job.get('head_sha') == source_sha and job.get('run_attempt') == 1
+            and job.get('status') == 'completed' for job in jobs['jobs']), 'Retained selftest tool producer differs')
+    found = [job for job in jobs['jobs'] if job.get('name') == 'pointer-guard-snapshot']
+    source_jobs = [job for job in jobs['jobs'] if job.get('name') == 'source']
+    require(len(found) == 1 and found[0].get('id') == job_id and found[0].get('conclusion') == 'failure'
+        and 'macrunner' in found[0].get('labels', []) and len(source_jobs) == 1
+        and source_jobs[0].get('id') == 132637909857 and source_jobs[0].get('conclusion') == 'success'
+        and all(job.get('conclusion') == 'skipped' for job in jobs['jobs']
+            if job.get('name') not in {'source', 'pointer-guard-snapshot'}), 'Retained selftest native job differs')
+    identity, digest, size = SELFTEST_ARTIFACT
+    artifact = api('actions/artifacts/' + str(identity))
+    release.verify_artifact(artifact, run, found[0], identity, digest,
+        'native-pointer-guard-measurement-' + str(run_id) + '-a1')
+    require(artifact.get('size_in_bytes') == size, 'Retained selftest artifact size differs')
+    cohort.consumer_paths(source_sha, os.environ['GITHUB_SHA'])
+    outer = evidence / 'retained-selftest-tool.zip'; download(artifact, outer)
+    require(checksum(outer) == digest, 'Retained selftest archive changed')
+    with release.verified_zip(outer, 64 * 1024**2) as archive: raw = selftest_tool_bytes(archive)
+    tool.write_bytes(raw); tool.chmod(0o755)
+    targets.logged(evidence, 'verify-retained-observer-selftest-tool', ['codesign', '--verify', '--strict', str(tool)])
+    require(checksum(tool) == SELFTEST_TOOL_SHA, 'Retained selftest verification changed its bytes')
+    write(evidence / 'retained-observer-selftest-tool.json', {'producer': artifact, 'run': run, 'job': found[0],
+        'sha256': SELFTEST_TOOL_SHA, 'bytes': SELFTEST_TOOL_BYTES, 'sourceSHA256': SELFTEST_SOURCE_SHA,
+        'actualMacOS': version, 'minimumMacOS': '27.2.0', 'compiledOrResigned': False})
 
 
 def bind(output):
@@ -273,6 +344,9 @@ def verify_snapshots(raw, process, inspector, image, expected_identity=None, neg
                 and groups['probe-hook-ready'][0].get('classImageIdentity') == expected_identity
                 and groups['eligibility'] and any(row.get('uniqueProbeMatches') is False and row.get('eligible') is False
                     and row.get('classImageMatches') is True and row.get('ownAXImageMatches') is True
+                    and all(row.get(key) is True for key in ('runtimeLineageMatches', 'effectiveAXMatches', 'declaredOwnAX'))
+                    and all(isinstance(row.get(key), str) and row[key] and row[key] != 'nil'
+                        for key in ('rootClass', 'runtimeRootClass'))
                     for row in groups['eligibility']), 'Duplicate-probe selftest did not exercise the refusal')
             return {'duplicateProbeRefused': True, 'records': len(rows), 'diagnosticOnly': True}
         require(finished['rectCalls'] == finished['rectReturns'] == 0 and not groups['probe-hook-ready']
@@ -286,11 +360,16 @@ def verify_snapshots(raw, process, inspector, image, expected_identity=None, neg
         return isinstance(value, str) and re.fullmatch(r'0x[0-9a-fA-F]+', value) is not None and int(value, 16) > 0
     require(all(pointer(hook.get(key)) for key in ('root', 'probe', 'windowIdentity'))
         and type(hook.get('window')) is int and hook['window'] > 0, 'Original window and view identities are missing')
+    require(all(isinstance(hook.get(key), str) and hook[key] and hook[key] != 'nil'
+                for key in ('rootClass', 'runtimeRootClass'))
+        and all(hook.get(key) is True for key in ('runtimeLineageMatches', 'effectiveAXMatches', 'declaredOwnAX'))
+        and pointer(hook.get('originalAXIMP')), 'Declared hosting class or runtime dispatch is unqualified')
     require(probe_hook.get('installed') is True and probe_hook.get('mainThread') is True
         and probe_hook.get('classImageIdentity') == probe_hook.get('expectedImageIdentity') == expected_identity
         and probe_hook.get('class') == 'NexGenVideo.AppRelaunchClickProbeView'
         and hook.get('installed') is True and hook.get('mainThread') is True
         and hook.get('rootAXImageIdentity') == hook.get('expectedImageIdentity') == expected_identity
+        and hook.get('rootDeclaredImageIdentity') == expected_identity
         and hook.get('inspectorImage') == str(inspector) and hook.get('originalIMP', '').startswith('0x')
         and all(isinstance(row.get('typeEncoding'), str) and row['typeEncoding'] for row in (probe_hook, hook)),
         'Hook origin or ABI provenance is incomplete')
@@ -335,10 +414,7 @@ def verify_snapshots(raw, process, inspector, image, expected_identity=None, neg
 
 def observer_selftest(evidence, inspector):
     tool = evidence / 'pointer-observer-selftest'
-    targets.logged(evidence, 'compile-observer-selftest-tool', ['xcrun', 'swiftc', '-parse-as-library', '-swift-version', '6',
-        '-module-name', 'NexGenVideo', 'scripts/native_pointer_guard_selftest.swift', '-o', str(tool)])
-    targets.logged(evidence, 'sign-observer-selftest-tool', ['codesign', '--sign', '-', str(tool)])
-    targets.logged(evidence, 'verify-observer-selftest-tool', ['codesign', '--verify', '--strict', str(tool)])
+    restore_selftest_tool(tool, evidence)
     results = {}
     for name in ('owned-image', 'foreign-image', 'already-key', 'duplicate-probe'):
         folder = evidence / ('selftest-' + name); folder.mkdir()
@@ -370,6 +446,7 @@ def observer_selftest(evidence, inspector):
             require(matches and any(row['kind'] == 'guard-snapshot' and row.get('hit') == witness.get('hit') for row in rows),
                 'Observer does not match the independently computed native fixture geometry and hit return')
         results[name] = {'process': result, 'witness': witness, 'measurement': measured}
+        require(checksum(tool) == SELFTEST_TOOL_SHA, 'Selftest execution changed the retained tool')
     write(evidence / 'observer-selftest.json', {'results': results, 'complete': True, 'fullReleaseAcceptance': False})
 
 

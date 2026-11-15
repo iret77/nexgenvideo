@@ -15,6 +15,8 @@
 typedef NSView *(*HitFunction)(id, SEL, NSPoint);
 static HitFunction originalHit;
 static Class hostingClass;
+static Class runtimeHostingClass;
+static IMP boundAX;
 typedef NSRect (*RectFunction)(id, SEL, NSRect, NSView *);
 static RectFunction originalRect;
 static Class probeClass;
@@ -43,6 +45,7 @@ static NSArray *point(NSPoint value) {
 }
 
 static NSString *identity(id value) { return value ? [NSString stringWithFormat:@"%p", (__bridge void *)value] : @"nil"; }
+static NSNumber *wireBool(BOOL value) { return value ? @YES : @NO; }
 
 static BOOL record(NSDictionary *value, BOOL terminal) {
     @try {
@@ -140,6 +143,21 @@ static BOOL owns(Class type, SEL selector) {
     free(methods); return found;
 }
 
+static IMP implementation(Class type, SEL selector) {
+    Method method = class_getInstanceMethod(type, selector);
+    return method ? method_getImplementation(method) : NULL;
+}
+
+static BOOL privateLineage(Class runtime, Class declared) {
+    for (NSUInteger depth = 0; runtime && depth < 32; depth++, runtime = class_getSuperclass(runtime)) {
+        if (runtime == declared) return YES;
+        const char *image = class_getImageName(runtime);
+        if ((image && !sameImage(@(image))) || owns(runtime, @selector(accessibilityHitTest:))
+            || owns(runtime, @selector(hitTest:))) return NO;
+    }
+    return NO;
+}
+
 static BOOL abi(Method method, const char *result, NSArray<NSString *> *arguments) {
     if (!method || method_getNumberOfArguments(method) != arguments.count) return NO;
     char *returned = method_copyReturnType(method); BOOL matches = returned && strcmp(returned, result) == 0;
@@ -173,8 +191,8 @@ static NSArray *clipStates(NSView *marker) {
         NSRect frame = [marker.superview convertRect:marker.frame toView:clip];
         [result addObject:@{@"scroll": identity(scroll), @"clip": identity(clip), @"bounds": rect(clip.bounds),
             @"probeFrame": rect(frame), @"isFlipped": @(clip.isFlipped),
-            @"widthFits": @(frame.size.width <= clip.bounds.size.width),
-            @"heightFits": @(frame.size.height <= clip.bounds.size.height),
+            @"widthFits": wireBool(frame.size.width <= clip.bounds.size.width),
+            @"heightFits": wireBool(frame.size.height <= clip.bounds.size.height),
             @"contains": @(NSContainsRect(clip.bounds, frame))}];
     }
     return result;
@@ -182,40 +200,78 @@ static NSArray *clipStates(NSView *marker) {
 
 static NSView *snapshotHit(id receiver, SEL selector, NSPoint location);
 
+static BOOL boundClassMatches(void) {
+    const char *image = class_getImageName(hostingClass);
+    return [boundRoot class] == hostingClass && object_getClass(boundRoot) == runtimeHostingClass
+        && image && sameImage(@(image))
+        && privateLineage(runtimeHostingClass, hostingClass)
+        && implementation(hostingClass, @selector(accessibilityHitTest:)) == boundAX
+        && implementation(runtimeHostingClass, @selector(accessibilityHitTest:)) == boundAX
+        && implementation(hostingClass, @selector(hitTest:)) == (IMP)snapshotHit
+        && implementation(runtimeHostingClass, @selector(hitTest:)) == (IMP)snapshotHit;
+}
+
 static BOOL bindProbe(NSView *marker) {
     NSWindow *window = marker.window; NSView *root = window.contentView;
-    if (boundRoot) return boundRoot == root && boundWindow == window && boundProbe == marker && probe(root) == marker;
+    if (boundRoot) {
+        BOOL sameScope = boundRoot == root && boundWindow == window && root.window == boundWindow
+            && boundProbe == marker && probe(root) == marker;
+        BOOL related = boundRoot == root || boundWindow == window || boundProbe == marker;
+        if (related && !sameScope && (window || boundWindow.contentView || boundRoot.window)) {
+            outputErrors++; record(@{@"kind": @"scope-changed", @"phase": @"root-window-probe"}, NO);
+            return NO;
+        }
+        if (sameScope && !boundClassMatches()) {
+            outputErrors++; record(@{@"kind": @"scope-changed", @"phase": @"root-class"}, NO);
+            return NO;
+        }
+        return sameScope;
+    }
     BOOL hosting = NO;
     for (Class type = object_getClass(root); type; type = class_getSuperclass(type))
         if ([NSStringFromClass(type) containsString:@"NSHostingView"]) hosting = YES;
-    Class type = object_getClass(root); Method ax = class_getInstanceMethod(type, @selector(accessibilityHitTest:));
+    Class type = [root class], runtime = object_getClass(root);
+    Method ax = class_getInstanceMethod(type, @selector(accessibilityHitTest:));
     Dl_info axInfo = {0}; if (ax) dladdr((void *)method_getImplementation(ax), &axInfo);
     const char *classImage = type ? class_getImageName(type) : NULL;
-    BOOL classMatches = !classImage || sameImage(@(classImage));
+    BOOL classMatches = classImage && sameImage(@(classImage));
     BOOL axMatches = axInfo.dli_fname && sameImage(@(axInfo.dli_fname));
+    BOOL lineage = privateLineage(runtime, type);
+    BOOL effectiveAX = ax && implementation(runtime, @selector(accessibilityHitTest:)) == method_getImplementation(ax);
     BOOL eligible = window && root && hosting && classMatches && axMatches
-        && owns(type, @selector(accessibilityHitTest:)) && probe(root) == marker;
+        && owns(type, @selector(accessibilityHitTest:)) && lineage && effectiveAX && probe(root) == marker;
     if (discoveryCount < 32) {
         discoveryCount++;
         record(@{@"kind": @"eligibility", @"eligible": @(eligible), @"hosting": @(hosting),
             @"classImageMatches": @(classMatches), @"ownAXImageMatches": @(axMatches),
-            @"uniqueProbeMatches": @(root && probe(root) == marker),
+            @"uniqueProbeMatches": wireBool(root && probe(root) == marker),
+            @"runtimeLineageMatches": wireBool(lineage), @"effectiveAXMatches": wireBool(effectiveAX),
+            @"declaredOwnAX": wireBool(owns(type, @selector(accessibilityHitTest:))),
             @"root": identity(root), @"probe": identity(marker), @"windowIdentity": identity(window),
-            @"rootClass": root ? NSStringFromClass(type) : @"nil", @"rootBounds": root ? rect(root.bounds) : @[],
+            @"rootClass": root ? NSStringFromClass(type) : @"nil", @"runtimeRootClass": root ? NSStringFromClass(runtime) : @"nil",
+            @"rootBounds": root ? rect(root.bounds) : @[],
             @"classImage": classImage ? @(classImage) : @"nil", @"axImage": axInfo.dli_fname ? @(axInfo.dli_fname) : @"nil"}, NO);
     } else discoverySuppressed++;
     if (!eligible) return NO;
     Method hit = class_getInstanceMethod(type, @selector(hitTest:));
-    BOOL compatible = !owns(type, @selector(hitTest:)) && abi(hit, @encode(id), @[@(@encode(id)), @(@encode(SEL)), @(@encode(NSPoint))]);
+    BOOL compatible = hit && !owns(type, @selector(hitTest:))
+        && implementation(runtime, @selector(hitTest:)) == method_getImplementation(hit)
+        && abi(hit, @encode(id), @[@(@encode(id)), @(@encode(SEL)), @(@encode(NSPoint))]);
     if (!compatible) { outputErrors++; record(@{@"kind": @"hook-rejected", @"phase": @"hit-ABI"}, NO); return NO; }
-    originalHit = (HitFunction)method_getImplementation(hit); hostingClass = type;
+    originalHit = (HitFunction)method_getImplementation(hit); hostingClass = type; runtimeHostingClass = runtime;
+    boundAX = method_getImplementation(ax);
     boundRoot = root; boundWindow = window; boundProbe = marker;
     BOOL added = class_addMethod(type, @selector(hitTest:), (IMP)snapshotHit, method_getTypeEncoding(hit));
+    if (added && !boundClassMatches()) { outputErrors++; added = NO; }
     hookTime = NSDate.date.timeIntervalSince1970;
     Dl_info image = {0}; dladdr((void *)snapshotHit, &image);
     record(@{@"kind": @"hook-ready", @"installed": @(added), @"mainThread": @YES,
         @"root": identity(root), @"probe": identity(marker), @"windowIdentity": identity(window), @"window": @(window.windowNumber),
+        @"rootClass": NSStringFromClass(type), @"runtimeRootClass": NSStringFromClass(runtime),
+        @"runtimeLineageMatches": wireBool(lineage), @"effectiveAXMatches": wireBool(effectiveAX), @"declaredOwnAX": @YES,
+        @"originalAXIMP": [NSString stringWithFormat:@"%p", (void *)boundAX],
         @"rootClassImage": classImage ? @(classImage) : @"nil", @"rootAXImageIdentity": fileIdentity(@(axInfo.dli_fname)),
+        @"rootDeclaredImageIdentity": classImage ? fileIdentity(@(classImage)) : @{},
         @"expectedImageIdentity": fileIdentity(expectedImage), @"typeEncoding": @(method_getTypeEncoding(hit)),
         @"originalIMP": [NSString stringWithFormat:@"%p", (void *)originalHit],
         @"inspectorImage": image.dli_fname ? @(image.dli_fname) : @"nil", @"wallTime": @(hookTime)}, NO);
@@ -243,8 +299,8 @@ static NSRect snapshotRect(id receiver, SEL selector, NSRect value, NSView *dest
                     @"probe": identity(marker), @"clip": identity(destination), @"inputRect": rect(value),
                     @"returnedRect": rect(returned), @"clipBounds": rect(bounds), @"rootBounds": rect(boundRoot.bounds),
                     @"probeVisibleRect": rect(marker.visibleRect), @"hidden": @(marker.isHiddenOrHasHiddenAncestor),
-                    @"widthFits": @(returned.size.width <= bounds.size.width),
-                    @"heightFits": @(returned.size.height <= bounds.size.height), @"ancestorClips": clips,
+                    @"widthFits": wireBool(returned.size.width <= bounds.size.width),
+                    @"heightFits": wireBool(returned.size.height <= bounds.size.height), @"ancestorClips": clips,
                     @"stack": stackTrace()}, NO)) rectSamples++;
             }
         }
@@ -265,7 +321,7 @@ static void discover(NSString *reason, NSWindow *window) {
         BOOL matches = path && sameImage(@(path));
         if (discoveryCount < 32) {
             discoveryCount++;
-            record(@{@"kind": @"discovery", @"reason": reason, @"classFound": @(type != Nil),
+            record(@{@"kind": @"discovery", @"reason": reason, @"classFound": wireBool(type != Nil),
                 @"imageMatches": @(matches), @"classImage": path ? @(path) : @"nil",
                 @"expectedImageIdentity": fileIdentity(expectedImage), @"windowIdentity": identity(window),
                 @"rootBounds": window.contentView ? rect(window.contentView.bounds) : @[]}, NO);
@@ -288,7 +344,7 @@ static void discover(NSString *reason, NSWindow *window) {
 
 static NSView *snapshotHit(id receiver, SEL selector, NSPoint location) {
     if (!NSThread.isMainThread || atomic_load(&stopping)) return originalHit(receiver, selector, location);
-    if (receiver != boundRoot) return originalHit(receiver, selector, location);
+    if (receiver != boundRoot && ((NSView *)receiver).window != boundWindow) return originalHit(receiver, selector, location);
     if (inspecting) {
         recursiveCalls++;
         return originalHit(receiver, selector, location);
@@ -308,43 +364,49 @@ static NSView *snapshotHit(id receiver, SEL selector, NSPoint location) {
     @try {
         NSView *root = receiver;
         NSView *marker = probe(root);
-        NSPoint local = [root convertPoint:location fromView:root.superview];
-        NSPoint windowPoint = [root convertPoint:local toView:nil];
-        NSRect markerFrame = marker ? [marker convertRect:marker.bounds toView:root] : NSZeroRect;
-        if (root.window == boundWindow && marker && hit && CGRectContainsPoint(markerFrame, local) && samples < 16) {
-            if (!boundProbe) boundProbe = marker;
-            if (marker != boundProbe) @throw [NSException exceptionWithName:@"ChangedProbeIdentity" reason:nil userInfo:nil];
-            if (!firstHitTime) firstHitTime = NSDate.date.timeIntervalSince1970;
+        BOOL detached = !root.window && !boundWindow.contentView && !boundRoot.window;
+        if (!detached && (root != boundRoot || root.window != boundWindow || boundWindow.contentView != boundRoot
+            || marker != boundProbe || !boundClassMatches()))
+            @throw [NSException exceptionWithName:@"ChangedHostingScope" reason:nil userInfo:nil];
+        if (!detached) {
+            NSPoint local = [root convertPoint:location fromView:root.superview];
+            NSPoint windowPoint = [root convertPoint:local toView:nil];
+            NSRect markerFrame = marker ? [marker convertRect:marker.bounds toView:root] : NSZeroRect;
+            if (root.window == boundWindow && marker && hit && CGRectContainsPoint(markerFrame, local) && samples < 16) {
+                if (!boundProbe) boundProbe = marker;
+                if (marker != boundProbe) @throw [NSException exceptionWithName:@"ChangedProbeIdentity" reason:nil userInfo:nil];
+                if (!firstHitTime) firstHitTime = NSDate.date.timeIntervalSince1970;
 
-            NSRect hitBounds = [hit convertRect:hit.bounds toView:root];
-            NSPoint hitPoint = [hit convertPoint:windowPoint fromView:nil];
-            BOOL nativeType = [hit isKindOfClass:NSControl.class] || [hit isKindOfClass:NSTextView.class];
-            BOOL shown = !hit.isHiddenOrHasHiddenAncestor;
-            BOOL visibleArea = !NSIsEmptyRect(hit.visibleRect);
-            BOOL contained = CGRectContainsRect(NSInsetRect(markerFrame, -1, -1), hitBounds);
-            BOOL visiblePoint = CGRectContainsPoint(hit.visibleRect, hitPoint);
-            BOOL enabled = [hit isAccessibilityEnabled];
-            NSString *role = [hit accessibilityRole];
-            BOOL knownRole = role.length && ![role isEqualToString:NSAccessibilityUnknownRole];
-            NSPoint screen = [root.window convertPointToScreen:windowPoint];
-            NSMutableDictionary *value = [@{@"kind": @"guard-snapshot", @"pid": @(getpid()),
-                @"wallTime": @(NSDate.date.timeIntervalSince1970), @"sample": @(samples + 1),
-                @"window": @(root.window.windowNumber), @"windowIdentity": identity(boundWindow), @"root": identity(root), @"hit": identity(hit),
-                @"probe": identity(marker), @"hitClass": NSStringFromClass(hit.class), @"hitClasses": classes(hit),
-                @"hitAncestry": ancestry(hit), @"probeAncestry": ancestry(marker),
-                @"rootPoint": point(local), @"windowPoint": point(windowPoint), @"screenPoint": point(screen),
-                @"probeFrame": rect(markerFrame), @"hitBoundsInRoot": rect(hitBounds),
-                @"hitVisibleRect": rect(hit.visibleRect), @"hitPoint": point(hitPoint),
-                @"nativeRole": role ?: @"nil", @"nativeControlType": @(nativeType),
-                @"notHidden": @(shown), @"visibleArea": @(visibleArea), @"probeContainsHitBounds": @(contained),
-                @"visibleRectContainsPoint": @(visiblePoint), @"nativeAccessibilityEnabled": @(enabled),
-                @"nativeKnownRole": @(knownRole), @"nativeGuardResult": @(nativeType && shown && visibleArea
-                    && contained && visiblePoint && enabled && knownRole), @"diagnosticOnly": @YES} mutableCopy];
-            value[@"stack"] = stackTrace();
-            value[@"hostingAXChain"] = accessibilityChain([root accessibilityHitTest:screen]);
-            value[@"hitAXChain"] = accessibilityChain([hit accessibilityHitTest:screen]);
-            value[@"hitOwnAXChain"] = accessibilityChain(hit);
-            if (record(value, NO)) samples++;
+                NSRect hitBounds = [hit convertRect:hit.bounds toView:root];
+                NSPoint hitPoint = [hit convertPoint:windowPoint fromView:nil];
+                BOOL nativeType = [hit isKindOfClass:NSControl.class] || [hit isKindOfClass:NSTextView.class];
+                BOOL shown = !hit.isHiddenOrHasHiddenAncestor;
+                BOOL visibleArea = !NSIsEmptyRect(hit.visibleRect);
+                BOOL contained = CGRectContainsRect(NSInsetRect(markerFrame, -1, -1), hitBounds);
+                BOOL visiblePoint = CGRectContainsPoint(hit.visibleRect, hitPoint);
+                BOOL enabled = [hit isAccessibilityEnabled];
+                NSString *role = [hit accessibilityRole];
+                BOOL knownRole = role.length && ![role isEqualToString:NSAccessibilityUnknownRole];
+                NSPoint screen = [root.window convertPointToScreen:windowPoint];
+                NSMutableDictionary *value = [@{@"kind": @"guard-snapshot", @"pid": @(getpid()),
+                    @"wallTime": @(NSDate.date.timeIntervalSince1970), @"sample": @(samples + 1),
+                    @"window": @(root.window.windowNumber), @"windowIdentity": identity(boundWindow), @"root": identity(root), @"hit": identity(hit),
+                    @"probe": identity(marker), @"hitClass": NSStringFromClass(hit.class), @"hitClasses": classes(hit),
+                    @"hitAncestry": ancestry(hit), @"probeAncestry": ancestry(marker),
+                    @"rootPoint": point(local), @"windowPoint": point(windowPoint), @"screenPoint": point(screen),
+                    @"probeFrame": rect(markerFrame), @"hitBoundsInRoot": rect(hitBounds),
+                    @"hitVisibleRect": rect(hit.visibleRect), @"hitPoint": point(hitPoint),
+                    @"nativeRole": role ?: @"nil", @"nativeControlType": @(nativeType),
+                    @"notHidden": @(shown), @"visibleArea": @(visibleArea), @"probeContainsHitBounds": @(contained),
+                    @"visibleRectContainsPoint": @(visiblePoint), @"nativeAccessibilityEnabled": @(enabled),
+                    @"nativeKnownRole": @(knownRole), @"nativeGuardResult": wireBool(nativeType && shown && visibleArea
+                        && contained && visiblePoint && enabled && knownRole), @"diagnosticOnly": @YES} mutableCopy];
+                value[@"stack"] = stackTrace();
+                value[@"hostingAXChain"] = accessibilityChain([root accessibilityHitTest:screen]);
+                value[@"hitAXChain"] = accessibilityChain([hit accessibilityHitTest:screen]);
+                value[@"hitOwnAXChain"] = accessibilityChain(hit);
+                if (record(value, NO)) samples++;
+            }
         }
     } @catch (NSException *exception) {
         outputErrors++;
