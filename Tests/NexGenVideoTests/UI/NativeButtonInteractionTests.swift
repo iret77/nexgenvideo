@@ -1409,7 +1409,7 @@ struct NativePointerInteractionTests {
     }
 
 
-    @MainActor private final class CanonicalAXLeaf: NSAccessibilityElement {
+    @MainActor private final class CanonicalAXLeaf: NSView {
         var roleValue: NSAccessibility.Role? = .textField
         var enabled = true
         var measuredFrame: NSRect
@@ -1418,9 +1418,9 @@ struct NativePointerInteractionTests {
         init(window: NSWindow, frame: NSRect) {
             measuredFrame = frame
             parentElement = window
-            super.init()
+            super.init(frame: .zero)
         }
-
+        required init?(coder: NSCoder) { return nil }
         override func accessibilityRole() -> NSAccessibility.Role? { MainActor.assumeIsolated { roleValue?.rawValue }.map { NSAccessibility.Role(rawValue: $0) } }
         override func accessibilityFrame() -> NSRect { MainActor.assumeIsolated { measuredFrame } }
         override func accessibilityParent() -> Any? { MainActor.assumeIsolated { () -> (any AnyObject & Sendable)? in parentElement } }
