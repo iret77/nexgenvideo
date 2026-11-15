@@ -1408,6 +1408,314 @@ struct NativePointerInteractionTests {
         }
     }
 
+
+    @MainActor private final class CanonicalAXLeaf: NSAccessibilityElement {
+        var roleValue: NSAccessibility.Role? = .textField
+        var enabled = true
+        var measuredFrame: NSRect
+        var parentElement: AnyObject?
+
+        init(window: NSWindow, frame: NSRect) {
+            measuredFrame = frame
+            parentElement = window
+            super.init()
+        }
+
+        override func accessibilityRole() -> NSAccessibility.Role? { roleValue }
+        override func accessibilityFrame() -> NSRect { measuredFrame }
+        override func accessibilityParent() -> Any? { parentElement }
+        override func isAccessibilityEnabled() -> Bool { enabled }
+    }
+
+    @MainActor private final class CanonicalNativeControl: NSControl {
+        var canonicalHit: Any?
+        var downTags: [Int64] = []
+        var downWasPressed = false
+        var upCount = 0
+
+        override func accessibilityRole() -> NSAccessibility.Role? { .init(rawValue: kAXUnknownRole) }
+        override func accessibilityHitTest(_ point: NSPoint) -> Any? { canonicalHit }
+        override func isAccessibilityEnabled() -> Bool { isEnabled }
+        override func mouseDown(with event: NSEvent) {
+            downTags.append(event.cgEvent?.getIntegerValueField(.eventSourceUserData) ?? 0)
+            downWasPressed = CGEventSource.buttonState(.combinedSessionState, button: .left)
+        }
+        override func mouseUp(with event: NSEvent) { upCount += 1 }
+    }
+
+    @MainActor private final class CanonicalChangeWitness {
+        var switched = false
+    }
+
+    @MainActor private final class CanonicalNativeFixture {
+        let window: NSWindow
+        let control: CanonicalNativeControl
+        let leaf: CanonicalAXLeaf
+        let driver: ProductionVisualSourcesDriver
+        let output: URL
+        var input: [String: Any]?
+        private let activation: NSApplication.ActivationPolicy
+
+        init(_ name: String) throws {
+            try #require(ProcessInfo.processInfo.arguments.contains("--no-parallel"))
+            let events = try #require(ProcessInfo.processInfo.environment["NGV_APPKIT_TEST_EVENTS"])
+            let folder = URL(fileURLWithPath: events).deletingLastPathComponent()
+                .appendingPathComponent("native-pointer-canonical-" + name + "-" + UUID().uuidString, isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+            let created = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 260, height: 140),
+                                   styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            let root = NSView(frame: NSRect(x: 0, y: 0, width: 260, height: 140))
+            let native = CanonicalNativeControl(frame: NSRect(x: 30, y: 40, width: 180, height: 36))
+            let canonical = CanonicalAXLeaf(window: created, frame: .zero)
+            native.canonicalHit = canonical
+            root.addSubview(native)
+            created.contentView = root
+            created.isReleasedWhenClosed = false
+            window = created
+            control = native
+            leaf = canonical
+            output = folder
+            driver = ProductionVisualSourcesDriver(window: created, output: folder, name: name)
+            activation = NSApp.activationPolicy()
+            NSApp.setActivationPolicy(.regular)
+            window.center()
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            root.layoutSubtreeIfNeeded()
+        }
+
+        func ready() async throws {
+            try await driver.wait("canonical native fixture") {
+                NSApp.isActive && self.window.isKeyWindow && self.control.window === self.window
+            }
+            reset()
+        }
+
+        func reset() {
+            control.isEnabled = true
+            control.canonicalHit = leaf
+            leaf.roleValue = .textField
+            leaf.enabled = true
+            leaf.parentElement = window
+            leaf.measuredFrame = window.convertToScreen(control.convert(control.bounds, to: nil))
+            input = nil
+        }
+
+        func click() async throws {
+            let token = try NativeAcceptancePointer.claim()
+            defer { NativeAcceptancePointer.release(token) }
+            try await NativeAcceptancePointer.click(control, window: window, fraction: NSPoint(x: 0.5, y: 0.5),
+                                                    token: token) { self.input = $0 }
+        }
+
+        func record(_ name: String, _ value: [String: Any]) throws {
+            try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
+                .write(to: output.appendingPathComponent(name + ".json"), options: .atomic)
+        }
+
+        func close() {
+            leaf.parentElement = nil
+            control.canonicalHit = nil
+            window.contentView = nil
+            window.close()
+            NSApp.setActivationPolicy(activation)
+        }
+    }
+
+    @Test func canonicalNativeAccessibilityHitKeepsSystemInputAndRealFieldFocus() async throws {
+        let fixture = try CanonicalNativeFixture("input")
+        defer { fixture.close() }
+        try await fixture.ready()
+        #expect(fixture.control.accessibilityRole()?.rawValue == kAXUnknownRole)
+        let label = CanonicalAXLeaf(window: fixture.window, frame: fixture.leaf.measuredFrame)
+        label.roleValue = .staticText
+        label.enabled = false
+        label.parentElement = fixture.leaf
+        fixture.control.canonicalHit = label
+        let hit = fixture.control.accessibilityHitTest(NSPoint(x: fixture.leaf.measuredFrame.midX,
+                                                              y: fixture.leaf.measuredFrame.midY)) as? CanonicalAXLeaf
+        #expect(hit === label)
+        let replacementLabel = CanonicalAXLeaf(window: fixture.window, frame: fixture.leaf.measuredFrame)
+        replacementLabel.roleValue = .staticText
+        replacementLabel.enabled = false
+        replacementLabel.parentElement = fixture.leaf
+        let witness = CanonicalChangeWitness()
+        do {
+            let number = fixture.window.windowNumber
+            let monitor = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved) { event in
+                let owned = event.windowNumber == number && (event.cgEvent?.getIntegerValueField(.eventSourceUserData) ?? 0) > 0
+                MainActor.assumeIsolated {
+                    if owned { fixture.control.canonicalHit = replacementLabel; witness.switched = true }
+                }
+                return event
+            }
+            defer { if let monitor { NSEvent.removeMonitor(monitor) } }
+            try await fixture.click()
+        }
+        #expect(witness.switched)
+        let input = try #require(fixture.input)
+        let posted = try #require(input["posted"] as? [[String: Any]])
+        #expect(input["status"] as? String == "delivered")
+        #expect(input["targetKind"] as? String == "native-control")
+        #expect(input["accessibilityRole"] as? String == kAXTextFieldRole)
+        let tag = try #require(input["tag"] as? Int64)
+        #expect(fixture.control.downTags == [tag])
+        #expect(fixture.control.downWasPressed)
+        #expect(fixture.control.upCount <= 1)
+        #expect(posted.filter { $0["type"] as? UInt32 == CGEventType.leftMouseDown.rawValue }.count == 1)
+        #expect(posted.filter { $0["type"] as? UInt32 == CGEventType.leftMouseUp.rawValue }.count == 1)
+        #expect(input["buttonDownObserved"] as? Bool == true)
+        #expect(input["buttonReleased"] as? Bool == true)
+        try fixture.record("canonical-input", input)
+        let real = try Fixture("canonical-real-field")
+        defer { real.close() }
+        try await real.ready()
+        let field = try real.input("field")
+        #expect(field["status"] as? String == "delivered")
+        #expect(field["accessibilityRole"] as? String == kAXTextFieldRole)
+        #expect(real.window.firstResponder is NSTextView)
+    }
+
+    @Test func canonicalNativeAccessibilityFailuresNeverPostDown() async throws {
+        let fixture = try CanonicalNativeFixture("refused")
+        defer { fixture.close() }
+        try await fixture.ready()
+        let counter = DownCounter()
+        defer { counter.close() }
+        let foreign = NSWindow(contentRect: fixture.window.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        foreign.isReleasedWhenClosed = false
+        defer { foreign.close() }
+        var records: [[String: Any]] = []
+        for invalid in ["nil", "nonaccessibility", "absent-role", "unknown-role", "unrecognized-role", "empty-role",
+                        "disabled-view", "disabled-leaf", "empty-frame", "nonfinite-frame", "outside-hit",
+                        "misses-point", "foreign-window", "cycle", "missing-parent", "group-without-control", "unknown-surface-leaf"] {
+            fixture.reset()
+            switch invalid {
+            case "nil": fixture.control.canonicalHit = nil
+            case "nonaccessibility": fixture.control.canonicalHit = NSObject()
+            case "absent-role": fixture.leaf.roleValue = nil
+            case "unknown-role": fixture.leaf.roleValue = .init(rawValue: kAXUnknownRole)
+            case "unrecognized-role": fixture.leaf.roleValue = .init(rawValue: "AXUnrecognizedFixtureRole")
+            case "empty-role": fixture.leaf.roleValue = .init(rawValue: "")
+            case "disabled-view": fixture.control.isEnabled = false
+            case "disabled-leaf": fixture.leaf.enabled = false
+            case "empty-frame": fixture.leaf.measuredFrame.size.width = 0
+            case "nonfinite-frame": fixture.leaf.measuredFrame.origin.x = .nan
+            case "outside-hit": fixture.leaf.measuredFrame = fixture.leaf.measuredFrame.insetBy(dx: -5, dy: -5)
+            case "misses-point": fixture.leaf.measuredFrame.size.width = 2
+            case "foreign-window": fixture.leaf.parentElement = foreign
+            case "cycle": fixture.leaf.parentElement = fixture.leaf
+            case "missing-parent": fixture.leaf.parentElement = nil
+            case "group-without-control": fixture.leaf.roleValue = .group
+            case "unknown-surface-leaf":
+                let unknown = CanonicalAXLeaf(window: fixture.window, frame: fixture.leaf.measuredFrame)
+                unknown.roleValue = .init(rawValue: kAXUnknownRole)
+                unknown.parentElement = fixture.leaf
+                fixture.control.canonicalHit = unknown
+            default: Issue.record("Unknown canonical accessibility refusal case.")
+            }
+            do {
+                try await fixture.click()
+                Issue.record("An invalid canonical native accessibility target posted input: " + invalid)
+            } catch {}
+            try await Task.sleep(for: .milliseconds(50))
+            #expect(counter.count == 0)
+            #expect(fixture.control.downTags.isEmpty)
+            #expect(!CGEventSource.buttonState(.combinedSessionState, button: .left))
+            records.append(["case": invalid, "downs": counter.count])
+        }
+        fixture.reset()
+        let cover = NSWindow(contentRect: fixture.window.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        cover.isReleasedWhenClosed = false
+        cover.backgroundColor = .windowBackgroundColor
+        cover.ignoresMouseEvents = false
+        cover.order(.above, relativeTo: fixture.window.windowNumber)
+        defer { cover.close() }
+        try #require(NSApp.isActive && fixture.window.isKeyWindow && cover.isVisible)
+        let point = NSPoint(x: fixture.leaf.measuredFrame.midX, y: fixture.leaf.measuredFrame.midY)
+        try #require(NSWindow.windowNumber(at: point, belowWindowWithWindowNumber: 0) == cover.windowNumber)
+        do {
+            try await fixture.click()
+            Issue.record("An input-catching window accepted a click through the original native target.")
+        } catch {
+            #expect(error.localizedDescription.contains("The original native window is covered at the pointer target."))
+        }
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(counter.count == 0)
+        #expect(fixture.control.downTags.isEmpty)
+        #expect(!CGEventSource.buttonState(.combinedSessionState, button: .left))
+        let input = try #require(fixture.input)
+        let failure = try #require(input["windowGuardFailure"] as? [String: Any])
+        #expect(failure["firstFailedClause"] as? String == "windowAtPointMatches")
+        #expect(failure["windowAtPoint"] as? Int == cover.windowNumber)
+        #expect(failure["originalWindowNumber"] as? Int == fixture.window.windowNumber)
+        #expect(failure["ownerPID"] as? Int32 == getpid())
+        #expect(failure["originalWindowMatchCount"] as? Int == 1)
+        let clauses = try #require(failure["clauses"] as? [[String: String]])
+        #expect(clauses.first == ["name": "windowAtPointMatches", "status": "FAIL"])
+        #expect(clauses.count == 9 && clauses.dropFirst().allSatisfy { $0["status"] == "NOT_EVALUATED" })
+        #expect(failure["screenPoint"] as? [CGFloat] == [point.x, point.y])
+        #expect((input["posted"] as? [Any])?.isEmpty == true)
+        #expect(input["ownedDownPosted"] as? Bool == false)
+        records.append(["case": "covered-window", "downs": counter.count, "windowGuardFailure": failure])
+        do {
+            let token = try NativeAcceptancePointer.claim()
+            defer { NativeAcceptancePointer.release(token) }
+            try await NativeAcceptancePointer.click(fixture.control, window: fixture.window,
+                fraction: NSPoint(x: 0.5, y: 0.5), token: token) { _ in throw CocoaError(.fileWriteNoPermission) }
+            Issue.record("A covered native target accepted input when its failure recorder threw.")
+        } catch {
+            #expect(error.localizedDescription.contains("The original native window is covered at the pointer target."))
+        }
+        #expect(counter.count == 0)
+        #expect(fixture.control.downTags.isEmpty)
+        try fixture.record("canonical-refusals", ["cases": records])
+    }
+
+    @Test func canonicalNativeAccessibilityIdentityAndGeometryAreRevalidatedBeforeDown() async throws {
+        let fixture = try CanonicalNativeFixture("revalidation")
+        defer { fixture.close() }
+        try await fixture.ready()
+        let counter = DownCounter()
+        defer { counter.close() }
+        var records: [[String: Any]] = []
+        for change in ["identity", "geometry", "enabled"] {
+            fixture.reset()
+            let replacement = CanonicalAXLeaf(window: fixture.window, frame: fixture.leaf.measuredFrame)
+            let number = fixture.window.windowNumber
+            let witness = CanonicalChangeWitness()
+            let monitor = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved) { event in
+                let owned = event.windowNumber == number && (event.cgEvent?.getIntegerValueField(.eventSourceUserData) ?? 0) > 0
+                MainActor.assumeIsolated {
+                    if owned {
+                        witness.switched = true
+                        if change == "identity" { fixture.control.canonicalHit = replacement }
+                        else if change == "geometry" { fixture.leaf.measuredFrame.origin.x += 0.25 }
+                        else { fixture.leaf.enabled = false }
+                    }
+                }
+                return event
+            }
+            defer { if let monitor { NSEvent.removeMonitor(monitor) } }
+            do {
+                try await fixture.click()
+                Issue.record("A changed canonical native accessibility target accepted Down: " + change)
+            } catch {}
+            #expect(witness.switched)
+            try await Task.sleep(for: .milliseconds(50))
+            #expect(counter.count == 0)
+            #expect(fixture.control.downTags.isEmpty)
+            #expect(!CGEventSource.buttonState(.combinedSessionState, button: .left))
+            let input = try #require(fixture.input)
+            let posted = try #require(input["posted"] as? [[String: Any]])
+            #expect(posted.contains { $0["type"] as? UInt32 == CGEventType.mouseMoved.rawValue })
+            #expect(!posted.contains { $0["type"] as? UInt32 == CGEventType.leftMouseDown.rawValue })
+            records.append(["case": change, "switched": witness.switched, "downs": counter.count])
+            replacement.parentElement = nil
+        }
+        try fixture.record("canonical-revalidation", ["cases": records])
+    }
+
 }
 
 @MainActor private func nativePointerViewportReady(in window: NSWindow) -> Bool {

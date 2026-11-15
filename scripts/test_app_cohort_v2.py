@@ -20,7 +20,14 @@ class NativeRegressionInventoryTests(unittest.TestCase):
 
     def test_current_dynamic_inventory_preserves_all_original_regressions(self):
         expected = cohort.criteria()
-        self.assertEqual(len(expected['modules']['app']['exactEndedFunctionIDs']), 3719)
+        self.assertEqual(len(expected['modules']['app']['exactEndedFunctionIDs']), 3722)
+        canonical = {
+            'NexGenVideoTests.NativePointerInteractionTests/' + name
+            + '()/NativeButtonInteractionTests.swift:' + str(line) + ':6' for name, line in (
+                ('canonicalNativeAccessibilityHitKeepsSystemInputAndRealFieldFocus', 1525),
+                ('canonicalNativeAccessibilityFailuresNeverPostDown', 1579),
+                ('canonicalNativeAccessibilityIdentityAndGeometryAreRevalidatedBeforeDown', 1675))}
+        self.assertTrue(canonical <= set(expected['modules']['app']['exactEndedFunctionIDs']))
         self.assertEqual({identity.rsplit('/', 1)[0] for identity in
             expected['originalEightAppFailureIDsRequiredToEndWithoutIssues']}, cohort.ORIGINAL_NATIVE_REGRESSIONS)
 
