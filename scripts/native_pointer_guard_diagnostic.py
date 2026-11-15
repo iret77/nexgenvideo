@@ -1,4 +1,4 @@
-"""Inspect one original native pointer guard using unchanged test and host images."""
+"""Inspect current native pointer and window guards using unchanged test and host images."""
 import argparse
 import hashlib
 import json
@@ -20,8 +20,10 @@ from retained_app_test_products import api, archive_bytes, checksum, download, r
 from native_app_failure_diagnostic import measure, scope_filter, verify_failure_origin, verify_bound, run_owned
 
 KIND = 'native-pointer-guard-snapshot'
-FIXTURE = Path(__file__).with_name('fixtures') / 'native-app-failure-1099.json'
-FIXTURE_SHA = '63d9340373d7ed61645880d1c30508320577c851682d8f4097682c5127b0d0f4'
+FIXTURE = Path(__file__).with_name('fixtures') / 'native-app-failure-1110.json'
+FIXTURE_SHA = '788cb699f927a280614ddfbc3f769fd72ba60fe3052ccc4fc442f84e1f18aa8e'
+LEGACY_FIXTURE = FIXTURE.with_name('native-app-failure-1099.json')
+LEGACY_FIXTURE_SHA = '63d9340373d7ed61645880d1c30508320577c851682d8f4097682c5127b0d0f4'
 RETAINED_RUN = 43629283870
 RETAINED_SOURCE = '0b43415624ab9188c81f2f98cd7cd7ed9e5cfb37'
 RETAINED_ARTIFACTS = {
@@ -35,7 +37,8 @@ INSPECTOR_PREFIX = 'native-pointer-guard-diagnostic/evidence/'
 HISTORICAL_C_SHA = 'b7413fbf5849efa42b8563ec04d74f7a012ae343878610d0150e194a5fb4ab21'
 HISTORICAL_SOURCE_FILES = {'scripts/native_pointer_guard_diagnostic.py', 'scripts/native_pointer_guard_snapshot.m',
     'scripts/native_app_failure_diagnostic.py', 'scripts/fixtures/native-app-failure-1099.json'}
-SOURCE_FILES = HISTORICAL_SOURCE_FILES | {'scripts/native_pointer_guard_selftest.swift'}
+SOURCE_FILES = HISTORICAL_SOURCE_FILES | {'scripts/native_pointer_guard_selftest.swift',
+    'scripts/fixtures/native-app-failure-1110.json'}
 SELFTEST_SOURCE_SHA = '32ab7da761fc1dd7745964cbad6e91918c5d2a71e7568a1bfb2283648e71e8cb'
 SELFTEST_TOOL_SHA = '8d5d8c7734614b186e92a96026630af2573bbbd25cd6d6a8b905c7725cfd2bd1'
 SELFTEST_TOOL_BYTES = 134736
@@ -46,7 +49,7 @@ SELFTEST_PRODUCER_FILES = {
     'scripts/native_pointer_guard_snapshot.m': '4938f09f942cd8694f7cbddb3d3fe710986983972d8698efa74fecc5037f1f6e',
     'scripts/native_pointer_guard_diagnostic.py': 'd95211ca087f675f5a03888fff2264a33bd3250b69f6f25974e872b1500a47d9',
     'scripts/native_app_failure_diagnostic.py': '40a7143c57b994cecb429a8e8927015962e2aa9b6580f64562e3dfa1a7f7a278',
-    'scripts/fixtures/native-app-failure-1099.json': FIXTURE_SHA}
+    'scripts/fixtures/native-app-failure-1099.json': LEGACY_FIXTURE_SHA}
 MEMBERS = {'failure-bound.json': ('bound.json', 'boundSHA256'),
            'failure-events.jsonl': ('app-swift-testing/events.jsonl', 'eventSHA256'),
            'failure-host-receipt.json': ('app-swift-testing/host-receipt.json', 'hostReceiptSHA256')}
@@ -55,6 +58,11 @@ MEMBERS = {'failure-bound.json': ('bound.json', 'boundSHA256'),
 def fixture():
     require(checksum(FIXTURE) == FIXTURE_SHA, 'Original failure scope changed')
     return json.loads(FIXTURE.read_bytes())
+
+
+def legacy_fixture():
+    require(checksum(LEGACY_FIXTURE) == LEGACY_FIXTURE_SHA, 'Retained tool legacy scope changed')
+    return json.loads(LEGACY_FIXTURE.read_bytes())
 
 
 def validate_inputs(event):
@@ -112,7 +120,7 @@ def retained_origin(role):
 def verify_retained_binding(binding, value):
     require(binding.get('schema') == 'native-pointer-guard-binding/v1'
         and binding.get('sourceSHA') == RETAINED_SOURCE and binding.get('runID') == RETAINED_RUN
-        and binding.get('attempt') == 1 and binding.get('fixtureSHA256') == FIXTURE_SHA
+        and binding.get('attempt') == 1 and binding.get('fixtureSHA256') == LEGACY_FIXTURE_SHA
         and binding.get('nativeExecution') is False and binding.get('fullReleaseAcceptance') is False
         and binding.get('members') == {name: value[key] for name, (_, key) in MEMBERS.items()}
         and set(binding.get('sourceFiles', {})) == HISTORICAL_SOURCE_FILES
@@ -134,7 +142,7 @@ def inspector_bytes(archive, value):
 
 def build_inspector(inspector, evidence):
     targets.logged(evidence, 'compile-current-inspector-only', ['xcrun', 'clang', '-dynamiclib', '-fobjc-arc', '-fblocks',
-        '-Wall', '-Wextra', '-Werror=implicit-function-declaration', '-framework', 'AppKit',
+        '-Wall', '-Wextra', '-Werror=implicit-function-declaration', '-framework', 'AppKit', '-framework', 'CoreGraphics',
         'scripts/native_pointer_guard_snapshot.m', '-o', str(inspector)])
     targets.logged(evidence, 'sign-current-inspector-only', ['codesign', '--sign', '-', str(inspector)])
     targets.logged(evidence, 'verify-current-inspector-only', ['codesign', '--verify', '--strict', str(inspector)])
@@ -145,7 +153,7 @@ def selftest_tool_bytes(archive):
     require(binding.get('schema') == 'native-pointer-guard-binding/v1'
         and binding.get('runID') == SELFTEST_PRODUCER[0] and binding.get('sourceSHA') == SELFTEST_PRODUCER[1]
         and binding.get('attempt') == 1 and binding.get('sourceFiles') == SELFTEST_PRODUCER_FILES
-        and binding.get('fixtureSHA256') == FIXTURE_SHA and binding.get('nativeExecution') is False
+        and binding.get('fixtureSHA256') == LEGACY_FIXTURE_SHA and binding.get('nativeExecution') is False
         and binding.get('fullReleaseAcceptance') is False,
         'Retained selftest tool source differs')
     for stage in ('compile-observer-selftest-tool', 'sign-observer-selftest-tool', 'verify-observer-selftest-tool'):
@@ -165,6 +173,9 @@ def restore_selftest_tool(tool, evidence):
         and tuple((list(map(int, version.split('.'))) + [0, 0, 0])[:3]) >= (27, 2, 0),
         'Retained selftest tool requires macOS 27.2 or newer')
     run_id, source_sha, job_id = SELFTEST_PRODUCER
+    tool_source = 'scripts/native_pointer_guard_selftest.swift'
+    require(cohort.objects(source_sha, [tool_source]) == cohort.objects(os.environ['GITHUB_SHA'], [tool_source]),
+        'Retained selftest compiler input changed')
     run = api('actions/runs/' + str(run_id))
     jobs = api(f'actions/runs/{run_id}/attempts/1/jobs?per_page=100')
     require(run.get('id') == run_id and run.get('head_sha') == source_sha and run.get('run_attempt') == 1
@@ -188,7 +199,6 @@ def restore_selftest_tool(tool, evidence):
     release.verify_artifact(artifact, run, found[0], identity, digest,
         'native-pointer-guard-measurement-' + str(run_id) + '-a1')
     require(artifact.get('size_in_bytes') == size, 'Retained selftest artifact size differs')
-    cohort.consumer_paths(source_sha, os.environ['GITHUB_SHA'])
     outer = evidence / 'retained-selftest-tool.zip'; download(artifact, outer)
     require(checksum(outer) == digest, 'Retained selftest archive changed')
     with release.verified_zip(outer, 64 * 1024**2) as archive: raw = selftest_tool_bytes(archive)
@@ -208,14 +218,12 @@ def bind(output):
     jobs = api(f"actions/runs/{value['failureRunID']}/attempts/1/jobs?per_page=100")
     artifact = api('actions/artifacts/' + str(value['failureArtifactID']))
     verify_failure_origin(value, run, jobs, artifact)
-    retained_source = retained_origin('source')
-    original = output.parent / 'retained-pointer-source.zip'; download(retained_source, original)
-    require(checksum(original) == RETAINED_ARTIFACTS['source'][1], 'Retained source ZIP changed')
+    original = output.parent / 'original-current-pointer-failure.zip'; download(artifact, original)
+    require(checksum(original) == value['failureArtifactSHA256'], 'Current failure ZIP changed')
     hashes = {}
-    with release.verified_zip(original, 64 * 1024**2) as archive:
-        verify_retained_binding(json.loads(archive_bytes(archive, 'binding.json', 4 * 1024**2)), value)
-        for name, (_, digest_key) in MEMBERS.items():
-            raw = archive_bytes(archive, name, 32 * 1024**2)
+    with release.verified_zip(original, 4 * 1024**3) as archive:
+        for name, (member, digest_key) in MEMBERS.items():
+            raw = archive_bytes(archive, member, 32 * 1024**2)
             require(hashlib.sha256(raw).hexdigest() == value[digest_key], 'Original failure member changed')
             (output / name).write_bytes(raw); hashes[name] = value[digest_key]
     bound = json.loads((output / 'failure-bound.json').read_bytes()); verify_bound(bound, value)
@@ -233,7 +241,6 @@ def bind(output):
         'sourceSHA': os.environ['GITHUB_SHA'], 'runID': int(os.environ['GITHUB_RUN_ID']), 'attempt': 1,
         'fixtureSHA256': FIXTURE_SHA, 'originalRun': run, 'originalJobs': jobs, 'originalArtifact': artifact,
         'members': hashes, 'sourceComposition': composition, 'originalMeasurement': measured,
-        'retainedOriginalMemberProducer': retained_source,
         'sourceFiles': {name: checksum(Path(name)) for name in SOURCE_FILES},
         'nativeExecution': False, 'fullReleaseAcceptance': False})
 
@@ -306,9 +313,93 @@ def image_identity(path):
     return {'path': str(resolved), 'device': value.st_dev, 'inode': value.st_ino}
 
 
+def contains_point(bounds, point):
+    x, y, width, height = bounds
+    return width != 0 and height != 0 and min(x, x + width) <= point[0] < max(x, x + width) \
+        and min(y, y + height) <= point[1] < max(y, y + height)
+
+
+def contains_rect(outer, inner):
+    x, y, width, height = outer
+    left, bottom, across, up = inner
+    return min(x, x + width) <= min(left, left + across) and min(y, y + height) <= min(bottom, bottom + up) \
+        and max(left, left + across) <= max(x, x + width) and max(bottom, bottom + up) <= max(y, y + height)
+
+
+def native_predicates(row):
+    flags = ('hitNSControl', 'hitNSTextView', 'hitHidden', 'rolePresent', 'roleNonEmpty',
+        'roleNotUnknown', 'nativeAccessibilityEnabled')
+    require(all(type(row.get(key)) is bool for key in flags) and isinstance(row.get('nativeRole'), str),
+        'Untyped native guard operands')
+    role = row['nativeRole']
+    require((row['rolePresent'] or role == 'nil')
+        and row['roleNonEmpty'] == (row['rolePresent'] and bool(role))
+        and row['roleNotUnknown'] == (row['rolePresent'] and role != 'AXUnknown'), 'Native role operands disagree')
+    x, y, width, height = row['probeFrame']
+    visible = row['hitVisibleRect']
+    return {'nativeControlType': row['hitNSControl'] or row['hitNSTextView'], 'notHidden': not row['hitHidden'],
+        'visibleArea': visible[2] != 0 and visible[3] != 0,
+        'probeContainsHitBounds': contains_rect([x - 1, y - 1, width + 2, height + 2], row['hitBoundsInRoot']),
+        'visibleRectContainsPoint': contains_point(visible, row['hitPoint']),
+        'nativeAccessibilityEnabled': row['nativeAccessibilityEnabled'],
+        'nativeKnownRole': row['rolePresent'] and row['roleNonEmpty'] and row['roleNotUnknown']}
+
+
+def window_predicates(row):
+    value = row.get('windowGuard')
+    require(isinstance(value, dict) and type(value.get('screenAvailable')) is bool
+        and type(value.get('cgWindowListAvailable')) is bool and type(value.get('windowAtPoint')) is int
+        and type(value.get('ownerPID')) is int and value['ownerPID'] == row['pid']
+        and type(value.get('windowNumber')) is int and value['windowNumber'] == row['window'],
+        'Window guard operands are missing or foreign')
+    screen, quartz = value.get('firstScreenFrame'), value.get('quartzPoint')
+    if value['screenAvailable']:
+        require(isinstance(screen, list) and len(screen) == 4
+            and all(type(n) in (int, float) and math.isfinite(n) for n in screen), 'Nonfinite first-screen geometry')
+        require(quartz == [row['screenPoint'][0], screen[1] + screen[3] - row['screenPoint'][1]],
+            'Window Quartz point differs from the original coordinate conversion')
+    else:
+        require(screen == quartz == [], 'Unavailable screen has invented geometry')
+    windows = value.get('cgWindows')
+    require(isinstance(windows, list) and len(windows) <= 1024
+        and (value['cgWindowListAvailable'] or not windows), 'Window list is incomplete or excessive')
+    matches = []
+    def coordinate(number):
+        if type(number) in (int, float):
+            require(math.isfinite(number), 'Nonfinite window coordinate lacks its explicit encoding')
+            return number
+        if isinstance(number, dict) and set(number) == {'nonfinite'} and number['nonfinite'] in ('nan', '+inf', '-inf'):
+            return float(number['nonfinite'])
+        require(number is None, 'Unknown window coordinate encoding')
+        return None
+    for window in windows:
+        require(isinstance(window, dict) and set(window) == {'ownerPID', 'number', 'boundsAvailable', 'bounds'}
+            and all(window[key] is None or type(window[key]) is int for key in ('ownerPID', 'number'))
+            and type(window['boundsAvailable']) is bool and isinstance(window['bounds'], dict)
+            and set(window['bounds']) == {'X', 'Y', 'Width', 'Height'}, 'Unknown window list member')
+        numbers = [coordinate(window['bounds'][key]) for key in ('X', 'Y', 'Width', 'Height')]
+        require(window['boundsAvailable'] or all(number is None for number in numbers),
+            'Unavailable window bounds have invented coordinates')
+        if window['ownerPID'] == row['pid'] and window['number'] == row['window']:
+            matches.append((window, numbers))
+    require(type(value.get('matchingWindowCount')) is int and value['matchingWindowCount'] == len(matches),
+        'Window match count disagrees with the complete raw list')
+    unique = len(matches) == 1
+    readable = unique and matches[0][0]['boundsAvailable']
+    frame = matches[0][1] if readable else [None] * 4
+    decoded = readable and all(number is not None for number in frame)
+    finite = decoded and all(math.isfinite(number) for number in frame)
+    require(value.get('cgFrame') == (frame if finite else []), 'Decoded window frame disagrees with raw bounds')
+    width, height = decoded and abs(frame[2]) > 0, decoded and abs(frame[3]) > 0
+    return {'windowAtPointMatches': value['windowAtPoint'] == row['window'], 'uniqueOwnWindow': unique,
+        'boundsAvailable': readable, 'boundsDecoded': decoded, 'frameFinite': finite,
+        'positiveWidth': width, 'positiveHeight': height,
+        'containsQuartzPoint': bool(finite and value['screenAvailable'] and contains_point(frame, quartz))}
+
+
 def verify_snapshots(raw, process, inspector, image, expected_identity=None, negative=False):
     require(raw.endswith(b'\n') and len(raw) <= 1024 * 1024, 'Inspector output is incomplete or oversized')
-    rows = [json.loads(line) for line in raw.splitlines()]
+    rows = [json.loads(line) for line in raw.split(b'\n') if line]
     expected_identity = image_identity(image) if expected_identity is None else expected_identity
     allowed = {'loaded', 'discovery', 'probe-hook-ready', 'eligibility', 'hook-ready', 'viewport-convert', 'guard-snapshot', 'finished'}
     require(2 <= len(rows) <= 84 and all(isinstance(row, dict) and row.get('diagnosticOnly') is True
@@ -377,7 +468,7 @@ def verify_snapshots(raw, process, inspector, image, expected_identity=None, neg
         and finished.get('hookTime') == hook['wallTime'], 'Observation preceded its complete hook binding')
     def finite(row, key, count):
         require(isinstance(row.get(key), list) and len(row[key]) == count
-            and all(isinstance(value, (int, float)) and math.isfinite(value) for value in row[key]), 'Nonfinite observer geometry')
+            and all(type(value) in (int, float) and math.isfinite(value) for value in row[key]), 'Nonfinite observer geometry')
     for kind, measured in [('viewport-convert', geometry), ('guard-snapshot', samples)]:
         for index, row in enumerate(measured, 1):
             require(row.get('sample') == index and all(row.get(key) == hook.get(key)
@@ -394,10 +485,18 @@ def verify_snapshots(raw, process, inspector, image, expected_identity=None, neg
     predicates = ('nativeControlType', 'notHidden', 'visibleArea', 'probeContainsHitBounds',
         'visibleRectContainsPoint', 'nativeAccessibilityEnabled', 'nativeKnownRole')
     for row in samples:
-        require(all(type(row.get(key)) is bool for key in (*predicates, 'nativeGuardResult'))
-            and row['nativeGuardResult'] == all(row[key] for key in predicates), 'Inconsistent target predicates')
         for key in ('rootPoint', 'windowPoint', 'screenPoint', 'hitPoint'): finite(row, key, 2)
         for key in ('probeFrame', 'hitBoundsInRoot', 'hitVisibleRect'): finite(row, key, 4)
+        actual = native_predicates(row)
+        require(all(type(row.get(key)) is bool and row[key] == actual[key] for key in predicates)
+            and type(row.get('nativeGuardResult')) is bool and row['nativeGuardResult'] == all(actual.values()),
+            'Inconsistent target predicates')
+        window = window_predicates(row)
+        supplied = row['windowGuard'].get('predicates')
+        require(isinstance(supplied, dict) and set(supplied) == set(window)
+            and all(type(supplied[key]) is bool and supplied[key] == window[key] for key in window)
+            and type(row['windowGuard'].get('result')) is bool and row['windowGuard']['result'] == all(window.values()),
+            'Inconsistent window predicates')
         for key in ('hostingAXChain', 'hitAXChain', 'hitOwnAXChain'):
             chain = row.get(key, {})
             require(isinstance(chain.get('elements'), list) and len(chain['elements']) <= 32
@@ -409,7 +508,9 @@ def verify_snapshots(raw, process, inspector, image, expected_identity=None, neg
     return {'records': len(rows), 'samples': len(samples), 'rectSamples': len(geometry),
         'exactOriginalProcess': True, 'hookBeforeFirstSnapshot': True, 'outputComplete': True, 'diagnosticOnly': True,
         'viewportSizeFailures': [row['sample'] for row in geometry if not row['widthFits'] or not row['heightFits']],
-        'falsePredicatesBySample': [[key for key in predicates if not row[key]] for row in samples]}
+        'falsePredicatesBySample': [[key for key in predicates if not row[key]] for row in samples],
+        'falseWindowPredicatesBySample': [[key for key, value in row['windowGuard']['predicates'].items() if not value]
+            for row in samples]}
 
 
 def observer_selftest(evidence, inspector):
@@ -439,7 +540,7 @@ def observer_selftest(evidence, inspector):
         raw = (folder / 'snapshots.jsonl').read_bytes()
         measured = verify_snapshots(raw, result, inspector, expected, negative=name if name in {'foreign-image', 'duplicate-probe'} else False)
         if name in {'owned-image', 'already-key'}:
-            rows = [json.loads(line) for line in raw.splitlines()]
+            rows = [json.loads(line) for line in raw.split(b'\n') if line]
             matches = [row for row in rows if row['kind'] == 'viewport-convert'
                 and all(row.get(key) == witness.get(key) for key in ('root', 'probe', 'window', 'windowIdentity', 'clip'))
                 and row.get('returnedRect') == witness['expectedRect'] and row.get('clipBounds') == witness['clipBounds']]
@@ -448,6 +549,33 @@ def observer_selftest(evidence, inspector):
         results[name] = {'process': result, 'witness': witness, 'measurement': measured}
         require(checksum(tool) == SELFTEST_TOOL_SHA, 'Selftest execution changed the retained tool')
     write(evidence / 'observer-selftest.json', {'results': results, 'complete': True, 'fullReleaseAcceptance': False})
+
+
+def collect_selections(value, evidence, runtime, image, host, inspector):
+    from run_macos_tests import app_environment
+    collected = {}
+    for index, identity in enumerate(value['diagnosticFunctionIDs'], 1):
+        selection = evidence / ('selection-' + str(index)); selection.mkdir()
+        folder = selection / 'host'; folder.mkdir()
+        snapshots = selection / 'inspector'; snapshots.mkdir()
+        environment = app_environment(dict(os.environ), runtime, image, folder)
+        require(not any(key.startswith(('NGV_ACCEPTANCE', 'NGV_APP_DIAGNOSTIC', 'NSZombie', 'DYLD_INSERT_LIBRARIES'))
+            for key in environment), 'Unexpected native diagnostic substitution')
+        environment.update(NGV_APPKIT_TEST_BUNDLE=str(image), NGV_APPKIT_TEST_EVENTS=str(folder / 'events.jsonl'),
+            NGV_APPKIT_TEST_RECEIPT=str(folder / 'host-receipt.json'), NGV_APPKIT_EXCEPTION_EVIDENCE=str(folder / 'exception.jsonl'),
+            DYLD_INSERT_LIBRARIES=str(inspector), NGV_POINTER_GUARD_SNAPSHOT_DIR=str(snapshots),
+            NGV_POINTER_GUARD_EXPECTED_IMAGE=str(image))
+        command = [str(host), '--event-stream-version', '0', '--no-parallel', '--filter', scope_filter([identity])]
+        with (selection / 'host.STARTED.json').open('x') as marker:
+            json.dump({'command': command, 'at': time.time(), 'oneShot': True}, marker); marker.flush(); os.fsync(marker.fileno())
+        result = run_owned(command, folder / 'console.log', environment)
+        write(folder / 'process.json', result)
+        require(result['processReaped'] and not result['cleanupSignalErrors'] and not result['logFinalizationErrors'],
+            'Owned diagnostic child cleanup is incomplete')
+        require(checksum(host) == value['originalHostSHA256'] and checksum(image) == value['testImage']['sha256'],
+            'Original native images changed during diagnosis')
+        collected[identity] = {'folder': folder, 'snapshots': snapshots, 'process': result}
+    return collected
 
 
 def execute(source, root):
@@ -506,46 +634,41 @@ def execute(source, root):
     host_uuid = targets.logged(evidence, 'native-host-uuid', ['xcrun', 'dwarfdump', '--uuid', str(host)])
     require(value['originalHostUUID'] in host_uuid.lower(), 'Original AppKit host UUID changed')
     signatures = {label: signature_preflight(path, evidence, label) for label, path in [('host', host), ('tests', image)]}
-    folder = evidence / 'host'; folder.mkdir()
-    snapshots = evidence / 'inspector'; snapshots.mkdir()
-    from run_macos_tests import app_environment
-    environment = app_environment(dict(os.environ), runtime, image, folder)
-    require(not any(key.startswith(('NGV_ACCEPTANCE', 'NGV_APP_DIAGNOSTIC', 'NSZombie', 'DYLD_INSERT_LIBRARIES'))
-        for key in environment), 'Unexpected native diagnostic substitution')
-    environment.update(NGV_APPKIT_TEST_BUNDLE=str(image), NGV_APPKIT_TEST_EVENTS=str(folder / 'events.jsonl'),
-        NGV_APPKIT_TEST_RECEIPT=str(folder / 'host-receipt.json'), NGV_APPKIT_EXCEPTION_EVIDENCE=str(folder / 'exception.jsonl'),
-        DYLD_INSERT_LIBRARIES=str(inspector), NGV_POINTER_GUARD_SNAPSHOT_DIR=str(snapshots),
-        NGV_POINTER_GUARD_EXPECTED_IMAGE=str(image))
-    command = [str(host), '--event-stream-version', '0', '--no-parallel', '--filter', scope_filter(value['diagnosticFunctionIDs'])]
     write(evidence / 'original-inputs.json', {'binding': binding, 'selected': value['selected'], 'testReceipt': receipt,
         'origins': origins, 'hostSHA256': checksum(host), 'imageSHA256': checksum(image),
         'runtimePath': str(runtime), 'imagePath': str(image), 'originalReleaseRuntimePath': bound['runtime'],
         'pathDomainChanged': str(runtime) != bound['runtime'], 'noAppOrTestCompilation': True, 'inspectorSHA256': checksum(inspector),
         'signaturePreflight': signatures, 'injectedInstrumentation': True, 'fullReleaseAcceptance': False})
-    with (evidence / 'host.STARTED.json').open('x') as marker:
-        json.dump({'command': command, 'at': time.time(), 'oneShot': True}, marker); marker.flush(); os.fsync(marker.fileno())
-    result = run_owned(command, folder / 'console.log', environment)
-    write(folder / 'process.json', result)
-    require(result['eof'] and result['stoppedReason'] is None, 'Native measurement incomplete; preserve originals')
-    require(b'NGV_POINTER_INSPECTOR_FINALIZATION_FAILED' not in (folder / 'console.log').read_bytes(),
-        'Inspector finalization failed')
-    measurement = measure((folder / 'events.jsonl').read_bytes(), value['diagnosticFunctionIDs'], expected_cases={})
-    host_receipt = json.loads((folder / 'host-receipt.json').read_bytes())
-    require(host_receipt.get('pid') == result['pid'] and host_receipt.get('parentPID') == os.getpid()
-        and host_receipt.get('hostExecutable') == str(host) and host_receipt.get('bundleBinary') == str(image)
-        and host_receipt.get('sourceSHA') == os.environ['GITHUB_SHA'] and host_receipt.get('completed') is True
-        and host_receipt.get('started') is True and host_receipt.get('runReturnedAfterCompletion') is True
-        and host_receipt.get('applicationRunningAtStart') is True and host_receipt.get('mainThread') is True
-        and host_receipt.get('getterImagePath') == host_receipt.get('entryPointImagePath')
-        and str(host_receipt.get('getterImagePath', '')).endswith('/Testing.framework/Versions/A/Testing')
-        and host_receipt.get('eventRecordCount') == measurement['records']
-        and host_receipt.get('abiSucceeded') == measurement['passed'] and result['exitCode'] == (0 if measurement['passed'] else 1)
-        and (folder / 'exception.jsonl').stat().st_size == 0, 'Original native host did not complete the measured selection')
-    require(checksum(host) == value['originalHostSHA256'] and checksum(image) == value['testImage']['sha256'], 'Original native images changed during diagnosis')
-    snapshot = verify_snapshots((snapshots / 'snapshots.jsonl').read_bytes(), result, inspector, image)
-    write(evidence / 'measurement.json', {'schema': 'native-pointer-guard-measurement/v1', 'measurement': measurement,
-        'process': result, 'hostReceipt': host_receipt, 'snapshot': snapshot, 'fullReleaseAcceptance': False,
+    collected = collect_selections(value, evidence, runtime, image, host, inspector)
+    selections = {}
+    for identity, acquired in collected.items():
+        folder, snapshots, result = acquired['folder'], acquired['snapshots'], acquired['process']
+        selection = folder.parent
+        require(result['eof'] and result['stoppedReason'] is None, 'Native measurement incomplete; preserve originals')
+        require(b'NGV_POINTER_INSPECTOR_FINALIZATION_FAILED' not in (folder / 'console.log').read_bytes(),
+            'Inspector finalization failed')
+        measurement = measure((folder / 'events.jsonl').read_bytes(), [identity], expected_cases={})
+        host_receipt = json.loads((folder / 'host-receipt.json').read_bytes())
+        require(host_receipt.get('pid') == result['pid'] and host_receipt.get('parentPID') == os.getpid()
+            and host_receipt.get('hostExecutable') == str(host) and host_receipt.get('bundleBinary') == str(image)
+            and host_receipt.get('sourceSHA') == os.environ['GITHUB_SHA'] and host_receipt.get('completed') is True
+            and host_receipt.get('started') is True and host_receipt.get('runReturnedAfterCompletion') is True
+            and host_receipt.get('applicationRunningAtStart') is True and host_receipt.get('mainThread') is True
+            and host_receipt.get('getterImagePath') == host_receipt.get('entryPointImagePath')
+            and str(host_receipt.get('getterImagePath', '')).endswith('/Testing.framework/Versions/A/Testing')
+            and host_receipt.get('eventRecordCount') == measurement['records']
+            and host_receipt.get('abiSucceeded') == measurement['passed'] and result['exitCode'] == (0 if measurement['passed'] else 1)
+            and (folder / 'exception.jsonl').stat().st_size == 0, 'Original native host did not complete the measured selection')
+        require(checksum(host) == value['originalHostSHA256'] and checksum(image) == value['testImage']['sha256'],
+            'Original native images changed during diagnosis')
+        snapshot = verify_snapshots((snapshots / 'snapshots.jsonl').read_bytes(), result, inspector, image)
+        require(snapshot['samples'] > 0, 'Current field guard operands were not observed')
+        selections[identity] = {'measurement': measurement, 'process': result, 'hostReceipt': host_receipt, 'snapshot': snapshot}
+        write(selection / 'measurement.json', dict(selections[identity], fullReleaseAcceptance=False))
+    write(evidence / 'measurement.json', {'schema': 'native-pointer-guard-measurement/v2', 'selections': selections,
+        'allSelectionsComplete': set(selections) == set(value['diagnosticFunctionIDs']), 'fullReleaseAcceptance': False,
         'scopeLimit': 'Injected observation, filtered execution and restored paths can alter timing or accessibility state. '
+            'Snapshot predicates precede the original guards; native events retain their actual outcomes. '
             'This experiment never qualifies App, tests, runtime or release acceptance.'})
 
 
