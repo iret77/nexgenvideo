@@ -1039,7 +1039,8 @@ enum NativeAcceptancePointer {
         return control
     }
 
-    private static func target(_ probe: NSView, window: NSWindow, fraction: NSPoint) throws -> Target {
+    private static func target(_ probe: NSView, window: NSWindow, fraction: NSPoint,
+                               windowFailure: ([String: Any]) -> Void) throws -> Target {
         guard NSApp.isActive, window.isVisible, window.isKeyWindow, !window.ignoresMouseEvents,
               let root = window.contentView, probe.window === window,
               !probe.isHiddenOrHasHiddenAncestor,
@@ -1074,12 +1075,50 @@ enum NativeAcceptancePointer {
             (item[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == getpid()
                 && (item[kCGWindowNumber as String] as? NSNumber)?.intValue == window.windowNumber
         }
-        guard NSWindow.windowNumber(at: appKitPoint, belowWindowWithWindowNumber: 0) == window.windowNumber,
-              matches.count == 1, let covering = matches.first,
-              let rawBounds = covering[kCGWindowBounds as String] as? [String: Any],
-              let cgFrame = CGRect(dictionaryRepresentation: rawBounds as CFDictionary),
-              [cgFrame.minX, cgFrame.minY, cgFrame.width, cgFrame.height].allSatisfy(\.isFinite),
-              cgFrame.width > 0, cgFrame.height > 0, cgFrame.contains(quartzPoint) else {
+        let clauseNames = ["windowAtPointMatches", "singleOriginalWindowMatch", "originalWindowEntry",
+            "originalWindowBounds", "decodedOriginalWindowBounds", "finiteOriginalWindowBounds",
+            "positiveOriginalWindowWidth", "positiveOriginalWindowHeight", "originalWindowContainsQuartzPoint"]
+        var clauses = Dictionary(uniqueKeysWithValues: clauseNames.map { ($0, "NOT_EVALUATED") })
+        var firstFailedClause: String?
+        var originalBoundsOperand: [String: String] = ["type": "NOT_EVALUATED", "value": "NOT_EVALUATED"]
+        var decodedBoundsOperand: [String] = ["NOT_EVALUATED"]
+        func clause(_ name: String, _ passed: Bool) -> Bool {
+            clauses[name] = passed ? "PASS" : "FAIL"
+            if !passed { firstFailedClause = name }
+            return passed
+        }
+        func present<T>(_ name: String, _ value: T?) -> T? {
+            _ = clause(name, value != nil)
+            return value
+        }
+        func bounds(_ value: Any?) -> [String: Any]? {
+            originalBoundsOperand = ["type": value.map { String(reflecting: type(of: $0)) } ?? "MISSING",
+                                     "value": value.map { String(describing: $0) } ?? "MISSING"]
+            return present("originalWindowBounds", value as? [String: Any])
+        }
+        func decoded(_ value: CGRect?) -> CGRect? {
+            if let value {
+                decodedBoundsOperand = [value.minX, value.minY, value.width, value.height].map { String(describing: $0) }
+            } else { decodedBoundsOperand = ["DECODE_FAILED"] }
+            return present("decodedOriginalWindowBounds", value)
+        }
+        let windowAtPoint = NSWindow.windowNumber(at: appKitPoint, belowWindowWithWindowNumber: 0)
+        let originalWindowNumber = window.windowNumber
+        guard clause("windowAtPointMatches", windowAtPoint == originalWindowNumber),
+              clause("singleOriginalWindowMatch", matches.count == 1),
+              let covering = present("originalWindowEntry", matches.first),
+              let rawBounds = bounds(covering[kCGWindowBounds as String]),
+              let cgFrame = decoded(CGRect(dictionaryRepresentation: rawBounds as CFDictionary)),
+              clause("finiteOriginalWindowBounds", [cgFrame.minX, cgFrame.minY, cgFrame.width, cgFrame.height].allSatisfy(\.isFinite)),
+              clause("positiveOriginalWindowWidth", cgFrame.width > 0),
+              clause("positiveOriginalWindowHeight", cgFrame.height > 0),
+              clause("originalWindowContainsQuartzPoint", cgFrame.contains(quartzPoint)) else {
+            windowFailure(["firstFailedClause": firstFailedClause ?? "UNAVAILABLE",
+                "clauses": clauseNames.map { ["name": $0, "status": clauses[$0] ?? "NOT_EVALUATED"] },
+                "windowAtPoint": windowAtPoint, "originalWindowNumber": originalWindowNumber,
+                "ownerPID": getpid(), "screenPoint": [appKitPoint.x, appKitPoint.y],
+                "quartzPoint": [quartzPoint.x, quartzPoint.y], "originalWindowMatchCount": matches.count,
+                "originalBoundsOperand": originalBoundsOperand, "decodedBoundsOperand": decodedBoundsOperand])
             throw GateBlocked("The original native window is covered at the pointer target.")
         }
         let accessible: AnyObject
@@ -1160,7 +1199,13 @@ enum NativeAcceptancePointer {
               !CGEventSource.buttonState(.combinedSessionState, button: .left) else {
             throw GateBlocked("Native pointer input is unavailable or a mouse button is already held.")
         }
-        let original = try target(probe, window: window, fraction: fraction)
+        var windowGuardFailure: [String: Any]?
+        func reportWindowFailure(_ value: [String: Any]) {
+            windowGuardFailure = value
+            try? record(["kind": "native-pointer", "status": "refused-window", "windowGuardFailure": value,
+                         "posted": [], "received": [], "ownedDownPosted": false, "ownedUpPosted": false])
+        }
+        let original = try target(probe, window: window, fraction: fraction, windowFailure: reportWindowFailure)
         let tag = Int64.random(in: 1...Int64.max)
         guard let source = CGEventSource(stateID: .combinedSessionState),
               let down = CGEvent(mouseEventSource: source, mouseType: .leftMouseDown,
@@ -1231,6 +1276,7 @@ enum NativeAcceptancePointer {
                 "posted": posted + (value["posted"] as? [[String: Any]] ?? []), "received": delivery.events,
                 "localMonitorDownObserved": delivery.down, "localMonitorUpObserved": delivery.up,
                 "upDeliveryAcknowledged": false]) { _, new in new }
+            if let windowGuardFailure { value["windowGuardFailure"] = windowGuardFailure }
             return value
         }
 
@@ -1253,7 +1299,7 @@ enum NativeAcceptancePointer {
             }
             positions.append(original.quartzPoint)
             for position in positions {
-                guard same(original, try target(probe, window: window, fraction: fraction)),
+                guard same(original, try target(probe, window: window, fraction: fraction, windowFailure: reportWindowFailure)),
                       let move = CGEvent(mouseEventSource: source, mouseType: .mouseMoved,
                                          mouseCursorPosition: position, mouseButton: .left) else {
                     throw GateBlocked("The original native pointer target changed before movement.")
@@ -1271,7 +1317,7 @@ enum NativeAcceptancePointer {
             guard abs(actual.x - original.screenPoint.x) < 0.5,
                   abs(actual.y - original.screenPoint.y) < 0.5,
                   !CGEventSource.buttonState(.combinedSessionState, button: .left),
-                  same(original, try target(probe, window: window, fraction: fraction)) else {
+                  same(original, try target(probe, window: window, fraction: fraction, windowFailure: reportWindowFailure)) else {
                 throw GateBlocked("The actual system pointer or original control changed before Down.")
             }
             try record(evidence("prepared"))

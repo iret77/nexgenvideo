@@ -1624,6 +1624,51 @@ struct NativePointerInteractionTests {
             #expect(!CGEventSource.buttonState(.combinedSessionState, button: .left))
             records.append(["case": invalid, "downs": counter.count])
         }
+        fixture.reset()
+        let cover = NSWindow(contentRect: fixture.window.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        cover.isReleasedWhenClosed = false
+        cover.backgroundColor = .windowBackgroundColor
+        cover.ignoresMouseEvents = false
+        cover.order(.above, relativeTo: fixture.window.windowNumber)
+        defer { cover.close() }
+        try #require(NSApp.isActive && fixture.window.isKeyWindow && cover.isVisible)
+        let point = NSPoint(x: fixture.leaf.measuredFrame.midX, y: fixture.leaf.measuredFrame.midY)
+        try #require(NSWindow.windowNumber(at: point, belowWindowWithWindowNumber: 0) == cover.windowNumber)
+        do {
+            try await fixture.click()
+            Issue.record("An input-catching window accepted a click through the original native target.")
+        } catch {
+            #expect(error.localizedDescription.contains("The original native window is covered at the pointer target."))
+        }
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(counter.count == 0)
+        #expect(fixture.control.downTags.isEmpty)
+        #expect(!CGEventSource.buttonState(.combinedSessionState, button: .left))
+        let input = try #require(fixture.input)
+        let failure = try #require(input["windowGuardFailure"] as? [String: Any])
+        #expect(failure["firstFailedClause"] as? String == "windowAtPointMatches")
+        #expect(failure["windowAtPoint"] as? Int == cover.windowNumber)
+        #expect(failure["originalWindowNumber"] as? Int == fixture.window.windowNumber)
+        #expect(failure["ownerPID"] as? Int32 == getpid())
+        #expect(failure["originalWindowMatchCount"] as? Int == 1)
+        let clauses = try #require(failure["clauses"] as? [[String: String]])
+        #expect(clauses.first == ["name": "windowAtPointMatches", "status": "FAIL"])
+        #expect(clauses.count == 9 && clauses.dropFirst().allSatisfy { $0["status"] == "NOT_EVALUATED" })
+        #expect(failure["screenPoint"] as? [CGFloat] == [point.x, point.y])
+        #expect((input["posted"] as? [Any])?.isEmpty == true)
+        #expect(input["ownedDownPosted"] as? Bool == false)
+        records.append(["case": "covered-window", "downs": counter.count, "windowGuardFailure": failure])
+        do {
+            let token = try NativeAcceptancePointer.claim()
+            defer { NativeAcceptancePointer.release(token) }
+            try await NativeAcceptancePointer.click(fixture.control, window: fixture.window,
+                fraction: NSPoint(x: 0.5, y: 0.5), token: token) { _ in throw CocoaError(.fileWriteNoPermission) }
+            Issue.record("A covered native target accepted input when its failure recorder threw.")
+        } catch {
+            #expect(error.localizedDescription.contains("The original native window is covered at the pointer target."))
+        }
+        #expect(counter.count == 0)
+        #expect(fixture.control.downTags.isEmpty)
         try fixture.record("canonical-refusals", ["cases": records])
     }
 
