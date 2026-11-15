@@ -937,7 +937,7 @@ struct NativePointerInteractionTests {
 
         func ready() async throws {
             try await driver.wait("exclusive native pointer fixture") {
-                NSApp.isActive && self.window.isKeyWindow && self.probe("Undo") != nil && nativePointerViewportReady(in: self.window)
+                NSApp.isActive && self.window.isKeyWindow && nativePointerWindowPresented(self.window) && self.probe("Undo") != nil && nativePointerViewportReady(in: self.window)
             }
             try await driver.fill("pointer.field", value: "0.5", in: window)
             try #require(window.firstResponder is NSTextView)
@@ -1066,7 +1066,7 @@ struct NativePointerInteractionTests {
         overlay.ignoresMouseEvents = true
         overlay.order(.above, relativeTo: fixture.window.windowNumber)
         defer { overlay.close() }
-        try #require(NSApp.isActive && fixture.window.isKeyWindow && overlay.isVisible)
+        try await fixture.driver.wait("mouse-ignoring overlay presentation") { nativePointerOverlayPresented(overlay, above: fixture.window, at: try? fixture.point("Undo"), receiver: fixture.window) }
         let windows = try #require(CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]])
         let overlayIndex = try #require(windows.firstIndex { ($0[kCGWindowNumber as String] as? NSNumber)?.intValue == overlay.windowNumber })
         let originalIndex = try #require(windows.firstIndex { ($0[kCGWindowNumber as String] as? NSNumber)?.intValue == fixture.window.windowNumber })
@@ -1085,7 +1085,7 @@ struct NativePointerInteractionTests {
         let counter = DownCounter()
         defer { counter.close() }
         overlay.ignoresMouseEvents = false
-        try #require(NSApp.isActive && fixture.window.isKeyWindow && overlay.isVisible)
+        try await fixture.driver.wait("input-catching overlay presentation") { nativePointerOverlayPresented(overlay, above: fixture.window, at: point, receiver: overlay) }
         try #require(NSWindow.windowNumber(at: point, belowWindowWithWindowNumber: 0) == overlay.windowNumber)
         do {
             try await fixture.driver.click("pointer.Undo", in: fixture.window)
@@ -1130,7 +1130,7 @@ struct NativePointerInteractionTests {
         foreign.isReleasedWhenClosed = false
         foreign.makeKeyAndOrderFront(nil)
         defer { foreign.close() }
-        do {
+        try await fixture.driver.wait("foreign key fixture presentation") { foreign.isKeyWindow && nativePointerWindowPresented(foreign) }; do {
             try await fixture.driver.click("pointer.Undo", in: fixture.window)
             Issue.record("A foreign key window did not prevent pointer input.")
         } catch {}
@@ -1486,7 +1486,7 @@ struct NativePointerInteractionTests {
 
         func ready() async throws {
             try await driver.wait("canonical native fixture") {
-                NSApp.isActive && self.window.isKeyWindow && self.control.window === self.window
+                NSApp.isActive && self.window.isKeyWindow && nativePointerWindowPresented(self.window) && self.control.window === self.window
             }
             reset()
         }
@@ -1631,8 +1631,8 @@ struct NativePointerInteractionTests {
         cover.ignoresMouseEvents = false
         cover.order(.above, relativeTo: fixture.window.windowNumber)
         defer { cover.close() }
-        try #require(NSApp.isActive && fixture.window.isKeyWindow && cover.isVisible)
         let point = NSPoint(x: fixture.leaf.measuredFrame.midX, y: fixture.leaf.measuredFrame.midY)
+        try await fixture.driver.wait("canonical cover presentation") { nativePointerOverlayPresented(cover, above: fixture.window, at: point, receiver: cover) }
         try #require(NSWindow.windowNumber(at: point, belowWindowWithWindowNumber: 0) == cover.windowNumber)
         do {
             try await fixture.click()
@@ -1824,4 +1824,32 @@ struct NativePointerInteractionTests {
             self.callback?(width)
         }
     }
+}
+
+@MainActor private func nativePointerWindowPresented(_ window: NSWindow, above original: NSWindow? = nil) -> Bool {
+    guard window.isVisible, let screen = NSScreen.screens.first,
+          let rows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return false }
+    let matches = rows.indices.filter { (rows[$0][kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == getpid()
+        && (rows[$0][kCGWindowNumber as String] as? NSNumber)?.intValue == window.windowNumber }
+    guard matches.count == 1, let index = matches.first,
+          (rows[index][kCGWindowIsOnscreen as String] as? NSNumber)?.boolValue == true,
+          let alpha = (rows[index][kCGWindowAlpha as String] as? NSNumber)?.doubleValue, alpha.isFinite, alpha > 0,
+          let raw = rows[index][kCGWindowBounds as String] as? [String: Any],
+          let actual = CGRect(dictionaryRepresentation: raw as CFDictionary) else { return false }
+    let frame = window.frame
+    let expected = CGRect(x: frame.minX, y: screen.frame.maxY - frame.maxY, width: frame.width, height: frame.height)
+    guard [actual.minX, actual.minY, actual.width, actual.height, expected.minX, expected.minY, expected.width, expected.height].allSatisfy(\.isFinite),
+          actual.width > 0, actual.height > 0, actual == expected else { return false }
+    if let original {
+        let below = rows.indices.filter { (rows[$0][kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == getpid()
+            && (rows[$0][kCGWindowNumber as String] as? NSNumber)?.intValue == original.windowNumber }
+        return below.count == 1 && index < below[0]
+    }
+    return true
+}
+
+@MainActor private func nativePointerOverlayPresented(_ overlay: NSWindow, above original: NSWindow, at point: NSPoint?, receiver: NSWindow) -> Bool {
+    guard let point, point.x.isFinite, point.y.isFinite else { return false }
+    return NSApp.isActive && original.isKeyWindow && nativePointerWindowPresented(overlay, above: original)
+        && NSWindow.windowNumber(at: point, belowWindowWithWindowNumber: 0) == receiver.windowNumber
 }
