@@ -319,9 +319,15 @@ def _native_inventory_additions(before, after):
                   + '/NativeButtonInteractionTests.swift:SOURCE-LINE:6'}
     viewport = {'NexGenVideoTests.NativePointerInteractionTests/viewportWidthPreservesFieldAndNativeWheelAcrossScrollerStyles()'
                 + '/NativeButtonInteractionTests.swift:SOURCE-LINE:6'}
+    canonical = {'NexGenVideoTests.NativePointerInteractionTests/' + name
+                 + '()/NativeButtonInteractionTests.swift:SOURCE-LINE:6' for name in (
+                     'canonicalNativeAccessibilityHitKeepsSystemInputAndRealFieldFocus',
+                     'canonicalNativeAccessibilityFailuresNeverPostDown',
+                     'canonicalNativeAccessibilityIdentityAndGeometryAreRevalidatedBeforeDown')}
     historical = (expected, admission, expected | admission, admission | lifetime, expected | admission | lifetime)
     pointer_families = (pointer, window_hit, pointer | window_hit)
     pointer_families += (viewport,) + tuple(family | viewport for family in pointer_families)
+    pointer_families += (canonical,) + tuple(family | canonical for family in pointer_families)
     require(added in historical + pointer_families + tuple(previous | family for previous in historical for family in pointer_families)
             and len(current) == len(set(current)) and set(prior) <= set(current),
             'UI test App transition has unknown or removed native tests')

@@ -714,6 +714,19 @@ class ExternalTestBundleTests(unittest.TestCase):
                          {'scripts/compiled_current_core_reuse.py',
                           'scripts/fixtures/compiled-current-core-reuse-1047.json'})
         self.assertTrue(proof['cohortMetadata']['appTransition']['newRuntimeProductProvenanceRequired'])
+        transition = proof['cohortMetadata']['appTransition']
+        canonical = {'NexGenVideoTests.NativePointerInteractionTests/' + name
+                     + '()/NativeButtonInteractionTests.swift:SOURCE-LINE:6' for name in (
+                         'canonicalNativeAccessibilityHitKeepsSystemInputAndRealFieldFocus',
+                         'canonicalNativeAccessibilityFailuresNeverPostDown',
+                         'canonicalNativeAccessibilityIdentityAndGeometryAreRevalidatedBeforeDown')}
+        self.assertEqual(transition['consumerBuild'], '113')
+        self.assertEqual(len(transition['additionalNativeAppTests']), 30)
+        self.assertTrue(canonical <= set(transition['additionalNativeAppTests']))
+        driver = 'Sources/NexGenVideo/App/ProductionVisualSourcesDriver.swift'
+        self.assertTrue(all(driver in transition['changedRolePaths'][role]
+                            for role in ('production', 'testable', 'tests')))
+        self.assertNotIn(driver, proof['consumerFiles'])
 
         archive = self.archive([('original-client', 'file', b'opaque retained client test fixture')])
         input_receipt = receipt | {'archiveSHA256': journey.sha256(archive)}
@@ -1254,6 +1267,11 @@ class ExternalTestBundleTests(unittest.TestCase):
                       + '/NativeButtonInteractionTests.swift:SOURCE-LINE:6']
         viewport = ['NexGenVideoTests.NativePointerInteractionTests/viewportWidthPreservesFieldAndNativeWheelAcrossScrollerStyles()'
                     + '/NativeButtonInteractionTests.swift:SOURCE-LINE:6']
+        canonical = ['NexGenVideoTests.NativePointerInteractionTests/' + name
+                     + '()/NativeButtonInteractionTests.swift:SOURCE-LINE:6' for name in (
+                         'canonicalNativeAccessibilityHitKeepsSystemInputAndRealFieldFocus',
+                         'canonicalNativeAccessibilityFailuresNeverPostDown',
+                         'canonicalNativeAccessibilityIdentityAndGeometryAreRevalidatedBeforeDown')]
         previous = ['NexGenVideoTests.NativeButtonInteractionTests/' + name
                     + '()/NativeButtonInteractionTests.swift:SOURCE-LINE:6' for name in (
                         'actualLegacyScrollersKeepTheEnabledUndoDiscoverable',
@@ -1269,8 +1287,9 @@ class ExternalTestBundleTests(unittest.TestCase):
         only_window['modules']['app']['exactEndedFunctionIDs'] += window_hit
         self.assertEqual(bundle._native_inventory_additions(before, only_window), window_hit)
         families = [pointers, previous + pointers, pointers + window_hit, previous + pointers + window_hit]
-        for additions in families + [viewport, window_hit + viewport, previous + viewport,
-                                     previous + window_hit + viewport] + [family + viewport for family in families]:
+        families += [viewport, window_hit + viewport, previous + viewport,
+                     previous + window_hit + viewport] + [family + viewport for family in families]
+        for additions in families + [canonical, previous + canonical] + [family + canonical for family in families]:
             after = copy.deepcopy(before)
             after['expectedActualExecutions'] += len(additions)
             after['modules']['app']['exactEndedFunctionIDs'] += additions
@@ -1294,6 +1313,14 @@ class ExternalTestBundleTests(unittest.TestCase):
                 missing['expectedActualExecutions'] -= 1
                 with self.assertRaisesRegex(ValueError, 'unknown or removed native tests'):
                     bundle._native_inventory_additions(before, missing)
+            if set(canonical) <= set(additions):
+                for removed in (canonical[:1], canonical[:2]):
+                    partial = copy.deepcopy(after)
+                    partial['modules']['app']['exactEndedFunctionIDs'] = [identity for identity in
+                        partial['modules']['app']['exactEndedFunctionIDs'] if identity not in removed]
+                    partial['expectedActualExecutions'] -= len(removed)
+                    with self.assertRaisesRegex(ValueError, 'unknown or removed native tests'):
+                        bundle._native_inventory_additions(before, partial)
             wrong_file = copy.deepcopy(after)
             index = wrong_file['modules']['app']['exactEndedFunctionIDs'].index(additions[0])
             wrong_file['modules']['app']['exactEndedFunctionIDs'][index] = additions[0].replace('NativeButtonInteractionTests.swift', 'Other.swift')
@@ -1307,6 +1334,10 @@ class ExternalTestBundleTests(unittest.TestCase):
         with_viewport['modules']['app']['exactEndedFunctionIDs'] += viewport
         with_viewport['expectedActualExecutions'] += 1
         self.assertEqual(bundle._native_inventory_additions(current, with_viewport), viewport)
+        with_canonical = copy.deepcopy(with_viewport)
+        with_canonical['modules']['app']['exactEndedFunctionIDs'] += canonical
+        with_canonical['expectedActualExecutions'] += len(canonical)
+        self.assertEqual(bundle._native_inventory_additions(with_viewport, with_canonical), sorted(canonical))
 
     def test_cleanup_admission_inventory_transition_preserves_parameter_and_prior_coverage(self):
         additions = [
