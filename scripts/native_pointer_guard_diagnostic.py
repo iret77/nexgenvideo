@@ -751,6 +751,23 @@ def verify_event_trace(raw, process, image, host, *, selftest=False, identities=
             and posted.get('flags') == 0 and posted.get('isARepeat') is False and not {'CGPosition', 'CGTimestamp', 'tag'} & set(posted),
             'Native witness posted event fields are missing or converted')
         posted_fields = key_event_fields(posted)
+        timestamp_input = witness.get('timestampInput')
+        require(isinstance(timestamp_input, dict)
+            and set(timestamp_input) == {'scope', 'policy', 'requestUptime', 'selectedTimestamp', 'units'}
+            and timestamp_input['scope'] == 'ISOLATED_SELFTEST_ONLY'
+            and timestamp_input['policy'] == 'latest-half-second-at-or-before-request'
+            and timestamp_input['units'] == 'seconds-since-startup',
+            'Native witness timestamp input domain is undeclared')
+        request_clock, selected_timestamp = timestamp_input['requestUptime'], timestamp_input['selectedTimestamp']
+        require(all(type(value) in (int, float) and math.isfinite(value) and value >= 0
+                for value in (request_clock, selected_timestamp))
+            and times[1] <= request_clock <= times[3]
+            and selected_timestamp <= request_clock < selected_timestamp + 0.5,
+            'Native witness timestamp input is not the latest past half-second')
+        numerator, denominator = selected_timestamp.as_integer_ratio()
+        require((numerator * 2) % denominator == 0 and (numerator * 10**9) % denominator == 0
+            and posted['timestamp'] == selected_timestamp,
+            'Native witness timestamp is not the declared exact binary/nanosecond test vector')
         require(posted['windowIdentity'] == witness['readiness']['windowIdentity'],
             'Posted key does not belong to the ready owned witness window')
         delivered = witness.get('dequeuedEvent'); delivered_fields = key_event_fields(delivered)
