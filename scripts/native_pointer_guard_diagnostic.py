@@ -795,6 +795,22 @@ def verify_event_trace(raw, process, image, host, *, selftest=False, identities=
                 and isinstance(returns[row['call']].get('returned'), dict)
                 and returns[row['call']]['returned'].get('range', {}).get('selection') == [0, 2] for row in calls.values()),
             'Native witness lacks actual ordered queue delivery, receive or command routing')
+        key_downs = [row for row in calls.values() if row['method'] == 'keyDown:']
+        matching_key_downs = [row for row in key_downs
+            if row['arguments'].get('receiver') == witness['readiness']['textIdentity']
+            and row['arguments'].get('argument') == posted]
+        require(len(matching_key_downs) == 1, 'Native keyDown receiver or actual event is not the owned queued input')
+        key_down = matching_key_downs[0]; key_return = returns[key_down['call']]
+        require(matching_sends[0]['sequence'] < key_down['sequence'] < key_return['sequence']
+                < returns[matching_sends[0]['call']]['sequence']
+            and matching_sends[0]['uptime'] <= key_down['uptime'] <= key_return['uptime']
+                <= returns[matching_sends[0]['call']]['uptime']
+            and any(row['kind'] == 'receive' and row.get('event') == posted
+                and matching_sends[0]['sequence'] < row['sequence'] < key_down['sequence'] for row in rows)
+            and isinstance(key_return.get('returned'), dict)
+            and key_return['returned'].get('receiver') == witness['readiness']['textIdentity']
+            and key_return['returned'].get('range', {}).get('selection') == [1, 0],
+            'Native keyDown did not return the actual key range inside its matching send/receive')
         ranges = [row['returned'] for row in returns.values() if row['method'] == 'selectedRange']
         require([1, 0] in ranges and [0, 2] in ranges and any(row.get('selector') == 'selectedRange'
             and row.get('typeEncoding', '').startswith('{_NSRange=QQ}') for row in hooks),

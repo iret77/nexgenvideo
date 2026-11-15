@@ -34,6 +34,7 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
             flags=0, keyCode=7, characters='x', charactersIgnoringModifiers='x', getterOrigin='ADDITIONAL_OBSERVATION')
         counts = {}
         for index, method in enumerate(methods, 1):
+            if method == 'keyDown:': continue
             arguments = dict(event=copy.deepcopy(event)) if method in ('postEvent:atStart:', 'sendEvent:') else {}
             if method == 'sendEvent:': arguments['selftestPumpDispatch'] = selftest
             if method in ('window.performKeyEquivalent:', 'menu.performKeyEquivalent:'):
@@ -50,7 +51,15 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
             rows.append(dict(kind='call', call=index, method=method, arguments=arguments,
                 context=copy.deepcopy(context), queryOrigin='ORIGINAL_EXECUTION',
                 stack=[dict(image='/tests', address='0x20', imageBase='0x10')]))
-            if method == 'sendEvent:': rows.append(dict(kind='receive', event=copy.deepcopy(event)))
+            if method == 'sendEvent:':
+                rows.append(dict(kind='receive', event=copy.deepcopy(event)))
+                rows.append(dict(kind='call', call=80, method='keyDown:',
+                    arguments=dict(receiver='0x41', argument=copy.deepcopy(event)), context=copy.deepcopy(context),
+                    queryOrigin='ORIGINAL_EXECUTION', stack=[dict(image='/tests', address='0x20', imageBase='0x10')], fixtureUptime=2.132))
+                rows.append(dict(kind='return', call=80, method='keyDown:',
+                    returned=dict(receiver='0x41', range=dict(selection=[1, 0])), context=copy.deepcopy(context),
+                    queryOrigin='ORIGINAL_EXECUTION', fixtureUptime=2.135))
+                counts['keyDown:'] = 1
             rows.append(dict(kind='return', call=index, method=method, returned=returned,
                 context=copy.deepcopy(context), queryOrigin='ORIGINAL_EXECUTION'))
             counts[method] = counts.get(method, 0) + 1
@@ -159,7 +168,7 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
         for defect in ('changed-characters', 'wrong-selection', 'missing-range-return', 'unknown-range-ABI', 'wrong-menu-return', 'numeric-queue-identity', 'numeric-complete', 'selftest-in-original-child', 'inactive', 'wrong-responder', 'ready-numeric',
                 'readiness-expired', 'dequeue-nil', 'dequeue-foreign', 'dequeue-expired', 'missing-receive',
                 'missing-command', 'wrong-command-return', 'cleanup-failed', 'post-before-start', 'nonfinite-uptime',
-                'reordered-uptime', 'wrong-expiration-unit', 'missing-native-nil', 'foreign-scope-admitted', 'missing-foreign-return', 'wrong-owner-image'):
+                'reordered-uptime', 'wrong-expiration-unit', 'key-receiver', 'key-event', 'key-range', 'key-outside-send', 'missing-native-nil', 'foreign-scope-admitted', 'missing-foreign-return', 'wrong-owner-image'):
             changed = copy.deepcopy(rows)
             if defect == 'changed-characters': next(row for row in changed if row['kind'] == 'call' and row['method'] == 'sendEvent:')['arguments']['event']['characters'] = 'y'
             elif defect == 'wrong-selection': next(row for row in changed if row['kind'] == 'selftest')['selectionAfterAction'] = [1, 0]
@@ -196,6 +205,18 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
             elif defect == 'missing-foreign-return':
                 changed.pop(next(i for i, row in enumerate(changed) if row['kind'] == 'selftest-scope-return'))
                 for index, row in enumerate(changed, 1): row['sequence'] = index
+            elif defect in ('key-receiver', 'key-event', 'key-range', 'key-outside-send'):
+                key_call = next(row for row in changed if row['kind'] == 'call' and row.get('method') == 'keyDown:')
+                key_return = next(row for row in changed if row['kind'] == 'return' and row.get('method') == 'keyDown:')
+                if defect == 'key-receiver': key_call['arguments']['receiver'] = '0x51'
+                elif defect == 'key-event': key_call['arguments']['argument']['characters'] = 'q'
+                elif defect == 'key-range': key_return['returned']['range']['selection'] = [0, 1]
+                elif defect == 'key-outside-send':
+                    changed.remove(key_call); changed.remove(key_return)
+                    index = next(i for i, row in enumerate(changed) if row['kind'] == 'return' and row.get('method') == 'sendEvent:') + 1
+                    key_call['uptime'] = 2.141; key_return['uptime'] = 2.142
+                    changed[index:index] = [key_call, key_return]
+                    for index, row in enumerate(changed, 1): row['sequence'] = index
             elif defect == 'wrong-owner-image': next(row for row in changed if row['kind'] == 'selftest')['selftestOwner']['classImageIdentity']['inode'] = 6
             elif defect == 'wrong-command-return': next(row for row in changed if row['kind'] == 'return' and row.get('method') == 'doCommandBySelector:')['returned']['range']['selection'] = [0, 1]
             elif defect == 'missing-command': next(row for row in changed if row['kind'] == 'call' and row.get('method') == 'doCommandBySelector:')['arguments']['command'] = 'deleteBackward:'
