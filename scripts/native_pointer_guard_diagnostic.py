@@ -20,8 +20,8 @@ from retained_app_test_products import api, archive_bytes, checksum, download, r
 from native_app_failure_diagnostic import measure, scope_filter, verify_failure_origin, verify_bound, run_owned
 
 KIND = 'native-pointer-guard-snapshot'
-FIXTURE = Path(__file__).with_name('fixtures') / 'native-app-failure-1110.json'
-FIXTURE_SHA = '788cb699f927a280614ddfbc3f769fd72ba60fe3052ccc4fc442f84e1f18aa8e'
+FIXTURE = Path(__file__).with_name('fixtures') / 'native-app-failure-1120.json'
+FIXTURE_SHA = '09b410793dd823b0e2757efeb211b5ba52682315372566b04edee617b45b5253'
 LEGACY_FIXTURE = FIXTURE.with_name('native-app-failure-1099.json')
 LEGACY_FIXTURE_SHA = '63d9340373d7ed61645880d1c30508320577c851682d8f4097682c5127b0d0f4'
 RETAINED_RUN = 43629283870
@@ -38,7 +38,7 @@ HISTORICAL_C_SHA = 'b7413fbf5849efa42b8563ec04d74f7a012ae343878610d0150e194a5fb4
 HISTORICAL_SOURCE_FILES = {'scripts/native_pointer_guard_diagnostic.py', 'scripts/native_pointer_guard_snapshot.m',
     'scripts/native_app_failure_diagnostic.py', 'scripts/fixtures/native-app-failure-1099.json'}
 SOURCE_FILES = HISTORICAL_SOURCE_FILES | {'scripts/native_pointer_guard_selftest.swift',
-    'scripts/fixtures/native-app-failure-1110.json'}
+    'scripts/fixtures/native-app-failure-1110.json', 'scripts/fixtures/native-app-failure-1120.json'}
 SELFTEST_SOURCE_SHA = '32ab7da761fc1dd7745964cbad6e91918c5d2a71e7568a1bfb2283648e71e8cb'
 SELFTEST_TOOL_SHA = '8d5d8c7734614b186e92a96026630af2573bbbd25cd6d6a8b905c7725cfd2bd1'
 SELFTEST_TOOL_BYTES = 134736
@@ -397,7 +397,7 @@ def window_predicates(row):
         'containsQuartzPoint': bool(finite and value['screenAvailable'] and contains_point(frame, quartz))}
 
 
-def verify_snapshots(raw, process, inspector, image, expected_identity=None, negative=False):
+def verify_snapshots(raw, process, inspector, image, expected_identity=None, negative=False, no_probe=False, optional_probe=False):
     require(raw.endswith(b'\n') and len(raw) <= 1024 * 1024, 'Inspector output is incomplete or oversized')
     rows = [json.loads(line) for line in raw.split(b'\n') if line]
     expected_identity = image_identity(image) if expected_identity is None else expected_identity
@@ -422,6 +422,8 @@ def verify_snapshots(raw, process, inspector, image, expected_identity=None, neg
         and finished.get('rectCalls') == finished.get('rectReturns'), 'Inspector lost data or original returns')
     groups = {kind: [row for row in rows if row['kind'] == kind] for kind in allowed}
     geometry = groups['viewport-convert']; samples = groups['guard-snapshot']
+    if optional_probe and not groups['hook-ready'] and not geometry and not samples and finished['originalCalls'] == finished['rectCalls'] == 0:
+        no_probe = True
     require(finished.get('rectSamples') == len(geometry) <= 32 and finished.get('samples') == len(samples) <= 16
         and len(groups['discovery']) + len(groups['eligibility']) <= 32
         and finished['originalCalls'] >= len(samples) and finished['rectCalls'] >= len(geometry),
@@ -432,6 +434,7 @@ def verify_snapshots(raw, process, inspector, image, expected_identity=None, neg
             'Refused selftest installed a root hook or observed a foreign scope')
         if negative == 'duplicate-probe':
             require(len(groups['probe-hook-ready']) == 1 and groups['probe-hook-ready'][0].get('installed') is True
+                and finished['rectCalls'] == finished['rectReturns'] >= 1
                 and groups['probe-hook-ready'][0].get('classImageIdentity') == expected_identity
                 and groups['eligibility'] and any(row.get('uniqueProbeMatches') is False and row.get('eligible') is False
                     and row.get('classImageMatches') is True and row.get('ownAXImageMatches') is True
@@ -444,6 +447,15 @@ def verify_snapshots(raw, process, inspector, image, expected_identity=None, neg
             and groups['discovery'] and any(row.get('classFound') is True and row.get('imageMatches') is False
                 for row in groups['discovery']), 'Foreign-image selftest did not exercise the refusal')
         return {'negativeImageRefused': True, 'records': len(rows), 'diagnosticOnly': True}
+    if no_probe:
+        require(not groups['hook-ready'] and not geometry and not samples
+            and finished['originalCalls'] == finished['transparentReturns'] == finished['rectCalls'] == finished['rectReturns'] == 0,
+            'Canonical-only selection unexpectedly used a hosting probe')
+        require(len(groups['probe-hook-ready']) <= 1 and all(row.get('installed') is True
+            and row.get('classImageIdentity') == row.get('expectedImageIdentity') == expected_identity
+            for row in groups['probe-hook-ready']), 'Canonical-only trace installed a foreign probe method')
+        return {'records': len(rows), 'samples': 0, 'noHostingProbeInOriginalSelection': True,
+            'outputComplete': True, 'diagnosticOnly': True}
     require(len(groups['probe-hook-ready']) == len(groups['hook-ready']) == 1 and geometry,
         'Inspector did not install exactly one pair of hooks and observe the viewport')
     probe_hook, hook = groups['probe-hook-ready'][0], groups['hook-ready'][0]
@@ -513,17 +525,157 @@ def verify_snapshots(raw, process, inspector, image, expected_identity=None, neg
             for row in samples]}
 
 
+def verify_event_trace(raw, process, image, host, *, selftest=False, identities=None):
+    require(raw.endswith(b'\n') and len(raw) <= 32 * 1024**2, 'Event trace is truncated or oversized')
+    rows = [json.loads(line) for line in raw.splitlines()]
+    expected_image, expected_host = identities or (image_identity(image), image_identity(host))
+    require(2 <= len(rows) <= 50000 and all(isinstance(row, dict) for row in rows)
+        and [row.get('sequence') for row in rows] == list(range(1, len(rows) + 1)),
+        'Event trace is missing, duplicated or reordered')
+    allowed = {'loaded', 'hook', 'call', 'return', 'receive', 'lifecycle', 'selftest', 'finished'}
+    require(all(isinstance(row, dict) and row.get('kind') in allowed and row.get('diagnosticOnly') is True
+        and row.get('pid') == process['pid'] and row.get('parentPID') == process['parentPID']
+        and type(row.get('mainThread')) is bool for row in rows), 'Foreign event trace process or schema')
+    require(rows[0]['kind'] == 'loaded' and rows[-1]['kind'] == 'finished'
+        and sum(row['kind'] == 'loaded' for row in rows) == sum(row['kind'] == 'finished' for row in rows) == 1,
+        'Event trace lifetime is incomplete')
+    loaded, finished = rows[0], rows[-1]
+    require(loaded.get('expectedImageIdentity') == expected_image
+        and loaded.get('expectedHostIdentity') == loaded.get('actualHostIdentity') == expected_host
+        and loaded.get('selftestMode') is selftest and finished.get('selftestMode') is selftest,
+        'Event trace image, actual executable or selftest mode differs')
+    times = [row.get('wallTime') for row in rows]
+    require(all(type(value) in (float, int) and math.isfinite(value) for value in times)
+        and times == sorted(times) and process['launchBefore'] <= times[0] <= times[-1] <= process['endAfter'],
+        'Event trace escapes the original child lifetime')
+    require(type(finished.get('errors')) is int and finished['errors'] == 0, 'Event observer lost data or transparency')
+    require(type(finished.get('contextCount')) is int and finished['contextCount'] >= 0
+        and isinstance(finished.get('additionalGetterQueryCounts'), dict)
+        and all(type(value) is int and value > 0 for value in finished['additionalGetterQueryCounts'].values()),
+        'Additional getter queries were not counted separately')
+    for key in ('calls', 'returns'):
+        require(isinstance(finished.get(key), dict)
+            and all(type(value) is int and value > 0 for value in finished[key].values()),
+            'Original call counters are not positive typed integers')
+    hooks = [row for row in rows if row['kind'] == 'hook']
+    required_hooks = {'postEvent:atStart:', 'sendEvent:', 'sendAction:to:from:',
+        'windowNumberAtPoint:belowWindowWithWindowNumber:', 'windowNumber'}
+    require(required_hooks <= {row.get('selector') for row in hooks}
+        and all(row.get('installed') is True and isinstance(row.get('typeEncoding'), str)
+            and row['typeEncoding'] for row in hooks), 'Native trace hook ABI or installation is missing')
+    require({'NSWindow', 'NSMenu'} <= {row.get('class') for row in hooks if row.get('selector') == 'performKeyEquivalent:'},
+        'Actual window and menu key-equivalent route hooks are missing')
+    calls, returns, observed_calls, observed_returns = {}, {}, {}, {}
+    methods = {'postEvent:atStart:', 'sendEvent:', 'sendAction:to:from:',
+        'windowNumberAtPoint:belowWindowWithWindowNumber:', 'windowNumber', 'CGWindowListCopyWindowInfo',
+        'CGEventPost', 'keyDown:', 'selectAll:', 'doCommandBySelector:', 'selectedRange',
+        'window.performKeyEquivalent:', 'menu.performKeyEquivalent:',
+        'accessibilityHitTest:', 'accessibilityRole', 'accessibilityParent', 'isAccessibilityEnabled', 'accessibilityFrame'}
+    for row in rows:
+        kind = row['kind']
+        if 'context' in row:
+            context = row['context']
+            require(isinstance(context, dict) and context.get('queryOrigin') == 'ADDITIONAL_CONTEXT',
+                'Additional observations were represented as original guard operands')
+            if not context.get('AppKitNotQueriedOffMainThread'):
+                require(type(context.get('contextOrdinal')) is int and context['contextOrdinal'] > 0
+                    and context.get('additionalQueryCounts', {}).get('CGWindowListCopyWindowInfo') == 1,
+                    'Additional context query accounting is absent')
+        if kind in {'call', 'return'}:
+            method, identity = row.get('method'), row.get('call')
+            require(method in methods and type(identity) is int and identity > 0
+                and row.get('queryOrigin') == 'ORIGINAL_EXECUTION', 'Unknown original call identity')
+            if kind == 'call':
+                require(identity not in calls and isinstance(row.get('arguments'), dict)
+                    and isinstance(row.get('stack'), list) and 1 <= len(row['stack']) <= 64,
+                    'Repeated original call or missing original caller stack')
+                require(any(frame.get('image') in {expected_image['path'], expected_host['path']}
+                    and isinstance(frame.get('address'), str) and re.fullmatch('0x[0-9a-fA-F]+', frame['address'])
+                    and isinstance(frame.get('imageBase'), str) and re.fullmatch('0x[0-9a-fA-F]+', frame['imageBase'])
+                    for frame in row['stack']), 'Original call is not bound to its actual Tests or Host image')
+                calls[identity] = row
+                observed_calls[method] = observed_calls.get(method, 0) + 1
+                if method == 'windowNumberAtPoint:belowWindowWithWindowNumber:':
+                    require(type(row['arguments'].get('below')) is int
+                        and len(row['arguments'].get('point', [])) == 2, 'Original window query arguments missing')
+            else:
+                require(identity in calls and identity not in returns and calls[identity]['method'] == method,
+                    'Original call lost, duplicated or changed its return')
+                returns[identity] = row
+                observed_returns[method] = observed_returns.get(method, 0) + 1
+                if method == 'selectedRange':
+                    require(isinstance(row.get('returned'), list) and len(row['returned']) == 2
+                        and all(type(value) is int and 0 <= value <= 2**64 - 1 for value in row['returned']),
+                        'Original NSRange ABI or unsigned values differ')
+                if method in {'sendAction:to:from:', 'window.performKeyEquivalent:', 'menu.performKeyEquivalent:', 'isAccessibilityEnabled'}:
+                    require(type(row.get('returned')) is bool, 'Original BOOL return is not a wire boolean')
+        event = row.get('event') or row.get('arguments', {}).get('event')
+        if event is not None:
+            require(isinstance(event, dict) and event.get('getterOrigin') == 'ADDITIONAL_OBSERVATION'
+                and type(event.get('type')) is int and type(event.get('timestamp')) in (float, int)
+                and event.get('timestampUnits') == 'seconds-since-startup',
+                'Event identity or original timestamp is unavailable')
+            if event['type'] in (10, 11, 12):
+                require(not {'CGPosition', 'CGTimestamp', 'tag'} & set(event)
+                    and type(event.get('flags')) is int and type(event.get('keyCode')) is int,
+                    'Queued key observation converted the event to Quartz or lost its actual fields')
+    require(set(calls) == set(returns) and observed_calls == observed_returns == finished.get('calls') == finished.get('returns'),
+        'Original calls and returns are not one-to-one')
+    if selftest:
+        witnesses = [row for row in rows if row['kind'] == 'selftest']
+        require(len(witnesses) == 1 and witnesses[0].get('complete') is True
+            and witnesses[0].get('queueIdentityUnchanged') is True and witnesses[0].get('inserted') == 'xb'
+            and witnesses[0].get('selectionAfterKey') == [1, 0]
+            and witnesses[0].get('selectionAfterAction') == [0, 2] and witnesses[0].get('actionReturn') is True
+            and witnesses[0].get('windowEquivalentReturn') is False and witnesses[0].get('menuEquivalentReturn') is True
+            and witnesses[0].get('selectionAfterMenu') == [0, 2]
+            and finished.get('selftestCompleted') is True,
+            'Independent native key/range witness did not preserve actual dispatch and NSRange values')
+        for method in ('postEvent:atStart:', 'sendEvent:', 'sendAction:to:from:', 'keyDown:', 'selectAll:', 'selectedRange', 'window.performKeyEquivalent:', 'menu.performKeyEquivalent:'):
+            require(observed_calls.get(method, 0) > 0, 'New native hook was not exercised: ' + method)
+        posts = [row for row in calls.values() if row['method'] == 'postEvent:atStart:']
+        sent = [row for row in calls.values() if row['method'] == 'sendEvent:']
+        require(any(post['arguments']['event'] == send['arguments']['event']
+            and post['arguments']['event'].get('characters') == 'x'
+            and post['arguments']['event'].get('keyCode') == 7
+            and post['arguments']['event'].get('flags') == 0 for post in posts for send in sent),
+            'Native witness did not forward the identical event fields')
+        ranges = [row['returned'] for row in returns.values() if row['method'] == 'selectedRange']
+        require([1, 0] in ranges and [0, 2] in ranges and any(row.get('selector') == 'selectedRange'
+            and row.get('typeEncoding', '').startswith('{_NSRange=QQ}') for row in hooks),
+            'Native witness did not exercise the actual two-NSUInteger NSRange return ABI')
+        for method, expected_return in (('window.performKeyEquivalent:', False), ('menu.performKeyEquivalent:', True)):
+            require(any(row['method'] == method and row['returned'] is expected_return
+                and calls[row['call']]['arguments'].get('event', {}).get('characters') == 'a'
+                and calls[row['call']]['arguments']['event'].get('flags') == 1 << 20
+                for row in returns.values()), 'Native witness did not forward its actual key-equivalent BOOL return')
+    else:
+        require(not any(row['kind'] == 'selftest' for row in rows)
+            and finished.get('selftestCompleted') is False, 'Real original child executed synthetic selftest actions')
+        require(observed_calls.get('windowNumberAtPoint:belowWindowWithWindowNumber:', 0) > 0
+            and observed_calls.get('CGWindowListCopyWindowInfo', 0) > 0,
+            'Original target window queries were not actually observed')
+    return {'records': len(rows), 'originalCallsByMethod': observed_calls, 'originalReturnsByMethod': observed_returns,
+        'allOriginalCallsReturnedOnce': True, 'actualProcessAndImagesBound': True, 'selftest': selftest,
+        'originalOutcomesPreserved': True, 'fullReleaseAcceptance': False,
+        'mutationCoverageOrRootCauseQualified': False,
+        'independentActualCallsiteAndPredicateReviewRequired': not selftest,
+        'limit': 'A standalone original PASS or additional context never proves which original guard rejected a mutation.'}
+
+
 def observer_selftest(evidence, inspector):
     tool = evidence / 'pointer-observer-selftest'
     restore_selftest_tool(tool, evidence)
     results = {}
-    for name in ('owned-image', 'foreign-image', 'already-key', 'duplicate-probe'):
+    for name in ('owned-image', 'foreign-image', 'already-key', 'duplicate-probe', 'event-route'):
         folder = evidence / ('selftest-' + name); folder.mkdir()
         expected = Path('/usr/bin/true') if name == 'foreign-image' else tool
         environment = dict(os.environ)
         require(not any(key.startswith(('NGV_ACCEPTANCE', 'NGV_APP_DIAGNOSTIC', 'NSZombie', 'DYLD_INSERT_LIBRARIES'))
             for key in environment), 'Unexpected selftest substitution')
         environment.update(NGV_POINTER_GUARD_SNAPSHOT_DIR=str(folder), NGV_POINTER_GUARD_EXPECTED_IMAGE=str(expected))
+        if name == 'event-route':
+            environment.update(NGV_POINTER_EVENT_TRACE='1', NGV_POINTER_TRACE_SELFTEST='1', NGV_POINTER_TRACE_EXPECTED_HOST=str(tool))
         if name != 'already-key': environment['DYLD_INSERT_LIBRARIES'] = str(inspector)
         result = run_owned([str(tool), str(folder / 'witness.json'), name, str(inspector)], folder / 'console.log', environment, timeout=15)
         require(result['exitCode'] == 0 and result['processReaped'] and result['eof'] and result['stoppedReason'] is None,
@@ -539,6 +691,8 @@ def observer_selftest(evidence, inspector):
             and witness.get('scenario') == name, 'Independent selftest return witness differs')
         raw = (folder / 'snapshots.jsonl').read_bytes()
         measured = verify_snapshots(raw, result, inspector, expected, negative=name if name in {'foreign-image', 'duplicate-probe'} else False)
+        if name == 'event-route':
+            measured['eventTrace'] = verify_event_trace((folder / 'event-trace.jsonl').read_bytes(), result, expected, tool, selftest=True)
         if name in {'owned-image', 'already-key'}:
             rows = [json.loads(line) for line in raw.split(b'\n') if line]
             matches = [row for row in rows if row['kind'] == 'viewport-convert'
@@ -561,10 +715,12 @@ def collect_selections(value, evidence, runtime, image, host, inspector):
         environment = app_environment(dict(os.environ), runtime, image, folder)
         require(not any(key.startswith(('NGV_ACCEPTANCE', 'NGV_APP_DIAGNOSTIC', 'NSZombie', 'DYLD_INSERT_LIBRARIES'))
             for key in environment), 'Unexpected native diagnostic substitution')
+        require(not any(key.startswith('NGV_POINTER_') for key in environment), 'Unexpected inherited pointer instrumentation')
         environment.update(NGV_APPKIT_TEST_BUNDLE=str(image), NGV_APPKIT_TEST_EVENTS=str(folder / 'events.jsonl'),
             NGV_APPKIT_TEST_RECEIPT=str(folder / 'host-receipt.json'), NGV_APPKIT_EXCEPTION_EVIDENCE=str(folder / 'exception.jsonl'),
             DYLD_INSERT_LIBRARIES=str(inspector), NGV_POINTER_GUARD_SNAPSHOT_DIR=str(snapshots),
-            NGV_POINTER_GUARD_EXPECTED_IMAGE=str(image))
+            NGV_POINTER_GUARD_EXPECTED_IMAGE=str(image), NGV_POINTER_EVENT_TRACE='1', NGV_POINTER_TRACE_EXPECTED_HOST=str(host))
+        require('NGV_POINTER_TRACE_SELFTEST' not in environment, 'Real original selection cannot enter observer selftest mode')
         command = [str(host), '--event-stream-version', '0', '--no-parallel', '--filter', scope_filter([identity])]
         with (selection / 'host.STARTED.json').open('x') as marker:
             json.dump({'command': command, 'at': time.time(), 'oneShot': True}, marker); marker.flush(); os.fsync(marker.fileno())
@@ -642,34 +798,50 @@ def execute(source, root):
     collected = collect_selections(value, evidence, runtime, image, host, inspector)
     selections = {}
     for identity, acquired in collected.items():
-        folder, snapshots, result = acquired['folder'], acquired['snapshots'], acquired['process']
-        selection = folder.parent
-        require(result['eof'] and result['stoppedReason'] is None, 'Native measurement incomplete; preserve originals')
-        require(b'NGV_POINTER_INSPECTOR_FINALIZATION_FAILED' not in (folder / 'console.log').read_bytes(),
-            'Inspector finalization failed')
-        measurement = measure((folder / 'events.jsonl').read_bytes(), [identity], expected_cases={})
-        host_receipt = json.loads((folder / 'host-receipt.json').read_bytes())
-        require(host_receipt.get('pid') == result['pid'] and host_receipt.get('parentPID') == os.getpid()
-            and host_receipt.get('hostExecutable') == str(host) and host_receipt.get('bundleBinary') == str(image)
-            and host_receipt.get('sourceSHA') == os.environ['GITHUB_SHA'] and host_receipt.get('completed') is True
-            and host_receipt.get('started') is True and host_receipt.get('runReturnedAfterCompletion') is True
-            and host_receipt.get('applicationRunningAtStart') is True and host_receipt.get('mainThread') is True
-            and host_receipt.get('getterImagePath') == host_receipt.get('entryPointImagePath')
-            and str(host_receipt.get('getterImagePath', '')).endswith('/Testing.framework/Versions/A/Testing')
-            and host_receipt.get('eventRecordCount') == measurement['records']
-            and host_receipt.get('abiSucceeded') == measurement['passed'] and result['exitCode'] == (0 if measurement['passed'] else 1)
-            and (folder / 'exception.jsonl').stat().st_size == 0, 'Original native host did not complete the measured selection')
-        require(checksum(host) == value['originalHostSHA256'] and checksum(image) == value['testImage']['sha256'],
-            'Original native images changed during diagnosis')
-        snapshot = verify_snapshots((snapshots / 'snapshots.jsonl').read_bytes(), result, inspector, image)
-        require(snapshot['samples'] > 0, 'Current field guard operands were not observed')
-        selections[identity] = {'measurement': measurement, 'process': result, 'hostReceipt': host_receipt, 'snapshot': snapshot}
-        write(selection / 'measurement.json', dict(selections[identity], fullReleaseAcceptance=False))
-    write(evidence / 'measurement.json', {'schema': 'native-pointer-guard-measurement/v2', 'selections': selections,
-        'allSelectionsComplete': set(selections) == set(value['diagnosticFunctionIDs']), 'fullReleaseAcceptance': False,
-        'scopeLimit': 'Injected observation, filtered execution and restored paths can alter timing or accessibility state. '
-            'Snapshot predicates precede the original guards; native events retain their actual outcomes. '
-            'This experiment never qualifies App, tests, runtime or release acceptance.'})
+        try:
+            folder, snapshots, result = acquired['folder'], acquired['snapshots'], acquired['process']
+            selection = folder.parent
+            require(result['eof'] and result['stoppedReason'] is None, 'Native measurement incomplete; preserve originals')
+            require(b'NGV_POINTER_INSPECTOR_FINALIZATION_FAILED' not in (folder / 'console.log').read_bytes(),
+                'Inspector finalization failed')
+            measurement = measure((folder / 'events.jsonl').read_bytes(), [identity], expected_cases={})
+            host_receipt = json.loads((folder / 'host-receipt.json').read_bytes())
+            require(host_receipt.get('pid') == result['pid'] and host_receipt.get('parentPID') == os.getpid()
+                and host_receipt.get('hostExecutable') == str(host) and host_receipt.get('bundleBinary') == str(image)
+                and host_receipt.get('sourceSHA') == os.environ['GITHUB_SHA'] and host_receipt.get('completed') is True
+                and host_receipt.get('started') is True and host_receipt.get('runReturnedAfterCompletion') is True
+                and host_receipt.get('applicationRunningAtStart') is True and host_receipt.get('mainThread') is True
+                and host_receipt.get('getterImagePath') == host_receipt.get('entryPointImagePath')
+                and str(host_receipt.get('getterImagePath', '')).endswith('/Testing.framework/Versions/A/Testing')
+                and host_receipt.get('eventRecordCount') == measurement['records']
+                and host_receipt.get('abiSucceeded') == measurement['passed'] and result['exitCode'] == (0 if measurement['passed'] else 1)
+                and (folder / 'exception.jsonl').stat().st_size == 0, 'Original native host did not complete the measured selection')
+            require(checksum(host) == value['originalHostSHA256'] and checksum(image) == value['testImage']['sha256'],
+                'Original native images changed during diagnosis')
+            canonical = '/canonicalNativeAccessibility' in identity
+            mixed = '/canonicalNativeAccessibilityHitKeepsSystemInputAndRealFieldFocus()/' in identity
+            snapshot = verify_snapshots((snapshots / 'snapshots.jsonl').read_bytes(), result, inspector, image,
+                no_probe=canonical and not mixed, optional_probe=mixed)
+            require(canonical or snapshot['samples'] > 0, 'Current field guard operands were not observed')
+            trace = verify_event_trace((snapshots / 'event-trace.jsonl').read_bytes(), result, image, host)
+            selections[identity] = {'measurement': measurement, 'process': result, 'hostReceipt': host_receipt, 'snapshot': snapshot,
+                'eventTrace': trace, 'qualificationComplete': True, 'standalonePassDoesNotQualifyMutationCoverageOrCause': True}
+            write(selection / 'measurement.json', dict(selections[identity], fullReleaseAcceptance=False))
+        except (ValueError, KeyError, TypeError, OSError, json.JSONDecodeError) as error:
+            selections[identity] = {'qualificationComplete': False, 'process': acquired['process'],
+                'error': type(error).__name__ + ': ' + str(error), 'allSelectedOriginalChildrenAlreadySettled': True,
+                'fullReleaseAcceptance': False}
+            write(acquired['folder'].parent / 'measurement.json', selections[identity])
+    write(evidence / 'measurement.json', {'schema': 'native-pointer-event-measurement/v1', 'selections': selections,
+        'allSelectionsAcquiredBeforeSemantics': set(collected) == set(value['diagnosticFunctionIDs']),
+        'allSelectionsReviewed': set(selections) == set(value['diagnosticFunctionIDs']),
+        'allSelectionsComplete': all(item['qualificationComplete'] for item in selections.values()),
+        'mutationCoverageOrRootCauseQualified': False, 'fullReleaseAcceptance': False,
+        'scopeLimit': 'Injected observation, isolated selections and restored paths can alter timing. '
+            'Original calls and returns are distinct from additional context. A method PASS cannot qualify '
+            'the mutation guard or the historical failure cause without independent actual callsite and predicate review.'})
+    require(all(item['qualificationComplete'] for item in selections.values()),
+        'One or more original traces need review; every child original was acquired and reaped before semantics')
 
 
 def main():

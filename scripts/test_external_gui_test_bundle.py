@@ -75,13 +75,13 @@ class ExternalTestBundleTests(unittest.TestCase):
 
     def test_cohort_diagnostic_paths_remain_outside_compiled_client_inputs(self):
         prior = ['scripts/previous.py']
-        additions = ['scripts/scene_pointer_delivery.py', 'scripts/scene_pointer_observer.swift']
+        additions = ['scripts/fixtures/native-app-failure-1120.json', 'scripts/scene_pointer_delivery.py', 'scripts/scene_pointer_observer.swift']
         changes = dict.fromkeys(additions, 'A')
         self.assertEqual(bundle._cohort_ci_additions(prior, prior + additions, changes, set(), {}), additions)
         for name in additions:
             with self.subTest(compiled=name), self.assertRaises(ValueError):
                 bundle._cohort_ci_additions(prior, prior + additions, changes, set(), {name: 'a' * 64})
-        for name in ['scripts/other_diagnostic.py', 'scripts/other_observer.swift', 'Sources/NexGenVideo/App/AppDelegate.swift']:
+        for name in ['scripts/other_diagnostic.py', 'scripts/other_observer.swift', 'scripts/fixtures/native-app-failure-1121.json', 'Sources/NexGenVideo/App/AppDelegate.swift']:
             with self.subTest(unreviewed=name), self.assertRaises(ValueError):
                 bundle._cohort_ci_additions(prior, prior + [name], {name: 'A'}, set(), {})
         with self.assertRaises(ValueError):
