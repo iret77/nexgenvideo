@@ -39,6 +39,7 @@
     "scripts/native_app_window_sampler.swift",
     "scripts/native_current_cohort.py",
     "scripts/native_pointer_guard_diagnostic.py",
+    "scripts/native_pointer_guard_selftest.swift",
     "scripts/native_pointer_guard_snapshot.m",
     "scripts/notarize.sh",
     "scripts/notary_submission.py",
