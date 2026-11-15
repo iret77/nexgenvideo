@@ -19,9 +19,12 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
         rows = [dict(kind='loaded', expectedImageIdentity=image, expectedHostIdentity=host,
             actualHostIdentity=host, selftestMode=selftest)]
         methods = ['windowNumberAtPoint:belowWindowWithWindowNumber:', 'windowNumber', 'CGWindowListCopyWindowInfo',
-            'postEvent:atStart:', 'sendEvent:', 'sendAction:to:from:', 'keyDown:', 'selectAll:', 'selectedRange', 'selectedRange']
+            'postEvent:atStart:', 'sendEvent:', 'sendAction:to:from:', 'keyDown:', 'selectAll:',
+            'window.performKeyEquivalent:', 'menu.performKeyEquivalent:', 'selectedRange', 'selectedRange']
         for method in sorted(set(methods)):
-            rows.append(dict(kind='hook', selector=method, installed=True,
+            equivalent = method in ('window.performKeyEquivalent:', 'menu.performKeyEquivalent:')
+            rows.append(dict(kind='hook', selector='performKeyEquivalent:' if equivalent else method, installed=True,
+                **{'class': 'NSWindow' if method.startswith('window.') else 'NSMenu' if equivalent else 'NSApplication'},
                 typeEncoding='{_NSRange=QQ}16@0:8' if method == 'selectedRange' else 'v24@0:8@16'))
         context = dict(queryOrigin='ADDITIONAL_CONTEXT', contextOrdinal=1,
             additionalQueryCounts=dict(CGWindowListCopyWindowInfo=1))
@@ -30,8 +33,11 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
         counts = {}
         for index, method in enumerate(methods, 1):
             arguments = dict(event=copy.deepcopy(event)) if method in ('postEvent:atStart:', 'sendEvent:') else {}
+            if method in ('window.performKeyEquivalent:', 'menu.performKeyEquivalent:'):
+                arguments = dict(event=dict(event, characters='a', charactersIgnoringModifiers='a', flags=1 << 20, keyCode=0))
             if method == 'windowNumberAtPoint:belowWindowWithWindowNumber:': arguments = dict(point=[1, 2], below=0)
             returned = [0, 2] if index == len(methods) else [1, 0] if method == 'selectedRange' else True
+            if method == 'window.performKeyEquivalent:': returned = False
             rows.append(dict(kind='call', call=index, method=method, arguments=arguments,
                 context=copy.deepcopy(context), queryOrigin='ORIGINAL_EXECUTION',
                 stack=[dict(image='/tests', address='0x20', imageBase='0x10')]))
@@ -40,7 +46,8 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
             counts[method] = counts.get(method, 0) + 1
         if selftest:
             rows.append(dict(kind='selftest', complete=True, queueIdentityUnchanged=True, inserted='xb',
-                selectionAfterKey=[1, 0], selectionAfterAction=[0, 2], actionReturn=True))
+                selectionAfterKey=[1, 0], selectionAfterAction=[0, 2], actionReturn=True,
+                windowEquivalentReturn=False, menuEquivalentReturn=True, selectionAfterMenu=[0, 2]))
         rows.append(dict(kind='finished', calls=counts, returns=copy.deepcopy(counts), errors=0,
             selftestMode=selftest, selftestCompleted=selftest, contextCount=20,
             additionalGetterQueryCounts=dict(CGWindowListCopyWindowInfo=20)))
@@ -57,7 +64,7 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
     def test_event_trace_requires_every_original_return_and_true_operand_provenance(self):
         rows, identities = self.trace_rows()
         self.assertTrue(self.trace_verify(rows, identities)['allOriginalCallsReturnedOnce'])
-        for defect in ('lost-return', 'foreign-stack', 'wrong-process', 'context-as-original', 'bool-counter', 'missing-ABI', 'wrong-host'):
+        for defect in ('lost-return', 'foreign-stack', 'wrong-process', 'context-as-original', 'bool-counter', 'missing-ABI', 'numeric-installed', 'wrong-host'):
             changed = copy.deepcopy(rows)
             call = next(row for row in changed if row['kind'] == 'call')
             if defect == 'lost-return':
@@ -68,6 +75,7 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
             elif defect == 'context-as-original': call['context']['queryOrigin'] = 'ORIGINAL_EXECUTION'
             elif defect == 'bool-counter': changed[-1]['calls'][call['method']] = True
             elif defect == 'missing-ABI': next(row for row in changed if row['kind'] == 'hook')['installed'] = False
+            elif defect == 'numeric-installed': next(row for row in changed if row['kind'] == 'hook')['installed'] = 1
             elif defect == 'wrong-host': changed[0]['actualHostIdentity'] = identities[0]
             with self.subTest(defect=defect), self.assertRaises(ValueError): self.trace_verify(changed, identities)
 
@@ -88,7 +96,7 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
     def test_native_key_range_witness_requires_identical_event_and_actual_range_returns(self):
         rows, identities = self.trace_rows(selftest=True)
         self.assertTrue(self.trace_verify(rows, identities, selftest=True)['selftest'])
-        for defect in ('changed-characters', 'wrong-selection', 'missing-range-return', 'unknown-range-ABI', 'selftest-in-original-child'):
+        for defect in ('changed-characters', 'wrong-selection', 'missing-range-return', 'unknown-range-ABI', 'wrong-menu-return', 'numeric-queue-identity', 'numeric-complete', 'selftest-in-original-child'):
             changed = copy.deepcopy(rows)
             if defect == 'changed-characters': next(row for row in changed if row['kind'] == 'call' and row['method'] == 'sendEvent:')['arguments']['event']['characters'] = 'y'
             elif defect == 'wrong-selection': next(row for row in changed if row['kind'] == 'selftest')['selectionAfterAction'] = [1, 0]
@@ -96,6 +104,9 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
                 for row in changed:
                     if row['kind'] == 'return' and row['method'] == 'selectedRange': row['returned'] = [1, 0]
             elif defect == 'unknown-range-ABI': next(row for row in changed if row['kind'] == 'hook' and row['selector'] == 'selectedRange')['typeEncoding'] = '{_NSRange=II}16@0:8'
+            elif defect == 'wrong-menu-return': next(row for row in changed if row['kind'] == 'return' and row['method'] == 'menu.performKeyEquivalent:')['returned'] = False
+            elif defect == 'numeric-queue-identity': next(row for row in changed if row['kind'] == 'selftest')['queueIdentityUnchanged'] = 1
+            elif defect == 'numeric-complete': next(row for row in changed if row['kind'] == 'selftest')['complete'] = 1
             with self.subTest(defect=defect), self.assertRaises(ValueError): self.trace_verify(changed, identities, selftest=defect != 'selftest-in-original-child')
 
     def test_canonical_only_trace_and_standalone_pass_never_qualify_mutation_refusal(self):
@@ -110,6 +121,20 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
         measured = diagnostic.verify_snapshots(raw, dict(pid=10, parentPID=20, launchBefore=0, endAfter=7),
             Path('/inspector'), Path('/tests'), expected_identity=self.file_identity, no_probe=True)
         self.assertTrue(measured['noHostingProbeInOriginalSelection'])
+        process = dict(pid=10, parentPID=20, launchBefore=0, endAfter=7)
+        optional = diagnostic.verify_snapshots(raw, process, Path('/inspector'), Path('/tests'),
+            expected_identity=self.file_identity, optional_probe=True)
+        self.assertTrue(optional['noHostingProbeInOriginalSelection'])
+        partial = copy.deepcopy(rows); partial[-1].update(rectCalls=1, rectReturns=1)
+        with self.assertRaises(ValueError):
+            diagnostic.verify_snapshots(b''.join((json.dumps(row) + '\n').encode() for row in partial), process,
+                Path('/inspector'), Path('/tests'), expected_identity=self.file_identity, optional_probe=True)
+        full = b''.join((json.dumps(row) + '\n').encode() for row in self.rows())
+        self.assertEqual(diagnostic.verify_snapshots(full, process, Path('/inspector'), Path('/tests'),
+            expected_identity=self.file_identity, optional_probe=True)['samples'], 1)
+        with self.assertRaises(ValueError):
+            diagnostic.verify_snapshots(full, process, Path('/inspector'), Path('/tests'),
+                expected_identity=self.file_identity, no_probe=True)
         with self.assertRaises(ValueError):
             diagnostic.verify_snapshots(raw, dict(pid=10, parentPID=20, launchBefore=0, endAfter=7),
                 Path('/inspector'), Path('/tests'), expected_identity=self.file_identity)

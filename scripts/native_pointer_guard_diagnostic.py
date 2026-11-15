@@ -397,7 +397,7 @@ def window_predicates(row):
         'containsQuartzPoint': bool(finite and value['screenAvailable'] and contains_point(frame, quartz))}
 
 
-def verify_snapshots(raw, process, inspector, image, expected_identity=None, negative=False, no_probe=False):
+def verify_snapshots(raw, process, inspector, image, expected_identity=None, negative=False, no_probe=False, optional_probe=False):
     require(raw.endswith(b'\n') and len(raw) <= 1024 * 1024, 'Inspector output is incomplete or oversized')
     rows = [json.loads(line) for line in raw.split(b'\n') if line]
     expected_identity = image_identity(image) if expected_identity is None else expected_identity
@@ -422,13 +422,15 @@ def verify_snapshots(raw, process, inspector, image, expected_identity=None, neg
         and finished.get('rectCalls') == finished.get('rectReturns'), 'Inspector lost data or original returns')
     groups = {kind: [row for row in rows if row['kind'] == kind] for kind in allowed}
     geometry = groups['viewport-convert']; samples = groups['guard-snapshot']
+    if optional_probe and not groups['hook-ready'] and not geometry and not samples and finished['originalCalls'] == finished['rectCalls'] == 0:
+        no_probe = True
     require(finished.get('rectSamples') == len(geometry) <= 32 and finished.get('samples') == len(samples) <= 16
         and len(groups['discovery']) + len(groups['eligibility']) <= 32
         and finished['originalCalls'] >= len(samples) and finished['rectCalls'] >= len(geometry),
         'Inspector counters differ from complete records')
     if negative:
         require(not groups['hook-ready'] and not geometry and not samples
-            and finished['originalCalls'] == finished['transparentReturns'] == 0,
+            and finished['originalCalls'] == finished['transparentReturns'] == finished['rectCalls'] == finished['rectReturns'] == 0,
             'Refused selftest installed a root hook or observed a foreign scope')
         if negative == 'duplicate-probe':
             require(len(groups['probe-hook-ready']) == 1 and groups['probe-hook-ready'][0].get('installed') is True
@@ -560,10 +562,13 @@ def verify_event_trace(raw, process, image, host, *, selftest=False, identities=
     require(required_hooks <= {row.get('selector') for row in hooks}
         and all(row.get('installed') is True and isinstance(row.get('typeEncoding'), str)
             and row['typeEncoding'] for row in hooks), 'Native trace hook ABI or installation is missing')
+    require({'NSWindow', 'NSMenu'} <= {row.get('class') for row in hooks if row.get('selector') == 'performKeyEquivalent:'},
+        'Actual window and menu key-equivalent route hooks are missing')
     calls, returns, observed_calls, observed_returns = {}, {}, {}, {}
     methods = {'postEvent:atStart:', 'sendEvent:', 'sendAction:to:from:',
         'windowNumberAtPoint:belowWindowWithWindowNumber:', 'windowNumber', 'CGWindowListCopyWindowInfo',
         'CGEventPost', 'keyDown:', 'selectAll:', 'doCommandBySelector:', 'selectedRange',
+        'window.performKeyEquivalent:', 'menu.performKeyEquivalent:',
         'accessibilityHitTest:', 'accessibilityRole', 'accessibilityParent', 'isAccessibilityEnabled', 'accessibilityFrame'}
     for row in rows:
         kind = row['kind']
@@ -601,6 +606,8 @@ def verify_event_trace(raw, process, image, host, *, selftest=False, identities=
                     require(isinstance(row.get('returned'), list) and len(row['returned']) == 2
                         and all(type(value) is int and 0 <= value <= 2**64 - 1 for value in row['returned']),
                         'Original NSRange ABI or unsigned values differ')
+                if method in {'sendAction:to:from:', 'window.performKeyEquivalent:', 'menu.performKeyEquivalent:', 'isAccessibilityEnabled'}:
+                    require(type(row.get('returned')) is bool, 'Original BOOL return is not a wire boolean')
         event = row.get('event') or row.get('arguments', {}).get('event')
         if event is not None:
             require(isinstance(event, dict) and event.get('getterOrigin') == 'ADDITIONAL_OBSERVATION'
@@ -619,9 +626,11 @@ def verify_event_trace(raw, process, image, host, *, selftest=False, identities=
             and witnesses[0].get('queueIdentityUnchanged') is True and witnesses[0].get('inserted') == 'xb'
             and witnesses[0].get('selectionAfterKey') == [1, 0]
             and witnesses[0].get('selectionAfterAction') == [0, 2] and witnesses[0].get('actionReturn') is True
+            and witnesses[0].get('windowEquivalentReturn') is False and witnesses[0].get('menuEquivalentReturn') is True
+            and witnesses[0].get('selectionAfterMenu') == [0, 2]
             and finished.get('selftestCompleted') is True,
             'Independent native key/range witness did not preserve actual dispatch and NSRange values')
-        for method in ('postEvent:atStart:', 'sendEvent:', 'sendAction:to:from:', 'keyDown:', 'selectAll:', 'selectedRange'):
+        for method in ('postEvent:atStart:', 'sendEvent:', 'sendAction:to:from:', 'keyDown:', 'selectAll:', 'selectedRange', 'window.performKeyEquivalent:', 'menu.performKeyEquivalent:'):
             require(observed_calls.get(method, 0) > 0, 'New native hook was not exercised: ' + method)
         posts = [row for row in calls.values() if row['method'] == 'postEvent:atStart:']
         sent = [row for row in calls.values() if row['method'] == 'sendEvent:']
@@ -634,6 +643,11 @@ def verify_event_trace(raw, process, image, host, *, selftest=False, identities=
         require([1, 0] in ranges and [0, 2] in ranges and any(row.get('selector') == 'selectedRange'
             and row.get('typeEncoding', '').startswith('{_NSRange=QQ}') for row in hooks),
             'Native witness did not exercise the actual two-NSUInteger NSRange return ABI')
+        for method, expected_return in (('window.performKeyEquivalent:', False), ('menu.performKeyEquivalent:', True)):
+            require(any(row['method'] == method and row['returned'] is expected_return
+                and calls[row['call']]['arguments'].get('event', {}).get('characters') == 'a'
+                and calls[row['call']]['arguments']['event'].get('flags') == 1 << 20
+                for row in returns.values()), 'Native witness did not forward its actual key-equivalent BOOL return')
     else:
         require(not any(row['kind'] == 'selftest' for row in rows)
             and finished.get('selftestCompleted') is False, 'Real original child executed synthetic selftest actions')
@@ -804,7 +818,9 @@ def execute(source, root):
             require(checksum(host) == value['originalHostSHA256'] and checksum(image) == value['testImage']['sha256'],
                 'Original native images changed during diagnosis')
             canonical = '/canonicalNativeAccessibility' in identity
-            snapshot = verify_snapshots((snapshots / 'snapshots.jsonl').read_bytes(), result, inspector, image, no_probe=canonical)
+            mixed = '/canonicalNativeAccessibilityHitKeepsSystemInputAndRealFieldFocus()/' in identity
+            snapshot = verify_snapshots((snapshots / 'snapshots.jsonl').read_bytes(), result, inspector, image,
+                no_probe=canonical and not mixed, optional_probe=mixed)
             require(canonical or snapshot['samples'] > 0, 'Current field guard operands were not observed')
             trace = verify_event_trace((snapshots / 'event-trace.jsonl').read_bytes(), result, image, host)
             selections[identity] = {'measurement': measurement, 'process': result, 'hostReceipt': host_receipt, 'snapshot': snapshot,
