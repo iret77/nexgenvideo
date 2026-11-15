@@ -593,6 +593,21 @@ def verify_event_trace(raw, process, image, host, *, selftest=False, identities=
                     and isinstance(frame.get('address'), str) and re.fullmatch('0x[0-9a-fA-F]+', frame['address'])
                     and isinstance(frame.get('imageBase'), str) and re.fullmatch('0x[0-9a-fA-F]+', frame['imageBase'])
                     for frame in row['stack']), 'Original call is not bound to its actual Tests or Host image')
+                if method in {'sendAction:to:from:', 'window.performKeyEquivalent:', 'menu.performKeyEquivalent:'}:
+                    scope = row['arguments'].get('scope')
+                    flags = ('ownedCaller', 'ownedKeyWindow', 'ownedTargetWindow', 'ownedEventWindow')
+                    require(isinstance(scope, dict) and scope.get('queryOrigin') == 'ADDITIONAL_SCOPE_OBSERVATION'
+                        and all(type(scope.get(key)) is bool for key in flags) and any(scope[key] for key in flags),
+                        'Action or key-equivalent route has no exact owned scope')
+                    for flag, key in (('ownedKeyWindow', 'actualKeyWindowIdentity'),
+                            ('ownedTargetWindow', 'targetWindowIdentity'), ('ownedEventWindow', 'eventWindowIdentity')):
+                        value = scope.get(key)
+                        require(isinstance(value, str) and (value == 'nil' or re.fullmatch('0x[0-9a-fA-F]+', value))
+                            and (not scope[flag] or value != 'nil'), 'Owned route window identity is absent')
+                    require(not scope['ownedCaller'] or any(frame.get('image') == expected_image['path'] for frame in row['stack']),
+                        'Owned caller route lacks its exact canonical image stack')
+                    require(row['context'].get('keyWindowIdentity') == scope['actualKeyWindowIdentity'],
+                        'Actual key window was replaced by the observational scope window')
                 calls[identity] = row
                 observed_calls[method] = observed_calls.get(method, 0) + 1
                 if method == 'windowNumberAtPoint:belowWindowWithWindowNumber:':
@@ -623,15 +638,74 @@ def verify_event_trace(raw, process, image, host, *, selftest=False, identities=
         'Original calls and returns are not one-to-one')
     if selftest:
         witnesses = [row for row in rows if row['kind'] == 'selftest']
+        require(len(witnesses) == 1, 'Native witness is missing or repeated')
+        witness = witnesses[0]
+        def ready(value):
+            flags = ('active', 'visible', 'key', 'acceptsFirstResponder', 'makeFirstResponderReturn')
+            return isinstance(value, dict) and value.get('queryOrigin') == 'SELFTEST_ONLY' \
+                and all(value.get(key) is True for key in flags) \
+                and isinstance(value.get('windowIdentity'), str) and re.fullmatch('0x[0-9a-fA-F]+', value['windowIdentity']) \
+                and value.get('keyWindowIdentity') == value['windowIdentity'] \
+                and isinstance(value.get('textIdentity'), str) and re.fullmatch('0x[0-9a-fA-F]+', value['textIdentity']) \
+                and value.get('responderIdentity') == value['textIdentity']
+        times = [witness.get(key) for key in ('readinessStart', 'readinessEnd', 'readinessDeadline', 'queueStart', 'queueDeadline', 'queueEnd')]
+        require(all(type(value) in (int, float) and math.isfinite(value) for value in times)
+            and times[0] <= times[1] <= times[2] and 0 < times[2] - times[0] <= 2
+            and times[1] <= times[3] < times[4] and times[3] <= times[5] and times[4] - times[3] <= 2
+            and witness.get('timeUnits') == 'seconds-since-startup'
+            and witness.get('ready') is True and ready(witness.get('readiness'))
+            and witness.get('cleanupComplete') is True, 'Native witness readiness, deadline or cleanup is unqualified')
+        require(witness.get('dequeueMask') == 1 << 10 and witness.get('dequeueMode') == 'kCFRunLoopDefaultMode'
+            and witness.get('dequeue') is True and witness.get('posted') is True
+            and witness.get('queueResult') == 'IDENTICAL_EVENT',
+            'Native witness changed its actual dequeue contract')
+        dequeues = witness.get('dequeues'); readiness_events = witness.get('readinessEvents')
+        require(isinstance(dequeues, list) and 1 <= len(dequeues) <= 128
+            and isinstance(readiness_events, list) and len(readiness_events) <= 128,
+            'Native witness dequeue or readiness ledger is incomplete')
+        previous_ready = times[0]
+        for entry in readiness_events:
+            requested, instant = entry.get('requestedAt'), entry.get('dequeuedAt')
+            require(type(requested) in (int, float) and type(instant) in (int, float)
+                and math.isfinite(requested) and math.isfinite(instant)
+                and previous_ready <= requested <= instant <= times[1]
+                and type(entry.get('mask')) is int and entry['mask'] == 2**64 - 1
+                and entry.get('mode') == witness['dequeueMode'] and entry.get('dequeue') is True
+                and type(entry.get('expiration')) in (int, float) and math.isfinite(entry['expiration'])
+                and type(entry.get('dispatched')) is bool and entry['dispatched'] == (entry.get('event') is not None),
+                'Readiness event pump lost its actual queue contract or dispatch')
+            previous_ready = instant
+        posted = witness.get('postedEvent')
+        require(isinstance(posted, dict) and posted == witness.get('createdEvent') and posted.get('type') == 10 and posted.get('characters') == 'x'
+            and posted.get('charactersIgnoringModifiers') == 'x' and posted.get('keyCode') == 7
+            and posted.get('flags') == 0 and not {'CGPosition', 'CGTimestamp', 'tag'} & set(posted),
+            'Native witness posted event fields are missing or converted')
+        previous = times[3]
+        for index, entry in enumerate(dequeues):
+            instant = entry.get('dequeuedAt'); requested = entry.get('requestedAt'); event = entry.get('event')
+            require(type(instant) in (int, float) and math.isfinite(instant) and previous <= instant <= times[5]
+                and type(requested) in (int, float) and math.isfinite(requested) and previous <= requested <= instant
+                and type(entry.get('sameIdentity')) is bool and type(entry.get('dispatched')) is bool
+                and type(entry.get('expiration')) in (int, float) and math.isfinite(entry['expiration']), 'Native dequeue diagnostics lost actual operands')
+            require(event is not None and entry['dispatched'] is True and isinstance(event, dict)
+                and entry['sameIdentity'] == (event.get('identity') == posted.get('identity')),
+                'Native witness dequeued nil or concealed a foreign event')
+            if index == len(dequeues) - 1:
+                require(entry['sameIdentity'] is True and event == posted and instant <= times[4]
+                    and ready(entry.get('readiness')), 'Native witness did not dispatch the ready identical queued event')
+            else:
+                require(entry['sameIdentity'] is False, 'Native witness dequeued its posted event repeatedly')
+            previous = instant
         require(len(witnesses) == 1 and witnesses[0].get('complete') is True
             and witnesses[0].get('queueIdentityUnchanged') is True and witnesses[0].get('inserted') == 'xb'
             and witnesses[0].get('selectionAfterKey') == [1, 0]
             and witnesses[0].get('selectionAfterAction') == [0, 2] and witnesses[0].get('actionReturn') is True
             and witnesses[0].get('windowEquivalentReturn') is False and witnesses[0].get('menuEquivalentReturn') is True
             and witnesses[0].get('selectionAfterMenu') == [0, 2]
+            and witnesses[0].get('selectionAfterCommand') == [0, 2]
             and finished.get('selftestCompleted') is True,
             'Independent native key/range witness did not preserve actual dispatch and NSRange values')
-        for method in ('postEvent:atStart:', 'sendEvent:', 'sendAction:to:from:', 'keyDown:', 'selectAll:', 'selectedRange', 'window.performKeyEquivalent:', 'menu.performKeyEquivalent:'):
+        for method in ('postEvent:atStart:', 'sendEvent:', 'sendAction:to:from:', 'keyDown:', 'selectAll:', 'doCommandBySelector:', 'selectedRange', 'window.performKeyEquivalent:', 'menu.performKeyEquivalent:'):
             require(observed_calls.get(method, 0) > 0, 'New native hook was not exercised: ' + method)
         posts = [row for row in calls.values() if row['method'] == 'postEvent:atStart:']
         sent = [row for row in calls.values() if row['method'] == 'sendEvent:']
@@ -640,6 +714,25 @@ def verify_event_trace(raw, process, image, host, *, selftest=False, identities=
             and post['arguments']['event'].get('keyCode') == 7
             and post['arguments']['event'].get('flags') == 0 for post in posts for send in sent),
             'Native witness did not forward the identical event fields')
+        matching_posts = [row for row in posts if row['arguments'].get('event') == posted]
+        matching_sends = [row for row in sent if row['arguments'].get('event') == posted]
+        forwarded = set()
+        for entry in [entry for entry in readiness_events if entry['event'] is not None] + dequeues:
+            matching = [row for row in sent if row['call'] not in forwarded
+                and row['arguments'].get('event') == entry['event'] and row['uptime'] >= entry['dequeuedAt']]
+            require(matching, 'A dequeued event was not actually forwarded through the application')
+            forwarded.add(min(matching, key=lambda row: row['sequence'])['call'])
+        require(len(forwarded) == len(sent), 'Witness dispatched an event outside its exact dequeue ledger')
+        require(len(matching_posts) == len(matching_sends) == 1
+            and matching_posts[0]['sequence'] < returns[matching_posts[0]['call']]['sequence'] < matching_sends[0]['sequence']
+            and returns[matching_posts[0]['call']]['uptime'] <= dequeues[-1]['dequeuedAt'] <= matching_sends[0]['uptime']
+            and any(row['kind'] == 'receive' and row.get('event') == posted
+                and matching_sends[0]['sequence'] < row['sequence'] < returns[matching_sends[0]['call']]['sequence'] for row in rows)
+            and any(row['method'] == 'doCommandBySelector:' and row['arguments'].get('command') == 'selectAll:'
+                and row['arguments'].get('receiver') == witness['readiness']['textIdentity']
+                and isinstance(returns[row['call']].get('returned'), dict)
+                and returns[row['call']]['returned'].get('range', {}).get('selection') == [0, 2] for row in calls.values()),
+            'Native witness lacks actual ordered queue delivery, receive or command routing')
         ranges = [row['returned'] for row in returns.values() if row['method'] == 'selectedRange']
         require([1, 0] in ranges and [0, 2] in ranges and any(row.get('selector') == 'selectedRange'
             and row.get('typeEncoding', '').startswith('{_NSRange=QQ}') for row in hooks),

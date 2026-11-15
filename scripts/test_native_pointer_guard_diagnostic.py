@@ -20,13 +20,13 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
             actualHostIdentity=host, selftestMode=selftest)]
         methods = ['windowNumberAtPoint:belowWindowWithWindowNumber:', 'windowNumber', 'CGWindowListCopyWindowInfo',
             'postEvent:atStart:', 'sendEvent:', 'sendAction:to:from:', 'keyDown:', 'selectAll:',
-            'window.performKeyEquivalent:', 'menu.performKeyEquivalent:', 'selectedRange', 'selectedRange']
+            'window.performKeyEquivalent:', 'menu.performKeyEquivalent:', 'doCommandBySelector:', 'selectedRange', 'selectedRange']
         for method in sorted(set(methods)):
             equivalent = method in ('window.performKeyEquivalent:', 'menu.performKeyEquivalent:')
             rows.append(dict(kind='hook', selector='performKeyEquivalent:' if equivalent else method, installed=True,
                 **{'class': 'NSWindow' if method.startswith('window.') else 'NSMenu' if equivalent else 'NSApplication'},
                 typeEncoding='{_NSRange=QQ}16@0:8' if method == 'selectedRange' else 'v24@0:8@16'))
-        context = dict(queryOrigin='ADDITIONAL_CONTEXT', contextOrdinal=1,
+        context = dict(queryOrigin='ADDITIONAL_CONTEXT', contextOrdinal=1, keyWindowIdentity='nil', keyWindow=0,
             additionalQueryCounts=dict(CGWindowListCopyWindowInfo=1))
         event = dict(identity='0xa', type=10, timestamp=2.0, timestampUnits='seconds-since-startup',
             flags=0, keyCode=7, characters='x', charactersIgnoringModifiers='x', getterOrigin='ADDITIONAL_OBSERVATION')
@@ -36,16 +36,32 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
             if method in ('window.performKeyEquivalent:', 'menu.performKeyEquivalent:'):
                 arguments = dict(event=dict(event, characters='a', charactersIgnoringModifiers='a', flags=1 << 20, keyCode=0))
             if method == 'windowNumberAtPoint:belowWindowWithWindowNumber:': arguments = dict(point=[1, 2], below=0)
+            if method == 'doCommandBySelector:': arguments = dict(command='selectAll:', receiver='0x41')
+            if method in ('sendAction:to:from:', 'window.performKeyEquivalent:', 'menu.performKeyEquivalent:'):
+                arguments['scope'] = dict(queryOrigin='ADDITIONAL_SCOPE_OBSERVATION', ownedCaller=True,
+                    ownedKeyWindow=False, ownedTargetWindow=False, ownedEventWindow=False,
+                    actualKeyWindowIdentity='nil', targetWindowIdentity='nil', eventWindowIdentity='nil')
             returned = [0, 2] if index == len(methods) else [1, 0] if method == 'selectedRange' else True
             if method == 'window.performKeyEquivalent:': returned = False
+            if method == 'doCommandBySelector:': returned = dict(range=dict(selection=[0, 2]))
             rows.append(dict(kind='call', call=index, method=method, arguments=arguments,
                 context=copy.deepcopy(context), queryOrigin='ORIGINAL_EXECUTION',
                 stack=[dict(image='/tests', address='0x20', imageBase='0x10')]))
+            if method == 'sendEvent:': rows.append(dict(kind='receive', event=copy.deepcopy(event)))
             rows.append(dict(kind='return', call=index, method=method, returned=returned,
                 context=copy.deepcopy(context), queryOrigin='ORIGINAL_EXECUTION'))
             counts[method] = counts.get(method, 0) + 1
         if selftest:
-            rows.append(dict(kind='selftest', complete=True, queueIdentityUnchanged=True, inserted='xb',
+            ready = dict(queryOrigin='SELFTEST_ONLY', active=True, visible=True, key=True,
+                keyWindowIdentity='0x40', windowIdentity='0x40', responderIdentity='0x41', textIdentity='0x41',
+                acceptsFirstResponder=True, makeFirstResponderReturn=True)
+            rows.append(dict(kind='selftest', ready=True, readiness=copy.deepcopy(ready), readinessStart=1.0,
+                readinessDeadline=3.0, readinessEnd=1.1, readinessEvents=[], queueStart=2.0, queueDeadline=4.0, queueEnd=2.2,
+                dequeueMask=1 << 10, dequeueMode='kCFRunLoopDefaultMode', dequeue=True, queueResult='IDENTICAL_EVENT',
+                postedEvent=copy.deepcopy(event), createdEvent=copy.deepcopy(event), posted=True,
+                timeUnits='seconds-since-startup', cleanupComplete=True, selectionAfterCommand=[0, 2],
+                dequeues=[dict(event=copy.deepcopy(event), dequeuedAt=2.1, expiration=100.0,
+                    readiness=copy.deepcopy(ready), requestedAt=2.05, sameIdentity=True, dispatched=True)], complete=True, queueIdentityUnchanged=True, inserted='xb',
                 selectionAfterKey=[1, 0], selectionAfterAction=[0, 2], actionReturn=True,
                 windowEquivalentReturn=False, menuEquivalentReturn=True, selectionAfterMenu=[0, 2]))
         rows.append(dict(kind='finished', calls=counts, returns=copy.deepcopy(counts), errors=0,
@@ -53,7 +69,7 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
             additionalGetterQueryCounts=dict(CGWindowListCopyWindowInfo=20)))
         for index, row in enumerate(rows, 1):
             row.update(sequence=index, pid=10, parentPID=20, mainThread=True, wallTime=index,
-                uptime=index, diagnosticOnly=True)
+                uptime=1.9 if row.get('method') == 'postEvent:atStart:' else 2.2 if row.get('method') == 'sendEvent:' else 2.3, diagnosticOnly=True)
         return rows, (image, host)
 
     def trace_verify(self, rows, identities, selftest=False):
@@ -64,7 +80,7 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
     def test_event_trace_requires_every_original_return_and_true_operand_provenance(self):
         rows, identities = self.trace_rows()
         self.assertTrue(self.trace_verify(rows, identities)['allOriginalCallsReturnedOnce'])
-        for defect in ('lost-return', 'foreign-stack', 'wrong-process', 'context-as-original', 'bool-counter', 'missing-ABI', 'numeric-installed', 'wrong-host'):
+        for defect in ('lost-return', 'foreign-stack', 'wrong-process', 'context-as-original', 'bool-counter', 'missing-ABI', 'numeric-installed', 'wrong-host', 'scope-unowned', 'scope-numeric', 'scope-false-window', 'scope-substitution'):
             changed = copy.deepcopy(rows)
             call = next(row for row in changed if row['kind'] == 'call')
             if defect == 'lost-return':
@@ -77,6 +93,13 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
             elif defect == 'missing-ABI': next(row for row in changed if row['kind'] == 'hook')['installed'] = False
             elif defect == 'numeric-installed': next(row for row in changed if row['kind'] == 'hook')['installed'] = 1
             elif defect == 'wrong-host': changed[0]['actualHostIdentity'] = identities[0]
+            elif defect.startswith('scope-'):
+                route = next(row for row in changed if row.get('method') == 'sendAction:to:from:' and row['kind'] == 'call')
+                scope = route['arguments']['scope']
+                if defect == 'scope-unowned': scope['ownedCaller'] = False
+                elif defect == 'scope-numeric': scope['ownedCaller'] = 1
+                elif defect == 'scope-false-window': scope.update(ownedCaller=False, ownedTargetWindow=True)
+                elif defect == 'scope-substitution': scope['actualKeyWindowIdentity'] = '0x40'
             with self.subTest(defect=defect), self.assertRaises(ValueError): self.trace_verify(changed, identities)
 
     def test_app_authored_keys_do_not_need_quartz_and_unsigned_range_corruption_is_rejected(self):
@@ -96,7 +119,9 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
     def test_native_key_range_witness_requires_identical_event_and_actual_range_returns(self):
         rows, identities = self.trace_rows(selftest=True)
         self.assertTrue(self.trace_verify(rows, identities, selftest=True)['selftest'])
-        for defect in ('changed-characters', 'wrong-selection', 'missing-range-return', 'unknown-range-ABI', 'wrong-menu-return', 'numeric-queue-identity', 'numeric-complete', 'selftest-in-original-child'):
+        for defect in ('changed-characters', 'wrong-selection', 'missing-range-return', 'unknown-range-ABI', 'wrong-menu-return', 'numeric-queue-identity', 'numeric-complete', 'selftest-in-original-child', 'inactive', 'wrong-responder', 'ready-numeric',
+                'readiness-expired', 'dequeue-nil', 'dequeue-foreign', 'dequeue-expired', 'missing-receive',
+                'missing-command', 'wrong-command-return', 'cleanup-failed'):
             changed = copy.deepcopy(rows)
             if defect == 'changed-characters': next(row for row in changed if row['kind'] == 'call' and row['method'] == 'sendEvent:')['arguments']['event']['characters'] = 'y'
             elif defect == 'wrong-selection': next(row for row in changed if row['kind'] == 'selftest')['selectionAfterAction'] = [1, 0]
@@ -107,6 +132,20 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
             elif defect == 'wrong-menu-return': next(row for row in changed if row['kind'] == 'return' and row['method'] == 'menu.performKeyEquivalent:')['returned'] = False
             elif defect == 'numeric-queue-identity': next(row for row in changed if row['kind'] == 'selftest')['queueIdentityUnchanged'] = 1
             elif defect == 'numeric-complete': next(row for row in changed if row['kind'] == 'selftest')['complete'] = 1
+            elif defect in ('inactive', 'wrong-responder', 'ready-numeric', 'readiness-expired',
+                    'dequeue-nil', 'dequeue-foreign', 'dequeue-expired', 'cleanup-failed'):
+                witness = next(row for row in changed if row['kind'] == 'selftest')
+                if defect == 'inactive': witness['readiness']['active'] = False
+                elif defect == 'wrong-responder': witness['readiness']['responderIdentity'] = '0x42'
+                elif defect == 'ready-numeric': witness['ready'] = 1
+                elif defect == 'readiness-expired': witness['readinessEnd'] = 3.1
+                elif defect == 'dequeue-nil': witness['dequeues'][0]['event'] = None
+                elif defect == 'dequeue-foreign': witness['dequeues'][0]['event']['identity'] = '0xb'
+                elif defect == 'dequeue-expired': witness['dequeues'][0]['dequeuedAt'] = 4.1; witness['queueEnd'] = 4.2
+                elif defect == 'cleanup-failed': witness['cleanupComplete'] = False
+            elif defect == 'missing-receive': next(row for row in changed if row['kind'] == 'receive')['event']['identity'] = '0xb'
+            elif defect == 'wrong-command-return': next(row for row in changed if row['kind'] == 'return' and row.get('method') == 'doCommandBySelector:')['returned']['range']['selection'] = [0, 1]
+            elif defect == 'missing-command': next(row for row in changed if row['kind'] == 'call' and row.get('method') == 'doCommandBySelector:')['arguments']['command'] = 'deleteBackward:'
             with self.subTest(defect=defect), self.assertRaises(ValueError): self.trace_verify(changed, identities, selftest=defect != 'selftest-in-original-child')
 
     def test_canonical_only_trace_and_standalone_pass_never_qualify_mutation_refusal(self):

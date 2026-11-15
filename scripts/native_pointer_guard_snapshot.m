@@ -623,7 +623,7 @@ static NSDictionary *traceContext(NSWindow *window) {
     if (!NSThread.isMainThread) return @{@"queryOrigin": @"ADDITIONAL_CONTEXT", @"AppKitNotQueriedOffMainThread": @YES};
     [traceLock lock]; NSUInteger contextNumber = ++traceContextSequence; [traceLock unlock];
     NSMutableDictionary *value = [@{@"queryOrigin": @"ADDITIONAL_CONTEXT", @"contextOrdinal": @(contextNumber), @"active": wireBool(NSApp.isActive),
-        @"keyWindow": @(NSApp.keyWindow.windowNumber), @"firstResponder": traceRange(window.firstResponder),
+        @"keyWindow": @(NSApp.keyWindow.windowNumber), @"keyWindowIdentity": identity(NSApp.keyWindow), @"firstResponder": traceRange(window.firstResponder),
         @"mainMenuPresent": wireBool(NSApp.mainMenu != nil), @"mainMenu": traceMenu(NSApp.mainMenu, 0),
         @"currentGlobalMouse": point(NSEvent.mouseLocation), @"currentRunLoopMode": NSRunLoop.currentRunLoop.currentMode ?: @"nil"} mutableCopy];
     NSMutableArray *screens = [NSMutableArray array];
@@ -719,12 +719,37 @@ static void tracedSend(id receiver, SEL selector, NSEvent *event) {
     if (observe) traceEnd(@"sendEvent:", call, @{@"eventIdentity": identity(event)}, event.window);
 }
 
+static NSDictionary *traceRouteScope(id target, NSEvent *event, NSWindow *keyWindow) {
+    NSWindow *targetWindow = nil;
+    if (NSThread.isMainThread) {
+        if ([target isKindOfClass:NSWindow.class]) targetWindow = target;
+        else if ([target isKindOfClass:NSView.class]) targetWindow = [(NSView *)target window];
+    }
+    NSWindow *eventWindow = NSThread.isMainThread ? event.window : nil;
+    BOOL keyOwned = traceWindow(keyWindow);
+    BOOL targetOwned = targetWindow == keyWindow ? keyOwned : traceWindow(targetWindow);
+    BOOL eventOwned = eventWindow == keyWindow ? keyOwned : (eventWindow == targetWindow ? targetOwned : traceWindow(eventWindow));
+    return @{@"queryOrigin": @"ADDITIONAL_SCOPE_OBSERVATION", @"ownedCaller": wireBool(traceCaller()),
+        @"ownedKeyWindow": wireBool(keyOwned), @"ownedTargetWindow": wireBool(targetOwned),
+        @"ownedEventWindow": wireBool(eventOwned), @"actualKeyWindowIdentity": identity(keyWindow),
+        @"targetWindowIdentity": identity(targetWindow), @"eventWindowIdentity": identity(eventWindow)};
+}
+
+static BOOL traceAdmitted(NSDictionary *scope) {
+    return [scope[@"ownedCaller"] boolValue] || [scope[@"ownedKeyWindow"] boolValue]
+        || [scope[@"ownedTargetWindow"] boolValue] || [scope[@"ownedEventWindow"] boolValue];
+}
+
 static BOOL tracedAction(id receiver, SEL selector, SEL action, id target, id sender) {
     NSWindow *window = NSThread.isMainThread ? NSApp.keyWindow : nil;
     BOOL observe = NO; NSUInteger call = 0;
     @try {
-        observe = !traceDepth && !atomic_load(&stopping) && traceWindow(window);
-        if (observe) call = traceBegin(@"sendAction:to:from:", @{@"action": action ? NSStringFromSelector(action) : @"nil", @"target": identity(target), @"sender": identity(sender)}, window);
+        if (!traceDepth && !atomic_load(&stopping)) {
+            NSDictionary *scope = traceRouteScope(target, [sender isKindOfClass:NSEvent.class] ? sender : nil, window);
+            observe = traceAdmitted(scope);
+            if (observe) call = traceBegin(@"sendAction:to:from:", @{@"action": action ? NSStringFromSelector(action) : @"nil",
+                @"target": identity(target), @"sender": identity(sender), @"scope": scope}, window);
+        }
     } @catch (NSException *exception) { traceErrors++; observe = NO; }
     BOOL result = ((BOOL (*)(id, SEL, SEL, id, id))traceOriginal(receiver, selector))(receiver, selector, action, target, sender);
     if (observe) traceEnd(@"sendAction:to:from:", call, wireBool(result), window);
@@ -732,12 +757,15 @@ static BOOL tracedAction(id receiver, SEL selector, SEL action, id target, id se
 }
 
 static BOOL tracedEquivalent(id receiver, SEL selector, NSEvent *event) {
-    NSWindow *window = [receiver isKindOfClass:NSWindow.class] ? receiver : NSApp.keyWindow;
+    NSWindow *window = NSThread.isMainThread ? NSApp.keyWindow : nil;
     NSString *name = [receiver isKindOfClass:NSWindow.class] ? @"window.performKeyEquivalent:" : @"menu.performKeyEquivalent:";
     BOOL observe = NO; NSUInteger call = 0;
     @try {
-        observe = !traceDepth && !atomic_load(&stopping) && traceWindow(window);
-        if (observe) call = traceBegin(name, @{@"receiver": identity(receiver), @"event": traceEvent(event)}, window);
+        if (!traceDepth && !atomic_load(&stopping)) {
+            NSDictionary *scope = traceRouteScope(receiver, event, window);
+            observe = traceAdmitted(scope);
+            if (observe) call = traceBegin(name, @{@"receiver": identity(receiver), @"event": traceEvent(event), @"scope": scope}, window);
+        }
     } @catch (NSException *exception) { traceErrors++; observe = NO; }
     BOOL returned = ((BOOL (*)(id, SEL, NSEvent *))traceOriginal(receiver, selector))(receiver, selector, event);
     if (observe) traceEnd(name, call, wireBool(returned), window);
@@ -939,41 +967,107 @@ __attribute__((used, section("__DATA,__interpose"))) static const struct { const
 @interface NGVTraceSelftestTextView : NSTextView @end
 @implementation NGVTraceSelftestTextView @end
 
+static NSDictionary *traceReadiness(NSWindow *window, NSTextView *text, BOOL accepted) {
+    return @{@"queryOrigin": @"SELFTEST_ONLY", @"active": wireBool(NSApp.isActive),
+        @"visible": wireBool(window.isVisible), @"key": wireBool(window.isKeyWindow),
+        @"keyWindowIdentity": identity(NSApp.keyWindow), @"windowIdentity": identity(window),
+        @"responderIdentity": identity(window.firstResponder), @"textIdentity": identity(text),
+        @"acceptsFirstResponder": wireBool(text.acceptsFirstResponder), @"makeFirstResponderReturn": wireBool(accepted)};
+}
+
+static BOOL traceReady(NSDictionary *value) {
+    return [value[@"active"] boolValue] && [value[@"visible"] boolValue] && [value[@"key"] boolValue]
+        && [value[@"acceptsFirstResponder"] boolValue] && [value[@"makeFirstResponderReturn"] boolValue]
+        && [value[@"keyWindowIdentity"] isEqual:value[@"windowIdentity"]]
+        && [value[@"responderIdentity"] isEqual:value[@"textIdentity"]];
+}
+
 static void traceSelftest(void) {
     if (!selftestMode || selftestDone || !boundRoot || !NSThread.isMainThread) return;
     selftestDone = YES; selftestRunning = YES;
-    NSWindow *previous = NSApp.keyWindow; NSWindow *window = nil;
+    NSWindow *previous = NSApp.keyWindow; NSWindow *window = nil, *empty = nil;
+    NSMutableDictionary *witness = [@{@"kind": @"selftest", @"complete": @NO, @"queryOrigin": @"SELFTEST_ONLY", @"timeUnits": @"seconds-since-startup"} mutableCopy];
     @try {
         window = [[NSWindow alloc] initWithContentRect:NSMakeRect(30, 30, 160, 100) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
         window.releasedWhenClosed = NO;
         NGVTraceSelftestTextView *text = [[NGVTraceSelftestTextView alloc] initWithFrame:NSMakeRect(0, 0, 160, 100)];
-        text.string = @"ab"; window.contentView = text; [window makeKeyAndOrderFront:nil]; [window makeFirstResponder:text];
-        text.selectedRange = NSMakeRange(0, 1); traceFieldHooks(text);
+        text.string = @"ab"; window.contentView = text; traceFieldHooks(text);
+        witness[@"beforeActivation"] = traceReadiness(window, text, NO);
+        witness[@"activationRequest"] = @"activate";
+        [NSApp activate]; [window makeKeyAndOrderFront:nil];
+        BOOL accepted = text.acceptsFirstResponder && [window makeFirstResponder:text];
+        NSTimeInterval start = NSProcessInfo.processInfo.systemUptime, readyLimit = start + 2;
+        NSMutableArray *readinessEvents = [NSMutableArray array];
+        NSDictionary *ready = traceReadiness(window, text, accepted);
+        while (!traceReady(ready) && NSProcessInfo.processInfo.systemUptime < readyLimit && readinessEvents.count < 128) {
+            NSTimeInterval requestedAt = NSProcessInfo.processInfo.systemUptime;
+            NSDate *expiration = [NSDate dateWithTimeIntervalSinceNow:fmin(0.02, fmax(0, readyLimit - requestedAt))];
+            NSEvent *pending = [NSApp nextEventMatchingMask:NSEventMaskAny untilDate:expiration inMode:NSDefaultRunLoopMode dequeue:YES];
+            [readinessEvents addObject:@{@"event": pending ? traceEvent(pending) : NSNull.null,
+                @"requestedAt": @(requestedAt), @"expiration": @(expiration.timeIntervalSince1970), @"mask": @(NSEventMaskAny), @"mode": NSDefaultRunLoopMode, @"dequeue": @YES,
+                @"dequeuedAt": @(NSProcessInfo.processInfo.systemUptime), @"dispatched": wireBool(pending != nil)}];
+            if (pending) [NSApp sendEvent:pending];
+            ready = traceReadiness(window, text, accepted);
+        }
+        witness[@"readiness"] = ready; witness[@"readinessEvents"] = readinessEvents;
+        witness[@"readinessStart"] = @(start); witness[@"readinessDeadline"] = @(readyLimit);
+        witness[@"readinessEnd"] = @(NSProcessInfo.processInfo.systemUptime);
+        BOOL wasReady = traceReady(ready) && NSProcessInfo.processInfo.systemUptime <= readyLimit; witness[@"ready"] = wireBool(wasReady);
+        text.selectedRange = NSMakeRange(0, 1);
         NSEvent *event = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:0 timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:window.windowNumber context:nil characters:@"x" charactersIgnoringModifiers:@"x" isARepeat:NO keyCode:7];
-        [NSApp postEvent:event atStart:YES];
-        NSEvent *queued = [NSApp nextEventMatchingMask:NSEventMaskKeyDown untilDate:NSDate.date inMode:NSDefaultRunLoopMode dequeue:YES];
-        if (queued == event) [NSApp sendEvent:queued];
+        witness[@"createdEvent"] = traceEvent(event); witness[@"posted"] = wireBool(wasReady);
+        NSTimeInterval queueStart = NSProcessInfo.processInfo.systemUptime, queueLimit = queueStart + 2;
+        witness[@"queueStart"] = @(queueStart); witness[@"queueDeadline"] = @(queueLimit);
+        witness[@"dequeueMask"] = @(NSEventMaskKeyDown); witness[@"dequeueMode"] = NSDefaultRunLoopMode; witness[@"dequeue"] = @YES;
+        NSMutableArray *dequeues = [NSMutableArray array]; NSEvent *queued = nil; BOOL dispatchReady = NO;
+        if (wasReady) {
+            witness[@"postedEvent"] = traceEvent(event);
+            [NSApp postEvent:event atStart:YES];
+            while (NSProcessInfo.processInfo.systemUptime < queueLimit && dequeues.count < 128) {
+                NSTimeInterval requestedAt = NSProcessInfo.processInfo.systemUptime;
+                NSDate *expiration = [NSDate dateWithTimeIntervalSinceNow:fmax(0, queueLimit - requestedAt)];
+                NSEvent *candidate = [NSApp nextEventMatchingMask:NSEventMaskKeyDown untilDate:expiration inMode:NSDefaultRunLoopMode dequeue:YES];
+                NSTimeInterval dequeuedAt = NSProcessInfo.processInfo.systemUptime;
+                NSDictionary *dispatchState = traceReadiness(window, text, accepted);
+                [dequeues addObject:@{@"event": candidate ? traceEvent(candidate) : NSNull.null,
+                    @"requestedAt": @(requestedAt), @"dequeuedAt": @(dequeuedAt), @"readiness": dispatchState, @"expiration": @(expiration.timeIntervalSince1970),
+                    @"sameIdentity": wireBool(candidate == event), @"dispatched": wireBool(candidate != nil)}];
+                if (candidate) [NSApp sendEvent:candidate];
+                if (!candidate || candidate == event) { queued = candidate; dispatchReady = traceReady(dispatchState) && dequeuedAt <= queueLimit; break; }
+            }
+        }
+        witness[@"dequeues"] = dequeues; witness[@"queueEnd"] = @(NSProcessInfo.processInfo.systemUptime);
+        witness[@"queueIdentityUnchanged"] = wireBool(queued == event);
+        witness[@"queueResult"] = queued == event ? @"IDENTICAL_EVENT" : (!wasReady ? @"READINESS_REFUSED" :
+            (dequeues.count && dequeues.lastObject[@"event"] == NSNull.null ? @"DEQUEUE_NIL" :
+            (dequeues.count >= 128 ? @"DEQUEUE_LIMIT" : @"DEADLINE_EXPIRED")));
         NSString *inserted = [text.string copy]; NSRange after = text.selectedRange;
-        BOOL action = [NSApp sendAction:@selector(selectAll:) to:text from:nil];
-        NSRange selected = text.selectedRange;
+        BOOL action = [NSApp sendAction:@selector(selectAll:) to:text from:nil]; NSRange selected = text.selectedRange;
+        text.selectedRange = NSMakeRange(0, 1); [text doCommandBySelector:@selector(selectAll:)]; NSRange commanded = text.selectedRange;
         NSEvent *equivalent = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:NSEventModifierFlagCommand timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:window.windowNumber context:nil characters:@"a" charactersIgnoringModifiers:@"a" isARepeat:NO keyCode:0];
-        NSWindow *empty = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 40, 40) styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
+        empty = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 40, 40) styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
         empty.releasedWhenClosed = NO; empty.contentView = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 40, 40)];
-        BOOL windowEquivalent = [empty performKeyEquivalent:equivalent]; [empty close];
+        BOOL windowEquivalent = [empty performKeyEquivalent:equivalent];
         NSMenu *menu = [[NSMenu alloc] initWithTitle:@"Trace witness"];
         NSMenuItem *item = [menu addItemWithTitle:@"Select All" action:@selector(selectAll:) keyEquivalent:@"a"];
         item.target = text; item.keyEquivalentModifierMask = NSEventModifierFlagCommand;
         text.selectedRange = NSMakeRange(0, 1);
         BOOL menuEquivalent = [menu performKeyEquivalent:equivalent]; NSRange menuSelection = text.selectedRange;
-        traceWrite(@{@"kind": @"selftest", @"queueIdentityUnchanged": wireBool(queued == event), @"inserted": inserted,
-            @"selectionAfterKey": @[@(after.location), @(after.length)], @"actionReturn": wireBool(action),
-            @"selectionAfterAction": @[@(selected.location), @(selected.length)], @"expectedInserted": @"xb",
-            @"expectedSelectionAfterKey": @[@1, @0], @"expectedSelectionAfterAction": @[@0, @2],
+        [witness addEntriesFromDictionary:@{@"inserted": inserted, @"selectionAfterKey": @[@(after.location), @(after.length)],
+            @"actionReturn": wireBool(action), @"selectionAfterAction": @[@(selected.location), @(selected.length)],
+            @"selectionAfterCommand": @[@(commanded.location), @(commanded.length)],
+            @"expectedInserted": @"xb", @"expectedSelectionAfterKey": @[@1, @0], @"expectedSelectionAfterAction": @[@0, @2],
             @"windowEquivalentReturn": wireBool(windowEquivalent), @"menuEquivalentReturn": wireBool(menuEquivalent),
             @"selectionAfterMenu": @[@(menuSelection.location), @(menuSelection.length)],
-            @"complete": wireBool(queued == event && [inserted isEqual:@"xb"] && after.location == 1 && after.length == 0 && action && selected.location == 0 && selected.length == 2 && !windowEquivalent && menuEquivalent && menuSelection.location == 0 && menuSelection.length == 2)});
-    } @catch (NSException *exception) { traceErrors++; traceWrite(@{@"kind": @"selftest", @"complete": @NO, @"exception": exception.name}); }
-    @finally { [window close]; [previous makeKeyWindow]; selftestRunning = NO; }
+            @"complete": wireBool(wasReady && dispatchReady && queued == event && [inserted isEqual:@"xb"] && after.location == 1 && after.length == 0
+                && action && selected.location == 0 && selected.length == 2 && commanded.location == 0 && commanded.length == 2
+                && !windowEquivalent && menuEquivalent && menuSelection.location == 0 && menuSelection.length == 2)}];
+    } @catch (NSException *exception) { traceErrors++; witness[@"exception"] = exception.name; }
+    @finally {
+        @try { [empty close]; [window close]; [previous makeKeyWindow]; witness[@"cleanupComplete"] = @YES; }
+        @catch (NSException *exception) { traceErrors++; witness[@"cleanupComplete"] = @NO; witness[@"cleanupException"] = exception.name; }
+        traceWrite(witness); selftestRunning = NO;
+    }
 }
 
 static void traceInitialize(NSDictionary *environment, NSString *folder) {
