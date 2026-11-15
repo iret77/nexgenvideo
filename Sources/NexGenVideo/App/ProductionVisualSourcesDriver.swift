@@ -999,6 +999,27 @@ enum NativeAcceptancePointer {
         let accessibilityRole: NSAccessibility.Role
         let accessibilityFrame: NSRect
         let kind: String
+        let hosting: NSView?
+    }
+
+    static func ownedHostingView(for hit: NSView, probe: NSView, root: NSView, window: NSWindow, point: NSPoint) -> NSView? {
+        guard !(hit is NSControl || hit is NSTextView), root === window.contentView, hit.window === window,
+              probe.window === window, hit === root || hit.isDescendant(of: root),
+              probe === hit || probe.isDescendant(of: hit), !hit.isHiddenOrHasHiddenAncestor,
+              !hit.visibleRect.isEmpty, hit.isAccessibilityEnabled() else { return nil }
+        let bounds = probe.convert(probe.bounds, to: hit), local = hit.convert(point, from: nil)
+        guard [bounds.minX, bounds.minY, bounds.width, bounds.height, local.x, local.y].allSatisfy(\.isFinite),
+              bounds.width > 0, bounds.height > 0, hit.bounds.contains(bounds),
+              hit.visibleRect.contains(bounds), hit.bounds.contains(local), hit.visibleRect.contains(local) else { return nil }
+        var ancestor: NSView? = hit
+        for _ in 0..<32 {
+            guard let current = ancestor, current.window === window, !current.isHiddenOrHasHiddenAncestor,
+                  !(current is NSControl || current is NSTextView) else { return nil }
+            if current is any NativeAcceptanceHostingSurface { return current }
+            if current === root { return nil }
+            ancestor = current.superview
+        }
+        return nil
     }
 
     private static func accessibilityControl(from leaf: any NSAccessibilityProtocol,
@@ -1125,7 +1146,8 @@ enum NativeAcceptancePointer {
         let role: NSAccessibility.Role
         let accessibleFrame: NSRect
         let kind: String
-        if let surface = hit as? any NativeAcceptanceHostingSurface, probe.isDescendant(of: hit) {
+        let hosting = ownedHostingView(for: hit, probe: probe, root: root, window: window, point: point)
+        if let surface = hosting as? any NativeAcceptanceHostingSurface {
             guard let leaf = surface.accessibilityHitTest(appKitPoint) as? any NSAccessibilityProtocol else {
                 throw GateBlocked("The SwiftUI pointer target has no known accessibility hit.")
             }
@@ -1175,7 +1197,7 @@ enum NativeAcceptancePointer {
         }
         return Target(window: window, root: root, probe: probe, hit: hit, windowFrame: window.frame,
                       probeFrame: frame, point: point, screenPoint: appKitPoint, quartzPoint: quartzPoint, cgFrame: cgFrame,
-                      accessibility: accessible, accessibilityRole: role, accessibilityFrame: accessibleFrame, kind: kind)
+                      accessibility: accessible, accessibilityRole: role, accessibilityFrame: accessibleFrame, kind: kind, hosting: hosting)
     }
 
     private static func same(_ first: Target, _ next: Target) -> Bool {
@@ -1185,6 +1207,7 @@ enum NativeAcceptancePointer {
             && first.cgFrame == next.cgFrame
             && first.accessibility === next.accessibility && first.accessibilityRole == next.accessibilityRole
             && first.accessibilityFrame == next.accessibilityFrame && first.kind == next.kind
+            && first.hosting === next.hosting
     }
 
     private static func pause() async {
