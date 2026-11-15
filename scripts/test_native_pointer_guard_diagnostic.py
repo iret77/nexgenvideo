@@ -782,7 +782,7 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
                     else:
                         acquired = diagnostic.collect_selections(value, evidence, root / 'runtime', image, host, root / 'inspector')
                         self.assertEqual(list(acquired), value['diagnosticFunctionIDs'])
-                        self.assertEqual(len(calls), 6)
+                        self.assertEqual(len(calls), 5)
                         for index, identity in enumerate(value['diagnosticFunctionIDs'], 1):
                             self.assertEqual(calls[index - 1][-1], diagnostic.scope_filter([identity]))
                             self.assertTrue((evidence / ('selection-' + str(index)) / 'host.STARTED.json').is_file())
