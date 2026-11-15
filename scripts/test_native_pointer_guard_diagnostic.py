@@ -107,7 +107,7 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
                 foreignActionReturn=True, foreignMenuReturn=True, foreignActionSelection=[0, 2], foreignMenuSelection=[0, 2],
                 ownedTextIdentity='0x41', ownedMenuIdentity='0x42', foreignTextIdentity='0x51', foreignMenuIdentity='0x52',
                 emptyWindowIdentity='0x43', equivalentEvent=copy.deepcopy(equivalent), foreignEquivalentEvent=copy.deepcopy(foreign_equivalent),
-                phases=dict(normalAction=[2.30, 2.33], normalWindow=[2.36, 2.39], normalMenu=[2.39, 2.41],
+                phases=dict(normalAction=[2.30, 2.33], normalWindow=[2.365, 2.385], normalMenu=[2.385, 2.415],
                     nilAction=[3.19, 3.26], nilMenu=[3.29, 3.36], foreignAction=[4.09, 4.16], foreignMenu=[4.19, 4.255]),
                 dequeues=[dict(event=copy.deepcopy(event), dequeuedAt=2.1, expiration=100.0,
                     readiness=copy.deepcopy(ready), requestedAt=2.05, sameIdentity=True, dispatched=True)], complete=True, queueIdentityUnchanged=True, inserted='xb',
