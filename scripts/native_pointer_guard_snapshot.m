@@ -661,7 +661,7 @@ static NSDictionary *traceEvent(NSEvent *event) {
     value[@"getterOrigin"] = @"ADDITIONAL_OBSERVATION";
     if (event.type == NSEventTypeKeyDown || event.type == NSEventTypeKeyUp || event.type == NSEventTypeFlagsChanged) {
         value[@"keyCode"] = @(event.keyCode);
-        if (event.type != NSEventTypeFlagsChanged) { value[@"characters"] = event.characters ?: @""; value[@"charactersIgnoringModifiers"] = event.charactersIgnoringModifiers ?: @""; }
+        if (event.type != NSEventTypeFlagsChanged) { value[@"characters"] = event.characters ?: @""; value[@"charactersIgnoringModifiers"] = event.charactersIgnoringModifiers ?: @""; traceAdditional(@"event.isARepeat"); value[@"isARepeat"] = wireBool(event.isARepeat); }
     } else if (event.type == NSEventTypeMouseMoved || event.type == NSEventTypeLeftMouseDown || event.type == NSEventTypeLeftMouseUp) {
         CGEventRef cg = event.CGEvent;
         if (cg) { value[@"CGPosition"] = point(CGEventGetLocation(cg)); value[@"CGTimestamp"] = @(CGEventGetTimestamp(cg)); value[@"CGTimestampUnits"] = @"nanoseconds-since-startup"; value[@"tag"] = @(CGEventGetIntegerValueField(cg, kCGEventSourceUserData)); }
@@ -670,6 +670,12 @@ static NSDictionary *traceEvent(NSEvent *event) {
     }
     return value;
     } @finally { traceDepth--; }
+}
+
+static NSDictionary *traceKeyFields(NSDictionary *snapshot) {
+    NSMutableDictionary *fields = [snapshot mutableCopy];
+    [fields removeObjectForKey:@"identity"];
+    return fields;
 }
 
 static NSUInteger traceBegin(NSString *method, NSDictionary *arguments, NSWindow *window) {
@@ -1065,12 +1071,12 @@ static void traceSelftest(void) {
         witness[@"readinessEnd"] = @(NSProcessInfo.processInfo.systemUptime);
         BOOL wasReady = traceReady(ready) && NSProcessInfo.processInfo.systemUptime <= readyLimit; witness[@"ready"] = wireBool(wasReady);
         text.selectedRange = NSMakeRange(0, 1);
-        NSEvent *event = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:0 timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:window.windowNumber context:nil characters:@"x" charactersIgnoringModifiers:@"x" isARepeat:NO keyCode:7];
+        NSEvent * __attribute__((objc_precise_lifetime)) event = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:0 timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:window.windowNumber context:nil characters:@"x" charactersIgnoringModifiers:@"x" isARepeat:NO keyCode:7];
         witness[@"createdEvent"] = traceEvent(event); witness[@"posted"] = wireBool(wasReady);
         NSTimeInterval queueStart = NSProcessInfo.processInfo.systemUptime, queueLimit = queueStart + 2;
         witness[@"queueStart"] = @(queueStart); witness[@"queueDeadline"] = @(queueLimit);
         witness[@"dequeueMask"] = @(NSEventMaskKeyDown); witness[@"dequeueMode"] = NSDefaultRunLoopMode; witness[@"dequeue"] = @YES;
-        NSMutableArray *dequeues = [NSMutableArray array]; NSEvent *queued = nil; BOOL dispatchReady = NO;
+        NSMutableArray *dequeues = [NSMutableArray array]; NSEvent *queued = nil; BOOL dispatchReady = NO, queueMatched = NO;
         if (wasReady) {
             witness[@"postedEvent"] = traceEvent(event);
             [NSApp postEvent:event atStart:YES];
@@ -1080,16 +1086,20 @@ static void traceSelftest(void) {
                 NSEvent *candidate = [NSApp nextEventMatchingMask:NSEventMaskKeyDown untilDate:expiration inMode:NSDefaultRunLoopMode dequeue:YES];
                 NSTimeInterval dequeuedAt = NSProcessInfo.processInfo.systemUptime;
                 NSDictionary *dispatchState = traceReadiness(window, text, accepted);
-                [dequeues addObject:@{@"event": candidate ? traceEvent(candidate) : NSNull.null,
+                NSDictionary *candidateSnapshot = candidate ? traceEvent(candidate) : nil;
+                BOOL correlated = candidate && [traceKeyFields(candidateSnapshot) isEqual:traceKeyFields(witness[@"postedEvent"])];
+                [dequeues addObject:@{@"event": candidateSnapshot ?: NSNull.null,
                     @"requestedAt": @(requestedAt), @"dequeuedAt": @(dequeuedAt), @"readiness": dispatchState, @"expiration": @(expiration.timeIntervalSince1970),
-                    @"sameIdentity": wireBool(candidate == event), @"dispatched": wireBool(candidate != nil)}];
+                    @"sameIdentity": wireBool(candidate == event), @"correlationMatched": wireBool(correlated), @"dispatched": wireBool(candidate != nil)}];
                 if (candidate) tracePumpSend(candidate);
-                if (!candidate || candidate == event) { queued = candidate; dispatchReady = traceReady(dispatchState) && dequeuedAt <= queueLimit; break; }
+                if (!candidate || correlated) { queued = candidate; queueMatched = correlated; dispatchReady = traceReady(dispatchState) && dequeuedAt <= queueLimit; break; }
             }
         }
         witness[@"dequeues"] = dequeues; witness[@"queueEnd"] = @(NSProcessInfo.processInfo.systemUptime);
         witness[@"queueIdentityUnchanged"] = wireBool(queued == event);
-        witness[@"queueResult"] = queued == event ? @"IDENTICAL_EVENT" : (!wasReady ? @"READINESS_REFUSED" :
+        witness[@"dequeuedEvent"] = queued ? traceEvent(queued) : NSNull.null;
+        witness[@"queueCorrelationMatched"] = wireBool(queueMatched);
+        witness[@"queueResult"] = queueMatched ? @"CORRELATED_KEY_EVENT" : (!wasReady ? @"READINESS_REFUSED" :
             (dequeues.count && dequeues.lastObject[@"event"] == NSNull.null ? @"DEQUEUE_NIL" :
             (dequeues.count >= 128 ? @"DEQUEUE_LIMIT" : @"DEADLINE_EXPIRED")));
         NSString *inserted = [text.string copy]; NSRange after = text.selectedRange;
@@ -1157,7 +1167,7 @@ static void traceSelftest(void) {
             @"expectedInserted": @"xb", @"expectedSelectionAfterKey": @[@1, @0], @"expectedSelectionAfterAction": @[@0, @2],
             @"windowEquivalentReturn": wireBool(windowEquivalent), @"menuEquivalentReturn": wireBool(menuEquivalent),
             @"selectionAfterMenu": @[@(menuSelection.location), @(menuSelection.length)],
-            @"complete": wireBool(wasReady && dispatchReady && queued == event && [inserted isEqual:@"xb"] && after.location == 1 && after.length == 0
+            @"complete": wireBool(wasReady && dispatchReady && queueMatched && dequeues.count == 1 && [inserted isEqual:@"xb"] && after.location == 1 && after.length == 0
                 && action && selected.location == 0 && selected.length == 2 && commanded.location == 0 && commanded.length == 2
                 && !windowEquivalent && menuEquivalent && menuSelection.location == 0 && menuSelection.length == 2
                 && nilKey && NSApp.keyWindow == nil && nilAction && nilMenu && nilActionSelection.location == 0 && nilActionSelection.length == 2
