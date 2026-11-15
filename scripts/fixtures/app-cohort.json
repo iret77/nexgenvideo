@@ -1,6 +1,6 @@
 {
-  "appSourceSHA": "99b8e4ea9fa7d3fc075ebe70c8a1b823e782975b",
-  "appTreeSHA": "acb9825c79f5b31f8c98355e287e1502c56a3f47",
+  "appSourceSHA": "a2c12af56364670cf4e103ce232695cdd582c806",
+  "appTreeSHA": "5967bc7d32c378d25ecb18e4f106eaac14ea16f0",
   "build": "113",
   "ciPaths": [
     ".github/actionlint.yaml",
@@ -108,7 +108,7 @@
   },
   "criteria": {
     "path": "scripts/fixtures/app-cohort-native-inventory.json",
-    "sha256": "e990262c606004103ae5c80d18b4753cf5a59723deb96fb35e4c0c3b77f78077"
+    "sha256": "63767544b04c88183d50b9f4afd41056ccccfa122069f11de2a9371d9f49c8b7"
   },
   "nativeSourceObjects": {
     "Engine": "29cfed623d13e6d84d5822a30b98e088fc123c3f",
@@ -117,7 +117,7 @@
     "Package.swift": "37f605bfb8cdccc48821b39484c819ba3e5eff43",
     "Runtime": "910b87b08a3a8c976e0f2502580c843b0df74154",
     "Sources": "31bf00cb7c15023366a407a92d7eb6764ee2e3d0",
-    "Tests": "606757b049226068a63adda3abcde178472f23ed",
+    "Tests": "6d8c48a9b6298dafd8221a4f98fda2fcee8da6e3",
     "Vendor": "51e93c100e00dcd196edac0e70e1af921d52055a",
     "plugins": "b75e017d3145010368ae417bc410574f3f0300c1"
   },
@@ -2930,7 +2930,7 @@
       "Sources/NexGenVideo/Utilities/SourceTiming.swift": "15247fa32564207dee3a5a01065d5a4fc8389f9f",
       "Sources/NexGenVideo/Utilities/TimeFormatting.swift": "4c10a4554812031a08ecbe3e10d39cce76e1719e",
       "Tests/AppKitTestHostSupport": "180f486523e826b8b462011d42bf758fdc4e1d6f",
-      "Tests/NexGenVideoTests": "f2b07812f802dcd48ca6a01113b019410e67f880"
+      "Tests/NexGenVideoTests": "258cfa99c3db5633578eec59dbf5d271ac6e9922"
     }
   },
   "schema": "native-app-cohort/v2",
