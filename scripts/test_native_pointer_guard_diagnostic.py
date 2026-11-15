@@ -117,10 +117,89 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
                 classImageIdentity=self.file_identity, expectedImageIdentity=self.file_identity,
                 **{'class': 'NexGenVideo.AppRelaunchClickProbeView', 'typeEncoding': '{CGRect}{CGRect}@'}),
             dict(common, **root, kind='hook-ready', wallTime=3, installed=True, mainThread=True,
+                rootClass='FixtureHosting', runtimeRootClass='ObservedFixtureHosting', originalAXIMP='0x8',
+                runtimeLineageMatches=True, effectiveAXMatches=True, declaredOwnAX=True,
                 inspectorImage='/inspector', rootAXImageIdentity=self.file_identity, expectedImageIdentity=self.file_identity,
+                rootDeclaredImageIdentity=self.file_identity,
                 originalIMP='0x6', typeEncoding='@32@0:8{CGPoint=dd}16'), geometry, sample,
             dict(common, kind='finished', wallTime=6, samples=1, rectSamples=1, outputErrors=0,
                 rejectedRecords=0, originalCalls=1, transparentReturns=1, rectCalls=1, rectReturns=1, hookTime=3)]
+
+    def test_retained_selftest_tool_requires_exact_source_bytes_and_three_passed_commands(self):
+        image = b'signed-native-selftest-fixture'
+        stages = ('compile-observer-selftest-tool', 'sign-observer-selftest-tool', 'verify-observer-selftest-tool')
+        def archive(defect=None):
+            binding = dict(schema='native-pointer-guard-binding/v1', runID=diagnostic.SELFTEST_PRODUCER[0],
+                sourceSHA=diagnostic.SELFTEST_PRODUCER[1], attempt=1,
+                sourceFiles=dict(diagnostic.SELFTEST_PRODUCER_FILES), fixtureSHA256=diagnostic.FIXTURE_SHA,
+                nativeExecution=False, fullReleaseAcceptance=False)
+            if defect == 'source': binding['sourceFiles']['scripts/native_pointer_guard_selftest.swift'] = 'a' * 64
+            if defect == 'producer': binding['runID'] += 1
+            if defect == 'attempt': binding['attempt'] = 2
+            data = io.BytesIO()
+            with zipfile.ZipFile(data, 'w') as zipped:
+                zipped.writestr('native-pointer-guard-source/binding.json', json.dumps(binding))
+                for stage in stages:
+                    if defect != 'missing-' + stage:
+                        zipped.writestr(diagnostic.INSPECTOR_PREFIX + stage + '.exit.json',
+                            json.dumps({'exitCode': 1 if defect == stage else 0}))
+                zipped.writestr(diagnostic.INSPECTOR_PREFIX + 'pointer-observer-selftest',
+                    image + (b'changed' if defect == 'image' else b''))
+            data.seek(0); return zipfile.ZipFile(data)
+        with mock.patch.object(diagnostic, 'SELFTEST_TOOL_SHA', hashlib.sha256(image).hexdigest()), \
+                mock.patch.object(diagnostic, 'SELFTEST_TOOL_BYTES', len(image)):
+            with archive() as zipped: self.assertEqual(diagnostic.selftest_tool_bytes(zipped), image)
+            for defect in ['source', 'producer', 'attempt', 'image', *stages, *('missing-' + stage for stage in stages)]:
+                with self.subTest(defect=defect), archive(defect) as zipped, self.assertRaises(ValueError):
+                    diagnostic.selftest_tool_bytes(zipped)
+
+    def test_retained_selftest_runtime_refusal_precedes_any_acquisition(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary)
+            for version in ('27.1.9', '26.9', '', 'unknown'):
+                with self.subTest(version=version), \
+                        mock.patch.object(diagnostic, 'checksum', return_value=diagnostic.SELFTEST_SOURCE_SHA), \
+                        mock.patch.object(diagnostic.platform, 'mac_ver', return_value=(version, (), 'arm64')), \
+                        mock.patch.object(diagnostic, 'api') as acquire:
+                    with self.assertRaises(ValueError): diagnostic.restore_selftest_tool(evidence / 'tool', evidence)
+                    acquire.assert_not_called()
+                    self.assertEqual(list(evidence.iterdir()), [])
+
+    def test_hosting_class_admission_requires_declared_and_runtime_guards(self):
+        def duplicate(rows):
+            eligibility = dict(rows[2], kind='eligibility', uniqueProbeMatches=False, eligible=False,
+                classImageMatches=True, ownAXImageMatches=True)
+            return [rows[0], rows[1], eligibility, dict(rows[-1], samples=0, rectSamples=0,
+                originalCalls=0, transparentReturns=0)]
+        self.assertTrue(self.verify(duplicate(self.rows()), negative='duplicate-probe')['duplicateProbeRefused'])
+        for key in ('runtimeLineageMatches', 'effectiveAXMatches', 'declaredOwnAX'):
+            for value in (None, False, 1):
+                rows = self.rows()
+                if value is None: rows[2].pop(key)
+                else: rows[2][key] = value
+                with self.subTest(key=key, value=value), self.assertRaises(ValueError): self.verify(rows)
+                with self.subTest(negative=key, value=value), self.assertRaises(ValueError):
+                    self.verify(duplicate(rows), negative='duplicate-probe')
+        for key in ('rootClass', 'runtimeRootClass', 'originalAXIMP'):
+            rows = self.rows(); rows[2][key] = 'nil'
+            with self.subTest(key=key), self.assertRaises(ValueError): self.verify(rows)
+            if key != 'originalAXIMP':
+                with self.subTest(negative=key), self.assertRaises(ValueError):
+                    self.verify(duplicate(rows), negative='duplicate-probe')
+        rows = self.rows(); rows[2]['rootDeclaredImageIdentity'] = dict(path='/foreign', device=2, inode=3)
+        with self.assertRaises(ValueError): self.verify(rows)
+
+    def test_boolean_wire_fields_reject_numeric_truth_values(self):
+        for key in ('widthFits', 'heightFits'):
+            rows = self.rows(); rows[3][key] = int(rows[3][key])
+            with self.subTest(key=key), self.assertRaises(ValueError): self.verify(rows)
+        rows = self.rows(); rows[4]['nativeGuardResult'] = 0
+        with self.assertRaises(ValueError): self.verify(rows)
+        rows = self.rows()
+        negative = [rows[0], dict(pid=10, diagnosticOnly=True, kind='discovery', wallTime=2,
+            classFound=1, imageMatches=False), dict(rows[-1], samples=0, rectSamples=0,
+            originalCalls=0, transparentReturns=0, rectCalls=0, rectReturns=0)]
+        with self.assertRaises(ValueError): self.verify(negative, negative=True)
 
     def verify(self, rows, truncate=False, negative=False):
         raw = b''.join((json.dumps(row) + '\n').encode() for row in rows)
