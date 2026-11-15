@@ -1,4 +1,5 @@
 #import <AppKit/AppKit.h>
+#import <CoreGraphics/CoreGraphics.h>
 #import <objc/runtime.h>
 #import <fcntl.h>
 #import <unistd.h>
@@ -46,6 +47,53 @@ static NSArray *point(NSPoint value) {
 
 static NSString *identity(id value) { return value ? [NSString stringWithFormat:@"%p", (__bridge void *)value] : @"nil"; }
 static NSNumber *wireBool(BOOL value) { return value ? @YES : @NO; }
+
+static id windowCoordinate(id value) {
+    if (![value isKindOfClass:NSNumber.class]) return NSNull.null;
+    double number = [value doubleValue];
+    if (isfinite(number)) return @(number);
+    return @{@"nonfinite": isnan(number) ? @"nan" : (number > 0 ? @"+inf" : @"-inf")};
+}
+
+static NSDictionary *windowState(NSWindow *window, NSPoint screenPoint) {
+    NSScreen *screen = NSScreen.screens.firstObject;
+    NSPoint quartz = NSMakePoint(screenPoint.x, screen ? NSMaxY(screen.frame) - screenPoint.y : NAN);
+    NSInteger atPoint = [NSWindow windowNumberAtPoint:screenPoint belowWindowWithWindowNumber:0];
+    NSArray *windows = CFBridgingRelease(CGWindowListCopyWindowInfo(
+        kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID));
+    NSMutableArray *rows = [NSMutableArray array], *matches = [NSMutableArray array];
+    for (NSDictionary *entry in windows) {
+        id raw = entry[(__bridge NSString *)kCGWindowBounds];
+        BOOL readable = [raw isKindOfClass:NSDictionary.class];
+        NSMutableDictionary *bounds = [NSMutableDictionary dictionary];
+        for (NSString *key in @[@"X", @"Y", @"Width", @"Height"])
+            bounds[key] = readable ? windowCoordinate(raw[key]) : NSNull.null;
+        id owner = entry[(__bridge NSString *)kCGWindowOwnerPID];
+        id number = entry[(__bridge NSString *)kCGWindowNumber];
+        [rows addObject:@{@"ownerPID": owner ?: NSNull.null, @"number": number ?: NSNull.null,
+            @"boundsAvailable": wireBool(readable), @"bounds": bounds}];
+        if ([owner isKindOfClass:NSNumber.class] && [number isKindOfClass:NSNumber.class]
+            && [owner intValue] == getpid() && [number integerValue] == window.windowNumber)
+            [matches addObject:entry];
+    }
+    id raw = matches.count == 1 ? matches[0][(__bridge NSString *)kCGWindowBounds] : nil;
+    BOOL readable = [raw isKindOfClass:NSDictionary.class];
+    CGRect frame = CGRectZero;
+    BOOL decoded = readable && CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)raw, &frame);
+    BOOL finite = decoded && isfinite(frame.origin.x) && isfinite(frame.origin.y)
+        && isfinite(frame.size.width) && isfinite(frame.size.height);
+    BOOL width = decoded && CGRectGetWidth(frame) > 0, height = decoded && CGRectGetHeight(frame) > 0;
+    BOOL contains = finite && screen && CGRectContainsPoint(frame, quartz);
+    BOOL sameWindow = atPoint == window.windowNumber, unique = matches.count == 1;
+    return @{@"windowAtPoint": @(atPoint), @"ownerPID": @(getpid()), @"windowNumber": @(window.windowNumber),
+        @"screenAvailable": wireBool(screen != nil), @"firstScreenFrame": screen ? rect(screen.frame) : @[],
+        @"quartzPoint": point(quartz), @"cgWindowListAvailable": wireBool(windows != nil), @"cgWindows": rows,
+        @"matchingWindowCount": @(matches.count), @"cgFrame": finite ? rect(frame) : @[],
+        @"predicates": @{@"windowAtPointMatches": wireBool(sameWindow), @"uniqueOwnWindow": wireBool(unique),
+            @"boundsAvailable": wireBool(readable), @"boundsDecoded": wireBool(decoded), @"frameFinite": wireBool(finite),
+            @"positiveWidth": wireBool(width), @"positiveHeight": wireBool(height), @"containsQuartzPoint": wireBool(contains)},
+        @"result": wireBool(sameWindow && unique && readable && decoded && finite && width && height && contains)};
+}
 
 static BOOL record(NSDictionary *value, BOOL terminal) {
     @try {
@@ -379,9 +427,10 @@ static NSView *snapshotHit(id receiver, SEL selector, NSPoint location) {
 
                 NSRect hitBounds = [hit convertRect:hit.bounds toView:root];
                 NSPoint hitPoint = [hit convertPoint:windowPoint fromView:nil];
-                BOOL nativeType = [hit isKindOfClass:NSControl.class] || [hit isKindOfClass:NSTextView.class];
-                BOOL shown = !hit.isHiddenOrHasHiddenAncestor;
-                BOOL visibleArea = !NSIsEmptyRect(hit.visibleRect);
+                BOOL controlType = [hit isKindOfClass:NSControl.class], textType = [hit isKindOfClass:NSTextView.class];
+                BOOL nativeType = controlType || textType;
+                BOOL hidden = hit.isHiddenOrHasHiddenAncestor, shown = !hidden;
+                BOOL visibleArea = !CGRectIsEmpty(hit.visibleRect);
                 BOOL contained = CGRectContainsRect(NSInsetRect(markerFrame, -1, -1), hitBounds);
                 BOOL visiblePoint = CGRectContainsPoint(hit.visibleRect, hitPoint);
                 BOOL enabled = [hit isAccessibilityEnabled];
@@ -396,12 +445,17 @@ static NSView *snapshotHit(id receiver, SEL selector, NSPoint location) {
                     @"rootPoint": point(local), @"windowPoint": point(windowPoint), @"screenPoint": point(screen),
                     @"probeFrame": rect(markerFrame), @"hitBoundsInRoot": rect(hitBounds),
                     @"hitVisibleRect": rect(hit.visibleRect), @"hitPoint": point(hitPoint),
-                    @"nativeRole": role ?: @"nil", @"nativeControlType": @(nativeType),
+                    @"nativeRole": role ?: @"nil", @"nativeControlType": wireBool(nativeType),
+                    @"hitNSControl": wireBool(controlType), @"hitNSTextView": wireBool(textType),
+                    @"hitHidden": wireBool(hidden),
+                    @"rolePresent": wireBool(role != nil), @"roleNonEmpty": wireBool(role.length > 0),
+                    @"roleNotUnknown": wireBool(role != nil && ![role isEqualToString:NSAccessibilityUnknownRole]),
                     @"notHidden": @(shown), @"visibleArea": @(visibleArea), @"probeContainsHitBounds": @(contained),
                     @"visibleRectContainsPoint": @(visiblePoint), @"nativeAccessibilityEnabled": @(enabled),
                     @"nativeKnownRole": @(knownRole), @"nativeGuardResult": wireBool(nativeType && shown && visibleArea
                         && contained && visiblePoint && enabled && knownRole), @"diagnosticOnly": @YES} mutableCopy];
                 value[@"stack"] = stackTrace();
+                value[@"windowGuard"] = windowState(root.window, screen);
                 value[@"hostingAXChain"] = accessibilityChain([root accessibilityHitTest:screen]);
                 value[@"hitAXChain"] = accessibilityChain([hit accessibilityHitTest:screen]);
                 value[@"hitOwnAXChain"] = accessibilityChain(hit);

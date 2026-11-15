@@ -25,7 +25,8 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
         event = self.event()
         value = diagnostic.validate_inputs(event)
         self.assertEqual(value['diagnosticFunctionIDs'], [identity for identity in value['failedFunctionIDs']
-            if '/unselectedAndDisabledTargetsKeepDifferentMeaning()/' in identity])
+            if any('/' + name + '()/' in identity for name in (
+                'unselectedAndDisabledTargetsKeepDifferentMeaning', 'viewportWidthPreservesFieldAndNativeWheelAcrossScrollerStyles'))])
         for key, change in [('run_id', '1'), ('source_sha', 'a' * 40), ('artifact_id', '1'),
                 ('artifact_sha256', 'a' * 64), ('verified_pr_run_id', ''), ('interface_scale', '1.5'),
                 ('runtime_failure_binding', '{}'), ('test_bundle_run_id', '1'), ('expected_dmg_sha256', 'b' * 64)]:
@@ -57,9 +58,9 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
             self.assertEqual(result['flags'], 0x20002)
 
     def retained_binding(self):
-        value = diagnostic.fixture()
+        value = diagnostic.legacy_fixture()
         return dict(schema='native-pointer-guard-binding/v1', sourceSHA=diagnostic.RETAINED_SOURCE,
-            runID=diagnostic.RETAINED_RUN, attempt=1, fixtureSHA256=diagnostic.FIXTURE_SHA,
+            runID=diagnostic.RETAINED_RUN, attempt=1, fixtureSHA256=diagnostic.LEGACY_FIXTURE_SHA,
             nativeExecution=False, fullReleaseAcceptance=False,
             members={name: value[key] for name, (_, key) in diagnostic.MEMBERS.items()},
             sourceFiles={name: (diagnostic.HISTORICAL_C_SHA if name.endswith('.m') else diagnostic.checksum(Path(name)))
@@ -67,14 +68,14 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
 
     def test_retained_original_members_reject_foreign_producers_or_different_C_source(self):
         valid = self.retained_binding()
-        diagnostic.verify_retained_binding(valid, diagnostic.fixture())
+        diagnostic.verify_retained_binding(valid, diagnostic.legacy_fixture())
         for key, value in [('sourceSHA', 'a' * 40), ('runID', 1), ('attempt', 2), ('fixtureSHA256', 'a' * 64),
                 ('nativeExecution', True), ('members', {}), ('sourceFiles', {})]:
             changed = copy.deepcopy(valid); changed[key] = value
             with self.subTest(key=key), self.assertRaises(ValueError):
-                diagnostic.verify_retained_binding(changed, diagnostic.fixture())
+                diagnostic.verify_retained_binding(changed, diagnostic.legacy_fixture())
         changed = copy.deepcopy(valid); changed['sourceFiles']['scripts/native_pointer_guard_snapshot.m'] = 'a' * 64
-        with self.assertRaises(ValueError): diagnostic.verify_retained_binding(changed, diagnostic.fixture())
+        with self.assertRaises(ValueError): diagnostic.verify_retained_binding(changed, diagnostic.legacy_fixture())
 
     def test_retained_inspector_requires_exact_bytes_and_all_three_passed_commands(self):
         image = b'qualified-observation-image'
@@ -89,12 +90,12 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
                 zipped.writestr(diagnostic.INSPECTOR_PREFIX + 'pointer-guard-snapshot.dylib', image + (b'changed' if changed else b''))
             data.seek(0); return zipfile.ZipFile(data)
         with mock.patch.object(diagnostic, 'INSPECTOR_SHA', digest), mock.patch.object(diagnostic, 'INSPECTOR_BYTES', len(image)):
-            with archive() as zipped: self.assertEqual(diagnostic.inspector_bytes(zipped, diagnostic.fixture()), image)
+            with archive() as zipped: self.assertEqual(diagnostic.inspector_bytes(zipped, diagnostic.legacy_fixture()), image)
             for stage in ('compile-inspector-only', 'sign-inspector-only', 'verify-inspector-only'):
                 with self.subTest(stage=stage), archive(stage) as zipped, self.assertRaises(ValueError):
-                    diagnostic.inspector_bytes(zipped, diagnostic.fixture())
+                    diagnostic.inspector_bytes(zipped, diagnostic.legacy_fixture())
             with archive(changed=True) as zipped, self.assertRaises(ValueError):
-                diagnostic.inspector_bytes(zipped, diagnostic.fixture())
+                diagnostic.inspector_bytes(zipped, diagnostic.legacy_fixture())
 
     def rows(self):
         self.file_identity = dict(path='/tests', device=1, inode=2)
@@ -103,9 +104,18 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
         sample = dict(common, **root, kind='guard-snapshot', wallTime=5, sample=1,
             nativeControlType=False, notHidden=True, visibleArea=True, probeContainsHitBounds=True,
             visibleRectContainsPoint=True, nativeAccessibilityEnabled=True, nativeKnownRole=True,
-            nativeGuardResult=False, rootPoint=[1, 2], windowPoint=[1, 2], screenPoint=[1, 2], hitPoint=[1, 2],
+            nativeGuardResult=False, nativeRole='AXTextField', hitNSControl=False, hitNSTextView=False,
+            hitHidden=False, rolePresent=True, roleNonEmpty=True, roleNotUnknown=True,
+            rootPoint=[1, 2], windowPoint=[1, 2], screenPoint=[1, 2], hitPoint=[1, 2],
             probeFrame=[0, 0, 10, 10], hitBoundsInRoot=[0, 0, 10, 10], hitVisibleRect=[0, 0, 10, 10],
             stack=[dict(address='0x4', imageBase='0x5', image='/tests', symbol='target')])
+        sample['windowGuard'] = dict(windowAtPoint=123, ownerPID=10, windowNumber=123,
+            screenAvailable=True, firstScreenFrame=[0, 0, 100, 100], quartzPoint=[1, 98],
+            cgWindowListAvailable=True, matchingWindowCount=1, cgFrame=[0, 0, 100, 100],
+            cgWindows=[dict(ownerPID=10, number=123, boundsAvailable=True,
+                bounds=dict(X=0, Y=0, Width=100, Height=100))],
+            predicates=dict(windowAtPointMatches=True, uniqueOwnWindow=True, boundsAvailable=True,
+                boundsDecoded=True, frameFinite=True, positiveWidth=True, positiveHeight=True, containsQuartzPoint=True), result=True)
         for key in ['hostingAXChain', 'hitAXChain', 'hitOwnAXChain']:
             sample[key] = dict(elements=[dict(identity='0x2')], end='boundWindow', completeToBoundWindow=True)
         geometry = dict(common, **root, kind='viewport-convert', wallTime=4, sample=1, clip='0x7',
@@ -131,7 +141,7 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
         def archive(defect=None):
             binding = dict(schema='native-pointer-guard-binding/v1', runID=diagnostic.SELFTEST_PRODUCER[0],
                 sourceSHA=diagnostic.SELFTEST_PRODUCER[1], attempt=1,
-                sourceFiles=dict(diagnostic.SELFTEST_PRODUCER_FILES), fixtureSHA256=diagnostic.FIXTURE_SHA,
+                sourceFiles=dict(diagnostic.SELFTEST_PRODUCER_FILES), fixtureSHA256=diagnostic.LEGACY_FIXTURE_SHA,
                 nativeExecution=False, fullReleaseAcceptance=False)
             if defect == 'source': binding['sourceFiles']['scripts/native_pointer_guard_selftest.swift'] = 'a' * 64
             if defect == 'producer': binding['runID'] += 1
@@ -165,6 +175,18 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
                     acquire.assert_not_called()
                     self.assertEqual(list(evidence.iterdir()), [])
 
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary)
+            with mock.patch.object(diagnostic, 'checksum', return_value=diagnostic.SELFTEST_SOURCE_SHA), \
+                    mock.patch.object(diagnostic.platform, 'mac_ver', return_value=('27.2', (), 'arm64')), \
+                    mock.patch.dict(diagnostic.os.environ, {'GITHUB_SHA': 'b' * 40}), \
+                    mock.patch.object(diagnostic.cohort, 'objects', side_effect=[{'tool': 'a' * 40}, {'tool': 'b' * 40}]), \
+                    mock.patch.object(diagnostic, 'api') as acquire:
+                with self.assertRaisesRegex(ValueError, 'compiler input changed'):
+                    diagnostic.restore_selftest_tool(evidence / 'tool', evidence)
+                acquire.assert_not_called()
+                self.assertEqual(list(evidence.iterdir()), [])
+
     def test_hosting_class_admission_requires_declared_and_runtime_guards(self):
         def duplicate(rows):
             eligibility = dict(rows[2], kind='eligibility', uniqueProbeMatches=False, eligible=False,
@@ -195,6 +217,16 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaises(ValueError): self.verify(rows)
         rows = self.rows(); rows[4]['nativeGuardResult'] = 0
         with self.assertRaises(ValueError): self.verify(rows)
+        for key in ('hitNSControl', 'hitNSTextView', 'hitHidden', 'rolePresent', 'roleNonEmpty', 'roleNotUnknown'):
+            rows = self.rows(); rows[4][key] = int(rows[4][key])
+            with self.subTest(native=key), self.assertRaises(ValueError): self.verify(rows)
+        for key in ('screenAvailable', 'cgWindowListAvailable', 'result'):
+            rows = self.rows(); rows[4]['windowGuard'][key] = int(rows[4]['windowGuard'][key])
+            with self.subTest(window=key), self.assertRaises(ValueError): self.verify(rows)
+        for key in self.rows()[4]['windowGuard']['predicates']:
+            rows = self.rows(); rows[4]['windowGuard']['predicates'][key] = 1
+            with self.subTest(windowPredicate=key), self.assertRaises(ValueError): self.verify(rows)
+
         rows = self.rows()
         negative = [rows[0], dict(pid=10, diagnosticOnly=True, kind='discovery', wallTime=2,
             classFound=1, imageMatches=False), dict(rows[-1], samples=0, rectSamples=0,
@@ -213,6 +245,32 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
         self.assertTrue(result['diagnosticOnly'])
         self.assertEqual(result['falsePredicatesBySample'], [['nativeControlType']])
         self.assertEqual(result['viewportSizeFailures'], [1])
+        self.assertEqual(result['falseWindowPredicatesBySample'], [[]])
+        rows = self.rows(); window = rows[4]['windowGuard']
+        window['windowAtPoint'] = 999; window['predicates']['windowAtPointMatches'] = False; window['result'] = False
+        self.assertEqual(self.verify(rows)['falseWindowPredicatesBySample'], [['windowAtPointMatches']])
+        rows = self.rows(); window = rows[4]['windowGuard']
+        window.update(cgWindows=[], matchingWindowCount=0, cgFrame=[], result=False)
+        false = ['uniqueOwnWindow', 'boundsAvailable', 'boundsDecoded', 'frameFinite',
+            'positiveWidth', 'positiveHeight', 'containsQuartzPoint']
+        window['predicates'].update({key: False for key in false})
+        self.assertEqual(self.verify(rows)['falseWindowPredicatesBySample'], [false])
+        rows = self.rows(); window = rows[4]['windowGuard']
+        window['cgWindows'][0]['bounds']['Width'] = 0; window['cgFrame'][2] = 0
+        window['predicates'].update(positiveWidth=False, containsQuartzPoint=False); window['result'] = False
+        self.assertEqual(self.verify(rows)['falseWindowPredicatesBySample'], [['positiveWidth', 'containsQuartzPoint']])
+        rows = self.rows(); window = rows[4]['windowGuard']
+        window['cgWindows'][0]['bounds'].update(X=100, Y=100, Width=-100, Height=-100)
+        window['cgFrame'] = [100, 100, -100, -100]
+        self.assertEqual(self.verify(rows)['falseWindowPredicatesBySample'], [[]])
+        for bounds in ([5, 5, 0, 0], [10, 10, -10, -10]):
+            rows = self.rows(); rows[4]['hitBoundsInRoot'] = bounds
+            self.assertEqual(self.verify(rows)['falsePredicatesBySample'], [['nativeControlType']])
+        rows = self.rows(); rows[4]['hitVisibleRect'] = [10, 10, -10, -10]
+        self.assertEqual(self.verify(rows)['falsePredicatesBySample'], [['nativeControlType']])
+        rows = self.rows(); rows[4]['hitPoint'] = [10, 2]; rows[4]['visibleRectContainsPoint'] = False
+        self.assertEqual(self.verify(rows)['falsePredicatesBySample'], [['nativeControlType', 'visibleRectContainsPoint']])
+
         rows = self.rows(); rows[4]['hitAXChain'] = dict(elements=[], end='nonProtocol', completeToBoundWindow=False)
         self.assertTrue(self.verify(rows)['outputComplete'])
 
@@ -223,6 +281,38 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
         self.assertEqual(measured['rectSamples'], 1)
         self.assertEqual(measured['falsePredicatesBySample'], [])
         self.assertTrue(measured['diagnosticOnly'])
+        for failure in (None, 'cleanup', 'image'):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary); evidence = root / 'evidence'; evidence.mkdir()
+                host, image = root / 'host', root / 'tests'
+                host.write_bytes(b'original-host'); image.write_bytes(b'original-tests')
+                value = dict(diagnostic.fixture(), originalHostSHA256=diagnostic.checksum(host),
+                    testImage={'sha256': diagnostic.checksum(image)})
+                calls = []
+                def collect(command, log, environment):
+                    calls.append(command)
+                    log.write_bytes(b'complete original console\n')
+                    Path(environment['NGV_APPKIT_TEST_EVENTS']).write_bytes(b'unknown original event form\n')
+                    if failure == 'image': image.write_bytes(b'changed-tests')
+                    return dict(processReaped=True, eof=True, exitCode=1, stoppedReason=None,
+                        cleanupSignalErrors=['failed'] if failure == 'cleanup' else [], logFinalizationErrors=[])
+                with mock.patch('run_macos_tests.app_environment', side_effect=lambda *_: {}), \
+                        mock.patch.object(diagnostic, 'run_owned', side_effect=collect), \
+                        mock.patch.object(diagnostic, 'measure', side_effect=AssertionError('premature event semantics')), \
+                        mock.patch.object(diagnostic, 'verify_snapshots', side_effect=AssertionError('premature snapshot semantics')):
+                    if failure:
+                        with self.assertRaises(ValueError):
+                            diagnostic.collect_selections(value, evidence, root / 'runtime', image, host, root / 'inspector')
+                        self.assertEqual(len(calls), 1)
+                    else:
+                        acquired = diagnostic.collect_selections(value, evidence, root / 'runtime', image, host, root / 'inspector')
+                        self.assertEqual(list(acquired), value['diagnosticFunctionIDs'])
+                        self.assertEqual(len(calls), 2)
+                        for index, identity in enumerate(value['diagnosticFunctionIDs'], 1):
+                            self.assertEqual(calls[index - 1][-1], diagnostic.scope_filter([identity]))
+                            self.assertTrue((evidence / ('selection-' + str(index)) / 'host.STARTED.json').is_file())
+                            self.assertTrue((acquired[identity]['folder'] / 'process.json').is_file())
+                            self.assertFalse((acquired[identity]['snapshots'] / 'snapshots.jsonl').exists())
 
     def test_foreign_image_refusal_requires_real_discovery_and_zero_installed_hooks(self):
         rows = self.rows()
@@ -264,7 +354,9 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
         for defect in ['no-finish', 'no-hook', 'no-probe-hook', 'no-geometry', 'wrong-pid', 'wrong-image', 'wrong-window',
                 'wrong-root', 'wrong-probe', 'late-hook', 'write-error', 'cap-loss', 'lost-return', 'lost-rect-return',
                 'count', 'guard-lie', 'nonfinite', 'bad-chain', 'foreign-window-chain', 'no-stack', 'truncated',
-                'width-lie', 'unowned-clip', 'duplicate-probe-hook']:
+                'width-lie', 'unowned-clip', 'duplicate-probe-hook', 'native-type-lie', 'native-role-lie',
+                'native-hit-bounds-lie', 'native-visible-lie', 'window-guard-lie', 'window-match-count',
+                'window-owner', 'window-coordinate', 'window-frame', 'missing-window']:
             rows = self.rows()
             if defect == 'no-finish': rows.pop()
             elif defect == 'no-hook': rows.pop(2)
@@ -289,4 +381,15 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
             elif defect == 'width-lie': rows[3]['widthFits'] = True
             elif defect == 'unowned-clip': rows[3]['clip'] = '0xff'
             elif defect == 'duplicate-probe-hook': rows.insert(2, copy.deepcopy(rows[1]))
+            elif defect == 'native-type-lie': rows[4]['hitNSControl'] = True
+            elif defect == 'native-role-lie': rows[4]['nativeRole'] = ''
+            elif defect == 'native-hit-bounds-lie': rows[4]['hitBoundsInRoot'][2] = 100
+            elif defect == 'native-visible-lie': rows[4]['hitVisibleRect'][2] = 0
+            elif defect == 'window-guard-lie': rows[4]['windowGuard']['result'] = False
+            elif defect == 'window-match-count': rows[4]['windowGuard']['matchingWindowCount'] = 2
+            elif defect == 'window-owner': rows[4]['windowGuard']['ownerPID'] = 999
+            elif defect == 'window-coordinate': rows[4]['windowGuard']['quartzPoint'][1] += 1
+            elif defect == 'window-frame': rows[4]['windowGuard']['cgFrame'][2] += 1
+            elif defect == 'missing-window': rows[4].pop('windowGuard')
+
             with self.subTest(defect=defect), self.assertRaises(ValueError): self.verify(rows, defect == 'truncated')

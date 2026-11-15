@@ -1,0 +1,69 @@
+{
+  "appSourceSHA": "a163054c87f924f365525385ff27d86eecad4316",
+  "boundSHA256": "a4836f17bff7e101c4f8993103183ab0ca83bc19de548deba036f47814f3dd0d",
+  "diagnosticFunctionIDs": [
+    "NexGenVideoTests.NativePointerInteractionTests/unselectedAndDisabledTargetsKeepDifferentMeaning()/NativeButtonInteractionTests.swift:1035:6",
+    "NexGenVideoTests.NativePointerInteractionTests/viewportWidthPreservesFieldAndNativeWheelAcrossScrollerStyles()/NativeButtonInteractionTests.swift:1364:6"
+  ],
+  "eventSHA256": "e824272b55a2bb17c2d9ab2131cb3c4b8f4a1b41431db0bdbd7cfc6a19f6b6c8",
+  "expectedOriginalIssues": 11,
+  "failedFunctionIDs": [
+    "NexGenVideoTests.NativePointerInteractionTests/aLostUpGetsOnlyOneReleaseCleanup()/NativeButtonInteractionTests.swift:1256:6",
+    "NexGenVideoTests.NativePointerInteractionTests/actualCompactButtonsUseOneTaggedSystemClickEach()/NativeButtonInteractionTests.swift:1002:6",
+    "NexGenVideoTests.NativePointerInteractionTests/actualNativeControlAndMenuTrackingKeepTheirCallbacks()/NativeButtonInteractionTests.swift:1168:6",
+    "NexGenVideoTests.NativePointerInteractionTests/changedAccessibilityHitCannotBorrowTheOriginalGeometry()/NativeButtonInteractionTests.swift:1185:6",
+    "NexGenVideoTests.NativePointerInteractionTests/concurrentButtonPreparationCannotMoveTheOwnedPointer()/NativeButtonInteractionTests.swift:1333:6",
+    "NexGenVideoTests.NativePointerInteractionTests/coveredForeignAndInvalidTargetsNeverPostDown()/NativeButtonInteractionTests.swift:1102:6",
+    "NexGenVideoTests.NativePointerInteractionTests/gestureSurfacesAndSmallCardMarkersRemainUsable()/NativeButtonInteractionTests.swift:1155:6",
+    "NexGenVideoTests.NativePointerInteractionTests/mouseIgnoringWindowAllowsOneClickAndInputCatchingWindowRefusesIt()/NativeButtonInteractionTests.swift:1058:6",
+    "NexGenVideoTests.NativePointerInteractionTests/ownedDownIsReleasedWhenTheTaskIsCancelled()/NativeButtonInteractionTests.swift:1305:6",
+    "NexGenVideoTests.NativePointerInteractionTests/unselectedAndDisabledTargetsKeepDifferentMeaning()/NativeButtonInteractionTests.swift:1035:6",
+    "NexGenVideoTests.NativePointerInteractionTests/viewportWidthPreservesFieldAndNativeWheelAcrossScrollerStyles()/NativeButtonInteractionTests.swift:1364:6"
+  ],
+  "failureArtifactBytes": 974807252,
+  "failureArtifactID": 14145036397,
+  "failureArtifactSHA256": "f3242282fd23d3b9d4b955af25cb32c8901d3f51c0b574f251479eb3cbe359ae",
+  "failureAttempt": 1,
+  "failureJobID": 132680028873,
+  "failureRunID": 43670720131,
+  "failureSourceSHA": "33539486108e1bde6a362bb2e02b18d2fe5b96ca",
+  "hostReceiptSHA256": "f60e84515d16da571b53b6a5c056e3f534a9f2bad08a5bfb24fdac3c8c7a20d1",
+  "originalHostSHA256": "70330e80bf88fa7e23032d80b9b2df2b855e9baaa00c87c1195a5093edc333f5",
+  "originalHostUUID": "f590711f-f616-3965-bf42-0f283720b59b",
+  "schema": "native-pointer-guard-original-scope/v1",
+  "selected": {
+    "metadata": {
+      "artifactID": 14142696852,
+      "artifactSHA256": "2decad1b4ce9fe0b09a7e759b288e4687c4405d4412800dc7135328cd219c57e",
+      "runID": 43666996708,
+      "sourceSHA": "33539486108e1bde6a362bb2e02b18d2fe5b96ca"
+    },
+    "production": {
+      "artifactID": 14123847382,
+      "artifactSHA256": "044cca431fd9f7bf9eaa8a2554087d11f4f90cfd5c9fe8ecfdaed40950de237c",
+      "receiptSHA256": "2eaad70c0c69fa3a2575c64f09bcc720bb07e0b331aea1b2944c8e7cd245cb47",
+      "runID": 43616301210,
+      "sourceSHA": "7e1b83ed584a9a272ee3824a0cd20e6ee5505cc7"
+    },
+    "testable": {
+      "artifactID": 14122849995,
+      "artifactSHA256": "3fae3f84261c3956588132242c899da5c777412f627f92c352698a4b83885f05",
+      "receiptSHA256": "a51bb670aa46996f1ed9117b6b3d3613c93b66db035b3306c1d0b668e5843d25",
+      "runID": 43616301210,
+      "sourceSHA": "7e1b83ed584a9a272ee3824a0cd20e6ee5505cc7"
+    },
+    "tests": {
+      "artifactID": 14142876631,
+      "artifactSHA256": "afcb1091942f3a64bd65d8f60d97c2ccfd2b2712b909c7a32baa62ada3c96614",
+      "receiptSHA256": "ce7108b2df63f739ae5a66e299486a7d1b34d06b46e49b2cc483fe5c3b068e84",
+      "runID": 43666996708,
+      "sourceSHA": "33539486108e1bde6a362bb2e02b18d2fe5b96ca"
+    }
+  },
+  "testImage": {
+    "UUIDs": [
+      "CFF2BD85-4286-3F28-870B-E53DD8C6C2E2"
+    ],
+    "sha256": "db45dc61ae7e1abd662819c6df18b0fada2579e432287dc8d578d56461c5bcea"
+  }
+}

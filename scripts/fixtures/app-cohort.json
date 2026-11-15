@@ -34,6 +34,7 @@
     "scripts/fixtures/compiled-current-core-reuse-1047.json",
     "scripts/fixtures/native-app-failure-1087.json",
     "scripts/fixtures/native-app-failure-1099.json",
+    "scripts/fixtures/native-app-failure-1110.json",
     "scripts/native_app_failure_diagnostic.py",
     "scripts/native_app_target_build.py",
     "scripts/native_app_window_sampler.swift",
