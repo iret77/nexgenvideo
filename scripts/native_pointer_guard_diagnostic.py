@@ -532,7 +532,8 @@ def verify_event_trace(raw, process, image, host, *, selftest=False, identities=
     require(2 <= len(rows) <= 50000 and all(isinstance(row, dict) for row in rows)
         and [row.get('sequence') for row in rows] == list(range(1, len(rows) + 1)),
         'Event trace is missing, duplicated or reordered')
-    allowed = {'loaded', 'hook', 'call', 'return', 'receive', 'lifecycle', 'selftest', 'finished'}
+    allowed = {'loaded', 'hook', 'call', 'return', 'receive', 'lifecycle', 'selftest', 'finished',
+        'selftest-scope-call', 'selftest-scope-return'}
     require(all(isinstance(row, dict) and row.get('kind') in allowed and row.get('diagnosticOnly') is True
         and row.get('pid') == process['pid'] and row.get('parentPID') == process['parentPID']
         and type(row.get('mainThread')) is bool for row in rows), 'Foreign event trace process or schema')
@@ -548,6 +549,9 @@ def verify_event_trace(raw, process, image, host, *, selftest=False, identities=
     require(all(type(value) in (float, int) and math.isfinite(value) for value in times)
         and times == sorted(times) and process['launchBefore'] <= times[0] <= times[-1] <= process['endAfter'],
         'Event trace escapes the original child lifetime')
+    uptimes = [row.get('uptime') for row in rows]
+    require(all(type(value) in (int, float) and math.isfinite(value) for value in uptimes)
+        and uptimes == sorted(uptimes), 'Event trace startup-clock ledger is nonfinite or reordered')
     require(type(finished.get('errors')) is int and finished['errors'] == 0, 'Event observer lost data or transparency')
     require(type(finished.get('contextCount')) is int and finished['contextCount'] >= 0
         and isinstance(finished.get('additionalGetterQueryCounts'), dict)
@@ -581,6 +585,9 @@ def verify_event_trace(raw, process, image, host, *, selftest=False, identities=
                 require(type(context.get('contextOrdinal')) is int and context['contextOrdinal'] > 0
                     and context.get('additionalQueryCounts', {}).get('CGWindowListCopyWindowInfo') == 1,
                     'Additional context query accounting is absent')
+        if kind.startswith('selftest-scope-'):
+            require(selftest and row.get('queryOrigin') == 'SELFTEST_ONLY_SCOPE_REFUSAL',
+                'Real original child contains a synthetic scope probe')
         if kind in {'call', 'return'}:
             method, identity = row.get('method'), row.get('call')
             require(method in methods and type(identity) is int and identity > 0
@@ -604,12 +611,17 @@ def verify_event_trace(raw, process, image, host, *, selftest=False, identities=
                         value = scope.get(key)
                         require(isinstance(value, str) and (value == 'nil' or re.fullmatch('0x[0-9a-fA-F]+', value))
                             and (not scope[flag] or value != 'nil'), 'Owned route window identity is absent')
-                    require(not scope['ownedCaller'] or any(frame.get('image') == expected_image['path'] for frame in row['stack']),
+                    require(not scope['ownedCaller'] or (expected_image != expected_host
+                        and any(frame.get('image') == expected_image['path'] for frame in row['stack'])),
                         'Owned caller route lacks its exact canonical image stack')
                     require(row['context'].get('keyWindowIdentity') == scope['actualKeyWindowIdentity'],
                         'Actual key window was replaced by the observational scope window')
                 calls[identity] = row
                 observed_calls[method] = observed_calls.get(method, 0) + 1
+                if method == 'sendEvent:':
+                    require(type(row['arguments'].get('selftestPumpDispatch')) is bool
+                        and (selftest or row['arguments']['selftestPumpDispatch'] is False),
+                        'Real original event used the selftest pump scope')
                 if method == 'windowNumberAtPoint:belowWindowWithWindowNumber:':
                     require(type(row['arguments'].get('below')) is int
                         and len(row['arguments'].get('point', [])) == 2, 'Original window query arguments missing')
@@ -636,7 +648,28 @@ def verify_event_trace(raw, process, image, host, *, selftest=False, identities=
                     'Queued key observation converted the event to Quartz or lost its actual fields')
     require(set(calls) == set(returns) and observed_calls == observed_returns == finished.get('calls') == finished.get('returns'),
         'Original calls and returns are not one-to-one')
+    route_count = sum(observed_calls.get(method, 0) for method in ('sendAction:to:from:', 'window.performKeyEquivalent:', 'menu.performKeyEquivalent:'))
+    if route_count:
+        require(finished['additionalGetterQueryCounts'].get('scope.evaluation', 0) >= route_count,
+            'Route ownership getters escaped additional-query accounting')
     if selftest:
+        refused_calls = {row['call']: row for row in rows if row['kind'] == 'selftest-scope-call'}
+        refused_returns = {row['call']: row for row in rows if row['kind'] == 'selftest-scope-return'}
+        require(len(refused_calls) == sum(row['kind'] == 'selftest-scope-call' for row in rows)
+            and len(refused_returns) == sum(row['kind'] == 'selftest-scope-return' for row in rows)
+            and set(refused_calls) == set(refused_returns) and refused_calls,
+            'Native foreign scope probe lacks unique complete entry/return pairs')
+        for identity, call in refused_calls.items():
+            returned = refused_returns[identity]; scope = call.get('scope')
+            require(type(identity) is int and identity > 0 and isinstance(scope, dict)
+                and scope.get('queryOrigin') == 'ADDITIONAL_SCOPE_OBSERVATION'
+                and all(scope.get(key) is False for key in ('ownedCaller', 'ownedKeyWindow', 'ownedTargetWindow', 'ownedEventWindow'))
+                and scope.get('actualKeyWindowIdentity') == 'nil'
+                and call.get('method') in ('sendAction:to:from:', 'menu.performKeyEquivalent:')
+                and returned.get('method') == call['method'] and type(returned.get('returned')) is bool
+                and call['sequence'] < returned['sequence'], 'Foreign native scope or actual BOOL return was not refused transparently')
+        require({'sendAction:to:from:', 'menu.performKeyEquivalent:'} <= {row['method'] for row in refused_calls.values()},
+            'Native foreign action and menu branches were not both exercised')
         witnesses = [row for row in rows if row['kind'] == 'selftest']
         require(len(witnesses) == 1, 'Native witness is missing or repeated')
         witness = witnesses[0]
@@ -648,11 +681,38 @@ def verify_event_trace(raw, process, image, host, *, selftest=False, identities=
                 and value.get('keyWindowIdentity') == value['windowIdentity'] \
                 and isinstance(value.get('textIdentity'), str) and re.fullmatch('0x[0-9a-fA-F]+', value['textIdentity']) \
                 and value.get('responderIdentity') == value['textIdentity']
+        owner = witness.get('selftestOwner')
+        require(isinstance(owner, dict) and owner.get('class') == 'NGVTraceSelftestTextView'
+            and owner.get('classImageIdentity') == loaded.get('observerImageIdentity')
+            and isinstance(owner.get('classImageIdentity'), dict) and owner['classImageIdentity'].get('path')
+            and owner.get('windowIdentity') == witness.get('readiness', {}).get('windowIdentity')
+            and owner.get('textIdentity') == witness.get('readiness', {}).get('textIdentity'),
+            'Native witness window/text ownership lacks its actual compiled observer class image')
+        nil_times = [witness.get(key) for key in ('nilKeyStart', 'nilKeyEnd', 'nilKeyDeadline')]
+        require(all(type(value) in (int, float) and math.isfinite(value) for value in nil_times)
+            and nil_times[0] <= nil_times[1] <= nil_times[2] and 0 < nil_times[2] - nil_times[0] <= 2
+            and witness.get('nilKeyWindow') is True and witness.get('nilKeyAfterForeign') is True
+            and all(witness.get(key) is True for key in ('nilActionReturn', 'nilMenuReturn', 'foreignActionReturn', 'foreignMenuReturn'))
+            and all(witness.get(key) == [0, 2] for key in ('nilActionSelection', 'nilMenuSelection', 'foreignActionSelection', 'foreignMenuSelection')),
+            'Native nil-key or foreign original outcome witness is incomplete')
+        for method in ('sendAction:to:from:', 'menu.performKeyEquivalent:'):
+            argument = 'target' if method == 'sendAction:to:from:' else 'receiver'
+            foreign_identity = witness['foreignTextIdentity'] if argument == 'target' else witness['foreignMenuIdentity']
+            require(any(row['method'] == method and row['arguments'].get(argument) == foreign_identity
+                and refused_returns[row['call']]['returned'] is True for row in refused_calls.values()),
+                'Foreign native fixture identity is not bound to its actual refused original call')
+            require(any(row['method'] == method and row['context'].get('keyWindowIdentity') == 'nil'
+                and row['arguments']['scope']['ownedCaller'] is False
+                and row['arguments']['scope']['ownedKeyWindow'] is False
+                and (row['arguments']['scope']['ownedTargetWindow'] is True or row['arguments']['scope']['ownedEventWindow'] is True)
+                and row['arguments'].get(argument) == (witness['ownedTextIdentity'] if argument == 'target' else witness['ownedMenuIdentity'])
+                and returns[row['call']].get('returned') is True and row['uptime'] >= nil_times[1] for row in calls.values()),
+                'Native owned nil-key action/menu admission was not actually exercised')
         times = [witness.get(key) for key in ('readinessStart', 'readinessEnd', 'readinessDeadline', 'queueStart', 'queueDeadline', 'queueEnd')]
         require(all(type(value) in (int, float) and math.isfinite(value) for value in times)
             and times[0] <= times[1] <= times[2] and 0 < times[2] - times[0] <= 2
             and times[1] <= times[3] < times[4] and times[3] <= times[5] and times[4] - times[3] <= 2
-            and witness.get('timeUnits') == 'seconds-since-startup'
+            and witness.get('timeUnits') == 'seconds-since-startup' and witness.get('expirationUnits') == 'seconds-since-Unix-epoch'
             and witness.get('ready') is True and ready(witness.get('readiness'))
             and witness.get('cleanupComplete') is True, 'Native witness readiness, deadline or cleanup is unqualified')
         require(witness.get('dequeueMask') == 1 << 10 and witness.get('dequeueMode') == 'kCFRunLoopDefaultMode'
@@ -725,7 +785,9 @@ def verify_event_trace(raw, process, image, host, *, selftest=False, identities=
         require(len(forwarded) == len(sent), 'Witness dispatched an event outside its exact dequeue ledger')
         require(len(matching_posts) == len(matching_sends) == 1
             and matching_posts[0]['sequence'] < returns[matching_posts[0]['call']]['sequence'] < matching_sends[0]['sequence']
-            and returns[matching_posts[0]['call']]['uptime'] <= dequeues[-1]['dequeuedAt'] <= matching_sends[0]['uptime']
+            and times[3] <= matching_posts[0]['uptime'] <= returns[matching_posts[0]['call']]['uptime']
+                <= dequeues[0]['requestedAt'] <= dequeues[-1]['dequeuedAt'] <= matching_sends[0]['uptime']
+                <= returns[matching_sends[0]['call']]['uptime'] <= times[5] <= nil_times[0]
             and any(row['kind'] == 'receive' and row.get('event') == posted
                 and matching_sends[0]['sequence'] < row['sequence'] < returns[matching_sends[0]['call']]['sequence'] for row in rows)
             and any(row['method'] == 'doCommandBySelector:' and row['arguments'].get('command') == 'selectAll:'

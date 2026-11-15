@@ -15,9 +15,10 @@ import native_pointer_guard_diagnostic as diagnostic
 
 class NativePointerGuardDiagnosticTests(unittest.TestCase):
     def trace_rows(self, selftest=False):
-        image, host = dict(path='/tests', device=1, inode=2), dict(path='/host', device=3, inode=4)
+        image = dict(path='/tests', device=1, inode=2)
+        host = copy.deepcopy(image) if selftest else dict(path='/host', device=3, inode=4)
         rows = [dict(kind='loaded', expectedImageIdentity=image, expectedHostIdentity=host,
-            actualHostIdentity=host, selftestMode=selftest)]
+            actualHostIdentity=host, selftestMode=selftest, observerImageIdentity=dict(path='/observer', device=1, inode=5))]
         methods = ['windowNumberAtPoint:belowWindowWithWindowNumber:', 'windowNumber', 'CGWindowListCopyWindowInfo',
             'postEvent:atStart:', 'sendEvent:', 'sendAction:to:from:', 'keyDown:', 'selectAll:',
             'window.performKeyEquivalent:', 'menu.performKeyEquivalent:', 'doCommandBySelector:', 'selectedRange', 'selectedRange']
@@ -26,21 +27,23 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
             rows.append(dict(kind='hook', selector='performKeyEquivalent:' if equivalent else method, installed=True,
                 **{'class': 'NSWindow' if method.startswith('window.') else 'NSMenu' if equivalent else 'NSApplication'},
                 typeEncoding='{_NSRange=QQ}16@0:8' if method == 'selectedRange' else 'v24@0:8@16'))
-        context = dict(queryOrigin='ADDITIONAL_CONTEXT', contextOrdinal=1, keyWindowIdentity='nil', keyWindow=0,
+        context = dict(queryOrigin='ADDITIONAL_CONTEXT', contextOrdinal=1,
+            keyWindowIdentity='0x40' if selftest else 'nil', keyWindow=40 if selftest else 0,
             additionalQueryCounts=dict(CGWindowListCopyWindowInfo=1))
         event = dict(identity='0xa', type=10, timestamp=2.0, timestampUnits='seconds-since-startup',
             flags=0, keyCode=7, characters='x', charactersIgnoringModifiers='x', getterOrigin='ADDITIONAL_OBSERVATION')
         counts = {}
         for index, method in enumerate(methods, 1):
             arguments = dict(event=copy.deepcopy(event)) if method in ('postEvent:atStart:', 'sendEvent:') else {}
+            if method == 'sendEvent:': arguments['selftestPumpDispatch'] = selftest
             if method in ('window.performKeyEquivalent:', 'menu.performKeyEquivalent:'):
                 arguments = dict(event=dict(event, characters='a', charactersIgnoringModifiers='a', flags=1 << 20, keyCode=0))
             if method == 'windowNumberAtPoint:belowWindowWithWindowNumber:': arguments = dict(point=[1, 2], below=0)
             if method == 'doCommandBySelector:': arguments = dict(command='selectAll:', receiver='0x41')
             if method in ('sendAction:to:from:', 'window.performKeyEquivalent:', 'menu.performKeyEquivalent:'):
-                arguments['scope'] = dict(queryOrigin='ADDITIONAL_SCOPE_OBSERVATION', ownedCaller=True,
-                    ownedKeyWindow=False, ownedTargetWindow=False, ownedEventWindow=False,
-                    actualKeyWindowIdentity='nil', targetWindowIdentity='nil', eventWindowIdentity='nil')
+                arguments['scope'] = dict(queryOrigin='ADDITIONAL_SCOPE_OBSERVATION', ownedCaller=not selftest,
+                    ownedKeyWindow=selftest, ownedTargetWindow=False, ownedEventWindow=False,
+                    actualKeyWindowIdentity='0x40' if selftest else 'nil', targetWindowIdentity='nil', eventWindowIdentity='nil')
             returned = [0, 2] if index == len(methods) else [1, 0] if method == 'selectedRange' else True
             if method == 'window.performKeyEquivalent:': returned = False
             if method == 'doCommandBySelector:': returned = dict(range=dict(selection=[0, 2]))
@@ -52,6 +55,27 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
                 context=copy.deepcopy(context), queryOrigin='ORIGINAL_EXECUTION'))
             counts[method] = counts.get(method, 0) + 1
         if selftest:
+            nil_context = dict(context, keyWindowIdentity='nil', keyWindow=0)
+            for number, method in enumerate(('sendAction:to:from:', 'menu.performKeyEquivalent:'), 90):
+                arguments = dict(target='0x41') if number == 90 else dict(receiver='0x42', event=dict(event, characters='a', charactersIgnoringModifiers='a', keyCode=0, flags=1 << 20))
+                arguments['scope'] = dict(queryOrigin='ADDITIONAL_SCOPE_OBSERVATION', ownedCaller=False,
+                    ownedKeyWindow=False, ownedTargetWindow=number == 90, ownedEventWindow=number == 91,
+                    actualKeyWindowIdentity='nil', targetWindowIdentity='0x40' if number == 90 else 'nil',
+                    eventWindowIdentity='0x40' if number == 91 else 'nil')
+                rows.append(dict(kind='call', call=number, method=method, arguments=arguments, context=copy.deepcopy(nil_context),
+                    queryOrigin='ORIGINAL_EXECUTION', stack=[dict(image='/tests', address='0x20', imageBase='0x10')], fixtureUptime=3.2 + (number - 90) * 0.1))
+                rows.append(dict(kind='return', call=number, method=method, returned=True, context=copy.deepcopy(nil_context),
+                    queryOrigin='ORIGINAL_EXECUTION', fixtureUptime=3.25 + (number - 90) * 0.1))
+                counts[method] += 1
+            for number, method in enumerate(('sendAction:to:from:', 'menu.performKeyEquivalent:'), 1):
+                arguments = dict(target='0x51') if number == 1 else dict(receiver='0x52', event=dict(event, characters='a', charactersIgnoringModifiers='a', keyCode=0, flags=1 << 20))
+                scope = dict(queryOrigin='ADDITIONAL_SCOPE_OBSERVATION', ownedCaller=False, ownedKeyWindow=False,
+                    ownedTargetWindow=False, ownedEventWindow=False, actualKeyWindowIdentity='nil',
+                    targetWindowIdentity='0x50' if number == 1 else 'nil', eventWindowIdentity='0x50' if number == 2 else 'nil')
+                rows.append(dict(kind='selftest-scope-call', call=number, method=method, arguments=arguments, scope=scope,
+                    queryOrigin='SELFTEST_ONLY_SCOPE_REFUSAL', fixtureUptime=4.0 + number * 0.1))
+                rows.append(dict(kind='selftest-scope-return', call=number, method=method, returned=True,
+                    queryOrigin='SELFTEST_ONLY_SCOPE_REFUSAL', fixtureUptime=4.05 + number * 0.1))
             ready = dict(queryOrigin='SELFTEST_ONLY', active=True, visible=True, key=True,
                 keyWindowIdentity='0x40', windowIdentity='0x40', responderIdentity='0x41', textIdentity='0x41',
                 acceptsFirstResponder=True, makeFirstResponderReturn=True)
@@ -59,17 +83,30 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
                 readinessDeadline=3.0, readinessEnd=1.1, readinessEvents=[], queueStart=2.0, queueDeadline=4.0, queueEnd=2.2,
                 dequeueMask=1 << 10, dequeueMode='kCFRunLoopDefaultMode', dequeue=True, queueResult='IDENTICAL_EVENT',
                 postedEvent=copy.deepcopy(event), createdEvent=copy.deepcopy(event), posted=True,
-                timeUnits='seconds-since-startup', cleanupComplete=True, selectionAfterCommand=[0, 2],
+                timeUnits='seconds-since-startup', expirationUnits='seconds-since-Unix-epoch', cleanupComplete=True, selectionAfterCommand=[0, 2],
+                selftestOwner=dict(windowIdentity='0x40', textIdentity='0x41', **{'class': 'NGVTraceSelftestTextView'},
+                    classImageIdentity=dict(path='/observer', device=1, inode=5)),
+                nilKeyStart=3.0, nilKeyDeadline=5.0, nilKeyEnd=3.1, nilKeyWindow=True, nilKeyAfterForeign=True,
+                nilActionReturn=True, nilMenuReturn=True, nilActionSelection=[0, 2], nilMenuSelection=[0, 2],
+                foreignActionReturn=True, foreignMenuReturn=True, foreignActionSelection=[0, 2], foreignMenuSelection=[0, 2],
+                ownedTextIdentity='0x41', ownedMenuIdentity='0x42', foreignTextIdentity='0x51', foreignMenuIdentity='0x52',
                 dequeues=[dict(event=copy.deepcopy(event), dequeuedAt=2.1, expiration=100.0,
                     readiness=copy.deepcopy(ready), requestedAt=2.05, sameIdentity=True, dispatched=True)], complete=True, queueIdentityUnchanged=True, inserted='xb',
                 selectionAfterKey=[1, 0], selectionAfterAction=[0, 2], actionReturn=True,
                 windowEquivalentReturn=False, menuEquivalentReturn=True, selectionAfterMenu=[0, 2]))
         rows.append(dict(kind='finished', calls=counts, returns=copy.deepcopy(counts), errors=0,
             selftestMode=selftest, selftestCompleted=selftest, contextCount=20,
-            additionalGetterQueryCounts=dict(CGWindowListCopyWindowInfo=20)))
+            additionalGetterQueryCounts=dict(CGWindowListCopyWindowInfo=20, **{'scope.evaluation': 12})))
+        clock = 0.0
         for index, row in enumerate(rows, 1):
+            if row.get('method') == 'postEvent:atStart:': clock = 2.01 if row['kind'] == 'call' else 2.02
+            elif row.get('method') == 'sendEvent:': clock = 2.12 if row['kind'] == 'call' else 2.14
+            elif row['kind'] == 'receive': clock = 2.13
+            elif clock >= 2.14: clock = max(clock, 2.3) + 0.01
+            else: clock += 0.01
+            clock = row.pop('fixtureUptime', clock)
             row.update(sequence=index, pid=10, parentPID=20, mainThread=True, wallTime=index,
-                uptime=1.9 if row.get('method') == 'postEvent:atStart:' else 2.2 if row.get('method') == 'sendEvent:' else 2.3, diagnosticOnly=True)
+                uptime=clock, diagnosticOnly=True)
         return rows, (image, host)
 
     def trace_verify(self, rows, identities, selftest=False):
@@ -121,7 +158,8 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
         self.assertTrue(self.trace_verify(rows, identities, selftest=True)['selftest'])
         for defect in ('changed-characters', 'wrong-selection', 'missing-range-return', 'unknown-range-ABI', 'wrong-menu-return', 'numeric-queue-identity', 'numeric-complete', 'selftest-in-original-child', 'inactive', 'wrong-responder', 'ready-numeric',
                 'readiness-expired', 'dequeue-nil', 'dequeue-foreign', 'dequeue-expired', 'missing-receive',
-                'missing-command', 'wrong-command-return', 'cleanup-failed'):
+                'missing-command', 'wrong-command-return', 'cleanup-failed', 'post-before-start', 'nonfinite-uptime',
+                'reordered-uptime', 'wrong-expiration-unit', 'missing-native-nil', 'foreign-scope-admitted', 'missing-foreign-return', 'wrong-owner-image'):
             changed = copy.deepcopy(rows)
             if defect == 'changed-characters': next(row for row in changed if row['kind'] == 'call' and row['method'] == 'sendEvent:')['arguments']['event']['characters'] = 'y'
             elif defect == 'wrong-selection': next(row for row in changed if row['kind'] == 'selftest')['selectionAfterAction'] = [1, 0]
@@ -144,6 +182,21 @@ class NativePointerGuardDiagnosticTests(unittest.TestCase):
                 elif defect == 'dequeue-expired': witness['dequeues'][0]['dequeuedAt'] = 4.1; witness['queueEnd'] = 4.2
                 elif defect == 'cleanup-failed': witness['cleanupComplete'] = False
             elif defect == 'missing-receive': next(row for row in changed if row['kind'] == 'receive')['event']['identity'] = '0xb'
+            elif defect == 'post-before-start':
+                for row in changed:
+                    if row.get('method') == 'postEvent:atStart:': row['uptime'] = 1.9
+            elif defect == 'nonfinite-uptime': changed[0]['uptime'] = float('nan')
+            elif defect == 'reordered-uptime': changed[-1]['uptime'] = 0.0
+            elif defect == 'wrong-expiration-unit': next(row for row in changed if row['kind'] == 'selftest')['expirationUnits'] = 'seconds-since-startup'
+            elif defect == 'missing-native-nil':
+                for row in changed:
+                    if row['kind'] == 'call' and row.get('call') in (90, 91):
+                        row['context']['keyWindowIdentity'] = '0x40'; row['arguments']['scope']['actualKeyWindowIdentity'] = '0x40'
+            elif defect == 'foreign-scope-admitted': next(row for row in changed if row['kind'] == 'selftest-scope-call')['scope']['ownedTargetWindow'] = True
+            elif defect == 'missing-foreign-return':
+                changed.pop(next(i for i, row in enumerate(changed) if row['kind'] == 'selftest-scope-return'))
+                for index, row in enumerate(changed, 1): row['sequence'] = index
+            elif defect == 'wrong-owner-image': next(row for row in changed if row['kind'] == 'selftest')['selftestOwner']['classImageIdentity']['inode'] = 6
             elif defect == 'wrong-command-return': next(row for row in changed if row['kind'] == 'return' and row.get('method') == 'doCommandBySelector:')['returned']['range']['selection'] = [0, 1]
             elif defect == 'missing-command': next(row for row in changed if row['kind'] == 'call' and row.get('method') == 'doCommandBySelector:')['arguments']['command'] = 'deleteBackward:'
             with self.subTest(defect=defect), self.assertRaises(ValueError): self.trace_verify(changed, identities, selftest=defect != 'selftest-in-original-child')
