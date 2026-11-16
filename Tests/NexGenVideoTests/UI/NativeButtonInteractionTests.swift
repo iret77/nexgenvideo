@@ -1190,6 +1190,11 @@ struct NativePointerInteractionTests {
         let root = try #require(fixture.window.contentView as? Hosting)
         let probe = try #require(fixture.probe("Undo"))
         let frame = fixture.window.convertToScreen(probe.convert(probe.bounds, to: nil))
+        try await fixture.driver.click("pointer.Undo", in: fixture.window)
+        try await fixture.driver.wait("original accessibility target callback") { fixture.capture.count("Undo") == 1 }
+        try delivered("Undo", in: fixture)
+        try #require(try fixture.input("Undo")["status"] as? String == "delivered")
+        try #require(fixture.capture.count("Undo") == 1)
         let replacement = ReplacementHit(window: fixture.window, frame: frame)
         let counter = DownCounter()
         defer { counter.close() }
@@ -1198,26 +1203,61 @@ struct NativePointerInteractionTests {
             do {
                 try await fixture.driver.click("pointer.Undo", in: fixture.window)
                 Issue.record("An unknown accessibility role qualified a gesture target.")
-            } catch {}
+            } catch {
+                #expect((error as? GateBlocked)?.message == "The pointer accessibility ancestry has an unknown role.")
+            }
             try await Task.sleep(for: .milliseconds(100))
             #expect(counter.count == 0)
-            #expect(fixture.capture.count("Undo") == 0)
+            #expect(fixture.capture.count("Undo") == 1)
+            #expect((try fixture.input("Undo")["posted"] as? [Any])?.isEmpty == true)
         }
+        let disabled = CanonicalAXLeaf(window: fixture.window, frame: frame)
+        disabled.roleValue = .button
+        disabled.enabled = false
+        root.substitutedHit = disabled
+        do {
+            try await fixture.driver.click("pointer.Undo", in: fixture.window)
+            Issue.record("A disabled SwiftUI accessibility control accepted pointer input.")
+        } catch {
+            #expect((error as? GateBlocked)?.message == "The actual pointer control is disabled or has changed geometry.")
+        }
+        #expect(counter.count == 0)
+        #expect(fixture.capture.count("Undo") == 1)
+        #expect((try fixture.input("Undo")["posted"] as? [Any])?.isEmpty == true)
         root.substitutedHit = nil
+        try await fixture.moveAway()
         let number = fixture.window.windowNumber
+        let witness = CanonicalChangeWitness()
         let monitor = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved) { event in
             let owned = event.windowNumber == number && (event.cgEvent?.getIntegerValueField(.eventSourceUserData) ?? 0) > 0
-            MainActor.assumeIsolated { if owned { root.substitutedHit = replacement } }
+            MainActor.assumeIsolated {
+                if owned {
+                    witness.switched = true
+                    root.substitutedHit = replacement
+                }
+            }
             return event
         }
         defer { if let monitor { NSEvent.removeMonitor(monitor) } }
         do {
             try await fixture.driver.click("pointer.Undo", in: fixture.window)
             Issue.record("A different accessibility target borrowed the original hosting surface and geometry.")
-        } catch {}
+        } catch {
+            #expect((error as? GateBlocked)?.message == "The actual system pointer or original control changed before Down.")
+        }
+        #expect(witness.switched)
+        #expect((root.substitutedHit as? ReplacementHit) === replacement)
+        let input = try fixture.input("Undo")
+        let posted = try #require(input["posted"] as? [[String: Any]])
+        let received = try #require(input["received"] as? [[String: Any]])
+        #expect(posted.filter { $0["type"] as? UInt32 == CGEventType.mouseMoved.rawValue }.count == 1)
+        #expect(received.filter { $0["type"] as? UInt == NSEvent.EventType.mouseMoved.rawValue }.count == 1)
+        #expect(!posted.contains { $0["type"] as? UInt32 == CGEventType.leftMouseDown.rawValue })
+        #expect(input["ownedDownPosted"] as? Bool == false)
         try await Task.sleep(for: .milliseconds(100))
         #expect(counter.count == 0)
-        #expect(fixture.capture.count("Undo") == 0)
+        #expect(fixture.capture.count("Undo") == 1)
+        #expect(!CGEventSource.buttonState(.combinedSessionState, button: .left))
         #expect(try #require(fixture.probe("Undo")) === probe)
         #expect(fixture.window.convertToScreen(probe.convert(probe.bounds, to: nil)) == frame)
     }
@@ -2119,6 +2159,18 @@ struct NativePointerInteractionTests {
     func owner(_ hit: NSView, original: NSView? = nil, at location: NSPoint? = nil) -> NSView? {
         NativeAcceptancePointer.ownedHostingView(for: hit, probe: marker, root: original ?? root, window: window, point: location ?? point)
     }
+    try #require(wrapper.window === window && marker.window === window)
+    try #require(wrapper.isDescendant(of: root) && marker.isDescendant(of: wrapper))
+    try #require(!wrapper.isHiddenOrHasHiddenAncestor && !wrapper.visibleRect.isEmpty)
+    let bounds = marker.convert(marker.bounds, to: wrapper)
+    let local = wrapper.convert(point, from: nil)
+    try #require(wrapper.bounds.contains(bounds) && wrapper.visibleRect.contains(bounds))
+    try #require(wrapper.bounds.contains(local) && wrapper.visibleRect.contains(local))
+    #expect(owner(root) === root)
+    #expect(owner(wrapper) === root)
+    wrapper.setAccessibilityElement(false)
+    wrapper.setAccessibilityEnabled(false)
+    try #require(!wrapper.isAccessibilityElement() && !wrapper.isAccessibilityEnabled())
     #expect(owner(wrapper) === root)
     let sibling = NSView(frame: wrapper.frame); root.addSubview(sibling)
     defer { sibling.removeFromSuperview() }
