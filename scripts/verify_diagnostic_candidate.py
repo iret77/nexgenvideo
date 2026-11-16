@@ -93,6 +93,8 @@ BPY_DIAGNOSTIC_PATHS = {
 }
 
 APP_DIAGNOSTIC_PATHS = {
+    "scripts/isolated_test_home.py",
+    "scripts/test_isolated_test_home.py",
     ".github/workflows/diagnostic-acceptance.yml",
     "scripts/verify_diagnostic_candidate.py",
     "scripts/test_diagnostic_acceptance.py",
