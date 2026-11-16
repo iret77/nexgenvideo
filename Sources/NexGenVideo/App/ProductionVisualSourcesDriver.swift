@@ -1163,7 +1163,8 @@ enum NativeAcceptancePointer {
                 throw GateBlocked("The pointer accessibility ancestry has an unknown role.")
             }
             if roles.contains(currentRole.rawValue) {
-                let readFrame = current.accessibilityFrame, readEnabled = current.isAccessibilityEnabled
+                let readFrame: (@MainActor () -> NSRect)? = current.accessibilityFrame
+                let readEnabled = current.isAccessibilityEnabled
                 trace[trace.count - 1]["frameGetter"] = readFrame != nil
                 trace[trace.count - 1]["enabledGetter"] = readEnabled != nil
                 guard let bounds = readFrame?(), let enabled = readEnabled?() else {
