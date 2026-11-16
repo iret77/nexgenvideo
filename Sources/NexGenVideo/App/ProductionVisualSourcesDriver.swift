@@ -1029,22 +1029,26 @@ enum NativeAcceptancePointer {
         }
         var posted: [[String: Any]] = []
         var windowChecks: [String: Bool] = [:]
+        var observedWindowAtPoint: Int?
         func evidence(_ status: String) -> [String: Any] {
             let pointer = NSEvent.mouseLocation
             return ["status": status, "transaction": token.uuidString, "tag": tag, "window": number,
                 "targetScreenPoint": [screenPoint.x, screenPoint.y], "quartzPoint": [location.x, location.y],
                 "actualScreenPoint": [pointer.x, pointer.y], "expected": [delivery.expected.x, delivery.expected.y],
                 "posted": posted, "received": delivery.events, "matched": delivery.matched, "windowChecks": windowChecks,
+                "windowAtPoint": observedWindowAtPoint as Any? ?? NSNull(),
                 "buttonDown": CGEventSource.buttonState(.combinedSessionState, button: .left)]
         }
         func checkWindow(at point: CGPoint) throws {
             let global = NSPoint(x: point.x, y: screen.frame.maxY - point.y)
             let local = root.convert(window.convertPoint(fromScreen: global), from: nil)
+            let windowAtPoint = NSWindow.windowNumber(at: global, belowWindowWithWindowNumber: 0)
+            observedWindowAtPoint = windowAtPoint
             windowChecks = ["lease": owner == token, "active": NSApp.isActive, "visible": window.isVisible,
                 "key": window.isKeyWindow, "receivesMouseEvents": !window.ignoresMouseEvents,
                 "originalRoot": window.contentView === root, "originalFrame": window.frame == originalFrame,
                 "pointInside": root.bounds.contains(local),
-                "frontmostAtPoint": NSWindow.windowNumber(at: global, belowWindowWithWindowNumber: 0) == number,
+                "frontmostAtPoint": windowAtPoint == number,
                 "buttonReleased": !CGEventSource.buttonState(.combinedSessionState, button: .left)]
             guard windowChecks.values.allSatisfy({ $0 }) else {
                 throw GateBlocked("The owned native pointer window changed before movement.")

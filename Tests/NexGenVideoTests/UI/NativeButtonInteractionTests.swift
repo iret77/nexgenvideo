@@ -788,6 +788,10 @@ struct NativePointerInteractionTests {
             VStack(spacing: AppTheme.Spacing.sm) {
                 HStack(spacing: AppTheme.Spacing.sm) {
                     Text("Pale room")
+                        .background {
+                            AppRelaunchClickProbe(identifier: "pointer.Away", acceptanceState: true)
+                                .allowsHitTesting(false)
+                        }
                     Spacer()
                     button("Undo")
                     button("Redo")
@@ -954,7 +958,9 @@ struct NativePointerInteractionTests {
 
         func moveAway() async throws {
             let screen = try #require(NSScreen.screens.first)
-            let point = window.convertPoint(toScreen: NSPoint(x: 4, y: 4))
+            let away = try #require(probe("Away"))
+            try #require(away.window === window && !away.isHiddenOrHasHiddenAncestor && !away.visibleRect.isEmpty)
+            let point = try self.point("Away")
             try await ProductionNativeReadingAcceptance.movePointer(to: CGPoint(x: point.x, y: screen.frame.maxY - point.y),
                                                                     window: window, driver: driver)
         }
