@@ -274,12 +274,14 @@ enum TimelineEditingOwnerAcceptance {
     }
 
     private static func wheel(_ delta: Int32, horizontal: Bool, view: TimelineView, window: NSWindow, driver: ProductionVisualSourcesDriver) async throws {
+        let transaction = try NativeAcceptancePointer.claim()
+        defer { NativeAcceptancePointer.release(transaction) }
         guard let screen = NSScreen.screens.first else { throw GateBlocked("No native screen for timeline scroll.") }
         let p = NSPoint(x: view.visibleRect.midX, y: view.visibleRect.maxY - 8)
         try exposed(p, view: view, window: window)
         let global = window.convertPoint(toScreen: view.convert(p, to: nil))
         let location = CGPoint(x: global.x, y: screen.frame.maxY - global.y)
-        try await ProductionNativeReadingAcceptance.movePointer(to: location, window: window, driver: driver)
+        try await ProductionNativeReadingAcceptance.movePointer(to: location, window: window, driver: driver, transaction: transaction)
         let before = view.visibleRect
         for event in try HangDiagnosticReplay.scrollGestureEvents(delta: delta, location: location) {
             guard let cg = event.cgEvent else { throw GateBlocked("The native wheel event is unavailable.") }

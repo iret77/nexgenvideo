@@ -188,27 +188,31 @@ enum AppViewOwnerAcceptance {
         guard let currentRoot = window.contentView,
               let preview = AppNativeMenuAcceptance.views(currentRoot).compactMap({ $0 as? PreviewNSView }).first(where: { !$0.isHiddenOrHasHiddenAncestor }),
               let screen = NSScreen.screens.first else { throw GateBlocked("The actual video canvas is unavailable for anchored zoom.") }
-        let local = NSPoint(x: preview.bounds.width * 0.3, y: preview.bounds.height * 0.6)
-        let global = window.convertPoint(toScreen: preview.convert(local, to: nil))
-        guard let wheel = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: 24, wheel2: 0, wheel3: 0) else {
-            throw GateBlocked("The actual anchored canvas wheel event is unavailable.")
+        do {
+            let transaction = try NativeAcceptancePointer.claim()
+            defer { NativeAcceptancePointer.release(transaction) }
+            let local = NSPoint(x: preview.bounds.width * 0.3, y: preview.bounds.height * 0.6)
+            let global = window.convertPoint(toScreen: preview.convert(local, to: nil))
+            guard let wheel = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: 24, wheel2: 0, wheel3: 0) else {
+                throw GateBlocked("The actual anchored canvas wheel event is unavailable.")
+            }
+            wheel.location = CGPoint(x: global.x, y: screen.frame.height - global.y)
+            try await ProductionNativeReadingAcceptance.movePointer(to: wheel.location, window: window, driver: driver, transaction: transaction)
+            wheel.flags = .maskCommand; wheel.post(tap: .cghidEventTap)
+            try await driver.wait("actual anchored canvas wheel") { editor.canvasZoom > 1 && editor.canvasOffset != .zero }
+            let anchoredZoom = editor.canvasZoom, anchoredOffset = editor.canvasOffset
+            guard let pan = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: 8, wheel2: 6, wheel3: 0) else {
+                throw GateBlocked("The actual canvas pan wheel event is unavailable.")
+            }
+            pan.location = wheel.location; pan.post(tap: .cghidEventTap)
+            try await driver.wait("actual free canvas pan") { editor.canvasOffset != anchoredOffset && editor.canvasZoom == anchoredZoom }
+            let panned = editor.canvasOffset
+            guard editor.timeline == timeline && editor.selectedClipIds == selection else { throw GateBlocked("Canvas Pan changed clip geometry or selection.") }
+            try driver.capture("viewer-panned", target: window)
+            try driver.record("native-viewer-wheel", fields: ["zoom": anchoredZoom,
+                "anchoredOffset": [anchoredOffset.width, anchoredOffset.height], "pannedOffset": [panned.width, panned.height],
+                "input": "command-wheel-then-plain-wheel", "timelineUnchanged": true])
         }
-        wheel.location = CGPoint(x: global.x, y: screen.frame.height - global.y)
-        try await ProductionNativeReadingAcceptance.movePointer(to: wheel.location, window: window, driver: driver)
-        wheel.flags = .maskCommand; wheel.post(tap: .cghidEventTap)
-        try await driver.wait("actual anchored canvas wheel") { editor.canvasZoom > 1 && editor.canvasOffset != .zero }
-        let anchoredZoom = editor.canvasZoom, anchoredOffset = editor.canvasOffset
-        guard let pan = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: 8, wheel2: 6, wheel3: 0) else {
-            throw GateBlocked("The actual canvas pan wheel event is unavailable.")
-        }
-        pan.location = wheel.location; pan.post(tap: .cghidEventTap)
-        try await driver.wait("actual free canvas pan") { editor.canvasOffset != anchoredOffset && editor.canvasZoom == anchoredZoom }
-        let panned = editor.canvasOffset
-        guard editor.timeline == timeline && editor.selectedClipIds == selection else { throw GateBlocked("Canvas Pan changed clip geometry or selection.") }
-        try driver.capture("viewer-panned", target: window)
-        try driver.record("native-viewer-wheel", fields: ["zoom": anchoredZoom,
-            "anchoredOffset": [anchoredOffset.width, anchoredOffset.height], "pannedOffset": [panned.width, panned.height],
-            "input": "command-wheel-then-plain-wheel", "timelineUnchanged": true])
         try await driver.menu("preview.zoom", title: "Fit", in: window)
         try await driver.wait("Fit clears actual zoom and offset") { editor.canvasZoom == 1 && editor.canvasOffset == .zero && editor.timeline == timeline }
         try await overlayDrag(clip: clip, editor: editor, window: window, driver: driver)

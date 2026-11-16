@@ -1266,6 +1266,7 @@ struct NativePointerInteractionTests {
         var task: Task<Void, Error>?
         var competitor: Task<Void, Never>?
         var competitorRefused = false
+        var competingMovementRefused = false
     }
 
     private final class DropFirstUp: @unchecked Sendable {
@@ -1302,7 +1303,7 @@ struct NativePointerInteractionTests {
         let appKitPoint = try fixture.point("Undo")
         let screen = try #require(NSScreen.screens.first)
         let point = CGPoint(x: appKitPoint.x, y: screen.frame.maxY - appKitPoint.y)
-        try await ProductionNativeReadingAcceptance.movePointer(to: point, window: fixture.window, driver: fixture.driver)
+        try await ProductionNativeReadingAcceptance.movePointer(to: point, window: fixture.window, driver: fixture.driver, transaction: token)
         let source = try #require(CGEventSource(stateID: .combinedSessionState))
         let down = try #require(CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left))
         let up = try #require(CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left))
@@ -1376,6 +1377,7 @@ struct NativePointerInteractionTests {
         try await fixture.ready()
         try await fixture.moveAway()
         let box = TaskBox(), number = fixture.window.windowNumber
+        let screen = try #require(NSScreen.screens.first)
         let monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
             let owned = event.windowNumber == number && (event.cgEvent?.getIntegerValueField(.eventSourceUserData) ?? 0) > 0
             MainActor.assumeIsolated {
@@ -1385,7 +1387,19 @@ struct NativePointerInteractionTests {
                     do {
                         try await fixture.driver.clickButton("pointer.Later", title: "Later", in: fixture.window)
                         Issue.record("Competing button preparation entered the owned pointer transaction.")
-                    } catch { box.competitorRefused = true }
+                    } catch {
+                        #expect((error as? GateBlocked)?.message == "A native pointer transaction is already active.")
+                        box.competitorRefused = (error as? GateBlocked)?.message == "A native pointer transaction is already active."
+                    }
+                    do {
+                        try await ProductionNativeReadingAcceptance.movePointer(
+                            to: CGPoint(x: before.x, y: screen.frame.maxY - before.y),
+                            window: fixture.window, driver: fixture.driver)
+                        Issue.record("Competing wheel preparation entered the owned pointer transaction.")
+                    } catch {
+                        #expect((error as? GateBlocked)?.message == "A native pointer transaction is already active.")
+                        box.competingMovementRefused = (error as? GateBlocked)?.message == "A native pointer transaction is already active."
+                    }
                     #expect(NSEvent.mouseLocation == before)
                 }
             }
@@ -1396,6 +1410,7 @@ struct NativePointerInteractionTests {
         let competitor = try #require(box.competitor)
         await competitor.value
         #expect(box.competitorRefused)
+        #expect(box.competingMovementRefused)
         try await fixture.driver.wait("single unperturbed callback") { fixture.capture.count("Undo") == 1 }
         #expect(fixture.capture.count("Later") == 0)
         try delivered("Undo", in: fixture)
@@ -1485,6 +1500,28 @@ struct NativePointerInteractionTests {
 
     @MainActor private final class CanonicalChangeWitness {
         var switched = false
+    }
+
+    @MainActor private final class MethodBasedAXElement {
+        var role: NSAccessibility.Role
+        var frame: NSRect
+        var parent: AnyObject
+        var enabled = true
+
+        init(role: NSAccessibility.Role, frame: NSRect, parent: AnyObject) {
+            self.role = role
+            self.frame = frame
+            self.parent = parent
+        }
+
+        @objc func accessibilityRole() -> NSAccessibility.Role? { role }
+        @objc func accessibilityFrame() -> NSRect { frame }
+        @objc func accessibilityParent() -> Any? { parent }
+        @objc func isAccessibilityEnabled() -> Bool { enabled }
+    }
+
+    @MainActor private final class IncompleteAXElement {
+        @objc func accessibilityRole() -> NSAccessibility.Role? { .textField }
     }
 
     @MainActor private final class CanonicalNativeFixture {
@@ -1607,6 +1644,20 @@ struct NativePointerInteractionTests {
         #expect(input["buttonDownObserved"] as? Bool == true)
         #expect(input["buttonReleased"] as? Bool == true)
         try fixture.record("canonical-input", input)
+        fixture.reset()
+        let methodControl = MethodBasedAXElement(role: .textField, frame: fixture.leaf.measuredFrame, parent: fixture.window)
+        let methodLabel = MethodBasedAXElement(role: .staticText, frame: fixture.leaf.measuredFrame, parent: methodControl)
+        methodLabel.enabled = false
+        #expect(!((methodControl as AnyObject) is any NSAccessibilityProtocol))
+        fixture.control.canonicalHit = methodLabel
+        try await fixture.click()
+        let methodInput = try #require(fixture.input)
+        #expect(methodInput["status"] as? String == "delivered")
+        #expect(methodInput["accessibilityRole"] as? String == kAXTextFieldRole)
+        #expect(fixture.control.downTags.count == 2)
+        #expect(methodInput["buttonDownObserved"] as? Bool == true)
+        #expect(methodInput["buttonReleased"] as? Bool == true)
+        try fixture.record("method-based-input", methodInput)
         let real = try await Fixture("canonical-real-field")
         defer { real.close() }
         try await real.ready()
@@ -1628,7 +1679,8 @@ struct NativePointerInteractionTests {
         var records: [[String: Any]] = []
         for invalid in ["nil", "nonaccessibility", "absent-role", "unknown-role", "unrecognized-role", "empty-role",
                         "disabled-view", "disabled-leaf", "empty-frame", "nonfinite-frame", "outside-hit",
-                        "misses-point", "foreign-window", "cycle", "missing-parent", "group-without-control", "unknown-surface-leaf"] {
+                        "misses-point", "foreign-window", "cycle", "missing-parent", "group-without-control", "unknown-surface-leaf",
+                        "method-only-disabled", "method-only-incomplete"] {
             fixture.reset()
             switch invalid {
             case "nil": fixture.control.canonicalHit = nil
@@ -1646,6 +1698,11 @@ struct NativePointerInteractionTests {
             case "foreign-window": fixture.leaf.parentElement = foreign
             case "cycle": fixture.leaf.parentElement = fixture.leaf
             case "missing-parent": fixture.leaf.parentElement = nil
+            case "method-only-disabled":
+                let leaf = MethodBasedAXElement(role: .textField, frame: fixture.leaf.measuredFrame, parent: fixture.window)
+                leaf.enabled = false
+                fixture.control.canonicalHit = leaf
+            case "method-only-incomplete": fixture.control.canonicalHit = IncompleteAXElement()
             case "group-without-control": fixture.leaf.roleValue = .group
             case "unknown-surface-leaf":
                 let unknown = CanonicalAXLeaf(window: fixture.window, frame: fixture.leaf.measuredFrame)
@@ -1657,7 +1714,29 @@ struct NativePointerInteractionTests {
             do {
                 try await fixture.click()
                 Issue.record("An invalid canonical native accessibility target posted input: \(invalid)")
-            } catch {}
+            } catch {
+                if invalid == "method-only-disabled" || invalid == "method-only-incomplete" {
+                    let failure = try #require(fixture.input?["accessibilityGuardFailure"] as? [String: Any])
+                    #expect(failure["provided"] as? Bool == true)
+                    #expect(failure["formalProtocolConformance"] as? Bool == false)
+                    let ancestry = try #require(failure["ancestry"] as? [[String: Any]])
+                    let original = try #require(ancestry.first)
+                    #expect(original["roleGetter"] as? Bool == true)
+                    #expect(original["role"] as? String == kAXTextFieldRole)
+                    if invalid == "method-only-disabled" {
+                        #expect((error as? GateBlocked)?.message == "The actual pointer control is disabled or has changed geometry.")
+                        #expect(failure["type"] as? String == String(reflecting: MethodBasedAXElement.self))
+                        #expect(original["frameGetter"] as? Bool == true)
+                        #expect(original["enabledGetter"] as? Bool == true)
+                        #expect(original["enabled"] as? Bool == false)
+                    } else {
+                        #expect((error as? GateBlocked)?.message == "The actual pointer control has incomplete accessibility getters.")
+                        #expect(failure["type"] as? String == String(reflecting: IncompleteAXElement.self))
+                        #expect(original["frameGetter"] as? Bool == false)
+                        #expect(original["enabledGetter"] as? Bool == false)
+                    }
+                }
+            }
             try await Task.sleep(for: .milliseconds(50))
             #expect(counter.count == 0)
             #expect(fixture.control.downTags.isEmpty)
