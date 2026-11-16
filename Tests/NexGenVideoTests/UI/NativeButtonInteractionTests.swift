@@ -1459,6 +1459,10 @@ struct NativePointerInteractionTests {
             let wheels = fixture.driver.interactions.dropFirst(interactionStart).filter {
                 $0["kind"] as? String == "wheel" && $0["id"] as? String == "pointer.Later"
             }
+            #expect(!wheels.isEmpty)
+            #expect(wheels.allSatisfy { $0["nativeScrollEnded"] as? Bool == true })
+            #expect(wheels.allSatisfy { ($0["settledGeometrySamples"] as? Int ?? 0) >= 2 })
+            #expect(wheels.allSatisfy { ($0["settledGeometrySeconds"] as? Double ?? 0) >= 0.25 })
             #expect(wheels.contains { wheel in
                 guard let start = wheel["before"] as? [CGFloat], let end = wheel["after"] as? [CGFloat],
                       start.count == 2, end.count == 2 else { return false }
