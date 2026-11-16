@@ -993,7 +993,7 @@ def _current_core_import_view(raw, path, *, current=False):
                                              '85fd1de9410291d002aed95373dcb152eb6c0dd3b00e3a3c34fabf6e796a2617'),
         }
         pack_additions = {
-            'signed_pack_product': '50d44454849d38a9d1381237c144d0eb950e664e5b12749879ac2425ce526f2a',
+            'signed_pack_product': '66f4a13b8cb75d4e25cff4b2d47d7a92b7d7bac73e1c0a7208c33bbddb045c18',
             'original_pack_execution': 'd0192ae09a6cda4cfff16714d4b2a3b399b1918481728484a7e273a8cfd6c419',
             'pack_verification_provenance': '9433a2fa8e875b95495127d5db17502b5665a3f7e152613074ddaf5ad7b99052',
         }

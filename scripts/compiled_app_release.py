@@ -1815,6 +1815,7 @@ def pack_verification_provenance(product=None):
 
 
 def signed_pack_product():
+    import app_cohort_v2
     if os.environ.get('NGV_COMPILED_APP_RELEASE') != 'true':
         return None
     root = Path(os.environ['RUNNER_TEMP']) / 'release-signed-binding'
@@ -1827,8 +1828,14 @@ def signed_pack_product():
     require(binding.get('sourceSHA') == product, 'Pack admission selected another signed product')
     manifest = checkpoint.verify_manifest(binding['manifest'], product, binding['producer']['id'])
     if manifest['nativeEvidence'].get('schema') in ('release-native-compiled-app/v5', 'release-native-compiled-app/v6'):
-        require(manifest['nativeEvidence']['cohortV2']['harnessSourceSHA'] == product,
-            'Pack admission differs from its signed native cohort')
+        context = manifest['nativeEvidence']['cohortV2']
+        app_cohort_v2.verify_context(context)
+        compiler = context['harnessSourceSHA']
+        allowed = app_cohort_v2.consumer_ci_paths(compiler, product)
+        changed = app_cohort_v2.git('diff', '--name-only', '--no-renames', compiler, product).splitlines()
+        require(set(changed) <= allowed
+            and manifest['componentAssembly']['signedBase'] == app_cohort_v2.manifest(product)['signedBase'],
+            'Signed pack product changed outside its verified compiler cohort')
         return product
     return None
 
