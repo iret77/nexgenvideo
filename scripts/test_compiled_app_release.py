@@ -818,6 +818,55 @@ class CompiledAppReleaseTests(unittest.TestCase):
             self.assertEqual(image.read_bytes(), b'new signed executable')
             self.assertEqual(partial.read_bytes(), b'incomplete zip, not a qualified product')
 
+    def test_signed_pack_product_preserves_compiler_context_across_reviewed_ci_transitions(self):
+        import app_cohort_v2
+        product = 'b' * 40
+        origin = {'payloadArtifactID': 13, 'proofArtifactID': 12}
+        modes = [('release-native-compiled-app/v5', 'a' * 40, product, None),
+            ('release-native-compiled-app/v5', 'a' * 40, 'c' * 40, {'productSourceSHA': product}),
+            ('release-native-compiled-app/v6', product, 'c' * 40, {'productSourceSHA': product}),
+            ('release-native-compiled-app/v4', 'a' * 40, product, None)]
+        for schema, compiler, harness, retained in modes:
+            for defect in ('none', 'context', 'native-closure', 'unreviewed', 'binding', 'base'):
+                if schema.endswith('/v4') and defect != 'none':
+                    continue
+                with self.subTest(schema=schema, defect=defect, harness=harness), tempfile.TemporaryDirectory() as temporary:
+                    root = Path(temporary) / 'release-signed-binding'
+                    root.mkdir()
+                    context = {'harnessSourceSHA': compiler}
+                    manifest = {'nativeEvidence': {'schema': schema, 'cohortV2': context},
+                        'componentAssembly': {'signedBase': copy.deepcopy(origin)}}
+                    binding = {'sourceSHA': 'f' * 40 if defect == 'binding' else product,
+                        'producer': {'id': 100}, 'manifest': manifest}
+                    (root / 'binding.json').write_text(json.dumps(binding))
+                    env = {'NGV_COMPILED_APP_RELEASE': 'true', 'RUNNER_TEMP': temporary, 'GITHUB_SHA': harness}
+                    difference = '' if compiler == product else 'scripts/compiled_app_release.py'
+                    if defect == 'unreviewed':
+                        difference = 'Sources/NexGenVideo/changed.swift'
+                    with patch.dict(os.environ, env), patch.object(release.checkpoint, 'packaging_binding', return_value=retained), \
+                            patch.object(release.checkpoint, 'verify_manifest', return_value=manifest) as signed, \
+                            patch.object(app_cohort_v2, 'verify_context',
+                                side_effect=ValueError('invalid original context') if defect == 'context' else None) as verify, \
+                            patch.object(app_cohort_v2, 'consumer_ci_paths', return_value={'scripts/compiled_app_release.py'},
+                                side_effect=ValueError('changed native component or ancestry') if defect == 'native-closure' else None) as consumer, \
+                            patch.object(app_cohort_v2, 'git', return_value=difference) as changed, \
+                            patch.object(app_cohort_v2, 'manifest', return_value={
+                                'signedBase': {'payloadArtifactID': 14} if defect == 'base' else origin}):
+                        if defect != 'none':
+                            with self.assertRaises(ValueError): release.signed_pack_product()
+                            continue
+                        self.assertEqual(release.signed_pack_product(), None if schema.endswith('/v4') else product)
+                        signed.assert_called_once_with(manifest, product, 100)
+                        self.assertEqual(context['harnessSourceSHA'], compiler)
+                        if schema.endswith('/v4'):
+                            verify.assert_not_called()
+                            consumer.assert_not_called()
+                            changed.assert_not_called()
+                        else:
+                            verify.assert_called_once_with(context)
+                            consumer.assert_called_once_with(compiler, product)
+                            changed.assert_called_once_with('diff', '--name-only', '--no-renames', compiler, product)
+
     def test_cohort_pack_carrier_preserves_native_history_and_rejects_rebinding(self):
         import app_cohort_v2
         import io
