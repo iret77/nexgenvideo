@@ -189,6 +189,7 @@ jobs:
             ${{ runner.temp }}/evidence/result.json
             ${{ runner.temp }}/evidence/execution-provenance.json
             ${{ runner.temp }}/evidence/replay.log
+            ${{ runner.temp }}/evidence/home-environment.json
             ${{ runner.temp }}/evidence/panel-*.png
             ${{ runner.temp }}/evidence/sample.txt
           retention-days: 7

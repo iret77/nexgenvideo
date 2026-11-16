@@ -758,29 +758,13 @@ class ExternalTestBundleTests(unittest.TestCase):
                       for status, name in zip(changes[:-1:2], changes[1:-1:2])]}
         with patch.dict(os.environ, {'GITHUB_SHA': current}):
             _, files = journey.test_source_identity(current)
-            proof = bundle._compiled_compatibility(producer, receipt['testFiles'], current, files,
-                                                   originals, comparison)
-        self.assertEqual(len(proof['producerFiles']), 37)
-        self.assertEqual(len(proof['consumerFiles']), 39)
-        self.assertEqual(proof['producerFiles'], receipt['testFiles'])
-        self.assertEqual(set(proof['consumerFiles']) - set(proof['producerFiles']),
-                         {'scripts/compiled_current_core_reuse.py',
-                          'scripts/fixtures/compiled-current-core-reuse-1047.json'})
-        self.assertTrue(proof['cohortMetadata']['appTransition']['newRuntimeProductProvenanceRequired'])
-        transition = proof['cohortMetadata']['appTransition']
-        canonical = {'NexGenVideoTests.NativePointerInteractionTests/' + name
-                     + '()/NativeButtonInteractionTests.swift:SOURCE-LINE:6' for name in (
-                         'canonicalNativeAccessibilityHitKeepsSystemInputAndRealFieldFocus',
-                         'canonicalNativeAccessibilityFailuresNeverPostDown',
-                         'canonicalNativeAccessibilityIdentityAndGeometryAreRevalidatedBeforeDown')}
-        current_cohort = json.loads(output('show', current + ':scripts/fixtures/app-cohort.json'))
-        self.assertEqual(transition['consumerBuild'], current_cohort['build'])
-        self.assertEqual(len(transition['additionalNativeAppTests']), 30)
-        self.assertTrue(canonical <= set(transition['additionalNativeAppTests']))
-        driver = 'Sources/NexGenVideo/App/ProductionVisualSourcesDriver.swift'
-        self.assertTrue(all(driver in transition['changedRolePaths'][role]
-                            for role in ('production', 'testable', 'tests')))
-        self.assertNotIn(driver, proof['consumerFiles'])
+            self.assertIn('scripts/isolated_test_home.py', files)
+            client = 'scripts/external-gui/NexGenVideoExternalUITests/UserJourneyTests.swift'
+            self.assertNotEqual(files[client], receipt['testFiles'][client])
+            with self.assertRaisesRegex(ValueError, 'UI test receipt has unknown added verifier inputs'):
+                bundle._compiled_compatibility(producer, receipt['testFiles'], current, files,
+                                               originals, comparison)
+        self.assertEqual(len(receipt['testFiles']), 37)
 
         archive = self.archive([('original-client', 'file', b'opaque retained client test fixture')])
         input_receipt = receipt | {'archiveSHA256': journey.sha256(archive)}
@@ -809,19 +793,32 @@ class ExternalTestBundleTests(unittest.TestCase):
             self.fail('Unexpected historical-client API route: ' + route)
 
         destination = self.root / 'historical-resolved'
-        with patch.dict(os.environ, {'GITHUB_SHA': current, 'GITHUB_RUN_ID': '78',
+        with patch.dict(os.environ, {'GITHUB_SHA': producer, 'GITHUB_RUN_ID': '78',
                                     'GITHUB_OUTPUT': str(self.root / 'output')}), \
+                patch.object(journey, 'test_source_identity', return_value=(producer, receipt['testFiles'])), \
                 patch.object(bundle, 'api', side_effect=api), \
                 patch.object(bundle, 'items', return_value=[job]), \
                 patch.object(bundle, 'download', side_effect=lambda item, path: path.write_bytes(transfer.read_bytes())):
             bundle.resolve(SimpleNamespace(run_id=receipt['runID'], artifact_id=34,
                 artifact_sha256=artifact['digest'].removeprefix('sha256:'), destination=str(destination)))
-        self.assertEqual(set(requested), set(originals))
-        self.assertEqual(len(requested), 39)
+        self.assertEqual(requested, [])
         self.assertEqual((destination / 'tests-input.json').read_bytes(), raw_receipt)
         self.assertEqual((destination / 'tests.tar.gz').read_bytes(), archive.read_bytes())
-        self.assertEqual(journey.read_json(destination / 'tests-producer.json')['compiledCompatibility'], proof)
-        self.assertEqual(bundle.verify_input(destination, current, files), input_receipt)
+        self.assertNotIn('compiledCompatibility', journey.read_json(destination / 'tests-producer.json'))
+        self.assertEqual(bundle.verify_input(destination, producer, receipt['testFiles']), input_receipt)
+        self.assertEqual(receipt['testFiles'], {name: hashlib.sha256(originals[name]).hexdigest()
+                                               for name in receipt['testFiles']})
+        requests = []
+        with patch.dict(os.environ, {'GITHUB_SHA': current, 'GITHUB_RUN_ID': '78'}), \
+                patch.object(journey, 'test_source_identity', return_value=(current, files)), \
+                patch.object(bundle, 'api', side_effect=lambda route: requests.append(route) or api(route)), \
+                patch.object(bundle, 'download', side_effect=lambda item, path: path.write_bytes(transfer.read_bytes())), \
+                self.assertRaisesRegex(ValueError, 'Invalid original UI test source map'):
+            bundle.resolve(SimpleNamespace(run_id=receipt['runID'], artifact_id=34,
+                artifact_sha256=artifact['digest'].removeprefix('sha256:'), destination=str(self.root / 'current-rejected')))
+        self.assertFalse(any(route.startswith('/contents/') for route in requests))
+        with self.assertRaises(ValueError):
+            bundle.verify_input(destination, current, files)
 
     def test_resolve_rejects_invalid_historical_receipt_before_source_requests(self):
         fixture = self.compiled_client_fixture()
@@ -842,6 +839,45 @@ class ExternalTestBundleTests(unittest.TestCase):
             with self.subTest(index=index), patch.object(journey, 'read_json', return_value=receipt), self.assertRaises(ValueError):
                 self.resolve_compiled_fixture(case)
             self.assertFalse(any(route.startswith('/contents/') for route in requests))
+
+    def test_current_client_resolver_preserves_every_current_source_fingerprint_and_product(self):
+        fixture = self.compiled_client_fixture()
+        self.assertEqual(set(fixture.files), {'scripts/external-gui/' + name for name in journey.TEST_INPUTS}
+                         | set(journey.SHARED_INPUTS))
+        self.assertEqual(fixture.files['scripts/isolated_test_home.py'],
+                         journey.sha256(journey.REPOSITORY / 'scripts/isolated_test_home.py'))
+        receipt = fixture.receipt | {'sourceSHA': fixture.current, 'testFiles': fixture.files}
+        raw = (json.dumps(receipt, indent=2) + '\n').encode()
+        transfer = self.root / 'current-transfer.zip'
+        with zipfile.ZipFile(transfer, 'w') as archive:
+            archive.write(fixture.archive, 'tests.tar.gz')
+            archive.writestr('tests-input.json', raw)
+        run = self.run | {'head_sha': fixture.current}
+        artifact = fixture.artifact | {'digest': 'sha256:' + journey.sha256(transfer),
+                                      'workflow_run': {'id': 12, 'head_sha': fixture.current}}
+        job = self.job | {'head_sha': fixture.current}
+        responses = {'/actions/runs/12': run, '/actions/artifacts/34': artifact}
+        with patch.dict(os.environ, {'GITHUB_SHA': fixture.current, 'GITHUB_RUN_ID': '78',
+                                    'GITHUB_OUTPUT': str(self.root / 'output')}), \
+                patch.object(journey, 'test_source_identity', return_value=(fixture.current, fixture.files)), \
+                patch.object(bundle, 'api', side_effect=lambda route: responses[route]), \
+                patch.object(bundle, 'items', return_value=[job]), \
+                patch.object(bundle, 'download', side_effect=lambda item, path: path.write_bytes(transfer.read_bytes())):
+            bundle.resolve(SimpleNamespace(run_id=12, artifact_id=34,
+                artifact_sha256=artifact['digest'].removeprefix('sha256:'), destination=str(fixture.destination)))
+        self.assertEqual((fixture.destination / 'tests-input.json').read_bytes(), raw)
+        self.assertEqual((fixture.destination / 'tests.tar.gz').read_bytes(), fixture.archive.read_bytes())
+        producer = journey.read_json(fixture.destination / 'tests-producer.json')
+        self.assertNotIn('compiledCompatibility', producer)
+        self.assertEqual(producer['run'], run)
+        self.assertEqual(producer['job'], job)
+        self.assertEqual(bundle.verify_input(fixture.destination, fixture.current, fixture.files), receipt)
+        xctestrun, actual = bundle.consume(fixture.destination, self.root / 'current-products', fixture.current, fixture.files)
+        self.assertEqual(actual, receipt)
+        self.assertEqual(bundle.products_sha256(xctestrun.parent), receipt['productsSHA256'])
+        with self.assertRaises(ValueError):
+            bundle.verify_input(fixture.destination, fixture.current,
+                                fixture.files | {'scripts/isolated_test_home.py': '0' * 64})
 
     def test_current_core_projection_preserves_build_reachable_code_and_imports(self):
         for name in ('scripts/app_cohort_v2.py', 'scripts/app_release_v2.py', 'scripts/compiled_app_release.py',
