@@ -91,11 +91,57 @@ final class ProductionVisualSourcesDriver {
                   hit === scroll || hit.isDescendant(of: scroll) else { throw GateBlocked("The scroll viewport is covered: " + id) }
             let point = target.convertPoint(toScreen: scroll.convert(center, to: nil))
             let before = clip.bounds.origin
+            guard let document = scroll.documentView else { throw GateBlocked("The native scroll document disappeared: " + id) }
+            @MainActor final class ScrollCompletion {
+                var ended = false
+            }
+            let completion = ScrollCompletion()
+            let observer = NotificationCenter.default.addObserver(forName: NSScrollView.didEndLiveScrollNotification,
+                                                                  object: scroll, queue: .main) { _ in
+                MainActor.assumeIsolated { completion.ended = true }
+            }
+            defer { NotificationCenter.default.removeObserver(observer) }
             try await postWheel(delta: delta, at: CGPoint(x: point.x, y: screen.frame.height - point.y), in: target,
                                 transaction: transaction)
             try await wait("native scroll applied " + id, seconds: 2) { clip.bounds.origin != before }
+            var previousGeometry: [NSRect] = []
+            var stableSince: TimeInterval?
+            var stableSamples = 0
+            try await wait("native scroll ended with settled target geometry " + id, seconds: 2) {
+                root.layoutSubtreeIfNeeded()
+                guard completion.ended, target.contentView === root, self.probe(id, in: target) === view,
+                      view.window === target, scroll.window === target, scroll.contentView === clip,
+                      scroll.documentView === document else {
+                    previousGeometry = []
+                    stableSince = nil
+                    stableSamples = 0
+                    return false
+                }
+                let geometry = [clip.bounds, clip.frame, document.frame, view.convert(view.bounds, to: root)]
+                guard geometry.allSatisfy({ frame in
+                    [frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite)
+                        && frame.width > 0 && frame.height > 0
+                }) else {
+                    previousGeometry = []
+                    stableSince = nil
+                    stableSamples = 0
+                    return false
+                }
+                let now = ProcessInfo.processInfo.systemUptime
+                if geometry != previousGeometry {
+                    previousGeometry = geometry
+                    stableSince = now
+                    stableSamples = 1
+                    return false
+                }
+                stableSamples += 1
+                return now - (stableSince ?? now) >= 0.25
+            }
             interactions.append(["kind": "wheel", "id": id, "delta": delta,
-                "before": [before.x, before.y], "after": [clip.bounds.origin.x, clip.bounds.origin.y]])
+                "before": [before.x, before.y], "after": [clip.bounds.origin.x, clip.bounds.origin.y],
+                "nativeScrollEnded": completion.ended, "settledGeometry": previousGeometry.map(rect),
+                "settledGeometrySamples": stableSamples,
+                "settledGeometrySeconds": ProcessInfo.processInfo.systemUptime - (stableSince ?? ProcessInfo.processInfo.systemUptime)])
         }
         throw GateBlocked("Wheel input did not reveal the complete control: " + id)
     }
@@ -1116,6 +1162,7 @@ enum NativeAcceptancePointer {
         let accessibilityFrame: NSRect
         let kind: String
         let hosting: NSView?
+        let clippingAncestors: [[String: Any]]
 
         var evidence: [String: Any] {
             ["windowObject": String(describing: ObjectIdentifier(window)),
@@ -1133,7 +1180,7 @@ enum NativeAcceptancePointer {
              "windowBounds": [cgFrame.minX, cgFrame.minY, cgFrame.width, cgFrame.height],
              "accessibilityRole": accessibilityRole.rawValue,
              "accessibilityFrame": [accessibilityFrame.minX, accessibilityFrame.minY, accessibilityFrame.width, accessibilityFrame.height],
-             "kind": kind]
+             "kind": kind, "clippingAncestors": clippingAncestors]
         }
     }
 
@@ -1229,11 +1276,16 @@ enum NativeAcceptancePointer {
               frame.width > 0, frame.height > 0, root.bounds.contains(frame) else {
             throw GateBlocked("The native pointer target has no complete finite frame.")
         }
+        var clippingAncestors: [[String: Any]] = []
         var parent = probe.superview
         while let view = parent {
-            if let clip = view as? NSClipView,
-               !clip.bounds.contains(probe.convert(probe.bounds, to: clip)) {
-                throw GateBlocked("The native pointer target is clipped.")
+            if let clip = view as? NSClipView {
+                let bounds = clip.bounds
+                let probeFrame = probe.convert(probe.bounds, to: clip)
+                clippingAncestors.append(["object": String(describing: ObjectIdentifier(clip)),
+                    "bounds": [bounds.minX, bounds.minY, bounds.width, bounds.height],
+                    "probeFrame": [probeFrame.minX, probeFrame.minY, probeFrame.width, probeFrame.height]])
+                guard bounds.contains(probeFrame) else { throw GateBlocked("The native pointer target is clipped.") }
             }
             parent = view.superview
         }
@@ -1367,7 +1419,8 @@ enum NativeAcceptancePointer {
         }
         return Target(window: window, root: root, probe: probe, hit: hit, windowFrame: window.frame,
                       probeFrame: frame, point: point, screenPoint: appKitPoint, quartzPoint: quartzPoint, cgFrame: cgFrame,
-                      accessibility: accessible, accessibilityRole: role, accessibilityFrame: accessibleFrame, kind: kind, hosting: hosting)
+                      accessibility: accessible, accessibilityRole: role, accessibilityFrame: accessibleFrame, kind: kind,
+                      hosting: hosting, clippingAncestors: clippingAncestors)
     }
 
     private static func same(_ first: Target, _ next: Target, comparisons: inout [String: Bool]) -> Bool {
