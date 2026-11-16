@@ -30,10 +30,11 @@ REPOSITORY = ROOT.parents[1]
 sys.path.insert(0, str(REPOSITORY / 'scripts'))
 from verify_diagnostic_candidate import SIGNED_JOURNEY_HARNESS_PATHS
 import retained_packaging
+from isolated_test_home import environment as isolated_environment
 TEST_INPUTS = ('acceptance.py', 'test_bundle.py', 'transport.py', 'project.yml', 'NexGenVideoExternalUITests/UserJourneyTests.swift')
 COLOR_HELPER = 'scripts/export_color_diagnostic.swift'
 PACKAGING_INPUTS = retained_packaging.VERIFIER_INPUTS
-SHARED_INPUTS = tuple(name for name in dict.fromkeys(('scripts/verify_diagnostic_candidate.py', COLOR_HELPER) + PACKAGING_INPUTS)
+SHARED_INPUTS = tuple(name for name in dict.fromkeys(('scripts/verify_diagnostic_candidate.py', 'scripts/isolated_test_home.py', COLOR_HELPER) + PACKAGING_INPUTS)
                       if name not in {'scripts/external-gui/' + value for value in TEST_INPUTS})
 CONFIG = Path('/tmp/nexgenvideo-external-gui-config.json')
 STAGES = ['home', 'settings', 'new-project', 'media-import', 'source-insert',
@@ -82,10 +83,10 @@ def tree_sha256(path):
     return hashlib.sha256(json.dumps(records, ensure_ascii=True, separators=(',', ':')).encode()).hexdigest()
 
 
-def command(arguments, log, timeout=60, check=True, cwd=None):
+def command(arguments, log, timeout=60, check=True, cwd=None, env=None):
     with Path(log).open('ab') as handle:
         with subprocess.Popen([str(item) for item in arguments], stdin=subprocess.DEVNULL,
-                              stdout=handle, stderr=subprocess.STDOUT, cwd=cwd,
+                              stdout=handle, stderr=subprocess.STDOUT, cwd=cwd, env=env,
                               start_new_session=True) as process:
             try:
                 process.wait(timeout=timeout)
@@ -600,6 +601,22 @@ def verify_downloaded_pack(raw, bundle):
     return hashlib.sha256(json.dumps(sorted(actual.items()), separators=(',', ':')).encode()).hexdigest()
 
 
+def run_external_test(xctestrun, tests, home, evidence, method, timeout=720):
+    import test_bundle
+    environment = isolated_environment(os.environ, home, evidence / 'home-environment.json')
+    with test_bundle.isolated_invocation(xctestrun, tests, home, evidence) as invocation:
+        code = command(['xcodebuild', 'test-without-building', '-xctestrun', invocation,
+                        '-only-testing:NexGenVideoExternalUITests/UserJourneyTests/' + method,
+                        '-destination', 'platform=macOS,arch=arm64', '-parallel-testing-enabled', 'NO',
+                        '-resultBundlePath', evidence / 'tests.xcresult'], evidence / 'tests.log',
+                       timeout=timeout, check=False, env=environment)
+    if code == 0:
+        runner = read_json(evidence / 'runner-home.json')
+        require(runner == {'HOME': str(home), 'CFFIXED_USER_HOME': str(home), 'foundationHome': str(home)},
+                'The actual XCTest runner home differs from its invocation')
+    return code
+
+
 def run_fresh_musicvideo(args):
     import test_bundle
     require(args.dmg and not args.app and args.scale == '1.5', 'Fresh Musicvideo requires the exact DMG at150%')
@@ -626,16 +643,14 @@ def run_fresh_musicvideo(args):
         identity['testBundle'] = {key: tests[key] for key in ('runID', 'attempt', 'archiveSHA256', 'productsSHA256', 'xctestrun', 'xcode')}
         identity['testBundle'].update(receiptSHA256=sha256(evidence / 'tests-input.json'), producerSHA256=sha256(evidence / 'tests-producer.json'))
         write_json(evidence / 'identity.json', identity)
-        config = {'scenario': FRESH_MUSICVIDEO, 'app': str(app), 'evidence': str(evidence),
+        config = {'scenario': FRESH_MUSICVIDEO, 'app': str(app), 'evidence': str(evidence), 'home': str((work / 'home').resolve()),
                   'bootstrapProject': str(evidence / 'Bootstrap.ngv'), 'project': str(evidence / 'Fresh Musicvideo.ngv'),
                   'scaleLabel': SCALES[args.scale]}
         with CONFIG.open('x') as stream: json.dump(config, stream)
         write_json(evidence / 'configuration.json', config)
         (evidence / 'test-bundle.sha256').write_text(sha256(xctestrun) + '\n')
-        code = command(['xcodebuild', 'test-without-building', '-xctestrun', xctestrun,
-                        '-only-testing:NexGenVideoExternalUITests/UserJourneyTests/testNormalFreshMusicvideoThroughInstalledApp',
-                        '-destination', 'platform=macOS,arch=arm64', '-parallel-testing-enabled', 'NO',
-                        '-resultBundlePath', evidence / 'tests.xcresult'], evidence / 'tests.log', timeout=720, check=False)
+        code = run_external_test(xctestrun, tests, Path(config['home']), evidence,
+                                 'testNormalFreshMusicvideoThroughInstalledApp')
         result['exitCode'] = code
         command(['xcrun', 'xcresulttool', 'export', 'attachments', '--path', evidence / 'tests.xcresult',
                  '--output-path', evidence / 'attachments'], evidence / 'results.log')
@@ -651,7 +666,7 @@ def run_fresh_musicvideo(args):
         raw = fetch_public_bytes(entry['url'], 512 * 1024 * 1024)
         require(hashlib.sha256(raw).hexdigest() == args.expected_pack_sha256, 'Published pack archive changed')
         (evidence / 'published-pack.zip').write_bytes(raw)
-        bundle = Path.home() / 'Library/Application Support/NexGenVideo/Plugins/musicvideo/0.6.0.ngvpack'
+        bundle = Path(config['home']) / 'Library/Application Support/NexGenVideo/Plugins/musicvideo/0.6.0.ngvpack'
         pack_tree = verify_downloaded_pack(raw, bundle)
         shutil.copytree(bundle, evidence / 'installed-pack', symlinks=True)
         require(verify_downloaded_pack(raw, evidence / 'installed-pack') == pack_tree, 'Installed pack evidence changed while copying')
@@ -695,16 +710,14 @@ def run_local_musicvideo(args):
         identity['testBundle'] = {key: tests[key] for key in ('runID', 'attempt', 'archiveSHA256', 'productsSHA256', 'xctestrun', 'xcode')}
         identity['testBundle'].update(receiptSHA256=sha256(evidence / 'tests-input.json'), producerSHA256=sha256(evidence / 'tests-producer.json'))
         write_json(evidence / 'identity.json', identity)
-        config = {'scenario': LOCAL_MUSICVIDEO, 'app': str(app), 'evidence': str(evidence),
+        config = {'scenario': LOCAL_MUSICVIDEO, 'app': str(app), 'evidence': str(evidence), 'home': str((work / 'home').resolve()),
                   'externalPack': str(evidence / 'musicvideo.ngvpack'), 'project': str(evidence / 'Fresh Musicvideo.ngv'),
                   'scaleLabel': SCALES[args.scale]}
         with CONFIG.open('x') as stream: json.dump(config, stream)
         write_json(evidence / 'configuration.json', config)
         (evidence / 'test-bundle.sha256').write_text(sha256(xctestrun) + '\n')
-        code = command(['xcodebuild', 'test-without-building', '-xctestrun', xctestrun,
-                        '-only-testing:NexGenVideoExternalUITests/UserJourneyTests/testNormalFreshLocalMusicvideoFromDMGThroughInstalledApp',
-                        '-destination', 'platform=macOS,arch=arm64', '-parallel-testing-enabled', 'NO',
-                        '-resultBundlePath', evidence / 'tests.xcresult'], evidence / 'tests.log', timeout=720, check=False)
+        code = run_external_test(xctestrun, tests, Path(config['home']), evidence,
+                                 'testNormalFreshLocalMusicvideoFromDMGThroughInstalledApp')
         result['exitCode'] = code
         command(['xcrun', 'xcresulttool', 'export', 'attachments', '--path', evidence / 'tests.xcresult',
                  '--output-path', evidence / 'attachments'], evidence / 'results.log')
@@ -717,7 +730,7 @@ def run_local_musicvideo(args):
         local_catalog(after, args.expected_catalog_sha256, args.expected_pack_sha256)
         require(after == before, 'Normal catalog changed during installation')
         (evidence / 'catalog-after.json').write_bytes(after)
-        bundle = Path.home() / 'Library/Application Support/NexGenVideo/Plugins/musicvideo/0.6.0.ngvpack'
+        bundle = Path(config['home']) / 'Library/Application Support/NexGenVideo/Plugins/musicvideo/0.6.0.ngvpack'
         require(identity.get('externalPack', {}).get('origin') == 'mounted-dmg'
                 and identity['externalPack'].get('dmgSHA256') == args.dmg_sha256
                 and identity['externalPack'].get('treeSHA256') == LOCAL_PACK_TREE,
@@ -902,17 +915,15 @@ def run(args):
                                      producerSHA256=sha256(evidence / 'tests-producer.json'))
         write_json(evidence / 'identity.json', identity)
         source = create_source(evidence)
-        config = {'app': str(app), 'evidence': str(evidence), 'source': str(source),
+        config = {'app': str(app), 'evidence': str(evidence), 'source': str(source), 'home': str((work / 'home').resolve()),
                   'project': str(evidence / 'External GUI.ngv'), 'movie': str(evidence / 'user-export.mp4'),
                   'scaleLabel': SCALES[args.scale]}
         with CONFIG.open('x') as handle:
             json.dump(config, handle)
         write_json(evidence / 'configuration.json', config)
         (evidence / 'test-bundle.sha256').write_text(sha256(xctestrun) + '\n')
-        code = command(['xcodebuild', 'test-without-building', '-xctestrun', xctestrun,
-                        '-only-testing:NexGenVideoExternalUITests/UserJourneyTests/testGenericEditingThroughInstalledApp',
-                        '-destination', 'platform=macOS,arch=arm64', '-parallel-testing-enabled', 'NO',
-                        '-resultBundlePath', evidence / 'tests.xcresult'], evidence / 'tests.log', timeout=720, check=False)
+        code = run_external_test(xctestrun, tests, Path(config['home']), evidence,
+                                 'testGenericEditingThroughInstalledApp')
         result['exitCode'] = code
         bundle = evidence / 'tests.xcresult'
         if bundle.exists():

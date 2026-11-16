@@ -73,8 +73,12 @@ jobs:
             [[ "$ORIGINAL_ARTIFACT" =~ ^[1-9][0-9]*$ ]]
             [[ "$ORIGINAL_DIGEST" =~ ^[0-9a-f]{64}$ ]]
           fi
+      - name: Prepare the job-local temporary test home
+        run: mkdir -p "$RUNNER_TEMP/nexgenvideo-test-home"
       - name: Record original App and current harness provenance
         env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
           APP_SOURCE: ${{ inputs.expected_source_sha || github.sha }}
           PRODUCER_RUN: ${{ inputs.runtime_run_id || github.run_id }}
           ORIGINAL_ARTIFACT: ${{ inputs.app_artifact_id }}
@@ -87,7 +91,7 @@ jobs:
           from retained_packaging import VERIFIER_INPUTS, committed_inputs
           output = Path(os.environ['RUNNER_TEMP']) / 'evidence'
           output.mkdir(parents=True, exist_ok=True)
-          paths = ['scripts/bpy_runtime_acceptance.py', 'scripts/run_macos_tests.py',
+          paths = ['scripts/bpy_runtime_acceptance.py', 'scripts/run_macos_tests.py', 'scripts/isolated_test_home.py',
                    'scripts/app_host_zombie_diagnostic.py', 'scripts/verify_swift_test_output.py',
                    'scripts/reuse_bpy_binary_evidence.py', 'scripts/pinned_download.py',
                    '.github/workflows/bpy-runtime-acceptance.yml'] + list(VERIFIER_INPUTS)
@@ -197,6 +201,8 @@ jobs:
           fi
       - name: Relocate the exact app and prepare denied resources
         env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
           APP_ZIP: ${{ inputs.app_zip }}
           DISTRIBUTION: ${{ inputs.distribution }}
           EXPECTED_SOURCE: ${{ inputs.expected_source_sha || github.sha }}
@@ -285,6 +291,8 @@ jobs:
         if: ${{ inputs.runtime_run_id != '' && inputs.app_artifact_id != '' && !inputs.distribution }}
         timeout-minutes: 4
         env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
           EXPECTED_SOURCE: ${{ inputs.expected_source_sha }}
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -346,12 +354,16 @@ jobs:
           control=
       - name: Prove deterministic deletion during native directory accounting
         env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
           EXPECTED_SOURCE: ${{ inputs.expected_source_sha || github.sha }}
         run: |
           python3 scripts/bpy_directory_scan_acceptance.py "$RUNNER_TEMP/relocated/NexGenVideo.app" \
             --source-sha "$EXPECTED_SOURCE" --output "$RUNNER_TEMP/evidence/directory-deletion"
       - name: Prove pre-lease and post-exec host-crash cleanup
         env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
           EXPECTED_SOURCE: ${{ inputs.expected_source_sha || github.sha }}
         run: |
           set -euo pipefail
@@ -386,6 +398,8 @@ jobs:
       - name: Run real bpy acceptance without ambient Blender or Python
         id: native
         env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
           EXPECTED_SOURCE: ${{ inputs.expected_source_sha || github.sha }}
           NGV_BPY_CAPTURE_SANDBOX_LOGS: ${{ inputs.app_artifact_id != '' && '1' || '0' }}
         run: |

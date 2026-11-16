@@ -244,9 +244,13 @@ jobs:
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               output.write('scales=' + json.dumps(scales) + '\n')
           PY
+      - name: Prepare the job-local temporary test home
+        run: mkdir -p "$RUNNER_TEMP/nexgenvideo-test-home"
       - name: Bind the retained signed DMG and unchanged product inputs
         if: inputs.product_source_sha != ''
         env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
           GH_TOKEN: ${{ github.token }}
           ORIGINAL_RUN: ${{ inputs.runtime_run_id }}
           ORIGINAL_ARTIFACT: ${{ inputs.runtime_artifact_id }}

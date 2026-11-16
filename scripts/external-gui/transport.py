@@ -346,6 +346,7 @@ def run(args):
         journey.write_json(evidence / 'project-before.json', before)
         journey.write_json(evidence / 'fixture.json', fixture)
         config = {'scenario': 'transport', 'app': str(app), 'evidence': str(evidence), 'project': str(working),
+                  'home': str((work / 'home').resolve()),
                   'source': str(working / fixture['sourceRelativePath']), 'scaleLabel': journey.SCALES[args.scale],
                   'transportFixture': fixture}
         with journey.CONFIG.open('x') as handle:
@@ -355,9 +356,7 @@ def run(args):
         identity['testBundle'].update(receiptSHA256=journey.sha256(evidence / 'tests-input.json'), producerSHA256=args.test_producer_sha256)
         journey.write_json(evidence / 'identity.json', identity)
         result['mode'] = identity['mode']
-        code = journey.command(['xcodebuild', 'test-without-building', '-xctestrun', xctestrun, '-only-testing:' + TEST,
-            '-destination', 'platform=macOS,arch=arm64', '-parallel-testing-enabled', 'NO',
-            '-resultBundlePath', evidence / 'tests.xcresult'], evidence / 'tests.log', timeout=360, check=False)
+        code = journey.run_external_test(xctestrun, tests, Path(config['home']), evidence, TEST.rsplit('/', 1)[-1], timeout=360)
         result['exitCode'] = code
         bundle = evidence / 'tests.xcresult'
         journey.command(['xcrun', 'xcresulttool', 'export', 'attachments', '--path', bundle,

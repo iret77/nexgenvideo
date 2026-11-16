@@ -1,5 +1,7 @@
 """Build once and transfer the exact external XCTest products between CI jobs."""
 import argparse
+from contextlib import contextmanager
+import copy
 import hashlib
 import json
 import os
@@ -1497,6 +1499,55 @@ def consume(directory, destination, source_sha, source_files):
     xctestrun = destination / receipt['xctestrun']
     check_test_paths(xctestrun, destination)
     return xctestrun, receipt
+
+
+@contextmanager
+def isolated_invocation(xctestrun, receipt, home, evidence):
+    products = xctestrun.parent
+    require(products_sha256(products) == receipt['productsSHA256'], 'UI test products changed before invocation')
+    original = xctestrun.read_bytes()
+    data = plistlib.loads(original)
+    invocation = copy.deepcopy(data)
+    targets = []
+
+    def visit(value):
+        if isinstance(value, dict):
+            if 'TestBundlePath' in value:
+                targets.append(value)
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+
+    visit(invocation)
+    require(len(targets) == 1 and targets[0]['TestBundlePath'].endswith('/NexGenVideoExternalUITests.xctest'),
+            'Expected the single qualified external UI test target')
+    for key in ('EnvironmentVariables', 'TestingEnvironmentVariables', 'UITargetAppEnvironmentVariables'):
+        environment = targets[0].setdefault(key, {})
+        require(isinstance(environment, dict) and all(isinstance(k, str) and isinstance(v, str)
+                for k, v in environment.items()), 'Invalid existing XCTest environment')
+        environment.update(HOME=str(home), CFFIXED_USER_HOME=str(home))
+    derived = xctestrun.with_name('isolated-home.xctestrun')
+    require(not derived.exists() and not derived.is_symlink(), 'Occupied isolated XCTest invocation')
+    with derived.open('xb') as stream:
+        stream.write(plistlib.dumps(invocation, fmt=plistlib.FMT_BINARY))
+    proof = {'schema': 'nexgenvideo/external-tests-isolated-home/1',
+             'originalSHA256': hashlib.sha256(original).hexdigest(),
+             'invocationSHA256': journey.sha256(derived), 'productsSHA256': receipt['productsSHA256'],
+             'home': str(home), 'changedEnvironmentKeys': ['HOME', 'CFFIXED_USER_HOME'],
+             'environmentDictionaries': ['EnvironmentVariables', 'TestingEnvironmentVariables', 'UITargetAppEnvironmentVariables'],
+             'originalProductsUnchangedAfterExecution': False}
+    journey.write_json(evidence / 'test-home-invocation.json', proof)
+    try:
+        check_test_paths(derived, products)
+        yield derived
+    finally:
+        derived.replace(evidence / 'isolated-home.xctestrun')
+        require(xctestrun.read_bytes() == original and products_sha256(products) == receipt['productsSHA256'],
+                'Original UI test products changed during isolated invocation')
+        proof['originalProductsUnchangedAfterExecution'] = True
+        journey.write_json(evidence / 'test-home-invocation.json', proof)
 
 
 def require_runner_access(products, log):

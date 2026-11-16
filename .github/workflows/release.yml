@@ -320,8 +320,13 @@ jobs:
         if: inputs.verified_pr_run_id == ''
         run: python3 scripts/lint_app_theme.py
 
+      - name: Prepare the job-local temporary test home
+        run: mkdir -p "$RUNNER_TEMP/nexgenvideo-test-home"
       - name: Verify private fixture bundle tooling
         if: inputs.verified_pr_run_id == ''
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: python3 -m unittest discover -s scripts -p 'test_*.py'
 
       - name: Retain exact PR source proof
@@ -662,9 +667,14 @@ jobs:
           python3 scripts/release_test_repair.py confirm --root "$RUNNER_TEMP/release-native" \
             --artifact-id "$REPAIR_ARTIFACT" --artifact-digest "$REPAIR_DIGEST"
 
+      - name: Prepare the job-local temporary test home
+        run: mkdir -p "$RUNNER_TEMP/nexgenvideo-test-home"
       - name: Verify the complete changed GenerationBatch test scope
         if: inputs.completed_release_tests_run_id == '42500881402' || inputs.completed_release_tests_run_id == '42518096376'
         timeout-minutes: 10
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: python3 scripts/release_test_repair.py run --root "$RUNNER_TEMP/release-native"
 
       - name: Preserve every scoped test product and original execution record
@@ -735,6 +745,8 @@ jobs:
         if: inputs.compiled_app_targets_json != ''
         timeout-minutes: 20
         env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/compiled_app_release.py test --root "$RUNNER_TEMP/compiled-app-release"
 
@@ -811,6 +823,9 @@ jobs:
 
       - name: Retain staged runtime products before native tests
         if: inputs.completed_release_tests_run_id == '' && inputs.compiled_app_targets_json == ''
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: |
           python3 scripts/release_checkpoint.py native-test-products --phase runtime \
             --root "$RUNNER_TEMP/release-test-product-checkpoints" --scratch-path "$RUNNER_TEMP/release-tests" \
@@ -832,6 +847,8 @@ jobs:
         if: inputs.completed_release_tests_run_id == '' && inputs.compiled_app_targets_json == ''
         shell: bash
         env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
           RELEASE_ENGINE_RUN: ${{ inputs.completed_engine_tests_run_id }}
         run: |
           set -euo pipefail
@@ -1288,8 +1305,13 @@ jobs:
             || { echo "::error::app does not dynamically link libNexGenEngine.dylib"; exit 1; }
           echo "OK: NexGenEngine is one shared dynamic image across app + pack"
 
+      - name: Prepare the job-local temporary test home
+        run: mkdir -p "$RUNNER_TEMP/nexgenvideo-test-home"
       - name: Load-test — the SIGNED app actually loads the SIGNED pack from an EXTERNAL dir
         if: env.NGV_COMPONENT_NOTARY_CONTINUATION != 'true' && env.NGV_COHORT_PACK_CHECKS_REUSED != 'true'
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: |
           set -euo pipefail
           # This is the check that was MISSING here: release.yml published the pack the app reads
@@ -1486,6 +1508,8 @@ jobs:
 
       - name: Verify the exact DMG users install
         env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -2057,7 +2081,12 @@ jobs:
           verify_signed_bpy(run, jobs, artifact, run_id, os.environ['PRODUCT_SOURCE'], int(os.environ['ARTIFACT_ID']),
               os.environ['ARTIFACT_SHA'], [], packaging=selected)
           PYCODE
+      - name: Prepare the job-local temporary test home
+        run: mkdir -p "$RUNNER_TEMP/nexgenvideo-test-home"
       - name: Verify signed production capture and exact symbolization
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: |
           ditto -x -k diagnostic-app.zip .
           ditto -x -k diagnostic-symbols.zip .
@@ -2065,9 +2094,15 @@ jobs:
           xcrun stapler validate NexGenVideo.app
           python3 scripts/hang_diagnostic_acceptance.py NexGenVideo.app diagnostic-symbols/NexGenVideo.dSYM --output evidence
       - name: Exercise native Export Cancel, Retry and Reveal actions
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: python3 scripts/export_actions_acceptance.py NexGenVideo.app --output evidence/export-actions.json
       - name: Verify generation batch pricing recovery
         shell: bash
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: |
           set -euo pipefail
           NGV_SELFTEST_GENERATION_BATCH_RECOVERY=1 \
@@ -2076,6 +2111,8 @@ jobs:
       - name: Verify asynchronous termination, cancellation and restart
         if: ${{ !cancelled() }}
         env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
           PRODUCT_SOURCE: ${{ needs.release.outputs.product_source_sha }}
         run: python3 scripts/app_termination_acceptance.py NexGenVideo.app --output evidence/termination --product-source "$PRODUCT_SOURCE"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

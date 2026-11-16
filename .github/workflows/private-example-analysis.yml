@@ -162,8 +162,12 @@ jobs:
           NGV_GHCR_TOKEN: ${{ secrets.NGV_GHCR_TOKEN }}
         run: python3 scripts/private_analysis_verification.py isolation
 
+      - name: Prepare the job-local temporary test home
+        run: mkdir -p "$RUNNER_TEMP/nexgenvideo-test-home"
       - name: Bind the original signed App before macOS allocation
         env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -193,6 +197,9 @@ jobs:
 
       - name: Verify fixture bundle tooling
         if: inputs.verified_pr_run_id == ''
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: python3 -m unittest discover -s scripts -p 'test_*.py'
 
       - name: Install pinned ORAS CLI
@@ -371,8 +378,12 @@ jobs:
             --password-stdin \
             --registry-config "$RUNNER_TEMP/oras-auth.json"
 
+      - name: Prepare the job-local temporary test home
+        run: mkdir -p "$RUNNER_TEMP/nexgenvideo-test-home"
       - name: Pull and verify immutable fixtures
         env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
           FIXTURE_DIGEST: ${{ vars.NGV_EXAMPLE_FIXTURE_DIGEST }}
         run: |
           set -euo pipefail
@@ -389,6 +400,8 @@ jobs:
 
       - name: Run exact-file analysis through the real app and pack
         env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
           NGV_EXAMPLE_ANALYSIS_PACK: ${{ github.workspace }}/.build/plugins/musicvideo.ngvpack
           NGV_EXAMPLE_FIXTURE_ROOT: ${{ runner.temp }}/fixture-data/examples
           NGV_EXAMPLE_FIXTURE_MANIFEST: ${{ runner.temp }}/fixture-package/fixtures.manifest.json

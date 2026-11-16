@@ -159,7 +159,7 @@ class CIWorkflowTests(unittest.TestCase):
                     """))
                 (root / "scripts").mkdir()
                 shutil.copyfile(ROOT / "scripts/bpy_runtime_acceptance.py", root / "scripts/bpy_runtime_acceptance_impl.py")
-                for name in ("run_macos_tests.py", "app_host_zombie_diagnostic.py", "verify_swift_test_output.py"):
+                for name in ("run_macos_tests.py", "isolated_test_home.py", "app_host_zombie_diagnostic.py", "verify_swift_test_output.py"):
                     shutil.copyfile(ROOT / "scripts" / name, root / "scripts" / name)
                 (root / "scripts/bpy_runtime_acceptance.py").write_text(textwrap.dedent("""\
                     from contextlib import contextmanager

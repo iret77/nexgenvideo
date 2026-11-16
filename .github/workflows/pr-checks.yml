@@ -33,8 +33,13 @@ jobs:
             python3 scripts/validate_pipeline_contract.py "$manifest"
           done
 
+      - name: Prepare the job-local temporary test home
+        run: mkdir -p "$RUNNER_TEMP/nexgenvideo-test-home"
       - name: Verify CI and fixture tooling
         id: fixture_tooling
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: python3 -m unittest discover -s scripts -p 'test_*.py' -v -f
 
       - name: Record verified source checkout

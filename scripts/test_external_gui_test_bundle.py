@@ -443,6 +443,57 @@ class ExternalTestBundleTests(unittest.TestCase):
                 path.write_bytes(plistlib.dumps({'Test': {**entry, 'TestBundlePath': invalid}}))
                 bundle.check_test_paths(path, products)
 
+    def isolated_invocation_fixture(self, root, modern):
+        products = root / 'Products'
+        test = products / 'Runner.app/Contents/PlugIns/NexGenVideoExternalUITests.xctest'
+        test.mkdir(parents=True)
+        path = products / 'Tests.xctestrun'
+        entry = {'TestHostPath': '__TESTROOT__/Runner.app',
+                 'TestBundlePath': '__TESTHOST__/Contents/PlugIns/NexGenVideoExternalUITests.xctest',
+                 'OnlyTestIdentifiers': ['UserJourneyTests/testGenericEditingThroughInstalledApp'],
+                 'EnvironmentVariables': {'EXISTING': 'original'},
+                 'TestingEnvironmentVariables': {'DYLD_LIBRARY_PATH': '__TESTROOT__/Frameworks'},
+                 'UITargetAppEnvironmentVariables': {'LANG': 'en_US.UTF-8'}}
+        data = {'TestConfigurations': [{'TestTargets': [entry]}], '__xctestrun_metadata__': {'FormatVersion': 2}} if modern else {'External': entry}
+        path.write_bytes(plistlib.dumps(data))
+        evidence = root / 'evidence'
+        evidence.mkdir()
+        return path, {'productsSHA256': bundle.products_sha256(products)}, evidence, data
+
+    def test_isolated_xctestrun_preserves_original_products_loader_and_test_selection(self):
+        for modern in (False, True):
+            with self.subTest(modern=modern):
+                path, receipt, evidence, original = self.isolated_invocation_fixture(self.root / str(modern), modern)
+                home = evidence.parent / 'home'
+                with bundle.isolated_invocation(path, receipt, home, evidence) as invocation:
+                    self.assertNotEqual(path, invocation)
+                    actual = plistlib.loads(invocation.read_bytes())
+                    target = actual['TestConfigurations'][0]['TestTargets'][0] if modern else actual['External']
+                    expected = original['TestConfigurations'][0]['TestTargets'][0] if modern else original['External']
+                    for key in ('EnvironmentVariables', 'TestingEnvironmentVariables', 'UITargetAppEnvironmentVariables'):
+                        self.assertEqual(target[key], {**expected[key], 'HOME': str(home), 'CFFIXED_USER_HOME': str(home)})
+                        target[key] = expected[key]
+                    self.assertEqual(actual, original)
+                self.assertEqual(bundle.products_sha256(path.parent), receipt['productsSHA256'])
+                proof = journey.read_json(evidence / 'test-home-invocation.json')
+                self.assertTrue(proof['originalProductsUnchangedAfterExecution'])
+                self.assertEqual(journey.sha256(evidence / 'isolated-home.xctestrun'), proof['invocationSHA256'])
+
+    def test_isolated_invocation_retains_description_after_original_test_failure(self):
+        path, receipt, evidence, _ = self.isolated_invocation_fixture(self.root, True)
+        with self.assertRaisesRegex(RuntimeError, 'original test failure'):
+            with bundle.isolated_invocation(path, receipt, self.root / 'home', evidence):
+                raise RuntimeError('original test failure')
+        self.assertTrue((evidence / 'isolated-home.xctestrun').is_file())
+        self.assertEqual(bundle.products_sha256(path.parent), receipt['productsSHA256'])
+
+    def test_isolated_invocation_rejects_changed_original_test_products(self):
+        path, receipt, evidence, _ = self.isolated_invocation_fixture(self.root, False)
+        with self.assertRaisesRegex(ValueError, 'Original UI test products changed'):
+            with bundle.isolated_invocation(path, receipt, self.root / 'home', evidence):
+                path.write_bytes(b'changed original')
+        self.assertFalse(journey.read_json(evidence / 'test-home-invocation.json')['originalProductsUnchangedAfterExecution'])
+
     def test_receipt_requires_exact_source_inputs_archive_and_original_job(self):
         archive = self.archive([('binary', 'file', b'original')])
         receipt = {'schema': 'nexgenvideo/external-tests-input/1', 'sourceSHA': self.sha,
