@@ -722,7 +722,8 @@ class ExternalTestBundleTests(unittest.TestCase):
                          'canonicalNativeAccessibilityHitKeepsSystemInputAndRealFieldFocus',
                          'canonicalNativeAccessibilityFailuresNeverPostDown',
                          'canonicalNativeAccessibilityIdentityAndGeometryAreRevalidatedBeforeDown')}
-        self.assertEqual(transition['consumerBuild'], '114')
+        current_cohort = json.loads(output('show', current + ':scripts/fixtures/app-cohort.json'))
+        self.assertEqual(transition['consumerBuild'], current_cohort['build'])
         self.assertEqual(len(transition['additionalNativeAppTests']), 30)
         self.assertTrue(canonical <= set(transition['additionalNativeAppTests']))
         driver = 'Sources/NexGenVideo/App/ProductionVisualSourcesDriver.swift'
