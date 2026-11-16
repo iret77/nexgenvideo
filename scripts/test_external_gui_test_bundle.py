@@ -597,7 +597,7 @@ class ExternalTestBundleTests(unittest.TestCase):
                 commit, name = arguments[-1].split(':', 1)
                 if commit == current and name in {workflow, action, cohort, 'scripts/fixtures/app-cohort-native-inventory.json',
                         'scripts/compiled_app_release.py', 'scripts/retained_packaging.py', 'scripts/retained_app_test_products.py',
-                        'scripts/app_cohort_v2.py', 'scripts/release_checkpoint.py', 'scripts/compiled_current_core_reuse.py'}: return (journey.REPOSITORY / name).read_bytes()
+                        'scripts/app_cohort_v2.py', 'scripts/app_release_v2.py', 'scripts/release_checkpoint.py', 'scripts/compiled_current_core_reuse.py'}: return (journey.REPOSITORY / name).read_bytes()
                 self.assertEqual(commit, self.sha)
                 return original[name]
             self.fail('Unexpected compiled-client command: ' + str(arguments))
@@ -792,7 +792,7 @@ class ExternalTestBundleTests(unittest.TestCase):
             self.assertFalse(any(route.startswith('/contents/') for route in requests))
 
     def test_current_core_projection_preserves_build_reachable_code_and_imports(self):
-        for name in ('scripts/app_cohort_v2.py', 'scripts/compiled_app_release.py',
+        for name in ('scripts/app_cohort_v2.py', 'scripts/app_release_v2.py', 'scripts/compiled_app_release.py',
                      'scripts/release_checkpoint.py', 'scripts/retained_packaging.py'):
             current = (journey.REPOSITORY / name).read_text()
             baseline = bundle._current_core_import_view(current, name)
@@ -849,6 +849,25 @@ class ExternalTestBundleTests(unittest.TestCase):
             changed = current.replace(old, new)
             self.assertNotEqual(changed, current)
             with self.subTest(change=old), self.assertRaises(ValueError):
+                bundle._current_core_import_view(changed, path, current=True)
+
+    def test_pack_carrier_transition_rejects_changed_guards_and_partial_declarations(self):
+        path = 'scripts/compiled_app_release.py'
+        current = (journey.REPOSITORY / path).read_text()
+        mutations = [
+            current.replace("producer.get('id') == origin['runID']", 'True'),
+            current.replace("origin['packTreeSHA256'] == PACK_TREE", 'True'),
+            current.replace("parent.get('packCarrier') == provenance['carrier']", 'True'),
+            current.replace("runtime.get('packCarrier') == provenance['carrier']", 'True'),
+            current.replace('def signed_pack_product():', 'def signed_pack_product(default=execute()):'),
+        ]
+        module = ast.parse(current)
+        module.body = [node for node in module.body if not isinstance(node, ast.FunctionDef)
+                       or node.name != 'signed_pack_product']
+        mutations.append(ast.unparse(module))
+        for index, changed in enumerate(mutations):
+            self.assertNotEqual(changed, current)
+            with self.subTest(mutation=index), self.assertRaises(ValueError):
                 bundle._current_core_import_view(changed, path, current=True)
 
     def test_compiled_client_rejects_unknown_added_or_removed_verifier(self):
@@ -977,7 +996,7 @@ class ExternalTestBundleTests(unittest.TestCase):
                 reason = ('native inventory changes outside an App-only transition'
                           if name == 'scripts/fixtures/app-cohort-native-inventory.json'
                           else 'Engine acquisition helper changes' if name == 'scripts/compiled_app_release.py'
-                          else 'Receipt verifier is not valid Python' if name in {'scripts/app_cohort_v2.py', 'scripts/release_checkpoint.py'}
+                          else 'Receipt verifier is not valid Python' if name in {'scripts/app_cohort_v2.py', 'scripts/app_release_v2.py', 'scripts/release_checkpoint.py'}
                           else 'Packaging verifier is not valid Python' if name == 'scripts/retained_packaging.py'
                           else 'Metadata transport is not valid Python' if name == 'scripts/retained_app_test_products.py'
                           else 'Compiled UI test source, project or reachable shared helper changed')
@@ -1558,10 +1577,12 @@ class ExternalTestBundleTests(unittest.TestCase):
             'externalPack': {'guideSHA256': 'b' * 64}}
         expected_binding = {'sourceSHA': 'e' * 40, 'dmgSHA256': 'd' * 64, 'appTreeSHA256': 'a' * 64, 'guideSHA256': 'b' * 64}
         expected_producer = {'sourceSHA': 'e' * 40, 'runID': 777, 'artifactID': 888,
-            'artifactSHA256': 'f' * 64, 'producerJobID': 999, 'intakeBinding': expected_binding}
+            'artifactSHA256': 'f' * 64, 'producerJobID': 999, 'intakeBinding': expected_binding,
+            'packCarrier': {'schema': 'signed-base-pack-carrier/v1', 'productSourceSHA': 'e' * 40,
+                'signedBase': {'payloadArtifactID': 13, 'proofArtifactID': 12}}}
         for case in ('valid', 'fresh-claim', 'old-source', 'old-run', 'wrong-origin', 'wrong-dmg', 'wrong-producer',
                 'producer-run', 'producer-artifact', 'producer-digest', 'producer-job', 'intake-app', 'intake-guide',
-                'current-run', 'current-attempt', 'durable'):
+                'current-run', 'current-attempt', 'carrier-product', 'carrier-payload', 'durable'):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 (root / 'pack-reuse').mkdir()
@@ -1585,6 +1606,8 @@ class ExternalTestBundleTests(unittest.TestCase):
                     elif case == 'producer-job': proof['runtimeProducer']['producerJobID'] = 998
                     elif case == 'intake-app': proof['runtimeProducer']['intakeBinding']['appTreeSHA256'] = '0' * 64
                     elif case == 'intake-guide': proof['runtimeProducer']['intakeBinding']['guideSHA256'] = '0' * 64
+                    elif case == 'carrier-product': proof['runtimeProducer']['packCarrier']['productSourceSHA'] = '0' * 40
+                    elif case == 'carrier-payload': proof['runtimeProducer']['packCarrier']['signedBase']['payloadArtifactID'] = 14
                     journey.write_json(root / name, proof)
                     journey.write_json(root / 'pack-reuse' / (context + '.json'), proof if case != 'durable' else {})
                 identity['externalPack']['verificationReuseSHA256'] = journey.sha256(root / 'pack-source-signature.log')

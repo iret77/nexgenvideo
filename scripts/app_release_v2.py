@@ -167,7 +167,7 @@ def assemble(root):
     if not (build / 'plugins/musicvideo.ngvpack').exists():
         targets.logged(root, 'restore-retained-pack', ['/usr/bin/ditto', '-x', '-k',
             str(build / 'plugins/musicvideo.ngvpack.zip'), str(build / 'plugins')])
-    release.verify_pack(build / 'plugins')
+    release.verify_pack(build / 'plugins', product=receipt['sourceSHA'])
     handoff = source_handoff(root, build / 'bpy-source', original, value)
     main = main_product(bound)
     image, symbols = app / 'Contents/MacOS/NexGenVideo', build / 'NexGenVideo.dSYM'

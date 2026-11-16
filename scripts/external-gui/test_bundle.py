@@ -933,6 +933,14 @@ def _current_core_import_view(raw, path, *, current=False):
                                                                               "{}).get('manifest', {})",
                                                                   'following': 'from app_release_v2 import '
                                                                                'signed_product'}]}}
+    transitions['scripts/app_release_v2.py'] = {'assemble': [{
+        'before': "release.verify_pack(build / 'plugins')",
+        'after': "release.verify_pack(build / 'plugins', product=receipt['sourceSHA'])",
+        'previous': "if not (build / 'plugins/musicvideo.ngvpack').exists():\n"
+                    "    targets.logged(root, 'restore-retained-pack', ['/usr/bin/ditto', '-x', '-k', "
+                    "str(build / 'plugins/musicvideo.ngvpack.zip'), str(build / 'plugins')])",
+        'following': "handoff = source_handoff(root, build / 'bpy-source', original, value)",
+    }]}
     try:
         module = ast.parse(raw)
     except (SyntaxError, UnicodeDecodeError):
@@ -969,6 +977,45 @@ def _current_core_import_view(raw, path, *, current=False):
                             'Receipt verifier transition moved outside its exact boundary')
                 owner.body[index:index + len(expected)] = replacement
     require(not any(observed) and not current or all(observed), 'Incomplete current receipt verifier transition')
+    if path == 'scripts/compiled_app_release.py':
+        pack_changes = {
+            'verify_pack': ('4e3a7d9f9b684aea32c1bbde377ac1c7a7954188bf2c328c10ca598f9049d27c',
+                            '7d41745225e5154faeffe55345a3891f212c6d02edcf2a7a295f463156d3c331'),
+            'pack_verification_origin': ('db9ec3d735593eda7cea798194997c3742ea718ca25b72cf93e8fb34d5a624f0',
+                                         '66cb4bbec40581169430f8f9e888b4fee28679e083e73d64e8c3a8a0e2a6acb0'),
+            'verify_pack_copy': ('4a6bddaaeba23032d0f030b9608933361f44b0a8701e4fa3279d95eabf46419a',
+                                 '060429603c088b5a737037f9d9f63600887f12e0ac6b03e9a89cae176f535e98'),
+            'local_pack_runtime_origin': ('594372cbc2c5bbc394963ea1c6125732ea19f9098cd92f12a3ee2683256cbdcf',
+                                         '34a08e383c1942353f07487dfb9f0be0dcd0cc4c96a70cad87e013cc8badefda'),
+            'verify_retained_runtime_pack': ('b4d148e5443ee3506b9d4a37fd0b17c7619745a7fbb06d3cb74d2afc37d41186',
+                                            '0884555783dc4ae4bb3ceebb4e060bbb2063f0348f5991db3cd0e9bf3d300c35'),
+            'verify_component_runtime_pack': ('ffc417b2506fdee86fe19011ed48340edb0204d7eb4fe1ebd7c7121e4c11ee43',
+                                             '85fd1de9410291d002aed95373dcb152eb6c0dd3b00e3a3c34fabf6e796a2617'),
+        }
+        pack_additions = {
+            'signed_pack_product': '50d44454849d38a9d1381237c144d0eb950e664e5b12749879ac2425ce526f2a',
+            'original_pack_execution': 'd0192ae09a6cda4cfff16714d4b2a3b399b1918481728484a7e273a8cfd6c419',
+            'pack_verification_provenance': '9433a2fa8e875b95495127d5db17502b5665a3f7e152613074ddaf5ad7b99052',
+        }
+        versions, additions, kept = [], set(), []
+        for node in module.body:
+            if isinstance(node, ast.FunctionDef) and node.name in pack_changes | pack_additions:
+                _safe_function(node)
+                digest = hashlib.sha256(ast.dump(node, include_attributes=False).encode()).hexdigest()
+                if node.name in pack_additions:
+                    require(digest == pack_additions[node.name], 'Changed signed-base pack carrier declaration')
+                    additions.add(node.name)
+                    continue
+                before, after = pack_changes[node.name]
+                require(digest in (before, after), 'Changed signed-base pack admission guard')
+                versions.append(digest == after)
+                node = ast.parse('def ' + node.name + '(): pass').body[0]
+            kept.append(node)
+        require(len(versions) == len(pack_changes)
+                and (all(versions) and additions == set(pack_additions)
+                     or not current and not any(versions) and not additions),
+                'Incomplete signed-base pack carrier transition')
+        module.body = kept
     return ast.unparse(module)
 
 
@@ -1056,10 +1103,10 @@ def _compiled_compatibility(producer_sha, producer_files, current_sha, current_f
     runtime_helper = 'scripts/compiled_app_release.py'
     packaging_helper = 'scripts/retained_packaging.py'
     metadata_helper = 'scripts/retained_app_test_products.py'
-    metadata_only = {'scripts/external-gui/transport.py', 'scripts/release_engine_resume.py', inventory_path, runtime_helper, packaging_helper, metadata_helper, 'scripts/app_cohort_v2.py', 'scripts/release_checkpoint.py', *added_inputs}
+    metadata_only = {'scripts/external-gui/transport.py', 'scripts/release_engine_resume.py', inventory_path, runtime_helper, packaging_helper, metadata_helper, 'scripts/app_cohort_v2.py', 'scripts/app_release_v2.py', 'scripts/release_checkpoint.py', *added_inputs}
     require(all(producer_files[name] == digest for name, digest in current_files.items() if name not in {helper, guard, cohort, *metadata_only}),
             'Compiled UI test source, project or reachable shared helper changed')
-    for name in ('scripts/app_cohort_v2.py', 'scripts/release_checkpoint.py'):
+    for name in ('scripts/app_cohort_v2.py', 'scripts/app_release_v2.py', 'scripts/release_checkpoint.py'):
         raw = journey.output([*git, 'show', current_sha + ':' + name])
         require(raw == (journey.REPOSITORY / name).read_bytes()
                 and hashlib.sha256(raw).hexdigest() == current_files[name],
