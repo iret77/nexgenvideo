@@ -68,6 +68,7 @@ struct ExportProjectToolTests {
         #expect(ToolHarness.textOf(overwriteFalse).contains("already exists"))
 
         let downloads = try #require(FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first)
+        try FileManager.default.createDirectory(at: downloads, withIntermediateDirectories: true)
         let existingXML = downloads.appendingPathComponent("\(base).xml")
         try Data("existing".utf8).write(to: existingXML)
         defer { try? FileManager.default.removeItem(at: existingXML) }
