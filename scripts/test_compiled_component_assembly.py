@@ -241,10 +241,13 @@ class CompiledComponentAssemblyTests(unittest.TestCase):
                 broken = copy.deepcopy(actual); del broken['componentAssembly']
                 with self.assertRaises(ValueError): release.checkpoint.verify_manifest(broken, consumer, 777)
 
-    def normal_runtime(self, base, mutation=None, caller='replay'):
-        directory = base / ('scene-pointer-workspace-55' if caller == 'measurement' else 'chat-replay')
+    def normal_runtime(self, base, mutation=None, caller='replay', producer_mutation=None, same_source=False):
+        directories = {'measurement': 'scene-pointer-workspace-55', 'analyze': '.build', 'replay': 'chat-replay'}
+        directory = base / directories[caller]
         bundle = directory / 'plugins/musicvideo.ngvpack'; bundle.mkdir(parents=True)
         product, harness = 'a' * 40, 'b' * 40
+        if same_source:
+            harness = product
         identity = {'CFBundleVersion': '107', 'CFBundleShortVersionString': '1.8.0', 'NGVSourceCommit': product,
             'treeSHA256': 'c' * 64, 'executableSHA256': 'd' * 64}
         receipt = {'schema': 'nexgenvideo/workspace-ui-input/1', 'sourceSHA': product,
@@ -256,15 +259,17 @@ class CompiledComponentAssemblyTests(unittest.TestCase):
             'actor': {'login': 'iret77'}, 'path': '.github/workflows/release.yml', 'workflow_id': 303346287,
             'event': 'workflow_dispatch', 'status': 'completed'}
         job = {'id': 888, 'run_id': 777, 'name': 'release', 'head_sha': product, 'run_attempt': 1,
-            'labels': ['macrunner'], 'conclusion': 'success', 'started_at': '2026-11-01T00:00:00Z',
+            'labels': ['macrunner'], 'status': 'completed', 'conclusion': 'success', 'started_at': '2026-11-01T00:00:00Z',
             'completed_at': '2026-11-01T01:00:00Z'}
         artifact = {'id': 999, 'name': 'workspace-ui-app', 'digest': 'sha256:' + 'f' * 64, 'expired': False,
             'workflow_run': {'id': 777, 'head_sha': product}, 'created_at': '2026-11-01T00:30:00Z',
             'updated_at': '2026-11-01T00:30:01Z', 'expires_at': '2099-01-01T00:00:00Z'}
-        rows = {'actions/runs/777': producer, 'actions/jobs/888': job, 'actions/artifacts/999': artifact}
         origin = ({'id': release.RETAINED_RUN}, {'id': release.PACK_NATIVE_PROOF['jobID']},
             {'id': release.FINAL_ARTIFACT[0], 'digest': 'sha256:' + release.FINAL_ARTIFACT[1]})
         if mutation: mutation(proof, receipt, identity, artifact, job)
+        if producer_mutation: producer_mutation(producer, proof, identity, artifact, job)
+        rows = {'actions/runs/' + str(proof['producerRunID']): producer,
+            'actions/jobs/888': job, 'actions/artifacts/999': artifact}
         environment = {'RUNNER_TEMP': str(base), 'GITHUB_WORKSPACE': str(base), 'GITHUB_ACTIONS': 'true',
             'GITHUB_REPOSITORY': release.REPOSITORY, 'GITHUB_SHA': harness, 'GITHUB_RUN_ID': '55',
             'GITHUB_RUN_ATTEMPT': '1', 'GITHUB_JOB': caller, 'KIND': 'native-scene-pointer-delivery'}
@@ -322,6 +327,49 @@ class CompiledComponentAssemblyTests(unittest.TestCase):
                     else: receipt['appTreeSHA256'] = '0' * 64
                 with self.assertRaises(ValueError): self.normal_runtime(Path(temporary), mutate)
                 self.assertFalse((Path(temporary) / 'chat-replay/pack-verification.reused.json').exists())
+
+    def test_private_analysis_accepts_own_active_root_only_after_exact_release_job_finishes(self):
+        for case in ('own-active', 'own-complete', 'foreign-active', 'replay-active', 'queued-root',
+                     'failed-root', 'active-release-job', 'failed-release-job', 'actor', 'attempt', 'artifact',
+                     'foreign-source', 'missing-release-status'):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary:
+                def mutate(producer, proof, identity, artifact, job):
+                    producer.update(id=55, status='in_progress', conclusion=None)
+                    proof['producerRunID'] = 55
+                    job['run_id'] = artifact['workflow_run']['id'] = 55
+                    if case == 'own-complete':
+                        producer['status'] = 'completed'
+                    elif case == 'foreign-active':
+                        producer['id'] = proof['producerRunID'] = job['run_id'] = artifact['workflow_run']['id'] = 777
+                    elif case == 'queued-root':
+                        producer['status'] = 'queued'
+                    elif case == 'failed-root':
+                        producer['conclusion'] = 'failure'
+                    elif case == 'active-release-job':
+                        job.update(status='in_progress', conclusion=None)
+                    elif case == 'failed-release-job':
+                        job['conclusion'] = 'failure'
+                    elif case == 'actor':
+                        producer['actor']['login'] = 'other'
+                    elif case == 'attempt':
+                        producer['run_attempt'] = 2
+                    elif case == 'artifact':
+                        artifact['digest'] = 'sha256:' + '0' * 64
+                    elif case == 'missing-release-status':
+                        job.pop('status')
+                root = Path(temporary)
+                caller = 'replay' if case == 'replay-active' else 'analyze'
+                marker = root / ('.build' if caller == 'analyze' else 'chat-replay') / 'pack-verification.reused.json'
+                if case in ('own-active', 'own-complete'):
+                    actual = self.normal_runtime(root, caller=caller, producer_mutation=mutate, same_source=True)
+                    self.assertEqual(actual['producerRunID'], actual['executionRunID'])
+                    self.assertEqual(actual['job'], 'analyze')
+                    self.assertEqual(json.loads(marker.read_bytes()), actual)
+                    self.assertFalse(actual['newAppPackLoadQualified'])
+                else:
+                    with self.assertRaises(ValueError):
+                        self.normal_runtime(root, caller=caller, producer_mutation=mutate, same_source=case != 'foreign-source')
+                    self.assertFalse(marker.exists())
 
     def test_root_sign_callback_cannot_requalify_changed_main_or_original_symbols(self):
         for changed in ('installed-main', 'original-main', 'installed-symbols'):
