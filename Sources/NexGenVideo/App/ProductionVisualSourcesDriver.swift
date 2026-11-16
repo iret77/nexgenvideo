@@ -1116,6 +1116,25 @@ enum NativeAcceptancePointer {
         let accessibilityFrame: NSRect
         let kind: String
         let hosting: NSView?
+
+        var evidence: [String: Any] {
+            ["windowObject": String(describing: ObjectIdentifier(window)),
+             "rootObject": String(describing: ObjectIdentifier(root)),
+             "probeObject": String(describing: ObjectIdentifier(probe)),
+             "hitObject": String(describing: ObjectIdentifier(hit)),
+             "accessibilityObject": String(describing: ObjectIdentifier(accessibility)),
+             "hostingObject": hosting.map { String(describing: ObjectIdentifier($0)) } ?? "nil",
+             "hitClass": String(reflecting: type(of: hit)),
+             "accessibilityClass": String(reflecting: type(of: accessibility)),
+             "windowFrame": [windowFrame.minX, windowFrame.minY, windowFrame.width, windowFrame.height],
+             "probeFrame": [probeFrame.minX, probeFrame.minY, probeFrame.width, probeFrame.height],
+             "windowPoint": [point.x, point.y], "screenPoint": [screenPoint.x, screenPoint.y],
+             "quartzPoint": [quartzPoint.x, quartzPoint.y],
+             "windowBounds": [cgFrame.minX, cgFrame.minY, cgFrame.width, cgFrame.height],
+             "accessibilityRole": accessibilityRole.rawValue,
+             "accessibilityFrame": [accessibilityFrame.minX, accessibilityFrame.minY, accessibilityFrame.width, accessibilityFrame.height],
+             "kind": kind]
+        }
     }
 
     static func ownedHostingView(for hit: NSView, probe: NSView, root: NSView, window: NSWindow, point: NSPoint) -> NSView? {
@@ -1351,14 +1370,16 @@ enum NativeAcceptancePointer {
                       accessibility: accessible, accessibilityRole: role, accessibilityFrame: accessibleFrame, kind: kind, hosting: hosting)
     }
 
-    private static func same(_ first: Target, _ next: Target) -> Bool {
-        first.window === next.window && first.root === next.root && first.probe === next.probe
-            && first.hit === next.hit && first.windowFrame == next.windowFrame
-            && first.probeFrame == next.probeFrame && first.point == next.point
-            && first.cgFrame == next.cgFrame
-            && first.accessibility === next.accessibility && first.accessibilityRole == next.accessibilityRole
-            && first.accessibilityFrame == next.accessibilityFrame && first.kind == next.kind
-            && first.hosting === next.hosting
+    private static func same(_ first: Target, _ next: Target, comparisons: inout [String: Bool]) -> Bool {
+        comparisons = ["window": first.window === next.window, "root": first.root === next.root,
+            "probe": first.probe === next.probe, "hit": first.hit === next.hit,
+            "windowFrame": first.windowFrame == next.windowFrame, "probeFrame": first.probeFrame == next.probeFrame,
+            "point": first.point == next.point, "cgFrame": first.cgFrame == next.cgFrame,
+            "accessibility": first.accessibility === next.accessibility,
+            "accessibilityRole": first.accessibilityRole == next.accessibilityRole,
+            "accessibilityFrame": first.accessibilityFrame == next.accessibilityFrame,
+            "kind": first.kind == next.kind, "hosting": first.hosting === next.hosting]
+        return comparisons.values.allSatisfy { $0 }
     }
 
     private static func pause() async {
@@ -1440,6 +1461,24 @@ enum NativeAcceptancePointer {
         }
         var posted: [[String: Any]] = []
         var movement: [String: Any] = [:]
+        var movementTargetComparisons: [String: Bool] = [:]
+        let preDownClauseNames = ["pointerX", "pointerY", "buttonReleased", "originalTarget"]
+        var preDownClauses = Dictionary(uniqueKeysWithValues: preDownClauseNames.map { ($0, "NOT_EVALUATED") })
+        var preDownFirstFailure: String?
+        var preDownActualPoint: NSPoint?
+        var preDownTargetComparisons: [String: Bool] = [:]
+        var preDownTarget: [String: Any] = [:]
+        func preDownClause(_ name: String, _ passed: Bool) -> Bool {
+            preDownClauses[name] = passed ? "PASS" : "FAIL"
+            if !passed { preDownFirstFailure = name }
+            return passed
+        }
+        func originalTargetUnchanged() throws -> Bool {
+            let next = try target(probe, window: window, fraction: fraction, windowFailure: reportWindowFailure,
+                                  accessibilityFailure: reportAccessibilityFailure)
+            preDownTarget = next.evidence
+            return same(original, next, comparisons: &preDownTargetComparisons)
+        }
         func evidence(_ status: String) -> [String: Any] {
             var value = poster.snapshot()
             value.merge(["kind": "native-pointer", "transaction": token.uuidString, "tag": tag, "status": status,
@@ -1450,7 +1489,13 @@ enum NativeAcceptancePointer {
                                        original.accessibilityFrame.width, original.accessibilityFrame.height],
                 "posted": posted + (value["posted"] as? [[String: Any]] ?? []), "received": delivery.events,
                 "localMonitorDownObserved": delivery.down, "localMonitorUpObserved": delivery.up,
-                "upDeliveryAcknowledged": false, "movement": movement]) { _, new in new }
+                "upDeliveryAcknowledged": false, "movement": movement,
+                "movementTargetComparisons": movementTargetComparisons,
+                "preDownGuard": ["firstFailedClause": preDownFirstFailure ?? "NONE",
+                    "clauses": preDownClauseNames.map { ["name": $0, "status": preDownClauses[$0] ?? "NOT_EVALUATED"] },
+                    "actualScreenPoint": preDownActualPoint.map { [$0.x, $0.y] } ?? [],
+                    "originalTarget": original.evidence, "currentTarget": preDownTarget,
+                    "targetComparisons": preDownTargetComparisons]]) { _, new in new }
             if let windowGuardFailure { value["windowGuardFailure"] = windowGuardFailure }
             if let accessibilityGuardFailure { value["accessibilityGuardFailure"] = accessibilityGuardFailure }
             return value
@@ -1461,7 +1506,7 @@ enum NativeAcceptancePointer {
             try await move(to: original.quartzPoint, window: window, token: token, source: source, tag: tag,
                            validate: {
                 guard same(original, try target(probe, window: window, fraction: fraction, windowFailure: reportWindowFailure,
-                                                accessibilityFailure: reportAccessibilityFailure)) else {
+                                                accessibilityFailure: reportAccessibilityFailure), comparisons: &movementTargetComparisons) else {
                     throw GateBlocked("The original native pointer target changed before movement.")
                 }
             }, record: { value in
@@ -1469,11 +1514,11 @@ enum NativeAcceptancePointer {
                 posted = value["posted"] as? [[String: Any]] ?? []
             })
             let actual = NSEvent.mouseLocation
-            guard abs(actual.x - original.screenPoint.x) < 0.5,
-                  abs(actual.y - original.screenPoint.y) < 0.5,
-                  !CGEventSource.buttonState(.combinedSessionState, button: .left),
-                  same(original, try target(probe, window: window, fraction: fraction, windowFailure: reportWindowFailure,
-                                            accessibilityFailure: reportAccessibilityFailure)) else {
+            preDownActualPoint = actual
+            guard preDownClause("pointerX", abs(actual.x - original.screenPoint.x) < 0.5),
+                  preDownClause("pointerY", abs(actual.y - original.screenPoint.y) < 0.5),
+                  preDownClause("buttonReleased", !CGEventSource.buttonState(.combinedSessionState, button: .left)),
+                  preDownClause("originalTarget", try originalTargetUnchanged()) else {
                 throw GateBlocked("The actual system pointer or original control changed before Down.")
             }
             try record(evidence("prepared"))
