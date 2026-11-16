@@ -31,7 +31,16 @@ final class UserJourneyTests: XCTestCase {
         output = URL(fileURLWithPath: try string("evidence"), isDirectory: true)
         app = XCUIApplication(url: URL(fileURLWithPath: try string("app")))
         app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
-        app.launchEnvironment = [:]
+        let home = URL(fileURLWithPath: try string("home"), isDirectory: true).standardizedFileURL.resolvingSymlinksInPath()
+        let environment = ProcessInfo.processInfo.environment
+        try require(environment["HOME"] == home.path && environment["CFFIXED_USER_HOME"] == home.path,
+                    "The independent test runner did not receive its isolated home")
+        try require(FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL.resolvingSymlinksInPath() == home,
+                    "Foundation resolved a different test runner home")
+        app.launchEnvironment = ["HOME": home.path, "CFFIXED_USER_HOME": home.path]
+        try write(["HOME": home.path, "CFFIXED_USER_HOME": home.path,
+                   "foundationHome": FileManager.default.homeDirectoryForCurrentUser.path],
+                  to: output.appendingPathComponent("runner-home.json"))
         try require(NSRunningApplication.runningApplications(withBundleIdentifier: "de.h5ventures.nexgenvideo").isEmpty,
                     "Another NexGenVideo process is already running in this job")
     }

@@ -163,8 +163,13 @@ jobs:
             python3 scripts/validate_pipeline_contract.py "$manifest"
           done
 
+      - name: Prepare the job-local temporary test home
+        run: mkdir -p "$RUNNER_TEMP/nexgenvideo-test-home"
       - name: Verify CI and fixture tooling
         if: (steps.classify.outputs.build_required == 'true' || steps.classify.outputs.ui_required == 'true') && inputs.completed_source_checks_run_id == '' && steps.pr_source.outputs.verified != 'true'
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: python3 -m unittest discover -s scripts -p 'test_*.py' -v -f
 
       - name: Upload exact PR source composition
@@ -197,6 +202,9 @@ jobs:
 
       - name: Complete changed source and workflow checks
         if: (steps.classify.outputs.build_required == 'true' || steps.classify.outputs.ui_required == 'true') && inputs.completed_source_checks_run_id != ''
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: python3 scripts/resume_core_source_checks.py run --evidence "$RUNNER_TEMP/core-source-resume"
 
       - name: Upload source check composition
@@ -315,9 +323,14 @@ jobs:
         with:
           restore-only: 'true'
 
+      - name: Prepare the job-local temporary test home
+        run: mkdir -p "$RUNNER_TEMP/nexgenvideo-test-home"
       - name: Verify native app signing with nested runtime content
         if: inputs.completed_backends_run_id == '' && inputs.completed_full_core_run_id == '' && inputs.completed_app_tests_run_id == ''
         timeout-minutes: 5
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: python3 -m unittest discover -s scripts -p test_sign_app.py -v
 
       - name: Build
@@ -368,6 +381,8 @@ jobs:
         if: inputs.completed_full_core_run_id == ''
         timeout-minutes: 30
         env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
           NGV_BLOCKOUT_ORIENTATION_EVIDENCE_DIR: ${{ runner.temp }}/blockout-orientation-evidence
           NGV_COMPLETED_BACKENDS: ${{ inputs.completed_backends_run_id }}
           NGV_APP_ASSERTIONS: ${{ inputs.completed_app_tests_run_id }}
@@ -444,6 +459,8 @@ jobs:
       - name: HDR export QC
         if: inputs.completed_full_core_run_id == '' || inputs.completed_full_core_run_id == '40265902971'
         env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
           NGV_HDR_RUNTIME_QC: '1'
           NGV_HDR_QC_OUTPUT_DIR: ${{ runner.temp }}/hdr-export-qc
         run: |
@@ -556,6 +573,9 @@ jobs:
 
       - name: Load-test — the app actually loads the pack from an EXTERNAL dir (guards the load-time cast)
         if: needs.source_gate.outputs.bundle_required == 'true'
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: |
           set -euo pipefail
           # The static checks above are necessary but NOT sufficient — they missed the 0.7.6 rpath
@@ -579,6 +599,8 @@ jobs:
       - name: Relaunch-test — historical ABI gate and same-contract restart keep Home interactive
         if: needs.source_gate.outputs.bundle_required == 'true'
         env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -690,19 +712,33 @@ jobs:
         run: |
           ditto -x -k candidate/NexGenVideo.zip candidate
           python3 scripts/verify_hang_startup.py candidate/NexGenVideo.app --output evidence/candidate.json
+      - name: Prepare the job-local temporary test home
+        run: mkdir -p "$RUNNER_TEMP/nexgenvideo-test-home"
       - name: Exercise native Export Cancel, Retry and Reveal actions
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: python3 scripts/export_actions_acceptance.py candidate/NexGenVideo.app --output evidence/export-actions.json
       - name: Verify generation batch pricing recovery
         shell: bash
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: |
           set -euo pipefail
           NGV_SELFTEST_GENERATION_BATCH_RECOVERY=1 \
             candidate/NexGenVideo.app/Contents/MacOS/NexGenVideo \
             | grep -qx 'SELFTEST_GENERATION_BATCH_RECOVERY_OK'
       - name: Verify helper recovery during active work
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: python3 scripts/hang_diagnostic_acceptance.py candidate/NexGenVideo.app --helper-recovery-only --output evidence
       - name: Verify asynchronous termination, cancellation and restart
         if: ${{ !cancelled() }}
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: python3 scripts/app_termination_acceptance.py candidate/NexGenVideo.app --output evidence/termination
       - uses: actions/upload-artifact@v4
         if: always()

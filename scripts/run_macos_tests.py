@@ -18,6 +18,7 @@ import uuid
 
 from verify_swift_test_output import ANSI, assess_output
 from app_host_zombie_diagnostic import ZombieCapture, diagnostic_environment, probe_child_stdio
+from isolated_test_home import process_environment
 
 
 NO_MATCH = "warning: No matching test cases were run"
@@ -186,6 +187,7 @@ def run_process(command, path, environment, observation=None):
     if missing:
         raise VerificationError(f"Python {sys.version.split()[0]} at {sys.executable} lacks {', '.join(missing)}; "
                                 "native child observation requires Python 3.13 or newer on macOS")
+    environment = process_environment(environment, path.with_suffix('.home.json'))
     with path.open("wb") as log:
         with subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                               stderr=subprocess.STDOUT, env=environment) as process:

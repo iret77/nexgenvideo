@@ -207,7 +207,7 @@ def main():
                 verify_cache(destination, previous["cacheFiles"])
             keys = {"PATH", "TMPDIR", "LANG", "LC_ALL", "__CF_USER_TEXT_ENCODING", "DISPLAY", "TERM"}
             env = {key: value for key, value in os.environ.items() if key in keys}
-            env.update({"CFFIXED_USER_HOME": str(home), "NGV_WORKSPACE_UI_ACCEPTANCE": "1",
+            env.update({"HOME": str(home), "CFFIXED_USER_HOME": str(home), "NGV_WORKSPACE_UI_ACCEPTANCE": "1",
                         "TMPDIR": str(temporary) + os.sep,
                         "NGV_SMART_SEARCH_OWNER_ACCEPTANCE": "1", "NGV_SMART_SEARCH_EVIDENCE": str(case),
                         "NGV_SMART_SEARCH_SCALE": str(scale), "NGV_SMART_SEARCH_MODE": "cold" if cold else "warm",

@@ -9,6 +9,8 @@ import zipfile
 
 
 HARNESS_PATHS = {
+    "scripts/isolated_test_home.py",
+    "scripts/test_isolated_test_home.py",
     ".github/workflows/diagnostic-acceptance.yml",
     "scripts/hang_diagnostic_acceptance.py",
     "scripts/verify_diagnostic_candidate.py",
@@ -44,6 +46,8 @@ SIGNED_WORKSPACE_HARNESS_PATHS = SIGNED_JOURNEY_BASE_HARNESS_PATHS | {
     "scripts/test_private_example_workflow.py",
 }
 SIGNED_DESKTOP_HARNESS_PATHS = {
+    "scripts/isolated_test_home.py",
+    "scripts/test_isolated_test_home.py",
     ".github/workflows/workspace-ui-acceptance.yml",
     ".github/actions/prepare-native-runtime/action.yml",
     "scripts/workspace_native_ci.py",
@@ -53,6 +57,8 @@ SIGNED_DESKTOP_HARNESS_PATHS = {
     "scripts/test_diagnostic_acceptance.py",
 }
 SIGNED_ACCEPTANCE_EVIDENCE_PATHS = {
+    "scripts/isolated_test_home.py",
+    "scripts/test_isolated_test_home.py",
     ".github/workflows/ci-batch.yml",
     ".github/workflows/settings-owner-acceptance.yml",
     ".github/workflows/diagnostic-acceptance.yml",
@@ -87,6 +93,8 @@ BPY_DIAGNOSTIC_PATHS = {
 }
 
 APP_DIAGNOSTIC_PATHS = {
+    "scripts/isolated_test_home.py",
+    "scripts/test_isolated_test_home.py",
     ".github/workflows/diagnostic-acceptance.yml",
     "scripts/verify_diagnostic_candidate.py",
     "scripts/test_diagnostic_acceptance.py",

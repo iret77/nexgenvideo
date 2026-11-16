@@ -395,8 +395,13 @@ jobs:
           path: ${{ runner.temp }}/button-query-source-binding/
           if-no-files-found: error
           retention-days: 90
+      - name: Prepare the job-local temporary test home
+        run: mkdir -p "$RUNNER_TEMP/nexgenvideo-test-home"
       - name: Verify signed acceptance tooling
         if: inputs.candidate_kind == 'signed-release' && inputs.verified_pr_run_id == ''
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: python3 -m unittest discover -s scripts -p 'test_*.py'
       - name: Bind exact retained runtime failures
         if: inputs.candidate_kind == 'native-retained-failures'
@@ -448,6 +453,9 @@ jobs:
           retention-days: 90
       - name: Verify changed runtime acceptance tooling
         if: inputs.candidate_kind == 'ci-runtime'
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: |
           python3 -m unittest discover -s scripts -p 'test_diagnostic_acceptance.py'
           python3 -m unittest discover -s scripts -p 'test_verify_macho_dependencies.py'
@@ -455,6 +463,9 @@ jobs:
           python3 -m unittest discover -s scripts -p 'test_release_workflow.py'
       - name: Verify retained signed bpy acceptance tooling
         if: inputs.candidate_kind == 'signed-bpy' && inputs.packaging_producer_source_sha == ''
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: |
           python3 -m unittest discover -s scripts -p 'test_diagnostic_acceptance.py'
           python3 -m unittest discover -s scripts -p 'test_ci_workflow.py'
@@ -462,6 +473,9 @@ jobs:
           python3 -m unittest discover -s scripts -p 'test_consume_bpy_distributable_source.py'
       - name: Verify isolated bpy diagnostic tooling
         if: inputs.candidate_kind == 'ci-bpy-open-diagnostic'
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: |
           python3 -m unittest discover -s scripts -p 'test_diagnostic_acceptance.py'
           python3 -m unittest discover -s scripts -p 'test_bpy_open_diagnostic.py'
@@ -469,6 +483,8 @@ jobs:
       - name: Bind original bpy resource diagnostic
         if: inputs.candidate_kind == 'ci-bpy-resource-diagnostic'
         env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
           GH_TOKEN: ${{ github.token }}
         run: |
           python3 -m unittest discover -s scripts -p 'test_bpy_resource_diagnostic.py'
@@ -486,6 +502,9 @@ jobs:
           retention-days: 90
       - name: Verify isolated App diagnostic tooling
         if: inputs.candidate_kind == 'ci-app-test-diagnostic'
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: |
           python3 -m unittest discover -s scripts -p 'test_diagnostic_acceptance.py'
           python3 -m unittest discover -s scripts -p 'test_run_macos_tests.py'
@@ -497,6 +516,8 @@ jobs:
       - name: Verify and bind exact Glow context comparison
         if: inputs.candidate_kind == 'ci-glow-context'
         env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
           GH_TOKEN: ${{ github.token }}
         run: |
           python3 -m unittest discover -s scripts -p 'test_ci_glow_context.py'
@@ -516,6 +537,8 @@ jobs:
       - name: Verify and bind standalone preheat comparison
         if: inputs.candidate_kind == 'ci-builtin-blur-preheat'
         env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
           GH_TOKEN: ${{ github.token }}
         run: |
           python3 -m unittest discover -s scripts -p 'test_ci_builtin_blur*.py'
@@ -533,6 +556,8 @@ jobs:
       - name: Verify and bind original standalone floor runtime
         if: inputs.candidate_kind == 'ci-builtin-blur-floor'
         env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
           GH_TOKEN: ${{ github.token }}
         run: |
           python3 -m unittest discover -s scripts -p 'test_ci_builtin_blur*.py'
@@ -550,6 +575,8 @@ jobs:
       - name: Verify and bind standalone blur experiment
         if: (inputs.candidate_kind == 'ci-builtin-blur' || inputs.candidate_kind == 'ci-builtin-blur-scribble')
         env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
           GH_TOKEN: ${{ github.token }}
         run: |
           python3 -m unittest discover -s scripts -p 'test_ci_builtin_blur.py'
@@ -566,6 +593,9 @@ jobs:
           retention-days: 90
       - name: Verify changed replay and shared test tooling
         if: (inputs.candidate_kind == 'ci-app-glow-replay' || inputs.candidate_kind == 'ci-app-full-replay')
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: |
           python3 -m unittest discover -s scripts -p 'test_retained_app_test_products.py'
           python3 -m unittest discover -s scripts -p 'test_run_macos_tests.py'
@@ -1058,7 +1088,7 @@ jobs:
           harness = root / 'app-diagnostic-harness'
           harness.mkdir()
           hashes = {}
-          for name in ('run_macos_tests.py', 'app_host_zombie_diagnostic.py', 'verify_swift_test_output.py',
+          for name in ('run_macos_tests.py', 'isolated_test_home.py', 'app_host_zombie_diagnostic.py', 'verify_swift_test_output.py',
                        'capture_render_review_test_diagnostic.py'):
               source = Path('scripts') / name
               shutil.copyfile(source, harness / name)
@@ -1131,10 +1161,14 @@ jobs:
           PY
           ditto -c -k --keepParent "$BIN_ROOT" "$RUNNER_TEMP/app-test-products.zip"
           shasum -a 256 "$RUNNER_TEMP/app-test-products.zip" > "$RUNNER_TEMP/candidate-metadata/compiled-products.sha256"
+      - name: Prepare the job-local temporary test home
+        run: mkdir -p "$RUNNER_TEMP/nexgenvideo-test-home"
       - name: Diagnose the original full App SwiftTesting backend once
         id: app_test
         timeout-minutes: 30
         env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
           NGV_BLOCKOUT_ORIENTATION_EVIDENCE_DIR: ${{ runner.temp }}/blockout-orientation-evidence
         run: |
           set -euo pipefail
@@ -1506,18 +1540,32 @@ jobs:
           codesign --verify --strict --verbose=2 NexGenVideo.app
           xcrun stapler validate NexGenVideo.app
           [ "$(sw_vers -productVersion | cut -d. -f1)" -ge 26 ]
+      - name: Prepare the job-local temporary test home
+        run: mkdir -p "$RUNNER_TEMP/nexgenvideo-test-home"
       - name: Verify signed capture, replay, startup and retained key bytes
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: python3 scripts/hang_diagnostic_acceptance.py NexGenVideo.app diagnostic-symbols/NexGenVideo.dSYM --output evidence
       - name: Exercise native Export Cancel, Retry and Reveal actions
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: python3 scripts/export_actions_acceptance.py NexGenVideo.app --output evidence/export-actions.json
       - name: Verify generation batch pricing recovery
         shell: bash
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: |
           set -euo pipefail
           NGV_SELFTEST_GENERATION_BATCH_RECOVERY=1 \
             NexGenVideo.app/Contents/MacOS/NexGenVideo \
             | grep -qx 'SELFTEST_GENERATION_BATCH_RECOVERY_OK'
       - name: Verify asynchronous termination, cancellation and restart
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: python3 scripts/app_termination_acceptance.py NexGenVideo.app --output evidence/termination --product-source "$CANDIDATE_SOURCE"
       - name: Record candidate identity
         run: |
@@ -1573,7 +1621,12 @@ jobs:
           APP="$RUNNER_TEMP/candidate/NexGenVideo.app"
           test "$(/usr/libexec/PlistBuddy -c 'Print :NGVSourceCommit' "$APP/Contents/Info.plist")" = "$CANDIDATE_SOURCE"
           codesign --verify --strict --verbose=2 "$APP"
+      - name: Prepare the job-local temporary test home
+        run: mkdir -p "$RUNNER_TEMP/nexgenvideo-test-home"
       - name: Verify helper recovery on the original app
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: python3 scripts/hang_diagnostic_acceptance.py "$RUNNER_TEMP/candidate/NexGenVideo.app" --helper-recovery-only --output evidence
       - uses: actions/upload-artifact@v4
         if: always()
@@ -1760,8 +1813,12 @@ jobs:
         with:
           name: diagnostic-candidate-identity
           path: evidence/identity
+      - name: Prepare the job-local temporary test home
+        run: mkdir -p "$RUNNER_TEMP/nexgenvideo-test-home"
       - name: Retrieve and verify the original app bytes
         env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -1794,6 +1851,9 @@ jobs:
           chmod +x "$RUNNER_TEMP/fake-bin/python3" "$RUNNER_TEMP/fake-bin/blender"
       - name: Observe the failed open on the original app
         id: probe
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: |
           mkdir -p "$RUNNER_TEMP/evidence"
           python3 scripts/bpy_open_diagnostic.py "$RUNNER_TEMP/relocated/NexGenVideo.app" \
@@ -1854,7 +1914,7 @@ jobs:
               raise ValueError('Replay checkout or metadata differs')
           harness = root / 'replay-harness'
           harness.mkdir()
-          names = ('run_macos_tests.py', 'app_host_zombie_diagnostic.py', 'verify_swift_test_output.py',
+          names = ('run_macos_tests.py', 'isolated_test_home.py', 'app_host_zombie_diagnostic.py', 'verify_swift_test_output.py',
                    'capture_render_review_test_diagnostic.py', 'verify_diagnostic_candidate.py',
                    'retained_app_test_products.py')
           hashes = {}
@@ -1874,8 +1934,13 @@ jobs:
         run: |
           python3 "$RUNNER_TEMP/replay-harness/retained_app_test_products.py" restore \
             --metadata "$RUNNER_TEMP/replay-metadata"
+      - name: Prepare the job-local temporary test home
+        run: mkdir -p "$RUNNER_TEMP/nexgenvideo-test-home"
       - name: Run the selected unchanged App tests once
         timeout-minutes: ${{ inputs.candidate_kind == 'ci-app-full-replay' && 30 || 10 }}
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: |
           set -euo pipefail
           export SWIFT_BACKTRACE=enable=yes,interactive=no,demangle=yes,cache=no

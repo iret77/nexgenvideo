@@ -161,49 +161,93 @@ jobs:
         run: |
           python3 scripts/workspace_native_ci.py plan --scope "$NGV_ACCEPTANCE_SCOPE" \
             --case "$NGV_ACCEPTANCE_CASE" --scale "$NGV_ACCEPTANCE_SCALE" --output "$RUNNER_TEMP/native-plan.json"
+      - name: Prepare the job-local temporary test home
+        run: mkdir -p "$RUNNER_TEMP/nexgenvideo-test-home"
       - name: Verify case isolation, artifact identity and evidence transfer rejection
         if: inputs.verified_pr_run_id == ''
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: python3 -m unittest discover -s scripts -p 'test_workspace_native_ci.py'
       - name: Verify native batch busy/Continue evidence rejection
         if: inputs.verified_pr_run_id == ''
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: python3 -m unittest discover -s scripts -p 'test_generation_batch_busy_evidence.py'
       - name: Verify native structured agent results and image detail evidence rejection
         if: inputs.verified_pr_run_id == ''
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: |
           python3 -m unittest discover -s scripts -p 'test_*structured*.py'
           python3 -m unittest discover -s scripts -p 'test_review_child_owner_evidence.py'
       - name: Verify export formats and restart evidence rejection
         if: inputs.verified_pr_run_id == ''
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: python3 -m unittest discover -s scripts -p 'test_export_owner_evidence.py'
       - name: Verify native timeline edit evidence rejection
         if: inputs.verified_pr_run_id == ''
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: python3 -m unittest discover -s scripts -p 'test_timeline_editing_evidence.py'
       - name: Validate layered timeline evidence tests
         if: inputs.verified_pr_run_id == ''
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: python3 -m unittest discover -s scripts -p 'test_layered_timeline_evidence.py'
       - name: Verify actual rendered postproduction evidence rejection
         if: inputs.verified_pr_run_id == ''
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: python3 -m unittest discover -s scripts -p 'test_postproduction_rendered_evidence.py'
       - name: Verify cover format and typography evidence rejection
         if: inputs.verified_pr_run_id == ''
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: python3 -m unittest discover -s scripts -p 'test_production_cover_owner_evidence.py'
       - name: Verify FilmFlow snapshot and native adoption evidence
         if: inputs.verified_pr_run_id == ''
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: python3 -m unittest discover -s scripts -p 'test_filmflow_owner_evidence.py'
       - name: Verify attributed native take repair evidence rejection
         if: inputs.verified_pr_run_id == ''
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: python3 -m unittest discover -s scripts -p 'test_production_take_repair_evidence.py'
       - name: Verify native technical edit evidence rejection
         if: inputs.verified_pr_run_id == ''
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: python3 -m unittest discover -s scripts -p 'test_production_technical_*.py'
       - name: Verify generated sketch and frame evidence rejection
         if: inputs.verified_pr_run_id == ''
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: python3 -m unittest discover -s scripts -p 'test_production_frames_owner_evidence.py'
       - name: Verify object context and history evidence rejection
         if: inputs.verified_pr_run_id == ''
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: python3 -m unittest discover -s scripts -p 'test_production_object_context_evidence.py'
       - name: Verify typed Bible and full-owner evidence rejection
         if: inputs.verified_pr_run_id == ''
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: |
           python3 -m venv "$RUNNER_TEMP/bible-parser"
           "$RUNNER_TEMP/bible-parser/bin/python" -m pip install --quiet PyYAML==6.0.3
@@ -217,29 +261,53 @@ jobs:
           "$RUNNER_TEMP/bible-parser/bin/python" -m unittest discover -s scripts -p 'test_workspace_ui_film_review.py'
       - name: Verify Analysis remeasurement and retry evidence rejection
         if: inputs.verified_pr_run_id == ''
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: python3 -m unittest discover -s scripts -p 'test_analysis_remeasurement_owner_evidence.py'
       - name: Verify Ledger decision and lock evidence rejection
         if: inputs.verified_pr_run_id == ''
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: python3 -m unittest discover -s scripts -p 'test_ledger_*evidence.py'
       - name: Verify caption decision and physical cut evidence rejection
         if: inputs.verified_pr_run_id == ''
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: |
           python3 -m unittest discover -s scripts -p 'test_caption_revision_evidence.py'
           python3 -m unittest discover -s scripts -p 'test_caption_translation_evidence.py'
       - name: Validate decoded still evidence rejection cases
         if: inputs.verified_pr_run_id == ''
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: python3 -m unittest discover -s scripts -p 'test_production_animated_still_owner_evidence.py'
       - name: Verify manual generation evidence rejection
         if: inputs.verified_pr_run_id == ''
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: python3 -m unittest discover -s scripts -p 'test_workspace_ui_manual*.py'
       - name: Verify native color reference evidence rejection
         if: inputs.verified_pr_run_id == ''
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: python3 -m unittest discover -s scripts -p 'test_color_reference*.py'
       - name: Verify native video modes evidence rejection
         if: inputs.verified_pr_run_id == ''
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: python3 -m unittest discover -s scripts -p 'test_manual_video_modes_evidence.py'
       - name: Verify durable generation restart evidence rejection
         if: inputs.verified_pr_run_id == ''
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: python3 -m unittest discover -s scripts -p 'test_generation_recovery_acceptance.py'
       - run: python3 scripts/lint_app_theme.py
         if: inputs.verified_pr_run_id == ''
@@ -317,9 +385,13 @@ jobs:
           path: ${{ runner.temp }}/workspace-transfer/*
           if-no-files-found: error
           retention-days: 3
+      - name: Prepare the job-local temporary test home
+        run: mkdir -p "$RUNNER_TEMP/nexgenvideo-test-home"
       - name: Run selected unit regressions
         if: inputs.unit_test_filter != ''
         env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
           NGV_UNIT_TEST_FILTER: ${{ inputs.unit_test_filter }}
         run: |
           set -euo pipefail
@@ -435,8 +507,12 @@ jobs:
           run-id: ${{ needs.runtime.outputs.runtime_run_id }}
           identity-artifact-id: ${{ needs.runtime.outputs.identity_artifact_id }}
           identity-sha: ${{ needs.runtime.outputs.identity_sha }}
+      - name: Prepare the job-local temporary test home
+        run: mkdir -p "$RUNNER_TEMP/nexgenvideo-test-home"
       - name: Exercise one native case and interface scale
         env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
           NGV_NATIVE_EXECUTABLE: ${{ steps.runtime.outputs.executable }}
           NGV_NATIVE_CASE: ${{ matrix.case }}
           NGV_NATIVE_SCALE: ${{ matrix.scale }}
@@ -493,8 +569,12 @@ jobs:
           run-id: ${{ needs.runtime.outputs.runtime_run_id }}
           identity-artifact-id: ${{ needs.runtime.outputs.identity_artifact_id }}
           identity-sha: ${{ needs.runtime.outputs.identity_sha }}
+      - name: Prepare the job-local temporary test home
+        run: mkdir -p "$RUNNER_TEMP/nexgenvideo-test-home"
       - name: Verify generation batch pointer and keyboard review
         env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
           NGV_NATIVE_EXECUTABLE: ${{ steps.runtime.outputs.executable }}
         run: |
           defaults write -g AppleKeyboardUIMode -int 2

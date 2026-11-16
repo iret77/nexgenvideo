@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from run_macos_tests import (host_binary_identity, owned_crash_report, read_stable_crash_report,
                              report_candidates, report_directories)
 from app_host_zombie_diagnostic import NativeReader
+from isolated_test_home import process_environment
 
 
 class WorkerReader(NativeReader):
@@ -717,7 +718,8 @@ def supervise(binary, output, mode, source_sha, timeout):
     output.mkdir(parents=True, exist_ok=True)
     proof_path = output / "armed.json"
     require(not proof_path.exists(), "occupied host-crash proof")
-    environment = dict(os.environ, NGV_BPY_COMMAND_EVIDENCE=str(output))
+    environment = process_environment(os.environ, output / 'home-environment.json')
+    environment['NGV_BPY_COMMAND_EVIDENCE'] = str(output)
     environment.pop("NGV_BPY_CAPTURE_SANDBOX_LOGS", None)
     if mode != "runtime":
         environment.update(NGV_SELFTEST_BPY_HOST_CRASH=mode, NGV_SELFTEST_BPY_HOST_CRASH_EVIDENCE=str(proof_path))

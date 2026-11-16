@@ -521,7 +521,7 @@ def main():
                                    "baseline": baseline, "target": target}, indent=2))
     safe_keys = {"PATH", "TMPDIR", "LANG", "LC_ALL", "__CF_USER_TEXT_ENCODING", "DISPLAY", "TERM"}
     env = {key: value for key, value in os.environ.items() if key in safe_keys}
-    env.update({"CFFIXED_USER_HOME": str(home), "NGV_PACK_RECOVERY_ACCEPTANCE": "1",
+    env.update({"HOME": str(home), "CFFIXED_USER_HOME": str(home), "NGV_PACK_RECOVERY_ACCEPTANCE": "1",
                 "NGV_WORKSPACE_UI_ACCEPTANCE": "1", "NGV_PACK_RECOVERY_EVIDENCE": str(output),
                 "NGV_SETTINGS_PACK_FIXTURE": str(manifest), "NGV_PACK_RECOVERY_SCALE": str(args.scale),
                 "NGV_PACK_RECOVERY_SCENARIO": args.scenario})

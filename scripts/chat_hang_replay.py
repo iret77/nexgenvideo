@@ -6,19 +6,22 @@ import subprocess
 import sys
 import time
 
+from isolated_test_home import process_environment
+
 
 def main():
     executable, output = sys.argv[1:]
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     log_path = output / "replay.log"
+    environment = process_environment(os.environ, output / 'home-environment.json')
     with log_path.open("w") as log:
         process = subprocess.Popen(
             [executable],
             stdout=log,
             stderr=subprocess.STDOUT,
             env={
-                **os.environ,
+                **environment,
                 "NGV_CHAT_HANG_REPLAY": "1",
                 "NGV_CHAT_REPLAY_EVIDENCE": str(output.resolve()),
             },

@@ -359,7 +359,8 @@ class CaptureOriginalRetentionTests(unittest.TestCase):
                         updated_at="2026-11-08T00:05:01Z", expires_at="2099-01-01T00:00:00Z")
         changed = {".github/workflows/diagnostic-acceptance.yml", ".github/workflows/release.yml",
                    "scripts/hang_diagnostic_acceptance.py", "scripts/verify_hang_startup.py",
-                   "scripts/verify_diagnostic_candidate.py", "scripts/test_diagnostic_acceptance.py"}
+                   "scripts/verify_diagnostic_candidate.py", "scripts/test_diagnostic_acceptance.py",
+                   "scripts/isolated_test_home.py", "scripts/test_isolated_test_home.py"}
         self.assertEqual(CAPTURE_HARNESS_PATHS, changed)
         verify(run, jobs, artifact, 12, source, 34, digest, changed)
         for field, bad in (("actor", dict(login="foreign")), ("run_attempt", 2), ("head_sha", "c" * 40)):

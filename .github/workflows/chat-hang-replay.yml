@@ -89,8 +89,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Prepare the job-local temporary test home
+        run: mkdir -p "$RUNNER_TEMP/nexgenvideo-test-home"
       - name: Bind the original signed App before macOS allocation
         env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -185,6 +189,7 @@ jobs:
             ${{ runner.temp }}/evidence/result.json
             ${{ runner.temp }}/evidence/execution-provenance.json
             ${{ runner.temp }}/evidence/replay.log
+            ${{ runner.temp }}/evidence/home-environment.json
             ${{ runner.temp }}/evidence/panel-*.png
             ${{ runner.temp }}/evidence/sample.txt
           retention-days: 7
