@@ -104,10 +104,14 @@ class LocalProducerScopeTests(unittest.TestCase):
                 elif defect == 'foreign-actor':run['actor']['login'] = 'other'
                 with mock.patch.dict(os.environ, GITHUB_EVENT_PATH=str(event), GITHUB_SHA=product), \
                         mock.patch.object(release.cohort, 'has_manifest', return_value=True), \
+                        mock.patch.object(current, 'pack_verification_provenance', return_value={
+                            'carrier': {'productSourceSHA': product}}), \
                         mock.patch.object(release.cohort, 'consumer_paths') as cohort_bound, \
                         mock.patch.object(current, 'api', side_effect=[run, {'total_count': 1, 'jobs': [job]}, artifact]):
                     if defect == 'none':
-                        self.assertEqual(current.local_pack_runtime_origin(binding, dmg)['producerJobID'], 12)
+                        actual = current.local_pack_runtime_origin(binding, dmg)
+                        self.assertEqual(actual['producerJobID'], 12)
+                        self.assertEqual(actual['packCarrier']['productSourceSHA'], product)
                         cohort_bound.assert_called_once_with(product, product)
                     else:
                         with self.assertRaises(ValueError):current.local_pack_runtime_origin(binding, dmg)

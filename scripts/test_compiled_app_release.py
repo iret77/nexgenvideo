@@ -818,7 +818,80 @@ class CompiledAppReleaseTests(unittest.TestCase):
             self.assertEqual(image.read_bytes(), b'new signed executable')
             self.assertEqual(partial.read_bytes(), b'incomplete zip, not a qualified product')
 
+    def test_cohort_pack_carrier_preserves_native_history_and_rejects_rebinding(self):
+        import app_cohort_v2
+        import io
+        import retained_packaging as packaging
+        product = 'c' * 40
+        origin = {'sourceSHA': 'a' * 40, 'runID': 10, 'jobID': 11,
+            'proofArtifactID': 12, 'payloadArtifactID': 13, 'payloadArtifactSHA256': 'd' * 64,
+            'appTreeSHA256': 'e' * 64, 'appArchiveSHA256': 'f' * 64,
+            'packArchiveSHA256': release.PACK_SHA, 'packTreeSHA256': release.PACK_TREE}
+        manifest = {'appTreeSHA256': origin['appTreeSHA256'], 'files': {
+            'NexGenVideo.zip': {'sha256': origin['appArchiveSHA256'], 'bytes': 100},
+            'plugins.tar.gz': {'sha256': 'b' * 64, 'bytes': 200}}}
+        raw_manifest = json.dumps(manifest).encode()
+        proof = io.BytesIO()
+        with zipfile.ZipFile(proof, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr('manifest.json', raw_manifest)
+        raw_proof = proof.getvalue()
+        origin['proofArtifactSHA256'] = hashlib.sha256(raw_proof).hexdigest()
+        native_run = {'id': release.RETAINED_RUN, 'head_sha': release.RETAINED_SOURCE, 'run_attempt': 1,
+            'workflow_id': 303346287, 'path': '.github/workflows/release.yml', 'event': 'workflow_dispatch',
+            'status': 'completed', 'conclusion': 'failure', 'repository': {'full_name': release.REPOSITORY},
+            'actor': {'login': 'iret77'}}
+        native_job = {'id': release.PACK_NATIVE_PROOF['jobID'], 'run_id': release.RETAINED_RUN,
+            'head_sha': release.RETAINED_SOURCE, 'run_attempt': 1, 'name': 'release', 'labels': ['macrunner'],
+            'status': 'completed', 'conclusion': 'success', 'started_at': '2026-11-08T21:15:34Z',
+            'completed_at': '2026-11-08T22:02:43Z', 'steps': copy.deepcopy(release.PACK_NATIVE_PROOF['steps'])}
+        run = dict(native_run, id=10, head_sha=origin['sourceSHA'])
+        job = dict(native_job, id=11, run_id=10, head_sha=origin['sourceSHA'], name='release-build')
+        artifacts = {role: {'id': origin[role + 'ArtifactID'],
+            'name': 'release-signed-input-' + origin['sourceSHA'] + ('-proof' if role == 'proof' else ''),
+            'digest': 'sha256:' + origin[role + 'ArtifactSHA256'], 'expired': False,
+            'size_in_bytes': len(raw_proof) if role == 'proof' else 1000,
+            'workflow_run': {'id': 10, 'head_sha': origin['sourceSHA']},
+            'created_at': '2026-11-08T21:30:00Z', 'updated_at': '2026-11-08T21:30:00Z',
+            'expires_at': '2099-01-01T00:00:00Z'} for role in ('proof', 'payload')}
+        values = {'actions/runs/' + str(release.RETAINED_RUN): native_run,
+            'actions/jobs/' + str(native_job['id']): native_job, 'actions/runs/10': run, 'actions/jobs/11': job,
+            'actions/artifacts/12': artifacts['proof'], 'actions/artifacts/13': artifacts['payload']}
+        for defect in ('none', 'proof-digest', 'proof-size', 'proof-expired', 'payload-digest', 'payload-expired',
+                'foreign-producer', 'wrong-builder', 'failed-builder', 'native-step', 'pack-tree',
+                'manifest-tree', 'proof-bytes'):
+            rows, selected, verified = copy.deepcopy(values), copy.deepcopy(origin), copy.deepcopy(manifest)
+            if defect == 'proof-digest': rows['actions/artifacts/12']['digest'] = 'sha256:' + '0' * 64
+            elif defect == 'proof-size': rows['actions/artifacts/12']['size_in_bytes'] += 1
+            elif defect == 'proof-expired': rows['actions/artifacts/12']['expired'] = True
+            elif defect == 'payload-digest': rows['actions/artifacts/13']['digest'] = 'sha256:' + '0' * 64
+            elif defect == 'payload-expired': rows['actions/artifacts/13']['expired'] = True
+            elif defect == 'foreign-producer': rows['actions/runs/10']['actor']['login'] = 'foreign'
+            elif defect == 'wrong-builder': rows['actions/jobs/11']['head_sha'] = '0' * 40
+            elif defect == 'failed-builder': rows['actions/jobs/11']['conclusion'] = 'failure'
+            elif defect == 'native-step': rows['actions/jobs/' + str(native_job['id'])]['steps'][0]['conclusion'] = 'failure'
+            elif defect == 'pack-tree': selected['packTreeSHA256'] = '0' * 64
+            elif defect == 'manifest-tree': verified['appTreeSHA256'] = '0' * 64
+            with self.subTest(defect=defect), patch.object(app_cohort_v2, 'has_manifest', return_value=True), \
+                    patch.object(app_cohort_v2, 'manifest', return_value={'signedBase': selected}), \
+                    patch.object(release, 'api', side_effect=lambda route: copy.deepcopy(rows[route])) as requests, \
+                    patch.object(packaging, 'read_api', return_value=raw_proof + (b'x' if defect == 'proof-bytes' else b'')), \
+                    patch.object(release.checkpoint, 'verify_manifest', return_value=verified) as verify:
+                if defect != 'none':
+                    with self.assertRaises(ValueError): release.pack_verification_provenance(product)
+                    continue
+                actual = release.pack_verification_provenance(product)
+                self.assertEqual(actual['nativeProducer']['runID'], release.RETAINED_RUN)
+                self.assertNotIn('artifactID', actual['nativeProducer'])
+                self.assertEqual(actual['carrier']['productSourceSHA'], product)
+                self.assertEqual(actual['carrier']['signedBase'], origin)
+                self.assertEqual(actual['carrier']['manifestSHA256'], hashlib.sha256(raw_manifest).hexdigest())
+                self.assertEqual(actual['carrier']['pluginsArchive'], manifest['files']['plugins.tar.gz'])
+                verify.assert_called_once_with(manifest, origin['sourceSHA'], origin['runID'])
+                self.assertNotIn('actions/artifacts/' + str(release.FINAL_ARTIFACT[0]),
+                    [call.args[0] for call in requests.call_args_list])
+
     def test_carried_engine_proof_survives_original_artifact_expiry_and_rejects_rebinding(self):
+        import app_cohort_v2
         import io
         original_zip, original_log = b'a' * 1717370, b'b' * 3862332
         original_digest, log_digest = (hashlib.sha256(value).hexdigest() for value in (original_zip, original_log))
@@ -834,7 +907,7 @@ class CompiledAppReleaseTests(unittest.TestCase):
             'proof': {'eventsSHA256': release.engine.EVENT_DIGEST, 'logSHA256': release.engine.CONSOLE_DIGEST}}
         parent = {'sourceSHA': base['sourceSHA'], 'runID': base['runID'], 'attempt': 1, 'passed': True,
             'counts': {'retainedEngine': 896, 'engineSkips': 14}, 'retainedEngine': historical}
-        for changed in (None, 'archive', 'raw', 'receipt', 'historical-id', 'historical-expiry', 'duplicate', 'carrier-expired', 'carrier-job'):
+        for changed in (None, 'cohort', 'archive', 'raw', 'receipt', 'historical-id', 'historical-expiry', 'duplicate', 'carrier-expired', 'carrier-job'):
             origin, receipt = copy.deepcopy(base), copy.deepcopy(parent)
             if changed == 'historical-id': receipt['retainedEngine']['artifact']['id'] += 1
             if changed == 'historical-expiry': receipt['retainedEngine']['artifact']['expires_at'] = '2020-01-01T00:00:00Z'
@@ -868,14 +941,19 @@ class CompiledAppReleaseTests(unittest.TestCase):
             routes = {'actions/runs/' + str(origin['runID']): run,
                 f"actions/runs/{origin['runID']}/attempts/1/jobs?per_page=100": {'total_count': 1, 'jobs': [job]},
                 **{'actions/artifacts/' + str(key): value for key, value in artifacts.items()}}
+            carrier = {'signedBase': {'proofArtifactID': 13769367412, 'payloadArtifactID': 13769391943}}
+            if changed == 'cohort':
+                del routes['actions/artifacts/' + str(release.FINAL_ARTIFACT[0])]
             with self.subTest(changed=changed), tempfile.TemporaryDirectory() as directory, \
+                    patch.object(app_cohort_v2, 'has_manifest', return_value=changed == 'cohort'), \
+                    patch.object(release, 'pack_verification_provenance', return_value={'carrier': carrier}), \
                     patch.object(release, 'engine_carrier_origin', return_value=origin), \
                     patch.object(release, 'api', side_effect=lambda route: copy.deepcopy(routes[route])) as requests, \
                     patch.object(release, 'download', side_effect=lambda item, dest: dest.write_bytes(payload)) as download, \
                     patch.object(release.engine, 'DIGEST', original_digest), \
                     patch.object(release.engine, 'LOG_DIGEST', log_digest), \
                     patch.object(release.engine, 'verify_original', return_value=old_job):
-                if changed is not None:
+                if changed not in (None, 'cohort'):
                     with self.assertRaises(ValueError): release.retained_engine_carrier(Path(directory))
                     continue
                 release.retained_engine_carrier()
@@ -887,6 +965,10 @@ class CompiledAppReleaseTests(unittest.TestCase):
                 self.assertEqual((Path(directory) / 'retained-engine/original-job.log').read_bytes(), original_log)
                 self.assertGreater(actual['acquiredAt'], historical['artifact']['expires_at'])
                 self.assertNotIn('actions/artifacts/' + str(release.engine.ARTIFACT), [call.args[0] for call in requests.call_args_list])
+                if changed == 'cohort':
+                    self.assertEqual(actual['packCarrier'], carrier)
+                    self.assertNotIn('actions/artifacts/' + str(release.FINAL_ARTIFACT[0]),
+                        [call.args[0] for call in requests.call_args_list])
 
     def test_retained_engine_environment_requires_all_original_context_fields_and_arm64(self):
         original = {'swift': 'measured Swift', 'xcode': 'measured Xcode', 'python': '3.13.17',
