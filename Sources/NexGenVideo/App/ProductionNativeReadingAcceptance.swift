@@ -4,6 +4,8 @@ import NexGenEngine
 @MainActor
 enum ProductionNativeReadingAcceptance {
     static func read(_ id: String, expected: String, driver: ProductionVisualSourcesDriver) async throws {
+        let transaction = try NativeAcceptancePointer.claim()
+        defer { NativeAcceptancePointer.release(transaction) }
         let window = driver.window
         try await driver.wait("locate readable text " + id) { driver.text(id, in: window) == expected }
         guard let root = window.contentView, let view = WorkspaceUIAcceptance.findProbe(in: root, identifier: id) else {
@@ -16,7 +18,7 @@ enum ProductionNativeReadingAcceptance {
             ancestor = current.superview
         }
         guard let scroll else {
-            try await driver.reveal(id, in: window)
+            try await driver.reveal(id, in: window, transaction: transaction)
             try driver.visible([id], in: window)
             try driver.capture("read-direction", target: window)
             try driver.record("complete compiled direction inspected", fields: ["id": id,
@@ -79,7 +81,7 @@ enum ProductionNativeReadingAcceptance {
             }
             let point = window.convertPoint(toScreen: scroll.convert(local, to: nil))
             let location = CGPoint(x: point.x, y: screen.frame.maxY - point.y)
-            try await movePointer(to: location, window: window, driver: driver)
+            try await movePointer(to: location, window: window, driver: driver, transaction: transaction)
             let before = clip.bounds.origin
             for event in try HangDiagnosticReplay.scrollGestureEvents(delta: delta,
                 location: location) {
@@ -95,45 +97,12 @@ enum ProductionNativeReadingAcceptance {
         throw GateBlocked("Native wheel input did not expose every line of the compiled direction: " + id)
     }
 
-    @MainActor private final class PointerDelivery {
-        var expected = NSPoint.zero
-        var matched = false
-    }
-
-    static func movePointer(to location: CGPoint, window: NSWindow, driver: ProductionVisualSourcesDriver) async throws {
-        guard window.isKeyWindow, let screen = NSScreen.screens.first else {
-            throw GateBlocked("The native wheel pointer cannot reach the active window.")
+    static func movePointer(to location: CGPoint, window: NSWindow, driver: ProductionVisualSourcesDriver,
+                            transaction: UUID? = nil) async throws {
+        let token = try transaction ?? NativeAcceptancePointer.claim()
+        defer { if transaction == nil { NativeAcceptancePointer.release(token) } }
+        try await NativeAcceptancePointer.move(to: location, window: window, token: token, seconds: 10) { value in
+            try driver.record("native wheel pointer", fields: value)
         }
-        let accepted = window.acceptsMouseMovedEvents, number = window.windowNumber
-        window.acceptsMouseMovedEvents = true
-        let delivery = PointerDelivery()
-        let monitor = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved) { event in
-            let eventWindow = event.windowNumber, point = event.locationInWindow
-            MainActor.assumeIsolated {
-                if eventWindow == number,
-                   abs(point.x - delivery.expected.x) < 0.5,
-                   abs(point.y - delivery.expected.y) < 0.5 { delivery.matched = true }
-            }
-            return event
-        }
-        defer {
-            if let monitor { NSEvent.removeMonitor(monitor) }
-            window.acceptsMouseMovedEvents = accepted
-        }
-        func post(_ point: CGPoint) async throws {
-            delivery.matched = false
-            delivery.expected = window.convertPoint(fromScreen: NSPoint(x: point.x, y: screen.frame.maxY - point.y))
-            guard let event = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left) else {
-                throw GateBlocked("The actual pointer move could not be created.")
-            }
-            event.post(tap: .cghidEventTap)
-            try await driver.wait("actual wheel pointer delivery") { delivery.matched }
-        }
-        let current = NSEvent.mouseLocation
-        if abs(current.x - location.x) < 0.5, abs(current.y - (screen.frame.maxY - location.y)) < 0.5 {
-            let offset: CGFloat = location.x + 2 < window.frame.maxX ? 2 : -2
-            try await post(CGPoint(x: location.x + offset, y: location.y))
-        }
-        try await post(location)
     }
 }

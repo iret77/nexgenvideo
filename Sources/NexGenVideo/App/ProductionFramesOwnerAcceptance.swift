@@ -295,13 +295,15 @@ enum ProductionFramesOwnerAcceptance {
 
     private static func reveal(_ item: PipelineProductionFrameCandidates.Item,
         context: ProductionPlanningAcceptanceFixture.Context, driver: ProductionVisualSourcesDriver) async throws {
+        let transaction = try NativeAcceptancePointer.claim()
+        defer { NativeAcceptancePointer.release(transaction) }
         let shot = item.candidate.receipt.shotID, role = item.candidate.receipt.role
         let current = try await snapshot(shotID: shot, role: role, context: context)
         let header = "frames.role.\(shot).\(role)", target = "frames.use." + item.id
         try await driver.wait("current candidate count visible") {
             driver.text(header, in: driver.window) == String(current.items.count)
         }
-        try await driver.reveal(header, in: driver.window)
+        try await driver.reveal(header, in: driver.window, transaction: transaction)
         guard let root = driver.window.contentView,
               let heading = WorkspaceUIAcceptance.findProbe(in: root, identifier: header),
               let screen = NSScreen.screens.first else { throw failed("The candidate role has no actual native scroll surface.") }
@@ -315,7 +317,7 @@ enum ProductionFramesOwnerAcceptance {
         for _ in 0..<30 {
             root.layoutSubtreeIfNeeded()
             if WorkspaceUIAcceptance.findProbe(in: root, identifier: target) != nil {
-                try await driver.reveal(target, in: driver.window)
+                try await driver.reveal(target, in: driver.window, transaction: transaction)
                 return
             }
             let before = scroll.contentView.bounds.origin
@@ -325,7 +327,8 @@ enum ProductionFramesOwnerAcceptance {
                   hit === scroll || hit.isDescendant(of: scroll) else { throw failed("The actual gallery wheel target is clipped or covered.") }
             let point = driver.window.convertPoint(toScreen: scroll.convert(local, to: nil))
             let location = CGPoint(x: point.x, y: screen.frame.maxY - point.y)
-            try await ProductionNativeReadingAcceptance.movePointer(to: location, window: driver.window, driver: driver)
+            try await ProductionNativeReadingAcceptance.movePointer(to: location, window: driver.window, driver: driver,
+                                                                    transaction: transaction)
             let events = try HangDiagnosticReplay.scrollGestureEvents(delta: scroll.contentView.isFlipped ? -100 : 100,
                 location: location)
             for event in events {

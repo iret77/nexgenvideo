@@ -257,6 +257,8 @@ enum LayeredTimelineOwnerAcceptance {
     }
 
     private static func revealTrack(_ id: String, editor: EditorViewModel, window: NSWindow, driver: ProductionVisualSourcesDriver) async throws {
+        let transaction = try NativeAcceptancePointer.claim()
+        defer { NativeAcceptancePointer.release(transaction) }
         guard let root = window.contentView, let screen = NSScreen.screens.first,
               let view = AppNativeMenuAcceptance.views(root).compactMap({ $0 as? TimelineView }).first(where: { !$0.isHiddenOrHasHiddenAncestor }) else {
             throw failed("The actual timeline cannot receive native wheel input.")
@@ -271,7 +273,7 @@ enum LayeredTimelineOwnerAcceptance {
             }
             let global = window.convertPoint(toScreen: view.convert(point, to: nil))
             let location = CGPoint(x: global.x, y: screen.frame.maxY - global.y)
-            try await ProductionNativeReadingAcceptance.movePointer(to: location, window: window, driver: driver)
+            try await ProductionNativeReadingAcceptance.movePointer(to: location, window: window, driver: driver, transaction: transaction)
             let before = view.visibleRect
             for event in try HangDiagnosticReplay.scrollGestureEvents(delta: y < view.visibleRect.minY + geometry.rulerHeight ? 50 : -50,
                 location: location) {
