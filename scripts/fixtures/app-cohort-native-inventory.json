@@ -1,5 +1,5 @@
 {
-  "appSourceSHA": "61780c549822cd9a35c2ee0806faa657eb3813f1",
+  "appSourceSHA": "bf4447a4a0de84f5505d2a1a6ac631eae4d8c473",
   "expectedActualExecutions": 4666,
   "modules": {
     "app": {
@@ -2129,9 +2129,9 @@
         "NexGenVideoTests.NativePointerInteractionTests/aLostUpGetsOnlyOneReleaseCleanup()/NativeButtonInteractionTests.swift:1297:6",
         "NexGenVideoTests.NativePointerInteractionTests/actualCompactButtonsUseOneTaggedSystemClickEach()/NativeButtonInteractionTests.swift:1002:6",
         "NexGenVideoTests.NativePointerInteractionTests/actualNativeControlAndMenuTrackingKeepTheirCallbacks()/NativeButtonInteractionTests.swift:1168:6",
-        "NexGenVideoTests.NativePointerInteractionTests/canonicalNativeAccessibilityFailuresNeverPostDown()/NativeButtonInteractionTests.swift:1664:6",
-        "NexGenVideoTests.NativePointerInteractionTests/canonicalNativeAccessibilityHitKeepsSystemInputAndRealFieldFocus()/NativeButtonInteractionTests.swift:1596:6",
-        "NexGenVideoTests.NativePointerInteractionTests/canonicalNativeAccessibilityIdentityAndGeometryAreRevalidatedBeforeDown()/NativeButtonInteractionTests.swift:1766:6",
+        "NexGenVideoTests.NativePointerInteractionTests/canonicalNativeAccessibilityFailuresNeverPostDown()/NativeButtonInteractionTests.swift:1670:6",
+        "NexGenVideoTests.NativePointerInteractionTests/canonicalNativeAccessibilityHitKeepsSystemInputAndRealFieldFocus()/NativeButtonInteractionTests.swift:1602:6",
+        "NexGenVideoTests.NativePointerInteractionTests/canonicalNativeAccessibilityIdentityAndGeometryAreRevalidatedBeforeDown()/NativeButtonInteractionTests.swift:1794:6",
         "NexGenVideoTests.NativePointerInteractionTests/changedAccessibilityHitCannotBorrowTheOriginalGeometry()/NativeButtonInteractionTests.swift:1185:6",
         "NexGenVideoTests.NativePointerInteractionTests/concurrentButtonPreparationCannotMoveTheOwnedPointer()/NativeButtonInteractionTests.swift:1374:6",
         "NexGenVideoTests.NativePointerInteractionTests/coveredForeignAndInvalidTargetsNeverPostDown()/NativeButtonInteractionTests.swift:1102:6",
@@ -2139,7 +2139,7 @@
         "NexGenVideoTests.NativePointerInteractionTests/mouseIgnoringWindowAllowsOneClickAndInputCatchingWindowRefusesIt()/NativeButtonInteractionTests.swift:1058:6",
         "NexGenVideoTests.NativePointerInteractionTests/ownedDownIsReleasedWhenTheTaskIsCancelled()/NativeButtonInteractionTests.swift:1346:6",
         "NexGenVideoTests.NativePointerInteractionTests/unselectedAndDisabledTargetsKeepDifferentMeaning()/NativeButtonInteractionTests.swift:1035:6",
-        "NexGenVideoTests.NativePointerInteractionTests/viewportWidthPreservesFieldAndNativeWheelAcrossScrollerStyles()/NativeButtonInteractionTests.swift:1413:6",
+        "NexGenVideoTests.NativePointerInteractionTests/viewportWidthPreservesFieldAndNativeWheelAcrossScrollerStyles()/NativeButtonInteractionTests.swift:1419:6",
         "NexGenVideoTests.NativeSegmentInteractionTests/accessibilityCenterOutsideTheNativeControlIsRejected()/NativeSegmentInteractionTests.swift:98:6",
         "NexGenVideoTests.NativeSegmentInteractionTests/accessibilityFrameCannotBorrowAnotherWindow()/NativeSegmentInteractionTests.swift:116:6",
         "NexGenVideoTests.NativeSegmentInteractionTests/clippedControlIsRejectedEvenWhenTheTargetSegmentIsVisible()/NativeSegmentInteractionTests.swift:73:6",
@@ -4799,7 +4799,7 @@
     "Package.swift": "37f605bfb8cdccc48821b39484c819ba3e5eff43",
     "Runtime": "910b87b08a3a8c976e0f2502580c843b0df74154",
     "Sources": "e96c24777e54c548e7ff10d9ba50927d19a55d13",
-    "Tests": "1bb632846782f27c3c85f9e72dbb318d2d7c221c",
+    "Tests": "3c81d4bd12e10d953bd44ac830b21e45a34c3f36",
     "Vendor": "51e93c100e00dcd196edac0e70e1af921d52055a",
     "plugins": "b75e017d3145010368ae417bc410574f3f0300c1"
   },
