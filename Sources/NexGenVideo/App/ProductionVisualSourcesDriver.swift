@@ -1006,7 +1006,7 @@ enum NativeAcceptancePointer {
         guard !(hit is NSControl || hit is NSTextView), root === window.contentView, hit.window === window,
               probe.window === window, hit === root || hit.isDescendant(of: root),
               probe === hit || probe.isDescendant(of: hit), !hit.isHiddenOrHasHiddenAncestor,
-              !hit.visibleRect.isEmpty, hit.isAccessibilityEnabled() else { return nil }
+              !hit.visibleRect.isEmpty else { return nil }
         let bounds = probe.convert(probe.bounds, to: hit), local = hit.convert(point, from: nil)
         guard [bounds.minX, bounds.minY, bounds.width, bounds.height, local.x, local.y].allSatisfy(\.isFinite),
               bounds.width > 0, bounds.height > 0, hit.bounds.contains(bounds),
