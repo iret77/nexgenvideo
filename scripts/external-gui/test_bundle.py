@@ -990,7 +990,7 @@ def _current_core_import_view(raw, path, *, current=False):
             'verify_retained_runtime_pack': ('b4d148e5443ee3506b9d4a37fd0b17c7619745a7fbb06d3cb74d2afc37d41186',
                                             '0884555783dc4ae4bb3ceebb4e060bbb2063f0348f5991db3cd0e9bf3d300c35'),
             'verify_component_runtime_pack': ('ffc417b2506fdee86fe19011ed48340edb0204d7eb4fe1ebd7c7121e4c11ee43',
-                                             '85fd1de9410291d002aed95373dcb152eb6c0dd3b00e3a3c34fabf6e796a2617'),
+                                             'b42c18b1d5a10542b4fb2f1c58000f3e0e8dc5a1302c69f1e67283f017f36463'),
         }
         pack_additions = {
             'signed_pack_product': '66f4a13b8cb75d4e25cff4b2d47d7a92b7d7bac73e1c0a7208c33bbddb045c18',

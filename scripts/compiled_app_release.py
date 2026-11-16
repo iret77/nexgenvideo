@@ -589,10 +589,15 @@ def verify_component_runtime_pack(directory, product, receipt, proof, identity):
         and producer.get('actor', {}).get('login') == 'iret77'
         and producer.get('run_attempt') == proof.get('producerAttempt') == 1
         and producer.get('path') == '.github/workflows/release.yml' and producer.get('workflow_id') == 303346287
-        and producer.get('event') == 'workflow_dispatch' and producer.get('status') == 'completed'
+        and producer.get('event') == 'workflow_dispatch'
+        and (producer.get('status') == 'completed'
+            or (producer.get('status') == 'in_progress' and producer.get('conclusion') is None
+                and str(producer['id']) == proof['executionRunID']
+                and product == os.environ['GITHUB_SHA'] and os.environ.get('GITHUB_JOB') == 'analyze'))
         and job.get('id') == proof['producerJobID'] and job.get('name') == 'release'
         and job.get('run_id') == producer['id'] and job.get('head_sha') == product and job.get('run_attempt') == 1
-        and job.get('labels') == ['macrunner'] and job.get('conclusion') == 'success',
+        and job.get('labels') == ['macrunner'] and job.get('status') == 'completed'
+        and job.get('conclusion') == 'success',
         'Corrected runtime pack differs from its actual release producer')
     verify_artifact(artifact, producer, job, proof['runtimeArtifactID'], proof['runtimeArtifactSHA256'], 'workspace-ui-app')
     bundle, marker = directory / 'plugins/musicvideo.ngvpack', directory / 'pack-verification.reused.json'
