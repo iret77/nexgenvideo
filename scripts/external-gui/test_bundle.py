@@ -141,7 +141,7 @@ def _builder_view(text):
                  '_workflow_build_view', '_guard_import_view', '_source_snapshot', '_compiled_compatibility',
                  'validate_client_selectors', 'validate_client_source', '_packaging_import_view', '_metadata_api_import_view',
                  '_native_inventory_additions', '_current_core_import_view', '_current_native_regression_ids',
-                 '_cohort_ci_additions'}
+                 '_cohort_ci_additions', '_home_oracle_import_view'}
     for node in module.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in consumers:
             _safe_function(node)
@@ -1039,6 +1039,27 @@ def _cohort_ci_additions(prior, current, changes, known_helpers, client_inputs):
     return added
 
 
+def _home_oracle_import_view(text):
+    import ast
+    module = ast.parse(text)
+    functions = [node for node in module.body if isinstance(node, ast.FunctionDef)
+                 and node.name == 'run_external_test']
+    require(len(functions) == 1, 'Ambiguous external runner HOME verifier')
+    _safe_function(functions[0])
+    legacy = ast.parse("require(runner == {'HOME': str(home), 'CFFIXED_USER_HOME': str(home), 'foundationHome': str(home)}, "
+                       "'The actual XCTest runner home differs from its invocation')").body[0]
+    current = ast.parse("require(isinstance(runner, dict) and set(runner) == {'HOME', 'CFFIXED_USER_HOME', 'foundationHome'} "
+                        "and home.is_dir() and all(isinstance(value, str) and Path(value).is_absolute() "
+                        "and Path(value).is_dir() and Path(value).samefile(home) for value in runner.values()), "
+                        "'The actual XCTest runner home differs from its invocation')").body[0]
+    allowed = {ast.dump(node, include_attributes=False) for node in (legacy, current)}
+    checks = [node for node in ast.walk(functions[0]) if isinstance(node, ast.Expr)
+              and ast.dump(node, include_attributes=False) in allowed]
+    require(len(checks) == 1, 'Unrecognized external runner HOME identity check')
+    checks[0].value = legacy.value
+    return ast.dump(module, include_attributes=False)
+
+
 def _compiled_compatibility(producer_sha, producer_files, current_sha, current_files, originals, comparison):
     require(re.fullmatch('[a-f0-9]{40}', producer_sha) and producer_sha != current_sha
             and set(producer_files) <= set(current_files), 'Incomplete original UI test qualification inputs')
@@ -1105,9 +1126,17 @@ def _compiled_compatibility(producer_sha, producer_files, current_sha, current_f
     runtime_helper = 'scripts/compiled_app_release.py'
     packaging_helper = 'scripts/retained_packaging.py'
     metadata_helper = 'scripts/retained_app_test_products.py'
-    metadata_only = {'scripts/external-gui/transport.py', 'scripts/release_engine_resume.py', inventory_path, runtime_helper, packaging_helper, metadata_helper, 'scripts/app_cohort_v2.py', 'scripts/app_release_v2.py', 'scripts/release_checkpoint.py', *added_inputs}
+    journey_helper = 'scripts/external-gui/acceptance.py'
+    metadata_only = {'scripts/external-gui/transport.py', 'scripts/release_engine_resume.py', inventory_path, runtime_helper, packaging_helper, metadata_helper, journey_helper, 'scripts/app_cohort_v2.py', 'scripts/app_release_v2.py', 'scripts/release_checkpoint.py', *added_inputs}
     require(all(producer_files[name] == digest for name, digest in current_files.items() if name not in {helper, guard, cohort, *metadata_only}),
             'Compiled UI test source, project or reachable shared helper changed')
+    if producer_files[journey_helper] != current_files[journey_helper]:
+        current_journey = journey.output([*git, 'show', current_sha + ':' + journey_helper])
+        require(current_journey == (journey.REPOSITORY / journey_helper).read_bytes()
+                and hashlib.sha256(current_journey).hexdigest() == current_files[journey_helper],
+                'External runner HOME verifier differs from its committed receipt')
+        require(_home_oracle_import_view(originals[journey_helper]) == _home_oracle_import_view(current_journey),
+                'External runner changes outside the exact HOME identity correction')
     for name in ('scripts/app_cohort_v2.py', 'scripts/app_release_v2.py', 'scripts/release_checkpoint.py'):
         raw = journey.output([*git, 'show', current_sha + ':' + name])
         require(raw == (journey.REPOSITORY / name).read_bytes()

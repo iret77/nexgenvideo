@@ -1,6 +1,7 @@
 import ast
 import base64
 import copy
+from contextlib import nullcontext
 import hashlib
 import io
 import json
@@ -564,17 +565,106 @@ class ExternalTestBundleTests(unittest.TestCase):
                 journey.validate_app_identity(self.root, changed_result, changed_identity, self.sha, '1.5', expected)
 
 
-    def compiled_client_fixture(self):
+    def external_home_result(self, home, runner):
+        evidence = self.root / 'runner-home-evidence'
+        evidence.mkdir(exist_ok=True)
+        journey.write_json(evidence / 'runner-home.json', runner)
+        with patch.object(journey, 'isolated_environment', return_value={'HOME': str(home)}), \
+                patch.object(bundle, 'isolated_invocation', return_value=nullcontext(self.root / 'Tests.xctestrun')), \
+                patch.object(journey, 'command', return_value=0):
+            return journey.run_external_test(self.root / 'Tests.xctestrun', {}, home, evidence,
+                                             'testGenericEditingThroughInstalledApp')
+
+    def test_external_runner_home_accepts_aliases_of_owned_directory(self):
+        home = self.root / 'owned-home'
+        home.mkdir()
+        alias = self.root / 'canonical-alias'
+        alias.symlink_to(home, target_is_directory=True)
+        self.assertEqual(self.external_home_result(home, {
+            'HOME': str(alias), 'CFFIXED_USER_HOME': str(home), 'foundationHome': str(alias)}), 0)
+
+    def test_external_runner_home_rejects_other_directory_for_each_field(self):
+        home, other = self.root / 'owned-home', self.root / 'other-home'
+        home.mkdir(); other.mkdir()
+        expected = {key: str(home) for key in ('HOME', 'CFFIXED_USER_HOME', 'foundationHome')}
+        for key in expected:
+            with self.subTest(field=key), self.assertRaisesRegex(ValueError, 'runner home differs'):
+                self.external_home_result(home, {**expected, key: str(other)})
+
+    def test_external_runner_home_rejects_malformed_or_missing_identity(self):
+        home = self.root / 'owned-home'
+        home.mkdir()
+        expected = {key: str(home) for key in ('HOME', 'CFFIXED_USER_HOME', 'foundationHome')}
+        regular = self.root / 'regular-file'
+        regular.write_text('not a home')
+        for runner in ({}, [], {**expected, 'extra': str(home)},
+                       {**expected, 'HOME': 'owned-home'}, {**expected, 'HOME': False},
+                       {**expected, 'HOME': str(self.root / 'missing')},
+                       {**expected, 'foundationHome': str(regular)},
+                       {key: value for key, value in expected.items() if key != 'CFFIXED_USER_HOME'}):
+            with self.subTest(runner=runner), self.assertRaisesRegex(ValueError, 'runner home differs'):
+                self.external_home_result(home, runner)
+
+    def legacy_home_oracle_source(self, text):
+        module = ast.parse(text)
+        target, = [node for node in module.body if isinstance(node, ast.FunctionDef)
+                   and node.name == 'run_external_test']
+        check, = [node for node in ast.walk(target) if isinstance(node, ast.Expr)
+                  and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name)
+                  and node.value.func.id == 'require' and len(node.value.args) == 2
+                  and isinstance(node.value.args[1], ast.Constant)
+                  and node.value.args[1].value == 'The actual XCTest runner home differs from its invocation']
+        check.value = ast.parse("require(runner == {'HOME': str(home), 'CFFIXED_USER_HOME': str(home), 'foundationHome': str(home)}, "
+                                "'The actual XCTest runner home differs from its invocation')").body[0].value
+        return ast.unparse(module).encode()
+
+    def test_compiled_client_reuses_exact_home_oracle_correction(self):
+        fixture = self.compiled_client_fixture(legacy_home_oracle=True)
+        with patch.object(journey, 'output', side_effect=fixture.git_output):
+            proof = bundle._compiled_compatibility(self.sha, fixture.original_files, fixture.current,
+                                                   fixture.files, fixture.original, fixture.comparison)
+        self.assertEqual(proof['producerSourceSHA'], self.sha)
+        name = 'scripts/external-gui/acceptance.py'
+        self.assertNotEqual(proof['producerFiles'][name], proof['consumerFiles'][name])
+
+    def test_home_oracle_compatibility_rejects_weaker_identity_checks(self):
+        current = (journey.ROOT / 'acceptance.py').read_text()
+        for before, after in (('Path(value).samefile(home)', 'True'),
+                              ('Path(value).is_absolute()', 'True'),
+                              ('Path(value).is_dir()', 'True'),
+                              ('home.is_dir()', 'True'),
+                              ('def run_external_test(', '@unexpected\ndef run_external_test(')):
+            changed = current.replace(before, after)
+            self.assertNotEqual(current, changed)
+            with self.subTest(change=before), self.assertRaises(ValueError):
+                bundle._home_oracle_import_view(changed)
+
+    def test_home_oracle_compatibility_preserves_other_build_reachable_code(self):
+        current = (journey.ROOT / 'acceptance.py').read_text()
+        original = self.legacy_home_oracle_source(current)
+        expected = bundle._home_oracle_import_view(original)
+        self.assertEqual(bundle._home_oracle_import_view(current), expected)
+        for changed in (current + '\nimport unexpected\n',
+                        current.replace('timeout=720', 'timeout=721'),
+                        current.replace('return digest.hexdigest()', "return 'changed digest'")):
+            self.assertNotEqual(current, changed)
+            with self.subTest(change=changed[-80:]):
+                self.assertNotEqual(bundle._home_oracle_import_view(changed), expected)
+
+    def compiled_client_fixture(self, *, legacy_home_oracle=False):
         current = 'd' * 40
         payloads = {(journey.ROOT / name).relative_to(journey.REPOSITORY).as_posix(): (journey.ROOT / name).read_bytes()
                     for name in journey.TEST_INPUTS}
         payloads.update({name: (journey.REPOSITORY / name).read_bytes() for name in journey.SHARED_INPUTS})
         files = {name: hashlib.sha256(raw).hexdigest() for name, raw in payloads.items()}
         original = dict(payloads)
+        journey_helper = 'scripts/external-gui/acceptance.py'
+        if legacy_home_oracle:
+            original[journey_helper] = self.legacy_home_oracle_source(original[journey_helper])
         helper = 'scripts/external-gui/test_bundle.py'
         added = {'_safe_function', '_builder_view', '_workflow_build_view', '_guard_import_view',
                  '_source_snapshot', '_compiled_compatibility', 'validate_client_selectors', 'validate_client_source',
-                 '_packaging_import_view', '_metadata_api_import_view', '_cohort_ci_additions'}
+                 '_packaging_import_view', '_metadata_api_import_view', '_cohort_ci_additions', '_home_oracle_import_view'}
         lines = original[helper].decode().splitlines(keepends=True)
         excluded = set()
         for node in ast.parse(original[helper]).body:
@@ -628,6 +718,8 @@ class ExternalTestBundleTests(unittest.TestCase):
                       {'filename': '.github/workflows/bpy-runtime-acceptance.yml', 'status': 'modified'},
                       {'filename': workflow, 'status': 'modified'},
                       {'filename': 'Sources/NexGenVideo/App/NativeButtonAccessibility.swift', 'status': 'added'}]}
+        if legacy_home_oracle:
+            comparison['files'].append({'filename': journey_helper, 'status': 'modified'})
         history = copy.deepcopy(comparison)
 
         def git_output(arguments, **kwargs):
@@ -648,7 +740,7 @@ class ExternalTestBundleTests(unittest.TestCase):
                 commit, name = arguments[-1].split(':', 1)
                 if commit == current and name in {workflow, action, cohort, 'scripts/fixtures/app-cohort-native-inventory.json',
                         'scripts/compiled_app_release.py', 'scripts/retained_packaging.py', 'scripts/retained_app_test_products.py',
-                        'scripts/app_cohort_v2.py', 'scripts/app_release_v2.py', 'scripts/release_checkpoint.py', 'scripts/compiled_current_core_reuse.py'}: return (journey.REPOSITORY / name).read_bytes()
+                        'scripts/app_cohort_v2.py', 'scripts/app_release_v2.py', 'scripts/release_checkpoint.py', 'scripts/compiled_current_core_reuse.py', journey_helper}: return (journey.REPOSITORY / name).read_bytes()
                 self.assertEqual(commit, self.sha)
                 return original[name]
             self.fail('Unexpected compiled-client command: ' + str(arguments))

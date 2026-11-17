@@ -27,9 +27,42 @@ def launch_capture(command, environment, output, name):
     return process
 
 
-def retain_capture_recordings(root, before, output):
+def retain_watchdog_reports(root, before, archive, receipt):
+    for path in sorted(set(root.parent.glob("NexGenVideo-*-main-thread-hang.json")) - before):
+        try:
+            if path.is_symlink() or not path.is_file() or path.stat().st_size > 1024 * 1024:
+                raise ValueError("watchdog report is not a bounded regular file")
+            raw = path.read_bytes()
+            report = json.loads(raw)
+            pid = report.get("processID") if isinstance(report, dict) else None
+            if type(pid) is not int or pid not in _capture_processes:
+                receipt["unmatched"].append({"name": path.name, "reason": "unowned-watchdog-process"})
+                continue
+            sample_name = path.stem + ".sample.txt"
+            if report.get("sampleFilenameIfAvailable") != sample_name:
+                raise ValueError("watchdog sample reference differs from its report")
+            files = [(path.name, raw)]
+            sample = path.with_name(sample_name)
+            if sample.exists() or sample.is_symlink():
+                if sample.is_symlink() or not sample.is_file() or sample.stat().st_size > 64 * 1024 * 1024:
+                    raise ValueError("watchdog sample is not a bounded regular file")
+                files.append((sample.name, sample.read_bytes()))
+            retained = []
+            for name, payload in files:
+                member = "watchdog/" + name
+                archive.writestr(member, payload)
+                retained.append({"path": member, "bytes": len(payload),
+                                 "sha256": hashlib.sha256(payload).hexdigest()})
+            receipt["watchdogReports"].append({"name": path.name, "pid": pid,
+                "mode": _capture_processes[pid], "sampleStatus": report.get("sampleStatus"),
+                "samplePresent": len(files) == 2, "files": retained})
+        except (OSError, ValueError, TypeError) as error:
+            receipt["captureErrors"].append({"name": path.name, "error": type(error).__name__})
+
+
+def retain_capture_recordings(root, before, output, *, before_watchdog=None):
     receipt = {"schema": "hang-capture-originals/1", "processes": _capture_processes.copy(),
-               "recordings": [], "unmatched": [], "captureErrors": []}
+               "recordings": [], "watchdogReports": [], "unmatched": [], "captureErrors": []}
     try:
         with zipfile.ZipFile(output / "capture-recordings.zip", "x", compression=zipfile.ZIP_DEFLATED) as archive:
             for folder in sorted(set(root.glob("*")) - before):
@@ -55,6 +88,7 @@ def retain_capture_recordings(root, before, output):
                         archive.write(path, path.relative_to(root))
                 except (OSError, ValueError, TypeError) as error:
                     receipt["captureErrors"].append({"name": folder.name, "error": type(error).__name__})
+            retain_watchdog_reports(root, before_watchdog or set(), archive, receipt)
     except (OSError, ValueError) as error:
         receipt["captureErrors"].append({"error": type(error).__name__})
     finally:
@@ -78,18 +112,19 @@ def main():
             parser.error("symbols are required for full diagnostic acceptance")
         root = Path.home() / "Library/Logs/NexGenVideo/HangIncidents"
         before = set(root.glob("*"))
+        before_watchdog = set(root.parent.glob("NexGenVideo-*-main-thread-hang.json"))
         args.output.mkdir(parents=True, exist_ok=True)
         _capture_processes.clear()
         try:
             verify(args)
         except BaseException:
             try:
-                retain_capture_recordings(root, before, args.output)
+                retain_capture_recordings(root, before, args.output, before_watchdog=before_watchdog)
             except Exception as error:
                 print(f"Capture retention failed: {type(error).__name__}", file=sys.stderr)
             raise
         else:
-            receipt = retain_capture_recordings(root, before, args.output)
+            receipt = retain_capture_recordings(root, before, args.output, before_watchdog=before_watchdog)
             assert not receipt["captureErrors"], receipt
 
 

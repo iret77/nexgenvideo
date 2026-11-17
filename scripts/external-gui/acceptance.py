@@ -612,7 +612,9 @@ def run_external_test(xctestrun, tests, home, evidence, method, timeout=720):
                        timeout=timeout, check=False, env=environment)
     if code == 0:
         runner = read_json(evidence / 'runner-home.json')
-        require(runner == {'HOME': str(home), 'CFFIXED_USER_HOME': str(home), 'foundationHome': str(home)},
+        require(isinstance(runner, dict) and set(runner) == {'HOME', 'CFFIXED_USER_HOME', 'foundationHome'}
+                and home.is_dir() and all(isinstance(value, str) and Path(value).is_absolute()
+                and Path(value).is_dir() and Path(value).samefile(home) for value in runner.values()),
                 'The actual XCTest runner home differs from its invocation')
     return code
 
