@@ -725,6 +725,34 @@ class ExternalTestBundleTests(unittest.TestCase):
                     continue
                 self.assertNotEqual(actual, expected)
 
+    def test_checkout_transport_compatibility_rejects_partial_or_weakened_source_recovery(self):
+        path = 'scripts/native_app_target_build.py'
+        current = (journey.REPOSITORY / path).read_text()
+        expected = self.component_transport_view(self.original_runtime_transport_source(path), path)
+        original = ast.parse(self.original_runtime_transport_source(path))
+        legacy_logged = next(node for node in original.body if isinstance(node, ast.FunctionDef) and node.name == 'logged')
+        partial = ast.parse(current)
+        partial.body = [legacy_logged if isinstance(node, ast.FunctionDef) and node.name == 'logged' else node
+                        for node in partial.body]
+        missing = ast.parse(current)
+        missing.body = [node for node in missing.body if not isinstance(node, ast.FunctionDef)
+                        or node.name != 'stop_logged_process']
+        variants = [ast.unparse(partial), ast.unparse(missing)]
+        for before, after in [("signal.SIGKILL", 'signal.SIGTERM'),
+                              ("GIT_TERMINAL_PROMPT='0'", "GIT_TERMINAL_PROMPT='1'"),
+                              ('https://github.com/notahotel/onnxruntime-swift-package-manager.git',
+                               'https://github.com/unreviewed/onnxruntime-swift-package-manager.git'),
+                              ('59178cede37305e8725fd09d5907d872a55004f1', '0' * 40),
+                              ("failure.get('ownedProcessGroupAbsent') is True", 'True'),
+                              ('source_git_environment(environment)', 'dict(environment)'),
+                              ('def fetch_pinned_source(', '@execute\ndef fetch_pinned_source(')]:
+            changed = current.replace(before, after)
+            self.assertNotEqual(changed, current)
+            variants.append(changed)
+        for changed in variants:
+            with self.subTest(change=changed[-100:]), self.assertRaises(ValueError):
+                self.component_transport_view(changed, path)
+
     def compiled_client_fixture(self, *, legacy_home_oracle=False, legacy_component_transport=False):
         current = 'd' * 40
         payloads = {(journey.ROOT / name).relative_to(journey.REPOSITORY).as_posix(): (journey.ROOT / name).read_bytes()

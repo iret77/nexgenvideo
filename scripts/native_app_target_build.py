@@ -250,6 +250,23 @@ def bind(root):
         'functionalAcceptance': False, 'publicationAuthorised': False})
 
 
+def stop_logged_process(process):
+    try: os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError: pass
+    try: process.wait(timeout=10)
+    except subprocess.TimeoutExpired: pass
+    try: os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError: pass
+    process.wait(timeout=10)
+    deadline = time.monotonic() + 10
+    while True:
+        try: os.killpg(process.pid, 0)
+        except ProcessLookupError: return
+        if time.monotonic() >= deadline:
+            raise RuntimeError('Owned native command process group did not terminate')
+        time.sleep(0.05)
+
+
 def logged(root, label, argv, env=None, cwd=None, timeout=600):
     root.mkdir(parents=True, exist_ok=True)
     write(root / (label + '.argv.json'), argv)
@@ -258,13 +275,28 @@ def logged(root, label, argv, env=None, cwd=None, timeout=600):
             env=env, cwd=cwd, start_new_session=True)
         try:
             status = process.wait(timeout=timeout)
-        except BaseException:
-            os.killpg(process.pid, signal.SIGTERM)
-            try: process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL); process.wait(timeout=10)
+        except BaseException as error:
+            cleanup_error = None
+            try: stop_logged_process(process)
+            except BaseException as failure: cleanup_error = failure
+            write(root / (label + '.exit.json'), {'exitCode': process.poll(),
+                'interrupted': True, 'exceptionType': type(error).__name__,
+                'timedOut': isinstance(error, subprocess.TimeoutExpired), 'timeoutSeconds': timeout,
+                'ownedProcessGroupID': process.pid, 'ownedProcessGroupAbsent': cleanup_error is None})
+            if cleanup_error is not None:
+                raise RuntimeError('Native command cleanup failed') from cleanup_error
             raise
-    write(root / (label + '.exit.json'), {'exitCode': status})
+    receipt = {'exitCode': status}
+    if status != 0:
+        cleanup_error = None
+        try: stop_logged_process(process)
+        except BaseException as failure: cleanup_error = failure
+        receipt.update(ownedProcessGroupID=process.pid, ownedProcessGroupAbsent=cleanup_error is None)
+        write(root / (label + '.exit.json'), receipt)
+        if cleanup_error is not None:
+            raise RuntimeError('Native command cleanup failed') from cleanup_error
+    else:
+        write(root / (label + '.exit.json'), receipt)
     require(status == 0, 'Native target command failed: ' + label)
     return (root / (label + '.stdout')).read_text()
 
@@ -303,8 +335,47 @@ def checkout_locations(packages, identities, scratch, workspace):
     return locations
 
 
+def source_git_environment(environment):
+    result = {name: value for name, value in environment.items()
+        if not name.startswith(('GIT_', 'SSH_', 'GH_', 'GITHUB_'))}
+    result.update(GIT_TERMINAL_PROMPT='0', GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL=os.devnull)
+    return result
+
+
+def fetch_pinned_source(root, git, destination, pin, environment):
+    identity, revision = pin['identity'], pin['state']['revision']
+    transports = {('onnxruntime-swift-package-manager',
+        'https://github.com/microsoft/onnxruntime-swift-package-manager',
+        'b7fb7f7dea8a2469e6335d95a61b8f36d0dc83b2'):
+        ('https://github.com/notahotel/onnxruntime-swift-package-manager.git',
+         '59178cede37305e8725fd09d5907d872a55004f1')}
+    label = identity + '-fetch-source-pin'
+    prefix = [*git, '-C', str(destination), 'fetch', '--no-tags', '--depth=1', '--no-recurse-submodules']
+    try:
+        logged(root, label, [*prefix, 'origin', revision], environment, timeout=180)
+    except (ValueError, subprocess.TimeoutExpired):
+        transport = transports.get((identity, repository_origin(pin['location']), revision))
+        if transport is None: raise
+        failure = json.loads((root / (label + '.exit.json')).read_text())
+        require((type(failure.get('exitCode')) is int and failure['exitCode'] != 0
+            or failure.get('timedOut') is True) and failure.get('ownedProcessGroupAbsent') is True,
+            'Pinned source primary failure is not safely recorded')
+        url, tree = transport
+        repository_origin(url)
+        logged(root, identity + '-fetch-source-transport', [*prefix, url, revision], environment, timeout=180)
+        logged(root, identity + '-verify-source-objects', [*git, '-C', str(destination),
+            'fsck', '--full', '--strict', revision], environment, timeout=180)
+        actual_tree = logged(root, identity + '-verify-source-tree', [*git, '-C', str(destination),
+            'rev-parse', revision + '^{tree}'], environment).strip()
+        require(actual_tree == tree, 'Recovered pinned source tree differs')
+        return {'kind': 'exact-commit-transport', 'url': url, 'treeGitObject': tree,
+            'primaryFailureReceipt': label + '.exit.json'}
+    return {'kind': 'canonical', 'url': pin['location']}
+
+
 def restore_checkouts(root, scratch, cache, pins, environment, packages, workspace):
     require(isinstance(pins, list) and len(pins) == 18, 'Pinned source checkout inventory changed')
+    environment = source_git_environment(environment)
     identities = set()
     for pin in pins:
         require(isinstance(pin, dict) and isinstance(pin.get('state'), dict)
@@ -347,23 +418,24 @@ def restore_checkouts(root, scratch, cache, pins, environment, packages, workspa
                 selected_cache, cache_origin = candidate, actual_origin
                 break
         destination = locations[identity]
-        git = ['git', '-c', 'core.hooksPath=/dev/null', '-c', 'maintenance.autoDetach=false', '-c', 'gc.autoDetach=false']
+        git = ['git', '-c', 'core.hooksPath=/dev/null', '-c', 'maintenance.autoDetach=false',
+            '-c', 'gc.autoDetach=false', '-c', 'credential.helper=']
         if selected_cache:
             logged(root, identity + '-clone-source', [*git, 'clone',
                 '--no-checkout', '--no-hardlinks', str(selected_cache), str(destination)], environment, timeout=180)
             logged(root, identity + '-canonical-origin', [*git, '-C', str(destination), 'remote', 'set-url',
                 'origin', pin['location']], environment)
+            transport = {'kind': 'qualified-cache', 'url': None}
         else:
             logged(root, identity + '-initialize-source', [*git, 'init', str(destination)], environment)
             logged(root, identity + '-canonical-origin', [*git, '-C', str(destination), 'remote', 'add',
                 'origin', pin['location']], environment)
-            logged(root, identity + '-fetch-source-pin', [*git, '-C', str(destination), 'fetch',
-                '--no-tags', '--depth=1', '--no-recurse-submodules', 'origin', revision], environment, timeout=180)
+            transport = fetch_pinned_source(root, git, destination, pin, environment)
         logged(root, identity + '-checkout-pin', [*git, '-C', str(destination),
             '-c', 'submodule.recurse=false', 'checkout', '--detach', revision], environment, timeout=180)
         restored.append({'identity': identity, 'revision': revision, 'origin': pin['location'],
             'cacheRepository': str(selected_cache) if selected_cache else None,
-            'originalCacheOrigin': cache_origin, 'checkout': str(destination)})
+            'originalCacheOrigin': cache_origin, 'checkout': str(destination), 'sourceTransport': transport})
     write(root / 'restored-source-checkouts.json', {'sourceOnly': True, 'binaryArtifactDownloads': 0, 'checkouts': restored})
 
 
@@ -462,14 +534,19 @@ def prepare(root, source_binding):
     require(scratch.is_relative_to(temporary) and not scratch.exists(), 'Pinned checkout path is occupied or outside this job')
     pins = json.loads(Path('Package.resolved').read_text())['pins']
     restore_checkouts(root, scratch, Path(snapshot['cache']), pins, environment, snapshot['graph']['packages'], Path.cwd())
+    git_environment = source_git_environment(environment)
     checkouts = list((scratch / 'checkouts').iterdir())
     require(len(pins) == len(checkouts) == 18, 'Pinned checkout inventory changed')
     for pin in pins:
         found = [path for path in checkouts if path.name.lower() == pin['identity'].lower()]
-        require(len(found) == 1 and capture.command(['git', '-C', str(found[0]), 'rev-parse', 'HEAD']).decode().strip()
+        require(len(found) == 1 and logged(root, pin['identity'] + '-verify-checkout-head',
+            ['git', '-c', 'core.hooksPath=/dev/null', '-c', 'credential.helper=', '-C', str(found[0]),
+             'rev-parse', 'HEAD'], git_environment).strip()
             == pin['state']['revision'], 'Pinned dependency checkout changed')
         require(not found[0].is_symlink() and found[0].resolve().parent == (scratch / 'checkouts').resolve()
-            and not capture.command(['git', '-C', str(found[0]), 'status', '--porcelain', '--untracked-files=all']).strip(),
+            and not logged(root, pin['identity'] + '-verify-checkout-clean',
+                ['git', '-c', 'core.hooksPath=/dev/null', '-c', 'credential.helper=', '-C', str(found[0]),
+                 'status', '--porcelain', '--untracked-files=all'], git_environment).strip(),
             'Pinned dependency checkout has changed or additional source files')
     require(not capture.git('status', '--porcelain', '--untracked-files=no'), 'Checkout restoration mutated tracked source')
     bank = binding['retainedBank']['runtimeArtifact']
