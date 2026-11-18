@@ -14,6 +14,7 @@ nonisolated final class BpyHostLauncher: @unchecked Sendable {
         let sourceSHA256: String?
         let fingerprint: String?
         let diagnosticDeniedPaths: [String]
+        var boundaryLoopbackPort: UInt16? = nil
     }
 
     private final class PipeEnds: @unchecked Sendable {
@@ -671,6 +672,11 @@ nonisolated final class BpyHostLauncher: @unchecked Sendable {
         let dataMount = try BpyStoragePaths.validateMount(pair.data, maximumBytes: dataBytes)
         defer { Darwin.close(dataMount) }
         try validate(spec, identity: launch.binding.identity)
+        let boundaryLoopbackPort = launch.binding.boundaryLoopbackPort
+        let testsNetwork = spec.mode == .boundary && spec.boundary == .denials
+        guard testsNetwork == (boundaryLoopbackPort != nil), boundaryLoopbackPort != 0 else {
+            throw POSIXError(.EPERM)
+        }
         let root = try open(spec.workerRoot, relativeTo: workerMount, device: pair.worker.device, directory: true)
         defer { Darwin.close(root) }
         let configuration = try open(spec.configuration, relativeTo: dataMount, device: pair.data.device, directory: false)
@@ -744,6 +750,8 @@ nonisolated final class BpyHostLauncher: @unchecked Sendable {
             return file
         }
         let environment = Self.workerEnvironment(rootPath: rootPath)
+        var configurationEnvironment = environment
+        configurationEnvironment["NGV_BPY_BOUNDARY_LOOPBACK_PORT"] = boundaryLoopbackPort.map { String($0) }
         let boundaryOnly = spec.mode == .boundary && spec.boundary != .diagnosticPythonFootprint
         let configurationValue = BpySupervisorConfiguration(hostPID: host.pid, hostStart: host.start,
             mode: spec.mode, python: boundaryOnly ? try BpyRuntimePath.canonical(layout.supervisor)
@@ -753,7 +761,7 @@ nonisolated final class BpyHostLauncher: @unchecked Sendable {
             runtime: try BpyRuntimePath.canonical(boundaryOnly ? layout.service.appendingPathComponent("Contents") : layout.runtime), readPaths: Array(Set(readPaths)).sorted(),
             canaryRead: try BpyRuntimePath.canonical(canaryRead), canaryWrite: canaryWrite.path,
             boundary: spec.boundary, boundaryPath: boundaryPath ?? canaryWrite.path,
-            injections: spec.injections, environment: environment)
+            injections: spec.injections, environment: configurationEnvironment)
         launch.startReaders()
         guard try memory.receipt(spec.permit).stop == nil, launch.lock.withLock({ launch.stop == nil }) else {
             throw BpyAdmissionFailure.closed

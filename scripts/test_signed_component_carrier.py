@@ -28,7 +28,7 @@ class SignedComponentCarrierTests(unittest.TestCase):
             originalSourceReceiptSHA256=hashlib.sha256(self.source).hexdigest())
         self.manifest = {'identity': {'build': '120'}, 'appTreeSHA256': self.selected['appTreeSHA256'],
             'files': self.selected['files'], 'nativeEvidence': {'cohortV2': {
-                'componentSourceObjects': self.value['componentSourceObjects']}},
+                'componentSourceObjects': self.selected['componentSourceObjects']}},
             'componentAssembly': {'signedBase': self.value['signedBase'], 'componentCompilerExecutions': 0,
                 'unchangedSignedComponents': self.components, 'sourceHandoff': {
                     'schema': 'compiled-component-source-handoff/v2', 'state': 'REUSED',
@@ -44,6 +44,12 @@ class SignedComponentCarrierTests(unittest.TestCase):
             value[key][next(iter(value[key]))] = 'changed'
             with self.subTest(key=key), self.assertRaises(ValueError):
                 carrier.origin(value)
+        replacement = copy.deepcopy(self.value)
+        replacement['componentSourceObjects'][carrier.REBUILT_SUPERVISOR] = 'f' * 40
+        self.assertEqual(carrier.origin(replacement)['componentSourceObjects'], self.selected['componentSourceObjects'])
+        replacement['componentSourceObjects'][carrier.REBUILT_SUPERVISOR] = 'invalid'
+        with self.assertRaises(ValueError):
+            carrier.origin(replacement)
         with mock.patch.object(carrier, 'FIXTURE_SHA256', '0' * 64), self.assertRaises(ValueError):
             carrier.origin(self.value)
 
@@ -136,7 +142,7 @@ class SignedComponentCarrierTests(unittest.TestCase):
             with self.subTest(change=change), mock.patch.dict(os.environ, GITHUB_SHA='c' * 40), \
                     mock.patch.object(carrier, 'origin', return_value=self.selected), \
                     mock.patch.object(carrier, 'api', side_effect=lambda route: selected[route]) as api, \
-                    mock.patch.object(app_cohort_v2, 'objects', return_value=self.value['componentSourceObjects']):
+                    mock.patch.object(app_cohort_v2, 'objects', side_effect=lambda _source, inputs: inputs):
                 if change:
                     with self.assertRaises(ValueError): carrier.metadata(self.value)
                 else:

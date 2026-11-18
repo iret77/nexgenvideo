@@ -211,10 +211,12 @@ private func launchChild(_ configuration: BpySupervisorConfiguration) throws -> 
     Darwin.close(BpyLaunchDescriptors.diagnosticRelease)
     if configuration.mode == .boundary {
         guard let mode = configuration.boundary else { throw SupervisorError.invalidArguments }
+        let loopbackPort = configuration.environment["NGV_BPY_BOUNDARY_LOOPBACK_PORT"].flatMap { UInt16($0) }
         Darwin.close(BpyLaunchDescriptors.configuration)
         closeReport()
         try runBoundaryChild(root: URL(fileURLWithPath: root),
-            outsidePath: URL(fileURLWithPath: configuration.boundaryPath ?? configuration.canaryWrite), mode: mode.rawValue)
+            outsidePath: URL(fileURLWithPath: configuration.boundaryPath ?? configuration.canaryWrite),
+            mode: mode.rawValue, loopbackPort: loopbackPort)
     }
     _ = fcntl(BpyLaunchDescriptors.report, F_SETFD, FD_CLOEXEC)
     guard fcntl(BpyLaunchDescriptors.configuration, F_SETFD, 0) == 0 else { throw SupervisorError.invalidArguments }
@@ -416,7 +418,35 @@ private func writeBoundaryResource(_ descriptor: Int32, byteCount: Int) throws {
     }
 }
 
-private func runBoundaryChild(root writeRoot: URL, outsidePath: URL, mode: String) throws -> Never {
+private func boundaryConnectionErrno(port: UInt16) throws -> Int32 {
+    let descriptor = Darwin.socket(AF_INET, SOCK_STREAM, 0)
+    guard descriptor >= 0 else { return errno }
+    defer { Darwin.close(descriptor) }
+    guard fcntl(descriptor, F_SETFL, O_NONBLOCK) == 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+    var address = sockaddr_in()
+    let length = socklen_t(MemoryLayout<sockaddr_in>.size)
+    address.sin_len = UInt8(length)
+    address.sin_family = sa_family_t(AF_INET)
+    address.sin_port = port.bigEndian
+    address.sin_addr.s_addr = UInt32(0x7f000001).bigEndian
+    let connected = withUnsafePointer(to: &address) { pointer in
+        pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.connect(descriptor, $0, length) }
+    }
+    if connected == 0 { return 0 }
+    let failure = errno
+    guard failure == EINPROGRESS else { return failure }
+    var socket = pollfd(fd: descriptor, events: Int16(POLLOUT), revents: 0)
+    let ready = Darwin.poll(&socket, 1, 1_000)
+    guard ready > 0 else { throw POSIXError(.init(rawValue: ready == 0 ? ETIMEDOUT : errno) ?? .EIO) }
+    var status: Int32 = 0
+    var size = socklen_t(MemoryLayout<Int32>.size)
+    guard Darwin.getsockopt(descriptor, SOL_SOCKET, SO_ERROR, &status, &size) == 0 else {
+        throw POSIXError(.init(rawValue: errno) ?? .EIO)
+    }
+    return status
+}
+
+private func runBoundaryChild(root writeRoot: URL, outsidePath: URL, mode: String, loopbackPort: UInt16?) throws -> Never {
     let reportURL = writeRoot.appendingPathComponent("child.json")
     if boundaryResourceModes.contains(mode) { _ = Darwin.signal(SIGTERM, SIG_IGN) }
 
@@ -570,15 +600,8 @@ private func runBoundaryChild(root writeRoot: URL, outsidePath: URL, mode: Strin
         throw POSIXError(.init(rawValue: forkProbeError) ?? .EIO)
     }
 
-    errno = 0
-    let socketDescriptor = Darwin.socket(AF_INET, SOCK_STREAM, 0)
-    let networkErrno: Int32
-    if socketDescriptor >= 0 {
-        networkErrno = 0
-        Darwin.close(socketDescriptor)
-    } else {
-        networkErrno = errno
-    }
+    guard mode == "denials", let loopbackPort, loopbackPort != 0 else { throw SupervisorError.invalidArguments }
+    let networkErrno = try boundaryConnectionErrno(port: loopbackPort)
 
     var signalErrnos: [Int32] = []
     for value in [Int32(0), SIGSTOP, SIGKILL] {

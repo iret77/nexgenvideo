@@ -50,7 +50,7 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
 
     init() {}
 
-    var isEnabled: Bool { enabled.load(ordering: .relaxed) }
+    var isEnabled: Bool { enabled.load(ordering: .relaxed) && !stopping.load(ordering: .acquiring) }
     var recordsContent: Bool { isEnabled && contentEnabled.load(ordering: .relaxed) }
 
     @discardableResult
@@ -91,25 +91,13 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
     }
 
     @MainActor
-    func start(includeContent: Bool) {
-        guard !startRequested.exchange(true, ordering: .relaxed) else { return }
+    func start(includeContent: Bool, completion: (@MainActor @Sendable (Bool) -> Void)? = nil) {
+        guard !startRequested.exchange(true, ordering: .relaxed) else {
+            completion?(false)
+            return
+        }
         ngv_sampler_initialize()
         let id = UUID()
-        let contentKey = includeContent ? SymmetricKey(size: .bits256) : nil
-        if let contentKey {
-            let encoded = contentKey.withUnsafeBytes { Data($0) }.base64EncodedString()
-            KeychainStore.save(encoded, account: "hang-diagnostic-\(id.uuidString)")
-            guard KeychainStore.load(account: "hang-diagnostic-\(id.uuidString)") == encoded else {
-                KeychainStore.delete(account: "hang-diagnostic-\(id.uuidString)")
-                startRequested.store(false, ordering: .relaxed)
-                Self.showFailure("Cannot protect replay content in Keychain. Recording was not started.")
-                return
-            }
-            if HangDiagnosticSelfTest.requested,
-               let output = ProcessInfo.processInfo.environment["NGV_HANG_SELFTEST_KEY"] {
-                try? DiagnosticFiles.write(Data(encoded.utf8), to: URL(fileURLWithPath: output))
-            }
-        }
         let metadata = [
             "schema": "1", "startupID": id.uuidString,
             "version": AppVersion.marketing ?? "unknown",
@@ -124,7 +112,7 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
         let now = DispatchTime.now().uptimeNanoseconds
         mainPulse.store(now, ordering: .relaxed)
         loopPulse.store(now, ordering: .relaxed)
-        stopping.store(false, ordering: .relaxed)
+        stopping.store(false, ordering: .releasing)
         observer = CFRunLoopObserverCreateWithHandler(nil, CFRunLoopActivity.beforeWaiting.rawValue
             | CFRunLoopActivity.afterWaiting.rawValue, true, 0) { [weak self] _, _ in
             self?.loopPulse.store(DispatchTime.now().uptimeNanoseconds, ordering: .relaxed)
@@ -144,8 +132,20 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
         self.mainTimer = mainTimer
         RunLoop.main.add(mainTimer, forMode: .common)
         writer.async { [self] in
-            guard !stopping.load(ordering: .relaxed) else {
-                KeychainStore.delete(account: "hang-diagnostic-\(id.uuidString)")
+            guard !stopping.load(ordering: .acquiring) else {
+                DispatchQueue.main.async { completion?(false) }
+                return
+            }
+            let contentKey: SymmetricKey?
+            do {
+                contentKey = includeContent ? try Self.prepareReplayKey(recording: id.uuidString) : nil
+            } catch {
+                failStart("Cannot protect replay content in Keychain. Recording was not started.", completion: completion)
+                return
+            }
+            guard !stopping.load(ordering: .acquiring) else {
+                if contentKey != nil { HangDiagnosticReplayKeychain.delete(recording: id.uuidString) }
+                DispatchQueue.main.async { completion?(false) }
                 return
             }
             do {
@@ -169,25 +169,51 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
                 timer.resume()
                 startHeartbeat(folder: folder, id: id)
                 startSampler(folder: folder)
+                if let completion { DispatchQueue.main.async { [self] in completion(isEnabled) } }
             } catch {
                 recordIssue("setup-failed", detail: Self.errorCode(error))
-                if let session {
+                if startupID == id, let session {
                     try? DiagnosticFiles.replace(captureIssues, at: session.appendingPathComponent("capture-error.json"))
+                } else if contentKey != nil {
+                    HangDiagnosticReplayKeychain.delete(recording: id.uuidString)
                 }
-                enabled.store(false, ordering: .relaxed)
-                contentEnabled.store(false, ordering: .relaxed)
-                stopping.store(true, ordering: .relaxed)
-                startRequested.store(false, ordering: .relaxed)
                 let message = (error as? CocoaError)?.code == .fileWriteOutOfSpace
                     ? "Stored diagnostics reached 1 GB. Existing recordings and keys are preserved. Export and delete recordings from Help before starting a new recording."
                     : "Diagnostic recording could not start. Existing recordings and keys are preserved."
-                DispatchQueue.main.async { [self] in finishFailedStart(message) }
+                failStart(message, completion: completion)
             }
+        }
+    }
+
+    private static func prepareReplayKey(recording: String) throws -> SymmetricKey {
+        let key = SymmetricKey(size: .bits256)
+        let encoded = key.withUnsafeBytes { Data($0) }.base64EncodedString()
+        try HangDiagnosticReplayKeychain.saveAndVerify(encoded, recording: recording)
+        if HangDiagnosticSelfTest.requested,
+           let output = ProcessInfo.processInfo.environment["NGV_HANG_SELFTEST_KEY"] {
+            do {
+                try DiagnosticFiles.write(Data(encoded.utf8), to: URL(fileURLWithPath: output))
+            } catch {
+                HangDiagnosticReplayKeychain.delete(recording: recording)
+                throw error
+            }
+        }
+        return key
+    }
+
+    private func failStart(_ message: String, completion: (@MainActor @Sendable (Bool) -> Void)?) {
+        let cancelled = stopping.exchange(true, ordering: .acquiringAndReleasing)
+        enabled.store(false, ordering: .relaxed)
+        contentEnabled.store(false, ordering: .relaxed)
+        DispatchQueue.main.async { [self] in
+            if !cancelled { finishFailedStart(message) }
+            completion?(false)
         }
     }
 
     @MainActor
     private func finishFailedStart(_ message: String) {
+        startRequested.store(false, ordering: .relaxed)
         if let observer { CFRunLoopRemoveObserver(CFRunLoopGetMain(), observer, .commonModes) }
         observer = nil
         mainTimer?.invalidate()
@@ -197,8 +223,8 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
 
     @MainActor
     func stop() {
+        stopping.store(true, ordering: .releasing)
         enabled.store(false, ordering: .relaxed)
-        stopping.store(true, ordering: .relaxed)
         if let observer { CFRunLoopRemoveObserver(CFRunLoopGetMain(), observer, .commonModes) }
         observer = nil
         mainTimer?.invalidate()
@@ -207,12 +233,10 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
             flush()
             timer?.cancel()
             timer = nil
-        }
-        pulseQueue.async { [self] in
-            pulseTimer?.cancel()
-            pulseTimer = nil
-        }
-        writer.async { [self] in
+            pulseQueue.async { [self] in
+                pulseTimer?.cancel()
+                pulseTimer = nil
+            }
             if helper?.isRunning == true { helper?.terminate() }
         }
     }
@@ -344,6 +368,7 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
 
     private func startHeartbeat(folder: URL, id: UUID) {
         pulseQueue.async { [self] in
+            guard !stopping.load(ordering: .acquiring) else { return }
             let timer = DispatchSource.makeTimerSource(queue: pulseQueue)
             timer.schedule(deadline: .now(), repeating: .milliseconds(500))
             timer.setEventHandler { [self] in
@@ -492,7 +517,7 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
                             throw CocoaError(.fileWriteNoPermission)
                         }
                         try FileManager.default.removeItem(at: folder)
-                        KeychainStore.delete(account: "hang-diagnostic-\(folder.lastPathComponent)")
+                        HangDiagnosticReplayKeychain.delete(recording: folder.lastPathComponent)
                     }
                     session = nil
                     key = nil

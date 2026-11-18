@@ -15,6 +15,9 @@ import native_xctest_host
 from native_xctest_host import HOST_NAME, persist_proof
 from retained_app_test_products import api, checksum, download, require, verify_artifact, write
 
+SUPERVISOR = 'NexGenVideoBpySupervisor'
+SERVICE = 'NexGenVideoBpyService'
+
 
 def verify_reused_host(build, value):
     host = value['retainedXCTestHost']
@@ -100,6 +103,133 @@ def unchanged_components(app):
     return result
 
 
+def replace_supervisors(root, app, candidate, sign, baseline):
+    import compiled_app_release as release
+    import signed_component_carrier as carrier
+    declared = candidate['componentSourceObjects']
+    original = carrier.origin(candidate)['componentSourceObjects']
+    path = carrier.REBUILT_SUPERVISOR
+    if declared[path] == original[path]:
+        return None, baseline
+    require(cohort.objects(os.environ['GITHUB_SHA'], declared) == declared, 'Current supervisor source changed')
+    targets = release.targets
+    scratch = root / 'supervisor-compiler'
+    require(not scratch.exists() and not scratch.is_symlink(), 'Supervisor compiler scratch is already occupied')
+    swift = Path(targets.logged(root, 'bpy-supervisor-swift', ['xcrun', '--find', 'swift']).strip())
+    swiftc = Path(targets.logged(root, 'bpy-supervisor-swiftc', ['xcrun', '--find', 'swiftc']).strip())
+    require(swift.is_absolute() and swiftc.is_absolute() and swift.parent == swiftc.parent
+        and checksum(swiftc) == candidate['compilerSHA256'], 'Supervisor compiler differs from the reviewed toolchain')
+    environment = dict(os.environ, SWIFT_EXEC=str(swiftc))
+    args = [str(swift), 'build', '--configuration', 'release', '--arch', 'arm64',
+            '--disable-automatic-resolution', '--scratch-path', str(scratch)]
+    compile_args = args + ['--product', SUPERVISOR, '--verbose']
+    targets.logged(root, 'bpy-supervisor-compile', compile_args, env=environment, timeout=900)
+    bin_path = Path(targets.logged(root, 'bpy-supervisor-bin-path',
+        args + ['--show-bin-path'], env=environment).strip())
+    binary = bin_path / SUPERVISOR
+    require(bin_path.is_absolute() and bin_path.resolve().is_relative_to(scratch.resolve())
+        and binary.is_file() and not binary.is_symlink(), 'Supervisor compiler did not produce its owned binary')
+    build = targets.logged(root, 'bpy-supervisor-deployment', ['xcrun', 'vtool', '-show-build', str(binary)])
+    require(re.search(r'^\s*platform\s+MACOS\s*$', build, re.M)
+        and re.search(r'^\s*minos\s+26\.0(?:\.0)?\s*$', build, re.M),
+        'Supervisor deployment floor changed')
+    unsigned = checksum(binary)
+    payload = release.signed_payload_sha(binary, 2)
+    uuid = release.image_uuid(binary, 2)
+    entitlements = 'Runtime/bpy/PythonChild.entitlements'
+    service_entitlements = 'Runtime/bpy/NexGenVideoBpyService.entitlements'
+    targets.logged(root, 'bpy-supervisor-sign', ['codesign', '--force', '--options', 'runtime', '--timestamp',
+        '--sign', sign, '--entitlements', entitlements, str(binary)], timeout=180)
+    require(release.signed_payload_sha(binary, 2) == payload and release.image_uuid(binary, 2) == uuid,
+        'Signing changed the freshly compiled Supervisor payload')
+    signed = checksum(binary)
+    services = []
+    for slot in range(2):
+        xpc = app / 'Contents/XPCServices' / f'{SERVICE}{slot}.xpc'
+        target = xpc / 'Contents/MacOS' / SUPERVISOR
+        service = xpc / 'Contents/MacOS' / SERVICE
+        require(target.is_file() and not target.is_symlink() and service.is_file() and not service.is_symlink()
+            and checksum(target) == baseline[target.relative_to(app).as_posix()]['sha256'],
+            'Retained XPC image differs before the Supervisor replacement')
+        service_identity = {'slot': slot, 'uuid': release.image_uuid(service, 2),
+            'payloadSHA256': release.signed_payload_sha(service, 2)}
+        require(release.image_uuid(target, 2) != uuid, 'Fresh Supervisor reused the old executable identity')
+        shutil.copyfile(binary, target)
+        targets.logged(root, f'bpy-service-{slot}-reseal', ['codesign', '--force', '--options', 'runtime', '--timestamp',
+            '--sign', sign, '--entitlements', service_entitlements, str(xpc)], timeout=180)
+        require(checksum(target) == signed and release.image_uuid(service, 2) == service_identity['uuid']
+            and release.signed_payload_sha(service, 2) == service_identity['payloadSHA256'],
+            'XPC resealing changed retained service code or new Supervisor bytes')
+        services.append(service_identity)
+    current = unchanged_components(app)
+    require(current.keys() == baseline.keys(), 'Supervisor replacement changed the component inventory')
+    delta = {name:{'before': before, 'after': current[name]} for name, before in baseline.items()
+             if before != current[name]}
+    receipt = {'schema': 'bpy-supervisor-component-rebuild/v1', 'target': SUPERVISOR,
+        'sourceSHA': os.environ['GITHUB_SHA'], 'runID': int(os.environ['GITHUB_RUN_ID']),
+        'inputs': {name:declared[name] for name in (path, 'Sources/BpyRuntimeProtocol',
+            'Sources/BpySupervisorPOSIX', 'Package.swift', 'Package.resolved')},
+        'compilerPath': str(swiftc), 'compilerSHA256': checksum(swiftc), 'compileExitCode': 0,
+        'unsignedImageSHA256': unsigned, 'signedImageSHA256': signed, 'payloadSHA256': payload, 'uuid': uuid,
+        'compilerLogSHA256': checksum(root / 'bpy-supervisor-compile.stdout'),
+        'deploymentLogSHA256': checksum(root / 'bpy-supervisor-deployment.stdout'),
+        'retainedServices': services, 'files': delta}
+    write(root / 'bpy-supervisor-component-rebuild.json', receipt)
+    return receipt, {name:entry for name, entry in baseline.items() if name not in delta}
+
+
+def verify_components(value, candidate):
+    import signed_component_carrier as carrier
+    selected = carrier.origin(candidate)
+    path = carrier.REBUILT_SUPERVISOR
+    rebuilt = selected['componentSourceObjects'][path] != candidate['componentSourceObjects'][path]
+    baseline = value['unchangedSignedComponents']
+    require(type(value.get('componentCompilerExecutions')) is int
+        and value['componentCompilerExecutions'] == int(rebuilt), 'Component compiler execution count differs')
+    if not rebuilt:
+        require('supervisorReplacement' not in value, 'Unexpected Supervisor replacement')
+        if 'signedBaseCarrier' in value or int(candidate['build']) > int(selected['build']):
+            carrier.verify_record(value.get('signedBaseCarrier'), candidate)
+            carrier.verify_components(baseline, candidate)
+        return baseline
+    carrier.verify_record(value.get('signedBaseCarrier'), candidate)
+    receipt = value.get('supervisorReplacement', {})
+    inputs = candidate['componentSourceObjects']
+    require(receipt.get('schema') == 'bpy-supervisor-component-rebuild/v1' and receipt.get('target') == SUPERVISOR
+        and receipt.get('sourceSHA') == value['sourceSHA'] and receipt.get('runID') == value['runID']
+        and receipt.get('compilerSHA256') == candidate['compilerSHA256'] and receipt.get('compileExitCode') == 0
+        and Path(receipt.get('compilerPath', '')).is_absolute()
+        and Path(receipt['compilerPath']).name == 'swiftc'
+        and receipt.get('inputs') == {name: inputs[name] for name in (path, 'Sources/BpyRuntimeProtocol',
+            'Sources/BpySupervisorPOSIX', 'Package.swift', 'Package.resolved')}
+        and all(re.fullmatch('[a-f0-9]{64}', receipt.get(key, '')) for key in ('unsignedImageSHA256',
+            'signedImageSHA256', 'payloadSHA256', 'compilerLogSHA256', 'deploymentLogSHA256'))
+        and re.fullmatch(r'[A-F0-9]{8}(?:-[A-F0-9]{4}){3}-[A-F0-9]{12}', receipt.get('uuid', '')),
+        'Fresh Supervisor build receipt differs')
+    services = receipt.get('retainedServices', [])
+    require([service.get('slot') for service in services] == [0, 1] and all(
+        re.fullmatch(r'[A-F0-9]{8}(?:-[A-F0-9]{4}){3}-[A-F0-9]{12}', service.get('uuid', ''))
+        and re.fullmatch('[a-f0-9]{64}', service.get('payloadSHA256', '')) for service in services),
+        'Retained XPC executable identity is incomplete')
+    files = receipt.get('files', {})
+    required, allowed = set(), set()
+    for slot in range(2):
+        prefix = f'Contents/XPCServices/{SERVICE}{slot}.xpc/Contents/'
+        image = prefix + 'MacOS/' + SUPERVISOR
+        required.update((image, prefix + '_CodeSignature/CodeResources'))
+        allowed.add(prefix + 'MacOS/' + SERVICE)
+        require(files.get(image, {}).get('after', {}).get('sha256') == receipt['signedImageSHA256'],
+            'New Supervisor bytes differ between XPC slots')
+    require(required <= set(files) <= required | allowed and not set(files) & set(baseline)
+        and all(set(item) == {'before', 'after'} and item['before'].get('kind') == item['after'].get('kind') == 'file'
+            and item['before'].get('mode') == item['after'].get('mode')
+            and all(re.fullmatch('[a-f0-9]{64}', entry.get('sha256', '')) for entry in item.values())
+            and item['before']['sha256'] != item['after']['sha256'] for item in files.values()),
+        'Replacement changed files outside the two Supervisor executables and their XPC seals')
+    carrier.verify_components(baseline | {name: item['before'] for name, item in files.items()}, candidate)
+    return baseline | {name: item['after'] for name, item in files.items()}
+
+
 def assemble(root):
     import compiled_app_release as release
     checkpoint, targets = release.checkpoint, release.targets
@@ -109,9 +239,11 @@ def assemble(root):
     release.verify_receipt(receipt, os.environ['GITHUB_SHA'], int(os.environ['GITHUB_RUN_ID']))
     value = cohort.verify_context(bound['prepared']['cohortV2'])
     origin = value['signedBase']
+    import signed_component_carrier
+    original_components = signed_component_carrier.origin(value)['componentSourceObjects']
     require(cohort.git('rev-parse', 'HEAD') == os.environ['GITHUB_SHA']
         and cohort.objects(os.environ['GITHUB_SHA'], value['componentSourceObjects']) == value['componentSourceObjects']
-        and cohort.objects(origin['sourceSHA'], value['componentSourceObjects']) == value['componentSourceObjects'],
+        and cohort.objects(origin['sourceSHA'], original_components) == original_components,
         'Signed component source changed')
     resources = 'Sources/NexGenVideo/Resources'
     fresh_resources = {resources + '/Info.plist', resources + '/Changelog/changelog.json'}
@@ -125,7 +257,6 @@ def assemble(root):
     targets.logged(root, 'restore-signed-components', ['/usr/bin/ditto', '-x', '-k', str(original / 'NexGenVideo.zip'), str(build)])
     require(checkpoint.tree_digest(app) == manifest['appTreeSHA256'], 'Restored signed component carrier changed')
     baseline = unchanged_components(app)
-    import signed_component_carrier
     signed_component_carrier.verify_components(baseline, value)
     checkpoint.extract_tar(original / 'symbols.tar.gz', build, {
         'NexGenVideo.dSYM', 'NexGenVideoDiagnostics.dSYM', 'NexGenEngine.dSYM', 'MusicvideoPlugin.dSYM'})
@@ -158,17 +289,20 @@ def assemble(root):
     (app / 'Contents/Resources/Changelog/changelog.json').write_bytes(Path(resources + '/Changelog/changelog.json').read_bytes())
     sign = os.environ.get('SIGN_IDENTITY', '')
     require(re.fullmatch('[a-fA-F0-9]{40}', sign) or sign.startswith('Developer ID Application: '), 'Missing Developer ID signer')
+    supervisor, retained_components = replace_supervisors(root, app, value, sign, baseline)
     targets.logged(root, 'sign-new-app-root', ['codesign', '--force', '--options', 'runtime', '--timestamp',
         '--sign', sign, '--entitlements', 'scripts/NexGenVideo.entitlements', str(app)], timeout=180)
     targets.logged(root, 'verify-new-app-signature', ['codesign', '--verify', '--deep', '--strict', str(app)])
     targets.logged(root, 'verify-distributable-bpy', ['bash', 'scripts/verify_bpy_bundle.sh', str(app), '--distribution'], timeout=300)
-    require(unchanged_components(app) == baseline and main_product(bound) == main, 'Signing changed a retained component or original Main')
+    require(main_product(bound) == main, 'Signing changed the original Main compiler product')
     component = {'schema': 'compiled-component-assembly/v2', 'sourceSHA': os.environ['GITHUB_SHA'],
         'runID': int(os.environ['GITHUB_RUN_ID']), 'attempt': 1, 'build': value['build'], 'cohortV2': receipt['cohortV2'],
         'signedBase': origin, 'signedBaseCarrier': signed_component_carrier.record(value),
-        'unchangedSignedComponents': baseline, 'sourceHandoff': handoff,
+        'unchangedSignedComponents': retained_components, 'sourceHandoff': handoff,
         'main': {'original': main, 'distributionImageSHA256': checksum(image), 'payloadSHA256': distribution_payload},
-        'componentCompilerExecutions': 0}
+        'componentCompilerExecutions': int(supervisor is not None)}
+    if supervisor is not None:
+        component['supervisorReplacement'] = supervisor
     verify_materialization(component, app, build / 'NexGenEngine.dSYM')
     write(root / 'assembled.json', {'sourceSHA': os.environ['GITHUB_SHA'], 'runID': int(os.environ['GITHUB_RUN_ID']),
         'appTreeSHA256': checkpoint.tree_digest(app), 'identity': checkpoint.identity(build),
@@ -192,12 +326,9 @@ def verify_assembly(value, source_sha, run_id, identity, files, native):
         and value.get('runID') == run_id and value.get('attempt') == 1
         and value.get('cohortV2') == native['cohortV2'] and value.get('signedBase') == candidate['signedBase']
         and value.get('build') == identity.get('build') == candidate['build']
-        and identity.get('version') == candidate['version'] and value.get('componentCompilerExecutions') == 0
+        and identity.get('version') == candidate['version']
         and value.get('unchangedSignedComponents'), 'Fresh App component assembly identity changed')
-    import signed_component_carrier
-    if 'signedBaseCarrier' in value or int(candidate['build']) > int(signed_component_carrier.origin(candidate)['build']):
-        signed_component_carrier.verify_record(value.get('signedBaseCarrier'), candidate)
-        signed_component_carrier.verify_components(value['unchangedSignedComponents'], candidate)
+    verify_components(value, candidate)
     product = native['products']['production']['receipt']
     main = value.get('main', {}).get('original', {})
     verify_main_symbol_identity(product, main)
@@ -222,14 +353,20 @@ def verify_assembly(value, source_sha, run_id, identity, files, native):
 def verify_materialization(value, app, symbols):
     import compiled_app_release as release
     candidate = cohort.verify_context(value.get('cohortV2'))
-    import signed_component_carrier
-    if 'signedBaseCarrier' in value or int(candidate['build']) > int(signed_component_carrier.origin(candidate)['build']):
-        signed_component_carrier.verify_record(value.get('signedBaseCarrier'), candidate)
-        signed_component_carrier.verify_components(value['unchangedSignedComponents'], candidate)
+    components = verify_components(value, candidate)
+    if 'supervisorReplacement' in value:
+        replacement = value['supervisorReplacement']
+        for entry in replacement['retainedServices']:
+            folder = app / 'Contents/XPCServices' / f"{SERVICE}{entry['slot']}.xpc" / 'Contents/MacOS'
+            require(release.image_uuid(folder / SERVICE, 2) == entry['uuid']
+                and release.signed_payload_sha(folder / SERVICE, 2) == entry['payloadSHA256']
+                and release.image_uuid(folder / SUPERVISOR, 2) == replacement['uuid']
+                and release.signed_payload_sha(folder / SUPERVISOR, 2) == replacement['payloadSHA256'],
+                'Materialization changed a retained XPC executable or the new Supervisor payload')
     base, main = candidate['signedBase'], value['main']['original']
     image, dwarf = app / 'Contents/MacOS/NexGenVideo', symbols.parent / 'NexGenVideo.dSYM/Contents/Resources/DWARF/NexGenVideo'
     engine = app / 'Contents/Frameworks/libNexGenEngine.dylib'
-    require(unchanged_components(app) == value['unchangedSignedComponents']
+    require(unchanged_components(app) == components
         and checksum(engine) == base['engineImageSHA256'] and release.image_uuid(engine, 6) == base['engineUUID']
         and release.signed_payload_sha(engine) == base['enginePayloadSHA256']
         and release.canonical_bundle_tree(symbols) == base['engineSymbolsTreeSHA256']

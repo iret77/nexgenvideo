@@ -2,6 +2,7 @@ import ast
 import base64
 import copy
 from contextlib import nullcontext
+from functools import cache
 import hashlib
 import io
 import json
@@ -22,6 +23,10 @@ sys.path.insert(0, str(Path(__file__).parent / 'external-gui'))
 import acceptance as journey
 import test_bundle as bundle
 sys.path.pop(0)
+
+ORIGINAL_TRANSPORT_SOURCE = '1f564b21b138d0c397302efe0c72348ebc354acf'
+QUALIFIED_CONSUMER_SOURCE = '22c81c1d13e2d99c9320adb457a17b8cabb2b4cf'
+REBUILT_SUPERVISOR_SOURCE = '2ec306baaa4aaa65aa98f9ebe0063341ad2f4ffc'
 
 
 class ExternalTestBundleTests(unittest.TestCase):
@@ -630,7 +635,7 @@ class ExternalTestBundleTests(unittest.TestCase):
         self.assertNotEqual(proof['producerFiles'][name], proof['consumerFiles'][name])
 
     def test_home_oracle_compatibility_rejects_weaker_identity_checks(self):
-        current = (journey.ROOT / 'acceptance.py').read_text()
+        current = self.qualified_consumer_source('scripts/external-gui/acceptance.py').decode()
         for before, after in (('Path(value).samefile(home)', 'True'),
                               ('Path(value).is_absolute()', 'True'),
                               ('Path(value).is_dir()', 'True'),
@@ -642,7 +647,7 @@ class ExternalTestBundleTests(unittest.TestCase):
                 bundle._home_oracle_import_view(changed)
 
     def test_home_oracle_compatibility_preserves_other_build_reachable_code(self):
-        current = (journey.ROOT / 'acceptance.py').read_text()
+        current = self.qualified_consumer_source('scripts/external-gui/acceptance.py').decode()
         original = self.legacy_home_oracle_source(current)
         expected = bundle._home_oracle_import_view(original)
         self.assertEqual(bundle._home_oracle_import_view(current), expected)
@@ -653,9 +658,17 @@ class ExternalTestBundleTests(unittest.TestCase):
             with self.subTest(change=changed[-80:]):
                 self.assertNotEqual(bundle._home_oracle_import_view(changed), expected)
 
+    @staticmethod
+    @cache
+    def source_at(source, path):
+        return subprocess.check_output(['git', '-C', str(Path(__file__).resolve().parents[1]), 'show',
+            source + ':' + path], stdin=subprocess.DEVNULL, timeout=30)
+
     def original_runtime_transport_source(self, path):
-        return subprocess.check_output(['git', '-C', str(journey.REPOSITORY), 'show',
-            '1f564b21b138d0c397302efe0c72348ebc354acf:' + path], stdin=subprocess.DEVNULL, timeout=30)
+        return self.source_at(ORIGINAL_TRANSPORT_SOURCE, path)
+
+    def qualified_consumer_source(self, path):
+        return self.source_at(QUALIFIED_CONSUMER_SOURCE, path)
 
     def component_transport_view(self, raw, path, *, current=False):
         if path == 'scripts/app_release_v2.py':
@@ -683,7 +696,7 @@ class ExternalTestBundleTests(unittest.TestCase):
 
     def test_component_transport_compatibility_rejects_unreviewed_guards_and_import_changes(self):
         path = 'scripts/app_release_v2.py'
-        current = (journey.REPOSITORY / path).read_text()
+        current = self.qualified_consumer_source(path).decode()
         expected = self.component_transport_view(self.original_runtime_transport_source(path), path)
         self.assertEqual(self.component_transport_view(current, path, current=True), expected)
         partial = ast.parse(current)
@@ -707,10 +720,11 @@ class ExternalTestBundleTests(unittest.TestCase):
 
     def test_checkout_transport_compatibility_preserves_all_other_build_reachable_code(self):
         path = 'scripts/native_app_target_build.py'
-        current = (journey.REPOSITORY / path).read_text()
+        current = self.qualified_consumer_source(path).decode()
         expected = self.component_transport_view(self.original_runtime_transport_source(path), path)
         self.assertEqual(self.component_transport_view(current, path), expected)
-        for changed in (current.replace("'--depth=1', ", ''),
+        for changed in (self.source_at(REBUILT_SUPERVISOR_SOURCE, path).decode(),
+                        current.replace("'--depth=1', ", ''),
                         current.replace("len(pins) == 18", 'True'),
                         current.replace("revision + '^{commit}'", "'HEAD^{commit}'"),
                         current.replace('def restore_checkouts(', '@execute\ndef restore_checkouts('),
@@ -727,8 +741,9 @@ class ExternalTestBundleTests(unittest.TestCase):
 
     def test_checkout_transport_compatibility_rejects_partial_or_weakened_source_recovery(self):
         path = 'scripts/native_app_target_build.py'
-        current = (journey.REPOSITORY / path).read_text()
+        current = self.qualified_consumer_source(path).decode()
         expected = self.component_transport_view(self.original_runtime_transport_source(path), path)
+        self.assertEqual(self.component_transport_view(current, path), expected)
         original = ast.parse(self.original_runtime_transport_source(path))
         legacy_logged = next(node for node in original.body if isinstance(node, ast.FunctionDef) and node.name == 'logged')
         partial = ast.parse(current)
@@ -753,11 +768,25 @@ class ExternalTestBundleTests(unittest.TestCase):
             with self.subTest(change=changed[-100:]), self.assertRaises(ValueError):
                 self.component_transport_view(changed, path)
 
-    def compiled_client_fixture(self, *, legacy_home_oracle=False, legacy_component_transport=False):
+    def compiled_client_fixture(self, *, legacy_home_oracle=False, legacy_component_transport=False, historical=True):
         current = 'd' * 40
-        payloads = {(journey.ROOT / name).relative_to(journey.REPOSITORY).as_posix(): (journey.ROOT / name).read_bytes()
-                    for name in journey.TEST_INPUTS}
-        payloads.update({name: (journey.REPOSITORY / name).read_bytes() for name in journey.SHARED_INPUTS})
+        runtime_paths = ('scripts/signed_component_carrier.py', 'scripts/fixtures/signed-component-carrier-1170.json')
+        workflow = '.github/workflows/external-gui-acceptance.yml'
+        action = '.github/actions/setup-xcode-27/action.yml'
+        inputs = {'scripts/external-gui/' + name for name in journey.TEST_INPUTS} | set(journey.SHARED_INPUTS)
+        names = inputs | {workflow, action, *runtime_paths}
+        if historical:
+            consumer = {name: self.qualified_consumer_source(name) for name in sorted(names)}
+            repository = self.root / 'qualified-consumer'
+            for name, raw in consumer.items():
+                target = repository / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(raw)
+            self.enterContext(patch.object(journey, 'REPOSITORY', repository))
+            self.enterContext(patch.object(journey, 'ROOT', repository / 'scripts/external-gui'))
+        else:
+            consumer = {name: (journey.REPOSITORY / name).read_bytes() for name in sorted(names)}
+        payloads = {name: consumer[name] for name in sorted(inputs)}
         files = {name: hashlib.sha256(raw).hexdigest() for name, raw in payloads.items()}
         original = dict(payloads)
         transport_helpers = ('scripts/app_release_v2.py', 'scripts/compiled_app_release.py',
@@ -789,14 +818,11 @@ class ExternalTestBundleTests(unittest.TestCase):
         cohort = 'scripts/fixtures/app-cohort.json'
         original_cohort = json.loads(original[cohort])
         original_cohort['ciPaths'].remove('.github/workflows/bpy-runtime-acceptance.yml')
-        runtime_paths = ('scripts/signed_component_carrier.py', 'scripts/fixtures/signed-component-carrier-1170.json')
         if legacy_component_transport:
             original_cohort['ciPaths'] = [name for name in original_cohort['ciPaths'] if name not in runtime_paths]
         original[cohort] = (json.dumps(original_cohort, indent=2, sort_keys=True) + '\n').encode()
-        workflow = '.github/workflows/external-gui-acceptance.yml'
-        current_workflow = (journey.REPOSITORY / workflow).read_bytes()
-        action = '.github/actions/setup-xcode-27/action.yml'
-        original[action] = (journey.REPOSITORY / action).read_bytes()
+        current_workflow = consumer[workflow]
+        original[action] = consumer[action]
         original[workflow] = re.sub(rb'(?m)^      test_bundle_artifact_(?:id|sha256):\n(?:        [^\n]+\n)+',
                                     b'', current_workflow)
         original_files = {name: hashlib.sha256(original[name]).hexdigest() for name in files}
@@ -839,7 +865,7 @@ class ExternalTestBundleTests(unittest.TestCase):
             if arguments == ['xcodebuild', '-version']: return receipt['xcode'].encode()
             if arguments[-2:] == ['rev-parse', 'HEAD']: return current.encode()
             if 'rev-parse' in arguments and arguments[-1].endswith('^{tree}'):
-                declarations = [json.loads(original[cohort]), json.loads((journey.REPOSITORY / cohort).read_bytes())]
+                declarations = [json.loads(original[cohort]), json.loads(consumer[cohort])]
                 matches = [item['appTreeSHA'] for item in declarations if item['appSourceSHA'] == arguments[-1].removesuffix('^{tree}')]
                 self.assertEqual(len(matches), 1)
                 return matches[0].encode()
@@ -851,10 +877,8 @@ class ExternalTestBundleTests(unittest.TestCase):
                                for item in history['files']).encode()
             if 'show' in arguments:
                 commit, name = arguments[-1].split(':', 1)
-                if commit == current and name in {workflow, action, cohort, 'scripts/fixtures/app-cohort-native-inventory.json',
-                        'scripts/compiled_app_release.py', 'scripts/retained_packaging.py', 'scripts/retained_app_test_products.py',
-                        'scripts/app_cohort_v2.py', 'scripts/app_release_v2.py', 'scripts/release_checkpoint.py', 'scripts/compiled_current_core_reuse.py', 'scripts/native_app_target_build.py',
-                        'scripts/signed_component_carrier.py', 'scripts/fixtures/signed-component-carrier-1170.json', journey_helper}: return (journey.REPOSITORY / name).read_bytes()
+                if commit == current:
+                    return consumer[name]
                 self.assertEqual(commit, self.sha)
                 return original[name]
             self.fail('Unexpected compiled-client command: ' + str(arguments))
@@ -1047,7 +1071,7 @@ class ExternalTestBundleTests(unittest.TestCase):
             self.assertFalse(any(route.startswith('/contents/') for route in requests))
 
     def test_current_client_resolver_preserves_every_current_source_fingerprint_and_product(self):
-        fixture = self.compiled_client_fixture()
+        fixture = self.compiled_client_fixture(historical=False)
         self.assertEqual(set(fixture.files), {'scripts/external-gui/' + name for name in journey.TEST_INPUTS}
                          | set(journey.SHARED_INPUTS))
         self.assertEqual(fixture.files['scripts/isolated_test_home.py'],
@@ -1088,7 +1112,7 @@ class ExternalTestBundleTests(unittest.TestCase):
     def test_current_core_projection_preserves_build_reachable_code_and_imports(self):
         for name in ('scripts/app_cohort_v2.py', 'scripts/app_release_v2.py', 'scripts/compiled_app_release.py',
                      'scripts/release_checkpoint.py', 'scripts/retained_packaging.py'):
-            current = (journey.REPOSITORY / name).read_text()
+            current = self.qualified_consumer_source(name).decode()
             baseline = bundle._current_core_import_view(current, name)
             for altered in (current + '\nimport compiled_current_core_reuse\n',
                             current + '\nexecute_at_import()\n',
@@ -1096,7 +1120,7 @@ class ExternalTestBundleTests(unittest.TestCase):
                 with self.subTest(path=name, change=altered[-70:]):
                     self.assertNotEqual(bundle._current_core_import_view(altered, name), baseline)
         path = 'scripts/app_cohort_v2.py'
-        current = (journey.REPOSITORY / path).read_text()
+        current = self.qualified_consumer_source(path).decode()
         altered = current.replace('def manifest(source=None):',
                                   'def manifest(source=None):\n    import compiled_current_core_reuse')
         self.assertNotEqual(current, altered)
@@ -1105,7 +1129,7 @@ class ExternalTestBundleTests(unittest.TestCase):
 
     def test_current_core_projection_rejects_executable_declarations_and_changed_v6_guard(self):
         path = 'scripts/compiled_app_release.py'
-        current = (journey.REPOSITORY / path).read_text()
+        current = self.qualified_consumer_source(path).decode()
         for altered in (current.replace('def run_tests(root):', '@execute()\ndef run_tests(root):'),
                         current.replace('def run_tests(root):', 'def run_tests(root=execute()):'),
                         current.replace('def run_tests(root):', 'def run_tests(root: execute()):')):
@@ -1118,7 +1142,7 @@ class ExternalTestBundleTests(unittest.TestCase):
 
     def test_current_core_projection_rejects_missing_and_moved_native_guards(self):
         path = 'scripts/compiled_app_release.py'
-        current = (journey.REPOSITORY / path).read_text()
+        current = self.qualified_consumer_source(path).decode()
         for mode in ('missing', 'moved'):
             module = ast.parse(current)
             function = next(node for node in module.body if isinstance(node, ast.FunctionDef) and node.name == 'run_tests')
@@ -1132,7 +1156,7 @@ class ExternalTestBundleTests(unittest.TestCase):
 
     def test_pointer_destination_transition_cannot_hide_changed_guards_or_import_execution(self):
         path = 'scripts/compiled_app_release.py'
-        current = (journey.REPOSITORY / path).read_text()
+        current = self.qualified_consumer_source(path).decode()
         for old, new in [("os.environ.get('KIND') == 'native-scene-pointer-delivery'", 'True'),
                 ("re.fullmatch(r'[1-9][0-9]*', run_id)", 'True'),
                 ("temporary / ('scene-pointer-workspace-' + run_id)", "workspace / 'unrelated'"),
@@ -1147,7 +1171,7 @@ class ExternalTestBundleTests(unittest.TestCase):
 
     def test_pack_carrier_transition_rejects_changed_guards_and_partial_declarations(self):
         path = 'scripts/compiled_app_release.py'
-        current = (journey.REPOSITORY / path).read_text()
+        current = self.qualified_consumer_source(path).decode()
         legacy = self.original_runtime_transport_source(path).decode()
         for source in (legacy, current):
             bundle._current_core_import_view(source, path, current=True)
@@ -1208,7 +1232,7 @@ class ExternalTestBundleTests(unittest.TestCase):
                 bundle._current_native_regression_ids(altered)
 
     def test_metadata_retry_compatibility_preserves_exact_request_and_guards(self):
-        current = (journey.REPOSITORY / 'scripts/retained_app_test_products.py').read_text()
+        current = self.qualified_consumer_source('scripts/retained_app_test_products.py').decode()
         module = ast.parse(current)
         api_source = ast.get_source_segment(current, next(node for node in module.body
                                             if isinstance(node, ast.FunctionDef) and node.name == 'api'))
@@ -1374,7 +1398,7 @@ class ExternalTestBundleTests(unittest.TestCase):
                 bundle._guard_import_view(original, changed)
 
     def test_packaging_client_compatibility_preserves_all_reachable_guards(self):
-        current = (journey.REPOSITORY / 'scripts/retained_packaging.py').read_text()
+        current = self.qualified_consumer_source('scripts/retained_packaging.py').decode()
         module = ast.parse(current)
         module.body = [node for node in module.body if not isinstance(node, ast.FunctionDef)
                        or node.name != 'original_cohort_pack_checks']

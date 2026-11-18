@@ -98,7 +98,6 @@ enum HangDiagnosticUI {
         let folder = folders[selectedIndex]
         let hasReplay = ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [])
             .contains { $0.hasPrefix("replay-") && $0.hasSuffix(".enc") }
-        let key = KeychainStore.load(account: "hang-diagnostic-\(folder.lastPathComponent)")
         let save = NSSavePanel()
         save.title = "Export diagnostic recording"
         save.prompt = "Export"
@@ -129,6 +128,7 @@ enum HangDiagnosticUI {
                 try FileManager.default.copyItem(at: archive, to: partial)
                 try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: partial.path)
                 guard rename(partial.path, destination.path) == 0 else { throw CocoaError(.fileWriteUnknown) }
+                let key = hasReplay ? HangDiagnosticReplayKeychain.load(recording: folder.lastPathComponent) : nil
                 await MainActor.run {
                     NSWorkspace.shared.activateFileViewerSelecting([destination])
                     let alert = NSAlert()

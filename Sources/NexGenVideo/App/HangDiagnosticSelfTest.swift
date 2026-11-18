@@ -20,8 +20,15 @@ enum HangDiagnosticSelfTest {
             return
         }
         let content = ProcessInfo.processInfo.environment["NGV_HANG_SELFTEST_KEY"] != nil
-        HangDiagnosticRecorder.shared.start(includeContent: content)
-        if content {
+        HangDiagnosticRecorder.shared.start(includeContent: content) { ready in
+            guard ready else { exit(70) }
+            runCapture(includeContent: content)
+        }
+    }
+
+    @MainActor
+    private static func runCapture(includeContent: Bool) {
+        if includeContent {
             let editor = EditorViewModel()
             editor.setWorkspaceFocus(.production)
             editor.agentPanelVisible = true
@@ -68,10 +75,12 @@ enum HangDiagnosticSelfTest {
         guard environment["GITHUB_ACTIONS"] == "true",
               let rawID = environment["NGV_HANG_SELFTEST_RECORDING_ID"],
               let id = UUID(uuidString: rawID),
-              let expected = environment["NGV_HANG_SELFTEST_KEY_DIGEST"], expected.count == 64,
-              let key = KeychainStore.load(account: "hang-diagnostic-\(id.uuidString)") else { exit(70) }
-        let actual = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
-        exit(actual == expected ? 0 : 70)
+              let expected = environment["NGV_HANG_SELFTEST_KEY_DIGEST"], expected.count == 64 else { exit(70) }
+        DispatchQueue.global(qos: .utility).async {
+            guard let key = HangDiagnosticReplayKeychain.load(recording: id.uuidString) else { exit(70) }
+            let actual = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
+            exit(actual == expected ? 0 : 70)
+        }
     }
 
     static func injectReplayControl(_ messages: [AgentMessage]) {

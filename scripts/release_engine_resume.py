@@ -182,7 +182,7 @@ def verify_app_host_role(before, after):
     return dict(APP_HOST_ROLE)
 
 
-def verify_engine_source_objects(head):
+def verify_engine_source_objects(head, *, rebuilt_supervisor=None):
     actual, compatibility = {}, None
     for path, pinned in ENGINE_SOURCE_OBJECTS.items():
         require(command("git", "rev-parse", SOURCE + ":" + path) == pinned,
@@ -194,6 +194,9 @@ def verify_engine_source_objects(head):
                     "Unreviewed App Host object changed")
             compatibility = verify_app_host_role(command("git", "show", SOURCE + ":" + APP_HOST_FILE),
                                                  command("git", "show", head + ":" + APP_HOST_FILE))
+        elif path == "Sources/NexGenVideoBpySupervisor" and rebuilt_supervisor is not None:
+            require(current == rebuilt_supervisor and current != pinned,
+                    "Separately rebuilt Supervisor source differs from its current cohort")
         else:
             require(current == pinned, "Retained Engine dependency object changed: " + path)
         actual[path] = current

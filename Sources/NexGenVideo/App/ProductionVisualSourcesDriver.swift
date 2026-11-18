@@ -5,6 +5,11 @@ import SwiftUI
 
 @MainActor
 final class ProductionVisualSourcesDriver {
+    enum LocalButtonTarget: Equatable {
+        case button
+        case buttonOrGestureSurface
+    }
+
     let window: NSWindow
     let output: URL
     let name: String
@@ -186,12 +191,20 @@ final class ProductionVisualSourcesDriver {
     }
 
     private func click(_ id: String, in target: NSWindow, enabled: Bool = true,
-                       fraction: NSPoint = .init(x: 0.5, y: 0.5), transaction: UUID) async throws {
+                       fraction: NSPoint = .init(x: 0.5, y: 0.5), transaction: UUID,
+                       localButton: (title: String, target: LocalButtonTarget)? = nil) async throws {
         guard [fraction.x, fraction.y].allSatisfy({ $0.isFinite && (0...1).contains($0) }) else {
             throw GateBlocked("The native pointer fraction is invalid: " + id)
         }
         stage = "click " + id
         try await reveal(id, in: target, transaction: transaction)
+        let readiness: NativeAcceptancePointer.LocalButtonReadiness?
+        if let localButton {
+            readiness = try await settleButton(id, title: localButton.title, in: target, fraction: fraction,
+                                               localTarget: localButton.target)
+        } else {
+            readiness = nil
+        }
         try visible([id], in: target)
         guard !enabled || state(id, in: target) == true,
               let frame = WorkspaceUIAcceptance.probeFrame(identifier: id, in: target),
@@ -209,7 +222,8 @@ final class ProductionVisualSourcesDriver {
             "frame": rect(frame), "point": [point.x, point.y], "hitClass": String(describing: type(of: hit!)),
             "windowPoint": [windowPoint.x, windowPoint.y]])
         do {
-            try await NativeAcceptancePointer.click(view, window: target, fraction: fraction, token: transaction) { evidence in
+            try await NativeAcceptancePointer.click(view, window: target, fraction: fraction, token: transaction,
+                                                    buttonReadiness: readiness) { evidence in
                 self.interactions[index]["nativeInput"] = evidence
                 self.interactions[index]["localMonitorEvents"] = (evidence["received"] as? [[String: Any]])?.filter {
                     [NSEvent.EventType.leftMouseDown.rawValue, NSEvent.EventType.leftMouseUp.rawValue].contains($0["type"] as? UInt ?? 0)
@@ -229,9 +243,66 @@ final class ProductionVisualSourcesDriver {
         try persist()
     }
 
-    func clickButton(_ id: String, title: String, in target: NSWindow) async throws {
+    func clickButton(_ id: String, title: String, in target: NSWindow, settledTarget: LocalButtonTarget? = nil) async throws {
         let transaction = try NativeAcceptancePointer.claim()
         defer { NativeAcceptancePointer.release(transaction) }
+        let fraction: NSPoint
+        if settledTarget != nil {
+            fraction = NSPoint(x: 0.5, y: 0.5)
+        } else {
+            fraction = try await publicButtonFraction(id, title: title, in: target, transaction: transaction)
+        }
+        let before = interactions.count
+        try await click(id, in: target, fraction: fraction, transaction: transaction,
+                        localButton: settledTarget.map { (title: title, target: $0) })
+        let pointer = interactions.dropFirst(before).last { ($0["kind"] as? String) == "pointer" && ($0["id"] as? String) == id }
+        let native = pointer?["nativeInput"] as? [String: Any]
+        guard pointer?["localMonitorDownObserved"] as? Bool == true,
+              native?["buttonDownObserved"] as? Bool == true,
+              native?["buttonReleased"] as? Bool == true else {
+            throw GateBlocked("The actual button lacks a verified native pointer lifecycle: " + title)
+        }
+    }
+
+    private func settleButton(_ id: String, title: String, in target: NSWindow,
+                              fraction: NSPoint, localTarget: LocalButtonTarget) async throws
+        -> NativeAcceptancePointer.LocalButtonReadiness {
+        stage = "settled local button " + title
+        try persist()
+        let deadline = ProcessInfo.processInfo.systemUptime + 10
+        var local = NativeAcceptancePointer.LocalButtonReadiness(id: id, title: title,
+                                                                  allowsGestureSurface: localTarget == .buttonOrGestureSurface)
+        var publicEvidence: [String: Any] = [:]
+        do {
+            while ProcessInfo.processInfo.systemUptime < deadline {
+                try Task.checkCancellation()
+                let match = await buttonFrames(id, title: title, in: target, deadline: deadline)
+                try Task.checkCancellation()
+                publicEvidence = match.evidence
+                var matchingProbe: NSView?
+                if state(id, in: target) == true, let view = probe(id, in: target),
+                   match.frames.count == 1, let frame = match.frames.first {
+                    let point = NSPoint(x: view.bounds.minX + view.bounds.width * fraction.x,
+                                        y: view.bounds.minY + view.bounds.height * fraction.y)
+                    if frame.contains(point) { matchingProbe = view }
+                }
+                publicEvidence["containsProbePoint"] = matchingProbe != nil
+                let settled = local.observe(matchingProbe, window: target, fraction: fraction)
+                guard ProcessInfo.processInfo.systemUptime < deadline else { break }
+                if settled {
+                    try record("local button readiness", fields: local.evidence.merging(["publicButton": publicEvidence]) { _, new in new })
+                    return local
+                }
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            throw GateBlocked("The public and local button targets did not settle at the same pointer point: " + title)
+        } catch {
+            try record("local button readiness failed", fields: local.evidence.merging(["publicButton": publicEvidence]) { _, new in new })
+            throw error
+        }
+    }
+
+    private func publicButtonFraction(_ id: String, title: String, in target: NSWindow, transaction: UUID) async throws -> NSPoint {
         try await reveal(id, in: target, transaction: transaction)
         var match: (frames: [NSRect], evidence: [String: Any]) = ([], [:])
         stage = "actual enabled button " + title
@@ -259,20 +330,12 @@ final class ProductionVisualSourcesDriver {
         guard match.frames.count == 1, let frame = match.frames.first, let view = probe(id, in: target) else {
             throw GateBlocked("The actual button has no unique enabled accessibility frame: " + title)
         }
-        let fraction = NSPoint(x: (frame.midX - view.bounds.minX) / view.bounds.width,
-                               y: (frame.midY - view.bounds.minY) / view.bounds.height)
-        let before = interactions.count
-        try await click(id, in: target, fraction: fraction, transaction: transaction)
-        let pointer = interactions.dropFirst(before).last { ($0["kind"] as? String) == "pointer" && ($0["id"] as? String) == id }
-        let native = pointer?["nativeInput"] as? [String: Any]
-        guard pointer?["localMonitorDownObserved"] as? Bool == true,
-              native?["buttonDownObserved"] as? Bool == true,
-              native?["buttonReleased"] as? Bool == true else {
-            throw GateBlocked("The actual button lacks a verified native pointer lifecycle: " + title)
-        }
+        return NSPoint(x: (frame.midX - view.bounds.minX) / view.bounds.width,
+                       y: (frame.midY - view.bounds.minY) / view.bounds.height)
     }
 
-    private func buttonFrames(_ id: String, title: String, in target: NSWindow) async -> (frames: [NSRect], evidence: [String: Any]) {
+    private func buttonFrames(_ id: String, title: String, in target: NSWindow,
+                              deadline: TimeInterval? = nil) async -> (frames: [NSRect], evidence: [String: Any]) {
         var evidence: [String: Any] = ["kind": "button-accessibility", "id": id, "item": title, "window": target.windowNumber]
         guard target.isKeyWindow, let root = target.contentView, let view = probe(id, in: target),
               view.window === target, fullyVisible(view, root: root), let screen = NSScreen.screens.first else { return ([], evidence) }
@@ -287,7 +350,8 @@ final class ProductionVisualSourcesDriver {
         let snapshot: NativeButtonAccessibility.Snapshot
         do {
             let result = try await NativeAXPeer.withSession { session in
-                await NativeButtonAccessibility.read(request, using: session)
+                let seconds = deadline.map { min(2, $0 - ProcessInfo.processInfo.systemUptime) } ?? 2
+                return await NativeButtonAccessibility.read(request, using: session, seconds: seconds)
             }
             snapshot = result.0
             evidence["readerLifecycle"] = result.1.evidence
@@ -1146,7 +1210,7 @@ enum NativeAcceptancePointer {
         }
     }
 
-    private struct Target {
+    fileprivate struct Target {
         let window: NSWindow
         let root: NSView
         let probe: NSView
@@ -1435,6 +1499,80 @@ enum NativeAcceptancePointer {
         return comparisons.values.allSatisfy { $0 }
     }
 
+    @MainActor struct LocalButtonReadiness {
+        let id: String
+        let title: String
+        private let allowsGestureSurface: Bool
+        private var baseline: (target: Target, windowNumber: Int, uptime: TimeInterval)?
+        private var stableSeconds = 0.0
+        private var samples = 0
+        private var lastObservation: [String: Any] = [:]
+
+        init(id: String, title: String, allowsGestureSurface: Bool) {
+            self.id = id
+            self.title = title
+            self.allowsGestureSurface = allowsGestureSurface
+        }
+
+        var evidence: [String: Any] {
+            ["id": id, "title": title, "stableSeconds": stableSeconds, "samples": samples, "observation": lastObservation]
+        }
+
+        mutating func observe(_ probe: NSView?, window: NSWindow, fraction: NSPoint) -> Bool {
+            var rejection: [String: Any] = [:]
+            lastObservation = ["status": "missing enabled public button or local probe"]
+            if let probe {
+                do {
+                    let sample = try NativeAcceptancePointer.target(probe, window: window, fraction: fraction,
+                        windowFailure: { rejection = $0 }, accessibilityFailure: { rejection = $0 })
+                    let names = names(of: sample)
+                    lastObservation = sample.evidence
+                    lastObservation["buttonNames"] = names
+                    if accepts(sample, names: names) {
+                        let now = ProcessInfo.processInfo.systemUptime
+                        guard let baseline, unchanged(sample, from: baseline.target, windowNumber: baseline.windowNumber) else {
+                            self.baseline = (sample, window.windowNumber, now)
+                            stableSeconds = 0
+                            samples = 1
+                            return false
+                        }
+                        samples += 1
+                        stableSeconds = now - baseline.uptime
+                        return stableSeconds >= 0.25
+                    }
+                } catch {
+                    lastObservation = ["status": error.localizedDescription, "rejection": rejection]
+                }
+            }
+            baseline = nil
+            stableSeconds = 0
+            samples = 0
+            return false
+        }
+
+        fileprivate func matches(_ target: Target) -> Bool {
+            guard let baseline, stableSeconds >= 0.25, accepts(target, names: names(of: target)) else { return false }
+            return unchanged(target, from: baseline.target, windowNumber: baseline.windowNumber)
+        }
+
+        private func accepts(_ sample: Target, names: [String]) -> Bool {
+            if sample.accessibilityRole == .button { return names.contains(title) }
+            return allowsGestureSurface && sample.accessibilityRole == .group && sample.kind == "gesture-surface"
+        }
+
+        private func names(of sample: Target) -> [String] {
+            guard sample.accessibilityRole == .button else { return [] }
+            return [sample.accessibility.accessibilityTitle?(), sample.accessibility.accessibilityLabel?()].compactMap { $0 }
+        }
+
+        private func unchanged(_ sample: Target, from previous: Target, windowNumber: Int) -> Bool {
+            guard sample.window.windowNumber == windowNumber,
+                  sample.screenPoint == previous.screenPoint, sample.quartzPoint == previous.quartzPoint else { return false }
+            var comparisons: [String: Bool] = [:]
+            return NativeAcceptancePointer.same(previous, sample, comparisons: &comparisons)
+        }
+    }
+
     private static func pause() async {
         await withCheckedContinuation { continuation in
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) { continuation.resume() }
@@ -1442,7 +1580,8 @@ enum NativeAcceptancePointer {
     }
 
     static func click(_ probe: NSView, window: NSWindow, fraction: NSPoint,
-                      token: UUID, record: ([String: Any]) throws -> Void) async throws {
+                      token: UUID, buttonReadiness: LocalButtonReadiness? = nil,
+                      record: ([String: Any]) throws -> Void) async throws {
         guard owner == token, CGPreflightPostEventAccess(),
               !CGEventSource.buttonState(.combinedSessionState, button: .left) else {
             throw GateBlocked("Native pointer input is unavailable or a mouse button is already held.")
@@ -1461,6 +1600,12 @@ enum NativeAcceptancePointer {
         }
         let original = try target(probe, window: window, fraction: fraction, windowFailure: reportWindowFailure,
                                   accessibilityFailure: reportAccessibilityFailure)
+        if let buttonReadiness, !buttonReadiness.matches(original) {
+            try record(["kind": "native-pointer", "status": "refused-unsettled-button",
+                "settledButton": buttonReadiness.evidence, "originalTarget": original.evidence,
+                "posted": [], "received": [], "ownedDownPosted": false, "ownedUpPosted": false])
+            throw GateBlocked("The settled local button changed before movement.")
+        }
         let tag = Int64.random(in: 1...Int64.max)
         guard let source = CGEventSource(stateID: .combinedSessionState),
               let down = CGEvent(mouseEventSource: source, mouseType: .leftMouseDown,

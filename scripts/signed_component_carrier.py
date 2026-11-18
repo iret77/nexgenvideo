@@ -3,6 +3,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import stat
 import zipfile
@@ -10,6 +11,7 @@ import zipfile
 from retained_app_test_products import api, checksum, download, require, verify_artifact
 
 FIXTURE = Path(__file__).with_name('fixtures') / 'signed-component-carrier-1170.json'
+REBUILT_SUPERVISOR = 'Sources/NexGenVideoBpySupervisor'
 FIXTURE_SHA256 = '7046e77d61c974e8b6f888ce08289d2353e43e78b07918398df2a3f31535ec29'
 
 
@@ -21,11 +23,29 @@ def origin(value):
     raw = FIXTURE.read_bytes()
     require(hashlib.sha256(raw).hexdigest() == FIXTURE_SHA256, 'Signed component carrier fixture changed')
     selected = json.loads(raw)
+    prior, current = selected['componentSourceObjects'], value.get('componentSourceObjects', {})
     require(selected.get('schema') == 'signed-component-carrier-origin/v1'
-        and value.get('signedBase') == selected['signedBase']
-        and value.get('componentSourceObjects') == selected['componentSourceObjects'],
-        'Signed component carrier changed its semantic origin or sources')
+        and value.get('signedBase') == selected['signedBase'] and isinstance(current, dict) and prior.keys() == current.keys()
+        and all(isinstance(blob, str) and re.fullmatch('[a-f0-9]{40}', blob) for blob in current.values())
+        and {path for path in prior if prior[path] != current[path]} <= {REBUILT_SUPERVISOR},
+        'Signed component carrier changed sources outside the independently rebuilt supervisor')
     return selected
+
+
+def engine_component_source_binding(head, value):
+    if value is None:
+        return None
+    import app_cohort_v2
+    from release_engine_resume import ENGINE_SOURCE_OBJECTS
+    prior, current = origin(value)['componentSourceObjects'], value['componentSourceObjects']
+    require(app_cohort_v2.objects(head, current) == current, 'Current Engine and component source binding differs')
+    path = REBUILT_SUPERVISOR
+    if current[path] == prior[path]:
+        return None
+    require(ENGINE_SOURCE_OBJECTS[path] == prior[path],
+        'Retained Engine loses its original Supervisor source identity')
+    return {'path': path, 'originalGitObject': prior[path], 'currentGitObject': current[path],
+        'role': 'separate-executable', 'engineSourceUnchanged': True}
 
 
 def record(value):
@@ -78,7 +98,7 @@ def verify_manifest(raw, value):
         and manifest.get('appTreeSHA256') == selected['appTreeSHA256'] and manifest.get('files') == selected['files']
         and assembly.get('signedBase') == value['signedBase']
         and type(assembly.get('componentCompilerExecutions')) is int and assembly['componentCompilerExecutions'] == 0
-        and context.get('componentSourceObjects') == value['componentSourceObjects']
+        and context.get('componentSourceObjects') == selected['componentSourceObjects']
         and assembly.get('cohortV2') == context, 'Signed component carrier identity changed')
     verify_components(assembly.get('unchangedSignedComponents'), value)
     original_source_receipt(manifest, value)
@@ -121,9 +141,10 @@ def metadata(value):
         require(actual.get('size_in_bytes') == expected['size_in_bytes'], 'Signed component carrier size changed')
         artifacts[role] = actual
     import app_cohort_v2
-    for source in (selected['sourceSHA'], os.environ['GITHUB_SHA']):
-        require(app_cohort_v2.objects(source, selected['componentSourceObjects']) == selected['componentSourceObjects'],
-            'Signed component carrier has different actual source objects')
+    for source, expected in ((selected['sourceSHA'], selected['componentSourceObjects']),
+            (os.environ['GITHUB_SHA'], value['componentSourceObjects'])):
+        require(app_cohort_v2.objects(source, expected) == expected,
+            'Signed component carrier or current rebuild has different actual source objects')
     return run, job, artifacts
 
 
