@@ -347,12 +347,18 @@ def restore_checkouts(root, scratch, cache, pins, environment, packages, workspa
                 selected_cache, cache_origin = candidate, actual_origin
                 break
         destination = locations[identity]
-        source = str(selected_cache) if selected_cache else pin['location']
         git = ['git', '-c', 'core.hooksPath=/dev/null', '-c', 'maintenance.autoDetach=false', '-c', 'gc.autoDetach=false']
-        logged(root, identity + '-clone-source', [*git, 'clone',
-            '--no-checkout', '--no-hardlinks', source, str(destination)], environment, timeout=180)
-        logged(root, identity + '-canonical-origin', [*git, '-C', str(destination), 'remote', 'set-url',
-            'origin', pin['location']], environment)
+        if selected_cache:
+            logged(root, identity + '-clone-source', [*git, 'clone',
+                '--no-checkout', '--no-hardlinks', str(selected_cache), str(destination)], environment, timeout=180)
+            logged(root, identity + '-canonical-origin', [*git, '-C', str(destination), 'remote', 'set-url',
+                'origin', pin['location']], environment)
+        else:
+            logged(root, identity + '-initialize-source', [*git, 'init', str(destination)], environment)
+            logged(root, identity + '-canonical-origin', [*git, '-C', str(destination), 'remote', 'add',
+                'origin', pin['location']], environment)
+            logged(root, identity + '-fetch-source-pin', [*git, '-C', str(destination), 'fetch',
+                '--no-tags', '--depth=1', '--no-recurse-submodules', 'origin', revision], environment, timeout=180)
         logged(root, identity + '-checkout-pin', [*git, '-C', str(destination),
             '-c', 'submodule.recurse=false', 'checkout', '--detach', revision], environment, timeout=180)
         restored.append({'identity': identity, 'revision': revision, 'origin': pin['location'],

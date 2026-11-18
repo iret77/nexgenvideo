@@ -1057,7 +1057,11 @@ def retained_engine_carrier(root=None):
         replacements = {signed['proofArtifactID'], signed['payloadArtifactID']}
         require(replacements <= {item['id'] for item in selected_dependencies},
             'Cohort pack carrier is outside the reviewed acquisition inputs')
-        selected_dependencies = [item for item in selected_dependencies if item['id'] != FINAL_ARTIFACT[0]]
+        import signed_component_carrier
+        value = app_cohort_v2.manifest(product)
+        signed_component_carrier.verify_record(pack['carrier'].get('transport'), value)
+        selected_dependencies = [item for item in selected_dependencies
+            if item['id'] not in replacements | {FINAL_ARTIFACT[0]}] + signed_component_carrier.dependencies(value)
     dependencies = {}
     for selected in selected_dependencies:
         item = api('actions/artifacts/' + str(selected['id']))
@@ -1778,45 +1782,10 @@ def pack_verification_provenance(product=None):
     origin = value['signedBase']
     require(origin['packArchiveSHA256'] == PACK_SHA and origin['packTreeSHA256'] == PACK_TREE,
         'Cohort pack differs from the qualified native shell execution')
-    producer = api('actions/runs/' + str(origin['runID']))
-    builder = api('actions/jobs/' + str(origin['jobID']))
-    require(producer.get('id') == origin['runID'] and producer.get('head_sha') == origin['sourceSHA']
-        and producer.get('run_attempt') == 1 and producer.get('workflow_id') == 303346287
-        and producer.get('path') == '.github/workflows/release.yml' and producer.get('event') == 'workflow_dispatch'
-        and producer.get('status') == 'completed' and producer.get('actor', {}).get('login') == 'iret77'
-        and producer.get('repository', {}).get('full_name') == REPOSITORY
-        and builder.get('id') == origin['jobID'] and builder.get('run_id') == producer['id']
-        and builder.get('head_sha') == origin['sourceSHA'] and builder.get('run_attempt') == 1
-        and builder.get('name') == 'release-build' and builder.get('labels') == ['macrunner']
-        and builder.get('status') == 'completed' and builder.get('conclusion') == 'success',
-        'Signed-base pack carrier producer differs')
-    artifacts = {}
-    for role, suffix in (('proof', '-proof'), ('payload', '')):
-        artifact = api('actions/artifacts/' + str(origin[role + 'ArtifactID']))
-        verify_artifact(artifact, producer, builder, origin[role + 'ArtifactID'], origin[role + 'ArtifactSHA256'],
-            'release-signed-input-' + origin['sourceSHA'] + suffix)
-        artifacts[role] = artifact
-    require(0 < artifacts['proof']['size_in_bytes'] < checkpoint.SIGNED_MANIFEST_MAX_BYTES,
-        'Signed-base pack carrier proof is oversized')
-    raw = packaging.read_api('actions/artifacts/' + str(origin['proofArtifactID']) + '/zip',
-        maximum=checkpoint.SIGNED_MANIFEST_MAX_BYTES)
-    require(len(raw) == artifacts['proof']['size_in_bytes']
-        and hashlib.sha256(raw).hexdigest() == origin['proofArtifactSHA256'], 'Signed-base pack proof bytes differ')
-    members = packaging.read_proof_archive(raw)
-    require(set(members) == {'manifest.json'}, 'Signed-base pack proof inventory differs')
-    manifest_raw = members['manifest.json']
-    manifest = checkpoint.verify_manifest(json.loads(manifest_raw), origin['sourceSHA'], origin['runID'])
-    require(manifest['appTreeSHA256'] == origin['appTreeSHA256']
-        and manifest['files']['NexGenVideo.zip']['sha256'] == origin['appArchiveSHA256'],
-        'Signed-base pack carrier manifest differs')
-    return {'nativeProducer': {'runID': run['id'], 'sourceSHA': run['head_sha'], 'jobID': job['id'],
-        'jobStartedAt': job['started_at'], 'jobCompletedAt': job['completed_at']},
-        'carrier': {'schema': 'signed-base-pack-carrier/v1', 'productSourceSHA': product, 'signedBase': origin,
-            'producerRunID': producer['id'], 'producerJobID': builder['id'],
-            'proofArtifact': artifacts['proof'], 'payloadArtifact': artifacts['payload'],
-            'manifestSHA256': hashlib.sha256(manifest_raw).hexdigest(),
-            'pluginsArchive': manifest['files']['plugins.tar.gz'],
-            'packArchiveSHA256': PACK_SHA, 'packTreeSHA256': PACK_TREE}}
+    import signed_component_carrier
+    return signed_component_carrier.provenance(value, product, {
+        'runID': run['id'], 'sourceSHA': run['head_sha'], 'jobID': job['id'],
+        'jobStartedAt': job['started_at'], 'jobCompletedAt': job['completed_at']})
 
 
 def signed_pack_product():

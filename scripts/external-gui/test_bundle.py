@@ -141,7 +141,7 @@ def _builder_view(text):
                  '_workflow_build_view', '_guard_import_view', '_source_snapshot', '_compiled_compatibility',
                  'validate_client_selectors', 'validate_client_source', '_packaging_import_view', '_metadata_api_import_view',
                  '_native_inventory_additions', '_current_core_import_view', '_current_native_regression_ids',
-                 '_cohort_ci_additions', '_home_oracle_import_view'}
+                 '_cohort_ci_additions', '_home_oracle_import_view', '_component_transport_import_view'}
     for node in module.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in consumers:
             _safe_function(node)
@@ -950,6 +950,10 @@ def _current_core_import_view(raw, path, *, current=False):
                  'UI test Engine acquisition helper' if path == 'scripts/compiled_app_release.py' else
                  'Receipt verifier')
         raise ValueError(label + ' is not valid Python') from None
+    if path == 'scripts/app_release_v2.py':
+        assembly = [node for node in module.body if isinstance(node, ast.FunctionDef) and node.name == 'assemble']
+        if len(assembly) == 1 and hashlib.sha256(ast.dump(assembly[0], include_attributes=False).encode()).hexdigest() == 'af7483dd0eae8579c72e31d7bbbddcb879d36e00a80404d73e0ddc9f8af04430':
+            transitions[path]['assemble'][0]['following'] = "handoff = source_handoff(root, build / 'bpy-source', original, value, manifest)"
     declarations = [node.name for node in module.body if isinstance(node, ast.FunctionDef)]
     require(len(declarations) == len(set(declarations)), 'Duplicate receipt verifier declaration')
     observed = []
@@ -997,7 +1001,8 @@ def _current_core_import_view(raw, path, *, current=False):
         pack_additions = {
             'signed_pack_product': '66f4a13b8cb75d4e25cff4b2d47d7a92b7d7bac73e1c0a7208c33bbddb045c18',
             'original_pack_execution': 'd0192ae09a6cda4cfff16714d4b2a3b399b1918481728484a7e273a8cfd6c419',
-            'pack_verification_provenance': '9433a2fa8e875b95495127d5db17502b5665a3f7e152613074ddaf5ad7b99052',
+            'pack_verification_provenance': ('9433a2fa8e875b95495127d5db17502b5665a3f7e152613074ddaf5ad7b99052',
+                                             'b8438814b7679562e67e607361b3478727ec4fc5f341162da405952211b08139'),
         }
         versions, additions, kept = [], set(), []
         for node in module.body:
@@ -1005,7 +1010,9 @@ def _current_core_import_view(raw, path, *, current=False):
                 _safe_function(node)
                 digest = hashlib.sha256(ast.dump(node, include_attributes=False).encode()).hexdigest()
                 if node.name in pack_additions:
-                    require(digest == pack_additions[node.name], 'Changed signed-base pack carrier declaration')
+                    allowed = pack_additions[node.name]
+                    require(digest in ((allowed,) if isinstance(allowed, str) else allowed),
+                            'Changed signed-base pack carrier declaration')
                     additions.add(node.name)
                     continue
                 before, after = pack_changes[node.name]
@@ -1022,7 +1029,8 @@ def _current_core_import_view(raw, path, *, current=False):
 
 
 def _cohort_ci_additions(prior, current, changes, known_helpers, client_inputs):
-    diagnostic = {'scripts/hang_diagnostic_acceptance.py',
+    diagnostic = {'scripts/signed_component_carrier.py', 'scripts/fixtures/signed-component-carrier-1170.json',
+                  'scripts/hang_diagnostic_acceptance.py',
                   'scripts/scene_pointer_delivery.py', 'scripts/scene_pointer_observer.swift',
                   'scripts/workspace_native_evidence.py', 'scripts/native_app_failure_diagnostic.py',
                   'scripts/native_app_window_sampler.swift', 'scripts/fixtures/native-app-failure-1087.json',
@@ -1038,6 +1046,43 @@ def _cohort_ci_additions(prior, current, changes, known_helpers, client_inputs):
                          or re.fullmatch(r'scripts/test_[A-Za-z0-9_]+\.py', name)) for name in added),
             'UI test cohort adds non-CI paths or removes prior qualification paths')
     return added
+
+
+def _component_transport_import_view(text, path):
+    import ast
+    try:
+        module = ast.parse(text)
+    except (SyntaxError, UnicodeDecodeError):
+        raise ValueError('Runtime transport source is not valid Python') from None
+    versions = {'scripts/app_release_v2.py': {'original_signed_input': ['9de95a64b0a19753fd02a0c91253dd1d60cff59b993b0bfb69f518630550a11f',
+                                                             '70dd6fe6ddc46015731cb54b4733a2d1adb171a26fadfaf8d7e0c480aa867eab'],
+                                   'source_handoff': ['3606f74eabafc5fb08471b0e80f860d83587ae8d7d367e1f2cc849d02fbd67af',
+                                                      'cb8863976bf07478d1d1021bf64c95a7f8ae13a0edadef6503232485d4d1026b'],
+                                   'assemble': ['73168ef30267be3ffbc5888e9ecb44d0c17220f412c26f12d85d186d00d1ba1a',
+                                                'a01f2f6f820cc319e59c171d57d63c69aa1236455aff386b031aea8f1d28148d'],
+                                   'verify_assembly': ['486b84780676fb9f5d6567c3e3e80e7a0f446b285abd6b110a24d597d1a48507',
+                                                       'ddeb78d86dafd000b41857050582ead7c64b9494f23ba30e01ce9cb5f6b0fceb'],
+                                   'verify_materialization': ['7508e30fbe30ea43151c0e2a4becde7abeb7846bb5db79b5efa78403569b2e40',
+                                                              '8fdb08362d95303a59c1bdee84e241c9b030f8720a536915229339686acd4ae7']},
+     'scripts/native_app_target_build.py': {'restore_checkouts': ['f10b61309b1dc9bd87dd5cf317f7137b6d15283d261089b7bf87111bf73b82f8',
+                                                                  'e39db1b140c4944fcbadc868ad78510f387f5b2215765f1c3e093c67d2299c12']}}
+    require(path in versions, 'Unknown runtime transport source')
+    expected = versions[path]
+    declarations = [node.name for node in module.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    require(len(declarations) == len(set(declarations)), 'Duplicate runtime transport declaration')
+    observed = set()
+    versions_seen = []
+    for index, node in enumerate(module.body):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in expected:
+            _safe_function(node)
+            digest = hashlib.sha256(ast.dump(node, include_attributes=False).encode()).hexdigest()
+            require(digest in expected[node.name], 'Unreviewed runtime transport function: ' + node.name)
+            versions_seen.append(digest == expected[node.name][1])
+            observed.add(node.name)
+            module.body[index] = ast.parse('def ' + node.name + '(): pass').body[0]
+    require(observed == set(expected), 'Incomplete runtime transport source')
+    require(not any(versions_seen) or all(versions_seen), 'Incomplete runtime transport transition')
+    return ast.dump(module, include_attributes=False)
 
 
 def _home_oracle_import_view(text):
@@ -1131,7 +1176,8 @@ def _compiled_compatibility(producer_sha, producer_files, current_sha, current_f
     packaging_helper = 'scripts/retained_packaging.py'
     metadata_helper = 'scripts/retained_app_test_products.py'
     journey_helper = 'scripts/external-gui/acceptance.py'
-    metadata_only = {'scripts/external-gui/transport.py', 'scripts/release_engine_resume.py', inventory_path, runtime_helper, packaging_helper, metadata_helper, journey_helper, 'scripts/app_cohort_v2.py', 'scripts/app_release_v2.py', 'scripts/release_checkpoint.py', *added_inputs}
+    checkout_helper = 'scripts/native_app_target_build.py'
+    metadata_only = {'scripts/external-gui/transport.py', 'scripts/release_engine_resume.py', inventory_path, runtime_helper, packaging_helper, metadata_helper, journey_helper, checkout_helper, 'scripts/app_cohort_v2.py', 'scripts/app_release_v2.py', 'scripts/release_checkpoint.py', *added_inputs}
     require(all(producer_files[name] == digest for name, digest in current_files.items() if name not in {helper, guard, cohort, *metadata_only}),
             'Compiled UI test source, project or reachable shared helper changed')
     if producer_files[journey_helper] != current_files[journey_helper]:
@@ -1141,13 +1187,24 @@ def _compiled_compatibility(producer_sha, producer_files, current_sha, current_f
                 'External runner HOME verifier differs from its committed receipt')
         require(_home_oracle_import_view(originals[journey_helper]) == _home_oracle_import_view(current_journey),
                 'External runner changes outside the exact HOME identity correction')
+    current_checkout = journey.output([*git, 'show', current_sha + ':' + checkout_helper])
+    require(current_checkout == (journey.REPOSITORY / checkout_helper).read_bytes()
+            and hashlib.sha256(current_checkout).hexdigest() == current_files[checkout_helper],
+            'Current checkout transport differs from its committed receipt')
+    require(_component_transport_import_view(originals[checkout_helper], checkout_helper)
+            == _component_transport_import_view(current_checkout, checkout_helper),
+            'Checkout transport changes outside the exact pinned-fetch correction')
     for name in ('scripts/app_cohort_v2.py', 'scripts/app_release_v2.py', 'scripts/release_checkpoint.py'):
         raw = journey.output([*git, 'show', current_sha + ':' + name])
         require(raw == (journey.REPOSITORY / name).read_bytes()
                 and hashlib.sha256(raw).hexdigest() == current_files[name],
                 'Current receipt verifier differs from its committed receipt')
-        require(_current_core_import_view(originals[name], name) == _current_core_import_view(raw, name, current=True),
-                'Receipt verifier changes outside the exact current-core transition')
+        before = _current_core_import_view(originals[name], name)
+        after = _current_core_import_view(raw, name, current=True)
+        if name == 'scripts/app_release_v2.py':
+            before = _component_transport_import_view(before, name)
+            after = _component_transport_import_view(after, name)
+        require(before == after, 'Receipt verifier changes outside the exact current-core transition')
     current_metadata = journey.output([*git, 'show', current_sha + ':' + metadata_helper])
     require(current_metadata == (journey.REPOSITORY / metadata_helper).read_bytes()
             and hashlib.sha256(current_metadata).hexdigest() == current_files[metadata_helper],
@@ -1293,6 +1350,14 @@ def _compiled_compatibility(producer_sha, producer_files, current_sha, current_f
             'UI test native inventory changes outside an App-only transition')
     added_paths = _cohort_ci_additions(prior_paths, current_paths, local,
         {helper, metadata_helper, *added_verifiers}, current_files)
+    transport_inputs = {}
+    transport_paths = {'scripts/signed_component_carrier.py', 'scripts/fixtures/signed-component-carrier-1170.json'}
+    require(transport_paths <= set(current_paths) and not transport_paths & set(current_files),
+            'Runtime carrier sources are missing from the CI closure or enter the compiled client')
+    for name in sorted(transport_paths):
+        raw = journey.output([*git, 'show', current_sha + ':' + name])
+        require(raw == (journey.REPOSITORY / name).read_bytes(), 'Runtime carrier source differs from its committed bytes')
+        transport_inputs[name] = hashlib.sha256(raw).hexdigest()
     recipe = _builder_view(originals[helper].decode())
     require(recipe == _builder_view(Path(__file__).read_text()), 'UI test build closure, imports or constants changed')
     imported = _guard_import_view(originals[guard].decode(), (journey.REPOSITORY / guard).read_text())
@@ -1315,6 +1380,7 @@ def _compiled_compatibility(producer_sha, producer_files, current_sha, current_f
     return {'schema': 'nexgenvideo/external-tests-compiled-compatibility/1',
         'producerSourceSHA': producer_sha, 'consumerSourceSHA': current_sha,
         'producerFiles': producer_files, 'consumerFiles': current_files,
+        'runtimeTransportInputs': transport_inputs,
         'originalSources': {name: raw.decode() for name, raw in originals.items()}, 'comparison': comparison,
         'packagingRuntimeHelper': {'producerSHA256': producer_files[packaging_helper],
             'consumerSHA256': current_files[packaging_helper],
