@@ -60,10 +60,25 @@ def retain_watchdog_reports(root, before, archive, receipt):
             receipt["captureErrors"].append({"name": path.name, "error": type(error).__name__})
 
 
-def retain_capture_recordings(root, before, output, *, before_watchdog=None):
+def validate_capture_root(root, home):
+    relative = root.absolute().relative_to(home.absolute())
+    if not relative.parts or ".." in relative.parts:
+        raise ValueError("capture log root escapes its owned home")
+    owned = home.resolve(strict=True)
+    current = owned
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            raise ValueError("capture log root contains a symlink")
+    if not current.resolve().is_relative_to(owned):
+        raise ValueError("capture log root escapes its owned home")
+
+
+def retain_capture_recordings(root, before, output, *, before_watchdog=None, home=None):
     receipt = {"schema": "hang-capture-originals/1", "processes": _capture_processes.copy(),
                "recordings": [], "watchdogReports": [], "unmatched": [], "captureErrors": []}
     try:
+        validate_capture_root(root, Path.home() if home is None else Path(home))
         with zipfile.ZipFile(output / "capture-recordings.zip", "x", compression=zipfile.ZIP_DEFLATED) as archive:
             for folder in sorted(set(root.glob("*")) - before):
                 try:
@@ -111,11 +126,14 @@ def main():
         if args.symbols is None:
             parser.error("symbols are required for full diagnostic acceptance")
         root = Path.home() / "Library/Logs/NexGenVideo/HangIncidents"
-        before = set(root.glob("*"))
-        before_watchdog = set(root.parent.glob("NexGenVideo-*-main-thread-hang.json"))
+        before = set()
+        before_watchdog = set()
         args.output.mkdir(parents=True, exist_ok=True)
         _capture_processes.clear()
         try:
+            validate_capture_root(root, Path.home())
+            before = set(root.glob("*"))
+            before_watchdog = set(root.parent.glob("NexGenVideo-*-main-thread-hang.json"))
             verify(args)
         except BaseException:
             try:

@@ -42,6 +42,7 @@
     "scripts/fixtures/native-app-failure-1110.json",
     "scripts/fixtures/native-app-failure-1120.json",
     "scripts/fixtures/native-app-failure-1135.json",
+    "scripts/hang_diagnostic_acceptance.py",
     "scripts/isolated_test_home.py",
     "scripts/native_app_failure_diagnostic.py",
     "scripts/native_app_target_build.py",
