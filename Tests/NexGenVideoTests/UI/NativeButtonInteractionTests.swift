@@ -940,9 +940,22 @@ struct NativePointerInteractionTests {
         }
 
         func ready() async throws {
-            try await context.wait("exclusive native pointer fixture", driver: driver, clauses: ["active", "key", "presentation", "probe", "viewport"]) {
-                self.context.operand("active", NSApp.isActive) && self.context.operand("key", self.window.isKeyWindow) && self.context.operand("presentation", nativePointerWindowPresented(self.window)) && self.context.operand("probe", self.probe("Undo") != nil) && self.context.operand("viewport", nativePointerViewportReady(in: self.window))
+            var viewport = NativePointerViewportReadiness()
+            let began = ProcessInfo.processInfo.systemUptime
+            do {
+                try await context.wait("exclusive native pointer fixture", driver: driver, clauses: ["active", "key", "presentation", "probe", "viewport", "settled-viewport"]) {
+                    let ready = self.context.operand("active", NSApp.isActive) && self.context.operand("key", self.window.isKeyWindow) && self.context.operand("presentation", nativePointerWindowPresented(self.window)) && self.context.operand("probe", self.probe("Undo") != nil) && self.context.operand("viewport", nativePointerViewportReady(in: self.window))
+                    guard ready else { viewport.reset(); return false }
+                    return self.context.operand("settled-viewport", viewport.observe(NativePointerViewportReadiness.Sample.current(in: self.window), at: ProcessInfo.processInfo.systemUptime))
+                }
+            } catch {
+                viewportReadiness = viewport.evidence.merging(["waitSeconds": ProcessInfo.processInfo.systemUptime - began, "ready": false]) { _, new in new }
+                do { try record("viewport-readiness", viewportReadiness) }
+                catch { FileHandle.standardError.write(Data(("VIEWPORT_READINESS_EVIDENCE_FAIL " + error.localizedDescription + "\n").utf8)) }
+                throw error
             }
+            viewportReadiness = viewport.evidence.merging(["waitSeconds": ProcessInfo.processInfo.systemUptime - began, "ready": true]) { _, new in new }
+            try record("viewport-readiness", viewportReadiness)
             try await context.fill("pointer.field", value: "0.5", driver: driver)
             try #require(window.firstResponder is NSTextView)
         }
@@ -980,6 +993,8 @@ struct NativePointerInteractionTests {
             window.close()
             application.close(); context.applicationRestored()
         }
+
+        private(set) var viewportReadiness: [String: Any] = [:]
     }
 
     private func delivered(_ title: String, in fixture: Fixture, movements: Int = 1) throws {
@@ -1442,6 +1457,42 @@ struct NativePointerInteractionTests {
             let scroll = try #require(field.enclosingScrollView)
             scroll.scrollerStyle = style
             try await fixture.ready()
+            #expect((fixture.viewportReadiness["waitSeconds"] as? Double ?? 0) >= 0.25)
+            #expect((fixture.viewportReadiness["stableSeconds"] as? Double ?? 0) >= 0.25)
+            #expect((fixture.viewportReadiness["samples"] as? Int ?? 0) >= 2)
+            let observed = try #require(fixture.viewportReadiness["lastObserved"] as? [String: Any])
+            #expect(observed["style"] as? Int == Int(style.rawValue))
+            let sample = try #require(NativePointerViewportReadiness.Sample.current(in: fixture.window))
+            #expect(sample.fieldFrame.width == sample.clipBounds.width)
+            var readiness = NativePointerViewportReadiness()
+            #expect(!readiness.observe(sample, at: 10))
+            #expect(!readiness.observe(sample, at: 10.249))
+            #expect(readiness.observe(sample, at: 10.25))
+            var changed = sample
+            changed.fieldFrame.origin.y += 0.25
+            #expect(changed.isValid)
+            #expect(!readiness.observe(changed, at: 11))
+            #expect(readiness.observe(changed, at: 11.25))
+            let replacement = NSView()
+            changed.objects[2] = replacement
+            #expect(!readiness.observe(changed, at: 12))
+            #expect(readiness.observe(changed, at: 12.25))
+            changed.style = Int(style == .legacy ? NSScroller.Style.overlay.rawValue : NSScroller.Style.legacy.rawValue)
+            #expect(!readiness.observe(changed, at: 12.5))
+            #expect(readiness.observe(changed, at: 12.75))
+            var stale = changed
+            stale.fieldFrame.size.width -= 1
+            #expect(!readiness.observe(stale, at: 13))
+            #expect(!readiness.observe(changed, at: 14))
+            #expect(readiness.observe(changed, at: 14.25))
+            #expect(!readiness.observe(nil, at: 15))
+            #expect(!readiness.observe(changed, at: 16))
+            #expect(readiness.observe(changed, at: 16.25))
+            #expect(!readiness.observe(changed, at: 16))
+            #expect(readiness.observe(changed, at: 16.25))
+            #expect(!readiness.observe(changed, at: .nan))
+            #expect(!readiness.observe(changed, at: 17))
+            #expect(readiness.observe(changed, at: 17.25))
             #expect(scroll.scrollerStyle == style)
             let clip = scroll.contentView
             let fieldFrame = field.convert(field.bounds, to: clip)
@@ -1477,6 +1528,7 @@ struct NativePointerInteractionTests {
             try delivered("Later", in: fixture)
             try fixture.record("viewport", ["style": style.rawValue, "fieldFrame": NSStringFromRect(fieldFrame),
                 "windowReadySeconds": windowReadySeconds,
+                "fieldReadiness": fixture.viewportReadiness,
                 "viewport": NSStringFromRect(clip.bounds), "before": [before.x, before.y],
                 "after": [clip.bounds.origin.x, clip.bounds.origin.y], "laterInitiallyOutside": initiallyOutside,
                 "wheels": Array(wheels), "callbacks": fixture.capture.callbacks])
@@ -2295,4 +2347,89 @@ struct NativePointerInteractionTests {
     marker.removeFromSuperview(); wrapper.addSubview(marker); marker.frame = frame
     text.removeFromSuperview()
     marker.removeFromSuperview(); #expect(owner(wrapper) == nil)
+}
+
+@MainActor private struct NativePointerViewportReadiness {
+    @MainActor struct Sample {
+        var fieldFrame: NSRect
+        var clipBounds: NSRect
+        var rootBounds: NSRect
+        var windowFrame: NSRect
+        var objects: [AnyObject]
+        var windowNumber: Int
+        var style: Int
+
+        var identities: [ObjectIdentifier] { objects.map { ObjectIdentifier($0) } }
+
+        static func current(in window: NSWindow) -> Self? {
+            guard let root = window.contentView, root.window === window,
+                  let field = WorkspaceUIAcceptance.findProbe(in: root, identifier: "pointer.field"),
+                  let scroll = field.enclosingScrollView,
+                  field.window === window, scroll.window === window else { return nil }
+            let clip = scroll.contentView
+            guard clip.window === window, let style = Int(exactly: scroll.scrollerStyle.rawValue) else { return nil }
+            return Self(fieldFrame: field.convert(field.bounds, to: clip), clipBounds: clip.bounds,
+                rootBounds: root.bounds, windowFrame: window.frame,
+                objects: [window, root, field, scroll, clip],
+                windowNumber: window.windowNumber, style: style)
+        }
+
+        func matches(_ other: Self) -> Bool {
+            fieldFrame == other.fieldFrame && clipBounds == other.clipBounds && rootBounds == other.rootBounds
+                && windowFrame == other.windowFrame && identities == other.identities
+                && windowNumber == other.windowNumber && style == other.style
+        }
+
+        var isValid: Bool {
+            let rectangles = [fieldFrame, clipBounds, rootBounds, windowFrame]
+            return windowNumber > 0 && identities.count == 5
+                && rectangles.allSatisfy { frame in
+                    [frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite)
+                        && frame.width > 0 && frame.height > 0
+                }
+                && fieldFrame.width == clipBounds.width && clipBounds.contains(fieldFrame)
+        }
+
+        var evidence: [String: Any] {
+            ["fieldFrame": NSStringFromRect(fieldFrame), "clipBounds": NSStringFromRect(clipBounds),
+             "rootBounds": NSStringFromRect(rootBounds), "windowFrame": NSStringFromRect(windowFrame),
+             "identities": identities.map { String(describing: $0) }, "window": windowNumber,
+             "style": style, "valid": isValid]
+        }
+    }
+
+    private var previous: Sample?
+    private var began: TimeInterval?
+    private var lastTime: TimeInterval?
+    private var lastObserved: Sample?
+    private var lastObservedAt: TimeInterval?
+    private(set) var stableSeconds = 0.0
+    private(set) var samples = 0
+
+    mutating func reset() {
+        previous = nil; began = nil; lastTime = nil
+        stableSeconds = 0; samples = 0
+    }
+
+    mutating func observe(_ sample: Sample?, at time: TimeInterval) -> Bool {
+        lastObserved = sample; lastObservedAt = time
+        guard time.isFinite, time >= 0, let sample, sample.isValid else { reset(); return false }
+        if previous?.matches(sample) != true || lastTime.map({ time < $0 }) == true {
+            previous = sample; began = time; lastTime = time
+            stableSeconds = 0; samples = 1
+            return false
+        }
+        guard let began else { reset(); return false }
+        lastTime = time; samples += 1; stableSeconds = time - began
+        return stableSeconds >= 0.25
+    }
+
+    var evidence: [String: Any] {
+        var result: [String: Any] = ["stableSeconds": stableSeconds, "samples": samples,
+            "intervalActive": previous != nil, "lastObserved": lastObserved?.evidence ?? [:]]
+        if let lastObservedAt {
+            result["lastObservedUptime"] = lastObservedAt.isFinite ? lastObservedAt as Any : String(describing: lastObservedAt)
+        }
+        return result
+    }
 }
