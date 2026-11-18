@@ -1,6 +1,6 @@
-"""Measure only the three failed Build 123 runtime paths on the retained signed app."""
+"""Capture the first Boundary child report on the retained signed Build 123."""
 import argparse
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -10,12 +10,13 @@ import platform
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import time
 import zipfile
 
-from bpy_open_diagnostic import read_regular, stop_owned
+from bpy_open_diagnostic import stop_owned
 from release_acceptance_identity import digest, gui_tools, require
 from retained_packaging import collect_source
 from reuse_bpy_binary_evidence import api, download, instant
@@ -23,7 +24,9 @@ from verify_diagnostic_candidate import verify_signed_bpy
 
 SOURCE = "22c81c1d13e2d99c9320adb457a17b8cabb2b4cf"
 REF = "iret77/rc-delivery-base-795"
-BRANCH = "iret77/rc-app123-diagnostic-1190"
+BRANCH = "iret77/rc-app123-boundary-1191"
+PRIOR_HARNESS = "de4d86ade10742675b1951ed7c17b3f8782e9bbc"
+SERVICE = "de.h5ventures.nexgenvideo.bpy-service-0"
 RUN = 44324570507
 ID = 14443479233
 ARCHIVE = "4eacfe5620c925e391cf2a1935ee9548cbe7aa2e866de9df7f7bc7cb5932bee5"
@@ -34,10 +37,6 @@ UUID = "3D6DF417-F27C-31C3-94D5-F7DCAEA09C6A"
 PATHS = {".github/workflows/diagnostic-acceptance.yml",
          "scripts/app123_runtime_diagnostic.py", "scripts/fixtures/app-cohort.json"}
 FAILURES = {
-    "diagnostic-acceptance": (
-        134937235316, 14454848302, "diagnostic-runtime-acceptance",
-        "eaa005929d31599fc4c14c10761807ccddc6663cef3a9095626bf1047e7aacf1",
-        ["Verify signed production capture and exact symbolization"]),
     "bpy-runtime / runtime": (
         134937236124, 14446677200, f"managed-bpy-runtime-evidence-{SOURCE}",
         "b3235398754eb1d55f2c707fc94541115c2a56db9ed5130e617ab2fbdf845213",
@@ -71,8 +70,10 @@ def context():
             "The diagnostic accepts only its exact existing Build 123 selectors")
     head = git("rev-parse", "HEAD")
     changed = git("diff", "--no-renames", "--name-only", SOURCE, head).splitlines()
-    require(head == os.environ["GITHUB_SHA"] and git("show", "-s", "--format=%P", "HEAD") == SOURCE
-            and set(changed) == PATHS and not git("status", "--porcelain", "--untracked-files=no"),
+    require(head == os.environ["GITHUB_SHA"] and git("show", "-s", "--format=%P", "HEAD") == PRIOR_HARNESS
+            and set(changed) == PATHS
+            and set(git("diff", "--name-only", PRIOR_HARNESS, head).splitlines()) == PATHS - {"scripts/fixtures/app-cohort.json"}
+            and not git("status", "--porcelain", "--untracked-files=no"),
             "The diagnostic must be one clean harness-only commit from the production source")
     return dict(runID=int(os.environ["GITHUB_RUN_ID"]), harnessSHA=head, actor="iret77",
                 artifactID=ID, appSourceSHA=SOURCE, harnessFiles={name:digest(Path(name)) for name in sorted(PATHS)})
@@ -104,7 +105,27 @@ def producer():
                 and instant(item["expires_at"]) > datetime.now(timezone.utc),
                 "Original failed-job artifact changed: " + name)
         bound[name] = {"job": job, "artifact": item}
-    return {"run": run, "app": app, "releaseJob": release, "failures": bound}
+    prior = api("/actions/runs/44385227085")
+    prior_job = api("/actions/jobs/135088071105")
+    prior_artifact = api("/actions/artifacts/14467029810")
+    require((prior["id"], prior["head_sha"], prior["run_attempt"], prior["conclusion"]) ==
+            (44385227085, PRIOR_HARNESS, 1, "success")
+            and (prior["workflow_id"], prior["path"], prior["event"], prior["status"], prior["actor"]["login"]) ==
+            (355242770, ".github/workflows/diagnostic-acceptance.yml", "workflow_dispatch", "completed", "iret77")
+            and (prior_job["run_id"], prior_job["head_sha"], prior_job["run_attempt"], prior_job["conclusion"]) ==
+            (44385227085, PRIOR_HARNESS, 1, "success") and prior_job["labels"] == ["macrunner"]
+            and (prior_job["name"], prior_job["status"]) == ("app123-runtime-diagnostic", "completed")
+            and (prior_artifact["id"], prior_artifact["workflow_run"]["id"], prior_artifact["size_in_bytes"]) ==
+            (14467029810, 44385227085, 24657250)
+            and prior_artifact["name"] == "app123-runtime-observations-44385227085-a1"
+            and prior_artifact["workflow_run"]["head_sha"] == PRIOR_HARNESS
+            and instant(prior_job["started_at"]) <= instant(prior_artifact["created_at"])
+                <= instant(prior_artifact["updated_at"]) <= instant(prior_job["completed_at"])
+            and prior_artifact["digest"] == "sha256:7523096900b40c56991e444655b7a506712bb55365a8818ed7182f63a86b3d16"
+            and not prior_artifact["expired"] and instant(prior_artifact["expires_at"]) > datetime.now(timezone.utc),
+            "Previous Boundary observation origin differs")
+    return {"run": run, "app": app, "releaseJob": release, "failures": bound,
+            "priorBoundary": {"run": prior, "job": prior_job, "artifact": prior_artifact}}
 
 
 def bind(output):
@@ -169,157 +190,6 @@ def restore(product, stage, evidence):
     return app
 
 
-def identify(process, executable):
-    if process.poll() is not None:
-        return None
-    reply = subprocess.run(["/bin/ps", "-ww", "-p", str(process.pid), "-o", "pid=,ppid=,lstart=,comm="],
-        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=2)
-    fields = reply.stdout.decode(errors="replace").strip().split(None, 7)
-    if reply.returncode != 0 or len(fields) != 8 or fields[:2] != [str(process.pid), str(os.getpid())]:
-        return None
-    if Path(fields[-1]).resolve() != executable.resolve():
-        return None
-    return dict(pid=process.pid, ppid=os.getpid(), start=" ".join(fields[2:7]), executable=str(executable))
-
-
-def sample(process, executable, initial, output, name, deadline, environment):
-    record = {"name": name, "before": identify(process, executable), "didSample": False}
-    if record["before"] != initial or initial is None or deadline - time.monotonic() < 3:
-        return record
-    sample_path = output / (name + ".sample.log")
-    argv = ["/usr/bin/sample", str(process.pid), "1", "-file", str(sample_path)]
-    with (output / (name + ".stdout.log")).open("xb") as stdout, (output / (name + ".stderr.log")).open("xb") as stderr:
-        sampler = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr, env=environment)
-        record.update(didSample=True, argv=argv, samplerPID=sampler.pid, collectedAt=time.time())
-        try:
-            sampler.wait(timeout=max(0.1, min(7, deadline - time.monotonic() - 2)))
-        except subprocess.TimeoutExpired:
-            record["timedOut"] = True
-            sampler.kill()
-            sampler.wait(timeout=2)
-        finally:
-            if sampler.poll() is None:
-                sampler.kill()
-                sampler.wait(timeout=2)
-            record.update(exitCode=sampler.returncode, reaped=sampler.poll() is not None)
-    record["after"] = identify(process, executable)
-    if sample_path.is_file() and not sample_path.is_symlink():
-        record["rawSampleSHA256"] = digest(sample_path)
-        record["rawSampleBytes"] = sample_path.stat().st_size
-    return record
-
-
-def remaining_group(pgid):
-    data = subprocess.check_output(["/bin/ps", "-ww", "-axo", "pid=,pgid=,comm="],
-                                   stdin=subprocess.DEVNULL, text=True, timeout=4)
-    return [dict(pid=int(parts[0]), executable=parts[2])
-            for line in data.splitlines() if len(parts := line.strip().split(None, 2)) == 3 and parts[1] == str(pgid)]
-
-
-def reap_app(process):
-    before = []
-    try:
-        before = remaining_group(process.pid)
-    finally:
-        if process.poll() is None or before:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-        process.wait(timeout=5)
-    deadline = time.monotonic() + 4
-    while (remaining := remaining_group(process.pid)) and time.monotonic() < deadline:
-        time.sleep(0.1)
-    return {"observedBeforeCleanup":before, "remaining":remaining}
-
-
-def diagnostic(app, stage, output):
-    import hang_diagnostic_acceptance as capture
-    output.mkdir()
-    environment = child_environment(stage / "diagnostic-home")
-    root = Path(environment["HOME"]) / "Library/Logs/NexGenVideo/HangIncidents"
-    key_root = stage / "private-replay"
-    key_root.mkdir(mode=0o700)
-    environment.update(NGV_HANG_SELFTEST="wait", NGV_HANG_SELFTEST_KEY=str(key_root / "replay.key"),
-                       NGV_HANG_SELFTEST_EXPORT=str(key_root / "export"))
-    binary = app / "Contents/MacOS/NexGenVideo"
-    started = time.monotonic()
-    deadline = started + 65
-    log = (output / "capture-wait.log").open("xb")
-    try:
-        process = subprocess.Popen([str(binary)], stdin=subprocess.DEVNULL, stdout=log,
-                                   stderr=subprocess.STDOUT, env=environment, start_new_session=True)
-    finally:
-        log.close()
-    capture._capture_processes[process.pid] = "wait"
-    records, initial, reason, timed_out = [], None, None, False
-    try:
-        initial = identify(process, binary)
-        while process.poll() is None and time.monotonic() < deadline:
-            elapsed = time.monotonic() - started
-            if initial is None and elapsed < 5:
-                initial = identify(process, binary)
-            if not records:
-                for path in root.parent.glob("NexGenVideo-*-main-thread-hang.json"):
-                    try:
-                        raw = read_regular(path, 1024 * 1024)
-                        if json.loads(raw)["processID"] == process.pid:
-                            (output / "watchdog-at-trigger.json").write_bytes(raw)
-                            reason = "owned-watchdog"
-                            records.append(sample(process, binary, initial, output, "early", deadline, environment))
-                            break
-                    except (FileNotFoundError, KeyError, ValueError):
-                        continue
-                if elapsed >= 15 and not records:
-                    reason = "early-time-control"
-                    records.append(sample(process, binary, initial, output, "early", deadline, environment))
-            if elapsed >= 45 and len(records) == 1 and not (
-                    records[0].get("rawSampleBytes") and records[0].get("exitCode") == 0):
-                records.append(sample(process, binary, initial, output, "late", deadline, environment))
-            time.sleep(min(0.15, max(0, deadline - time.monotonic())))
-        timed_out = process.poll() is None
-    finally:
-        observed_seconds = time.monotonic() - started
-        cleanup = reap_app(process)
-        save(output / "wait-process.json", dict(identity=initial, hostPID=process.pid, exitCode=process.returncode,
-             watchedSeconds=observed_seconds, timedOut=timed_out, reaped=process.poll() is not None,
-             originalLimitSeconds=65, firstProbeTrigger=reason, samples=records, ownedGroupCleanup=cleanup))
-        capture.retain_capture_recordings(root, set(), output, home=Path(environment["HOME"]))
-        require(not cleanup["remaining"], "Diagnostic process group did not exit")
-    sampled = any(x.get("didSample") for x in records)
-    return {"observed": initial is not None and (sampled or not timed_out),
-            "timeout": timed_out, "originalExitCode": process.returncode,
-            "rawSampleAvailable":any(x.get("rawSampleBytes", 0) > 0 and x.get("exitCode") == 0 for x in records)}
-
-
-def fixture_environment(stage, output):
-    environment = child_environment(stage / "scene-home")
-    denied = stage / "denied"
-    approved = stage / "approved-input"
-    fake = stage / "fake-bin"
-    for directory in (denied / "foreign-project", approved, fake):
-        directory.mkdir(parents=True)
-    sentinel = Path(environment["HOME"]) / "ngv-bpy-host-home-secret"
-    inputs = [(denied/"provider-secret", "provider-secret"), (denied/"canonical-artifact", "canonical-project-truth"),
-              (denied/"foreign-project/scene.blend", "foreign-project"), (sentinel, "host-home-secret")]
-    for path, content in inputs:
-        path.write_text(content)
-    (approved/"fixture.json").write_text('{"approved":true}')
-    (approved/"symlink.json").symlink_to(inputs[0][0])
-    (approved/"hardlink-source").write_text("hardlink")
-    os.link(approved/"hardlink-source", approved/"hardlink.json")
-    for name in ("python3", "blender"):
-        path = fake/name
-        path.write_text("#!/bin/sh\nexit 99\n")
-        path.chmod(0o700)
-    environment.update(PATH=str(fake), BLENDER_USER_CONFIG=str(denied/"foreign-blender"),
-        PYTHONPATH=str(denied/"foreign-python"), NGV_TEST_SECRET="must-not-cross-xpc",
-        NGV_BPY_DENIED_PATHS=json.dumps([str(path) for path, _ in inputs]),
-        NGV_BPY_APPROVED_INPUT_DIR=str(approved), NGV_SELFTEST_BPY=str(output),
-        NGV_BPY_CAPTURE_SANDBOX_LOGS="1")
-    return environment
-
-
 @contextmanager
 def owned(argv, output, environment, *, privileged=False):
     with output.open("xb") as log:
@@ -331,66 +201,163 @@ def owned(argv, output, environment, *, privileged=False):
             stop_owned(process, privileged)
 
 
-def scene(app, stage, output, observer):
-    output.mkdir()
-    native = output / "native"
-    snapshots = output / "ax"
-    snapshots.mkdir()
-    environment = fixture_environment(stage, native)
-    deadline = time.time() + 1800
-    argv = [sys.executable, "-I", "scripts/bpy_runtime_acceptance.py", str(app), "--mode", "runtime",
-            "--source-sha", SOURCE, "--deadline", str(deadline), "--capture-open-logs", "--output", str(native)]
-    done = output / "app-completed.json"
-    progress = native / "spatial-scene-100.json"
-    with owned(argv, output/"harness.log", environment) as process:
-        while process.poll() is None and not progress.is_file() and time.time() < deadline + 45:
-            time.sleep(0.1)
-        if progress.is_file() and process.poll() is None:
-            content = read_regular(progress, 4 * 1024 * 1024)
-            (output / "observer-trigger.json").write_bytes(content)
-            args = [str(observer), str(native/"process.json"), str(app/"Contents/MacOS/NexGenVideo"),
-                    SOURCE, str(snapshots), str(done)]
-            with owned(args, output/"ax-observer.log", environment) as ax:
-                process.wait(timeout=max(1, deadline + 45 - time.time()))
-                host = json.loads(read_regular(native/"process.json", 4096))
-                save(done, {"pid":host["pid"], "sourceSHA":SOURCE})
-                try:
-                    ax.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    stop_owned(ax)
-                save(output/"observer-process.json", dict(pid=ax.pid, exitCode=ax.returncode, reaped=ax.poll() is not None))
-        else:
-            process.wait(timeout=max(1, deadline + 45 - time.time()))
-    observed = []
-    completion = snapshots / "observer-completion.json"
-    if progress.is_file() and completion.is_file():
-        host = json.loads(read_regular(native / "process.json", 4096))
-        pointer = [row for row in json.loads(read_regular(progress, 4 * 1024 * 1024))["interactions"]
-                   if row.get("kind") == "pointer" and row.get("id") == "spatial.location.create"]
-        if len(pointer) == 1:
-            center = pointer[0]
-            up = [row["postedUptime"] for row in center.get("nativeInput", {}).get("posted", [])
-                  if row["type"] == 2 and not row.get("cleanup")]
-            for path in sorted(snapshots.glob("ax-sample-*.json")):
-                row = json.loads(read_regular(path, 2 * 1024 * 1024))
-                if (len(up) == 1 and row.get("processAlive") and row["processIdentity"]["pid"] == host["pid"]
-                        and row["AXWindowsStatus"] == 0 and row["windows"]
-                        and row["startedUptime"] <= up[0] + 4 and row["completedUptime"] >= up[0] - 1
-                        and any(window.get("kCGWindowNumber") == center["window"] for window in row["CGWindows"])):
-                    observed.append(path.name)
-    result = {"nativeExitCode":process.returncode, "wrapperPID":process.pid, "wrapperReaped":process.poll() is not None,
-              "sceneReached":progress.is_file(), "axObservationComplete":bool(observed),
-              "windowSampleFilesAtCreate":observed}
-    save(output/"scene-process.json", result)
-    return result
-
-
 def boundary_fixture(app, output):
     from bpy_boundary_acceptance import run
     from bpy_runtime_acceptance import capture_open_logs
     output.mkdir()
     with capture_open_logs(output/"storage"):
         run(app, output/"native", SOURCE)
+
+
+def read_member(directory, name, maximum):
+    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+    with os.fdopen(fd, "rb") as handle:
+        before = os.fstat(handle.fileno())
+        require(stat.S_ISREG(before.st_mode) and before.st_nlink <= 1 and 0 < before.st_size <= maximum,
+                "Expected a single bounded regular observation file")
+        raw = handle.read(maximum + 1)
+        after = os.fstat(handle.fileno())
+        require(len(raw) == before.st_size and after.st_nlink <= 1
+                and (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) ==
+                (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns),
+                "Observation file changed while reading")
+        return raw, before
+
+
+def capture_report(home, started_ns):
+    with ExitStack() as stack:
+        def directory(name, parent=None):
+            fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+            stack.callback(os.close, fd)
+            return fd
+
+        try:
+            slot = directory(home)
+            for part in ("Library", "Caches", "NexGenVideo", "BpyVolumes", SERVICE):
+                slot = directory(part, slot)
+            lease_raw, _ = read_member(slot, "lease.json", 16384)
+            journal = json.loads(lease_raw)
+            nonce = journal["id"]
+            require(journal["schema"] == "nexgenvideo/bpy-storage/2" and journal["role"] == "worker"
+                    and journal["serviceName"] == SERVICE and journal["pairID"] == nonce
+                    and re.fullmatch(r"[A-F0-9]{8}(?:-[A-F0-9]{4}){3}-[A-F0-9]{12}", nonce),
+                    "Invalid owned Boundary worker journal")
+            lease = journal.get("lease")
+            if lease is None:
+                return None
+            slot_path = home / "Library/Caches/NexGenVideo/BpyVolumes" / SERVICE
+            require(lease["mountPath"] == str(slot_path / "mount") and lease["id"] == nonce,
+                    "Unexpected owned Boundary mount")
+            mount = directory("mount", slot)
+            node = directory(nonce, mount)
+            node = directory("boundary", node)
+            node = directory("denials", node)
+            raw, info = read_member(node, "child.json", 4096)
+            moment = time.time_ns()
+            slot_info = os.fstat(slot)
+            require(info.st_dev == os.fstat(mount).st_dev == lease["device"]
+                    and slot_info.st_ino == journal["directoryInode"] and slot_info.st_dev == journal["directoryDevice"]
+                    and started_ns <= info.st_mtime_ns <= moment,
+                    "Boundary report is outside its mounted worker lease or time interval")
+        except FileNotFoundError:
+            return None
+
+        if not journal.get("workers"):
+            try:
+                later_raw, _ = read_member(slot, "lease.json", 16384)
+                later = json.loads(later_raw)
+                stable_keys = ("schema", "id", "pairID", "serviceName", "role", "bootSessionID",
+                               "ownerPID", "ownerStart", "servicePID", "serviceStart", "directoryDevice",
+                               "directoryInode", "lease")
+                if all(later.get(key) == journal[key] for key in stable_keys):
+                    lease_raw, journal = later_raw, later
+            except FileNotFoundError:
+                pass
+        provenance = {name: journal[name] for name in ("id", "pairID", "serviceName", "ownerPID",
+            "ownerStart", "servicePID", "serviceStart", "directoryDevice", "directoryInode", "bootSessionID")}
+        provenance.update({"workerDevice": lease["device"], "leaseSHA256": hashlib.sha256(lease_raw).hexdigest(),
+                           "supervisors": journal.get("supervisors", []), "workers": journal.get("workers", [])})
+        receipt = {"readAtNS": moment, "observerPID": os.getpid(), "fixtureStartedAtNS": started_ns,
+                   "relativeFile": nonce + "/boundary/denials/child.json", "worker": provenance,
+                   "file": {"bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest(), "device": info.st_dev,
+                            "inode": info.st_ino, "mtimeNS": info.st_mtime_ns, "mode": stat.S_IMODE(info.st_mode),
+                            "linksWhenOpened": info.st_nlink}}
+        return raw, receipt
+
+
+def record_processes(report, capture, journal, output):
+    pids = (journal["ownerPID"], journal["servicePID"], report["parentProcessIdentifier"], report["processIdentifier"])
+    require(all(type(pid) is int and pid > 1 for pid in pids) and len(set(pids)) == len(pids),
+            "Boundary process IDs are invalid")
+    with (output / "processes-at-capture.log").open("xb") as log:
+        status = subprocess.run(["/bin/ps", "-ww", "-p", ",".join(map(str, pids)), "-o", "pid=,ppid=,lstart=,comm="],
+                                stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, timeout=3)
+    capture["processListingExitCode"] = status.returncode
+
+
+def observe_first_report(process, home, output, started_ns):
+    deadline = time.monotonic() + 620
+    while process.poll() is None and time.monotonic() < deadline:
+        found = capture_report(home, started_ns)
+        if found is not None:
+            raw, observation = found
+            with (output / "child.json").open("xb") as evidence:
+                evidence.write(raw)
+            save(output / "child-capture.json", observation)
+            report = json.loads(raw)
+            require(report["schema"] == "nexgenvideo/bpy-boundary-child/2" and report["mode"] == "denials"
+                    and type(report["allowedWriteSucceeded"]) is bool
+                    and all(type(report[key]) is int for key in ("outsideWriteDeniedErrno", "forkDeniedErrno",
+                        "networkDeniedErrno", "resourceBytes", "retentionDeniedErrno"))
+                    and len(report["signalDeniedErrnos"]) == 3
+                    and all(type(errno) is int for errno in report["signalDeniedErrnos"]),
+                    "Malformed original Boundary child report")
+            try:
+                record_processes(report, observation, observation["worker"], output)
+            except (OSError, subprocess.SubprocessError) as error:
+                observation["processListingError"] = type(error).__name__
+            return observation
+        time.sleep(0.005)
+    return None
+
+
+def bind_report(observation, native, capture, fixture_stage, report):
+    if observation is None:
+        return None
+    worker = observation["worker"]
+    require(native["processIdentifier"] == worker["ownerPID"] and native["sourceSHA"] == SOURCE
+            and native["originalHashes"]["Contents/MacOS/NexGenVideo"] == IMAGE,
+            "Boundary journal does not belong to the fixture and original app")
+    events = [json.loads(line) for line in (capture / "storage/open-events.ndjson").read_text().splitlines()
+              if line.startswith("{")]
+    nonce = worker["id"]
+    host = [value for value in events if value.get("processID") == worker["ownerPID"]
+            and value.get("eventMessage", "").startswith(f"bookmark.resolve id={nonce} pair={nonce} role=worker ")]
+    service = [value for value in events if value.get("processID") == worker["servicePID"]
+               and value.get("eventMessage", "").startswith(f"open.validated session={nonce} owner={nonce} ")
+               and f" start={worker['serviceStart']} pair={nonce} " in value["eventMessage"]]
+    resolved_host = host[0]["processImagePath"] if host else ""
+    expected_host = (re.escape(str(fixture_stage))
+                     + r"/bpy-boundary-fixture-[0-9a-f]{32}/NexGenVideo\.app/Contents/MacOS/NexGenVideo")
+    xpc = resolved_host.removesuffix("/MacOS/NexGenVideo") + "/XPCServices/NexGenVideoBpyService0.xpc/Contents/MacOS/"
+    supervisors = worker["supervisors"]
+    children = worker["workers"]
+    require(len(supervisors) == 1 and len(children) == 1 and supervisors[0]["pid"] == report["parentProcessIdentifier"]
+            and supervisors[0]["parent"] == worker["ownerPID"] and supervisors[0]["start"] > 0
+            and supervisors[0]["executable"] == xpc + "NexGenVideoBpySupervisor"
+            and children[0]["pid"] == report["processIdentifier"]
+            and children[0]["parent"] == report["parentProcessIdentifier"]
+            and children[0]["start"] > 0 and children[0]["executable"] == supervisors[0]["executable"],
+            "Boundary report parent does not match the worker's recorded supervisor")
+    require(len(host) >= 1 and all(value["processImagePath"] == resolved_host for value in host)
+            and re.fullmatch(expected_host, resolved_host)
+            and any(f" device={worker['workerDevice']} " in value["eventMessage"] for value in host)
+            and {"worker", "data"} == {value["eventMessage"].split(" role=")[1].split()[0] for value in service}
+            and all(value["processImagePath"] == xpc + "NexGenVideoBpyService" for value in service)
+            and any(" role=worker " in value["eventMessage"]
+                    and f" device={worker['workerDevice']} " in value["eventMessage"] for value in service),
+            "Boundary storage events do not match the captured report")
+    return {"capture": observation, "nativeHost": host[0], "serviceValidated": service}
 
 
 def boundary(app, stage, output):
@@ -411,8 +378,17 @@ def boundary(app, stage, output):
             pulse = subprocess.run(["/bin/cat", str(marker)], stdin=subprocess.DEVNULL, stdout=control,
                                    stderr=subprocess.STDOUT, env=environment, timeout=5)
         try:
+            started_ns = time.time_ns()
+            started = time.monotonic()
             with owned(argv, output/"harness.log", environment) as process:
-                process.wait(timeout=620)
+                observed = None
+                try:
+                    observed = observe_first_report(process, Path(environment["HOME"]), output, started_ns)
+                except (OSError, subprocess.SubprocessError, ValueError, TypeError, KeyError) as error:
+                    if isinstance(error, InterruptedError):
+                        raise
+                    save(output/"observer-error.json", {"type": type(error).__name__, "error": str(error)})
+                process.wait(timeout=max(0.1, 620 - (time.monotonic() - started)))
                 trace_early = trace.poll() is not None
         finally:
             if capture.is_dir() and not capture.is_symlink():
@@ -423,13 +399,21 @@ def boundary(app, stage, output):
     storage = json.loads(storage_receipt.read_bytes()) if storage_receipt.is_file() else {}
     positive = pulse.returncode == 0 and any(marker.name.encode() in row
         for row in (output / "filesystem-trace.log").open("rb"))
-    result = {"nativeExitCode":process.returncode, "wrapperPID":process.pid, "wrapperReaped":process.poll() is not None,
+    report = json.loads((output/"child.json").read_bytes()) if observed is not None else None
+    bound = bind_report(observed, native, output/"capture", fixture_stage, report)
+    if bound is not None:
+        save(output/"child-binding.json", bound)
+    result = {"originalChildReportBound":bound is not None, "nativeExitCode":process.returncode,
+              "wrapperPID":process.pid, "wrapperReaped":process.poll() is not None,
               "traceStarted":trace_started, "traceExitCode":trace.returncode, "traceReaped":trace.poll() is not None,
               "filesystemPositiveControl":positive, "traceStoppedEarly":trace_early,
               "storageStreamReported":bool(storage),
               "observed":bool(trace_started and not trace_early and positive and storage.get("reaped")
                   and not storage.get("stoppedEarly") and not storage.get("cleanupErrors")
-                  and native.get("processReaped") and native.get("originalUnchanged"))}
+                  and native.get("processReaped") and native.get("originalUnchanged")
+                  and native.get("originalSignatureVerifiedAfter")
+                  and not native.get("survivingOwnedWorkers") and not native.get("cleanupObservationError")
+                  and bound is not None)}
     save(output/"boundary-process.json", result)
     return result
 
@@ -450,36 +434,19 @@ def observe(binding_path, output):
     app = restore(binding["producer"], stage, output)
     before = app_bytes(app)
     save(output/"app-before.json", before)
-    observer = stage/"scene-observer"
-    scoped = {}
+    result = {}
     try:
-        try:
-            logged(["/usr/bin/xcrun", "swiftc", "-swift-version", "6", "-parse-as-library",
-                    "scripts/scene_history_ax_observer.swift", "-o", observer],
-                   output/"observer-compile.log", timeout=90)
-        except (OSError, subprocess.SubprocessError) as error:
-            scoped["observerTool"] = {"error": str(error)}
-        for name, measure, extra in (("diagnostic", diagnostic, ()), ("scene", scene, (observer,)),
-                                     ("boundary", boundary, ())):
-            try:
-                scoped[name] = measure(app, stage, output/name, *extra)
-            except InterruptedError:
-                raise
-            except (OSError, subprocess.SubprocessError, RuntimeError, ValueError, AssertionError) as error:
-                scoped[name] = {"measurementError": type(error).__name__, "detail": str(error)}
+        result = boundary(app, stage, output/"boundary")
     finally:
         unchanged = app_bytes(app) == before
         logged(["/usr/bin/codesign", "--verify", "--deep", "--strict", "--verbose=2", app], output/"signature-after.log")
         logged(["/usr/bin/xcrun", "stapler", "validate", app], output/"staple-after.log")
-        save(output/"outcome.json", dict(cases=scoped, appUnchanged=unchanged, measurementOnly=True, runtimeAccepted=False))
+        save(output/"outcome.json", dict(boundary=result, appUnchanged=unchanged, measurementOnly=True, runtimeAccepted=False))
         require(unchanged, "Executed App differs from the retained signed original")
-    require(scoped.get("diagnostic", {}).get("observed")
-            and scoped.get("scene", {}).get("axObservationComplete")
-            and scoped.get("boundary", {}).get("observed"), "One or more observations were incomplete; inspect retained originals")
+    require(result.get("observed"), "The exact Boundary report was not bound; inspect retained originals")
 
 
 def seal(output, destination):
-    import stat
     require(output.is_dir() and not output.is_symlink(), "Missing diagnostic evidence")
     with zipfile.ZipFile(destination, "x", compression=zipfile.ZIP_DEFLATED, compresslevel=1) as archive:
         for path in sorted(output.rglob("*")):

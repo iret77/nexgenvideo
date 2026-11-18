@@ -618,7 +618,7 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-      - name: Bind the original Build 123 failure, signed artifact and source proof
+      - name: Bind the original Build 123 Boundary failure, signed artifact and source proof
         if: inputs.candidate_kind == 'app123-runtime-diagnostic'
         run: python3 scripts/app123_runtime_diagnostic.py bind --output "$RUNNER_TEMP/app123-diagnostic-binding"
       - uses: actions/upload-artifact@v4
@@ -911,7 +911,7 @@ jobs:
     needs: source
     if: inputs.candidate_kind == 'app123-runtime-diagnostic'
     runs-on: macrunner
-    timeout-minutes: 52
+    timeout-minutes: 24
     steps:
       - uses: actions/checkout@v4
         with:
@@ -922,7 +922,7 @@ jobs:
         with:
           name: app123-runtime-diagnostic-binding
           path: ${{ runner.temp }}/app123-diagnostic-binding
-      - name: Capture the three Build 123 runtime failures
+      - name: Read the original Build 123 Boundary child report
         run: |
           python3 scripts/app123_runtime_diagnostic.py observe \
             --binding "$RUNNER_TEMP/app123-diagnostic-binding/identity.json" \
