@@ -916,7 +916,9 @@ class CompiledAppReleaseTests(unittest.TestCase):
             with self.subTest(defect=defect), patch.dict(os.environ, GITHUB_SHA=product), \
                     patch.object(app_cohort_v2, 'has_manifest', return_value=True), \
                     patch.object(app_cohort_v2, 'manifest', return_value=value), \
-                    patch.object(app_cohort_v2, 'objects', return_value=fixture.value['componentSourceObjects']), \
+                    patch.object(app_cohort_v2, 'objects', side_effect=lambda source, _paths: {
+                        selected['sourceSHA']: selected['componentSourceObjects'],
+                        product: value['componentSourceObjects']}[source]), \
                     patch.object(carrier, 'origin', return_value=selected), \
                     patch.object(carrier, 'api', side_effect=lambda route: copy.deepcopy(rows[route])), \
                     patch.object(release, 'api', side_effect=lambda route: copy.deepcopy(rows[route])) as requests, \
