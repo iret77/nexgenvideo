@@ -1,0 +1,85 @@
+{
+  "appTreeSHA256": "b4ce4b8cd5d82a762f33e319f9f2a24158c4f06d619f9bbc2204272de44a93bf",
+  "build": "120",
+  "componentMapSHA256": "f80fe48b413978125bcacefbed51c025291e5c6f20d5fc794416f18357911760",
+  "componentRecordCount": 15882,
+  "componentSourceObjects": {
+    "Engine": "29cfed623d13e6d84d5822a30b98e088fc123c3f",
+    "Metal": "4fddc68f15d9ff70104869a2dffd8e5956e9b5d8",
+    "Package.resolved": "530cdaed0a29a65181353d86d05cf9dc04890cc2",
+    "Package.swift": "37f605bfb8cdccc48821b39484c819ba3e5eff43",
+    "Runtime": "910b87b08a3a8c976e0f2502580c843b0df74154",
+    "Sources/BpyRuntimeProtocol": "4bf768314bb52830a55da47d6a25ff36e9f2cf94",
+    "Sources/BpySupervisorPOSIX": "f1469002cfa83206e5d74aa6c71aba4aab365f6b",
+    "Sources/FixtureFictionPlugin": "ec63ab91074a258add456a1059049779b338cd7d",
+    "Sources/HangDiagnostics": "8902080461c5c5ba8c0eb175157740cc54e4204f",
+    "Sources/HangStackSampler": "25207c3c25a4e61cd68501feef2a892b60a4900f",
+    "Sources/MusicvideoPlugin": "2eeef41c978f57342cc9534defec31ab5fba39ea",
+    "Sources/NexGenVideo/Resources/AppResources.txt": "ed934b45d5a6ee37540078228114536ea83d1c98",
+    "Sources/NexGenVideoBpyService": "b7d478b9196a2bc0c2eb4b4876c012f44a4045d1",
+    "Sources/NexGenVideoBpyStorage": "b9bf2fa702b820f2eb88f95591ad9eb76c7dc776",
+    "Sources/NexGenVideoBpySupervisor": "27230f5bbb93ad75eebf69bc6520c951213dc800",
+    "Sources/NexGenVideoDiagnostics": "8eca484dc0fe1dac2a049bb5651ca27c6beddac8",
+    "Tests/AppKitTestHost": "04baf7ac5e107a119133859694b2b176291ac8f9",
+    "Tests/AppKitTestHostSupport": "180f486523e826b8b462011d42bf758fdc4e1d6f",
+    "Tests/NexGenEngineTests": "bbb8baff2d9dcfb569f5828fc0de5c36a0589826",
+    "Vendor": "51e93c100e00dcd196edac0e70e1af921d52055a",
+    "assets": "a729eb6bb4d87bd4e2cec9cc999cc53b1f1af4c6",
+    "plugins": "b75e017d3145010368ae417bc410574f3f0300c1",
+    "scripts/NexGenVideo.entitlements": "6631ffa6f24265b2e341ccb354d8a5983a7f106a"
+  },
+  "files": {
+    "NexGenVideo.zip": {
+      "bytes": 1628657458,
+      "sha256": "8ec671d65e7fa2b3d9664e1caa03ee1a95b4bd8db82aa602bcfbd1409096954c"
+    },
+    "bpy-source-receipt.json": {
+      "bytes": 1958,
+      "sha256": "31149545bd140b320fc0975b43eac6264ec4b59af3f6953977a1f72bb761d53e"
+    },
+    "plugins.tar.gz": {
+      "bytes": 2927400,
+      "sha256": "9d6b6e25a31ad2e77c3c0fddd7e5dc3dae923602f472d4f5e054f1f03fcf6909"
+    },
+    "symbols.tar.gz": {
+      "bytes": 61185746,
+      "sha256": "6d8c64cde4ec22b38fc50a7422a70066ae477dd509bdce4227d69373666820ba"
+    }
+  },
+  "jobID": 133602580859,
+  "manifestSHA256": "ae5a06cdb0de0af2730ada770a981ec75b1bd6ef4c70ec9fb99a1de7876f87eb",
+  "originalSourceReceiptSHA256": "015aa71e5dd5f47ce98569cf6d3f7ecabb9da13671eb6dd4acc24661eaa7e9ba",
+  "payloadArtifact": {
+    "digest": "sha256:f8740579faddbe64211f5d303b768f3971fabe9d60936f649546f1f3b9086203",
+    "id": 14275618314,
+    "name": "release-signed-input-b88037d229fe2555884c35ba92566a92a8724f56",
+    "size_in_bytes": 1705235950
+  },
+  "proofArtifact": {
+    "digest": "sha256:7aa8c423f6764a0d4c680b41784a9b57a45ced6fba000bb65d224682e70cfafa",
+    "id": 14275129107,
+    "name": "release-signed-input-b88037d229fe2555884c35ba92566a92a8724f56-proof",
+    "size_in_bytes": 2038888
+  },
+  "qualifiedRuntimeReviewSHA256": "9bce7604f53d3c8dba8d9305ca4aa65654a1a84654e593975b90488a105d4acf",
+  "runID": 43953613674,
+  "schema": "signed-component-carrier-origin/v1",
+  "signedBase": {
+    "appArchiveSHA256": "251008735347f303055a3931330c2f15375d2717920c0c34bf9b65a9de42b0e1",
+    "appTreeSHA256": "df1e8d1c7ec100dad95fa7b0f9a9d6d75a87ccf957fe3200e9c0769ba1df41ba",
+    "engineImageSHA256": "c3899800310e45d3058db28e328e0004c8becce7e22050a93ec54a1c3079bf85",
+    "enginePayloadSHA256": "1353c00481ef5b65a83ecfcb8cfce67a6e6323b4ce853497db718571863f1e59",
+    "engineSymbolsTreeSHA256": "6f59009b23267b8374f0153aaa621e913217931991da1a4c53d5e8eb46819452",
+    "engineUUID": "CB1CDC7B-9591-32A1-9FC5-735183BA68E2",
+    "jobID": 129851825955,
+    "packArchiveSHA256": "37fcee05d1ac334b20eb392c61cc3b7a94af165dc3b967c61602bc79d6dc4388",
+    "packTreeSHA256": "365e9a75174191359bb36b02b429a4bfea55f0b764caa81184228bd3072c402e",
+    "payloadArtifactID": 13769391943,
+    "payloadArtifactSHA256": "4dd7c9afd04a08039ac8ff0c1d7381d0bd779cbd3b5d405d978e502cf446a583",
+    "proofArtifactID": 13769367412,
+    "proofArtifactSHA256": "6a21867ad5474418ef37590da4d3f35b1b409089928796b4a4aeec42c6624ee0",
+    "runID": 42822598973,
+    "sourceSHA": "a1375966dbe6d2dd7b918c726f09ac5d1f4f16fb"
+  },
+  "sourceSHA": "b88037d229fe2555884c35ba92566a92a8724f56"
+}

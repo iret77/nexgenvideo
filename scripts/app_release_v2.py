@@ -34,50 +34,15 @@ def verify_reused_host(build, value):
 
 
 def original_signed_input(root, value):
-    import release_checkpoint as checkpoint
-    import compiled_app_release as release
-    origin = value['signedBase']
-    run = api('actions/runs/' + str(origin['runID']))
-    job = api('actions/jobs/' + str(origin['jobID']))
-    require(run.get('head_sha') == origin['sourceSHA'] and run.get('run_attempt') == 1
-        and run.get('repository', {}).get('full_name') == 'iret77/nexgenvideo'
-        and run.get('actor', {}).get('login') == 'iret77' and run.get('path') == '.github/workflows/release.yml'
-        and run.get('status') == 'completed' and job.get('run_id') == run['id']
-        and job.get('head_sha') == origin['sourceSHA'] and job.get('run_attempt') == 1
-        and job.get('name') == 'release-build' and job.get('labels') == ['macrunner']
-        and job.get('conclusion') == 'success', 'Retained signed component producer changed')
-    for role, suffix in (('proof', '-proof'), ('payload', '')):
-        artifact = api('actions/artifacts/' + str(origin[role + 'ArtifactID']))
-        verify_artifact(artifact, run, job, origin[role + 'ArtifactID'], origin[role + 'ArtifactSHA256'],
-            'release-signed-input-' + origin['sourceSHA'] + suffix)
-        download(artifact, root / ('signed-base-' + role + '.zip'))
-    with release.verified_zip(root / 'signed-base-proof.zip', checkpoint.SIGNED_MANIFEST_MAX_BYTES,
-            qualified_sha=origin['proofArtifactSHA256']) as archive:
-        require(archive.namelist() == ['manifest.json'], 'Retained signed component proof inventory changed')
-        raw = checkpoint.signed_manifest_bytes(archive)
-    manifest = checkpoint.verify_manifest(json.loads(raw), origin['sourceSHA'], origin['runID'])
-    require(manifest['appTreeSHA256'] == origin['appTreeSHA256']
-        and manifest['files']['NexGenVideo.zip']['sha256'] == origin['appArchiveSHA256'],
-        'Retained signed App bytes changed')
-    folder = root / 'signed-base'; folder.mkdir()
-    with release.verified_zip(root / 'signed-base-payload.zip', 8 * 1024**3,
-            qualified_sha=origin['payloadArtifactSHA256']) as archive:
-        require(set(archive.namelist()) == set(checkpoint.FILES) | {'manifest.json'}
-            and checkpoint.signed_manifest_bytes(archive) == raw,
-            'Retained signed payload lost its original proof')
-        for name in checkpoint.FILES:
-            expected = manifest['files'][name]
-            require(archive.getinfo(name).file_size == expected['bytes'], 'Retained component payload size differs')
-            with archive.open(name) as source, (folder / name).open('xb') as target:
-                shutil.copyfileobj(source, target, 1024 * 1024)
-            require(checksum(folder / name) == expected['sha256'], 'Retained component payload hash differs')
-    return folder, manifest
+    import signed_component_carrier
+    return signed_component_carrier.acquire(root, value)
 
 
-def source_handoff(root, folder, original, value):
+def source_handoff(root, folder, original, value, manifest):
     import consume_bpy_distributable_source as source
     public = source.public_asset(json.loads(source.LOCK_PATH.read_bytes()))
-    raw = (original / source.RECEIPT).read_bytes()
+    import signed_component_carrier
+    raw = signed_component_carrier.original_source_receipt(manifest, value)
     prior = source.qualified_handoff(json.loads(raw), public, value['signedBase']['sourceSHA'])
     require(cohort.objects(os.environ['GITHUB_SHA'], ['Runtime']) ==
         cohort.objects(value['signedBase']['sourceSHA'], ['Runtime']), 'Corresponding-source runtime pins changed')
@@ -158,8 +123,10 @@ def assemble(root):
     require(not app.exists() and not app.is_symlink(), 'Fresh App destination is occupied')
     checkpoint.validate_app_zip(original / 'NexGenVideo.zip')
     targets.logged(root, 'restore-signed-components', ['/usr/bin/ditto', '-x', '-k', str(original / 'NexGenVideo.zip'), str(build)])
-    require(checkpoint.tree_digest(app) == origin['appTreeSHA256'], 'Restored signed base changed')
+    require(checkpoint.tree_digest(app) == manifest['appTreeSHA256'], 'Restored signed component carrier changed')
     baseline = unchanged_components(app)
+    import signed_component_carrier
+    signed_component_carrier.verify_components(baseline, value)
     checkpoint.extract_tar(original / 'symbols.tar.gz', build, {
         'NexGenVideo.dSYM', 'NexGenVideoDiagnostics.dSYM', 'NexGenEngine.dSYM', 'MusicvideoPlugin.dSYM'})
     checkpoint.extract_tar(original / 'plugins.tar.gz', build, {'plugins'})
@@ -168,7 +135,7 @@ def assemble(root):
         targets.logged(root, 'restore-retained-pack', ['/usr/bin/ditto', '-x', '-k',
             str(build / 'plugins/musicvideo.ngvpack.zip'), str(build / 'plugins')])
     release.verify_pack(build / 'plugins', product=receipt['sourceSHA'])
-    handoff = source_handoff(root, build / 'bpy-source', original, value)
+    handoff = source_handoff(root, build / 'bpy-source', original, value, manifest)
     main = main_product(bound)
     image, symbols = app / 'Contents/MacOS/NexGenVideo', build / 'NexGenVideo.dSYM'
     image.rename(root / 'retired-base-main'); symbols.rename(root / 'retired-base-main-symbols')
@@ -198,7 +165,8 @@ def assemble(root):
     require(unchanged_components(app) == baseline and main_product(bound) == main, 'Signing changed a retained component or original Main')
     component = {'schema': 'compiled-component-assembly/v2', 'sourceSHA': os.environ['GITHUB_SHA'],
         'runID': int(os.environ['GITHUB_RUN_ID']), 'attempt': 1, 'build': value['build'], 'cohortV2': receipt['cohortV2'],
-        'signedBase': origin, 'unchangedSignedComponents': baseline, 'sourceHandoff': handoff,
+        'signedBase': origin, 'signedBaseCarrier': signed_component_carrier.record(value),
+        'unchangedSignedComponents': baseline, 'sourceHandoff': handoff,
         'main': {'original': main, 'distributionImageSHA256': checksum(image), 'payloadSHA256': distribution_payload},
         'componentCompilerExecutions': 0}
     verify_materialization(component, app, build / 'NexGenEngine.dSYM')
@@ -226,6 +194,10 @@ def verify_assembly(value, source_sha, run_id, identity, files, native):
         and value.get('build') == identity.get('build') == candidate['build']
         and identity.get('version') == candidate['version'] and value.get('componentCompilerExecutions') == 0
         and value.get('unchangedSignedComponents'), 'Fresh App component assembly identity changed')
+    import signed_component_carrier
+    if 'signedBaseCarrier' in value or int(candidate['build']) > int(signed_component_carrier.origin(candidate)['build']):
+        signed_component_carrier.verify_record(value.get('signedBaseCarrier'), candidate)
+        signed_component_carrier.verify_components(value['unchangedSignedComponents'], candidate)
     product = native['products']['production']['receipt']
     main = value.get('main', {}).get('original', {})
     verify_main_symbol_identity(product, main)
@@ -250,6 +222,10 @@ def verify_assembly(value, source_sha, run_id, identity, files, native):
 def verify_materialization(value, app, symbols):
     import compiled_app_release as release
     candidate = cohort.verify_context(value.get('cohortV2'))
+    import signed_component_carrier
+    if 'signedBaseCarrier' in value or int(candidate['build']) > int(signed_component_carrier.origin(candidate)['build']):
+        signed_component_carrier.verify_record(value.get('signedBaseCarrier'), candidate)
+        signed_component_carrier.verify_components(value['unchangedSignedComponents'], candidate)
     base, main = candidate['signedBase'], value['main']['original']
     image, dwarf = app / 'Contents/MacOS/NexGenVideo', symbols.parent / 'NexGenVideo.dSYM/Contents/Resources/DWARF/NexGenVideo'
     engine = app / 'Contents/Frameworks/libNexGenEngine.dylib'

@@ -564,7 +564,7 @@ class NativeAppTargetBuildTests(unittest.TestCase):
                 calls = []
                 def logged(folder, label, argv, environment, **options):
                     calls.append(argv)
-                    if 'clone' in argv: Path(argv[-1]).mkdir()
+                    if 'clone' in argv or 'init' in argv: Path(argv[-1]).mkdir()
                     return ''
                 def cached_probe(argv, **options):
                     if 'config' in argv:
@@ -575,10 +575,22 @@ class NativeAppTargetBuildTests(unittest.TestCase):
                         side_effect=cached_probe) as probe:
                     build.restore_checkouts(root, scratch, cache, self.checkout_pins(), {}, self.checkout_packages(scratch, root), root)
                 clones = [argv for argv in calls if 'clone' in argv]
-                self.assertEqual(len(clones), 18)
-                self.assertEqual(clones[0][-2], str(cached) if cache_status == 0 else self.checkout_pins()[0]['location'])
+                self.assertEqual(len(clones), 1 if cache_status == 0 else 0)
+                if clones: self.assertEqual(clones[0][-2], str(cached))
                 self.assertTrue(all(argv[0] == 'git' for argv in calls))
                 self.assertTrue(all('--no-checkout' in argv and '--no-hardlinks' in argv for argv in clones))
+                initialized = [argv for argv in calls if 'init' in argv]
+                fetched = [argv for argv in calls if 'fetch' in argv]
+                self.assertEqual(len(initialized), 18 - len(clones))
+                self.assertEqual(len(fetched), 18 - len(clones))
+                expected = {pin['identity']: pin for pin in self.checkout_pins()}
+                for argv in fetched:
+                    identity = Path(argv[argv.index('-C') + 1]).name.lower()
+                    self.assertEqual(argv[-2:], ['origin', expected[identity]['state']['revision']])
+                    self.assertTrue(all(flag in argv for flag in ('--depth=1', '--no-tags', '--no-recurse-submodules')))
+                    origin = next(command for command in calls if 'add' in command
+                        and command[command.index('-C') + 1] == argv[argv.index('-C') + 1])
+                    self.assertEqual(origin[-2:], ['origin', expected[identity]['location']])
                 detached = [argv[-1] for argv in calls if 'checkout' in argv and '--detach' in argv]
                 self.assertEqual(detached, [pin['state']['revision'] for pin in self.checkout_pins()])
                 self.assertEqual(sorted(p.name for p in (scratch / 'checkouts').iterdir()),
@@ -586,6 +598,25 @@ class NativeAppTargetBuildTests(unittest.TestCase):
                 self.assertEqual(probe.call_count, 0 if cache_status is None else 1 if cache_status == 'wrong-origin' else 2)
                 receipt = json.loads((root / 'restored-source-checkouts.json').read_text())
                 self.assertEqual(receipt['checkouts'][0]['originalCacheOrigin'], self.checkout_pins()[0]['location'] if cache_status == 0 else None)
+
+    def test_source_checkout_pin_fetch_failure_stops_before_checkout_or_later_dependencies(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); scratch = root / 'scratch'; calls = []
+            error = build.subprocess.TimeoutExpired(['git', 'fetch'], 180)
+            def logged(folder, label, argv, environment, **options):
+                calls.append((label, argv))
+                if 'init' in argv: Path(argv[-1]).mkdir()
+                if 'fetch' in argv: raise error
+                return ''
+            with patch.object(build, 'logged', side_effect=logged):
+                with self.assertRaises(build.subprocess.TimeoutExpired) as raised:
+                    build.restore_checkouts(root, scratch, root / 'cache', self.checkout_pins(), {},
+                        self.checkout_packages(scratch, root), root)
+            self.assertIs(raised.exception, error)
+            self.assertEqual([label for label, _ in calls], ['package0-initialize-source',
+                'package0-canonical-origin', 'package0-fetch-source-pin'])
+            self.assertFalse((root / 'restored-source-checkouts.json').exists())
+            self.assertFalse((scratch / 'checkouts/package1').exists())
 
     def test_source_checkout_restore_rejects_ambiguous_paths_origins_and_unpinned_revisions_before_any_git(self):
         for field, value in [('identity', '../escape'), ('identity', 'package1'), ('kind', 'binaryTarget'),
