@@ -1064,24 +1064,34 @@ def _component_transport_import_view(text, path):
                                                        'ddeb78d86dafd000b41857050582ead7c64b9494f23ba30e01ce9cb5f6b0fceb'],
                                    'verify_materialization': ['7508e30fbe30ea43151c0e2a4becde7abeb7846bb5db79b5efa78403569b2e40',
                                                               '8fdb08362d95303a59c1bdee84e241c9b030f8720a536915229339686acd4ae7']},
-     'scripts/native_app_target_build.py': {'restore_checkouts': ['f10b61309b1dc9bd87dd5cf317f7137b6d15283d261089b7bf87111bf73b82f8',
-                                                                  'e39db1b140c4944fcbadc868ad78510f387f5b2215765f1c3e093c67d2299c12']}}
+     'scripts/native_app_target_build.py': {'restore_checkouts': ['f10b61309b1dc9bd87dd5cf317f7137b6d15283d261089b7bf87111bf73b82f8', 'abf087b125782b80e02227b239b01d87ff326b7204dc5e78412e9a5c52b115d8'], 'logged': ['1857dfd11e216a671d82505d8a5b4505b4655093b2d52b5ea107bd831bbf44d3', '6589bb510b211de5bf8b2d543f2b393c2c9a98e3750a137eb0e931e2347771d4'], 'prepare': ['6de880f943a2c4b5c2c2b1fbba3b6cb1be47547fde8efae1dbd08723fb71f26d', '02cda0150ba6e705fc979ad8aa1bd22d9f019e4389ed06df64dfaa4bc79caab7']}}
     require(path in versions, 'Unknown runtime transport source')
     expected = versions[path]
+    additions = {'stop_logged_process': '4c1ac6a4f2b0a965663040e99eddd71db4888b407e4d2986c3fc0e9a2bcc9175', 'source_git_environment': '6c93688eef8f3741705a4998661e6da2328e20ebbe828a950ce2b625ddc25b1e', 'fetch_pinned_source': '179337841a0be697828fbf91e19eada1b59a53c3fe1f7b8d753725ebd143e3d3'} if path == 'scripts/native_app_target_build.py' else {}
     declarations = [node.name for node in module.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
     require(len(declarations) == len(set(declarations)), 'Duplicate runtime transport declaration')
-    observed = set()
+    observed, added = set(), set()
     versions_seen = []
-    for index, node in enumerate(module.body):
+    kept = []
+    for node in module.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in additions:
+            _safe_function(node)
+            require(hashlib.sha256(ast.dump(node, include_attributes=False).encode()).hexdigest()
+                    == additions[node.name], 'Unreviewed pinned source helper: ' + node.name)
+            added.add(node.name)
+            continue
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in expected:
             _safe_function(node)
             digest = hashlib.sha256(ast.dump(node, include_attributes=False).encode()).hexdigest()
             require(digest in expected[node.name], 'Unreviewed runtime transport function: ' + node.name)
             versions_seen.append(digest == expected[node.name][1])
             observed.add(node.name)
-            module.body[index] = ast.parse('def ' + node.name + '(): pass').body[0]
+            node = ast.parse('def ' + node.name + '(): pass').body[0]
+        kept.append(node)
     require(observed == set(expected), 'Incomplete runtime transport source')
-    require(not any(versions_seen) or all(versions_seen), 'Incomplete runtime transport transition')
+    require(not any(versions_seen) and not added or all(versions_seen) and added == set(additions),
+            'Incomplete runtime transport transition')
+    module.body = kept
     return ast.dump(module, include_attributes=False)
 
 

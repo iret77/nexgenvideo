@@ -618,6 +618,150 @@ class NativeAppTargetBuildTests(unittest.TestCase):
             self.assertFalse((root / 'restored-source-checkouts.json').exists())
             self.assertFalse((scratch / 'checkouts/package1').exists())
 
+    def test_pinned_source_transport_preserves_exact_commit_tree_and_primary_failure(self):
+        pin = {'identity': 'onnxruntime-swift-package-manager',
+            'location': 'https://github.com/microsoft/onnxruntime-swift-package-manager',
+            'state': {'revision': 'b7fb7f7dea8a2469e6335d95a61b8f36d0dc83b2'}}
+        for primary_ok in (True, False):
+            with self.subTest(primary_ok=primary_ok), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp); calls = []; original = copy.deepcopy(pin)
+                def logged(folder, label, argv, environment, **options):
+                    calls.append((label, argv, options))
+                    if label.endswith('-fetch-source-pin') and not primary_ok:
+                        (root / (label + '.exit.json')).write_text(json.dumps({'exitCode': 128, 'ownedProcessGroupAbsent': True}))
+                        raise ValueError('Canonical origin unavailable')
+                    return '59178cede37305e8725fd09d5907d872a55004f1\n' if 'rev-parse' in argv else ''
+                with patch.object(build, 'logged', side_effect=logged):
+                    receipt = build.fetch_pinned_source(root, ['git'], root / 'checkout', pin, {})
+                self.assertEqual(pin, original)
+                fetches = [argv for _, argv, _ in calls if 'fetch' in argv]
+                self.assertEqual(fetches[0][-2:], ['origin', pin['state']['revision']])
+                self.assertTrue(all(all(flag in argv for flag in ('--depth=1', '--no-tags', '--no-recurse-submodules'))
+                    for argv in fetches))
+                self.assertTrue(all(options.get('timeout') == 180 for _, argv, options in calls
+                    if 'fetch' in argv or 'fsck' in argv))
+                if primary_ok:
+                    self.assertEqual(receipt, {'kind': 'canonical', 'url': pin['location']})
+                    self.assertEqual(len(calls), 1)
+                else:
+                    self.assertEqual(fetches[1][-2:],
+                        ['https://github.com/notahotel/onnxruntime-swift-package-manager.git', pin['state']['revision']])
+                    self.assertEqual(receipt['treeGitObject'], '59178cede37305e8725fd09d5907d872a55004f1')
+                    self.assertEqual(json.loads((root / receipt['primaryFailureReceipt']).read_text()),
+                        {'exitCode': 128, 'ownedProcessGroupAbsent': True})
+                    self.assertEqual([argv[-4:] for _, argv, _ in calls if 'fsck' in argv],
+                        [['fsck', '--full', '--strict', pin['state']['revision']]])
+
+    def test_pinned_source_transport_refuses_changed_pin_unsafe_cleanup_and_wrong_tree(self):
+        for changed in ('identity', 'origin', 'revision', 'success-receipt', 'missing-cleanup', 'unsafe-cleanup', 'tree', 'fsck'):
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp); calls = []
+                pin = {'identity': 'onnxruntime-swift-package-manager',
+                    'location': 'https://github.com/microsoft/onnxruntime-swift-package-manager',
+                    'state': {'revision': 'b7fb7f7dea8a2469e6335d95a61b8f36d0dc83b2'}}
+                if changed == 'identity': pin['identity'] = 'another-package'
+                elif changed == 'origin': pin['location'] = 'https://github.com/another/onnxruntime-swift-package-manager'
+                elif changed == 'revision': pin['state']['revision'] = '1' * 40
+                primary_error = ValueError('Canonical origin unavailable')
+                def logged(folder, label, argv, environment, **options):
+                    calls.append(argv)
+                    if label.endswith('-fetch-source-pin'):
+                        failure = {'exitCode': 0 if changed == 'success-receipt' else 128, 'ownedProcessGroupAbsent': True}
+                        if changed == 'missing-cleanup': failure.pop('ownedProcessGroupAbsent')
+                        if changed == 'unsafe-cleanup': failure.update(interrupted=True, ownedProcessGroupAbsent=False)
+                        (root / (label + '.exit.json')).write_text(json.dumps(failure))
+                        raise primary_error
+                    if 'fsck' in argv and changed == 'fsck': raise ValueError('Corrupt source objects')
+                    return '0' * 40 if 'rev-parse' in argv else ''
+                with patch.object(build, 'logged', side_effect=logged), self.assertRaises(ValueError) as raised:
+                    build.fetch_pinned_source(root, ['git'], root / 'checkout', pin, {})
+                if changed in {'identity', 'origin', 'revision'}:
+                    self.assertIs(raised.exception, primary_error)
+                self.assertEqual(len([argv for argv in calls if 'fetch' in argv]),
+                    2 if changed in {'tree', 'fsck'} else 1)
+                self.assertFalse(any('checkout' in argv for argv in calls))
+
+    def test_source_checkout_git_isolation_covers_cached_and_remote_paths_without_mutating_compiler_environment(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); scratch = root / 'scratch'; cache = root / 'cache'
+            (cache / 'repositories/package0-cached').mkdir(parents=True)
+            parent = {'HOME': str(root), 'PATH': '/fixture/tools', 'GIT_ASKPASS': '/untrusted',
+                'GIT_CONFIG_COUNT': '1', 'GIT_CONFIG_KEY_0': 'url.rewrite', 'GIT_CONFIG_VALUE_0': 'untrusted',
+                'GH_TOKEN': 'fixture-only', 'GITHUB_TOKEN': 'fixture-only', 'SSH_AUTH_SOCK': '/untrusted'}
+            original = dict(parent); observed = []
+            def logged(folder, label, argv, environment, **options):
+                observed.append(environment)
+                if 'clone' in argv or 'init' in argv: Path(argv[-1]).mkdir()
+                self.assertIn('credential.helper=', argv)
+                return ''
+            def probe(argv, **options):
+                observed.append(options['env'])
+                return build.subprocess.CompletedProcess(argv, 0,
+                    stdout=self.checkout_pins()[0]['location'].encode() if 'config' in argv else b'')
+            with patch.object(build, 'logged', side_effect=logged), patch.object(build.subprocess, 'run', side_effect=probe):
+                build.restore_checkouts(root, scratch, cache, self.checkout_pins(), parent,
+                    self.checkout_packages(scratch, root), root)
+            self.assertEqual(parent, original)
+            self.assertGreater(len(observed), 18)
+            for environment in observed:
+                self.assertEqual(environment, {'HOME': str(root), 'PATH': '/fixture/tools',
+                    'GIT_TERMINAL_PROMPT': '0', 'GIT_CONFIG_NOSYSTEM': '1', 'GIT_CONFIG_GLOBAL': os.devnull})
+
+    def test_logged_failures_reap_term_ignoring_descendants_and_preserve_original_evidence(self):
+        for mode in ('timeout', 'nonzero'):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp); parent_file = root / 'parent.pid'; child_file = root / 'child.pid'
+                child = ('import os,signal,time;from pathlib import Path;'
+                    'signal.signal(signal.SIGTERM,signal.SIG_IGN);'
+                    'Path(' + repr(str(child_file)) + ').write_text(str(os.getpid()));time.sleep(60)')
+                parent = ('import os,subprocess,sys,time;from pathlib import Path;'
+                    'Path(' + repr(str(parent_file)) + ').write_text(str(os.getpid()));'
+                    'subprocess.Popen([sys.executable,"-c",' + repr(child) + '])\n'
+                    'while not Path(' + repr(str(child_file)) + ').exists(): time.sleep(0.01)\n'
+                    + ('sys.exit(128)' if mode == 'nonzero' else 'time.sleep(60)'))
+                environment = {'HOME': str(root), 'CFFIXED_USER_HOME': str(root), 'PATH': os.environ.get('PATH', '')}
+                group = None
+                try:
+                    expected = build.subprocess.TimeoutExpired if mode == 'timeout' else ValueError
+                    with self.assertRaises(expected) as raised:
+                        build.logged(root, 'failed-family', [build.sys.executable, '-c', parent], environment, timeout=2)
+                    group = int(parent_file.read_text())
+                    self.assertTrue(child_file.is_file())
+                    with self.assertRaises(ProcessLookupError): os.killpg(group, 0)
+                    receipt = json.loads((root / 'failed-family.exit.json').read_text())
+                    self.assertTrue(receipt['ownedProcessGroupAbsent'])
+                    self.assertEqual(receipt['ownedProcessGroupID'], group)
+                    if mode == 'timeout':
+                        self.assertEqual(raised.exception.timeout, 2)
+                        self.assertTrue(receipt['timedOut'])
+                        self.assertEqual(receipt['exceptionType'], 'TimeoutExpired')
+                    else:
+                        self.assertEqual(receipt['exitCode'], 128)
+                        self.assertFalse(receipt.get('timedOut', False))
+                    self.assertTrue((root / 'failed-family.stdout').is_file())
+                    self.assertTrue((root / 'failed-family.stderr').is_file())
+                finally:
+                    if group is None and parent_file.exists(): group = int(parent_file.read_text())
+                    if group is not None:
+                        try: os.killpg(group, build.signal.SIGKILL)
+                        except ProcessLookupError: pass
+
+    def test_logged_interruption_records_cleanup_failure_without_claiming_a_safe_group(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            process = build.subprocess.CompletedProcess(['fixture'], -15)
+            process.pid = 12345
+            process.wait = lambda **options: (_ for _ in ()).throw(build.subprocess.TimeoutExpired(['fixture'], 1))
+            process.poll = lambda: -15
+            with patch.object(build.subprocess, 'Popen', return_value=process), \
+                    patch.object(build, 'stop_logged_process', side_effect=RuntimeError('Group survives')), \
+                    self.assertRaisesRegex(RuntimeError, 'cleanup failed'):
+                build.logged(root, 'unsafe-family', ['fixture'], {}, timeout=1)
+            receipt = json.loads((root / 'unsafe-family.exit.json').read_text())
+            self.assertFalse(receipt['ownedProcessGroupAbsent'])
+            self.assertTrue(receipt['timedOut'])
+            self.assertEqual(receipt['exitCode'], -15)
+
     def test_source_checkout_restore_rejects_ambiguous_paths_origins_and_unpinned_revisions_before_any_git(self):
         for field, value in [('identity', '../escape'), ('identity', 'package1'), ('kind', 'binaryTarget'),
                 ('location', 'http://github.com/example/package0.git'), ('location', 'https://user@github.com/example/package0'),
