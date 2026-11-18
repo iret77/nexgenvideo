@@ -942,6 +942,7 @@ class CompiledAppReleaseTests(unittest.TestCase):
         import app_cohort_v2
         import signed_component_carrier as carrier_transport
         import io
+        from urllib.error import HTTPError
         original_zip, original_log = b'a' * 1717370, b'b' * 3862332
         original_digest, log_digest = (hashlib.sha256(value).hexdigest() for value in (original_zip, original_log))
         base = release.engine_carrier_origin()
@@ -956,7 +957,8 @@ class CompiledAppReleaseTests(unittest.TestCase):
             'proof': {'eventsSHA256': release.engine.EVENT_DIGEST, 'logSHA256': release.engine.CONSOLE_DIGEST}}
         parent = {'sourceSHA': base['sourceSHA'], 'runID': base['runID'], 'attempt': 1, 'passed': True,
             'counts': {'retainedEngine': 896, 'engineSkips': 14}, 'retainedEngine': historical}
-        for changed in (None, 'cohort', 'archive', 'raw', 'receipt', 'historical-id', 'historical-expiry', 'duplicate', 'carrier-expired', 'carrier-job'):
+        for changed in (None, 'cohort', 'cohort-source-404', 'archive', 'raw', 'receipt', 'historical-id',
+                'historical-expiry', 'duplicate', 'carrier-expired', 'carrier-job'):
             origin, receipt = copy.deepcopy(base), copy.deepcopy(parent)
             if changed == 'historical-id': receipt['retainedEngine']['artifact']['id'] += 1
             if changed == 'historical-expiry': receipt['retainedEngine']['artifact']['expires_at'] = '2020-01-01T00:00:00Z'
@@ -997,19 +999,26 @@ class CompiledAppReleaseTests(unittest.TestCase):
                     id=dependency['id'], name=dependency['name'], digest='sha256:' + dependency['sha256'],
                     size_in_bytes=dependency['bytes'], workflow_run={'id': dependency['runID'],
                         'head_sha': dependency['sourceSHA'], 'repository_id': 1280482148, 'head_repository_id': 1280482148})
-            if changed == 'cohort':
+            cohort = changed in ('cohort', 'cohort-source-404')
+            if cohort:
                 del routes['actions/artifacts/' + str(release.FINAL_ARTIFACT[0])]
+            source_carrier = {'artifact': {'id': release.SOURCE_PAIR_CARRIER['artifactID']}}
+            def get(route):
+                if changed == 'cohort-source-404' and route == 'actions/artifacts/12209205072':
+                    raise HTTPError(route, 404, 'original corresponding-source artifact expired', {}, None)
+                return copy.deepcopy(routes[route])
             with self.subTest(changed=changed), tempfile.TemporaryDirectory() as directory, \
-                    patch.object(app_cohort_v2, 'has_manifest', return_value=changed == 'cohort'), \
+                    patch.object(app_cohort_v2, 'has_manifest', return_value=cohort), \
+                    patch.object(release, 'source_pair_carrier_metadata', return_value=source_carrier) as source_pair, \
                     patch.object(app_cohort_v2, 'manifest', return_value=cohort_value), \
                     patch.object(release, 'pack_verification_provenance', return_value={'carrier': carrier}), \
                     patch.object(release, 'engine_carrier_origin', return_value=origin), \
-                    patch.object(release, 'api', side_effect=lambda route: copy.deepcopy(routes[route])) as requests, \
+                    patch.object(release, 'api', side_effect=get) as requests, \
                     patch.object(release, 'download', side_effect=lambda item, dest: dest.write_bytes(payload)) as download, \
                     patch.object(release.engine, 'DIGEST', original_digest), \
                     patch.object(release.engine, 'LOG_DIGEST', log_digest), \
                     patch.object(release.engine, 'verify_original', return_value=old_job):
-                if changed not in (None, 'cohort'):
+                if changed is not None and not cohort:
                     with self.assertRaises(ValueError): release.retained_engine_carrier(Path(directory))
                     continue
                 release.retained_engine_carrier()
@@ -1021,10 +1030,17 @@ class CompiledAppReleaseTests(unittest.TestCase):
                 self.assertEqual((Path(directory) / 'retained-engine/original-job.log').read_bytes(), original_log)
                 self.assertGreater(actual['acquiredAt'], historical['artifact']['expires_at'])
                 self.assertNotIn('actions/artifacts/' + str(release.engine.ARTIFACT), [call.args[0] for call in requests.call_args_list])
-                if changed == 'cohort':
+                if cohort:
                     self.assertEqual(actual['packCarrier'], carrier)
                     self.assertNotIn('actions/artifacts/' + str(release.FINAL_ARTIFACT[0]),
                         [call.args[0] for call in requests.call_args_list])
+                if changed == 'cohort-source-404':
+                    self.assertEqual(actual['sourcePairCarrier'], source_carrier)
+                    self.assertIn(str(source_carrier['artifact']['id']), actual['dependencies'])
+                    self.assertNotIn('12209205072', actual['dependencies'])
+                    self.assertEqual(source_pair.call_count, 2)
+                else:
+                    source_pair.assert_not_called()
 
     def test_retained_engine_environment_requires_all_original_context_fields_and_arm64(self):
         original = {'swift': 'measured Swift', 'xcode': 'measured Xcode', 'python': '3.13.17',

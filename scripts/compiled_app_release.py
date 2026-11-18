@@ -13,6 +13,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import urllib.error
 import zipfile
 import uuid
 
@@ -225,16 +226,21 @@ def verify_source_pair_carrier(carrier, public, acquired_at):
         'Corresponding-source carrier acquisition chronology differs')
 
 
+def source_pair_carrier_metadata(public):
+    selected = SOURCE_PAIR_CARRIER
+    carrier = {'run': api(f"actions/runs/{selected['runID']}"),
+        'job': api(f"actions/jobs/{selected['jobID']}"),
+        'artifact': api(f"actions/artifacts/{selected['artifactID']}"),
+        'receiptSHA256': selected['receiptSHA256']}
+    verify_source_pair_carrier(carrier, public, datetime.datetime.now(datetime.timezone.utc).isoformat())
+    return carrier
+
+
 def acquire_source_pair_carrier(public, stage):
     import consume_bpy_distributable_source as source
     from reuse_bpy_binary_evidence import instant
     selected = SOURCE_PAIR_CARRIER
-    carrier = {'run': source.api(f"/actions/runs/{selected['runID']}"),
-        'job': source.api(f"/actions/jobs/{selected['jobID']}"),
-        'artifact': source.api(f"/actions/artifacts/{selected['artifactID']}"),
-        'receiptSHA256': selected['receiptSHA256']}
-    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    verify_source_pair_carrier(carrier, public, now)
+    carrier = source_pair_carrier_metadata(public)
     anchor = source_directory_identity(stage, stage.parent)
     transport = stage / 'qualified-bpy-source-carrier.zip'
     source.download(carrier['artifact'], transport)
@@ -1144,8 +1150,38 @@ def retained_engine_carrier(root=None):
         selected_dependencies = [item for item in selected_dependencies
             if item['id'] not in replacements | {FINAL_ARTIFACT[0]}] + signed_component_carrier.dependencies(value)
     dependencies = {}
+    source_carrier, source_unavailability = None, None
     for selected in selected_dependencies:
-        item = api('actions/artifacts/' + str(selected['id']))
+        source_pair = pack is not None and selected['id'] == 12209205072
+        route = 'actions/artifacts/' + str(selected['id'])
+        missing = False
+        try:
+            item = api(route)
+            require(isinstance(item, dict), 'Invalid compiled App acquisition dependency metadata')
+        except urllib.error.HTTPError as error:
+            if not source_pair or error.code != 404:
+                raise
+            error.close()
+            item = None
+            missing = True
+        if source_pair and (missing or item.get('expired') is True):
+            import consume_bpy_distributable_source as source
+            public = source.public_asset(json.loads(source.LOCK_PATH.read_bytes()))
+            require((public['producer']['artifactID'], public['producer']['artifactDigest'],
+                public['producer']['artifactSize']) == (selected['id'], 'sha256:' + selected['sha256'], selected['bytes']),
+                'Pinned historical source-pair origin differs')
+            if item is not None:
+                require(item.get('id') == selected['id'] and item.get('digest') == 'sha256:' + selected['sha256']
+                    and item.get('size_in_bytes') == selected['bytes'] and item.get('name') == selected['name']
+                    and item.get('workflow_run', {}).get('id') == selected['runID']
+                    and item['workflow_run'].get('head_sha') == selected['sourceSHA']
+                    and item['workflow_run'].get('repository_id') == item['workflow_run'].get('head_repository_id') == 1280482148,
+                    'Expired corresponding-source artifact identity differs')
+            source_carrier = source_pair_carrier_metadata(public)
+            source_unavailability = {'originalArtifactID': selected['id'], 'reason': 'http404' if missing else 'expired'}
+            effective = source_carrier['artifact']
+            dependencies[str(effective['id'])] = effective
+            continue
         require(item.get('id') == selected['id'] and item.get('name') == selected['name']
             and item.get('digest') == 'sha256:' + selected['sha256'] and item.get('size_in_bytes') == selected['bytes']
             and item.get('expired') is False and item.get('workflow_run', {}).get('id') == selected['runID']
@@ -1178,6 +1214,9 @@ def retained_engine_carrier(root=None):
         'artifact': artifact, 'dependencies': dependencies, 'acquiredAt': acquired}
     if pack is not None:
         result['packCarrier'] = pack['carrier']
+    if source_carrier is not None:
+        result['sourcePairCarrier'] = source_carrier
+        result['sourcePairUnavailable'] = source_unavailability
     if root is None:
         return result
     target = root / 'retained-engine'
