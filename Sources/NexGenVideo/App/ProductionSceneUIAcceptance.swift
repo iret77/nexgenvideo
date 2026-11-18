@@ -24,7 +24,8 @@ enum ProductionSceneUIAcceptance {
                 let name = "Pale room \(Int(scale * 100))"
                 try await driver.fill("spatial.location.name", value: name, in: window)
                 var previous = driver.text("spatial.scene", in: window)
-                try await driver.click("spatial.location.create", in: window)
+                try await driver.clickButton("spatial.location.create", title: "Create location", in: window,
+                                             settledTarget: .buttonOrGestureSurface)
                 try await revision(after: previous, action: "create location", scene: name, root: root, driver: driver)
                 let empty = try await read(name: name, root: root)
                 guard empty.1.snapshot.objects.isEmpty else { throw failed("The new native location did not start empty.") }
@@ -44,14 +45,14 @@ enum ProductionSceneUIAcceptance {
                 guard let movedCube = moved.1.snapshot.objects.first(where: { $0.id == cube.id }),
                       abs(movedCube.matrixWorld[3] - 0.5) < 0.000001 else { throw failed("The typed transform did not change the actual Blender object.") }
                 previous = driver.text("spatial.scene", in: window)
-                try await driver.click("spatial.undo", in: window)
+                try await driver.clickButton("spatial.undo", title: "Undo", in: window, settledTarget: .button)
                 try await revision(after: previous, action: "undo", scene: name, root: root, driver: driver)
                 let undone = try await read(name: name, root: root)
                 guard undone.1.snapshot.objects.first(where: { $0.id == cube.id })?.matrixWorld == cube.matrixWorld else {
                     throw failed("Native scene Undo did not restore the preceding object matrix.")
                 }
                 previous = driver.text("spatial.scene", in: window)
-                try await driver.click("spatial.redo", in: window)
+                try await driver.clickButton("spatial.redo", title: "Redo", in: window, settledTarget: .button)
                 try await revision(after: previous, action: "redo", scene: name, root: root, driver: driver)
                 let restored = try await read(name: name, root: root)
                 guard restored.1.snapshot.objects.first(where: { $0.id == cube.id })?.matrixWorld == movedCube.matrixWorld else {

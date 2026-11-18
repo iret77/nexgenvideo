@@ -185,6 +185,77 @@ def source_directory_identity(directory, root, expected=None):
     return actual
 
 
+SOURCE_PAIR_CARRIER = {
+    'runID': 44324570507, 'jobID': 134896236966, 'artifactID': 14443044737,
+    'sourceSHA': '22c81c1d13e2d99c9320adb457a17b8cabb2b4cf',
+    'artifactName': 'NexGenVideo-1.8.0-artifact-only', 'bytes': 3629920088,
+    'sha256': 'c9bfcc5d21fb745c7ce4ba605a1557bac21ff59e5ffa353261ee7977d5f56edf',
+    'receiptSHA256': 'f05214557a56bdcf712b60ce91abbdeff57e9b58ba613032ada41cfd1e3bf38b',
+}
+
+
+def verify_source_pair_carrier(carrier, public, acquired_at):
+    import consume_bpy_distributable_source as source
+    from reuse_bpy_binary_evidence import instant
+    selected = SOURCE_PAIR_CARRIER
+    run, job, artifact = (carrier[name] for name in ('run', 'job', 'artifact'))
+    require(source.canonical_sha(public) == source.QUALIFIED_HANDOFF['publicSourceAssetSHA256']
+        and carrier.get('receiptSHA256') == selected['receiptSHA256']
+        and (run.get('id'), run.get('head_sha'), run.get('workflow_id'), run.get('run_attempt'))
+        == (selected['runID'], selected['sourceSHA'], 303346287, 1)
+        and run.get('path') == '.github/workflows/release.yml'
+        and run.get('actor', {}).get('login') == 'iret77' and run.get('status') == 'completed'
+        and run.get('repository', {}).get('full_name') == REPOSITORY
+        and run.get('head_repository', {}).get('full_name') == REPOSITORY
+        and run.get('head_branch') == 'iret77/rc-delivery-base-795' and run.get('event') == 'workflow_dispatch'
+        and (job.get('id'), job.get('run_id'), job.get('head_sha'), job.get('run_attempt'))
+        == (selected['jobID'], selected['runID'], selected['sourceSHA'], 1)
+        and job.get('name') == 'release' and job.get('labels') == ['macrunner']
+        and job.get('status') == 'completed' and job.get('conclusion') == 'success'
+        and artifact.get('size_in_bytes') == selected['bytes'], 'Corresponding-source carrier producer differs')
+    require((artifact.get('id'), artifact.get('name'), artifact.get('digest'), artifact.get('expired'))
+        == (selected['artifactID'], selected['artifactName'], 'sha256:' + selected['sha256'], False)
+        and artifact.get('workflow_run', {}).get('id') == selected['runID']
+        and artifact.get('workflow_run', {}).get('head_sha') == selected['sourceSHA'],
+        'Corresponding-source carrier archive differs')
+    upload, = [step for step in job['steps'] if step['name'] == 'Upload unpublished candidate']
+    require(upload['conclusion'] == 'success'
+        and instant(upload['started_at']) <= instant(artifact['created_at']) <= instant(artifact['updated_at'])
+        <= instant(upload['completed_at']) <= instant(job['completed_at']) <= instant(acquired_at) < instant(artifact['expires_at']),
+        'Corresponding-source carrier acquisition chronology differs')
+
+
+def acquire_source_pair_carrier(public, stage):
+    import consume_bpy_distributable_source as source
+    from reuse_bpy_binary_evidence import instant
+    selected = SOURCE_PAIR_CARRIER
+    carrier = {'run': source.api(f"/actions/runs/{selected['runID']}"),
+        'job': source.api(f"/actions/jobs/{selected['jobID']}"),
+        'artifact': source.api(f"/actions/artifacts/{selected['artifactID']}"),
+        'receiptSHA256': selected['receiptSHA256']}
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    verify_source_pair_carrier(carrier, public, now)
+    anchor = source_directory_identity(stage, stage.parent)
+    transport = stage / 'qualified-bpy-source-carrier.zip'
+    source.download(carrier['artifact'], transport)
+    source_directory_identity(stage, stage.parent, anchor)
+    with verified_zip(transport, selected['bytes'], qualified_sha=selected['sha256']) as archive:
+        raw = archive_bytes(archive, 'bpy-source/bpy-source-receipt.json', 16 * 1024)
+        require(hashlib.sha256(raw).hexdigest() == selected['receiptSHA256'],
+            'Corresponding-source carrier receipt changed')
+        source.qualified_handoff(json.loads(raw), public, selected['sourceSHA'])
+        for name, maximum in ((public['filename'], public['size']), (public['manifestFilename'], 16 * 1024**2)):
+            info = archive.getinfo('bpy-source/' + name)
+            require(0 < info.file_size <= maximum and stat.S_IFMT(info.external_attr >> 16) in (0, stat.S_IFREG),
+                'Corresponding-source carrier member is unsafe or oversized')
+            with archive.open(info) as origin, (stage / name).open('xb') as target:
+                shutil.copyfileobj(origin, target, 1024 * 1024)
+    verify_source_pair(stage, public)
+    require(datetime.datetime.now(datetime.timezone.utc) < instant(carrier['artifact']['expires_at']),
+        'Corresponding-source carrier expired during verification')
+    return carrier
+
+
 def acquire_source_pair(public, stage):
     import consume_bpy_distributable_source as source
     producer = public['producer']
@@ -192,6 +263,11 @@ def acquire_source_pair(public, stage):
     run = source.api(f"/actions/runs/{producer['runID']}")
     artifacts = source.pages(f"/actions/runs/{producer['runID']}/artifacts", 'artifacts')
     jobs = source.pages(f"/actions/runs/{producer['runID']}/jobs?filter=all", 'jobs')
+    if not any(item.get('id') == producer['artifactID'] and item.get('expired') is False for item in artifacts):
+        job, = [item for item in jobs if item.get('id') == producer['jobID']]
+        origin = {'run': run, 'job': job, 'sourceCarrier': acquire_source_pair_carrier(public, stage)}
+        verify_source_origin(origin, public, datetime.datetime.now(datetime.timezone.utc).isoformat())
+        return origin
     artifact = source.require_original_producer(public, run, artifacts, jobs)
     source_directory_identity(stage, stage.parent, anchor)
     source.download(artifact, stage / 'original-bpy-source.zip')
@@ -344,11 +420,16 @@ def verify_source_origin(evidence, public, acquired_at):
         and job.get('id') == producer['jobID']
         and job.get('run_id') == producer['runID'] and job.get('head_sha') == producer['sourceSHA']
         and job.get('run_attempt') == 1 and job.get('status') == 'completed' and job.get('conclusion') == 'success'
-        and 'ubuntu-24.04' in job.get('labels', []) and artifact.get('id') == producer['artifactID']
+        and 'ubuntu-24.04' in job.get('labels', []), 'Original source producer differs')
+    if 'sourceCarrier' in evidence:
+        require(set(evidence) == {'run', 'job', 'sourceCarrier'}, 'Ambiguous corresponding-source acquisition')
+        verify_source_pair_carrier(evidence['sourceCarrier'], public, acquired_at)
+        return
+    require(artifact.get('id') == producer['artifactID']
         and artifact.get('name') == producer['artifactName'] and artifact.get('digest') == producer['artifactDigest']
         and artifact.get('size_in_bytes') == producer['artifactSize'] and artifact.get('expired') is False
         and artifact.get('workflow_run', {}).get('id') == producer['runID']
-        and artifact.get('workflow_run', {}).get('head_sha') == producer['sourceSHA'], 'Original source producer differs')
+        and artifact.get('workflow_run', {}).get('head_sha') == producer['sourceSHA'], 'Original source archive differs')
     instant = lambda text: datetime.datetime.fromisoformat(text.replace('Z', '+00:00'))
     require(instant(job['started_at']) <= instant(artifact['created_at']) <= instant(artifact['updated_at'])
         <= instant(job['completed_at']) <= instant(acquired_at) < instant(artifact['expires_at']),
@@ -1145,7 +1226,13 @@ def retained_engine_carrier(root=None):
 
 
 def retained_engine_evidence(root, expected):
-    engine.verify_engine_source_objects(os.environ['GITHUB_SHA'])
+    head = os.environ['GITHUB_SHA']
+    import app_cohort_v2
+    import signed_component_carrier
+    candidate = app_cohort_v2.manifest(head) if app_cohort_v2.has_manifest(head) else None
+    source_binding = signed_component_carrier.engine_component_source_binding(head, candidate)
+    objects, _ = engine.verify_engine_source_objects(head,
+        rebuilt_supervisor=source_binding['currentGitObject'] if source_binding else None)
     original = api('actions/runs/' + str(engine.RUN))
     jobs = api(f'actions/runs/{engine.RUN}/attempts/1/jobs?per_page=100')
     job = engine.verify_original(original, jobs)
@@ -1160,8 +1247,11 @@ def retained_engine_evidence(root, expected):
     raw = (retained_engine / 'original-job.log').read_bytes()
     environment = engine_environment(raw)
     write(retained_engine / 'current-environment.json', environment)
-    return {'run': original, 'job': job, 'artifact': artifact, 'proof': retained_proof, 'environment': environment,
+    result = {'run': original, 'job': job, 'artifact': artifact, 'proof': retained_proof, 'environment': environment,
         'acquisition': {key: value for key, value in carrier.items() if key != 'original'}}
+    if source_binding is not None:
+        result['componentSourceBinding'] = dict(source_binding, verifiedCurrentObjects=objects)
+    return result
 
 
 def engine_environment(raw):
@@ -1285,6 +1375,15 @@ def verify_receipt(receipt, source, run_id):
         and set(retained_proof['environment'].get('original', {})) == {'swift', 'xcode', 'python', 'osVersion', 'osBuild'}
         and retained_proof['environment'].get('current') == retained_proof['environment']['original'],
         'Native acceptance retained Engine identity differs')
+    if dynamic:
+        import signed_component_carrier
+        source_binding = signed_component_carrier.engine_component_source_binding(source, value)
+        if source_binding is None:
+            require('componentSourceBinding' not in retained_proof, 'Unexpected separate Supervisor binding')
+        else:
+            objects, _ = engine.verify_engine_source_objects(source, rebuilt_supervisor=source_binding['currentGitObject'])
+            require(retained_proof.get('componentSourceBinding') == dict(source_binding, verifiedCurrentObjects=objects),
+                'Retained Engine did not bind the separately rebuilt Supervisor')
     return receipt
 
 

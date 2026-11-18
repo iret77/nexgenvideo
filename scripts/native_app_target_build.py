@@ -160,7 +160,7 @@ def raw_metadata(root, selected, app):
         'allFileHashes': file_hashes(files), 'workspace': workspace, 'toolchain': resume['snapshot']['toolchain']}
 
 
-def bank_metadata(root, selected, head):
+def bank_metadata(root, selected, head, *, cohort_manifest=None):
     run = api('actions/runs/' + str(retained.RUN))
     jobs = api(f'actions/runs/{retained.RUN}/attempts/1/jobs?per_page=100')
     job = retained.verify_original(run, jobs)
@@ -178,11 +178,17 @@ def bank_metadata(root, selected, head):
         and manifest['attempt'] == '1' and manifest['runtimeReady'] is True and manifest['configuration'] == 'release'
         and manifest['swiftcFlags'] == ['-enable-testing'] and manifest['treeSHA256'] == retained.TREE_SHA,
         'Retained compiler product context differs')
-    objects, role = verify_engine_source_objects(head)
+    from signed_component_carrier import engine_component_source_binding
+    source_binding = engine_component_source_binding(head, cohort_manifest)
+    objects, role = verify_engine_source_objects(head,
+        rebuilt_supervisor=source_binding['currentGitObject'] if source_binding else None)
     (root / 'bank-runtime-manifest.json').write_bytes(raw)
-    return {'run': run, 'job': job, 'runtimeArtifact': products, 'metadataArtifact': artifact,
+    result = {'run': run, 'job': job, 'runtimeArtifact': products, 'metadataArtifact': artifact,
         'manifestSHA256': retained.MANIFEST_SHA, 'treeSHA256': retained.TREE_SHA,
         'currentEngineSourceObjects': objects, 'appHostRole': role}
+    if source_binding is not None:
+        result['componentSourceBinding'] = source_binding
+    return result
 
 
 def resumed_products(selected, objects, head, allowed_paths=None, *, dynamic=False):
@@ -238,7 +244,8 @@ def bind(root):
         binder(root / 'app-source', selected['app'], CURRENT_PATHS if current else PATHS)
     app = json.loads((root / 'app-source/binding.json').read_text())
     metadata = raw_metadata(root, selected['metadata'], app)
-    bank = bank_metadata(root, selected['bank'], os.environ['GITHUB_SHA'])
+    bank = bank_metadata(root, selected['bank'], os.environ['GITHUB_SHA'],
+        cohort_manifest=app_cohort_v2.verify_context(app['cohortV2']) if dynamic else None)
     if dynamic:
         resumed = resumed_products(selected['resume'], app['nativeSourceObjects'], os.environ['GITHUB_SHA'], dynamic=True)
     else:

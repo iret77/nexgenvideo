@@ -165,9 +165,84 @@ enum BpyRuntimeSelfTest {
     }
 
     private static func runBoundaryProbe(outputPath: String) throws {
+        guard let fixtureMarker = Bundle.main.resourceURL?.appendingPathComponent("BPY_BOUNDARY_PROBE_NONPRODUCT_CI"),
+              FileManager.default.fileExists(atPath: fixtureMarker.path) else {
+            throw BpyRuntimeError.invalidOutput("The boundary probe requires its non-product fixture.")
+        }
         for slot in bpyRuntimeServiceNames.indices {
             try runBoundaryProbe(outputPath: outputPath + ".slot\(slot).json", slot: slot)
         }
+    }
+
+    private static func withBoundaryLoopback<T>(_ run: (UInt16) throws -> T) throws -> T {
+        let listener = try boundarySocket()
+        defer { Darwin.close(listener) }
+        var address = sockaddr_in()
+        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let loopback = UInt32(0x7f000001).bigEndian
+        address.sin_len = UInt8(length)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_addr.s_addr = loopback
+        let bound = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(listener, $0, length) }
+        }
+        guard bound == 0, Darwin.listen(listener, 1) == 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+        let named = withUnsafeMutablePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.getsockname(listener, $0, &length) }
+        }
+        guard named == 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+        guard length == socklen_t(MemoryLayout<sockaddr_in>.size), address.sin_family == sa_family_t(AF_INET),
+              address.sin_addr.s_addr == loopback, address.sin_port != 0 else {
+            throw BpyRuntimeError.invalidOutput("The boundary listener did not bind to an owned loopback port.")
+        }
+        try confirmBoundaryLoopback(listener: listener, address: &address, length: length)
+        return try run(UInt16(bigEndian: address.sin_port))
+    }
+
+    private static func boundarySocket() throws -> Int32 {
+        try BpySpawnGuard.withLock {
+            let descriptor = Darwin.socket(AF_INET, SOCK_STREAM, 0)
+            guard descriptor >= 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+            guard fcntl(descriptor, F_SETFD, FD_CLOEXEC) == 0, fcntl(descriptor, F_SETFL, O_NONBLOCK) == 0 else {
+                let error = POSIXError(.init(rawValue: errno) ?? .EIO)
+                Darwin.close(descriptor)
+                throw error
+            }
+            return descriptor
+        }
+    }
+
+    private static func confirmBoundaryLoopback(listener: Int32, address: inout sockaddr_in, length: socklen_t) throws {
+        let client = try boundarySocket()
+        defer { Darwin.close(client) }
+        let connected = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.connect(client, $0, length) }
+        }
+        if connected != 0 {
+            guard errno == EINPROGRESS else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+            try waitForBoundarySocket(client, events: Int16(POLLOUT))
+            var status: Int32 = 0
+            var size = socklen_t(MemoryLayout<Int32>.size)
+            guard Darwin.getsockopt(client, SOL_SOCKET, SO_ERROR, &status, &size) == 0 else {
+                throw POSIXError(.init(rawValue: errno) ?? .EIO)
+            }
+            guard status == 0 else { throw POSIXError(.init(rawValue: status) ?? .EIO) }
+        }
+        try waitForBoundarySocket(listener, events: Int16(POLLIN))
+        try BpySpawnGuard.withLock {
+            let accepted = Darwin.accept(listener, nil, nil)
+            guard accepted >= 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+            defer { Darwin.close(accepted) }
+            guard fcntl(accepted, F_SETFD, FD_CLOEXEC) == 0 else {
+                throw POSIXError(.init(rawValue: errno) ?? .EIO)
+            }
+        }
+    }
+
+    private static func waitForBoundarySocket(_ descriptor: Int32, events: Int16) throws {
+        var socket = pollfd(fd: descriptor, events: events, revents: 0)
+        let ready = Darwin.poll(&socket, 1, 1_000)
+        guard ready > 0 else { throw POSIXError(.init(rawValue: ready == 0 ? ETIMEDOUT : errno) ?? .EIO) }
     }
 
     private static func runBoundaryProbe(outputPath: String, slot: Int) throws {
@@ -220,25 +295,31 @@ enum BpyRuntimeSelfTest {
         let pair = BpyStoragePair(id: preparation.id, worker: worker.lease, data: ownedData.lease)
         let memory = BpyMemoryCoordinator.shared
         try memory.register(owner: nonce, generation: nonce)
-        func run(_ mode: BpyBoundaryMode) throws -> BpyBoundaryRun {
+        func run(_ mode: BpyBoundaryMode, loopbackPort: UInt16? = nil) throws -> BpyBoundaryRun {
             let admission = try memory.admit(owner: nonce, generation: nonce, transport: nonce, job: nil,
                 kind: .boundary, timeout: 20, cancellation: .init())
             defer { memory.finish(admission.id); memory.forget(admission.id) }
             try monitor.install(.init(slot: bpyRuntimeServiceNames[slot], identity: admission, pair: pair, limits: limits,
-                workerVolume: worker, dataVolume: ownedData, sourceSHA256: nil, fingerprint: nil, diagnosticDeniedPaths: []))
+                workerVolume: worker, dataVolume: ownedData, sourceSHA256: nil, fingerprint: nil,
+                diagnosticDeniedPaths: [], boundaryLoopbackPort: loopbackPort))
             let request = try JSONEncoder().encode(BpyBoundaryProbeRequest(nonce: nonce, execution: UUID(), mode: mode,
                 storagePair: pair, admission: admission.id, admissionDeadline: admission.admissionDeadline, limits: limits))
-            let run = try JSONDecoder().decode(BpyBoundaryRun.self, from: call { service.runBoundaryProbe(request, withReply: $0) })
+            let reply = try call { service.runBoundaryProbe(request, withReply: $0) }
+            let decoder = JSONDecoder()
+            if let failure = try? decoder.decode(BpyServiceResponse.self, from: reply), !failure.ok {
+                throw BpyRuntimeError.invalidOutput(failure.message ?? "The boundary service rejected the probe.")
+            }
+            let run = try decoder.decode(BpyBoundaryRun.self, from: reply)
             guard run.report.mode == mode.rawValue, run.supervisorParentProcessIdentifier == getpid(),
                   run.supervisorGone, run.childGone else { throw BpyRuntimeError.invalidOutput("Boundary process ownership failed.") }
             return run
         }
-        let first = try run(.denials)
+        let first = try withBoundaryLoopback { try run(.denials, loopbackPort: $0) }
         let retained = try [run(.openUnlinked), run(.readonlyUnlinked), run(.mappedUnlinked)]
         let external = try run(.externalReadonly)
         let internalLinked = try run(.internalWritable)
         let fileport = try run(.fileportUnlinked)
-        let followup = try run(.denials)
+        let followup = try withBoundaryLoopback { try run(.denials, loopbackPort: $0) }
         let result = BpyBoundaryProbeResult(nonce: nonce, serviceProcessIdentifier: preparation.servicePID,
             serviceStartAbsoluteTime: preparation.serviceStart,
             supervisorProcessIdentifier: first.supervisorProcessIdentifier,

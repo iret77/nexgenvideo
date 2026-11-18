@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Verify the shipped app's independent capture path; never use owner data."""
 import argparse
-from contextlib import ExitStack, suppress
+from contextlib import ExitStack, contextmanager, suppress
+import ctypes
 import hashlib
 import json
 import os
 from pathlib import Path
+import secrets
 import subprocess
 import sys
 import tempfile
@@ -146,9 +148,68 @@ def main():
             assert not receipt["captureErrors"], receipt
 
 
+@contextmanager
+def isolated_replay_keychain(output):
+    if sys.platform != "darwin" or os.environ.get("GITHUB_ACTIONS") != "true":
+        raise RuntimeError("Replay keychain verification requires macOS GitHub Actions")
+    security = ctypes.CDLL("/System/Library/Frameworks/Security.framework/Security")
+    foundation = ctypes.CDLL("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
+    pointer, count, boolean = ctypes.c_void_p, ctypes.c_uint32, ctypes.c_ubyte
+    security.SecKeychainCreate.argtypes = [
+        ctypes.c_char_p, count, pointer, boolean, pointer, ctypes.POINTER(pointer)]
+    security.SecKeychainUnlock.argtypes = [pointer, count, pointer, boolean]
+    security.SecKeychainGetStatus.argtypes = [pointer, ctypes.POINTER(count)]
+    security.SecKeychainDelete.argtypes = [pointer]
+    for function in (security.SecKeychainCreate, security.SecKeychainUnlock,
+                     security.SecKeychainGetStatus, security.SecKeychainDelete):
+        function.restype = ctypes.c_int32
+    foundation.CFRelease.argtypes = [pointer]
+    foundation.CFRelease.restype = None
+
+    with tempfile.TemporaryDirectory(prefix="ngv-hang-keychain-", dir=Path.home().resolve()) as private:
+        path = Path(private) / "replay.keychain-db"
+        keychain = pointer()
+        password = ctypes.create_string_buffer(secrets.token_hex(32).encode("ascii"))
+        password_length = len(password) - 1
+        status = count()
+        receipt = {"schema": "nexgenvideo/hang-ci-replay-keychain/1", "persistentBetweenProcesses": False}
+        completed = False
+        try:
+            receipt["createStatus"] = security.SecKeychainCreate(os.fsencode(path), password_length, password,
+                                                                 False, None, ctypes.byref(keychain))
+            if receipt["createStatus"] != 0 or not keychain or not path.is_file() or path.is_symlink():
+                raise RuntimeError("Could not create the isolated replay keychain")
+            receipt["unlockStatus"] = security.SecKeychainUnlock(keychain, password_length, password, True)
+            receipt["stateStatus"] = security.SecKeychainGetStatus(keychain, ctypes.byref(status))
+            receipt["unlockedAndWritable"] = bool(status.value & 1 and status.value & 4)
+            if receipt["unlockStatus"] != 0 or receipt["stateStatus"] != 0 or not receipt["unlockedAndWritable"]:
+                raise RuntimeError("Isolated replay keychain was not unlocked and writable")
+            ctypes.memset(password, 0, len(password))
+            yield path
+            completed = True
+            receipt["persistentBetweenProcesses"] = True
+        finally:
+            ctypes.memset(password, 0, len(password))
+            if keychain:
+                receipt["deleteStatus"] = security.SecKeychainDelete(keychain)
+                foundation.CFRelease(keychain)
+            with (output / "replay-keychain.json").open("x") as stream:
+                json.dump(receipt, stream, indent=2)
+                stream.write("\n")
+            if completed and receipt.get("deleteStatus") != 0:
+                raise RuntimeError("Could not delete the isolated replay keychain")
+
+
 def verify(args):
-    root = Path.home() / "Library/Logs/NexGenVideo/HangIncidents"
     args.output.mkdir(parents=True, exist_ok=True)
+    with isolated_replay_keychain(args.output) as keychain:
+        results = verify_capture(args, keychain)
+    (args.output / "result.json").write_text(json.dumps(results, indent=2))
+
+
+def verify_capture(args, keychain):
+    environment = {**os.environ, "NGV_HANG_TEST_KEYCHAIN": str(keychain)}
+    root = Path.home() / "Library/Logs/NexGenVideo/HangIncidents"
     results = []
     retained_recordings = []
     replay_account = None
@@ -158,7 +219,7 @@ def verify(args):
         temporary = tempfile.TemporaryDirectory()
         key_file = Path(temporary.name) / "replay.key"
         exported = Path(temporary.name) / "export"
-        test_environment = {**os.environ, "NGV_HANG_SELFTEST": mode}
+        test_environment = {**environment, "NGV_HANG_SELFTEST": mode}
         if mode == "wait":
             test_environment.update(NGV_HANG_SELFTEST_KEY=str(key_file), NGV_HANG_SELFTEST_EXPORT=str(exported))
         process = launch_capture([str(args.app / "Contents/MacOS/NexGenVideo")],
@@ -212,7 +273,7 @@ def verify(args):
             summary = analyze(export)
             (args.output / "capture-wait-analysis.json").write_text(json.dumps(summary, indent=2) + "\n")
             assert summary["eventCount"] > 0 and not summary["gaps"], summary
-            replay_environment = {**os.environ, "NGV_DIAGNOSTIC_REPLAY": str(export),
+            replay_environment = {**environment, "NGV_DIAGNOSTIC_REPLAY": str(export),
                                   "NGV_DIAGNOSTIC_KEY_FILE": str(key_file)}
             command = [str(args.app / "Contents/MacOS/NexGenVideo")]
             replay = launch_capture(command, replay_environment, args.output, "replay")
@@ -239,7 +300,7 @@ def verify(args):
         results.append({"mode": mode, "samples": len(stacks), "symbolizedMarker": marker, "passed": True})
     before = set(root.glob("*"))
     process = launch_capture([str(args.app / "Contents/MacOS/NexGenVideo")],
-        {**os.environ, "NGV_HANG_SELFTEST": "wait"}, args.output, "force-quit")
+        {**environment, "NGV_HANG_SELFTEST": "wait"}, args.output, "force-quit")
     try:
         deadline = time.monotonic() + 20
         folder = None
@@ -271,10 +332,11 @@ def verify(args):
     retained_recordings.append(folder)
     results.append(verify_helper_recovery(args.app, output=args.output))
     results.append(verify_startup(args.app, protected_recordings=retained_recordings,
-        launch=lambda command, env, name: launch_capture(command, env, args.output, "startup-" + name)))
-    verify_retained_key(args.app, replay_account, replay_key, output=args.output)
+        launch=lambda command, env, name: launch_capture(
+            command, {**env, "NGV_HANG_TEST_KEYCHAIN": str(keychain)}, args.output, "startup-" + name)))
+    verify_retained_key(args.app, replay_account, replay_key, output=args.output, environment=environment)
     results.append({"mode": "replay-key-retention", "passed": True})
-    (args.output / "result.json").write_text(json.dumps(results, indent=2))
+    return results
 
 
 def capture_helper_failure(process, root, before, output, error):
@@ -365,7 +427,8 @@ def verify_helper_recovery(app, *, output):
             resources.close()
 
 
-def verify_retained_key(app, account, key, *, output=None):
+def verify_retained_key(app, account, key, *, output=None, environment=None):
+    base_environment = os.environ if environment is None else environment
     if not account.startswith("hang-diagnostic-"):
         raise ValueError("expected a diagnostic recording account")
     recording_id = str(uuid.UUID(account.removeprefix("hang-diagnostic-")))
@@ -377,15 +440,16 @@ def verify_retained_key(app, account, key, *, output=None):
         (str(uuid.uuid4()), digest, 70),
         (recording_id, digest, 0),
     )):
-        environment = {**os.environ, "NGV_HANG_SELFTEST": "verify-retained-key",
-                       "NGV_HANG_SELFTEST_RECORDING_ID": candidate_id,
-                       "NGV_HANG_SELFTEST_KEY_DIGEST": expected_digest}
+        child_environment = {
+            **base_environment, "NGV_HANG_SELFTEST": "verify-retained-key",
+            "NGV_HANG_SELFTEST_RECORDING_ID": candidate_id, "NGV_HANG_SELFTEST_KEY_DIGEST": expected_digest,
+        }
         command = [str(app / "Contents/MacOS/NexGenVideo")]
         if output is None:
-            result = subprocess.run(command, env=environment, stdin=subprocess.DEVNULL,
+            result = subprocess.run(command, env=child_environment, stdin=subprocess.DEVNULL,
                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
         else:
-            result = launch_capture(command, environment, output, f"retained-key-{index}")
+            result = launch_capture(command, child_environment, output, f"retained-key-{index}")
             try:
                 result.wait(timeout=15)
             finally:
