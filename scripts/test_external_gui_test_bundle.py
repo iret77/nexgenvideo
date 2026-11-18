@@ -1120,19 +1120,24 @@ class ExternalTestBundleTests(unittest.TestCase):
     def test_pack_carrier_transition_rejects_changed_guards_and_partial_declarations(self):
         path = 'scripts/compiled_app_release.py'
         current = (journey.REPOSITORY / path).read_text()
+        legacy = self.original_runtime_transport_source(path).decode()
+        for source in (legacy, current):
+            bundle._current_core_import_view(source, path, current=True)
         mutations = [
-            current.replace("producer.get('id') == origin['runID']", 'True'),
-            current.replace("origin['packTreeSHA256'] == PACK_TREE", 'True'),
-            current.replace("parent.get('packCarrier') == provenance['carrier']", 'True'),
-            current.replace("runtime.get('packCarrier') == provenance['carrier']", 'True'),
-            current.replace('def signed_pack_product():', 'def signed_pack_product(default=execute()):'),
+            (legacy, legacy.replace("producer.get('id') == origin['runID']", 'True')),
+            (current, current.replace('signed_component_carrier.provenance(value, product, {',
+                                      'signed_component_carrier.provenance(value, None, {')),
+            (current, current.replace("origin['packTreeSHA256'] == PACK_TREE", 'True')),
+            (current, current.replace("parent.get('packCarrier') == provenance['carrier']", 'True')),
+            (current, current.replace("runtime.get('packCarrier') == provenance['carrier']", 'True')),
+            (current, current.replace('def signed_pack_product():', 'def signed_pack_product(default=execute()):')),
         ]
         module = ast.parse(current)
         module.body = [node for node in module.body if not isinstance(node, ast.FunctionDef)
                        or node.name != 'signed_pack_product']
-        mutations.append(ast.unparse(module))
-        for index, changed in enumerate(mutations):
-            self.assertNotEqual(changed, current)
+        mutations.append((current, ast.unparse(module)))
+        for index, (source, changed) in enumerate(mutations):
+            self.assertNotEqual(changed, source)
             with self.subTest(mutation=index), self.assertRaises(ValueError):
                 bundle._current_core_import_view(changed, path, current=True)
 

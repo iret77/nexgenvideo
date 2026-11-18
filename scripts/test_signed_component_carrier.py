@@ -126,7 +126,7 @@ class SignedComponentCarrierTests(unittest.TestCase):
         job = 'actions/jobs/' + str(self.selected['jobID'])
         proof = 'actions/artifacts/' + str(self.selected['proofArtifact']['id'])
         payload = 'actions/artifacts/' + str(self.selected['payloadArtifact']['id'])
-        changes = [(run, 'head_sha', '0' * 40), (run, 'actor', {'login': 'foreign'}),
+        changes = [(run, 'id', 1), (run, 'head_sha', '0' * 40), (run, 'actor', {'login': 'foreign'}),
             (job, 'conclusion', 'failure'), (job, 'name', 'release'), (proof, 'digest', 'sha256:' + '0' * 64),
             (proof, 'size_in_bytes', 1), (proof, 'expired', True), (payload, 'expired', True),
             (payload, 'id', 13769391943), (payload, 'workflow_run', {'id': 1, 'head_sha': '0' * 40})]
