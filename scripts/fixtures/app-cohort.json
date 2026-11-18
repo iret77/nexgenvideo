@@ -23,6 +23,7 @@
     "script/actionlint-tool/go.sum",
     "script/actionlint-tool/main.go",
     "script/actionlint-tool/main_test.go",
+    "scripts/app123_runtime_diagnostic.py",
     "scripts/app_cohort_v2.py",
     "scripts/app_release_v2.py",
     "scripts/bpy_runtime_acceptance.py",

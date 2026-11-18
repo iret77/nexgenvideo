@@ -15,7 +15,7 @@ on:
       candidate_kind:
         description: Signed release verification or targeted failed CI diagnostics
         type: choice
-        options: [native-pointer-guard-snapshot, native-app-native-failure-diagnostic, native-app-targets, native-app-build-plan, signed-release, signed-bpy, signed-journey, signed-transport, native-retained-failures, native-scene-history-hierarchy, native-scene-pointer-delivery, native-segment-geometry, native-button-query, native-button-query-crash, native-button-query-crash-reuse, native-export-color, ci-runtime, ci-bpy-open-diagnostic, ci-bpy-resource-diagnostic, ci-app-test-diagnostic, ci-app-glow-replay, ci-app-full-replay, ci-builtin-blur, ci-builtin-blur-scribble, ci-builtin-blur-floor, ci-builtin-blur-preheat, ci-glow-context]
+        options: [native-pointer-guard-snapshot, native-app-native-failure-diagnostic, native-app-targets, native-app-build-plan, signed-release, signed-bpy, signed-journey, signed-transport, app123-runtime-diagnostic, native-retained-failures, native-scene-history-hierarchy, native-scene-pointer-delivery, native-segment-geometry, native-button-query, native-button-query-crash, native-button-query-crash-reuse, native-export-color, ci-runtime, ci-bpy-open-diagnostic, ci-bpy-resource-diagnostic, ci-app-test-diagnostic, ci-app-glow-replay, ci-app-full-replay, ci-builtin-blur, ci-builtin-blur-scribble, ci-builtin-blur-floor, ci-builtin-blur-preheat, ci-glow-context]
         default: signed-release
       run_id:
         description: "Original producer workflow run"
@@ -618,8 +618,18 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+      - name: Bind the original Build 123 failure, signed artifact and source proof
+        if: inputs.candidate_kind == 'app123-runtime-diagnostic'
+        run: python3 scripts/app123_runtime_diagnostic.py bind --output "$RUNNER_TEMP/app123-diagnostic-binding"
+      - uses: actions/upload-artifact@v4
+        if: inputs.candidate_kind == 'app123-runtime-diagnostic'
+        with:
+          name: app123-runtime-diagnostic-binding
+          path: ${{ runner.temp }}/app123-diagnostic-binding/
+          if-no-files-found: error
+          retention-days: 90
       - name: Bind the successful release job and immutable artifact
-        if: inputs.candidate_kind != 'native-pointer-guard-snapshot' && inputs.candidate_kind != 'native-app-native-failure-diagnostic' && inputs.candidate_kind != 'native-app-targets' && inputs.candidate_kind != 'native-app-build-plan' && inputs.candidate_kind != 'native-retained-failures' && inputs.candidate_kind != 'native-scene-history-hierarchy' && inputs.candidate_kind != 'native-scene-pointer-delivery' && inputs.candidate_kind != 'native-segment-geometry' && inputs.candidate_kind != 'native-button-query' && inputs.candidate_kind != 'native-button-query-crash' && inputs.candidate_kind != 'native-button-query-crash-reuse' && inputs.candidate_kind != 'native-export-color' && inputs.candidate_kind != 'ci-bpy-resource-diagnostic' && inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor' && inputs.candidate_kind != 'ci-builtin-blur-preheat' && inputs.candidate_kind != 'ci-glow-context'
+        if: inputs.candidate_kind != 'native-pointer-guard-snapshot' && inputs.candidate_kind != 'native-app-native-failure-diagnostic' && inputs.candidate_kind != 'native-app-targets' && inputs.candidate_kind != 'native-app-build-plan' && inputs.candidate_kind != 'app123-runtime-diagnostic' && inputs.candidate_kind != 'native-retained-failures' && inputs.candidate_kind != 'native-scene-history-hierarchy' && inputs.candidate_kind != 'native-scene-pointer-delivery' && inputs.candidate_kind != 'native-segment-geometry' && inputs.candidate_kind != 'native-button-query' && inputs.candidate_kind != 'native-button-query-crash' && inputs.candidate_kind != 'native-button-query-crash-reuse' && inputs.candidate_kind != 'native-export-color' && inputs.candidate_kind != 'ci-bpy-resource-diagnostic' && inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor' && inputs.candidate_kind != 'ci-builtin-blur-preheat' && inputs.candidate_kind != 'ci-glow-context'
         env:
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_KIND: ${{ inputs.candidate_kind }}
@@ -644,7 +654,7 @@ jobs:
             --candidate-kind "$CANDIDATE_KIND" \
             --packaging-producer-source "$PACKAGING_PRODUCER_SOURCE" --packaging-provenance-artifact-id "$PACKAGING_PROVENANCE_ARTIFACT_ID" --packaging-provenance-artifact-sha256 "$PACKAGING_PROVENANCE_ARTIFACT_SHA256" "${extra[@]}"
       - uses: actions/upload-artifact@v4
-        if: inputs.candidate_kind != 'native-pointer-guard-snapshot' && inputs.candidate_kind != 'native-app-native-failure-diagnostic' && inputs.candidate_kind != 'native-app-targets' && inputs.candidate_kind != 'native-app-build-plan' && inputs.candidate_kind != 'native-retained-failures' && inputs.candidate_kind != 'native-scene-history-hierarchy' && inputs.candidate_kind != 'native-scene-pointer-delivery' && inputs.candidate_kind != 'native-segment-geometry' && inputs.candidate_kind != 'native-button-query' && inputs.candidate_kind != 'native-button-query-crash' && inputs.candidate_kind != 'native-button-query-crash-reuse' && inputs.candidate_kind != 'native-export-color' && inputs.candidate_kind != 'ci-bpy-resource-diagnostic' && inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor' && inputs.candidate_kind != 'ci-builtin-blur-preheat' && inputs.candidate_kind != 'ci-glow-context'
+        if: inputs.candidate_kind != 'native-pointer-guard-snapshot' && inputs.candidate_kind != 'native-app-native-failure-diagnostic' && inputs.candidate_kind != 'native-app-targets' && inputs.candidate_kind != 'native-app-build-plan' && inputs.candidate_kind != 'app123-runtime-diagnostic' && inputs.candidate_kind != 'native-retained-failures' && inputs.candidate_kind != 'native-scene-history-hierarchy' && inputs.candidate_kind != 'native-scene-pointer-delivery' && inputs.candidate_kind != 'native-segment-geometry' && inputs.candidate_kind != 'native-button-query' && inputs.candidate_kind != 'native-button-query-crash' && inputs.candidate_kind != 'native-button-query-crash-reuse' && inputs.candidate_kind != 'native-export-color' && inputs.candidate_kind != 'ci-bpy-resource-diagnostic' && inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor' && inputs.candidate_kind != 'ci-builtin-blur-preheat' && inputs.candidate_kind != 'ci-glow-context'
         with:
           name: diagnostic-candidate-identity
           path: ${{ runner.temp }}/candidate-metadata/*.json
@@ -895,6 +905,40 @@ jobs:
           name: retained-origin-diagnostic-acceptance-${{ github.job }}-${{ strategy.job-index || 0 }}-a${{ github.run_attempt }}
           path: ${{ runner.temp }}/retained-packaging-supplements/
           if-no-files-found: ignore
+          retention-days: 90
+
+  app123-runtime-diagnostic:
+    needs: source
+    if: inputs.candidate_kind == 'app123-runtime-diagnostic'
+    runs-on: macrunner
+    timeout-minutes: 52
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-xcode-27
+      - uses: ./.github/actions/setup-native-test-python
+      - uses: actions/download-artifact@v4
+        with:
+          name: app123-runtime-diagnostic-binding
+          path: ${{ runner.temp }}/app123-diagnostic-binding
+      - name: Capture the three Build 123 runtime failures
+        run: |
+          python3 scripts/app123_runtime_diagnostic.py observe \
+            --binding "$RUNNER_TEMP/app123-diagnostic-binding/identity.json" \
+            --output "$RUNNER_TEMP/app123-runtime-observations"
+      - name: Archive the original observations without following links
+        if: always()
+        run: |
+          python3 scripts/app123_runtime_diagnostic.py seal \
+            --output "$RUNNER_TEMP/app123-runtime-observations" \
+            --archive "$RUNNER_TEMP/app123-runtime-observations.zip"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: app123-runtime-observations-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/app123-runtime-observations.zip
+          if-no-files-found: error
           retention-days: 90
 
   native-retained-failures:
