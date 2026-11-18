@@ -78,6 +78,7 @@
     "scripts/test_isolated_test_home.py",
     "scripts/test_model_capability_research.py",
     "scripts/test_native_app_failure_diagnostic.py",
+    "scripts/test_native_app_target_build.py",
     "scripts/test_native_pointer_guard_diagnostic.py",
     "scripts/test_native_test_python_workflow.py",
     "scripts/test_notarize.py",
