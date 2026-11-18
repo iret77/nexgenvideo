@@ -238,6 +238,113 @@ class NativeAppTargetWorkflowTests(unittest.TestCase):
 
 
 class CaptureOriginalRetentionTests(unittest.TestCase):
+    def test_capture_failure_retains_owned_watchdog_originals_without_recording_folder(self):
+        import hang_diagnostic_acceptance as capture
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            output = home / "evidence"
+            base = home / "Library/Logs/NexGenVideo"
+            report = base / "NexGenVideo-current-main-thread-hang.json"
+            sample = report.with_name(report.stem + ".sample.txt")
+            raw_sample = b"raw partial sample before timeout\x00\xff"
+            raw_report = json.dumps({"processID": 123, "sampleStatus": "timedOut",
+                                     "sampleFilenameIfAvailable": sample.name}).encode()
+            error = RuntimeError("diagnostic self-test did not recover")
+
+            def fail(args):
+                base.mkdir(parents=True)
+                report.write_bytes(raw_report)
+                sample.write_bytes(raw_sample)
+                capture._capture_processes[123] = "wait"
+                raise error
+
+            with patch.object(capture.Path, "home", return_value=home), \
+                    patch.object(sys, "argv", ["capture", "App.app", "Symbols.dSYM", "--output", str(output)]), \
+                    patch.object(capture, "verify", side_effect=fail):
+                with self.assertRaises(RuntimeError) as raised:
+                    capture.main()
+            self.assertIs(raised.exception, error)
+            with zipfile.ZipFile(output / "capture-recordings.zip") as archive:
+                self.assertEqual(archive.read("watchdog/" + report.name), raw_report)
+                self.assertEqual(archive.read("watchdog/" + sample.name), raw_sample)
+            receipt = json.loads((output / "capture-originals.json").read_text())
+            self.assertEqual(receipt["recordings"], [])
+            self.assertFalse(receipt["captureErrors"])
+            self.assertEqual(receipt["watchdogReports"][0]["sampleStatus"], "timedOut")
+            self.assertEqual(receipt["watchdogReports"][0]["files"][1]["sha256"],
+                             hashlib.sha256(raw_sample).hexdigest())
+
+    def test_watchdog_retention_refuses_old_foreign_and_escaping_samples(self):
+        import hang_diagnostic_acceptance as capture
+        with tempfile.TemporaryDirectory() as directory:
+            base, output = Path(directory) / "logs", Path(directory) / "evidence"
+            base.mkdir(); output.mkdir()
+            before = set()
+            for name, pid in (("old", 123), ("foreign", 456), ("escaped", 123), ("linked", 123)):
+                report = base / f"NexGenVideo-{name}-main-thread-hang.json"
+                sample_name = report.stem + ".sample.txt"
+                report.write_text(json.dumps({"processID": pid, "sampleStatus": "pending",
+                    "sampleFilenameIfAvailable": "../../outside" if name == "escaped" else sample_name}))
+                if name == "old": before.add(report)
+                if name == "linked":
+                    outside = Path(directory) / "outside"
+                    outside.write_bytes(b"foreign bytes must not be archived")
+                    (base / sample_name).symlink_to(outside)
+            with patch.dict(capture._capture_processes, {123: "wait"}, clear=True):
+                receipt = capture.retain_capture_recordings(base / "HangIncidents", set(), output,
+                                                             before_watchdog=before, home=Path(directory))
+            with zipfile.ZipFile(output / "capture-recordings.zip") as archive:
+                self.assertEqual(archive.namelist(), [])
+            self.assertEqual(receipt["watchdogReports"], [])
+            self.assertEqual(receipt["unmatched"], [{"name": "NexGenVideo-foreign-main-thread-hang.json",
+                                                     "reason": "unowned-watchdog-process"}])
+            self.assertEqual(len(receipt["captureErrors"]), 2)
+
+    def test_retention_confines_log_ancestors_but_accepts_canonical_home_alias(self):
+        import hang_diagnostic_acceptance as capture
+        for linked in ("Library", "Library/Logs", "Library/Logs/NexGenVideo"):
+            with self.subTest(linked=linked), tempfile.TemporaryDirectory() as directory:
+                home, outside, output = (Path(directory) / name for name in ("home", "outside", "evidence"))
+                home.mkdir(); outside.mkdir(); output.mkdir()
+                link = home / linked
+                link.parent.mkdir(parents=True, exist_ok=True)
+                link.symlink_to(outside, target_is_directory=True)
+                root = home / "Library/Logs/NexGenVideo/HangIncidents"
+                report = root.parent / "NexGenVideo-owned-main-thread-hang.json"
+                report.parent.mkdir(parents=True, exist_ok=True)
+                report.write_text(json.dumps({"processID": 123,
+                    "sampleFilenameIfAvailable": report.stem + ".sample.txt"}))
+                with patch.dict(capture._capture_processes, {123: "wait"}, clear=True):
+                    receipt = capture.retain_capture_recordings(root, set(), output, home=home)
+                self.assertFalse((output / "capture-recordings.zip").exists())
+                self.assertEqual(receipt["recordings"], [])
+                self.assertEqual(receipt["watchdogReports"], [])
+                self.assertEqual(receipt["captureErrors"], [{"error": "ValueError"}])
+                self.assertEqual(json.loads((output / "capture-originals.json").read_text())["captureErrors"],
+                                 [{"error": "ValueError"}])
+        for invalid in ("home-itself", "outside", "dotdot"):
+            with self.subTest(invalid=invalid), tempfile.TemporaryDirectory() as directory:
+                home, output = Path(directory) / "home", Path(directory) / "evidence"
+                home.mkdir(); output.mkdir()
+                root = {"home-itself": home, "outside": Path(directory) / "outside/HangIncidents",
+                        "dotdot": home / "Library/../Logs/HangIncidents"}[invalid]
+                receipt = capture.retain_capture_recordings(root, set(), output, home=home)
+                self.assertFalse((output / "capture-recordings.zip").exists())
+                self.assertEqual(receipt["captureErrors"], [{"error": "ValueError"}])
+        with tempfile.TemporaryDirectory() as directory:
+            home, alias, output = (Path(directory) / name for name in ("home", "alias", "evidence"))
+            home.mkdir(); output.mkdir(); alias.symlink_to(home, target_is_directory=True)
+            root = alias / "Library/Logs/NexGenVideo/HangIncidents"
+            root.parent.mkdir(parents=True)
+            report = root.parent / "NexGenVideo-owned-main-thread-hang.json"
+            raw = json.dumps({"processID": 123, "sampleFilenameIfAvailable": report.stem + ".sample.txt"}).encode()
+            report.write_bytes(raw)
+            with patch.dict(capture._capture_processes, {123: "wait"}, clear=True):
+                receipt = capture.retain_capture_recordings(root, set(), output, home=alias)
+            self.assertEqual(receipt["captureErrors"], [])
+            with zipfile.ZipFile(output / "capture-recordings.zip") as archive:
+                self.assertEqual(archive.read("watchdog/" + report.name), raw)
+
     def test_initial_capture_failure_preserves_original_exception_and_owned_bytes(self):
         import hang_diagnostic_acceptance as capture
         with tempfile.TemporaryDirectory() as directory:
@@ -314,7 +421,7 @@ class CaptureOriginalRetentionTests(unittest.TestCase):
             secret.write_bytes(b"must never be archived")
             (root / "linked/escape").symlink_to(secret)
             with patch.dict(capture._capture_processes, {123: "wait"}, clear=True):
-                receipt = capture.retain_capture_recordings(root, set(), output)
+                receipt = capture.retain_capture_recordings(root, set(), output, home=Path(directory))
             with zipfile.ZipFile(output / "capture-recordings.zip") as archive:
                 self.assertEqual(archive.namelist(), [])
             self.assertEqual(receipt["unmatched"], [{"name": "foreign", "reason": "unowned-process"}])

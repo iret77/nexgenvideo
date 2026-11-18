@@ -7,7 +7,7 @@ mkdir "$actionlint_dir"
 export GOTOOLCHAIN=local GOWORK=off CGO_ENABLED=0
 (
   cd script/actionlint-tool
-  python3 ../../scripts/isolated_test_home.py --home "$RUNNER_TEMP/actionlint-test-home" -- go test -mod=readonly .
+  python3 ../../scripts/isolated_test_home.py --home "$RUNNER_TEMP/actionlint-test-home" -- go test -count=1 -mod=readonly .
   go build -mod=readonly -trimpath -o "$actionlint_dir/actionlint" .
 )
 "$actionlint_dir/actionlint" -config-file .github/actionlint.yaml -shellcheck= -pyflakes= "$@"

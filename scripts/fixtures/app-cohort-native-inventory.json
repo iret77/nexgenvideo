@@ -1,5 +1,5 @@
 {
-  "appSourceSHA": "1134a04877312efa91e414c87edfc595f2a8ab82",
+  "appSourceSHA": "a2a24be2a7e0f6ae9c0bd4df8ced06684e7bda35",
   "expectedActualExecutions": 4666,
   "modules": {
     "app": {
@@ -2129,9 +2129,9 @@
         "NexGenVideoTests.NativePointerInteractionTests/aLostUpGetsOnlyOneReleaseCleanup()/NativeButtonInteractionTests.swift:1307:6",
         "NexGenVideoTests.NativePointerInteractionTests/actualCompactButtonsUseOneTaggedSystemClickEach()/NativeButtonInteractionTests.swift:1008:6",
         "NexGenVideoTests.NativePointerInteractionTests/actualNativeControlAndMenuTrackingKeepTheirCallbacks()/NativeButtonInteractionTests.swift:1174:6",
-        "NexGenVideoTests.NativePointerInteractionTests/canonicalNativeAccessibilityFailuresNeverPostDown()/NativeButtonInteractionTests.swift:1684:6",
-        "NexGenVideoTests.NativePointerInteractionTests/canonicalNativeAccessibilityHitKeepsSystemInputAndRealFieldFocus()/NativeButtonInteractionTests.swift:1616:6",
-        "NexGenVideoTests.NativePointerInteractionTests/canonicalNativeAccessibilityIdentityAndGeometryAreRevalidatedBeforeDown()/NativeButtonInteractionTests.swift:1808:6",
+        "NexGenVideoTests.NativePointerInteractionTests/canonicalNativeAccessibilityFailuresNeverPostDown()/NativeButtonInteractionTests.swift:1690:6",
+        "NexGenVideoTests.NativePointerInteractionTests/canonicalNativeAccessibilityHitKeepsSystemInputAndRealFieldFocus()/NativeButtonInteractionTests.swift:1622:6",
+        "NexGenVideoTests.NativePointerInteractionTests/canonicalNativeAccessibilityIdentityAndGeometryAreRevalidatedBeforeDown()/NativeButtonInteractionTests.swift:1814:6",
         "NexGenVideoTests.NativePointerInteractionTests/changedAccessibilityHitCannotBorrowTheOriginalGeometry()/NativeButtonInteractionTests.swift:1191:6",
         "NexGenVideoTests.NativePointerInteractionTests/concurrentButtonPreparationCannotMoveTheOwnedPointer()/NativeButtonInteractionTests.swift:1384:6",
         "NexGenVideoTests.NativePointerInteractionTests/coveredForeignAndInvalidTargetsNeverPostDown()/NativeButtonInteractionTests.swift:1108:6",
@@ -4798,8 +4798,8 @@
     "Package.resolved": "530cdaed0a29a65181353d86d05cf9dc04890cc2",
     "Package.swift": "37f605bfb8cdccc48821b39484c819ba3e5eff43",
     "Runtime": "910b87b08a3a8c976e0f2502580c843b0df74154",
-    "Sources": "9a17c716ff57e80486088cdbb9cc842e1a6de3b3",
-    "Tests": "d7768d9c333733901522f5ff9106016473a21a5c",
+    "Sources": "0a3c6557f7f02d0391790ec09ea81dd9e1071fef",
+    "Tests": "7b241ae6664a64a8ac03566121f67e45a075cae2",
     "Vendor": "51e93c100e00dcd196edac0e70e1af921d52055a",
     "plugins": "b75e017d3145010368ae417bc410574f3f0300c1"
   },

@@ -1515,6 +1515,7 @@ enum NativeAcceptancePointer {
         var posted: [[String: Any]] = []
         var movement: [String: Any] = [:]
         var movementTargetComparisons: [String: Bool] = [:]
+        var movementTarget: [String: Any] = [:]
         let preDownClauseNames = ["pointerX", "pointerY", "buttonReleased", "originalTarget"]
         var preDownClauses = Dictionary(uniqueKeysWithValues: preDownClauseNames.map { ($0, "NOT_EVALUATED") })
         var preDownFirstFailure: String?
@@ -1544,6 +1545,7 @@ enum NativeAcceptancePointer {
                 "localMonitorDownObserved": delivery.down, "localMonitorUpObserved": delivery.up,
                 "upDeliveryAcknowledged": false, "movement": movement,
                 "movementTargetComparisons": movementTargetComparisons,
+                "movementTarget": movementTarget,
                 "preDownGuard": ["firstFailedClause": preDownFirstFailure ?? "NONE",
                     "clauses": preDownClauseNames.map { ["name": $0, "status": preDownClauses[$0] ?? "NOT_EVALUATED"] },
                     "actualScreenPoint": preDownActualPoint.map { [$0.x, $0.y] } ?? [],
@@ -1558,8 +1560,10 @@ enum NativeAcceptancePointer {
             try Task.checkCancellation()
             try await move(to: original.quartzPoint, window: window, token: token, source: source, tag: tag,
                            validate: {
-                guard same(original, try target(probe, window: window, fraction: fraction, windowFailure: reportWindowFailure,
-                                                accessibilityFailure: reportAccessibilityFailure), comparisons: &movementTargetComparisons) else {
+                let next = try target(probe, window: window, fraction: fraction, windowFailure: reportWindowFailure,
+                                      accessibilityFailure: reportAccessibilityFailure)
+                movementTarget = next.evidence
+                guard same(original, next, comparisons: &movementTargetComparisons) else {
                     throw GateBlocked("The original native pointer target changed before movement.")
                 }
             }, record: { value in

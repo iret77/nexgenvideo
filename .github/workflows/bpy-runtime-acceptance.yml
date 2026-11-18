@@ -200,6 +200,7 @@ jobs:
           PYTHON
           fi
       - name: Relocate the exact app and prepare denied resources
+        id: boundary_inputs
         env:
           HOME: ${{ runner.temp }}/nexgenvideo-test-home
           CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
@@ -621,8 +622,11 @@ jobs:
           [ -z "$after" ] || { echo "orphan bpy workers: $after"; exit 1; }
           du -sk "$APP" > "$EVIDENCE/app-size-kib.txt"
       - name: Prove both sandbox boundary slots using an explicitly derived fixture
+        if: ${{ !cancelled() && steps.boundary_inputs.outcome == 'success' && (inputs.packaging_producer_source_sha == '' || steps.app_bytes_before.outcome == 'success') }}
         timeout-minutes: 12
         env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
           EXPECTED_SOURCE: ${{ inputs.expected_source_sha || github.sha }}
         run: |
           python3 scripts/bpy_boundary_acceptance.py "$RUNNER_TEMP/relocated/NexGenVideo.app" \

@@ -131,6 +131,45 @@ def active_publication_steps(workflow, artifact_only, dry_run, resumed=False):
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
+    def test_boundary_slots_run_after_native_failure_only_with_verified_inputs(self):
+        workflow = yaml.load((ROOT / '.github/workflows/bpy-runtime-acceptance.yml').read_text(), Loader=yaml.BaseLoader)
+        steps = workflow['jobs']['runtime']['steps']
+        prepare = next(step for step in steps if step.get('name') == 'Relocate the exact app and prepare denied resources')
+        boundary = next(step for step in steps if step.get('name') == 'Prove both sandbox boundary slots using an explicitly derived fixture')
+        self.assertNotIn('continue-on-error', prepare)
+        self.assertNotIn('continue-on-error', boundary)
+        self.assertIn('scripts/bpy_boundary_acceptance.py', boundary['run'])
+        for key in ('HOME', 'CFFIXED_USER_HOME'):
+            self.assertEqual(boundary['env'][key], '${{ runner.temp }}/nexgenvideo-test-home')
+        condition = boundary.get('if', '${{ success() }}').removeprefix('${{').removesuffix('}}').strip()
+        for cancelled in (False, True):
+            for prepared in ('success', 'failure', 'skipped'):
+                for packaging in ('', 'a' * 40):
+                    for byte_proof in ('success', 'failure', 'skipped'):
+                        for native in ('success', 'failure', 'skipped'):
+                            with self.subTest(cancelled=cancelled, prepared=prepared, packaging=packaging,
+                                              byte_proof=byte_proof, native=native):
+                                expression = condition
+                                values = {f"steps.{prepare['id']}.outcome": prepared,
+                                    'steps.app_bytes_before.outcome': byte_proof,
+                                    'steps.native.outcome': native,
+                                    'inputs.packaging_producer_source_sha': packaging}
+                                for token, value in values.items():
+                                    expression = expression.replace(token, repr(value))
+                                has_status = re.search(r'\b(?:success|failure|cancelled|always)\(\)', condition)
+                                expression = expression.replace('!cancelled()', repr(not cancelled))
+                                expression = expression.replace('cancelled()', repr(cancelled))
+                                expression = expression.replace('success()', repr(native == 'success'))
+                                expression = expression.replace('failure()', repr(native == 'failure'))
+                                expression = expression.replace('always()', 'True').replace('&&', ' and ').replace('||', ' or ')
+                                tree = ast.parse(expression, mode='eval')
+                                self.assertTrue(all(isinstance(node, (ast.Expression, ast.BoolOp, ast.And,
+                                    ast.Or, ast.Compare, ast.Eq, ast.NotEq, ast.Constant, ast.Load)) for node in ast.walk(tree)))
+                                actual = (has_status is not None or native == 'success') and bool(eval(
+                                    compile(tree, '<boundary condition>', 'eval'), {'__builtins__': {}}))
+                                expected = not cancelled and prepared == 'success' and (not packaging or byte_proof == 'success')
+                                self.assertEqual(actual, expected)
+
     def test_compiled_source_handoff_routes_only_the_authenticated_singleton_and_binds_both_receivers(self):
         action = (ROOT / '.github/actions/prepare-bpy-source/action.yml').read_text()
         self.assertIn('if [ "${NGV_CURRENT_COMPILED_SOURCE_REUSE:-}" = true ]; then', action)

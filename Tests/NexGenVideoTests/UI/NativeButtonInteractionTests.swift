@@ -1433,6 +1433,11 @@ struct NativePointerInteractionTests {
             try await fixture.context.wait("native viewport fixture", driver: fixture.driver, clauses: ["active", "key", "field-probe"]) {
                 fixture.context.operand("active", NSApp.isActive) && fixture.context.operand("key", fixture.window.isKeyWindow) && fixture.context.operand("field-probe", fixture.probe("field") != nil)
             }
+            let viewportSize = try #require(fixture.window.contentView?.bounds.size)
+            let windowReadyBegan = ProcessInfo.processInfo.systemUptime
+            try await ProductionSceneUIAcceptance.waitForViewport(viewportSize, driver: fixture.driver)
+            let windowReadySeconds = ProcessInfo.processInfo.systemUptime - windowReadyBegan
+            #expect(windowReadySeconds >= 0.25)
             let field = try #require(fixture.probe("field"))
             let scroll = try #require(field.enclosingScrollView)
             scroll.scrollerStyle = style
@@ -1471,6 +1476,7 @@ struct NativePointerInteractionTests {
             #expect(fixture.capture.count("Later") == 1)
             try delivered("Later", in: fixture)
             try fixture.record("viewport", ["style": style.rawValue, "fieldFrame": NSStringFromRect(fieldFrame),
+                "windowReadySeconds": windowReadySeconds,
                 "viewport": NSStringFromRect(clip.bounds), "before": [before.x, before.y],
                 "after": [clip.bounds.origin.x, clip.bounds.origin.y], "laterInitiallyOutside": initiallyOutside,
                 "wheels": Array(wheels), "callbacks": fixture.capture.callbacks])
