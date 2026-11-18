@@ -1180,6 +1180,7 @@ class ExternalTestBundleTests(unittest.TestCase):
                           else 'Receipt verifier is not valid Python' if name in {'scripts/app_cohort_v2.py', 'scripts/app_release_v2.py', 'scripts/release_checkpoint.py'}
                           else 'Packaging verifier is not valid Python' if name == 'scripts/retained_packaging.py'
                           else 'Metadata transport is not valid Python' if name == 'scripts/retained_app_test_products.py'
+                          else 'External runner HOME verifier is not valid Python' if name == 'scripts/external-gui/acceptance.py'
                           else 'Compiled UI test source, project or reachable shared helper changed')
                 self.assert_compiled_guard_rejects(fixture, reason)
             fixture.original[name] = original

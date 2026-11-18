@@ -1042,7 +1042,10 @@ def _cohort_ci_additions(prior, current, changes, known_helpers, client_inputs):
 
 def _home_oracle_import_view(text):
     import ast
-    module = ast.parse(text)
+    try:
+        module = ast.parse(text)
+    except (SyntaxError, UnicodeDecodeError):
+        raise ValueError('External runner HOME verifier is not valid Python') from None
     functions = [node for node in module.body if isinstance(node, ast.FunctionDef)
                  and node.name == 'run_external_test']
     require(len(functions) == 1, 'Ambiguous external runner HOME verifier')
