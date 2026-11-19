@@ -943,9 +943,24 @@ nonisolated final class BpyHostLauncher: @unchecked Sendable {
             case .autoexecPositive: childKind = .autoexec
             case .boundary: childKind = .boundary
             }
+            let heldSample = try observation.sample()
+            guard let heldWorker = heldSample.worker, heldWorker.pid == child.pid, heldWorker.start == child.start else {
+                throw BpyLaunchDeferral.observation
+            }
+            let sampledAt = try BpyRuntimeClock.awakeSeconds()
+            let heldResponse = observedResponse(for: launch, sample: heldSample)
             _ = try memory.releaseChild(launch.spec.permit, child: childKind) {
                 try BpyLaunchGateRelease.write(lock: launch.lock, stopped: { launch.stop != nil },
-                    writing: { try launch.childGate.release() }, released: { launch.childReleased = true })
+                    writing: {
+                        guard try BpyRuntimeClock.awakeSeconds() - sampledAt <= BpyMemoryState.observationBudget else {
+                            throw BpyLaunchDeferral.observation
+                        }
+                        try launch.childGate.release()
+                    }, released: {
+                        launch.snapshot = heldResponse
+                        launch.snapshotAt = sampledAt
+                        launch.childReleased = true
+                    })
             }
         }
         guard let observation = launch.lock.withLock({ launch.observation }) else { throw POSIXError(.EIO) }
@@ -987,9 +1002,13 @@ nonisolated final class BpyHostLauncher: @unchecked Sendable {
         if let clock = BpyRuntimeClock.read() {
             BpyRuntimeObservation.shared.processes(supervisor: sample.supervisor, worker: worker, service: launch.service, clock: clock)
         }
-        let response = BpyMonitorResponse(status: .observed, request: launch.request, epoch: launch.epoch,
-            service: launch.service, supervisor: sample.supervisor, descendants: sample.descendants, worker: worker, vnodes: sample.vnodes)
+        let response = observedResponse(for: launch, sample: sample)
         launch.lock.withLock { launch.snapshot = response; launch.snapshotAt = now }
+    }
+
+    private func observedResponse(for launch: Launch, sample: BpyProcessObservation.Snapshot) -> BpyMonitorResponse {
+        BpyMonitorResponse(status: .observed, request: launch.request, epoch: launch.epoch, service: launch.service,
+            supervisor: sample.supervisor, descendants: sample.descendants, worker: sample.worker, vnodes: sample.vnodes)
     }
 
     private func response(_ request: BpyMonitorRequest, launch: Launch,
