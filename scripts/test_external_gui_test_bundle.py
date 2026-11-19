@@ -774,10 +774,12 @@ class ExternalTestBundleTests(unittest.TestCase):
         runtime_paths = ('scripts/signed_component_carrier.py', 'scripts/fixtures/signed-component-carrier-1170.json')
         workflow = '.github/workflows/external-gui-acceptance.yml'
         action = '.github/actions/setup-xcode-27/action.yml'
+        helper = 'scripts/external-gui/test_bundle.py'
         inputs = {'scripts/external-gui/' + name for name in journey.TEST_INPUTS} | set(journey.SHARED_INPUTS)
         names = inputs | {workflow, action, *runtime_paths}
         if historical:
-            consumer = {name: self.qualified_consumer_source(name) for name in sorted(names)}
+            consumer = {name: self.qualified_consumer_source(name) for name in sorted(names - {helper})}
+            consumer[helper] = Path(bundle.__file__).read_bytes()
             repository = self.root / 'qualified-consumer'
             for name, raw in consumer.items():
                 target = repository / name
@@ -798,7 +800,6 @@ class ExternalTestBundleTests(unittest.TestCase):
         journey_helper = 'scripts/external-gui/acceptance.py'
         if legacy_home_oracle:
             original[journey_helper] = self.legacy_home_oracle_source(original[journey_helper])
-        helper = 'scripts/external-gui/test_bundle.py'
         added = {'_safe_function', '_builder_view', '_workflow_build_view', '_guard_import_view',
                  '_source_snapshot', '_compiled_compatibility', 'validate_client_selectors', 'validate_client_source',
                  '_packaging_import_view', '_metadata_api_import_view', '_cohort_ci_additions', '_home_oracle_import_view', '_component_transport_import_view'}
