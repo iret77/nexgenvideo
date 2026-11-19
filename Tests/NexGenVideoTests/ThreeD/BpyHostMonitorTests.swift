@@ -28,8 +28,9 @@ struct BpyHostMonitorTests {
         func inspector() -> BpyHostMonitor.Inspector {
             .init(canonical: { $0.path }, process: { self.process($0) }, descendants: { root in
                 self.lock.withLock { self.processes.values.filter { $0.parent == root.pid } }
-            }, matches: { self.process($0.pid)?.start == $0.start }, vnodes: { _ in
-                try self.lock.withLock {
+            }, matches: { self.process($0.pid)?.start == $0.start }, vnodes: { _, workerDevice in
+                #expect(workerDevice == 1)
+                return try self.lock.withLock {
                     self.vnodeReads += 1
                     if let error = self.inspectionError { throw error }
                     return [.init(device: 1, inode: 42, links: 0, openFlags: 3, logical: 8_192, blocks: 16, path: nil)]
@@ -53,7 +54,7 @@ struct BpyHostMonitorTests {
                 supervisor, child])
             observation = BpyProcessObservation(supervisor: supervisor,
                 workerExecutable: layout.runtime.appendingPathComponent("python/bin/python3.13").path,
-                inspector: kernel.inspector())
+                workerDevice: 1, inspector: kernel.inspector())
             if capture { try observation.captureChild(child) }
         }
     }
@@ -64,6 +65,19 @@ struct BpyHostMonitorTests {
         #expect(sample.worker?.pid == 30)
         #expect(sample.worker?.start == 300)
         #expect(sample.vnodes.first?.inode == 42)
+        let read = UInt32(VM_PROT_READ), readWrite = read | UInt32(VM_PROT_WRITE)
+        #expect(!BpyKernelInspection.retainMappedVnode(device: 2, workerDevice: 1, links: 0,
+            protection: read, maximumProtection: read))
+        #expect(BpyKernelInspection.retainMappedVnode(device: 1, workerDevice: 1, links: 0,
+            protection: read, maximumProtection: read))
+        #expect(BpyKernelInspection.retainMappedVnode(device: 2, workerDevice: nil, links: 0,
+            protection: read, maximumProtection: read))
+        #expect(BpyKernelInspection.retainMappedVnode(device: 2, workerDevice: 1, links: 1,
+            protection: read, maximumProtection: read))
+        #expect(BpyKernelInspection.retainMappedVnode(device: 2, workerDevice: 1, links: 0,
+            protection: read, maximumProtection: readWrite))
+        #expect(BpyKernelInspection.retainMappedVnode(device: 2, workerDevice: 1, links: 0,
+            protection: readWrite, maximumProtection: readWrite))
         f.kernel.set(nil, pid: 20)
         #expect(throws: POSIXError.self) { try f.observation.sample() }
         f.kernel.set(nil, pid: 30)
@@ -148,7 +162,8 @@ struct BpyHostMonitorTests {
         try #require(output.fileHandleForReading.read(upToCount: 5) == Data("ready".utf8))
         let supervisor = try #require(try BpyKernelInspection.process(process.processIdentifier))
         let worker = try #require(BpyKernelInspection.descendants(of: supervisor).first)
-        let observation = BpyProcessObservation(supervisor: supervisor, workerExecutable: worker.executable)
+        let observation = BpyProcessObservation(supervisor: supervisor, workerExecutable: worker.executable,
+                                                workerDevice: nil)
         try observation.captureChild(worker)
         try process.signal(SIGKILL)
         #expect(try process.waitForTermination().signal == SIGKILL)

@@ -248,7 +248,14 @@ nonisolated enum BpyKernelInspection {
         return try matching(process) ? records : []
     }
 
-    static func mappings(_ process: BpyObservedProcess) throws -> [BpyObservedVnode] {
+    static func retainMappedVnode(device: UInt64, workerDevice: UInt64?, links: UInt16,
+                                  protection: UInt32, maximumProtection: UInt32) -> Bool {
+        guard let workerDevice, workerDevice > 0, device > 0, device != workerDevice, links == 0 else { return true }
+        let readOnly = UInt32(VM_PROT_READ)
+        return protection != readOnly || maximumProtection != readOnly
+    }
+
+    static func mappings(_ process: BpyObservedProcess, workerDevice: UInt64? = nil) throws -> [BpyObservedVnode] {
         guard try matches(process) else { return [] }
         let region = UnsafeMutableRawPointer.allocate(byteCount: 1_272, alignment: 8)
         defer { region.deallocate() }
@@ -271,11 +278,16 @@ nonisolated enum BpyKernelInspection {
                 throw failure(.EIO, operation: "mappings.geometry", pid: process.pid, result: Int64(index), argument: address)
             }
             if region.load(fromByteOffset: 100, as: UInt16.self) & UInt16(S_IFMT) == UInt16(S_IFREG) {
-                records.append(.init(device: UInt64(region.load(fromByteOffset: 96, as: UInt32.self)),
-                    inode: region.load(fromByteOffset: 104, as: UInt64.self), links: region.load(fromByteOffset: 102, as: UInt16.self),
-                    openFlags: nil, logical: region.load(fromByteOffset: 184, as: Int64.self),
-                    blocks: region.load(fromByteOffset: 192, as: Int64.self), path: try kernelPath(region, offset: 248,
-                        pid: process.pid, operation: "mappings.path")))
+                let device = UInt64(region.load(fromByteOffset: 96, as: UInt32.self))
+                let links = region.load(fromByteOffset: 102, as: UInt16.self)
+                let path = try kernelPath(region, offset: 248, pid: process.pid, operation: "mappings.path")
+                if retainMappedVnode(device: device, workerDevice: workerDevice, links: links,
+                                     protection: region.load(as: UInt32.self),
+                                     maximumProtection: region.load(fromByteOffset: 4, as: UInt32.self)) {
+                    records.append(.init(device: device, inode: region.load(fromByteOffset: 104, as: UInt64.self),
+                        links: links, openFlags: nil, logical: region.load(fromByteOffset: 184, as: Int64.self),
+                        blocks: region.load(fromByteOffset: 192, as: Int64.self), path: path))
+                }
             }
             address = begin + length
             if address == UInt64.max { return try matches(process) ? records : [] }
