@@ -30,6 +30,7 @@ struct HangDiagnosticTranscript: Codable, Sendable {
         }
     }
 
+    @MainActor
     static func capture(messages: [AgentMessage], streaming: Bool, sessionID: UUID? = nil,
                         dialog: AgentDialog? = nil, spend: SpendApproval? = nil,
                         project: ProjectContext? = nil) {

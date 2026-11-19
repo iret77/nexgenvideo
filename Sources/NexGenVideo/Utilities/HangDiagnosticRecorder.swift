@@ -22,6 +22,8 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
     private let stopping = Atomic<Bool>(false)
     private let startRequested = Atomic<Bool>(false)
     private let ring = DiagnosticRing()
+    private let ringAccess = NSLock()
+    private let ringContentionLosses = Atomic<UInt64>(0)
     private let writer = DispatchQueue(label: "de.h5ventures.nexgenvideo.diagnostic-writer", qos: .utility)
     private let pulseQueue = DispatchQueue(label: "de.h5ventures.nexgenvideo.diagnostic-heartbeat", qos: .utility)
     private let snapshotSlots = DispatchSemaphore(value: 2)
@@ -57,6 +59,11 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
     func record(_ operation: DiagnosticOperation, correlation: UInt64 = 0,
                 end: Bool = false, values: [Double] = []) -> UInt64 {
         guard isEnabled else { return 0 }
+        guard ringAccess.try() else {
+            ringContentionLosses.wrappingAdd(1, ordering: .relaxed)
+            return 0
+        }
+        defer { ringAccess.unlock() }
         return ring.append(operation, correlation: correlation, end: end, values: values)
     }
 
@@ -252,7 +259,7 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
         guard let session else { return }
         let now = ProcessInfo.processInfo.systemUptime
         do {
-            let records = ring.drain()
+            let records = ringAccess.withLock { ring.drain() }
             if !records.isEmpty {
                 let bytes = try JSONEncoder().encode(records)
                 if journalBytes + bytes.count <= 32 * 1024 * 1024 {
@@ -376,7 +383,8 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
                     startupID: id, processID: getpid(), writerUptime: ProcessInfo.processInfo.systemUptime,
                     mainUptime: Double(mainPulse.load(ordering: .relaxed)) / 1_000_000_000,
                     runLoopUptime: Double(loopPulse.load(ordering: .relaxed)) / 1_000_000_000,
-                    dropped: ring.dropped + snapshotLosses.load(ordering: .relaxed),
+                    dropped: ring.dropped + ringContentionLosses.load(ordering: .relaxed)
+                        + snapshotLosses.load(ordering: .relaxed),
                     stopped: stopping.load(ordering: .relaxed)
                 ), at: folder.appendingPathComponent("heartbeat.json"))
             }
@@ -414,6 +422,7 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
         }
     }
 
+    @MainActor
     func snapshot(_ value: HangDiagnosticTranscript, correlation: UInt64) {
         let capturedUptime = ProcessInfo.processInfo.systemUptime
         guard recordsContent, snapshotSlots.wait(timeout: .now()) == .success else {
@@ -467,7 +476,9 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
                 contentBytes += encrypted.count
                 previousSnapshot = value
                 previousFrameDigest = DiagnosticFiles.digest(encoded)
-                record(.replaySnapshot, correlation: correlation, end: true, values: [Double(snapshotOrdinal)])
+                ringAccess.withLock {
+                    ring.append(.replaySnapshot, correlation: correlation, end: true, values: [Double(snapshotOrdinal)])
+                }
             } catch { recordIssue("snapshot-failed", detail: Self.errorCode(error)) }
         }
     }

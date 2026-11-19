@@ -44,7 +44,7 @@ struct BpyHostMonitorTests {
         let supervisor: BpyObservedProcess
         let child: BpyObservedProcess
         let observation: BpyProcessObservation
-        init() throws {
+        init(capture: Bool = true) throws {
             layout = try .init(app: URL(fileURLWithPath: "/Fixture.app"), serviceName: bpyRuntimeServiceNames[0])
             supervisor = .init(pid: 20, start: 200, parent: 1, executable: layout.supervisor.path, footprint: 2_048)
             child = .init(pid: 30, start: 300, parent: 20, executable: layout.supervisor.path, footprint: 4_096)
@@ -54,7 +54,7 @@ struct BpyHostMonitorTests {
             observation = BpyProcessObservation(supervisor: supervisor,
                 workerExecutable: layout.runtime.appendingPathComponent("python/bin/python3.13").path,
                 inspector: kernel.inspector())
-            try observation.captureChild(child)
+            if capture { try observation.captureChild(child) }
         }
     }
 
@@ -74,8 +74,11 @@ struct BpyHostMonitorTests {
     }
 
     @Test func inspectionDenialCannotBecomeEmptySuccessfulMeasurement() throws {
-        let f = try Fixture()
+        let f = try Fixture(capture: false)
         f.kernel.failInspection()
+        #expect(throws: BpyLaunchDeferral.self) { try f.observation.sample() }
+        #expect(f.kernel.vnodeReads == 0)
+        try f.observation.captureChild(f.child)
         #expect(throws: POSIXError.self) { try f.observation.sample() }
         #expect(f.kernel.vnodeReads == 1)
     }

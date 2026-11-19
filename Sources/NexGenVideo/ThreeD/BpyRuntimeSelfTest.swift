@@ -307,7 +307,8 @@ enum BpyRuntimeSelfTest {
             let reply = try call { service.runBoundaryProbe(request, withReply: $0) }
             let decoder = JSONDecoder()
             if let failure = try? decoder.decode(BpyServiceResponse.self, from: reply), !failure.ok {
-                throw BpyRuntimeError.invalidOutput(failure.message ?? "The boundary service rejected the probe.")
+                let reason = failure.message ?? "The boundary service rejected the probe."
+                throw BpyRuntimeError.invalidOutput("Boundary \(mode.rawValue): \(reason)")
             }
             let run = try decoder.decode(BpyBoundaryRun.self, from: reply)
             guard run.report.mode == mode.rawValue, run.supervisorParentProcessIdentifier == getpid(),

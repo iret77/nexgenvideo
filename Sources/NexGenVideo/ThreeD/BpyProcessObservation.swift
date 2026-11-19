@@ -48,6 +48,7 @@ nonisolated final class BpyProcessObservation: @unchecked Sendable {
                       value.executable == supervisor.executable || value.executable == workerExecutable,
                       child.map({ $0.pid == value.pid && $0.start == value.start }) ?? true,
                       try inspector.matches(value) else { throw POSIXError(.EPERM) }
+                guard child != nil else { throw BpyLaunchDeferral.observation }
             } else if let child, let value = try inspector.process(child.pid), value.start == child.start {
                 throw POSIXError(.EBUSY)
             }
