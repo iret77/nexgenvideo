@@ -21,9 +21,7 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
     private let loopPulse = Atomic<UInt64>(0)
     private let stopping = Atomic<Bool>(false)
     private let startRequested = Atomic<Bool>(false)
-    private let ring = DiagnosticRing()
-    private let ringAccess = NSLock()
-    private let ringContentionLosses = Atomic<UInt64>(0)
+    private let journal = DiagnosticEventJournal()
     private let writer = DispatchQueue(label: "de.h5ventures.nexgenvideo.diagnostic-writer", qos: .utility)
     private let pulseQueue = DispatchQueue(label: "de.h5ventures.nexgenvideo.diagnostic-heartbeat", qos: .utility)
     private let snapshotSlots = DispatchSemaphore(value: 2)
@@ -59,12 +57,17 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
     func record(_ operation: DiagnosticOperation, correlation: UInt64 = 0,
                 end: Bool = false, values: [Double] = []) -> UInt64 {
         guard isEnabled else { return 0 }
-        guard ringAccess.try() else {
-            ringContentionLosses.wrappingAdd(1, ordering: .relaxed)
-            return 0
+        return appendRecord(operation, correlation: correlation, end: end, values: values)
+    }
+
+    @discardableResult
+    private func appendRecord(_ operation: DiagnosticOperation, correlation: UInt64,
+                              end: Bool, values: [Double]) -> UInt64 {
+        let uptime = ProcessInfo.processInfo.systemUptime
+        return journal.append { sequence in
+            DiagnosticRecord(sequence: sequence, uptime: uptime, operation: operation, correlation: correlation,
+                             end: end, values: values)
         }
-        defer { ringAccess.unlock() }
-        return ring.append(operation, correlation: correlation, end: end, values: values)
     }
 
     @MainActor
@@ -237,11 +240,15 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
         mainTimer?.invalidate()
         mainTimer = nil
         writer.async { [self] in
-            flush()
+            let wasRecording = timer != nil
+            let recording = wasRecording ? session.map { (folder: $0, id: startupID) } : nil
+            flush(finishing: wasRecording)
             timer?.cancel()
             timer = nil
-            pulseQueue.async { [self] in
+            // Publish the terminal heartbeat before a later writer task can export it.
+            pulseQueue.sync { [self] in
                 pulseTimer?.cancel()
+                if let recording { writeHeartbeat(folder: recording.folder, id: recording.id) }
                 pulseTimer = nil
             }
             if helper?.isRunning == true { helper?.terminate() }
@@ -255,11 +262,20 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
         }
     }
 
-    private func flush() {
+    private func flush(finishing: Bool = false) {
         guard let session else { return }
         let now = ProcessInfo.processInfo.systemUptime
         do {
-            let records = ringAccess.withLock { ring.drain() }
+            let records: [DiagnosticRecord]
+            if finishing {
+                let final = journal.finish(by: .now() + .milliseconds(500))
+                if final.incomplete != 0 {
+                    recordIssue("journal-publication-interrupted", detail: "records=\(final.incomplete)")
+                }
+                records = final.records
+            } else {
+                records = journal.drain()
+            }
             if !records.isEmpty {
                 let bytes = try JSONEncoder().encode(records)
                 if journalBytes + bytes.count <= 32 * 1024 * 1024 {
@@ -378,19 +394,20 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
             guard !stopping.load(ordering: .acquiring) else { return }
             let timer = DispatchSource.makeTimerSource(queue: pulseQueue)
             timer.schedule(deadline: .now(), repeating: .milliseconds(500))
-            timer.setEventHandler { [self] in
-                try? DiagnosticFiles.replace(DiagnosticHeartbeat(
-                    startupID: id, processID: getpid(), writerUptime: ProcessInfo.processInfo.systemUptime,
-                    mainUptime: Double(mainPulse.load(ordering: .relaxed)) / 1_000_000_000,
-                    runLoopUptime: Double(loopPulse.load(ordering: .relaxed)) / 1_000_000_000,
-                    dropped: ring.dropped + ringContentionLosses.load(ordering: .relaxed)
-                        + snapshotLosses.load(ordering: .relaxed),
-                    stopped: stopping.load(ordering: .relaxed)
-                ), at: folder.appendingPathComponent("heartbeat.json"))
-            }
+            timer.setEventHandler { [self] in writeHeartbeat(folder: folder, id: id) }
             pulseTimer = timer
             timer.resume()
         }
+    }
+
+    private func writeHeartbeat(folder: URL, id: UUID) {
+        try? DiagnosticFiles.replace(DiagnosticHeartbeat(
+            startupID: id, processID: getpid(), writerUptime: ProcessInfo.processInfo.systemUptime,
+            mainUptime: Double(mainPulse.load(ordering: .relaxed)) / 1_000_000_000,
+            runLoopUptime: Double(loopPulse.load(ordering: .relaxed)) / 1_000_000_000,
+            dropped: journal.dropped + snapshotLosses.load(ordering: .relaxed),
+            stopped: stopping.load(ordering: .relaxed)
+        ), at: folder.appendingPathComponent("heartbeat.json"))
     }
 
     private func startSampler(folder: URL) {
@@ -476,9 +493,7 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
                 contentBytes += encrypted.count
                 previousSnapshot = value
                 previousFrameDigest = DiagnosticFiles.digest(encoded)
-                ringAccess.withLock {
-                    ring.append(.replaySnapshot, correlation: correlation, end: true, values: [Double(snapshotOrdinal)])
-                }
+                appendRecord(.replaySnapshot, correlation: correlation, end: true, values: [Double(snapshotOrdinal)])
             } catch { recordIssue("snapshot-failed", detail: Self.errorCode(error)) }
         }
     }
@@ -578,5 +593,122 @@ final class HangDiagnosticRecorder: @unchecked Sendable {
                 } catch { continuation.resume(throwing: error) }
             }
         }
+    }
+}
+
+nonisolated final class DiagnosticEventJournal: @unchecked Sendable {
+    private final class Slot {
+        let turn: Atomic<UInt64>
+        var record: DiagnosticRecord?
+
+        init(turn: UInt64) {
+            self.turn = Atomic(turn)
+        }
+    }
+
+    private static let sealedBit: UInt64 = 1 << 63
+    private let slots: [Slot]
+    private let capacity: UInt64
+    private let reservePosition = Atomic<UInt64>(0)
+    private let losses = Atomic<UInt64>(0)
+    private let publication = DispatchSemaphore(value: 0)
+    private var readPosition: UInt64 = 0
+    private var finalized = false
+
+    init(capacity: Int = 8192) {
+        precondition(capacity >= 2)
+        self.capacity = UInt64(capacity)
+        slots = (0..<capacity).map { Slot(turn: UInt64($0)) }
+    }
+
+    var dropped: UInt64 { losses.load(ordering: .relaxed) & ~Self.sealedBit }
+
+    @discardableResult
+    func append(_ makeRecord: (UInt64) -> DiagnosticRecord) -> UInt64 {
+        var position = reservePosition.load(ordering: .relaxed)
+        while position & Self.sealedBit == 0 {
+            let slot = slots[Int(position % capacity)]
+            let turn = slot.turn.load(ordering: .acquiring)
+            let distance = Int64(bitPattern: turn &- position)
+            if distance < 0 {
+                updateLosses(by: 1)
+                return 0
+            }
+            if distance > 0 {
+                position = reservePosition.load(ordering: .relaxed)
+                continue
+            }
+            let next = position &+ 1
+            let reservation = reservePosition.compareExchange(expected: position, desired: next, ordering: .relaxed)
+            guard reservation.exchanged else {
+                position = reservation.original
+                continue
+            }
+            slot.record = makeRecord(next)
+            slot.turn.store(next, ordering: .releasing)
+            if reservePosition.load(ordering: .relaxed) & Self.sealedBit != 0 {
+                publication.signal()
+            }
+            return next
+        }
+        return 0
+    }
+
+    // The serial writer alone consumes and releases slots.
+    func drain() -> [DiagnosticRecord] {
+        guard !finalized else { return [] }
+        return drain(through: reservePosition.load(ordering: .relaxed) & ~Self.sealedBit)
+    }
+
+    func finish(by deadline: DispatchTime) -> (records: [DiagnosticRecord], incomplete: UInt64) {
+        guard !finalized else { return ([], 0) }
+        let boundary = seal()
+        var records = drain(through: boundary)
+        while readPosition < boundary {
+            let wake = publication.wait(timeout: deadline)
+            records.append(contentsOf: drain(through: boundary))
+            if wake == .timedOut { break }
+        }
+        let incomplete = boundary &- readPosition
+        updateLosses(by: incomplete, sealing: true)
+        finalized = true
+        return (records, incomplete)
+    }
+
+    private func updateLosses(by addition: UInt64, sealing: Bool = false) {
+        var state = losses.load(ordering: .relaxed)
+        while state & Self.sealedBit == 0 {
+            let count = state &+ addition
+            let next = sealing ? count | Self.sealedBit : count
+            let update = losses.compareExchange(expected: state, desired: next, ordering: .relaxed)
+            if update.exchanged { return }
+            state = update.original
+        }
+    }
+
+    private func seal() -> UInt64 {
+        var position = reservePosition.load(ordering: .relaxed)
+        while position & Self.sealedBit == 0 {
+            let update = reservePosition.compareExchange(expected: position, desired: position | Self.sealedBit,
+                                                         ordering: .acquiringAndReleasing)
+            if update.exchanged { return position }
+            position = update.original
+        }
+        return position & ~Self.sealedBit
+    }
+
+    private func drain(through boundary: UInt64) -> [DiagnosticRecord] {
+        var records: [DiagnosticRecord] = []
+        while readPosition < boundary {
+            let slot = slots[Int(readPosition % capacity)]
+            let next = readPosition &+ 1
+            guard slot.turn.load(ordering: .acquiring) == next else { break }
+            guard let record = slot.record else { preconditionFailure("Published diagnostic slot has no record") }
+            records.append(record)
+            slot.record = nil
+            slot.turn.store(readPosition &+ capacity, ordering: .releasing)
+            readPosition = next
+        }
+        return records
     }
 }

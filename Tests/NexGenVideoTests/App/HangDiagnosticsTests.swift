@@ -57,7 +57,7 @@ struct HangDiagnosticsTests {
         #expect(FileManager.default.fileExists(atPath: file.path))
     }
 
-    @Test func ringNeverOverwritesUnconsumedEvents() {
+    @Test func ringNeverOverwritesUnconsumedEvents() throws {
         let ring = DiagnosticRing(capacity: 2)
         ring.append(.startup)
         ring.append(.projection)
@@ -65,6 +65,58 @@ struct HangDiagnosticsTests {
         #expect(ring.dropped == 1)
         #expect(ring.drain().map(\.operation) == [.startup, .projection])
         #expect(ring.drain().isEmpty)
+
+        let journal = DiagnosticEventJournal(capacity: 2)
+        func holdNextPublication() throws -> (release: DispatchSemaphore, finished: DispatchGroup) {
+            let reserved = DispatchSemaphore(value: 0)
+            let release = DispatchSemaphore(value: 0)
+            let finished = DispatchGroup()
+            DispatchQueue.global(qos: .userInitiated).async(group: finished) {
+                journal.append { sequence in
+                    reserved.signal()
+                    release.wait()
+                    return DiagnosticRecord(sequence: sequence, uptime: 1, operation: .startup)
+                }
+            }
+            let observed = reserved.wait(timeout: .now() + 5)
+            if observed != .success { release.signal() }
+            try #require(observed == .success)
+            return (release, finished)
+        }
+
+        let first = try holdNextPublication()
+        defer { first.release.signal() }
+        let second = journal.append { DiagnosticRecord(sequence: $0, uptime: 2, operation: .projection) }
+        #expect(second == 2)
+        let held = journal.drain()
+        #expect(held.isEmpty)
+        let refused = journal.append { DiagnosticRecord(sequence: $0, uptime: 3, operation: .markdown) }
+        #expect(refused == 0)
+        #expect(journal.dropped == 1)
+
+        first.release.signal()
+        let published = first.finished.wait(timeout: .now() + 5)
+        try #require(published == .success)
+        let committed = journal.drain()
+        #expect(committed.map(\.sequence) == [1, 2])
+        #expect(committed.map(\.operation) == [.startup, .projection])
+
+        let stalledAtStop = try holdNextPublication()
+        defer { stalledAtStop.release.signal() }
+        let admitted = journal.append { DiagnosticRecord(sequence: $0, uptime: 4, operation: .window) }
+        #expect(admitted == 4)
+        let stop = journal.finish(by: .now())
+        #expect(stop.records.isEmpty)
+        #expect(stop.incomplete == 2)
+        #expect(journal.dropped == 3)
+        let afterSeal = journal.append { DiagnosticRecord(sequence: $0, uptime: 5, operation: .scroll) }
+        #expect(afterSeal == 0)
+        stalledAtStop.release.signal()
+        let late = stalledAtStop.finished.wait(timeout: .now() + 5)
+        try #require(late == .success)
+        let afterStop = journal.drain()
+        #expect(afterStop.isEmpty)
+        #expect(journal.dropped == 3)
     }
 
     @Test func nonFiniteGeometryCannotPoisonJournal() throws {

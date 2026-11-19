@@ -1,7 +1,7 @@
 {
-  "appSourceSHA": "847452fa8bca04040f3d289d8f123eeb253ec396",
-  "appTreeSHA": "120a6f8ec2f4e453acc921311895b665c497cd15",
-  "build": "126",
+  "appSourceSHA": "960d15e7a1038c3cf71905dab6f40604cae2b419",
+  "appTreeSHA": "712730e39457adf44ec3abbc9beb7ededbeb2eeb",
+  "build": "127",
   "ciPaths": [
     ".github/actionlint.yaml",
     ".github/workflows/bpy-runtime-acceptance.yml",
@@ -128,7 +128,7 @@
   },
   "criteria": {
     "path": "scripts/fixtures/app-cohort-native-inventory.json",
-    "sha256": "e2ecfbd6fe9655e31bff787f2c40cc3b3d38eecc69165567dc8a11eaccbca4f5"
+    "sha256": "313b8fa62f9ad256170bc576c67413ade96997b48e4fe5d9c1c4ff7354287cae"
   },
   "nativeSourceObjects": {
     "Engine": "29cfed623d13e6d84d5822a30b98e088fc123c3f",
@@ -136,8 +136,8 @@
     "Package.resolved": "530cdaed0a29a65181353d86d05cf9dc04890cc2",
     "Package.swift": "37f605bfb8cdccc48821b39484c819ba3e5eff43",
     "Runtime": "910b87b08a3a8c976e0f2502580c843b0df74154",
-    "Sources": "678cf2c8e44699f8821f1415b3f78d58774b2d01",
-    "Tests": "7f81593bec37eb4d0d1774810b54adfdc8c9eb74",
+    "Sources": "2e85d25c634c1ea3742a8eacad9c63b833b59dba",
+    "Tests": "c8a86dabe6010293446783b980521883066a708a",
     "Vendor": "51e93c100e00dcd196edac0e70e1af921d52055a",
     "plugins": "b75e017d3145010368ae417bc410574f3f0300c1"
   },
@@ -987,7 +987,7 @@
       "Sources/NexGenVideo/ThreeD/BpyFootprintProbe.swift": "2f586a9be7627760db5499e09e71c9d0562f633e",
       "Sources/NexGenVideo/ThreeD/BpyGeneratedMedia.swift": "d6a816f6bfc5364f85c484b82322982b477db01a",
       "Sources/NexGenVideo/ThreeD/BpyHostConfiguration.swift": "ace051ec4c187d61575e9fe7a2335d31cc92cfb6",
-      "Sources/NexGenVideo/ThreeD/BpyHostLauncher.swift": "918323b2f77089e170b49ff296541ae0189b34aa",
+      "Sources/NexGenVideo/ThreeD/BpyHostLauncher.swift": "2dcd22bd934feba2d943e3751b0df49a9b1f8e69",
       "Sources/NexGenVideo/ThreeD/BpyHostMonitor.swift": "32937ba541a2f22b462408d8c2e733a0a26f9a92",
       "Sources/NexGenVideo/ThreeD/BpyHostStaging.swift": "97a39f0260304bd44028d7fde35f09f6d5476874",
       "Sources/NexGenVideo/ThreeD/BpyJSONValidation.swift": "00e55deb4e4fdf60bd32c8b307366af42743114a",
@@ -1080,7 +1080,7 @@
       "Sources/NexGenVideo/Utilities/Constants.swift": "0d881e7894373117f2627c07bafe96ac63d475f0",
       "Sources/NexGenVideo/Utilities/CoordinatedProcess.swift": "ccaf80f3beb05285edc500200abfd6590cbf92db",
       "Sources/NexGenVideo/Utilities/DiskCache.swift": "ef2e3d4c52056624fedf288bfab5162d04020df5",
-      "Sources/NexGenVideo/Utilities/HangDiagnosticRecorder.swift": "110b7f55ada37a0d606db8ffec4a929b88430f0f",
+      "Sources/NexGenVideo/Utilities/HangDiagnosticRecorder.swift": "5618fbd367a7ee4fd4801e44af95c5bb7a6d06f7",
       "Sources/NexGenVideo/Utilities/HangDiagnosticTranscript.swift": "5ae11c0d4fff83874234c29a678e6105bbd0c6db",
       "Sources/NexGenVideo/Utilities/HangDiagnosticUI.swift": "9f30c01699e64ce84717375886648d2a47f9a7b7",
       "Sources/NexGenVideo/Utilities/ImageEncoder.swift": "466295a69886628e9ed664e6d5626f2b486a5715",
@@ -1916,7 +1916,7 @@
       "Sources/NexGenVideo/ThreeD/BpyFootprintProbe.swift": "2f586a9be7627760db5499e09e71c9d0562f633e",
       "Sources/NexGenVideo/ThreeD/BpyGeneratedMedia.swift": "d6a816f6bfc5364f85c484b82322982b477db01a",
       "Sources/NexGenVideo/ThreeD/BpyHostConfiguration.swift": "ace051ec4c187d61575e9fe7a2335d31cc92cfb6",
-      "Sources/NexGenVideo/ThreeD/BpyHostLauncher.swift": "918323b2f77089e170b49ff296541ae0189b34aa",
+      "Sources/NexGenVideo/ThreeD/BpyHostLauncher.swift": "2dcd22bd934feba2d943e3751b0df49a9b1f8e69",
       "Sources/NexGenVideo/ThreeD/BpyHostMonitor.swift": "32937ba541a2f22b462408d8c2e733a0a26f9a92",
       "Sources/NexGenVideo/ThreeD/BpyHostStaging.swift": "97a39f0260304bd44028d7fde35f09f6d5476874",
       "Sources/NexGenVideo/ThreeD/BpyJSONValidation.swift": "00e55deb4e4fdf60bd32c8b307366af42743114a",
@@ -2009,7 +2009,7 @@
       "Sources/NexGenVideo/Utilities/Constants.swift": "0d881e7894373117f2627c07bafe96ac63d475f0",
       "Sources/NexGenVideo/Utilities/CoordinatedProcess.swift": "ccaf80f3beb05285edc500200abfd6590cbf92db",
       "Sources/NexGenVideo/Utilities/DiskCache.swift": "ef2e3d4c52056624fedf288bfab5162d04020df5",
-      "Sources/NexGenVideo/Utilities/HangDiagnosticRecorder.swift": "110b7f55ada37a0d606db8ffec4a929b88430f0f",
+      "Sources/NexGenVideo/Utilities/HangDiagnosticRecorder.swift": "5618fbd367a7ee4fd4801e44af95c5bb7a6d06f7",
       "Sources/NexGenVideo/Utilities/HangDiagnosticTranscript.swift": "5ae11c0d4fff83874234c29a678e6105bbd0c6db",
       "Sources/NexGenVideo/Utilities/HangDiagnosticUI.swift": "9f30c01699e64ce84717375886648d2a47f9a7b7",
       "Sources/NexGenVideo/Utilities/ImageEncoder.swift": "466295a69886628e9ed664e6d5626f2b486a5715",
@@ -2845,7 +2845,7 @@
       "Sources/NexGenVideo/ThreeD/BpyFootprintProbe.swift": "2f586a9be7627760db5499e09e71c9d0562f633e",
       "Sources/NexGenVideo/ThreeD/BpyGeneratedMedia.swift": "d6a816f6bfc5364f85c484b82322982b477db01a",
       "Sources/NexGenVideo/ThreeD/BpyHostConfiguration.swift": "ace051ec4c187d61575e9fe7a2335d31cc92cfb6",
-      "Sources/NexGenVideo/ThreeD/BpyHostLauncher.swift": "918323b2f77089e170b49ff296541ae0189b34aa",
+      "Sources/NexGenVideo/ThreeD/BpyHostLauncher.swift": "2dcd22bd934feba2d943e3751b0df49a9b1f8e69",
       "Sources/NexGenVideo/ThreeD/BpyHostMonitor.swift": "32937ba541a2f22b462408d8c2e733a0a26f9a92",
       "Sources/NexGenVideo/ThreeD/BpyHostStaging.swift": "97a39f0260304bd44028d7fde35f09f6d5476874",
       "Sources/NexGenVideo/ThreeD/BpyJSONValidation.swift": "00e55deb4e4fdf60bd32c8b307366af42743114a",
@@ -2938,7 +2938,7 @@
       "Sources/NexGenVideo/Utilities/Constants.swift": "0d881e7894373117f2627c07bafe96ac63d475f0",
       "Sources/NexGenVideo/Utilities/CoordinatedProcess.swift": "ccaf80f3beb05285edc500200abfd6590cbf92db",
       "Sources/NexGenVideo/Utilities/DiskCache.swift": "ef2e3d4c52056624fedf288bfab5162d04020df5",
-      "Sources/NexGenVideo/Utilities/HangDiagnosticRecorder.swift": "110b7f55ada37a0d606db8ffec4a929b88430f0f",
+      "Sources/NexGenVideo/Utilities/HangDiagnosticRecorder.swift": "5618fbd367a7ee4fd4801e44af95c5bb7a6d06f7",
       "Sources/NexGenVideo/Utilities/HangDiagnosticTranscript.swift": "5ae11c0d4fff83874234c29a678e6105bbd0c6db",
       "Sources/NexGenVideo/Utilities/HangDiagnosticUI.swift": "9f30c01699e64ce84717375886648d2a47f9a7b7",
       "Sources/NexGenVideo/Utilities/ImageEncoder.swift": "466295a69886628e9ed664e6d5626f2b486a5715",
@@ -2950,7 +2950,7 @@
       "Sources/NexGenVideo/Utilities/SourceTiming.swift": "15247fa32564207dee3a5a01065d5a4fc8389f9f",
       "Sources/NexGenVideo/Utilities/TimeFormatting.swift": "4c10a4554812031a08ecbe3e10d39cce76e1719e",
       "Tests/AppKitTestHostSupport": "180f486523e826b8b462011d42bf758fdc4e1d6f",
-      "Tests/NexGenVideoTests": "d5a7c5e85c0cc110b86773a91b0852d489a4a245"
+      "Tests/NexGenVideoTests": "44b45fa41a01c22315f437ff6491e806ee4c777f"
     }
   },
   "schema": "native-app-cohort/v2",
