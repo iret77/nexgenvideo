@@ -454,11 +454,19 @@ final class AgentService {
     @ObservationIgnored
     private var dialogActivities: [String: AgentTurnActivity] = [:]
 
+    @ObservationIgnored
+    private var diagnosticCaptureScheduled = false
+
     func captureDiagnosticTranscript() {
-        guard HangDiagnosticRecorder.shared.recordsContent else { return }
-        HangDiagnosticTranscript.capture(messages: messages, streaming: isStreaming,
-                                         sessionID: currentSessionId, dialog: pendingDialog,
-                                         spend: pendingSpendApproval, project: editor?.diagnosticProjectContext)
+        guard !diagnosticCaptureScheduled, HangDiagnosticRecorder.shared.recordsContent else { return }
+        diagnosticCaptureScheduled = true
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            diagnosticCaptureScheduled = false
+            HangDiagnosticTranscript.capture(messages: messages, streaming: isStreaming,
+                                             sessionID: currentSessionId, dialog: pendingDialog,
+                                             spend: pendingSpendApproval, project: editor?.diagnosticProjectContext)
+        }
     }
 
     func restoreDiagnosticTranscript(_ state: HangDiagnosticTranscript) throws {

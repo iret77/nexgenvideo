@@ -542,14 +542,31 @@ nonisolated final class BpyHostLauncher: @unchecked Sendable {
         do {
         switch request.operation {
         case .sample, .release:
-            let fresh = launch.lock.withLock { launch.snapshotAt }
-            if launch.lock.withLock({ launch.childReleased && launch.termination == nil }) {
-                guard let fresh, try BpyRuntimeClock.awakeSeconds() - fresh <= BpyMemoryState.observationBudget else {
+            let boundaryResources: Bool
+            switch launch.spec.boundary {
+            case .openUnlinked, .readonlyUnlinked, .mappedUnlinked, .externalReadonly, .internalWritable, .fileportUnlinked:
+                boundaryResources = request.operation == .sample && launch.spec.mode == .boundary
+            default:
+                boundaryResources = false
+            }
+            let state = launch.lock.withLock {
+                (released: launch.childReleased, terminated: launch.termination != nil, stopped: launch.stop != nil,
+                 snapshotAt: launch.snapshotAt, hasObservedWorker: launch.snapshot?.worker != nil,
+                 observation: launch.observation)
+            }
+            var boundarySample: BpyProcessObservation.Snapshot?
+            if state.released && !state.terminated {
+                guard let fresh = state.snapshotAt, try BpyRuntimeClock.awakeSeconds() - fresh <= BpyMemoryState.observationBudget else {
                     throw POSIXError(.ETIMEDOUT)
+                }
+                if boundaryResources && !state.stopped && state.hasObservedWorker {
+                    guard let observation = state.observation else { throw POSIXError(.EIO) }
+                    boundarySample = try observation.sample()
                 }
                 memory.serviceObserved(launch.spec.permit)
             }
-            result = try response(request, launch: launch)
+            result = try response(request, launch: launch, boundaryResources: boundaryResources,
+                                  boundarySample: boundarySample)
         case .terminate:
             let reason: BpyMemoryStop
             switch request.stopCause ?? .cancelled {
@@ -975,12 +992,20 @@ nonisolated final class BpyHostLauncher: @unchecked Sendable {
     }
 
     private func response(_ request: BpyMonitorRequest, launch: Launch,
-                          status: BpyMonitorResponse.Status? = nil) throws -> BpyMonitorResponse {
+                          status: BpyMonitorResponse.Status? = nil, boundaryResources: Bool = false,
+                          boundarySample: BpyProcessObservation.Snapshot? = nil) throws -> BpyMonitorResponse {
         if let error = launch.lock.withLock({ launch.launchError }) {
             return .init(status: .refused, request: request, epoch: launch.epoch, service: launch.service, errorCode: error)
         }
         let receipt = try memory.receipt(launch.spec.permit)
         return try launch.lock.withLock {
+            let boundaryActive = launch.stop == nil && launch.termination == nil && receipt.stop == nil
+            if let boundarySample, boundaryActive {
+                guard launch.childReleased, let supervisor = launch.supervisor, let observed = boundarySample.supervisor,
+                      observed.pid == supervisor.pid, observed.start == supervisor.start,
+                      let worker = launch.worker, let measured = boundarySample.worker,
+                      measured.pid == worker.pid, measured.start == worker.start else { throw POSIXError(.EPERM) }
+            }
             guard request.outputOffset >= launch.logBase, request.outputOffset <= launch.logBase + UInt64(launch.log.count) else {
                 throw POSIXError(.EINVAL)
             }
@@ -989,10 +1014,12 @@ nonisolated final class BpyHostLauncher: @unchecked Sendable {
             let end = min(launch.log.count, 65_536)
             let snapshot = launch.snapshot
             let gone = launch.termination != nil && launch.workerEnded
+            let hideWorker = gone || (boundaryResources && (!boundaryActive || boundarySample == nil))
             return BpyMonitorResponse(status: status ?? (gone ? .gone : .observed), request: request, epoch: launch.epoch,
                 service: launch.service, supervisor: gone ? nil : launch.supervisor,
-                descendants: gone ? [] : snapshot?.descendants ?? [], worker: gone ? nil : snapshot?.worker,
-                vnodes: gone ? [] : snapshot?.vnodes ?? [],
+                descendants: hideWorker ? [] : boundarySample?.descendants ?? snapshot?.descendants ?? [],
+                worker: hideWorker ? nil : boundarySample?.worker ?? snapshot?.worker,
+                vnodes: hideWorker ? [] : boundarySample?.vnodes ?? snapshot?.vnodes ?? [],
                 ended: gone ? (launch.supervisor.map { [$0] } ?? []) + (launch.worker.map { [$0] } ?? []) : [],
                 errorCode: launch.streams.errorCode,
                 exitStatus: launch.termination?.exitStatus, terminationSignal: launch.termination?.signal,
