@@ -18,6 +18,11 @@ class NativeRegressionInventoryTests(unittest.TestCase):
                 mock.patch.object(cohort.Path, 'read_bytes', return_value=json.dumps(expected).encode()):
             return cohort.criteria()
 
+    @staticmethod
+    def stale_position(identity):
+        prefix, line, column = identity.rsplit(':', 2)
+        return f'{prefix}:{int(line) + 1}:{column}'
+
     def test_current_dynamic_inventory_preserves_all_original_regressions(self):
         expected = cohort.criteria()
         self.assertEqual(len(expected['modules']['app']['exactEndedFunctionIDs']), 3722)
@@ -41,7 +46,7 @@ class NativeRegressionInventoryTests(unittest.TestCase):
             changed = copy.deepcopy(self.expected)
             required = changed[key]
             if defect == 'stale':
-                required[-1] = required[-1].replace(':638:6', ':630:6')
+                required[-1] = self.stale_position(required[-1])
             elif defect == 'duplicate':
                 required[-1] = required[0]
             elif defect == 'missing':
@@ -61,8 +66,8 @@ class NativeRegressionInventoryTests(unittest.TestCase):
         import compiled_app_release as release
         event = {'inputs': {'artifact_only': True, 'dry_run': True, 'version': '1.8.0', 'verified_pr_run_id': '1'}}
         changed = copy.deepcopy(self.expected)
-        changed['originalEightAppFailureIDsRequiredToEndWithoutIssues'][-1] = \
-            changed['originalEightAppFailureIDsRequiredToEndWithoutIssues'][-1].replace(':638:6', ':630:6')
+        required = changed['originalEightAppFailureIDsRequiredToEndWithoutIssues']
+        required[-1] = self.stale_position(required[-1])
         with mock.patch.object(release, 'selector_identities', return_value={}), \
                 mock.patch.object(release, 'producer') as producer, \
                 mock.patch.object(cohort, 'manifest', return_value=self.manifest), \

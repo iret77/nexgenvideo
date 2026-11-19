@@ -11,12 +11,20 @@ struct NativeButtonInteractionTests {
     private typealias Query = NativeButtonAccessibility
 
     @MainActor private final class Fixture {
-        let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 600, height: 200),
-            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        let window: NSWindow
 
         init(disabled: Bool = false, duplicate: Bool = false, split: Bool = false, rows: Int = 0,
-             scroll: Bool = false) {
+             scroll: Bool = false, fullSizeContent: Bool = false) {
+            let style: NSWindow.StyleMask = fullSizeContent
+                ? [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+                : [.titled, .closable]
+            window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 600, height: 200),
+                styleMask: style, backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false
+            if fullSizeContent {
+                window.titleVisibility = .hidden
+                window.titlebarAppearsTransparent = true
+            }
             let controls = HStack {
                 Button("Undo") {}.disabled(disabled)
                 if duplicate { Button("Undo") {} }
@@ -699,7 +707,12 @@ struct NativeButtonInteractionTests {
     }
 
     @Test func actualWindowAttributeInventoryIsBoundToTheCompleteContent() async throws {
-        let fixture = Fixture()
+        let fixture = Fixture(fullSizeContent: true)
+        #expect(fixture.request.contentFrame == fixture.request.windowFrame)
+        #expect(Query.chromeExclusion(for: [kAXZoomButtonAttribute, kAXFullScreenButtonAttribute]) == kAXZoomButtonAttribute)
+        #expect(Query.chromeExclusion(for: [kAXFullScreenButtonAttribute]) == kAXFullScreenButtonAttribute)
+        #expect(Query.chromeExclusion(for: [kAXCloseButtonAttribute, kAXZoomButtonAttribute]) == nil)
+        #expect(Query.chromeExclusion(for: []) == nil)
         defer { fixture.close() }
         let outcome = try await NativeAXPeer.withSession { session in
             let result = try await fixture.ready(using: session)
@@ -708,7 +721,21 @@ struct NativeButtonInteractionTests {
             #expect(result.windowAttributeStatuses["AXAttributeNames"] == 0)
             #expect(result.windowAttributeStatuses["timeout:AXAttributeNames"] == 0)
             #expect(Set(result.chromeExclusions.keys).isSubset(of: Set(result.windowAttributes)))
+            let green = try #require(result.rootRivals.first {
+                $0.scopeExclusion == kAXZoomButtonAttribute || $0.scopeExclusion == kAXFullScreenButtonAttribute
+            })
+            #expect(green.frame?.rect.intersects(fixture.request.contentFrame.rect) == true)
+            #expect(green.chromeMatches == [kAXZoomButtonAttribute, kAXFullScreenButtonAttribute])
             #expect(Query.buttons(result, title: "Undo", inside: fixture.request.windowFrame).count == 1)
+            var unbound = result
+            let index = try #require(unbound.rootRivals.firstIndex(of: green))
+            unbound.rootRivals[index].chromeMatches = nil
+            #expect(Query.buttons(unbound, title: "Undo", inside: fixture.request.windowFrame).isEmpty)
+            var missingAlias = result
+            missingAlias.chromeExclusions[kAXFullScreenButtonAttribute] = nil
+            missingAlias.windowAttributeStatuses[kAXFullScreenButtonAttribute] = nil
+            missingAlias.windowAttributeStatuses["timeout:" + kAXFullScreenButtonAttribute] = nil
+            #expect(Query.buttons(missingAlias, title: "Undo", inside: fixture.request.windowFrame).isEmpty)
         }
         #expect(outcome.1.clean)
     }

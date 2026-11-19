@@ -14,12 +14,16 @@ nonisolated final class BpyProcessObservation: @unchecked Sendable {
     private let lock = NSLock()
     private let supervisor: BpyObservedProcess
     private let workerExecutable: String
+    private let workerDevice: UInt64?
     private let inspector: BpyHostMonitor.Inspector
     private var child: BpyObservedProcess?
 
-    init(supervisor: BpyObservedProcess, workerExecutable: String,
+    init(supervisor: BpyObservedProcess, workerExecutable: String, workerDevice: UInt64?,
          inspector: BpyHostMonitor.Inspector = .init()) {
-        self.supervisor = supervisor; self.workerExecutable = workerExecutable; self.inspector = inspector
+        self.supervisor = supervisor
+        self.workerExecutable = workerExecutable
+        self.workerDevice = workerDevice
+        self.inspector = inspector
     }
 
     func captureChild(_ value: BpyObservedProcess) throws {
@@ -52,7 +56,7 @@ nonisolated final class BpyProcessObservation: @unchecked Sendable {
             } else if let child, let value = try inspector.process(child.pid), value.start == child.start {
                 throw POSIXError(.EBUSY)
             }
-            let vnodes = try worker.map { try inspector.vnodes($0) } ?? []
+            let vnodes = try worker.map { try inspector.vnodes($0, workerDevice) } ?? []
             if let value = worker, try !inspector.matches(value) { worker = nil }
             return .init(supervisor: root, descendants: worker.map { [$0] } ?? [], worker: worker, vnodes: vnodes, ended: [])
         }

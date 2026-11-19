@@ -808,7 +808,8 @@ nonisolated final class BpyHostLauncher: @unchecked Sendable {
         try launch.binding.dataVolume.bindLaunch(supervisor: supervisor)
         let workerExecutable = try BpyRuntimePath.canonical(spec.mode == .boundary && spec.boundary != .diagnosticPythonFootprint ? layout.supervisor
             : layout.runtime.appendingPathComponent("python/bin/python3.13"))
-        let observation = BpyProcessObservation(supervisor: supervisor, workerExecutable: workerExecutable)
+        let observation = BpyProcessObservation(supervisor: supervisor, workerExecutable: workerExecutable,
+                                                workerDevice: pair.worker.device)
         let stopped = launch.lock.withLock {
             launch.supervisor = supervisor; launch.observation = observation
             launch.replay = BpyLaunchReplay(epoch: launch.epoch, transport: transport,

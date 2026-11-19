@@ -20,9 +20,10 @@ nonisolated final class BpyHostMonitor: NSObject, BpyHostMonitorProtocol, @unche
         var process: @Sendable (Int32) throws -> BpyObservedProcess? = BpyKernelInspection.process
         var descendants: @Sendable (BpyObservedProcess) throws -> [BpyObservedProcess] = BpyKernelInspection.descendants
         var matches: @Sendable (BpyObservedProcess) throws -> Bool = BpyKernelInspection.matches
-        var vnodes: @Sendable (BpyObservedProcess) throws -> [BpyObservedVnode] = {
-            try BpyKernelInspection.descriptors($0, fileports: false)
-                + BpyKernelInspection.descriptors($0, fileports: true) + BpyKernelInspection.mappings($0)
+        var vnodes: @Sendable (BpyObservedProcess, UInt64?) throws -> [BpyObservedVnode] = { process, workerDevice in
+            try BpyKernelInspection.descriptors(process, fileports: false)
+                + BpyKernelInspection.descriptors(process, fileports: true)
+                + BpyKernelInspection.mappings(process, workerDevice: workerDevice)
         }
     }
 

@@ -47,13 +47,15 @@ enum NativeButtonAccessibility {
         let statuses: [String: Int32]
         let childTypes: [UInt]
         var scopeExclusion: String?
+        var chromeMatches: [String]?
 
         var evidence: [String: Any] {
             ["parent": parent as Any? ?? NSNull(), "pid": pid, "role": role as Any? ?? NSNull(),
              "title": title as Any? ?? NSNull(), "label": label as Any? ?? NSNull(),
              "enabled": enabled as Any? ?? NSNull(), "publicScreenFrame": frame?.evidence as Any? ?? NSNull(),
              "statuses": statuses, "rawChildTypes": childTypes,
-             "scopeExclusion": scopeExclusion as Any? ?? NSNull()]
+             "scopeExclusion": scopeExclusion as Any? ?? NSNull(),
+             "chromeMatches": chromeMatches as Any? ?? NSNull()]
         }
     }
 
@@ -125,6 +127,14 @@ enum NativeButtonAccessibility {
         return chromeAttributes.filter { available.contains($0) }
     }
 
+    private static let zoomButtonAliases = [kAXZoomButtonAttribute, kAXFullScreenButtonAttribute]
+
+    static func chromeExclusion(for matches: [String]) -> String? {
+        if matches == zoomButtonAliases { return kAXZoomButtonAttribute }
+        guard matches.count == 1, let slot = matches.first, chromeAttributes.contains(slot) else { return nil }
+        return slot
+    }
+
     private static func knownWindowAttributes(_ snapshot: Snapshot) -> Bool {
         guard validatedWindowAttributes(snapshot.windowAttributes) != nil,
               snapshot.windowAttributeStatuses["AXAttributeNames"] == AXError.success.rawValue,
@@ -186,9 +196,13 @@ enum NativeButtonAccessibility {
                   if knownContent(node, request: snapshot.request) { return true }
                   guard let frame = node.frame else { return false }
                   if !frame.rect.intersects(snapshot.request.contentFrame.rect) { return true }
-                  guard let slot = node.scopeExclusion, let declared = snapshot.chromeExclusions[slot] else { return false }
-                  return declared.pid == node.pid && declared.role == node.role && declared.frame == node.frame
-                      && knownChrome(declared, slot: slot, request: snapshot.request)
+                  guard let matches = node.chromeMatches, let slot = chromeExclusion(for: matches),
+                        node.scopeExclusion == slot else { return false }
+                  return matches.allSatisfy { attribute in
+                      guard let declared = snapshot.chromeExclusions[attribute] else { return false }
+                      return declared.pid == node.pid && declared.role == node.role && declared.frame == node.frame
+                          && knownChrome(declared, slot: attribute, request: snapshot.request)
+                  }
               }),
               uniqueCGWindow(snapshot.cgWindows, request: snapshot.request),
               snapshot.reportedWindowCount == snapshot.windows.count,
@@ -554,13 +568,13 @@ enum NativeButtonAccessibility {
                     }
                 }
             }
-            let matches = chrome.keys.filter { slot in
-                chrome[slot].map { CFEqual($0, element) } == true
-                    && result.chromeExclusions[slot]?.pid == observed.pid
+            let matches = chromeAttributes.filter { slot in chrome[slot].map { CFEqual($0, element) } == true }
+            result.rootRivals[index].chromeMatches = matches
+            guard let slot = chromeExclusion(for: matches), matches.allSatisfy({ slot in
+                result.chromeExclusions[slot]?.pid == observed.pid
                     && result.chromeExclusions[slot]?.role == observed.role
                     && result.chromeExclusions[slot]?.frame == observed.frame
-            }
-            guard matches.count == 1, let slot = matches.first else {
+            }) else {
                 result.failure = "intersecting-unclassified-content-root-rival"; return result
             }
             result.rootRivals[index].scopeExclusion = slot

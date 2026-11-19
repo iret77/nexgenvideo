@@ -169,8 +169,12 @@ enum NativeAXPeer {
         }
         func node(_ value: Any?) throws {
             let value = try shape(value, required: ["pid", "statuses", "childTypes"],
-                optional: ["parent", "role", "title", "label", "enabled", "frame", "scopeExclusion"])
+                optional: ["parent", "role", "title", "label", "enabled", "frame", "scopeExclusion", "chromeMatches"])
             if let value = value["frame"] { try frame(value) }
+            if let matches = value["chromeMatches"] {
+                guard let matches = matches as? [String], matches.count <= 7,
+                      Query.supportedChromeAttributes(matches) == matches else { throw Failure("peer-nested-chrome-matches") }
+            }
         }
         func nodes(_ value: Any?, limit: Int) throws {
             guard let values = value as? [Any] else { throw Failure("peer-nested-array") }
