@@ -42,6 +42,32 @@ def fixture():
 
 
 class CurrentCoreReuseTests(unittest.TestCase):
+    def test_assembly_continuation_selects_the_pinned_pre_signing_execution_without_running_tests(self):
+        origin = current.assembly_resume_origin()
+        self.assertEqual(origin['originalExecution']['runID'], 44428123807)
+        self.assertEqual(origin['originalExecution']['sourceSHA'], 'fc9bfe6f7dd28012e62c6b585bf809bbb60aa1eb')
+        self.assertEqual(origin['compilerSourceSHA'], '5b55c199ae602c3545b46fbd5b131d8771d7f466')
+        self.assertEqual(origin['counts'], {'retainedApp': 3722, 'retainedXCTest': 48, 'retainedEngine': 896,
+            'executions': 4666, 'appSkips': 8, 'engineSkips': 14})
+        self.assertTrue(all(item['sourceSHA'] == origin['compilerSourceSHA']
+            for item in origin['compiledSelectors'].values()))
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            bound = {'appSourceSHA': origin['appSourceSHA'],
+                'prepared': {'cohortV2': {'harnessSourceSHA': origin['compilerSourceSHA']}}}
+            (root / 'bound.json').write_text(json.dumps(bound))
+            with patch.object(current, 'acquire_assembly_resume', side_effect=ValueError('Original source proof failed')) as acquire, \
+                    patch.object(native, 'run_process') as process, patch.object(app_release_v2, 'run_xctest') as xctest:
+                with self.assertRaisesRegex(ValueError, 'Original source proof failed'):
+                    release.run_tests(root)
+                acquire.assert_called_once()
+                process.assert_not_called()
+                xctest.assert_not_called()
+            foreign = root / 'original.json'
+            foreign.write_bytes(current.ASSEMBLY_RESUME_FIXTURE.read_bytes() + b' ')
+            with patch.object(current, 'ASSEMBLY_RESUME_FIXTURE', foreign), self.assertRaisesRegex(ValueError, 'origin changed'):
+                current.assembly_resume_origin()
+
     def verification(self, origin, expected, value):
         stack = ExitStack()
         for target, attribute, replacement in ((current, 'origin', origin), (current, 'criteria', expected),

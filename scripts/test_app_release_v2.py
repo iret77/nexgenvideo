@@ -8,6 +8,22 @@ import app_release_v2 as release
 
 
 class AppleBoundaryTests(unittest.TestCase):
+    def test_supervisor_package_keeps_only_the_three_original_local_targets(self):
+        original = Path('Package.swift').read_bytes()
+        isolated = release.supervisor_package_manifest(original).decode()
+        self.assertTrue(isolated.startswith('// swift-tools-version: 6.2\n'))
+        self.assertIn('platforms: [.macOS(.v26)]', isolated)
+        self.assertEqual(isolated.count('.target('), 2)
+        self.assertEqual(isolated.count('.executableTarget('), 1)
+        for declaration in release.SUPERVISOR_TARGETS:
+            self.assertEqual(isolated.count(declaration), 1)
+        self.assertNotIn('.package(', isolated)
+        self.assertNotIn('NexGenVideoBpyService', isolated)
+        for changed in (original.replace(b'.macOS(.v26)', b'.macOS(.v27)'),
+                original.replace(b'linkedLibrary("proc"', b'linkedLibrary("z"')):
+            with self.subTest(changed=changed), self.assertRaisesRegex(ValueError, 'declaration changed'):
+                release.supervisor_package_manifest(changed)
+
     def test_main_and_dsym_match_by_uuid_with_their_distinct_original_paths(self):
         identifier = 'C1AB1815-D829-3F3E-B536-C8F3D703FEE2'
         main = {'compiledImageSHA256': 'a' * 64, 'uuid': identifier}

@@ -17,6 +17,19 @@ from retained_app_test_products import api, checksum, download, require, verify_
 
 SUPERVISOR = 'NexGenVideoBpySupervisor'
 SERVICE = 'NexGenVideoBpyService'
+SUPERVISOR_SOURCE_ROOTS = ('Sources/BpyRuntimeProtocol', 'Sources/BpySupervisorPOSIX',
+    'Sources/NexGenVideoBpySupervisor')
+SUPERVISOR_PACKAGE_SHA256 = '8b9c4bef0703bf4456ab04a7dbe3f8bd551b8807df3642243660b12cd38edc76'
+SUPERVISOR_TARGETS = (
+    '        .target(name: "BpyRuntimeProtocol", dependencies: ["BpySupervisorPOSIX"], path: "Sources/BpyRuntimeProtocol"),',
+    '        .target(name: "BpySupervisorPOSIX", path: "Sources/BpySupervisorPOSIX",\n'
+    '                linkerSettings: [.linkedFramework("Foundation")]),',
+    '        .executableTarget(\n'
+    '            name: "NexGenVideoBpySupervisor", dependencies: ["BpyRuntimeProtocol", "BpySupervisorPOSIX"], '
+    'path: "Sources/NexGenVideoBpySupervisor",\n'
+    '            linkerSettings: [.linkedLibrary("proc", .when(platforms: [.macOS]))]\n'
+    '        ),',
+)
 
 
 def verify_reused_host(build, value):
@@ -103,7 +116,55 @@ def unchanged_components(app):
     return result
 
 
-def replace_supervisors(root, app, candidate, sign, baseline):
+def supervisor_package_manifest(original):
+    require(hashlib.sha256(original).hexdigest() == SUPERVISOR_PACKAGE_SHA256,
+        'Supervisor package declaration changed')
+    tools_version = '// swift-tools-version: 6.2'
+    product = '        .executable(name: "NexGenVideoBpySupervisor", targets: ["NexGenVideoBpySupervisor"]),'
+    platform = '    platforms: [.macOS(.v26)],'
+    declarations = original.decode()
+    require(all(declarations.count(entry) == 1 for entry in (tools_version, product, platform, *SUPERVISOR_TARGETS)),
+        'Supervisor product, local targets or platform differ')
+    return ('\n'.join((tools_version, '', 'import PackageDescription', '',
+        'let package = Package(', '    name: "NexGenVideo",', platform,
+        '    products: [', product, '    ],', '    targets: [', *SUPERVISOR_TARGETS, '    ]', ')')) + '\n').encode()
+
+
+def supervisor_package(source, inputs, destination=None):
+    def git_bytes(*args):
+        return subprocess.check_output(['git', *args], stdin=subprocess.DEVNULL, timeout=30)
+
+    paths = ('Package.swift', *SUPERVISOR_SOURCE_ROOTS)
+    require(cohort.objects(source, paths) == {name: inputs[name] for name in paths},
+        'Supervisor source closure changed')
+    package = supervisor_package_manifest(git_bytes('show', source + ':Package.swift'))
+    if destination is not None:
+        destination.mkdir(exist_ok=False)
+        (destination / 'Package.swift').write_bytes(package)
+    files = {}
+    rows = git_bytes('ls-tree', '-rz', source, '--', *SUPERVISOR_SOURCE_ROOTS).split(b'\0')
+    for row in filter(None, rows):
+        metadata, raw_path = row.split(b'\t', 1)
+        mode, kind, blob = metadata.decode().split()
+        name = raw_path.decode()
+        relative = Path(name)
+        require(mode == '100644' and kind == 'blob' and any(name.startswith(root + '/') for root in SUPERVISOR_SOURCE_ROOTS)
+            and '..' not in relative.parts and name not in files and relative.suffix in ('.swift', '.c', '.m', '.h'),
+            'Unexpected Supervisor package input')
+        raw = git_bytes('cat-file', 'blob', blob)
+        files[name] = {'gitObject': blob, 'sha256': hashlib.sha256(raw).hexdigest(), 'bytes': len(raw), 'mode': mode}
+        if destination is not None:
+            path = destination / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open('xb') as stream:
+                stream.write(raw)
+    require(all(any(name.startswith(root + '/') for name in files) for root in SUPERVISOR_SOURCE_ROOTS),
+        'Supervisor package target is missing')
+    return {'rootManifestSHA256': SUPERVISOR_PACKAGE_SHA256,
+        'derivedManifestSHA256': hashlib.sha256(package).hexdigest(), 'sourceFiles': files}
+
+
+def replace_supervisors(root, app, candidate, sign, baseline, driver):
     import compiled_app_release as release
     import signed_component_carrier as carrier
     declared = candidate['componentSourceObjects']
@@ -115,12 +176,19 @@ def replace_supervisors(root, app, candidate, sign, baseline):
     targets = release.targets
     scratch = root / 'supervisor-compiler'
     require(not scratch.exists() and not scratch.is_symlink(), 'Supervisor compiler scratch is already occupied')
+    package = root / 'supervisor-package' / 'nexgenvideo'
+    package.parent.mkdir(exist_ok=False)
+    recipe = supervisor_package(os.environ['GITHUB_SHA'], declared, package)
+    write(root / 'bpy-supervisor-package.json', recipe)
     swift = Path(targets.logged(root, 'bpy-supervisor-swift', ['xcrun', '--find', 'swift']).strip())
     swiftc = Path(targets.logged(root, 'bpy-supervisor-swiftc', ['xcrun', '--find', 'swiftc']).strip())
+    sdk = Path(targets.logged(root, 'bpy-supervisor-sdk', ['xcrun', '--sdk', 'macosx', '--show-sdk-path']).strip())
     require(swift.is_absolute() and swiftc.is_absolute() and swift.parent == swiftc.parent
-        and checksum(swiftc) == candidate['compilerSHA256'], 'Supervisor compiler differs from the reviewed toolchain')
-    environment = dict(os.environ, SWIFT_EXEC=str(swiftc))
-    args = [str(swift), 'build', '--configuration', 'release', '--arch', 'arm64',
+        and checksum(swiftc) == candidate['compilerSHA256'] and driver.count('-sdk') == 1
+        and sdk.is_absolute() and sdk.resolve(strict=True) == Path(driver[driver.index('-sdk') + 1]).resolve(strict=True),
+        'Supervisor compiler or SDK differs from the reviewed toolchain')
+    environment = dict(os.environ, SWIFT_EXEC=str(swiftc), SDKROOT=str(sdk))
+    args = [str(swift), 'build', '--package-path', str(package), '--configuration', 'release', '--arch', 'arm64',
             '--disable-automatic-resolution', '--scratch-path', str(scratch)]
     compile_args = args + ['--product', SUPERVISOR, '--verbose']
     targets.logged(root, 'bpy-supervisor-compile', compile_args, env=environment, timeout=900)
@@ -165,11 +233,12 @@ def replace_supervisors(root, app, candidate, sign, baseline):
     require(current.keys() == baseline.keys(), 'Supervisor replacement changed the component inventory')
     delta = {name:{'before': before, 'after': current[name]} for name, before in baseline.items()
              if before != current[name]}
-    receipt = {'schema': 'bpy-supervisor-component-rebuild/v1', 'target': SUPERVISOR,
+    receipt = {'schema': 'bpy-supervisor-component-rebuild/v2', 'target': SUPERVISOR,
         'sourceSHA': os.environ['GITHUB_SHA'], 'runID': int(os.environ['GITHUB_RUN_ID']),
         'inputs': {name:declared[name] for name in (path, 'Sources/BpyRuntimeProtocol',
             'Sources/BpySupervisorPOSIX', 'Package.swift', 'Package.resolved')},
         'compilerPath': str(swiftc), 'compilerSHA256': checksum(swiftc), 'compileExitCode': 0,
+        'package': recipe, 'sdkPath': str(sdk),
         'unsignedImageSHA256': unsigned, 'signedImageSHA256': signed, 'payloadSHA256': payload, 'uuid': uuid,
         'compilerLogSHA256': checksum(root / 'bpy-supervisor-compile.stdout'),
         'deploymentLogSHA256': checksum(root / 'bpy-supervisor-deployment.stdout'),
@@ -195,17 +264,20 @@ def verify_components(value, candidate):
     carrier.verify_record(value.get('signedBaseCarrier'), candidate)
     receipt = value.get('supervisorReplacement', {})
     inputs = candidate['componentSourceObjects']
-    require(receipt.get('schema') == 'bpy-supervisor-component-rebuild/v1' and receipt.get('target') == SUPERVISOR
+    require(receipt.get('schema') == 'bpy-supervisor-component-rebuild/v2' and receipt.get('target') == SUPERVISOR
         and receipt.get('sourceSHA') == value['sourceSHA'] and receipt.get('runID') == value['runID']
         and receipt.get('compilerSHA256') == candidate['compilerSHA256'] and receipt.get('compileExitCode') == 0
         and Path(receipt.get('compilerPath', '')).is_absolute()
         and Path(receipt['compilerPath']).name == 'swiftc'
+        and Path(receipt.get('sdkPath', '')).is_absolute()
         and receipt.get('inputs') == {name: inputs[name] for name in (path, 'Sources/BpyRuntimeProtocol',
             'Sources/BpySupervisorPOSIX', 'Package.swift', 'Package.resolved')}
         and all(re.fullmatch('[a-f0-9]{64}', receipt.get(key, '')) for key in ('unsignedImageSHA256',
             'signedImageSHA256', 'payloadSHA256', 'compilerLogSHA256', 'deploymentLogSHA256'))
         and re.fullmatch(r'[A-F0-9]{8}(?:-[A-F0-9]{4}){3}-[A-F0-9]{12}', receipt.get('uuid', '')),
         'Fresh Supervisor build receipt differs')
+    require(receipt.get('package') == supervisor_package(receipt['sourceSHA'], inputs),
+        'Fresh Supervisor package source closure differs')
     services = receipt.get('retainedServices', [])
     require([service.get('slot') for service in services] == [0, 1] and all(
         re.fullmatch(r'[A-F0-9]{8}(?:-[A-F0-9]{4}){3}-[A-F0-9]{12}', service.get('uuid', ''))
@@ -289,7 +361,8 @@ def assemble(root):
     (app / 'Contents/Resources/Changelog/changelog.json').write_bytes(Path(resources + '/Changelog/changelog.json').read_bytes())
     sign = os.environ.get('SIGN_IDENTITY', '')
     require(re.fullmatch('[a-fA-F0-9]{40}', sign) or sign.startswith('Developer ID Application: '), 'Missing Developer ID signer')
-    supervisor, retained_components = replace_supervisors(root, app, value, sign, baseline)
+    supervisor, retained_components = replace_supervisors(root, app, value, sign, baseline,
+        bound['prepared']['plans']['production']['driver']['argv'])
     targets.logged(root, 'sign-new-app-root', ['codesign', '--force', '--options', 'runtime', '--timestamp',
         '--sign', sign, '--entitlements', 'scripts/NexGenVideo.entitlements', str(app)], timeout=180)
     targets.logged(root, 'verify-new-app-signature', ['codesign', '--verify', '--deep', '--strict', str(app)])

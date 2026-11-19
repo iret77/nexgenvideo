@@ -1,0 +1,329 @@
+{
+  "appSourceSHA": "450e419f583dfd0fac621914c2dd42b47fd176db",
+  "archiveNames": [
+    "app-swift-testing/command.json",
+    "app-swift-testing/console.home.json",
+    "app-swift-testing/console.log",
+    "app-swift-testing/events.jsonl",
+    "app-swift-testing/exception.jsonl",
+    "app-swift-testing/host-receipt.json",
+    "app-swift-testing/loader-paths.json",
+    "app-swift-testing/native-pointer-adjacent-buttons-BAAEECF1-0E8B-4C30-9A3C-EB363A034B34/adjacent-buttons-0-native-adjacent-buttons.png",
+    "app-swift-testing/native-pointer-adjacent-buttons-BAAEECF1-0E8B-4C30-9A3C-EB363A034B34/adjacent-buttons.json",
+    "app-swift-testing/native-pointer-adjacent-buttons-BAAEECF1-0E8B-4C30-9A3C-EB363A034B34/callbacks.json",
+    "app-swift-testing/native-pointer-adjacent-buttons-BAAEECF1-0E8B-4C30-9A3C-EB363A034B34/fixture-context.json",
+    "app-swift-testing/native-pointer-adjacent-buttons-BAAEECF1-0E8B-4C30-9A3C-EB363A034B34/viewport-readiness.json",
+    "app-swift-testing/native-pointer-cancelled-down-6A8046D1-87FC-4FB6-86AF-240B4B17D891/cancelled-down.json",
+    "app-swift-testing/native-pointer-cancelled-down-6A8046D1-87FC-4FB6-86AF-240B4B17D891/fixture-context.json",
+    "app-swift-testing/native-pointer-cancelled-down-6A8046D1-87FC-4FB6-86AF-240B4B17D891/viewport-readiness.json",
+    "app-swift-testing/native-pointer-canonical-input-828AEC36-0A1F-4E45-BBE4-8533D254C505/canonical-input.json",
+    "app-swift-testing/native-pointer-canonical-input-828AEC36-0A1F-4E45-BBE4-8533D254C505/fixture-context.json",
+    "app-swift-testing/native-pointer-canonical-input-828AEC36-0A1F-4E45-BBE4-8533D254C505/input.json",
+    "app-swift-testing/native-pointer-canonical-input-828AEC36-0A1F-4E45-BBE4-8533D254C505/method-based-input.json",
+    "app-swift-testing/native-pointer-canonical-real-field-096FB3D5-781D-4B32-B250-F865954B30BC/canonical-real-field.json",
+    "app-swift-testing/native-pointer-canonical-real-field-096FB3D5-781D-4B32-B250-F865954B30BC/fixture-context.json",
+    "app-swift-testing/native-pointer-canonical-real-field-096FB3D5-781D-4B32-B250-F865954B30BC/viewport-readiness.json",
+    "app-swift-testing/native-pointer-canonical-refused-0BCB94AA-0322-45EE-A23D-BFAEFA51B438/canonical-refusals.json",
+    "app-swift-testing/native-pointer-canonical-refused-0BCB94AA-0322-45EE-A23D-BFAEFA51B438/fixture-context.json",
+    "app-swift-testing/native-pointer-canonical-refused-0BCB94AA-0322-45EE-A23D-BFAEFA51B438/refused.json",
+    "app-swift-testing/native-pointer-canonical-revalidation-A2E29221-F9A6-49D6-9FE0-7E8E7A1C21E5/canonical-revalidation.json",
+    "app-swift-testing/native-pointer-canonical-revalidation-A2E29221-F9A6-49D6-9FE0-7E8E7A1C21E5/fixture-context.json",
+    "app-swift-testing/native-pointer-canonical-revalidation-A2E29221-F9A6-49D6-9FE0-7E8E7A1C21E5/revalidation.json",
+    "app-swift-testing/native-pointer-changed-accessibility-target-7FF835B6-D16B-4847-981C-18906C191882/changed-accessibility-target.json",
+    "app-swift-testing/native-pointer-changed-accessibility-target-7FF835B6-D16B-4847-981C-18906C191882/fixture-context.json",
+    "app-swift-testing/native-pointer-changed-accessibility-target-7FF835B6-D16B-4847-981C-18906C191882/viewport-readiness.json",
+    "app-swift-testing/native-pointer-concurrent-preparation-ECE599BC-255D-4538-B726-6B6023506645/concurrent-preparation.json",
+    "app-swift-testing/native-pointer-concurrent-preparation-ECE599BC-255D-4538-B726-6B6023506645/fixture-context.json",
+    "app-swift-testing/native-pointer-concurrent-preparation-ECE599BC-255D-4538-B726-6B6023506645/viewport-readiness.json",
+    "app-swift-testing/native-pointer-gesture-surfaces-BE6E8106-2ECC-4C34-BEB6-6CC47B66A6E5/callbacks.json",
+    "app-swift-testing/native-pointer-gesture-surfaces-BE6E8106-2ECC-4C34-BEB6-6CC47B66A6E5/fixture-context.json",
+    "app-swift-testing/native-pointer-gesture-surfaces-BE6E8106-2ECC-4C34-BEB6-6CC47B66A6E5/gesture-surfaces.json",
+    "app-swift-testing/native-pointer-gesture-surfaces-BE6E8106-2ECC-4C34-BEB6-6CC47B66A6E5/viewport-readiness.json",
+    "app-swift-testing/native-pointer-legacy-observation-D6E6D15C-5033-44B0-B017-422B8AA5EF04/fixture-context.json",
+    "app-swift-testing/native-pointer-legacy-observation-D6E6D15C-5033-44B0-B017-422B8AA5EF04/legacy-observation.json",
+    "app-swift-testing/native-pointer-legacy-observation-D6E6D15C-5033-44B0-B017-422B8AA5EF04/viewport-readiness.json",
+    "app-swift-testing/native-pointer-lost-up-cleanup-746E7B7A-986C-4CF0-B01A-EC2B4C24937E/fixture-context.json",
+    "app-swift-testing/native-pointer-lost-up-cleanup-746E7B7A-986C-4CF0-B01A-EC2B4C24937E/lost-up-cleanup.json",
+    "app-swift-testing/native-pointer-lost-up-cleanup-746E7B7A-986C-4CF0-B01A-EC2B4C24937E/release-control.json",
+    "app-swift-testing/native-pointer-lost-up-cleanup-746E7B7A-986C-4CF0-B01A-EC2B4C24937E/viewport-readiness.json",
+    "app-swift-testing/native-pointer-native-tracking-BCF6F308-9E97-43A7-A683-18AAE36771D3/callbacks.json",
+    "app-swift-testing/native-pointer-native-tracking-BCF6F308-9E97-43A7-A683-18AAE36771D3/fixture-context.json",
+    "app-swift-testing/native-pointer-native-tracking-BCF6F308-9E97-43A7-A683-18AAE36771D3/native-tracking.json",
+    "app-swift-testing/native-pointer-native-tracking-BCF6F308-9E97-43A7-A683-18AAE36771D3/viewport-readiness.json",
+    "app-swift-testing/native-pointer-refused-targets-2A2488BB-7047-47A2-ACD8-692A15CB90F4/fixture-context.json",
+    "app-swift-testing/native-pointer-refused-targets-2A2488BB-7047-47A2-ACD8-692A15CB90F4/refused-targets.json",
+    "app-swift-testing/native-pointer-refused-targets-2A2488BB-7047-47A2-ACD8-692A15CB90F4/viewport-readiness.json",
+    "app-swift-testing/native-pointer-selection-disabled-B0DA2E27-646E-4AAA-81E2-74909F0F207A/fixture-context.json",
+    "app-swift-testing/native-pointer-selection-disabled-B0DA2E27-646E-4AAA-81E2-74909F0F207A/selection-disabled.json",
+    "app-swift-testing/native-pointer-selection-disabled-B0DA2E27-646E-4AAA-81E2-74909F0F207A/viewport-readiness.json",
+    "app-swift-testing/native-pointer-viewport-0-1B693A84-2B4D-49BB-9B94-A5A23DF683A9/fixture-context.json",
+    "app-swift-testing/native-pointer-viewport-0-1B693A84-2B4D-49BB-9B94-A5A23DF683A9/viewport-0.json",
+    "app-swift-testing/native-pointer-viewport-0-1B693A84-2B4D-49BB-9B94-A5A23DF683A9/viewport-readiness.json",
+    "app-swift-testing/native-pointer-viewport-0-1B693A84-2B4D-49BB-9B94-A5A23DF683A9/viewport.json",
+    "app-swift-testing/native-pointer-viewport-1-9FBA34A7-2ACF-4941-ABDB-0821664AFF06/fixture-context.json",
+    "app-swift-testing/native-pointer-viewport-1-9FBA34A7-2ACF-4941-ABDB-0821664AFF06/viewport-1.json",
+    "app-swift-testing/native-pointer-viewport-1-9FBA34A7-2ACF-4941-ABDB-0821664AFF06/viewport-readiness.json",
+    "app-swift-testing/native-pointer-viewport-1-9FBA34A7-2ACF-4941-ABDB-0821664AFF06/viewport.json",
+    "app-swift-testing/native-pointer-window-input-hit-1CC42E89-420A-4DD5-A972-655BD44C1B2A/fixture-context.json",
+    "app-swift-testing/native-pointer-window-input-hit-1CC42E89-420A-4DD5-A972-655BD44C1B2A/viewport-readiness.json",
+    "app-swift-testing/native-pointer-window-input-hit-1CC42E89-420A-4DD5-A972-655BD44C1B2A/window-input-hit.json",
+    "app-swift-testing/platform-path.stderr",
+    "app-swift-testing/platform-path.stdout",
+    "app-swift-testing/process.json",
+    "app-swift-testing/swiftc-path.stderr",
+    "app-swift-testing/swiftc-path.stdout",
+    "app-swift-testing/verified.json",
+    "bank-runtime-manifest.json",
+    "bound.json",
+    "metadata-original.zip",
+    "native-tests.STARTED.json",
+    "production/original.zip",
+    "receipt.json",
+    "restore-runtime.argv.json",
+    "restore-runtime.exit.json",
+    "restore-runtime.stderr",
+    "restore-runtime.stdout",
+    "retained-engine/carrier-acquisition.json",
+    "retained-engine/current-environment.json",
+    "retained-engine/engine-swift-testing/console.log",
+    "retained-engine/engine-swift-testing/events.jsonl",
+    "retained-engine/original-job.log",
+    "retained-engine/original.zip",
+    "testable/original.zip",
+    "tests/original.zip",
+    "verify-test-bundle.argv.json",
+    "verify-test-bundle.exit.json",
+    "verify-test-bundle.stderr",
+    "verify-test-bundle.stdout",
+    "xctest/command.json",
+    "xctest/console.home.json",
+    "xctest/console.log",
+    "xctest/discovery.json",
+    "xctest/events.jsonl",
+    "xctest/exception.jsonl",
+    "xctest/expected.json",
+    "xctest/loader-paths.json",
+    "xctest/process.json",
+    "xctest/receipt.json",
+    "xctest/verified.json"
+  ],
+  "compiledSelectors": {
+    "metadata": {
+      "artifactID": 14485410061,
+      "artifactSHA256": "b0492ccfa2bacae5cd275c20c031e1b257a3e7e5d6945255c0af43519ca95b96",
+      "runID": 44422554498,
+      "sourceSHA": "5b55c199ae602c3545b46fbd5b131d8771d7f466"
+    },
+    "production": {
+      "artifactID": 14484010785,
+      "artifactSHA256": "ca04745a94eab1e841e18cbd23ab879dc9562c517c909b4dbdacf01bacd22270",
+      "receiptSHA256": "65abf025f50423f7b49fc4a3b10b4a2ad3d377a7d0fb6dbc45a9cb2e4cfb61b1",
+      "runID": 44422554498,
+      "sourceSHA": "5b55c199ae602c3545b46fbd5b131d8771d7f466"
+    },
+    "testable": {
+      "artifactID": 14484007625,
+      "artifactSHA256": "a9b5d9099f7907e6bfef7263eac9b9363e018b9bbc2e6c7b3e6d1337331a68cf",
+      "receiptSHA256": "ea571202965cbf141d590db5ee3c04d4d99a25144e5072f383b2a71f07540d99",
+      "runID": 44422554498,
+      "sourceSHA": "5b55c199ae602c3545b46fbd5b131d8771d7f466"
+    },
+    "tests": {
+      "artifactID": 14485350287,
+      "artifactSHA256": "a9f87233d3413a042ccb036e748a3983aef92848418daae717ffeee1e93f90b2",
+      "receiptSHA256": "e78f70270040f258ce44408d7bdb2b38b68a24c579cb5780173309978a531b2a",
+      "runID": 44422554498,
+      "sourceSHA": "5b55c199ae602c3545b46fbd5b131d8771d7f466"
+    }
+  },
+  "compilerSourceSHA": "5b55c199ae602c3545b46fbd5b131d8771d7f466",
+  "counts": {
+    "appSkips": 8,
+    "engineSkips": 14,
+    "executions": 4666,
+    "retainedApp": 3722,
+    "retainedEngine": 896,
+    "retainedXCTest": 48
+  },
+  "criteriaSHA256": "7b39b3483c65c9c38de8d56e6d38c9d14f6af43e19f49b55547da02b99e3067a",
+  "members": {
+    "app-swift-testing/command.json": {
+      "bytes": 157,
+      "sha256": "49749462ccbc15d77a86bb81d071aff5addce46c9004f469618f6bdb1139ab26"
+    },
+    "app-swift-testing/console.home.json": {
+      "bytes": 245,
+      "sha256": "1b2ec27854adfd58d69f8e55a2e5bfd56a594cebe7900058dcbc0241bc60f17c"
+    },
+    "app-swift-testing/console.log": {
+      "bytes": 1301957,
+      "sha256": "238b3506a44d191503f38168bf3a3bc118adc57ab6da334ecc17e09e4ed232f5"
+    },
+    "app-swift-testing/events.jsonl": {
+      "bytes": 5724690,
+      "sha256": "2db9b2b99543397011ab5f9e3ac1bee06d10c47afab6bccd6e693d94f546a5da"
+    },
+    "app-swift-testing/exception.jsonl": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "app-swift-testing/host-receipt.json": {
+      "bytes": 909,
+      "sha256": "80622f2da334e396eaae21d422f001d1b6b13cc7a47cf1821fab56a83d43b7da"
+    },
+    "app-swift-testing/loader-paths.json": {
+      "bytes": 1253,
+      "sha256": "13c9fffc52ff65428c0b5c736526eb9a5573e30ed6e358d1849c024e8799de35"
+    },
+    "app-swift-testing/platform-path.stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "app-swift-testing/platform-path.stdout": {
+      "bytes": 74,
+      "sha256": "197fce3f2334c5a53d18f1465e2ea6c785fe4efb9192586d818fcc5c0f03dfe8"
+    },
+    "app-swift-testing/process.json": {
+      "bytes": 1051,
+      "sha256": "b9308b15fdc8c2119d0dad0de0f16871d5409c95f19407d98e734f459d5d9e02"
+    },
+    "app-swift-testing/swiftc-path.stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "app-swift-testing/swiftc-path.stdout": {
+      "bytes": 99,
+      "sha256": "e5f642a67aebf696758b27fbd02f5956a8ca96aa668f401d9bd084db54083210"
+    },
+    "app-swift-testing/verified.json": {
+      "bytes": 1414519,
+      "sha256": "507655c319837277dca49ae308b246648785ee6ad4773894d59621d774440d25"
+    },
+    "bank-runtime-manifest.json": {
+      "bytes": 607095,
+      "sha256": "8942741043167ff08b5434abb352c8ef65c7e3426de948ded9e1479543ddaf96"
+    },
+    "bound.json": {
+      "bytes": 6301852,
+      "sha256": "fffeb371fd14d520ad99fdd6caaf7575fbbcb7303ad4dfc18876c0b754a51724"
+    },
+    "native-tests.STARTED.json": {
+      "bytes": 1171,
+      "sha256": "bca422846e96fcafb81d287da2c135a34d33880603d1e863335c607087536691"
+    },
+    "receipt.json": {
+      "bytes": 7576405,
+      "sha256": "e97582be15d8cdc74af49cc15af80ffa2e12d6df9981cb4c6d7f1532a73a4142"
+    },
+    "restore-runtime.argv.json": {
+      "bytes": 198,
+      "sha256": "2ea121dc52583e055f663c181efd64ced18a03416d1fc0efce88a9604b54645b"
+    },
+    "restore-runtime.exit.json": {
+      "bytes": 20,
+      "sha256": "ff8ae5796bcef71911ff9c5c3eaea341819c471f669549e252b830106edd4305"
+    },
+    "restore-runtime.stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "restore-runtime.stdout": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "retained-engine/carrier-acquisition.json": {
+      "bytes": 418890,
+      "sha256": "20e49068283d08c5899661c701d193af52ed9313642b64a35758e8aded6721c3"
+    },
+    "retained-engine/current-environment.json": {
+      "bytes": 545,
+      "sha256": "94836daa4da522eb551c6943483af87c759cc81391013fe9f026e24da96a934f"
+    },
+    "retained-engine/engine-swift-testing/console.log": {
+      "bytes": 176887,
+      "sha256": "a97b3156108f080b112d3ce9019985bceebed8d2a16bf7e81024b77fff9f9ac9"
+    },
+    "retained-engine/engine-swift-testing/events.jsonl": {
+      "bytes": 1340720,
+      "sha256": "2f872313ee84af000898df20f29be6a62154c87524cce06d8059a089d27206ed"
+    },
+    "retained-engine/original-job.log": {
+      "bytes": 3862332,
+      "sha256": "0f634eddc6ed44ed1afb4b7ad0be28e0f5e130d90f885a2c8bdd5ed6841f928f"
+    },
+    "verify-test-bundle.argv.json": {
+      "bytes": 179,
+      "sha256": "f78ffd3374ff7caafdce1d397f9668f33fcc672567d2b8f540871e676635a906"
+    },
+    "verify-test-bundle.exit.json": {
+      "bytes": 20,
+      "sha256": "ff8ae5796bcef71911ff9c5c3eaea341819c471f669549e252b830106edd4305"
+    },
+    "verify-test-bundle.stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "verify-test-bundle.stdout": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "xctest/command.json": {
+      "bytes": 634,
+      "sha256": "9ef0ada086d5e54c7ad3d983c23b50b12a8b43e941d1dcf89cda2dbe13f71ba4"
+    },
+    "xctest/console.home.json": {
+      "bytes": 245,
+      "sha256": "1b2ec27854adfd58d69f8e55a2e5bfd56a594cebe7900058dcbc0241bc60f17c"
+    },
+    "xctest/console.log": {
+      "bytes": 19010,
+      "sha256": "d7dc3243d3c96aede007a8d7057798ce96586d725a46fb01f4736f52ab967569"
+    },
+    "xctest/discovery.json": {
+      "bytes": 99235,
+      "sha256": "b985a6b245dc70627f347aef0f0435135319e7b375ad0d21a709f94419aa9c79"
+    },
+    "xctest/events.jsonl": {
+      "bytes": 189339,
+      "sha256": "a20ea37f47cd93486ae9b257c1bbb89939770e9eaa3a7d62774529bc6088b579"
+    },
+    "xctest/exception.jsonl": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "xctest/expected.json": {
+      "bytes": 5487,
+      "sha256": "7bffa4db974cb49c9c51188da6b8d6162f6d3a8aa5500414748fcc5e8e07cc63"
+    },
+    "xctest/loader-paths.json": {
+      "bytes": 400,
+      "sha256": "f0742af6ba3a0103e518cc6091d1dba1339e1fd3751c5f6b9b64902bf3604a8e"
+    },
+    "xctest/process.json": {
+      "bytes": 1134,
+      "sha256": "c03c4c4ff492a6cfa66e13ef231869d88a081741dd1cc82c21e59e30526f21e0"
+    },
+    "xctest/receipt.json": {
+      "bytes": 115956,
+      "sha256": "ae5ef987015aff941270998cf6d293485654959a5c23b98f5dd7735e23032df7"
+    },
+    "xctest/verified.json": {
+      "bytes": 683402,
+      "sha256": "55e3e4c13e0310f8c928f09abf10309d1e8122583a6ec83dc5b25a02335e4f81"
+    }
+  },
+  "nativeActualSHA256": "7384b62c11681a0b92c29e3a95b3a2f3dfe71f893aa354e67f70049d1fa0fa3a",
+  "originalExecution": {
+    "artifactBytes": 977680246,
+    "artifactID": 14485921636,
+    "artifactSHA256": "fbdb7a3af252e32ddfce41d72d33ad45a1f2527557530bcda783f91ae690c76b",
+    "attempt": 1,
+    "fullRawBytes": 1830648,
+    "fullRawSHA256": "79db5b5165bc74287a137e0c58ff79a3709c8e983280f56d13276c9451973bd2",
+    "jobID": 135238391171,
+    "runID": 44428123807,
+    "sourceSHA": "fc9bfe6f7dd28012e62c6b585bf809bbb60aa1eb"
+  },
+  "rootOriginalIntegritySHA256": "3d60c395c2e949947034a1fdfd4515bad6d76313178fb3c56605f7c4484b6d41",
+  "schema": "compiled-current-core-assembly-origin/v1"
+}
