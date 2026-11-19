@@ -1029,7 +1029,8 @@ def _current_core_import_view(raw, path, *, current=False):
 
 
 def _cohort_ci_additions(prior, current, changes, known_helpers, client_inputs):
-    diagnostic = {'scripts/signed_component_carrier.py', 'scripts/fixtures/signed-component-carrier-1170.json',
+    diagnostic = {'scripts/compiled_app_engine_preparation.py',
+                  'scripts/signed_component_carrier.py', 'scripts/fixtures/signed-component-carrier-1170.json',
                   'scripts/hang_diagnostic_acceptance.py',
                   'scripts/scene_pointer_delivery.py', 'scripts/scene_pointer_observer.swift',
                   'scripts/workspace_native_evidence.py', 'scripts/native_app_failure_diagnostic.py',

@@ -14,6 +14,39 @@ import compiled_app_release as release
 
 
 class CompiledAppReleaseTests(unittest.TestCase):
+    def test_prepared_engine_requires_current_binding_criteria_and_unchanged_originals(self):
+        import compiled_app_engine_preparation as preparation
+
+        expected = {'exactEndedFunctionIDs': ['Engine.example']}
+        evidence = {'proof': {'phase': {'exitCode': 0}}}
+        bound_bytes = b'{"sourceSHA":"candidate","runID":41}'
+        environment = {'GITHUB_SHA': 'candidate', 'GITHUB_RUN_ID': '41', 'GITHUB_RUN_ATTEMPT': '1'}
+        with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, environment):
+            root = Path(temp).resolve()
+            binding = root / 'bound.json'
+            binding.write_bytes(bound_bytes)
+            for name in preparation.ENGINE_FILES:
+                path = root / 'retained-engine' / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(name)
+            receipt = root / preparation.RECEIPT
+            with self.assertRaises(FileNotFoundError):
+                preparation.consume(root, expected)
+            receipt.write_text(json.dumps({
+                'identity': preparation.identity(bound_bytes, expected),
+                'files': preparation.evidence_files(root), 'evidence': evidence,
+            }))
+            self.assertEqual(preparation.consume(root, expected), evidence)
+            with self.assertRaisesRegex(ValueError, 'product binding or criteria differ'):
+                preparation.consume(root, {'exactEndedFunctionIDs': ['Engine.other']})
+            binding.write_bytes(bound_bytes + b' ')
+            with self.assertRaisesRegex(ValueError, 'product binding or criteria differ'):
+                preparation.consume(root, expected)
+            binding.write_bytes(bound_bytes)
+            (root / 'retained-engine' / 'engine-swift-testing' / 'events.jsonl').write_text('changed')
+            with self.assertRaisesRegex(ValueError, 'Engine evidence changed'):
+                preparation.consume(root, expected)
+
     def source_reuse_fixture(self):
         public = json.loads(Path('Runtime/bpy/runtime-lock.json').read_text())['distributionClosure']['publicSourceAsset']
         original = {'schema': 'nexgenvideo/bpy-source-receipt/1', 'sourceSHA': release.RETAINED_SOURCE,

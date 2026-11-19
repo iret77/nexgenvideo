@@ -81,7 +81,8 @@ class ExternalTestBundleTests(unittest.TestCase):
 
     def test_cohort_diagnostic_paths_remain_outside_compiled_client_inputs(self):
         prior = ['scripts/previous.py']
-        additions = ['scripts/fixtures/native-app-failure-1120.json', 'scripts/fixtures/native-app-failure-1135.json',
+        additions = ['scripts/compiled_app_engine_preparation.py',
+                     'scripts/fixtures/native-app-failure-1120.json', 'scripts/fixtures/native-app-failure-1135.json',
                      'scripts/hang_diagnostic_acceptance.py', 'scripts/scene_pointer_delivery.py',
                      'scripts/scene_pointer_observer.swift', 'scripts/signed_component_carrier.py']
         additions = sorted(additions + ['scripts/fixtures/signed-component-carrier-1170.json'])

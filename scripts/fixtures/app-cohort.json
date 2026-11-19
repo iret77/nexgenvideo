@@ -1,6 +1,6 @@
 {
-  "appSourceSHA": "d2674dfb79ee9654d1f871030e0bfb02e200d652",
-  "appTreeSHA": "6c61c6f00609b1c1b9d36e79805554172e0bbb13",
+  "appSourceSHA": "847452fa8bca04040f3d289d8f123eeb253ec396",
+  "appTreeSHA": "120a6f8ec2f4e453acc921311895b665c497cd15",
   "build": "126",
   "ciPaths": [
     ".github/actionlint.yaml",
@@ -28,6 +28,7 @@
     "scripts/bpy_runtime_acceptance.py",
     "scripts/canonical_analysis.jxa",
     "scripts/chat_hang_replay.py",
+    "scripts/compiled_app_engine_preparation.py",
     "scripts/compiled_app_release.py",
     "scripts/compiled_current_core_reuse.py",
     "scripts/external-gui/NexGenVideoExternalUITests/UserJourneyTests.swift",
@@ -127,7 +128,7 @@
   },
   "criteria": {
     "path": "scripts/fixtures/app-cohort-native-inventory.json",
-    "sha256": "1c9d47e4ae4f60d115ab8f30b6a1ef1a073b119105a553cb1282698d051a60a7"
+    "sha256": "e2ecfbd6fe9655e31bff787f2c40cc3b3d38eecc69165567dc8a11eaccbca4f5"
   },
   "nativeSourceObjects": {
     "Engine": "29cfed623d13e6d84d5822a30b98e088fc123c3f",
@@ -136,7 +137,7 @@
     "Package.swift": "37f605bfb8cdccc48821b39484c819ba3e5eff43",
     "Runtime": "910b87b08a3a8c976e0f2502580c843b0df74154",
     "Sources": "678cf2c8e44699f8821f1415b3f78d58774b2d01",
-    "Tests": "f23062fd33a5499374838a96a389f6f44e7853e4",
+    "Tests": "7f81593bec37eb4d0d1774810b54adfdc8c9eb74",
     "Vendor": "51e93c100e00dcd196edac0e70e1af921d52055a",
     "plugins": "b75e017d3145010368ae417bc410574f3f0300c1"
   },
@@ -2949,7 +2950,7 @@
       "Sources/NexGenVideo/Utilities/SourceTiming.swift": "15247fa32564207dee3a5a01065d5a4fc8389f9f",
       "Sources/NexGenVideo/Utilities/TimeFormatting.swift": "4c10a4554812031a08ecbe3e10d39cce76e1719e",
       "Tests/AppKitTestHostSupport": "180f486523e826b8b462011d42bf758fdc4e1d6f",
-      "Tests/NexGenVideoTests": "7eb732a57756c2d048152c375c881d30958449ca"
+      "Tests/NexGenVideoTests": "d5a7c5e85c0cc110b86773a91b0852d489a4a245"
     }
   },
   "schema": "native-app-cohort/v2",

@@ -741,6 +741,15 @@ jobs:
           COMPILED_APP_TARGETS: ${{ inputs.compiled_app_targets_json }}
         run: python3 scripts/compiled_app_release.py acquire --root "$RUNNER_TEMP/compiled-app-release"
 
+      - name: Prepare the qualified Engine evidence for complete native testing
+        if: inputs.compiled_app_targets_json != ''
+        timeout-minutes: 35
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/compiled_app_engine_preparation.py "$RUNNER_TEMP/compiled-app-release"
+
       - name: Verify the complete new App and XCTest scope
         if: inputs.compiled_app_targets_json != ''
         timeout-minutes: 20
@@ -748,6 +757,7 @@ jobs:
           HOME: ${{ runner.temp }}/nexgenvideo-test-home
           CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
           GH_TOKEN: ${{ github.token }}
+          COMPILED_APP_ENGINE_PREPARED: '1'
         run: python3 scripts/compiled_app_release.py test --root "$RUNNER_TEMP/compiled-app-release"
 
       - name: Preserve all original compiled inputs and native execution evidence
