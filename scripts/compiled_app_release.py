@@ -1265,6 +1265,9 @@ def retained_engine_carrier(root=None):
 
 
 def retained_engine_evidence(root, expected):
+    if os.environ.get('COMPILED_APP_ENGINE_PREPARED') == '1':
+        from compiled_app_engine_preparation import consume
+        return consume(root, expected)
     head = os.environ['GITHUB_SHA']
     import app_cohort_v2
     import signed_component_carrier

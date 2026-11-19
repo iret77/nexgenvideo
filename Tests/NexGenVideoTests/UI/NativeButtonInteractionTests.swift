@@ -713,6 +713,34 @@ struct NativeButtonInteractionTests {
         #expect(Query.chromeExclusion(for: [kAXFullScreenButtonAttribute]) == kAXFullScreenButtonAttribute)
         #expect(Query.chromeExclusion(for: [kAXCloseButtonAttribute, kAXZoomButtonAttribute]) == nil)
         #expect(Query.chromeExclusion(for: []) == nil)
+        let aliases = [kAXZoomButtonAttribute, kAXFullScreenButtonAttribute]
+        let chromeFrame = Query.Frame(CGRect(x: 100, y: 20, width: 14, height: 14))
+        var chrome = Query.Node(parent: nil, pid: getpid(), role: kAXButtonRole,
+            title: nil, label: nil, enabled: nil, frame: chromeFrame,
+            statuses: ["pid": 0, kAXRoleAttribute: 0, kAXPositionAttribute: 0, kAXSizeAttribute: 0,
+                kAXZoomButtonAttribute: 0, kAXFullScreenButtonAttribute: 0], childTypes: [])
+        chrome.scopeExclusion = kAXZoomButtonAttribute
+        chrome.chromeMatches = aliases
+        var paired = snapshot([node()])
+        paired.windowAttributes.append(contentsOf: aliases)
+        paired.rootRivals.append(chrome)
+        paired.reportedRootCount += 1
+        for alias in aliases {
+            paired.chromeExclusions[alias] = chrome
+            paired.windowAttributeStatuses[alias] = 0
+            paired.windowAttributeStatuses["timeout:" + alias] = 0
+        }
+        #expect(Query.buttons(paired, title: "Undo", inside: probe).count == 1)
+        var incompletePair = paired
+        incompletePair.chromeExclusions[kAXFullScreenButtonAttribute] = nil
+        incompletePair.windowAttributeStatuses[kAXFullScreenButtonAttribute] = nil
+        incompletePair.windowAttributeStatuses["timeout:" + kAXFullScreenButtonAttribute] = nil
+        #expect(Query.buttons(incompletePair, title: "Undo", inside: probe).isEmpty)
+        var differentPair = paired
+        differentPair.chromeExclusions[kAXFullScreenButtonAttribute] = Query.Node(parent: nil, pid: getpid(),
+            role: kAXButtonRole, title: nil, label: nil, enabled: nil,
+            frame: .init(chromeFrame.rect.offsetBy(dx: 20, dy: 0)), statuses: chrome.statuses, childTypes: [])
+        #expect(Query.buttons(differentPair, title: "Undo", inside: probe).isEmpty)
         defer { fixture.close() }
         let outcome = try await NativeAXPeer.withSession { session in
             let result = try await fixture.ready(using: session)
@@ -725,17 +753,20 @@ struct NativeButtonInteractionTests {
                 $0.scopeExclusion == kAXZoomButtonAttribute || $0.scopeExclusion == kAXFullScreenButtonAttribute
             })
             #expect(green.frame?.rect.intersects(fixture.request.contentFrame.rect) == true)
-            #expect(green.chromeMatches == [kAXZoomButtonAttribute, kAXFullScreenButtonAttribute])
+            let matches = try #require(green.chromeMatches)
+            let declaredSlot = try #require(matches.last)
+            #expect(Query.chromeExclusion(for: matches) == green.scopeExclusion)
+            try #require(result.chromeExclusions[declaredSlot] != nil)
             #expect(Query.buttons(result, title: "Undo", inside: fixture.request.windowFrame).count == 1)
             var unbound = result
             let index = try #require(unbound.rootRivals.firstIndex(of: green))
             unbound.rootRivals[index].chromeMatches = nil
             #expect(Query.buttons(unbound, title: "Undo", inside: fixture.request.windowFrame).isEmpty)
-            var missingAlias = result
-            missingAlias.chromeExclusions[kAXFullScreenButtonAttribute] = nil
-            missingAlias.windowAttributeStatuses[kAXFullScreenButtonAttribute] = nil
-            missingAlias.windowAttributeStatuses["timeout:" + kAXFullScreenButtonAttribute] = nil
-            #expect(Query.buttons(missingAlias, title: "Undo", inside: fixture.request.windowFrame).isEmpty)
+            var missingDeclaration = result
+            missingDeclaration.chromeExclusions[declaredSlot] = nil
+            missingDeclaration.windowAttributeStatuses[declaredSlot] = nil
+            missingDeclaration.windowAttributeStatuses["timeout:" + declaredSlot] = nil
+            #expect(Query.buttons(missingDeclaration, title: "Undo", inside: fixture.request.windowFrame).isEmpty)
         }
         #expect(outcome.1.clean)
     }
@@ -966,13 +997,16 @@ struct NativePointerInteractionTests {
             window.contentView?.layoutSubtreeIfNeeded()
         }
 
-        func ready() async throws {
+        func ready(unobscured: [String] = []) async throws {
             var viewport = NativePointerViewportReadiness()
             let began = ProcessInfo.processInfo.systemUptime
+            let targets = unobscured.map { "foreground:" + $0 }
+            let clauses = ["active", "key", "presentation", "probe", "viewport"] + targets + ["settled-viewport"]
             do {
-                try await context.wait("exclusive native pointer fixture", driver: driver, clauses: ["active", "key", "presentation", "probe", "viewport", "settled-viewport"]) {
+                try await context.wait("exclusive native pointer fixture", driver: driver, clauses: clauses) {
                     let ready = self.context.operand("active", NSApp.isActive) && self.context.operand("key", self.window.isKeyWindow) && self.context.operand("presentation", nativePointerWindowPresented(self.window)) && self.context.operand("probe", self.probe("Undo") != nil) && self.context.operand("viewport", nativePointerViewportReady(in: self.window))
-                    guard ready else { viewport.reset(); return false }
+                    guard ready, unobscured.allSatisfy({ self.context.operand("foreground:" + $0, self.isForeground($0)) })
+                    else { viewport.reset(); return false }
                     return self.context.operand("settled-viewport", viewport.observe(NativePointerViewportReadiness.Sample.current(in: self.window), at: ProcessInfo.processInfo.systemUptime))
                 }
             } catch {
@@ -991,9 +1025,19 @@ struct NativePointerInteractionTests {
             window.contentView.flatMap { WorkspaceUIAcceptance.findProbe(in: $0, identifier: "pointer." + title) }
         }
 
+        private func isForeground(_ title: String) -> Bool {
+            guard let view = probe(title), view.window === window,
+                  !view.isHiddenOrHasHiddenAncestor, !view.visibleRect.isEmpty else { return false }
+            return NSWindow.windowNumber(at: screenCenter(of: view), belowWindowWithWindowNumber: 0) == window.windowNumber
+        }
+
+        private func screenCenter(of view: NSView) -> NSPoint {
+            let center = NSPoint(x: view.bounds.midX, y: view.bounds.midY)
+            return window.convertPoint(toScreen: view.convert(center, to: nil))
+        }
+
         func point(_ title: String) throws -> NSPoint {
-            let probe = try #require(probe(title))
-            return window.convertPoint(toScreen: probe.convert(NSPoint(x: probe.bounds.midX, y: probe.bounds.midY), to: nil))
+            screenCenter(of: try #require(probe(title)))
         }
 
         func moveAway() async throws {
@@ -1063,7 +1107,9 @@ struct NativePointerInteractionTests {
         legacy.close()
         let fixture = try await Fixture("adjacent-buttons")
         defer { fixture.close() }
-        try await fixture.ready()
+        let screen = try #require(fixture.window.screen)
+        fixture.window.setFrameOrigin(NSPoint(x: screen.visibleFrame.minX, y: fixture.window.frame.minY))
+        try await fixture.ready(unobscured: ["Away", "field", "Undo", "Redo"])
         try await fixture.moveAway()
         try await fixture.driver.click("pointer.Undo", in: fixture.window)
         try await fixture.driver.wait("Undo callback") { fixture.capture.count("Undo") == 1 }
