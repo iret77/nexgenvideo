@@ -58,18 +58,15 @@ enum ProductionSceneUIAcceptance {
                 guard restored.1.snapshot.objects.first(where: { $0.id == cube.id })?.matrixWorld == movedCube.matrixWorld else {
                     throw failed("Native scene Redo did not restore the actual transform.")
                 }
-                try await driver.fill("spatial.camera.name", value: "Wide camera", in: window)
-                try await driver.fill("spatial.camera.fov", value: "60.0", in: window)
-                try await driver.fill("spatial.camera.width", value: "641", in: window)
-                try await driver.fill("spatial.camera.height", value: "360", in: window)
+                try await driver.fillFields([("spatial.camera.name", "Wide camera"), ("spatial.camera.fov", "60.0"),
+                                             ("spatial.camera.width", "641"), ("spatial.camera.height", "360")], in: window)
                 guard driver.state("spatial.camera.apply", in: window) == false,
                       !(driver.text("spatial.camera.dimensions-error", in: window) ?? "").isEmpty else {
                     throw failed("The non-renderable camera ratio was silently accepted before Save.")
                 }
                 try driver.capture("camera-invalid-ratio", target: window)
                 guard try await read(name: name, root: root).0 == restored.0 else { throw failed("Unsaved camera fields mutated the canonical location.") }
-                try await driver.fill("spatial.camera.width", value: "128", in: window)
-                try await driver.fill("spatial.camera.height", value: "128", in: window)
+                try await driver.fillFields([("spatial.camera.width", "128"), ("spatial.camera.height", "128")], in: window)
                 if driver.state("spatial.camera.keyframe", in: window) == false {
                     try await driver.click("spatial.camera.keyframe", in: window, enabled: false)
                 }
