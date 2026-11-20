@@ -1765,6 +1765,7 @@ struct NativePointerInteractionTests {
     }
 
     @Test func canonicalNativeAccessibilityHitKeepsSystemInputAndRealFieldFocus() async throws {
+        try await exerciseTabTraversal()
         let fixture = try await CanonicalNativeFixture("input")
         defer { fixture.close() }
         try await fixture.ready()
@@ -1831,7 +1832,6 @@ struct NativePointerInteractionTests {
         #expect(field["accessibilityRole"] as? String == kAXTextFieldRole)
         #expect(real.window.firstResponder is NSTextView)
     }
-
     @Test func canonicalNativeAccessibilityFailuresNeverPostDown() async throws {
         let fixture = try await CanonicalNativeFixture("refused")
         defer { fixture.close() }
@@ -2524,5 +2524,194 @@ struct NativePointerInteractionTests {
             result["lastObservedUptime"] = lastObservedAt.isFinite ? lastObservedAt as Any : String(describing: lastObservedAt)
         }
         return result
+    }
+}
+
+private extension NativePointerInteractionTests {
+    @MainActor private final class CameraValues: ObservableObject {
+        @Published var name = "Camera"
+        @Published var fov = 50.0
+        @Published var width = 1280
+        @Published var untouched = 12
+        @Published var height = 720
+    }
+
+    @MainActor private struct CameraFields: View {
+        @ObservedObject var values: CameraValues
+
+        var body: some View {
+            VStack {
+                TextField("Camera name", text: $values.name).background { marker("name", values.name) }
+                LabeledContent("FOV") { TextField("Degrees", value: $values.fov, format: .number).background { marker("fov", String(values.fov)) } }
+                LabeledContent("Width") { TextField("Pixels", value: $values.width, format: .number).background { marker("width", String(values.width)) } }
+                LabeledContent("Other") { TextField("Pixels", value: $values.untouched, format: .number).background { marker("untouched", String(values.untouched)) } }
+                LabeledContent("Height") { TextField("Pixels", value: $values.height, format: .number).background { marker("height", String(values.height)) } }
+            }
+            .padding(AppTheme.Spacing.md)
+            .interfaceStyle()
+        }
+
+        private func marker(_ id: String, _ value: String) -> some View {
+            AppRelaunchClickProbe(identifier: id, acceptanceState: true, acceptanceText: value).allowsHitTesting(false)
+        }
+    }
+
+    @MainActor private final class TabWitness: NSObject {
+        let window: NSWindow
+        let values: CameraValues
+        let fields: [String: NSTextField]
+        let driver: ProductionVisualSourcesDriver
+        var from = ""
+        var start = 0
+        var events: [String] = []
+        var nameAtTab: [String] = []
+        var fovAtTab: [Double] = []
+        var earlyCompletion = false
+        var coverWidth = false
+
+        init(window: NSWindow, root: NSView, values: CameraValues, driver: ProductionVisualSourcesDriver) throws {
+            self.window = window
+            self.values = values
+            self.driver = driver
+            func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+            let editable = descendants(root).compactMap { $0 as? NSTextField }.filter(\.isEditable)
+            var fields: [String: NSTextField] = [:]
+            for id in ["name", "fov", "width", "untouched", "height"] {
+                let marker = try #require(WorkspaceUIAcceptance.findProbe(in: root, identifier: id))
+                let frame = marker.convert(marker.bounds, to: root)
+                let matches = editable.filter { $0.convert($0.bounds, to: root).contains(NSPoint(x: frame.midX, y: frame.midY)) }
+                try #require(matches.count == 1)
+                fields[id] = matches.first
+            }
+            self.fields = fields
+            super.init()
+        }
+
+        func receive(_ type: UInt, code: UInt16, flags: UInt, point: NSPoint) {
+            let editor = window.firstResponder as? NSTextView
+            let owner = fields.first { editor != nil && $0.value.currentEditor() === editor }?.key ?? "none"
+            if type == NSEvent.EventType.keyDown.rawValue, code == 48 {
+                from = owner
+                events.append("tab-down:" + owner)
+                if owner == "name" {
+                    nameAtTab.append(values.name)
+                    if editor?.string != values.name || driver.text("name", in: window) != values.name {
+                        events.append("name editor or probe differs at Tab")
+                    }
+                }
+                if owner == "fov" {
+                    fovAtTab.append(values.fov)
+                    if editor?.string != "60.0" || driver.text("fov", in: window) != "60.0" {
+                        events.append("FOV editor or probe differs at Tab")
+                    }
+                }
+                if owner == "name" || owner == "fov" {
+                    earlyCompletion = earlyCompletion || driver.interactions.dropFirst(start).contains {
+                        ($0["field"] as? [String: Any])?["id"] as? String == owner
+                    }
+                }
+            } else if type == NSEvent.EventType.keyUp.rawValue, code == 48 {
+                events.append("tab-up:" + from)
+            } else if type == NSEvent.EventType.keyDown.rawValue, code == 0,
+                      NSEvent.ModifierFlags(rawValue: flags).contains(.command) {
+                events.append("select:" + owner)
+            } else if type == NSEvent.EventType.leftMouseDown.rawValue {
+                for (id, field) in fields where field.convert(field.bounds, to: nil).contains(point) {
+                    events.append("mouse:" + id)
+                }
+            }
+        }
+
+        @objc func editing(_ notification: Notification) {
+            guard let field = notification.object as? NSTextField,
+                  let id = fields.first(where: { $0.value === field })?.key else { return }
+            if notification.name == NSControl.textDidBeginEditingNotification {
+                events.append("begin:" + id)
+            } else {
+                let movement = (notification.userInfo?["NSTextMovement"] as? NSNumber)?.intValue
+                events.append(movement == NSTextMovement.tab.rawValue ? "tab-end:" + id : "end:" + id)
+                if coverWidth, id == "fov", let width = fields["width"], let root = window.contentView {
+                    let cover = NSButton(title: "Other control", target: nil, action: nil)
+                    cover.refusesFirstResponder = true
+                    cover.frame = width.convert(width.bounds, to: root)
+                    root.addSubview(cover)
+                }
+            }
+        }
+    }
+
+    private func exerciseTabTraversal() async throws {
+        let fixture = try await CanonicalNativeFixture("tab-traversal")
+        defer { fixture.close() }
+        try await fixture.ready()
+        let window = fixture.window, values = CameraValues()
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: 390, height: 320))
+        let host = NSHostingView(rootView: CameraFields(values: values))
+        host.frame = root.bounds
+        root.addSubview(host)
+        window.setContentSize(root.bounds.size)
+        window.contentView = root
+        window.center()
+        try await fixture.driver.wait("camera fields presented") {
+            root.layoutSubtreeIfNeeded()
+            return nativePointerWindowPresented(window) && WorkspaceUIAcceptance.probeFrame(identifier: "height", in: window) != nil
+        }
+        let observer = try TabWitness(window: window, root: root, values: values, driver: fixture.driver)
+        let center = NotificationCenter.default
+        for name in [NSControl.textDidBeginEditingNotification, NSControl.textDidEndEditingNotification] {
+            center.addObserver(observer, selector: #selector(TabWitness.editing(_:)), name: name, object: nil)
+        }
+        defer { center.removeObserver(observer) }
+        let number = window.windowNumber
+        let monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .leftMouseDown]) { event in
+            if event.windowNumber == number {
+                let type = event.type.rawValue, flags = event.modifierFlags.rawValue, point = event.locationInWindow
+                let code: UInt16 = event.type == .leftMouseDown ? 0 : event.keyCode
+                MainActor.assumeIsolated { observer.receive(type, code: code, flags: flags, point: point) }
+            }
+            return event
+        }
+        defer { if let monitor { NSEvent.removeMonitor(monitor) } }
+        try #require(monitor != nil && window.makeFirstResponder(nil))
+        observer.start = fixture.driver.interactions.count
+        try await fixture.driver.fillFields([("name", "Wide camera"), ("fov", "60.0"),
+                                             ("width", "641"), ("height", "360")], in: window)
+        try await fixture.driver.wait("last camera field finished editing") { observer.events.contains("tab-end:height") }
+        #expect(values.name == "Wide camera" && values.fov == 60 && values.width == 641 && values.height == 360)
+        #expect(values.untouched == 12)
+        #expect(observer.nameAtTab == ["Wide camera"] && observer.fovAtTab == [60] && !observer.earlyCompletion)
+        #expect(!observer.events.contains("name editor or probe differs at Tab"))
+        #expect(!observer.events.contains("FOV editor or probe differs at Tab"))
+        #expect(!observer.events.contains("mouse:fov") && !observer.events.contains("mouse:width"))
+        func precedes(_ first: String, _ second: String) throws {
+            let a = try #require(observer.events.firstIndex(of: first))
+            let b = try #require(observer.events.firstIndex(of: second))
+            #expect(a < b)
+        }
+        try precedes("mouse:name", "select:name")
+        try precedes("mouse:height", "select:height")
+        for (id, next) in [("name", "select:fov"), ("fov", "select:width"), ("width", "mouse:height"), ("height", "")] {
+            try precedes("select:" + id, "tab-down:" + id)
+            for completion in ["tab-up:" + id, "tab-end:" + id] {
+                try precedes("tab-down:" + id, completion)
+                if !next.isEmpty { try precedes(completion, next) }
+            }
+        }
+
+        try #require(window.makeFirstResponder(nil))
+        observer.coverWidth = true
+        observer.events = []
+        observer.start = fixture.driver.interactions.count
+        do {
+            try await fixture.driver.fillFields([("fov", "60.0"), ("width", "128")], in: window)
+            Issue.record("The covered Width field received input.")
+        } catch {
+            #expect(error.localizedDescription.contains("The field reached by Tab is covered or has lost its editor."))
+        }
+        #expect(observer.fovAtTab == [60, 60] && !observer.earlyCompletion)
+        #expect(observer.events.contains("tab-end:fov"))
+        #expect(!observer.events.contains("FOV editor or probe differs at Tab"))
+        #expect(!observer.events.contains("mouse:width") && !observer.events.contains("select:width"))
+        #expect(values.width == 641)
     }
 }
