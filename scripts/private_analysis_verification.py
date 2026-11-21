@@ -493,6 +493,73 @@ def project_evidence(root, analysis, song, lyrics, canonicalizer):
     return owner
 
 
+def verify_dialog_selection(path, action, event, typed, selected):
+    actual = PurePosixPath(selected.get('selected', ''))
+    check(actual == path and '..' not in actual.parts
+          and typed.get('pathField') == 'PathTextField', 'INTAKE')
+    if action == 'save':
+        check(typed.get('filename') == path.name and typed.get('typed') == str(actual.parent)
+              and event.get('kind') == 'save-panel' and event.get('filename') == path.name
+              and event.get('exactURLVerified') is True and event.get('nativeDirectoryAndFilenameTyped') is True, 'INTAKE')
+    else:
+        check(typed.get('typed') == str(actual) and event.get('kind') == 'file-panel'
+              and event.get('path') == actual.name and event.get('selectedURLVerified') is True
+              and event.get('nativePathEditorVerified') is True, 'INTAKE')
+
+
+def verify_private_dialogs(root, identity, manifest):
+    client = read_json(local(root, 'dialog-client.json'))
+    artifact = api('actions/artifacts/' + str(client['artifactID']))
+    check(artifact.get('id') == client['artifactID'] and artifact.get('name') == 'file-dialog-ui'
+          and artifact.get('digest') == client['artifactDigest'] and DIGEST.fullmatch(client['artifactDigest'])
+          and artifact.get('workflow_run', {}).get('id') == client['run']
+          and artifact['workflow_run'].get('head_sha') == client['source'] == identity['productSourceSHA']
+          and client['attempt'] == 1 and SHA.fullmatch(client['products']), 'ORIGIN')
+    execution = read_json(local(root, 'private-xctest-execution.json'))
+    check(execution.get('schema') == 'private-audio-xctest/1' and execution.get('nativeExit') == 0
+          and execution.get('testExit') == 0 and execution.get('runID') == identity['nativeRunID']
+          and execution.get('attempt') == 1 and execution.get('productSHA') == identity['productSourceSHA']
+          and execution.get('harnessSHA') == identity['nativeHarnessSourceSHA'], 'INTAKE')
+    pid = execution.get('appPID')
+    check(type(pid) is int and pid > 0 and local(root, 'dialog-native.pid').read_text() == str(pid), 'INTAKE')
+    report = read_json(local(root, 'provenance.json'))
+    dataset, = [d for d in manifest['datasets'] if d['id'] == report['dataset']]
+    track, = [f['path'] for f in dataset['files'] if f['kind'] == 'audio']
+    lyrics = [f['path'] for f in dataset['files'] if f['kind'] == 'lyrics']
+    runner = PurePosixPath(execution['runnerTemp'])
+    check(runner.is_absolute() and '..' not in runner.parts and runner != PurePosixPath('/'), 'INTAKE')
+    fixtures = runner / 'fixture-data/examples'
+    report_dir = runner / 'analysis-report'
+    project_id = read_json(local(root, 'approved-project.ngv/ngv.json')).get('id')
+    check(isinstance(project_id, str) and re.fullmatch(
+        r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', project_id), 'PROJECT')
+    recovery = runner / 'nexgenvideo-test-home/Library/Application Support/NexGenVideo/Recovery' / ('p-' + project_id)
+    movie = report_dir / 'private-song-moving-source.mov'
+    expected = [fixtures / track, *(fixtures / name for name in lyrics), None, report_dir / 'Stage.png',
+                movie, movie, movie, None, movie, None, movie, recovery / 'pipeline/bible/refs/native-effect.wav',
+                report_dir / 'owner-v2-film.mp4']
+    evidence = [read_json(local(root, f'hostflow-{stage}-result.json')) for stage in ('track-lyrics', 'repeatable-intake')]
+    evidence.append(read_json(local(root, 'owner-v2-result.json'))['nativeEvidence'])
+    events = [e for result in evidence for e in result['interactions'] if e.get('kind') in
+              ('file-panel', 'file-panel-cancel', 'save-panel')]
+    check(len(expected) == len(events) and local(root, 'dialog-test-steps').read_text() == str(len(expected)), 'INTAKE')
+    for index, (path, event) in enumerate(zip(expected, events), 1):
+        prefix = f'file-panel-{index}-'
+        name = prefix + 'input.json'
+        visible = read_json(local(root, prefix + 'visible.json'))
+        typed = read_json(local(root, name))
+        selected = read_json(local(root, prefix + 'observed'))
+        action = 'cancel' if path is None else 'save' if index == len(events) else 'open'
+        check(event.get('externalInput') == name and event.get('dialogTestStep') == index
+              and visible == {'pid': pid, 'step': index, 'action': action, 'window': visible.get('window')}
+              and type(visible['window']) is int and visible['window'] > 0
+              and all(typed.get(k) == v and selected.get(k) == v for k, v in visible.items()), 'INTAKE')
+        if path is None:
+            check(event['kind'] == 'file-panel-cancel' and 'typed' not in typed and 'selected' not in selected, 'INTAKE')
+            continue
+        verify_dialog_selection(path, action, event, typed, selected)
+
+
 def validate_report(root, fixture_root, manifest, selected, canonicalizer=foundation_field):
     report = read_json(local(root, 'provenance.json'))
     analysis_path = local(root, 'analysis.json'); analysis = read_json(analysis_path)
@@ -609,6 +676,9 @@ def verify(output, work):
         runtime_binding(runtime, bound, identity)
         receipt['checks']['runtime_origin'] = True
         validate_report(root, fixture_root, manifest, identity)
+        from file_dialog_products import uses_external_dialogs
+        if uses_external_dialogs(identity['productSourceSHA']):
+            verify_private_dialogs(root, identity, manifest)
         for name in CHECKS[4:-1]:receipt['checks'][name] = True
         receipt['privateInventorySHA256'] = digest(json.dumps(inventory(work), ensure_ascii=True, separators=(',', ':')).encode())
         receipt['checks']['private_inventory'] = True

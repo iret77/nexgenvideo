@@ -357,6 +357,11 @@ jobs:
             .build/bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.tar \
             .build/bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json
           scripts/stage_bpy_runtime.sh .build/bpy-runtime
+      - name: Build file dialog XCTest
+        uses: ./.github/actions/file-dialog-products
+        with:
+          mode: build
+
       - name: Build acceptance app
         run: |
           scripts/bundle.sh debug
@@ -499,6 +504,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: ./.github/actions/setup-native-test-python
       - uses: ./.github/actions/prepare-native-runtime
         id: runtime
@@ -507,6 +514,14 @@ jobs:
           run-id: ${{ needs.runtime.outputs.runtime_run_id }}
           identity-artifact-id: ${{ needs.runtime.outputs.identity_artifact_id }}
           identity-sha: ${{ needs.runtime.outputs.identity_sha }}
+      - name: Restore the app producer’s file dialog XCTest
+        if: contains(fromJSON('["appnle","filmreview","genericnle","performance"]'), matrix.case)
+        uses: ./.github/actions/file-dialog-products
+        with:
+          mode: restore
+          app-source: ${{ inputs.runtime_source_sha }}
+          app-run: ${{ needs.runtime.outputs.runtime_run_id }}
+
       - name: Prepare the job-local temporary test home
         run: mkdir -p "$RUNNER_TEMP/nexgenvideo-test-home"
       - name: Exercise one native case and interface scale

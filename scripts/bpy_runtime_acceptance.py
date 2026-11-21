@@ -24,6 +24,7 @@ from run_macos_tests import (host_binary_identity, owned_crash_report, read_stab
                              report_candidates, report_directories)
 from app_host_zombie_diagnostic import NativeReader
 from isolated_test_home import process_environment
+from file_dialog_ui import session
 
 
 class WorkerReader(NativeReader):
@@ -733,10 +734,13 @@ def supervise(binary, output, mode, source_sha, timeout):
         postmortem = None
     start = time.time()
     deadline = time.monotonic() + timeout
-    with (output / "runtime.log").open("wb") as stdout, (output / "runtime-stderr.log").open("wb") as stderr:
+    scenario = "bpy" if mode == "runtime" and not environment.get("NGV_SELFTEST_BPY_SCOPE") else None
+    with session(binary.parents[2], environment, output, scenario) as client, (output / "runtime.log").open("wb") as stdout, (output / "runtime-stderr.log").open("wb") as stderr:
         process = subprocess.Popen([str(binary), "-hangDiagnosticMode", "disabled"],
             env=environment, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr)
         try:
+            if client:
+                client.attach(process.pid)
             workers = None
             if mode == "runtime" and sys.platform == "darwin" and postmortem is not None:
                 try:
@@ -747,6 +751,8 @@ def supervise(binary, output, mode, source_sha, timeout):
                     diagnostic_error(output, "live-worker-setup", error)
             (output / "process.json").write_text(json.dumps(dict(pid=process.pid, sourceSHA=source_sha, mode=mode)) + "\n")
             while process.poll() is None:
+                if client:
+                    client.check()
                 if workers is not None:
                     try:
                         workers.poll(time.monotonic())

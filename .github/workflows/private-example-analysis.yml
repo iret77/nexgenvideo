@@ -261,6 +261,11 @@ jobs:
 
       - uses: ./.github/actions/cache-swiftpm-dependencies
 
+      - name: Build file dialog XCTest
+        uses: ./.github/actions/file-dialog-products
+        with:
+          mode: build
+
       - name: Bundle real app and external pack
         run: |
           set -euo pipefail
@@ -296,6 +301,13 @@ jobs:
           fetch-depth: 0
       - uses: ./.github/actions/setup-native-test-python
         if: inputs.runtime_run_id != ''
+
+      - name: Restore the app producer’s file dialog XCTest
+        uses: ./.github/actions/file-dialog-products
+        with:
+          mode: restore
+          app-source: ${{ inputs.runtime_source_sha }}
+          app-run: ${{ inputs.runtime_run_id }}
 
       - name: Verify supported runtime
         shell: bash
@@ -409,7 +421,13 @@ jobs:
           NGV_EXAMPLE_DATASET: ${{ inputs.dataset }}
           NGV_EXAMPLE_REPORT_DIR: ${{ runner.temp }}/analysis-report
           NGV_GIT_COMMIT: ${{ inputs.runtime_source_sha || github.sha }}
-        run: .build/NexGenVideo.app/Contents/MacOS/NexGenVideo -ApplePersistenceIgnoreState YES
+          GH_TOKEN: ''
+        run: |
+          if [ -n "${NGV_FILE_DIALOG_PRODUCTS:-}" ]; then
+            python3 scripts/private_audio_ui.py
+          else
+            .build/NexGenVideo.app/Contents/MacOS/NexGenVideo -ApplePersistenceIgnoreState YES
+          fi
 
       - name: Verify actual optional material intake
         run: python3 scripts/private_analysis_verification.py validate-intake --work "$RUNNER_TEMP/analysis-report"
@@ -422,7 +440,16 @@ jobs:
         run: |
           set -euo pipefail
           if [ ! -s "$RUNNER_TEMP/analysis-report/provenance.json" ]; then
-            echo "No private analysis provenance was produced."
+            if [ -s "$RUNNER_TEMP/analysis-report/dialog-test.log" ]; then
+              cd "$RUNNER_TEMP/analysis-report"
+              tar -czf "$RUNNER_TEMP/dialog-diagnostic.tar.gz" .
+              cd "$RUNNER_TEMP"
+              digest="$(oras push --no-tty --registry-config "$RUNNER_TEMP/oras-auth.json" \
+                --artifact-type application/vnd.nexgenvideo.private-analysis-diagnostic.v1 \
+                --format 'go-template={{.digest}}' "$REPORT_REFERENCE" \
+                dialog-diagnostic.tar.gz:application/gzip)"
+              echo "reference=${REPORT_REFERENCE%:*}@$digest" >> "$GITHUB_OUTPUT"
+            fi
             exit 0
           fi
           cd "$RUNNER_TEMP/analysis-report"
@@ -487,6 +514,7 @@ jobs:
         if: ${{ always() }}
         run: |
           rm -rf "$RUNNER_TEMP/fixture-package" "$RUNNER_TEMP/fixture-data" "$RUNNER_TEMP/analysis-report"
+          rm -rf "$RUNNER_TEMP/file-dialog-ui" "$RUNNER_TEMP/dialog-diagnostic.tar.gz"
           rm -rf "$RUNNER_TEMP/runtime-harness" .build/NexGenVideo.app .build/plugins
           rm -f "$RUNNER_TEMP/oras-auth.json"
       - name: Retain separately acquired original component evidence

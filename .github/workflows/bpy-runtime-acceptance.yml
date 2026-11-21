@@ -75,6 +75,13 @@ jobs:
           fi
       - name: Prepare the job-local temporary test home
         run: mkdir -p "$RUNNER_TEMP/nexgenvideo-test-home"
+      - name: Restore the app producer’s file dialog XCTest
+        uses: ./.github/actions/file-dialog-products
+        with:
+          mode: restore
+          app-source: ${{ inputs.expected_source_sha }}
+          app-run: ${{ inputs.runtime_run_id }}
+
       - name: Record original App and current harness provenance
         env:
           HOME: ${{ runner.temp }}/nexgenvideo-test-home
@@ -91,7 +98,7 @@ jobs:
           from retained_packaging import VERIFIER_INPUTS, committed_inputs
           output = Path(os.environ['RUNNER_TEMP']) / 'evidence'
           output.mkdir(parents=True, exist_ok=True)
-          paths = ['scripts/bpy_runtime_acceptance.py', 'scripts/run_macos_tests.py', 'scripts/isolated_test_home.py',
+          paths = ['scripts/bpy_runtime_acceptance.py', 'scripts/file_dialog_ui.py', 'scripts/run_macos_tests.py', 'scripts/isolated_test_home.py',
                    'scripts/app_host_zombie_diagnostic.py', 'scripts/verify_swift_test_output.py',
                    'scripts/reuse_bpy_binary_evidence.py', 'scripts/pinned_download.py',
                    '.github/workflows/bpy-runtime-acceptance.yml'] + list(VERIFIER_INPUTS)

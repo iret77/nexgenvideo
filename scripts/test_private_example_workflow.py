@@ -36,7 +36,8 @@ class PrivateExampleWorkflowTests(unittest.TestCase):
         )
         self.assertNotIn("scripts/bundle.sh", analyze)
         self.assertNotIn("scripts/assemble_ngvpack.sh", analyze)
-        self.assertIn("run: .build/NexGenVideo.app/Contents/MacOS/NexGenVideo -ApplePersistenceIgnoreState YES", analyze)
+        self.assertIn(".build/NexGenVideo.app/Contents/MacOS/NexGenVideo -ApplePersistenceIgnoreState YES", analyze)
+        self.assertIn("python3 scripts/private_audio_ui.py", analyze)
         self.assertLess(analyze.index("sw_vers -productVersion"), analyze.index("actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"))
         self.assertLess(analyze.index("actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"), analyze.index("oras pull"))
 

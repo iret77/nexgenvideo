@@ -3,7 +3,7 @@ import copy
 import io
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import tarfile
 import tempfile
 import unittest
@@ -14,6 +14,15 @@ import private_analysis_verification as verify
 
 
 class PrivateAnalysisVerificationTests(unittest.TestCase):
+    def test_selected_panel_url_requires_the_exact_fixture_parent(self):
+        expected = PurePosixPath('/job/fixture-data/examples/track.wav')
+        event = dict(kind='file-panel', path='track.wav', selectedURLVerified=True, nativePathEditorVerified=True)
+        typed = dict(pathField='PathTextField', typed=str(expected))
+        verify.verify_dialog_selection(expected, 'open', event, typed, dict(selected=str(expected)))
+        wrong = '/another-job/fixture-data/examples/track.wav'
+        with self.assertRaises(verify.VerificationError):
+            verify.verify_dialog_selection(expected, 'open', event, dict(typed, typed=wrong), dict(selected=wrong))
+
     def test_private_package_isolation_uses_authenticated_owner_and_finite_errors(self):
         packages = [{'name': name, 'package_type': 'container', 'visibility': 'private',
                      'repository': None, 'owner': {'login': 'iret77'}}

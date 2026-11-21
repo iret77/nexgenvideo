@@ -1,5 +1,6 @@
 """Native Settings acceptance with local transports and real, supplied pack ZIPs."""
 import argparse
+from contextlib import ExitStack
 import hashlib
 import json
 import os
@@ -9,6 +10,7 @@ import struct
 import subprocess
 import zipfile
 
+from file_dialog_ui import session, start, wait_for_native
 from release_acceptance_identity import after_case, before_case, digest, installed_target
 
 
@@ -141,10 +143,13 @@ def main():
             before.update(targetArchiveSHA256=digest(args.target_pack_zip), baselineArchiveSHA256=digest(args.baseline_pack_zip))
             (run / "byte-binding-before.json").write_text(json.dumps(before, indent=2) + "\n")
         try:
-            with (run / "settings.log").open("w") as log:
-                process = subprocess.run([str(args.executable.resolve(strict=True)), "-ApplePersistenceIgnoreState", "YES",
-                                          "-interfaceTextScale", str(scale)], env=env, stdin=subprocess.DEVNULL,
-                                         stdout=log, stderr=subprocess.STDOUT, timeout=360, check=False)
+            executable = args.executable.resolve(strict=True)
+            with ExitStack() as stack:
+                client = stack.enter_context(session(executable.parents[2], env, run, "settings", scale=round(scale * 100)))
+                log = stack.enter_context((run / "settings.log").open("w"))
+                process = start(stack, [str(executable), "-ApplePersistenceIgnoreState", "YES",
+                                       "-interfaceTextScale", str(scale)], env=env, log=log)
+                wait_for_native(process, client, 360)
             if process.returncode:
                 raise RuntimeError("The native Settings process failed; inspect " + str(run / "settings.log"))
             expected_tree = before['before']['packTreeSHA256'] if before is not None else None

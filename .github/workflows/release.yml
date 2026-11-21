@@ -580,6 +580,11 @@ jobs:
       - uses: ./.github/actions/setup-native-test-python
       - uses: ./.github/actions/setup-xcode-27
 
+      - name: Build file dialog XCTest
+        uses: ./.github/actions/file-dialog-products
+        with:
+          mode: build
+
       - name: Resolve version + mode
         env:
           ARTIFACT_ONLY: ${{ inputs.artifact_only }}
@@ -977,6 +982,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/compiled_app_release.py assemble --root "$RUNNER_TEMP/compiled-app-release"
+
+      - name: Retain the native file dialog result before signing
+        if: always() && inputs.compiled_app_targets_json != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: file-dialog-intake-evidence
+          path: ${{ runner.temp }}/file-dialog-intake/evidence/
+          if-no-files-found: ignore
+          retention-days: 90
 
       - name: Record compiled App signed input without invoking a build
         if: inputs.compiled_app_targets_json != ''

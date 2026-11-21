@@ -12,6 +12,8 @@ import time
 import uuid
 from urllib.parse import unquote, urlparse
 
+from contextlib import ExitStack
+from file_dialog_ui import session, wait_for_native
 from settings_owner_acceptance import pack_metadata
 from release_acceptance_identity import after_case, before_case, installed_target
 from prepare_settings_pack_artifacts import PREVIEW_PROFILE, PREVIEW_RELEASE, PREVIEW_COMMIT, STABLE_PROFILE, require_baseline
@@ -535,17 +537,35 @@ def main():
     if before is not None:
         before.update(targetArchiveSHA256=digest(args.target_pack_zip), baselineArchiveSHA256=digest(args.baseline_pack_zip))
         (output / "byte-binding-before.json").write_text(json.dumps(before, indent=2) + "\n")
-    with (output / "pack-recovery.log").open("w") as log:
+    dialogs = args.scenario == PREVIEW_PROFILE and bool(os.environ.get("NGV_FILE_DIALOG_PRODUCTS"))
+    with ExitStack() as clients, (output / "pack-recovery.log").open("w") as log:
+        first = clients.enter_context(session(executable.parents[2], env, output, "packresume-start" if dialogs else None,
+                                             scale=round(args.scale * 100)))
         process = subprocess.Popen([str(executable), "--ngv-pack-recovery-owner=" + owner,
                                     "-ApplePersistenceIgnoreState", "YES", "-interfaceTextScale", str(args.scale)],
                                    stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, env=env, start_new_session=True)
         try:
-            returncode = process.wait(timeout=timeout)
+            returncode = wait_for_native(process, first, max(1, deadline - time.monotonic()))
             if returncode:
                 failure = output / "pack-recovery-failure.txt"
                 detail = failure.read_text() if failure.exists() else "No native failure detail was written"
                 raise RuntimeError("The actual initial native pack-upgrade process failed: " + detail)
+            clients.close()
+            if dialogs:
+                second = clients.enter_context(session(executable.parents[2], env, output, "packresume-finish",
+                                                       scale=round(args.scale * 100)))
+                resumed_record = output / "pack-recovery-process-resumed.json"
+                while not resumed_record.exists() and time.monotonic() < deadline:
+                    if (output / "pack-recovery-failure.txt").exists():
+                        raise RuntimeError("The owned pack restart failed")
+                    time.sleep(0.1)
+                record = json.loads(resumed_record.read_bytes())
+                if record["owner"] != owner or record["pid"] == process.pid or not owned_process_alive(record["pid"], executable, owner):
+                    raise ValueError("Resumed file dialog test does not belong to the owned restart")
+                second.attach(record["pid"])
             while time.monotonic() < deadline:
+                if dialogs:
+                    second.check()
                 if (output / "pack-recovery-failure.txt").exists():
                     raise RuntimeError((output / "pack-recovery-failure.txt").read_text())
                 if (output / "pack-recovery-result.json").exists():
