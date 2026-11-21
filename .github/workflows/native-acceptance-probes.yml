@@ -6,7 +6,7 @@ on:
       scope:
         description: Native probes or isolated owned-child and worker-sandbox components
         type: choice
-        options: [native, owned-child, worker-sandbox, worker-memory, clay-timing]
+        options: [native, owned-child, worker-sandbox, worker-memory, clay-timing, file-panel-focus]
         default: native
       owned_child_binary_run_id:
         description: Optional exact retained owned-child diagnostic binary
@@ -26,6 +26,85 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  file-panel-focus:
+    if: inputs.scope == 'file-panel-focus'
+    runs-on: macrunner
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Measure M76 input against the owned open panel
+        shell: bash
+        env:
+          HOME: ${{ runner.temp }}/panel-focus-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/panel-focus-home
+        run: |
+          set -euo pipefail
+          test "$GITHUB_RUN_ATTEMPT" = 1
+          scratch="$RUNNER_TEMP/panel-focus"
+          mkdir -p "$HOME" "$scratch/evidence"
+          cp -R scripts/native-panel-focus "$scratch/project"
+          cd "$scratch/project"
+          xcodebuild -version > "$scratch/evidence/xcode.txt"
+          test "$(awk 'NR == 1 {split($2,v,".");print v[1]}' "$scratch/evidence/xcode.txt")" -ge 27
+          sw_vers > "$scratch/evidence/os.txt"
+          python3 - "$scratch" <<'PY'
+          from hashlib import sha256
+          import json, os, sys
+          from pathlib import Path
+          root = Path(sys.argv[1])
+          lines = Path('App/M76Keyboard.swift').read_bytes().splitlines(keepends=True)
+          call = sha256(lines[4]).hexdigest()
+          key = sha256(b''.join(lines[7:-1])).hexdigest()
+          if call != 'e1ddd6731e173929e630003a8ff16e066a3e2236c6ee4b312b3e06c132e0eb36' or key != '493ff7d2564729c07fa41a6dfe472ea1eba2ce3b961cb7e0253dc52542173cad':
+              raise ValueError('The measured keyboard call or implementation differs from M76')
+          (root / 'evidence' / 'identity.json').write_text(json.dumps(dict(
+              sourceSHA=os.environ['GITHUB_SHA'], runID=os.environ['GITHUB_RUN_ID'],
+              keyboardSourceSHA='f209ef1420690f1f7fa031137ce8357aca9b56d8',
+              keyboardPath='Sources/NexGenVideo/App/ProductionVisualSourcesDriver.swift',
+              keySHA256=key, callSHA256=call), sort_keys=True))
+          PY
+          xcodegen generate
+          xcodebuild build-for-testing -project NativePanelFocus.xcodeproj -scheme NativePanelFocus \
+            -destination 'platform=macOS,arch=arm64' -derivedDataPath "$scratch/build" \
+            > "$scratch/evidence/build.log" 2>&1
+          python3 - "$scratch" <<'PY'
+          import os, plistlib, sys
+          from pathlib import Path
+          root = Path(sys.argv[1])
+          products = root / 'build/Build/Products'
+          original, = products.glob('*.xctestrun')
+          fixture, = products.glob('*/PanelFocusFixture.app')
+          data = plistlib.loads(original.read_bytes())
+          def targets(item):
+              if isinstance(item, dict):
+                  if 'TestBundlePath' in item: yield item
+                  for value in item.values(): yield from targets(value)
+              elif isinstance(item, list):
+                  for value in item: yield from targets(value)
+          target, = targets(data)
+          if 'PanelFocusUITests.xctest' not in target['TestBundlePath']: raise ValueError('Unexpected UI test target')
+          values = dict(HOME=os.environ['HOME'], CFFIXED_USER_HOME=os.environ['CFFIXED_USER_HOME'],
+                        PANEL_PROBE_EVIDENCE=str(root / 'evidence'), PANEL_PROBE_BUNDLE=str(fixture))
+          for name in ('EnvironmentVariables', 'TestingEnvironmentVariables', 'UITargetAppEnvironmentVariables'):
+              target.setdefault(name, {}).update(values)
+          (products / 'isolated-panel.xctestrun').write_bytes(plistlib.dumps(data))
+          PY
+          xcodebuild test-without-building -xctestrun "$scratch/build/Build/Products/isolated-panel.xctestrun" \
+            -only-testing:PanelFocusUITests/PanelFocusTests/testOwnOpenPanelShortcut \
+            -destination 'platform=macOS,arch=arm64' -parallel-testing-enabled NO \
+            -resultBundlePath "$scratch/results.xcresult" > "$scratch/evidence/test.log" 2>&1
+          test -s "$scratch/evidence/observer.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-panel-focus-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/panel-focus/evidence
+          if-no-files-found: error
+          retention-days: 7
+
+
   clay-timing:
     if: inputs.scope == 'clay-timing'
     runs-on: macrunner

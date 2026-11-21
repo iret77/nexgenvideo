@@ -1,0 +1,41 @@
+name: NativePanelFocus
+options:
+  deploymentTarget:
+    macOS: "26.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "-"
+    GENERATE_INFOPLIST_FILE: YES
+    ENABLE_APP_SANDBOX: NO
+targets:
+  PanelFocusFixture:
+    type: application
+    platform: macOS
+    sources: [App]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: de.h5ventures.nexgenvideo.acceptance.panel-focus-fixture
+  PanelFocusUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources: [UITests]
+    entitlements:
+      path: PanelFocusUITests.entitlements
+      properties:
+        com.apple.security.app-sandbox: false
+    dependencies:
+      - target: PanelFocusFixture
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: de.h5ventures.nexgenvideo.acceptance.panel-focus-tests
+        TEST_TARGET_NAME: PanelFocusFixture
+schemes:
+  NativePanelFocus:
+    build:
+      targets:
+        PanelFocusFixture: all
+        PanelFocusUITests: [test]
+    test:
+      targets: [PanelFocusUITests]
