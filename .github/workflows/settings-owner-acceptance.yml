@@ -194,6 +194,18 @@ jobs:
         run: |
           python3 scripts/release_acceptance_identity.py restore --identity "$RUNNER_TEMP/settings-release-input" \
             --identity-sha256 "$NGV_IDENTITY_SHA" --output "$RUNNER_TEMP/settings-runtime"
+      - name: Restore the app producer’s file dialog XCTest
+        if: matrix.family == 'settings' || matrix.family == 'packresume172'
+        uses: ./.github/actions/file-dialog-products
+        env:
+          PACKAGING_PRODUCER_SOURCE: ${{ inputs.release_binding != '' && fromJSON(inputs.release_binding).packaging.producerSourceSHA || '' }}
+          PACKAGING_PROVENANCE_ARTIFACT_ID: ${{ inputs.release_binding != '' && fromJSON(inputs.release_binding).packaging.artifactID || '' }}
+          PACKAGING_PROVENANCE_ARTIFACT_SHA256: ${{ inputs.release_binding != '' && fromJSON(inputs.release_binding).packaging.artifactSHA256 || '' }}
+        with:
+          mode: restore
+          app-source: ${{ inputs.release_binding != '' && fromJSON(inputs.release_binding).sourceSHA || github.sha }}
+          app-run: ${{ inputs.release_binding != '' && fromJSON(inputs.release_binding).runID || inputs.runtime_run_id }}
+
       - name: Prepare real published baseline and unchanged CI target ZIPs
         id: packs
         env:

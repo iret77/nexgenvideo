@@ -65,10 +65,8 @@ enum ProductionPanoramaRecoveryAcceptance {
         let sheet = try await driver.sheet("bible.panorama.sheet")
         try await driver.chooseFile(source, in: sheet, trigger: "bible.panorama.choose")
         try await driver.click("bible.panorama.custom", in: sheet)
-        try await driver.fill("bible.panorama.name", value: "panorama", in: sheet)
-        try await driver.fill("bible.panorama.yaw", value: "0", in: sheet)
-        try await driver.fill("bible.panorama.pitch", value: "0", in: sheet)
-        try await driver.fill("bible.panorama.fov", value: "60", in: sheet)
+        try await driver.fillFields([("bible.panorama.name", "panorama"), ("bible.panorama.yaw", "0"),
+                                     ("bible.panorama.pitch", "0"), ("bible.panorama.fov", "60")], in: sheet)
         try await driver.click("bible.panorama.extract", in: sheet)
         try await driver.wait("noncolliding panorama-named view") {
             driver.text("bible.panorama.candidate", in: sheet) != nil && driver.text("bible.panorama.image.panorama", in: sheet) != nil

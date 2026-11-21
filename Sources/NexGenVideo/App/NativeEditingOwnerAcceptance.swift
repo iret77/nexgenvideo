@@ -8,7 +8,9 @@ import NexGenEngine
 enum NativeEditingOwnerAcceptance {
     static func run(editor: EditorViewModel, window: NSWindow, directory: URL,
                     driver: ProductionVisualSourcesDriver) async throws -> [String: Any] {
-        let sourceA = try await ProductionPlanningAcceptanceFixture.makeSourceVideo()
+        let fixture = ProcessInfo.processInfo.environment["NGV_FILE_DIALOG_TEST_CASE"] == "appnle"
+            ? directory.appendingPathComponent("Moving shapes with tone.mov") : nil
+        let sourceA = try await ProductionPlanningAcceptanceFixture.makeSourceVideo(destination: fixture)
         let sourceB = directory.appendingPathComponent("Second moving source.mov")
         try await FullflowAcceptanceFixture.writeVideo(to: sourceB, duration: 8, fps: 30, warm: false)
         try await workspace(.media, editor: editor, window: window, driver: driver)

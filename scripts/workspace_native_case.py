@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import time
 
+from file_dialog_ui import session, wait_for_native
 from workspace_ui_acceptance import ALL_CASES, SCALES, parse_events
 from workspace_native_evidence import validate_case
 
@@ -61,7 +62,8 @@ def run_case(executable, output, case, scale):
             environment = {**os.environ, 'NGV_WORKSPACE_UI_ACCEPTANCE': '1',
                            'NGV_WORKSPACE_UI_EVIDENCE': str(output.resolve()), 'NGV_WORKSPACE_UI_SCALE': str(scale),
                            'NGV_WORKSPACE_UI_CASE': case, 'NGV_INSPECTOR_UI_ACCEPTANCE': '1'}
-            with log_path.open('w') as log:
+            scenario = case if case in {'filmreview', 'appnle', 'genericnle', 'performance'} else None
+            with session(Path(executable).parents[2], environment, output, scenario, scale=round(scale * 100)) as client, log_path.open('w') as log:
                 with subprocess.Popen([str(executable), '-ApplePersistenceIgnoreState', 'YES',
                                        '-AppleLanguages', '(en)', '-AppleLocale', 'en_US'],
                                       stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
@@ -69,7 +71,7 @@ def run_case(executable, output, case, scale):
                     result['processID'] = process.pid
                     atomic_json(result_path, result)
                     try:
-                        code = process.wait(timeout=timeout_for(case))
+                        code = wait_for_native(process, client, timeout_for(case))
                     except subprocess.TimeoutExpired:
                         process.terminate()
                         try:
@@ -77,12 +79,16 @@ def run_case(executable, output, case, scale):
                         except subprocess.TimeoutExpired:
                             process.kill(); process.wait(timeout=10)
                         code = 124
+                    finally:
+                        if process.poll() is None:
+                            process.kill()
+                            process.wait(timeout=10)
             text = log_path.read_text(errors='replace')
         rows = parse_events(text)
         valid, images = validate_case(case, rows, output, scale)
         result.update(events=rows, screenshots=images,
                       completed=code == 0 and validate_processes(case, rows, scale) and valid)
-    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError, subprocess.SubprocessError) as error:
         result['error'] = str(error)
     finally:
         result.update(exitCode=code, elapsedSeconds=time.monotonic() - started)

@@ -72,7 +72,11 @@ enum ProductionV2OwnerAcceptance {
             try await driver.wait("production owner workspace") { editor.workspaceFocus == .production }
             let privateBinding = try await preservedSong(context: context, expectedSHA256: privateSongSHA256)
             let source: URL
-            if mixed { source = try await ProductionPlanningAcceptanceFixture.makeSourceVideo(durationSeconds: 8) }
+            if mixed {
+                let fixture = ["performance", "filmreview"].contains(ProcessInfo.processInfo.environment["NGV_FILE_DIALOG_TEST_CASE"] ?? "")
+                    ? output.appendingPathComponent("Moving shapes with tone.mov") : nil
+                source = try await ProductionPlanningAcceptanceFixture.makeSourceVideo(durationSeconds: 8, destination: fixture)
+            }
             else {
                 let root = context.dataRoot
                 let seconds = try await Task.detached {

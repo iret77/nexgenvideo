@@ -215,10 +215,8 @@ enum ProductionRetainedSpatialAcceptance {
                 guard try await readBible(root) == before else { throw failed("An invalid panorama changed the Bible.") }
                 try await driver.chooseFile(source, in: sheet, trigger: "bible.panorama.choose")
                 try await driver.click("bible.panorama.custom", in: sheet)
-                try await driver.fill("bible.panorama.name", value: "owner_reverse", in: sheet)
-                try await driver.fill("bible.panorama.yaw", value: "180", in: sheet)
-                try await driver.fill("bible.panorama.pitch", value: "0", in: sheet)
-                try await driver.fill("bible.panorama.fov", value: "60", in: sheet)
+                try await driver.fillFields([("bible.panorama.name", "owner_reverse"), ("bible.panorama.yaw", "180"),
+                                             ("bible.panorama.pitch", "0"), ("bible.panorama.fov", "60")], in: sheet)
                 try await driver.click("bible.panorama.extract", in: sheet)
                 try await driver.wait("new extracted candidate available") {
                     driver.text("bible.panorama.candidate", in: sheet) != nil

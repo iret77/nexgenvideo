@@ -168,7 +168,9 @@ final class MusicvideoHostFlowAcceptance {
         try require(service.pendingDialog?.fileIntake?.completionLabel == "Skip", "First empty character has no Skip action")
         try await click("agent.dialog.complete")
         try await waitForDialog("Prepared location 1", attachAs: "location")
-        let reference = FileManager.default.temporaryDirectory.appendingPathComponent("Stage-\(UUID().uuidString).png")
+        let reference = ProcessInfo.processInfo.environment["NGV_FILE_DIALOG_TEST_CASE"] != nil
+            ? evidenceURL.appendingPathComponent("Stage.png")
+            : FileManager.default.temporaryDirectory.appendingPathComponent("Stage-\(UUID().uuidString).png")
         defer { try? FileManager.default.removeItem(at: reference) }
         try FullflowAcceptanceFixture.writeReference(to: reference)
         try require(WorkspaceUIAcceptance.probeState(identifier: "agent.dialog.confirm", in: window) == false,

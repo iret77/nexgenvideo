@@ -476,7 +476,58 @@ final class ProductionVisualSourcesDriver {
 
     func fill(_ id: String, value: String, in target: NSWindow, requireFocusExit: Bool = false,
               commitByClicking: String? = nil) async throws {
-        try await click(id, in: target)
+        _ = try await editField(id, value: value, in: target, requireFocusExit: requireFocusExit,
+                                commitByClicking: commitByClicking, observeTab: false, arrival: nil)
+    }
+
+    func fillFields(_ fields: [(id: String, value: String)], in target: NSWindow) async throws {
+        var arrival: TabArrival?
+        for field in fields {
+            arrival = try await editField(field.id, value: field.value, in: target, requireFocusExit: true,
+                                          commitByClicking: nil, observeTab: true, arrival: arrival)
+        }
+    }
+
+    private struct TabArrival {
+        let source: String
+        let window: NSWindow
+        let field: NSTextField
+        let editor: NSTextView
+    }
+
+    private func focusedField(_ id: String, in target: NSWindow) -> (owner: NSView, editor: NSTextView)? {
+        guard let root = target.contentView, let frame = WorkspaceUIAcceptance.probeFrame(identifier: id, in: target),
+              let first = target.firstResponder as? NSTextView, first.isEditable else { return nil }
+        let candidates = views(root).filter { view in
+            let editable = (view as? NSTextField)?.isEditable == true || (view === first && !first.isFieldEditor)
+            let bounds = view.convert(view.bounds, to: root)
+            return editable && !view.isHiddenOrHasHiddenAncestor && frame.insetBy(dx: -1, dy: -1).contains(bounds)
+                && bounds.contains(NSPoint(x: frame.midX, y: frame.midY))
+        }
+        guard candidates.count == 1, let owner = candidates.first else { return nil }
+        if let field = owner as? NSTextField, field.currentEditor() !== first { return nil }
+        return (owner, first)
+    }
+
+    private func tabFocus(_ arrival: TabArrival, for id: String, in target: NSWindow) async throws -> [String: Any]? {
+        try await reveal(id, in: target)
+        guard arrival.window === target, let active = focusedField(id, in: target),
+              active.owner === arrival.field, active.editor === arrival.editor else { return nil }
+        guard state(id, in: target) == true, let marker = probe(id, in: target) else {
+            throw GateBlocked("The field reached by Tab is disabled or missing: " + id)
+        }
+        let evidence = try NativeAcceptancePointer.tabTarget(marker, field: arrival.field, editor: arrival.editor, window: target)
+        try visible([id], in: target)
+        return evidence
+    }
+
+    private func editField(_ id: String, value: String, in target: NSWindow, requireFocusExit: Bool,
+                           commitByClicking: String?, observeTab: Bool, arrival: TabArrival?) async throws -> TabArrival? {
+        var focusTarget: [String: Any]?
+        if let arrival { focusTarget = try await tabFocus(arrival, for: id, in: target) }
+        if focusTarget == nil {
+            try await click(id, in: target)
+        }
         var owner: NSView?
         var editor: NSTextView?
         func ownership() -> Bool {
@@ -493,15 +544,13 @@ final class ProductionVisualSourcesDriver {
                 "firstResponder": target.firstResponder.map { String(describing: type(of: $0)) } ?? "none"]
         }
         try await wait("focus exact field " + id) {
-            guard let frame = WorkspaceUIAcceptance.probeFrame(identifier: id, in: target), let root = target.contentView,
-                  let first = target.firstResponder as? NSTextView else { evidence("focus"); return false }
-            let candidates = self.views(root).filter { view in
-                let editable = (view as? NSTextField)?.isEditable == true || ((view as? NSTextView)?.isEditable == true && view === first && !(first.isFieldEditor))
-                let bounds = view.convert(view.bounds, to: root)
-                return editable && !view.isHiddenOrHasHiddenAncestor && frame.insetBy(dx: -1, dy: -1).contains(bounds)
-                    && bounds.contains(NSPoint(x: frame.midX, y: frame.midY))
+            let active = self.focusedField(id, in: target)
+            owner = active?.owner
+            editor = active?.editor
+            if focusTarget != nil, owner !== arrival?.field || editor !== arrival?.editor {
+                evidence("focus")
+                return false
             }
-            if candidates.count == 1 { owner = candidates[0]; editor = first }
             evidence("focus")
             let font = (owner as? NSTextField)?.font ?? (owner as? NSTextView)?.font
             let scale = AppTheme.Typography.validatedScale(UserDefaults.standard.double(forKey: AppTheme.Typography.scaleKey))
@@ -516,8 +565,11 @@ final class ProductionVisualSourcesDriver {
         try await wait("clear " + id) { evidence("clear"); return ownership() && editor?.string == "" }
         for character in value { try key(0, String(character), in: target) }
         try await wait("type " + id) { evidence("type"); return ownership() && editor?.string == value }
+        var tabDelivery: [String: Double]?
         if let commitByClicking {
             try await click(commitByClicking, in: target, enabled: false)
+        } else if observeTab {
+            tabDelivery = try await postTab(from: id, in: target, ownsEditor: ownership)
         } else {
             try key(48, "\t", in: target)
         }
@@ -528,8 +580,43 @@ final class ProductionVisualSourcesDriver {
         latestField["commitInput"] = commitByClicking.map { "Pointer:" + $0 } ?? "Tab"
         latestField["requiresFocusExit"] = requireFocusExit
         latestField["focusLeftTarget"] = !ownership()
+        if let tabDelivery {
+            latestField["tabDelivery"] = tabDelivery
+            latestField["focusInput"] = focusTarget == nil ? "Pointer" : "Tab:" + (arrival?.source ?? "")
+            latestField["tabTarget"] = focusTarget
+        }
         interactions.append(["kind": "text", "field": latestField])
         try persist()
+        guard observeTab, let root = target.contentView, let next = target.firstResponder as? NSTextView,
+              next.isFieldEditor else { return nil }
+        let fields = views(root).compactMap { $0 as? NSTextField }.filter { $0.currentEditor() === next }
+        guard fields.count == 1, let field = fields.first else { return nil }
+        return TabArrival(source: id, window: target, field: field, editor: next)
+    }
+
+    private func postTab(from id: String, in target: NSWindow, ownsEditor: @escaping @MainActor () -> Bool) async throws -> [String: Double] {
+        @MainActor final class Receipt {
+            var posted: [NSEvent] = []
+            var down: TimeInterval?
+            var up: TimeInterval?
+        }
+        let receipt = Receipt(), number = target.windowNumber
+        let monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { event in
+            let type = event.type.rawValue, code = event.keyCode, window = event.windowNumber, stamp = event.timestamp
+            MainActor.assumeIsolated {
+                guard window == number, code == 48,
+                      receipt.posted.contains(where: { $0.type.rawValue == type && $0.timestamp == stamp }) else { return }
+                if type == NSEvent.EventType.keyDown.rawValue, receipt.down == nil, ownsEditor() { receipt.down = stamp }
+                if type == NSEvent.EventType.keyUp.rawValue, receipt.down != nil { receipt.up = stamp }
+            }
+            return event
+        }
+        guard let monitor else { throw GateBlocked("The native Tab input cannot be observed.") }
+        defer { NSEvent.removeMonitor(monitor) }
+        receipt.posted = try key(48, "\t", in: target)
+        try await wait("Tab delivery from " + id) { receipt.up != nil }
+        guard let down = receipt.down, let up = receipt.up else { throw GateBlocked("Tab did not complete in the original window.") }
+        return ["keyDown": down, "keyUp": up]
     }
 
     func menu(_ id: String, title: String, in target: NSWindow) async throws {
@@ -710,6 +797,69 @@ final class ProductionVisualSourcesDriver {
         return (local, evidence)
     }
 
+    private static var dialogTestIndex = 0
+
+    private func observeTestPanel(_ panel: NSSavePanel, selection: URL?, parent: NSWindow,
+                                     returnsToParent: Bool) async throws -> Bool {
+        let environment = ProcessInfo.processInfo.environment
+        guard let directory = environment["NGV_FILE_DIALOG_EVIDENCE"] else { return false }
+        let scenario = environment["NGV_FILE_DIALOG_TEST_CASE"]
+        guard ["musicvideo-intake", "private-audio", "bpy", "filmreview", "performance", "appnle", "genericnle", "settings", "packresume-start", "packresume-finish"].contains(scenario ?? "") else {
+            throw GateBlocked("Unknown native dialog test case.")
+        }
+        var root = URL(fileURLWithPath: directory, isDirectory: true)
+        if scenario == "packresume-start", ProcessInfo.processInfo.arguments.contains("--ngv-native-pack-recovery-resume") {
+            root = root.deletingLastPathComponent().appendingPathComponent("dialogs-packresume-finish", isDirectory: true)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        }
+        Self.dialogTestIndex += 1
+        let index = Self.dialogTestIndex
+        let prefix = "file-panel-\(index)-"
+        let isOpen = panel is NSOpenPanel
+        let action = selection == nil ? "cancel" : (isOpen ? "open" : "save")
+        let marker = root.appendingPathComponent(prefix + "visible.json")
+        let panels = NSApp.windows.compactMap { $0 as? NSSavePanel }.filter(\.isVisible)
+        guard panels.count == 1, panels.first === panel else { throw GateBlocked("The UI test has no unique visible file panel.") }
+        let identity: [String: Any] = ["step": index, "pid": ProcessInfo.processInfo.processIdentifier,
+            "window": panel.windowNumber, "action": action]
+        try JSONSerialization.data(withJSONObject: identity).write(to: marker, options: .atomic)
+        let input = root.appendingPathComponent(prefix + "input.json")
+        try await wait("external file panel input", seconds: 90) { FileManager.default.fileExists(atPath: input.path) }
+        let receipt = try JSONSerialization.jsonObject(with: Data(contentsOf: input)) as? [String: Any]
+        guard receipt?["step"] as? Int == index, receipt?["pid"] as? Int == Int(ProcessInfo.processInfo.processIdentifier),
+              receipt?["window"] as? Int == panel.windowNumber, receipt?["action"] as? String == action else {
+            throw GateBlocked("The external file panel observation differs from the active dialog.")
+        }
+        if let selection {
+            let expected = selection.standardizedFileURL.resolvingSymlinksInPath()
+            let typed = isOpen ? selection : selection.deletingLastPathComponent()
+            guard receipt?["pathField"] as? String == "PathTextField", let path = receipt?["typed"] as? String,
+                  URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path == typed.standardizedFileURL.resolvingSymlinksInPath().path,
+                  isOpen || receipt?["filename"] as? String == selection.lastPathComponent else {
+                throw GateBlocked("The external test did not verify the expected path editor contents.")
+            }
+            try await wait("exact external file selection") {
+                panel.isVisible && panel.url?.standardizedFileURL.resolvingSymlinksInPath().path == expected.path
+            }
+            try capture(isOpen ? "file-selected" : "save-selected", target: panel)
+        }
+        var observed = identity
+        if selection != nil { observed["selected"] = panel.url?.standardizedFileURL.resolvingSymlinksInPath().path }
+        try JSONSerialization.data(withJSONObject: observed).write(to: root.appendingPathComponent(prefix + "observed"), options: .atomic)
+        try await wait("external file panel completion", seconds: 30) { !panel.isVisible && (!returnsToParent || parent.isKeyWindow) }
+        var interaction: [String: Any] = ["dialogTestStep": index, "externalInput": input.lastPathComponent]
+        if let selection, isOpen {
+            interaction.merge(["kind": "file-panel", "path": selection.lastPathComponent, "selectedURLVerified": true,
+                               "nativePathEditorVerified": true]) { _, value in value }
+        } else if let selection {
+            interaction.merge(["kind": "save-panel", "filename": selection.lastPathComponent, "exactURLVerified": true,
+                               "nativeDirectoryAndFilenameTyped": true]) { _, value in value }
+        } else { interaction["kind"] = "file-panel-cancel" }
+        interactions.append(interaction)
+        try persist()
+        return true
+    }
+
     func chooseFile(_ url: URL?, in sheet: NSWindow, trigger: String? = "storyboard.native-sketch.choose", returnsToParent: Bool = true) async throws {
         if let trigger { try await click(trigger, in: sheet) }
         try await wait("native file panel") { NSApp.windows.contains { ($0 as? NSOpenPanel)?.isVisible == true } }
@@ -717,6 +867,7 @@ final class ProductionVisualSourcesDriver {
             throw GateBlocked("No actual NSOpenPanel appeared.")
         }
         try capture("file-panel", target: panel)
+        if try await observeTestPanel(panel, selection: url, parent: sheet, returnsToParent: returnsToParent) { return }
         guard let url else {
             try key(53, "\u{1b}", in: panel)
             try await wait("cancel native file panel") { !panel.isVisible && sheet.isKeyWindow }
@@ -781,6 +932,7 @@ final class ProductionVisualSourcesDriver {
         }
         try await wait("save panel keyboard focus") { panel.isKeyWindow }
         try capture("save-panel", target: panel)
+        if try await observeTestPanel(panel, selection: destination, parent: parent, returnsToParent: returnsToParent) { return }
         let app = AXUIElementCreateApplication(getpid())
         AXUIElementSetMessagingTimeout(app, 1)
         let previousEditor = panel.firstResponder as? NSTextView
@@ -961,15 +1113,18 @@ final class ProductionVisualSourcesDriver {
         guard let value = axValue(element, attribute), CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
         return (value as! AXUIElement)
     }
-    private func key(_ code: UInt16, _ characters: String, modifiers: NSEvent.ModifierFlags = [], in target: NSWindow) throws {
-        for type in [NSEvent.EventType.keyDown, .keyUp] {
+    @discardableResult
+    private func key(_ code: UInt16, _ characters: String, modifiers: NSEvent.ModifierFlags = [], in target: NSWindow) throws -> [NSEvent] {
+        let events = try [NSEvent.EventType.keyDown, .keyUp].map { type in
             guard let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: modifiers,
                 timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: target.windowNumber, context: nil,
                 characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code) else {
                 throw GateBlocked("The native keyboard event could not be created.")
             }
-            NSApp.postEvent(event, atStart: false)
+            return event
         }
+        for event in events { NSApp.postEvent(event, atStart: false) }
+        return events
     }
 }
 
@@ -1325,7 +1480,17 @@ enum NativeAcceptancePointer {
         return control
     }
 
+    static func tabTarget(_ probe: NSView, field: NSTextField, editor: NSTextView, window: NSWindow) throws -> [String: Any] {
+        let result = try target(probe, window: window, fraction: NSPoint(x: 0.5, y: 0.5),
+                                editing: (field, editor), windowFailure: { _ in }, accessibilityFailure: { _ in })
+        guard result.kind == "native-control", result.accessibilityRole == .textField else {
+            throw GateBlocked("The field reached by Tab has no canonical accessibility text field.")
+        }
+        return result.evidence
+    }
+
     private static func target(_ probe: NSView, window: NSWindow, fraction: NSPoint,
+                               editing: (field: NSTextField, editor: NSTextView)? = nil,
                                windowFailure: ([String: Any]) -> Void,
                                accessibilityFailure: ([String: Any]) -> Void) throws -> Target {
         guard NSApp.isActive, window.isVisible, window.isKeyWindow, !window.ignoresMouseEvents,
@@ -1356,8 +1521,20 @@ enum NativeAcceptancePointer {
         let local = NSPoint(x: probe.bounds.minX + probe.bounds.width * fraction.x,
                             y: probe.bounds.minY + probe.bounds.height * fraction.y)
         let point = probe.convert(local, to: nil)
-        guard let hit = root.hitTest(probe.convert(local, to: root.superview)) else {
+        guard let actualHit = root.hitTest(probe.convert(local, to: root.superview)) else {
             throw GateBlocked("The native pointer target cannot receive input.")
+        }
+        let hit: NSView
+        if let (field, editor) = editing {
+            guard window.firstResponder === editor, editor.window === window, editor.isEditable, editor.isFieldEditor,
+                  field.window === window, field.isEnabled, field.isEditable, field.currentEditor() === editor,
+                  !actualHit.isHiddenOrHasHiddenAncestor, actualHit.visibleRect.contains(actualHit.convert(point, from: nil)),
+                  actualHit === field || actualHit === editor || (actualHit is NSClipView && actualHit === editor.superview) else {
+                throw GateBlocked("The field reached by Tab is covered or has lost its editor.")
+            }
+            hit = field
+        } else {
+            hit = actualHit
         }
         let appKitPoint = window.convertPoint(toScreen: point)
         let quartzPoint = CGPoint(x: appKitPoint.x, y: screen.frame.maxY - appKitPoint.y)

@@ -641,6 +641,12 @@ jobs:
           retention-days: 7
           compression-level: 0
 
+      - name: Build file dialog XCTest
+        if: needs.source_gate.outputs.bundle_required == 'true'
+        uses: ./.github/actions/file-dialog-products
+        with:
+          mode: build
+
       - name: Transfer the same app and pack for workspace acceptance
         if: needs.source_gate.outputs.bundle_required == 'true'
         run: |

@@ -1,0 +1,40 @@
+name: Prepare file dialog XCTest
+description: Build the independent UI test with its app producer or restore those exact products.
+inputs:
+  mode:
+    required: true
+    description: build or restore
+  app-source:
+    default: ''
+    description: Actual product commit
+  app-run:
+    default: ''
+    description: Actual product producer run
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        DIALOG_MODE: ${{ inputs.mode }}
+        DIALOG_APP_SOURCE: ${{ inputs.app-source }}
+        DIALOG_APP_RUN: ${{ inputs.app-run }}
+        GH_TOKEN: ${{ inputs.mode == 'restore' && github.token || '' }}
+        HOME: ${{ runner.temp }}/nexgenvideo-test-home
+        CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
+      run: |
+        mkdir -p "$HOME"
+        python3 scripts/file_dialog_products.py "$DIALOG_MODE"
+    - if: inputs.mode == 'build'
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: file-dialog-ui
+        path: ${{ runner.temp }}/file-dialog-ui/transfer/
+        if-no-files-found: error
+        retention-days: 90
+        compression-level: 0
+    - if: failure() && inputs.mode == 'build'
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: file-dialog-ui-build-log
+        path: ${{ runner.temp }}/file-dialog-ui/build.log
+        if-no-files-found: ignore

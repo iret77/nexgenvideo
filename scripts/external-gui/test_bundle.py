@@ -943,6 +943,13 @@ def _current_core_import_view(raw, path, *, current=False):
                     "str(build / 'plugins/musicvideo.ngvpack.zip'), str(build / 'plugins')])",
         'following': "handoff = source_handoff(root, build / 'bpy-source', original, value)",
     }]}
+    if isinstance(raw, str):
+        raw = raw.encode()
+    if path == 'scripts/app_release_v2.py' and hashlib.sha256(raw).hexdigest() == '1a7252a448ac9b89d810b65dcac0fece030e3c270b2105ddaceb7abe52d6d6aa':
+        gate = b"    if int(value['build']) >= 128:\n        from file_dialog_presign import verify_intake\n        verify_intake(app, build / 'plugins/musicvideo.ngvpack', main['uuid'], distribution_payload)\n"
+        raw = raw.replace(gate, b'', 1)
+        require(hashlib.sha256(raw).hexdigest() == '497fa86ab4c639fc51cf46ed725efa906db6787a79b217a54afa62ef74706b78',
+                'The pre-sign intake changed code consumed by the external GUI client')
     try:
         module = ast.parse(raw)
     except (SyntaxError, UnicodeDecodeError):
@@ -952,8 +959,13 @@ def _current_core_import_view(raw, path, *, current=False):
         raise ValueError(label + ' is not valid Python') from None
     if path == 'scripts/app_release_v2.py':
         assembly = [node for node in module.body if isinstance(node, ast.FunctionDef) and node.name == 'assemble']
-        if len(assembly) == 1 and hashlib.sha256(ast.dump(assembly[0], include_attributes=False).encode()).hexdigest() == 'af7483dd0eae8579c72e31d7bbbddcb879d36e00a80404d73e0ddc9f8af04430':
-            transitions[path]['assemble'][0]['following'] = "handoff = source_handoff(root, build / 'bpy-source', original, value, manifest)"
+        if len(assembly) == 1:
+            calls = [node for node in assembly[0].body if isinstance(node, ast.Assign)
+                     and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name)
+                     and node.value.func.id == 'source_handoff']
+            supported = "handoff = source_handoff(root, build / 'bpy-source', original, value, manifest)"
+            if len(calls) == 1 and ast.dump(calls[0]) == ast.dump(ast.parse(supported).body[0]):
+                transitions[path]['assemble'][0]['following'] = supported
     declarations = [node.name for node in module.body if isinstance(node, ast.FunctionDef)]
     require(len(declarations) == len(set(declarations)), 'Duplicate receipt verifier declaration')
     observed = []
@@ -1039,6 +1051,9 @@ def _cohort_ci_additions(prior, current, changes, known_helpers, client_inputs):
                   'scripts/native_pointer_guard_selftest.swift',
                   'scripts/fixtures/native-app-failure-1099.json', 'scripts/fixtures/native-app-failure-1110.json',
                   'scripts/fixtures/native-app-failure-1120.json', 'scripts/fixtures/native-app-failure-1135.json'}
+    diagnostic.update({'.github/actions/file-dialog-products/action.yml', 'scripts/file-dialog-ui/Tests/FileDialogTests.swift',
+                       'scripts/file-dialog-ui/project.yml', 'scripts/file_dialog_presign.py', 'scripts/file_dialog_products.py',
+                       'scripts/file_dialog_ui.py', 'scripts/private_audio_ui.py', 'scripts/workspace_native_case.py'})
     added = sorted(set(current) - set(prior))
     require(set(prior) <= set(current)
             and all(changes.get(name) in {'A', 'M'}

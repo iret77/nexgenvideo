@@ -553,7 +553,7 @@ enum ProductionPlanningAcceptanceFixture {
         }
     }
 
-    static func makeSourceVideo(durationSeconds: Double = 8) async throws -> URL {
+    static func makeSourceVideo(durationSeconds: Double = 8, destination: URL? = nil) async throws -> URL {
         guard durationSeconds.isFinite, durationSeconds >= 8, durationSeconds <= 60 else { throw GateBlocked("Choose a short acceptance source of at least eight seconds.") }
         return try await Task.detached(priority: .userInitiated) {
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("Silent shapes " + UUID().uuidString + ".mov")
@@ -613,7 +613,7 @@ enum ProductionPlanningAcceptanceFixture {
             let duration = CMTime(value: Int64(frames), timescale: Int32(fps))
             try visual.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: video, at: .zero)
             try soundtrack.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: audio, at: .zero)
-            let result = FileManager.default.temporaryDirectory.appendingPathComponent("Moving shapes with tone " + UUID().uuidString + ".mov")
+            let result = destination ?? FileManager.default.temporaryDirectory.appendingPathComponent("Moving shapes with tone " + UUID().uuidString + ".mov")
             guard let exporter = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetPassthrough) else { throw CocoaError(.fileWriteUnknown) }
             do {
                 try await exporter.export(to: result, as: .mov)

@@ -359,6 +359,9 @@ def assemble(root):
     require(info.get('NGVPluginCatalogURL') == manifest['identity']['catalogURL'], 'App catalog channel changed')
     (app / 'Contents/Info.plist').write_bytes(plistlib.dumps(info))
     (app / 'Contents/Resources/Changelog/changelog.json').write_bytes(Path(resources + '/Changelog/changelog.json').read_bytes())
+    if int(value['build']) >= 128:
+        from file_dialog_presign import verify_intake
+        verify_intake(app, build / 'plugins/musicvideo.ngvpack', main['uuid'], distribution_payload)
     sign = os.environ.get('SIGN_IDENTITY', '')
     require(re.fullmatch('[a-fA-F0-9]{40}', sign) or sign.startswith('Developer ID Application: '), 'Missing Developer ID signer')
     supervisor, retained_components = replace_supervisors(root, app, value, sign, baseline,
