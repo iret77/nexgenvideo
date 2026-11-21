@@ -67,20 +67,16 @@ def restore(work, products, product, run_id):
     run = api(f"actions/runs/{run_id}")
     if (run.get("repository", {}).get("full_name") != "iret77/nexgenvideo" or run.get("id") != run_id
             or run.get("head_sha") != product or run.get("path") not in {
-                ".github/workflows/ci.yml", ".github/workflows/ci-batch.yml", ".github/workflows/workspace-ui-acceptance.yml",
+                ".github/workflows/bundle.yml", ".github/workflows/ci.yml", ".github/workflows/ci-batch.yml", ".github/workflows/workspace-ui-acceptance.yml",
                 ".github/workflows/private-example-analysis.yml", ".github/workflows/release.yml"}):
         raise ValueError("Unexpected file dialog producer")
     inventory = api(f"actions/runs/{run_id}/artifacts?name=file-dialog-ui&per_page=100")
     item, = inventory["artifacts"]
     artifact = api("actions/artifacts/" + str(item["id"]))
-    jobs = api(f"actions/runs/{run_id}/attempts/{run['run_attempt']}/jobs?per_page=100")
-    candidates = jobs["jobs"]
-    for page in range(2, (jobs["total_count"] + 99) // 100 + 1):
-        candidates.extend(api(f"actions/runs/{run_id}/attempts/{run['run_attempt']}/jobs?per_page=100&page={page}")["jobs"])
-    job, = [j for j in candidates if j["conclusion"] == "success" and j["labels"] == ["macrunner"]
-            and j["head_sha"] == product and j["run_id"] == run_id and j["run_attempt"] == run["run_attempt"]
-            and any(s["name"] == "Build file dialog XCTest" and s["conclusion"] == "success" for s in j["steps"])]
-    verify_artifact(artifact, run, job, item["id"], artifact["digest"].removeprefix("sha256:"), "file-dialog-ui")
+    if (artifact.get("name") != "file-dialog-ui" or artifact.get("expired") is not False
+            or artifact.get("workflow_run", {}).get("id") != run_id
+            or artifact["workflow_run"].get("head_sha") != product or artifact["id"] != item["id"]):
+        raise ValueError("File dialog artifact does not belong to the app producer")
     size = artifact["size_in_bytes"]
     if not 0 < size <= 128 * 1024**2 or shutil.disk_usage(work).free < 512 * 1024**2 + size:
         raise ValueError("Insufficient file dialog client archive reserve")
@@ -94,9 +90,18 @@ def restore(work, products, product, run_id):
         archive = work / "products.tar.gz"
         with outer.open("products.tar.gz") as src, archive.open("xb") as dest:
             shutil.copyfileobj(src, dest)
-    if (receipt["source"] != product or receipt["run"] != run_id or receipt["attempt"] != run["run_attempt"]
+    attempt = receipt["attempt"]
+    if (receipt["source"] != product or receipt["run"] != run_id or type(attempt) is not int or not 1 <= attempt <= run["run_attempt"]
             or receipt["tree"] != project_tree(os.environ["GITHUB_SHA"]) or checksum(archive) != receipt["sha256"]):
         raise ValueError("File dialog client source or archive differs")
+    jobs = api(f"actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100")
+    candidates = jobs["jobs"]
+    for page in range(2, (jobs["total_count"] + 99) // 100 + 1):
+        candidates.extend(api(f"actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100&page={page}")["jobs"])
+    job, = [j for j in candidates if j["conclusion"] == "success" and j["labels"] == ["macrunner"]
+            and j["head_sha"] == product and j["run_id"] == run_id and j["run_attempt"] == attempt
+            and any(s["name"] == "Build file dialog XCTest" and s["conclusion"] == "success" for s in j["steps"])]
+    verify_artifact(artifact, run, job, item["id"], artifact["digest"].removeprefix("sha256:"), "file-dialog-ui")
     with tarfile.open(archive) as tar:
         if sum(i.size for i in tar) > 400 * 1024**2:
             raise ValueError("Oversize expanded file dialog products")
