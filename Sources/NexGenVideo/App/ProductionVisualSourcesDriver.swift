@@ -797,6 +797,69 @@ final class ProductionVisualSourcesDriver {
         return (local, evidence)
     }
 
+    private static var dialogTestIndex = 0
+
+    private func observeTestPanel(_ panel: NSSavePanel, selection: URL?, parent: NSWindow,
+                                     returnsToParent: Bool) async throws -> Bool {
+        let environment = ProcessInfo.processInfo.environment
+        guard let directory = environment["NGV_FILE_DIALOG_EVIDENCE"] else { return false }
+        let scenario = environment["NGV_FILE_DIALOG_TEST_CASE"]
+        guard ["musicvideo-intake", "private-audio", "bpy", "filmreview", "performance", "appnle", "genericnle", "settings", "packresume-start", "packresume-finish"].contains(scenario ?? "") else {
+            throw GateBlocked("Unknown native dialog test case.")
+        }
+        var root = URL(fileURLWithPath: directory, isDirectory: true)
+        if scenario == "packresume-start", ProcessInfo.processInfo.arguments.contains("--ngv-native-pack-recovery-resume") {
+            root = root.deletingLastPathComponent().appendingPathComponent("dialogs-packresume-finish", isDirectory: true)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        }
+        Self.dialogTestIndex += 1
+        let index = Self.dialogTestIndex
+        let prefix = "file-panel-\(index)-"
+        let isOpen = panel is NSOpenPanel
+        let action = selection == nil ? "cancel" : (isOpen ? "open" : "save")
+        let marker = root.appendingPathComponent(prefix + "visible.json")
+        let panels = NSApp.windows.compactMap { $0 as? NSSavePanel }.filter(\.isVisible)
+        guard panels.count == 1, panels.first === panel else { throw GateBlocked("The UI test has no unique visible file panel.") }
+        let identity: [String: Any] = ["step": index, "pid": ProcessInfo.processInfo.processIdentifier,
+            "window": panel.windowNumber, "action": action]
+        try JSONSerialization.data(withJSONObject: identity).write(to: marker, options: .atomic)
+        let input = root.appendingPathComponent(prefix + "input.json")
+        try await wait("external file panel input", seconds: 90) { FileManager.default.fileExists(atPath: input.path) }
+        let receipt = try JSONSerialization.jsonObject(with: Data(contentsOf: input)) as? [String: Any]
+        guard receipt?["step"] as? Int == index, receipt?["pid"] as? Int == Int(ProcessInfo.processInfo.processIdentifier),
+              receipt?["window"] as? Int == panel.windowNumber, receipt?["action"] as? String == action else {
+            throw GateBlocked("The external file panel observation differs from the active dialog.")
+        }
+        if let selection {
+            let expected = selection.standardizedFileURL.resolvingSymlinksInPath()
+            let typed = isOpen ? selection : selection.deletingLastPathComponent()
+            guard receipt?["pathField"] as? String == "PathTextField", let path = receipt?["typed"] as? String,
+                  URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path == typed.standardizedFileURL.resolvingSymlinksInPath().path,
+                  isOpen || receipt?["filename"] as? String == selection.lastPathComponent else {
+                throw GateBlocked("The external test did not verify the expected path editor contents.")
+            }
+            try await wait("exact external file selection") {
+                panel.isVisible && panel.url?.standardizedFileURL.resolvingSymlinksInPath().path == expected.path
+            }
+            try capture(isOpen ? "file-selected" : "save-selected", target: panel)
+        }
+        var observed = identity
+        if selection != nil { observed["selected"] = panel.url?.standardizedFileURL.resolvingSymlinksInPath().path }
+        try JSONSerialization.data(withJSONObject: observed).write(to: root.appendingPathComponent(prefix + "observed"), options: .atomic)
+        try await wait("external file panel completion", seconds: 30) { !panel.isVisible && (!returnsToParent || parent.isKeyWindow) }
+        var interaction: [String: Any] = ["dialogTestStep": index, "externalInput": input.lastPathComponent]
+        if let selection, isOpen {
+            interaction.merge(["kind": "file-panel", "path": selection.lastPathComponent, "selectedURLVerified": true,
+                               "nativePathEditorVerified": true]) { _, value in value }
+        } else if let selection {
+            interaction.merge(["kind": "save-panel", "filename": selection.lastPathComponent, "exactURLVerified": true,
+                               "nativeDirectoryAndFilenameTyped": true]) { _, value in value }
+        } else { interaction["kind"] = "file-panel-cancel" }
+        interactions.append(interaction)
+        try persist()
+        return true
+    }
+
     func chooseFile(_ url: URL?, in sheet: NSWindow, trigger: String? = "storyboard.native-sketch.choose", returnsToParent: Bool = true) async throws {
         if let trigger { try await click(trigger, in: sheet) }
         try await wait("native file panel") { NSApp.windows.contains { ($0 as? NSOpenPanel)?.isVisible == true } }
@@ -804,6 +867,7 @@ final class ProductionVisualSourcesDriver {
             throw GateBlocked("No actual NSOpenPanel appeared.")
         }
         try capture("file-panel", target: panel)
+        if try await observeTestPanel(panel, selection: url, parent: sheet, returnsToParent: returnsToParent) { return }
         guard let url else {
             try key(53, "\u{1b}", in: panel)
             try await wait("cancel native file panel") { !panel.isVisible && sheet.isKeyWindow }
@@ -868,6 +932,7 @@ final class ProductionVisualSourcesDriver {
         }
         try await wait("save panel keyboard focus") { panel.isKeyWindow }
         try capture("save-panel", target: panel)
+        if try await observeTestPanel(panel, selection: destination, parent: parent, returnsToParent: returnsToParent) { return }
         let app = AXUIElementCreateApplication(getpid())
         AXUIElementSetMessagingTimeout(app, 1)
         let previousEditor = panel.firstResponder as? NSTextView

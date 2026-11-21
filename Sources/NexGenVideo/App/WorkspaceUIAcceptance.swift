@@ -169,6 +169,18 @@ enum WorkspaceUIAcceptance {
                     do {
                         emit("native-media-library", scale: scale, fields: try await MediaLibraryAcceptance.run(output: evidenceURL, scale: scale))
                     } catch { fail("Media library acceptance: " + error.localizedDescription, scale: scale) }
+                case "musicvideo-intake":
+                    do {
+                        guard let path = ProcessInfo.processInfo.environment["NGV_WORKSPACE_UI_PACK"],
+                              PluginLoader.load(at: URL(fileURLWithPath: path)).isLoaded,
+                              let binding = PluginLoader.liveBinding(id: "musicvideo") else {
+                            throw ToolError("Track intake requires the actual Music Video pack.")
+                        }
+                        let flow = try await MusicvideoHostFlowAcceptance.start(
+                            track: evidenceURL.appendingPathComponent("Track.wav"), lyrics: nil,
+                            binding: binding, evidenceURL: evidenceURL, nativeCreation: true)
+                        flow.close()
+                    } catch { fail("Native Music Video track intake: " + error.localizedDescription, scale: scale) }
                 case "filmreview": await captureProductionOwner(kind: .musicvideo, evidenceURL: evidenceURL, scale: scale)
                 case "performance": await captureProductionOwner(kind: .musicvideo, evidenceURL: evidenceURL, scale: scale, performance: true)
                 case "performanceroles":
