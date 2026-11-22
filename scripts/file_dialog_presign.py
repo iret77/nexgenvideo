@@ -17,7 +17,7 @@ from isolated_test_home import environment
 from retained_app_test_products import checksum, require
 
 
-def intake_binding(app, pack, image_uuid, payload):
+def intake_binding(app, pack, image_uuid, payload, client_producer):
     import file_dialog_products as dialogs
     from compiled_app_release import canonical_bundle_tree
     from release_checkpoint import tree_digest
@@ -25,9 +25,10 @@ def intake_binding(app, pack, image_uuid, payload):
     source = os.environ['GITHUB_SHA']
     products = Path(os.environ['NGV_FILE_DIALOG_PRODUCTS']).resolve(strict=True)
     client = json.loads((runner / 'file-dialog-ui/transfer/client.json').read_bytes())
+    if client_producer is None:
+        client_producer = (source, int(os.environ['GITHUB_RUN_ID']), int(os.environ['GITHUB_RUN_ATTEMPT']))
     require(products == (runner / 'file-dialog-ui/build/Build/Products').resolve(strict=True)
-            and client['source'] == source and client['run'] == int(os.environ['GITHUB_RUN_ID'])
-            and client['attempt'] == int(os.environ['GITHUB_RUN_ATTEMPT'])
+            and (client['source'], client['run'], client['attempt']) == client_producer
             and client['tree'] == dialogs.project_tree(source) and client['products'] == dialogs.products_sha256(products),
             'Early intake and release require the same actual file dialog XCTest')
     return dict(source=source, runID=os.environ['GITHUB_RUN_ID'], attempt=client['attempt'], client=client,
@@ -54,13 +55,13 @@ def observed_intake(evidence, pid):
                 dialogReceipts=[checksum(report / f'file-panel-{index}-input.json') for index in (1, 2)])
 
 
-def verify_intake(app, pack, image_uuid, payload, *, early=False):
+def verify_intake(app, pack, image_uuid, payload, *, early=False, client_producer=None, window_arguments=()):
     from compiled_app_release import image_uuid as uuid_of, signed_payload_sha
     runner = Path(os.environ['RUNNER_TEMP']).resolve(strict=True)
     work = runner / 'file-dialog-intake'
     evidence = work / 'evidence'
     receipt = evidence / 'verified.json'
-    binding = intake_binding(app, pack, image_uuid, payload)
+    binding = intake_binding(app, pack, image_uuid, payload, client_producer)
     build = plistlib.loads((app / 'Contents/Info.plist').read_bytes())['CFBundleVersion']
     if not early and int(build) >= 129:
         require(receipt.is_file(), 'Missing early Track acceptance before signing')
@@ -71,6 +72,8 @@ def verify_intake(app, pack, image_uuid, payload, *, early=False):
         return
     work.mkdir()
     evidence.mkdir()
+    with (evidence / 'launch-binding.json').open('x') as out:
+        json.dump(dict(binding=binding, windowArguments=list(window_arguments)), out)
     track = evidence / 'Track.wav'
     with wave.open(str(track), 'wb') as wav:
         wav.setparams((1, 2, 16000, 0, 'NONE', 'not compressed'))
@@ -90,7 +93,7 @@ def verify_intake(app, pack, image_uuid, payload, *, early=False):
         client = stack.enter_context(session(clone, env, evidence, 'musicvideo-intake', scale=100))
         require(client is not None, 'The reviewed file dialog XCTest is missing')
         log = stack.enter_context((evidence / 'native.log').open('xb'))
-        process = start(stack, [native, '-ApplePersistenceIgnoreState', 'YES', '-AppleLanguages', '(en)', '-AppleLocale', 'en_US'],
+        process = start(stack, [native, *window_arguments, '-ApplePersistenceIgnoreState', 'YES', '-AppleLanguages', '(en)', '-AppleLocale', 'en_US'],
                         env=env, log=log)
         require(wait_for_native(process, client, 180) == 0, 'The actual native track intake failed')
     observed = observed_intake(evidence, process.pid)
