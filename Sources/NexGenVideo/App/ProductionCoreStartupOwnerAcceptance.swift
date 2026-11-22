@@ -72,9 +72,9 @@ enum ProductionCoreStartupOwnerAcceptance {
             enrollmentDriver = driver
             try await driver.waitForPresentation(of: window, control: "editor.workspace.production")
             try await driver.click("editor.workspace.production", in: window, enabled: false)
-            try await driver.reveal("dock.start", in: window)
+            try await driver.reveal(PipelinePanelView.startProductionProbeID, in: window)
             try driver.capture("before-explicit-enrollment", target: window)
-            try await driver.click("dock.start", in: window)
+            try await driver.click(PipelinePanelView.startProductionProbeID, in: window)
             try await SettingsOwnerAcceptance.dialog("Start Production", driver: driver)
             try await driver.wait("actual Core enrollment completed", seconds: 60) {
                 editor.declaredProductionContract == .current && editor.hasProductionPipeline

@@ -109,7 +109,7 @@ concurrency:
 jobs:
   validate:
     name: Validate verification mode and inputs
-    runs-on: ubuntu-24.04
+    runs-on: macrunner
     timeout-minutes: 5
     outputs:
       mode: ${{ steps.inputs.outputs.mode }}
@@ -218,6 +218,8 @@ jobs:
         if: inputs.mode == 'followup'
         with:
           fetch-depth: 0
+      - uses: ./.github/actions/setup-macos-source
+        if: inputs.mode == 'followup'
       - name: Require an existing exact same-source app before allocating Mac jobs
         if: inputs.mode == 'followup' && inputs.followup_workflow != 'bpy' && inputs.release_binding == ''
         env:

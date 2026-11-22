@@ -170,7 +170,7 @@ jobs:
         env:
           HOME: ${{ runner.temp }}/nexgenvideo-test-home
           CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
-        run: python3 -m unittest discover -s scripts -p 'test_*.py' -v -f
+        run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
 
       - name: Upload exact PR source composition
         if: always() && inputs.verified_pr_run_id != ''

@@ -117,14 +117,14 @@ final class MusicvideoHostFlowAcceptance {
         let intakeDriver = ProductionVisualSourcesDriver(window: window, output: evidenceURL, name: "hostflow-track-lyrics")
         try await intakeDriver.waitForPresentation(of: window, control: "agent.dialog.choose-file")
         try await intakeDriver.chooseFile(track, in: window, trigger: "agent.dialog.choose-file")
-        try await intakeDriver.click("agent.dialog.confirm", in: window)
+        try await intakeDriver.clickButton("agent.dialog.confirm", title: "Attach track", in: window, settledTarget: .hoveredButton)
         try await waitForDialog("Lyrics", attachAs: "lyrics")
         let song = AudioProjectLayout.songFiles(dataRoot: dataRoot)
         try require(song.count == 1 && song[0].lastPathComponent == track.lastPathComponent
             && (try FileDigest.sha256(of: song[0])) == (try FileDigest.sha256(of: track)),
             "Track intake changed the source identity or its readable filename")
         if let lyrics { try await intakeDriver.chooseFile(lyrics, in: window, trigger: "agent.dialog.choose-file") }
-        try await intakeDriver.click("agent.dialog.confirm", in: window)
+        try await intakeDriver.clickButton("agent.dialog.confirm", title: "Continue", in: window, settledTarget: .hoveredButton)
         try await waitForHandoff("project_init")
         try require(service.pendingDialog == nil, "A creative intake appeared before analysis")
         try Data(contentsOf: track, options: .mappedIfSafe).write(to: evidenceURL.appendingPathComponent("intake-track-source.bin"), options: .atomic)
@@ -135,8 +135,7 @@ final class MusicvideoHostFlowAcceptance {
             "nextPhase": "project_init", "creativeIntakeAbsent": true])
         try recordIntake(intakeDriver)
         try await approve("project_init")
-        try await waitForHandoff("analysis")
-        try require(editor.productionSelectedPhase == "analysis", "Init approval left the old phase selected")
+        try await waitForHandoff("analysis", requireSelectedPhase: true)
     }
 
     func runAnalysisOnNextNativeTurn() { runtime.runAnalysisOnNextTurn = true }
@@ -430,7 +429,7 @@ final class MusicvideoHostFlowAcceptance {
         try capture(attachAs)
     }
 
-    private func waitForHandoff(_ phase: String, hidden: Bool = true) async throws {
+    private func waitForHandoff(_ phase: String, hidden: Bool = true, requireSelectedPhase: Bool = false) async throws {
         try await waitUntil("handoff to \(phase)") {
             if let error = self.service.streamError {
                 throw Failure("Hostflow handoff to \(phase) failed: \(error.localizedDescription)")
@@ -443,6 +442,9 @@ final class MusicvideoHostFlowAcceptance {
             throw Failure("No actual message carried the phase handoff")
         }
         if hidden { try require(message.hidden && message.userPresentation == nil, "An automatic handoff became a user turn") }
+        if requireSelectedPhase {
+            try require(editor.productionSelectedPhase == phase, "The project still shows the previous phase")
+        }
         transitions.append("handoff \(phase)")
         try capture(phase)
     }

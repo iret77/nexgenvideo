@@ -229,6 +229,7 @@ enum ExampleAudioAnalysisSelfTest {
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
         BundledFonts.register()
+        app.mainMenu = MainMenuBuilder.buildMenu()
         Task { @MainActor in
             await runRequested(environment: environment)
         }

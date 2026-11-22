@@ -267,7 +267,7 @@ class RetainedProductsTests(unittest.TestCase):
 
             library = SimpleNamespace(listxattr=Mock(side_effect=names), getxattr=Mock(side_effect=value))
             with patch.object(replay.sys, "platform", "darwin"), patch.object(replay.ctypes, "CDLL", return_value=library), \
-                    patch.object(os, "listxattr", side_effect=AssertionError("Linux API on Darwin")):
+                    patch.object(os, "listxattr", create=True, side_effect=AssertionError("Linux API on Darwin")):
                 self.assertEqual(replay.read_xattrs(Path("/fixture/link")), {name.decode(): data.hex() for name, data in attributes.items()})
             self.assertTrue(all(call[1:3] == (b"/fixture/link", 1) for call in calls))
             self.assertTrue(all(call[3] == 0 for call in calls if call[0] == "value"))

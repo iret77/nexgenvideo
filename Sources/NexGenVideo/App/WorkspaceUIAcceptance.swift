@@ -263,7 +263,7 @@ enum WorkspaceUIAcceptance {
                 return editor.workspaceFocus == .production
                     && visiblePanelIDs(in: host) == expectedPanels(for: .production)
                     && defaultPanelWidthsAreValid(workspace: .production, frames: frames)
-                    && probeState(identifier: "pipeline.overview.dock.start", in: window) == true
+                    && probeState(identifier: PipelinePanelView.startProductionProbeID, in: window) == true
                     && previewTimecodeIsSingleLine(in: window, scale: scale)
                     && productionControlsAreContained(in: window)
             }) else {

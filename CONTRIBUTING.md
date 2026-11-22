@@ -27,7 +27,7 @@ runtime evidence records the OS actually used.
 
 ## Verification
 
-Pull requests run the Linux source checks in `.github/workflows/pr-checks.yml`.
+Owned pull requests against the RC delivery branch run source and lint checks on macrunner. Other pull requests run Linux source checks in `.github/workflows/pr-checks.yml`.
 The manually dispatched `.github/workflows/ci-batch.yml` runs compilation, unit
 tests, app and external-pack loading, native UI acceptance, and real Music Video
 audio-analysis acceptance. See [CI execution and measurement](docs/CI_EFFICIENCY.md)

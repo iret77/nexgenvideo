@@ -147,7 +147,7 @@ class CompiledAppReleaseTests(unittest.TestCase):
     def test_source_receivers_require_their_actual_linux_or_macos_context(self):
         parent = {'producerSourceSHA': 'c' * 40}
         for context, job, system in [('bpy-runtime', 'runtime', 'darwin'),
-                ('workspace-source-preflight', 'runtime', 'linux'), ('settings-restore', 'acceptance', 'darwin')]:
+                ('workspace-source-preflight', 'runtime', 'darwin'), ('settings-restore', 'acceptance', 'darwin')]:
             env = {'GITHUB_ACTIONS': 'true', 'GITHUB_REPOSITORY': release.REPOSITORY,
                 'GITHUB_RUN_ATTEMPT': '1', 'GITHUB_JOB': job, 'GITHUB_SHA': 'c' * 40}
             with self.subTest(context=context), patch.dict(os.environ, env), patch.object(release.sys, 'platform', system):
@@ -161,7 +161,7 @@ class CompiledAppReleaseTests(unittest.TestCase):
         import retained_packaging as packaging
         from compiled_component_reuse import ORIGIN
         for context, job, system in [('bpy-runtime', 'runtime', 'darwin'),
-                ('workspace-source-preflight', 'runtime', 'linux'), ('settings-restore', 'acceptance', 'darwin')]:
+                ('workspace-source-preflight', 'runtime', 'darwin'), ('settings-restore', 'acceptance', 'darwin')]:
             for changed in ('valid', 'parent', 'binding', 'checkout', 'dirty', 'product-path', 'job', 'platform', 'attempt'):
                 with self.subTest(context=context, changed=changed):
                     parent = {'producerSourceSHA': 'c' * 40, 'productSourceSHA': ORIGIN['sourceSHA'],
@@ -249,7 +249,7 @@ class CompiledAppReleaseTests(unittest.TestCase):
         import consume_bpy_distributable_source as source
         import retained_packaging as packaging
         for context, job, system in [('bpy-runtime', 'runtime', 'darwin'),
-                ('workspace-source-preflight', 'runtime', 'linux'), ('settings-restore', 'acceptance', 'darwin')]:
+                ('workspace-source-preflight', 'runtime', 'darwin'), ('settings-restore', 'acceptance', 'darwin')]:
             for changed in ('valid', 'cross-harness', 'input-receipt', 'replaced-during-acquisition'):
                 with self.subTest(context=context, changed=changed), tempfile.TemporaryDirectory() as temporary:
                     root = Path(temporary); runner = root / 'runner'; runner.mkdir(); outside = root / 'outside'; outside.mkdir()
@@ -652,7 +652,11 @@ class CompiledAppReleaseTests(unittest.TestCase):
                     metadata = contents / 'Info.plist'
                     metadata.write_bytes(b'pack metadata\n')
                     metadata.chmod(0o644)
-                    (bundle / 'active').symlink_to('Contents/Entry')
+                    link = bundle / 'active'
+                    link.symlink_to('Contents/Entry')
+                    if link.lstat().st_mode & 0o777 != 0o777:
+                        os.chmod(link, 0o777, follow_symlinks=False)
+                    self.assertEqual(link.lstat().st_mode & 0o777, 0o777)
                     archive = root / 'musicvideo.ngvpack.zip'
                     archive.write_bytes(b'qualified archive')
                     archive_sha = hashlib.sha256(archive.read_bytes()).hexdigest()

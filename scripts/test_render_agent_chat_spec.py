@@ -54,10 +54,15 @@ def write_process_fixture(directory):
 
 
 def process_running(pid):
-    try:
-        return Path(f"/proc/{pid}/stat").read_text().split(") ", 1)[1].split()[0] != "Z"
-    except (FileNotFoundError, ProcessLookupError):
+    result = subprocess.run(["/bin/ps", "-p", str(pid), "-o", "stat="],
+                            capture_output=True, text=True, timeout=5)
+    if result.returncode == 1 and not result.stdout.strip() and not result.stderr.strip():
         return False
+    result.check_returncode()
+    state = result.stdout.strip()
+    if not state:
+        raise ValueError("Missing process state")
+    return not state.startswith("Z")
 
 
 def png_chunk(kind, payload):
@@ -81,17 +86,15 @@ def write_rgb_png(path, width, height, pixel):
 
 class AgentChatSpecRendererTests(unittest.TestCase):
     def test_process_observation_distinguishes_exit_from_unreadable_state(self):
-        for error in (FileNotFoundError(), ProcessLookupError()):
-            with self.subTest(error=type(error).__name__), mock.patch.object(Path, "read_text", side_effect=error):
-                self.assertFalse(process_running(123))
-        for state in ("R", "S", "Z"):
-            with self.subTest(state=state), mock.patch.object(Path, "read_text", return_value=f"123 (fixture) {state} 1 1"):
-                self.assertEqual(process_running(123), state != "Z")
-        with mock.patch.object(Path, "read_text", side_effect=PermissionError()):
-            with self.assertRaises(PermissionError):
-                process_running(123)
+        for status, output, expected in ((1, "", False), (0, "R", True), (0, "S+", True), (0, "Z", False)):
+            result = subprocess.CompletedProcess([], status, output, "")
+            with self.subTest(state=output), mock.patch.object(subprocess, "run", return_value=result):
+                self.assertEqual(process_running(123), expected)
+        result = subprocess.CompletedProcess([], 1, "", "Permission denied")
+        with mock.patch.object(subprocess, "run", return_value=result), self.assertRaises(subprocess.CalledProcessError):
+            process_running(123)
 
-    @unittest.skipUnless(sys.platform == "linux", "Process fixtures target the Linux UI runner")
+    @unittest.skipUnless(os.name == "posix", "Process fixtures require POSIX sessions")
     def test_browser_calls_use_private_profiles_closed_stdin_and_common_flags(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -122,7 +125,7 @@ class AgentChatSpecRendererTests(unittest.TestCase):
                     self.assertEqual(result[stream]["sha256"], hashlib.sha256(raw).hexdigest())
             self.assertNotEqual(*profiles)
 
-    @unittest.skipUnless(sys.platform == "linux", "Process fixtures target the Linux UI runner")
+    @unittest.skipUnless(os.name == "posix", "Process fixtures require POSIX sessions")
     def test_nonzero_browser_retains_large_direct_output_without_retry(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -139,7 +142,7 @@ class AgentChatSpecRendererTests(unittest.TestCase):
             self.assertGreater((diagnostic / "stderr.log").stat().st_size, 262144)
             self.assertEqual((diagnostic / "stdout.log").read_text().count('"initialEntries"'), 1)
 
-    @unittest.skipUnless(sys.platform == "linux", "Process fixtures target the Linux UI runner")
+    @unittest.skipUnless(os.name == "posix", "Process fixtures require POSIX sessions")
     def test_timeout_and_success_cleanup_owned_descendants_without_touching_foreign_process(self):
         sentinel = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -213,7 +216,7 @@ class AgentChatSpecRendererTests(unittest.TestCase):
             self.assertTrue((diagnostic / "stdout.log").is_file())
             self.assertTrue((diagnostic / "stderr.log").is_file())
 
-    @unittest.skipUnless(sys.platform == "linux", "Process fixtures target the Linux UI runner")
+    @unittest.skipUnless(os.name == "posix", "Process fixtures require POSIX sessions")
     def test_browser_wait_cancellation_is_retained_and_propagated(self):
         wait = subprocess.Popen.wait
         interrupted = False
@@ -235,7 +238,7 @@ class AgentChatSpecRendererTests(unittest.TestCase):
             self.assertTrue((diagnostic / "stdout.log").is_file())
             self.assertTrue((diagnostic / "stderr.log").is_file())
 
-    @unittest.skipUnless(sys.platform == "linux", "Process fixtures target the Linux UI runner")
+    @unittest.skipUnless(os.name == "posix", "Process fixtures require POSIX sessions")
     def test_cleanup_wait_interrupt_still_kills_owned_child_and_is_propagated(self):
         sentinel = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,

@@ -32,11 +32,11 @@ def validate(directory, report, scale):
     if not isinstance(actions, list) or not all(isinstance(item, dict) for item in actions):
         raise ValueError('Malformed native creation actions')
     decisions = [item['id'] for item in actions if item.get('kind') == 'pointer'
-                 and item.get('id') in {'home.new', 'home.format.musicvideo', 'home.format.create', 'dock.start'}]
-    if decisions != ['home.new', 'home.format.musicvideo', 'home.format.create', 'dock.start']:
+                 and item.get('id') in {'home.new', 'home.format.musicvideo', 'home.format.create', 'pipeline.overview.dock.start'}]
+    if decisions != ['home.new', 'home.format.musicvideo', 'home.format.create', 'pipeline.overview.dock.start']:
         raise ValueError('Missing or reordered native Music Video decisions')
     save = [i for i, item in enumerate(actions) if item.get('kind') == 'save-panel']
-    start = next(i for i, item in enumerate(actions) if item.get('kind') == 'pointer' and item.get('id') == 'dock.start')
+    start = next(i for i, item in enumerate(actions) if item.get('kind') == 'pointer' and item.get('id') == 'pipeline.overview.dock.start')
     create = next(i for i, item in enumerate(actions) if item.get('kind') == 'pointer' and item.get('id') == 'home.format.create')
     if (len(save) != 1 or not create < save[0] < start or actions[save[0]].get('filename') != 'Native Music Video.ngv'
             or actions[save[0]].get('nativeDirectoryAndFilenameTyped') is not True

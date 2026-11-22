@@ -107,7 +107,7 @@ env:
 
 jobs:
   source:
-    runs-on: ubuntu-24.04
+    runs-on: macrunner
     timeout-minutes: 5
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
@@ -119,6 +119,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: ./.github/actions/setup-macos-source
       - name: Validate complete runtime and source reuse inputs
         env:
           NGV_RUNTIME_ARTIFACT: ${{ inputs.runtime_artifact }}
@@ -417,7 +418,7 @@ jobs:
   runtime:
     needs: [source, build]
     if: ${{ !cancelled() && needs.source.result == 'success' && ((needs.build.result == 'success' && needs.build.outputs.app_ready == 'true') || (needs.build.result == 'skipped' && (inputs.runtime_artifact != '' || inputs.runtime_run_id != ''))) }}
-    runs-on: ubuntu-24.04
+    runs-on: macrunner
     timeout-minutes: 10
     outputs:
       artifact_id: ${{ steps.resolve.outputs.artifact_id }}
@@ -428,6 +429,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: ./.github/actions/setup-macos-source
       - uses: actions/download-artifact@v4
         if: inputs.verified_pr_run_id != ''
         with:
@@ -620,10 +622,11 @@ jobs:
   qualification:
     needs: [source, runtime, acceptance, batch-review]
     if: ${{ always() && needs.source.result == 'success' && needs.runtime.result == 'success' }}
-    runs-on: ubuntu-24.04
+    runs-on: macrunner
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-macos-source
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true

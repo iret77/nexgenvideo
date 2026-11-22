@@ -85,8 +85,9 @@ class ExternalTestBundleTests(unittest.TestCase):
                      'scripts/fixtures/native-app-failure-1120.json', 'scripts/fixtures/native-app-failure-1135.json',
                      'scripts/hang_diagnostic_acceptance.py', 'scripts/scene_pointer_delivery.py',
                      'scripts/scene_pointer_observer.swift', 'scripts/signed_component_carrier.py']
-        additions = sorted(additions + ['scripts/fixtures/signed-component-carrier-1170.json', 'scripts/native_camera_focus_check.py'])
-        additions = sorted(additions + ['.github/actions/file-dialog-products/action.yml', 'scripts/file-dialog-ui/Tests/FileDialogTests.swift', 'scripts/file-dialog-ui/project.yml', 'scripts/file_dialog_presign.py', 'scripts/file_dialog_products.py', 'scripts/file_dialog_ui.py', 'scripts/private_audio_ui.py', 'scripts/workspace_native_case.py'])
+        additions = sorted(additions + ['scripts/fixtures/signed-component-carrier-1170.json', 'scripts/native_camera_focus_check.py',
+                                        'scripts/core_startup_owner_evidence.py', 'scripts/native_new_musicvideo_evidence.py'])
+        additions = sorted(additions + ['.github/actions/setup-macos-source/action.yml', '.github/actions/file-dialog-products/action.yml', 'scripts/file-dialog-ui/Tests/FileDialogTests.swift', 'scripts/file-dialog-ui/project.yml', 'scripts/file_dialog_presign.py', 'scripts/file_dialog_products.py', 'scripts/file_dialog_ui.py', 'scripts/private_audio_ui.py', 'scripts/workspace_native_case.py'])
         changes = dict.fromkeys(additions, 'A')
         for status in ('A', 'M'):
             self.assertEqual(bundle._cohort_ci_additions(prior, prior + additions, dict.fromkeys(additions, status), set(), {}), additions)
@@ -801,7 +802,7 @@ class ExternalTestBundleTests(unittest.TestCase):
         journey_helper = 'scripts/external-gui/acceptance.py'
         if legacy_home_oracle:
             original[journey_helper] = self.legacy_home_oracle_source(original[journey_helper])
-        added = {'_safe_function', '_builder_view', '_workflow_build_view', '_guard_import_view',
+        added = {'_safe_function', '_reviewed_function_digest', '_builder_view', '_workflow_build_view', '_guard_import_view',
                  '_source_snapshot', '_compiled_compatibility', 'validate_client_selectors', 'validate_client_source',
                  '_packaging_import_view', '_metadata_api_import_view', '_cohort_ci_additions', '_home_oracle_import_view', '_component_transport_import_view'}
         lines = original[helper].decode().splitlines(keepends=True)
@@ -994,7 +995,7 @@ class ExternalTestBundleTests(unittest.TestCase):
             self.assertIn('scripts/isolated_test_home.py', files)
             client = 'scripts/external-gui/NexGenVideoExternalUITests/UserJourneyTests.swift'
             self.assertNotEqual(files[client], receipt['testFiles'][client])
-            with self.assertRaisesRegex(ValueError, 'UI test receipt has unknown added verifier inputs'):
+            with self.assertRaisesRegex(ValueError, 'Compiled UI test source, project or reachable shared helper changed'):
                 bundle._compiled_compatibility(producer, receipt['testFiles'], current, files,
                                                originals, comparison)
         self.assertEqual(len(receipt['testFiles']), 37)
@@ -1959,17 +1960,29 @@ class ExternalTestBundleTests(unittest.TestCase):
         stages[2].update(scaleLabel=journey.SCALES['1.5'], selectedValue=journey.SCALES['1.5'])
         stages[3].update(packOrigin='mounted-dmg', packFilename='musicvideo.ngvpack')
         for index in (4, 5): stages[index].update(packID='musicvideo', version='0.6.0', schema='musicvideo/3.0.0')
-        stages[-1].update(chooseEnabled=True, attachEnabled=False, trackUploaded=False)
+        identifier = '17EA4564-5386-4C2E-8C6F-040CEA7F0ECE'
+        generation = self.root / 'track-working-generation.txt'
+        generation.write_text('0DF51A37-E4B4-47C8-950C-62616FB7F261')
+        window = self.root / 'track-window-accessibility.txt'
+        window.write_text('Track Choose… Attach track')
+        journey.write_json(self.root / 'track-working-ngv.json', {'id': identifier})
+        journey.write_json(self.root / 'track-working-media.json', {'intakeRoleByAssetID': {}})
+        originals = {n: journey.sha256(self.root / ('track-working-' + n)) for n in ('media.json', 'ngv.json')}
+        stages[-1].update(chooseEnabled=True, attachEnabled=False, trackUploaded=False, lyricsCardVisible=False,
+            workingKey='p-' + identifier, generationSHA256=journey.sha256(generation), windowAXSHA256=journey.sha256(window),
+            rootEntries=['.ngv-open-generation', 'media.json', 'ngv.json', 'pipeline'],
+            pipelineEntries=['audio'], audioEntries=[], workingFiles=originals)
         original = {'schema': 'nexgenvideo/external-local-musicvideo/1', 'stages': stages,
             'actions': [{'target': 'normal native action ' + str(index)} for index in range(12)]}
         journey.write_json(self.root / 'profile-before-launch.json', {'installedEntries': 0})
-        journey.write_json(self.root / 'fresh-binding.json', {'activePlugin': 'musicvideo', 'activePluginVersion': '0.6.0',
+        journey.write_json(self.root / 'fresh-binding.json', {'id': identifier, 'activePlugin': 'musicvideo', 'activePluginVersion': '0.6.0',
             'activePluginProjectSchema': 'musicvideo/3.0.0'})
         journey.write_json(self.root / 'journey.json', original)
         self.assertEqual(journey.validate_local_stages(self.root), original)
         variants = []
         for index, key, value in [(0, 'installedEntries', 1), (3, 'packOrigin', 'preseeded-library'),
-                (3, 'packFilename', 'other.ngvpack'), (5, 'version', '0.5.8'), (6, 'attachEnabled', True)]:
+                (3, 'packFilename', 'other.ngvpack'), (5, 'version', '0.5.8'), (6, 'attachEnabled', True),
+                (6, 'audioEntries', ['assigned.wav']), (6, 'workingKey', 'p-other'), (6, 'lyricsCardVisible', True)]:
             changed = copy.deepcopy(original); changed['stages'][index][key] = value; variants.append(changed)
         changed = copy.deepcopy(original); changed['schema'] = 'nexgenvideo/external-fresh-musicvideo/1'; variants.append(changed)
         for value in variants:

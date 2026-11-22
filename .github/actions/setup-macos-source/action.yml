@@ -1,0 +1,21 @@
+name: Prepare macOS source checks
+description: Select the arm64 interpreter and dependencies for the RC verification jobs.
+runs:
+  using: composite
+  steps:
+    - name: Record the guest platform
+      shell: bash
+      run: |
+        sw_vers
+        test "$(sw_vers -productVersion | cut -d. -f1)" = 27
+        test "$(uname -m)" = arm64
+    - uses: ./.github/actions/setup-native-test-python
+    - name: Install source verification dependencies
+      shell: bash
+      run: |
+        mkdir -p "$RUNNER_TEMP/source-check-tmp"
+        temp_path="$(cd "$RUNNER_TEMP/source-check-tmp" && pwd -P)"
+        echo "TMPDIR=$temp_path" >> "$GITHUB_ENV"
+        python3 -m venv "$RUNNER_TEMP/source-check-python"
+        "$RUNNER_TEMP/source-check-python/bin/python3" -m pip install --only-binary=:all: PyYAML==6.0.3 cryptography==50.0.2
+        echo "$RUNNER_TEMP/source-check-python/bin" >> "$GITHUB_PATH"

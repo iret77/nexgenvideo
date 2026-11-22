@@ -20,6 +20,23 @@ from verify_diagnostic_candidate import SIGNED_DESKTOP_HARNESS_PATHS, SIGNED_WOR
 
 
 class NativeAppTargetWorkflowTests(unittest.TestCase):
+    def test_failed_diagnostic_can_supply_only_its_bound_successful_dialog_client(self):
+        from file_dialog_products import client_producer_job
+        origin = dict(jobID=321, attempt=1)
+        job = dict(id=321, name='rc130-track-confirmation', status='completed', conclusion='failure', labels=['macrunner'],
+                   head_sha='a' * 40, run_id=123, run_attempt=1,
+                   steps=[dict(name='Build file dialog XCTest', conclusion='success')])
+        def select(row, binding=origin):
+            return client_producer_job([row], job['head_sha'], job['run_id'], 1, binding)
+        self.assertEqual(select(job), job)
+        with self.assertRaises(ValueError):
+            select(job, None)
+        for difference in [dict(id=322), dict(name='other'), dict(status='in_progress'), dict(run_attempt=2),
+                           dict(head_sha='b' * 40), dict(run_id=124), dict(labels=['other']),
+                           dict(steps=[dict(name='Build file dialog XCTest', conclusion='failure')])]:
+            with self.subTest(difference=difference), self.assertRaises(ValueError):
+                select(job | difference)
+
     @staticmethod
     def steps():
         workflow = Path(__file__).resolve().parent.parent / '.github/workflows/diagnostic-acceptance.yml'
@@ -84,8 +101,10 @@ class NativeAppTargetWorkflowTests(unittest.TestCase):
         self.assertEqual(job['env']['TARGET_BINDING_DIGEST'], '${{ needs.source.outputs.target-binding-digest }}')
         steps = job['steps']; indexes = {step['id']: index for index, step in enumerate(steps) if 'id' in step}
         self.assertLess(indexes['tests_upload'], indexes['camera_focus'])
-        self.assertLess(indexes['camera_focus'], indexes['production'])
-        for phase, next_phase in [('testable', 'tests'), ('tests', 'production'), ('production', None)]:
+        self.assertLess(indexes['track_client'], indexes['production'])
+        self.assertLess(indexes['production_upload'], indexes['track_intake'])
+        self.assertLess(indexes['track_intake'], indexes['testable'])
+        for phase, next_phase in [('production', 'track_intake'), ('testable', 'tests'), ('tests', 'camera_focus')]:
             compiled, uploaded = indexes[phase], indexes[phase + '_upload']
             self.assertLess(compiled, uploaded)
             if next_phase: self.assertLess(uploaded, indexes[next_phase])
@@ -627,7 +646,7 @@ class DiagnosticCompiledClientRouteTests(unittest.TestCase):
 
     def test_original_transport_validator_keeps_native_xcode_and_pinned_media_tools(self):
         source = self.workflow['jobs']['source']
-        self.assertEqual(source['runs-on'], 'ubuntu-24.04')
+        self.assertEqual(source['runs-on'], 'macrunner')
         fixture_job = self.workflow['jobs']['transport-fixture']
         self.assertEqual(fixture_job['needs'], 'source')
         self.assertEqual(fixture_job['if'], "inputs.candidate_kind == 'signed-transport'")

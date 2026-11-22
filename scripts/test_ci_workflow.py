@@ -33,6 +33,13 @@ def triggers(path):
     return keys
 
 
+RC_SOURCE_RUNNER = (
+    "${{ github.event_name == 'pull_request' && github.actor == 'iret77' && github.repository == 'iret77/nexgenvideo' && "
+    "github.event.pull_request.head.repo.full_name == github.repository && github.base_ref == 'iret77/rc-delivery-base-795' "
+    "&& 'macrunner' || 'ubuntu-24.04' }}"
+)
+
+
 def run_commands(text):
     commands = []
     lines = text.splitlines()
@@ -370,7 +377,7 @@ class CIWorkflowTests(unittest.TestCase):
         self.assertNotIn("pattern: native-evidence-*", gate)
         self.assertIn("cancel-in-progress: false", workspace)
 
-    def test_only_linux_pull_request_checks_start_automatically(self):
+    def test_only_source_checks_start_automatically(self):
         allowed = {PR_CHECKS, WORKFLOWS / "ci-lint.yml"}
         for path in sorted(WORKFLOWS.glob("*.yml")):
             automatic = set(triggers(path)) & AUTOMATIC_TRIGGERS
@@ -383,7 +390,7 @@ class CIWorkflowTests(unittest.TestCase):
                 self.assertFalse(any(line.strip().startswith(("paths:", "paths-ignore:")) for line in header))
                 runners = [line.split(":", 1)[1].strip() for line in text.splitlines()
                            if line.strip().startswith("runs-on:")]
-                self.assertEqual(runners, ["ubuntu-24.04"])
+                self.assertEqual(runners, [RC_SOURCE_RUNNER])
                 self.assertNotIn("uses: ./.github/workflows/", text)
 
     def test_every_macos_job_uses_macrunner(self):
@@ -394,7 +401,7 @@ class CIWorkflowTests(unittest.TestCase):
                     continue
                 runner = line.split(":", 1)[1].strip()
                 with self.subTest(workflow=path.name, line=index + 1):
-                    self.assertIn(runner, {"ubuntu-24.04", "macrunner"})
+                    self.assertIn(runner, {"ubuntu-24.04", "macrunner", RC_SOURCE_RUNNER} if path.name in {"pr-checks.yml", "ci-lint.yml"} else {"ubuntu-24.04", "macrunner"})
 
     def test_pull_request_check_mirrors_the_ci_light_job(self):
         light = CI.read_text().split("  source_gate:\n", 1)[1].split("\n  ui_render:\n", 1)[0]

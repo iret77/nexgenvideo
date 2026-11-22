@@ -191,7 +191,7 @@ class MemoryDiagnosticTests(unittest.TestCase):
             if stage != "before-original-call":
                 raise OSError("stdout unavailable")
 
-        with patch.object(payload.resource, "getrlimit", return_value=(-1, -1)), \
+        with patch.object(payload.resource, "getrlimit", return_value=(payload.resource.RLIM_INFINITY,) * 2), \
              patch.object(payload.resource, "setrlimit", side_effect=original), \
              patch.object(payload, "address_space_boundary", side_effect=OSError("restore failed")), \
              patch.object(payload, "emit_limit", side_effect=emit):
@@ -200,7 +200,7 @@ class MemoryDiagnosticTests(unittest.TestCase):
         self.assertIs(raised.exception, original)
 
     def test_permission_failure_is_not_an_address_space_lower_bracket(self):
-        original = (-1, -1)
+        original = (payload.resource.RLIM_INFINITY,) * 2
 
         def setter(_, pair):
             if pair != original:

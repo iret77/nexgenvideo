@@ -257,10 +257,31 @@ final class FileDialogTests: XCTestCase {
                 try activeTarget()
                 field.click()
                 field.typeKey("a", modifierFlags: .command)
-                field.typeText(path)
-                try wait("The native path editor shows a different value") { field.value as? String == path }
+                let board = NSPasteboard.general
+                var pasteChange: Int?
+                defer { if let pasteChange, board.changeCount == pasteChange { board.clearContents() } }
+                if isSave {
+                    field.typeText(path)
+                } else {
+                    board.clearContents()
+                    try require(board.setString(path, forType: .string), "The native file path could not be copied")
+                    pasteChange = board.changeCount
+                    try activeTarget()
+                    field.typeKey("v", modifierFlags: .command)
+                }
+                do {
+                    try wait("The native path editor shows a different value") { field.value as? String == path }
+                } catch {
+                    let value = field.value
+                    let failure: [String: Any] = ["pid": Int(pid), "step": index, "window": try XCTUnwrap(receipt["window"] as? Int),
+                        "expected": path, "value": (value as? String) as Any? ?? NSNull(),
+                        "valueType": String(describing: type(of: value)), "hittable": field.isHittable]
+                    try JSONSerialization.data(withJSONObject: failure).write(to: file("path-failure.json"), options: .atomic)
+                    throw error
+                }
                 receipt["typed"] = try XCTUnwrap(field.value as? String)
                 receipt["pathField"] = field.identifier
+                receipt["pathInput"] = isSave ? "typeText" : "commandV"
                 field.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
                 try wait("The Go to Folder editor did not close") { sheets.count == 0 }
             }
@@ -268,10 +289,32 @@ final class FileDialogTests: XCTestCase {
             try wait("The app did not observe the expected selection") { FileManager.default.fileExists(atPath: file("observed").path) }
             try activeTarget()
             try require(sheets.count == 0, "The path editor is still open")
-            let labels = url == nil ? ["Cancel"] : isSave ? ["Save"] : ["Open", "Choose", "Attach"]
+            if action == "open", let url {
+                let observed = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: file("observed"))) as? [String: Any])
+                try require(observed["pid"] as? Int == Int(pid) && observed["step"] as? Int == index
+                            && observed["window"] as? Int == receipt["window"] as? Int
+                            && observed["action"] as? String == "open" && observed["selected"] as? String == url.path,
+                            "The open panel has not selected the intended file")
+                let panelNumber = try XCTUnwrap(observed["window"] as? Int)
+                try activeTarget()
+                try require(sheets.count == 0, "A new path editor appeared before Open")
+                let windows = try XCTUnwrap(CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
+                                                                       kCGNullWindowID) as? [[String: Any]])
+                let targetWindows = windows.filter {
+                    ($0[kCGWindowOwnerPID as String] as? Int) == Int(pid)
+                        && ($0[kCGWindowAlpha as String] as? Double ?? 0) > 0
+                }.compactMap { $0[kCGWindowNumber as String] as? Int }
+                let current = targetWindows.first == panelNumber && NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
+                if current { app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: []) }
+                try JSONSerialization.data(withJSONObject: ["window": panelNumber, "visibleTargetWindows": targetWindows, "sentReturn": current])
+                    .write(to: file("default-action.json"), options: .atomic)
+                try require(current, "The observed Open panel is no longer the frontmost target window")
+                continue
+            }
+            let label = isSave ? "Save" : "Cancel"
             let buttons = app.windows.descendants(matching: .button)
             func visibleButtons() -> [XCUIElement] {
-                labels.flatMap { buttons.matching(identifier: $0).allElementsBoundByIndex }.filter { $0.isEnabled && $0.isHittable }
+                buttons.matching(identifier: label).allElementsBoundByIndex.filter { $0.isEnabled && $0.isHittable }
             }
             try wait("The native dialog action is missing or ambiguous") { visibleButtons().count == 1 }
             try activeTarget()

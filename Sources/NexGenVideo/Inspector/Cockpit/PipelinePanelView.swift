@@ -107,6 +107,8 @@ enum PipelineSurfaceRouting {
 enum PipelinePanelPresentation { case overview, sidebar, dock }
 
 struct PipelinePanelView: View {
+    static let startProductionProbeID = "pipeline.overview.dock.start"
+
     var presentation: PipelinePanelPresentation = .overview
     @Environment(EditorViewModel.self) private var editor
     @Environment(\.interfaceScale) private var interfaceScale
@@ -285,7 +287,7 @@ struct PipelinePanelView: View {
                 Button("Start production") { editor.startProduction() }
                     .buttonStyle(.inlineAction(.pack))
                     .disabled(workIsRunning || editor.packWiringBroken != nil)
-                    .background { acceptanceProbe("dock.start", enabled: !workIsRunning && editor.packWiringBroken == nil) }
+                    .background { acceptanceProbe(id: Self.startProductionProbeID, enabled: !workIsRunning && editor.packWiringBroken == nil) }
             }
         }
         .interfaceFont(size: AppTheme.Typography.ui)
@@ -758,11 +760,15 @@ struct PipelinePanelView: View {
             .background { acceptanceProbe("phase.\(phase.phase)", text: PhaseDisplay.label(phase.phase)) }
     }
 
-    @ViewBuilder
     private func acceptanceProbe(_ part: String, enabled: Bool? = nil, text: String? = nil) -> some View {
+        acceptanceProbe(id: "pipeline.overview.\(part)", enabled: enabled, text: text)
+    }
+
+    @ViewBuilder
+    private func acceptanceProbe(id: String, enabled: Bool? = nil, text: String? = nil) -> some View {
         if WorkspaceUIAcceptance.isRequested || MusicvideoHostFlowAcceptance.isRequested
             || ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"]?.isEmpty == false {
-            AppRelaunchClickProbe(identifier: "pipeline.overview.\(part)",
+            AppRelaunchClickProbe(identifier: id,
                 acceptanceState: enabled, acceptanceText: text)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .allowsHitTesting(false)

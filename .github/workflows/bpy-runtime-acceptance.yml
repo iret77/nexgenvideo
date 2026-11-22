@@ -68,10 +68,10 @@ jobs:
           if [ -z "$ORIGINAL_RUN" ]; then
             test -z "$ORIGINAL_SOURCE$ORIGINAL_ARTIFACT$ORIGINAL_DIGEST${PACKAGING_PRODUCER_SOURCE:-}${PACKAGING_PROVENANCE_ARTIFACT_ID:-}${PACKAGING_PROVENANCE_ARTIFACT_SHA256:-}"
           else
-            [[ "$ORIGINAL_RUN" =~ ^[1-9][0-9]*$ ]]
-            [[ "$ORIGINAL_SOURCE" =~ ^[0-9a-f]{40}$ ]]
-            [[ "$ORIGINAL_ARTIFACT" =~ ^[1-9][0-9]*$ ]]
-            [[ "$ORIGINAL_DIGEST" =~ ^[0-9a-f]{64}$ ]]
+            [[ "$ORIGINAL_RUN" =~ ^[1-9][0-9]*$ ]] || exit 1
+            [[ "$ORIGINAL_SOURCE" =~ ^[0-9a-f]{40}$ ]] || exit 1
+            [[ "$ORIGINAL_ARTIFACT" =~ ^[1-9][0-9]*$ ]] || exit 1
+            [[ "$ORIGINAL_DIGEST" =~ ^[0-9a-f]{64}$ ]] || exit 1
           fi
       - name: Prepare the job-local temporary test home
         run: mkdir -p "$RUNNER_TEMP/nexgenvideo-test-home"
@@ -128,8 +128,8 @@ jobs:
           ORIGINAL_DIGEST: ${{ inputs.app_artifact_sha256 }}
         run: |
           set -euo pipefail
-          [[ "$ORIGINAL_ARTIFACT" =~ ^[1-9][0-9]*$ ]]
-          [[ "$ORIGINAL_DIGEST" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$ORIGINAL_ARTIFACT" =~ ^[1-9][0-9]*$ ]] || exit 1
+          [[ "$ORIGINAL_DIGEST" =~ ^[0-9a-f]{64}$ ]] || exit 1
           python3 - <<'PY'
           import os, sys
           from pathlib import Path
@@ -224,7 +224,7 @@ jobs:
           ditto -x -k "$RUNNER_TEMP/download/$APP_ZIP" "$RUNNER_TEMP/relocated"
           APP="$RUNNER_TEMP/relocated/NexGenVideo.app"
           codesign --verify --strict --verbose=2 "$APP"
-          [[ "$EXPECTED_SOURCE" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXPECTED_SOURCE" =~ ^[0-9a-f]{40}$ ]] || exit 1
           [ "$(/usr/libexec/PlistBuddy -c 'Print :NGVSourceCommit' "$APP/Contents/Info.plist")" = "$EXPECTED_SOURCE" ]
           if [ "$DISTRIBUTION" = true ]; then
             scripts/verify_bpy_bundle.sh "$APP" --distribution

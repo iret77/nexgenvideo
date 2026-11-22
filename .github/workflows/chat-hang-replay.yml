@@ -83,12 +83,13 @@ concurrency:
 
 jobs:
   source:
-    runs-on: ubuntu-24.04
+    runs-on: macrunner
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: ./.github/actions/setup-macos-source
       - name: Prepare the job-local temporary test home
         run: mkdir -p "$RUNNER_TEMP/nexgenvideo-test-home"
       - name: Bind the original signed App before macOS allocation

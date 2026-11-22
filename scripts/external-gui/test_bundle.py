@@ -134,10 +134,18 @@ def _safe_function(node):
             'Compatibility default executes at import')
 
 
+def _reviewed_function_digest(node):
+    import ast
+    import sys
+    # The reviewed hashes include the empty fields emitted by Python 3.12.
+    options = {'show_empty': True} if sys.version_info >= (3, 13) else {}
+    return hashlib.sha256(ast.dump(node, **options).encode()).hexdigest()
+
+
 def _builder_view(text):
     import ast
     module = ast.parse(text)
-    consumers = {'resolve', 'verify_input', 'consume', '_safe_function', '_builder_view',
+    consumers = {'resolve', 'verify_input', 'consume', '_safe_function', '_reviewed_function_digest', '_builder_view',
                  '_workflow_build_view', '_guard_import_view', '_source_snapshot', '_compiled_compatibility',
                  'validate_client_selectors', 'validate_client_source', '_packaging_import_view', '_metadata_api_import_view',
                  '_native_inventory_additions', '_current_core_import_view', '_current_native_regression_ids',
@@ -1020,7 +1028,7 @@ def _current_core_import_view(raw, path, *, current=False):
         for node in module.body:
             if isinstance(node, ast.FunctionDef) and node.name in pack_changes | pack_additions:
                 _safe_function(node)
-                digest = hashlib.sha256(ast.dump(node, include_attributes=False).encode()).hexdigest()
+                digest = _reviewed_function_digest(node)
                 if node.name in pack_additions:
                     allowed = pack_additions[node.name]
                     require(digest in ((allowed,) if isinstance(allowed, str) else allowed),
@@ -1046,13 +1054,14 @@ def _cohort_ci_additions(prior, current, changes, known_helpers, client_inputs):
                   'scripts/hang_diagnostic_acceptance.py',
                   'scripts/scene_pointer_delivery.py', 'scripts/scene_pointer_observer.swift',
                   'scripts/workspace_native_evidence.py', 'scripts/native_app_failure_diagnostic.py',
-                  'scripts/native_camera_focus_check.py',
+                  'scripts/native_camera_focus_check.py', 'scripts/core_startup_owner_evidence.py',
+                  'scripts/native_new_musicvideo_evidence.py',
                   'scripts/native_app_window_sampler.swift', 'scripts/fixtures/native-app-failure-1087.json',
                   'scripts/native_pointer_guard_diagnostic.py', 'scripts/native_pointer_guard_snapshot.m',
                   'scripts/native_pointer_guard_selftest.swift',
                   'scripts/fixtures/native-app-failure-1099.json', 'scripts/fixtures/native-app-failure-1110.json',
                   'scripts/fixtures/native-app-failure-1120.json', 'scripts/fixtures/native-app-failure-1135.json'}
-    diagnostic.update({'.github/actions/file-dialog-products/action.yml', 'scripts/file-dialog-ui/Tests/FileDialogTests.swift',
+    diagnostic.update({'.github/actions/setup-macos-source/action.yml', '.github/actions/file-dialog-products/action.yml', 'scripts/file-dialog-ui/Tests/FileDialogTests.swift',
                        'scripts/file-dialog-ui/project.yml', 'scripts/file_dialog_presign.py', 'scripts/file_dialog_products.py',
                        'scripts/file_dialog_ui.py', 'scripts/private_audio_ui.py', 'scripts/workspace_native_case.py'})
     added = sorted(set(current) - set(prior))
@@ -1093,13 +1102,13 @@ def _component_transport_import_view(text, path):
     for node in module.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in additions:
             _safe_function(node)
-            require(hashlib.sha256(ast.dump(node, include_attributes=False).encode()).hexdigest()
+            require(_reviewed_function_digest(node)
                     == additions[node.name], 'Unreviewed pinned source helper: ' + node.name)
             added.add(node.name)
             continue
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in expected:
             _safe_function(node)
-            digest = hashlib.sha256(ast.dump(node, include_attributes=False).encode()).hexdigest()
+            digest = _reviewed_function_digest(node)
             require(digest in expected[node.name], 'Unreviewed runtime transport function: ' + node.name)
             versions_seen.append(digest == expected[node.name][1])
             observed.add(node.name)
@@ -1139,6 +1148,9 @@ def _home_oracle_import_view(text):
 def _compiled_compatibility(producer_sha, producer_files, current_sha, current_files, originals, comparison):
     require(re.fullmatch('[a-f0-9]{40}', producer_sha) and producer_sha != current_sha
             and set(producer_files) <= set(current_files), 'Incomplete original UI test qualification inputs')
+    require(all(current_files.get(name) == digest for name, digest in producer_files.items()
+                if name.startswith('scripts/external-gui/') and (name.endswith('.swift') or name.endswith('/project.yml'))),
+            'Compiled UI test source, project or reachable shared helper changed')
     require(comparison.get('base_commit', {}).get('sha') == producer_sha
             and comparison.get('merge_base_commit', {}).get('sha') == producer_sha
             and comparison.get('status') == 'ahead'
