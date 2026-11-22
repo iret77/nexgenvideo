@@ -893,6 +893,20 @@ final class ProductionVisualSourcesDriver {
 
     private static var dialogTestIndex = 0
 
+    private func waitForPanelDismissal(_ panel: NSSavePanel, number: Int,
+                                       parent: NSWindow, returnsToParent: Bool) async throws {
+        guard number > 0 else { throw GateBlocked("The native file panel has no window number.") }
+        try await wait("native file panel dismissed", seconds: 30) {
+            guard !panel.isVisible, !returnsToParent || parent.isKeyWindow,
+                  let rows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+                    as? [[String: Any]], !rows.isEmpty else { return false }
+            return rows.allSatisfy { row in
+                guard let listed = row[kCGWindowNumber as String] as? NSNumber else { return false }
+                return listed.intValue != number
+            }
+        }
+    }
+
     private func observeTestPanel(_ panel: NSSavePanel, selection: URL?, parent: NSWindow,
                                      returnsToParent: Bool) async throws -> Bool {
         let environment = ProcessInfo.processInfo.environment
@@ -914,8 +928,9 @@ final class ProductionVisualSourcesDriver {
         let marker = root.appendingPathComponent(prefix + "visible.json")
         let panels = NSApp.windows.compactMap { $0 as? NSSavePanel }.filter(\.isVisible)
         guard panels.count == 1, panels.first === panel else { throw GateBlocked("The UI test has no unique visible file panel.") }
+        let number = panel.windowNumber
         let identity: [String: Any] = ["step": index, "pid": ProcessInfo.processInfo.processIdentifier,
-            "window": panel.windowNumber, "action": action]
+            "window": number, "action": action]
         try JSONSerialization.data(withJSONObject: identity).write(to: marker, options: .atomic)
         let input = root.appendingPathComponent(prefix + "input.json")
         try await wait("external file panel input", seconds: 90) { FileManager.default.fileExists(atPath: input.path) }
@@ -940,8 +955,8 @@ final class ProductionVisualSourcesDriver {
         var observed = identity
         if selection != nil { observed["selected"] = panel.url?.standardizedFileURL.resolvingSymlinksInPath().path }
         try JSONSerialization.data(withJSONObject: observed).write(to: root.appendingPathComponent(prefix + "observed"), options: .atomic)
-        try await wait("external file panel completion", seconds: 30) { !panel.isVisible && (!returnsToParent || parent.isKeyWindow) }
-        var interaction: [String: Any] = ["dialogTestStep": index, "externalInput": input.lastPathComponent]
+        try await waitForPanelDismissal(panel, number: number, parent: parent, returnsToParent: returnsToParent)
+        var interaction: [String: Any] = ["dialogTestStep": index, "externalInput": input.lastPathComponent, "dismissedWindow": number]
         if let selection, isOpen {
             interaction.merge(["kind": "file-panel", "path": selection.lastPathComponent, "selectedURLVerified": true,
                                "nativePathEditorVerified": true]) { _, value in value }
@@ -960,11 +975,12 @@ final class ProductionVisualSourcesDriver {
         guard let panel = NSApp.windows.compactMap({ $0 as? NSOpenPanel }).first(where: \.isVisible) else {
             throw GateBlocked("No actual NSOpenPanel appeared.")
         }
+        let number = panel.windowNumber
         try capture("file-panel", target: panel)
         if try await observeTestPanel(panel, selection: url, parent: sheet, returnsToParent: returnsToParent) { return }
         guard let url else {
             try key(53, "\u{1b}", in: panel)
-            try await wait("cancel native file panel") { !panel.isVisible && sheet.isKeyWindow }
+            try await waitForPanelDismissal(panel, number: number, parent: sheet, returnsToParent: true)
             interactions.append(["kind": "file-panel-cancel"]); try persist(); return
         }
         try key(5, "G", modifiers: [.command, .shift], in: panel)
@@ -1002,7 +1018,7 @@ final class ProductionVisualSourcesDriver {
         try await wait("native file selected") { recordPath("selected"); return panel.url?.standardizedFileURL.resolvingSymlinksInPath() == url.standardizedFileURL.resolvingSymlinksInPath() }
         try capture("file-selected", target: panel)
         try key(36, "\r", in: panel)
-        try await wait("native file selection accepted") { !panel.isVisible && (!returnsToParent || sheet.isKeyWindow) }
+        try await waitForPanelDismissal(panel, number: number, parent: sheet, returnsToParent: returnsToParent)
         interactions.append(["kind": "file-panel", "path": url.lastPathComponent, "selectedURLVerified": true,
             "nativePathEditorVerified": true])
         try persist()
@@ -1024,6 +1040,7 @@ final class ProductionVisualSourcesDriver {
               !FileManager.default.fileExists(atPath: destination.path) else {
             throw GateBlocked("The native save panel or its unused output destination is unavailable.")
         }
+        let number = panel.windowNumber
         try await wait("save panel keyboard focus") { panel.isKeyWindow }
         try capture("save-panel", target: panel)
         if try await observeTestPanel(panel, selection: destination, parent: parent, returnsToParent: returnsToParent) { return }
@@ -1112,7 +1129,7 @@ final class ProductionVisualSourcesDriver {
         }
         try capture("save-selected", target: panel)
         try key(36, "\r", in: panel)
-        try await wait("native save accepted") { !panel.isVisible && (!returnsToParent || parent.isKeyWindow) }
+        try await waitForPanelDismissal(panel, number: number, parent: parent, returnsToParent: returnsToParent)
         interactions.append(["kind": "save-panel", "filename": destination.lastPathComponent,
             "nativeDirectoryAndFilenameTyped": true, "exactURLVerified": true])
         try persist()
