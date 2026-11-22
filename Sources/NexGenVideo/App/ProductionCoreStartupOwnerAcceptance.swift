@@ -33,9 +33,10 @@ enum ProductionCoreStartupOwnerAcceptance {
                 try AppNativeMenuAcceptance.accessibilityClick("Continue", in: home, driver: homeDriver)
                 try await homeDriver.wait("release notes dismissed") { ChangelogStore.shared.pending == nil }
             }
+            try await homeDriver.waitForPresentation(of: home, control: "home.new")
             try await homeDriver.click("home.new", in: home)
             if !InstalledPack.all.isEmpty {
-                let format = try await homeDriver.sheet("home.format.generic", parent: home)
+                let format = try await homeDriver.sheet("home.format.generic", parent: home, waitForControl: true)
                 try await homeDriver.click("home.format.generic", in: format)
                 try await homeDriver.wait("native Generic format selected") { homeDriver.text("home.format.generic", in: format) == "selected" }
                 try homeDriver.capture("generic-format", target: format)
@@ -69,6 +70,7 @@ enum ProductionCoreStartupOwnerAcceptance {
                 .write(to: output.appendingPathComponent("core-new-project-result.json"), options: .atomic)
             let driver = ProductionVisualSourcesDriver(window: window, output: output, name: "core-enrollment")
             enrollmentDriver = driver
+            try await driver.waitForPresentation(of: window, control: "editor.workspace.production")
             try await driver.click("editor.workspace.production", in: window, enabled: false)
             try await driver.reveal("dock.start", in: window)
             try driver.capture("before-explicit-enrollment", target: window)

@@ -115,6 +115,7 @@ final class MusicvideoHostFlowAcceptance {
         try require(WorkspaceUIAcceptance.probeState(identifier: "agent.dialog.confirm", in: window) == false,
             "Empty Track intake was actionable")
         let intakeDriver = ProductionVisualSourcesDriver(window: window, output: evidenceURL, name: "hostflow-track-lyrics")
+        try await intakeDriver.waitForPresentation(of: window, control: "agent.dialog.choose-file")
         try await intakeDriver.chooseFile(track, in: window, trigger: "agent.dialog.choose-file")
         try await intakeDriver.click("agent.dialog.confirm", in: window)
         try await waitForDialog("Lyrics", attachAs: "lyrics")

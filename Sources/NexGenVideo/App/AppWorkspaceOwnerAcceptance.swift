@@ -37,9 +37,10 @@ enum AppWorkspaceOwnerAcceptance {
             try driver.pressKey(53, characters: "\u{1b}", in: cancelledPanel)
             try await driver.wait("native New cancellation") { !cancelledPanel.isVisible && home.isKeyWindow }
             guard NSDocumentController.shared.documents.count == documentsBefore else { throw GateBlocked("Cancelled New created a hidden document.") }
+            try await driver.waitForPresentation(of: home, control: "home.new")
             try await driver.click("home.new", in: home)
             if !InstalledPack.all.isEmpty {
-                let format = try await driver.sheet("home.format.generic", parent: home)
+                let format = try await driver.sheet("home.format.generic", parent: home, waitForControl: true)
                 try driver.visible(["home.format.cancel", "home.format.create"], in: format)
                 try await driver.click("home.format.generic", in: format)
                 try await driver.wait("actual Generic format selected") { driver.text("home.format.generic", in: format) == "selected" }
@@ -55,6 +56,7 @@ enum AppWorkspaceOwnerAcceptance {
             guard let originalID = ProjectIdentity.existingUUID(for: package) else { throw GateBlocked("Native New did not persist its actual project identity.") }
             guard editor.declaredPluginBinding == nil, editor.declaredProductionContract == nil, !editor.hasProductionPipeline,
                   editor.timeline.tracks.isEmpty else { throw GateBlocked("Native Generic New silently enrolled production or reused project content.") }
+            try await driver.waitForPresentation(of: window)
             try await settings(editor: editor, window: window, driver: driver)
             try await driver.menu("project.settings.Aspect Ratio", title: "9:16", in: window)
             try await driver.wait("native portrait aspect") { editor.timeline.width == 1080 && editor.timeline.height == 1920 }

@@ -109,8 +109,9 @@ enum NativeNewMusicvideoAcceptance {
                 return home.isKeyWindow && NSWindow.windowNumber(at: home.convertPoint(toScreen: center),
                     belowWindowWithWindowNumber: 0) == home.windowNumber
             }
+            try await driver.waitForPresentation(of: home, control: "home.new")
             try await driver.click("home.new", in: home)
-            let format = try await driver.sheet("home.format.musicvideo", parent: home)
+            let format = try await driver.sheet("home.format.musicvideo", parent: home, waitForControl: true)
             try await driver.reveal("home.format.musicvideo", in: format)
             try await driver.click("home.format.musicvideo", in: format)
             guard driver.text("home.format.musicvideo", in: format) == "selected" else { throw GateBlocked("The native Music Video format was not selected.") }
@@ -134,6 +135,7 @@ enum NativeNewMusicvideoAcceptance {
             let settings = try Data(contentsOf: project.appendingPathComponent("ngv.json"))
             try settings.write(to: output.appendingPathComponent("native-new-project-ngv.json"), options: .atomic)
             window.setContentSize(AppTheme.Window.projectMin)
+            try await driver.waitForPresentation(of: window, control: "editor.workspace.production")
             try await driver.click("editor.workspace.production", in: window, enabled: false)
             try await driver.reveal("dock.start", in: window)
             try driver.capture("native-musicvideo-before-start", target: window)

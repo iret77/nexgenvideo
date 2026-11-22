@@ -118,47 +118,7 @@ enum ProductionSceneUIAcceptance {
         guard [size.width, size.height].allSatisfy(\.isFinite), size.width > 0, size.height > 0 else {
             throw failed("The native scene viewport must have finite positive dimensions.")
         }
-        let window = driver.window
-        var previous: [CGFloat] = [], rootIdentity: ObjectIdentifier?
-        var stableSince = 0.0, stableFor = 0.0, samples = 0
-        try await driver.wait("minimum scene viewport") {
-            guard window.isVisible, let root = window.contentView, root.window === window,
-                  root.bounds.size == size,
-                  let rows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
-                    as? [[String: Any]] else {
-                previous = []; rootIdentity = nil; samples = 0
-                return false
-            }
-            let number = window.windowNumber, frame = window.frame, viewport = root.bounds
-            let owned = rows.filter {
-                ($0[kCGWindowNumber as String] as? NSNumber)?.intValue == number
-                    && ($0[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == ProcessInfo.processInfo.processIdentifier
-            }
-            guard owned.count == 1, let raw = owned[0][kCGWindowBounds as String] as? [String: Any],
-                  let bounds = CGRect(dictionaryRepresentation: raw as CFDictionary),
-                  frame.width > 0, frame.height > 0, bounds.width > 0, bounds.height > 0 else {
-                previous = []; rootIdentity = nil; samples = 0
-                return false
-            }
-            let geometry = [frame.minX, frame.minY, frame.width, frame.height,
-                viewport.minX, viewport.minY, viewport.width, viewport.height,
-                bounds.minX, bounds.minY, bounds.width, bounds.height, CGFloat(number)]
-            guard geometry.allSatisfy(\.isFinite) else {
-                previous = []; rootIdentity = nil; samples = 0
-                return false
-            }
-            let now = ProcessInfo.processInfo.systemUptime
-            if previous != geometry || rootIdentity != ObjectIdentifier(root) {
-                previous = geometry; rootIdentity = ObjectIdentifier(root); stableSince = now; samples = 1
-                return false
-            }
-            samples += 1
-            stableFor = now - stableSince
-            return stableFor >= 0.25
-        }
-        try driver.record("native scene viewport stable", fields: ["window": Int(previous[12]),
-            "windowFrame": Array(previous[0..<4]), "viewport": Array(previous[4..<8]),
-            "cgWindowBounds": Array(previous[8..<12]), "stableSeconds": stableFor, "samples": samples])
+        try await driver.waitForPresentation(of: driver.window, requiredViewport: size)
     }
 
     static func documentWindow(_ context: ProductionPlanningAcceptanceFixture.Context) throws -> NSWindow {
