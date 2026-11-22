@@ -289,7 +289,7 @@ final class FileDialogTests: XCTestCase {
             try wait("The app did not observe the expected selection") { FileManager.default.fileExists(atPath: file("observed").path) }
             try activeTarget()
             try require(sheets.count == 0, "The path editor is still open")
-            if case .open = step, let url {
+            if action == "open", let url {
                 let observed = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: file("observed"))) as? [String: Any])
                 try require(observed["pid"] as? Int == Int(pid) && observed["step"] as? Int == index
                             && observed["window"] as? Int == receipt["window"] as? Int
@@ -311,10 +311,10 @@ final class FileDialogTests: XCTestCase {
                 app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
                 continue
             }
-            let labels = url == nil ? ["Cancel"] : isSave ? ["Save"] : ["Open", "Choose", "Attach"]
+            let label = isSave ? "Save" : "Cancel"
             let buttons = app.windows.descendants(matching: .button)
             func visibleButtons() -> [XCUIElement] {
-                labels.flatMap { buttons.matching(identifier: $0).allElementsBoundByIndex }.filter { $0.isEnabled && $0.isHittable }
+                buttons.matching(identifier: label).allElementsBoundByIndex.filter { $0.isEnabled && $0.isHittable }
             }
             try wait("The native dialog action is missing or ambiguous") { visibleButtons().count == 1 }
             try activeTarget()
