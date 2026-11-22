@@ -56,6 +56,7 @@
     "scripts/native_app_failure_diagnostic.py",
     "scripts/native_app_target_build.py",
     "scripts/native_app_window_sampler.swift",
+    "scripts/native_camera_focus_check.py",
     "scripts/native_current_cohort.py",
     "scripts/native_pointer_guard_diagnostic.py",
     "scripts/native_pointer_guard_selftest.swift",

@@ -1328,7 +1328,7 @@ jobs:
       - name: Verify native camera focus before production compilation
         id: camera_focus
         if: steps.retained_products.outputs.camera_focus == 'true'
-        run: python3 scripts/native_app_target_build.py camera-focus --output "$RUNNER_TEMP/app-target-build"
+        run: python3 scripts/native_camera_focus_check.py
       - name: Build only the current production App target
         id: production
         run: python3 scripts/native_app_target_build.py production --output "$RUNNER_TEMP/app-target-build"
