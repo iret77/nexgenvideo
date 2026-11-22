@@ -6,7 +6,7 @@ on:
       scope:
         description: Native probes or isolated owned-child and worker-sandbox components
         type: choice
-        options: [native, owned-child, worker-sandbox, worker-memory, clay-timing]
+        options: [native, owned-child, worker-sandbox, worker-memory, clay-timing, rc128-intake]
         default: native
       owned_child_binary_run_id:
         description: Optional exact retained owned-child diagnostic binary
@@ -26,6 +26,38 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  rc128-intake:
+    if: inputs.scope == 'rc128-intake'
+    runs-on: macrunner
+    timeout-minutes: 16
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup-native-test-python
+      - uses: ./.github/actions/setup-xcode-27
+      - name: Prepare the isolated observation home
+        run: mkdir -p "$RUNNER_TEMP/observation-home"
+      - name: Verify transported dialog client and real track assignment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HOME: ${{ runner.temp }}/observation-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/observation-home
+        run: python3 scripts/rc128_intake_observation.py
+      - name: Retain original intake evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: rc128-track-intake
+          path: |
+            ${{ runner.temp }}/rc128-dialog-build/build.log
+            ${{ runner.temp }}/rc128-dialog-build/transfer/client.json
+            ${{ runner.temp }}/rc128-intake-binding.json
+            ${{ runner.temp }}/file-dialog-intake/evidence/
+          if-no-files-found: error
+          retention-days: 14
+
   clay-timing:
     if: inputs.scope == 'clay-timing'
     runs-on: macrunner

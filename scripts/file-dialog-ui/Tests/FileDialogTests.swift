@@ -152,19 +152,24 @@ final class FileDialogTests: XCTestCase {
         }
     }
 
-    func testScenarioFileSelection() throws {
+    @MainActor func testScenarioFileSelection() throws {
         continueAfterFailure = false
         let config = try XCTUnwrap(ProcessInfo.processInfo.environment["NGV_FILE_DIALOG_TEST_CONFIG"])
         let fixture = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: URL(fileURLWithPath: config)))
         try require(canonical(FileManager.default.homeDirectoryForCurrentUser).path == canonical(fixture.home).path, "Unexpected XCTest home")
         let app = XCUIApplication(url: fixture.app)
         let pidFile = fixture.report.appendingPathComponent("dialog-native.pid")
+        let identifier = "de.h5ventures.nexgenvideo"
+        let runnerWasFrontmost = NSRunningApplication.current.isActive
+        if NSRunningApplication.runningApplications(withBundleIdentifier: identifier).isEmpty {
+            NSApplication.shared.yieldActivation(toApplicationWithBundleIdentifier: identifier)
+        }
         // The supervisor starts the selected executable and retains its actual exit status.
         try Data().write(to: fixture.report.appendingPathComponent("dialog-test-ready"), options: .withoutOverwriting)
         try wait("The supervised application was not started") { FileManager.default.fileExists(atPath: pidFile.path) }
         let pid = try XCTUnwrap(Int32(String(contentsOf: pidFile, encoding: .utf8)))
         func isTarget() -> Bool {
-            let running = NSRunningApplication.runningApplications(withBundleIdentifier: "de.h5ventures.nexgenvideo")
+            let running = NSRunningApplication.runningApplications(withBundleIdentifier: identifier)
             return running.count == 1 && running[0].processIdentifier == pid
                 && running[0].bundleURL.map { canonical($0).path } == canonical(fixture.app).path
         }
@@ -173,6 +178,23 @@ final class FileDialogTests: XCTestCase {
                         "The intended foreground application or modal context changed")
         }
         try wait("The supervised app did not register its bundle") { isTarget() }
+        let target = try XCTUnwrap(NSRunningApplication(processIdentifier: pid))
+        try require(target.bundleURL.map { canonical($0).path } == canonical(fixture.app).path,
+                    "The supervised app bundle changed before activation")
+        if !target.isActive {
+            NSApplication.shared.yieldActivation(to: target)
+            _ = target.activate(options: [])
+        }
+        try wait("The supervised app did not reach the foreground") {
+            try require(isTarget(), "The supervised app exited during activation")
+            return target.isActive && NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
+        }
+        let foreground = try XCTUnwrap(NSWorkspace.shared.frontmostApplication)
+        try require(foreground.processIdentifier == pid && isTarget(), "The foreground app changed")
+        let activation: [String: Any] = ["pid": Int(pid), "runnerWasFrontmost": runnerWasFrontmost,
+                                         "foregroundPID": Int(foreground.processIdentifier), "bundle": try XCTUnwrap(target.bundleURL).path]
+        try JSONSerialization.data(withJSONObject: activation).write(
+            to: fixture.report.appendingPathComponent("dialog-activation.json"), options: .withoutOverwriting)
         let steps = try scenario(fixture)
         let sheets = app.sheets.matching(identifier: "GoToWindow")
         for (offset, step) in steps.enumerated() {
