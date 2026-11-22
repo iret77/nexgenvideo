@@ -87,6 +87,7 @@
     "scripts/test_ci_workflow.py",
     "scripts/test_compiled_app_release.py",
     "scripts/test_compiled_component_assembly.py",
+    "scripts/test_compiled_component_reuse.py",
     "scripts/test_compiled_current_core_reuse.py",
     "scripts/test_core_startup_owner_evidence.py",
     "scripts/test_diagnostic_acceptance.py",
