@@ -51,8 +51,9 @@ def package(work, products, source):
     publication = work / "transfer"
     publication.mkdir()
     archive = publication / "products.tar.gz"
-    subprocess.run(["/usr/bin/tar", "-czf", archive, "-C", products, *sorted(p.name for p in products.iterdir())],
-                   stdin=subprocess.DEVNULL, check=True, timeout=90)
+    with tarfile.open(archive, "w:gz") as bundle:
+        for path in sorted(products.iterdir()):
+            bundle.add(path, arcname=path.name)
     receipt = dict(tree=project_tree(source), source=source, run=int(os.environ["GITHUB_RUN_ID"]),
                    attempt=int(os.environ["GITHUB_RUN_ATTEMPT"]), sha256=checksum(archive),
                    products=products_sha256(products), xctestrun=original.name)

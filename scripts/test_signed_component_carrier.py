@@ -206,4 +206,9 @@ class SignedComponentCarrierTests(unittest.TestCase):
                     folder, actual = app_release_v2.original_signed_input(root, self.value)
                     self.assertEqual(actual, manifest)
                     self.assertEqual({path.name: path.read_bytes() for path in folder.iterdir()}, files)
+                    with mock.patch.object(carrier, 'download', side_effect=AssertionError('Duplicate download')):
+                        self.assertEqual(app_release_v2.original_signed_input(root, self.value), (folder, manifest))
+                        (folder / 'NexGenVideo.zip').write_bytes(b'substituted')
+                        with self.assertRaises(ValueError):
+                            app_release_v2.original_signed_input(root, self.value)
 

@@ -232,7 +232,7 @@ enum ExampleAudioAnalysisSelfTest {
         Task { @MainActor in
             await runRequested(environment: environment)
         }
-        app.run()
+        NativeDocumentAcceptanceDelegate.run(app)
     }
 
     private static func runRequested(environment: [String: String]) async {

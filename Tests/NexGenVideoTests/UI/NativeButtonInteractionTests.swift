@@ -2656,6 +2656,7 @@ private extension NativePointerInteractionTests {
             root.layoutSubtreeIfNeeded()
             return nativePointerWindowPresented(window) && WorkspaceUIAcceptance.probeFrame(identifier: "height", in: window) != nil
         }
+        window.recalculateKeyViewLoop()
         let observer = try TabWitness(window: window, root: root, values: values, driver: fixture.driver)
         let center = NotificationCenter.default
         for name in [NSControl.textDidBeginEditingNotification, NSControl.textDidEndEditingNotification] {

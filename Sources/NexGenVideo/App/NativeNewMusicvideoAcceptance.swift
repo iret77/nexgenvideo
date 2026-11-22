@@ -90,15 +90,24 @@ enum NativeNewMusicvideoAcceptance {
         guard let home = HomeWindowController.shared.window else { throw GateBlocked("The actual Home window is unavailable.") }
         NSApp.mainMenu = MainMenuBuilder.buildMenu()
         home.setContentSize(NSSize(width: AppTheme.Window.projectMin.width, height: AppTheme.Window.homeMin.height))
-        home.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
+        home.makeKeyAndOrderFront(nil); NSApp.activate()
         let driver = ProductionVisualSourcesDriver(window: home, output: output, name: "hostflow-new-project")
         let project = output.appendingPathComponent("Native Music Video.ngv", isDirectory: true)
         var succeeded = false
         defer { if !succeeded { created?.close() } }
         do {
+            try await driver.wait("native Home window is ready for input") {
+                NSApp.isActive && NSApp.keyWindow === home && home.isVisible && home.isKeyWindow && home.occlusionState.contains(.visible)
+            }
             if ChangelogStore.shared.pending != nil {
                 try AppNativeMenuAcceptance.accessibilityClick("Continue", in: home, driver: driver)
                 try await driver.wait("actual release notes dismissed") { ChangelogStore.shared.pending == nil }
+            }
+            try await driver.wait("New Project is on the front Home window") {
+                guard let root = home.contentView, let frame = WorkspaceUIAcceptance.probeFrame(identifier: "home.new", in: home) else { return false }
+                let center = root.convert(NSPoint(x: frame.midX, y: frame.midY), to: nil)
+                return home.isKeyWindow && NSWindow.windowNumber(at: home.convertPoint(toScreen: center),
+                    belowWindowWithWindowNumber: 0) == home.windowNumber
             }
             try await driver.click("home.new", in: home)
             let format = try await driver.sheet("home.format.musicvideo", parent: home)

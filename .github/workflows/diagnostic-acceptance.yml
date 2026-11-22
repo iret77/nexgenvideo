@@ -1283,6 +1283,10 @@ jobs:
           prepared = json.loads((root / 'prepared.json').read_bytes())
           decisions = {}
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              cohort = prepared.get('cohortV2')
+              if cohort:
+                  manifest = json.loads(Path('scripts/fixtures/app-cohort.json').read_bytes())
+                  output.write('camera_focus=' + str(manifest['build'] == '129').lower() + '\n')
               for phase in ('production', 'testable', 'tests'):
                   resumed = prepared['resumedProducts'].get(phase, {})
                   state = resumed.get('receipt', {}).get('state', {})
@@ -1297,18 +1301,6 @@ jobs:
           (root / 'upload-selection.json').write_text(json.dumps({
               'schema': 'native-app-target-upload-selection/v1', 'roles': decisions}, indent=2) + '\n')
           PY
-      - name: Build only the current production App target
-        id: production
-        run: python3 scripts/native_app_target_build.py production --output "$RUNNER_TEMP/app-target-build"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: always() && steps.production.outcome != 'skipped' && (steps.retained_products.outputs.production != 'true' || steps.production.outcome != 'success')
-        id: production_upload
-        with:
-          name: app-target-production-products
-          path: ${{ runner.temp }}/app-target-build/production-products.zip
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 90
       - name: Build only the current testable App target
         id: testable
         run: python3 scripts/native_app_target_build.py testable --output "$RUNNER_TEMP/app-target-build"
@@ -1330,6 +1322,22 @@ jobs:
         with:
           name: app-target-tests-products
           path: ${{ runner.temp }}/app-target-build/tests-products.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
+      - name: Verify native camera focus before production compilation
+        id: camera_focus
+        if: steps.retained_products.outputs.camera_focus == 'true'
+        run: python3 scripts/native_camera_focus_check.py
+      - name: Build only the current production App target
+        id: production
+        run: python3 scripts/native_app_target_build.py production --output "$RUNNER_TEMP/app-target-build"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always() && steps.production.outcome != 'skipped' && (steps.retained_products.outputs.production != 'true' || steps.production.outcome != 'success')
+        id: production_upload
+        with:
+          name: app-target-production-products
+          path: ${{ runner.temp }}/app-target-build/production-products.zip
           if-no-files-found: error
           compression-level: 0
           retention-days: 90
@@ -1442,6 +1450,7 @@ jobs:
         with:
           name: app-target-build-evidence
           path: |
+            ${{ runner.temp }}/app-target-build/camera-focus/
             ${{ runner.temp }}/app-target-build/tests-driver-plan/
             ${{ runner.temp }}/app-target-build/partial-driver-cache/
             ${{ runner.temp }}/app-target-build/*.json
