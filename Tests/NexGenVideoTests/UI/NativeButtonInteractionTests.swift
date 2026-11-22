@@ -1998,6 +1998,25 @@ struct NativePointerInteractionTests {
             replacement.parentElement = nil
         }
         try fixture.record("canonical-revalidation", ["cases": records])
+
+        let sheet = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 390, height: 360),
+                             styleMask: [.titled], backing: .buffered, defer: false)
+        let capture = Capture()
+        sheet.isReleasedWhenClosed = false
+        sheet.contentView = Hosting(rootView: Controls(capture: capture))
+        fixture.window.beginSheet(sheet, completionHandler: nil)
+        defer { fixture.window.endSheet(sheet); sheet.orderOut(nil) }
+        let readySheet = try await fixture.driver.sheet("pointer.Undo", parent: fixture.window, waitForControl: true)
+        try #require(readySheet === sheet && fixture.window.attachedSheet === sheet)
+        try await fixture.driver.click("pointer.Undo", in: readySheet)
+        try await fixture.driver.wait("presented sheet delivered Undo") { capture.count("Undo") == 1 }
+        let input = try #require(fixture.driver.interactions.last { $0["id"] as? String == "pointer.Undo" }?["nativeInput"] as? [String: Any])
+        let callback = try #require(capture.callbacks.first)
+        let tag = try #require(input["tag"] as? Int64)
+        #expect(input["status"] as? String == "delivered")
+        #expect(input["window"] as? Int == sheet.windowNumber)
+        #expect(tag > 0 && callback["tag"] as? Int64 == tag)
+        try fixture.record("presented-sheet-input", input)
     }
 
 }

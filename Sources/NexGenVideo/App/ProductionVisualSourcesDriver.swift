@@ -34,16 +34,77 @@ final class ProductionVisualSourcesDriver {
         guard ready() else { throw GateBlocked("Native visual sources: " + label + "; " + diagnostic()) }
     }
 
+    func waitForPresentation(of window: NSWindow, control id: String? = nil, requiredViewport: NSSize? = nil) async throws {
+        var previous: [NSRect] = []
+        var previousRoot: NSView?, previousControl: NSView?
+        var previousNumber = -1, samples = 0
+        var stableSince = 0.0, stableFor = 0.0
+        try await wait(requiredViewport == nil ? "native window presentation" : "minimum scene viewport") {
+            guard window.isVisible, let root = window.contentView, root.window === window,
+                  requiredViewport.map({ $0 == root.bounds.size }) ?? true,
+                  let rows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+                    as? [[String: Any]] else {
+                samples = 0
+                return false
+            }
+            let number = window.windowNumber
+            let owned = rows.filter {
+                ($0[kCGWindowNumber as String] as? NSNumber)?.intValue == number
+                    && ($0[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == ProcessInfo.processInfo.processIdentifier
+            }
+            guard owned.count == 1, let raw = owned[0][kCGWindowBounds as String] as? [String: Any],
+                  let bounds = CGRect(dictionaryRepresentation: raw as CFDictionary) else {
+                samples = 0
+                return false
+            }
+            let control = id.flatMap { self.probe($0, in: window) }
+            var geometry = [window.frame, root.bounds, bounds]
+            if id != nil {
+                guard let control, control.window === window, !control.isHiddenOrHasHiddenAncestor else {
+                    samples = 0
+                    return false
+                }
+                geometry.append(control.convert(control.bounds, to: root))
+            }
+            guard geometry.allSatisfy({ frame in
+                [frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite) && frame.width > 0 && frame.height > 0
+            }) else {
+                samples = 0
+                return false
+            }
+            let now = ProcessInfo.processInfo.systemUptime
+            if samples == 0 || previousNumber != number || previousRoot !== root || previousControl !== control || previous != geometry {
+                previous = geometry
+                previousNumber = number
+                previousRoot = root
+                previousControl = control
+                stableSince = now
+                samples = 1
+                return false
+            }
+            samples += 1
+            stableFor = now - stableSince
+            return stableFor >= 0.25
+        }
+        try record(requiredViewport == nil ? "native window presentation stable" : "native scene viewport stable", fields: [
+            "window": previousNumber, "windowFrame": rect(previous[0]), "viewport": rect(previous[1]),
+            "cgWindowBounds": rect(previous[2]), "stableSeconds": stableFor, "samples": samples])
+    }
+
     func text(_ id: String, in target: NSWindow) -> String? { WorkspaceUIAcceptance.probeText(identifier: id, in: target) }
     func state(_ id: String, in target: NSWindow) -> Bool? { WorkspaceUIAcceptance.probeState(identifier: id, in: target) }
 
-    func sheet(_ id: String, parent: NSWindow? = nil) async throws -> NSWindow {
+    func sheet(_ id: String, parent: NSWindow? = nil, waitForControl: Bool = false) async throws -> NSWindow {
         let parent = parent ?? window
         try await wait("open sheet " + id) {
             guard let sheet = parent.attachedSheet else { return false }
             return sheet.isKeyWindow && self.probe(id, in: sheet) != nil
         }
         guard let result = parent.attachedSheet else { throw GateBlocked("The native sheet disappeared.") }
+        if waitForControl {
+            try await waitForPresentation(of: result, control: id)
+            guard parent.attachedSheet === result, result.isKeyWindow else { throw GateBlocked("The native sheet changed during presentation.") }
+        }
         return result
     }
 
