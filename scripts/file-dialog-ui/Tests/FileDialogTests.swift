@@ -18,6 +18,7 @@ final class FileDialogTests: XCTestCase {
         let track: URL?
         let lyrics: URL?
         let fixtureRoot: URL?
+        let observeSelectionOnly: Bool?
     }
 
     private enum Step {
@@ -152,6 +153,51 @@ final class FileDialogTests: XCTestCase {
         }
     }
 
+    @MainActor private func recordPathFocus(_ file: URL, app: XCUIApplication, pid: Int32, field: XCUIElement) throws {
+        let application = AXUIElementCreateApplication(pid)
+        let system = AXUIElementCreateSystemWide()
+        AXUIElementSetMessagingTimeout(application, 0.5)
+        AXUIElementSetMessagingTimeout(system, 0.5)
+        let observed = field.value as? String
+        func focused(_ root: AXUIElement) -> [String: Any] {
+            var raw: CFTypeRef?
+            let status = AXUIElementCopyAttributeValue(root, kAXFocusedUIElementAttribute as CFString, &raw)
+            var evidence: [String: Any] = ["status": status.rawValue]
+            guard status == .success, let raw, CFGetTypeID(raw) == AXUIElementGetTypeID() else { return evidence }
+            let element = raw as! AXUIElement
+            var owner: pid_t = -1
+            AXUIElementGetPid(element, &owner)
+            evidence["pid"] = owner
+            guard owner == pid || CFEqual(root, application) else { return evidence }
+            var text: CFTypeRef?
+            if AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &text) == .success,
+               let value = text as? String, let observed, !observed.isEmpty {
+                evidence["matchesPathValue"] = value == observed
+            }
+            var selection: CFTypeRef?
+            if AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &selection) == .success,
+               let selection, CFGetTypeID(selection) == AXValueGetTypeID() {
+                var range = CFRange()
+                if AXValueGetValue(selection as! AXValue, .cfRange, &range) {
+                    evidence["selectionStart"] = range.location
+                    evidence["selectionLength"] = range.length
+                }
+            }
+            for name in [kAXRoleAttribute, kAXIdentifierAttribute] {
+                var value: CFTypeRef?
+                if AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success,
+                   let value = value as? String { evidence[name] = value }
+            }
+            return evidence
+        }
+        let result: [String: Any] = ["targetPID": Int(pid), "frontmostPID": NSWorkspace.shared.frontmostApplication?.processIdentifier ?? -1,
+            "systemFocus": focused(system), "applicationFocus": focused(application), "axTrusted": AXIsProcessTrusted(),
+            "pathField": field.identifier, "fieldValue": observed as Any? ?? NSNull(),
+            "editMenuCount": app.menuBars.menuBarItems.matching(identifier: "Edit").count,
+            "hittable": field.isHittable]
+        try JSONSerialization.data(withJSONObject: result).write(to: file, options: .atomic)
+    }
+
     @MainActor func testScenarioFileSelection() throws {
         continueAfterFailure = false
         let config = try XCTUnwrap(ProcessInfo.processInfo.environment["NGV_FILE_DIALOG_TEST_CONFIG"])
@@ -256,11 +302,38 @@ final class FileDialogTests: XCTestCase {
                 let path = (isSave ? url.deletingLastPathComponent() : url).path
                 try activeTarget()
                 field.click()
+                if index == 1 { try recordPathFocus(file("editor-before.json"), app: app, pid: pid, field: field) }
                 field.typeKey("a", modifierFlags: .command)
-                field.typeText(path)
-                try wait("The native path editor shows a different value") { field.value as? String == path }
+                if index == 1 {
+                    try recordPathFocus(file("editor-selection.json"), app: app, pid: pid, field: field)
+                    if fixture.observeSelectionOnly == true { return }
+                }
+                let board = NSPasteboard.general
+                var pasteChange: Int?
+                defer { if let pasteChange, board.changeCount == pasteChange { board.clearContents() } }
+                if isSave {
+                    field.typeText(path)
+                } else {
+                    board.clearContents()
+                    try require(board.setString(path, forType: .string), "The native file path could not be copied")
+                    pasteChange = board.changeCount
+                    try activeTarget()
+                    field.typeKey("v", modifierFlags: .command)
+                }
+                if index == 1 { try recordPathFocus(file("editor-after.json"), app: app, pid: pid, field: field) }
+                do {
+                    try wait("The native path editor shows a different value") { field.value as? String == path }
+                } catch {
+                    let value = field.value
+                    let failure: [String: Any] = ["pid": Int(pid), "step": index, "window": try XCTUnwrap(receipt["window"] as? Int),
+                        "expected": path, "value": (value as? String) as Any? ?? NSNull(),
+                        "valueType": String(describing: type(of: value)), "hittable": field.isHittable]
+                    try JSONSerialization.data(withJSONObject: failure).write(to: file("path-failure.json"), options: .atomic)
+                    throw error
+                }
                 receipt["typed"] = try XCTUnwrap(field.value as? String)
                 receipt["pathField"] = field.identifier
+                receipt["pathInput"] = isSave ? "typeText" : "commandV"
                 field.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
                 try wait("The Go to Folder editor did not close") { sheets.count == 0 }
             }
