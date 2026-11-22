@@ -565,7 +565,31 @@ def validate_local_stages(evidence):
                 and binding.get('activePluginProjectSchema') == 'musicvideo/3.0.0', 'Persisted format binding differs')
     track = journey['stages'][-1]
     require(track.get('chooseEnabled') is True and track.get('attachEnabled') is False
-            and track.get('trackUploaded') is False, 'Required Track intake was bypassed')
+            and track.get('trackUploaded') is False and track.get('lyricsCardVisible') is False,
+            'Required Track intake was bypassed')
+    identifier = binding.get('id', '')
+    uuid = r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}'
+    marker = evidence / 'track-working-generation.txt'
+    tree = evidence / 'track-window-accessibility.txt'
+    require(re.fullmatch(uuid, identifier) and track.get('workingKey') == 'p-' + identifier
+            and sha256(marker) == track.get('generationSHA256') and re.fullmatch(uuid, marker.read_text().strip())
+            and sha256(tree) == track.get('windowAXSHA256')
+            and all(label in tree.read_text() for label in ('Track', 'Choose…', 'Attach track')),
+            'Missing the active generation or the Track controls in the project window')
+    root, pipeline, audio = (track.get(k) for k in ('rootEntries', 'pipelineEntries', 'audioEntries'))
+    require(all(isinstance(v, list) and all(isinstance(name, str) and name and Path(name).name == name for name in v)
+                and len(v) == len(set(v)) for v in (root, pipeline, audio))
+            and {'.ngv-open-generation', 'ngv.json'} <= set(root) and (not pipeline or 'pipeline' in root)
+            and not audio, 'The live project audio inventory is incomplete or occupied')
+    originals = track.get('workingFiles', {})
+    require(set(originals) == set(root) & {'ngv.json', 'media.json'}
+            and all(sha256(evidence / ('track-working-' + name)) == original for name, original in originals.items())
+            and read_json(evidence / 'track-working-ngv.json').get('id') == identifier,
+            'Track intake lost the original working-copy metadata')
+    if 'media.json' in originals:
+        media = read_json(evidence / 'track-working-media.json')
+        require(media.get('songAnchorAssetId') is None and 'song' not in media.get('intakeRoleByAssetID', {}).values(),
+                'The active media manifest already assigned a song')
     actions = journey.get('actions', [])
     require(len(actions) >= 12 and all(action.get('target') not in ('Attach track', 'Attach lyrics') for action in actions),
             'The bounded installation check performed an intake submission')

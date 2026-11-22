@@ -338,17 +338,56 @@ final class UserJourneyTests: XCTestCase {
         try stage("new-musicvideo-project", fields: ["packID": "musicvideo", "version": "0.6.0", "schema": "musicvideo/3.0.0"])
         try click(windowButtons["Project settings"], "Project settings")
         try click(windowButtons["Start production"], "Start production")
+        let document = try documentWindow(project)
+        let choose = document.buttons["Choose…"]
+        let attach = document.buttons["Attach track"]
         try wait("first required Track intake", timeout: 90) {
-            self.app.staticTexts["Track"].exists && self.windowButtons["Choose…"].exists
-                && self.windowButtons["Choose…"].isEnabled && self.windowButtons["Attach track"].exists
-                && !self.windowButtons["Attach track"].isEnabled
+            document.staticTexts["Track"].exists && choose.isHittable && choose.isEnabled
+                && attach.exists && !attach.isEnabled
         }
-        try require(!windowButtons["Attach lyrics"].exists, "Track was bypassed before any assignment")
-        let audio = (try? FileManager.default.contentsOfDirectory(at: project.appendingPathComponent("audio"),
-            includingPropertiesForKeys: nil, options: .skipsHiddenFiles)) ?? []
-        try require(audio.isEmpty, "The installation check unexpectedly assigned a track")
-        try stage("track-intake", fields: ["chooseEnabled": windowButtons["Choose…"].isEnabled,
-            "attachEnabled": windowButtons["Attach track"].isEnabled, "trackUploaded": !audio.isEmpty])
+        try require(!document.staticTexts["Lyrics"].exists, "The optional Lyrics card appeared before a track was assigned")
+        var observation = try captureTrackWorkingCopy(binding)
+        let tree = output.appendingPathComponent("track-window-accessibility.txt")
+        try document.debugDescription.write(to: tree, atomically: true, encoding: .utf8)
+        observation["windowAXSHA256"] = try digest(tree)
+        observation["chooseEnabled"] = choose.isEnabled
+        observation["attachEnabled"] = attach.isEnabled
+        observation["lyricsCardVisible"] = document.staticTexts["Lyrics"].exists
+        try stage("track-intake", fields: observation)
+    }
+
+    private func captureTrackWorkingCopy(_ binding: [String: Any]) throws -> [String: Any] {
+        let id = try XCTUnwrap(binding["id"] as? String)
+        try require(UUID(uuidString: id) != nil, "The saved project has no valid identity")
+        let root = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/NexGenVideo/Recovery/p-" + id)
+        let marker = root.appendingPathComponent(".ngv-open-generation")
+        let generation = try Data(contentsOf: marker)
+        let projectID = try json(root.appendingPathComponent("ngv.json"))["id"] as? String
+        try require(projectID == id, "The open working copy belongs to another project")
+        func contents(_ directory: URL) throws -> [String] {
+            try require(directory.standardizedFileURL.path == directory.resolvingSymlinksInPath().standardizedFileURL.path,
+                        "The working copy contains an unexpected link")
+            return try FileManager.default.contentsOfDirectory(atPath: directory.path).sorted()
+        }
+        let entries = try contents(root)
+        let pipeline = root.appendingPathComponent("pipeline")
+        let pipelineEntries = entries.contains("pipeline") ? try contents(pipeline) : []
+        let audioEntries = pipelineEntries.contains("audio") ? try contents(pipeline.appendingPathComponent("audio")) : []
+        var files: [String: String] = [:]
+        for name in ["ngv.json", "media.json"] where entries.contains(name) {
+            let original = root.appendingPathComponent(name)
+            try require(original.resolvingSymlinksInPath().path == original.path, "Linked working-copy metadata")
+            let target = output.appendingPathComponent("track-working-" + name)
+            try Data(contentsOf: original).write(to: target, options: .atomic)
+            files[name] = try digest(target)
+        }
+        let generationFile = output.appendingPathComponent("track-working-generation.txt")
+        try require(try Data(contentsOf: marker) == generation, "The project changed generation during Track intake")
+        try generation.write(to: generationFile, options: .atomic)
+        return ["workingKey": root.lastPathComponent, "workingFiles": files, "generationSHA256": try digest(generationFile),
+                "rootEntries": entries, "pipelineEntries": pipelineEntries, "audioEntries": audioEntries,
+                "trackUploaded": !audioEntries.isEmpty]
     }
 
     func testTimelineTransportThroughInstalledApp() throws {

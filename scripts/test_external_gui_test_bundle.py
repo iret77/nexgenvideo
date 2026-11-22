@@ -1960,17 +1960,29 @@ class ExternalTestBundleTests(unittest.TestCase):
         stages[2].update(scaleLabel=journey.SCALES['1.5'], selectedValue=journey.SCALES['1.5'])
         stages[3].update(packOrigin='mounted-dmg', packFilename='musicvideo.ngvpack')
         for index in (4, 5): stages[index].update(packID='musicvideo', version='0.6.0', schema='musicvideo/3.0.0')
-        stages[-1].update(chooseEnabled=True, attachEnabled=False, trackUploaded=False)
+        identifier = '17EA4564-5386-4C2E-8C6F-040CEA7F0ECE'
+        generation = self.root / 'track-working-generation.txt'
+        generation.write_text('0DF51A37-E4B4-47C8-950C-62616FB7F261')
+        window = self.root / 'track-window-accessibility.txt'
+        window.write_text('Track Choose… Attach track')
+        journey.write_json(self.root / 'track-working-ngv.json', {'id': identifier})
+        journey.write_json(self.root / 'track-working-media.json', {'intakeRoleByAssetID': {}})
+        originals = {n: journey.sha256(self.root / ('track-working-' + n)) for n in ('media.json', 'ngv.json')}
+        stages[-1].update(chooseEnabled=True, attachEnabled=False, trackUploaded=False, lyricsCardVisible=False,
+            workingKey='p-' + identifier, generationSHA256=journey.sha256(generation), windowAXSHA256=journey.sha256(window),
+            rootEntries=['.ngv-open-generation', 'media.json', 'ngv.json', 'pipeline'],
+            pipelineEntries=['audio'], audioEntries=[], workingFiles=originals)
         original = {'schema': 'nexgenvideo/external-local-musicvideo/1', 'stages': stages,
             'actions': [{'target': 'normal native action ' + str(index)} for index in range(12)]}
         journey.write_json(self.root / 'profile-before-launch.json', {'installedEntries': 0})
-        journey.write_json(self.root / 'fresh-binding.json', {'activePlugin': 'musicvideo', 'activePluginVersion': '0.6.0',
+        journey.write_json(self.root / 'fresh-binding.json', {'id': identifier, 'activePlugin': 'musicvideo', 'activePluginVersion': '0.6.0',
             'activePluginProjectSchema': 'musicvideo/3.0.0'})
         journey.write_json(self.root / 'journey.json', original)
         self.assertEqual(journey.validate_local_stages(self.root), original)
         variants = []
         for index, key, value in [(0, 'installedEntries', 1), (3, 'packOrigin', 'preseeded-library'),
-                (3, 'packFilename', 'other.ngvpack'), (5, 'version', '0.5.8'), (6, 'attachEnabled', True)]:
+                (3, 'packFilename', 'other.ngvpack'), (5, 'version', '0.5.8'), (6, 'attachEnabled', True),
+                (6, 'audioEntries', ['assigned.wav']), (6, 'workingKey', 'p-other'), (6, 'lyricsCardVisible', True)]:
             changed = copy.deepcopy(original); changed['stages'][index][key] = value; variants.append(changed)
         changed = copy.deepcopy(original); changed['schema'] = 'nexgenvideo/external-fresh-musicvideo/1'; variants.append(changed)
         for value in variants:
