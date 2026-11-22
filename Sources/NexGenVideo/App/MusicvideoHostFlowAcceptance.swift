@@ -117,14 +117,14 @@ final class MusicvideoHostFlowAcceptance {
         let intakeDriver = ProductionVisualSourcesDriver(window: window, output: evidenceURL, name: "hostflow-track-lyrics")
         try await intakeDriver.waitForPresentation(of: window, control: "agent.dialog.choose-file")
         try await intakeDriver.chooseFile(track, in: window, trigger: "agent.dialog.choose-file")
-        try await intakeDriver.click("agent.dialog.confirm", in: window)
+        try await intakeDriver.clickButton("agent.dialog.confirm", title: "Attach track", in: window, settledTarget: .hoveredButton)
         try await waitForDialog("Lyrics", attachAs: "lyrics")
         let song = AudioProjectLayout.songFiles(dataRoot: dataRoot)
         try require(song.count == 1 && song[0].lastPathComponent == track.lastPathComponent
             && (try FileDigest.sha256(of: song[0])) == (try FileDigest.sha256(of: track)),
             "Track intake changed the source identity or its readable filename")
         if let lyrics { try await intakeDriver.chooseFile(lyrics, in: window, trigger: "agent.dialog.choose-file") }
-        try await intakeDriver.click("agent.dialog.confirm", in: window)
+        try await intakeDriver.clickButton("agent.dialog.confirm", title: "Continue", in: window, settledTarget: .hoveredButton)
         try await waitForHandoff("project_init")
         try require(service.pendingDialog == nil, "A creative intake appeared before analysis")
         try Data(contentsOf: track, options: .mappedIfSafe).write(to: evidenceURL.appendingPathComponent("intake-track-source.bin"), options: .atomic)

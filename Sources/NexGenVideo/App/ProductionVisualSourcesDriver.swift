@@ -8,6 +8,7 @@ final class ProductionVisualSourcesDriver {
     enum LocalButtonTarget: Equatable {
         case button
         case buttonOrGestureSurface
+        case hoveredButton
     }
 
     let window: NSWindow
@@ -260,7 +261,10 @@ final class ProductionVisualSourcesDriver {
         stage = "click " + id
         try await reveal(id, in: target, transaction: transaction)
         let readiness: NativeAcceptancePointer.LocalButtonReadiness?
-        if let localButton {
+        if let localButton, localButton.target == .hoveredButton {
+            readiness = try await hoverAndSettleButton(id, title: localButton.title, in: target,
+                                                       fraction: fraction, transaction: transaction)
+        } else if let localButton {
             readiness = try await settleButton(id, title: localButton.title, in: target, fraction: fraction,
                                                localTarget: localButton.target)
         } else {
@@ -323,6 +327,32 @@ final class ProductionVisualSourcesDriver {
               native?["buttonReleased"] as? Bool == true else {
             throw GateBlocked("The actual button lacks a verified native pointer lifecycle: " + title)
         }
+    }
+
+    private func hoverAndSettleButton(_ id: String, title: String, in window: NSWindow,
+                                      fraction: NSPoint, transaction: UUID) async throws -> NativeAcceptancePointer.LocalButtonReadiness {
+        try await wait("enabled " + title) { self.state(id, in: window) == true }
+        guard let view = probe(id, in: window), let screen = NSScreen.screens.first else {
+            throw GateBlocked("The button disappeared before hover: " + title)
+        }
+        let point = NSPoint(x: view.bounds.midX, y: view.bounds.midY)
+        let location = window.convertPoint(toScreen: view.convert(point, to: nil))
+        try await NativeAcceptancePointer.move(to: CGPoint(x: location.x, y: screen.frame.maxY - location.y),
+                                               window: window, token: transaction) { evidence in
+            try self.record("button hover", fields: evidence)
+        }
+        var local = NativeAcceptancePointer.LocalButtonReadiness(id: id, title: title, allowsGestureSurface: false)
+        do {
+            try await wait("settled " + title) {
+                let enabled = self.state(id, in: window) == true
+                return local.observe(enabled ? self.probe(id, in: window) : nil, window: window, fraction: fraction)
+            }
+        } catch {
+            try record("local button readiness failed", fields: local.evidence)
+            throw error
+        }
+        try record("local button readiness", fields: local.evidence)
+        return local
     }
 
     private func settleButton(_ id: String, title: String, in target: NSWindow,
