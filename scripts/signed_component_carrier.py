@@ -178,11 +178,23 @@ def acquire(root, value):
     selected = origin(value)
     _, _, artifacts = metadata(value)
     proof = root / 'signed-base-proof.zip'
+    payload = root / 'signed-base-payload.zip'
+    folder = root / 'signed-base'
+    if folder.exists():
+        require(folder.is_dir() and not folder.is_symlink() and set(p.name for p in folder.iterdir()) == set(release_checkpoint.FILES),
+            'Previously restored component inventory differs')
+        require(proof.is_file() and not proof.is_symlink() and proof.stat().st_size == artifacts['proof']['size_in_bytes']
+            and payload.is_file() and not payload.is_symlink() and payload.stat().st_size == artifacts['payload']['size_in_bytes']
+            and checksum(payload) == artifacts['payload']['digest'].removeprefix('sha256:'), 'Previously restored carrier differs')
+        manifest = proof_manifest(proof.read_bytes(), value)
+        for name, item in manifest['files'].items():
+            path = folder / name
+            require(path.is_file() and not path.is_symlink() and path.stat().st_size == item['bytes']
+                and checksum(path) == item['sha256'], 'Previously restored component differs')
+        return folder, manifest
     download(artifacts['proof'], proof)
     manifest = proof_manifest(proof.read_bytes(), value)
-    payload = root / 'signed-base-payload.zip'
     download(artifacts['payload'], payload)
-    folder = root / 'signed-base'
     folder.mkdir()
     with compiled_app_release.verified_zip(payload, 8 * 1024**3,
             qualified_sha=selected['payloadArtifact']['digest'].removeprefix('sha256:')) as archive:

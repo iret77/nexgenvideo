@@ -746,6 +746,13 @@ jobs:
           COMPILED_APP_TARGETS: ${{ inputs.compiled_app_targets_json }}
         run: python3 scripts/compiled_app_release.py acquire --root "$RUNNER_TEMP/compiled-app-release"
 
+      - name: Verify native Track assignment on the restored production app
+        if: inputs.compiled_app_targets_json != ''
+        timeout-minutes: 15
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/file_dialog_presign.py "$RUNNER_TEMP/compiled-app-release"
+
       - name: Prepare the qualified Engine evidence for complete native testing
         if: inputs.compiled_app_targets_json != ''
         timeout-minutes: 35
