@@ -60,6 +60,19 @@ def package(work, products, source):
     (publication / "client.json").write_text(json.dumps(receipt))
 
 
+def client_producer_job(candidates, product, run_id, attempt, native_origin=None):
+    if native_origin:
+        candidates = [j for j in candidates if j["id"] == native_origin["jobID"] and j["name"] == "release-build"
+                      and j["status"] == "completed" and j["conclusion"] in {"failure", "success"}
+                      and j["run_attempt"] == native_origin["attempt"]]
+    else:
+        candidates = [j for j in candidates if j["conclusion"] == "success"]
+    job, = [j for j in candidates if j["labels"] == ["macrunner"]
+            and j["head_sha"] == product and j["run_id"] == run_id and j["run_attempt"] == attempt
+            and any(s["name"] == "Build file dialog XCTest" and s["conclusion"] == "success" for s in j["steps"])]
+    return job
+
+
 def restore(work, products, product, run_id, *, native_origin=None):
     selected = environment_selectors()
     if native_origin and (selected or os.environ.get("GITHUB_JOB") != "app-target-build"):
@@ -105,15 +118,7 @@ def restore(work, products, product, run_id, *, native_origin=None):
     candidates = jobs["jobs"]
     for page in range(2, (jobs["total_count"] + 99) // 100 + 1):
         candidates.extend(api(f"actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100&page={page}")["jobs"])
-    if native_origin:
-        candidates = [j for j in candidates if j["id"] == native_origin["jobID"] and j["name"] == "release-build"
-                      and j["status"] == "completed" and j["conclusion"] in {"failure", "success"}
-                      and j["run_attempt"] == native_origin["attempt"]]
-    else:
-        candidates = [j for j in candidates if j["conclusion"] == "success"]
-    job, = [j for j in candidates if j["labels"] == ["macrunner"]
-            and j["head_sha"] == product and j["run_id"] == run_id and j["run_attempt"] == attempt
-            and any(s["name"] == "Build file dialog XCTest" and s["conclusion"] == "success" for s in j["steps"])]
+    job = client_producer_job(candidates, product, run_id, attempt, native_origin)
     verify_artifact(artifact, run, job, item["id"], artifact["digest"].removeprefix("sha256:"), "file-dialog-ui")
     with tarfile.open(archive) as tar:
         if sum(i.size for i in tar) > 400 * 1024**2:

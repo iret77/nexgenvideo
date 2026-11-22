@@ -20,6 +20,23 @@ from verify_diagnostic_candidate import SIGNED_DESKTOP_HARNESS_PATHS, SIGNED_WOR
 
 
 class NativeAppTargetWorkflowTests(unittest.TestCase):
+    def test_failed_release_can_supply_only_its_bound_successful_dialog_client(self):
+        from file_dialog_products import client_producer_job
+        origin = dict(jobID=321, attempt=1)
+        job = dict(id=321, name='release-build', status='completed', conclusion='failure', labels=['macrunner'],
+                   head_sha='a' * 40, run_id=123, run_attempt=1,
+                   steps=[dict(name='Build file dialog XCTest', conclusion='success')])
+        def select(row, binding=origin):
+            return client_producer_job([row], job['head_sha'], job['run_id'], 1, binding)
+        self.assertEqual(select(job), job)
+        with self.assertRaises(ValueError):
+            select(job, None)
+        for difference in [dict(id=322), dict(name='other'), dict(status='in_progress'), dict(run_attempt=2),
+                           dict(head_sha='b' * 40), dict(run_id=124), dict(labels=['other']),
+                           dict(steps=[dict(name='Build file dialog XCTest', conclusion='failure')])]:
+            with self.subTest(difference=difference), self.assertRaises(ValueError):
+                select(job | difference)
+
     @staticmethod
     def steps():
         workflow = Path(__file__).resolve().parent.parent / '.github/workflows/diagnostic-acceptance.yml'
