@@ -1,7 +1,7 @@
 {
-  "appSourceSHA": "c74f21973bf9a32cb4466f1d651707c3893a8044",
-  "appTreeSHA": "0d9c569c43517e5678360cc034b375407764b8fe",
-  "build": "131",
+  "appSourceSHA": "1743264c37f246dc877ccc2361e856d5bf2f234d",
+  "appTreeSHA": "03724fc9bc3e8318ebc87649a66838af5c9c918f",
+  "build": "132",
   "ciPaths": [
     ".github/actionlint.yaml",
     ".github/actions/file-dialog-products/action.yml",
@@ -149,7 +149,7 @@
   },
   "criteria": {
     "path": "scripts/fixtures/app-cohort-native-inventory.json",
-    "sha256": "85e55539f5db0b9d6a69d74b0ea1d5e708df8cf199d59029f343214129feba24"
+    "sha256": "64e20dbe24abb453755dc865cb8ea75103679911cd2c8856b52f59bc0310d388"
   },
   "nativeSourceObjects": {
     "Engine": "29cfed623d13e6d84d5822a30b98e088fc123c3f",
@@ -157,7 +157,7 @@
     "Package.resolved": "530cdaed0a29a65181353d86d05cf9dc04890cc2",
     "Package.swift": "37f605bfb8cdccc48821b39484c819ba3e5eff43",
     "Runtime": "910b87b08a3a8c976e0f2502580c843b0df74154",
-    "Sources": "fd1bf848c95baa937917682fcdcb522d33027edb",
+    "Sources": "e4828ee2aaf8b6469253df7bfb36efacba3ab00d",
     "Tests": "b314d79b8a72d0a1a8c795c917ce6aa0d3e3dcca",
     "Vendor": "51e93c100e00dcd196edac0e70e1af921d52055a",
     "plugins": "b75e017d3145010368ae417bc410574f3f0300c1"
@@ -480,7 +480,7 @@
       "Sources/NexGenVideo/App/NativeEditingOwnerAcceptance.swift": "1e2db6c0681ae65cd43e87932cc3e013b9434377",
       "Sources/NexGenVideo/App/NativeLUTAcceptance.swift": "2c7de0664b30a87df105b00df030d64d4e6c8765",
       "Sources/NexGenVideo/App/NativeLUTRecoveryAcceptance.swift": "bf14e70edd0f69c424ab3a37274d9023460593a8",
-      "Sources/NexGenVideo/App/NativeNewMusicvideoAcceptance.swift": "5cf989b3c3ebbf3562c223bc891d05bcdaadd4dc",
+      "Sources/NexGenVideo/App/NativeNewMusicvideoAcceptance.swift": "38aa9f9039b8608fa207248e88fb412a30ccb96b",
       "Sources/NexGenVideo/App/NativeNewMusicvideoHTTP.swift": "87d67cd151deb3a1aa4aa5e9fbad1373619ad2c7",
       "Sources/NexGenVideo/App/NativeSourceOperationsAcceptance.swift": "54975c76af81a7efef2e3b41abf507a002df183b",
       "Sources/NexGenVideo/App/PackInstallProgress.swift": "d8df9113588c4cf80c39e7c92b43849537ce4466",
@@ -1409,7 +1409,7 @@
       "Sources/NexGenVideo/App/NativeEditingOwnerAcceptance.swift": "1e2db6c0681ae65cd43e87932cc3e013b9434377",
       "Sources/NexGenVideo/App/NativeLUTAcceptance.swift": "2c7de0664b30a87df105b00df030d64d4e6c8765",
       "Sources/NexGenVideo/App/NativeLUTRecoveryAcceptance.swift": "bf14e70edd0f69c424ab3a37274d9023460593a8",
-      "Sources/NexGenVideo/App/NativeNewMusicvideoAcceptance.swift": "5cf989b3c3ebbf3562c223bc891d05bcdaadd4dc",
+      "Sources/NexGenVideo/App/NativeNewMusicvideoAcceptance.swift": "38aa9f9039b8608fa207248e88fb412a30ccb96b",
       "Sources/NexGenVideo/App/NativeNewMusicvideoHTTP.swift": "87d67cd151deb3a1aa4aa5e9fbad1373619ad2c7",
       "Sources/NexGenVideo/App/NativeSourceOperationsAcceptance.swift": "54975c76af81a7efef2e3b41abf507a002df183b",
       "Sources/NexGenVideo/App/PackInstallProgress.swift": "d8df9113588c4cf80c39e7c92b43849537ce4466",
@@ -2338,7 +2338,7 @@
       "Sources/NexGenVideo/App/NativeEditingOwnerAcceptance.swift": "1e2db6c0681ae65cd43e87932cc3e013b9434377",
       "Sources/NexGenVideo/App/NativeLUTAcceptance.swift": "2c7de0664b30a87df105b00df030d64d4e6c8765",
       "Sources/NexGenVideo/App/NativeLUTRecoveryAcceptance.swift": "bf14e70edd0f69c424ab3a37274d9023460593a8",
-      "Sources/NexGenVideo/App/NativeNewMusicvideoAcceptance.swift": "5cf989b3c3ebbf3562c223bc891d05bcdaadd4dc",
+      "Sources/NexGenVideo/App/NativeNewMusicvideoAcceptance.swift": "38aa9f9039b8608fa207248e88fb412a30ccb96b",
       "Sources/NexGenVideo/App/NativeNewMusicvideoHTTP.swift": "87d67cd151deb3a1aa4aa5e9fbad1373619ad2c7",
       "Sources/NexGenVideo/App/NativeSourceOperationsAcceptance.swift": "54975c76af81a7efef2e3b41abf507a002df183b",
       "Sources/NexGenVideo/App/PackInstallProgress.swift": "d8df9113588c4cf80c39e7c92b43849537ce4466",

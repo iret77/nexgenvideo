@@ -114,7 +114,10 @@ enum NativeNewMusicvideoAcceptance {
             let format = try await driver.sheet("home.format.musicvideo", parent: home, waitForControl: true)
             try await driver.reveal("home.format.musicvideo", in: format)
             try await driver.click("home.format.musicvideo", in: format)
-            guard driver.text("home.format.musicvideo", in: format) == "selected" else { throw GateBlocked("The native Music Video format was not selected.") }
+            try await driver.wait("native Music Video format selected") {
+                driver.text("home.format.musicvideo", in: format) == "selected"
+                    && driver.text("home.format.generic", in: format) == "unselected"
+            }
             try driver.visible(["home.format.musicvideo", "home.format.cancel", "home.format.create"], in: format)
             try driver.capture("native-musicvideo-format", target: format)
             try await driver.click("home.format.create", in: format)
