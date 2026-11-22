@@ -1,6 +1,19 @@
 import AppKit
 import NexGenEngine
 
+@MainActor
+final class NativeDocumentAcceptanceDelegate: NSObject, NSApplicationDelegate {
+    func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool {
+        AppDelegate().applicationShouldOpenUntitledFile(sender)
+    }
+
+    static func run(_ app: NSApplication) {
+        let delegate = NativeDocumentAcceptanceDelegate()
+        app.delegate = delegate
+        withExtendedLifetime(delegate) { app.run() }
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     func applicationDidFinishLaunching(_ notification: Notification) {
         MainThreadHangWatchdog.shared.start()

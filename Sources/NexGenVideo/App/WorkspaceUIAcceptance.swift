@@ -42,8 +42,8 @@ enum WorkspaceUIAcceptance {
             "case": ProcessInfo.processInfo.environment["NGV_WORKSPACE_UI_CASE"] ?? "workspace",
             "restorationIgnored": UserDefaults.standard.bool(forKey: "ApplePersistenceIgnoreState"),
         ])
+        let scenario = ProcessInfo.processInfo.environment["NGV_WORKSPACE_UI_CASE"] ?? "workspace"
         Task { @MainActor in
-            let scenario = ProcessInfo.processInfo.environment["NGV_WORKSPACE_UI_CASE"] ?? "workspace"
             if scenario != "workspace" {
                 switch scenario {
                 case "cards": await captureProjectCards(evidenceURL: evidenceURL, scale: scale)
@@ -559,7 +559,11 @@ enum WorkspaceUIAcceptance {
             emit("completed", scale: scale)
             exit(0)
         }
-        app.run()
+        if ["musicvideo-intake", "filmreview", "performance"].contains(scenario) {
+            NativeDocumentAcceptanceDelegate.run(app)
+        } else {
+            app.run()
+        }
         exit(1)
     }
 
