@@ -1,4 +1,4 @@
-"""Run the selected native input regression on the linked test bundle before compiling the app."""
+"""Run the selected native input regression on the linked test bundle."""
 import json
 import os
 from pathlib import Path
@@ -50,7 +50,7 @@ def verify_input(root):
     command = [str(host), '--event-stream-version', '0', '--no-parallel', '--filter', scope_filter([identity])]
     process = run_owned(command, output / 'console.log', env)
     require(process['exitCode'] == 0 and process['processReaped'] and process['eof'] and not process['stoppedReason'],
-            'Native input regression failed before production compilation')
+            'Native input regression failed on the linked test bundle')
     events = measure((output / 'events.jsonl').read_bytes(), [identity], expected_cases={})
     require(events['passed'], 'Native input test recorded an issue')
     host_receipt(output / 'host-receipt.json', {'recordCount': events['records']}, pid=process['pid'],

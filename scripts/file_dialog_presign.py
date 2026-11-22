@@ -17,16 +17,29 @@ from isolated_test_home import environment
 from retained_app_test_products import checksum, require
 
 
-def intake_binding(app, pack, image_uuid, payload):
+NATIVE_CLIENT = dict(source="28817a4e21dd02046ee8b424bccbdb08c9300c21", run=44981161541, attempt=1,
+                     artifactID=14738011584, jobID=137081858561,
+                     digest="sha256:cbb070c511f195f178580c9bd55058269f48ee3d1225992018c9be2c26739eba")
+
+
+def intake_binding(app, pack, image_uuid, payload, native=False):
     import file_dialog_products as dialogs
     from compiled_app_release import canonical_bundle_tree
     from release_checkpoint import tree_digest
     runner = Path(os.environ['RUNNER_TEMP'])
     source = os.environ['GITHUB_SHA']
     products = Path(os.environ['NGV_FILE_DIALOG_PRODUCTS']).resolve(strict=True)
-    client = json.loads((runner / 'file-dialog-ui/transfer/client.json').read_bytes())
+    if native:
+        require(os.environ.get('GITHUB_JOB') == 'app-target-build', 'Unexpected native Track consumer')
+        client = json.loads((runner / 'file-dialog-ui/client.json').read_bytes())
+        require(client['artifactID'] == NATIVE_CLIENT['artifactID'] and client['artifactDigest'] == NATIVE_CLIENT['digest'],
+                'Restored original client does not match the native Track check')
+        origin_source, origin_run = NATIVE_CLIENT['source'], NATIVE_CLIENT['run']
+    else:
+        client = json.loads((runner / 'file-dialog-ui/transfer/client.json').read_bytes())
+        origin_source, origin_run = source, int(os.environ['GITHUB_RUN_ID'])
     require(products == (runner / 'file-dialog-ui/build/Build/Products').resolve(strict=True)
-            and client['source'] == source and client['run'] == int(os.environ['GITHUB_RUN_ID'])
+            and client['source'] == origin_source and client['run'] == origin_run
             and client['attempt'] == int(os.environ['GITHUB_RUN_ATTEMPT'])
             and client['tree'] == dialogs.project_tree(source) and client['products'] == dialogs.products_sha256(products),
             'Early intake and release require the same actual file dialog XCTest')
@@ -54,13 +67,14 @@ def observed_intake(evidence, pid):
                 dialogReceipts=[checksum(report / f'file-panel-{index}-input.json') for index in (1, 2)])
 
 
-def verify_intake(app, pack, image_uuid, payload, *, early=False):
+def verify_intake(app, pack, image_uuid, payload, *, early=False, native=False):
     from compiled_app_release import image_uuid as uuid_of, signed_payload_sha
     runner = Path(os.environ['RUNNER_TEMP']).resolve(strict=True)
-    work = runner / 'file-dialog-intake'
+    work = runner / 'app-target-build/track-intake' if native else runner / 'file-dialog-intake'
     evidence = work / 'evidence'
     receipt = evidence / 'verified.json'
-    binding = intake_binding(app, pack, image_uuid, payload)
+    require(not native or early, 'Native Track evidence is limited to the early check')
+    binding = intake_binding(app, pack, image_uuid, payload, native=native)
     build = plistlib.loads((app / 'Contents/Info.plist').read_bytes())['CFBundleVersion']
     if not early and int(build) >= 129:
         require(receipt.is_file(), 'Missing early Track acceptance before signing')
@@ -102,10 +116,7 @@ def verify_intake(app, pack, image_uuid, payload, *, early=False):
 
 def early_intake(root):
     import app_cohort_v2 as cohort
-    import app_release_v2
     import compiled_app_release as release
-    import release_checkpoint as checkpoint
-    import signed_component_carrier as carrier
     runner = release.native_guard(root)
     bound = json.loads((root / 'bound.json').read_bytes())
     context = bound['prepared'].get('cohortV2')
@@ -117,6 +128,51 @@ def early_intake(root):
     require(bound['sourceSHA'] == os.environ['GITHUB_SHA'] == cohort.git('rev-parse', 'HEAD')
             and bound['runID'] == int(os.environ['GITHUB_RUN_ID']) and bound['appSourceSHA'] == value['appSourceSHA'],
             'Intake compiler outputs belong to a different candidate')
+    stage_intake(root, runner, value, bound, native=False)
+
+
+def native_intake(root, prepare):
+    import app_cohort_v2 as cohort
+    import file_dialog_products as dialogs
+    import native_app_target_build as targets
+    runner = targets.native_guard(root)
+    prepared = json.loads((root / 'prepared.json').read_bytes())
+    value = cohort.verify_context(prepared['cohortV2'], current=True)
+    require(int(value['build']) >= 131 and prepared['sourceSHA'] == os.environ['GITHUB_SHA'],
+            'Native Track intake requires the current candidate')
+    if prepare:
+        require(dialogs.project_tree(NATIVE_CLIENT['source']) == dialogs.project_tree(prepared['sourceSHA']),
+                'The qualified original client is incompatible with the current native check')
+        work = runner / 'file-dialog-ui'
+        work.mkdir()
+        products = work / 'build/Build/Products'
+        dialogs.restore(work, products, NATIVE_CLIENT['source'], NATIVE_CLIENT['run'], native_origin=NATIVE_CLIENT)
+        with open(os.environ['GITHUB_ENV'], 'a') as output:
+            output.write('NGV_FILE_DIALOG_PRODUCTS=' + str(products) + '\n')
+        return
+    receipt = json.loads((root / 'production/product-receipt.json').read_bytes())
+    plan = prepared['plans']['production']
+    link, = [row for row in plan['operations']['links'] if row['targetGUID'] == plan['driver']['targetGUID']]
+    image = Path(link['output'])
+    require(receipt['phase'] == 'production' and receipt['sourceSHA'] == prepared['sourceSHA']
+            and receipt['runID'] == int(os.environ['GITHUB_RUN_ID']) and receipt['attempt'] == 1
+            and receipt['cohortV2'] == prepared['cohortV2'] and receipt['recipePlan']['production'] == plan
+            and receipt['state']['linkComplete'] and receipt['state']['compileComplete']
+            and receipt['state']['linkedOutput'] == str(image)
+            and receipt['files'][image.relative_to(plan['operations']['arena']).as_posix()]['sha256'] == checksum(image),
+            'Native Track intake lost the current production linker output')
+    bound = dict(sourceSHA=prepared['sourceSHA'], runtime=prepared['bankBinary'],
+                 products={'production': {'output': str(image), 'receipt': receipt}})
+    carrier_root = runner / 'native-intake-carrier'
+    carrier_root.mkdir()
+    stage_intake(carrier_root, runner, value, bound, native=True)
+
+
+def stage_intake(root, runner, value, bound, *, native):
+    import app_release_v2
+    import compiled_app_release as release
+    import release_checkpoint as checkpoint
+    import signed_component_carrier as carrier
     require(shutil.disk_usage(runner).free >= 12 * 1024**3, 'Insufficient scratch for retained inputs and native intake')
     main = app_release_v2.main_product(bound)
     original, manifest = carrier.acquire(root, value)
@@ -152,8 +208,14 @@ def early_intake(root):
                     CFBundleShortVersionString=value['version'], CFBundleVersion=value['build'])
         info_path.write_bytes(plistlib.dumps(info))
         shutil.copyfile(resources / 'Changelog/changelog.json', app / 'Contents/Resources/Changelog/changelog.json')
-        verify_intake(app, pack, main['uuid'], release.signed_payload_sha(image, 2), early=True)
+        verify_intake(app, pack, main['uuid'], release.signed_payload_sha(image, 2), early=True, native=native)
 
 
 if __name__ == '__main__':
-    early_intake(Path(sys.argv[1]))
+    root = Path(sys.argv[1])
+    if sys.argv[2:] in (['native-client'], ['native-intake']):
+        native_intake(root, prepare=sys.argv[2] == 'native-client')
+    elif len(sys.argv) == 2:
+        early_intake(root)
+    else:
+        raise SystemExit('Unexpected intake mode')

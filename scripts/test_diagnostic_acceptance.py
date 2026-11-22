@@ -84,8 +84,10 @@ class NativeAppTargetWorkflowTests(unittest.TestCase):
         self.assertEqual(job['env']['TARGET_BINDING_DIGEST'], '${{ needs.source.outputs.target-binding-digest }}')
         steps = job['steps']; indexes = {step['id']: index for index, step in enumerate(steps) if 'id' in step}
         self.assertLess(indexes['tests_upload'], indexes['camera_focus'])
-        self.assertLess(indexes['camera_focus'], indexes['production'])
-        for phase, next_phase in [('testable', 'tests'), ('tests', 'production'), ('production', None)]:
+        self.assertLess(indexes['track_client'], indexes['production'])
+        self.assertLess(indexes['production_upload'], indexes['track_intake'])
+        self.assertLess(indexes['track_intake'], indexes['testable'])
+        for phase, next_phase in [('production', 'track_intake'), ('testable', 'tests'), ('tests', 'camera_focus')]:
             compiled, uploaded = indexes[phase], indexes[phase + '_upload']
             self.assertLess(compiled, uploaded)
             if next_phase: self.assertLess(uploaded, indexes[next_phase])

@@ -1286,6 +1286,7 @@ jobs:
               cohort = prepared.get('cohortV2')
               if cohort:
                   manifest = json.loads(Path('scripts/fixtures/app-cohort.json').read_bytes())
+                  output.write('track_intake=' + str(int(manifest['build']) >= 131).lower() + '\n')
                   output.write('camera_focus=' + str(int(manifest['build']) >= 129).lower() + '\n')
               for phase in ('production', 'testable', 'tests'):
                   resumed = prepared['resumedProducts'].get(phase, {})
@@ -1301,6 +1302,26 @@ jobs:
           (root / 'upload-selection.json').write_text(json.dumps({
               'schema': 'native-app-target-upload-selection/v1', 'roles': decisions}, indent=2) + '\n')
           PY
+      - name: Restore the qualified Track dialog client
+        id: track_client
+        if: steps.retained_products.outputs.track_intake == 'true'
+        run: python3 scripts/file_dialog_presign.py "$RUNNER_TEMP/app-target-build" native-client
+      - name: Build only the current production App target
+        id: production
+        run: python3 scripts/native_app_target_build.py production --output "$RUNNER_TEMP/app-target-build"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always() && steps.production.outcome != 'skipped' && (steps.retained_products.outputs.production != 'true' || steps.production.outcome != 'success')
+        id: production_upload
+        with:
+          name: app-target-production-products
+          path: ${{ runner.temp }}/app-target-build/production-products.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
+      - name: Exercise real Save and Track selection on the linked production app
+        id: track_intake
+        if: steps.retained_products.outputs.track_intake == 'true'
+        run: python3 scripts/file_dialog_presign.py "$RUNNER_TEMP/app-target-build" native-intake
       - name: Build only the current testable App target
         id: testable
         run: python3 scripts/native_app_target_build.py testable --output "$RUNNER_TEMP/app-target-build"
@@ -1325,22 +1346,10 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 90
-      - name: Verify native input before production compilation
+      - name: Verify native input on the linked test bundle
         id: camera_focus
         if: steps.retained_products.outputs.camera_focus == 'true'
         run: python3 scripts/native_camera_focus_check.py
-      - name: Build only the current production App target
-        id: production
-        run: python3 scripts/native_app_target_build.py production --output "$RUNNER_TEMP/app-target-build"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: always() && steps.production.outcome != 'skipped' && (steps.retained_products.outputs.production != 'true' || steps.production.outcome != 'success')
-        id: production_upload
-        with:
-          name: app-target-production-products
-          path: ${{ runner.temp }}/app-target-build/production-products.zip
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 90
       - name: Select required fallback directories
         id: fallback_selection
         if: always() && steps.artifact_probe.outcome == 'success'
@@ -1450,6 +1459,7 @@ jobs:
         with:
           name: app-target-build-evidence
           path: |
+            ${{ runner.temp }}/app-target-build/track-intake/evidence/
             ${{ runner.temp }}/app-target-build/camera-focus/
             ${{ runner.temp }}/app-target-build/window-presentation/
             ${{ runner.temp }}/app-target-build/tests-driver-plan/
