@@ -82,6 +82,7 @@
     "scripts/signed_component_carrier.py",
     "scripts/smart_search_owner_acceptance.py",
     "scripts/test_app_cohort_v2.py",
+    "scripts/test_app_host_zombie_diagnostic.py",
     "scripts/test_app_release_v2.py",
     "scripts/test_bpy_metal_diagnostic.py",
     "scripts/test_ci_workflow.py",

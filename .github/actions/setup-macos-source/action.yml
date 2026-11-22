@@ -13,6 +13,9 @@ runs:
     - name: Install source verification dependencies
       shell: bash
       run: |
+        mkdir -p "$RUNNER_TEMP/source-check-tmp"
+        temp_path="$(cd "$RUNNER_TEMP/source-check-tmp" && pwd -P)"
+        echo "TMPDIR=$temp_path" >> "$GITHUB_ENV"
         python3 -m venv "$RUNNER_TEMP/source-check-python"
         "$RUNNER_TEMP/source-check-python/bin/python3" -m pip install --only-binary=:all: PyYAML==6.0.3 cryptography==50.0.2
         echo "$RUNNER_TEMP/source-check-python/bin" >> "$GITHUB_PATH"

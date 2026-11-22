@@ -255,7 +255,7 @@ class ZombieDiagnosticTests(unittest.TestCase):
 
     def test_real_post_mortem_identity_shape_binds_the_native_uuid(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
+            root = Path(directory).resolve(strict=True)
             host = root / "NexGenVideoAppKitTestHost"
             header = struct.pack("<8I", 0xFEEDFACF, 0x0100000C, 0, 2, 1, 24, 0, 0)
             host.write_bytes(header + struct.pack("<2I", 0x1B, 24) + uuid.UUID(IMAGE_UUID).bytes)
