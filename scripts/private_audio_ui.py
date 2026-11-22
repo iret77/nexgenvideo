@@ -53,11 +53,12 @@ def verify_native_intake(app, pack, runner, binding):
                                    '-AppleLanguages', '(en)', '-AppleLocale', 'en_US'], env=env, log=log)
             client.attach(native.pid)
             deadline = time.monotonic() + 180
-            while not list(report.glob('hostflow-*-analysis.png')):
+            confirmations = [report / f'file-panel-{n}-default-action.json' for n in range(1, len(paths) + 1)]
+            while not (list(report.glob('hostflow-*-analysis.png')) and all(path.is_file() for path in confirmations)):
                 require(native.poll() is None, 'Private startup exited before Analysis')
                 client.check()
                 if time.monotonic() >= deadline:
-                    raise TimeoutError('No private Analysis handoff')
+                    raise TimeoutError('Missing private Analysis handoff or native Open confirmation')
                 time.sleep(0.1)
             progress = json.loads((report / 'hostflow-track-lyrics-result.json').read_bytes())
             entered = observation(progress, 'native Track and optional Lyrics intake')
