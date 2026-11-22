@@ -257,10 +257,31 @@ final class FileDialogTests: XCTestCase {
                 try activeTarget()
                 field.click()
                 field.typeKey("a", modifierFlags: .command)
-                field.typeText(path)
-                try wait("The native path editor shows a different value") { field.value as? String == path }
+                let board = NSPasteboard.general
+                var pasteChange: Int?
+                defer { if let pasteChange, board.changeCount == pasteChange { board.clearContents() } }
+                if isSave {
+                    field.typeText(path)
+                } else {
+                    board.clearContents()
+                    try require(board.setString(path, forType: .string), "The native file path could not be copied")
+                    pasteChange = board.changeCount
+                    try activeTarget()
+                    field.typeKey("v", modifierFlags: .command)
+                }
+                do {
+                    try wait("The native path editor shows a different value") { field.value as? String == path }
+                } catch {
+                    let value = field.value
+                    let failure: [String: Any] = ["pid": Int(pid), "step": index, "window": try XCTUnwrap(receipt["window"] as? Int),
+                        "expected": path, "value": (value as? String) as Any? ?? NSNull(),
+                        "valueType": String(describing: type(of: value)), "hittable": field.isHittable]
+                    try JSONSerialization.data(withJSONObject: failure).write(to: file("path-failure.json"), options: .atomic)
+                    throw error
+                }
                 receipt["typed"] = try XCTUnwrap(field.value as? String)
                 receipt["pathField"] = field.identifier
+                receipt["pathInput"] = isSave ? "typeText" : "commandV"
                 field.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
                 try wait("The Go to Folder editor did not close") { sheets.count == 0 }
             }
@@ -268,6 +289,15 @@ final class FileDialogTests: XCTestCase {
             try wait("The app did not observe the expected selection") { FileManager.default.fileExists(atPath: file("observed").path) }
             try activeTarget()
             try require(sheets.count == 0, "The path editor is still open")
+            if case .open = step, let url {
+                let observed = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: file("observed"))) as? [String: Any])
+                try require(observed["pid"] as? Int == Int(pid) && observed["step"] as? Int == index
+                            && observed["window"] as? Int == receipt["window"] as? Int
+                            && observed["action"] as? String == "open" && observed["selected"] as? String == url.path,
+                            "The open panel has not selected the intended file")
+                app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
+                continue
+            }
             let labels = url == nil ? ["Cancel"] : isSave ? ["Save"] : ["Open", "Choose", "Attach"]
             let buttons = app.windows.descendants(matching: .button)
             func visibleButtons() -> [XCUIElement] {
