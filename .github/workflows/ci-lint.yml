@@ -14,8 +14,10 @@ concurrency:
 jobs:
   ci-lint:
     name: ci-lint
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    # ci-lint: allow-CI006 Only owner PRs from this repository use an ephemeral Mac. All external contributors require approval.
+    # ci-lint: allow-CI008 This bounded source check qualifies the RC merge tree on the requested Mac.
+    runs-on: ${{ github.event_name == 'pull_request' && github.actor == 'iret77' && github.repository == 'iret77/nexgenvideo' && github.event.pull_request.head.repo.full_name == github.repository && github.base_ref == 'iret77/rc-delivery-base-795' && 'macrunner' || 'ubuntu-24.04' }}
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:

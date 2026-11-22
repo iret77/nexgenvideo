@@ -87,7 +87,7 @@ class ExternalTestBundleTests(unittest.TestCase):
                      'scripts/scene_pointer_observer.swift', 'scripts/signed_component_carrier.py']
         additions = sorted(additions + ['scripts/fixtures/signed-component-carrier-1170.json', 'scripts/native_camera_focus_check.py',
                                         'scripts/core_startup_owner_evidence.py', 'scripts/native_new_musicvideo_evidence.py'])
-        additions = sorted(additions + ['.github/actions/file-dialog-products/action.yml', 'scripts/file-dialog-ui/Tests/FileDialogTests.swift', 'scripts/file-dialog-ui/project.yml', 'scripts/file_dialog_presign.py', 'scripts/file_dialog_products.py', 'scripts/file_dialog_ui.py', 'scripts/private_audio_ui.py', 'scripts/workspace_native_case.py'])
+        additions = sorted(additions + ['.github/actions/setup-macos-source/action.yml', '.github/actions/file-dialog-products/action.yml', 'scripts/file-dialog-ui/Tests/FileDialogTests.swift', 'scripts/file-dialog-ui/project.yml', 'scripts/file_dialog_presign.py', 'scripts/file_dialog_products.py', 'scripts/file_dialog_ui.py', 'scripts/private_audio_ui.py', 'scripts/workspace_native_case.py'])
         changes = dict.fromkeys(additions, 'A')
         for status in ('A', 'M'):
             self.assertEqual(bundle._cohort_ci_additions(prior, prior + additions, dict.fromkeys(additions, status), set(), {}), additions)
@@ -995,7 +995,7 @@ class ExternalTestBundleTests(unittest.TestCase):
             self.assertIn('scripts/isolated_test_home.py', files)
             client = 'scripts/external-gui/NexGenVideoExternalUITests/UserJourneyTests.swift'
             self.assertNotEqual(files[client], receipt['testFiles'][client])
-            with self.assertRaisesRegex(ValueError, 'UI test receipt has unknown added verifier inputs'):
+            with self.assertRaisesRegex(ValueError, 'Compiled UI test source, project or reachable shared helper changed'):
                 bundle._compiled_compatibility(producer, receipt['testFiles'], current, files,
                                                originals, comparison)
         self.assertEqual(len(receipt['testFiles']), 37)

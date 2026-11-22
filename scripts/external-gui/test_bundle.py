@@ -1053,7 +1053,7 @@ def _cohort_ci_additions(prior, current, changes, known_helpers, client_inputs):
                   'scripts/native_pointer_guard_selftest.swift',
                   'scripts/fixtures/native-app-failure-1099.json', 'scripts/fixtures/native-app-failure-1110.json',
                   'scripts/fixtures/native-app-failure-1120.json', 'scripts/fixtures/native-app-failure-1135.json'}
-    diagnostic.update({'.github/actions/file-dialog-products/action.yml', 'scripts/file-dialog-ui/Tests/FileDialogTests.swift',
+    diagnostic.update({'.github/actions/setup-macos-source/action.yml', '.github/actions/file-dialog-products/action.yml', 'scripts/file-dialog-ui/Tests/FileDialogTests.swift',
                        'scripts/file-dialog-ui/project.yml', 'scripts/file_dialog_presign.py', 'scripts/file_dialog_products.py',
                        'scripts/file_dialog_ui.py', 'scripts/private_audio_ui.py', 'scripts/workspace_native_case.py'})
     added = sorted(set(current) - set(prior))
@@ -1140,6 +1140,9 @@ def _home_oracle_import_view(text):
 def _compiled_compatibility(producer_sha, producer_files, current_sha, current_files, originals, comparison):
     require(re.fullmatch('[a-f0-9]{40}', producer_sha) and producer_sha != current_sha
             and set(producer_files) <= set(current_files), 'Incomplete original UI test qualification inputs')
+    require(all(current_files.get(name) == digest for name, digest in producer_files.items()
+                if name.startswith('scripts/external-gui/') and (name.endswith('.swift') or name.endswith('/project.yml'))),
+            'Compiled UI test source, project or reachable shared helper changed')
     require(comparison.get('base_commit', {}).get('sha') == producer_sha
             and comparison.get('merge_base_commit', {}).get('sha') == producer_sha
             and comparison.get('status') == 'ahead'

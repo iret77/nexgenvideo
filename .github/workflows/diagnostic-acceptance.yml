@@ -146,13 +146,14 @@ jobs:
       plan-binding-digest: ${{ steps.plan-binding-upload.outputs.artifact-digest }}
       target-binding-id: ${{ steps.target-binding-upload.outputs.artifact-id }}
       target-binding-digest: ${{ steps.target-binding-upload.outputs.artifact-digest }}
-    runs-on: ubuntu-24.04
+    runs-on: macrunner
     # Signed acceptance runs the full six-minute suite; targeted diagnostic modes keep their bound.
     timeout-minutes: ${{ (inputs.candidate_kind == 'signed-release' || inputs.candidate_kind == 'signed-transport') && 10 || 5 }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: ./.github/actions/setup-macos-source
       - name: Require exact compiled UI client selectors
         env:
           KIND: ${{ inputs.candidate_kind }}

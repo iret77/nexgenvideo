@@ -106,7 +106,7 @@ jobs:
   release-gate:
     env:
       GH_TOKEN: ${{ github.token }}
-    runs-on: ubuntu-24.04
+    runs-on: macrunner
     timeout-minutes: 75
     outputs:
       publication-resumed: ${{ steps.publication-state.outputs.resumed }}
@@ -168,6 +168,7 @@ jobs:
         with:
           fetch-depth: 0
 
+      - uses: ./.github/actions/setup-macos-source
       - name: Validate every retained product selector before publication or runner allocation
         run: python3 scripts/retained_packaging.py validate-inputs
 

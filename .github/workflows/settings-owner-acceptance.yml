@@ -58,11 +58,16 @@ concurrency:
 
 jobs:
   cases:
-    runs-on: ubuntu-24.04
+    runs-on: macrunner
     timeout-minutes: 5
     outputs:
       matrix: ${{ steps.cases.outputs.matrix }}
     steps:
+      - name: Verify the RC guest
+        run: |
+          sw_vers
+          test "$(sw_vers -productVersion | cut -d. -f1)" = 27
+          test "$(uname -m)" = arm64
       - name: Require complete signed Settings preflight inputs
         env:
           NGV_BINDING: ${{ inputs.release_binding }}

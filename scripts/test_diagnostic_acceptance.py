@@ -646,7 +646,7 @@ class DiagnosticCompiledClientRouteTests(unittest.TestCase):
 
     def test_original_transport_validator_keeps_native_xcode_and_pinned_media_tools(self):
         source = self.workflow['jobs']['source']
-        self.assertEqual(source['runs-on'], 'ubuntu-24.04')
+        self.assertEqual(source['runs-on'], 'macrunner')
         fixture_job = self.workflow['jobs']['transport-fixture']
         self.assertEqual(fixture_job['needs'], 'source')
         self.assertEqual(fixture_job['if'], "inputs.candidate_kind == 'signed-transport'")

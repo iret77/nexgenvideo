@@ -334,11 +334,17 @@ class MetalControlTests(unittest.TestCase):
                 self.assertTrue(rows[0]['state'].startswith('Z'))
                 inspection = json.loads((snapshot_root / 'group-inventory.json').read_text())
                 self.assertNotIn('-A', inspection['command'])
-                self.assertEqual(inspection['command'], ['/bin/ps', '-s', str(child.pid), '-o', 'pid=,pgid=,state='])
+                selection = ['-x', '-g'] if sys.platform == 'darwin' else ['-s']
+                self.assertEqual(inspection['command'], ['/bin/ps', *selection, str(child.pid), '-o', 'pid=,pgid=,state='])
             finally:
                 killpg(child.pid, signal.SIGKILL)
                 child.wait(timeout=5)
-            grandchild_code = "import os,subprocess,sys;from pathlib import Path;p=subprocess.Popen([sys.executable,'-I','-c','import time;time.sleep(30)'],stdin=subprocess.DEVNULL);Path('grandchild.part').write_text(str(p.pid));os.replace('grandchild.part','grandchild.pid');print('grandchild-ready',flush=True)"
+            grandchild_wait = ("import pathlib,time\nend = time.monotonic() + 30\n"
+                               "while not pathlib.Path('finish-grandchild').exists() and time.monotonic() < end: time.sleep(.02)")
+            grandchild_code = ("import os,subprocess,sys;from pathlib import Path;"
+                               f"p=subprocess.Popen([sys.executable,'-I','-c',{grandchild_wait!r}],stdin=subprocess.DEVNULL);"
+                               "Path('grandchild.part').write_text(str(p.pid));os.replace('grandchild.part','grandchild.pid');"
+                               "print('grandchild-ready',flush=True)")
             cases = [
                 ('output', "import os,sys;assert sys.stdin.buffer.read()==b'';assert os.environ['USER']=='nexgenvideo';assert os.environ['CYCLES_METAL_ASYNC_PSO_CREATION']=='0';assert all(k not in os.environ for k in ['GH_TOKEN','PROVIDER_SECRET','ANTHROPIC_API_KEY']);sys.stdout.buffer.write(b'x'*(5*1024*1024))", 5),
                 ('timeout', 'import time;time.sleep(30)', .15),
@@ -385,7 +391,8 @@ class MetalControlTests(unittest.TestCase):
                     marker = root / 'grandchild.pid'
                     if marker.exists() and not grandchild:
                         pid = int(marker.read_text())
-                        grandchild.update(pid=pid, fd=os.pidfd_open(pid))
+                        self.assertEqual(os.getpgid(pid), created[0].pid)
+                        grandchild.update(pid=pid)
                     return events
                 try:
                     with mock.patch.object(diagnostic.subprocess, 'Popen', side_effect=start), \
@@ -422,14 +429,14 @@ class MetalControlTests(unittest.TestCase):
                         elif name == 'grandchild-permission':
                             with mock.patch.object(diagnostic.selectors.DefaultSelector, 'select', observe), self.assertRaises(RuntimeError):
                                 diagnostic.run_bounded([sys.executable, '-I', '-c', code], environment, root, root / 'process.log', timeout)
-                            self.assertIn('fd', grandchild)
+                            self.assertIn('pid', grandchild)
                             os.kill(grandchild['pid'], 0)
                         elif name == 'grandchild':
                             with mock.patch.object(diagnostic.selectors.DefaultSelector, 'select', observe):
                                 result = diagnostic.run_bounded([sys.executable, '-I', '-c', code], environment, root, root / 'process.log', timeout)
                             self.assertTrue(result['timedOut'])
                             self.assertEqual(result['exitCode'], 0)
-                            self.assertIn('fd', grandchild)
+                            self.assertIn('pid', grandchild)
                             deadline = time.monotonic() + 5
                             while time.monotonic() < deadline:
                                 try:
@@ -466,16 +473,22 @@ class MetalControlTests(unittest.TestCase):
                         self.assertTrue(supervision['cleanupErrors'])
                         self.assertEqual(diagnostic.exit_status(dict(status='processFailed', supervision=supervision)), 1)
                 finally:
-                    if 'fd' in grandchild:
-                        try:
-                            signal.pidfd_send_signal(grandchild['fd'], signal.SIGKILL)
-                        except ProcessLookupError:
-                            pass
-                        os.close(grandchild['fd'])
+                    (root / 'finish-grandchild').touch()
                     for child in created:
                         if child.poll() is None:
                             child.kill()
                         child.wait(timeout=5)
+                    if grandchild:
+                        deadline = time.monotonic() + 5
+                        while time.monotonic() < deadline:
+                            try:
+                                os.kill(grandchild['pid'], 0)
+                            except ProcessLookupError:
+                                break
+                            time.sleep(.02)
+                        else:
+                            self.fail("The owned fixture grandchild did not exit")
+
             raw = self.raw_scene
             blob = hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest()
             for mutate in (False, True):

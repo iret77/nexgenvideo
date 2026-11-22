@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "${GITHUB_ACTIONS:-}" == true && "${GITHUB_REPOSITORY:-}" == iret77/nexgenvideo && "${RUNNER_OS:-}" == Linux ]]
-[[ "$(uname -m)" == x86_64 ]]
+[[ "${GITHUB_ACTIONS:-}" == true && "${GITHUB_REPOSITORY:-}" == iret77/nexgenvideo ]]
+case "${RUNNER_OS:-}/$(uname -m)" in
+  Linux/x86_64) ;;
+  macOS/arm64) sw_vers; test "$(sw_vers -productVersion | cut -d. -f1)" = 27 ;;
+  *) exit 1 ;;
+esac
 actionlint_dir="$RUNNER_TEMP/ngv-actionlint-1.7.12"
 mkdir "$actionlint_dir"
 export GOTOOLCHAIN=local GOWORK=off CGO_ENABLED=0
