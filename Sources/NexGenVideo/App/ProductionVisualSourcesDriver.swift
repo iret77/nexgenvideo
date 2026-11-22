@@ -127,9 +127,31 @@ final class ProductionVisualSourcesDriver {
         try persist()
     }
 
+    struct WheelResponse {
+        let delta: Int32
+        let displacement: CGFloat
+    }
+
+    static func revealWheelDelta(distance: CGFloat, flipped: Bool, prior: WheelResponse?) -> Int32 {
+        let direction: Int32 = (distance > 0) == flipped ? -1 : 1
+        var limit: CGFloat = 100
+        var pointsPerUnit: CGFloat = 1
+        if let prior {
+            pointsPerUnit = max(1, abs(prior.displacement / CGFloat(prior.delta)))
+            if prior.delta.signum() != direction {
+                limit = max(1, CGFloat(abs(prior.delta)) / 2)
+            }
+        }
+        let magnitude = max(1, min(limit, abs(distance) / pointsPerUnit))
+        return direction * Int32(magnitude.rounded(.down))
+    }
+
     func reveal(_ id: String, in target: NSWindow, transaction: UUID? = nil) async throws {
         try await wait("locate " + id) { self.probe(id, in: target) != nil }
         guard let root = target.contentView else { throw GateBlocked("The native content view disappeared.") }
+        var previousClip: NSClipView?
+        var previousDocument: NSView?
+        var response: WheelResponse?
         for _ in 0..<45 {
             root.layoutSubtreeIfNeeded()
             guard let view = probe(id, in: target) else { throw GateBlocked("Control disappeared while scrolling: " + id) }
@@ -151,14 +173,18 @@ final class ProductionVisualSourcesDriver {
             guard frame.height <= clip.bounds.height, frame.width <= clip.bounds.width else {
                 throw GateBlocked("Control exceeds its scroll viewport: " + id)
             }
-            let below = frame.midY > clip.bounds.midY
-            let delta: Int32 = below == clip.isFlipped ? -100 : 100
+            guard let document = scroll.documentView else { throw GateBlocked("The native scroll document disappeared: " + id) }
+            let distance = frame.midY - clip.bounds.midY
+            guard distance.isFinite, frame.maxY > clip.bounds.maxY || frame.minY < clip.bounds.minY else {
+                throw GateBlocked("The control cannot be revealed by vertical scrolling: " + id)
+            }
+            let prior = previousClip === clip && previousDocument === document ? response : nil
+            let delta = Self.revealWheelDelta(distance: distance, flipped: clip.isFlipped, prior: prior)
             let center = NSPoint(x: scroll.bounds.midX, y: scroll.bounds.midY)
             guard target.isKeyWindow, let hit = root.hitTest(scroll.convert(center, to: root.superview)),
                   hit === scroll || hit.isDescendant(of: scroll) else { throw GateBlocked("The scroll viewport is covered: " + id) }
             let point = target.convertPoint(toScreen: scroll.convert(center, to: nil))
             let before = clip.bounds.origin
-            guard let document = scroll.documentView else { throw GateBlocked("The native scroll document disappeared: " + id) }
             @MainActor final class ScrollCompletion {
                 var ended = false
             }
@@ -204,6 +230,9 @@ final class ProductionVisualSourcesDriver {
                 stableSamples += 1
                 return now - (stableSince ?? now) >= 0.25
             }
+            previousClip = clip
+            previousDocument = document
+            response = WheelResponse(delta: delta, displacement: clip.bounds.minY - before.y)
             interactions.append(["kind": "wheel", "id": id, "delta": delta,
                 "before": [before.x, before.y], "after": [clip.bounds.origin.x, clip.bounds.origin.y],
                 "nativeScrollEnded": completion.ended, "settledGeometry": previousGeometry.map(rect),
