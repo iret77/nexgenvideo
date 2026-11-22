@@ -462,7 +462,7 @@ def verify_source_pair(directory, public):
 
 
 def source_receiver_context(context, parent, *, packaging=None):
-    contexts = {'bpy-runtime': ('runtime', 'darwin'), 'workspace-source-preflight': ('runtime', 'linux'),
+    contexts = {'bpy-runtime': ('runtime', 'darwin'), 'workspace-source-preflight': ('runtime', 'darwin'),
         'settings-restore': ('acceptance', 'darwin')}
     require(context in contexts and os.environ.get('GITHUB_ACTIONS') == 'true'
         and os.environ.get('GITHUB_REPOSITORY') == REPOSITORY and os.environ.get('GITHUB_RUN_ATTEMPT') == '1'

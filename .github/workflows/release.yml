@@ -439,7 +439,7 @@ jobs:
           [ "$(jq -r .tag "$TRANSACTION")" = "$TAG" ] \
             || { echo "::error::publication transaction tag mismatch"; exit 1; }
           EXPECTED_CATALOG_SHA="$(jq -r .catalog_sha256 "$TRANSACTION")"
-          ACTUAL_CATALOG_SHA="$(sha256sum "$PENDING" | awk '{print $1}')"
+          ACTUAL_CATALOG_SHA="$(shasum -a 256 "$PENDING" | awk '{print $1}')"
           [ "$ACTUAL_CATALOG_SHA" = "$EXPECTED_CATALOG_SHA" ] \
             || { echo "::error::pending catalog checksum mismatch"; exit 1; }
           jq -e '.schema == "plugins/v2" and (.plugins | type == "array")' "$PENDING" >/dev/null \
@@ -462,7 +462,7 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --pattern "$ASSET_NAME" \
               --dir "$ASSET_DIR"
-            DOWNLOADED_SHA="$(sha256sum "$ASSET_DIR/$ASSET_NAME" | awk '{print $1}')"
+            DOWNLOADED_SHA="$(shasum -a 256 "$ASSET_DIR/$ASSET_NAME" | awk '{print $1}')"
             [ "$DOWNLOADED_SHA" = "$ASSET_SHA" ] \
               || { echo "::error::published asset checksum mismatch for $ASSET_NAME"; exit 1; }
           done < <(jq -r '.assets[] | [.name, .sha256] | @tsv' "$TRANSACTION")

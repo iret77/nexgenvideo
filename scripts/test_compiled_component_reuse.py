@@ -213,7 +213,7 @@ class CompiledComponentReuseTests(unittest.TestCase):
 
     def test_component_exact_source_receipt_roundtrips_through_all_actual_source_receiver_contexts(self):
         for context, job, system in [('bpy-runtime', 'runtime', 'darwin'),
-            ('workspace-source-preflight', 'runtime', 'linux'), ('settings-restore', 'acceptance', 'darwin')]:
+            ('workspace-source-preflight', 'runtime', 'darwin'), ('settings-restore', 'acceptance', 'darwin')]:
             for change in ('valid', 'input-receipt', 'replaced-destination'):
                 with self.subTest(context=context, change=change), tempfile.TemporaryDirectory() as name:
                     temporary = Path(name); runner = temporary / 'runner'; runner.mkdir()
