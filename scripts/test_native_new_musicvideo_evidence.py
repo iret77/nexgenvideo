@@ -35,7 +35,7 @@ def new_musicvideo_fixture(directory, scale=1):
         'nextIntake': 'Track', 'viewport': {'width': 960, 'height': 640, 'textScale': scale}, 'liveCatalog': False, 'runtimeFixture': True}
     actions = [{'kind': 'pointer', 'id': k} for k in ['home.new', 'home.format.musicvideo', 'home.format.create']]
     actions += [{'kind': 'save-panel', 'filename': 'Native Music Video.ngv', 'nativeDirectoryAndFilenameTyped': True, 'exactURLVerified': True},
-                {'kind': 'pointer', 'id': 'dock.start'}, {'kind': 'verified-state', 'label': 'native New Music Video completed', 'evidence': observed}]
+                {'kind': 'pointer', 'id': 'pipeline.overview.dock.start'}, {'kind': 'verified-state', 'label': 'native New Music Video completed', 'evidence': observed}]
     images = [f'owner-{label}.png' for label in ['native-musicvideo-format', 'native-musicvideo-before-start', 'save-panel', 'save-selected']]
     for name in images: (directory / name).write_bytes(b'\x89PNG\r\n\x1a\n' + b'unit oracle png' * 100)
     record = {'progress': 'hostflow-new-project.json', 'interactions': actions, 'screenshots': images}

@@ -85,7 +85,8 @@ class ExternalTestBundleTests(unittest.TestCase):
                      'scripts/fixtures/native-app-failure-1120.json', 'scripts/fixtures/native-app-failure-1135.json',
                      'scripts/hang_diagnostic_acceptance.py', 'scripts/scene_pointer_delivery.py',
                      'scripts/scene_pointer_observer.swift', 'scripts/signed_component_carrier.py']
-        additions = sorted(additions + ['scripts/fixtures/signed-component-carrier-1170.json', 'scripts/native_camera_focus_check.py'])
+        additions = sorted(additions + ['scripts/fixtures/signed-component-carrier-1170.json', 'scripts/native_camera_focus_check.py',
+                                        'scripts/core_startup_owner_evidence.py', 'scripts/native_new_musicvideo_evidence.py'])
         additions = sorted(additions + ['.github/actions/file-dialog-products/action.yml', 'scripts/file-dialog-ui/Tests/FileDialogTests.swift', 'scripts/file-dialog-ui/project.yml', 'scripts/file_dialog_presign.py', 'scripts/file_dialog_products.py', 'scripts/file_dialog_ui.py', 'scripts/private_audio_ui.py', 'scripts/workspace_native_case.py'])
         changes = dict.fromkeys(additions, 'A')
         for status in ('A', 'M'):

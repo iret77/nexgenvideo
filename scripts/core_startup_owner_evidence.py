@@ -57,7 +57,7 @@ def validate(directory, owner, scale):
         raise ValueError('Core enrollment changed identity, mode or scale')
     actions = start['interactions']
     workspace = [i for i, a in enumerate(actions) if a.get('kind') == 'pointer' and a.get('id') == 'editor.workspace.production']
-    starts = [i for i, a in enumerate(actions) if a.get('kind') == 'pointer' and a.get('id') == 'dock.start']
+    starts = [i for i, a in enumerate(actions) if a.get('kind') == 'pointer' and a.get('id') == 'pipeline.overview.dock.start']
     confirms = [i for i, a in enumerate(actions) if a.get('label') == 'native-dialog-pointer' and a.get('evidence', {}).get('title') == 'Start Production']
     choices = [i for i, a in enumerate(actions) if a.get('kind') == 'pointer' and a.get('id') == 'story-source.greenfield']
     approvals = [i for i, a in enumerate(actions) if a.get('kind') == 'pointer' and a.get('id') == 'agent.gate.approve']

@@ -137,9 +137,9 @@ enum NativeNewMusicvideoAcceptance {
             window.setContentSize(AppTheme.Window.projectMin)
             try await driver.waitForPresentation(of: window, control: "editor.workspace.production")
             try await driver.click("editor.workspace.production", in: window, enabled: false)
-            try await driver.reveal("dock.start", in: window)
+            try await driver.reveal(PipelinePanelView.startProductionProbeID, in: window)
             try driver.capture("native-musicvideo-before-start", target: window)
-            try await driver.click("dock.start", in: window)
+            try await driver.click(PipelinePanelView.startProductionProbeID, in: window)
             try await driver.wait("native production setup reached Track", seconds: 60) {
                 document.editorViewModel.hasProductionPipeline && service.pendingDialog?.title == "Track"
                     && !document.editorViewModel.productionStarting

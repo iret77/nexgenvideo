@@ -40,7 +40,7 @@ def core_startup_fixture(directory, scale=1, gates=None):
     for i, (path, data) in enumerate(artifacts.items()):
         name = f'core-start-artifact-{i}.json'; (directory / name).write_bytes(data)
         retained.append({'path': path, 'retained': name, 'sha256': hashlib.sha256(data).hexdigest()})
-    actions = [{'kind': 'pointer', 'id': 'editor.workspace.production'}, {'kind': 'pointer', 'id': 'dock.start'},
+    actions = [{'kind': 'pointer', 'id': 'editor.workspace.production'}, {'kind': 'pointer', 'id': 'pipeline.overview.dock.start'},
         {'kind': 'verified-state', 'label': 'native-dialog-pointer', 'evidence': {'title': 'Start Production'}}]
     for i, gate in enumerate(gates):
         if i == 1: actions.append({'kind': 'pointer', 'id': 'story-source.greenfield'})
