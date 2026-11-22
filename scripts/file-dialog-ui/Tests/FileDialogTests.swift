@@ -257,10 +257,31 @@ final class FileDialogTests: XCTestCase {
                 try activeTarget()
                 field.click()
                 field.typeKey("a", modifierFlags: .command)
-                field.typeText(path)
-                try wait("The native path editor shows a different value") { field.value as? String == path }
+                let board = NSPasteboard.general
+                var pasteChange: Int?
+                defer { if let pasteChange, board.changeCount == pasteChange { board.clearContents() } }
+                if isSave {
+                    field.typeText(path)
+                } else {
+                    board.clearContents()
+                    try require(board.setString(path, forType: .string), "The native file path could not be copied")
+                    pasteChange = board.changeCount
+                    try activeTarget()
+                    field.typeKey("v", modifierFlags: .command)
+                }
+                do {
+                    try wait("The native path editor shows a different value") { field.value as? String == path }
+                } catch {
+                    let value = field.value
+                    let failure: [String: Any] = ["pid": Int(pid), "step": index, "window": try XCTUnwrap(receipt["window"] as? Int),
+                        "expected": path, "value": (value as? String) as Any? ?? NSNull(),
+                        "valueType": String(describing: type(of: value)), "hittable": field.isHittable]
+                    try JSONSerialization.data(withJSONObject: failure).write(to: file("path-failure.json"), options: .atomic)
+                    throw error
+                }
                 receipt["typed"] = try XCTUnwrap(field.value as? String)
                 receipt["pathField"] = field.identifier
+                receipt["pathInput"] = isSave ? "typeText" : "commandV"
                 field.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
                 try wait("The Go to Folder editor did not close") { sheets.count == 0 }
             }
