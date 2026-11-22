@@ -134,10 +134,18 @@ def _safe_function(node):
             'Compatibility default executes at import')
 
 
+def _reviewed_function_digest(node):
+    import ast
+    import sys
+    # The reviewed hashes include the empty fields emitted by Python 3.12.
+    options = {'show_empty': True} if sys.version_info >= (3, 13) else {}
+    return hashlib.sha256(ast.dump(node, **options).encode()).hexdigest()
+
+
 def _builder_view(text):
     import ast
     module = ast.parse(text)
-    consumers = {'resolve', 'verify_input', 'consume', '_safe_function', '_builder_view',
+    consumers = {'resolve', 'verify_input', 'consume', '_safe_function', '_reviewed_function_digest', '_builder_view',
                  '_workflow_build_view', '_guard_import_view', '_source_snapshot', '_compiled_compatibility',
                  'validate_client_selectors', 'validate_client_source', '_packaging_import_view', '_metadata_api_import_view',
                  '_native_inventory_additions', '_current_core_import_view', '_current_native_regression_ids',
@@ -1020,7 +1028,7 @@ def _current_core_import_view(raw, path, *, current=False):
         for node in module.body:
             if isinstance(node, ast.FunctionDef) and node.name in pack_changes | pack_additions:
                 _safe_function(node)
-                digest = hashlib.sha256(ast.dump(node, include_attributes=False).encode()).hexdigest()
+                digest = _reviewed_function_digest(node)
                 if node.name in pack_additions:
                     allowed = pack_additions[node.name]
                     require(digest in ((allowed,) if isinstance(allowed, str) else allowed),
@@ -1094,13 +1102,13 @@ def _component_transport_import_view(text, path):
     for node in module.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in additions:
             _safe_function(node)
-            require(hashlib.sha256(ast.dump(node, include_attributes=False).encode()).hexdigest()
+            require(_reviewed_function_digest(node)
                     == additions[node.name], 'Unreviewed pinned source helper: ' + node.name)
             added.add(node.name)
             continue
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in expected:
             _safe_function(node)
-            digest = hashlib.sha256(ast.dump(node, include_attributes=False).encode()).hexdigest()
+            digest = _reviewed_function_digest(node)
             require(digest in expected[node.name], 'Unreviewed runtime transport function: ' + node.name)
             versions_seen.append(digest == expected[node.name][1])
             observed.add(node.name)

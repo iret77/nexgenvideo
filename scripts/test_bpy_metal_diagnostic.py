@@ -337,7 +337,8 @@ class MetalControlTests(unittest.TestCase):
                 selection = ['-x', '-g'] if sys.platform == 'darwin' else ['-s']
                 self.assertEqual(inspection['command'], ['/bin/ps', *selection, str(child.pid), '-o', 'pid=,pgid=,state='])
             finally:
-                killpg(child.pid, signal.SIGKILL)
+                if child.poll() is None:
+                    child.kill()
                 child.wait(timeout=5)
             grandchild_wait = ("import pathlib,time\nend = time.monotonic() + 30\n"
                                "while not pathlib.Path('finish-grandchild').exists() and time.monotonic() < end: time.sleep(.02)")
@@ -345,6 +346,7 @@ class MetalControlTests(unittest.TestCase):
                                f"p=subprocess.Popen([sys.executable,'-I','-c',{grandchild_wait!r}],stdin=subprocess.DEVNULL);"
                                "Path('grandchild.part').write_text(str(p.pid));os.replace('grandchild.part','grandchild.pid');"
                                "print('grandchild-ready',flush=True)")
+            inspect_group = diagnostic.group_snapshot
             cases = [
                 ('output', "import os,sys;assert sys.stdin.buffer.read()==b'';assert os.environ['USER']=='nexgenvideo';assert os.environ['CYCLES_METAL_ASYNC_PSO_CREATION']=='0';assert all(k not in os.environ for k in ['GH_TOKEN','PROVIDER_SECRET','ANTHROPIC_API_KEY']);sys.stdout.buffer.write(b'x'*(5*1024*1024))", 5),
                 ('timeout', 'import time;time.sleep(30)', .15),
@@ -360,6 +362,7 @@ class MetalControlTests(unittest.TestCase):
                 root = base / name
                 root.mkdir()
                 created, signals, grandchild = [], [], {}
+                permission_denied = []
                 def start(*args, **kwargs):
                     self.assertTrue({signal.SIGINT, signal.SIGTERM}.issubset(signal.pthread_sigmask(signal.SIG_BLOCK, set())))
                     child = popen(*args, **kwargs)
@@ -370,16 +373,21 @@ class MetalControlTests(unittest.TestCase):
                 def send_group(pid, sig):
                     self.assertTrue({signal.SIGINT, signal.SIGTERM}.issubset(signal.pthread_sigmask(signal.SIG_BLOCK, set())))
                     signals.append((pid, sig))
-                    if name == 'grandchild-permission':
-                        raise PermissionError('fixture live group denied')
-                    value = killpg(pid, sig)
-                    if name == 'zombie-permission':
-                        raise PermissionError('fixture zombie group denied')
-                    return value
+                    if name in ('grandchild-permission', 'zombie-permission'):
+                        permission_denied.append(pid)
+                        raise PermissionError('fixture group signal denied')
+                    try:
+                        return killpg(pid, sig)
+                    except PermissionError:
+                        permission_denied.append(pid)
+                        raise
                 def snapshot(pid, output):
                     self.assertEqual(pid, created[0].pid)
                     self.assertEqual(output, root)
                     self.assertTrue(diagnostic.leader_exited(pid))
+                    if name not in ('grandchild-permission', 'zombie-permission'):
+                        with mock.patch.object(diagnostic.subprocess, 'Popen', popen):
+                            return inspect_group(pid, output)
                     rows = [dict(pid=pid, pgid=pid, state='Z')]
                     if name == 'grandchild-permission':
                         os.kill(grandchild['pid'], 0)
@@ -418,7 +426,11 @@ class MetalControlTests(unittest.TestCase):
                                 timer.join(timeout=2)
                                 signal.signal(signal.SIGTERM, previous)
                         elif name == 'liveness-interrupt':
-                            with mock.patch.object(diagnostic.os, 'waitid', side_effect=diagnostic.ControlCancelled(15)), self.assertRaises(diagnostic.ControlCancelled):
+                            waitid = os.waitid
+                            def interrupt_once(*args):
+                                liveness.side_effect = waitid
+                                raise diagnostic.ControlCancelled(15)
+                            with mock.patch.object(diagnostic.os, 'waitid', side_effect=interrupt_once) as liveness, self.assertRaises(diagnostic.ControlCancelled):
                                 diagnostic.run_bounded([sys.executable, '-I', '-c', code], environment, root, root / 'process.log', timeout)
                         elif name == 'selector-start':
                             with mock.patch.object(diagnostic.selectors, 'DefaultSelector', side_effect=RuntimeError), self.assertRaises(RuntimeError):
@@ -457,8 +469,9 @@ class MetalControlTests(unittest.TestCase):
                                 self.assertEqual(result['groupKill'], 'zombieOnly')
                                 self.assertEqual(result['cleanupErrors'], [])
                                 self.assertEqual(diagnostic.exit_status(dict(status='gpuBranchCompletedDiagnosticOnly', supervision=result)), 0)
-                        if name in ('zombie-permission', 'grandchild-permission'):
-                            group_snapshot.assert_called_once()
+                        if permission_denied:
+                            self.assertEqual(permission_denied, [created[0].pid])
+                            group_snapshot.assert_called_once_with(created[0].pid, root)
                         else:
                             group_snapshot.assert_not_called()
                     self.assertEqual(len(created), 1)
@@ -466,6 +479,8 @@ class MetalControlTests(unittest.TestCase):
                     self.assertIn((created[0].pid, signal.SIGKILL), signals)
                     supervision = json.loads((root / 'supervision.json').read_text())
                     self.assertEqual(supervision['reaped'], name != 'reap-failure')
+                    if permission_denied and name != 'grandchild-permission':
+                        self.assertEqual(supervision['groupKill'], 'zombieOnly')
                     if name == 'reap-failure':
                         self.assertEqual(diagnostic.exit_status(dict(status='processFailed', supervision=supervision)), 1)
                     if name == 'grandchild-permission':

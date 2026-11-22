@@ -802,7 +802,7 @@ class ExternalTestBundleTests(unittest.TestCase):
         journey_helper = 'scripts/external-gui/acceptance.py'
         if legacy_home_oracle:
             original[journey_helper] = self.legacy_home_oracle_source(original[journey_helper])
-        added = {'_safe_function', '_builder_view', '_workflow_build_view', '_guard_import_view',
+        added = {'_safe_function', '_reviewed_function_digest', '_builder_view', '_workflow_build_view', '_guard_import_view',
                  '_source_snapshot', '_compiled_compatibility', 'validate_client_selectors', 'validate_client_source',
                  '_packaging_import_view', '_metadata_api_import_view', '_cohort_ci_additions', '_home_oracle_import_view', '_component_transport_import_view'}
         lines = original[helper].decode().splitlines(keepends=True)

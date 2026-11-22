@@ -652,7 +652,11 @@ class CompiledAppReleaseTests(unittest.TestCase):
                     metadata = contents / 'Info.plist'
                     metadata.write_bytes(b'pack metadata\n')
                     metadata.chmod(0o644)
-                    (bundle / 'active').symlink_to('Contents/Entry')
+                    link = bundle / 'active'
+                    link.symlink_to('Contents/Entry')
+                    if link.lstat().st_mode & 0o777 != 0o777:
+                        os.chmod(link, 0o777, follow_symlinks=False)
+                    self.assertEqual(link.lstat().st_mode & 0o777, 0o777)
                     archive = root / 'musicvideo.ngvpack.zip'
                     archive.write_bytes(b'qualified archive')
                     archive_sha = hashlib.sha256(archive.read_bytes()).hexdigest()

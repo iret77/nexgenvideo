@@ -256,8 +256,8 @@ class ReviewChildOwnerEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "authorization artifact lacks its own identity"): validate(root)
 
     def test_separate_resumed_artifact_cannot_reuse_the_original_authorization_identity(self):
-        for resumed_id in ("auth-0", "AUTH-0"):
-            root = self.root / ("reused-authorization-" + resumed_id)
+        for index, resumed_id in enumerate(("auth-0", "AUTH-0")):
+            root = self.root / f"reused-authorization-{index}"
             fixture(root, authorization_identities=["auth-0", resumed_id])
             with self.subTest(resumed_id=resumed_id), self.assertRaisesRegex(ValueError, "reused an authorization identity"):
                 validate(root)
