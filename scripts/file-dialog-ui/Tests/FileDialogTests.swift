@@ -296,19 +296,19 @@ final class FileDialogTests: XCTestCase {
                             && observed["action"] as? String == "open" && observed["selected"] as? String == url.path,
                             "The open panel has not selected the intended file")
                 let panelNumber = try XCTUnwrap(observed["window"] as? Int)
+                try activeTarget()
+                try require(sheets.count == 0, "A new path editor appeared before Open")
                 let windows = try XCTUnwrap(CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
                                                                        kCGNullWindowID) as? [[String: Any]])
                 let targetWindows = windows.filter {
                     ($0[kCGWindowOwnerPID as String] as? Int) == Int(pid)
                         && ($0[kCGWindowAlpha as String] as? Double ?? 0) > 0
                 }.compactMap { $0[kCGWindowNumber as String] as? Int }
-                try JSONSerialization.data(withJSONObject: ["window": panelNumber, "visibleTargetWindows": targetWindows])
+                let current = targetWindows.first == panelNumber && NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
+                if current { app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: []) }
+                try JSONSerialization.data(withJSONObject: ["window": panelNumber, "visibleTargetWindows": targetWindows, "sentReturn": current])
                     .write(to: file("default-action.json"), options: .atomic)
-                try require(targetWindows.first == panelNumber && NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
-                            "The observed Open panel is no longer the frontmost target window")
-                try activeTarget()
-                try require(sheets.count == 0, "A new path editor appeared before Open")
-                app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
+                try require(current, "The observed Open panel is no longer the frontmost target window")
                 continue
             }
             let label = isSave ? "Save" : "Cancel"
