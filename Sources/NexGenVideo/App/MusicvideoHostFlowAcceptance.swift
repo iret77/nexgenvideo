@@ -135,8 +135,7 @@ final class MusicvideoHostFlowAcceptance {
             "nextPhase": "project_init", "creativeIntakeAbsent": true])
         try recordIntake(intakeDriver)
         try await approve("project_init")
-        try await waitForHandoff("analysis")
-        try require(editor.productionSelectedPhase == "analysis", "Init approval left the old phase selected")
+        try await waitForHandoff("analysis", requireSelectedPhase: true)
     }
 
     func runAnalysisOnNextNativeTurn() { runtime.runAnalysisOnNextTurn = true }
@@ -430,7 +429,7 @@ final class MusicvideoHostFlowAcceptance {
         try capture(attachAs)
     }
 
-    private func waitForHandoff(_ phase: String, hidden: Bool = true) async throws {
+    private func waitForHandoff(_ phase: String, hidden: Bool = true, requireSelectedPhase: Bool = false) async throws {
         try await waitUntil("handoff to \(phase)") {
             if let error = self.service.streamError {
                 throw Failure("Hostflow handoff to \(phase) failed: \(error.localizedDescription)")
@@ -443,6 +442,9 @@ final class MusicvideoHostFlowAcceptance {
             throw Failure("No actual message carried the phase handoff")
         }
         if hidden { try require(message.hidden && message.userPresentation == nil, "An automatic handoff became a user turn") }
+        if requireSelectedPhase {
+            try require(editor.productionSelectedPhase == phase, "The project still shows the previous phase")
+        }
         transitions.append("handoff \(phase)")
         try capture(phase)
     }
