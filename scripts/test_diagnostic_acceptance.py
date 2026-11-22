@@ -20,10 +20,10 @@ from verify_diagnostic_candidate import SIGNED_DESKTOP_HARNESS_PATHS, SIGNED_WOR
 
 
 class NativeAppTargetWorkflowTests(unittest.TestCase):
-    def test_failed_release_can_supply_only_its_bound_successful_dialog_client(self):
+    def test_failed_diagnostic_can_supply_only_its_bound_successful_dialog_client(self):
         from file_dialog_products import client_producer_job
         origin = dict(jobID=321, attempt=1)
-        job = dict(id=321, name='release-build', status='completed', conclusion='failure', labels=['macrunner'],
+        job = dict(id=321, name='rc130-track-confirmation', status='completed', conclusion='failure', labels=['macrunner'],
                    head_sha='a' * 40, run_id=123, run_attempt=1,
                    steps=[dict(name='Build file dialog XCTest', conclusion='success')])
         def select(row, binding=origin):

@@ -1302,6 +1302,52 @@ jobs:
           (root / 'upload-selection.json').write_text(json.dumps({
               'schema': 'native-app-target-upload-selection/v1', 'roles': decisions}, indent=2) + '\n')
           PY
+      - if: steps.retained_products.outputs.track_intake == 'true'
+        name: Verify private package access and isolation
+        id: private_isolation
+        env:
+          NGV_GHCR_TOKEN: ${{ secrets.NGV_GHCR_TOKEN }}
+        run: python3 scripts/private_analysis_verification.py isolation
+      - if: steps.retained_products.outputs.track_intake == 'true'
+        name: Install pinned ORAS CLI
+        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d
+        with:
+          version: 1.3.3
+
+      - if: steps.retained_products.outputs.track_intake == 'true'
+        name: Authenticate to private GHCR packages
+        env:
+          NGV_GHCR_TOKEN: ${{ secrets.NGV_GHCR_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$NGV_GHCR_TOKEN" | oras login ghcr.io \
+            --username iret77 \
+            --password-stdin \
+            --registry-config "$RUNNER_TEMP/oras-auth.json"
+
+      - if: steps.retained_products.outputs.track_intake == 'true'
+        name: Prepare the job-local temporary test home
+        run: mkdir -p "$RUNNER_TEMP/nexgenvideo-test-home"
+      - if: steps.retained_products.outputs.track_intake == 'true'
+        name: Pull and verify immutable fixtures
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          FIXTURE_DIGEST: ${{ vars.NGV_EXAMPLE_FIXTURE_DIGEST }}
+        run: |
+          set -euo pipefail
+          [ "$FIXTURE_DIGEST" = "sha256:068d8e00fa66a62356056be2dee99d2b24187398e03c1f03c078ac5a3e264460" ]
+          FIXTURE_REFERENCE="ghcr.io/iret77/nexgenvideo-examples@$FIXTURE_DIGEST"
+          PACKAGE_DIR="$RUNNER_TEMP/fixture-package"
+          EXTRACT_DIR="$RUNNER_TEMP/fixture-data"
+          mkdir -p "$PACKAGE_DIR"
+          oras pull \
+            --no-tty \
+            --registry-config "$RUNNER_TEMP/oras-auth.json" \
+            --output "$PACKAGE_DIR" \
+            "$FIXTURE_REFERENCE"
+          python3 scripts/private_analysis_verification.py fixture-extract --work "$PACKAGE_DIR" --output "$EXTRACT_DIR"
+
       - name: Restore the qualified Track dialog client
         id: track_client
         if: steps.retained_products.outputs.track_intake == 'true'
@@ -1321,7 +1367,47 @@ jobs:
       - name: Exercise real Save and Track selection on the linked production app
         id: track_intake
         if: steps.retained_products.outputs.track_intake == 'true'
+        env:
+          NGV_EXAMPLE_FIXTURE_ROOT: ${{ runner.temp }}/fixture-data/examples
+          NGV_EXAMPLE_FIXTURE_MANIFEST: ${{ runner.temp }}/fixture-package/fixtures.manifest.json
+          NGV_EXAMPLE_REGISTRY_REFERENCE: ghcr.io/iret77/nexgenvideo-examples@${{ vars.NGV_EXAMPLE_FIXTURE_DIGEST }}
+          NGV_EXAMPLE_DATASET: claude_mouse
         run: python3 scripts/file_dialog_presign.py "$RUNNER_TEMP/app-target-build" native-intake
+      - name: Retain private originals by digest
+        if: always() && steps.private_isolation.outcome == 'success'
+        env:
+          REPORT_REPOSITORY: ghcr.io/iret77/nexgenvideo-analysis-reports
+        run: |
+          set -euo pipefail
+          if [ ! -d "$RUNNER_TEMP/analysis-report" ]; then exit 0; fi
+          cd "$RUNNER_TEMP"
+          python3 - <<'PY'
+          import shutil
+          from pathlib import Path
+          size = sum(p.stat().st_size for p in Path("analysis-report").rglob("*") if p.is_file())
+          if size > 512 * 1024**2 or shutil.disk_usage(".").free < size + 1024**3:
+              raise SystemExit("Private diagnostic exceeds storage budget")
+          PY
+          tar -czf private-intake.tar.gz -C analysis-report .
+          digest="$(oras push --no-tty --registry-config "$RUNNER_TEMP/oras-auth.json" \
+            --artifact-type application/vnd.nexgenvideo.private-analysis-diagnostic.v1 \
+            --format 'go-template={{.digest}}' "$REPORT_REPOSITORY" private-intake.tar.gz:application/gzip)"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [ "$(oras resolve --registry-config "$RUNNER_TEMP/oras-auth.json" "$REPORT_REPOSITORY@$digest")" = "$digest" ]
+          printf '%s@%s\n' "$REPORT_REPOSITORY" "$digest" > private-intake-reference
+          shasum -a 256 private-intake.tar.gz > private-intake-sha256
+          wc -c < private-intake.tar.gz > private-intake-size
+      - name: Preserve original input binding and private report address
+        if: always() && steps.private_isolation.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: private-native-intake-reference
+          path: |
+            ${{ runner.temp }}/private-intake-reference
+            ${{ runner.temp }}/private-intake-sha256
+            ${{ runner.temp }}/private-intake-size
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Build only the current testable App target
         id: testable
         run: python3 scripts/native_app_target_build.py testable --output "$RUNNER_TEMP/app-target-build"

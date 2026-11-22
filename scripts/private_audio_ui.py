@@ -40,12 +40,12 @@ def verify_native_intake(app, pack, runner, binding):
     env = environment({k: os.environ[k] for k in keys if k in os.environ}, runner / 'private-track-home')
     env.update(NGV_EXAMPLE_REPORT_DIR=str(report), NGV_EXAMPLE_ANALYSIS_PACK=str(pack),
                NGV_GIT_COMMIT=binding['source'])
-    config = config_for()
-    paths = [Path(unquote(urlsplit(config[key]).path)).resolve(strict=True) for key in ('track', 'lyrics') if config.get(key)]
     class HandoffObserved(Exception):
         pass
 
     try:
+        config = config_for()
+        paths = [Path(unquote(urlsplit(config[key]).path)).resolve(strict=True) for key in ('track', 'lyrics') if config.get(key)]
         with session(app, env, report, 'private-audio', report=report, private=config) as client, ExitStack() as stack:
             require(client is not None, 'Missing the bound file dialog client')
             log = stack.enter_context((report / 'private-app.log').open('xb'))
@@ -74,6 +74,9 @@ def verify_native_intake(app, pack, runner, binding):
             for n, path in enumerate(paths, 1):
                 marker = json.loads((report / f'file-panel-{n}-observed').read_bytes())
                 receipt = json.loads((report / f'file-panel-{n}-input.json').read_bytes())
+                confirmation = json.loads((report / f'file-panel-{n}-default-action.json').read_bytes())
+                require(confirmation['sentReturn'] is True and confirmation['visibleTargetWindows'][:1] == [marker['window']]
+                        and confirmation['window'] == marker['window'], 'Unconfirmed private Open panel')
                 require(marker['pid'] == receipt['pid'] == native.pid and marker['step'] == receipt['step'] == n
                         and marker['window'] == receipt['window'] and marker['window'] > 0
                         and marker['action'] == receipt['action'] == 'open' and receipt['pathField'] == 'PathTextField'
@@ -83,6 +86,10 @@ def verify_native_intake(app, pack, runner, binding):
         require(native.poll() is not None and client.process.poll() is not None, 'Private intake child did not exit')
         (report / 'native-intake.json').write_text(json.dumps(dict(binding=binding, appPID=native.pid,
             nativeExit=native.returncode, clientExit=client.process.returncode, analysisHandoff=True, fullAcceptance=False)))
+    except Exception:
+        import traceback
+        (report / 'intake-error.log').write_text(traceback.format_exc())
+        raise RuntimeError('Private native intake failed. See the private evidence.') from None
 
 
 def analyze():

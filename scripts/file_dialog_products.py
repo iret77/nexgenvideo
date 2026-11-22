@@ -62,7 +62,7 @@ def package(work, products, source):
 
 def client_producer_job(candidates, product, run_id, attempt, native_origin=None):
     if native_origin:
-        candidates = [j for j in candidates if j["id"] == native_origin["jobID"] and j["name"] == "release-build"
+        candidates = [j for j in candidates if j["id"] == native_origin["jobID"] and j["name"] == "rc130-track-confirmation"
                       and j["status"] == "completed" and j["conclusion"] in {"failure", "success"}
                       and j["run_attempt"] == native_origin["attempt"]]
     else:
@@ -81,10 +81,12 @@ def restore(work, products, product, run_id, *, native_origin=None):
         provenance = load_provenance(run_id, product, selected)["record"]
         run_id = provenance["originalSignedBuildRunID"]
     run = api(f"actions/runs/{run_id}")
+    supported_workflows = {".github/workflows/" + name + ".yml" for name in
+                           ("bundle", "ci", "ci-batch", "workspace-ui-acceptance", "private-example-analysis", "release")}
+    if native_origin:
+        supported_workflows = {".github/workflows/native-acceptance-probes.yml"}
     if (run.get("repository", {}).get("full_name") != "iret77/nexgenvideo" or run.get("id") != run_id
-            or run.get("head_sha") != product or run.get("path") not in {
-                ".github/workflows/bundle.yml", ".github/workflows/ci.yml", ".github/workflows/ci-batch.yml", ".github/workflows/workspace-ui-acceptance.yml",
-                ".github/workflows/private-example-analysis.yml", ".github/workflows/release.yml"}):
+            or run.get("head_sha") != product or run.get("path") not in supported_workflows):
         raise ValueError("Unexpected file dialog producer")
     inventory = api(f"actions/runs/{run_id}/artifacts?name=file-dialog-ui&per_page=100")
     item, = inventory["artifacts"]
@@ -95,7 +97,7 @@ def restore(work, products, product, run_id, *, native_origin=None):
         raise ValueError("File dialog artifact does not belong to the app producer")
     if native_origin and (artifact["id"] != native_origin["artifactID"] or artifact["digest"] != native_origin["digest"]
             or run["actor"]["login"] != "iret77" or run["run_attempt"] != native_origin["attempt"]
-            or run["status"] != "completed" or run["workflow_id"] != 303346287):
+            or run["status"] != "completed" or run["workflow_id"] != 388064375 or run["event"] != "workflow_dispatch"):
         raise ValueError("Native Track check received a different original client")
     size = artifact["size_in_bytes"]
     if not 0 < size <= 128 * 1024**2 or shutil.disk_usage(work).free < 512 * 1024**2 + size:

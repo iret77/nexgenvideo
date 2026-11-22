@@ -17,9 +17,9 @@ from isolated_test_home import environment
 from retained_app_test_products import checksum, require
 
 
-NATIVE_CLIENT = dict(source="28817a4e21dd02046ee8b424bccbdb08c9300c21", run=44981161541, attempt=1,
-                     artifactID=14738011584, jobID=137081858561,
-                     digest="sha256:cbb070c511f195f178580c9bd55058269f48ee3d1225992018c9be2c26739eba")
+NATIVE_CLIENT = dict(source="293a860f7fd1d042624791f1a8461efde20bd226", run=44986243216, attempt=1,
+                     artifactID=14740056062, jobID=137097327254,
+                     digest="sha256:704db102731772be4231f4bb33d091b335fb59117010601a4dc4a4ae19ea788e")
 
 
 def intake_binding(app, pack, image_uuid, payload, native=False):
@@ -89,25 +89,29 @@ def verify_intake(app, pack, image_uuid, payload, *, early=False, native=False):
     with wave.open(str(track), 'wb') as wav:
         wav.setparams((1, 2, 16000, 0, 'NONE', 'not compressed'))
         wav.writeframes(b''.join(struct.pack('<h', round(8000 * math.sin(2 * math.pi * 440 * t / 16000))) for t in range(32000)))
-    with tempfile.TemporaryDirectory(dir=work) as temp, ExitStack() as stack:
+    with tempfile.TemporaryDirectory(dir=work) as temp:
         clone = Path(temp) / 'NexGenVideo.app'
-        native = clone / 'Contents/MacOS/NexGenVideo'
+        executable = clone / 'Contents/MacOS/NexGenVideo'
         require(shutil.disk_usage(work).free > 512 * 1024**2, 'Insufficient scratch for the APFS clone and native evidence')
         subprocess.run(['/bin/cp', '-cR', app, clone], stdin=subprocess.DEVNULL, check=True, timeout=120)
         subprocess.run(['/usr/bin/codesign', '--force', '--sign', '-', clone], stdin=subprocess.DEVNULL, check=True, timeout=90)
-        require(uuid_of(native, 2) == image_uuid and signed_payload_sha(native, 2) == payload,
+        require(uuid_of(executable, 2) == image_uuid and signed_payload_sha(executable, 2) == payload,
                 'The test signature did not preserve the linked app payload')
         parent = {k: os.environ[k] for k in ('PATH', 'TMPDIR', 'LANG', 'LC_ALL', 'DISPLAY') if k in os.environ}
         env = environment(parent, Path(temp) / 'home')
         env.update(NGV_WORKSPACE_UI_ACCEPTANCE='1', NGV_WORKSPACE_UI_CASE='musicvideo-intake', NGV_WORKSPACE_UI_SCALE='1.0',
                    NGV_WORKSPACE_UI_EVIDENCE=str(evidence), NGV_WORKSPACE_UI_PACK=str(pack.resolve(strict=True)))
-        client = stack.enter_context(session(clone, env, evidence, 'musicvideo-intake', scale=100))
-        require(client is not None, 'The reviewed file dialog XCTest is missing')
-        log = stack.enter_context((evidence / 'native.log').open('xb'))
-        process = start(stack, [native, '-ApplePersistenceIgnoreState', 'YES', '-AppleLanguages', '(en)', '-AppleLocale', 'en_US'],
-                        env=env, log=log)
-        require(wait_for_native(process, client, 180) == 0, 'The actual native track intake failed')
-    observed = observed_intake(evidence, process.pid)
+        with ExitStack() as stack:
+            client = stack.enter_context(session(clone, env, evidence, 'musicvideo-intake', scale=100))
+            require(client is not None, 'The reviewed file dialog XCTest is missing')
+            log = stack.enter_context((evidence / 'native.log').open('xb'))
+            process = start(stack, [executable, '-ApplePersistenceIgnoreState', 'YES', '-AppleLanguages', '(en)', '-AppleLocale', 'en_US'],
+                            env=env, log=log)
+            require(wait_for_native(process, client, 180) == 0, 'The actual native track intake failed')
+        observed = observed_intake(evidence, process.pid)
+        if native:
+            from private_audio_ui import verify_native_intake
+            verify_native_intake(clone, pack, runner, binding)
     with receipt.open('x') as out:
         json.dump(dict(binding=binding, observed=observed, source=binding['source'], runID=binding['runID'],
                        imageUUID=image_uuid, mainPayloadSHA256=payload, trackSHA256=observed['trackSHA256'],
