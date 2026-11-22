@@ -6,7 +6,7 @@ on:
       scope:
         description: Native probes or isolated owned-child and worker-sandbox components
         type: choice
-        options: [native, owned-child, worker-sandbox, worker-memory, clay-timing]
+        options: [native, owned-child, worker-sandbox, worker-memory, clay-timing, rc128-observation]
         default: native
       owned_child_binary_run_id:
         description: Optional exact retained owned-child diagnostic binary
@@ -26,6 +26,45 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  rc128-observation:
+    if: inputs.scope == 'rc128-observation'
+    runs-on: macrunner
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup-native-test-python
+      - uses: ./.github/actions/setup-xcode-27
+      - name: Prepare the isolated observation home
+        run: mkdir -p "$RUNNER_TEMP/observation-home"
+      - name: Observe the original camera test
+        id: camera
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HOME: ${{ runner.temp }}/observation-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/observation-home
+        run: python3 scripts/rc128_native_observation.py camera
+      - name: Exercise the original track intake
+        if: ${{ !cancelled() && (steps.camera.outcome == 'success' || steps.camera.outcome == 'failure') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HOME: ${{ runner.temp }}/observation-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/observation-home
+        run: python3 scripts/rc128_native_observation.py intake
+      - name: Retain both observations
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: rc128-native-observations
+          path: |
+            ${{ runner.temp }}/rc128-tab/
+            ${{ runner.temp }}/rc128-intake-binding.json
+            ${{ runner.temp }}/file-dialog-intake/evidence/
+          if-no-files-found: error
+          retention-days: 14
+
   clay-timing:
     if: inputs.scope == 'clay-timing'
     runs-on: macrunner
