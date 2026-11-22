@@ -84,6 +84,7 @@ final class MusicvideoHostFlowAcceptance {
             await flow.editor.refreshEngineState()
             try await flow.waitUntil("native Music Video document is ready for input") {
                 NSApp.isActive && NSApp.keyWindow === flow.window && flow.window.isVisible && flow.window.isKeyWindow
+                    && flow.window.occlusionState.contains(.visible)
             }
             try await flow.beginTrackIntake(track: track, lyrics: lyrics)
             return flow
