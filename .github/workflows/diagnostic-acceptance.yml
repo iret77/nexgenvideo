@@ -1286,7 +1286,7 @@ jobs:
               cohort = prepared.get('cohortV2')
               if cohort:
                   manifest = json.loads(Path('scripts/fixtures/app-cohort.json').read_bytes())
-                  output.write('camera_focus=' + str(manifest['build'] == '129').lower() + '\n')
+                  output.write('camera_focus=' + str(int(manifest['build']) >= 129).lower() + '\n')
               for phase in ('production', 'testable', 'tests'):
                   resumed = prepared['resumedProducts'].get(phase, {})
                   state = resumed.get('receipt', {}).get('state', {})
@@ -1325,7 +1325,7 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 90
-      - name: Verify native camera focus before production compilation
+      - name: Verify native input before production compilation
         id: camera_focus
         if: steps.retained_products.outputs.camera_focus == 'true'
         run: python3 scripts/native_camera_focus_check.py
@@ -1451,6 +1451,7 @@ jobs:
           name: app-target-build-evidence
           path: |
             ${{ runner.temp }}/app-target-build/camera-focus/
+            ${{ runner.temp }}/app-target-build/window-presentation/
             ${{ runner.temp }}/app-target-build/tests-driver-plan/
             ${{ runner.temp }}/app-target-build/partial-driver-cache/
             ${{ runner.temp }}/app-target-build/*.json
