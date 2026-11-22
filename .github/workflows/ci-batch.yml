@@ -219,6 +219,7 @@ jobs:
         with:
           fetch-depth: 0
       - uses: ./.github/actions/setup-macos-source
+        if: inputs.mode == 'followup'
       - name: Require an existing exact same-source app before allocating Mac jobs
         if: inputs.mode == 'followup' && inputs.followup_workflow != 'bpy' && inputs.release_binding == ''
         env:
