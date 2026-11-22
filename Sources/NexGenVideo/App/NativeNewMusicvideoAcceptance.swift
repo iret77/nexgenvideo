@@ -90,12 +90,15 @@ enum NativeNewMusicvideoAcceptance {
         guard let home = HomeWindowController.shared.window else { throw GateBlocked("The actual Home window is unavailable.") }
         NSApp.mainMenu = MainMenuBuilder.buildMenu()
         home.setContentSize(NSSize(width: AppTheme.Window.projectMin.width, height: AppTheme.Window.homeMin.height))
-        home.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
+        home.makeKeyAndOrderFront(nil); NSApp.activate()
         let driver = ProductionVisualSourcesDriver(window: home, output: output, name: "hostflow-new-project")
         let project = output.appendingPathComponent("Native Music Video.ngv", isDirectory: true)
         var succeeded = false
         defer { if !succeeded { created?.close() } }
         do {
+            try await driver.wait("native Home window is ready for input") {
+                NSApp.isActive && NSApp.keyWindow === home && home.isVisible && home.isKeyWindow
+            }
             if ChangelogStore.shared.pending != nil {
                 try AppNativeMenuAcceptance.accessibilityClick("Continue", in: home, driver: driver)
                 try await driver.wait("actual release notes dismissed") { ChangelogStore.shared.pending == nil }

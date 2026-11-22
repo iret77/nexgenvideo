@@ -80,8 +80,11 @@ final class MusicvideoHostFlowAcceptance {
             document.showWindows()
             flow.window.setContentSize(AppTheme.Window.projectMin)
             flow.window.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
+            NSApp.activate()
             await flow.editor.refreshEngineState()
+            try await flow.waitUntil("native Music Video document is ready for input") {
+                NSApp.isActive && NSApp.keyWindow === flow.window && flow.window.isVisible && flow.window.isKeyWindow
+            }
             try await flow.beginTrackIntake(track: track, lyrics: lyrics)
             return flow
         } catch {

@@ -605,7 +605,10 @@ final class ProductionVisualSourcesDriver {
             let type = event.type.rawValue, code = event.keyCode, window = event.windowNumber, stamp = event.timestamp
             MainActor.assumeIsolated {
                 guard window == number, code == 48,
-                      receipt.posted.contains(where: { $0.type.rawValue == type && $0.timestamp == stamp }) else { return }
+                      target.isKeyWindow, receipt.posted.contains(where: { posted in
+                          // AppKit can truncate the queued timestamp to nanoseconds.
+                          posted.type.rawValue == type && abs(posted.timestamp - stamp) <= max(1e-9, stamp.ulp)
+                      }) else { return }
                 if type == NSEvent.EventType.keyDown.rawValue, receipt.down == nil, ownsEditor() { receipt.down = stamp }
                 if type == NSEvent.EventType.keyUp.rawValue, receipt.down != nil { receipt.up = stamp }
             }
