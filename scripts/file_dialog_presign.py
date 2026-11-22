@@ -97,25 +97,38 @@ def verify_intake(app, pack, image_uuid, payload, *, early=False, native=False):
         subprocess.run(['/usr/bin/codesign', '--force', '--sign', '-', clone], stdin=subprocess.DEVNULL, check=True, timeout=90)
         require(uuid_of(executable, 2) == image_uuid and signed_payload_sha(executable, 2) == payload,
                 'The test signature did not preserve the linked app payload')
-        parent = {k: os.environ[k] for k in ('PATH', 'TMPDIR', 'LANG', 'LC_ALL', 'DISPLAY') if k in os.environ}
-        env = environment(parent, Path(temp) / 'home')
-        env.update(NGV_WORKSPACE_UI_ACCEPTANCE='1', NGV_WORKSPACE_UI_CASE='musicvideo-intake', NGV_WORKSPACE_UI_SCALE='1.0',
-                   NGV_WORKSPACE_UI_EVIDENCE=str(evidence), NGV_WORKSPACE_UI_PACK=str(pack.resolve(strict=True)))
-        with ExitStack() as stack:
-            client = stack.enter_context(session(clone, env, evidence, 'musicvideo-intake', scale=100))
-            require(client is not None, 'The reviewed file dialog XCTest is missing')
-            log = stack.enter_context((evidence / 'native.log').open('xb'))
-            process = start(stack, [executable, '-ApplePersistenceIgnoreState', 'YES', '-AppleLanguages', '(en)', '-AppleLocale', 'en_US'],
-                            env=env, log=log)
-            require(wait_for_native(process, client, 180) == 0, 'The actual native track intake failed')
-        observed = observed_intake(evidence, process.pid)
+        normal_error = None
+        try:
+            parent = {k: os.environ[k] for k in ('PATH', 'TMPDIR', 'LANG', 'LC_ALL', 'DISPLAY') if k in os.environ}
+            env = environment(parent, Path(temp) / 'home')
+            env.update(NGV_WORKSPACE_UI_ACCEPTANCE='1', NGV_WORKSPACE_UI_CASE='musicvideo-intake', NGV_WORKSPACE_UI_SCALE='1.0',
+                       NGV_WORKSPACE_UI_EVIDENCE=str(evidence), NGV_WORKSPACE_UI_PACK=str(pack.resolve(strict=True)))
+            with ExitStack() as stack:
+                client = stack.enter_context(session(clone, env, evidence, 'musicvideo-intake', scale=100))
+                require(client is not None, 'The reviewed file dialog XCTest is missing')
+                log = stack.enter_context((evidence / 'native.log').open('xb'))
+                process = start(stack, [executable, '-ApplePersistenceIgnoreState', 'YES', '-AppleLanguages', '(en)', '-AppleLocale', 'en_US'],
+                                env=env, log=log)
+                require(wait_for_native(process, client, 180) == 0, 'The actual native track intake failed')
+            observed = observed_intake(evidence, process.pid)
+            with receipt.open('x') as out:
+                json.dump(dict(binding=binding, observed=observed, source=binding['source'], runID=binding['runID'],
+                               imageUUID=image_uuid, mainPayloadSHA256=payload, trackSHA256=observed['trackSHA256'],
+                               appPID=process.pid, testExit=client.process.returncode, nativeExit=process.returncode), out)
+        except Exception as error:
+            if not native:
+                raise
+            normal_error = error
         if native:
             from private_audio_ui import verify_native_intake
-            verify_native_intake(clone, pack, runner, binding)
-    with receipt.open('x') as out:
-        json.dump(dict(binding=binding, observed=observed, source=binding['source'], runID=binding['runID'],
-                       imageUUID=image_uuid, mainPayloadSHA256=payload, trackSHA256=observed['trackSHA256'],
-                       appPID=process.pid, testExit=client.process.returncode, nativeExit=process.returncode), out)
+            try:
+                verify_native_intake(clone, pack, runner, binding)
+            except Exception as private_error:
+                if normal_error is not None:
+                    raise ExceptionGroup('Both native intakes failed', [normal_error, private_error]) from None
+                raise
+        if normal_error is not None:
+            raise normal_error
 
 
 def early_intake(root):
