@@ -12,6 +12,8 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
+import urllib.error
 import zipfile
 
 from retained_app_test_products import api, archive_bytes, checksum, download, require, verify_artifact, write
@@ -232,7 +234,15 @@ def confirm_native_test_products(root, artifact_id, artifact_digest):
             and os.environ.get('GITHUB_RUN_ATTEMPT') == '1' and sys.platform == 'darwin', 'Owned native release checkpoint required')
     require(artifact_id and artifact_id.isdecimal() and int(artifact_id) > 0
             and re.fullmatch('[a-f0-9]{64}', artifact_digest or ''), 'Exact successful compiler upload required')
-    artifact = api('actions/artifacts/' + artifact_id)
+    for delay in (1, 2, 4, 8, 15, 30, None):
+        try:
+            artifact = api('actions/artifacts/' + artifact_id)
+            break
+        except urllib.error.HTTPError as error:
+            if error.code != 404 or delay is None:
+                raise
+            error.close()
+            time.sleep(delay)
     require(artifact['id'] == int(artifact_id) and artifact['digest'] == 'sha256:' + artifact_digest
             and artifact['name'] == 'release-test-compiler-products-' + os.environ['GITHUB_RUN_ID'] + '-a1'
             and artifact['workflow_run']['id'] == int(os.environ['GITHUB_RUN_ID'])
@@ -314,6 +324,15 @@ def create(root):
                     and all("reusedFrom" not in phase for phase in suite.get("phases", [])),
                     "Retained Release executions cannot be labeled fresh")
             evidence = {"schema": "fresh-release-tests/v1", "suite": suite}
+            compiler_origin = os.environ.get("RELEASE_COMPILER_ORIGIN")
+            inputs = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_bytes())['inputs']
+            require(bool(inputs.get('compiler_checkpoint_run_id')) == bool(compiler_origin),
+                    'Compiler origin receipt must match the release dispatch')
+            if compiler_origin:
+                from release_compiler_restore import origin_receipt
+                evidence["compilerOrigin"] = json.loads(Path(compiler_origin).read_bytes())
+                require(evidence["compilerOrigin"] == origin_receipt(suite["sourceSHA"], int(os.environ["GITHUB_RUN_ID"])),
+                        "Test compiler receipt belongs to a different execution")
     info = identity(build)
     require(info["version"] == os.environ["REL_VERSION"]
             and info["sourceSHA"] == os.environ["GITHUB_SHA"], "Signed App version or source differs")
@@ -372,6 +391,9 @@ def verify_manifest(manifest, source, run_id):
                 and not any(key in suite for key in ("retainedBackends", "freshTestExecutions", "reusedTestExecutions"))
                 and all("reusedFrom" not in phase for phase in suite.get("phases", [])),
                 "Signed input lacks completed fresh Release tests")
+        if "compilerOrigin" in evidence:
+            from release_compiler_restore import origin_receipt
+            require(evidence["compilerOrigin"] == origin_receipt(source, run_id), "Unexpected release test compiler origin")
     require(set(manifest.get("files", {})) == set(FILES), "Signed input file inventory differs")
     for value in manifest["files"].values():
         require(type(value.get("bytes")) is int and 0 < value["bytes"] < 12 * 1024**3
@@ -420,6 +442,12 @@ def internal_image_evidence(run, jobs, source):
                         'manifest.json', SIGNED_MANIFEST_MAX_BYTES)
     verify_manifest(manifest, source, run_id)
     require(manifest['nativeEvidence']['schema'] == 'fresh-release-tests/v1', 'Fresh Release tests required')
+    builder, = [job for job in jobs['jobs'] if job['name'] == 'release-build']
+    restore_steps = [step['conclusion'] for step in builder.get('steps', [])
+                     if step['name'] == 'Restore the original release test compiler products']
+    require(restore_steps in ([], ['skipped'], ['success'])
+            and (restore_steps == ['success']) == ('compilerOrigin' in manifest['nativeEvidence']),
+            'Signed compiler provenance differs from the original build steps')
     mounted = original('release', 'release-workspace-producer', 'release-workspace-producer.json', 100_000)
     app = mounted.get('app', {})
     require(mounted.get('schema') == 'nexgenvideo/release-workspace-producer/1'

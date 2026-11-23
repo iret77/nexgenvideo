@@ -357,6 +357,25 @@ def verify_runtime(binary, manifest):
     require(tree_digest(binary) == TREE_SHA, "Retained runtime tree differs")
 
 
+def validate_product_archive(nested, *, reuse_crc=False):
+    with zipfile.ZipFile(nested) as archive:
+        seen = set()
+        require(sum(entry.file_size for entry in archive.infolist()) < 4 * 1024**3, "Runtime archive exceeds its bound")
+        for entry in archive.infolist():
+            name = entry.filename.rstrip("/")
+            path = PurePosixPath(name)
+            require(name and str(path) == name and not path.is_absolute() and ".." not in path.parts
+                    and "\\" not in name and path.parts[0] in {"Release", "__MACOSX"}
+                    and name.casefold() not in seen, "Runtime archive path is unsafe or duplicated")
+            seen.add(name.casefold())
+            if stat.S_ISLNK(entry.external_attr >> 16):
+                target = archive.read(entry).decode()
+                resolved = posixpath.normpath(posixpath.join(str(path.parent), target))
+                require(not target.startswith("/") and resolved.startswith("Release/")
+                        and "\\" not in target, "Runtime archive link escapes")
+        require(reuse_crc or archive.testzip() is None, "Nested runtime archive CRC failed")
+
+
 def restore_runtime(root, manifest, logged, *, reuse_crc=False):
     binary = Path(manifest["binaryRoot"])
     temporary = Path(os.environ["RUNNER_TEMP"]).resolve()
@@ -380,22 +399,7 @@ def restore_runtime(root, manifest, logged, *, reuse_crc=False):
             shutil.copyfileobj(source, destination, 1024 * 1024)
     nested = root / "runtime-products.zip"
     require(checksum(nested) == RUNTIME_SHA, "Nested runtime archive differs")
-    with zipfile.ZipFile(nested) as archive:
-        seen = set()
-        require(sum(entry.file_size for entry in archive.infolist()) < 4 * 1024**3, "Runtime archive exceeds its bound")
-        for entry in archive.infolist():
-            name = entry.filename.rstrip("/")
-            path = PurePosixPath(name)
-            require(name and str(path) == name and not path.is_absolute() and ".." not in path.parts
-                    and "\\" not in name and path.parts[0] in {"Release", "__MACOSX"}
-                    and name.casefold() not in seen, "Runtime archive path is unsafe or duplicated")
-            seen.add(name.casefold())
-            if stat.S_ISLNK(entry.external_attr >> 16):
-                target = archive.read(entry).decode()
-                resolved = posixpath.normpath(posixpath.join(str(path.parent), target))
-                require(not target.startswith("/") and resolved.startswith("Release/")
-                        and "\\" not in target, "Runtime archive link escapes")
-        require(reuse_crc or archive.testzip() is None, "Nested runtime archive CRC failed")
+    validate_product_archive(nested, reuse_crc=reuse_crc)
     binary.parent.mkdir(parents=True, exist_ok=True)
     logged(["/usr/bin/ditto", "-x", "-k", str(nested), str(binary.parent)], "restore-runtime", 300)
     verify_runtime(binary, manifest)
