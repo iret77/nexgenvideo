@@ -458,13 +458,13 @@ xcrun() { printf 'stapler\\n' >> "$CALLS"; return "$NATIVE_RC"; }
         validate = next(step['run'] for step in steps if step.get('name') == 'Validate release input')
         inputs = dict(REL_VERSION='1.8.0', INTERNAL_IMAGE_ONLY='true', ARTIFACT_ONLY='true', DRY_RUN='true',
                       VERIFIED_PR_RUN='123', GITHUB_REF_NAME='iret77/rc-delivery-base-795',
-                      COMPILER_CHECKPOINT_RUN='45207102608')
+                      COMPILER_CHECKPOINT_RUN='45207102608', DEFER_PRIVATE_AUDIO='false')
         for change in ({}, {'COMPILER_CHECKPOINT_RUN': '1'}, {'INTERNAL_IMAGE_ONLY': 'false'},
                        {'SIGNED_BUILD_RUN': '9'}, {'NOTARY_PROGRESS_RUN': '9'}, {'RELEASE_TEST_RUN': '9'}):
             with self.subTest(change=change):
                 result = subprocess.run(['bash', '-c', validate], env={**os.environ, **inputs, **change},
                                         capture_output=True, text=True, timeout=5)
-                self.assertEqual(result.returncode == 0, not change)
+                self.assertEqual(result.returncode == 0, not change, result.stdout + result.stderr)
 
     def test_internal_image_stays_pending_after_packaging(self):
         jobs = self.workflow()['jobs']

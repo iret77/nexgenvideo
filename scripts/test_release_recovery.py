@@ -738,8 +738,11 @@ class ReleaseRecoveryTests(unittest.TestCase):
             self.assertIn("inputs.signed_build_run_id == ''", condition)
             self.assertIn("inputs.notary_progress_run_id == ''", condition)
         steps = {step.get("name"): step for step in jobs["release-build"]["steps"]}
-        for name in ("Build the exact release test configuration", "Stage release test runtime inputs", "Test the exact release configuration"):
-            self.assertEqual(steps[name]["if"], "inputs.completed_release_tests_run_id == '' && inputs.compiled_app_targets_json == ''")
+        fresh = "inputs.completed_release_tests_run_id == '' && inputs.compiled_app_targets_json == ''"
+        self.assertEqual(steps["Build the exact release test configuration"]["if"],
+                         fresh + " && inputs.compiler_checkpoint_run_id == ''")
+        for name in ("Stage release test runtime inputs", "Test the exact release configuration"):
+            self.assertEqual(steps[name]["if"], fresh)
         self.assertNotIn("notarize", "\n".join(step.get("run", "") for step in steps.values()).lower())
         packaging = "\n".join(step.get("run", "") for step in jobs["release"]["steps"])
         self.assertNotIn("swift build", packaging)
