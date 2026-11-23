@@ -41,12 +41,6 @@ jobs:
 
       - name: Prepare the job-local temporary test home
         run: mkdir -p "$RUNNER_TEMP/nexgenvideo-test-home"
-      - name: Typecheck the scene desktop observer
-        if: runner.os == 'macOS' && github.head_ref == 'iret77/rc-142-scene-desktop'
-        env:
-          HOME: ${{ runner.temp }}/nexgenvideo-test-home
-        run: xcrun swiftc -parse-as-library -typecheck scripts/scene_desktop_observer.swift
-
       - name: Verify CI and fixture tooling
         id: fixture_tooling
         env:

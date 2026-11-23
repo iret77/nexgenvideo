@@ -27,7 +27,7 @@ from acceptance import metadata, tree_sha256
 BASE = 'iret77/rc-delivery-base-795'
 DESKTOP_BRANCH = 'iret77/rc-142-scene-desktop'
 PRODUCT = 'd81c249811b31954c0e0366ef7740856c8cf8655'
-HARNESS_FILES = {'.github/workflows/pr-checks.yml', 'scripts/release_checkpoint.py', 'scripts/signed_scene_history.py',
+HARNESS_FILES = {'scripts/release_checkpoint.py', 'scripts/signed_scene_history.py',
                  'scripts/scene_desktop_observer.swift', 'scripts/test_signed_scene_history.py'}
 
 
@@ -74,10 +74,12 @@ def bind_desktop_harness(run_id):
     merge = api('git/commits/' + receipt['checkoutSHA'])
     require(merge['tree']['sha'] == receipt['treeSHA'] and [p['sha'] for p in merge['parents']] == [PRODUCT, head],
             'Tested source tree or parents differ')
-    require([step['conclusion'] for step in job['steps'] if step['name'] == 'Typecheck the scene desktop observer']
-            == ['success'], 'The Mac did not verify the desktop observer source')
     source_checks.verify_steps(job, receipt)
-    summary = source_checks.test_completion(source_checks.read_api(f"actions/jobs/{job['id']}/logs"))
+    log = source_checks.read_api(f"actions/jobs/{job['id']}/logs")
+    case = 'test_desktop_observer_typechecks_on_macos'
+    require(len(re.findall(rf'(?m) {case} \(test_signed_scene_history\.SignedSceneHistoryTests\.{case}\) \.\.\. ok\r?$', log.decode())) == 1,
+            'The original Mac source run did not typecheck the desktop observer')
+    summary = source_checks.test_completion(log)
     require(summary['summary'] == 'OK', 'Incomplete standalone harness source checks')
     return dict(head=head, tree=receipt['treeSHA'], sourceRun=run_id, sourceArtifact=item['id'], sourceResult=summary)
 

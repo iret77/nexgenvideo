@@ -1,6 +1,8 @@
 import json
 import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
@@ -9,6 +11,12 @@ import signed_scene_history as history
 
 
 class SignedSceneHistoryTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == 'darwin', 'AppKit requires the macOS SDK')
+    def test_desktop_observer_typechecks_on_macos(self):
+        observer = Path(__file__).with_name('scene_desktop_observer.swift')
+        subprocess.run(['xcrun', 'swiftc', '-parse-as-library', '-typecheck', observer], check=True,
+                       stdin=subprocess.DEVNULL, timeout=120)
+
     def test_signed_scene_rejects_unrelated_dispatch_modes_and_selectors(self):
         base = dict(candidate_kind='signed-scene-history', run_id='12345', source_sha='c' * 40,
                     artifact_id='123', artifact_sha256='a' * 64, expected_dmg_sha256='b' * 64, verified_pr_run_id='456')
