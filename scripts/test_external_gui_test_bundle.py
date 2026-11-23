@@ -1921,6 +1921,12 @@ class ExternalTestBundleTests(unittest.TestCase):
         raw = json.dumps({'schema': 'plugins/v2', 'plugins': [{'id': 'musicvideo', 'version': '0.5.8'}]}).encode()
         digest = hashlib.sha256(raw).hexdigest()
         self.assertEqual(journey.local_catalog(raw, digest, journey.LOCAL_PACK_ZIP_SHA)['plugins'][0]['version'], '0.5.8')
+        self.assertEqual(journey.local_catalog(raw, digest, journey.INTERNAL_PACK_ZIP, journey.INTERNAL_RUNTIME_SOURCE)
+                         ['plugins'][0]['version'], '0.5.8')
+        with self.assertRaises(ValueError):
+            journey.local_catalog(raw, digest, journey.LOCAL_PACK_ZIP_SHA, journey.INTERNAL_RUNTIME_SOURCE)
+        with self.assertRaises(ValueError):
+            journey.local_catalog(raw, digest, journey.INTERNAL_PACK_ZIP)
         with self.assertRaises(ValueError): journey.fresh_catalog(raw, digest, journey.LOCAL_PACK_ZIP_SHA)
         for value, expected, pack in [(raw, '0' * 64, journey.LOCAL_PACK_ZIP_SHA), (raw, digest, 'f' * 64),
                 (raw.replace(b'0.5.8', b'0.6.0'), hashlib.sha256(raw.replace(b'0.5.8', b'0.6.0')).hexdigest(), journey.LOCAL_PACK_ZIP_SHA)]:

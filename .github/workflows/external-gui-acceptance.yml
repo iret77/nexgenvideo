@@ -214,7 +214,9 @@ jobs:
                   raise SystemExit('Fresh Musicvideo requires the exact retained DMG, 150% size, source and published catalog/pack bytes')
           elif os.environ.get('EXPECTED_CATALOG_SHA256') or os.environ.get('EXPECTED_PACK_SHA256'):
               raise SystemExit('Normal catalog and pack selectors cannot be ignored by another scenario')
-          if scenario == 'normal-fresh-local-musicvideo' and os.environ.get('EXPECTED_PACK_SHA256') != '37fcee05d1ac334b20eb392c61cc3b7a94af165dc3b967c61602bc79d6dc4388':
+          internal_pack = os.environ['RETAINED_RUN'] == '45216062737' and os.environ['RETAINED_SOURCE'] == '116e812d86f8886b7657daf005f955500fb05648'
+          pack_digest = 'edee39f329cdb3c122fa4ab71fd1ae5cb8205185025bea9fc999568d2e670866' if internal_pack else '37fcee05d1ac334b20eb392c61cc3b7a94af165dc3b967c61602bc79d6dc4388'
+          if scenario == 'normal-fresh-local-musicvideo' and os.environ.get('EXPECTED_PACK_SHA256') != pack_digest:
               raise SystemExit('The local-DMG case requires the qualified original Musicvideo pack lineage')
           if scenario == 'transport':
               if (mode != 'dmg' or scale != '1.5' or not os.environ['RETAINED_SOURCE']
@@ -261,9 +263,11 @@ jobs:
           CANDIDATE_KIND: ${{ inputs.scenario == 'transport' && 'signed-transport' || 'signed-journey' }}
         run: |
           set -euo pipefail
+          set --
           if [ -n "$VERIFIED_PR_RUN" ]; then
             python3 scripts/verified_pr_source_checks.py prepare --run-id "$VERIFIED_PR_RUN" \
               --output "$RUNNER_TEMP/public-client-source-proof"
+            set -- --source-proof "$RUNNER_TEMP/public-client-source-proof/receipt.json"
           else
             python3 -m unittest discover -s scripts -p 'test_external_gui_test_bundle.py'
             python3 -m unittest discover -s scripts -p 'test_diagnostic_acceptance.py'
@@ -274,7 +278,7 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ORIGINAL_RUN/attempts/$ATTEMPT/jobs?per_page=100" > "$RUNNER_TEMP/retained-dmg/jobs.json"
           gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ORIGINAL_ARTIFACT" > "$RUNNER_TEMP/retained-dmg/artifact.json"
           python3 scripts/verify_diagnostic_candidate.py "$ORIGINAL_RUN" "$PRODUCT_SOURCE" \
-            "$ORIGINAL_ARTIFACT" "$ORIGINAL_DIGEST" "$RUNNER_TEMP/retained-dmg" --candidate-kind "$CANDIDATE_KIND" \
+            "$ORIGINAL_ARTIFACT" "$ORIGINAL_DIGEST" "$RUNNER_TEMP/retained-dmg" --candidate-kind "$CANDIDATE_KIND" "$@" \
             --packaging-producer-source "$PACKAGING_PRODUCER_SOURCE" --packaging-provenance-artifact-id "$PACKAGING_PROVENANCE_ARTIFACT_ID" --packaging-provenance-artifact-sha256 "$PACKAGING_PROVENANCE_ARTIFACT_SHA256"
           if jq -e '.mountedInternalImage' "$RUNNER_TEMP/retained-dmg/harness.json" >/dev/null; then
             [ "$(jq -r '.mountedInternalImage.dmgSHA256' "$RUNNER_TEMP/retained-dmg/harness.json")" = "$EXPECTED_DMG_SHA256" ]
@@ -420,6 +424,11 @@ jobs:
           run-id: ${{ inputs.runtime_run_id || github.run_id }}
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}/external-runtime
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        if: inputs.product_source_sha != '' && inputs.verified_pr_run_id != '' && (inputs.scenario == 'journey' || inputs.scenario == 'normal-fresh-local-musicvideo')
+        with:
+          name: retained-dmg-producer
+          path: ${{ runner.temp }}/qualified-journey
       - name: Retrieve the exact retained DMG artifact
         if: inputs.product_source_sha != ''
         env:

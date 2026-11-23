@@ -182,12 +182,24 @@ def prepare(run_id, root):
     step_proof = verify_steps(job, receipt)
     pr = api(f"pulls/{receipt['pullRequest']}")
     commit = api(f"git/commits/{receipt['checkoutSHA']}")
-    verify_tree(receipt, pr, commit, head, git("rev-parse", "HEAD^{tree}"), os.environ["GITHUB_REF_NAME"])
+    from release_checkpoint import INTERNAL_RUNTIME_BRANCH, internal_runtime_inputs, verify_internal_runtime_tree
+    ref = os.environ["GITHUB_REF_NAME"]
+    tree = git("rev-parse", "HEAD^{tree}")
+    schema = "core-pr-source-composition/v1"
+    if ref == INTERNAL_RUNTIME_BRANCH:
+        selectors = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_bytes())['inputs']
+        internal_runtime_inputs(selectors, run_id)
+        require(os.environ['GITHUB_EVENT_NAME'] == 'workflow_dispatch' and receipt['schema'] == 'verified-pr-source/v2'
+                and run['head_branch'] == ref and job['labels'] == ['macrunner'], "Unexpected internal runtime source consumer")
+        verify_internal_runtime_tree(receipt, pr, commit, head, tree, ref)
+        schema = "internal-runtime-pr-source/v1"
+    else:
+        verify_tree(receipt, pr, commit, head, tree, ref)
     log = read_api(f"actions/jobs/{job['id']}/logs")
     result = test_completion(log)
     (root / "original-proof.zip").write_bytes(raw)
     (root / "original-job.log").write_bytes(log)
-    write(root / "receipt.json", {"schema": "core-pr-source-composition/v1", "sourceSHA": head,
+    write(root / "receipt.json", {"schema": schema, "sourceSHA": head,
         "runID": os.environ["GITHUB_RUN_ID"], "attempt": os.environ["GITHUB_RUN_ATTEMPT"],
         "originalRun": run, "originalJobs": jobs, "originalArtifact": artifact, "originalReceipt": receipt,
         "originalCheckoutCommit": commit, "originalPR": pr, "originalResult": result,

@@ -402,11 +402,100 @@ def verify_manifest(manifest, source, run_id):
     return manifest
 
 
-def internal_image_evidence(run, jobs, source):
+INTERNAL_RUNTIME_SOURCE = '116e812d86f8886b7657daf005f955500fb05648'
+INTERNAL_RUNTIME_RUN = 45216062737
+INTERNAL_RUNTIME_BRANCH = 'iret77/rc-141-signed-runtime'
+INTERNAL_RUNTIME_DMG = 'ffc70e6b062db0a1678815c232f91a8f5767d02299a3b613bcf576d5e19de0e8'
+INTERNAL_RUNTIME_PATHS = {
+    '.github/workflows/diagnostic-acceptance.yml', '.github/workflows/external-gui-acceptance.yml',
+    'scripts/release_checkpoint.py', 'scripts/verify_diagnostic_candidate.py',
+    'scripts/external-gui/acceptance.py', 'scripts/test_release_recovery.py',
+    'scripts/verified_pr_source_checks.py', 'scripts/test_diagnostic_acceptance.py', 'scripts/test_external_gui_test_bundle.py',
+}
+
+
+def internal_runtime_inputs(inputs, source_run):
+    kind = inputs.get('candidate_kind')
+    expected = dict(candidate_kind=kind, verified_pr_run_id=str(source_run), run_id=str(INTERNAL_RUNTIME_RUN),
+                    source_sha=INTERNAL_RUNTIME_SOURCE)
+    scenario = inputs.get('journey_scenario', 'journey')
+    scale = '1'
+    if kind == 'signed-release':
+        expected.update(artifact_id='14847693808',
+                        artifact_sha256='c490a7dd85e48e492b5ed7ce52148f66c5e2a2bbeb8be564929ebdf214dc905e')
+        require(scenario == 'journey', 'Standard diagnostics cannot select a GUI scenario')
+    else:
+        require(kind == 'signed-journey' and scenario in ('journey', 'normal-fresh-local-musicvideo'),
+                'Unexpected signed runtime scenario')
+        expected.update(artifact_id='14848191988', expected_dmg_sha256=INTERNAL_RUNTIME_DMG,
+                        artifact_sha256='e6a5ba580e29b5c11b375c1a1ceec23e1a77b454945448e6fcc5bcbc10ac944c')
+        if scenario == 'normal-fresh-local-musicvideo':
+            scale = '1.5'
+            expected['expected_catalog_sha256'] = 'b6a94288d7a36593c0c97a018d9f9c008c6d3bf386683b646a8dde036584bd24'
+            for key in ('test_bundle_run_id', 'test_bundle_artifact_id', 'test_bundle_artifact_sha256'):
+                value = inputs.get(key, '')
+                pattern = '[0-9a-f]{64}' if key.endswith('sha256') else '[1-9][0-9]*'
+                require(re.fullmatch(pattern, value), 'Local pack acceptance needs the verified external test client')
+                expected[key] = value
+    defaults = {'interface_scale': scale, 'journey_scenario': scenario}
+    require(all(inputs.get(key) == value for key, value in expected.items())
+            and all(value == defaults.get(key, '') for key, value in inputs.items() if key not in expected)
+            and inputs.get('interface_scale', '1') == scale, 'Unexpected internal runtime input or artifact')
+
+
+def verify_internal_runtime_tree(receipt, pr, commit, head, tree, ref):
+    base = 'iret77/rc-delivery-base-795'
+    require(ref == INTERNAL_RUNTIME_BRANCH and pr.get('state') == 'open' and pr.get('merged') is False
+            and pr['number'] == receipt['pullRequest'] and pr['user']['login'] == 'iret77'
+            and pr['head']['repo']['full_name'] == pr['base']['repo']['full_name'] == REPOSITORY
+            and pr['head']['ref'] == ref and pr['head']['sha'] == receipt['headSHA'] == head
+            and pr['base']['ref'] == receipt['baseRef'] == base and pr['base']['sha'] == INTERNAL_RUNTIME_SOURCE
+            and commit.get('sha') == receipt['checkoutSHA'] and commit['tree']['sha'] == receipt['treeSHA'] == tree
+            and [row['sha'] for row in commit['parents']] == [INTERNAL_RUNTIME_SOURCE, head],
+            'Open runtime PR does not match the tested merge tree and its two parents')
+
+
+def internal_runtime_paths(source, run_id, kind, proof):
+    from verified_pr_source_checks import check_results, git
+    head = os.environ['GITHUB_SHA']
+    require(source == INTERNAL_RUNTIME_SOURCE and run_id == INTERNAL_RUNTIME_RUN
+            and kind in ('signed-release', 'signed-journey') and head != source
+            and head == git('rev-parse', 'HEAD') and not git('status', '--porcelain', '--untracked-files=no'),
+            'Internal runtime checkout or role differs')
+    require(proof.get('schema') == 'internal-runtime-pr-source/v1' and proof.get('sourceSHA') == head
+            and proof.get('runID') == os.environ['GITHUB_RUN_ID']
+            and proof.get('attempt') == os.environ['GITHUB_RUN_ATTEMPT'],
+            'Missing complete current runtime source proof')
+    original = proof['originalReceipt']
+    require(original['schema'] == 'verified-pr-source/v2' and original['repository'] == REPOSITORY
+            and original['headRepository'] == REPOSITORY and original['attempt'] == 1
+            and original['runID'] == proof['originalRun']['id'], 'Runtime source producer differs')
+    verify_internal_runtime_tree(original, proof['originalPR'], proof['originalCheckoutCommit'], head,
+                git('rev-parse', 'HEAD^{tree}'), os.environ['GITHUB_REF_NAME'])
+    check_results(original['checkResults'])
+    git('merge-base', '--is-ancestor', source, head)
+    raw = subprocess.check_output(['git', 'diff', '--raw', '--no-renames', '-z', source, head], timeout=30)
+    entries = raw.split(b'\0')
+    require(entries[-1:] == [b''] and len(entries) > 1 and len(entries) % 2 == 1, 'Missing runtime changes')
+    paths = set()
+    for header, path in zip(entries[:-1:2], entries[1:-1:2]):
+        name = path.decode()
+        require(header.split()[:2] == [b':100644', b'100644'] and header.split()[-1] == b'M'
+                and name in INTERNAL_RUNTIME_PATHS, 'Runtime change outside reviewed CI files: ' + name)
+        paths.add(name)
+    return paths
+
+
+def internal_image_evidence(run, jobs, source, *, runtime_review=None):
     run_id = run['id']
+    checkout = source
+    if runtime_review is not None:
+        kind, proof = runtime_review
+        internal_runtime_paths(source, run_id, kind, proof)
+        checkout = os.environ['GITHUB_SHA']
     require(run.get('run_attempt') == 1 and run.get('actor', {}).get('login') == 'iret77'
             and run.get('head_branch') == 'iret77/rc-delivery-base-795' and run.get('head_sha') == source
-            and source == os.environ['GITHUB_SHA'] == subprocess.check_output(
+            and checkout == os.environ['GITHUB_SHA'] == subprocess.check_output(
                 ['git', 'rev-parse', 'HEAD'], text=True, timeout=30).strip()
             and not subprocess.check_output(['git', 'status', '--porcelain', '--untracked-files=no'], timeout=30),
             'Internal image requires its exact reviewed checkout')
@@ -461,6 +550,10 @@ def internal_image_evidence(run, jobs, source):
             and all(re.fullmatch('[a-f0-9]{64}', mounted.get(key, '')) for key in
                     ('dmgSHA256', 'mountedAppTreeSHA256', 'mountedPackTreeSHA256', 'archiveSHA256',
                      'runtimeInputSHA256', 'bpySourceReceiptSHA256')), 'Mounted internal product differs')
+    if runtime_review is not None:
+        require(builder['id'] == 137841279194 and origins['release-workspace-producer']['jobID'] == 137861647220
+                and mounted['dmgSHA256'] == INTERNAL_RUNTIME_DMG and app['CFBundleVersion'] == '141',
+                'Internal runtime refers to a different release image')
     return dict(mounted, evidenceArtifacts=origins)
 
 

@@ -305,10 +305,10 @@ def verify_ci(run, jobs, artifact, run_id, source_sha, artifact_id, digest, chan
         raise ValueError("application or build inputs changed; retained CI app cannot be used")
 
 
-def verify(run, jobs, artifact, run_id, source_sha, artifact_id, digest, changed_paths, *, packaging=None):
+def verify(run, jobs, artifact, run_id, source_sha, artifact_id, digest, changed_paths, *, packaging=None, runtime_review=None):
     if str(run.get("head_branch", "")).startswith("iret77/rc-"):
         mounted = verify_signed_bpy(run, jobs, artifact, run_id, source_sha, artifact_id, digest,
-                          changed_paths, harness_paths=CAPTURE_HARNESS_PATHS, packaging=packaging)
+                          changed_paths, harness_paths=CAPTURE_HARNESS_PATHS, packaging=packaging, runtime_review=runtime_review)
         release = next(job for job in jobs["jobs"] if job["name"] == "release")
         if run.get("actor", {}).get("login") != "iret77" or release.get("labels") != ["macrunner"]:
             raise ValueError("RC capture must retain an owned macrunner release")
@@ -337,12 +337,20 @@ def verify(run, jobs, artifact, run_id, source_sha, artifact_id, digest, changed
 
 def verify_signed_bpy(run, jobs, artifact, run_id, source_sha, artifact_id, digest, changed_paths,
                       *, artifact_name="diagnostic-release-evidence", harness_paths=SIGNED_BPY_HARNESS_PATHS,
-                      packaging=None):
+                      packaging=None, runtime_review=None):
     producer_source = source_sha
     import app_cohort_v2
     internal = any(job.get('name') == 'acceptance-pending' and job.get('conclusion') == 'failure'
                    for job in jobs.get('jobs', []))
-    if internal and (packaging is not None or changed_paths):
+    if runtime_review is not None:
+        from release_checkpoint import internal_runtime_paths
+        if not internal or packaging is not None:
+            raise ValueError('Reviewed runtime requires the original internal producer')
+        allowed = internal_runtime_paths(source_sha, run_id, *runtime_review)
+        if allowed != set(changed_paths):
+            raise ValueError('Runtime paths differ from the verified checkout')
+        harness_paths = allowed
+    elif internal and (packaging is not None or changed_paths):
         raise ValueError('Internal image must use its exact original source')
     if not internal and packaging is None and app_cohort_v2.has_manifest(source_sha):
         import os
@@ -391,7 +399,7 @@ def verify_signed_bpy(run, jobs, artifact, run_id, source_sha, artifact_id, dige
         raise ValueError("application or build inputs changed; retained signed App cannot be used")
     if internal:
         from release_checkpoint import internal_image_evidence
-        return internal_image_evidence(run, jobs, source_sha)
+        return internal_image_evidence(run, jobs, source_sha, runtime_review=runtime_review)
 
 
 
@@ -446,6 +454,7 @@ def main():
     parser.add_argument("metadata", type=Path)
     parser.add_argument("--candidate-kind", choices=("signed-release", "signed-bpy", "signed-journey", "signed-transport", "ci-runtime", "ci-bpy-open-diagnostic", "ci-app-test-diagnostic"), default="signed-release")
     parser.add_argument("--crash-archive", type=Path)
+    parser.add_argument("--source-proof", type=Path)
     consumer_arguments(parser)
     args = parser.parse_args()
     if (args.candidate_kind == "ci-app-test-diagnostic") != (args.crash_archive is not None):
@@ -464,9 +473,18 @@ def main():
                 "signed-journey": verify_signed_journey, "signed-transport": verify_signed_transport, "ci-runtime": verify_ci,
                 "ci-bpy-open-diagnostic": verify_bpy_diagnostic,
                 "ci-app-test-diagnostic": verify_app_diagnostic}[args.candidate_kind]
+    options = {'packaging': packaging} if packaging is not None else {}
+    from release_checkpoint import INTERNAL_RUNTIME_SOURCE, INTERNAL_RUNTIME_RUN
+    runtime_review = None
+    if (args.source_sha == INTERNAL_RUNTIME_SOURCE and args.run_id == INTERNAL_RUNTIME_RUN
+            and args.candidate_kind in ('signed-release', 'signed-journey') and any(paths) and packaging is None):
+        if args.source_proof is None:
+            parser.error('A changed Build 141 runtime harness requires its current verified source receipt')
+        runtime_review = json.loads(args.source_proof.read_bytes())
+        options['runtime_review'] = (args.candidate_kind, runtime_review)
     mounted = verifier(*(json.loads((args.metadata / name).read_text()) for name in ("run.json", "jobs.json", "artifact.json")),
            args.run_id, args.source_sha, args.artifact_id, args.digest, [path for path in paths if path],
-           **({'packaging': packaging} if packaging is not None else {}))
+           **options)
     if args.crash_archive is not None:
         verify_app_crash_archive(args.crash_archive, args.run_id, args.source_sha, args.digest)
     harness_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
@@ -476,6 +494,8 @@ def main():
     }
     if mounted is not None and args.candidate_kind in ('signed-release', 'signed-journey', 'signed-transport'):
         record['mountedInternalImage'] = mounted
+    if runtime_review is not None:
+        record['runtimeSourceProof'] = runtime_review
     if binding is not None:
         record['packaging'] = binding
     (args.metadata / "harness.json").write_text(json.dumps(record, indent=2) + "\n")
