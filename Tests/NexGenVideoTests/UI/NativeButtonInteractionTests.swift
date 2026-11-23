@@ -2726,7 +2726,7 @@ private extension NativePointerInteractionTests {
             try await fixture.driver.fillFields([("fov", "60.0"), ("width", "128")], in: window)
             Issue.record("The covered Width field received input.")
         } catch {
-            #expect(error.localizedDescription.contains("The field reached by Tab is covered or has lost its editor."))
+            #expect((error as? GateBlocked)?.message == "The text field is covered or has lost its editor.")
         }
         #expect(observer.fovAtTab == [60, 60] && !observer.earlyCompletion)
         #expect(observer.events.contains("tab-end:fov"))
