@@ -28,25 +28,31 @@ def intake_binding(app, pack, image_uuid, payload, native=False):
     work = runner / 'file-dialog-ui'
     if native:
         require(os.environ.get('GITHUB_JOB') == 'app-target-build', 'Unexpected native Track consumer')
-        client = json.loads((work / 'transfer/client.json').read_bytes())
-        artifact_id = int(os.environ['DIALOG_CLIENT_ARTIFACT_ID'])
-        digest = os.environ['DIALOG_CLIENT_ARTIFACT_SHA256'].removeprefix('sha256:')
-        require(artifact_id > 0 and re.fullmatch('[a-f0-9]{64}', digest), 'Missing native file dialog artifact')
-        client.update(artifactID=artifact_id, artifactDigest='sha256:' + digest)
-        with (work / 'client.json').open('x') as out:
-            json.dump(client, out)
-        origin_run = int(os.environ['GITHUB_RUN_ID'])
+        if (work / 'client.json').is_file():
+            client = json.loads((work / 'client.json').read_bytes())
+            require(client == dialogs.QUALIFIED_CLIENT,
+                    'Restored original client does not match the qualified native Track consumer')
+            origin_run = dialogs.QUALIFIED_CLIENT['run']
+        else:
+            client = json.loads((work / 'transfer/client.json').read_bytes())
+            artifact_id = int(os.environ['DIALOG_CLIENT_ARTIFACT_ID'])
+            digest = os.environ['DIALOG_CLIENT_ARTIFACT_SHA256'].removeprefix('sha256:')
+            require(artifact_id > 0 and re.fullmatch('[a-f0-9]{64}', digest), 'Missing native file dialog artifact')
+            client.update(artifactID=artifact_id, artifactDigest='sha256:' + digest)
+            with (work / 'client.json').open('x') as out:
+                json.dump(client, out)
+            origin_run = int(os.environ['GITHUB_RUN_ID'])
     elif (work / 'transfer/native-client-origin.json').is_file():
         origin = json.loads((work / 'transfer/native-client-origin.json').read_bytes())
         client = json.loads((work / 'client.json').read_bytes())
         require(origin['releaseRun'] == int(os.environ['GITHUB_RUN_ID']) and origin['client'] == client
                 and origin['metadata']['sourceSHA'] == source, 'Release file dialog origin changed')
-        origin_run = origin['metadata']['runID']
+        origin_run = dialogs.QUALIFIED_CLIENT['run'] if client == dialogs.QUALIFIED_CLIENT else origin['metadata']['runID']
     else:
         client = json.loads((work / 'transfer/client.json').read_bytes())
         origin_run = int(os.environ['GITHUB_RUN_ID'])
     require(products == (work / 'build/Build/Products').resolve(strict=True)
-            and client['source'] == source and client['run'] == origin_run
+            and dialogs.bound_client_source(client, source) and client['run'] == origin_run
             and client['attempt'] == int(os.environ['GITHUB_RUN_ATTEMPT'])
             and client['tree'] == dialogs.project_tree(source) and client['products'] == dialogs.products_sha256(products),
             'Early intake and release require the same actual file dialog XCTest')

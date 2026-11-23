@@ -3,7 +3,7 @@ description: Build the independent UI test with its app producer or restore thos
 inputs:
   mode:
     required: true
-    description: build, restore or native-transfer
+    description: build, restore, restore-qualified or native-transfer
   app-source:
     default: ''
     description: Actual product commit

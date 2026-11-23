@@ -18,6 +18,24 @@ from test_bundle import check_test_paths, products_sha256, unpack_products
 from retained_packaging import api, artifact_bytes, verify_artifact, environment_selectors, load_provenance
 
 
+QUALIFIED_CLIENT = {
+    "tree": "186415df9e11a56ed484ee381a99d96586e27618",
+    "source": "a0cf15a928be745ea692ba04a1c60544efef4e8a",
+    "run": 45091463772,
+    "attempt": 1,
+    "sha256": "a6264b5704dd775da5dd843289e54dd6ac7963629756d5629f8d9d361e6eb120",
+    "products": "ee8acfb10f5f47707da65329921a61c0c9a689ff53c32d3739b4326b9fae42d1",
+    "xctestrun": "FileDialogUI_macosx27.2-arm64.xctestrun",
+    "artifactID": 14781965475,
+    "artifactDigest": "sha256:ed4cfad46727eb1730ab7a773dc7c49916349a2bfd9f6869219d67a1329f4c19"
+}
+QUALIFIED_JOB = 137422367069
+
+
+def bound_client_source(client, source):
+    return client["source"] == source or (client == QUALIFIED_CLIENT and project_tree(source) == client["tree"])
+
+
 def uses_external_dialogs(product):
     if not re.fullmatch(r"[a-f0-9]{40}", product):
         raise ValueError("Missing product source")
@@ -73,11 +91,13 @@ def client_producer_job(candidates, product, run_id, attempt, native_origin=None
     return job
 
 
-def restore(work, products, product, run_id, *, native_origin=None, native_producer=None):
+def restore(work, products, product, run_id, *, native_origin=None, native_producer=None, qualified=False):
     selected = environment_selectors()
     if native_origin and (selected or os.environ.get("GITHUB_JOB") != "app-target-build"):
         raise ValueError("A native Track check requires a direct original client")
-    if selected and native_producer is None:
+    if qualified and (product != QUALIFIED_CLIENT["source"] or run_id != QUALIFIED_CLIENT["run"] or native_origin or native_producer):
+        raise ValueError("Unexpected qualified file dialog origin")
+    if selected and native_producer is None and not qualified:
         provenance = load_provenance(run_id, product, selected)["record"]
         run_id = provenance["originalSignedBuildRunID"]
     run = api(f"actions/runs/{run_id}")
@@ -85,6 +105,11 @@ def restore(work, products, product, run_id, *, native_origin=None, native_produ
                            ("bundle", "ci", "ci-batch", "workspace-ui-acceptance", "private-example-analysis", "release")}
     if native_origin:
         supported_workflows = {".github/workflows/native-acceptance-probes.yml"}
+    if qualified:
+        supported_workflows = {".github/workflows/diagnostic-acceptance.yml"}
+        if (run["actor"]["login"] != "iret77" or run["event"] != "workflow_dispatch" or run["workflow_id"] != 355242770
+                or run["run_attempt"] != QUALIFIED_CLIENT["attempt"] or run["status"] != "completed"):
+            raise ValueError("Qualified file dialog run changed")
     if native_producer is not None:
         supported_workflows = {".github/workflows/diagnostic-acceptance.yml"}
         if native_producer["run"]["id"] != run_id or run["conclusion"] != "success" or run["status"] != "completed":
@@ -103,13 +128,15 @@ def restore(work, products, product, run_id, *, native_origin=None, native_produ
             or run["actor"]["login"] != "iret77" or run["run_attempt"] != native_origin["attempt"]
             or run["status"] != "completed" or run["workflow_id"] != 388064375 or run["event"] != "workflow_dispatch"):
         raise ValueError("Native Track check received a different original client")
+    if qualified and (artifact["id"] != QUALIFIED_CLIENT["artifactID"] or artifact["digest"] != QUALIFIED_CLIENT["artifactDigest"]):
+        raise ValueError("Qualified file dialog archive changed")
     size = artifact["size_in_bytes"]
     if not 0 < size <= 128 * 1024**2 or shutil.disk_usage(work).free < 512 * 1024**2 + size:
         raise ValueError("Insufficient file dialog client archive reserve")
     raw = artifact_bytes(artifact, size)
     with zipfile.ZipFile(io.BytesIO(raw)) as outer:
         if outer.namelist() == ["native-client-origin.json"]:
-            if (native_origin or native_producer or run["path"] != ".github/workflows/release.yml"
+            if (native_origin or native_producer or qualified or run["path"] != ".github/workflows/release.yml"
                     or outer.getinfo("native-client-origin.json").file_size > 16384):
                 raise ValueError("Unexpected native file dialog transfer")
             transfer = json.loads(outer.read("native-client-origin.json"))
@@ -146,7 +173,13 @@ def restore(work, products, product, run_id, *, native_origin=None, native_produ
     candidates = jobs["jobs"]
     for page in range(2, (jobs["total_count"] + 99) // 100 + 1):
         candidates.extend(api(f"actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100&page={page}")["jobs"])
-    job = client_producer_job(candidates, product, run_id, attempt, native_origin)
+    if qualified:
+        job, = [j for j in candidates if j["id"] == QUALIFIED_JOB and j["name"] == "app-target-build"
+                and j["status"] == "completed" and j["conclusion"] in {"failure", "success"} and j["labels"] == ["macrunner"]
+                and j["run_id"] == run_id and j["head_sha"] == product and j["run_attempt"] == attempt == 1
+                and [s["conclusion"] for s in j["steps"] if s["name"] == "Build file dialog XCTest"] == ["success"]]
+    else:
+        job = client_producer_job(candidates, product, run_id, attempt, native_origin)
     if native_producer is not None and job["id"] != native_producer["job"]["id"]:
         raise ValueError("Compiled App metadata and file dialog XCTest came from different jobs")
     verify_artifact(artifact, run, job, item["id"], artifact["digest"].removeprefix("sha256:"), "file-dialog-ui")
@@ -159,8 +192,16 @@ def restore(work, products, product, run_id, *, native_origin=None, native_produ
     if original.name != receipt["xctestrun"] or products_sha256(products) != receipt["products"]:
         raise ValueError("Restored file dialog client differs")
     client = dict(receipt, artifactID=item["id"], artifactDigest=artifact["digest"])
+    if qualified and client != QUALIFIED_CLIENT:
+        raise ValueError("Qualified file dialog receipt changed")
     (work / "client.json").write_text(json.dumps(client))
     return client
+
+
+def restore_qualified_client(work, products, source):
+    if project_tree(source) != QUALIFIED_CLIENT["tree"]:
+        raise ValueError("The current file dialog project differs from the qualified compiler input")
+    return restore(work, products, QUALIFIED_CLIENT["source"], QUALIFIED_CLIENT["run"], qualified=True)
 
 
 def restore_native_client(work, products, product, metadata):
@@ -171,6 +212,20 @@ def restore_native_client(work, products, product, metadata):
             or not re.fullmatch("[a-f0-9]{64}", metadata["artifactSHA256"])):
         raise ValueError("Unexpected native file dialog metadata selector")
     origin = producer(metadata, "metadata")
+    if any(step["name"] == "Restore qualified file dialog XCTest" and step["conclusion"] == "success"
+           for step in origin["job"]["steps"]):
+        if origin["run"]["conclusion"] != "success" or origin["job"]["conclusion"] != "success":
+            raise ValueError("Native intake did not qualify the restored client")
+        raw = artifact_bytes(origin["artifact"], 256 * 1024**2)
+        name = "track-intake/evidence/verified.json"
+        with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+            if archive.namelist().count(name) != 1 or archive.getinfo(name).file_size > 128 * 1024:
+                raise ValueError("Missing qualified native intake receipt")
+            intake = json.loads(archive.read(name))
+        if (intake["source"] != product or intake["runID"] != str(metadata["runID"])
+                or intake["nativeExit"] != 0 or intake["testExit"] != 0 or intake["binding"]["client"] != QUALIFIED_CLIENT):
+            raise ValueError("Native intake did not exercise the selected original client")
+        return restore_qualified_client(work, products, product)
     return restore(work, products, product, metadata["runID"], native_producer=origin)
 
 
@@ -190,7 +245,7 @@ def transfer_native_client(work, products, product):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=("build", "restore", "native-transfer"))
+    parser.add_argument("mode", choices=("build", "restore", "native-transfer", "select-native", "restore-qualified"))
     args = parser.parse_args()
     if os.environ.get("GITHUB_ACTIONS") != "true" or os.environ.get("GITHUB_REPOSITORY") != "iret77/nexgenvideo":
         raise ValueError("Requires the NexGenVideo CI job")
@@ -199,10 +254,19 @@ def main():
     product = os.environ.get("DIALOG_APP_SOURCE") or os.environ["GITHUB_SHA"]
     if not uses_external_dialogs(product):
         return
+    if args.mode in {"select-native", "restore-qualified"}:
+        if os.environ.get("GITHUB_JOB") != "app-target-build" or product != os.environ["GITHUB_SHA"]:
+            raise ValueError("Unexpected native file dialog consumer")
+        if args.mode == "select-native":
+            with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
+                stream.write("reuse=" + str(project_tree(product) == QUALIFIED_CLIENT["tree"]).lower() + "\n")
+            return
     work.mkdir()
     products = work / "build/Build/Products"
     if args.mode == "build":
         package(work, products, product)
+    elif args.mode == "restore-qualified":
+        restore_qualified_client(work, products, product)
     elif args.mode == "native-transfer":
         transfer_native_client(work, products, product)
     else:
