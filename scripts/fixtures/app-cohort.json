@@ -1,7 +1,7 @@
 {
-  "appSourceSHA": "ba8704bce58e57d93ebffd3d7cfd615e02fecefa",
-  "appTreeSHA": "72f3de3cc170eb9847e48e5cee0bb9780b820221",
-  "build": "139",
+  "appSourceSHA": "055559886dc8a415a157d925622dec833eff22ba",
+  "appTreeSHA": "d488bb6763eeec3a024534050835888f7b22153a",
+  "build": "140",
   "ciPaths": [
     ".github/actionlint.yaml",
     ".github/actions/file-dialog-products/action.yml",
@@ -149,7 +149,7 @@
   },
   "criteria": {
     "path": "scripts/fixtures/app-cohort-native-inventory.json",
-    "sha256": "f62e00a6bf1300a1ca99ac56d15e99b3a2eb86e5eb1e8a567e52df0eff92c838"
+    "sha256": "d04e115551764bf166a8644c0e2ce815c8a37c905d782ca94f0a75cadbfb5c56"
   },
   "nativeSourceObjects": {
     "Engine": "29cfed623d13e6d84d5822a30b98e088fc123c3f",
@@ -157,7 +157,7 @@
     "Package.resolved": "530cdaed0a29a65181353d86d05cf9dc04890cc2",
     "Package.swift": "37f605bfb8cdccc48821b39484c819ba3e5eff43",
     "Runtime": "910b87b08a3a8c976e0f2502580c843b0df74154",
-    "Sources": "f4e9eaf451005f6c2f448f781d274c3ea71c3bf1",
+    "Sources": "4d99bd7ff38b9d82311958b5368656bcbdb96e11",
     "Tests": "72bc5cb63c39768f528a87ba507ab4b9257df427",
     "Vendor": "51e93c100e00dcd196edac0e70e1af921d52055a",
     "plugins": "b75e017d3145010368ae417bc410574f3f0300c1"
@@ -520,7 +520,7 @@
       "Sources/NexGenVideo/App/ProductionSpatialAcceptance.swift": "fe5d0a0bb5b16fa69261df5dc3967141927ed2b6",
       "Sources/NexGenVideo/App/ProductionSpatialClayAcceptance.swift": "b2811bd9d7f9a31386a0c961abf147b55faf211b",
       "Sources/NexGenVideo/App/ProductionSpatialCommitCancellationAcceptance.swift": "e43e787a1ba0ecc860df5aac7ffd4bbfc5735596",
-      "Sources/NexGenVideo/App/ProductionSpatialHashCancellationAcceptance.swift": "06241b296147c167599151a5a036b6362e6e4a1d",
+      "Sources/NexGenVideo/App/ProductionSpatialHashCancellationAcceptance.swift": "77ce767daa3aa6916aea95c5b04345ce8bf20cd5",
       "Sources/NexGenVideo/App/ProductionSpatialHistoryAcceptance.swift": "18e3a92d824544cff162820fb0777108fee716b5",
       "Sources/NexGenVideo/App/ProductionSpatialPoseAcceptance.swift": "2cde3b37d22750d1ddc139c03c24bda97c3146fb",
       "Sources/NexGenVideo/App/ProductionSpatialPromotionAcceptance.swift": "811c1ae580577ebceeae9ea77b6738025828f917",
@@ -1033,7 +1033,7 @@
       "Sources/NexGenVideo/ThreeD/BpyRetiredLaunch.swift": "1ab6db7cbfc9c6a81138051f7e2a2631914eac6a",
       "Sources/NexGenVideo/ThreeD/BpyRoleLockAcceptance.swift": "0401935fd64a5555748262f8fadac7fe6c9621bf",
       "Sources/NexGenVideo/ThreeD/BpyRuntimeClient.swift": "5f94843a22274773f2c15c9a5ec85a29e7828fda",
-      "Sources/NexGenVideo/ThreeD/BpyRuntimeObservation.swift": "294a32cd9c62671dc9a5ee9bcaaad28533f0dee2",
+      "Sources/NexGenVideo/ThreeD/BpyRuntimeObservation.swift": "6773b6f66c1e319010e59319addd9743c065a88e",
       "Sources/NexGenVideo/ThreeD/BpyRuntimeResultLease.swift": "1ed3c58e7838127361caaa9fbf5961b2519e5e28",
       "Sources/NexGenVideo/ThreeD/BpyRuntimeSelfTest.swift": "03a7d004c2bd34d3577ee6ccc820a0182c89fff4",
       "Sources/NexGenVideo/ThreeD/BpyRuntimeVolume.swift": "53859cc42cb2230f80f69d16dca4ed4bf8b83fe7",
@@ -1449,7 +1449,7 @@
       "Sources/NexGenVideo/App/ProductionSpatialAcceptance.swift": "fe5d0a0bb5b16fa69261df5dc3967141927ed2b6",
       "Sources/NexGenVideo/App/ProductionSpatialClayAcceptance.swift": "b2811bd9d7f9a31386a0c961abf147b55faf211b",
       "Sources/NexGenVideo/App/ProductionSpatialCommitCancellationAcceptance.swift": "e43e787a1ba0ecc860df5aac7ffd4bbfc5735596",
-      "Sources/NexGenVideo/App/ProductionSpatialHashCancellationAcceptance.swift": "06241b296147c167599151a5a036b6362e6e4a1d",
+      "Sources/NexGenVideo/App/ProductionSpatialHashCancellationAcceptance.swift": "77ce767daa3aa6916aea95c5b04345ce8bf20cd5",
       "Sources/NexGenVideo/App/ProductionSpatialHistoryAcceptance.swift": "18e3a92d824544cff162820fb0777108fee716b5",
       "Sources/NexGenVideo/App/ProductionSpatialPoseAcceptance.swift": "2cde3b37d22750d1ddc139c03c24bda97c3146fb",
       "Sources/NexGenVideo/App/ProductionSpatialPromotionAcceptance.swift": "811c1ae580577ebceeae9ea77b6738025828f917",
@@ -1962,7 +1962,7 @@
       "Sources/NexGenVideo/ThreeD/BpyRetiredLaunch.swift": "1ab6db7cbfc9c6a81138051f7e2a2631914eac6a",
       "Sources/NexGenVideo/ThreeD/BpyRoleLockAcceptance.swift": "0401935fd64a5555748262f8fadac7fe6c9621bf",
       "Sources/NexGenVideo/ThreeD/BpyRuntimeClient.swift": "5f94843a22274773f2c15c9a5ec85a29e7828fda",
-      "Sources/NexGenVideo/ThreeD/BpyRuntimeObservation.swift": "294a32cd9c62671dc9a5ee9bcaaad28533f0dee2",
+      "Sources/NexGenVideo/ThreeD/BpyRuntimeObservation.swift": "6773b6f66c1e319010e59319addd9743c065a88e",
       "Sources/NexGenVideo/ThreeD/BpyRuntimeResultLease.swift": "1ed3c58e7838127361caaa9fbf5961b2519e5e28",
       "Sources/NexGenVideo/ThreeD/BpyRuntimeSelfTest.swift": "03a7d004c2bd34d3577ee6ccc820a0182c89fff4",
       "Sources/NexGenVideo/ThreeD/BpyRuntimeVolume.swift": "53859cc42cb2230f80f69d16dca4ed4bf8b83fe7",
@@ -2378,7 +2378,7 @@
       "Sources/NexGenVideo/App/ProductionSpatialAcceptance.swift": "fe5d0a0bb5b16fa69261df5dc3967141927ed2b6",
       "Sources/NexGenVideo/App/ProductionSpatialClayAcceptance.swift": "b2811bd9d7f9a31386a0c961abf147b55faf211b",
       "Sources/NexGenVideo/App/ProductionSpatialCommitCancellationAcceptance.swift": "e43e787a1ba0ecc860df5aac7ffd4bbfc5735596",
-      "Sources/NexGenVideo/App/ProductionSpatialHashCancellationAcceptance.swift": "06241b296147c167599151a5a036b6362e6e4a1d",
+      "Sources/NexGenVideo/App/ProductionSpatialHashCancellationAcceptance.swift": "77ce767daa3aa6916aea95c5b04345ce8bf20cd5",
       "Sources/NexGenVideo/App/ProductionSpatialHistoryAcceptance.swift": "18e3a92d824544cff162820fb0777108fee716b5",
       "Sources/NexGenVideo/App/ProductionSpatialPoseAcceptance.swift": "2cde3b37d22750d1ddc139c03c24bda97c3146fb",
       "Sources/NexGenVideo/App/ProductionSpatialPromotionAcceptance.swift": "811c1ae580577ebceeae9ea77b6738025828f917",
@@ -2891,7 +2891,7 @@
       "Sources/NexGenVideo/ThreeD/BpyRetiredLaunch.swift": "1ab6db7cbfc9c6a81138051f7e2a2631914eac6a",
       "Sources/NexGenVideo/ThreeD/BpyRoleLockAcceptance.swift": "0401935fd64a5555748262f8fadac7fe6c9621bf",
       "Sources/NexGenVideo/ThreeD/BpyRuntimeClient.swift": "5f94843a22274773f2c15c9a5ec85a29e7828fda",
-      "Sources/NexGenVideo/ThreeD/BpyRuntimeObservation.swift": "294a32cd9c62671dc9a5ee9bcaaad28533f0dee2",
+      "Sources/NexGenVideo/ThreeD/BpyRuntimeObservation.swift": "6773b6f66c1e319010e59319addd9743c065a88e",
       "Sources/NexGenVideo/ThreeD/BpyRuntimeResultLease.swift": "1ed3c58e7838127361caaa9fbf5961b2519e5e28",
       "Sources/NexGenVideo/ThreeD/BpyRuntimeSelfTest.swift": "03a7d004c2bd34d3577ee6ccc820a0182c89fff4",
       "Sources/NexGenVideo/ThreeD/BpyRuntimeVolume.swift": "53859cc42cb2230f80f69d16dca4ed4bf8b83fe7",
