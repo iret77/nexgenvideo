@@ -1349,9 +1349,18 @@ jobs:
             "$FIXTURE_REFERENCE"
           python3 scripts/private_analysis_verification.py fixture-extract --work "$PACKAGE_DIR" --output "$EXTRACT_DIR"
 
+      - name: Match the file dialog client source
+        if: steps.retained_products.outputs.track_intake == 'true'
+        id: dialog_source
+        run: python3 scripts/file_dialog_products.py select-native
+      - name: Restore qualified file dialog XCTest
+        if: steps.retained_products.outputs.track_intake == 'true' && steps.dialog_source.outputs.reuse == 'true'
+        uses: ./.github/actions/file-dialog-products
+        with:
+          mode: restore-qualified
       - name: Build file dialog XCTest
         id: track_client
-        if: steps.retained_products.outputs.track_intake == 'true'
+        if: steps.retained_products.outputs.track_intake == 'true' && steps.dialog_source.outputs.reuse == 'false'
         uses: ./.github/actions/file-dialog-products
         with:
           mode: build

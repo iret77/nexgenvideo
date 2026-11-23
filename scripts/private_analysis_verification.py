@@ -510,10 +510,30 @@ def verify_dialog_selection(path, action, event, typed, selected):
 def verify_private_dialogs(root, identity, manifest):
     client = read_json(local(root, 'dialog-client.json'))
     artifact = api('actions/artifacts/' + str(client['artifactID']))
+    if client['source'] != identity['productSourceSHA']:
+        from file_dialog_products import QUALIFIED_CLIENT, QUALIFIED_JOB, project_tree
+        from retained_packaging import artifact_bytes
+        check(client == QUALIFIED_CLIENT and project_tree(identity['productSourceSHA']) == project_tree(client['source']) == client['tree'], 'ORIGIN')
+        run = api('actions/runs/' + str(client['run']))
+        job = api('actions/jobs/' + str(QUALIFIED_JOB))
+        check(run['repository']['full_name'] == REPOSITORY and run['workflow_id'] == 355242770
+              and run['path'] == '.github/workflows/diagnostic-acceptance.yml' and run['event'] == 'workflow_dispatch'
+              and run['actor']['login'] == 'iret77' and run['status'] == 'completed'
+              and run['id'] == job['run_id'] == client['run'] and run['head_sha'] == job['head_sha'] == client['source']
+              and run['run_attempt'] == job['run_attempt'] == 1 and job['id'] == QUALIFIED_JOB
+              and job['labels'] == ['macrunner'] and job['name'] == 'app-target-build' and job['status'] == 'completed'
+              and [s['conclusion'] for s in job['steps'] if s['name'] == 'Build file dialog XCTest'] == ['success'], 'ORIGIN')
+        verify_artifact(artifact, run, job, client['artifactID'], client['artifactDigest'][7:], 'file-dialog-ui')
+        with zipfile.ZipFile(io.BytesIO(artifact_bytes(artifact, 128 * 1024**2))) as archive:
+            check(sorted(archive.namelist()) == ['client.json', 'products.tar.gz']
+                  and archive.getinfo('client.json').file_size < 16384 and archive.getinfo('products.tar.gz').file_size <= 128 * 1024**2, 'ORIGIN')
+            receipt = json.loads(archive.read('client.json'))
+            check(receipt == {k: v for k, v in client.items() if k not in {'artifactID', 'artifactDigest'}}
+                  and hashlib.sha256(archive.read('products.tar.gz')).hexdigest() == client['sha256'], 'ORIGIN')
     check(artifact.get('id') == client['artifactID'] and artifact.get('name') == 'file-dialog-ui'
           and artifact.get('digest') == client['artifactDigest'] and DIGEST.fullmatch(client['artifactDigest'])
           and artifact.get('workflow_run', {}).get('id') == client['run']
-          and artifact['workflow_run'].get('head_sha') == client['source'] == identity['productSourceSHA']
+          and artifact['workflow_run'].get('head_sha') == client['source']
           and client['attempt'] == 1 and SHA.fullmatch(client['products']), 'ORIGIN')
     execution = read_json(local(root, 'private-xctest-execution.json'))
     check(execution.get('schema') == 'private-audio-xctest/1' and execution.get('nativeExit') == 0

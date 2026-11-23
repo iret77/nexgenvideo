@@ -1,7 +1,7 @@
 {
-  "appSourceSHA": "8452a5e5d109a51890db64463121b456fcabfff1",
-  "appTreeSHA": "3dcebe3d86a3d7b6de7505fcf58b0cfcea6b433f",
-  "build": "134",
+  "appSourceSHA": "12a855f6e1f4418c496f0f9c5ab3129b59db1ed7",
+  "appTreeSHA": "2879ef36931520fa6936f120cdb6a45fcf6ae387",
+  "build": "135",
   "ciPaths": [
     ".github/actionlint.yaml",
     ".github/actions/file-dialog-products/action.yml",
@@ -149,7 +149,7 @@
   },
   "criteria": {
     "path": "scripts/fixtures/app-cohort-native-inventory.json",
-    "sha256": "57210bc68f58ce56de5beed7e03f6d426de5c0cb867f6398abaaa219c1dac3d9"
+    "sha256": "ccc6bd041aa5ffc915c72c4400a308e2986999e4ac769a6b1460157b86e4f867"
   },
   "nativeSourceObjects": {
     "Engine": "29cfed623d13e6d84d5822a30b98e088fc123c3f",
@@ -157,7 +157,7 @@
     "Package.resolved": "530cdaed0a29a65181353d86d05cf9dc04890cc2",
     "Package.swift": "37f605bfb8cdccc48821b39484c819ba3e5eff43",
     "Runtime": "910b87b08a3a8c976e0f2502580c843b0df74154",
-    "Sources": "6e847f462d89af4061850e6888a39eb83ddc61a4",
+    "Sources": "12cf3cb953e34db570886e2ba38732b1e812b32c",
     "Tests": "3390396694e778c9707cb26457aa7bffc8f62be7",
     "Vendor": "51e93c100e00dcd196edac0e70e1af921d52055a",
     "plugins": "b75e017d3145010368ae417bc410574f3f0300c1"
@@ -214,7 +214,7 @@
       "Sources/NexGenVideo/Agent/Panel/AgentActivityProgressView.swift": "938c3b46500d5f95cce75b60f3bb5f4d8e7c8108",
       "Sources/NexGenVideo/Agent/Panel/AgentBlocksView.swift": "4545ed885f3182a3062105e0503bc42f3d19dfac",
       "Sources/NexGenVideo/Agent/Panel/AgentDecisionHistoryView.swift": "2c587b45c922427eab83a5cb81a679d62e0933fa",
-      "Sources/NexGenVideo/Agent/Panel/AgentDialogCard.swift": "d17004b7a7eedba04dbec0b7abaef4cf251d0bcd",
+      "Sources/NexGenVideo/Agent/Panel/AgentDialogCard.swift": "72bd46fbb3aeee3550ad1c7a9dac7279d7fe46d2",
       "Sources/NexGenVideo/Agent/Panel/AgentInputBox.swift": "bcfbfaa77df8242dba78be7d7bfd18540766260c",
       "Sources/NexGenVideo/Agent/Panel/AgentLiveStatusView.swift": "7da3680f28e2711cf54c8a5d9efb66ae1b89b125",
       "Sources/NexGenVideo/Agent/Panel/AgentMessageView.swift": "e752cb0446eec284b3bea266dab9fa50c722fac0",
@@ -539,7 +539,7 @@
       "Sources/NexGenVideo/App/ProductionV2RecordingRuntime.swift": "d0fce19728d59c065458760cc41ae08a4ed41d76",
       "Sources/NexGenVideo/App/ProductionV2TakeAcceptance.swift": "716f776bc16fb895e193feeb9cd6443d6ed3ee80",
       "Sources/NexGenVideo/App/ProductionVisualSourcesAcceptance.swift": "c196d62bded392962d59704c07915f63dab18287",
-      "Sources/NexGenVideo/App/ProductionVisualSourcesDriver.swift": "b5245cf1406cf9f3a289f54bd35ae4f7c5205f73",
+      "Sources/NexGenVideo/App/ProductionVisualSourcesDriver.swift": "9a1d1a20a21f934471fdb114d71b2b91dedd7e97",
       "Sources/NexGenVideo/App/ProjectOpenAdmission.swift": "766682fc10359a912282809a318135fa6020a774",
       "Sources/NexGenVideo/App/SettingsOwnerAcceptance.swift": "f61357e970c9c9686bccb4331c8758820987b993",
       "Sources/NexGenVideo/App/SmartSearchOwnerAcceptance.swift": "0a11a0dd34bc8bb9a7e8daf240a37811a69cbce2",
@@ -1143,7 +1143,7 @@
       "Sources/NexGenVideo/Agent/Panel/AgentActivityProgressView.swift": "938c3b46500d5f95cce75b60f3bb5f4d8e7c8108",
       "Sources/NexGenVideo/Agent/Panel/AgentBlocksView.swift": "4545ed885f3182a3062105e0503bc42f3d19dfac",
       "Sources/NexGenVideo/Agent/Panel/AgentDecisionHistoryView.swift": "2c587b45c922427eab83a5cb81a679d62e0933fa",
-      "Sources/NexGenVideo/Agent/Panel/AgentDialogCard.swift": "d17004b7a7eedba04dbec0b7abaef4cf251d0bcd",
+      "Sources/NexGenVideo/Agent/Panel/AgentDialogCard.swift": "72bd46fbb3aeee3550ad1c7a9dac7279d7fe46d2",
       "Sources/NexGenVideo/Agent/Panel/AgentInputBox.swift": "bcfbfaa77df8242dba78be7d7bfd18540766260c",
       "Sources/NexGenVideo/Agent/Panel/AgentLiveStatusView.swift": "7da3680f28e2711cf54c8a5d9efb66ae1b89b125",
       "Sources/NexGenVideo/Agent/Panel/AgentMessageView.swift": "e752cb0446eec284b3bea266dab9fa50c722fac0",
@@ -1468,7 +1468,7 @@
       "Sources/NexGenVideo/App/ProductionV2RecordingRuntime.swift": "d0fce19728d59c065458760cc41ae08a4ed41d76",
       "Sources/NexGenVideo/App/ProductionV2TakeAcceptance.swift": "716f776bc16fb895e193feeb9cd6443d6ed3ee80",
       "Sources/NexGenVideo/App/ProductionVisualSourcesAcceptance.swift": "c196d62bded392962d59704c07915f63dab18287",
-      "Sources/NexGenVideo/App/ProductionVisualSourcesDriver.swift": "b5245cf1406cf9f3a289f54bd35ae4f7c5205f73",
+      "Sources/NexGenVideo/App/ProductionVisualSourcesDriver.swift": "9a1d1a20a21f934471fdb114d71b2b91dedd7e97",
       "Sources/NexGenVideo/App/ProjectOpenAdmission.swift": "766682fc10359a912282809a318135fa6020a774",
       "Sources/NexGenVideo/App/SettingsOwnerAcceptance.swift": "f61357e970c9c9686bccb4331c8758820987b993",
       "Sources/NexGenVideo/App/SmartSearchOwnerAcceptance.swift": "0a11a0dd34bc8bb9a7e8daf240a37811a69cbce2",
@@ -2072,7 +2072,7 @@
       "Sources/NexGenVideo/Agent/Panel/AgentActivityProgressView.swift": "938c3b46500d5f95cce75b60f3bb5f4d8e7c8108",
       "Sources/NexGenVideo/Agent/Panel/AgentBlocksView.swift": "4545ed885f3182a3062105e0503bc42f3d19dfac",
       "Sources/NexGenVideo/Agent/Panel/AgentDecisionHistoryView.swift": "2c587b45c922427eab83a5cb81a679d62e0933fa",
-      "Sources/NexGenVideo/Agent/Panel/AgentDialogCard.swift": "d17004b7a7eedba04dbec0b7abaef4cf251d0bcd",
+      "Sources/NexGenVideo/Agent/Panel/AgentDialogCard.swift": "72bd46fbb3aeee3550ad1c7a9dac7279d7fe46d2",
       "Sources/NexGenVideo/Agent/Panel/AgentInputBox.swift": "bcfbfaa77df8242dba78be7d7bfd18540766260c",
       "Sources/NexGenVideo/Agent/Panel/AgentLiveStatusView.swift": "7da3680f28e2711cf54c8a5d9efb66ae1b89b125",
       "Sources/NexGenVideo/Agent/Panel/AgentMessageView.swift": "e752cb0446eec284b3bea266dab9fa50c722fac0",
@@ -2397,7 +2397,7 @@
       "Sources/NexGenVideo/App/ProductionV2RecordingRuntime.swift": "d0fce19728d59c065458760cc41ae08a4ed41d76",
       "Sources/NexGenVideo/App/ProductionV2TakeAcceptance.swift": "716f776bc16fb895e193feeb9cd6443d6ed3ee80",
       "Sources/NexGenVideo/App/ProductionVisualSourcesAcceptance.swift": "c196d62bded392962d59704c07915f63dab18287",
-      "Sources/NexGenVideo/App/ProductionVisualSourcesDriver.swift": "b5245cf1406cf9f3a289f54bd35ae4f7c5205f73",
+      "Sources/NexGenVideo/App/ProductionVisualSourcesDriver.swift": "9a1d1a20a21f934471fdb114d71b2b91dedd7e97",
       "Sources/NexGenVideo/App/ProjectOpenAdmission.swift": "766682fc10359a912282809a318135fa6020a774",
       "Sources/NexGenVideo/App/SettingsOwnerAcceptance.swift": "f61357e970c9c9686bccb4331c8758820987b993",
       "Sources/NexGenVideo/App/SmartSearchOwnerAcceptance.swift": "0a11a0dd34bc8bb9a7e8daf240a37811a69cbce2",

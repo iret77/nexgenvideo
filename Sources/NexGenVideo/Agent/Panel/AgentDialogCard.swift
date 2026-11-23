@@ -109,14 +109,17 @@ struct AgentDialogCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
             header
+                .padding(.horizontal, AppTheme.Spacing.md)
             ScrollView {
                 decisionBody
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, AppTheme.Spacing.md)
             }
             .scrollBounceBehavior(.basedOnSize)
             footerRow
+                .padding(.horizontal, AppTheme.Spacing.md)
         }
-        .padding(AppTheme.Spacing.md)
+        .padding(.vertical, AppTheme.Spacing.md)
         .frame(maxHeight: min(availableHeight ?? AppTheme.ComponentSize.agentDecisionMaxHeight,
                               AppTheme.ComponentSize.agentDecisionMaxHeight))
         .background(

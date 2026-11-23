@@ -37,6 +37,17 @@ class NativeAppTargetWorkflowTests(unittest.TestCase):
             with self.subTest(difference=difference), self.assertRaises(ValueError):
                 select(job | difference)
 
+    def test_cross_source_dialog_reuse_requires_the_original_receipt_and_full_project_tree(self):
+        from file_dialog_products import QUALIFIED_CLIENT, bound_client_source
+        product = 'a' * 40
+        with patch('file_dialog_products.project_tree', return_value=QUALIFIED_CLIENT['tree']):
+            self.assertTrue(bound_client_source(QUALIFIED_CLIENT, product))
+            for key in ('artifactID', 'artifactDigest', 'source', 'run', 'products', 'sha256'):
+                with self.subTest(key=key):
+                    self.assertFalse(bound_client_source(QUALIFIED_CLIENT | {key: None}, product))
+        with patch('file_dialog_products.project_tree', return_value='f' * 40):
+            self.assertFalse(bound_client_source(QUALIFIED_CLIENT, product))
+
     def test_release_file_dialog_transfer_records_original_client_and_release_separately(self):
         from file_dialog_products import transfer_native_client
         head = 'a' * 40
