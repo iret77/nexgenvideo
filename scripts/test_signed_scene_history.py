@@ -44,6 +44,8 @@ class SignedSceneHistoryTests(unittest.TestCase):
                         self.assertEqual((product, pid), ('c' * 40, 472))
                         self.assertEqual(json.loads(files['process-result.json'])['returncode'], 0)
                     args, = launch.call_args.args
+                    self.assertEqual(args.count('-de.h5ventures.nexgenvideo.notifications.enabled'), 1)
+                    self.assertEqual(args[args.index('-de.h5ventures.nexgenvideo.notifications.enabled') + 1], 'NO')
                     self.assertEqual(args[-4:], ['-agentBackend', 'anthropicAPI',
                         '-de.h5ventures.nexgenvideo.mcp.enabled', 'NO'])
                     env = launch.call_args.kwargs['env']
