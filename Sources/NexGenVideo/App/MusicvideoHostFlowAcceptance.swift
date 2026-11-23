@@ -209,7 +209,7 @@ final class MusicvideoHostFlowAcceptance {
         try intakeDriver.capture("location-without-name", target: window)
         try await intakeDriver.fill("agent.dialog.direction", value: "Stage", in: window)
         try require(service.dialogDraft.direction == "Stage", "Native identity input did not reach the actual draft")
-        try await intakeDriver.click("agent.dialog.confirm", in: window)
+        try await intakeDriver.clickButton("agent.dialog.confirm", title: "Attach", in: window, settledTarget: .hoveredButton)
         try await waitForDialog("Prepared location 2", attachAs: "location")
         try require(service.pendingDialog?.fileIntake?.completionLabel == "Done", "The completed location has no Done action")
         let confirmed = try ConfirmedIdentityAssetStoreV1.load(dataRoot: dataRoot).entries.values.filter {
@@ -225,13 +225,13 @@ final class MusicvideoHostFlowAcceptance {
             "An unfinished repeated location can be attached or discarded with Done")
         try intakeDriver.visible(["agent.dialog.confirm", "agent.dialog.complete", "agent.dialog.clear-item"], in: window)
         try intakeDriver.capture("second-location-incomplete", target: window)
-        try await intakeDriver.click("agent.dialog.clear-item", in: window)
+        try await intakeDriver.clickButton("agent.dialog.clear-item", title: "Clear item", in: window, settledTarget: .hoveredButton)
         try await intakeDriver.wait("clear incomplete repeated location") {
             self.service.dialogDraft.direction.isEmpty && self.service.dialogDraft.fileURLs.isEmpty
                 && WorkspaceUIAcceptance.probeState(identifier: "agent.dialog.complete", in: self.window) == true
                 && WorkspaceUIAcceptance.probeState(identifier: "agent.dialog.confirm", in: self.window) == false
         }
-        try await intakeDriver.click("agent.dialog.complete", in: window)
+        try await intakeDriver.clickButton("agent.dialog.complete", title: "Done", in: window, settledTarget: .hoveredButton)
         try await waitForDialog("Style references", attachAs: "style")
         let afterManifest = try ConfirmedIdentityAssetStoreV1.load(dataRoot: dataRoot)
         try require(afterManifest == completeManifest, "Clearing the second item lost or invented a confirmed identity")
