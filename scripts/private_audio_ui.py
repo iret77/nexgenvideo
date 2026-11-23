@@ -1,11 +1,13 @@
 """Run the fixed private musicvideo dialog journey alongside the real analysis process."""
 from contextlib import ExitStack
+import hashlib
 import json
 import os
 from pathlib import Path
 import plistlib
 import subprocess
 import sys
+import tempfile
 import time
 from urllib.parse import unquote, urlsplit
 from file_dialog_ui import session, start, wait_for_native
@@ -28,6 +30,76 @@ def config_for():
         raise ValueError("Ambiguous private lyrics fixture")
     return dict(track=track,
                 lyrics=next(iter(lyrics), None), fixtureRoot=root.as_uri())
+
+
+def observe_location_footer(report, pid):
+    marker = report / 'hostflow-repeatable-intake-4-second-location-incomplete.png'
+    progress = report / 'hostflow-repeatable-intake.json'
+    result = report / 'hostflow-repeatable-intake-result.json'
+    deadline = time.monotonic() + 49 * 60
+    while not marker.is_file():
+        if time.monotonic() >= deadline:
+            raise TimeoutError('Second location was not presented')
+        time.sleep(0.01 if progress.is_file() else 0.1)
+    if int((report / 'dialog-native.pid').read_text()) != pid:
+        raise ValueError('Location window belongs to another intake')
+    rows = json.loads(progress.read_bytes())['interactions']
+    field, = [r['field'] for r in rows if r['kind'] == 'text' and r['field']['actual'] == 'Unfinished location']
+    window = field['window']
+    if not field['ownsEditor'] or not isinstance(window, int) or window <= 0:
+        raise ValueError('Missing original second location window')
+    with tempfile.TemporaryDirectory(dir=report.parent) as temp:
+        captures = []
+        end = time.monotonic() + 2
+        while time.monotonic() < end and not result.exists():
+            path = Path(temp) / f'{len(captures)}.png'
+            before = time.monotonic()
+            subprocess.run(['/usr/sbin/screencapture', '-x', '-o', '-l', str(window), str(path)],
+                           stdin=subprocess.DEVNULL, check=True, timeout=4)
+            captures.append((before, time.monotonic(), path))
+        while not result.exists():
+            if time.monotonic() >= deadline:
+                raise TimeoutError('Location confirmation did not finish')
+            time.sleep(0.05)
+        raw = result.read_bytes()
+        click, = [r['nativeInput'] for r in json.loads(raw)['interactions']
+                  if r.get('id') == 'agent.dialog.clear-item' and r['kind'] == 'pointer']
+        hover, = [e for e in click['movement']['received'] if e['tagMatches'] and e['windowMatches']
+                  and e['xMatches'] and e['yMatches'] and e['window'] == window]
+        down, = [e for e in click['posted'] if e['type'] == 1 and e['tag'] == hover['tag'] == click['tag']]
+        if click['status'] != 'delivered' or click['window'] != window or not click['originalHoverValidAtDown']:
+            raise ValueError('Missing observed Clear item activation')
+        settled = [(a, b, path) for a, b, path in captures
+                   if hover['observedUptime'] + 0.15 <= a <= b < down['postedUptime']]
+        frames = []
+        for a, b, path in settled:
+            data = path.read_bytes()
+            if data[:8] != bytes.fromhex('89504e470d0a1a0a'):
+                raise ValueError('WindowServer capture is not a PNG')
+            name = f'location-footer-settled-{len(frames)}.png'
+            path.replace(report / name)
+            frames.append(dict(name=name, begin=a, end=b, sha256=hashlib.sha256(data).hexdigest()))
+        receipt = dict(pid=pid, window=window, transaction=click['transaction'], hover=hover['observedUptime'],
+                       down=down['postedUptime'], resultSHA256=hashlib.sha256(raw).hexdigest(), frames=frames,
+                       attempts=[[a, b] for a, b, _ in captures], runID=int(os.environ['GITHUB_RUN_ID']),
+                       attempt=int(os.environ['GITHUB_RUN_ATTEMPT']))
+        with (report / 'location-footer-observation.json').open('x') as stream:
+            json.dump(receipt, stream, sort_keys=True)
+        if not frames:
+            raise RuntimeError('No WindowServer image inside the settled location interval')
+
+
+def start_footer_observer(stack, app, env, report, native):
+    build = plistlib.loads((app / 'Contents/Info.plist').read_bytes())['CFBundleVersion']
+    if int(build) < 139:
+        return None
+    log = stack.enter_context((report / 'location-footer-observer.log').open('xb'))
+    return start(stack, [sys.executable, __file__, '--observe-footer', str(report), str(native.pid)], env=env, log=log)
+
+
+def finish_footer_observer(observer):
+    if observer is not None and observer.wait(timeout=10) != 0:
+        raise RuntimeError('Missing settled location footer evidence')
 
 
 def verify_material_handoff(report, native, client, file_count, project):
@@ -104,6 +176,7 @@ def verify_native_intake(app, pack, runner, binding):
             log = stack.enter_context((report / 'private-app.log').open('xb'))
             native = start(stack, [app / 'Contents/MacOS/NexGenVideo', '-ApplePersistenceIgnoreState', 'YES',
                                    '-AppleLanguages', '(en)', '-AppleLocale', 'en_US'], env=env, log=log)
+            observer = start_footer_observer(stack, app, env, report, native)
             client.attach(native.pid)
             deadline = time.monotonic() + 180
             confirmations = [report / f'file-panel-{n}-default-action.json' for n in range(1, len(paths) + 1)]
@@ -137,6 +210,7 @@ def verify_native_intake(app, pack, runner, binding):
                         and marker['selected'] == receipt['typed'] == str(path), 'Private native selection does not match')
             if material_required:
                 verify_material_handoff(report, native, client, len(paths), entered['projectKey'])
+            finish_footer_observer(observer)
             raise HandoffObserved
     except HandoffObserved:
         require(native.poll() is not None and client.process.poll() is not None, 'Private intake child did not exit')
@@ -169,9 +243,11 @@ def analyze():
             log = stack.enter_context((report / "private-app.log").open("xb"))
             native = start(stack, [app / "Contents/MacOS/NexGenVideo", "-ApplePersistenceIgnoreState", "YES",
                                    "-AppleLanguages", "(en)", "-AppleLocale", "en_US"], env=env, log=log)
+            observer = start_footer_observer(stack, app, env, report, native)
             code = wait_for_native(native, client, 49 * 60)
             if code:
                 raise RuntimeError("The private analysis failed")
+            finish_footer_observer(observer)
     with (report / "private-xctest-execution.json").open("x") as out:
         json.dump(dict(schema="private-audio-xctest/1", nativeExit=code, testExit=client.process.returncode,
                        appPID=native.pid, runnerTemp=str(runner), runID=int(os.environ["GITHUB_RUN_ID"]),
@@ -181,7 +257,10 @@ def analyze():
 
 if __name__ == "__main__":
     try:
-        analyze()
+        if len(sys.argv) == 4 and sys.argv[1] == '--observe-footer':
+            observe_location_footer(Path(sys.argv[2]), int(sys.argv[3]))
+        else:
+            analyze()
     except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError) as error:
         print("Private audio UI failed (" + type(error).__name__ + ")", file=sys.stderr)
         sys.exit(1)
