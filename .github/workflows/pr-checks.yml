@@ -45,7 +45,7 @@ jobs:
         if: runner.os == 'macOS' && github.head_ref == 'iret77/rc-142-scene-desktop'
         env:
           HOME: ${{ runner.temp }}/nexgenvideo-test-home
-        run: xcrun swiftc -typecheck scripts/scene_desktop_observer.swift
+        run: xcrun swiftc -parse-as-library -typecheck scripts/scene_desktop_observer.swift
 
       - name: Verify CI and fixture tooling
         id: fixture_tooling

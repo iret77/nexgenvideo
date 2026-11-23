@@ -197,7 +197,7 @@ def editing_result(directory, product, pid):
 @contextmanager
 def observe_desktop(root, evidence):
     executable = root / 'scene-desktop-observer'
-    subprocess.run(['xcrun', 'swiftc', 'scripts/scene_desktop_observer.swift', '-o', executable],
+    subprocess.run(['xcrun', 'swiftc', '-parse-as-library', 'scripts/scene_desktop_observer.swift', '-o', executable],
                    check=True, stdin=subprocess.DEVNULL, timeout=120)
     with (evidence / 'desktop-observations.jsonl').open('xb') as out, (evidence / 'desktop-observer.log').open('xb') as err:
         observer = subprocess.Popen([executable, root], stdout=out, stderr=err, stdin=subprocess.DEVNULL)

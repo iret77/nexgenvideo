@@ -122,32 +122,37 @@ func desktop(_ phase: String, pid: pid_t? = nil, keyWindow: Int? = nil) throws {
     if phase == "before-app", inventory == nil || !AXIsProcessTrusted() { exit(3) }
 }
 
-let arguments = Array(CommandLine.arguments.dropFirst())
-guard arguments.count == 1 else { exit(2) }
-let root = URL(fileURLWithPath: arguments[0], isDirectory: true)
-let progress = root.appendingPathComponent("evidence/scene/spatial-history-admission.json")
-let processFile = root.appendingPathComponent("scene-observed-app.json")
-try desktop("before-app")
-try Data().write(to: root.appendingPathComponent("scene-desktop-ready"))
-let deadline = ProcessInfo.processInfo.systemUptime + 350
-while ProcessInfo.processInfo.systemUptime < deadline && !FileManager.default.fileExists(atPath: root.appendingPathComponent("scene-desktop-done").path) {
-    if let data = try? Data(contentsOf: processFile),
-       let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-       let pid = (object["pid"] as? NSNumber)?.int32Value,
-       let path = object["executable"] as? String, let app = NSRunningApplication(processIdentifier: pid),
-       app.executableURL?.resolvingSymlinksInPath().path == URL(fileURLWithPath: path).resolvingSymlinksInPath().path {
-        var phase = "app-started"
-        var keyWindow: Int?
-        if let receipt = try? Data(contentsOf: progress),
-           let fields = try? JSONSerialization.jsonObject(with: receipt) as? [String: Any],
-           let stage = fields["stage"] as? String {
-            phase = String(stage.prefix(120))
-            if phase == "settled local button Undo", let diagnostic = fields["diagnostic"] as? String,
-               diagnostic.hasPrefix("key="), let first = diagnostic.split(separator: ",").first {
-                keyWindow = Int(first.dropFirst(4))
+@main
+struct SceneDesktopObserver {
+    @MainActor static func main() throws {
+        let arguments = Array(CommandLine.arguments.dropFirst())
+        guard arguments.count == 1 else { exit(2) }
+        let root = URL(fileURLWithPath: arguments[0], isDirectory: true)
+        let progress = root.appendingPathComponent("evidence/scene/spatial-history-admission.json")
+        let processFile = root.appendingPathComponent("scene-observed-app.json")
+        try desktop("before-app")
+        try Data().write(to: root.appendingPathComponent("scene-desktop-ready"))
+        let deadline = ProcessInfo.processInfo.systemUptime + 350
+        while ProcessInfo.processInfo.systemUptime < deadline && !FileManager.default.fileExists(atPath: root.appendingPathComponent("scene-desktop-done").path) {
+            if let data = try? Data(contentsOf: processFile),
+               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let pid = (object["pid"] as? NSNumber)?.int32Value,
+               let path = object["executable"] as? String, let app = NSRunningApplication(processIdentifier: pid),
+               app.executableURL?.resolvingSymlinksInPath().path == URL(fileURLWithPath: path).resolvingSymlinksInPath().path {
+                var phase = "app-started"
+                var keyWindow: Int?
+                if let receipt = try? Data(contentsOf: progress),
+                   let fields = try? JSONSerialization.jsonObject(with: receipt) as? [String: Any],
+                   let stage = fields["stage"] as? String {
+                    phase = String(stage.prefix(120))
+                    if phase == "settled local button Undo", let diagnostic = fields["diagnostic"] as? String,
+                       diagnostic.hasPrefix("key="), let first = diagnostic.split(separator: ",").first {
+                        keyWindow = Int(first.dropFirst(4))
+                    }
+                }
+                try desktop(phase, pid: pid, keyWindow: keyWindow)
             }
+            Thread.sleep(forTimeInterval: 0.5)
         }
-        try desktop(phase, pid: pid, keyWindow: keyWindow)
     }
-    Thread.sleep(forTimeInterval: 0.5)
 }
