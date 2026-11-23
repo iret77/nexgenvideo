@@ -737,7 +737,7 @@ class DiagnosticLocalMusicvideoRouteTests(unittest.TestCase):
         self.assertEqual(job['uses'], './.github/workflows/external-gui-acceptance.yml')
         self.assertEqual(job['with']['scenario'], "${{ inputs.journey_scenario || 'journey' }}")
         self.assertEqual(job['with']['expected_catalog_sha256'], '${{ inputs.expected_catalog_sha256 }}')
-        self.assertEqual(job['with']['expected_pack_sha256'], "${{ inputs.journey_scenario == 'normal-fresh-local-musicvideo' && '37fcee05d1ac334b20eb392c61cc3b7a94af165dc3b967c61602bc79d6dc4388' || '' }}")
+        self.assertEqual(job['with']['expected_pack_sha256'], "${{ inputs.journey_scenario == 'normal-fresh-local-musicvideo' && (needs.source.outputs.mounted-pack-sha256 || '37fcee05d1ac334b20eb392c61cc3b7a94af165dc3b967c61602bc79d6dc4388') || '' }}")
         for field in ('test_bundle_run_id', 'test_bundle_artifact_id', 'test_bundle_artifact_sha256', 'verified_pr_run_id'):
             self.assertEqual(job['with'][field], '${{ inputs.' + field + ' }}')
         proof = next(row for row in self.steps if row.get('name') == 'Reuse complete current merged PR source proof')

@@ -123,6 +123,9 @@ enum ProductionSpatialClayAcceptance {
                 }
                 try driver.record("native full shot Clay render and inspect", fields: ["shotID": shotID,
                     "videoSHA256": current.video.sha256, "proofSHA256": current.proof.sha256, "durationSeconds": duration.seconds])
+                let receipt = try ProjectLocalFile.requireHash(current.proof.sha256, at: current.proof.path, dataRoot: root)
+                try FileManager.default.copyItem(at: receipt.deletingLastPathComponent(),
+                    to: output.appendingPathComponent("clay-render-\(Int(scale * 100))", isDirectory: true))
                 var result = driver.result()
                 result["cancelDuringHash"] = true; result["closeDuringLoading"] = true
                 results.append(result.merging(try presentation(window: window, scale: scale)) { _, new in new })

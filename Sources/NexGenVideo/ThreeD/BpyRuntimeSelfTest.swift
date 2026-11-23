@@ -23,10 +23,14 @@ enum BpyRuntimeSelfTest {
                     withIntermediateDirectories: true
                 )
                 outputDirectory = output
-                guard ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY_SCOPE"] == "scene-history" else {
-                    throw GateBlocked("Unknown scene-history acceptance scope.")
+                switch ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY_SCOPE"] {
+                case "scene-history":
+                    pendingResult = try await runSceneHistory(output: output)
+                case "scene-editing":
+                    pendingResult = try await runSceneEditing(output: output)
+                default:
+                    throw GateBlocked("Unknown scene acceptance scope.")
                 }
-                pendingResult = try await runSceneHistory(output: output)
                 AppTermination.request()
             } catch {
                 recordInspectionFailureDiagnostic()
@@ -89,7 +93,7 @@ enum BpyRuntimeSelfTest {
                 to: outputDirectory.appendingPathComponent("result.json"),
                 options: .atomic
             )
-            let marker = "SELFTEST_BPY_HISTORY_OK\n"
+            let marker = result["scope"] as? String == "scene-editing" ? "SELFTEST_BPY_EDITING_OK\n" : "SELFTEST_BPY_HISTORY_OK\n"
             FileHandle.standardOutput.write(Data(marker.utf8))
         } catch {
             let message = "SELFTEST_BPY_FAIL \(error.localizedDescription)\n"
@@ -111,6 +115,35 @@ enum BpyRuntimeSelfTest {
         return ["schema": "nexgenvideo/scene-history-runtime/1", "scope": "scene-history",
             "sourceSHA": Bundle.main.object(forInfoDictionaryKey: "NGVSourceCommit") as? String ?? "",
             "historyAdmission": history]
+    }
+
+    private static func runSceneEditing(output: URL) async throws -> [String: Any] {
+        var opened: ProductionPlanningAcceptanceFixture.Context?
+        var selection: (SpatialSceneHead, [[String: Any]])?
+        defer { opened?.document.close() }
+        let context = try await ProductionPlanningAcceptanceFixture.makeScript(beforeDesignApproval: { context in
+            opened = context
+            NSDocumentController.shared.addDocument(context.document)
+            selection = try await ProductionSceneUIAcceptance.run(context: context, output: output)
+        })
+        guard let (scene, sceneUI) = selection,
+              let camera = try SpatialSceneStore.load(scene, in: context.dataRoot).snapshot.cameras.first else {
+            throw GateBlocked("The edited scene has no saved camera.")
+        }
+        try await ProductionPlanningAcceptanceFixture.approve("script", in: context)
+        _ = try await ProductionPlanningAcceptanceFixture.writeStoryboard(in: context)
+        let board = try await ProductionPlanningAcceptanceFixture.attachSketches(in: context)
+        guard let shot = board.timing.shots.first else { throw GateBlocked("The storyboard has no planned shot.") }
+        try await ProductionPlanningAcceptanceFixture.approve("storyboard", in: context)
+        _ = try await ProductionPlanningAcceptanceFixture.writeShotPlanning(in: context)
+        let poseUI = try await ProductionSpatialPoseAcceptance.run(context: context, scene: scene,
+            cameraID: camera.id, shotID: shot.id, output: output)
+        let clayUI = try await ProductionSpatialClayAcceptance.run(context: context, shotID: shot.id, output: output)
+        guard let key = context.editor.openWorkingCopyKey else { throw SpatialSceneError.changed }
+        terminationOperation = try await BpyRuntimeHost.shared.acquireOperation(document: context.document, documentID: key)
+        return ["schema": "nexgenvideo/scene-editing-runtime/1", "scope": "scene-editing",
+            "sourceSHA": Bundle.main.object(forInfoDictionaryKey: "NGVSourceCommit") as? String ?? "",
+            "hostPID": getpid(), "nativeSceneUI": sceneUI, "nativePoseUI": poseUI, "nativeClayUI": clayUI]
     }
 
     private static func hostPeakMemoryBytes() -> Int64 {

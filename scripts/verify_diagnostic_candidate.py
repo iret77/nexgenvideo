@@ -430,10 +430,11 @@ def verify_signed_workspace(*args, **kwargs):
 
 
 def verify_signed_desktop(*args, **kwargs):
-    verify_signed_bpy(*args, artifact_name="workspace-ui-app", harness_paths=SIGNED_DESKTOP_HARNESS_PATHS, **kwargs)
+    mounted = verify_signed_bpy(*args, artifact_name="workspace-ui-app", harness_paths=SIGNED_DESKTOP_HARNESS_PATHS, **kwargs)
     release = next(job for job in args[1]["jobs"] if job["name"] == "release")
     if release.get("labels") != ["macrunner"]:
         raise ValueError("retained desktop runtime must be produced on macrunner")
+    return mounted
 
 
 def main():

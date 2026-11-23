@@ -1909,13 +1909,32 @@ class ExternalTestBundleTests(unittest.TestCase):
                     ({'EXPECTED_PACK_SHA256': ''}, False), ({'FIXTURE_ARTIFACT': '78'}, False),
                     ({'SCENARIO': 'journey'}, False)]
         variants += [({'SCENARIO': 'normal-fresh-local-musicvideo', 'EXPECTED_PACK_SHA256': journey.LOCAL_PACK_ZIP_SHA}, True),
-                     ({'SCENARIO': 'normal-fresh-local-musicvideo'}, False),
+                     ({'SCENARIO': 'normal-fresh-local-musicvideo'}, True),
+                     ({'SCENARIO': 'normal-fresh-local-musicvideo', 'RETAINED_SOURCE': 'f' * 40}, False),
                      ({'SCENARIO': 'normal-fresh-local-musicvideo', 'EXPECTED_PACK_SHA256': journey.LOCAL_PACK_ZIP_SHA, 'ARTIFACT_MODE': 'app'}, False)]
         for changes, accepted in variants:
             with self.subTest(changes=changes):
                 result = subprocess.run([sys.executable, '-c', code], stdin=subprocess.DEVNULL, capture_output=True,
                                         env=os.environ | values | changes, timeout=20)
                 self.assertEqual(result.returncode == 0, accepted, result.stderr.decode())
+
+    def test_internal_local_pack_requires_both_the_mounted_receipt_and_the_selected_archive(self):
+        source, dmg, pack = 'a' * 40, '1' * 64, '2' * 64
+        mounted = dict(sourceSHA=source, dmgSHA256=dmg, packArchive='musicvideo.ngvpack.zip', packOrigin='mounted-dmg',
+                       packArchiveSHA256=pack, mountedPackTreeSHA256='3' * 64, packTreeSHA256='3' * 64,
+                       mountedAppTreeSHA256='4' * 64)
+        before = dict(candidateKind='signed-journey', buildSourceSHA=source, harnessSourceSHA=source)
+        with patch.dict(os.environ, RUNNER_TEMP=str(self.root), GITHUB_SHA=source):
+            for item, selected, valid in ((mounted, pack, True), (mounted, '9' * 64, False),
+                                         (dict(mounted, packTreeSHA256='9' * 64), pack, False),
+                                         (None, pack, False), (None, journey.LOCAL_PACK_ZIP_SHA, True)):
+                with self.subTest(item=item, selected=selected), patch.object(journey, 'read_json',
+                        return_value=dict(before, mountedInternalImage=item)):
+                    if valid:
+                        self.assertEqual(journey.qualified_local_pack(source, dmg, selected), item)
+                    else:
+                        with self.assertRaises(ValueError):
+                            journey.qualified_local_pack(source, dmg, selected)
 
     def test_local_dmg_case_keeps_the_old_catalog_case_distinct_and_binds_original_pack_lineage(self):
         raw = json.dumps({'schema': 'plugins/v2', 'plugins': [{'id': 'musicvideo', 'version': '0.5.8'}]}).encode()
