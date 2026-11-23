@@ -3,6 +3,7 @@ from contextlib import ExitStack
 import json
 import os
 from pathlib import Path
+import plistlib
 import subprocess
 import sys
 import time
@@ -29,10 +30,57 @@ def config_for():
                 lyrics=next(iter(lyrics), None), fixtureRoot=root.as_uri())
 
 
+def verify_material_handoff(report, native, client, file_count, project):
+    from musicvideo_intake_evidence import observation, validate
+    from retained_app_test_products import require
+    material_result = report / 'hostflow-material-actions-result.json'
+    location_open = file_count + 2
+    confirmation_path = report / f'file-panel-{location_open}-default-action.json'
+    deadline = time.monotonic() + 600
+    while not (material_result.is_file() and confirmation_path.is_file()):
+        require(native.poll() is None, 'Private material intake exited before the Brief handoff')
+        client.check()
+        if time.monotonic() >= deadline:
+            raise TimeoutError('Missing private material decisions, location Open or Brief handoff')
+        time.sleep(0.2)
+    stages = ['hostflow-track-lyrics-result.json', 'hostflow-repeatable-intake-result.json']
+    validate(report, {'nativeIntakeEvidence': stages})
+    location = json.loads((report / stages[1]).read_bytes())
+    panels = [row for row in location['interactions'] if row['kind'] in ('file-panel-cancel', 'file-panel')]
+    require([row['dialogTestStep'] for row in panels] == [location_open - 1, location_open], 'Wrong material file panels')
+    for panel, action in zip(panels, ('cancel', 'open')):
+        prefix = f"file-panel-{panel['dialogTestStep']}-"
+        observed = json.loads((report / (prefix + 'observed')).read_bytes())
+        typed = json.loads((report / (prefix + 'input.json')).read_bytes())
+        require(observed['pid'] == typed['pid'] == native.pid and observed['step'] == typed['step'] == panel['dialogTestStep']
+                and observed['action'] == typed['action'] == action and observed['window'] == typed['window'] == panel['dismissedWindow']
+                and typed['window'] > 0, 'Material file panel no longer matches the app')
+        if action == 'open':
+            proof = json.loads(confirmation_path.read_bytes())
+            require(proof['sentReturn'] is True and proof['visibleTargetWindows'][:1] == [typed['window']]
+                    and proof['window'] == typed['window'] and typed['pathField'] == 'PathTextField'
+                    and observed['selected'] == typed['typed'] == str(report / 'Stage.png'), 'Unconfirmed location selection')
+    material = json.loads(material_result.read_bytes())
+    actions = [row for row in material['interactions'] if row.get('kind') == 'pointer']
+    cards = [row['evidence'] for row in material['interactions'] if row.get('label') == 'material action']
+    handoff = observation(material, 'material intake handoff')
+    require([(card['role'], card['title'], card['button']) for card in cards] ==
+            [('script', 'Existing story', 'Continue'), ('character', 'Prepared character 1', 'Skip'),
+             ('style', 'Style references', 'Continue')] and len({card['dialogID'] for card in cards}) == 3
+            and handoff['projectKey'] == project and handoff['phase'] == 'brief' and handoff['turnID'] and handoff['instructionsSHA256'],
+            'Private material decisions did not hand the same project to Brief')
+    require([row['id'] for row in actions] == [card['control'] for card in cards] ==
+            ['agent.dialog.confirm', 'agent.dialog.complete', 'agent.dialog.confirm']
+            and len({row['nativeInput']['transaction'] for row in actions}) == 3
+            and all(row['nativeInput']['buttonDownObserved'] is True and row['nativeInput']['buttonReleased'] is True
+                    for row in actions), 'Private material buttons did not receive their native clicks')
+
+
 def verify_native_intake(app, pack, runner, binding):
     from isolated_test_home import environment
     from retained_app_test_products import checksum, require
     from musicvideo_intake_evidence import observation
+    material_required = int(plistlib.loads((app / 'Contents/Info.plist').read_bytes())['CFBundleVersion']) >= 134
     report = runner / 'analysis-report'
     report.mkdir()
     keys = ('PATH', 'TMPDIR', 'LANG', 'LC_ALL', 'DISPLAY', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT',
@@ -82,11 +130,13 @@ def verify_native_intake(app, pack, runner, binding):
                         and marker['window'] == receipt['window'] and marker['window'] > 0
                         and marker['action'] == receipt['action'] == 'open' and receipt['pathField'] == 'PathTextField'
                         and marker['selected'] == receipt['typed'] == str(path), 'Private native selection does not match')
+            if material_required:
+                verify_material_handoff(report, native, client, len(paths), entered['projectKey'])
             raise HandoffObserved
     except HandoffObserved:
         require(native.poll() is not None and client.process.poll() is not None, 'Private intake child did not exit')
         (report / 'native-intake.json').write_text(json.dumps(dict(binding=binding, appPID=native.pid,
-            nativeExit=native.returncode, clientExit=client.process.returncode, analysisHandoff=True, fullAcceptance=False)))
+            nativeExit=native.returncode, clientExit=client.process.returncode, analysisHandoff=True, materialIntakeHandoff=material_required, fullAcceptance=False)))
     except Exception:
         import traceback
         (report / 'intake-error.log').write_text(traceback.format_exc())
