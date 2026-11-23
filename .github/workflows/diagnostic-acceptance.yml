@@ -15,7 +15,7 @@ on:
       candidate_kind:
         description: Signed release verification or targeted failed CI diagnostics
         type: choice
-        options: [native-pointer-guard-snapshot, native-app-native-failure-diagnostic, native-app-targets, native-app-build-plan, signed-release, signed-bpy, signed-journey, signed-transport, native-retained-failures, native-scene-history-hierarchy, native-scene-pointer-delivery, native-segment-geometry, native-button-query, native-button-query-crash, native-button-query-crash-reuse, native-export-color, ci-runtime, ci-bpy-open-diagnostic, ci-bpy-resource-diagnostic, ci-app-test-diagnostic, ci-app-glow-replay, ci-app-full-replay, ci-builtin-blur, ci-builtin-blur-scribble, ci-builtin-blur-floor, ci-builtin-blur-preheat, ci-glow-context]
+        options: [signed-scene-history, native-pointer-guard-snapshot, native-app-native-failure-diagnostic, native-app-targets, native-app-build-plan, signed-release, signed-bpy, signed-journey, signed-transport, native-retained-failures, native-scene-history-hierarchy, native-scene-pointer-delivery, native-segment-geometry, native-button-query, native-button-query-crash, native-button-query-crash-reuse, native-export-color, ci-runtime, ci-bpy-open-diagnostic, ci-bpy-resource-diagnostic, ci-app-test-diagnostic, ci-app-glow-replay, ci-app-full-replay, ci-builtin-blur, ci-builtin-blur-scribble, ci-builtin-blur-floor, ci-builtin-blur-preheat, ci-glow-context]
         default: signed-release
       run_id:
         description: "Original producer workflow run"
@@ -136,7 +136,30 @@ env:
   FAILURE_DIGEST: ${{ inputs.failure_artifact_sha256 }}
 
 jobs:
+  signed-scene-history:
+    if: inputs.candidate_kind == 'signed-scene-history'
+    runs-on: macrunner
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-macos-source
+      - name: Verify the private DMG and exercise scene history in the installed app
+        env:
+          EXPECTED_DMG: ${{ inputs.expected_dmg_sha256 }}
+          HARNESS_PR_RUN: ${{ inputs.verified_pr_run_id }}
+        run: python3 scripts/signed_scene_history.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: signed-scene-history-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/signed-scene-history/evidence/
+          if-no-files-found: error
+          retention-days: 7
+
   source:
+    if: inputs.candidate_kind != 'signed-scene-history'
     outputs:
       pointer-guard-binding-id: ${{ steps.pointer-guard-binding-upload.outputs.artifact-id }}
       pointer-guard-binding-digest: ${{ steps.pointer-guard-binding-upload.outputs.artifact-digest }}
