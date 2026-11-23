@@ -31,8 +31,14 @@ class SignedSceneHistoryTests(unittest.TestCase):
                 proc.poll.return_value = status
                 app = root / 'NexGenVideo.app'
                 checked = {'appScopePassed': True}
+
+                def start(*args, **kwargs):
+                    kwargs['stderr'].write(b'[app] NOTICE: notifications disabled in settings\n')
+                    kwargs['stderr'].flush()
+                    return proc
+
                 with patch.dict(os.environ, {'NGV_SELFTEST_OLD': '1', 'GH_TOKEN': 'test-placeholder'}), \
-                        patch.object(history.subprocess, 'Popen', return_value=proc) as launch, \
+                        patch.object(history.subprocess, 'Popen', side_effect=start) as launch, \
                         patch.object(history, 'scoped_success', return_value=checked) as verify:
                     if status:
                         with self.assertRaisesRegex(ValueError, 'exited'):
@@ -44,6 +50,8 @@ class SignedSceneHistoryTests(unittest.TestCase):
                         self.assertEqual((product, pid), ('c' * 40, 472))
                         self.assertEqual(json.loads(files['process-result.json'])['returncode'], 0)
                     args, = launch.call_args.args
+                    self.assertEqual(args.count('-de.h5ventures.nexgenvideo.notifications.enabled'), 1)
+                    self.assertEqual(args[args.index('-de.h5ventures.nexgenvideo.notifications.enabled') + 1], 'NO')
                     self.assertEqual(args[-4:], ['-agentBackend', 'anthropicAPI',
                         '-de.h5ventures.nexgenvideo.mcp.enabled', 'NO'])
                     env = launch.call_args.kwargs['env']
@@ -65,3 +73,73 @@ class SignedSceneHistoryTests(unittest.TestCase):
                                  (dict(stream, duration_ts=6), frames), (stream, [{'pts': i} for i in (0, 1, 4)])):
             with self.subTest(stream=observed, frames=timing), self.assertRaises(ValueError):
                 history.validate_timing(proof, observed, timing)
+
+    def test_chunk_ranges_match_the_actual_pngs_and_jobs(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            chunks, outputs = [], {}
+            for frame in (1, 2):
+                image = dict(filename=f'clay-{frame:08d}.png', sha256=str(frame) * 64)
+                outputs[image['filename']] = image
+                name = f'part-{frame}.json'
+                part = dict(request=dict(startFrame=frame, endFrame=frame, cameraID='wide'),
+                            scene={'revision': 'confirmed'}, jobID=str(frame), jobFingerprint=str(frame) * 64, outputs=[image])
+                (folder / name).write_text(json.dumps(part))
+                chunks.append(dict(startFrame=frame, endFrame=frame, jobID=part['jobID'], jobFingerprint=part['jobFingerprint'],
+                                   proofFilename=name, proofSHA256=history.checksum(folder / name)))
+            proof = dict(request=dict(startFrame=1, endFrame=2, cameraID='wide'), scene={'revision': 'confirmed'}, chunks=chunks)
+            with patch.object(history, 'validate_worker_render', return_value={'frames': 1}):
+                self.assertEqual(len(history.validate_chunks(folder, proof, outputs)), 2)
+                for ranges in (chunks[:1], list(reversed(chunks)), [chunks[0], chunks[0]],
+                               [chunks[0], dict(chunks[1], jobID=chunks[0]['jobID'])],
+                               [chunks[0], dict(chunks[1], endFrame=3)]):
+                    with self.subTest(chunks=ranges), self.assertRaises(ValueError):
+                        history.validate_chunks(folder, dict(proof, chunks=ranges), outputs)
+
+    def test_worker_render_verifies_settings_after_the_actual_frame(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            job = '12345678-ABCD-4321-ABCD-123456789ABC'
+            folder = root / job
+            folder.mkdir()
+            name = 'clay-00000003.png'
+            image = dict(filename=name, sha256='a' * 64, byteCount=219)
+            pose = {'frame': 3, 'matrixWorld': [1.0]}
+            actual = dict(before=['CYCLES', 'CPU'], after=['CYCLES', 'CPU'], result='FINISHED',
+                          cameraID='wide', frame=3, filename=name, pid=27)
+            proof = dict(jobID=job, jobFingerprint='b' * 64, scene={'revision': 'first'}, framePoses=[pose],
+                         outputs=[image], request=dict(startFrame=3, endFrame=3, cameraID='wide'))
+            for changes in ({}, {'after': ['CYCLES', 'GPU']}, {'cameraID': 'other'}, {'result': 'CANCELLED'}, {'pid': 0}):
+                with self.subTest(changes=changes):
+                    frames = folder / 'clay-frames.json'
+                    frames.write_text(json.dumps([dict(pose, execution=actual | changes)]))
+                    descriptors = [dict(name=name, sha256=image['sha256'], byteCount=image['byteCount']),
+                                   dict(name=frames.name, sha256=history.checksum(frames), byteCount=frames.stat().st_size)]
+                    (folder / 'job.json').write_text(json.dumps(dict(jobID=job, jobFingerprint=proof['jobFingerprint'],
+                        sourceRevision='first', outputs=descriptors)))
+                    if changes:
+                        with self.assertRaises(ValueError):
+                            history.validate_worker_render(root, proof)
+                    else:
+                        with patch.object(history, 'verify_saved_render', return_value=28) as verified:
+                            row = history.validate_worker_render(root, proof)
+                            self.assertEqual((row['workerPID'], row['verifierPID']), (27, 28))
+                            self.assertEqual(verified.call_args.args[3], 27)
+
+    def test_verifier_binds_executable_and_module_to_the_observed_service(self):
+        with tempfile.TemporaryDirectory() as temp:
+            app = Path(temp) / 'NexGenVideo.app'
+            services = app / 'Contents/XPCServices'
+            roots = [services / f'NexGenVideoBpyService{slot}.xpc/Contents/Resources/BpyRuntime' for slot in (0, 1)]
+            for root in roots:
+                for name in ('site-packages/bpy/__init__.so', 'python/bin/python3.13'):
+                    file = root / name
+                    file.parent.mkdir(parents=True, exist_ok=True)
+                    file.write_bytes(b'fixture')
+            for root in roots:
+                value = dict(bpyModule=str(root / 'site-packages/bpy/__init__.so'),
+                             executable=str(root / 'python/bin/python3.13'))
+                self.assertEqual(history.verifier_runtime(value, app), root)
+                other, = [r for r in roots if r != root]
+                with self.assertRaises(ValueError):
+                    history.verifier_runtime(dict(value, executable=str(other / 'python/bin/python3.13')), app)

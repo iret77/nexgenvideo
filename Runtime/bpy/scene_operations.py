@@ -1,5 +1,6 @@
 import json
 import math
+import os
 
 
 def find_object(identity):
@@ -281,8 +282,17 @@ def apply_command(command):
                              "matrixWorld": [value for row in obj.evaluated_get(depsgraph).matrix_world for value in row]}
                             for obj in sorted(bpy.data.objects, key=lambda obj: obj["ngv_object_id"])],
             })
-            scene.render.filepath = str(output_dir / f"clay-{frame:08d}.png")
-            bpy.ops.render.render(write_still=True, scene=scene.name, layer=active_layer.name)
+            filename = f"clay-{frame:08d}.png"
+            scene.render.filepath = str(output_dir / filename)
+            before = [scene.render.engine, scene.cycles.device]
+            outcome = bpy.ops.render.render(write_still=True, scene=scene.name, layer=active_layer.name)
+            if outcome != {"FINISHED"}:
+                raise ValueError("The Clay frame did not finish rendering")
+            poses[-1]["execution"] = {
+                "pid": os.getpid(), "before": before, "after": [scene.render.engine, scene.cycles.device],
+                "cameraID": scene.camera["ngv_object_id"], "frame": scene.frame_current,
+                "filename": filename, "result": "FINISHED",
+            }
         (output_dir / "clay-frames.json").write_text(json.dumps(poses, sort_keys=True, separators=(",", ":")))
     else:
         raise ValueError("Unknown location operation")

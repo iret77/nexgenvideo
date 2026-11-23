@@ -211,7 +211,8 @@ enum SpatialClayRenderer {
             }
             return data
         }
-        let poses = try JSONDecoder().decode([SpatialClayFramePose].self, from: bytes("clay-frames.json"))
+        let frameData = try bytes("clay-frames.json")
+        let poses = try JSONDecoder().decode([SpatialClayFramePose].self, from: frameData)
         guard poses.map(\.frame) == Array(request.startFrame...request.endFrame),
               poses.allSatisfy({ $0.matrixWorld.count == 16 && $0.projection.count == 16
                   && $0.matrixWorld.allSatisfy(\.isFinite) && $0.projection.allSatisfy(\.isFinite) }) else {
@@ -264,6 +265,11 @@ enum SpatialClayRenderer {
         )
         let candidate = SpatialClayCandidate(proof: proof, proofData: try SpatialSceneStore.encode(proof), files: files, lease: lease)
         try validate(candidate, against: revision, cancellation: cancellation)
+        if BpyRuntimeSelfTest.recordsSceneEditing {
+            try BpyRuntimeSelfTest.retainRenderObservation(jobID: jobID, fingerprint: fingerprint,
+                sourceRevision: revision.manifest.revision, frames: frameData, verification: bytes("verification.json"),
+                outputs: result.response.outputs)
+        }
         try runtime.retainSpatialDerivation(candidate, source: revision, cancellation: cancellation)
         transferred = true
         return candidate

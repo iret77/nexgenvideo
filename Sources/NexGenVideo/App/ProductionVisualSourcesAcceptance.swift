@@ -300,6 +300,15 @@ enum ProductionVisualSourcesAcceptance {
                           try FileDigest.sha256(of: ProjectLocalFile.resolve(path, dataRoot: root)) == recoveredSHA else {
                         throw GateBlocked("The reloaded Bible preview was not assigned exactly.")
                     }
+                    guard BpyRuntimeSelfTest.recordsSceneEditing else { return }
+                    guard let location = bible.locations.first(where: { $0.id == locationID }) else { throw SpatialSceneError.changed }
+                    let current = try PlanningWriterIO.reference(PipelineLayout.bibleFile, id: "assigned-bible",
+                        role: "core.assigned-bible", dataRoot: root)
+                    for id in [viewID, recoveredID] {
+                        guard let references = try PipelineSpatialDerivationWriter.bibleViewReferences(location: location,
+                            viewID: id, dataRoot: root) else { throw SpatialSceneError.changed }
+                        try BpyRuntimeSelfTest.retainAssignment([current] + references, label: "bible-" + id, root: root, output: output)
+                    }
                 }.value
                 try driver.capture("reloaded-assigned", target: window)
                 var result = driver.result()
@@ -308,7 +317,8 @@ enum ProductionVisualSourcesAcceptance {
                     "exactPreviewAssigned": true, "preparedCancelUnchanged": true, "staleAssignmentUnchanged": true,
                     "reloadAndAssign": true,
                     "cancelDuringHash": true, "closeDuringLoading": true,
-                    "imageSHA256": assigned, "viewID": viewID]) { _, new in new }
+                    "imageSHA256": assigned, "viewID": viewID, "recoveredViewID": recoveredID,
+                    "recoveredImageSHA256": recoveredSHA]) { _, new in new }
                 results.append(result)
             } catch { driver.failure(error); throw error }
         }

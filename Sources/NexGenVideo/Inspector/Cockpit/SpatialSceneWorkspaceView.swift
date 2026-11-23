@@ -10,12 +10,18 @@ struct SpatialSceneWorkspaceView: View {
         let retry: UUID
     }
 
+    private struct SceneRefresh: Equatable {
+        let session: ObjectIdentifier
+        let revision: Int?
+        let busy: Bool
+    }
+
     @Environment(EditorViewModel.self) private var editor
     @State private var session: SpatialSceneSession?
     @State private var sessionHome: URL?
     @State private var failure: String?
     @State private var runtimePresentation: BpyRuntimePresentation?
-    @State private var reloadPending = false
+    @State private var pendingRevision: Int?
     @State private var retry = UUID()
     @State private var openingID: UUID?
 
@@ -36,6 +42,11 @@ struct SpatialSceneWorkspaceView: View {
             }
             if let session, sessionHome == editor.workingRoot {
                 SpatialSceneView(session: session, editingEnabled: editingEnabled)
+                    .task(id: SceneRefresh(session: ObjectIdentifier(session), revision: pendingRevision, busy: session.busy)) {
+                        guard let revision = pendingRevision, !session.busy else { return }
+                        let finished = await session.refreshLocationsIfChanged()
+                        if finished, !Task.isCancelled, pendingRevision == revision { pendingRevision = nil }
+                    }
             } else if let failure {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
                     Text(failure).foregroundStyle(AppTheme.Status.errorColor)
@@ -49,19 +60,12 @@ struct SpatialSceneWorkspaceView: View {
         .interfaceFont(size: AppTheme.Typography.ui)
         .task(id: OpenRequest(home: editor.workingRoot, key: editor.openWorkingCopyKey,
             generation: editor.openWorkingCopyGeneration, retry: retry)) { await open() }
-        .onChange(of: editor.engineStateRevision) { _, _ in
-            guard sessionHome == editor.workingRoot, let session else { return }
-            if session.busy { reloadPending = true }
-            else { session.reload() }
-        }
-        .onChange(of: session?.busy) { _, busy in
-            if busy == false, reloadPending, sessionHome == editor.workingRoot {
-                reloadPending = false
-                session?.reload()
-            }
+        .onChange(of: editor.engineStateRevision) { _, revision in
+            if session != nil, sessionHome == editor.workingRoot { pendingRevision = revision }
         }
         .onDisappear {
             openingID = nil
+            pendingRevision = nil
             session?.cancel()
             if let runtimePresentation { BpyRuntimeHost.shared.releasePresentation(runtimePresentation) }
             runtimePresentation = nil
@@ -72,7 +76,7 @@ struct SpatialSceneWorkspaceView: View {
     @MainActor private func open() async {
         let request = UUID()
         openingID = request
-        session?.cancel(); session = nil; sessionHome = nil; failure = nil; reloadPending = false
+        session?.cancel(); session = nil; sessionHome = nil; failure = nil; pendingRevision = nil
         if let runtimePresentation { BpyRuntimeHost.shared.releasePresentation(runtimePresentation) }
         runtimePresentation = nil
         guard let home = editor.workingRoot, let root = DataRootResolver.dataRoot(of: home),
@@ -102,7 +106,6 @@ struct SpatialSceneWorkspaceView: View {
                   editor.openWorkingCopyGeneration == generation else { return }
             let authority = try PipelineSpatialSceneAuthority(editor: editor, runtime: runtime)
             let value = SpatialSceneSession(pipelineRoot: root, runtime: runtime, authority: authority)
-            value.reload()
             sessionHome = home
             session = value
             runtimePresentation = presentation

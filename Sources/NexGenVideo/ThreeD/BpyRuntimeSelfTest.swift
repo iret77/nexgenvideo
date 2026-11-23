@@ -101,6 +101,52 @@ enum BpyRuntimeSelfTest {
         }
     }
 
+    nonisolated static var recordsSceneEditing: Bool {
+        let environment = ProcessInfo.processInfo.environment
+        return environment["NGV_SELFTEST_BPY_SCOPE"] == "scene-editing" && environment["NGV_SELFTEST_BPY"]?.isEmpty == false
+    }
+
+    nonisolated private static func writeOriginal(_ data: Data, to target: URL) throws {
+        do {
+            try data.write(to: target, options: .withoutOverwriting)
+        } catch let error as CocoaError where error.code == .fileWriteFileExists {
+            guard try Data(contentsOf: target) == data else { throw SpatialSceneError.changed }
+        }
+    }
+
+    nonisolated static func retainRenderObservation(jobID: UUID, fingerprint: String, sourceRevision: UUID,
+                                                   frames: Data, verification: Data, outputs: [BpyOutputDescriptor]) throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard recordsSceneEditing, let path = environment["NGV_SELFTEST_BPY"] else { return }
+        let directory = URL(fileURLWithPath: path, isDirectory: true)
+            .appendingPathComponent("render-observations", isDirectory: true)
+            .appendingPathComponent(jobID.uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try writeOriginal(frames, to: directory.appendingPathComponent("clay-frames.json"))
+        try writeOriginal(verification, to: directory.appendingPathComponent("verification.json"))
+        let descriptors = outputs.map { ["name": $0.name, "sha256": $0.sha256, "byteCount": $0.byteCount] as [String: Any] }
+        let receipt: [String: Any] = ["jobID": jobID.uuidString, "jobFingerprint": fingerprint,
+            "sourceRevision": sourceRevision.uuidString, "outputs": descriptors]
+        let data = try JSONSerialization.data(withJSONObject: receipt, options: [.sortedKeys])
+        try writeOriginal(data, to: directory.appendingPathComponent("job.json"))
+    }
+
+    nonisolated static func retainAssignment(_ references: [CanonicalArtifactReferenceV1], label: String,
+                                            root: URL, output: URL) throws {
+        let directory = output.appendingPathComponent("spatial-assignments", isDirectory: true)
+        let objects = directory.appendingPathComponent("objects", isDirectory: true)
+        try FileManager.default.createDirectory(at: objects, withIntermediateDirectories: true)
+        for reference in references {
+            let source = try ProjectLocalFile.requireHash(reference.sha256, at: reference.path, dataRoot: root)
+            let target = objects.appendingPathComponent(reference.sha256)
+            if !FileManager.default.fileExists(atPath: target.path) { try FileManager.default.copyItem(at: source, to: target) }
+            guard try FileDigest.sha256(of: target) == reference.sha256 else { throw SpatialSceneError.changed }
+        }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        try writeOriginal(encoder.encode(references), to: directory.appendingPathComponent(label + ".json"))
+    }
+
     private static func runSceneHistory(output: URL) async throws -> [String: Any] {
         var opened: ProductionPlanningAcceptanceFixture.Context?
         var history: [String: Any] = [:]
@@ -133,17 +179,42 @@ enum BpyRuntimeSelfTest {
         try await ProductionPlanningAcceptanceFixture.approve("script", in: context)
         _ = try await ProductionPlanningAcceptanceFixture.writeStoryboard(in: context)
         let board = try await ProductionPlanningAcceptanceFixture.attachSketches(in: context)
-        guard let shot = board.timing.shots.first else { throw GateBlocked("The storyboard has no planned shot.") }
+        guard let shot = board.timing.shots.first, let moment = shot.moments.first else {
+            throw GateBlocked("The storyboard has no planned moment.")
+        }
+        let spatialStoryboard = try await ProductionSpatialClayAcceptance.storyboard(context: context, scene: scene,
+            cameraID: camera.id, shotID: shot.id, momentID: moment.id, output: output)
         try await ProductionPlanningAcceptanceFixture.approve("storyboard", in: context)
         _ = try await ProductionPlanningAcceptanceFixture.writeShotPlanning(in: context)
         let poseUI = try await ProductionSpatialPoseAcceptance.run(context: context, scene: scene,
             cameraID: camera.id, shotID: shot.id, output: output)
         let clayUI = try await ProductionSpatialClayAcceptance.run(context: context, shotID: shot.id, output: output)
+        try await ProductionPlanningAcceptanceFixture.approve("shot_planning", in: context)
+        try await ProductionPlanningAcceptanceFixture.writeBible(in: context)
+        let baseline = try YAMLArtifactStore(dataRoot: context.dataRoot).load(Bible.self, at: PipelineLayout.bibleFile)
+        let appearance = try await ProductionRetainedSpatialAcceptance.prepareAppearanceFixture(context: context,
+            locationID: "pale_room", locationName: "Pale room")
+        let location = try Location(id: "pale_room", name: "Pale room", visualPrompt: "A neutral room around one cube.",
+            referenceImages: ["production_design/refs/lighting.png"], sheets: ["owner_appearance": appearance])
+        var withLocation = baseline
+        withLocation.locations = [location]
+        try await ProductionPlanningAcceptanceFixture.run("write_bible", args: ProductionBibleToolFixture.arguments(withLocation), in: context)
+        let bibleUI = try await ProductionVisualSourcesAcceptance.bible(context: context, output: output,
+            scene: scene, cameraID: camera.id, locationID: location.id)
         guard let key = context.editor.openWorkingCopyKey else { throw SpatialSceneError.changed }
-        terminationOperation = try await BpyRuntimeHost.shared.acquireOperation(document: context.document, documentID: key)
+        let operation = try await BpyRuntimeHost.shared.acquireOperation(document: context.document, documentID: key)
+        do {
+            let runtime = operation.session
+            try await SpatialEvaluatedGeometryAcceptance.run(runtime: runtime, runtimeRoot: runtime.bundledRuntimeRoot, output: output)
+        } catch {
+            BpyRuntimeHost.shared.releaseOperation(operation)
+            throw error
+        }
+        terminationOperation = operation
         return ["schema": "nexgenvideo/scene-editing-runtime/1", "scope": "scene-editing",
             "sourceSHA": Bundle.main.object(forInfoDictionaryKey: "NGVSourceCommit") as? String ?? "",
-            "hostPID": getpid(), "nativeSceneUI": sceneUI, "nativePoseUI": poseUI, "nativeClayUI": clayUI]
+            "hostPID": getpid(), "nativeSceneUI": sceneUI, "nativePoseUI": poseUI, "nativeClayUI": clayUI,
+            "nativeSpatialStoryboardUI": spatialStoryboard, "nativeBibleUI": bibleUI]
     }
 
     private static func hostPeakMemoryBytes() -> Int64 {
