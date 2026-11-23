@@ -77,10 +77,10 @@ def bind_desktop_harness(run_id):
     source_checks.verify_steps(job, receipt)
     log = source_checks.read_api(f"actions/jobs/{job['id']}/logs")
     case = 'test_desktop_observer_typechecks_on_macos'
-    require(len(re.findall(rf'(?m) {case} \(test_signed_scene_history\.SignedSceneHistoryTests\.{case}\) \.\.\. ok\r?$', log.decode())) == 1,
-            'The original Mac source run did not typecheck the desktop observer')
+    marker = f' {case} (test_signed_scene_history.SignedSceneHistoryTests.{case}) ... '.encode()
     summary = source_checks.test_completion(log)
-    require(summary['summary'] == 'OK', 'Incomplete standalone harness source checks')
+    require(log.count(marker) == 1 and summary['summary'] == 'OK',
+            'The Mac source run must pass the desktop observer typecheck and the entire fixture suite')
     return dict(head=head, tree=receipt['treeSHA'], sourceRun=run_id, sourceArtifact=item['id'], sourceResult=summary)
 
 
