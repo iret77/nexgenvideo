@@ -403,13 +403,18 @@ def verify_manifest(manifest, source, run_id):
 
 
 def internal_image_evidence(run, jobs, source):
-    run_id = run['id']
-    require(run.get('run_attempt') == 1 and run.get('actor', {}).get('login') == 'iret77'
-            and run.get('head_branch') == 'iret77/rc-delivery-base-795' and run.get('head_sha') == source
-            and source == os.environ['GITHUB_SHA'] == subprocess.check_output(
+    require(source == os.environ['GITHUB_SHA'] == subprocess.check_output(
                 ['git', 'rev-parse', 'HEAD'], text=True, timeout=30).strip()
             and not subprocess.check_output(['git', 'status', '--porcelain', '--untracked-files=no'], timeout=30),
             'Internal image requires its exact reviewed checkout')
+    return internal_image_originals(run, jobs, source)
+
+
+def internal_image_originals(run, jobs, source):
+    run_id = run['id']
+    require(run.get('run_attempt') == 1 and run.get('actor', {}).get('login') == 'iret77'
+            and run.get('head_branch') == 'iret77/rc-delivery-base-795' and run.get('head_sha') == source,
+            'Unexpected internal image producer')
     inventory = api(f'actions/runs/{run_id}/artifacts?per_page=100')
     require(inventory['total_count'] == len(inventory['artifacts']), 'Incomplete internal image inventory')
 

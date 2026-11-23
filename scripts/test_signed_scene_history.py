@@ -1,6 +1,8 @@
 import json
 import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
@@ -9,6 +11,12 @@ import signed_scene_history as history
 
 
 class SignedSceneHistoryTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == 'darwin', 'AppKit requires the macOS SDK')
+    def test_desktop_observer_typechecks_on_macos(self):
+        observer = Path(__file__).with_name('scene_desktop_observer.swift')
+        subprocess.run(['xcrun', 'swiftc', '-parse-as-library', '-typecheck', observer], check=True,
+                       stdin=subprocess.DEVNULL, timeout=120)
+
     def test_signed_scene_rejects_unrelated_dispatch_modes_and_selectors(self):
         base = dict(candidate_kind='signed-scene-history', run_id='12345', source_sha='c' * 40,
                     artifact_id='123', artifact_sha256='a' * 64, expected_dmg_sha256='b' * 64, verified_pr_run_id='456')
@@ -31,8 +39,14 @@ class SignedSceneHistoryTests(unittest.TestCase):
                 proc.poll.return_value = status
                 app = root / 'NexGenVideo.app'
                 checked = {'appScopePassed': True}
+
+                def start(*args, **kwargs):
+                    kwargs['stderr'].write(b'[app] NOTICE: notifications disabled in settings\n')
+                    kwargs['stderr'].flush()
+                    return proc
+
                 with patch.dict(os.environ, {'NGV_SELFTEST_OLD': '1', 'GH_TOKEN': 'test-placeholder'}), \
-                        patch.object(history.subprocess, 'Popen', return_value=proc) as launch, \
+                        patch.object(history.subprocess, 'Popen', side_effect=start) as launch, \
                         patch.object(history, 'scoped_success', return_value=checked) as verify:
                     if status:
                         with self.assertRaisesRegex(ValueError, 'exited'):
@@ -44,6 +58,8 @@ class SignedSceneHistoryTests(unittest.TestCase):
                         self.assertEqual((product, pid), ('c' * 40, 472))
                         self.assertEqual(json.loads(files['process-result.json'])['returncode'], 0)
                     args, = launch.call_args.args
+                    self.assertEqual(args.count('-de.h5ventures.nexgenvideo.notifications.enabled'), 1)
+                    self.assertEqual(args[args.index('-de.h5ventures.nexgenvideo.notifications.enabled') + 1], 'NO')
                     self.assertEqual(args[-4:], ['-agentBackend', 'anthropicAPI',
                         '-de.h5ventures.nexgenvideo.mcp.enabled', 'NO'])
                     env = launch.call_args.kwargs['env']

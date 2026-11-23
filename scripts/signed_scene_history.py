@@ -1,5 +1,6 @@
 """Verify ordinary scene edits and document shutdown on the qualified internal disk image."""
 
+from contextlib import contextmanager, nullcontext
 from fractions import Fraction
 import json
 import os
@@ -9,20 +10,25 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import zipfile
 
 from isolated_test_home import environment
 from retained_app_test_products import api, checksum, command, download, require, verify_artifact, write
 from scene_history_hierarchy import scoped_files, scoped_success
 from production_spatial_ui_evidence import validate_cases
-from release_checkpoint import internal_image_evidence
-from verified_pr_source_checks import prepare
+from release_checkpoint import internal_image_evidence, internal_image_originals
+import verified_pr_source_checks as source_checks
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'external-gui'))
 from acceptance import metadata, tree_sha256
 
 
 BASE = 'iret77/rc-delivery-base-795'
+DESKTOP_BRANCH = 'iret77/rc-142-scene-desktop'
+PRODUCT = 'd81c249811b31954c0e0366ef7740856c8cf8655'
+HARNESS_FILES = {'scripts/release_checkpoint.py', 'scripts/signed_scene_history.py',
+                 'scripts/scene_desktop_observer.swift', 'scripts/test_signed_scene_history.py'}
 
 
 def validate_dispatch(inputs):
@@ -45,7 +51,40 @@ def original_item(run, job, name):
     return item
 
 
-def acquire_image(root, inputs, product):
+def bind_desktop_harness(run_id):
+    head = os.environ['GITHUB_SHA']
+    require(command(['git', 'rev-parse', 'HEAD']) == head and not command(['git', 'status', '--porcelain'])
+            and not command(['git', 'merge-base', '--is-ancestor', PRODUCT, head])
+            and set(command(['git', 'diff', '--no-renames', '--name-only', PRODUCT, head]).splitlines()) == HARNESS_FILES,
+            'Unexpected scene harness checkout or product change')
+    run = api(f'actions/runs/{run_id}')
+    job = source_checks.verify_run_identity(run, api(f'actions/runs/{run_id}/attempts/1/jobs?per_page=100'), run_id)
+    require(run['head_sha'] == head and run['head_branch'] == DESKTOP_BRANCH and job['labels'] == ['macrunner'],
+            'Source checks belong to a different harness')
+    item = original_item(run, job, f'verified-pr-source-{run_id}-a1')
+    raw = source_checks.read_api(f"actions/artifacts/{item['id']}/zip", 100000)
+    receipt = source_checks.original_receipt(item, raw, run)
+    pr = api(f"pulls/{receipt['pullRequest']}")
+    require(receipt['schema'] == 'verified-pr-source/v2' and receipt['headSHA'] == head
+            and receipt['baseRef'] == BASE and pr['base']['ref'] == BASE and pr['base']['sha'] == PRODUCT
+            and pr['head']['repo']['full_name'] == pr['base']['repo']['full_name'] == 'iret77/nexgenvideo'
+            and pr['head']['sha'] == head and pr['head']['ref'] == DESKTOP_BRANCH and pr['user']['login'] == 'iret77'
+            and pr['state'] == 'open' and receipt['treeSHA'] == command(['git', 'rev-parse', 'HEAD^{tree}']),
+            'Source check receipt differs from the current RC or harness')
+    merge = api('git/commits/' + receipt['checkoutSHA'])
+    require(merge['tree']['sha'] == receipt['treeSHA'] and [p['sha'] for p in merge['parents']] == [PRODUCT, head],
+            'Tested source tree or parents differ')
+    source_checks.verify_steps(job, receipt)
+    log = source_checks.read_api(f"actions/jobs/{job['id']}/logs")
+    case = 'test_desktop_observer_typechecks_on_macos'
+    marker = f' {case} (test_signed_scene_history.SignedSceneHistoryTests.{case}) ... '.encode()
+    summary = source_checks.test_completion(log)
+    require(log.count(marker) == 1 and summary['summary'] == 'OK',
+            'The Mac source run must pass the desktop observer typecheck and the entire fixture suite')
+    return dict(head=head, tree=receipt['treeSHA'], sourceRun=run_id, sourceArtifact=item['id'], sourceResult=summary)
+
+
+def acquire_image(root, inputs, product, *, standalone=False):
     producer = int(inputs['run_id'])
     expected = inputs['expected_dmg_sha256']
     run = api(f'actions/runs/{producer}/attempts/1')
@@ -58,7 +97,7 @@ def acquire_image(root, inputs, product):
     pending = [j for j in inventory['jobs'] if j['name'] == 'acceptance-pending']
     require(len(pending) == 1 and pending[0]['conclusion'] == 'failure' and pending[0]['run_attempt'] == 1
             and pending[0]['run_id'] == producer and pending[0]['head_sha'] == product, 'Unexpected release gate result')
-    mounted = internal_image_evidence(run, inventory, product)
+    mounted = (internal_image_originals if standalone else internal_image_evidence)(run, inventory, product)
     require(mounted['dmgSHA256'] == expected and mounted['app']['CFBundleVersion'] == '142'
             and mounted['app']['CFBundleShortVersionString'] == '1.8.0', 'The original mounted receipt differs')
     release, = [job for job in inventory['jobs'] if job['name'] == 'release']
@@ -157,7 +196,31 @@ def editing_result(directory, product, pid):
     return dict(appScopePassed=True, movies=movies, decoders=decoders)
 
 
-def execute_history(installed, root, evidence, product, scope='scene-history'):
+@contextmanager
+def observe_desktop(root, evidence):
+    executable = root / 'scene-desktop-observer'
+    subprocess.run(['xcrun', 'swiftc', '-parse-as-library', 'scripts/scene_desktop_observer.swift', '-o', executable],
+                   check=True, stdin=subprocess.DEVNULL, timeout=120)
+    with (evidence / 'desktop-observations.jsonl').open('xb') as out, (evidence / 'desktop-observer.log').open('xb') as err:
+        observer = subprocess.Popen([executable, root], stdout=out, stderr=err, stdin=subprocess.DEVNULL)
+        try:
+            deadline = time.monotonic() + 15
+            while not (root / 'scene-desktop-ready').is_file():
+                require(observer.poll() is None and time.monotonic() < deadline, 'Desktop observer did not record its baseline')
+                time.sleep(0.1)
+            require(observer.poll() is None, 'Desktop observer stopped at its baseline')
+            yield observer
+        finally:
+            (root / 'scene-desktop-done').touch()
+            try:
+                observer.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                observer.kill()
+                observer.wait(timeout=5)
+        require(observer.returncode == 0, 'Desktop observation did not finish')
+
+
+def execute_history(installed, root, evidence, product, scope='scene-history', observer=None):
     executable = installed / 'Contents/MacOS/NexGenVideo'
     child = environment(os.environ, root / 'home')
     for key in list(child):
@@ -166,11 +229,16 @@ def execute_history(installed, root, evidence, product, scope='scene-history'):
     native = evidence / 'scene'
     native.mkdir()
     child.update(NGV_SELFTEST_BPY=str(native), NGV_SELFTEST_BPY_SCOPE=scope)
-    args = [str(executable), '-hangDiagnosticMode', 'disabled', '-agentBackend', 'anthropicAPI',
+    args = [str(executable), '-hangDiagnosticMode', 'disabled',
+            '-de.h5ventures.nexgenvideo.notifications.enabled', 'NO', '-agentBackend', 'anthropicAPI',
             '-de.h5ventures.nexgenvideo.mcp.enabled', 'NO']
     with (native / 'runtime.log').open('xb') as stdout, (native / 'runtime-stderr.log').open('xb') as stderr:
         process = subprocess.Popen(args, env=child, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr)
+        launch = dict(pid=process.pid, sourceSHA=product, scope=scope, arguments=args)
         try:
+            write(evidence / 'scene-launch.json', launch)
+            if observer is not None:
+                write(root / 'scene-observed-app.json', dict(pid=process.pid, executable=str(executable)))
             code = process.wait(timeout=2400 if scope == 'scene-editing' else 300)
         finally:
             if process.poll() is None:
@@ -180,7 +248,12 @@ def execute_history(installed, root, evidence, product, scope='scene-history'):
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait(timeout=5)
+            with (native / 'runtime-stderr.log').open('rb') as log:
+                launch['notificationOptOutObserved'] = any(
+                    line.rstrip(b'\r\n') == b'[app] NOTICE: notifications disabled in settings' for line in log)
+            write(evidence / 'scene-launch.json', launch)
     require(code == 0, f'Scene history exited with {code}')
+    require(launch['notificationOptOutObserved'], 'The App did not confirm its notification preference')
     write(native / 'process-result.json', dict(pid=process.pid, sourceSHA=product, mode='runtime', returncode=code))
     if scope == 'scene-editing':
         return editing_result(native, product, process.pid)
@@ -189,23 +262,30 @@ def execute_history(installed, root, evidence, product, scope='scene-history'):
 
 def main():
     env = os.environ
-    product = env['GITHUB_SHA']
     inputs = json.loads(Path(env['GITHUB_EVENT_PATH']).read_bytes())['inputs']
     validate_dispatch(inputs)
+    product = inputs['source_sha']
+    standalone = env['GITHUB_REF_NAME'] == DESKTOP_BRANCH
     producer = int(inputs['run_id'])
     require(sys.platform == 'darwin' and platform.machine() == 'arm64' and command(['sw_vers', '-productVersion']).split('.')[0] == '27'
             and env['GITHUB_REPOSITORY'] == 'iret77/nexgenvideo' and env['GITHUB_ACTOR'] == 'iret77'
-            and env['GITHUB_REF_NAME'] == BASE and env['GITHUB_RUN_ATTEMPT'] == '1'
-            and env['GITHUB_JOB'] == 'signed-scene-history' and inputs['source_sha'] == product
+            and (env['GITHUB_REF_NAME'] == BASE or standalone) and env['GITHUB_RUN_ATTEMPT'] == '1'
+            and env['GITHUB_JOB'] == 'signed-scene-history' and (product == PRODUCT if standalone else product == env['GITHUB_SHA'])
             and env['GITHUB_EVENT_NAME'] == 'workflow_dispatch', 'Unexpected scene-history job')
     root = Path(env['RUNNER_TEMP']).resolve(strict=True) / 'signed-scene-history'
     evidence = root / 'evidence'
     evidence.mkdir(parents=True)
     source_proof = root / 'source-proof'
-    prepare(int(inputs['verified_pr_run_id']), source_proof)
-    harness = json.loads((source_proof / 'receipt.json').read_bytes())
+    if standalone:
+        require(producer == 45242564408 and inputs['expected_dmg_sha256'] ==
+                '1a96e92c210e3c4accda088b4e904c0ae00c6e0e641513952f7a62d93c8f7a92',
+                'Standalone desktop verification requires the original Build 142 disk image')
+        harness = bind_desktop_harness(int(inputs['verified_pr_run_id']))
+    else:
+        source_checks.prepare(int(inputs['verified_pr_run_id']), source_proof)
+        harness = json.loads((source_proof / 'receipt.json').read_bytes())
     expected = inputs['expected_dmg_sha256']
-    dmg, original, item = acquire_image(root, inputs, product)
+    dmg, original, item = acquire_image(root, inputs, product, standalone=standalone)
     mount = root / 'volume'
     mount.mkdir()
     installed = Path('/Applications/NexGenVideo.app')
@@ -235,7 +315,9 @@ def main():
                  macOS=command(['sw_vers', '-productVersion']), architecture=platform.machine())
     write(evidence / 'input.json', proof)
     scope = inputs['candidate_kind'].removeprefix('signed-')
-    outcome = execute_history(installed, root, evidence, product, scope)
+    desktop = observe_desktop(root, evidence) if standalone and scope == 'scene-history' else nullcontext()
+    with desktop as observer:
+        outcome = execute_history(installed, root, evidence, product, scope, observer)
     require(outcome['appScopePassed'] is True and checksum(dmg) == expected and metadata(installed, product) == original['app'],
             'Scene history did not finish on the original product')
     write(evidence / 'verified.json', dict(input=proof, scope=scope, **{'history' if scope == 'scene-history' else 'editing': outcome}))
