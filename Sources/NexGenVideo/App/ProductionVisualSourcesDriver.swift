@@ -176,6 +176,9 @@ final class ProductionVisualSourcesDriver {
             guard let document = scroll.documentView else { throw GateBlocked("The native scroll document disappeared: " + id) }
             let distance = frame.midY - clip.bounds.midY
             guard distance.isFinite, frame.maxY > clip.bounds.maxY || frame.minY < clip.bounds.minY else {
+                try record("unreachable scroll target", fields: ["id": id, "window": target.windowNumber,
+                    "targetInClip": rect(frame), "clipBounds": rect(clip.bounds), "documentFrame": rect(document.frame),
+                    "targetInWindow": rect(view.convert(view.bounds, to: nil)), "backingScale": target.backingScaleFactor])
                 throw GateBlocked("The control cannot be revealed by vertical scrolling: " + id)
             }
             let prior = previousClip === clip && previousDocument === document ? response : nil
@@ -985,6 +988,18 @@ final class ProductionVisualSourcesDriver {
         if selection != nil { observed["selected"] = panel.url?.standardizedFileURL.resolvingSymlinksInPath().path }
         try JSONSerialization.data(withJSONObject: observed).write(to: root.appendingPathComponent(prefix + "observed"), options: .atomic)
         try await waitForPanelDismissal(panel, number: number, parent: parent, returnsToParent: returnsToParent)
+        if isOpen {
+            let cancelled = selection == nil
+            let name = prefix + (cancelled ? "cancel-action.json" : "default-action.json")
+            let url = root.appendingPathComponent(name)
+            try await wait("external file panel key delivery", seconds: 30) { FileManager.default.fileExists(atPath: url.path) }
+            let key = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+            guard key?[cancelled ? "sentEscape" : "sentReturn"] as? Bool == true,
+                  key?["window"] as? Int == number,
+                  (key?["visibleTargetWindows"] as? [Int])?.first == number else {
+                throw GateBlocked("The external key delivery does not match the dismissed file panel.")
+            }
+        }
         var interaction: [String: Any] = ["dialogTestStep": index, "externalInput": input.lastPathComponent, "dismissedWindow": number]
         if let selection, isOpen {
             interaction.merge(["kind": "file-panel", "path": selection.lastPathComponent, "selectedURLVerified": true,
