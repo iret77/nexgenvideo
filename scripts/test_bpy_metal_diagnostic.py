@@ -115,7 +115,14 @@ class MetalControlTests(unittest.TestCase):
                     diagnostic.source_input('a' * 40, path)
         compile(diagnostic.CHILD, '<metal-control-child>', 'exec')
         current = (Path(__file__).resolve().parents[1] / diagnostic.SOURCE_PATH).read_bytes()
-        compile(diagnostic.scene_source(current), '<actual-bound-scene>', 'exec')
+        historical = subprocess.check_output(['git', 'show',
+            '33669db17cd4d5e7c0524e3223137a13303a5dd7:' + diagnostic.SOURCE_PATH], timeout=30)
+        self.assertEqual(hashlib.sha256(historical).hexdigest(),
+                         'c822ca4f2883afa8adc4d09bf2b8f4a89d6cda0ef5486623867ec247e8ddd3b8')
+        self.assertTrue(diagnostic.scene_source(historical))
+        self.assertNotIn(b'func acceptanceSceneSource()', current)
+        with self.assertRaisesRegex(ValueError, 'one original acceptance scene required'):
+            diagnostic.scene_source(current)
         workflow = (Path(__file__).resolve().parents[1] / '.github/workflows/bpy-runtime-acceptance.yml').read_text()
         control_name = '- name: Capture the exact scene outside the sandbox as diagnostic evidence'
         first_native = '- name: Prove deterministic deletion during native directory accounting'

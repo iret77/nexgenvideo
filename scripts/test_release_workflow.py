@@ -68,13 +68,14 @@ def matching_shell_lines(step, prefix):
     return [line.strip() for line in step.splitlines() if line.strip().startswith(prefix)]
 
 
-def condition_enabled(condition, artifact_only, dry_run, resumed=False, *, needs_results=None, ancestry_success=True, compiled_targets="", component_continuation=False, cohort_pack_reuse=False, defer_private_audio=False):
+def condition_enabled(condition, artifact_only, dry_run, resumed=False, *, needs_results=None, ancestry_success=True, compiled_targets="", component_continuation=False, cohort_pack_reuse=False, defer_private_audio=False, internal_image_only=False):
     expression = str(condition or "true").removeprefix("${{").removesuffix("}}").strip()
     if not ancestry_success and not re.search(r"\b(?:always|cancelled|success|failure)\(\)", expression):
         return False
     values = {
         "inputs.artifact_only": artifact_only,
         "inputs.defer_private_audio": defer_private_audio,
+        "inputs.internal_image_only": internal_image_only,
         "inputs.compiled_app_targets_json": compiled_targets,
         "needs.bpy-source.result": "success",
         "env.NGV_COMPILED_APP_RELEASE": "true" if compiled_targets or cohort_pack_reuse else "",
@@ -417,6 +418,29 @@ xcrun() { printf 'stapler\\n' >> "$CALLS"; return "$NATIVE_RC"; }
                 result = subprocess.run(['bash', '-c', validate], env=environment,
                     capture_output=True, text=True, timeout=5)
                 self.assertEqual(result.returncode == 0, artifact_only and dry_run, result.stdout + result.stderr)
+
+    def test_internal_image_requires_reviewed_private_rc(self):
+        steps = self.workflow()['jobs']['release-gate']['steps']
+        validate = next(step['run'] for step in steps if step.get('name') == 'Validate release input')
+        inputs = dict(REL_VERSION='1.8.0', INTERNAL_IMAGE_ONLY='true', ARTIFACT_ONLY='true', DRY_RUN='true',
+                      DEFER_PRIVATE_AUDIO='false', VERIFIED_PR_RUN='123', GITHUB_REF_NAME='iret77/rc-delivery-base-795')
+        for change in ({}, {'ARTIFACT_ONLY': 'false'}, {'DRY_RUN': 'false'}, {'VERIFIED_PR_RUN': ''},
+                       {'DEFER_PRIVATE_AUDIO': 'true'}, {'GITHUB_REF_NAME': 'main'}, {'COMPILED_APP_TARGETS': '{}'},
+                       {'RETAINED_PRODUCT_SOURCE': 'old'}, {'RELEASE_TEST_RUN': '124'}, {'RELEASE_ENGINE_RUN': '125'}):
+            with self.subTest(change=change):
+                result = subprocess.run(['bash', '-c', validate], env={**os.environ, **inputs, **change},
+                                        capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode == 0, not change, result.stdout + result.stderr)
+
+    def test_internal_image_stays_pending_after_packaging(self):
+        jobs = self.workflow()['jobs']
+        for job in ('diagnostic-acceptance', 'bpy-runtime', 'external-user-acceptance',
+                    'chat-hang-replay', 'musicvideo-analysis-acceptance', 'publish'):
+            self.assertFalse(condition_enabled(jobs[job]['if'], True, True, internal_image_only=True), job)
+        self.assertTrue(condition_enabled(jobs['release']['if'], True, True, internal_image_only=True))
+        self.assertTrue(condition_enabled(jobs['acceptance-pending']['if'], True, True, internal_image_only=True))
+        self.assertFalse(condition_enabled(jobs['acceptance-pending']['if'], True, True))
+        self.assertEqual(jobs['acceptance-pending']['steps'][-1]['run'].strip().splitlines()[-1], 'exit 1')
 
     def test_artifact_only_keeps_distribution_and_native_gates(self):
         workflow = self.workflow()

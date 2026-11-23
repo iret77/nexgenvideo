@@ -29,7 +29,7 @@ def bind(run_id, source_sha, artifact_id, digest, *, verifier=None, packaging=No
     jobs = api(f'/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100')
     artifact = api('/actions/artifacts/' + str(artifact_id))
     options = {'packaging': packaging} if packaging is not None else {}
-    (verifier or verify_signed_workspace)(run, jobs, artifact, run_id, source_sha, artifact_id, digest,
+    mounted = (verifier or verify_signed_workspace)(run, jobs, artifact, run_id, source_sha, artifact_id, digest,
                                          list(filter(None, changed.split('\0'))), **options)
     harness = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
     producer = next(job for job in jobs['jobs'] if job['name'] == 'release')
@@ -39,6 +39,8 @@ def bind(run_id, source_sha, artifact_id, digest, *, verifier=None, packaging=No
                  runtimeArtifactSHA256=digest, executionRunID=os.environ.get('GITHUB_RUN_ID'),
                  executionAttempt=os.environ.get('GITHUB_RUN_ATTEMPT'),
                  changedHarnessPaths=sorted(filter(None, changed.split('\0'))))
+    if mounted is not None:
+        proof['mountedInternalImage'] = mounted
     if packaging_binding is not None:
         proof.update(schema='nexgenvideo/retained-release-runtime/2', packaging=packaging_binding)
     return artifact, proof
@@ -47,7 +49,7 @@ def bind(run_id, source_sha, artifact_id, digest, *, verifier=None, packaging=No
 def validate_app(directory, source_sha, receipt, *, proof=None):
     sys.path.insert(0, str(Path(__file__).resolve().parent / 'external-gui'))
     try:
-        from acceptance import metadata
+        from acceptance import metadata, tree_sha256
     finally:
         sys.path.pop(0)
     app = directory / 'NexGenVideo.app'
@@ -61,6 +63,14 @@ def validate_app(directory, source_sha, receipt, *, proof=None):
                       ['xcrun', 'stapler', 'validate', str(app)],
                       ['spctl', '-a', '-t', 'exec', str(app)]):
         subprocess.run(arguments, check=True, stdin=subprocess.DEVNULL, timeout=120)
+    mounted = (proof or {}).get('mountedInternalImage')
+    if mounted is not None:
+        if (identity != mounted['app'] or receipt['archiveSHA256'] != mounted['archiveSHA256']
+                or tree_sha256(pack) != mounted['mountedPackTreeSHA256']):
+            raise ValueError('Restored workspace differs from the mounted internal DMG')
+        subprocess.run(['codesign', '--verify', '--deep', '--strict', str(pack)], check=True, timeout=120)
+        subprocess.run(['xcrun', 'stapler', 'validate', str(pack)], check=True, timeout=120)
+        return identity
     from compiled_app_release import verify_retained_runtime_pack
     reuse = verify_retained_runtime_pack(directory, source_sha, receipt, proof or {}, identity)
     if reuse is None:
@@ -93,6 +103,12 @@ def restore(artifact, proof, directory):
     payload.mkdir()
     extract_transfer(archive, payload, {'workspace-ui.tar.gz', 'workspace-ui-input.json', 'bpy-source-receipt.json'})
     receipt = runtime_receipt(payload, {'sourceSHA': proof['productSourceSHA'], **({'packaging': proof['packaging']} if 'packaging' in proof else {})})
+    mounted = proof.get('mountedInternalImage')
+    if mounted is not None:
+        for name, key in [('workspace-ui-input.json', 'runtimeInputSHA256'),
+                          ('bpy-source-receipt.json', 'bpySourceReceiptSHA256')]:
+            if hashlib.sha256((payload / name).read_bytes()).hexdigest() != mounted[key]:
+                raise ValueError('Transferred workspace receipt differs from its DMG producer')
     directory.mkdir(parents=True, exist_ok=True)
     if (directory / 'NexGenVideo.app').exists() or (directory / 'plugins').exists():
         raise ValueError('Refusing to replace an existing runtime')

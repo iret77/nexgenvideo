@@ -6,10 +6,11 @@ permissions:
   actions: read
 jobs:
   source:
-    runs-on: ubuntu-24.04
+    runs-on: macrunner
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-macos-source
       - uses: ./.github/actions/prepare-bpy-source
         with:
           directory: ${{ runner.temp }}/qualified-bpy-source

@@ -133,7 +133,14 @@ def test_source_identity(source_sha, input_root=ROOT, *, allowed_paths=None, pac
         allowed = allowed | retained_packaging.component_consumer_repair_paths(record)
     import app_cohort_v2
     if app_cohort_v2.has_manifest(source_sha):
-        allowed = allowed | app_cohort_v2.consumer_paths(source_sha, revision)
+        if (record is None and revision == source_sha
+                and app_cohort_v2.objects(source_sha, app_cohort_v2.NATIVE_OBJECTS)
+                != app_cohort_v2.manifest(source_sha)['nativeSourceObjects']):
+            require(revision == os.environ.get('GITHUB_SHA') and not output(
+                ['git', '-C', REPOSITORY, 'status', '--porcelain', '--untracked-files=no']).strip(),
+                'Dirty or foreign runtime harness')
+        else:
+            allowed = allowed | app_cohort_v2.consumer_paths(source_sha, revision)
     if revision != producer_source:
         output(['git', '-C', REPOSITORY, 'merge-base', '--is-ancestor', producer_source, revision])
         changed = output(['git', '-C', REPOSITORY, 'diff', '--no-renames', '--name-only', '-z', producer_source, revision])

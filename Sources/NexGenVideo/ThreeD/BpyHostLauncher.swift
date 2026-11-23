@@ -14,7 +14,6 @@ nonisolated final class BpyHostLauncher: @unchecked Sendable {
         let sourceSHA256: String?
         let fingerprint: String?
         let diagnosticDeniedPaths: [String]
-        var boundaryLoopbackPort: UInt16? = nil
     }
 
     private final class PipeEnds: @unchecked Sendable {
@@ -491,37 +490,6 @@ nonisolated final class BpyHostLauncher: @unchecked Sendable {
         return true
     }
 
-    func diagnosticGate(execution: UUID) throws -> BpyHeldGateEvidence {
-        guard isSelfTest, let launch = lock.withLock({ launches[execution] }) else { throw POSIXError(.EPERM) }
-        launch.authorizationLock.lock()
-        defer { launch.authorizationLock.unlock() }
-        let supervisor = try launch.lock.withLock {
-            guard launch.spec.mode == .job, !launch.released, !launch.childReleased,
-                  launch.childPID == nil, launch.stop == nil, let supervisor = launch.supervisor else { throw POSIXError(.EPERM) }
-            return supervisor
-        }
-        guard try BpyKernelInspection.matches(supervisor) else { throw POSIXError(.EPERM) }
-        guard let clock = BpyRuntimeClock.read(), let source = launch.binding.sourceSHA256 else { throw POSIXError(.EIO) }
-        return .init(execution: execution, permit: launch.spec.permit, process: supervisor, clock: clock,
-            sourceSHA256: source, configurationSHA256: launch.spec.configurationSHA256)
-    }
-
-    func diagnosticEnded(execution: UUID) throws -> BpyMonitorResponse {
-        guard isSelfTest, let record = lock.withLock({ retired[execution] }) else { throw POSIXError(.EPERM) }
-        return record.diagnosticSnapshot
-    }
-
-    func diagnosticReapedLaunch(execution: UUID) throws -> Bool {
-        guard ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"]?.isEmpty == false,
-              let launch = lock.withLock({ launches[execution] }) else { throw POSIXError(.EPERM) }
-        return launch.reaped
-    }
-
-    func diagnosticRecovered() throws -> Bool {
-        guard ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"]?.isEmpty == false else { throw POSIXError(.EPERM) }
-        return recovered
-    }
-
     func inspect(_ request: BpyMonitorRequest, service: BpyObservedProcess) throws -> BpyMonitorResponse {
         guard request.schema == "nexgenvideo/bpy-monitor-request/2", request.transport == transport else {
             throw POSIXError(.EPERM)
@@ -616,9 +584,7 @@ nonisolated final class BpyHostLauncher: @unchecked Sendable {
         }
         guard let binding = lock.withLock({ stoppedPermits.contains(spec.permit) ? nil : bindings[spec.permit] }), spec.job == binding.identity.job,
               spec.workerLease == binding.pair.worker.id, spec.dataLease == binding.pair.data.id,
-              spec.injections.isEmpty || isSelfTest,
-              spec.mode != .autoexecPositive || (binding.identity.diagnosticAutoexec && isSelfTest),
-              spec.mode != .boundary || isSelfTest else { throw POSIXError(.EPERM) }
+              spec.injections.isEmpty, spec.boundary == nil, [.probe, .job, .verify].contains(spec.mode) else { throw POSIXError(.EPERM) }
         if let previous = lock.withLock({ launches[request.execution] }) {
             guard previous.spec == spec, previous.service.pid == service.pid,
                   previous.service.start == service.start else { throw POSIXError(.EPERM) }
@@ -689,11 +655,6 @@ nonisolated final class BpyHostLauncher: @unchecked Sendable {
         let dataMount = try BpyStoragePaths.validateMount(pair.data, maximumBytes: dataBytes)
         defer { Darwin.close(dataMount) }
         try validate(spec, identity: launch.binding.identity)
-        let boundaryLoopbackPort = launch.binding.boundaryLoopbackPort
-        let testsNetwork = spec.mode == .boundary && spec.boundary == .denials
-        guard testsNetwork == (boundaryLoopbackPort != nil), boundaryLoopbackPort != 0 else {
-            throw POSIXError(.EPERM)
-        }
         let root = try open(spec.workerRoot, relativeTo: workerMount, device: pair.worker.device, directory: true)
         defer { Darwin.close(root) }
         let configuration = try open(spec.configuration, relativeTo: dataMount, device: pair.data.device, directory: false)
@@ -730,7 +691,7 @@ nonisolated final class BpyHostLauncher: @unchecked Sendable {
         let frozen = try BpyHostConfiguration.freeze(configurationBytes, context: .init(mode: spec.mode,
             identity: launch.binding.identity, limits: launch.binding.limits,
             workerMount: pair.worker.mountPath, dataMount: pair.data.mountPath, root: rootPath,
-            sitePackages: spec.mode == .boundary ? "" : try BpyRuntimePath.canonical(layout.runtime.appendingPathComponent("site-packages")),
+            sitePackages: try BpyRuntimePath.canonical(layout.runtime.appendingPathComponent("site-packages")),
             readPaths: Set(readPaths), sourceSHA256: launch.binding.sourceSHA256, fingerprint: launch.binding.fingerprint,
             diagnosticDeniedPaths: launch.binding.diagnosticDeniedPaths))
         let configurationRoot = try BpyHostStaging.shared.directory("launch-" + launch.request.execution.uuidString)
@@ -754,7 +715,6 @@ nonisolated final class BpyHostLauncher: @unchecked Sendable {
             throw error
         }
         launch.lock.withLock { launch.configurationFile = frozenFile }
-        let boundaryPath = spec.boundary == .externalReadonly ? readPaths.last : nil
         readPaths.append(frozenFile.url.path)
         guard let host = try BpyKernelInspection.process(getpid()),
               let canaryRead = Bundle.main.executableURL else { throw POSIXError(.EIO) }
@@ -767,18 +727,13 @@ nonisolated final class BpyHostLauncher: @unchecked Sendable {
             return file
         }
         let environment = Self.workerEnvironment(rootPath: rootPath)
-        var configurationEnvironment = environment
-        configurationEnvironment["NGV_BPY_BOUNDARY_LOOPBACK_PORT"] = boundaryLoopbackPort.map { String($0) }
-        let boundaryOnly = spec.mode == .boundary && spec.boundary != .diagnosticPythonFootprint
         let configurationValue = BpySupervisorConfiguration(hostPID: host.pid, hostStart: host.start,
-            mode: spec.mode, python: boundaryOnly ? try BpyRuntimePath.canonical(layout.supervisor)
-                : try BpyRuntimePath.canonical(layout.runtime.appendingPathComponent("python/bin/python3.13")),
-            worker: boundaryOnly ? try BpyRuntimePath.canonical(layout.supervisor)
-                : try BpyRuntimePath.canonical(layout.runtime.appendingPathComponent("worker.py")),
-            runtime: try BpyRuntimePath.canonical(boundaryOnly ? layout.service.appendingPathComponent("Contents") : layout.runtime), readPaths: Array(Set(readPaths)).sorted(),
+            mode: spec.mode, python: try BpyRuntimePath.canonical(layout.runtime.appendingPathComponent("python/bin/python3.13")),
+            worker: try BpyRuntimePath.canonical(layout.runtime.appendingPathComponent("worker.py")),
+            runtime: try BpyRuntimePath.canonical(layout.runtime), readPaths: Array(Set(readPaths)).sorted(),
             canaryRead: try BpyRuntimePath.canonical(canaryRead), canaryWrite: canaryWrite.path,
-            boundary: spec.boundary, boundaryPath: boundaryPath ?? canaryWrite.path,
-            injections: spec.injections, environment: configurationEnvironment)
+            boundary: nil,
+            injections: [], environment: environment)
         launch.startReaders()
         guard try memory.receipt(spec.permit).stop == nil, launch.lock.withLock({ launch.stop == nil }) else {
             throw BpyAdmissionFailure.closed
@@ -1151,12 +1106,6 @@ nonisolated final class BpyHostLauncher: @unchecked Sendable {
         return ["schema": "nexgenvideo/bpy-recovery-failure/1", "transport": transport.uuidString,
                 "pendingCount": pending.count, "truncated": pending.count > records.count,
                 "pending": records, "recoveredAtCapture": recovered]
-    }
-
-    private var isSelfTest: Bool {
-        ["NGV_SELFTEST_BPY", "NGV_SELFTEST_BPY_BOUNDARY", "NGV_SELFTEST_BPY_HOST_CRASH"].contains {
-            ProcessInfo.processInfo.environment[$0]?.isEmpty == false
-        }
     }
 
     private func publish(_ process: BpyObservedProcess?, execution: UUID) {

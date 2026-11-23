@@ -1,5 +1,6 @@
 import copy
 from contextlib import chdir
+import hashlib
 import io
 import json
 import os
@@ -30,6 +31,54 @@ UUID = "12345678-1234-1234-1234-123456789abc"
 
 
 class ReleaseRecoveryTests(unittest.TestCase):
+    def test_internal_image_binds_fresh_builder_and_mounted_evidence_from_the_same_attempt(self):
+        run = {'id': 12, 'run_attempt': 1, 'actor': {'login': 'iret77'},
+               'head_branch': 'iret77/rc-delivery-base-795', 'head_sha': SOURCE}
+        manifest = {'identity': {'build': '141', 'version': '1.8.0'}, 'nativeEvidence': {'schema': 'fresh-release-tests/v1'}}
+        app = {'NGVSourceCommit': SOURCE, 'CFBundleVersion': '141', 'CFBundleShortVersionString': '1.8.0',
+               'treeSHA256': 'a' * 64}
+        mounted = dict.fromkeys(('dmgSHA256', 'mountedAppTreeSHA256', 'mountedPackTreeSHA256', 'packTreeSHA256',
+                                 'archiveSHA256', 'runtimeInputSHA256', 'bpySourceReceiptSHA256'), 'a' * 64)
+        mounted.update(schema='nexgenvideo/release-workspace-producer/1', app=app, packOrigin='mounted-dmg',
+                       sourceSHA=SOURCE, runID='12', runAttempt='1')
+        for variant in ('valid', 'foreign-builder', 'wrong-attempt', 'reused-tests', 'different-pack', 'wrong-digest'):
+            builder_record, mounted_record = copy.deepcopy(manifest), dict(mounted)
+            if variant == 'reused-tests': builder_record['nativeEvidence']['schema'] = 'retained'
+            if variant == 'different-pack': mounted_record['mountedPackTreeSHA256'] = 'b' * 64
+            jobs, artifacts, data = [], [], {}
+            for number, (role, name, member, value) in enumerate((
+                    ('release-build', 'release-signed-input-' + SOURCE + '-proof', 'manifest.json', builder_record),
+                    ('release', 'release-workspace-producer', 'release-workspace-producer.json', mounted_record)), start=1):
+                job = dict(id=number, name=role, labels=['macrunner'], conclusion='success', status='completed',
+                           run_attempt=1, run_id=12, head_sha=SOURCE, started_at='2025-01-01T00:00:00Z',
+                           completed_at='2025-01-01T00:05:00Z')
+                if number == 1 and variant == 'foreign-builder': job['head_sha'] = 'b' * 40
+                if number == 2 and variant == 'wrong-attempt': job['run_attempt'] = 2
+                jobs.append(job)
+                archive = io.BytesIO()
+                with zipfile.ZipFile(archive, 'w') as bundle:
+                    bundle.writestr(member, json.dumps(value))
+                data[number] = archive.getvalue()
+                digest = hashlib.sha256(data[number]).hexdigest()
+                artifacts.append(dict(id=number, name=name, size_in_bytes=len(data[number]), expired=False,
+                    workflow_run={'id': 12, 'head_sha': SOURCE}, digest='sha256:' + digest,
+                    created_at='2025-01-01T00:01:00Z', updated_at='2025-01-01T00:02:00Z',
+                    expires_at='2099-01-01T00:00:00Z'))
+            if variant == 'wrong-digest': artifacts[1]['digest'] = 'sha256:' + 'f' * 64
+            with self.subTest(variant=variant), tempfile.TemporaryDirectory() as temp, \
+                    patch.dict(os.environ, RUNNER_TEMP=temp, GITHUB_SHA=SOURCE), \
+                    patch.object(checkpoint.subprocess, 'check_output', side_effect=[SOURCE, b'']), \
+                    patch.object(checkpoint, 'api', return_value={'total_count': 2, 'artifacts': artifacts}), \
+                    patch.object(checkpoint, 'download', side_effect=lambda item, path: path.write_bytes(data[item['id']])), \
+                    patch.object(checkpoint, 'verify_manifest'):
+                if variant == 'valid':
+                    result = checkpoint.internal_image_evidence(run, {'jobs': jobs}, SOURCE)
+                    self.assertEqual(result['dmgSHA256'], mounted['dmgSHA256'])
+                    self.assertEqual(result['evidenceArtifacts']['release-workspace-producer']['artifactID'], 2)
+                else:
+                    with self.assertRaises(ValueError):
+                        checkpoint.internal_image_evidence(run, {'jobs': jobs}, SOURCE)
+
     def native_checkpoint_fixture(self, root):
         scratch = root / 'scratch'
         binary = scratch / 'arm64-apple-macosx/release'
@@ -664,7 +713,7 @@ class ReleaseRecoveryTests(unittest.TestCase):
             return set(needs).union(*(ancestors(parent) for parent in needs))
         self.assertEqual({name for name in jobs if "release" in ancestors(name)}, {
             "diagnostic-acceptance", "bpy-runtime", "external-user-acceptance", "chat-hang-replay",
-            "musicvideo-analysis-acceptance", "private-audio-pending", "publish",
+            "musicvideo-analysis-acceptance", "private-audio-pending", "acceptance-pending", "publish",
         })
         for name, job in jobs.items():
             if "release" not in ancestors(name):
@@ -672,7 +721,8 @@ class ReleaseRecoveryTests(unittest.TestCase):
             direct = job["needs"] if isinstance(job["needs"], list) else [job["needs"]]
             for artifact_only in (True, False):
                 for deferred in ((False, True) if artifact_only else (False,)):
-                    if name == 'private-audio-pending':expected = artifact_only and deferred
+                    if name == 'acceptance-pending':expected = False
+                    elif name == 'private-audio-pending':expected = artifact_only and deferred
                     elif name == 'musicvideo-analysis-acceptance':expected = artifact_only and not deferred
                     elif name == 'chat-hang-replay':expected = artifact_only
                     elif name == 'publish':expected = not artifact_only

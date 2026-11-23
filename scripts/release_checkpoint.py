@@ -367,6 +367,62 @@ def verify_manifest(manifest, source, run_id):
     return manifest
 
 
+def internal_image_evidence(run, jobs, source):
+    run_id = run['id']
+    require(run.get('run_attempt') == 1 and run.get('actor', {}).get('login') == 'iret77'
+            and run.get('head_branch') == 'iret77/rc-delivery-base-795' and run.get('head_sha') == source
+            and source == os.environ['GITHUB_SHA'] == subprocess.check_output(
+                ['git', 'rev-parse', 'HEAD'], text=True, timeout=30).strip()
+            and not subprocess.check_output(['git', 'status', '--porcelain', '--untracked-files=no'], timeout=30),
+            'Internal image requires its exact reviewed checkout')
+    inventory = api(f'actions/runs/{run_id}/artifacts?per_page=100')
+    require(inventory['total_count'] == len(inventory['artifacts']), 'Incomplete internal image inventory')
+
+    origins = {}
+
+    def original(job_name, artifact_name, member, byte_limit):
+        producers = [job for job in jobs['jobs'] if job['name'] == job_name]
+        require(len(producers) == 1, 'Ambiguous internal image producer')
+        job = producers[0]
+        require(job.get('labels') == ['macrunner'] and job.get('conclusion') == 'success'
+                and job.get('status') == 'completed' and job.get('run_attempt') == 1
+                and job.get('run_id') == run_id and job.get('head_sha') == source,
+                'Internal image producer identity differs')
+        matches = [item for item in inventory['artifacts'] if item['name'] == artifact_name]
+        require(len(matches) == 1, 'Missing or ambiguous internal image evidence')
+        item = matches[0]
+        require(re.fullmatch(r'sha256:[a-f0-9]{64}', item.get('digest', ''))
+                and 0 < item['size_in_bytes'] <= byte_limit, 'Invalid internal image archive')
+        verify_artifact(item, run, job, item['id'], item['digest'][7:], artifact_name)
+        origins[artifact_name] = {'jobID': job['id'], 'artifactID': item['id'], 'sha256': item['digest'][7:]}
+        with tempfile.TemporaryDirectory(dir=os.environ['RUNNER_TEMP']) as temporary:
+            path = Path(temporary) / 'original.zip'
+            download(item, path)
+            require(checksum(path) == item['digest'][7:], 'Internal image archive digest differs')
+            with zipfile.ZipFile(path) as archive:
+                require(archive.namelist() == [member], 'Unexpected internal image evidence entries')
+                return json.loads(archive_bytes(archive, member, byte_limit))
+
+    manifest = original('release-build', 'release-signed-input-' + source + '-proof',
+                        'manifest.json', SIGNED_MANIFEST_MAX_BYTES)
+    verify_manifest(manifest, source, run_id)
+    require(manifest['nativeEvidence']['schema'] == 'fresh-release-tests/v1', 'Fresh Release tests required')
+    mounted = original('release', 'release-workspace-producer', 'release-workspace-producer.json', 100_000)
+    app = mounted.get('app', {})
+    require(mounted.get('schema') == 'nexgenvideo/release-workspace-producer/1'
+            and mounted.get('sourceSHA') == source == app.get('NGVSourceCommit')
+            and mounted.get('runID') == str(run_id) and mounted.get('runAttempt') == '1'
+            and mounted.get('packOrigin') == 'mounted-dmg'
+            and app.get('CFBundleVersion') == manifest['identity']['build']
+            and app.get('CFBundleShortVersionString') == manifest['identity']['version']
+            and mounted.get('mountedAppTreeSHA256') == app.get('treeSHA256')
+            and mounted.get('mountedPackTreeSHA256') == mounted.get('packTreeSHA256')
+            and all(re.fullmatch('[a-f0-9]{64}', mounted.get(key, '')) for key in
+                    ('dmgSHA256', 'mountedAppTreeSHA256', 'mountedPackTreeSHA256', 'archiveSHA256',
+                     'runtimeInputSHA256', 'bpySourceReceiptSHA256')), 'Mounted internal product differs')
+    return dict(mounted, evidenceArtifacts=origins)
+
+
 def extract_tar(path, build, allowed):
     with tarfile.open(path) as archive:
         members = archive.getmembers()

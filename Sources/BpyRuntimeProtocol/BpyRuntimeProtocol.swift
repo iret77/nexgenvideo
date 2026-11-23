@@ -6,7 +6,6 @@ public let bpyRuntimeServiceNames = [
 ]
 
 @objc public protocol BpyRuntimeServiceProtocol {
-    func runBoundaryProbe(_ request: Data, withReply reply: @escaping (Data) -> Void)
     func openSession(_ request: Data, withReply reply: @escaping (Data) -> Void)
     func restoreCheckpoint(_ request: Data, chunk: Data, withReply reply: @escaping (Data) -> Void)
     func stageInput(_ request: Data, chunk: Data, withReply reply: @escaping (Data) -> Void)

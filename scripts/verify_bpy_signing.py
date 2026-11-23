@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import hashlib
+import mmap
 import plistlib
 import re
 import subprocess
@@ -37,6 +38,12 @@ def entitlements(path):
     return plistlib.loads(result.stdout) if result.stdout.strip() else {}
 
 
+def reject_test_payload(path, markers):
+    with path.open("rb") as file, mmap.mmap(file.fileno(), 0, access=mmap.ACCESS_READ) as image:
+        if any(image.find(marker) >= 0 for marker in markers):
+            raise ValueError(f"Blender diagnostic payload in distribution binary: {path.name}")
+
+
 def validate(app, development=False):
     host = details(app)
     team_match = re.search(r"^TeamIdentifier=([A-Z0-9]+)$", host, re.M)
@@ -51,12 +58,17 @@ def validate(app, development=False):
     if hashlib.sha256(supervisors[0].read_bytes()).digest() != hashlib.sha256(supervisors[1].read_bytes()).digest():
         raise ValueError("service supervisor copies differ")
     storage = app / "Contents/Helpers/NexGenVideoBpyStorage"
+    reject_test_payload(app / "Contents/MacOS/NexGenVideo",
+                        (b"hostile-container-sibling", b"The bounded volume did not prove ENOSPC"))
+    reject_test_payload(storage, (b"NGV_BPY_STORAGE_CRASH_AFTER_JOURNAL",))
     expected = {storage: {}}
     runtimes = []
     for slot in range(2):
         service = app / f"Contents/XPCServices/NexGenVideoBpyService{slot}.xpc"
         runtime = service / "Contents/Resources/BpyRuntime"
         runtimes.append(runtime)
+        reject_test_payload(service / "Contents/MacOS/NexGenVideoBpyService", (b"--selftest-directory-deletion",))
+        reject_test_payload(supervisors[slot], (b"host-memory-child", b"nexgenvideo/bpy-boundary-child/2"))
         expected[runtime / "python/bin/python3.13"] = {}
         expected[service / "Contents/MacOS/NexGenVideoBpySupervisor"] = {}
         expected[service] = {SANDBOX: True}
