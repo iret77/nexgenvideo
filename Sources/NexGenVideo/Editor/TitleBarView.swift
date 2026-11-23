@@ -103,7 +103,7 @@ struct TitleBarView: View {
                 .accessibilityLabel(focus.label)
                 .accessibilityAddTraits(selected ? .isSelected : [])
                 .background {
-                    if WorkspaceUIAcceptance.isRequested {
+                    if WorkspaceUIAcceptance.isRequested || MusicvideoHostFlowAcceptance.isRequested {
                         AppRelaunchClickProbe(
                             identifier: "editor.workspace.\(focus.rawValue)",
                             acceptanceState: selected

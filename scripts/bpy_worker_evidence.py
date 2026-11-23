@@ -537,15 +537,20 @@ def validate_runtime_observation(value):
             raise ValueError("actual bounded runtime activity lifetime")
         if number(events[1]["clock"]["awake"]) > number(value["evidenceClock"]["awake"]):
             raise ValueError("actual bounded runtime activity lifetime")
-    digest_activities = [events for events in activities.values() if events[0].get("scope") == "Verify 3D runtime files"]
-    if not digest_activities:
-        raise ValueError("parented runtime file verification activity")
-    for events in digest_activities + [events for events in activities.values() if events[0].get("scope") == "Verify a 3D movie"]:
-        if not any(parent[0].get("scope") == "Validate and encode 3D media"
-                   and parent[0]["parent"] == events[0]["parent"]
-                   and parent[0]["clock"]["awake"] <= events[0]["clock"]["awake"] <= parent[1]["clock"]["awake"]
-                   for parent in activities.values()):
+    consumers = {}
+    for begin, end in activities.values():
+        if begin.get("scope") == "Validate and encode 3D media":
+            consumers.setdefault(begin["parent"], []).append((begin["clock"]["awake"], end["clock"]["awake"]))
+    digest_seen = False
+    for begin, _ in activities.values():
+        if begin.get("scope") not in ("Verify 3D runtime files", "Verify a 3D movie"):
+            continue
+        if begin["scope"] == "Verify 3D runtime files":
+            digest_seen = True
+        if not any(start <= begin["clock"]["awake"] <= finish for start, finish in consumers.get(begin["parent"], ())):
             raise ValueError("parented runtime file verification activity")
+    if not digest_seen:
+        raise ValueError("parented runtime file verification activity")
     validate_stop_observation(value)
     maximum, sleep = 0, 0
     controllers = {UUID(item["controller"]) for item in trace["pressure"]}

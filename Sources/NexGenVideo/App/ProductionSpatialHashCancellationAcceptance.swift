@@ -28,9 +28,17 @@ enum ProductionSpatialHashCancellationAcceptance {
         for name in ["Hash cancellation A", "Hash cancellation B"] {
             await session.create(name: name)
             guard session.error == nil else { throw SpatialSceneError.changed }
-            await session.editPython("padding = bpy.data.texts.new('NGV_HASH_CANCELLATION_PADDING')\npadding.write('x' * (256 * 1024 * 1024))\n")
-            guard session.error == nil, let current = session.current, current.scenePayload.byteCount >= 256 * 1_024 * 1_024 else {
-                throw GateBlocked("The native cancellation control did not produce a valid large saved scene.")
+            await session.editPython("""
+                from array import array
+                block = array("i", [0]) * (1024 * 1024)
+                for index in range(64):
+                    bpy.context.scene[f"NGV_HASH_CANCELLATION_{index}"] = block
+                """)
+            if let error = session.error {
+                throw GateBlocked("Could not save the hash cancellation scene \(name): \(error)")
+            }
+            guard let current = session.current, current.scenePayload.byteCount >= 256 * 1_024 * 1_024 else {
+                throw GateBlocked("The saved hash cancellation scene \(name) is missing or smaller than 256 MiB.")
             }
             scenes.append(current)
         }

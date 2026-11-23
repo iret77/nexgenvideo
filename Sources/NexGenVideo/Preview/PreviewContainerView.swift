@@ -821,7 +821,7 @@ private struct PreviewTimecodeText: View {
         .lineLimit(1)
         .fixedSize(horizontal: true, vertical: false)
         .background {
-            if WorkspaceUIAcceptance.isRequested {
+            if WorkspaceUIAcceptance.isRequested || MusicvideoHostFlowAcceptance.isRequested {
                 AppRelaunchClickProbe(identifier: "preview.timecode", acceptanceText: String(frame))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .allowsHitTesting(false)
