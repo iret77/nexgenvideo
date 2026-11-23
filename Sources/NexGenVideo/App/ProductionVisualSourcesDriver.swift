@@ -87,9 +87,13 @@ final class ProductionVisualSourcesDriver {
             stableFor = now - stableSince
             return stableFor >= 0.25
         }
-        try record(requiredViewport == nil ? "native window presentation stable" : "native scene viewport stable", fields: [
-            "window": previousNumber, "windowFrame": rect(previous[0]), "viewport": rect(previous[1]),
-            "cgWindowBounds": rect(previous[2]), "stableSeconds": stableFor, "samples": samples])
+        var fields: [String: Any] = ["window": previousNumber, "windowFrame": rect(previous[0]),
+            "viewport": rect(previous[1]), "cgWindowBounds": rect(previous[2]), "stableSeconds": stableFor, "samples": samples]
+        if let id {
+            fields["control"] = id
+            fields["controlFrame"] = rect(previous[3])
+        }
+        try record(requiredViewport == nil ? "native window presentation stable" : "native scene viewport stable", fields: fields)
     }
 
     func text(_ id: String, in target: NSWindow) -> String? { WorkspaceUIAcceptance.probeText(identifier: id, in: target) }
@@ -291,7 +295,15 @@ final class ProductionVisualSourcesDriver {
             throw GateBlocked("The native pointer fraction is invalid: " + id)
         }
         stage = "click " + id
+        let sheetParent = editingText ? target.sheetParent : nil
         try await reveal(id, in: target, transaction: transaction)
+        if let sheetParent {
+            try await waitForPresentation(of: target, control: id)
+            guard target.sheetParent === sheetParent, sheetParent.attachedSheet === target, target.isKeyWindow else {
+                throw GateBlocked("The text field's sheet changed during presentation: " + id)
+            }
+            stage = "click " + id
+        }
         let readiness: NativeAcceptancePointer.LocalButtonReadiness?
         let observation = localButton?.target == .hoveredButton ? NativeAcceptancePointer.HoverObservation() : nil
         defer { observation?.close() }
@@ -670,6 +682,8 @@ final class ProductionVisualSourcesDriver {
         }
         var owner: NSView?
         var editor: NSTextView?
+        @MainActor final class EditingTrace { var end: [String: Any]? }
+        let trace = EditingTrace()
         func ownership() -> Bool {
             guard let owner, let editor, target.firstResponder === editor, editor.isEditable else { return false }
             if let field = owner as? NSTextField { return field.currentEditor() === editor }
@@ -682,6 +696,7 @@ final class ProductionVisualSourcesDriver {
                 "ownsEditor": ownership(), "window": target.windowNumber,
                 "fontPointSize": font?.pointSize as Any? ?? NSNull(),
                 "firstResponder": target.firstResponder.map { String(describing: type(of: $0)) } ?? "none"]
+            if let end = trace.end { latestField["endEditing"] = end }
         }
         try await wait("focus exact field " + id) {
             let active = self.focusedField(id, in: target)
@@ -696,6 +711,20 @@ final class ProductionVisualSourcesDriver {
             let scale = AppTheme.Typography.validatedScale(UserDefaults.standard.double(forKey: AppTheme.Typography.scaleKey))
             return ownership() && font.map { abs($0.pointSize - AppTheme.Typography.ui * scale) < 0.5 } == true
         }
+        var observer: NSObjectProtocol?
+        if let field = owner as? NSTextField {
+            observer = NotificationCenter.default.addObserver(forName: NSControl.textDidEndEditingNotification,
+                object: field, queue: .main) { note in
+                let movement = note.userInfo?["NSTextMovement"] as? Int
+                MainActor.assumeIsolated {
+                    trace.end = ["uptime": ProcessInfo.processInfo.systemUptime, "fieldEnabled": field.isEnabled,
+                        "attached": field.window === target, "keyWindow": target.isKeyWindow,
+                        "movement": movement as Any? ?? NSNull(),
+                        "sceneReady": self.state("spatial.scene", in: target) as Any? ?? NSNull()]
+                }
+            }
+        }
+        defer { if let observer { NotificationCenter.default.removeObserver(observer) } }
         try key(0, "a", modifiers: .command, in: target)
         try await wait("select all " + id) {
             evidence("select-all")

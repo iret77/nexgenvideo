@@ -56,7 +56,11 @@ final class SpatialSceneSession {
     private(set) var snapshotRevision = UUID()
     private(set) var busy = false
     private(set) var commitProgress: SpatialSceneCommitProgress?
-    private(set) var error: String?
+    private var actionError: String?
+    private(set) var error: String? {
+        get { actionError ?? refreshError }
+        set { actionError = newValue }
+    }
     private(set) var cameraPreview: Data?
     var selectedObjectID: String?
     var selectedCameraID: String?
@@ -79,6 +83,8 @@ final class SpatialSceneSession {
     private(set) var historyIntent: SpatialSceneHistoryIntent?
     private(set) var historyTrace = SpatialSceneHistoryTrace()
     @ObservationIgnored private var historyAdmissionObserver: (@MainActor (SpatialSceneHistoryIntent) -> Void)?
+    private(set) var readingLocations = false
+    private var refreshError: String?
 
     init(pipelineRoot: URL, runtime: BpyRuntimeSession, authority: any SpatialSceneAuthority,
          commitObserver: (@MainActor (SpatialSceneCommitProgress) -> Void)? = nil) {
@@ -118,29 +124,52 @@ final class SpatialSceneSession {
         if ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"]?.isEmpty == false { commitObserver?(progress) }
     }
 
+    private func readLocations() async throws -> ([SpatialSceneHead], SpatialSceneRevision?) {
+        let sceneID = current?.manifest.sceneID
+        return try await authority.readScene { root in
+            let heads = try SpatialSceneStore.index(in: root).scenes
+            let selected = heads.first { $0.id == sceneID }
+            let loaded = try selected.map { try SpatialSceneStore.load($0, in: root) }
+            return (heads, loaded)
+        }
+    }
+
+    private func applyLocations(_ heads: [SpatialSceneHead], selected: SpatialSceneRevision?) {
+        refreshError = nil
+        if locations != heads { locations = heads }
+        guard selected?.manifestData != current?.manifestData else { return }
+        undoRevisions.removeAll()
+        redoRevisions.removeAll()
+        showRevision(selected)
+    }
+
+    func refreshLocationsIfChanged() async -> Bool {
+        guard !busy, !Task.isCancelled else { return false }
+        let previousSnapshot = snapshotRevision
+        do {
+            let (heads, loaded) = try await readLocations()
+            guard !Task.isCancelled, !busy, snapshotRevision == previousSnapshot else { return false }
+            applyLocations(heads, selected: loaded)
+        } catch {
+            guard !Task.isCancelled, !busy, snapshotRevision == previousSnapshot else { return false }
+            refreshError = error.localizedDescription
+        }
+        return true
+    }
+
     func reload() {
         guard !busy else { return }
         beginOperation()
+        readingLocations = true
         refreshTask = Task {
-            defer { busy = false; refreshTask = nil }
+            defer { readingLocations = false; busy = false; refreshTask = nil }
             do {
-                let index = try await authority.readScene { try SpatialSceneStore.index(in: $0) }
-                locations = index.scenes
-                if let id = current?.manifest.sceneID, let head = locations.first(where: { $0.id == id }) {
-                    if head.revision != current?.manifest.revision {
-                        undoRevisions.removeAll()
-                        redoRevisions.removeAll()
-                    }
-                    try await load(head)
-                } else if current != nil {
-                    current = nil
-                    snapshot = nil
-                    cameraPreview = nil
-                    undoRevisions.removeAll()
-                    redoRevisions.removeAll()
-                }
-                error = nil
-            } catch { operationFailed(error) }
+                let (heads, selected) = try await readLocations()
+                try Task.checkCancellation()
+                applyLocations(heads, selected: selected)
+            } catch {
+                if !Task.isCancelled { refreshError = error.localizedDescription }
+            }
         }
     }
 
@@ -505,11 +534,15 @@ final class SpatialSceneSession {
             guard index.scenes.first(where: { $0.id == head.id }) == head else { throw SpatialSceneError.changed }
             return (try SpatialSceneStore.load(head, in: root), index)
         }
-        current = loaded
         locations = index.scenes
-        snapshot = loaded.snapshot
+        showRevision(loaded)
+    }
+
+    private func showRevision(_ loaded: SpatialSceneRevision?) {
+        current = loaded
+        snapshot = loaded?.snapshot
         snapshotRevision = UUID()
-        frame = loaded.snapshot.frame
+        if let loaded { frame = loaded.snapshot.frame }
         cameraPreview = nil
     }
 
@@ -525,12 +558,8 @@ final class SpatialSceneSession {
     }
 
     private func applyCommitted(_ committed: SpatialSceneCommit) {
-        current = committed.revision
         locations = committed.index.scenes
-        snapshot = committed.revision.snapshot
-        snapshotRevision = UUID()
-        frame = committed.revision.snapshot.frame
-        cameraPreview = nil
+        showRevision(committed.revision)
         error = nil
     }
 

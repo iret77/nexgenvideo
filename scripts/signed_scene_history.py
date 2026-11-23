@@ -1,6 +1,7 @@
 """Verify ordinary scene edits and document shutdown on the qualified internal disk image."""
 
 from fractions import Fraction
+from functools import lru_cache
 import json
 import os
 from pathlib import Path
@@ -10,11 +11,15 @@ import shutil
 import subprocess
 import sys
 import zipfile
+import uuid
+
+import yaml
 
 from isolated_test_home import environment
 from retained_app_test_products import api, checksum, command, download, require, verify_artifact, write
 from scene_history_hierarchy import scoped_files, scoped_success
 from production_spatial_ui_evidence import validate_cases
+from spatial_evaluated_geometry_evidence import verify as verify_geometry
 from release_checkpoint import internal_image_evidence
 from verified_pr_source_checks import prepare
 
@@ -23,6 +28,7 @@ from acceptance import metadata, tree_sha256
 
 
 BASE = 'iret77/rc-delivery-base-795'
+INSTALLED = Path('/Applications/NexGenVideo.app')
 
 
 def validate_dispatch(inputs):
@@ -59,7 +65,7 @@ def acquire_image(root, inputs, product):
     require(len(pending) == 1 and pending[0]['conclusion'] == 'failure' and pending[0]['run_attempt'] == 1
             and pending[0]['run_id'] == producer and pending[0]['head_sha'] == product, 'Unexpected release gate result')
     mounted = internal_image_evidence(run, inventory, product)
-    require(mounted['dmgSHA256'] == expected and mounted['app']['CFBundleVersion'] == '142'
+    require(mounted['dmgSHA256'] == expected and mounted['app']['CFBundleVersion'] == '143'
             and mounted['app']['CFBundleShortVersionString'] == '1.8.0', 'The original mounted receipt differs')
     release, = [job for job in inventory['jobs'] if job['name'] == 'release']
     item = original_item(run, release, 'release-user-journey-input')
@@ -96,6 +102,171 @@ def validate_timing(proof, stream, frames):
             'Decoded Clay presentation timestamps or shot duration differ')
 
 
+@lru_cache(maxsize=2)
+def sealed_renderer(runtime_root):
+    files = {'rendererBinarySHA256': 'site-packages/bpy/__init__.so', 'runtimeLockSHA256': 'runtime-lock.json',
+             'rendererScriptSHA256': 'scene_operations.py', 'workerSHA256': 'worker.py'}
+    return ({key: checksum(runtime_root / name) for key, name in files.items()},
+            json.loads((runtime_root / 'runtime-lock.json').read_bytes())['bpyWheelLayout']['expectedRuntimeBinaryEvidence'])
+
+
+def verifier_runtime(verified, installed):
+    module = Path(verified['bpyModule']).resolve(strict=True)
+    services = installed / 'Contents/XPCServices'
+    roots = [services / f'NexGenVideoBpyService{slot}.xpc/Contents/Resources/BpyRuntime' for slot in (0, 1)]
+    root, = [r for r in roots if module == (r / 'site-packages/bpy/__init__.so').resolve(strict=True)]
+    require(Path(verified['executable']).resolve(strict=True).is_relative_to(root.resolve()),
+            'Blender executable and module came from different services')
+    return root
+
+
+def verify_saved_render(folder, proof, descriptors, worker_pid, installed):
+    file = folder / 'verification.json'
+    descriptor = descriptors[file.name]
+    require(checksum(file) == descriptor['sha256'] and file.stat().st_size == descriptor['byteCount'],
+            'Independent Blender verification file differs from its job descriptor')
+    verified = json.loads(file.read_bytes())
+    require(verified['jobID'].upper() == proof['jobID'].upper() and verified['fingerprint'] == proof['jobFingerprint']
+            and verified['sceneSHA256'] == descriptors['scene.blend']['sha256']
+            and type(verified['processIdentifier']) is int and verified['processIdentifier'] > 0
+            and verified['processIdentifier'] != worker_pid, 'Independent Blender verifier or saved scene differs')
+    root = verifier_runtime(verified, installed)
+    hashes, binary = sealed_renderer(root)
+    require(all(proof[key] == digest for key, digest in hashes.items())
+            and verified['blenderBuildHash'] == proof['blenderBuildHash'] == binary['buildHash']
+            and all(verified['libraryVersions'][name]['version'] == version for name, version in binary['libraryVersions'].items()),
+            'Loaded Blender runtime differs from its signed binary, sources or libraries')
+    scene, = verified['scenes']
+    require(scene['engine'] == 'CYCLES' and scene['cyclesDevice'] == 'CPU'
+            and (scene['effectiveWidth'], scene['effectiveHeight']) == (proof['request']['width'], proof['request']['height']),
+            'Saved scene device or dimensions differ from the finished render')
+    return verified['processIdentifier']
+
+
+def validate_worker_render(observations, proof, installed=INSTALLED):
+    job = str(uuid.UUID(proof['jobID'])).upper()
+    folder = observations / job
+    receipt = json.loads((folder / 'job.json').read_bytes())
+    require(receipt['jobID'] == job and receipt['jobFingerprint'] == proof['jobFingerprint']
+            and receipt['sourceRevision'] == proof['scene']['revision'], 'Renderer job or source revision differs')
+    entries = receipt['outputs']
+    descriptors = {entry['name']: entry for entry in entries}
+    frames = folder / 'clay-frames.json'
+    require(len(entries) == len(descriptors) and checksum(frames) == descriptors[frames.name]['sha256']
+            and frames.stat().st_size == descriptors[frames.name]['byteCount'], 'Renderer frame descriptor differs')
+    poses = json.loads(frames.read_bytes())
+    request = proof['request']
+    require([p['frame'] for p in poses] == list(range(request['startFrame'], request['endFrame'] + 1)),
+            'Incomplete in-process render observations')
+    require([{k: v for k, v in pose.items() if k != 'execution'} for pose in poses] == proof['framePoses'],
+            'Job poses do not match the published derivation')
+    outputs = {entry['filename']: entry for entry in proof['outputs']}
+    pids = set()
+    for pose in poses:
+        actual = pose['execution']
+        frame = pose['frame']
+        name = f'clay-{frame:08d}.png'
+        require(actual['before'] == actual['after'] == ['CYCLES', 'CPU'] and actual['result'] == 'FINISHED'
+                and type(actual['pid']) is int and actual['pid'] > 0 and actual['filename'] == name
+                and actual['frame'] == frame and actual['cameraID'] == request['cameraID']
+                and descriptors[name]['sha256'] == outputs[name]['sha256']
+                and descriptors[name]['byteCount'] == outputs[name]['byteCount'],
+                'Renderer settings, finished frame, camera or original PNG descriptor differs')
+        pids.add(actual['pid'])
+    require(len(pids) == 1, 'One render job reported multiple worker processes')
+    pid = pids.pop()
+    verifier_pid = verify_saved_render(folder, proof, descriptors, pid, installed)
+    return dict(jobID=job, fingerprint=receipt['jobFingerprint'], frames=len(poses), workerPID=pid, verifierPID=verifier_pid)
+
+
+def validate_assignment(directory, label, state, scene, tools, view=None):
+    root = directory / 'spatial-assignments'
+    references = json.loads((root / (label + '.json')).read_bytes())
+    def original(reference):
+        digest = reference['sha256']
+        require(re.fullmatch('[a-f0-9]{64}', digest) is not None, 'Invalid spatial reference digest')
+        path = root / 'objects' / digest
+        require(path.is_file() and not path.is_symlink() and checksum(path) == digest, 'Spatial assignment original differs')
+        return path
+    for reference in references:
+        original(reference)
+    def current(name, path, role):
+        reference, = [entry for entry in references if (entry['id'], entry['path'], entry['role']) == (name, path, role)]
+        return original(reference)
+    records = [json.loads(original(ref).read_bytes()) for ref in references if ref['role'] == 'core.spatial-adoption']
+    if view is None:
+        timing = json.loads(current('assigned-timing', 'storyboard/timing-current.v1.json', 'core.storyboard-timing').read_bytes())
+        shot, = [s for s in timing['shots'] if s['id'] == state['shotID']]
+        moment, = [m for m in shot['moments'] if m['id'] == state['momentID']]
+        asset = moment['asset']
+        sketch = json.loads(original(asset['proof']).read_bytes())
+        derivation_reference = sketch['source']['spatialDerived']['proof']
+        adoption, = [r for r in records if r['schema'] == 'spatial-derivation-adoption/v1' and r['proof'] == derivation_reference]
+        source = adoption['ownerArtifact']
+        binding = adoption['storyboardBinding']
+        require(sketch['schema'] == 'storyboard-sketch-proof/v1' and sketch['shotID'] == binding['shotID'] == shot['id']
+                and sketch['momentID'] == binding['momentID'] == moment['id'] and sketch['image'] == asset['image']
+                and all(sketch[key] == binding[key] for key in ('intentSHA256', 'framingSHA256'))
+                and asset['image'] in adoption['media'].values() and source['role'] == 'core.storyboard-timing'
+                and asset['proof']['sha256'] == state['proofSHA256'], 'Storyboard moment does not own the original sketch')
+        image = asset['image']
+        expected = state['imageSHA256']
+        owner = 'storyboard'
+    else:
+        bible = yaml.safe_load(current('assigned-bible', 'bible/bible.yaml', 'core.assigned-bible').read_bytes())
+        adoption, = [r for r in records if r['schema'] == 'spatial-bible-view-adoption/v1' and r['binding']['viewID'] == view]
+        binding = adoption['binding']
+        location, = [loc for loc in bible['locations'] if loc['id'] == binding['locationID']]
+        image = adoption['image']
+        source = adoption['sourceBible']
+        require(location['sheets'][view] == image['path'] and location['view_purpose'][view] == binding['purpose'],
+                'The saved Bible view differs from its assignment')
+        expected = state['imageSHA256'] if view == state['viewID'] else state['recoveredImageSHA256']
+        owner = 'bible'
+    require(all(ref in references for ref in (source, image, adoption['proof'])), 'Assignment original missing from inventory')
+    derivation = json.loads(original(adoption['proof']).read_bytes())
+    item, = derivation['outputs']
+    require(derivation['id'] == adoption['id'] and derivation['request']['owner'] == owner
+            and derivation['scene']['id'] == scene['sceneID'] and derivation['request']['cameraID'] == scene['cameraID']
+            and derivation['scene']['manifestSHA256'] == adoption['sceneManifest']['sha256'] == scene['manifestSHA256']
+            and derivation['request']['ownerArtifactSHA256'] == source['sha256']
+            and item['sha256'] == image['sha256'] == expected and item['mediaKind'] == 'image/png'
+            and original(image).stat().st_size == item['byteCount'], 'Assigned image differs from the rendered frame')
+    stream, = json.loads(command([str(tools / 'ffprobe'), '-v', 'error', '-select_streams', 'v:0',
+        '-show_entries', 'stream=codec_name,width,height', '-of', 'json', str(original(image))], timeout=60))['streams']
+    require(stream['codec_name'] == 'png' and all(stream[key] == item[key] == derivation['request'][key]
+            for key in ('width', 'height')), 'Assigned image dimensions differ from the requested render')
+    return validate_worker_render(directory / 'render-observations', derivation)
+
+
+def validate_chunks(directory, proof, outputs):
+    request = proof['request']
+    jobs = []
+    chunks = proof['chunks']
+    require(len(chunks) == len({c['jobID'] for c in chunks}) == len({c['proofFilename'] for c in chunks}),
+            'Repeated render job or chunk evidence')
+    next_frame = request['startFrame']
+    for chunk in chunks:
+        name = chunk['proofFilename']
+        require(Path(name).name == name and checksum(directory / name) == chunk['proofSHA256'],
+                'Sequence chunk proof differs')
+        part = json.loads((directory / name).read_bytes())
+        start, end = chunk['startFrame'], chunk['endFrame']
+        part_images = {item['filename'] for item in part['outputs'] if item['filename'].endswith('.png')}
+        require(start == next_frame and start <= end <= request['endFrame']
+                and (part['request']['startFrame'], part['request']['endFrame']) == (start, end)
+                and part_images == {f'clay-{number:08d}.png' for number in range(start, end + 1)}
+                and part['scene'] == proof['scene'] and part['request']['cameraID'] == request['cameraID'],
+                'Render chunk skipped or duplicated requested scene frames')
+        next_frame = end + 1
+        require(part['jobID'] == chunk['jobID'] and part['jobFingerprint'] == chunk['jobFingerprint']
+                and all(outputs[item['filename']]['sha256'] == item['sha256'] for item in part['outputs']
+                        if item['filename'].endswith('.png')), 'Sequence PNG and render chunk differ')
+        jobs.append(validate_worker_render(directory.parent / 'render-observations', part))
+    require(jobs and next_frame == request['endFrame'] + 1 and sum(job['frames'] for job in jobs) == request['endFrame'] - request['startFrame'] + 1, 'Incomplete render job frame count')
+    return jobs
+
+
 def validate_render(directory, state, scene, pose, tools):
     movie = directory / 'clay.mov'
     receipt = directory / 'sequence.v1.json'
@@ -118,6 +289,7 @@ def validate_render(directory, state, scene, pose, tools):
         file = directory / name
         require(file.name == name and file.is_file() and not file.is_symlink() and file.stat().st_size == item['byteCount']
                 and checksum(file) == item['sha256'], 'Original shot payload differs: ' + name)
+    jobs = validate_chunks(directory, proof, outputs)
     shot = outputs['clay.mov']
     require(shot['sha256'] == state['videoSHA256'] and [shot[k] for k in ('width', 'height', 'frameCount')] ==
             [request['width'], request['height'], count], 'Final shot differs from its sequence')
@@ -127,18 +299,18 @@ def validate_render(directory, state, scene, pose, tools):
     validate_timing(proof, stream, decoded['frames'])
     subprocess.run([str(tools / 'ffmpeg'), '-nostdin', '-v', 'error', '-xerror', '-i', str(movie),
                     '-map', '0:v:0', '-f', 'null', '-'], stdin=subprocess.DEVNULL, check=True, timeout=120)
-    return dict(videoSHA256=state['videoSHA256'], proofSHA256=state['proofSHA256'], stream=stream,
+    return dict(videoSHA256=state['videoSHA256'], proofSHA256=state['proofSHA256'], jobs=jobs, stream=stream,
                 presentationTimestamps=[int(f['pts']) for f in decoded['frames']])
 
 
-def editing_result(directory, product, pid):
+def editing_result(directory, product, pid, installed):
     value = json.loads((directory / 'result.json').read_bytes())
     require(value.get('sourceSHA') == product and value.get('hostPID') == pid
             and value.get('schema') == 'nexgenvideo/scene-editing-runtime/1' and value.get('scope') == 'scene-editing'
             and value.get('operationShutdown') is True and value.get('appDelegateShutdown') is True
             and b'SELFTEST_BPY_EDITING_OK\n' in (directory / 'runtime.log').read_bytes()
             and not (directory / 'runtime-failure-observation.json').exists(), 'Scene editing did not finish normally')
-    require(validate_cases(value, directory, ('nativeSceneUI', 'nativePoseUI', 'nativeClayUI')),
+    require(validate_cases(value, directory, ('nativeSceneUI', 'nativePoseUI', 'nativeClayUI', 'nativeSpatialStoryboardUI', 'nativeBibleUI')),
             'Missing original scene, camera, pose, rendering or playback evidence')
     for row in value['nativeSceneUI']:
         choice, = [e for e in row['interactions'] if e.get('kind') == 'menu' and e.get('id') == 'spatial.camera.select']
@@ -154,7 +326,19 @@ def editing_result(directory, product, pid):
         state, = [i['evidence'] for i in row['interactions'] if i.get('label') == 'native full shot Clay render and inspect']
         folder = directory / f"clay-render-{round(row['scale'] * 100)}"
         movies.append(dict(scale=row['scale'], **validate_render(folder, state, scene, pose, tools)))
-    return dict(appScopePassed=True, movies=movies, decoders=decoders)
+    assignments = []
+    for row in value['nativeSpatialStoryboardUI']:
+        state, = [e['evidence'] for e in row['interactions'] if e.get('label') == 'native location sketch assigned']
+        assignments.append(validate_assignment(directory, f"storyboard-{round(row['scale'] * 100)}", state, scene, tools))
+    for row in value['nativeBibleUI']:
+        require(all(row[key] is True for key in ('nativeSceneAndCameraSelection', 'requiredPurpose', 'realRenderedPreview',
+                'nativeImageInspection', 'exactPreviewAssigned', 'preparedCancelUnchanged', 'staleAssignmentUnchanged',
+                'reloadAndAssign', 'cancelDuringHash', 'closeDuringLoading')), 'Incomplete Bible assignment coverage')
+        for view in (row['viewID'], row['recoveredViewID']):
+            assignments.append(validate_assignment(directory, 'bible-' + view, row, scene, tools, view))
+    verification = json.loads((directory / 'evaluated-deformation/scene-verification.json').read_bytes())
+    geometry = verify_geometry(directory, verifier_runtime(verification, installed))
+    return dict(appScopePassed=True, movies=movies, decoders=decoders, assignmentRenders=assignments, geometry=geometry)
 
 
 def execute_history(installed, root, evidence, product, scope='scene-history'):
@@ -166,12 +350,15 @@ def execute_history(installed, root, evidence, product, scope='scene-history'):
     native = evidence / 'scene'
     native.mkdir()
     child.update(NGV_SELFTEST_BPY=str(native), NGV_SELFTEST_BPY_SCOPE=scope)
-    args = [str(executable), '-hangDiagnosticMode', 'disabled', '-agentBackend', 'anthropicAPI',
+    args = [str(executable), '-hangDiagnosticMode', 'disabled',
+            '-de.h5ventures.nexgenvideo.notifications.enabled', 'NO', '-agentBackend', 'anthropicAPI',
             '-de.h5ventures.nexgenvideo.mcp.enabled', 'NO']
     with (native / 'runtime.log').open('xb') as stdout, (native / 'runtime-stderr.log').open('xb') as stderr:
         process = subprocess.Popen(args, env=child, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr)
+        launch = dict(pid=process.pid, sourceSHA=product, scope=scope, arguments=args)
         try:
-            code = process.wait(timeout=2400 if scope == 'scene-editing' else 300)
+            write(evidence / 'scene-launch.json', launch)
+            code = process.wait(timeout=5400 if scope == 'scene-editing' else 300)
         finally:
             if process.poll() is None:
                 process.terminate()
@@ -180,10 +367,15 @@ def execute_history(installed, root, evidence, product, scope='scene-history'):
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait(timeout=5)
+            with (native / 'runtime-stderr.log').open('rb') as log:
+                launch['notificationOptOutObserved'] = any(
+                    line.rstrip(b'\r\n') == b'[app] NOTICE: notifications disabled in settings' for line in log)
+            write(evidence / 'scene-launch.json', launch)
     require(code == 0, f'Scene history exited with {code}')
+    require(launch['notificationOptOutObserved'], 'The App did not confirm its notification preference')
     write(native / 'process-result.json', dict(pid=process.pid, sourceSHA=product, mode='runtime', returncode=code))
     if scope == 'scene-editing':
-        return editing_result(native, product, process.pid)
+        return editing_result(native, product, process.pid, installed)
     return scoped_success(scoped_files(native), product, process.pid)
 
 
@@ -208,7 +400,7 @@ def main():
     dmg, original, item = acquire_image(root, inputs, product)
     mount = root / 'volume'
     mount.mkdir()
-    installed = Path('/Applications/NexGenVideo.app')
+    installed = INSTALLED
     require(not installed.exists() and not installed.is_symlink(), 'Installation destination is occupied')
     log = evidence / 'installation.log'
     def invoke(*args):

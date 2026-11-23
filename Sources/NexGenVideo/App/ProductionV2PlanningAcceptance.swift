@@ -120,7 +120,7 @@ enum ProductionV2PlanningAcceptance {
         let scriptBefore = try await Task.detached { try PlanningWriterIO.script(dataRoot: root) }.value
         guard let scene = scriptBefore.scenes.first else { throw failed("Script has no scene.") }
         try await driver.click("script.scene.edit." + scene.id, in: window)
-        let sheet = try await driver.sheet("script.scene.title", waitForControl: true)
+        let sheet = try await driver.sheet("script.scene.title")
         let title = scene.title + " — native revision"
         try await driver.fill("script.scene.title", value: title, in: sheet)
         try driver.visible(["script.scene.cancel", "script.scene.apply"], in: sheet)
@@ -146,7 +146,7 @@ enum ProductionV2PlanningAcceptance {
         guard offset > 0, offset < first.durationTicks else { throw failed("The planned shot has no distinct interior source frame.") }
         let seconds = ProductionTimeEntry.seconds(offset, timebase: initial.timing.timebase)
         try await driver.click("storyboard.moment.add." + first.id, in: window)
-        let momentSheet = try await driver.sheet("storyboard.edit.sheet")
+        let momentSheet = try await driver.sheet("storyboard.edit.first")
         try await driver.fill("storyboard.edit.first", value: seconds, in: momentSheet)
         let intent = "The same action reaches its second visible position."
         try await driver.fill("storyboard.edit.second", value: intent, in: momentSheet)
@@ -228,7 +228,7 @@ enum ProductionV2PlanningAcceptance {
         for shot in current.timing.shots {
             for moment in shot.moments {
                 try await driver.menu("storyboard.sketch.sources." + moment.id, title: "Capture source video frame…", in: driver.window)
-                let sheet = try await driver.sheet("storyboard.native-sketch.sheet")
+                let sheet = try await driver.sheet("storyboard.native-sketch.choose", waitForControl: true)
                 guard driver.state("storyboard.native-sketch.confirm", in: sheet) == false else { throw failed("An unprepared sketch is assignable.") }
                 try await driver.chooseFile(sourceVideo, in: sheet)
                 let time = ProductionTimeEntry.seconds(moment.offsetTicks, timebase: current.timing.timebase)

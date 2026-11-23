@@ -139,7 +139,7 @@ jobs:
   signed-scene-history:
     if: inputs.candidate_kind == 'signed-scene-history' || inputs.candidate_kind == 'signed-scene-editing'
     runs-on: macrunner
-    timeout-minutes: 50
+    timeout-minutes: ${{ inputs.candidate_kind == 'signed-scene-editing' && 105 || 50 }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:

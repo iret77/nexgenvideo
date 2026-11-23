@@ -20,6 +20,7 @@ struct SpatialSceneView: View {
     @State private var requestedFrame = 1
 
     private var editable: Bool { editingEnabled && !session.busy }
+    private var canNameLocation: Bool { editingEnabled && (!session.busy || session.readingLocations) }
     private var canCreate: Bool { editable && !newName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     private var canTransform: Bool { editable && position.allFinite && rotation.allFinite && scale.allFinite && min(scale.x, scale.y, scale.z) > 0 }
     private var canSaveCamera: Bool {
@@ -63,7 +64,7 @@ struct SpatialSceneView: View {
         .reviewAcceptanceProbe("spatial.scene", state: !session.busy, text: session.current?.manifest.revision.uuidString ?? "")
         .reviewAcceptanceProbe("spatial.history.intent", text: session.historyIntent?.diagnosticText)
         .reviewAcceptanceProbe("spatial.history.trace", text: session.historyTrace.diagnosticText)
-        .task { session.reload() }
+        .task(id: ObjectIdentifier(session)) { session.reload() }
         .onChange(of: session.selectedObjectID) { _, _ in updateInspector() }
         .onChange(of: session.snapshot) { _, _ in updateInspector(); requestedFrame = session.frame }
     }
@@ -78,40 +79,42 @@ struct SpatialSceneView: View {
                     .reviewAcceptanceProbe("spatial.location.\(head.id.uuidString)", state: !session.busy)
             }
             TextField("Location name", text: $newName)
-                .disabled(!editingEnabled)
+                .disabled(!canNameLocation)
                 .accessibilityIdentifier("spatial.location.name")
-                .reviewAcceptanceProbe("spatial.location.name", state: editable, text: newName)
+                .reviewAcceptanceProbe("spatial.location.name", state: canNameLocation, text: newName)
             Button("Create location") { Task { await session.create(name: newName) } }
                 .disabled(!canCreate)
                 .accessibilityIdentifier("spatial.location.create")
                 .reviewAcceptanceProbe("spatial.location.create", state: canCreate)
             AppDivider()
             if session.current != nil {
-                Menu("Add object") {
-                    ForEach(["cube", "sphere", "cylinder", "plane"], id: \.self) { kind in
-                        Button(kind.capitalized) { Task { await session.addPrimitive(kind) } }
+                Group {
+                    Menu("Add object") {
+                        ForEach(["cube", "sphere", "cylinder", "plane"], id: \.self) { kind in
+                            Button(kind.capitalized) { Task { await session.addPrimitive(kind) } }
+                        }
                     }
-                }
-                .accessibilityIdentifier("spatial.object.add")
-                .reviewAcceptanceProbe("spatial.object.add", state: editable)
-                .disabled(!editingEnabled)
-                Button("Import GLB…") { Task { await session.importGLB() } }
+                    .accessibilityIdentifier("spatial.object.add")
+                    .reviewAcceptanceProbe("spatial.object.add", state: editable)
                     .disabled(!editingEnabled)
-                    .accessibilityIdentifier("spatial.import")
-                .reviewAcceptanceProbe("spatial.import", state: editable)
-                ForEach(session.snapshot?.objects ?? []) { object in
-                    Button(object.name) { session.selectedObjectID = object.id }
-                        .buttonStyle(.capsule(isSelected: session.selectedObjectID == object.id))
-                        .accessibilityIdentifier("spatial.object.\(object.id)")
-                .reviewAcceptanceProbe("spatial.object.\(object.id)", state: !session.busy)
+                    Button("Import GLB…") { Task { await session.importGLB() } }
+                        .disabled(!editingEnabled)
+                        .accessibilityIdentifier("spatial.import")
+                    .reviewAcceptanceProbe("spatial.import", state: editable)
+                    ForEach(session.snapshot?.objects ?? []) { object in
+                        Button(object.name) { session.selectedObjectID = object.id }
+                            .buttonStyle(.capsule(isSelected: session.selectedObjectID == object.id))
+                            .accessibilityIdentifier("spatial.object.\(object.id)")
+                    .reviewAcceptanceProbe("spatial.object.\(object.id)", state: !session.busy)
+                    }
+                    if session.selectedObject != nil { transformInspector.disabled(!editingEnabled) }
+                    AppDivider()
+                    cameraInspector
                 }
-                if session.selectedObject != nil { transformInspector.disabled(!editingEnabled) }
-                AppDivider()
-                cameraInspector
+                .disabled(session.busy)
             }
         }
         .buttonStyle(.capsule(size: .regular))
-        .disabled(session.busy)
         .padding(AppTheme.Spacing.md)
     }
 

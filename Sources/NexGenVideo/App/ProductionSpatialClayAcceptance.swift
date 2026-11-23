@@ -179,6 +179,12 @@ enum ProductionSpatialClayAcceptance {
                     try await Task.detached {
                         let proof = try PlanningWriterIO.read(StoryboardSketchProofV1.self, at: asset.proof.path, dataRoot: root)
                         try PipelineSpatialDerivationWriter.requireStoryboardSketch(proof, dataRoot: root)
+                        guard BpyRuntimeSelfTest.recordsSceneEditing else { return }
+                        let timing = try PlanningWriterIO.reference(StoryboardTimingV1.currentPath, id: "assigned-timing",
+                            role: "core.storyboard-timing", dataRoot: root)
+                        let references = try PipelineSpatialDerivationWriter.storyboardReferences(proof, dataRoot: root)
+                        try BpyRuntimeSelfTest.retainAssignment([asset.image, asset.proof, timing] + references,
+                            label: "storyboard-" + String(Int(scale * 100)), root: root, output: output)
                     }.value
                     try await driver.inspect("storyboard.sketch.inspect." + momentID, in: window)
                     try driver.capture("spatial-sketch-assigned", target: window)
