@@ -314,10 +314,9 @@ final class ProductionVisualSourcesDriver {
         guard hit != nil else {
             throw GateBlocked("The actual pointer target is unavailable: " + id)
         }
-        let active = editingText ? focusedField(id, in: target) : nil
         let editing: NativeAcceptancePointer.FieldTarget
-        if let active, let field = active.owner as? NSTextField, active.editor.isFieldEditor {
-            editing = .focused(field, active.editor)
+        if editingText, let field = editableOwner(id, in: target) as? NSTextField {
+            editing = .field(field, requiredEditor: nil)
         } else {
             editing = editingText ? .unfocused : .ordinary
         }
@@ -376,11 +375,12 @@ final class ProductionVisualSourcesDriver {
         }
         let point = NSPoint(x: view.bounds.midX, y: view.bounds.midY)
         let location = window.convertPoint(toScreen: view.convert(point, to: nil))
-        try await NativeAcceptancePointer.move(to: CGPoint(x: location.x, y: screen.frame.maxY - location.y),
+        let arrival = try await NativeAcceptancePointer.move(to: CGPoint(x: location.x, y: screen.frame.maxY - location.y),
                                                window: window, token: transaction) { evidence in
             try self.record("button hover", fields: evidence)
         }
         var local = NativeAcceptancePointer.LocalButtonReadiness(id: id, title: title, allowsGestureSurface: false)
+        local.hover = (view, arrival)
         do {
             try await wait("settled " + title) {
                 let enabled = self.state(id, in: window) == true
@@ -625,17 +625,21 @@ final class ProductionVisualSourcesDriver {
         let editor: NSTextView
     }
 
-    private func focusedField(_ id: String, in target: NSWindow) -> (owner: NSView, editor: NSTextView)? {
-        guard let root = target.contentView, let frame = WorkspaceUIAcceptance.probeFrame(identifier: id, in: target),
-              let first = target.firstResponder as? NSTextView, first.isEditable else { return nil }
+    private func editableOwner(_ id: String, in target: NSWindow) -> NSView? {
+        guard let root = target.contentView, let frame = WorkspaceUIAcceptance.probeFrame(identifier: id, in: target) else { return nil }
         let candidates = views(root).filter { view in
-            let editable = (view as? NSTextField)?.isEditable == true || (view === first && !first.isFieldEditor)
+            let text = view as? NSTextView
+            let editable = (view as? NSTextField)?.isEditable == true || (text?.isEditable == true && text?.isFieldEditor == false)
             let bounds = view.convert(view.bounds, to: root)
             return editable && !view.isHiddenOrHasHiddenAncestor && frame.insetBy(dx: -1, dy: -1).contains(bounds)
                 && bounds.contains(NSPoint(x: frame.midX, y: frame.midY))
         }
-        guard candidates.count == 1, let owner = candidates.first else { return nil }
-        if let field = owner as? NSTextField, field.currentEditor() !== first { return nil }
+        return candidates.count == 1 ? candidates.first : nil
+    }
+
+    private func focusedField(_ id: String, in target: NSWindow) -> (owner: NSView, editor: NSTextView)? {
+        guard let owner = editableOwner(id, in: target), let first = target.firstResponder as? NSTextView, first.isEditable,
+              (owner as? NSTextField)?.currentEditor() === first || owner === first else { return nil }
         return (owner, first)
     }
 
@@ -1314,13 +1318,21 @@ final class NativePointerPoster: @unchecked Sendable {
     private var state: [String: Any] = ["posted": [[String: Any]](), "ownedDownPosted": false,
         "ownedUpPosted": false, "buttonDownObserved": false, "buttonReleased": true, "cleanupUpPosted": false]
     private let screenPoint: NSPoint
+    private let hoverCounts: [UInt32]?
+
+    static func pointerCounts() -> [UInt32] {
+        let types: [CGEventType] = [.mouseMoved, .leftMouseDown, .leftMouseUp, .leftMouseDragged,
+            .rightMouseDown, .rightMouseUp, .rightMouseDragged, .otherMouseDown, .otherMouseUp, .otherMouseDragged, .scrollWheel]
+        return types.map { CGEventSource.counterForEventType(.combinedSessionState, eventType: $0) }
+    }
 
     init(source: CGEventSource, down: CGEvent, up: CGEvent, point: CGPoint, window: Int,
-         windowBounds: CGRect, screenPoint: NSPoint, tag: Int64,
+         windowBounds: CGRect, screenPoint: NSPoint, tag: Int64, hoverCounts: [UInt32]? = nil,
          deliver: @escaping @Sendable (CGEvent) -> Void = { $0.post(tap: .cghidEventTap) }) {
         self.source = source; self.down = down; self.up = up; self.point = point; self.window = window; self.tag = tag
         self.windowBounds = windowBounds; self.deliver = deliver
         self.screenPoint = screenPoint
+        self.hoverCounts = hoverCounts
     }
 
     func cancel() { lock.lock(); cancelled = true; lock.unlock() }
@@ -1378,6 +1390,14 @@ final class NativePointerPoster: @unchecked Sendable {
             put("error", "The original native window changed before Down.")
             return
         }
+        if let hoverCounts {
+            let current = Self.pointerCounts()
+            put("hoverCountsAtDown", current)
+            guard current == hoverCounts else {
+                put("error", "Pointer input changed after the delivered hover.")
+                return
+            }
+        }
         post(down, type: .leftMouseDown)
         let deadline = ProcessInfo.processInfo.systemUptime + 2
         while !observed() && !stopped() && ProcessInfo.processInfo.systemUptime < deadline {
@@ -1407,7 +1427,7 @@ enum NativeAcceptancePointer {
     enum FieldTarget {
         case ordinary
         case unfocused
-        case focused(NSTextField, NSTextView)
+        case field(NSTextField, requiredEditor: NSTextView?)
     }
 
     static func claim() throws -> UUID {
@@ -1422,9 +1442,21 @@ enum NativeAcceptancePointer {
         if owner == token { owner = nil }
     }
 
+    struct Arrival {
+        let transaction: UUID
+        let tag: Int64
+        let window: NSWindow
+        let root: NSView
+        let windowFrame: NSRect
+        let point: CGPoint
+        let counts: [UInt32]
+        let evidence: [String: Any]
+    }
+
+    @discardableResult
     static func move(to location: CGPoint, window: NSWindow, token: UUID, source: CGEventSource? = nil,
                      tag: Int64 = Int64.random(in: 1...Int64.max), seconds: Double = 2,
-                     validate: () throws -> Void = {}, record: ([String: Any]) throws -> Void) async throws {
+                     validate: () throws -> Void = {}, record: ([String: Any]) throws -> Void) async throws -> Arrival {
         guard owner == token, CGPreflightPostEventAccess(), let root = window.contentView,
               let screen = NSScreen.screens.first,
               [location.x, location.y].allSatisfy(\.isFinite),
@@ -1436,6 +1468,7 @@ enum NativeAcceptancePointer {
         @MainActor final class Movement {
             var expected = NSPoint.zero
             var matched = false
+            var counts: [UInt32] = []
             var events: [[String: Any]] = []
         }
         let delivery = Movement()
@@ -1449,11 +1482,20 @@ enum NativeAcceptancePointer {
                 let tagMatches = observedTag == tag, windowMatches = eventWindow == number
                 let xMatches = abs(point.x - delivery.expected.x) < 0.5
                 let yMatches = abs(point.y - delivery.expected.y) < 0.5
-                delivery.events.append(["window": eventWindow, "point": [point.x, point.y],
+                delivery.events.append(["type": NSEvent.EventType.mouseMoved.rawValue, "observedUptime": ProcessInfo.processInfo.systemUptime,
+                    "window": eventWindow, "point": [point.x, point.y],
                     "tag": observedTag ?? 0, "screenPoint": [pointer.x, pointer.y],
                     "expected": [delivery.expected.x, delivery.expected.y], "tagMatches": tagMatches,
                     "windowMatches": windowMatches, "xMatches": xMatches, "yMatches": yMatches])
-                if tagMatches && windowMatches && xMatches && yMatches { delivery.matched = true }
+                if tagMatches && !windowMatches, let receiver = NSApp.window(withWindowNumber: eventWindow) {
+                    delivery.events[delivery.events.count - 1]["receiverClass"] = String(reflecting: type(of: receiver))
+                    delivery.events[delivery.events.count - 1]["receiverFrame"] = [receiver.frame.minX, receiver.frame.minY, receiver.frame.width, receiver.frame.height]
+                    delivery.events[delivery.events.count - 1]["receiverParent"] = receiver.parent?.windowNumber ?? -1
+                }
+                if tagMatches && windowMatches && xMatches && yMatches {
+                    delivery.matched = true
+                    delivery.counts = NativePointerPoster.pointerCounts()
+                }
             }
             return event
         }
@@ -1528,7 +1570,10 @@ enum NativeAcceptancePointer {
             guard abs(actual.x - screenPoint.x) < 0.5, abs(actual.y - screenPoint.y) < 0.5 else {
                 throw GateBlocked("The actual system pointer did not reach its original movement target.")
             }
-            try record(evidence("delivered"))
+            let receipt = evidence("delivered")
+            try record(receipt)
+            return Arrival(transaction: token, tag: tag, window: window, root: root, windowFrame: originalFrame,
+                           point: location, counts: delivery.counts, evidence: receipt)
         } catch {
             try record(evidence("failed: " + String(describing: error)))
             throw error
@@ -1541,6 +1586,8 @@ enum NativeAcceptancePointer {
         let probe: NSView
         let hit: NSView
         let actualHit: NSView
+        let fieldOwner: NSTextField?
+        let fieldEditor: NSTextView?
         let windowFrame: NSRect
         let probeFrame: NSRect
         let point: NSPoint
@@ -1562,6 +1609,8 @@ enum NativeAcceptancePointer {
              "accessibilityObject": String(describing: ObjectIdentifier(accessibility)),
              "hostingObject": hosting.map { String(describing: ObjectIdentifier($0)) } ?? "nil",
              "hitClass": String(reflecting: type(of: hit)),
+             "fieldOwner": fieldOwner.map { String(describing: ObjectIdentifier($0)) } ?? "none",
+             "fieldEditor": fieldEditor.map { String(describing: ObjectIdentifier($0)) } ?? "none",
              "actualHitClass": String(reflecting: type(of: actualHit)),
              "actualHitObject": String(describing: ObjectIdentifier(actualHit)),
              "accessibilityClass": String(reflecting: type(of: accessibility)),
@@ -1655,7 +1704,7 @@ enum NativeAcceptancePointer {
 
     static func tabTarget(_ probe: NSView, field: NSTextField, editor: NSTextView, window: NSWindow) throws -> [String: Any] {
         let result = try target(probe, window: window, fraction: NSPoint(x: 0.5, y: 0.5),
-                                editing: .focused(field, editor), windowFailure: { _ in }, accessibilityFailure: { _ in })
+                                editing: .field(field, requiredEditor: editor), windowFailure: { _ in }, accessibilityFailure: { _ in })
         guard result.kind == "native-control", result.accessibilityRole == .textField else {
             throw GateBlocked("The field reached by Tab has no canonical accessibility text field.")
         }
@@ -1698,18 +1747,29 @@ enum NativeAcceptancePointer {
             throw GateBlocked("The native pointer target cannot receive input.")
         }
         let hit: NSView
-        if case let .focused(field, editor) = editing {
-            guard window.firstResponder === editor, editor.window === window, editor.isEditable, editor.isFieldEditor,
-                  field.window === window, field.isEnabled, field.isEditable, field.currentEditor() === editor,
+        var fieldOwner: NSTextField?
+        var fieldEditor: NSTextView?
+        if case let .field(field, requiredEditor) = editing {
+            let editor = field.currentEditor() as? NSTextView
+            let ownedEditor = editor.map { window.firstResponder === $0 && $0.window === window && $0.isEditable && $0.isFieldEditor } == true
+            let hitEditor = ownedEditor && (actualHit === editor || (actualHit is NSClipView && actualHit === editor?.superview))
+            guard field.window === window, field.isEditable, field.isEnabled,
                   !actualHit.isHiddenOrHasHiddenAncestor, actualHit.visibleRect.contains(actualHit.convert(point, from: nil)),
-                  actualHit === field || actualHit === editor || (actualHit is NSClipView && actualHit === editor.superview) else {
-                throw GateBlocked("The focused field is covered or has lost its editor.")
+                  requiredEditor == nil || (ownedEditor && requiredEditor === editor),
+                  actualHit === field || hitEditor else {
+                accessibilityFailure(["actualHitClass": String(reflecting: type(of: actualHit)),
+                    "owner": String(describing: ObjectIdentifier(field)), "hitOwner": actualHit === field,
+                    "ownsFocusedEditor": ownedEditor, "hitEditor": hitEditor])
+                throw GateBlocked("The text field is covered or has lost its editor.")
             }
+            fieldOwner = field
+            fieldEditor = ownedEditor ? editor : nil
             hit = field
         } else {
             if case .unfocused = editing,
-               (actualHit as? NSTextView)?.isFieldEditor == true || ((actualHit as? NSClipView)?.documentView as? NSTextView)?.isFieldEditor == true {
-                throw GateBlocked("The pointer reached a field editor without a verified owner.")
+               actualHit is NSTextField || (actualHit as? NSTextView)?.isFieldEditor == true ||
+               ((actualHit as? NSClipView)?.documentView as? NSTextView)?.isFieldEditor == true {
+                throw GateBlocked("The pointer reached a field without a unique verified owner.")
             }
             hit = actualHit
         }
@@ -1817,7 +1877,7 @@ enum NativeAcceptancePointer {
                     throw GateBlocked("The native pointer target has no enabled canonical accessibility control.")
                 }
                 let (nativeControl, nativeRole, nativeFrame) = control
-                if case .focused = editing, nativeRole != .textField {
+                if fieldOwner != nil, nativeRole != .textField {
                     throw GateBlocked("The focused editor does not resolve to an accessible text field.")
                 }
                 let probeScreen = window.convertToScreen(probe.convert(probe.bounds, to: nil))
@@ -1841,7 +1901,8 @@ enum NativeAcceptancePointer {
             accessibilityFailure(hitEvidence)
             throw error
         }
-        return Target(window: window, root: root, probe: probe, hit: hit, actualHit: actualHit, windowFrame: window.frame,
+        return Target(window: window, root: root, probe: probe, hit: hit, actualHit: actualHit,
+                      fieldOwner: fieldOwner, fieldEditor: fieldEditor, windowFrame: window.frame,
                       probeFrame: frame, point: point, screenPoint: appKitPoint, quartzPoint: quartzPoint, cgFrame: cgFrame,
                       accessibility: accessible, accessibilityRole: role, accessibilityFrame: accessibleFrame, kind: kind,
                       hosting: hosting, clippingAncestors: clippingAncestors)
@@ -1850,7 +1911,8 @@ enum NativeAcceptancePointer {
     private static func same(_ first: Target, _ next: Target, comparisons: inout [String: Bool]) -> Bool {
         comparisons = ["window": first.window === next.window, "root": first.root === next.root,
             "probe": first.probe === next.probe, "hit": first.hit === next.hit,
-            "actualHit": first.actualHit === next.actualHit,
+            "samePhysicalControl": first.actualHit === next.actualHit || (first.fieldOwner != nil && first.fieldOwner === next.fieldOwner),
+            "originalEditor": first.fieldEditor == nil || first.fieldEditor === next.fieldEditor,
             "windowFrame": first.windowFrame == next.windowFrame, "probeFrame": first.probeFrame == next.probeFrame,
             "point": first.point == next.point, "cgFrame": first.cgFrame == next.cgFrame,
             "accessibility": first.accessibility === next.accessibility,
@@ -1863,6 +1925,7 @@ enum NativeAcceptancePointer {
     @MainActor struct LocalButtonReadiness {
         let id: String
         let title: String
+        fileprivate var hover: (probe: NSView, arrival: Arrival)?
         private let allowsGestureSurface: Bool
         private var baseline: (target: Target, windowNumber: Int, uptime: TimeInterval)?
         private var stableSeconds = 0.0
@@ -1968,7 +2031,8 @@ enum NativeAcceptancePointer {
                 "posted": [], "received": [], "ownedDownPosted": false, "ownedUpPosted": false])
             throw GateBlocked("The settled local button changed before movement.")
         }
-        let tag = Int64.random(in: 1...Int64.max)
+        let hover = buttonReadiness?.hover
+        let tag = hover?.arrival.tag ?? Int64.random(in: 1...Int64.max)
         guard let source = CGEventSource(stateID: .combinedSessionState),
               let down = CGEvent(mouseEventSource: source, mouseType: .leftMouseDown,
                                  mouseCursorPosition: original.quartzPoint, mouseButton: .left),
@@ -1987,7 +2051,7 @@ enum NativeAcceptancePointer {
         }
         let poster = NativePointerPoster(source: source, down: down, up: up, point: original.quartzPoint,
                                          window: window.windowNumber, windowBounds: original.cgFrame,
-                                         screenPoint: original.screenPoint, tag: tag)
+                                         screenPoint: original.screenPoint, tag: tag, hoverCounts: hover?.arrival.counts)
         let delivery = Delivery(), number = window.windowNumber, point = original.point
         let acceptedMoves = window.acceptsMouseMovedEvents
         window.acceptsMouseMovedEvents = true
@@ -2034,9 +2098,16 @@ enum NativeAcceptancePointer {
             if !passed { preDownFirstFailure = name }
             return passed
         }
-        func originalTargetUnchanged() throws -> Bool {
+        var boundEditor = original.fieldEditor
+        func resample() throws -> Target {
             let next = try target(probe, window: window, fraction: fraction, editing: editing, windowFailure: reportWindowFailure,
                                   accessibilityFailure: reportAccessibilityFailure)
+            if let boundEditor, next.fieldEditor !== boundEditor { throw GateBlocked("The verified field editor changed before Down.") }
+            boundEditor = next.fieldEditor
+            return next
+        }
+        func originalTargetUnchanged() throws -> Bool {
+            let next = try resample()
             preDownTarget = next.evidence
             return same(original, next, comparisons: &preDownTargetComparisons)
         }
@@ -2065,18 +2136,34 @@ enum NativeAcceptancePointer {
 
         do {
             try Task.checkCancellation()
-            try await move(to: original.quartzPoint, window: window, token: token, source: source, tag: tag,
-                           validate: {
-                let next = try target(probe, window: window, fraction: fraction, editing: editing, windowFailure: reportWindowFailure,
-                                      accessibilityFailure: reportAccessibilityFailure)
+            func validateMovementTarget() throws {
+                let next = try resample()
                 movementTarget = next.evidence
                 guard same(original, next, comparisons: &movementTargetComparisons) else {
                     throw GateBlocked("The original native pointer target changed before movement.")
                 }
-            }, record: { value in
-                movement = value
-                posted = value["posted"] as? [[String: Any]] ?? []
-            })
+            }
+            if let hover {
+                let arrival = hover.arrival
+                movement = arrival.evidence
+                movement["hoverCountsAtArrival"] = arrival.counts
+                let counts = NativePointerPoster.pointerCounts()
+                movement["hoverCountsAtRevalidation"] = counts
+                posted = movement["posted"] as? [[String: Any]] ?? []
+                delivery.events = (movement["received"] as? [[String: Any]] ?? []).filter { $0["tagMatches"] as? Bool == true }
+                guard hover.probe === probe, arrival.transaction == token, arrival.window === window,
+                      arrival.root === original.root, arrival.windowFrame == original.windowFrame,
+                      arrival.point == original.quartzPoint, arrival.counts == counts else {
+                    throw GateBlocked("The delivered hover changed before button input.")
+                }
+                try validateMovementTarget()
+            } else {
+                try await move(to: original.quartzPoint, window: window, token: token, source: source, tag: tag,
+                               validate: validateMovementTarget, record: { value in
+                    movement = value
+                    posted = value["posted"] as? [[String: Any]] ?? []
+                })
+            }
             let actual = NSEvent.mouseLocation
             preDownActualPoint = actual
             guard preDownClause("pointerX", abs(actual.x - original.screenPoint.x) < 0.5),
