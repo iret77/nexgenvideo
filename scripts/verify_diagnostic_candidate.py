@@ -307,12 +307,12 @@ def verify_ci(run, jobs, artifact, run_id, source_sha, artifact_id, digest, chan
 
 def verify(run, jobs, artifact, run_id, source_sha, artifact_id, digest, changed_paths, *, packaging=None):
     if str(run.get("head_branch", "")).startswith("iret77/rc-"):
-        verify_signed_bpy(run, jobs, artifact, run_id, source_sha, artifact_id, digest,
+        mounted = verify_signed_bpy(run, jobs, artifact, run_id, source_sha, artifact_id, digest,
                           changed_paths, harness_paths=CAPTURE_HARNESS_PATHS, packaging=packaging)
         release = next(job for job in jobs["jobs"] if job["name"] == "release")
         if run.get("actor", {}).get("login") != "iret77" or release.get("labels") != ["macrunner"]:
             raise ValueError("RC capture must retain an owned macrunner release")
-        return
+        return mounted
     if packaging is not None:
         raise ValueError('Retained capture requires an owned RC producer')
     if not re.fullmatch(r"[0-9a-f]{40}", source_sha) or not re.fullmatch(r"[0-9a-f]{64}", digest):
@@ -340,7 +340,11 @@ def verify_signed_bpy(run, jobs, artifact, run_id, source_sha, artifact_id, dige
                       packaging=None):
     producer_source = source_sha
     import app_cohort_v2
-    if packaging is None and app_cohort_v2.has_manifest(source_sha):
+    internal = any(job.get('name') == 'acceptance-pending' and job.get('conclusion') == 'failure'
+                   for job in jobs.get('jobs', []))
+    if internal and (packaging is not None or changed_paths):
+        raise ValueError('Internal image must use its exact original source')
+    if not internal and packaging is None and app_cohort_v2.has_manifest(source_sha):
         import os
         harness_paths = harness_paths | app_cohort_v2.consumer_paths(source_sha, os.environ['GITHUB_SHA'])
     if packaging is not None:
@@ -385,6 +389,10 @@ def verify_signed_bpy(run, jobs, artifact, run_id, source_sha, artifact_id, dige
         raise ValueError("missing release production timestamps") from error
     if set(changed_paths) - harness_paths:
         raise ValueError("application or build inputs changed; retained signed App cannot be used")
+    if internal:
+        from release_checkpoint import internal_image_evidence
+        return internal_image_evidence(run, jobs, source_sha)
+
 
 
 def verify_scene_pointer_delivery(*args, **kwargs):
@@ -398,25 +406,27 @@ def verify_scene_history_hierarchy(*args, **kwargs):
 
 
 def verify_signed_journey(*args, **kwargs):
-    verify_signed_bpy(*args, artifact_name="release-user-journey-input", harness_paths=SIGNED_JOURNEY_HARNESS_PATHS, **kwargs)
+    return verify_signed_bpy(*args, artifact_name="release-user-journey-input", harness_paths=SIGNED_JOURNEY_HARNESS_PATHS, **kwargs)
 
 
 def verify_signed_transport(*args, **kwargs):
-    verify_signed_bpy(*args, artifact_name="release-user-journey-input", harness_paths=SIGNED_TRANSPORT_HARNESS_PATHS, **kwargs)
+    mounted = verify_signed_bpy(*args, artifact_name="release-user-journey-input", harness_paths=SIGNED_TRANSPORT_HARNESS_PATHS, **kwargs)
     release = next(job for job in args[1]["jobs"] if job["name"] == "release")
     if release.get("labels") != ["macrunner"]:
         raise ValueError("retained transport DMG must be produced on macrunner")
+    return mounted
 
 
 def verify_signed_settings(*args, **kwargs):
-    verify_signed_bpy(*args, artifact_name="workspace-ui-app", harness_paths=SIGNED_SETTINGS_HARNESS_PATHS, **kwargs)
+    mounted = verify_signed_bpy(*args, artifact_name="workspace-ui-app", harness_paths=SIGNED_SETTINGS_HARNESS_PATHS, **kwargs)
     release = next(job for job in args[1]["jobs"] if job["name"] == "release")
     if release.get("labels") != ["macrunner"]:
         raise ValueError("retained Settings runtime must be produced on macrunner")
+    return mounted
 
 
 def verify_signed_workspace(*args, **kwargs):
-    verify_signed_bpy(*args, artifact_name="workspace-ui-app", harness_paths=SIGNED_WORKSPACE_HARNESS_PATHS, **kwargs)
+    return verify_signed_bpy(*args, artifact_name="workspace-ui-app", harness_paths=SIGNED_WORKSPACE_HARNESS_PATHS, **kwargs)
 
 
 def verify_signed_desktop(*args, **kwargs):
@@ -454,7 +464,7 @@ def main():
                 "signed-journey": verify_signed_journey, "signed-transport": verify_signed_transport, "ci-runtime": verify_ci,
                 "ci-bpy-open-diagnostic": verify_bpy_diagnostic,
                 "ci-app-test-diagnostic": verify_app_diagnostic}[args.candidate_kind]
-    verifier(*(json.loads((args.metadata / name).read_text()) for name in ("run.json", "jobs.json", "artifact.json")),
+    mounted = verifier(*(json.loads((args.metadata / name).read_text()) for name in ("run.json", "jobs.json", "artifact.json")),
            args.run_id, args.source_sha, args.artifact_id, args.digest, [path for path in paths if path],
            **({'packaging': packaging} if packaging is not None else {}))
     if args.crash_archive is not None:
@@ -464,6 +474,8 @@ def main():
         "candidateKind": args.candidate_kind, "buildSourceSHA": args.source_sha,
         "harnessSourceSHA": harness_sha, "changedPaths": sorted(path for path in paths if path),
     }
+    if mounted is not None and args.candidate_kind in ('signed-release', 'signed-journey', 'signed-transport'):
+        record['mountedInternalImage'] = mounted
     if binding is not None:
         record['packaging'] = binding
     (args.metadata / "harness.json").write_text(json.dumps(record, indent=2) + "\n")

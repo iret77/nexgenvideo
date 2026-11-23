@@ -662,6 +662,14 @@ def runtime_binding(runtime, bound, identity):
         and all(isinstance(runtime.get(key), str) and SHA.fullmatch(runtime[key]) for key in
             ('archiveSHA256', 'appTreeSHA256', 'executableSHA256', 'runtimeInputSHA256')), 'RUNTIME')
 
+    mounted = bound.get('mountedInternalImage')
+    if mounted is not None:
+        check(runtime.get('mountedInternalImage') == mounted
+            and runtime['archiveSHA256'] == mounted['archiveSHA256']
+            and runtime['appTreeSHA256'] == mounted['mountedAppTreeSHA256']
+            and runtime['executableSHA256'] == mounted['app']['executableSHA256']
+            and runtime['runtimeInputSHA256'] == mounted['runtimeInputSHA256'], 'RUNTIME')
+
 
 def verify(output, work):
     receipt = dict.fromkeys(PUBLIC_KEYS)

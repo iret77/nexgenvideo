@@ -253,6 +253,7 @@ jobs:
           HOME: ${{ runner.temp }}/nexgenvideo-test-home
           CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
           GH_TOKEN: ${{ github.token }}
+          EXPECTED_DMG_SHA256: ${{ inputs.expected_dmg_sha256 }}
           ORIGINAL_RUN: ${{ inputs.runtime_run_id }}
           ORIGINAL_ARTIFACT: ${{ inputs.runtime_artifact_id }}
           ORIGINAL_DIGEST: ${{ inputs.runtime_artifact_sha256 }}
@@ -275,6 +276,9 @@ jobs:
           python3 scripts/verify_diagnostic_candidate.py "$ORIGINAL_RUN" "$PRODUCT_SOURCE" \
             "$ORIGINAL_ARTIFACT" "$ORIGINAL_DIGEST" "$RUNNER_TEMP/retained-dmg" --candidate-kind "$CANDIDATE_KIND" \
             --packaging-producer-source "$PACKAGING_PRODUCER_SOURCE" --packaging-provenance-artifact-id "$PACKAGING_PROVENANCE_ARTIFACT_ID" --packaging-provenance-artifact-sha256 "$PACKAGING_PROVENANCE_ARTIFACT_SHA256"
+          if jq -e '.mountedInternalImage' "$RUNNER_TEMP/retained-dmg/harness.json" >/dev/null; then
+            [ "$(jq -r '.mountedInternalImage.dmgSHA256' "$RUNNER_TEMP/retained-dmg/harness.json")" = "$EXPECTED_DMG_SHA256" ]
+          fi
       - uses: actions/upload-artifact@v4
         if: inputs.product_source_sha != ''
         with:

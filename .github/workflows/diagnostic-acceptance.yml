@@ -1645,6 +1645,10 @@ jobs:
               api('actions/artifacts/' + os.environ['CANDIDATE_ARTIFACT']), run_id, os.environ['CANDIDATE_SOURCE'],
               int(os.environ['CANDIDATE_ARTIFACT']), os.environ['CANDIDATE_DIGEST'], [], packaging=selected)
           PYCODE
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: diagnostic-candidate-identity
+          path: ${{ runner.temp }}/qualified-candidate
       - name: Retrieve the exact signed candidate
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1656,6 +1660,11 @@ jobs:
           ditto -x -k "$RUNNER_TEMP/candidate.zip" "$RUNNER_TEMP/candidate"
           ditto -x -k "$RUNNER_TEMP/candidate/diagnostic-app.zip" .
           ditto -x -k "$RUNNER_TEMP/candidate/diagnostic-symbols.zip" .
+          BINDING="$RUNNER_TEMP/qualified-candidate/harness.json"
+          jq -e '.candidateKind == "signed-release"' "$BINDING" >/dev/null
+          if jq -e '.mountedInternalImage' "$BINDING" >/dev/null; then
+            [ "$(python3 scripts/external-gui/acceptance.py tree-sha256 --app NexGenVideo.app)" = "$(jq -r '.mountedInternalImage.mountedAppTreeSHA256' "$BINDING")" ]
+          fi
           [ "$(/usr/libexec/PlistBuddy -c 'Print :NGVSourceCommit' NexGenVideo.app/Contents/Info.plist)" = "$CANDIDATE_SOURCE" ]
           codesign --verify --strict --verbose=2 NexGenVideo.app
           xcrun stapler validate NexGenVideo.app

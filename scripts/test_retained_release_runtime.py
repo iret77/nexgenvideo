@@ -19,6 +19,24 @@ sys.path.pop(0)
 
 
 class RetainedReleaseRuntimeTests(unittest.TestCase):
+    def test_fresh_internal_workspace_requires_the_original_mounted_app_pack_and_transfer(self):
+        pack = self.root / 'plugins/musicvideo.ngvpack'
+        pack.mkdir(parents=True)
+        (pack / 'payload').write_bytes(b'original pack')
+        app = {'treeSHA256': 'a' * 64, 'CFBundleVersion': '141'}
+        receipt = {'appTreeSHA256': app['treeSHA256'], 'archiveSHA256': 'b' * 64}
+        mounted = {'app': app, 'archiveSHA256': receipt['archiveSHA256'],
+                   'mountedPackTreeSHA256': journey.tree_sha256(pack)}
+        with patch.object(journey, 'metadata', return_value=app), patch.object(runtime.subprocess, 'run') as commands:
+            self.assertEqual(runtime.validate_app(self.root, self.source, receipt,
+                             proof={'mountedInternalImage': mounted}), app)
+            self.assertIn(['xcrun', 'stapler', 'validate', str(pack)], [call.args[0] for call in commands.call_args_list])
+            for key, replacement in [('mountedPackTreeSHA256', 'c' * 64), ('archiveSHA256', 'd' * 64),
+                                     ('app', dict(app, CFBundleVersion='140'))]:
+                with self.subTest(key=key), self.assertRaisesRegex(ValueError, 'mounted internal DMG'):
+                    runtime.validate_app(self.root, self.source, receipt,
+                                         proof={'mountedInternalImage': dict(mounted, **{key: replacement})})
+
     def test_pointer_measurement_destination_requires_exact_caller_run_and_unlinked_path(self):
         import compiled_app_release as compiled
         with tempfile.TemporaryDirectory() as temporary:

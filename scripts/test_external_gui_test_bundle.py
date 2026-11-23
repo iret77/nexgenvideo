@@ -157,6 +157,32 @@ class ExternalTestBundleTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         journey.test_source_identity(self.sha, input_root=self.root, packaging={'canonical': 'selectors'}, **options)
 
+    def test_exact_fresh_checkout_still_requires_clean_owned_source_and_handles_repackaging(self):
+        import app_cohort_v2 as cohort
+        revision, _, output = self.source_identity_fixture()
+        for variant in ('clean', 'dirty', 'foreign', 'packaging'):
+            def git_output(arguments, **kwargs):
+                if 'status' in arguments:
+                    return b' M Package.swift' if variant == 'dirty' else b''
+                return output(arguments, **kwargs)
+            with self.subTest(variant=variant), patch.object(journey, 'output', side_effect=git_output), \
+                    patch.dict(os.environ, GITHUB_SHA=self.sha if variant == 'foreign' else revision), \
+                    patch.object(cohort, 'has_manifest', return_value=True), \
+                    patch.object(cohort, 'objects', return_value={'Sources': revision}), \
+                    patch.object(cohort, 'manifest', return_value={'nativeSourceObjects': {'Sources': self.sha}}), \
+                    patch.object(cohort, 'consumer_paths', side_effect=ValueError('retained source changed')) as retained:
+                if variant == 'clean':
+                    self.assertEqual(journey.test_source_identity(revision, input_root=self.root)[0], revision)
+                elif variant == 'packaging':
+                    with patch.object(journey.retained_packaging, 'consumer_record', return_value={'producerSourceSHA': revision}), \
+                            patch.object(journey.retained_packaging, 'component_consumer_repair_paths', return_value=set()), \
+                            self.assertRaisesRegex(ValueError, 'retained source changed'):
+                        journey.test_source_identity(self.sha, input_root=self.root, packaging={'id': 1})
+                    retained.assert_called_once_with(self.sha, revision)
+                else:
+                    with self.assertRaisesRegex(ValueError, 'Dirty or foreign'):
+                        journey.test_source_identity(revision, input_root=self.root)
+
     def test_retained_product_rejects_product_changes_and_unrelated_history(self):
         for path in ('Sources/NexGenVideo/App/NexGenVideoApp.swift', 'Package.resolved', 'scripts/bundle.sh',
                      'musicvideo/manifest.json', '.github/workflows/release.yml'):
